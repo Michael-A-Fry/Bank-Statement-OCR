@@ -26,6 +26,11 @@ point-and-click wizard (or editing a YAML file), not by writing code.
 - **Reconciliation KPIs + trust score**: balance reconciliation, running-balance
   continuity, transaction count, dates-in-period, completeness, redaction
   summary — surfaced as single-line checks with a high/medium/low trust level.
+- **Fail-loud diagnostics**: any non-clean run reports **where / why / how-bad /
+  how-to-fix** — in the result, the workbook's `Diagnostics` sheet, the JSON, and
+  the app. The engine never returns a silent wrong answer.
+- **OCR pre-processing**: greyscale → deskew → normalise → upscale (ImageMagick)
+  before Tesseract, to lift accuracy on scanned pages.
 - **Never crashes**: any failure returns a `failed`/`unsupported`/`needs_review`
   status with an *actionable* message; one JSON line is logged per run.
 - **Test suite**: `16 files / 76 tests / 292 assertions, 0 failures`.
@@ -117,6 +122,8 @@ no-ops safely when they are not.
 **New here? Start with [`docs/ONBOARDING.md`](docs/ONBOARDING.md)** — a worked,
 click-through guide to converting statements and adding banks.
 Real-world edge cases + honest status: [`docs/edge-cases.md`](docs/edge-cases.md).
+Visual-wizard design + A/B/C roadmap: [`docs/wizard-vision-and-roadmap.md`](docs/wizard-vision-and-roadmap.md).
+OCR pre-processing research: [`docs/research/ocr-preprocessing.md`](docs/research/ocr-preprocessing.md).
 Template format and the full data contract: [`docs/architecture/build-contract.md`](docs/architecture/build-contract.md).
 Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/discovery/discovery-log.md).
 

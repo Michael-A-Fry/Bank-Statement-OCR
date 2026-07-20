@@ -103,6 +103,7 @@ ui <- fluidPage(
           width = 8,
           uiOutput("cv_status"),
           h4("Checks"), DTOutput("cv_kpis"),
+          h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
           h4("Transactions (preview)"), DTOutput("cv_txns")
         )
       )
@@ -215,6 +216,12 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$kpis))
     datatable(res$kpis[, intersect(c("name","status","detail"), names(res$kpis)), drop = FALSE],
               rownames = FALSE, options = list(dom = "t", pageLength = 20))
+  })
+
+  output$cv_diag <- renderDT({
+    res <- cv_res(); req(res); req(!is.null(res$diagnostics))
+    datatable(res$diagnostics, rownames = FALSE,
+              options = list(dom = "t", pageLength = 20, scrollX = TRUE))
   })
 
   output$cv_txns <- renderDT({
