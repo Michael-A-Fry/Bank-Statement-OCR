@@ -19,9 +19,11 @@
   paste(sel$text[order(sel$x)], collapse = " ")
 }
 
-# .clean_money(x) -- strip currency symbols / thousands separators, keep sign and
-# decimal so parse_amount can read it. The verbatim value is retained separately.
-.clean_money <- function(x) gsub(",", "", gsub("[^0-9.,()+-]", "", as.character(x)))
+# .has_money(x) -- TRUE when a cell carries any digit (used only to decide a row
+# is a transaction). Parsing itself is left to the sign-aware parse_amount/.num,
+# which read the raw cell verbatim: pre-stripping here used to remove a trailing
+# OD/DR/CR and silently flip an overdrawn balance's sign.
+.has_money <- function(x) grepl("[0-9]", as.character(x))
 
 parse_pdf_table <- function(input, template) {
   t <- template$table %||% list()
@@ -86,6 +88,19 @@ parse_pdf_table <- function(input, template) {
     p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
     yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
     yrs <- unique(yrs[!is.na(yrs)])
+    # Fallback: some statements print day/month only in the table AND give no
+    # parseable period. Rather than silently drop EVERY row (year-less dates parse
+    # to NA and fail the date filter), scan the page text for a plausible 4-digit
+    # year. Only used when it is UNAMBIGUOUS (a single distinct year on the page):
+    # if the text shows zero or several years we do not guess, keeping to the
+    # "never silently wrong" contract. date_raw stays verbatim regardless.
+    if (!length(yrs)) {
+      alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
+      cy <- suppressWarnings(as.integer(regmatches(alltext,
+              gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
+      cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
+      if (length(cy) == 1L) yrs <- cy
+    }
     full_date <- function(raw) {
       if (!length(yrs)) return(raw)
       bad <- is.na(raw) | !nzchar(trimws(raw))
@@ -109,23 +124,47 @@ parse_pdf_table <- function(input, template) {
   # date-parse-only filter would wrongly keep. Balance is deliberately NOT enough
   # on its own (carry-forward rows aren't transactions).
   .has_amount <- function(r) {
-    m <- .clean_money(if (identical(style, "debit_credit_cols"))
+    .has_money(if (identical(style, "debit_credit_cols"))
       paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
-    grepl("[0-9]", m)
   }
   # Summary lines (opening/closing balance, totals, carry-forward) are NOT
   # transactions even though they carry a money value on a dated line. Drop them
   # generically -- a real transaction is never *named* "closing balance". This
   # stops a statement's own summary row from corrupting the reconciliation.
   .is_summary <- function(r) {
-    txt <- tolower(paste(r$description %||% "", r$raw %||% ""))
-    grepl(paste0("opening balance|closing balance|balance brought forward|",
-                 "balance carried forward|brought forward|carried forward|",
-                 "total (withdrawal|deposit|credit|debit|payment)"), txt)
+    d   <- tolower(trimws(r$description %||% ""))
+    txt <- if (nzchar(d)) d else tolower(trimws(r$raw %||% ""))
+    # Balance/total labels are distinctive enough to match anywhere. "brought/
+    # carried forward" is required to carry "balance" OR the abbreviations (b/f,
+    # c/f, fwd) so a real narrative like "Transfer carried forward interest" is
+    # NOT dropped; the totals category is PLURAL ("Total Credits", not the
+    # transaction "Total Credit Union" / "Total Payment to ACME").
+    bal <- grepl(paste0(
+      "\\b(opening|closing)\\s+balance\\b",
+      "|\\bbalance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)\\b",
+      "|\\bbalance\\s+[bc]/f\\b",
+      "|\\btotal\\s+(withdrawals|deposits|credits|debits|payments|fees)\\b"), txt)
+    # bare "brought/carried forward" only when it HEADS the description (the label
+    # itself), never mid-narrative.
+    cf <- grepl("^(brought|carried)\\s+forward\\b", d)
+    bal || cf
+  }
+  # Did we manage to resolve a year for a year-less date format? When we did NOT
+  # (no period, no year anywhere in the text), dropping every row would silently
+  # lose a whole statement's transactions -- the worst forensic outcome, and one
+  # seen on real data. Instead, still KEEP a dated money line if its day/month is
+  # valid under the base format (sentinel year), carry date_raw verbatim, leave
+  # date_iso NA (the real year is genuinely unknown), and flag it date_unresolved
+  # so the reviewer can assign the year -- data preserved, never silently wrong.
+  year_resolved <- has_year || length(yrs) > 0
+  .date_ok <- function(raw) {
+    if (year_resolved)
+      return(!is.na(suppressWarnings(parse_date(full_date(raw), eff_fmt)$iso)))
+    !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
+                                       paste(date_fmt, "%Y"))$iso))
   }
   keep <- vapply(recs, function(r)
-    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)) &&
-    .has_amount(r) && !.is_summary(r), logical(1))
+    .date_ok(r$date) && .has_amount(r) && !.is_summary(r), logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
@@ -140,24 +179,39 @@ parse_pdf_table <- function(input, template) {
     if (identical(style, "debit_credit_cols")) {
       deb_raw <- getc("debit"); cr_raw <- getc("credit")
       amt <- parse_amount(NULL, "debit_credit_cols",
-                          list(debit = .clean_money(deb_raw), credit = .clean_money(cr_raw)))
+                          list(debit = deb_raw, credit = cr_raw))
       cr_has <- !is.na(cr_raw) & nzchar(trimws(cr_raw))
       amt$raw <- ifelse(cr_has, cr_raw, deb_raw)
     } else {
       amt_raw <- getc("amount")
-      amt <- parse_amount(.clean_money(amt_raw), style, list()); amt$raw <- amt_raw
+      amt <- parse_amount(amt_raw, style, list()); amt$raw <- amt_raw
     }
     description <- clean_description(getc("description"))
   }
   vb <- function(f) if (n == 0) character(0) else blank_to_na(getc(f))
   has_bal <- !is.null(cols$balance)
-  balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(.clean_money(getc("balance")), "signed")$value
+  balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(getc("balance"), "signed")$value
   balance_raw <- if (n == 0 || !has_bal) rep(NA_character_, n) else getc("balance")
 
   redacted <- if (n == 0) logical(0) else
     grepl("REDACTED", getc("amount"), ignore.case = TRUE) |
     grepl("REDACTED", getc("description"), ignore.case = TRUE)
-  flags <- if (n == 0) character(0) else ifelse(redacted, "redacted", "")
+  # malformed: the row was kept (dated line carrying a money-looking amount) yet
+  # the amount could not be parsed to a number -- a genuine parse failure, not a
+  # redaction. Flagging it lets the no_unparsed_rows KPI catch PDF parse gaps the
+  # same way it already does for delimited (previously this path never set the
+  # flag, so no_unparsed_rows was blind to a mis-read PDF amount).
+  malformed <- if (n == 0) logical(0) else (is.na(amt$value) & !redacted)
+  # date_unresolved: kept despite an unknown year (see .date_ok) -- date_iso is NA
+  # but the transaction is preserved. Marked so trust/review reflect the gap.
+  date_unresolved <- if (n == 0) logical(0)
+    else (!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw)))
+  flags <- if (n == 0) character(0) else {
+    base <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
+    ifelse(date_unresolved,
+           ifelse(nzchar(base), paste0(base, ",date_unresolved"), "date_unresolved"),
+           base)
+  }
   if (n > 0) amt$value[redacted] <- NA_real_
 
   core <- coerce_core(data.frame(
@@ -177,7 +231,9 @@ parse_pdf_table <- function(input, template) {
     extras <- data.frame(ex, stringsAsFactors = FALSE, check.names = FALSE)
   } else extras <- data.frame(row_id = integer(0))
 
-  .money_num <- function(x) suppressWarnings(as.numeric(.clean_money(x %||% NA)))
+  # sign-aware: a "$1,234.56 DR" / "(1,234.56)" opening/closing balance keeps its
+  # negative sign (via .num) instead of being read as a positive number.
+  .money_num <- function(x) .num(x %||% NA_character_)
   header <- list(
     bank = template$bank %||% NA_character_, statement_type = template$statement_type %||% NA_character_,
     template_id = template$id %||% NA_character_, template_version = template$version %||% NA,

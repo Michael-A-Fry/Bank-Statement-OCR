@@ -70,8 +70,10 @@ reconcile <- function(parsed, template = NULL) {
   # Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
   # tolerantly so an unparseable bound skips the check rather than crashing.
   .rec_date <- function(s) {
-    for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y")) {
-      d <- suppressWarnings(as.Date(as.character(s), f)); if (!is.na(d)) return(d)
+    for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y",
+                "%d %b %y", "%d %B %y", "%d/%m/%y", "%d-%m-%y")) {
+      d <- suppressWarnings(as.Date(as.character(s), f))
+      if (!is.na(d) && as.integer(format(d, "%Y")) >= 1990) return(d)
     }
     as.Date(NA)
   }

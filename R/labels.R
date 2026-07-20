@@ -20,7 +20,14 @@
 #   required    : logical (default FALSE)               -> EXIST / NOT EXIST.
 #   on_conflict : "flag" (default) | "first" | "last"   -> matches disagree.
 
-.MONEY_RX <- "-?\\$?-?[0-9][0-9,]*\\.[0-9]{2}"
+# A money token, SIGN-AWARE. Matches a leading currency/sign/paren, thousands
+# grouped with , or . (or space), a 1-2 place decimal (either . or , so European
+# "1.234,56" is captured whole), and an OPTIONAL trailing DR/CR/OD balance marker
+# -- so an overdrawn "1,234.56 DR" is captured with its sign intact for .num to
+# read (the old pattern stopped at the digits and silently dropped the sign).
+# `(?![0-9])` after the cents stops "1,234" being mis-read as "1,23". Consumed
+# with perl = TRUE + ignore.case in .value_from_line (lookahead needs perl).
+.MONEY_RX <- "\\(?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?(?:\\s?(?:DR|CR|OD))?"
 .DATE_RX  <- "[0-9]{1,2}[/ .-][A-Za-z0-9]{2,9}[/ .-][0-9]{2,4}"
 
 # .spec_terms(spec) -- the list of label phrases a spec matches on.
@@ -52,7 +59,7 @@
     return(if (length(m) && nzchar(m)) m[1] else NA_character_)
   }
   switch(vtype,
-    money = { m <- regmatches(line, gregexpr(.MONEY_RX, line))[[1]]
+    money = { m <- regmatches(line, gregexpr(.MONEY_RX, line, perl = TRUE, ignore.case = TRUE))[[1]]
               if (length(m)) m[length(m)] else NA_character_ },   # value sits to the right
     date  = { m <- regmatches(line, regexpr(.DATE_RX, line))
               if (length(m)) m[1] else NA_character_ },
@@ -69,6 +76,18 @@
   rest <- substr(line, p + attr(p, "match.length"), nchar(line))
   rest <- trimws(sub("^[ :–-]+", "", rest))
   if (nzchar(rest)) rest else NA_character_
+}
+
+# .after_label(line, term) -- the raw remainder of a line to the RIGHT of the
+# label, so a value extraction is anchored after its own label. This matters when
+# two labels share one physical line ("Opening date 1 Jan 26  Closing date 31 Jan
+# 26"): without it, both labels would pull the FIRST date on the line and the
+# period would collapse to a single date. Falls back to the whole line if the term
+# somehow isn't found (it always is -- this is only called on matched lines).
+.after_label <- function(line, term) {
+  p <- regexpr(tolower(term), tolower(line), fixed = TRUE)
+  if (p < 0) return(line)
+  substr(line, p + attr(p, "match.length"), nchar(line))
 }
 
 # match_label(spec, pages, dict) -> list(value, values, raw, matched, n,
@@ -103,7 +122,8 @@ match_label <- function(spec, pages, dict = NULL) {
     vv <- character(0); rr <- character(0); tt <- character(0)
     for (i in seq_along(hits)) {
       li <- hits[i]; term <- hit_terms[i]; line <- lines[li]
-      v <- if (identical(vtype, "text")) .text_after(line, term) else .value_from_line(line, vtype)
+      v <- if (identical(vtype, "text")) .text_after(line, term)
+           else .value_from_line(.after_label(line, term), vtype)
       if ((is.na(v) || !nzchar(v)) && use_next && !identical(vtype, "text") && li < length(lines))
         v <- .value_from_line(lines[li + 1L], vtype)
       if (!is.na(v) && nzchar(v)) { vv <- c(vv, v); rr <- c(rr, line); tt <- c(tt, term) }

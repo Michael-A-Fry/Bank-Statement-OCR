@@ -8,20 +8,56 @@ parse_date <- function(x, fmt) {
   iso <- rep(NA_character_, length(raw))
   ok <- !is.na(raw) & nzchar(trimws(raw))
   if (any(ok)) {
-    d <- suppressWarnings(as.Date(trimws(raw[ok]), format = fmt))
+    s <- trimws(raw[ok])
+    # Normalise for PARSING ONLY (raw is kept verbatim): drop ordinal suffixes
+    # ("1st April" -> "1 April", "21st" -> "21") and fold the 4-letter "Sept"
+    # to the 3-letter "Sep" that %b expects. "September" (%B) is untouched -- the
+    # word boundary after "Sept" fails inside it.
+    s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
+    s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
+    d <- suppressWarnings(as.Date(s, format = fmt))
     iso[ok] <- format(d, "%Y-%m-%d")  # format(NA) -> NA
   }
   list(iso = iso, raw = raw)
 }
 
-# Internal: strip thousands separators / currency symbols / spaces -> numeric.
-.num <- function(s) {
-  s <- trimws(as.character(s))
-  s <- gsub("[,$]", "", s)
-  s <- gsub("[[:space:]]", "", s)
-  s[!nzchar(s)] <- NA_character_
-  suppressWarnings(as.numeric(s))
+# .num(s) -- parse a money string to numeric, ROBUSTLY. Handles the real formats
+# that appear on statements, and returns NA (never a silently-wrong value) when
+# it can't be sure -- the caller then flags the NA. Covered:
+#   thousands : 1,234.56  /  1 234.56  /  1'234.56
+#   decimals  : 1,234.56 (US)  and  1.234,56 (European comma) via last-separator
+#   negatives : -123.45  /  (123.45)  /  123.45-  /  trailing DR or OD ; CR = +ve
+#   currency  : $ £ € and any other symbol/letters stripped
+.num_one <- function(raw) {
+  if (is.na(raw)) return(NA_real_)
+  raw <- trimws(as.character(raw))
+  if (!nzchar(raw)) return(NA_real_)
+  neg <- FALSE
+  up <- toupper(raw)
+  if (grepl("(DR|OD)\\s*$", up)) neg <- TRUE        # debit / overdrawn balance
+  else if (grepl("CR\\s*$", up)) neg <- FALSE       # explicit credit -> positive
+  s <- gsub("[^0-9.,()+-]", "", raw)                # drop currency/letters/space/apostrophe
+  if (grepl("\\(", s) && grepl("\\)", s)) neg <- TRUE   # (123.45) accounting negative
+  if (grepl("-", s)) neg <- TRUE                        # any minus -> negative
+  s <- gsub("[()+-]", "", s)
+  if (!nzchar(s)) return(NA_real_)
+  hasdot <- grepl("\\.", s); hascomma <- grepl(",", s)
+  if (hasdot && hascomma) {
+    # the LAST separator is the decimal one
+    if (max(gregexpr(",", s)[[1]]) > max(gregexpr("\\.", s)[[1]])) {
+      s <- gsub("\\.", "", s); s <- sub(",", ".", s)  # European: . thousands, , decimal
+    } else s <- gsub(",", "", s)                       # US/UK: , thousands
+  } else if (hascomma) {
+    parts <- strsplit(s, ",", fixed = TRUE)[[1]]
+    if (length(parts) == 2 && nchar(parts[2]) %in% c(1L, 2L))
+      s <- sub(",", ".", s)                            # decimal comma "1234,56"
+    else s <- gsub(",", "", s)                          # thousands "1,234"
+  }
+  v <- suppressWarnings(as.numeric(s))
+  if (is.na(v)) return(NA_real_)
+  if (neg) -abs(v) else v
 }
+.num <- function(s) vapply(as.character(s), .num_one, numeric(1), USE.NAMES = FALSE)
 
 # .direction(v) -- sign -> "debit" (<0) / "credit" (>0) / NA (0 or NA).
 .direction <- function(v) {
