@@ -91,7 +91,8 @@
 
 # write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
 write_outputs <- function(parsed, recon, outdir, basename,
-                          formats = c("xlsx", "csv", "json")) {
+                          formats = c("xlsx", "csv", "json"),
+                          diagnostics = NULL) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   paths <- character(0)
 
@@ -106,6 +107,10 @@ write_outputs <- function(parsed, recon, outdir, basename,
     openxlsx::writeData(wb, "Checks", .checks_df(recon))
     openxlsx::addWorksheet(wb, "Provenance")
     openxlsx::writeData(wb, "Provenance", parsed$provenance)
+    if (!is.null(diagnostics)) {
+      openxlsx::addWorksheet(wb, "Diagnostics")
+      openxlsx::writeData(wb, "Diagnostics", diagnostics)
+    }
     # Byte-reproducibility (guarantee 11.4): openxlsx stamps docProps/core.xml
     # with the wall-clock time, so identical input+template would otherwise yield
     # differing xlsx bytes. Pin the created timestamp to a fixed constant before
@@ -130,7 +135,8 @@ write_outputs <- function(parsed, recon, outdir, basename,
       extras = parsed$extras,
       provenance = parsed$provenance,
       kpis = recon$kpis,
-      trust = recon$trust
+      trust = recon$trust,
+      diagnostics = diagnostics
     )
     writeLines(jsonlite::toJSON(full, dataframe = "rows", auto_unbox = TRUE,
                                 na = "null", pretty = TRUE), json_path)

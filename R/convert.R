@@ -28,6 +28,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
       result$messages <- status_message("unsupported", "no template matched", det$detail)
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
+      result$diagnostics <- build_diagnostics("unsupported", det = det)
     } else {
       template <- templates[[det$template_id]]
       detected_template <- template$id
@@ -39,13 +40,14 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       kpi_fail_count <- sum(recon$kpis$status == "fail")
       trust_level <- recon$trust$level
 
-      outputs <- write_outputs(parsed, recon, outdir, base, formats)
-
       status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low")) {
         "needs_review"
       } else {
         "ok"
       }
+      diag <- build_diagnostics(status, parsed = parsed, recon = recon)
+      outputs <- write_outputs(parsed, recon, outdir, base, formats, diagnostics = diag)
+
       msg <- if (status == "ok") {
         status_message("ok", sprintf("matched %s, %d row(s), trust %s",
                                      template$id, row_count, recon$trust$level))
@@ -61,6 +63,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$kpis <- recon$kpis
       result$header <- parsed$header
       result$outputs <- outputs
+      result$diagnostics <- diag
       result$messages <- msg
     }
     result
@@ -68,6 +71,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     r <- new_result(status = "failed")
     r$messages <- status_message("failed", conditionMessage(e),
                                  "check the file is readable and matches a template")
+    r$diagnostics <- build_diagnostics("failed", messages = r$messages)
     r
   })
 
