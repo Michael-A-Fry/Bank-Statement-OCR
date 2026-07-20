@@ -425,3 +425,36 @@ that level of customisation?
 Net: adding a bank's odd wording is one line in `dictionaries/labels.yaml`, not a
 code change — which makes the engine *more* aligned with "no hardcoded bs,
 maintainable by one analyst," not less.
+
+---
+
+## 13. Default vs user templates + guided setup (2026-07-20)
+Goal set by Michael: "a 65-year-old non-technical accountant should be able to
+custom-create a template for a new statement." Plus: who creates templates?
+default vs user? pre-fill from a failed statement?
+
+**Governance — two tiers, decided:**
+- **Default templates** (`templates/`): curated by the team, golden-tested,
+  loaded `origin: "default"`, must be valid (hard error). The wizards save here.
+- **User templates** (`templates_user/`): created by accountants via Guided
+  setup, loaded `origin: "user"`. A default ALWAYS wins an id clash (a user
+  template can't shadow a blessed one); an invalid user template is skipped with
+  a warning, never fatal, so one bad file can't break everyone. Origin is logged
+  (`template_origin`) so the Admin panel can see user templates in use.
+
+**Guided setup (the radical-ease flow):** when a statement is `unsupported`, the
+file is ALREADY uploaded in Convert, so a "🪄 Set up this statement (guided)"
+button appears. It calls `draft_template()` (auto-detect delimiter/date/amount/
+columns for delimited; `suggest_pdf_columns()` for PDF), shows a live PREVIEW of
+the extracted rows, asks at most two plain-language questions (dates? amounts?)
+pre-answered, and Saves to `templates_user/`. Confirm-and-save, not build.
+
+**Real-data win:** testing on real Westpac/ASB revealed the period is often given
+as LABELLED dates ("Statement Opening date … / Closing date …") not "from X to
+Y", so year-less dates ("15 Jun") had no year and parsed to 0 rows. Fixed
+generically via the label dictionary (`statement_start`/`statement_end`) — Westpac
+went from unsupported to 11 rows. Honest boundary recorded: guided auto-draft is
+excellent for delimited + clean PDFs; complex/near-empty PDFs (e.g. ASB, one
+transaction) still need the PDF wizard to fine-tune boxes.
+
+Suite: 33 files / 145 tests / 522 assertions, 0 failures.

@@ -29,6 +29,19 @@ test_that("multi-statement detection keys on PERIODS, not account count", {
   expect_false(detect_multiple_statements(NULL, m2)$likely_multiple)
 })
 
+test_that("period is found from LABELLED opening/closing dates (not just a range)", {
+  # Westpac/ASB style: two labelled dates on separate lines, no "from X to Y".
+  input <- list(kind = "pdf", pages = paste(sep = "\n",
+    "Westpac Everyday",
+    "Statement Opening date:  10 June 2026",
+    "Statement Closing date:   9 July 2026",
+    "15 Jun DD Rates 863.90"))
+  m <- extract_metadata(input)
+  expect_match(m$period_start, "10 June 2026", fixed = TRUE)
+  expect_match(m$period_end, "9 July 2026", fixed = TRUE)
+  expect_true(m$n_periods >= 1)   # so year-less transaction dates can resolve
+})
+
 test_that("account and card regexes are generic", {
   input <- list(pages = c(
     "Account 01-0902-0123456-00 statement",

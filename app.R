@@ -16,7 +16,8 @@ suppressMessages({
 # Load the engine (all pure-R modules) into the session.
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 
-TEMPLATES_DIR <- "templates"
+TEMPLATES_DIR <- "templates"            # curated, team-maintained (default) templates
+USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guided setup
 LOGDIR <- "logs"   # run log + feedback log live together, next to the app
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
@@ -179,6 +180,7 @@ ui <- fluidPage(
         mainPanel(
           width = 8,
           uiOutput("cv_status"),
+          uiOutput("cv_teach"),
           h4("Checks"), DTOutput("cv_kpis"),
           h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
           h4("Transactions (preview)"), DTOutput("cv_txns"),
@@ -354,7 +356,8 @@ server <- function(input, output, session) {
   observeEvent(input$wp_help, show_tutorial())
   observeEvent(input$wz_help, show_tutorial())
 
-  templates <- reactive({ load_templates(TEMPLATES_DIR) })
+  tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
+  templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR) })
 
   output$cv_bank_ui <- renderUI({
     banks <- sort(unique(vapply(templates(), function(t) t$bank %||% "", character(1))))
@@ -363,6 +366,7 @@ server <- function(input, output, session) {
 
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
+  cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
   cv_fb_done <- reactiveVal(FALSE)
 
   observeEvent(input$cv_go, {
@@ -374,11 +378,11 @@ server <- function(input, output, session) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
     res <- tryCatch(
       convert_statement(src, bank = bank, outdir = sess,
-                        templates_dir = TEMPLATES_DIR, requested_by = "shiny",
-                        logdir = LOGDIR),
+                        templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
+                        requested_by = "shiny", logdir = LOGDIR),
       error = function(e) list(status = "failed",
                                messages = paste("error:", conditionMessage(e))))
-    cv_res(res); cv_dir(sess)
+    cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
   })
 
@@ -461,6 +465,89 @@ server <- function(input, output, session) {
     cv_fb_done(isTRUE(ok))
     if (!isTRUE(ok))
       showNotification("Could not save feedback.", type = "error")
+  })
+
+  # ---- Guided setup: teach the tool from a statement it couldn't read ----
+  guided <- reactiveVal(NULL)   # list(path, name, tmpl)
+
+  guided_date_choices <- function()
+    c(setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+               vapply(wd_date_table(), `[[`, "", "label")),
+      "31 Dec  (day month-name, no year)" = "%d %b")
+
+  apply_overrides <- function(tmpl, bank, datefmt, sign) {
+    if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
+    if (identical(tmpl$format, "pdf")) {
+      if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
+      if (!is.null(sign) && nzchar(sign)) tmpl$table$amount_sign <- sign
+    } else {
+      if (!is.null(datefmt) && nzchar(datefmt) && !is.null(tmpl$columns$date))
+        tmpl$columns$date$format <- datefmt
+      if (!is.null(sign) && nzchar(sign)) tmpl$amount_sign <- sign
+    }
+    tmpl
+  }
+
+  show_guided_modal <- function() {
+    g <- guided(); req(g); tmpl <- g$tmpl
+    cur_fmt  <- if (identical(tmpl$format, "pdf")) tmpl$table$date_format else (tmpl$columns$date$format %||% "%d/%m/%Y")
+    cur_sign <- if (identical(tmpl$format, "pdf")) tmpl$table$amount_sign else tmpl$amount_sign
+    showModal(modalDialog(
+      title = "Guided setup — teach the tool to read this statement", size = "l", easyClose = FALSE,
+      p(class = "muted", "We filled this in from your file. Only change something if the preview below looks wrong. When it looks right, click Save."),
+      textInput("g_bank", "Which bank is this?", value = tmpl$bank),
+      fluidRow(
+        column(6, selectInput("g_date", "How are the dates written?",
+                              choices = guided_date_choices(), selected = cur_fmt)),
+        column(6, selectInput("g_sign", "How are amounts shown?",
+                              choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels())),
+                              selected = cur_sign))),
+      h4("Preview — what we'll pull out"),
+      verbatimTextOutput("g_status"),
+      DTOutput("g_preview"),
+      footer = tagList(modalButton("Cancel"),
+        actionButton("g_save", "Save — teach the tool", class = "btn-primary"))))
+  }
+
+  output$cv_teach <- renderUI({
+    res <- cv_res(); req(res)
+    if (!identical(res$status, "unsupported") || is.null(cv_src())) return(NULL)
+    div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
+      strong("This statement doesn't match any template yet."),
+      p(class = "muted", "Teach the tool to read it — we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
+      actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"))
+  })
+
+  observeEvent(input$cv_teach_go, {
+    src <- cv_src(); req(src)
+    bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(src$name))))
+    tmpl <- tryCatch(draft_template(src$path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
+                     error = function(e) NULL)
+    if (is.null(tmpl)) { showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error"); return() }
+    guided(list(path = src$path, name = src$name, tmpl = tmpl))
+    show_guided_modal()
+  })
+
+  guided_live <- reactive({ g <- guided(); req(g)
+    apply_overrides(g$tmpl, input$g_bank, input$g_date, input$g_sign) })
+  output$g_preview <- renderDT({
+    g <- guided(); req(g); tx <- draft_preview(g$path, guided_live()); req(!is.null(tx))
+    datatable(utils::head(tx, 12)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
+              rownames = FALSE, options = list(dom = "t", pageLength = 12, scrollX = TRUE))
+  })
+  output$g_status <- renderText({
+    g <- guided(); req(g); tx <- draft_preview(g$path, guided_live())
+    if (is.null(tx) || !nrow(tx)) "No rows detected yet — try a different date or amount setting."
+    else sprintf("%d transaction row(s) detected. If these look right, click Save.", nrow(tx))
+  })
+  observeEvent(input$g_save, {
+    g <- guided(); req(g)
+    ok <- tryCatch({ save_user_template(guided_live(), USER_TEMPLATES_DIR); TRUE }, error = function(e) FALSE)
+    if (isTRUE(ok)) {
+      tpl_bump(isolate(tpl_bump()) + 1); removeModal()
+      showNotification("Saved as your template. Click Convert again to run this statement with it.",
+                       type = "message", duration = 8)
+    } else showNotification("Couldn't save — adjust the settings and try again.", type = "error")
   })
 
   # ---- PDF wizard ---------------------------------------------------
@@ -549,8 +636,8 @@ server <- function(input, output, session) {
     }
     id <- gsub("[^A-Za-z0-9_]+", "_", input$wp_id)
     path <- file.path(TEMPLATES_DIR, paste0(id, ".yaml"))
-    ok <- tryCatch({ yaml::write_yaml(wp_template(), path); load_templates(TEMPLATES_DIR); TRUE },
-                   error = function(e) FALSE)
+    ok <- tryCatch({ yaml::write_yaml(wp_template(), path); load_templates(TEMPLATES_DIR)
+                     tpl_bump(isolate(tpl_bump()) + 1); TRUE }, error = function(e) FALSE)
     output$wp_msg <- renderUI(
       if (isTRUE(ok)) span(class = "ok", paste("Saved", path, "- add a golden test next (see Help)."))
       else span(class = "bad", "Save failed - check the boxes and settings."))
@@ -662,6 +749,7 @@ server <- function(input, output, session) {
     ok <- tryCatch({
       writeLines(build_tpl_yaml(wz_cfg()), path)
       load_templates(TEMPLATES_DIR)  # validates the whole set still loads
+      tpl_bump(isolate(tpl_bump()) + 1)
       TRUE
     }, error = function(e) { attr(ok, "err") <<- conditionMessage(e); FALSE })
     output$wz_msg <- renderUI(
@@ -719,44 +807,19 @@ server <- function(input, output, session) {
   # ---- Admin: batch intake + auto-draft ----------------------------
   adm_batch <- reactiveVal(NULL)
 
+  # Reuses the same draft_template() the guided flow uses -> one source of truth.
   adm_draft_for <- function(row) {
-    path <- row$path
-    if (identical(row$kind, "delimited")) {
-      delim <- detect_delimiter(path)
-      df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
-        stringsAsFactors = FALSE, colClasses = "character", nrows = 50L, check.names = FALSE),
-        error = function(e) NULL)
-      h <- if (!is.null(df)) names(df) else read_headers(path, delim)
-      dcol <- guess_mapping(h, "date")
-      fmt <- if (!is.null(df) && dcol %in% names(df)) detect_date_format(df[[dcol]]) else "%d/%m/%Y"
-      cfg <- list(
-        id = paste0(gsub("[^a-z0-9]+", "_", tolower(tools::file_path_sans_ext(row$file))), "_csv"),
-        bank = "NewBank", statement_type = "everyday", delimiter = delim, currency = "NZD",
-        amount_sign = detect_amount_style(h, df), date_format = if (nzchar(fmt)) fmt else "%d/%m/%Y",
-        min_score = max(1, length(h)), fingerprint = h,
-        date_source = guess_col(h, c("date")), amount_source = guess_col(h, c("amount")),
-        description_source = guess_col(h, c("payee", "description", "details", "memo", "narrative")),
-        particulars_source = guess_col(h, c("particulars")), code_source = guess_col(h, c("^code$", "analysis")),
-        reference_source = guess_col(h, c("reference", "unique")), type_source = guess_col(h, c("type")),
-        other_party_source = guess_col(h, c("other party", "counterparty")), balance_source = guess_col(h, c("balance")))
-      return(list(kind = "delimited", yaml = build_tpl_yaml(cfg), cols = NULL))
+    tmpl <- tryCatch(draft_template(row$path, bank = "NewBank"), error = function(e) NULL)
+    if (is.null(tmpl)) return(list(kind = row$kind %||% "other",
+      yaml = "(could not auto-draft this file — open the wizard)", cols = NULL))
+    cols <- NULL
+    if (identical(tmpl$format, "pdf")) {
+      cd <- tmpl$table$columns
+      cols <- data.frame(field = names(cd),
+        x_min = vapply(cd, function(z) z$x_min, numeric(1)),
+        x_max = vapply(cd, function(z) z$x_max, numeric(1)), row.names = NULL)
     }
-    if (identical(row$kind, "pdf")) {
-      inp <- tryCatch(read_input(path), error = function(e) NULL)
-      sug <- if (!is.null(inp)) suggest_pdf_columns(inp) else data.frame()
-      if (!nrow(sug)) return(list(kind = "pdf", yaml = "(could not detect columns automatically — open the PDF wizard and draw them)", cols = sug))
-      cols <- list()
-      for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
-      fp <- header_phrases(inp)
-      if (!length(fp)) fp <- "Balance"
-      tmpl <- list(id = paste0(gsub("[^a-z0-9]+", "_", tolower(tools::file_path_sans_ext(row$file))), "_pdf"),
-        bank = "NewBank", statement_type = "statement", format = "pdf", version = 1,
-        min_score = max(1, length(fp)), fingerprint = list(page_contains_all = as.list(fp)),
-        table = list(row_tol = 3, date_format = "%d/%m/%Y", amount_sign = "signed", columns = cols),
-        currency = "NZD")
-      return(list(kind = "pdf", yaml = yaml::as.yaml(tmpl), cols = sug))
-    }
-    list(kind = "other", yaml = "(auto-draft supports delimited and PDF files)", cols = NULL)
+    list(kind = tmpl$format, yaml = yaml::as.yaml(tmpl), cols = cols)
   }
 
   observeEvent(input$adm_run, {
@@ -770,7 +833,8 @@ server <- function(input, output, session) {
         incProgress(1 / nrow(files), detail = files$name[i])
         src <- file.path(sess, files$name[i]); file.copy(files$datapath[i], src, overwrite = TRUE)
         r <- tryCatch(convert_statement(src, outdir = sess, templates_dir = TEMPLATES_DIR,
-          logdir = LOGDIR, requested_by = "batch"), error = function(e) NULL)
+          user_templates_dir = USER_TEMPLATES_DIR, logdir = LOGDIR, requested_by = "batch"),
+          error = function(e) NULL)
         inp <- tryCatch(read_input(src), error = function(e) NULL)
         lsig <- if (!is.null(inp)) layout_signature(inp) else list(signature = NA_character_, hint = "")
         csv <- if (!is.null(r)) r$outputs[grepl("\\.csv$", r$outputs)] else character(0)

@@ -77,10 +77,17 @@ validate_template <- function(t) {
   problems
 }
 
-# load_templates(dir) -> named list<template> keyed by id.
-# An invalid template is a HARD error at load time, listed by file/id.
-load_templates <- function(dir) {
-  if (!dir.exists(dir)) stop(sprintf("templates dir not found: %s", dir))
+# load_templates(dir, origin, strict) -> named list<template> keyed by id.
+# origin ("default" | "user") is stamped on each template so the app and reports
+# can tell a curated team template from one an accountant created. strict=TRUE
+# (curated set): an invalid template is a HARD error. strict=FALSE (user set):
+# an invalid/duplicate template is skipped with a warning, so one bad user
+# template can never break everyone's conversions.
+load_templates <- function(dir, origin = "default", strict = TRUE) {
+  if (!dir.exists(dir)) {
+    if (strict) stop(sprintf("templates dir not found: %s", dir))
+    return(list())
+  }
   files <- list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)
   templates <- list()
   errors <- character(0)
@@ -101,10 +108,37 @@ load_templates <- function(dir) {
       errors <- c(errors, sprintf("%s: duplicate template id", t$id))
       next
     }
+    t$origin <- origin
     templates[[t$id]] <- t
   }
   if (length(errors)) {
-    stop("Invalid template(s):\n", paste(errors, collapse = "\n"))
+    if (strict) stop("Invalid template(s):\n", paste(errors, collapse = "\n"))
+    warning("Skipped invalid user template(s):\n", paste(errors, collapse = "\n"))
   }
   templates
+}
+
+# load_template_set(default_dir, user_dir) -> merged templates. Curated defaults
+# load first and WIN on any id clash (a user template can never shadow a
+# team-blessed one). User templates fill in the rest and are marked origin="user".
+load_template_set <- function(default_dir = "templates", user_dir = "templates_user") {
+  d <- load_templates(default_dir, origin = "default", strict = TRUE)
+  if (!is.null(user_dir) && dir.exists(user_dir)) {
+    u <- load_templates(user_dir, origin = "user", strict = FALSE)
+    for (id in names(u)) if (is.null(d[[id]])) d[[id]] <- u[[id]]
+  }
+  d
+}
+
+# save_user_template(template, dir) -> path. Validates first (fail loud), writes
+# <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
+save_user_template <- function(template, dir = "templates_user") {
+  template$origin <- NULL   # origin is assigned at load time, not stored
+  probs <- validate_template(template)
+  if (length(probs)) stop("template is not valid: ", paste(probs, collapse = "; "))
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  id <- gsub("[^A-Za-z0-9_]+", "_", template$id %||% "user_template")
+  path <- file.path(dir, paste0(id, ".yaml"))
+  yaml::write_yaml(template, path)
+  invisible(path)
 }

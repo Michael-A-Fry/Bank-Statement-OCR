@@ -4,6 +4,7 @@
 # convert_statement(...) -> result (build-contract sections 6, 7).
 convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               outdir = "out", templates_dir = "templates",
+                              user_templates_dir = "templates_user",
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL) {
@@ -25,9 +26,10 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   detect_detail <- NA_character_
   layout_sig <- NA_character_
   layout_hint <- NA_character_
+  template_origin <- NA_character_
 
   outcome <- tryCatch({
-    templates <- load_templates(templates_dir)
+    templates <- load_template_set(templates_dir, user_templates_dir)
     input <- read_input(path, redaction_rects = redaction_rects)
     meta <- extract_metadata(input)
     multi <- detect_multiple_statements(input, meta)
@@ -52,6 +54,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       template <- templates[[det$template_id]]
       detected_template <- template$id
       template_version <- template$version %||% NA
+      template_origin <- template$origin %||% "default"
 
       parsed <- parse_statement(input, template)
       recon <- reconcile(parsed, template)
@@ -112,6 +115,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     source_sha256 = sha,
     bank_hint = bank %||% NA_character_,
     detected_template = if (result$status %in% c("ok", "needs_review")) result$template_id else NA_character_,
+    template_origin = template_origin,
     closest_template = closest_template,
     detect_detail = detect_detail,
     layout_signature = layout_sig,

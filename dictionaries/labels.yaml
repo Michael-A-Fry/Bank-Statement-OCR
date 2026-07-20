@@ -59,3 +59,16 @@ statement_date:
   any_of: ["statement date", "date of issue", "issue date", "date issued", "issued"]
   value: date
   where: page1
+
+# Statement period expressed as two LABELLED dates (not a "from X to Y" range) --
+# e.g. Westpac/ASB "Statement Opening date: 10 June 2026 / Closing date: 9 July
+# 2026". Used to fill period_start/end (and the year for day+month-only dates)
+# when no inline range is found.
+statement_start:
+  any_of: ["statement opening date", "opening date", "period start", "start date",
+           "statement period start", "from date", "opening"]
+  value: date
+statement_end:
+  any_of: ["statement closing date", "closing date", "period end", "end date",
+           "statement period end", "to date", "closing"]
+  value: date

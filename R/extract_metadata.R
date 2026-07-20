@@ -49,6 +49,17 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     ds <- regmatches(periods[1], gregexpr(.DATE_RX, periods[1]))[[1]]
     if (length(ds) >= 2) { period_start <- ds[1]; period_end <- ds[2] }
   }
+  # Fallback: period given as two LABELLED dates (Westpac/ASB "Opening date" /
+  # "Closing date"), not an inline range. Fills the period so year-less
+  # transaction dates ("15 Jun") can still be resolved.
+  if (is.na(period_start) || is.na(period_end)) {
+    ps <- match_label(dict$statement_start %||% list(any_of = "opening date", value = "date"), pages, dict)
+    pe <- match_label(dict$statement_end   %||% list(any_of = "closing date", value = "date"), pages, dict)
+    if (!is.na(ps$value) && !is.na(pe$value)) {
+      period_start <- ps$value; period_end <- pe$value
+      if (!length(periods)) periods <- sprintf("%s to %s", ps$value, pe$value)
+    }
+  }
 
   accounts <- unique(c(.all_matches(text, .ACCT_RX), .all_matches(text, .CARD_RX)))
 

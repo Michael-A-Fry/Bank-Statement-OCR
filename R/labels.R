@@ -54,7 +54,7 @@
   switch(vtype,
     money = { m <- regmatches(line, gregexpr(.MONEY_RX, line))[[1]]
               if (length(m)) m[length(m)] else NA_character_ },   # value sits to the right
-    date  = { m <- regmatches(line, regexpr(.DATE_RX, line))[[1]]
+    date  = { m <- regmatches(line, regexpr(.DATE_RX, line))
               if (length(m)) m[1] else NA_character_ },
     date_range = { m <- regmatches(line, gregexpr(.DATE_RX, line))[[1]]
                    if (length(m) >= 2) paste(m[1], "|", m[2]) else NA_character_ },
