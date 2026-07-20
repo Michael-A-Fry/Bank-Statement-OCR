@@ -236,7 +236,10 @@ ui <- fluidPage(
             column(8, DTOutput("adm_uploads")),
             column(4,
               selectInput("adm_up_pick", "Pickup — a saved upload", choices = NULL),
-              downloadButton("adm_up_audit", "Download its safe audit (no PII)"))),
+              downloadButton("adm_up_audit", "Download its safe audit (no PII)"),
+              br(), br(),
+              actionButton("adm_up_wizard", "🪄 Remediate — open in wizard",
+                           class = "btn-warning"))),
           tags$hr(),
           fluidRow(
             column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
@@ -514,6 +517,32 @@ server <- function(input, output, session) {
       p <- upload_file_path(id, UPLOADS_DIR); req(!is.na(p))
       writeLines(format_audit(statement_audit(p, templates = templates())), file)
     })
+
+  # Remediate a stuck upload right here: load the saved file into the SAME guided
+  # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
+  # pickup — identify it in the table (A), open it, teach the tool, save (B).
+  observeEvent(input$adm_up_wizard, {
+    id <- input$adm_up_pick
+    if (is.null(id) || !nzchar(id)) {
+      showNotification("Pick a saved upload first.", type = "warning"); return() }
+    p <- upload_file_path(id, UPLOADS_DIR)
+    if (is.na(p) || !file.exists(p)) {
+      showNotification("That upload's file is no longer available.", type = "error"); return() }
+    bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(basename(p)))))
+    tmpl <- withProgress(message = "Opening in wizard…", value = 0.4, {
+      # A scanned PDF is OCR'd while drafting, so this can take a few seconds.
+      tryCatch(draft_template(p, bank = if (nzchar(bankguess)) bankguess else "New bank"),
+               error = function(e) NULL)
+    })
+    if (is.null(tmpl)) {
+      showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error"); return() }
+    default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
+                            error = function(e) character(0))
+    # Remember which upload this is so a successful Save marks it picked-up.
+    cv_upload_id(id)
+    guided(list(path = p, name = basename(p), tmpl = tmpl, default_ids = default_ids))
+    show_guided_modal()
+  })
 
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
