@@ -16,8 +16,8 @@ reconcile <- function(parsed, template = NULL) {
   rows <- list()
 
   # 1. balance_reconciliation: opening + sum(amount) == closing.
-  opening <- suppressWarnings(as.numeric(h$opening_balance))
-  closing <- suppressWarnings(as.numeric(h$closing_balance))
+  opening <- suppressWarnings(as.numeric(h$opening_balance %||% NA))
+  closing <- suppressWarnings(as.numeric(h$closing_balance %||% NA))
   if (!is.na(opening) && !is.na(closing) && n > 0 && !any(is.na(tx$amount))) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
@@ -67,7 +67,7 @@ reconcile <- function(parsed, template = NULL) {
   }
 
   # 4. dates_within_period: all dates within period_start..period_end.
-  ps <- h$period_start; pe <- h$period_end
+  ps <- h$period_start %||% NA; pe <- h$period_end %||% NA
   if (!is.na(ps) && !is.na(pe) && n > 0) {
     d <- suppressWarnings(as.Date(tx$date))
     within <- !is.na(d) & d >= as.Date(ps) & d <= as.Date(pe)
@@ -133,9 +133,24 @@ reconcile <- function(parsed, template = NULL) {
   }
   score <- if (total == 0) 0 else round(100 * (n_pass + 0.5 * n_na) / total)
 
+  # Completeness guard (forensic): if NEITHER a balance reconciliation NOR a
+  # running-balance check could run, and there's no stated count, the engine has
+  # no independent way to know a transaction was dropped. Say so loudly and never
+  # rate such a run "high" -- silence here would be a silent audit gap.
+  bal_ok  <- any(kpis$name == "balance_reconciliation"     & kpis$status != "na")
+  run_ok  <- any(kpis$name == "running_balance_continuity" & kpis$status != "na")
+  cnt_ok  <- !is.na(suppressWarnings(as.integer(h$stated_count %||% NA)))
+  completeness_verified <- bal_ok || run_ok || cnt_ok
+  if (!completeness_verified && n > 0) {
+    if (identical(level, "high")) level <- "medium"
+    reasons <- c(reasons,
+      "completeness UNVERIFIED: no balance or stated count to reconcile against, so a dropped/missing transaction cannot be detected automatically — check the row count against the statement")
+  }
+
   # Return KPIs without the internal informational flag column exposed downstream.
   kpis_out <- kpis[, c("name", "status", "expected", "actual", "discrepancy", "detail")]
 
   list(kpis = kpis_out,
-       trust = list(level = level, score = score, reasons = reasons))
+       trust = list(level = level, score = score, reasons = reasons,
+                    completeness_verified = completeness_verified))
 }

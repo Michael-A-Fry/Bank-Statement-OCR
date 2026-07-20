@@ -183,6 +183,8 @@ ui <- fluidPage(
           uiOutput("cv_teach"),
           h4("Checks"), DTOutput("cv_kpis"),
           h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
+          h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
+          uiOutput("cv_cov_summary"), DTOutput("cv_coverage"),
           h4("Transactions (preview)"), DTOutput("cv_txns"),
           uiOutput("cv_feedback")
         )
@@ -287,8 +289,14 @@ ui <- fluidPage(
           h4("Where the gaps are — unsupported statements to fix"),
           helpText("Each row is one unknown layout (same format collapses together). Highest count = build that template first to unblock the most statements."),
           DTOutput("adm_gaps"),
+          h4("⚠ Drift — templates that used to work and recently got worse"),
+          helpText("A statement that subtly changed (a moved/renamed field) breaks the balance check → the run is logged as needs-review → a template whose recent health dropped shows here. Empty is good."),
+          DTOutput("adm_drift"),
           h4("Template usage"),
-          DTOutput("adm_usage")
+          DTOutput("adm_usage"),
+          br(),
+          actionButton("adm_rollup", "Tidy up logs (archive runs older than 90 days)"),
+          uiOutput("adm_rollup_msg")
         ),
         tabPanel(
           "Batch intake",
@@ -407,6 +415,20 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$diagnostics))
     datatable(res$diagnostics, rownames = FALSE,
               options = list(dom = "t", pageLength = 20, scrollX = TRUE))
+  })
+
+  output$cv_cov_summary <- renderUI({
+    res <- cv_res(); req(res); req(!is.null(res$coverage))
+    p(class = "muted", coverage_summary(res$coverage))
+  })
+  output$cv_coverage <- renderDT({
+    res <- cv_res(); req(res); req(!is.null(res$coverage))
+    cov <- res$coverage[res$coverage$verdict != "unmapped" | res$coverage$field %in% c("balance","particulars","reference"), ]
+    datatable(cov[, c("field", "verdict", "populated", "empty", "note")],
+              rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
+      formatStyle("verdict",
+        backgroundColor = styleEqual(c("populated","partial","empty","unmapped"),
+                                     c("#e6f4ea","#fff8e6","#fde7e7","#f2f2f2")))
   })
 
   output$cv_txns <- renderDT({
@@ -760,7 +782,7 @@ server <- function(input, output, session) {
   # ---- Admin: insights from the logs -------------------------------
   adm_data <- reactiveVal(NULL)
   load_admin <- function() adm_data(list(
-    runs = tryCatch(read_runs(LOGDIR), error = function(e) data.frame()),
+    runs = tryCatch(read_runs_all(LOGDIR), error = function(e) data.frame()),  # live + archived
     fb   = tryCatch(read_feedback(LOGDIR), error = function(e) data.frame())))
   observeEvent(input$adm_refresh, load_admin())
   observe({ if (is.null(adm_data())) load_admin() })
@@ -792,6 +814,22 @@ server <- function(input, output, session) {
     if (!nrow(u)) return(datatable(data.frame(message = "No matched conversions yet."),
                                    rownames = FALSE, options = list(dom = "t")))
     datatable(u, rownames = FALSE, options = list(dom = "t", pageLength = 20))
+  })
+  output$adm_drift <- renderDT({
+    d <- adm_data(); req(d)
+    dr <- template_drift(d$runs)
+    if (!nrow(dr)) return(datatable(data.frame(message = "No drift detected 🎉"),
+                                    rownames = FALSE, options = list(dom = "t")))
+    datatable(dr, rownames = FALSE, options = list(dom = "t")) |>
+      formatStyle("drop", fontWeight = "bold", color = "#b00020")
+  })
+  observeEvent(input$adm_rollup, {
+    r <- tryCatch(rollup_logs(LOGDIR, "runs", keep_days = 90), error = function(e) NULL)
+    r2 <- tryCatch(rollup_logs(LOGDIR, "feedback", keep_days = 90), error = function(e) NULL)
+    load_admin()
+    output$adm_rollup_msg <- renderUI(span(class = "ok",
+      sprintf("Archived %d old run file(s); %d kept. History is preserved in logs/archive/.",
+              (r$archived %||% 0) + (r2$archived %||% 0), (r$kept %||% 0))))
   })
   output$adm_feedback <- renderDT({
     d <- adm_data(); req(d); fb <- d$fb

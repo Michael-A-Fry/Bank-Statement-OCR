@@ -84,6 +84,12 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       }
     }
 
+    # 1b. Completeness cannot be verified (no balance / stated count).
+    if (!is.null(recon) && isFALSE(recon$trust$completeness_verified) && nrow(tx) > 0)
+      add("completeness", "completeness_unverified", "medium",
+        "no balance or stated count to reconcile against",
+        "The engine can't confirm every transaction was captured (nothing to reconcile the total against). Count the rows against the statement, or prefer a CSV/Excel export or a statement that shows a running balance.")
+
     # 2. Row-level parse problems (independent of KPI wiring).
     mal <- which(grepl("malformed", tx$flags %||% ""))
     if (length(mal)) add(sprintf("rows %s", .rng(mal)), "row_parse", "high",

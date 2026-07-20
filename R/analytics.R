@@ -91,3 +91,41 @@ template_usage <- function(runs, feedback = NULL) {
   res <- do.call(rbind, parts)
   res[order(-res$n), , drop = FALSE]
 }
+
+# template_drift(runs, recent_frac, min_runs) -- catch a template that USED to
+# work and is now producing review/low-trust/failed reconciliations. This is how
+# statement DRIFT (a bank subtly changes a field) is surfaced: the field change
+# breaks the balance check -> the run is logged needs_review -> a template whose
+# recent health drops below its earlier health is flagged here. Deterministic,
+# from the logs; no thresholds to tune beyond the obvious ones.
+template_drift <- function(runs, recent_frac = 0.4, min_runs = 6) {
+  empty <- data.frame(template = character(0), runs = integer(0),
+    earlier_ok_pct = numeric(0), recent_ok_pct = numeric(0),
+    drop = numeric(0), last_seen = character(0), stringsAsFactors = FALSE)
+  if (is.null(runs) || !nrow(runs)) return(empty)
+  tmpl <- as.character(.col(runs, "detected_template", NA))
+  keep <- !is.na(tmpl) & nzchar(tmpl)
+  if (!any(keep)) return(empty)
+  runs <- runs[keep, , drop = FALSE]; tmpl <- tmpl[keep]
+  ts <- as.character(.col(runs, "ts", ""))
+  st <- as.character(.col(runs, "status", ""))
+  kf <- suppressWarnings(as.integer(.col(runs, "kpi_fail_count", 0))); kf[is.na(kf)] <- 0L
+  tr <- as.character(.col(runs, "trust_level", ""))
+  healthy <- st == "ok" & kf == 0 & tr != "low"
+  parts <- lapply(split(seq_along(tmpl), tmpl), function(idx) {
+    o <- idx[order(ts[idx])]; k <- length(o)
+    if (k < min_runs) return(NULL)
+    nrec <- max(1L, round(k * recent_frac))
+    recent <- utils::tail(o, nrec); earlier <- utils::head(o, k - nrec)
+    if (!length(earlier)) return(NULL)
+    e_ok <- mean(healthy[earlier]) * 100; r_ok <- mean(healthy[recent]) * 100
+    data.frame(template = tmpl[o[1]], runs = k,
+      earlier_ok_pct = round(e_ok, 0), recent_ok_pct = round(r_ok, 0),
+      drop = round(e_ok - r_ok, 0), last_seen = max(ts[o]), stringsAsFactors = FALSE)
+  })
+  parts <- Filter(Negate(is.null), parts)
+  if (!length(parts)) return(empty)
+  res <- do.call(rbind, parts)
+  res <- res[res$drop >= 25, , drop = FALSE]   # a real, sustained drop
+  res[order(-res$drop), , drop = FALSE]
+}

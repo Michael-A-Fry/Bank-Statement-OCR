@@ -89,6 +89,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$header <- parsed$header
       result$outputs <- outputs
       result$diagnostics <- diag
+      result$coverage <- field_coverage(parsed, template)
       result$metadata <- c(meta, list(multiple = multi))
       result$messages <- msg
     }
