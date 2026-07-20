@@ -32,7 +32,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
       result$metadata <- c(meta, list(multiple = multi))
       result$diagnostics <- build_diagnostics("unsupported", det = det,
-        metadata = list(multi = multi, pages = meta$pages_actual))
+        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt))
     } else {
       template <- templates[[det$template_id]]
       detected_template <- template$id
@@ -51,7 +51,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
         "ok"
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-        metadata = list(multi = multi, pages = meta$pages_actual))
+        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta)
 

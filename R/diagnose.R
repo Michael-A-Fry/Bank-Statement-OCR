@@ -47,6 +47,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("upload", "oversized", "medium",
           sprintf("%d pages in one file", p),
           "Very long PDFs (>100 pages) may hit tool limits; split into smaller files if extraction stalls.")
+    mp <- suppressWarnings(as.numeric(metadata$max_page_pt %||% NA))
+    if (!is.na(mp) && mp > 2880)
+      add("upload", "oversized_page", "medium",
+          sprintf("largest page is %.0f pt (> 2880 pt / 40 in)", mp),
+          "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
   }
 
   if (!is.null(parsed) && !is.null(parsed$transactions)) {

@@ -20,6 +20,14 @@ extract_metadata <- function(input) {
 
   pages_actual <- input$meta$page_count %||% (if (length(pages)) length(pages) else NA_integer_)
 
+  # largest page dimension in points (Hubdoc-style pre-flight: <= 2880 pt / 40 in)
+  max_page_pt <- NA_real_
+  if (identical(input$kind, "pdf") && requireNamespace("pdftools", quietly = TRUE) &&
+      !is.null(input$path) && file.exists(input$path)) {
+    sz <- tryCatch(pdftools::pdf_pagesize(input$path), error = function(e) NULL)
+    if (!is.null(sz)) max_page_pt <- suppressWarnings(max(c(sz$width, sz$height), na.rm = TRUE))
+  }
+
   # "Page X of Y" -> the largest Y is the stated length; count of "Page 1 of N".
   pageofs <- .all_matches(text, "[Pp]age\\s+[0-9]+\\s+of\\s+[0-9]+")
   pages_stated <- if (length(pageofs))
@@ -46,6 +54,7 @@ extract_metadata <- function(input) {
 
   list(
     pages_actual   = pages_actual,
+    max_page_pt    = max_page_pt,
     pages_stated   = pages_stated,
     page1_markers  = page1_markers,
     period_start   = period_start,

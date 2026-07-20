@@ -46,3 +46,22 @@ test_that("metadata reaches the convert result and the workbook", {
   wb <- openxlsx::loadWorkbook(res$outputs[["xlsx"]])
   expect_true("Metadata" %in% names(wb))
 })
+
+test_that("an oversized page (>2880 pt) raises a diagnostic (Hubdoc-style pre-flight)", {
+  tx <- data.frame(row_id = 1L, date = "2025-01-01", date_raw = "1/1/25", description = "a",
+    amount = -1, amount_raw = "-1", direction = "debit", balance = NA_real_,
+    balance_raw = NA_character_, particulars = NA_character_, code = NA_character_,
+    reference = NA_character_, other_party = NA_character_, type = NA_character_,
+    currency = "NZD", flags = "", stringsAsFactors = FALSE)
+  d <- build_diagnostics("ok", parsed = list(transactions = tx), recon = list(kpis = NULL),
+    metadata = list(multi = list(likely_multiple = FALSE), pages = 2, max_page_pt = 3000))
+  expect_true(any(d$category == "oversized_page"))
+})
+
+test_that("a real statement's page size is within limits", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(file.exists(fixture(IF_META_PDF)))
+  m <- extract_metadata(read_input(fixture(IF_META_PDF)))
+  expect_true(is.finite(m$max_page_pt))
+  expect_lt(m$max_page_pt, 2880)   # A4 ~842 pt
+})
