@@ -209,8 +209,14 @@ parse_pdf_table <- function(input, template) {
     !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
                                        paste(date_fmt, "%Y"))$iso))
   }
+  # A REDACTED date cell must NOT drop a real transaction: if a redaction overlay
+  # sits over the date column, the amount/description are still there, so keep the
+  # row (it is flagged redacted below and its date_iso is left NA). Losing it would
+  # silently delete a transaction -- forbidden.
+  .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
   keep <- vapply(recs, function(r)
-    .date_ok(r$date) && .has_amount(r) && !.is_summary(r), logical(1))
+    (.date_ok(r$date) || .redacted_cell(r$date)) && .has_amount(r) && !.is_summary(r),
+    logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
@@ -239,9 +245,18 @@ parse_pdf_table <- function(input, template) {
   balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(getc("balance"), "signed", list(decimal = dec))$value
   balance_raw <- if (n == 0 || !has_bal) rep(NA_character_, n) else getc("balance")
 
+  # amt_redacted: the AMOUNT itself was hidden (amount cell, or a debit/credit
+  # cell) -> the value is genuinely unknown and is nulled. `redacted` (the row
+  # flag) is broader: any of date/amount/description hidden marks the row, but a
+  # row whose DATE was redacted still keeps its real amount.
+  amt_redacted <- if (n == 0) logical(0) else if (identical(style, "debit_credit_cols"))
+    grepl("REDACTED", getc("debit"), ignore.case = TRUE) |
+    grepl("REDACTED", getc("credit"), ignore.case = TRUE)
+  else grepl("REDACTED", getc("amount"), ignore.case = TRUE)
   redacted <- if (n == 0) logical(0) else
-    grepl("REDACTED", getc("amount"), ignore.case = TRUE) |
-    grepl("REDACTED", getc("description"), ignore.case = TRUE)
+    amt_redacted |
+    grepl("REDACTED", getc("description"), ignore.case = TRUE) |
+    grepl("REDACTED", getc("date"), ignore.case = TRUE)
   # malformed: the row was kept (dated line carrying a money-looking amount) yet
   # the amount could not be parsed to a number -- a genuine parse failure, not a
   # redaction. Flagging it lets the no_unparsed_rows KPI catch PDF parse gaps the
@@ -266,7 +281,7 @@ parse_pdf_table <- function(input, template) {
     f <- add(f, ocr_low, "ocr_low_conf")
     f
   }
-  if (n > 0) amt$value[redacted] <- NA_real_
+  if (n > 0) amt$value[amt_redacted] <- NA_real_   # only null when the AMOUNT was hidden
 
   core <- coerce_core(data.frame(
     row_id = seq_len(n), date = date_iso, date_raw = date_raw, description = description,

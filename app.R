@@ -434,14 +434,24 @@ server <- function(input, output, session) {
   })
 
   output$cv_downloads <- renderUI({
-    res <- cv_res(); if (is.null(res) || is.null(res$outputs)) return(NULL)
-    tagList(
-      strong("Download:"), br(),
-      downloadButton("dl_xlsx", "Excel"),
-      downloadButton("dl_csv", "CSV"),
-      downloadButton("dl_json", "JSON")
-    )
+    res <- cv_res(); src <- cv_src()
+    els <- list()
+    if (!is.null(res) && !is.null(res$outputs))
+      els <- list(strong("Download:"), br(),
+        downloadButton("dl_xlsx", "Excel"), downloadButton("dl_csv", "CSV"),
+        downloadButton("dl_json", "JSON"), br(), br())
+    if (!is.null(src))
+      els <- c(els, list(
+        downloadButton("dl_audit", "Safe audit (no PII)", class = "btn-info"),
+        helpText("A shapes-only structural report (no names, amounts or dates) you can share to build or fix a template.")))
+    if (length(els)) do.call(tagList, els) else NULL
   })
+  output$dl_audit <- downloadHandler(
+    filename = function() "statement.audit.md",
+    content = function(file) {
+      src <- cv_src(); req(src)
+      writeLines(format_audit(statement_audit(src$path, templates = templates())), file)
+    })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
       p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)][1]
