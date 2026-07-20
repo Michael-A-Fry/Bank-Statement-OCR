@@ -55,3 +55,37 @@ test_that("the two-column PDF template validates", {
   expect_length(validate_template(c(.tmpl, list(
     min_score = 1, fingerprint = list(page_contains_all = list("Withdrawals"))))), 0)
 })
+
+test_that("a row is kept only with a real amount; type codes don't break the date", {
+  # Westpac-style: a type code (DC) after the date, a date-only header line, and
+  # a real transaction. Date band must exclude the type code; the header line has
+  # no amount so it must be dropped.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("9",  "May",                                 # y=10: a stray issue-date line (NO amount) -> drop
+              "05", "Jan", "DC", "RENT", "500.00", "95.50",# y=40: real txn (type code DC after date)
+              "06", "Jan",       "PAY",           "1000.00", "1095.50"),
+    x     = c(45, 60,   45, 60, 79, 110, 415, 490,   45, 60, 110, 415, 490),
+    y     = c(10, 10,   40, 40, 40, 40,  40,  40,    70, 70, 70,  70,  70),
+    width = c(12, 16,   12, 16, 14, 40,  34,  30,    12, 16, 40,  34,  30),
+    height = rep(10, 13))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement Opening date 1 Jan 2026 Closing date 31 Jan 2026\nOpening balance 595.50\nClosing balance 1095.50"),
+    words = list(words), meta = list(page_count = 1L))
+  tmpl <- list(id = "wp_synth", bank = "S", statement_type = "everyday", format = "pdf",
+    version = 1, currency = "NZD", table = list(row_tol = 3, date_format = "%d %b",
+      amount_sign = "debit_credit_cols", columns = list(
+        date = list(x_min = 40, x_max = 74),          # excludes the DC type code at x~79
+        description = list(x_min = 74, x_max = 360),
+        debit = list(x_min = 360, x_max = 440), credit = list(x_min = 440, x_max = 520),
+        balance = list(x_min = 470, x_max = 545))))
+  # widen so debit vs credit don't overlap balance in this tiny fixture
+  tmpl$table$columns$credit$x_max <- 465
+  p <- parse_pdf_table(input, tmpl)
+  tx <- p$transactions
+  expect_equal(nrow(tx), 2L)                       # stray date-only line dropped
+  expect_equal(tx$date, c("2026-01-05", "2026-01-06"))
+  expect_true("RENT" %in% tx$description[1] || grepl("RENT", tx$description[1]))
+  # opening/closing balance wired into the header -> balance_reconciliation runs
+  expect_equal(p$header$opening_balance, 595.50)
+  expect_equal(p$header$closing_balance, 1095.50)
+})

@@ -67,10 +67,18 @@ reconcile <- function(parsed, template = NULL) {
   }
 
   # 4. dates_within_period: all dates within period_start..period_end.
-  ps <- h$period_start %||% NA; pe <- h$period_end %||% NA
+  # Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
+  # tolerantly so an unparseable bound skips the check rather than crashing.
+  .rec_date <- function(s) {
+    for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y")) {
+      d <- suppressWarnings(as.Date(as.character(s), f)); if (!is.na(d)) return(d)
+    }
+    as.Date(NA)
+  }
+  ps <- .rec_date(h$period_start %||% NA); pe <- .rec_date(h$period_end %||% NA)
   if (!is.na(ps) && !is.na(pe) && n > 0) {
     d <- suppressWarnings(as.Date(tx$date))
-    within <- !is.na(d) & d >= as.Date(ps) & d <= as.Date(pe)
+    within <- !is.na(d) & d >= ps & d <= pe
     outside <- sum(!within, na.rm = TRUE)
     rows$dates_within_period <- .kpi(
       "dates_within_period", if (outside == 0) "pass" else "fail",

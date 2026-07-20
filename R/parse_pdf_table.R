@@ -65,12 +65,16 @@ parse_pdf_table <- function(input, template) {
   # the year from the period (single year -> that year; a period spanning a
   # year-end -> the year that lands each date inside the period). Generic: no
   # bank-specific logic, driven entirely by the statement's own period text.
+  # Statement-level metadata (period + opening/closing balance) via the label
+  # dictionary. Wiring the balances into the header lets balance_reconciliation
+  # actually run for PDFs -- so a PDF that reconciles earns "high" trust and the
+  # completeness guard is satisfied, exactly like a delimited statement.
+  md <- safe(extract_metadata(input), NULL)
   has_year <- grepl("%[Yy]", date_fmt)
   full_date <- function(raw) raw
   eff_fmt <- date_fmt
   if (!has_year) {
     eff_fmt <- paste(date_fmt, "%Y")
-    md <- safe(extract_metadata(input), NULL)
     yrs <- suppressWarnings(as.integer(unlist(regmatches(
       c(md$period_start, md$period_end),
       gregexpr("(19|20)[0-9]{2}", c(md$period_start, md$period_end))))))
@@ -94,9 +98,20 @@ parse_pdf_table <- function(input, template) {
     }
   }
 
-  # Keep only rows whose date cell parses -> the actual transaction rows.
+  # Keep only genuine transaction rows: the date cell must parse AND the row must
+  # carry a real money amount (in the amount, or debit/credit, column). Requiring
+  # an amount drops date-only lines that leak into the date band -- a statement's
+  # issue date, a page header, a "balance brought forward" carry line -- which a
+  # date-parse-only filter would wrongly keep. Balance is deliberately NOT enough
+  # on its own (carry-forward rows aren't transactions).
+  .has_amount <- function(r) {
+    m <- .clean_money(if (identical(style, "debit_credit_cols"))
+      paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
+    grepl("[0-9]", m)
+  }
   keep <- vapply(recs, function(r)
-    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)), logical(1))
+    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)) && .has_amount(r),
+    logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
@@ -148,12 +163,13 @@ parse_pdf_table <- function(input, template) {
     extras <- data.frame(ex, stringsAsFactors = FALSE, check.names = FALSE)
   } else extras <- data.frame(row_id = integer(0))
 
+  .money_num <- function(x) suppressWarnings(as.numeric(.clean_money(x %||% NA)))
   header <- list(
     bank = template$bank %||% NA_character_, statement_type = template$statement_type %||% NA_character_,
     template_id = template$id %||% NA_character_, template_version = template$version %||% NA,
     account_number = NA_character_, account_name = NA_character_,
-    period_start = NA_character_, period_end = NA_character_,
-    opening_balance = NA_real_, closing_balance = NA_real_,
+    period_start = md$period_start %||% NA_character_, period_end = md$period_end %||% NA_character_,
+    opening_balance = .money_num(md$opening_balance), closing_balance = .money_num(md$closing_balance),
     currency = template$currency %||% "NZD",
     source_file = basename(input$path), source_sha256 = input$sha256,
     page_count = input$meta$page_count %||% NA_integer_, row_count = n,

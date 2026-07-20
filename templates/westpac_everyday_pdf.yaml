@@ -1,0 +1,19 @@
+id: westpac_everyday_pdf
+bank: Westpac
+statement_type: everyday
+format: pdf
+version: 1
+min_score: 2
+fingerprint:
+  page_contains_all: ["Your transactions", "OPENING BALANCE"]
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: debit_credit_cols
+  columns:
+    date:        {x_min: 40,  x_max: 78}
+    description: {x_min: 90,  x_max: 355}
+    debit:       {x_min: 355, x_max: 400}
+    credit:      {x_min: 400, x_max: 470}
+    balance:     {x_min: 470, x_max: 535}
+currency: NZD
