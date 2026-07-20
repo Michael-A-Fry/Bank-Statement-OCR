@@ -19,6 +19,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   outcome <- tryCatch({
     templates <- load_templates(templates_dir)
     input <- read_input(path, redaction_rects = redaction_rects)
+    meta <- extract_metadata(input)
+    multi <- detect_multiple_statements(input, meta)
 
     det <- detect_statement(input, templates, hint_bank = bank,
                             hint_type = statement_type)
@@ -28,7 +30,9 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
       result$messages <- status_message("unsupported", "no template matched", det$detail)
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
-      result$diagnostics <- build_diagnostics("unsupported", det = det)
+      result$metadata <- c(meta, list(multiple = multi))
+      result$diagnostics <- build_diagnostics("unsupported", det = det,
+        metadata = list(multi = multi, pages = meta$pages_actual))
     } else {
       template <- templates[[det$template_id]]
       detected_template <- template$id
@@ -40,13 +44,16 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       kpi_fail_count <- sum(recon$kpis$status == "fail")
       trust_level <- recon$trust$level
 
-      status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low")) {
+      status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
+                    isTRUE(multi$likely_multiple)) {
         "needs_review"
       } else {
         "ok"
       }
-      diag <- build_diagnostics(status, parsed = parsed, recon = recon)
-      outputs <- write_outputs(parsed, recon, outdir, base, formats, diagnostics = diag)
+      diag <- build_diagnostics(status, parsed = parsed, recon = recon,
+        metadata = list(multi = multi, pages = meta$pages_actual))
+      outputs <- write_outputs(parsed, recon, outdir, base, formats,
+        diagnostics = diag, metadata = meta)
 
       msg <- if (status == "ok") {
         status_message("ok", sprintf("matched %s, %d row(s), trust %s",
@@ -64,6 +71,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$header <- parsed$header
       result$outputs <- outputs
       result$diagnostics <- diag
+      result$metadata <- c(meta, list(multiple = multi))
       result$messages <- msg
     }
     result
@@ -90,6 +98,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     trust_level = result$trust$level %||% NA_character_,
     row_count = row_count,
     kpi_fail_count = kpi_fail_count,
+    pages = result$metadata$pages_actual %||% NA_integer_,
+    period_start = result$metadata$period_start %||% NA_character_,
+    period_end = result$metadata$period_end %||% NA_character_,
+    n_accounts = result$metadata$n_accounts %||% NA_integer_,
+    multiple_statements = isTRUE(result$metadata$multiple$likely_multiple),
     message = paste(result$messages, collapse = " | ")
   )))
 

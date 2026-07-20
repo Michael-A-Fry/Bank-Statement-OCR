@@ -11,8 +11,8 @@ version: 1
 fingerprint:
   page_contains_all: ["KiwiSaver", "Opening balance"]
 fields:
-  opening_balance:         {label: "Opening balance at 1 April 2025"}
-  closing_balance:         {label: "Closing balance at 31 March 2026"}
+  opening_balance:         {label: "Opening balance"}
+  closing_balance:         {label: "Closing balance"}
   contributions:           {label: "Contributions"}
   government_contribution: {label: "Government contribution"}
   investment_return:       {label: "Investment return"}

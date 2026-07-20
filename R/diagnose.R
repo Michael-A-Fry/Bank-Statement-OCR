@@ -20,7 +20,7 @@
 }
 
 build_diagnostics <- function(status, messages = character(0), det = NULL,
-                              parsed = NULL, recon = NULL) {
+                              parsed = NULL, recon = NULL, metadata = NULL) {
   rows <- list()
   add <- function(where, category, severity, detail, how_to_fix)
     rows[[length(rows) + 1L]] <<- .diag_row(where, category, severity, detail, how_to_fix)
@@ -35,6 +35,18 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         paste(messages, collapse = " "),
         paste("Check the file opens, is the expected type (CSV / PDF / Excel),",
               "and is not password-protected or corrupt."))
+  }
+
+  if (!is.null(metadata)) {
+    if (isTRUE(metadata$multi$likely_multiple))
+      add("upload", "multiple_statements", "high",
+          paste(metadata$multi$reasons, collapse = "; "),
+          "This upload looks like more than one statement bundled together, which corrupts a single parse. Split it into one statement per file and re-run.")
+    p <- suppressWarnings(as.integer(metadata$pages %||% NA))
+    if (!is.na(p) && p > 100)
+      add("upload", "oversized", "medium",
+          sprintf("%d pages in one file", p),
+          "Very long PDFs (>100 pages) may hit tool limits; split into smaller files if extraction stalls.")
   }
 
   if (!is.null(parsed) && !is.null(parsed$transactions)) {
