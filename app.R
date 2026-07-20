@@ -307,6 +307,21 @@ ui <- fluidPage(
               br(), br(),
               actionButton("adm_req_dismiss", "Dismiss"))),
           tags$hr(),
+          h4("📂 Folder intake — inbox / processed / failed"),
+          helpText("If the team drops statements into the inbox/ folder (the no-web option), this is where they land. A file in failed/ is actionable: open it in the wizard or grab its safe audit."),
+          uiOutput("adm_inbox_counts"),
+          fluidRow(
+            column(8, h5("Failed — needs attention"), DTOutput("adm_inbox_failed")),
+            column(4,
+              selectInput("adm_inbox_pick", "A failed file", choices = NULL),
+              actionButton("adm_inbox_wizard", "🪄 Open in wizard", class = "btn-warning"),
+              br(), br(),
+              downloadButton("adm_inbox_audit", "Download its safe audit (no PII)"))),
+          fluidRow(
+            column(4, h5("Waiting in inbox"), DTOutput("adm_inbox_waiting")),
+            column(4, h5("Processed"), DTOutput("adm_inbox_processed")),
+            column(4, h5("Output folders (outbox)"), DTOutput("adm_inbox_outbox"))),
+          tags$hr(),
           fluidRow(
             column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
                    DTOutput("adm_overview")),
@@ -606,6 +621,43 @@ server <- function(input, output, session) {
     id <- input$adm_req_pick; req(id, nzchar(id))
     if (isTRUE(set_request_status(id, "dismissed", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
   })
+
+  # ---- Admin: folder-intake browser (inbox / processed / failed / outbox) ----
+  inbox_state <- reactive({ input$adm_refresh; cv_upload_id(); inbox_status(".") })
+  output$adm_inbox_counts <- renderUI({
+    s <- inbox_state(); c <- s$counts
+    p(class = "muted", HTML(sprintf(
+      "Waiting: <b>%d</b> &nbsp;|&nbsp; Processed: <b>%d</b> &nbsp;|&nbsp; Failed: <b>%d</b> &nbsp;|&nbsp; Stuck: <b>%d</b> &nbsp;|&nbsp; Output folders: <b>%d</b>",
+      c[["inbox"]], c[["processed"]], c[["failed"]], c[["stuck"]], c[["outbox"]])))
+  })
+  inbox_tbl <- function(which) renderDT({
+    d <- inbox_state()$folders[[which]]
+    if (!nrow(d)) return(data.frame(note = "empty"))
+    d
+  }, options = list(pageLength = 6, dom = "tip"), rownames = FALSE)
+  output$adm_inbox_failed    <- inbox_tbl("failed")
+  output$adm_inbox_waiting   <- inbox_tbl("inbox")
+  output$adm_inbox_processed <- inbox_tbl("processed")
+  output$adm_inbox_outbox    <- inbox_tbl("outbox")
+  observe({
+    s <- inbox_state()
+    updateSelectInput(session, "adm_inbox_pick",
+      choices = if (nrow(s$folders$failed)) s$folders$failed$file else character(0))
+  })
+  observeEvent(input$adm_inbox_wizard, {
+    nm <- input$adm_inbox_pick
+    if (is.null(nm) || !nzchar(nm)) { showNotification("Pick a failed file first.", type = "warning"); return() }
+    p <- failed_file_path(nm, ".")
+    if (is.na(p)) { showNotification("That file is no longer in failed/.", type = "error"); return() }
+    open_guided(p, nm)
+  })
+  output$adm_inbox_audit <- downloadHandler(
+    filename = function() paste0(input$adm_inbox_pick %||% "file", ".audit.md"),
+    content = function(file) {
+      nm <- input$adm_inbox_pick; req(nm, nzchar(nm))
+      p <- failed_file_path(nm, "."); req(!is.na(p))
+      writeLines(format_audit(statement_audit(p, templates = templates())), file)
+    })
 
   # ---- Forms (IRD): extract labelled values from a form document ----------
   fm_res <- reactiveVal(NULL); fm_dir <- reactiveVal(NULL)
