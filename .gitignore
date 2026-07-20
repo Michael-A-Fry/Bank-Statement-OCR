@@ -1,0 +1,27 @@
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Runtime output (never commit generated conversions or logs)
+/outputs/
+/logs/
+*.log
+
+# Scratch / temp
+scratch/
+tmp/
+*.tmp
+
+# NOTE: samples/ is intentionally tracked — it is the public specimen corpus
+# used for template design and golden-file tests.
