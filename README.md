@@ -114,6 +114,9 @@ no-ops safely when they are not.
 3. Add a golden test — see [`tests/HOWTO-add-template-test.md`](tests/HOWTO-add-template-test.md).
 4. `Rscript tests/run_tests.R` — your bank must pass and no other bank may break.
 
+**New here? Start with [`docs/ONBOARDING.md`](docs/ONBOARDING.md)** — a worked,
+click-through guide to converting statements and adding banks.
+Real-world edge cases + honest status: [`docs/edge-cases.md`](docs/edge-cases.md).
 Template format and the full data contract: [`docs/architecture/build-contract.md`](docs/architecture/build-contract.md).
 Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/discovery/discovery-log.md).
 
