@@ -120,18 +120,21 @@ parse_amount <- function(x, style = "signed", opts = list()) {
 
   if (style == "unsigned") {
     # Credit-card style: one amount column of UNSIGNED magnitudes, where the sign
-    # is implied, not printed. Unmarked amounts take `unsigned_default` (default
-    # "debit" = a purchase / money out -> negative, consistent with how a debit
-    # column is treated); a trailing CR flips to credit (a payment in), a trailing
-    # DR/OD forces debit. `amount_raw` keeps the value verbatim either way.
+    # is implied, not printed. An unmarked amount is a CHARGE; a trailing CR is a
+    # PAYMENT (the opposite). `unsigned_default` sets the charge's sign:
+    #   "debit"  (default) -> charge = -mag (money out), CR payment = +mag. This
+    #            is the cash-flow view, consistent with a withdrawal column.
+    #   "credit"           -> charge = +mag, CR payment = -mag. Charges raise the
+    #            balance, so this ties out to a card's owed closing balance.
+    # The CR marker always flips RELATIVE to the charge sign. amount_raw stays
+    # verbatim either way.
     raw <- as.character(x)
     mag <- abs(.num(raw, dec))
-    default_debit <- !identical(opts[["unsigned_default"]] %||% "debit", "credit")
+    base <- if (identical(opts[["unsigned_default"]] %||% "debit", "credit")) 1 else -1
     up <- toupper(trimws(raw))
-    debit <- rep(default_debit, length(mag))
-    debit[grepl("CR\\s*$", up)] <- FALSE          # explicit credit (payment)
-    debit[grepl("(DR|OD)\\s*$", up)] <- TRUE       # explicit debit
-    value <- ifelse(is.na(mag), NA_real_, ifelse(debit, -mag, mag))
+    sgn <- rep(base, length(mag))
+    sgn[grepl("CR\\s*$", up)] <- -base             # a CR payment is the opposite of a charge
+    value <- ifelse(is.na(mag), NA_real_, sgn * mag)
     return(list(value = value, direction = .direction(value), raw = raw))
   }
 
