@@ -87,10 +87,64 @@ front-end agnostic.
 
 ---
 
-## 3. Open items (to be resolved in later banks)
-- Bank 2 — OCR & parsing engine: redaction behaviour, mixed text-layer
-  handling, provenance model, credit-card statement specifics, number/sign
-  normalisation.
+## 3. Confirmed decisions — Bank 2 (OCR & parsing engine)
+
+### 3.1 Redactions
+- **Never derive or infer redacted values.** They were redacted deliberately;
+  output is **as-shown only** (blank / `[REDACTED]` + `redaction_flag`).
+- Typical physical form: **black boxes drawn on top of the text** (like a
+  highlight/box struck through transactions that shouldn't be there) — but
+  **this is not consistent across banks**; detection must be
+  heuristic/pluggable and **per-template configurable**, not a single global
+  assumption.
+- **Critical forensic rule:** a black box *on top of* text frequently leaves
+  the original text still present in the PDF text layer. The engine must treat
+  a detected redaction overlay as authoritative and **must not extract text
+  hidden beneath a redaction region** — otherwise it leaks the very data that
+  was redacted.
+
+### 3.2 Text extraction, sections & tables
+- **Per page/region text-layer detection**: use `pdftools` (with x/y word
+  positions) where text is selectable; fall back to `tesseract` + `magick`
+  OCR only for non-selectable regions. OCR-derived values carry lower
+  `confidence` + an `ocr_flag`.
+- **Section awareness is central.** Statements have relatively consistent
+  **start/end markers** (sections, words, phrases). Templates define sections
+  by anchor markers, use them both to **classify statement type** and to
+  **parse each section with its own rules**.
+- **Extract tables as tables** where possible (column-band / positional
+  detection), not just flat lines.
+- **Environment:** CRAN package installation is available (incl. system libs
+  for `pdftools`/`poppler` and `tesseract`), so OCR is viable day one.
+- Seed section anchors and a starter template + test corpus from **publicly
+  available specimen statements** of the major NZ banks (never real customer
+  data).
+
+### 3.3 Provenance / output layout
+- Forensic accountants primarily download **clean raw transaction data**.
+- **Provenance & traceability (source page, row, raw snippet, `sheet!cell`)
+  live in a separate metadata sheet/page**, valuable for our debugging &
+  audit — deliberately kept **out of** the core data the accountants consume.
+
+### 3.4 Unified schema
+- **One consistent core schema across every statement type** (bank account,
+  Visa, Mastercard, other) — standardised key fields are essential for the
+  accountants' work.
+- Statement-type-specific extras (context, extra columns, header summaries
+  like credit limit / min payment) are **separated from the core data** when
+  easily produced.
+
+### 3.5 Raw vs normalised & careful formatting
+- Output preserves **both** `raw_*` (exactly as shown) **and** normalised
+  fields.
+- Normalisation applies to **numbers, signs and dates only**.
+- **Descriptions are preserved verbatim** — no stripping of apostrophes,
+  ampersands, or other special/Unicode characters (e.g. `O'Connor & Sons`
+  must survive intact). Be deliberate about what is normalised vs preserved.
+
+---
+
+## 4. Open items (to be resolved in later banks)
 - Bank 3 — Template system & wizard.
 - Bank 4 — Categorisation, reconciliation & manual review.
 - Bank 5 — Consistency, maintainability, governance, and non-bank docs (IRD
@@ -98,9 +152,9 @@ front-end agnostic.
 
 ---
 
-## 4. Interview progress
+## 5. Interview progress
 - [x] Bank 1 — Foundations
-- [ ] Bank 2 — OCR & parsing engine
+- [x] Bank 2 — OCR & parsing engine
 - [ ] Bank 3 — Template system & wizard
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
