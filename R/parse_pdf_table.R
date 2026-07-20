@@ -112,7 +112,9 @@ parse_pdf_table <- function(input, template) {
     opening_balance = NA_real_, closing_balance = NA_real_,
     currency = template$currency %||% "NZD",
     source_file = basename(input$path), source_sha256 = input$sha256,
-    page_count = input$meta$page_count %||% NA_integer_, row_count = n)
+    page_count = input$meta$page_count %||% NA_integer_, row_count = n,
+    ocr_pages = input$meta$ocr_pages %||% 0L,
+    ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_)
 
   pages_v <- if (n == 0) integer(0) else vapply(recs, function(r) as.integer(r$page), integer(1))
   provenance <- data.frame(row_id = seq_len(n),

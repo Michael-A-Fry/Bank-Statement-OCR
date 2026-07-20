@@ -193,6 +193,7 @@ read_pdf <- function(path, redaction_rects = NULL,
                 redactions = data.frame(page = integer(0), redacted_words = integer(0),
                                         stringsAsFactors = FALSE),
                 ocr = logical(0),
+                ocr_conf = numeric(0),
                 ok = FALSE)
   if (!requireNamespace("pdftools", quietly = TRUE)) return(empty)
   if (!file.exists(path)) return(empty)
@@ -209,6 +210,7 @@ read_pdf <- function(path, redaction_rects = NULL,
   words <- vector("list", np)
   red_counts <- integer(np)
   ocr_flags <- rep(FALSE, np)
+  ocr_conf <- rep(NA_real_, np)
 
   for (p in seq_len(np)) {
     wp <- word_list[[p]]
@@ -239,6 +241,7 @@ read_pdf <- function(path, redaction_rects = NULL,
                                           perl = TRUE, useBytes = TRUE)
           pages[p] <- otxt
           ocr_flags[p] <- TRUE
+          ocr_conf[p] <- res$conf %||% NA_real_
         }
       }
       next
@@ -266,6 +269,7 @@ read_pdf <- function(path, redaction_rects = NULL,
     redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
                             stringsAsFactors = FALSE),
     ocr = ocr_flags,
+    ocr_conf = ocr_conf,
     ok = TRUE
   )
 }

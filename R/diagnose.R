@@ -94,6 +94,10 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     if (!is.na(ocrp) && ocrp > 0) add("pages (OCR)", "ocr", "info",
       sprintf("%d page(s) were machine-read via OCR", ocrp),
       "OCR pages can contain recognition errors. Spot-check machine-read values against the image.")
+    ocrc <- suppressWarnings(as.numeric(parsed$header$ocr_min_confidence %||% NA))
+    if (!is.na(ocrc) && ocrc < 70) add("OCR text", "low_ocr_confidence", "high",
+      sprintf("lowest OCR word-confidence was %.0f%%", ocrc),
+      "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals.")
   }
 
   if (!length(rows))

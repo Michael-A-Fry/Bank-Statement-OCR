@@ -30,7 +30,9 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     words = pdf$words,
     page_count = pdf$page_count,
     sections = pdf$sections,
-    redactions = pdf$redactions
+    redactions = pdf$redactions,
+    ocr = pdf$ocr,
+    ocr_conf = pdf$ocr_conf
   )
 }
 
@@ -61,6 +63,10 @@ read_input <- function(path, redaction_rects = NULL) {
     input$meta$page_count <- x$page_count
     input$meta$sections <- x$sections
     input$meta$redactions <- x$redactions
+    ocr <- x$ocr %||% logical(0); conf <- x$ocr_conf %||% numeric(0)
+    input$meta$ocr_pages <- sum(ocr)
+    on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
+    input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
   } else {
     stop(sprintf("unsupported file extension: '%s'", ext))
   }
