@@ -81,12 +81,25 @@ reconcile <- function(parsed, template = NULL) {
       "dates_within_period", "na", detail = "statement period not available")
   }
 
-  # 5. no_unparsed_rows: every non-empty data row became a transaction.
+  # 5. no_unparsed_rows: every non-empty source data line became a transaction.
+  # Completeness is proven by comparing the count of non-empty PHYSICAL source
+  # data lines against parsed rows -- computing it from the parsed table alone
+  # (n vs n-malformed) can never see a record that was merged/lost, so a stray
+  # cross-line quote would silently pass. `source_line_count` is threaded from
+  # the reader; NA (excel/pdf) falls back to the malformed-only check.
   malformed <- sum(grepl("malformed", tx$flags))
+  src_lines <- suppressWarnings(as.integer(parsed$source_line_count %||% NA))
+  lost <- if (!is.na(src_lines)) src_lines - n else 0L
+  good <- n - malformed
+  ok_rows <- (malformed == 0) && (lost == 0)
+  expected_rows <- if (!is.na(src_lines)) src_lines else n
   rows$no_unparsed_rows <- .kpi(
-    "no_unparsed_rows", if (malformed == 0) "pass" else "fail",
-    expected = n, actual = n - malformed, discrepancy = malformed,
-    detail = sprintf("%d malformed row(s)", malformed))
+    "no_unparsed_rows", if (ok_rows) "pass" else "fail",
+    expected = expected_rows, actual = good,
+    discrepancy = expected_rows - good,
+    detail = if (lost > 0)
+      sprintf("%d source line(s) unaccounted for; %d malformed row(s)", lost, malformed)
+    else sprintf("%d malformed row(s)", malformed))
 
   # 6. redaction_summary: informational count of redacted rows.
   redacted <- sum(grepl("redacted", tx$flags))

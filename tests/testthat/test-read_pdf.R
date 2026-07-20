@@ -99,6 +99,21 @@ test_that("overlay detector is conservative on partial overlap", {
   expect_false(grepl("ACCOUNT", guarded$text[1]))
 })
 
+test_that("read_input threads redaction_rects into the PDF pipeline", {
+  # Guarantee 11.2 in production: read_input must forward overlay rectangles so
+  # text under a drawn redaction is dropped before it leaves the reader.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  rects <- data.frame(page = 1, x0 = 60, y0 = 130, x1 = 500, y1 = 175)
+  input <- read_input(fixture(SAMPLE_PDF), redaction_rects = rects)
+  expect_identical(input$kind, "pdf")
+  expect_gt(input$meta$redactions$redacted_words[1], 0L)
+  w1 <- input$words[[1]]
+  expect_true(all(w1$text[w1$redacted] == REDACTION_TOKEN))
+  # a plain read_input (no rects) leaves this clean specimen unredacted
+  plain <- read_input(fixture(SAMPLE_PDF))
+  expect_equal(sum(plain$meta$redactions$redacted_words), 0L)
+})
+
 test_that("read_pdf rebuilds page text from guarded boxes when redacted", {
   # Drive the full read_pdf path with an injected rectangle so a real page's
   # emitted text is proven to exclude text under the overlay. The rectangle

@@ -1,20 +1,13 @@
 # detect.R -- deterministic bank/statement detection via fingerprint scoring.
 
-# .header_fields(lines, template) -- locate the header row (honouring an
-# optional preamble.header_regex) and split it into trimmed field names.
+# .header_fields(lines, template) -- locate the header row (via the shared
+# locate_header helper so detection and the reader never diverge) and split it
+# into trimmed field names.
 .header_fields <- function(lines, template) {
   if (length(lines) == 0) return(character(0))
   delim <- template$delimiter %||% ","
-  hidx <- 1L
-  hr <- template$preamble$header_regex
-  if (!is.null(hr) && nzchar(hr)) {
-    m <- grep(hr, lines, perl = TRUE)
-    if (length(m)) hidx <- m[1] else return(character(0))
-  } else {
-    # first non-empty line
-    nz <- which(nzchar(trimws(lines)))
-    if (length(nz)) hidx <- nz[1]
-  }
+  hidx <- locate_header(lines, template)
+  if (is.na(hidx)) return(character(0))
   fields <- utils::read.table(text = lines[hidx], sep = delim, quote = "\"",
                               stringsAsFactors = FALSE, colClasses = "character",
                               header = FALSE, check.names = FALSE,
@@ -63,31 +56,45 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
 
   sc <- lapply(ids, function(i) .score_template(input, templates[[i]]))
   scores <- vapply(sc, function(s) s$score, numeric(1))
+  mins   <- vapply(ids, function(i) templates[[i]]$min_score %||% 1, numeric(1))
   ord <- order(scores, ids, decreasing = c(TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; sc <- sc[ord]
+  ids <- ids[ord]; scores <- scores[ord]; sc <- sc[ord]; mins <- mins[ord]
 
-  best_id <- ids[1]
+  # Eligibility is per-candidate: a template is a genuine contender only when it
+  # meets its OWN min_score. Ambiguity (best strictly > 2nd) is then judged among
+  # eligible candidates only, so a template that failed its own threshold can no
+  # longer create a false tie that blocks a genuinely-matching template.
+  eligible <- scores >= mins
+  best_id <- ids[1]           # overall top scorer (for "closest ..." reporting)
   best_score <- scores[1]
-  min_score <- templates[[best_id]]$min_score %||% 1
-  second <- if (length(scores) >= 2) scores[2] else -Inf
-  unambiguous <- best_score > second
-  matched <- (best_score >= min_score) && unambiguous
+  best_min <- mins[1]
 
-  detail <- if (matched) {
-    sprintf("matched %s (score %s/%s)", best_id, best_score, min_score)
-  } else if (best_score < min_score) {
-    miss <- sc[[1]]$missing
-    sprintf("closest %s score %s/%s%s", best_id, best_score, min_score,
-            if (length(miss)) sprintf(" (missing %s)",
-              paste(sprintf("'%s'", miss), collapse = ", ")) else "")
+  if (any(eligible)) {
+    e_ids <- ids[eligible]; e_scores <- scores[eligible]; e_mins <- mins[eligible]
+    win_id <- e_ids[1]; win_score <- e_scores[1]; win_min <- e_mins[1]
+    second <- if (length(e_scores) >= 2) e_scores[2] else -Inf
+    unambiguous <- win_score > second
+    matched <- unambiguous
+    if (matched) {
+      detail <- sprintf("matched %s (score %s/%s)", win_id, win_score, win_min)
+      return(list(template_id = win_id, score = win_score, matched = TRUE,
+                  candidates = data.frame(id = ids, score = scores,
+                                          stringsAsFactors = FALSE),
+                  detail = detail))
+    }
+    detail <- sprintf("ambiguous: %s and %s both score %s",
+                      win_id, e_ids[2], win_score)
   } else {
-    sprintf("ambiguous: %s and %s both score %s", best_id, ids[2], best_score)
+    miss <- sc[[1]]$missing
+    detail <- sprintf("closest %s score %s/%s%s", best_id, best_score, best_min,
+      if (length(miss)) sprintf(" (missing %s)",
+        paste(sprintf("'%s'", miss), collapse = ", ")) else "")
   }
 
   list(
     template_id = best_id,
     score = best_score,
-    matched = matched,
+    matched = FALSE,
     candidates = data.frame(id = ids, score = scores, stringsAsFactors = FALSE),
     detail = detail
   )

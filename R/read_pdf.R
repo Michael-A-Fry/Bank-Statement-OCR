@@ -192,6 +192,7 @@ read_pdf <- function(path, redaction_rects = NULL,
                 sections = detect_pdf_sections(character(0)),
                 redactions = data.frame(page = integer(0), redacted_words = integer(0),
                                         stringsAsFactors = FALSE),
+                ocr = logical(0),
                 ok = FALSE)
   if (!requireNamespace("pdftools", quietly = TRUE)) return(empty)
   if (!file.exists(path)) return(empty)
@@ -207,6 +208,7 @@ read_pdf <- function(path, redaction_rects = NULL,
   pages <- character(np)
   words <- vector("list", np)
   red_counts <- integer(np)
+  ocr_flags <- rep(FALSE, np)
 
   for (p in seq_len(np)) {
     wp <- word_list[[p]]
@@ -222,6 +224,23 @@ read_pdf <- function(path, redaction_rects = NULL,
                    y = integer(0), space = logical(0), text = character(0),
                    stringsAsFactors = FALSE), NULL, markers)
       red_counts[p] <- 0L
+      # OCR fallback for image-only pages: no text layer and no word boxes.
+      # Tesseract reads only VISIBLE pixels, so any redaction painted on the
+      # page is inherently unreadable -- text under a black box cannot be
+      # recovered by OCR. Each OCR'd page is flagged so downstream consumers
+      # know the text was machine-read, not extracted. Safely no-ops where the
+      # OCR tools (R/ocr.R + system tesseract/poppler) are absent.
+      if (exists("ocr_available", mode = "function") && ocr_available() &&
+          exists("page_needs_ocr", mode = "function") && page_needs_ocr(pages[p])) {
+        res <- ocr_pdf_page(path, p)
+        if (isTRUE(res$ok)) {
+          otxt <- paste(res$text, collapse = "\n")
+          for (m in markers) otxt <- gsub(m, REDACTION_TOKEN, otxt,
+                                          perl = TRUE, useBytes = TRUE)
+          pages[p] <- otxt
+          ocr_flags[p] <- TRUE
+        }
+      }
       next
     }
     wp <- as.data.frame(wp, stringsAsFactors = FALSE)
@@ -246,6 +265,7 @@ read_pdf <- function(path, redaction_rects = NULL,
     sections = detect_pdf_sections(pages, anchors),
     redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
                             stringsAsFactors = FALSE),
+    ocr = ocr_flags,
     ok = TRUE
   )
 }

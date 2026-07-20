@@ -1,0 +1,3 @@
+Card,Type,Amount,Details,TransactionDate,ProcessedDate,ForeignCurrencyAmount,ConversionCharge
+4879-****-****-6843,D,4.50,Auckland Nz,15/02/2020,17/02/2020,,
+4879-****-****-6843,D,120.00,Tokyo Jp,13/02/2020,14/02/2020,8000.00 JPY,2.50

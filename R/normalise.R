@@ -41,8 +41,8 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   }
 
   if (style == "debit_credit_cols") {
-    deb <- opts$debit
-    cr  <- opts$credit
+    deb <- opts[["debit"]]
+    cr  <- opts[["credit"]]
     dv <- .num(deb); cv <- .num(cr)
     dz <- ifelse(is.na(dv), 0, dv)
     cz <- ifelse(is.na(cv), 0, cv)
@@ -68,8 +68,10 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   if (style == "type_dc") {
     raw <- as.character(x)
     mag <- abs(.num(raw))
-    tv  <- as.character(opts$type %||% rep(NA_character_, length(raw)))
-    debit_val <- as.character(opts$type_debit_value %||% "D")
+    # Exact indexing (`[[`) -- `$` partial-matches `type` to `type_debit_value`
+    # when the type column is unmapped, which would flip every row to debit.
+    tv  <- as.character(opts[["type"]] %||% rep(NA_character_, length(raw)))
+    debit_val <- as.character(opts[["type_debit_value"]] %||% "D")
     is_debit <- !is.na(tv) & tv == debit_val
     value <- ifelse(is_debit, -mag, mag)
     return(list(value = value, direction = .direction(value), raw = raw))

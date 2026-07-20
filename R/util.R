@@ -18,6 +18,23 @@ blank_to_na <- function(x) {
   out
 }
 
+# locate_header(lines, template) -- single source of truth for finding the
+# header row of a delimited statement (used by BOTH detection and the reader so
+# they can never disagree). Honours an optional preamble.header_regex; otherwise
+# the first non-empty line. Agreed no-match behaviour: when a preamble regex is
+# supplied but matches no line, return NA_integer_ (no header found) so callers
+# treat the input as unrecognised rather than guessing line 1.
+locate_header <- function(lines, template) {
+  if (length(lines) == 0) return(NA_integer_)
+  hr <- template$preamble$header_regex
+  if (!is.null(hr) && nzchar(hr)) {
+    m <- grep(hr, lines, perl = TRUE)
+    return(if (length(m)) m[1] else NA_integer_)
+  }
+  nz <- which(nzchar(trimws(lines)))
+  if (length(nz)) nz[1] else NA_integer_
+}
+
 # file_sha256(path) -- deterministic content hash. Uses openssl when available,
 # otherwise digest, otherwise tools::md5sum as a last-resort fallback.
 file_sha256 <- function(path) {

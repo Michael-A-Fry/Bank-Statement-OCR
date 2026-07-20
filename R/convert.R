@@ -6,7 +6,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               outdir = "out", templates_dir = "templates",
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
-                              logdir = "logs") {
+                              logdir = "logs", redaction_rects = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
   result <- new_result(status = "failed", template_id = NA_character_,
                        messages = character(0))
@@ -18,7 +18,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
 
   outcome <- tryCatch({
     templates <- load_templates(templates_dir)
-    input <- read_input(path)
+    input <- read_input(path, redaction_rects = redaction_rects)
 
     det <- detect_statement(input, templates, hint_bank = bank,
                             hint_type = statement_type)

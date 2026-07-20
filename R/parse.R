@@ -30,14 +30,16 @@ parse_statement <- function(input, template) {
   reader <- switch(template$format %||% "delimited",
     delimited = read_delimited(input, template),
     excel     = list(table = input$table, source_lines = integer(0),
-                     raw = character(0), field_counts = integer(0),
-                     expected_fields = NA_integer_),
+                     source_spans = list(), raw = character(0),
+                     field_counts = integer(0), expected_fields = NA_integer_,
+                     n_data_lines = NA_integer_),
     # PDF text is extracted (pages/word boxes/sections via read_pdf) but
     # per-bank transaction-table parsing is future work: degrade to an empty
     # table so reconciliation reports needs_review, never crash.
     pdf       = list(table = NULL, source_lines = integer(0),
-                     raw = character(0), field_counts = integer(0),
-                     expected_fields = NA_integer_),
+                     source_spans = list(), raw = character(0),
+                     field_counts = integer(0), expected_fields = NA_integer_,
+                     n_data_lines = NA_integer_),
     stop(sprintf("parse_statement: unsupported format '%s'", template$format))
   )
   tbl <- reader$table
@@ -103,6 +105,13 @@ parse_statement <- function(input, template) {
 
   currency <- rep(template$currency %||% "NZD", n)
 
+  # ---- extras (template-declared per-bank columns, keyed by row_id) ----
+  extras <- .build_extras(template, tbl, n)
+  # foreign-currency amount (if mapped) drives the `fx` flag.
+  fx_present <- if (!is.null(extras[["fx_amount"]]))
+    !is.na(extras[["fx_amount"]]) & nzchar(trimws(as.character(extras[["fx_amount"]])))
+  else rep(FALSE, n)
+
   # ---- flags ----
   flags <- vapply(seq_len(n), function(i) {
     f <- character(0)
@@ -113,6 +122,7 @@ parse_statement <- function(input, template) {
     malformed <- (!is.na(fc) && !is.na(exp) && fc != exp) ||
                  (is.na(a$value[i]) && !amt_red && !is.blank_amount(amt_col[i]))
     if (malformed) f <- c(f, "malformed")
+    if (isTRUE(fx_present[i])) f <- c(f, "fx")
     paste(f, collapse = ",")
   }, character(1))
   # redacted amounts must not carry a derived value.
@@ -128,8 +138,6 @@ parse_statement <- function(input, template) {
   )
   core <- coerce_core(core)
 
-  extras <- data.frame(row_id = integer(0), stringsAsFactors = FALSE)
-
   page_count <- if (identical(input$kind, "pdf")) (input$meta$page_count %||% NA_integer_) else NA_integer_
   header <- list(
     bank = template$bank %||% NA_character_,
@@ -144,17 +152,58 @@ parse_statement <- function(input, template) {
     page_count = page_count, row_count = n
   )
 
-  src_lines <- reader$source_lines %||% integer(0)
+  # Provenance is per PARSED ROW: a multi-line quoted record maps to one row and
+  # records its full physical line span, so the audit trail survives embedded
+  # newlines instead of being blanked for the whole statement.
+  spans <- reader$source_spans %||% list()
   raw <- reader$raw %||% rep(NA_character_, n)
+  source_ref <- if (length(spans) == n) {
+    vapply(spans, .format_line_span, character(1))
+  } else if (length(reader$source_lines %||% integer(0)) == n) {
+    sprintf("csv:line=%d", reader$source_lines)
+  } else rep(NA_character_, n)
   provenance <- data.frame(
     row_id = seq_len(n),
-    source_ref = if (length(src_lines) == n)
-      sprintf("csv:line=%d", src_lines) else rep(NA_character_, n),
+    source_ref = source_ref,
     raw = if (length(raw) == n) raw else rep(NA_character_, n),
     stringsAsFactors = FALSE
   )
 
-  list(transactions = core, extras = extras, header = header, provenance = provenance)
+  list(transactions = core, extras = extras, header = header,
+       provenance = provenance,
+       # completeness accounting for reconcile: how many non-empty physical data
+       # lines the source held (vs how many rows we parsed).
+       source_line_count = reader$n_data_lines %||% NA_integer_)
+}
+
+# .format_line_span(v) -- "csv:line=5" for a single physical line, "csv:line=5-6"
+# for a contiguous span, "csv:line=5,8" otherwise.
+.format_line_span <- function(v) {
+  v <- as.integer(v)
+  if (length(v) == 0 || all(is.na(v))) return(NA_character_)
+  if (length(v) == 1) return(sprintf("csv:line=%d", v))
+  if (identical(v, seq.int(v[1], v[length(v)])))
+    return(sprintf("csv:line=%d-%d", v[1], v[length(v)]))
+  sprintf("csv:line=%s", paste(v, collapse = ","))
+}
+
+# .build_extras(template, tbl, n) -- honour a template `extras:` block, building
+# a row_id-keyed data.frame from the mapped source columns. Missing source
+# columns become NA (never silently omitted). Returns the empty row_id frame when
+# no extras are declared.
+.build_extras <- function(template, tbl, n) {
+  spec <- template$extras
+  if (is.null(spec) || length(spec) == 0) {
+    return(data.frame(row_id = integer(0), stringsAsFactors = FALSE))
+  }
+  out <- list(row_id = seq_len(n))
+  for (field in names(spec)) {
+    fs <- spec[[field]]
+    colname <- if (is.list(fs)) fs$source else as.character(fs)
+    v <- .pick(tbl, colname)
+    out[[field]] <- if (is.null(v)) rep(NA_character_, n) else blank_to_na(v)
+  }
+  data.frame(out, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
 # is.blank_amount(x) -- TRUE when an amount cell is truly empty (so a NA value

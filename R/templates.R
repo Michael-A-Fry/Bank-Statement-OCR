@@ -30,6 +30,30 @@ validate_template <- function(t) {
     problems <- c(problems, sprintf("amount_sign '%s' is not one of %s",
                                     t$amount_sign, paste(valid_sign, collapse = "/")))
   }
+  # amount_sign prerequisites -- caught at load with a clear per-id message
+  # rather than crashing (or silently mis-signing) deep in parse_statement.
+  .has_col <- function(field) !is.null(t$columns) && !is.null(t$columns[[field]])
+  if (identical(t$amount_sign, "debit_credit_cols")) {
+    for (k in c("debit", "credit")) {
+      if (!.has_col(k)) problems <- c(problems, sprintf(
+        "amount_sign 'debit_credit_cols' requires columns.%s", k))
+    }
+  }
+  if (identical(t$amount_sign, "type_dc") && !.has_col("type")) {
+    problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
+  }
+  # extras must map to a named source column.
+  if (!is.null(t$extras)) {
+    if (!is.list(t$extras)) {
+      problems <- c(problems, "extras must be a mapping of field -> {source}")
+    } else for (field in names(t$extras)) {
+      fs <- t$extras[[field]]
+      src <- if (is.list(fs)) fs$source else fs
+      if (is.null(src) || !nzchar(as.character(src)[1])) {
+        problems <- c(problems, sprintf("extras.%s missing a source column", field))
+      }
+    }
+  }
   valid_fmt <- c("delimited", "excel", "pdf")
   if (!is.null(t$format) && !(t$format %in% valid_fmt)) {
     problems <- c(problems, sprintf("format '%s' is not one of %s",

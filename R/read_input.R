@@ -16,8 +16,11 @@ read_excel_input <- function(path) {
 # page text, positioned + redaction-guarded word boxes, detected sections, and a
 # per-page redaction summary. Extraction only -- never crashes; degrades to an
 # empty structure when pdftools is missing or the file is unreadable.
-read_pdf_input <- function(path) {
-  pdf <- safe(read_pdf(path), NULL)
+read_pdf_input <- function(path, redaction_rects = NULL,
+                           markers = pdf_redaction_markers(),
+                           anchors = pdf_section_anchors()) {
+  pdf <- safe(read_pdf(path, redaction_rects = redaction_rects,
+                       markers = markers, anchors = anchors), NULL)
   if (is.null(pdf)) {
     return(list(pages = NULL, words = list(), page_count = NA_integer_,
                 sections = NULL, redactions = NULL))
@@ -31,8 +34,11 @@ read_pdf_input <- function(path) {
   )
 }
 
-# read_input(path) -> list(kind, path, sha256, lines, table, pages, meta)
-read_input <- function(path) {
+# read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table,
+# pages, meta). `redaction_rects` lets the caller feed overlay rectangles (per
+# build-contract 11.2) so text under a drawn redaction is dropped before it ever
+# leaves the reader; NULL keeps the text-layer marker sweep only.
+read_input <- function(path, redaction_rects = NULL) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))
   sha <- file_sha256(path)
@@ -49,7 +55,7 @@ read_input <- function(path) {
     input$table <- x$table
   } else if (ext == "pdf") {
     input$kind <- "pdf"
-    x <- read_pdf_input(path)
+    x <- read_pdf_input(path, redaction_rects = redaction_rects)
     input$pages <- x$pages
     input$words <- x$words
     input$meta$page_count <- x$page_count
