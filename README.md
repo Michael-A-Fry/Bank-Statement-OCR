@@ -6,8 +6,8 @@ and a trust score. Built for forensic-accounting use: audit-grade fidelity,
 verbatim descriptions, honoured redactions, and no silent data loss.
 
 **No Python, no reticulate, no machine learning.** Deterministic behaviour and
-declarative per-bank templates — a data analyst adds a new statement by editing
-a YAML file, not by writing code.
+declarative per-bank templates — a data analyst adds a new statement by using a
+point-and-click wizard (or editing a YAML file), not by writing code.
 
 ---
 
@@ -16,6 +16,9 @@ a YAML file, not by writing code.
 - **Delimited path (CSV/TSV/TDV): end-to-end for six banks** — ANZ everyday,
   ANZ credit card, ASB, BNZ, Kiwibank, Westpac — each with a passing golden-file
   test. `read_input → detect → parse → reconcile → outputs`.
+- **Interactive GUI + template wizard (Shiny)** — upload → convert → review the
+  checks → download; plus a wizard that builds a *new bank template for you*
+  from a sample (map columns by dropdown, preview, save).
 - **OCR**: image-only / scanned PDF pages are read via the system Tesseract
   engine (driven from R, no binding required); each OCR'd page is flagged.
 - **PDF reader + forensic redaction guard**: text under a redaction overlay is
@@ -37,22 +40,36 @@ a YAML file, not by writing code.
 
 ---
 
-## Quick start
+## The interactive app (GUI + wizard)
+
+```sh
+# from the repo root:
+R -e 'shiny::runApp(".", launch.browser = TRUE)'
+```
+
+Three tabs, all point-and-click — no coding:
+- **Convert** — upload a statement, (optionally force a bank), click Convert.
+  See the detected template, trust score, the reconciliation checks, and a
+  transaction preview; download the Excel / CSV / JSON.
+- **Template wizard** — upload a *sample* export, map each field (date, amount,
+  description, …) to a source column with dropdowns, set the date format and
+  amount style, tick the fingerprint columns, **Preview** the parse live, then
+  **Save** — it writes `templates/<id>.yaml` for you. That is how a sole analyst
+  adds a new bank.
+- **Help** — the exact test commands and the add-a-bank steps.
+
+## Quick start (no GUI)
 
 ```r
-# From the repo root, source the engine and convert a statement:
 for (f in list.files("R", full.names = TRUE)) source(f)
 res <- convert_statement("samples/raw/bnz/bnz_transaction_export_01.csv",
                          bank = "BNZ", outdir = "outputs")
-res$status      # "ok"
-res$trust       # list(level, score, reasons)
-res$outputs     # paths to the .xlsx / .csv / .json
+res$status; res$trust; res$outputs
 ```
-
-Or from the shell:
 
 ```sh
 Rscript run.R samples/raw/bnz/bnz_transaction_export_01.csv BNZ outputs
+Rscript tests/run_tests.R      # the whole test suite
 ```
 
 Outputs per statement:
@@ -72,7 +89,10 @@ The engine is a plain folder of R files. On a Debian/Ubuntu host:
 apt-get install -y r-base-core \
   r-cran-yaml r-cran-jsonlite r-cran-openxlsx r-cran-pdftools
 
-# OCR (optional but recommended — enables scanned-PDF reading)
+# GUI + wizard:
+apt-get install -y r-cran-shiny r-cran-dt
+
+# OCR (optional but recommended — enables scanned-PDF reading):
 apt-get install -y tesseract-ocr poppler-utils
 
 # tests only:
@@ -80,18 +100,18 @@ apt-get install -y r-cran-testthat
 ```
 
 Copy the folder across, drop templates in `templates/`, and call
-`convert_statement()` from whatever analytics tool runs R. OCR auto-enables when
-`tesseract` + `pdftoppm` are on the PATH and no-ops safely when they are not.
+`convert_statement()` from whatever analytics tool runs R, or run the Shiny app
+for your team. OCR auto-enables when `tesseract` + `pdftoppm` are on the PATH and
+no-ops safely when they are not.
 
 ---
 
 ## Adding a new bank (no code)
 
-1. Copy an existing `templates/<bank>.yaml` and edit the column map, date format,
-   `amount_sign`, and `fingerprint` for the new layout.
-2. Put a sample export under `samples/raw/<bank>/`.
-3. Generate the golden snapshot and add a one-line test — see
-   [`tests/HOWTO-add-template-test.md`](tests/HOWTO-add-template-test.md).
+1. **Easiest:** open the app's **Template wizard**, upload a sample, map the
+   columns, Preview, Save.
+2. Or copy an existing `templates/*.yaml` and edit the `columns:` map.
+3. Add a golden test — see [`tests/HOWTO-add-template-test.md`](tests/HOWTO-add-template-test.md).
 4. `Rscript tests/run_tests.R` — your bank must pass and no other bank may break.
 
 Template format and the full data contract: [`docs/architecture/build-contract.md`](docs/architecture/build-contract.md).
@@ -102,6 +122,7 @@ Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/disco
 ## Layout
 
 ```
+app.R         Shiny GUI + template wizard
 R/            engine (schema, readers, detect, normalise, parse, reconcile,
               outputs, logging, ocr, convert)
 templates/    declarative per-bank YAML templates
