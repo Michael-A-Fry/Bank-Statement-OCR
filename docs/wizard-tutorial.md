@@ -52,7 +52,7 @@ answer it, the wizard is 2 minutes.
 
 ## 3. The ways AMOUNTS differ (pick one — this is the big one)
 
-Statements encode "money in vs money out" in four common ways. Pick the matching
+Statements encode "money in vs money out" in five common ways. Pick the matching
 `amount style` in the wizard:
 
 1. **One signed column** — `signed`.
@@ -61,10 +61,16 @@ Statements encode "money in vs money out" in four common ways. Pick the matching
    Each row fills one or the other. Map **both** the debit (withdrawals) and
    credit (deposits) columns. *This is the worked example.*
 3. **A `DR` / `CR` suffix** — `dr_cr_suffix`.
-   `123.45 DR` is out, `123.45 CR` is in. Common on credit-card statements.
+   `123.45 DR` is out, `123.45 CR` is in. Every amount carries a suffix.
 4. **A Type column holding D/C** — `type_dc`.
    A separate column says `D` or `C` (or `DR`/`CR`) and the amount is unsigned.
    Map the type column too.
+5. **Unsigned amounts (credit cards)** — `unsigned`.
+   A plain number like `45.00` is a **charge**, and only a **payment** is marked,
+   e.g. `500.00 CR`. Charges come out negative (money out), the `CR` payment
+   positive. If your card's *closing balance* is the amount owed (it rises with
+   charges) and you want it to reconcile, set `unsigned_default: credit` so
+   charges are positive instead — the wizard preview shows which way ties out.
 
 > If the balance goes the wrong way (deposits look like withdrawals), you picked
 > the wrong style. Change it and Preview again — no other change needed.

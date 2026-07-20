@@ -43,6 +43,9 @@ test_that("amount style detection", {
   expect_equal(detect_amount_style(c("Date", "Debit", "Credit", "Balance")), "debit_credit_cols")
   df_sfx <- data.frame(Date = "1", Amount = c("45.00 DR", "10.00 CR"), stringsAsFactors = FALSE)
   expect_equal(detect_amount_style(c("Date", "Amount"), df_sfx), "dr_cr_suffix")
+  # a credit card: bare charges plus a stray CR payment -> unsigned, NOT dr_cr_suffix
+  df_cc <- data.frame(Date = 1:3, Amount = c("45.00", "12.50", "500.00 CR"), stringsAsFactors = FALSE)
+  expect_equal(detect_amount_style(c("Date", "Amount"), df_cc), "unsigned")
 })
 
 test_that("field mapping guesses", {

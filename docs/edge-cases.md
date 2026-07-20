@@ -38,6 +38,8 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | `D`/`C` type column (credit cards) | ✅ | `amount_sign: type_dc` (ANZ Visa, tested) |
 | Separate debit / credit columns | 🟡 | `amount_sign: debit_credit_cols` implemented; needs a fixture to mark ✅ |
 | `DR`/`CR` suffix | 🟡 | `amount_sign: dr_cr_suffix` implemented; needs a fixture |
+| Unsigned amounts, `CR` = payment (credit cards) | ✅ | `amount_sign: unsigned` — bare = charge (−), `CR` = payment (+); `unsigned_default: credit` to reconcile an owed balance (tested) |
+| Closing/opening balance printed in the amount column | ✅ | dropped as a summary row, still captured for reconciliation (tested) |
 | Parentheses negatives `(45.00)` | ✅ | normaliser handles `(45.00)` / `45.00-` (tested) |
 | Thousands separators `1,234.56` | ✅ | stripped in normalise, raw kept in `amount_raw` |
 | `DR`/`OD` = negative, `CR` = positive balance markers | ✅ | read by `.num` (tested) |

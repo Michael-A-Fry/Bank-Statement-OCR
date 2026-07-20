@@ -3,7 +3,7 @@
 # Keys every template declares, regardless of format.
 .TEMPLATE_COMMON <- c("id", "bank", "statement_type", "format", "version",
                       "min_score", "fingerprint", "currency")
-.VALID_SIGN <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc")
+.VALID_SIGN <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc", "unsigned")
 
 # validate_template(t) -> character vector of problems (length 0 if valid).
 # Format-aware: delimited/excel carry columns+amount_sign at the top level and

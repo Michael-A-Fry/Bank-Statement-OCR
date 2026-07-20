@@ -215,6 +215,31 @@ test_that("year-less PDF dates with no period are preserved, not dropped", {
   expect_true(grepl("date_unresolved", tx$flags[1]))
 })
 
+# ---- credit-card: unsigned amounts + a closing-balance row in that column --
+test_that("a Visa PDF parses unsigned charges/CR payments and drops the balance row", {
+  w <- data.frame(stringsAsFactors = FALSE,
+    text = c("05","Dec","COFFEE","4.50",
+             "20","Dec","ONLINE","PAYMENT","500.00","CR",
+             "Closing","Balance","1234.00"),      # bottom row in the amount column
+    x = c(45,60,110,415,  45,60,110,150,415,440,  110,150,415),
+    y = c(40,40,40,40,    80,80,80,80,80,80,      110,110,110),
+    width = rep(20,13), height = rep(10,13))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Visa period from 1 Dec 2025 to 31 Dec 2025\nClosing Balance 1234.00"),
+    words = list(w), meta = list(page_count = 1L))
+  tmpl <- list(id = "visa", bank = "V", statement_type = "creditcard", format = "pdf",
+    version = 1, currency = "NZD", table = list(row_tol = 3, date_format = "%d %b",
+    amount_sign = "unsigned", columns = list(
+      date = list(x_min = 40, x_max = 74), description = list(x_min = 74, x_max = 405),
+      amount = list(x_min = 405, x_max = 470))))
+  tx <- parse_pdf_table(input, tmpl)$transactions
+  expect_equal(nrow(tx), 2L)                          # closing-balance row excluded
+  expect_equal(tx$amount, c(-4.50, 500))              # charge negative, CR payment positive
+  expect_identical(tx$direction, c("debit", "credit"))
+  expect_length(validate_template(c(tmpl, list(min_score = 1,
+    fingerprint = list(page_contains_all = list("Visa"))))), 0)   # 'unsigned' validates
+})
+
 # ---- reconcile: 2-digit-year period bounds --------------------------------
 test_that("dates_within_period resolves a 2-digit-year period", {
   w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),

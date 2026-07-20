@@ -118,6 +118,23 @@ parse_amount <- function(x, style = "signed", opts = list()) {
     return(list(value = value, direction = .direction(value), raw = raw))
   }
 
+  if (style == "unsigned") {
+    # Credit-card style: one amount column of UNSIGNED magnitudes, where the sign
+    # is implied, not printed. Unmarked amounts take `unsigned_default` (default
+    # "debit" = a purchase / money out -> negative, consistent with how a debit
+    # column is treated); a trailing CR flips to credit (a payment in), a trailing
+    # DR/OD forces debit. `amount_raw` keeps the value verbatim either way.
+    raw <- as.character(x)
+    mag <- abs(.num(raw, dec))
+    default_debit <- !identical(opts[["unsigned_default"]] %||% "debit", "credit")
+    up <- toupper(trimws(raw))
+    debit <- rep(default_debit, length(mag))
+    debit[grepl("CR\\s*$", up)] <- FALSE          # explicit credit (payment)
+    debit[grepl("(DR|OD)\\s*$", up)] <- TRUE       # explicit debit
+    value <- ifelse(is.na(mag), NA_real_, ifelse(debit, -mag, mag))
+    return(list(value = value, direction = .direction(value), raw = raw))
+  }
+
   if (style == "type_dc") {
     raw <- as.character(x)
     mag <- abs(.num(raw, dec))

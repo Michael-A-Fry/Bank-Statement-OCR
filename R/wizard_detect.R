@@ -72,7 +72,8 @@ wd_amount_labels <- function() c(
   "signed"            = "One amount column, a minus sign means money out",
   "type_dc"           = "A D / C (debit / credit) indicator column",
   "debit_credit_cols" = "Separate money-in and money-out columns",
-  "dr_cr_suffix"      = "Amounts ending in DR / CR"
+  "dr_cr_suffix"      = "Amounts ending in DR / CR",
+  "unsigned"          = "Unsigned amounts (credit card): a plain number is a charge, a 'CR' is a payment"
 )
 
 # Guess the amount style from headers + a small character sample.
@@ -87,8 +88,13 @@ detect_amount_style <- function(headers, df = NULL) {
       if (length(vals) && all(vals %in% c("D", "C", "DR", "CR"))) return("type_dc")
     }
     amtcol <- headers[grepl("amount|value", h)][1]
-    if (!is.na(amtcol) && amtcol %in% names(df) &&
-        any(grepl("(DR|CR)[[:space:]]*$", toupper(as.character(df[[amtcol]]))))) return("dr_cr_suffix")
+    if (!is.na(amtcol) && amtcol %in% names(df)) {
+      vals <- toupper(trimws(as.character(df[[amtcol]]))); vals <- vals[nzchar(vals)]
+      suf <- grepl("(DR|CR)[[:space:]]*$", vals)
+      # ALL amounts carry DR/CR -> dr_cr_suffix; only SOME (bare numbers plus a
+      # stray CR payment) -> the unsigned credit-card style.
+      if (length(vals) && any(suf)) return(if (all(suf)) "dr_cr_suffix" else "unsigned")
+    }
   }
   "signed"
 }

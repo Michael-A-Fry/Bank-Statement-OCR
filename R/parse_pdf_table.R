@@ -54,6 +54,7 @@ parse_pdf_table <- function(input, template) {
   # decimal_mark: dot | comma | auto. Accepted top-level or inside the table block
   # so a European PDF template can declare its locale.
   dec <- template$decimal_mark %||% t$decimal_mark %||% "auto"
+  udef <- template$unsigned_default %||% t$unsigned_default %||% "debit"
   words_by_page <- input$words %||% list()
 
   recs <- list()
@@ -214,7 +215,7 @@ parse_pdf_table <- function(input, template) {
       amt$raw <- ifelse(cr_has, cr_raw, deb_raw)
     } else {
       amt_raw <- getc("amount")
-      amt <- parse_amount(amt_raw, style, list(decimal = dec)); amt$raw <- amt_raw
+      amt <- parse_amount(amt_raw, style, list(decimal = dec, unsigned_default = udef)); amt$raw <- amt_raw
     }
     description <- clean_description(getc("description"))
   }

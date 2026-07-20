@@ -65,7 +65,7 @@ parse_statement <- function(input, template) {
   # decimal_mark: dot | comma | auto (default). Lets a European template declare
   # its locale so "1.234,56" and bare "1.234" are read correctly.
   dec <- template$decimal_mark %||% "auto"
-  amt_opts <- list(decimal = dec)
+  amt_opts <- list(decimal = dec, unsigned_default = template$unsigned_default %||% "debit")
   if (style == "signed") {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
   } else if (style == "debit_credit_cols") {
