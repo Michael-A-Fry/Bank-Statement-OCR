@@ -1,0 +1,25 @@
+id: bnz_everyday_csv
+bank: BNZ
+statement_type: everyday
+format: delimited
+version: 1
+effective_from: 2018-01-01
+effective_to: null
+min_score: 3
+fingerprint:
+  header_contains_all: [Date, Amount, Payee, "Tran Type", "This Party Account"]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: Date, format: "%d/%m/%y"}
+  amount:      {source: Amount}
+  description: {source: Payee}
+  particulars: {source: Particulars}
+  code:        {source: Code}
+  reference:   {source: Reference}
+  type:        {source: "Tran Type"}
+  other_party: {source: "Other Party Account"}
+  balance:     null
+amount_sign: signed
+currency: NZD

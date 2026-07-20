@@ -1,0 +1,23 @@
+id: anz_investmentfunds_pdf
+bank: ANZ
+statement_type: investment-funds
+format: pdf
+version: 1
+effective_from: null
+effective_to: null
+min_score: 2
+fingerprint:
+  page_contains_all: ["Investment Funds", "account transactions"]
+table:
+  region: {x_min: 320, x_max: 545}   # isolate the statement column (drop left annotations)
+  row_tol: 3                          # y tolerance grouping words into a line
+  date_format: "%d/%m/%Y"
+  amount_sign: signed
+  columns:
+    date:        {x_min: 320, x_max: 360}
+    description: {x_min: 360, x_max: 440}
+    amount:      {x_min: 500, x_max: 545}
+  extras:
+    units:       {x_min: 440, x_max: 475}
+    unit_price:  {x_min: 475, x_max: 500}
+currency: NZD

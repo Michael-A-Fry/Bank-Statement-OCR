@@ -1,0 +1,48 @@
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Runtime I/O (never commit real statements or generated conversions/logs).
+# The folder poller drops originals into inbox/ and moves them to processed/ or
+# failed/; conversions land in out/ and outbox/. All of these can hold REAL bank
+# statements on a deployed box, so none may ever be committed.
+/out/
+/outputs/
+/outbox/
+/inbox/
+/processed/
+/failed/
+/stuck/
+/logs/
+*.log
+
+# Scratch / temp
+scratch/
+tmp/
+*.tmp
+
+# NOTE: samples/ is intentionally tracked — it is the public specimen corpus
+# used for template design and golden-file tests.
+
+# Real / personal statement data staged for LOCAL testing only.
+# NEVER committed. Drop your files in samples/_private_staging/ -- everything
+# there is ignored except its README, which documents the folder.
+samples/_private_staging/*
+!samples/_private_staging/README.md
+
+# Belt-and-braces: never commit real statements dropped anywhere private,
+# whatever the extension.
+/private/
+/incoming/
+**/*.private.*

@@ -1,0 +1,23 @@
+# ASB everyday PDF statement.
+# Columns: Date | type + details | Debit/Withdrawal $ | Deposit $ | Balance $
+# Dates day+month only; year from the labelled Opening/Closing date.
+# Two money columns -> debit_credit_cols. Built from real statement coordinates.
+id: asb_everyday_pdf
+bank: ASB
+statement_type: everyday
+format: pdf
+version: 1
+min_score: 2
+fingerprint:
+  page_contains_all: ["Debit/Withdrawal", "Deposit", "Balance"]
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: debit_credit_cols
+  columns:
+    date:        {x_min: 33,  x_max: 72}
+    description: {x_min: 82,  x_max: 328}
+    debit:       {x_min: 328, x_max: 415}
+    credit:      {x_min: 415, x_max: 478}
+    balance:     {x_min: 478, x_max: 545}
+currency: NZD

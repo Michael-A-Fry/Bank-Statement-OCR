@@ -1,0 +1,35 @@
+# Key-value ("mode: fields") template -- the IRD/form-style paradigm.
+# Stored OUTSIDE templates/ so it does not affect transaction detection; it is
+# consumed by extract_fields() directly. This is the foundation IRD-document
+# support builds on once a real IRD document is available to model.
+#
+# Each field is a label-matcher spec (R/labels.R): `any_of` lists synonyms;
+# `value` is money/date/text/regex; `occurrence`, `where`, `required` are
+# optional. A single string or {label: "..."} still works, and any field whose
+# name matches a base-dictionary key (dictionaries/labels.yaml) inherits those
+# synonyms automatically -- so these need only add wording specific to this doc.
+id: anz_kiwisaver_fields
+bank: ANZ
+statement_type: kiwisaver
+format: pdf
+mode: fields
+version: 1
+fingerprint:
+  page_contains_all: ["KiwiSaver", "Opening balance"]
+fields:
+  # opening/closing inherit the base dictionary's synonyms (balance brought
+  # forward, starting balance, ...) -- listed here too for a maintainer's eye.
+  opening_balance:
+    any_of: ["Opening balance", "Balance brought forward", "Starting balance"]
+    value: money
+  closing_balance:
+    any_of: ["Closing balance", "Balance carried forward", "Ending balance"]
+    value: money
+  contributions:           {label: "Contributions"}
+  government_contribution:
+    any_of: ["Government contribution", "Govt contribution", "Member tax credit"]
+    value: money
+  investment_return:       {label: "Investment return"}
+  tax:                     {label: "Tax"}
+  fees:                    {label: "Fees"}
+currency: NZD

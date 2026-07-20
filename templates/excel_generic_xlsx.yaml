@@ -1,0 +1,19 @@
+id: excel_generic_xlsx
+bank: Generic
+statement_type: excel
+format: excel
+version: 1
+effective_from: null
+effective_to: null
+min_score: 3
+fingerprint:
+  header_contains_all: [Date, Description, Amount, Balance]
+  filename_regex: null
+columns:
+  date:        {source: Date, format: "%d/%m/%Y"}
+  amount:      {source: Amount}
+  description: {source: Description}
+  balance:     {source: Balance}
+  reference:   {source: Reference}
+amount_sign: signed
+currency: NZD

@@ -1,0 +1,4 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2026-01-01","01/01/26","PAK N SAVE",-25,"-25.00","debit",,,"TEST CITY","000001",,"---","POS","NZD",""
+2,"2026-01-02","02/01/26","Savings",-100,"-100.00","debit",,,,,"INTERNET XFR","22-2222-2222222-00","FT","NZD",""
+3,"2026-01-03","03/01/26","Friend Share",11.5,"11.50","credit",,,"Software split",,,"33-3333-3333333-00","AP","NZD",""

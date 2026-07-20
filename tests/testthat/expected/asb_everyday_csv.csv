@@ -1,0 +1,5 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2014-12-20","2014/12/20","Savings",-500,"-500.00","debit",,,,,"2014122001",,"XFER","NZD",""
+2,"2014-12-21","2014/12/21","EFTPOS",-3.8,"-3.80","debit",,,,,"2014122101",,"POS","NZD",""
+3,"2014-12-22","2014/12/22","12-3456-7890123-45 001 INTEREST",-456.78,"-456.78","debit",,,,,"2014122201",,"DEBIT","NZD",""
+4,"2014-12-23","2014/12/23","Wages",5678.9,"5678.90","credit",,,,,"2014122301",,"DIRECTDEP","NZD",""
