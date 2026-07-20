@@ -409,9 +409,8 @@ server <- function(input, output, session) {
   guided <- reactiveVal(NULL)   # list(path, name, tmpl)
 
   guided_date_choices <- function()
-    c(setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
-               vapply(wd_date_table(), `[[`, "", "label")),
-      "31 Dec  (day month-name, no year)" = "%d %b")
+    setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+             vapply(wd_date_table(), `[[`, "", "label"))
 
   apply_overrides <- function(tmpl, bank, datefmt, sign) {
     if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
