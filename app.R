@@ -156,6 +156,60 @@ If a check fails, <b>Diagnostics</b> says where/why/how to fix &mdash; usually w
 <p class="lead" style="margin-top:12px">Full version with more detail: <code>docs/wizard-tutorial.md</code>.</p>
 </div>')
 
+# about_html() -- the one-stop-shop for a brand-new forensic accountant: what the
+# tool is, how it flows end to end (visual), how it proves it's right, and how to
+# start. Rendered on the About tab (the landing tab).
+about_html <- function() HTML('
+<style>
+ .ab{max-width:960px} .ab h3{color:#0b7a34;margin:22px 0 6px} .ab p{color:#333}
+ .ab .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:8px 0 6px}
+ .ab .box{background:#f2f8f4;border:1px solid #bfe0c8;border-radius:8px;padding:10px 12px;min-width:120px;max-width:170px;font-size:12.5px}
+ .ab .box b{display:block;color:#0b5} .ab .arrow{display:flex;align-items:center;padding:0 8px;color:#888;font-size:20px}
+ .ab .branch{background:#fff8e6;border-color:#f0c36d} .ab .term{background:#eef;border-color:#c9c9ef}
+ .ab table{border-collapse:collapse;margin:6px 0} .ab td,.ab th{border:1px solid #ddd;padding:5px 9px;font-size:13px;text-align:left}
+ .ab th{background:#f2f6f2} .ab code{background:#eef;padding:0 3px;border-radius:3px} .ab .muted{color:#777}
+ .ab ol{margin:4px 0 4px 18px}
+</style>
+<div class="ab">
+<h2 style="margin:0">Bank Statement OCR</h2>
+<p class="muted">Turn any bank statement — PDF, Excel or CSV — into clean, audit-grade transaction data you can trust. Built for forensic accountants. Deterministic (no AI guessing): if it can&#39;t be sure, it tells you exactly why.</p>
+
+<h3>How it flows, end to end</h3>
+<div class="flow">
+  <div class="box"><b>1. Upload</b>your statement (PDF / Excel / CSV) on the Convert tab</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box"><b>2. Detect</b>it matches your bank to a saved template automatically</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box"><b>3. Extract</b>date, description, amount, balance &mdash; verbatim</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box"><b>4. Check</b>reconciles the balance &amp; flags anything off (trust score)</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box term"><b>5. Download</b>Excel / CSV / JSON, and rate the result</div>
+</div>
+<div class="flow">
+  <div class="box branch" style="max-width:360px"><b>New bank? No template yet &rarr; Guided setup</b>The tool pre-fills a template from your file; you check the preview and click Save. Next upload of that bank just works. No coding, no jargon.</div>
+</div>
+
+<h3>How you know it&#39;s right</h3>
+<table>
+<tr><th>Signal</th><th>What it tells you</th></tr>
+<tr><td><b>Trust: high</b></td><td>Opening balance + every transaction = the closing balance the statement prints. Provably complete.</td></tr>
+<tr><td><b>Trust: medium</b></td><td>Parsed, but a check couldn&#39;t run (e.g. no balance on the statement). Eyeball it.</td></tr>
+<tr><td><b>Completeness: unverified</b></td><td>Nothing to reconcile against &mdash; confirm the row count matches the statement.</td></tr>
+<tr><td><b>Field coverage</b></td><td>Which fields are populated, which are empty (maybe a wrong column), which aren&#39;t on this statement.</td></tr>
+<tr><td><b>Diagnostics</b></td><td>If anything&#39;s off: where, why, and how to fix it.</td></tr>
+</table>
+<p class="muted">Redactions (black boxes) are never read or guessed — kept as <code>[REDACTED]</code>. Merged multi-statement PDFs are detected and you&#39;re asked to split them.</p>
+
+<h3>Get started in 3 steps</h3>
+<ol>
+<li><b>Convert tab</b> &rarr; upload a statement &rarr; <b>Convert</b>. Review the checks &amp; coverage, then download.</li>
+<li>If it says <b>unsupported</b>, click <b>🪄 Set up this statement (guided)</b> — confirm the pre-filled preview, Save. Convert again.</li>
+<li>Rate the result (the thumbs) so the team can see what works. That&#39;s it.</li>
+</ol>
+<p class="muted">Deeper how-to (drawing PDF columns, every way statements differ): the <b>ⓘ</b> button on the Add-a-template tab, or <code>docs/wizard-tutorial.md</code>. Best results come from CSV/Excel exports where your bank offers them.</p>
+</div>')
+
 # ---------------------------------------------------------------------------
 ui <- fluidPage(
   tags$head(tags$style(HTML(
@@ -163,6 +217,9 @@ ui <- fluidPage(
      .muted{color:#666}.mono{font-family:monospace;white-space:pre-wrap}"))),
   titlePanel("Bank statement conversion"),
   tabsetPanel(
+    id = "main_tabs",
+    # ---- About (landing) ----------------------------------------------
+    tabPanel("About", br(), about_html()),
     # ---- Convert -------------------------------------------------------
     tabPanel(
       "Convert",
@@ -190,9 +247,14 @@ ui <- fluidPage(
         )
       )
     ),
-    # ---- Template wizard ----------------------------------------------
+    # ---- Add a template (spreadsheet + PDF wizards, consolidated) ------
     tabPanel(
-      "Template wizard",
+      "Add a template",
+      br(),
+      helpText(HTML("Most banks set themselves up automatically via <b>Guided setup</b> on the Convert tab. Use these wizards to build or fine-tune a template by hand. Click <b>ⓘ</b> for the full step-by-step.")),
+      tabsetPanel(
+    tabPanel(
+      "Spreadsheet (CSV / Excel)",
       br(),
       sidebarLayout(
         sidebarPanel(
@@ -230,10 +292,9 @@ ui <- fluidPage(
         )
       )
     ),
-    # ---- Help ----------------------------------------------------------
-    # ---- PDF wizard ----------------------------------------------------
+    # ---- PDF wizard (nested under Add a template) ----------------------
     tabPanel(
-      "PDF wizard",
+      "PDF",
       br(),
       sidebarLayout(
         sidebarPanel(
@@ -269,6 +330,8 @@ ui <- fluidPage(
           h4("Live preview"), verbatimTextOutput("wp_prev_status"), DTOutput("wp_prev_tbl"),
           h4("Generated PDF template"), div(class = "mono", verbatimTextOutput("wp_yaml"))
         )
+      )
+    )
       )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -324,31 +387,6 @@ ui <- fluidPage(
             )
           )
         )
-      )
-    ),
-    tabPanel(
-      "Help",
-      br(),
-      div(style = "max-width:800px",
-        h4("Testing the engine without the GUI"),
-        tags$pre(
-"# one statement -> outputs/ (xlsx + csv + json):
-Rscript run.R samples/raw/bnz/bnz_transaction_export_01.csv BNZ outputs
-
-# run the whole test suite:
-Rscript tests/run_tests.R"),
-        h4("Adding a bank"),
-        tags$ol(
-          tags$li(HTML("Click <b>ⓘ How to build a template (step-by-step)</b> at the top of either wizard for the full walkthrough — it explains every way statements differ (amount styles, date formats, redactions, combined/merged statements).")),
-          tags$li("Template wizard tab: upload a sample, map the columns, Preview, Save."),
-          tags$li("PDF wizard tab: draw a box over each column, Preview, Save."),
-          tags$li(HTML("A worked example lives at <code>samples/raw/tutorial/sample_everyday_statement.pdf</code> — open it in the PDF wizard and follow along.")),
-          tags$li(HTML("Full written guide: <code>docs/wizard-tutorial.md</code>. Golden tests: <code>tests/HOWTO-add-template-test.md</code>."))
-        ),
-        p(class = "muted",
-          "The wizard handles single-header delimited exports. Statements with a ",
-          "preamble (e.g. ASB) or PDF tables are hand-edited from an existing ",
-          "template for now.")
       )
     )
   )
