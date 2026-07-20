@@ -17,6 +17,7 @@ suppressMessages({
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 
 TEMPLATES_DIR <- "templates"
+LOGDIR <- "logs"   # run log + feedback log live together, next to the app
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
 
@@ -104,7 +105,8 @@ ui <- fluidPage(
           uiOutput("cv_status"),
           h4("Checks"), DTOutput("cv_kpis"),
           h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
-          h4("Transactions (preview)"), DTOutput("cv_txns")
+          h4("Transactions (preview)"), DTOutput("cv_txns"),
+          uiOutput("cv_feedback")
         )
       )
     ),
@@ -223,6 +225,7 @@ server <- function(input, output, session) {
 
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
+  cv_fb_done <- reactiveVal(FALSE)
 
   observeEvent(input$cv_go, {
     req(input$cv_file)
@@ -233,10 +236,12 @@ server <- function(input, output, session) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
     res <- tryCatch(
       convert_statement(src, bank = bank, outdir = sess,
-                        templates_dir = TEMPLATES_DIR, requested_by = "shiny"),
+                        templates_dir = TEMPLATES_DIR, requested_by = "shiny",
+                        logdir = LOGDIR),
       error = function(e) list(status = "failed",
                                messages = paste("error:", conditionMessage(e))))
     cv_res(res); cv_dir(sess)
+    cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
   })
 
   output$cv_status <- renderUI({
@@ -289,6 +294,36 @@ server <- function(input, output, session) {
       file.copy(p, file, overwrite = TRUE)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
+
+  # ---- Feedback (every conversion can be rated; kept in feedback.jsonl) ----
+  output$cv_feedback <- renderUI({
+    res <- cv_res(); if (is.null(res) || is.null(res$run_id)) return(NULL)
+    if (isTRUE(cv_fb_done()))
+      return(div(style = "margin-top:16px", span(class = "ok",
+        "Thanks — your feedback was recorded.")))
+    div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
+        h4("Was this conversion correct?"),
+        p(class = "muted", sprintf("run %s", res$run_id)),
+        radioButtons("cv_fb_verdict", NULL, inline = TRUE,
+          choices = c("Correct" = "correct", "Minor issues" = "minor_issues",
+                      "Wrong" = "wrong")),
+        textAreaInput("cv_fb_comment", "Comment (optional — what was wrong?)",
+                      width = "100%", rows = 2),
+        actionButton("cv_fb_submit", "Submit feedback", class = "btn-primary"))
+  })
+
+  observeEvent(input$cv_fb_submit, {
+    res <- cv_res(); req(res, res$run_id)
+    ok <- tryCatch({
+      submit_feedback(run_id = res$run_id, verdict = input$cv_fb_verdict,
+                      comment = input$cv_fb_comment, requested_by = "shiny",
+                      template_id = res$template_id, logdir = LOGDIR)
+      TRUE
+    }, error = function(e) FALSE)
+    cv_fb_done(isTRUE(ok))
+    if (!isTRUE(ok))
+      showNotification("Could not save feedback.", type = "error")
+  })
 
   # ---- PDF wizard ---------------------------------------------------
   wp_bands <- reactiveVal(list())

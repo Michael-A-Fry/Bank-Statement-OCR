@@ -8,6 +8,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
+  # run_id: a stable, human-readable handle for this conversion. Content hash
+  # (first 10 chars) + timestamp, so feedback and logs can point back to it.
+  sha <- safe(file_sha256(path), NA_character_)
+  run_id <- paste0(substr(if (is.na(sha)) "na" else sha, 1, 10), "-",
+                   format(Sys.time(), "%Y%m%d%H%M%S"))
   result <- new_result(status = "failed", template_id = NA_character_,
                        messages = character(0))
   detected_template <- NA_character_
@@ -84,13 +89,15 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   })
 
   result <- outcome
+  result$run_id <- run_id
 
   # ---- run log (no raw statement content) ----
   safe(log_event(logdir, list(
     ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+    run_id = run_id,
     requested_by = requested_by %||% NA_character_,
     source_file = basename(path %||% NA_character_),
-    source_sha256 = safe(file_sha256(path), NA_character_),
+    source_sha256 = sha,
     bank_hint = bank %||% NA_character_,
     detected_template = result$template_id,
     template_version = template_version,
