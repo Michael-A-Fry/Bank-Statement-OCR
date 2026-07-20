@@ -327,5 +327,23 @@ build time; recorded as working assumptions until confirmed:
 - [x] Bank 4 — Categorisation, reconciliation & review
 - [x] Bank 5 — Consistency, maintainability & governance
 - **Discovery complete.**
+
+---
+
+## 10. V1 build milestone (2026-07-20)
+Engine built, adversarially audited and tested in pure R.
+- **Delimited (CSV/TSV/TDV) path end-to-end for six banks** — ANZ everyday, ANZ
+  credit card, ASB, BNZ, Kiwibank, Westpac — each with a golden-file test.
+- **OCR integrated** — system Tesseract + poppler driven from R (no binding, no
+  Python) as the no-text-layer fallback in the PDF reader; redactions stay
+  honoured (OCR reads only visible pixels).
+- PDF reader + forensic redaction guard; reconciliation KPIs + trust score;
+  never-crash status model; per-run JSON logging.
+- **Adversarial audit: 21 findings, all resolved.** Suite: 16 files / 76 tests
+  / **292 assertions, 0 failures**.
+- **Deferred (need real data, not code):** per-bank PDF transaction-table
+  templates; `.xlsx` templates. Categorisation intentionally out of v1 scope.
+
+See `README.md` and `docs/architecture/build-contract.md`.
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
