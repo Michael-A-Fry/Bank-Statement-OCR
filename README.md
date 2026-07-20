@@ -142,6 +142,8 @@ Real-world edge cases + honest status: [`docs/edge-cases.md`](docs/edge-cases.md
 Visual-wizard design + A/B/C roadmap: [`docs/wizard-vision-and-roadmap.md`](docs/wizard-vision-and-roadmap.md).
 OCR pre-processing research: [`docs/research/ocr-preprocessing.md`](docs/research/ocr-preprocessing.md).
 Template format and the full data contract: [`docs/architecture/build-contract.md`](docs/architecture/build-contract.md).
+**Setting it up for a team? [`docs/SETUP-AND-DEPLOYMENT.md`](docs/SETUP-AND-DEPLOYMENT.md)** — install once on a VM, users reach it by browser or shared folder (no R for users).
+**Launching? [`docs/LAUNCH-AUDIT.md`](docs/LAUNCH-AUDIT.md)** — readiness, honest boundaries, drift & missing-data behaviour, go/no-go.
 Server deployment, concurrency, AD-group auth & Qlik integration (design): [`docs/architecture/deployment-integration-plan.md`](docs/architecture/deployment-integration-plan.md).
 Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/discovery/discovery-log.md).
 
