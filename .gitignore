@@ -25,3 +25,6 @@ tmp/
 
 # NOTE: samples/ is intentionally tracked — it is the public specimen corpus
 # used for template design and golden-file tests.
+
+# Real third-party statement data staged for review (never auto-publish)
+samples/_private_staging/
