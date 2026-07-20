@@ -141,6 +141,21 @@ reconcile <- function(parsed, template = NULL) {
   }
   score <- if (total == 0) 0 else round(100 * (n_pass + 0.5 * n_na) / total)
 
+  # Balance reconciliation is the strongest proof of completeness (opening + every
+  # transaction = closing). When it PASSES, a failing running-balance-continuity
+  # check alone -- typical of combined/multi-account statements where the balance
+  # column resets between sections -- should not drag trust to "low". The result
+  # still surfaces as needs-review (a KPI failed), but honestly rated medium.
+  if (identical(level, "low")) {
+    fails <- applicable$name[applicable$status == "fail"]
+    bal_pass <- any(applicable$name == "balance_reconciliation" & applicable$status == "pass")
+    secondary <- c("running_balance_continuity", "dates_within_period")
+    if (bal_pass && length(fails) && all(fails %in% secondary)) {
+      level <- "medium"
+      reasons <- c(reasons, "balance fully reconciles (opening + every transaction = closing); the running-balance / period checks are secondary and commonly flag on combined/multi-account statements")
+    }
+  }
+
   # Completeness guard (forensic): if NEITHER a balance reconciliation NOR a
   # running-balance check could run, and there's no stated count, the engine has
   # no independent way to know a transaction was dropped. Say so loudly and never

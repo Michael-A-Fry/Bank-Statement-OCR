@@ -89,3 +89,24 @@ test_that("a row is kept only with a real amount; type codes don't break the dat
   expect_equal(p$header$opening_balance, 595.50)
   expect_equal(p$header$closing_balance, 1095.50)
 })
+
+test_that("summary lines are dropped and 2-digit period years resolve", {
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",                  # real txn
+              "31","Jan","Closing","Balance","1234.00","1234.00"), # summary line -> drop
+    x     = c(45,60,110,415,490,   45,60,110,180,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,70,70,70),
+    width = c(12,16,45,25,30,      12,16,50,50,34,30),
+    height = rep(10, 11))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    # period uses a 2-DIGIT year -> must resolve to 2026 (not 0026)
+    pages = c("Statement Opening date 1 Jan 26 Closing date 31 Jan 26"),
+    words = list(words), meta = list(page_count = 1L))
+  tmpl <- list(id = "s", bank = "S", statement_type = "e", format = "pdf", version = 1,
+    currency = "NZD", table = list(row_tol = 3, date_format = "%d %b", amount_sign = "signed",
+      columns = list(date = list(x_min = 40, x_max = 74), description = list(x_min = 74, x_max = 360),
+        amount = list(x_min = 360, x_max = 470), balance = list(x_min = 470, x_max = 545))))
+  tx <- parse_pdf_table(input, tmpl)$transactions
+  expect_equal(nrow(tx), 1L)                        # "Closing Balance" row dropped
+  expect_equal(tx$date, "2026-01-05")              # 2-digit year -> 2026, not 0026
+})

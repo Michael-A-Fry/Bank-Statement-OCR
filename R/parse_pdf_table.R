@@ -75,13 +75,17 @@ parse_pdf_table <- function(input, template) {
   eff_fmt <- date_fmt
   if (!has_year) {
     eff_fmt <- paste(date_fmt, "%Y")
-    yrs <- suppressWarnings(as.integer(unlist(regmatches(
-      c(md$period_start, md$period_end),
-      gregexpr("(19|20)[0-9]{2}", c(md$period_start, md$period_end))))))
-    yrs <- unique(yrs[!is.na(yrs)])
-    pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%Y-%m-%d")) {
-      dd <- suppressWarnings(as.Date(s, f)); if (!is.na(dd)) return(dd) }; as.Date(NA) }
+    # Parse the period bounds (2-digit years too, e.g. ASB "13 Jun 26") and take
+    # the year(s) from the parsed dates -- more robust than a 4-digit regex.
+    # Reject implausible years: as.Date("13 Aug 25", "%d %b %Y") yields 0025 (not
+    # NA), so without this the 4-digit format greedily eats a 2-digit year.
+    pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
+        "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+      dd <- suppressWarnings(as.Date(s, f))
+      if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
     p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
+    yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
+    yrs <- unique(yrs[!is.na(yrs)])
     full_date <- function(raw) {
       if (!length(yrs)) return(raw)
       bad <- is.na(raw) | !nzchar(trimws(raw))
@@ -109,9 +113,19 @@ parse_pdf_table <- function(input, template) {
       paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
     grepl("[0-9]", m)
   }
+  # Summary lines (opening/closing balance, totals, carry-forward) are NOT
+  # transactions even though they carry a money value on a dated line. Drop them
+  # generically -- a real transaction is never *named* "closing balance". This
+  # stops a statement's own summary row from corrupting the reconciliation.
+  .is_summary <- function(r) {
+    txt <- tolower(paste(r$description %||% "", r$raw %||% ""))
+    grepl(paste0("opening balance|closing balance|balance brought forward|",
+                 "balance carried forward|brought forward|carried forward|",
+                 "total (withdrawal|deposit|credit|debit|payment)"), txt)
+  }
   keep <- vapply(recs, function(r)
-    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)) && .has_amount(r),
-    logical(1))
+    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)) &&
+    .has_amount(r) && !.is_summary(r), logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
