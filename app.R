@@ -20,6 +20,7 @@ TEMPLATES_DIR <- "templates"            # curated, team-maintained (default) tem
 USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guided setup
 LOGDIR <- "logs"   # run log + feedback log live together, next to the app
 UPLOADS_DIR <- "uploads"  # every uploaded statement + its lifecycle status (git-ignored)
+DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictionary
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
 
@@ -102,6 +103,7 @@ ui <- fluidPage(
         sidebarPanel(
           width = 4,
           fileInput("cv_file", "Statement file (.csv / .tsv / .tdv / .pdf)"),
+          textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_bank_ui"),
           actionButton("cv_go", "Convert", class = "btn-primary"),
           br(), br(),
@@ -213,6 +215,14 @@ ui <- fluidPage(
     tabPanel(
       "Admin",
       br(),
+      conditionalPanel("!output.admin_authed",
+        wellPanel(style = "max-width:440px",
+          h4("Admin — password required"),
+          passwordInput("adm_pw", "Password"),
+          actionButton("adm_login", "Enter", class = "btn-primary"),
+          uiOutput("adm_login_msg"),
+          helpText("Set the password with the BSO_ADMIN_PASSWORD environment variable before deploying."))),
+      conditionalPanel("output.admin_authed",
       tabsetPanel(
         tabPanel(
           "Insights",
@@ -260,7 +270,17 @@ ui <- fluidPage(
             column(7,
               h4("Template YAML"),
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
-          )
+          ),
+          tags$hr(),
+          h4("Label dictionary — the wordings the engine recognises"),
+          helpText(HTML("This is usually why a check shows <b>NA</b> — the statement labels its opening/closing balance, period or totals with wording the engine hasn't seen. Add the exact phrases your statements use (case-insensitive) and Save. Applies to every statement immediately.")),
+          fluidRow(
+            column(5,
+              actionButton("adm_dict_reload", "Reload from file"),
+              actionButton("adm_dict_save", "Save dictionary", class = "btn-primary"),
+              br(), br(), uiOutput("adm_dict_msg")),
+            column(7,
+              textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))
         ),
         tabPanel(
           "Bulk audit & gaps",
@@ -313,6 +333,7 @@ ui <- fluidPage(
           )
         )
       )
+      )
     )
   )
 )
@@ -329,6 +350,20 @@ server <- function(input, output, session) {
 
   tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
   templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR) })
+
+  # ---- Admin password gate. Hidden outputs are suspended, so no admin data is
+  # computed or sent to the browser until the password is entered. Set it with
+  # the BSO_ADMIN_PASSWORD env var (a default is used only for local dev).
+  admin_ok <- reactiveVal(FALSE)
+  output$admin_authed <- reactive(isTRUE(admin_ok()))
+  outputOptions(output, "admin_authed", suspendWhenHidden = FALSE)
+  observeEvent(input$adm_login, {
+    pw <- Sys.getenv("BSO_ADMIN_PASSWORD", "changeme")
+    if (identical(input$adm_pw %||% "", pw)) {
+      admin_ok(TRUE); output$adm_login_msg <- renderUI(NULL)
+    } else output$adm_login_msg <- renderUI(
+      div(style = "color:#b00020;margin-top:6px", "Wrong password."))
+  })
 
   output$cv_bank_ui <- renderUI({
     banks <- sort(unique(vapply(templates(), function(t) t$bank %||% "", character(1))))
@@ -392,6 +427,26 @@ server <- function(input, output, session) {
         t$id, "' takes precedence — rename the id for your edit to apply.")
       output$adm_tpl_msg <- .tpl_note(msg, !shadowed)
     } else output$adm_tpl_msg <- .tpl_note(paste("Could not save:", path), FALSE)
+  })
+
+  # ---- Admin: label dictionary edit (the fix for "check shows NA") ----
+  .load_dict_text <- function()
+    if (file.exists(DICT_PATH)) paste(readLines(DICT_PATH, warn = FALSE), collapse = "\n") else ""
+  observeEvent(admin_ok(), if (isTRUE(admin_ok()))
+    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
+  observeEvent(input$adm_dict_reload,
+    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
+  observeEvent(input$adm_dict_save, {
+    txt <- input$adm_dict_edit %||% ""
+    if (!isTRUE(tryCatch({ yaml::yaml.load(txt); TRUE }, error = function(e) FALSE))) {
+      output$adm_dict_msg <- renderUI(div(style = "color:#b00020", "Not valid YAML — not saved."))
+      return()
+    }
+    safe(file.copy(DICT_PATH, paste0(DICT_PATH, ".bak"), overwrite = TRUE))
+    okw <- isTRUE(tryCatch({ writeLines(txt, DICT_PATH); TRUE }, error = function(e) FALSE))
+    output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+      if (okw) "Saved (backup at labels.yaml.bak). New wordings apply to the next conversion."
+      else "Could not write the file — check folder permissions."))
   })
 
   # ---- Admin: bulk audit & gaps ----
@@ -473,17 +528,19 @@ server <- function(input, output, session) {
     src <- file.path(sess, input$cv_file$name)
     file.copy(input$cv_file$datapath, src, overwrite = TRUE)
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
+    who <- if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) trimws(input$cv_by)
+           else (session$user %||% current_user())
     res <- tryCatch(
       convert_statement(src, bank = bank, outdir = sess,
                         templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
-                        requested_by = "shiny", logdir = LOGDIR),
+                        requested_by = who, logdir = LOGDIR),
       error = function(e) list(status = "failed",
                                messages = paste("error:", conditionMessage(e))))
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
     # Capture the upload + its outcome so a failed/abandoned new format is a
     # 2-second pickup in Admin -> Uploads (the file is saved for a safe re-audit).
-    uid <- safe(record_upload(src, name = input$cv_file$name, requested_by = "shiny",
+    uid <- safe(record_upload(src, name = input$cv_file$name, requested_by = who,
       status = res$status %||% "failed", run_id = res$run_id %||% NA_character_,
       template = res$template_id %||% NA_character_,
       trust = res$trust$level %||% NA_character_,

@@ -18,19 +18,37 @@ reconcile <- function(parsed, template = NULL) {
   # 1. balance_reconciliation: opening + sum(amount) == closing.
   opening <- suppressWarnings(as.numeric(h$opening_balance %||% NA))
   closing <- suppressWarnings(as.numeric(h$closing_balance %||% NA))
+  # Many statements don't PRINT a labelled opening/closing balance -- the figure
+  # is simply the first/last running balance. Rather than report "na" when the
+  # info is plainly there, DERIVE the MISSING one from the running-balance column
+  # (closing = last balance; opening = first balance - first amount) -- but ONLY
+  # when the OTHER balance is labelled, so at least one INDEPENDENT anchor remains.
+  # (Deriving BOTH would just re-check the balance column's endpoints and could
+  # mask a mid-column break, so both-missing stays honest "na" and
+  # running_balance_continuity is the check there.) Noted in the detail.
+  bal <- if (!is.null(tx$balance)) tx$balance else rep(NA_real_, n)
+  derived <- character(0)
+  if (is.na(closing) && !is.na(opening) && n > 0 && any(!is.na(bal))) {
+    closing <- bal[max(which(!is.na(bal)))]; derived <- c(derived, "closing")
+  }
+  if (is.na(opening) && !is.na(closing) && n > 0 && !is.na(bal[1]) && !is.na(tx$amount[1])) {
+    opening <- bal[1] - tx$amount[1]; derived <- c(derived, "opening")
+  }
   if (!is.na(opening) && !is.na(closing) && n > 0 && !any(is.na(tx$amount))) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
+    note <- if (length(derived))
+      sprintf(" [%s derived from the running-balance column]", paste(derived, collapse = " & ")) else ""
     rows$balance_reconciliation <- .kpi(
       "balance_reconciliation", if (abs(disc) < 0.005) "pass" else "fail",
       expected = round(expected_close, 2), actual = round(closing, 2),
       discrepancy = disc,
-      detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f",
-                       opening, sum(tx$amount), closing))
+      detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f%s",
+                       opening, sum(tx$amount), closing, note))
   } else {
     rows$balance_reconciliation <- .kpi(
       "balance_reconciliation", "na",
-      detail = "opening/closing balance not available")
+      detail = "no opening/closing balance and no running-balance column to derive one")
   }
 
   # 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].

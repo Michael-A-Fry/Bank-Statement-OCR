@@ -235,6 +235,29 @@ test_that("year-less PDF dates with no period are preserved, not dropped", {
   expect_true(grepl("date_unresolved", tx$flags[1]))
 })
 
+# ---- NA reduction: derive a missing balance from the running-balance column ---
+test_that("balance_reconciliation derives a missing closing balance, not 'na'", {
+  tx <- coerce_core(data.frame(row_id = 1:2, date = c("2024-01-05", "2024-01-06"),
+    date_raw = c("a", "b"), description = c("A", "B"), amount = c(-10, 20),
+    amount_raw = c("-10", "20"), direction = c("debit", "credit"),
+    balance = c(90, 110), balance_raw = c("90", "110"), particulars = NA, code = NA,
+    reference = NA, other_party = NA, type = NA, currency = "NZD", flags = "",
+    stringsAsFactors = FALSE))
+  # opening labelled (100), closing NOT labelled -> derive from the last balance (110)
+  r <- reconcile(list(transactions = tx,
+    header = list(opening_balance = 100, closing_balance = NA, row_count = 2L),
+    source_line_count = NA_integer_))
+  br <- r$kpis[r$kpis$name == "balance_reconciliation", ]
+  expect_equal(br$status, "pass")                 # 100 + (-10+20) == last balance 110
+  expect_true(grepl("derived", br$detail))
+  # no balance column at all -> honestly 'na'
+  tx2 <- tx; tx2$balance <- NA_real_
+  r2 <- reconcile(list(transactions = tx2,
+    header = list(opening_balance = NA, closing_balance = NA, row_count = 2L),
+    source_line_count = NA_integer_))
+  expect_equal(r2$kpis$status[r2$kpis$name == "balance_reconciliation"], "na")
+})
+
 # ---- credit-card: unsigned amounts + a closing-balance row in that column --
 test_that("a Visa PDF parses unsigned charges/CR payments and drops the balance row", {
   w <- data.frame(stringsAsFactors = FALSE,
