@@ -702,7 +702,9 @@ server <- function(input, output, session) {
 
   # apply_overrides -- fold the Basic-tab choices onto the working template. Only
   # the common fields live here; everything else is edited as YAML on Advanced.
-  apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL, unsigned_default = NULL) {
+  apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
+                              unsigned_default = NULL, desc_col = NULL,
+                              ref_col = NULL, bal_col = NULL) {
     if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
     if (identical(tmpl$format, "pdf")) {
       if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
@@ -711,6 +713,17 @@ server <- function(input, output, session) {
       if (!is.null(datefmt) && nzchar(datefmt) && !is.null(tmpl$columns$date))
         tmpl$columns$date$format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$amount_sign <- sign
+      # Basic column-pickers (delimited): "" means "(none)" -> drop the mapping;
+      # a name sets .source while preserving any other keys the field carries.
+      set_src <- function(cols, field, val) {
+        if (is.null(val)) return(cols)
+        if (nzchar(val)) cols[[field]] <- modifyList(cols[[field]] %||% list(), list(source = val))
+        else cols[[field]] <- NULL
+        cols
+      }
+      tmpl$columns <- set_src(tmpl$columns, "description", desc_col)
+      tmpl$columns <- set_src(tmpl$columns, "reference",   ref_col)
+      tmpl$columns <- set_src(tmpl$columns, "balance",     bal_col)
     }
     # decimal_mark / unsigned_default are top-level keys the engine reads.
     if (!is.null(decimal) && nzchar(decimal))
@@ -755,7 +768,20 @@ server <- function(input, output, session) {
               selectInput("g_unsigned_default", "For unsigned amounts, a plain number is a…",
                           choices = c("Charge — money out" = "debit",
                                       "Payment — money in" = "credit"),
-                          selected = cur_ud))))),
+                          selected = cur_ud)))),
+          if (!is.null(g$cols) && length(g$cols)) tagList(
+            tags$hr(),
+            p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
+            fluidRow(
+              column(4, selectInput("g_col_desc", "Description / particulars (required)",
+                                    choices = g$cols,
+                                    selected = tmpl$columns$description$source %||% g$cols[1])),
+              column(4, selectInput("g_col_ref", "Reference (optional)",
+                                    choices = c("(none)" = "", g$cols),
+                                    selected = tmpl$columns$reference$source %||% "")),
+              column(4, selectInput("g_col_bal", "Running balance (optional)",
+                                    choices = c("(none)" = "", g$cols),
+                                    selected = tmpl$columns$balance$source %||% ""))))),
         tabPanel(
           "Advanced (full template)", br(),
           helpText(HTML("This is the <b>complete</b> template. Edit anything — identifiers/fingerprints, column mapping, label synonyms, region bounds, row tolerance, metadata labels — to read even wildly different statements. Load your Basic choices in, edit, then Check &amp; apply.")),
@@ -792,8 +818,12 @@ server <- function(input, output, session) {
     # these would be shadowed (defaults win), so g_save gives it a distinct id.
     default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
                             error = function(e) character(0))
+    # For delimited statements, offer the file's actual columns in the Basic
+    # field-pickers (PDF columns are bands, edited visually / in Advanced).
+    cols <- if (identical(tmpl$format, "delimited"))
+      tryCatch(names(read_delimited(read_input(path), tmpl)$table), error = function(e) NULL) else NULL
     cv_upload_id(upload_id)
-    guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids))
+    guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids, cols = cols))
     show_guided_modal()
     invisible(TRUE)
   }
@@ -848,7 +878,8 @@ server <- function(input, output, session) {
 
   guided_live <- reactive({ g <- guided(); req(g)
     apply_overrides(g$tmpl, input$g_bank, input$g_date, input$g_sign,
-                    input$g_decimal, input$g_unsigned_default) })
+                    input$g_decimal, input$g_unsigned_default,
+                    input$g_col_desc, input$g_col_ref, input$g_col_bal) })
 
   # Advanced tab: pull the current Basic settings into the YAML editor on demand.
   observeEvent(input$g_adv_load, {
@@ -880,6 +911,9 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_sign", selected = gv_sign(parsed))
     updateSelectInput(session, "g_decimal", selected = parsed$decimal_mark %||% "auto")
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
+    updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")
+    updateSelectInput(session, "g_col_ref",  selected = parsed$columns$reference$source %||% "")
+    updateSelectInput(session, "g_col_bal",  selected = parsed$columns$balance$source %||% "")
     output$g_adv_msg <- renderUI(span(class = "ok", "Applied — preview updated below."))
   })
   output$g_preview <- renderDT({
