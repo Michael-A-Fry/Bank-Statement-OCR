@@ -25,6 +25,13 @@
     hits <- vapply(need, function(ph) grepl(ph, hay, fixed = TRUE), logical(1))
     return(list(score = sum(hits), need = length(need), missing = need[!hits]))
   }
+  # Excel templates fingerprint on the sheet's column names.
+  if (identical(template$format %||% "delimited", "excel")) {
+    need <- as.character(fp$header_contains_all %||% character(0))
+    header <- names(input$table %||% list())
+    return(list(score = sum(need %in% header), need = length(need),
+                missing = need[!(need %in% header)]))
+  }
   need <- as.character(fp$header_contains_all %||% character(0))
   header <- .header_fields(input$lines %||% character(0), template)
   present <- sum(need %in% header)
