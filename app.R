@@ -530,12 +530,20 @@ server <- function(input, output, session) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
     who <- if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) trimws(input$cv_by)
            else (session$user %||% current_user())
-    res <- tryCatch(
-      convert_statement(src, bank = bank, outdir = sess,
-                        templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
-                        requested_by = who, logdir = LOGDIR),
-      error = function(e) list(status = "failed",
-                               messages = paste("error:", conditionMessage(e))))
+    # Wrap the convert in a progress bar. Scanned PDFs go through OCR (poppler +
+    # tesseract) and can take many seconds, during which the button used to look
+    # frozen. A visible bar tells the user it IS working, not stuck.
+    res <- withProgress(message = "Converting statement…", value = 0.2, {
+      incProgress(0.2, detail = "Reading the file and detecting its format…")
+      out <- tryCatch(
+        convert_statement(src, bank = bank, outdir = sess,
+                          templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
+                          requested_by = who, logdir = LOGDIR),
+        error = function(e) list(status = "failed",
+                                 messages = paste("error:", conditionMessage(e))))
+      incProgress(0.5, detail = "Running checks and writing outputs…")
+      out
+    })
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
     # Capture the upload + its outcome so a failed/abandoned new format is a
@@ -690,20 +698,49 @@ server <- function(input, output, session) {
 
   output$cv_teach <- renderUI({
     res <- cv_res(); req(res)
-    if (!identical(res$status, "unsupported") || is.null(cv_src())) return(NULL)
-    div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
-      strong("This statement doesn't match any template yet."),
-      p(class = "muted", "Teach the tool to read it — we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-      actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"))
+    if (is.null(cv_src())) return(NULL)
+    st <- res$status %||% "failed"
+    if (identical(st, "unsupported")) {
+      div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
+        strong("This statement doesn't match any template yet."),
+        p(class = "muted", "Teach the tool to read it — we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
+        actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"))
+    } else {
+      # ANY result — ok, needs_review, or failed — can be opened in the wizard to
+      # remediate it. For ok/needs_review this seeds from the matched template so
+      # the accountant refines the real thing rather than starting from scratch.
+      label <- if (identical(st, "ok"))
+        "Something look off? Open this statement in the wizard to adjust how it's read."
+      else
+        "Open this statement in the wizard to fix how it's read and save an improved template."
+      div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
+        span(class = "muted", label), " ",
+        actionButton("cv_teach_go", "🪄 Open in wizard", class = "btn-default"))
+    }
   })
 
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)
-    bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(src$name))))
-    tmpl <- tryCatch(draft_template(src$path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
-                     error = function(e) NULL)
+    res <- cv_res()
+    tmpl <- NULL
+    # If the conversion matched a template, open THAT template so the user
+    # refines the real one (bank / date / sign) instead of starting from scratch.
+    tid <- (res$template_id %||% NA_character_)[1]
+    if (!is.na(tid) && nzchar(tid)) {
+      tset <- tryCatch(templates(), error = function(e) list())
+      if (!is.null(tset[[tid]])) tmpl <- tset[[tid]]
+    }
+    if (is.null(tmpl)) {
+      bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(src$name))))
+      tmpl <- tryCatch(draft_template(src$path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
+                       error = function(e) NULL)
+    }
     if (is.null(tmpl)) { showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error"); return() }
-    guided(list(path = src$path, name = src$name, tmpl = tmpl))
+    # Ids of the curated (tested) templates: saving a customised copy under one of
+    # these ids would be shadowed (defaults win), so g_save gives it a new id.
+    default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
+                            error = function(e) character(0))
+    guided(list(path = src$path, name = src$name, tmpl = tmpl, default_ids = default_ids))
     show_guided_modal()
   })
 
@@ -721,14 +758,21 @@ server <- function(input, output, session) {
   })
   observeEvent(input$g_save, {
     g <- guided(); req(g)
-    ok <- tryCatch({ save_user_template(guided_live(), USER_TEMPLATES_DIR); TRUE }, error = function(e) FALSE)
+    tmpl <- guided_live()
+    # If we opened a tested (default) template to refine it, saving under the same
+    # id would be shadowed — curated defaults win on an id clash. Give the
+    # customised copy a distinct id so the accountant's fix actually takes effect.
+    if (!is.null(g$default_ids) && (tmpl$id %||% "") %in% g$default_ids)
+      tmpl$id <- paste0(tmpl$id, "_custom")
+    ok <- tryCatch({ save_user_template(tmpl, USER_TEMPLATES_DIR); TRUE }, error = function(e) FALSE)
     if (isTRUE(ok)) {
       tpl_bump(isolate(tpl_bump()) + 1); removeModal()
       # mark this upload as taught, so it drops off the "needs pickup" list
       if (!is.na(cv_upload_id()))
         safe(set_upload_status(cv_upload_id(), "wizard_saved",
-          template = guided_live()$id %||% NA_character_, dir = UPLOADS_DIR))
-      showNotification("Saved as your template. Click Convert again to run this statement with it.",
+          template = tmpl$id %||% NA_character_, dir = UPLOADS_DIR))
+      showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
+                               tmpl$id %||% "template"),
                        type = "message", duration = 8)
     } else showNotification("Couldn't save — adjust the settings and try again.", type = "error")
   })

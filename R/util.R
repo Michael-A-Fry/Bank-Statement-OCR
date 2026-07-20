@@ -40,7 +40,8 @@ locate_header <- function(lines, template) {
 file_sha256 <- function(path) {
   if (!file.exists(path)) return(NA_character_)
   if (requireNamespace("openssl", quietly = TRUE)) {
-    return(paste0(openssl::sha256(file(path, open = "rb"))))
+    con <- file(path, open = "rb"); on.exit(close(con), add = TRUE)  # MUST close, or
+    return(paste0(openssl::sha256(con)))                             # connections leak
   }
   if (requireNamespace("digest", quietly = TRUE)) {
     return(digest::digest(file = path, algo = "sha256"))
