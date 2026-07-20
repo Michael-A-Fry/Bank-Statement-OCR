@@ -1,0 +1,8 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2014-06-19","19/06/2014","Acme Inc",-23.4,"-23.40","debit",,,"Acme LLB Inc","Smith Vj","1671190",,"Payment","NZD",""
+2,"2014-06-19","19/06/2014","Payroll Ltd",2000,"2000.00","credit",,,"Warner Bros",,"Payroll",,"Salary","NZD",""
+3,"2014-06-18","18/06/2014","Water Services",-46.96,"-46.96","debit",,,"Smith B","33 Queen St","4112233-02",,"Payment","NZD",""
+4,"2014-06-17","17/06/2014","1234-****-****-4321",-288,"-288.00","debit",,,"june pmt",,,,"Debit Transfer","NZD",""
+5,"2014-06-16","16/06/2014","Collage fund bank-00",-100,"-100.00","debit",,,"bank-00","Jane","Uni",,"Automatic Payment","NZD",""
+6,"2014-06-16","16/06/2014","General Savings",-20,"-20.00","debit",,,"Min Savings",,,,"Automatic Payment","NZD",""
+7,"2014-06-16","16/06/2014","Anz  1234567 Queen St",-80,"-80.00","debit",,,"Anz  S3A1234","Queen St","Anch  123456",,"Atm Debit","NZD",""

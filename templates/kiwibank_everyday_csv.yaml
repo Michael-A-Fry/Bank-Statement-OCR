@@ -1,0 +1,25 @@
+id: kiwibank_everyday_csv
+bank: Kiwibank
+statement_type: everyday
+format: delimited
+version: 1
+effective_from: 2018-01-01
+effective_to: null
+min_score: 6
+fingerprint:
+  header_contains_all: ["Effective Date", "Transaction Date", Description, "Transaction Code", "Other Party Name", Amount, Balance]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: "Transaction Date", format: "%Y-%m-%d"}
+  amount:      {source: Amount}
+  description: {source: Description}
+  particulars: {source: Particulars}
+  code:        {source: Code}
+  reference:   {source: Reference}
+  type:        {source: "Transaction Code"}
+  other_party: {source: "Other Party Name"}
+  balance:     {source: Balance}
+amount_sign: signed
+currency: NZD

@@ -1,0 +1,26 @@
+id: anz_creditcard_csv
+bank: ANZ
+statement_type: creditcard
+format: delimited
+version: 1
+effective_from: 2018-01-01
+effective_to: null
+min_score: 4
+fingerprint:
+  header_contains_all: [Card, Type, Details, TransactionDate, ProcessedDate]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: TransactionDate, format: "%d/%m/%Y"}
+  amount:      {source: Amount}
+  description: {source: Details}
+  type:        {source: Type}
+  balance:     null
+amount_sign: type_dc
+type_debit_value: "D"
+extras:
+  card:        {source: Card}
+  posted_date: {source: ProcessedDate}
+  fx_amount:   {source: ForeignCurrencyAmount}
+currency: NZD

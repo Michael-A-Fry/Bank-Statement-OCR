@@ -1,0 +1,27 @@
+id: anz_everyday_csv
+bank: ANZ
+statement_type: everyday
+format: delimited
+version: 1
+effective_from: 2014-01-01
+effective_to: null
+min_score: 6
+fingerprint:
+  header_contains_all: [Type, Details, Particulars, Code, Reference, Amount, Date]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: Date, format: "%d/%m/%Y"}
+  amount:      {source: Amount}
+  description: {source: Details}
+  particulars: {source: Particulars}
+  code:        {source: Code}
+  reference:   {source: Reference}
+  type:        {source: Type}
+  balance:     null
+amount_sign: signed
+extras:
+  fx_amount:          {source: ForeignCurrencyAmount}
+  conversion_charge:  {source: ConversionCharge}
+currency: NZD

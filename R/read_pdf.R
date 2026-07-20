@@ -1,0 +1,271 @@
+# read_pdf.R -- PDF text + word-box reader (pdftools) with a forensic redaction
+# guard. Extraction only: this surfaces page text, positioned word boxes, and
+# detected sections. Full per-bank PDF transaction-table parsing is future work.
+#
+# FORENSIC RULE (build-contract section 11.2): text hidden under a redaction
+# overlay must NEVER be emitted. Any word covered by a redaction -- whether the
+# source already carries a redaction marker in its text layer, or a rectangle
+# overlay sits on top of it -- is replaced by REDACTED_TOKEN and its underlying
+# text is discarded before anything leaves this module. Over-redaction (dropping
+# a word on any overlap) is the deliberate, safe failure mode.
+
+# Reuse the canonical token from parse.R when co-sourced; fall back otherwise so
+# this file is usable on its own.
+if (!exists("REDACTION_TOKEN")) REDACTION_TOKEN <- "[REDACTED]"
+
+# ---------------------------------------------------------------------------
+# Redaction markers already present in the text layer.
+#
+# A specimen/source PDF may bake a redaction directly into its extractable text
+# (a run of block glyphs, an explicit [REDACTED], a long XXXX mask, etc.). These
+# heuristics catch those. This list is intentionally a template -- extend it as
+# new marker conventions are encountered.
+# ---------------------------------------------------------------------------
+# Block/shade glyphs commonly used to visually blank out text. Kept as a
+# separate vector so the pattern is built with explicit UTF-8 encoding (this
+# engine runs in a C locale where raw multibyte regex literals are unreliable).
+.PDF_BLOCK_GLYPHS <- c("█", "▓", "▒", "░", "■",
+                       "▬", "▮", "▀", "▄", "█")
+
+pdf_redaction_markers <- function() {
+  block_run <- paste0(
+    "(?:", paste(unique(.PDF_BLOCK_GLYPHS), collapse = "|"), "){1,}")
+  c(
+    "\\[REDACTED\\]",   # explicit marker
+    "\\bREDACTED\\b",   # bare word
+    block_run,          # run of block/shade glyphs
+    "X{6,}",            # long XXXXXX mask
+    "#{6,}"             # long hash mask
+  )
+}
+
+# .matches_marker(text, markers) -- logical vector: does each string contain a
+# redaction marker? Matched at the byte level (useBytes) so block glyphs match
+# reliably even under a C locale, where re-encoding would mangle multibyte runs.
+.matches_marker <- function(text, markers) {
+  text <- as.character(text)
+  hit <- rep(FALSE, length(text))
+  for (m in markers) {
+    hit <- hit | grepl(m, text, perl = TRUE, useBytes = TRUE)
+  }
+  hit & !is.na(text)
+}
+
+# ---------------------------------------------------------------------------
+# Rectangle-overlay detection HOOK.
+#
+# detect_overlay_redactions(words, rects) flags every word box that overlaps a
+# supplied redaction rectangle. `rects` is a data.frame with columns
+# x0, y0, x1, y1 (top-left origin, matching pdftools word coordinates) OR NULL.
+#
+# >>> WHERE REAL IMAGE-RECTANGLE DETECTION PLUGS IN <<<
+# pdftools does not expose vector fill operators or a rasteriser, and tesseract
+# is not installed in this environment, so `rects` is currently supplied by the
+# caller (or a per-bank template) rather than derived automatically. A true
+# implementation would populate `rects` by either:
+#   (a) parsing the PDF content stream for filled rectangles (`re` + `f`/`F`
+#       operators) whose fill colour is near-black and whose area is large
+#       enough to hide text; or
+#   (b) rendering each page to a raster (pdftools::pdf_render_page) and detecting
+#       solid opaque rectangles via connected-component analysis, then mapping
+#       raster pixels back to PDF points.
+# Both feed the SAME `rects` structure consumed here, so the guard below does not
+# change when that detector is added -- only the source of `rects` does.
+# ---------------------------------------------------------------------------
+detect_overlay_redactions <- function(words, rects = NULL) {
+  n <- nrow(words)
+  if (is.null(rects) || nrow(rects) == 0 || n == 0) return(rep(FALSE, n))
+  wx0 <- words$x
+  wy0 <- words$y
+  wx1 <- words$x + words$width
+  wy1 <- words$y + words$height
+  covered <- rep(FALSE, n)
+  for (r in seq_len(nrow(rects))) {
+    rx0 <- rects$x0[r]; ry0 <- rects$y0[r]
+    rx1 <- rects$x1[r]; ry1 <- rects$y1[r]
+    # axis-aligned overlap (any overlap => covered; conservative on purpose)
+    overlap <- (wx0 < rx1) & (wx1 > rx0) & (wy0 < ry1) & (wy1 > ry0)
+    covered <- covered | overlap
+  }
+  covered
+}
+
+# ---------------------------------------------------------------------------
+# The redaction guard.
+#
+# apply_redaction_guard(words, rects, markers) -> words with:
+#   * a logical `redacted` column,
+#   * every redacted word's `text` overwritten with REDACTION_TOKEN and its
+#     ORIGINAL text discarded (never retained anywhere in the returned object).
+# This is the single choke point every emitted PDF word passes through.
+# ---------------------------------------------------------------------------
+apply_redaction_guard <- function(words, rects = NULL,
+                                  markers = pdf_redaction_markers()) {
+  words <- as.data.frame(words, stringsAsFactors = FALSE)
+  if (nrow(words) == 0) {
+    words$redacted <- logical(0)
+    return(words)
+  }
+  by_marker  <- .matches_marker(words$text, markers)
+  by_overlay <- detect_overlay_redactions(words, rects)
+  redacted <- by_marker | by_overlay
+  # Discard the underlying text of every redacted word BEFORE returning it.
+  words$text[redacted] <- REDACTION_TOKEN
+  words$redacted <- redacted
+  words
+}
+
+# ---------------------------------------------------------------------------
+# Reconstruct page text from (already guarded) word boxes. Used whenever a page
+# carried any redaction, because pdftools::pdf_text reads the raw text layer and
+# would leak text sitting under an overlay. Deterministic: words grouped into
+# lines by rounded y, ordered by x.
+# ---------------------------------------------------------------------------
+words_to_text <- function(words, line_tol = 3) {
+  if (nrow(words) == 0) return("")
+  o <- order(words$y, words$x)
+  w <- words[o, , drop = FALSE]
+  line_key <- cumsum(c(TRUE, diff(w$y) > line_tol))
+  lines <- vapply(split(w$text, line_key), function(tok)
+    paste(tok, collapse = " "), character(1))
+  paste(lines, collapse = "\n")
+}
+
+# ---------------------------------------------------------------------------
+# Section detection by anchor phrases.
+#
+# detect_pdf_sections(pages_text, anchors) scans each page's lines for anchor
+# phrases (case-insensitive, whole-line-ish header match) and returns a
+# data.frame(section, page, line_no, matched_text). Deterministic.
+# ---------------------------------------------------------------------------
+pdf_section_anchors <- function() {
+  c(
+    "YOUR CARD SUMMARY", "YOUR DETAILS", "OUR DETAILS", "ABOUT THIS DOCUMENT",
+    "YOUR ANZ CREDIT CARD DETAILS", "ACCOUNT SUMMARY", "ACCOUNT DETAILS",
+    "STATEMENT PERIOD", "OPENING BALANCE", "CLOSING BALANCE",
+    "TRANSACTION DETAILS", "TRANSACTIONS", "INTEREST", "FEES",
+    "PAYMENT DETAILS", "SUMMARY"
+  )
+}
+
+detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
+  out <- data.frame(section = character(0), page = integer(0),
+                    line_no = integer(0), matched_text = character(0),
+                    stringsAsFactors = FALSE)
+  if (length(pages_text) == 0) return(out)
+  for (p in seq_along(pages_text)) {
+    lines <- strsplit(pages_text[[p]] %||% "", "\n", fixed = TRUE)[[1]]
+    if (length(lines) == 0) next
+    lines_lc <- tolower(lines)
+    for (a in anchors) {
+      # anchor phrase anywhere in the line, matched literally (case-insensitive)
+      hits <- which(grepl(tolower(a), lines_lc, fixed = TRUE))
+      for (h in hits) {
+        out <- rbind(out, data.frame(
+          section = a, page = p, line_no = h,
+          matched_text = trimws(lines[h]), stringsAsFactors = FALSE))
+      }
+    }
+  }
+  out[order(out$page, out$line_no), , drop = FALSE]
+}
+
+# ---------------------------------------------------------------------------
+# read_pdf(path, redaction_rects, markers, anchors) -> list(
+#   pages        character[]  per-page text (redaction-safe),
+#   words        list<df>     per-page guarded word boxes (x,y,width,height,
+#                             space,text,redacted),
+#   page_count   integer,
+#   sections     data.frame   detected section anchors,
+#   redactions   data.frame   per-page redacted-word counts,
+#   ok           logical      whether pdftools extraction succeeded
+# )
+#
+# `redaction_rects`: optional named list keyed by page number (as character or
+# integer), each element a data.frame(x0,y0,x1,y1). This is the structure the
+# rectangle-overlay detector documented above will populate automatically.
+# ---------------------------------------------------------------------------
+read_pdf <- function(path, redaction_rects = NULL,
+                     markers = pdf_redaction_markers(),
+                     anchors = pdf_section_anchors()) {
+  empty <- list(pages = character(0), words = list(), page_count = NA_integer_,
+                sections = detect_pdf_sections(character(0)),
+                redactions = data.frame(page = integer(0), redacted_words = integer(0),
+                                        stringsAsFactors = FALSE),
+                ok = FALSE)
+  if (!requireNamespace("pdftools", quietly = TRUE)) return(empty)
+  if (!file.exists(path)) return(empty)
+
+  raw_text  <- safe(suppressMessages(pdftools::pdf_text(path)), NULL)
+  word_list <- safe(suppressMessages(pdftools::pdf_data(path)), NULL)
+  if (is.null(raw_text)) return(empty)
+
+  np <- length(raw_text)
+  # pdf_data may return fewer/NULL entries on odd pages; normalise to np slots.
+  if (is.null(word_list)) word_list <- vector("list", np)
+
+  pages <- character(np)
+  words <- vector("list", np)
+  red_counts <- integer(np)
+
+  for (p in seq_len(np)) {
+    wp <- word_list[[p]]
+    if (is.null(wp) || nrow(wp) == 0) {
+      # No word boxes -> emit raw text as-is; a marker sweep still applies so
+      # baked-in redaction tokens never survive even without geometry.
+      txt <- raw_text[[p]]
+      for (m in markers) txt <- gsub(m, REDACTION_TOKEN, txt,
+                                     perl = TRUE, useBytes = TRUE)
+      pages[p] <- txt
+      words[[p]] <- apply_redaction_guard(
+        data.frame(width = integer(0), height = integer(0), x = integer(0),
+                   y = integer(0), space = logical(0), text = character(0),
+                   stringsAsFactors = FALSE), NULL, markers)
+      red_counts[p] <- 0L
+      next
+    }
+    wp <- as.data.frame(wp, stringsAsFactors = FALSE)
+    rects_p <- .rects_for_page(redaction_rects, p)
+    guarded <- apply_redaction_guard(wp, rects_p, markers)
+    words[[p]] <- guarded
+    n_red <- sum(guarded$redacted)
+    red_counts[p] <- n_red
+    # If ANY redaction touched this page, do NOT trust the raw text layer
+    # (it exposes text under overlays); rebuild the page from guarded boxes.
+    if (n_red > 0) {
+      pages[p] <- words_to_text(guarded)
+    } else {
+      pages[p] <- raw_text[[p]]
+    }
+  }
+
+  list(
+    pages = pages,
+    words = words,
+    page_count = np,
+    sections = detect_pdf_sections(pages, anchors),
+    redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
+                            stringsAsFactors = FALSE),
+    ok = TRUE
+  )
+}
+
+# .rects_for_page(redaction_rects, p) -- fetch the rectangle data.frame for page
+# `p` from a named-by-page list, or NULL.
+.rects_for_page <- function(redaction_rects, p) {
+  if (is.null(redaction_rects)) return(NULL)
+  if (is.data.frame(redaction_rects)) {
+    # a single flat data.frame with a `page` column
+    if ("page" %in% names(redaction_rects)) {
+      sub <- redaction_rects[redaction_rects$page == p, , drop = FALSE]
+      if (nrow(sub) == 0) return(NULL)
+      return(sub[, c("x0", "y0", "x1", "y1"), drop = FALSE])
+    }
+    return(redaction_rects)
+  }
+  key <- as.character(p)
+  if (!is.null(redaction_rects[[key]])) return(redaction_rects[[key]])
+  if (length(redaction_rects) >= p && !is.null(redaction_rects[[p]]))
+    return(redaction_rects[[p]])
+  NULL
+}

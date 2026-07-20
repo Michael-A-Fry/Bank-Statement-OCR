@@ -1,0 +1,23 @@
+id: asb_everyday_csv
+bank: ASB
+statement_type: everyday
+format: delimited
+version: 1
+effective_from: 2014-01-01
+effective_to: null
+min_score: 6
+fingerprint:
+  header_contains_all: [Date, "Unique Id", "Tran Type", "Cheque Number", Payee, Memo, Amount]
+  filename_regex: null
+delimiter: ","
+preamble:
+  header_regex: "^Date,Unique Id,Tran Type"
+columns:
+  date:        {source: Date, format: "%Y/%m/%d"}
+  amount:      {source: Amount}
+  description: {source: Memo}
+  reference:   {source: "Unique Id"}
+  type:        {source: "Tran Type"}
+  balance:     null
+amount_sign: signed
+currency: NZD

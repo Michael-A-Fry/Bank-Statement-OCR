@@ -1,0 +1,24 @@
+id: westpac_everyday_csv
+bank: Westpac
+statement_type: everyday
+format: delimited
+version: 1
+effective_from: 2014-01-01
+effective_to: null
+min_score: 4
+fingerprint:
+  header_contains_all: [Date, Amount, "Other Party", Description, "Analysis Code"]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: Date, format: "%d/%m/%Y"}
+  amount:      {source: Amount}
+  description: {source: Description}
+  other_party: {source: "Other Party"}
+  reference:   {source: Reference}
+  particulars: {source: Particulars}
+  code:        {source: "Analysis Code"}
+  balance:     null
+amount_sign: signed
+currency: NZD

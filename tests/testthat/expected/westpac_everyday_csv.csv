@@ -1,0 +1,5 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2014-12-20","20/12/2014","ONLINE BANKING",-500,"-500.00","debit",,,"Savings","Transfer","11:11-11111","To 12-3456-7890123-45-02",,"NZD",""
+2,"2014-12-21","21/12/2014","EFTPOS TRANSACTION",-3.8,"-3.80","debit",,,"111111111111","1111   11111","11:11-11112","Bob's Cafe",,"NZD",""
+3,"2014-12-22","22/12/2014","BILL PAYMENT",-456.78,"-456.78","debit",,,"12-3456-7890123-45 001 INTEREST","repayment","11:11-11113","LOAN - INTEREST",,"NZD",""
+4,"2014-12-23","23/12/2014","DEPOSIT",5678.9,"5678.90","credit",,,"Wages",,"11:11-11114","Acme, Inc.",,"NZD",""
