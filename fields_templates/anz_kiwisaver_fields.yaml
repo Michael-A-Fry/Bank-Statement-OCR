@@ -1,0 +1,21 @@
+# Key-value ("mode: fields") template -- the IRD/form-style paradigm.
+# Stored OUTSIDE templates/ so it does not affect transaction detection; it is
+# consumed by extract_fields() directly. This is the foundation the IRD document
+# support builds on once a real IRD document is available to model.
+id: anz_kiwisaver_fields
+bank: ANZ
+statement_type: kiwisaver
+format: pdf
+mode: fields
+version: 1
+fingerprint:
+  page_contains_all: ["KiwiSaver", "Opening balance"]
+fields:
+  opening_balance:         {label: "Opening balance at 1 April 2025"}
+  closing_balance:         {label: "Closing balance at 31 March 2026"}
+  contributions:           {label: "Contributions"}
+  government_contribution: {label: "Government contribution"}
+  investment_return:       {label: "Investment return"}
+  tax:                     {label: "Tax"}
+  fees:                    {label: "Fees"}
+currency: NZD
