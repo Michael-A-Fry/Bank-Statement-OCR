@@ -18,6 +18,13 @@
 # .score_template(input, template) -- fingerprint score for one template.
 .score_template <- function(input, template) {
   fp <- template$fingerprint
+  # PDF templates fingerprint on page text, not delimited headers.
+  if (identical(template$format %||% "delimited", "pdf")) {
+    need <- as.character(fp$page_contains_all %||% character(0))
+    hay <- paste(input$pages %||% character(0), collapse = "\n")
+    hits <- vapply(need, function(ph) grepl(ph, hay, fixed = TRUE), logical(1))
+    return(list(score = sum(hits), need = length(need), missing = need[!hits]))
+  }
   need <- as.character(fp$header_contains_all %||% character(0))
   header <- .header_fields(input$lines %||% character(0), template)
   present <- sum(need %in% header)

@@ -27,6 +27,9 @@ REDACTION_TOKEN <- "[REDACTED]"
 
 # parse_statement(input, template) -> list(transactions, extras, header, provenance)
 parse_statement <- function(input, template) {
+  # PDF templates parse straight from positioned word boxes (R/parse_pdf_table.R).
+  if (identical(template$format %||% "delimited", "pdf"))
+    return(parse_pdf_table(input, template))
   reader <- switch(template$format %||% "delimited",
     delimited = read_delimited(input, template),
     excel     = list(table = input$table, source_lines = integer(0),

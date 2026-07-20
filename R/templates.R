@@ -1,63 +1,69 @@
 # templates.R -- load + validate declarative per-bank YAML templates.
 
-# Required top-level keys every template must declare.
-.TEMPLATE_REQUIRED <- c(
-  "id", "bank", "statement_type", "format", "version",
-  "min_score", "fingerprint", "columns", "amount_sign", "currency"
-)
+# Keys every template declares, regardless of format.
+.TEMPLATE_COMMON <- c("id", "bank", "statement_type", "format", "version",
+                      "min_score", "fingerprint", "currency")
+.VALID_SIGN <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc")
 
-# validate_template(t) -> character vector of problems ("" length if valid).
+# validate_template(t) -> character vector of problems (length 0 if valid).
+# Format-aware: delimited/excel carry columns+amount_sign at the top level and
+# fingerprint on the header; pdf carries them under `table:` and fingerprints on
+# page text.
 validate_template <- function(t) {
   problems <- character(0)
   if (!is.list(t)) return("template is not a mapping")
+  fmt <- if (is.null(t$format)) "delimited" else t$format
 
-  for (k in .TEMPLATE_REQUIRED) {
+  for (k in .TEMPLATE_COMMON)
     if (is.null(t[[k]])) problems <- c(problems, sprintf("missing key '%s'", k))
-  }
-  if (!is.null(t$fingerprint) &&
-      is.null(t$fingerprint$header_contains_all)) {
-    problems <- c(problems, "fingerprint.header_contains_all is required")
-  }
-  if (!is.null(t$columns)) {
-    for (k in c("date", "amount", "description")) {
-      if (is.null(t$columns[[k]])) {
-        problems <- c(problems, sprintf("columns.%s is required", k))
-      }
-    }
-  }
-  valid_sign <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc")
-  if (!is.null(t$amount_sign) && !(t$amount_sign %in% valid_sign)) {
-    problems <- c(problems, sprintf("amount_sign '%s' is not one of %s",
-                                    t$amount_sign, paste(valid_sign, collapse = "/")))
-  }
-  # amount_sign prerequisites -- caught at load with a clear per-id message
-  # rather than crashing (or silently mis-signing) deep in parse_statement.
-  .has_col <- function(field) !is.null(t$columns) && !is.null(t$columns[[field]])
-  if (identical(t$amount_sign, "debit_credit_cols")) {
-    for (k in c("debit", "credit")) {
-      if (!.has_col(k)) problems <- c(problems, sprintf(
-        "amount_sign 'debit_credit_cols' requires columns.%s", k))
-    }
-  }
-  if (identical(t$amount_sign, "type_dc") && !.has_col("type")) {
-    problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
-  }
-  # extras must map to a named source column.
-  if (!is.null(t$extras)) {
-    if (!is.list(t$extras)) {
-      problems <- c(problems, "extras must be a mapping of field -> {source}")
-    } else for (field in names(t$extras)) {
-      fs <- t$extras[[field]]
-      src <- if (is.list(fs)) fs$source else fs
-      if (is.null(src) || !nzchar(as.character(src)[1])) {
-        problems <- c(problems, sprintf("extras.%s missing a source column", field))
-      }
-    }
-  }
   valid_fmt <- c("delimited", "excel", "pdf")
-  if (!is.null(t$format) && !(t$format %in% valid_fmt)) {
-    problems <- c(problems, sprintf("format '%s' is not one of %s",
-                                    t$format, paste(valid_fmt, collapse = "/")))
+  if (!is.null(t$format) && !(fmt %in% valid_fmt))
+    problems <- c(problems, sprintf("format '%s' is not one of %s", fmt,
+                                    paste(valid_fmt, collapse = "/")))
+
+  if (identical(fmt, "pdf")) {
+    if (!is.null(t$fingerprint) && is.null(t$fingerprint$page_contains_all))
+      problems <- c(problems, "fingerprint.page_contains_all is required for pdf templates")
+    tab <- t$table
+    if (is.null(tab)) {
+      problems <- c(problems, "pdf templates require a 'table' block")
+    } else {
+      for (k in c("date", "description", "amount"))
+        if (is.null(tab$columns[[k]]))
+          problems <- c(problems, sprintf("table.columns.%s is required", k))
+      if (!is.null(tab$amount_sign) && !(tab$amount_sign %in% .VALID_SIGN))
+        problems <- c(problems, sprintf("table.amount_sign '%s' is invalid", tab$amount_sign))
+    }
+  } else {
+    if (is.null(t$columns)) problems <- c(problems, "missing key 'columns'")
+    if (is.null(t$amount_sign)) problems <- c(problems, "missing key 'amount_sign'")
+    if (!is.null(t$fingerprint) && is.null(t$fingerprint$header_contains_all))
+      problems <- c(problems, "fingerprint.header_contains_all is required")
+    if (!is.null(t$columns)) for (k in c("date", "amount", "description"))
+      if (is.null(t$columns[[k]])) problems <- c(problems, sprintf("columns.%s is required", k))
+    if (!is.null(t$amount_sign) && !(t$amount_sign %in% .VALID_SIGN))
+      problems <- c(problems, sprintf("amount_sign '%s' is not one of %s",
+                                      t$amount_sign, paste(.VALID_SIGN, collapse = "/")))
+    .has_col <- function(field) !is.null(t$columns) && !is.null(t$columns[[field]])
+    if (identical(t$amount_sign, "debit_credit_cols")) for (k in c("debit", "credit"))
+      if (!.has_col(k)) problems <- c(problems,
+        sprintf("amount_sign 'debit_credit_cols' requires columns.%s", k))
+    if (identical(t$amount_sign, "type_dc") && !.has_col("type"))
+      problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
+  }
+
+  # extras: {source} for delimited/excel, {x_min,x_max} bands for pdf.
+  extras <- if (identical(fmt, "pdf")) t$table$extras else t$extras
+  if (!is.null(extras)) {
+    if (!is.list(extras)) problems <- c(problems, "extras must be a mapping")
+    else for (field in names(extras)) {
+      fs <- extras[[field]]
+      ok <- if (identical(fmt, "pdf"))
+              is.list(fs) && !is.null(fs$x_min) && !is.null(fs$x_max)
+            else { src <- if (is.list(fs)) fs$source else fs
+                   !is.null(src) && nzchar(as.character(src)[1]) }
+      if (!isTRUE(ok)) problems <- c(problems, sprintf("extras.%s is malformed", field))
+    }
   }
   problems
 }
