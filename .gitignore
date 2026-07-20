@@ -13,8 +13,17 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Runtime output (never commit generated conversions or logs)
+# Runtime I/O (never commit real statements or generated conversions/logs).
+# The folder poller drops originals into inbox/ and moves them to processed/ or
+# failed/; conversions land in out/ and outbox/. All of these can hold REAL bank
+# statements on a deployed box, so none may ever be committed.
+/out/
 /outputs/
+/outbox/
+/inbox/
+/processed/
+/failed/
+/stuck/
 /logs/
 *.log
 

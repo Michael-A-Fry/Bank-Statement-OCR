@@ -65,7 +65,9 @@ point-and-click wizard (or editing a YAML file), not by writing code.
 ## The interactive app (GUI + wizard)
 
 ```sh
-# from the repo root:
+# Serve it for the team (listens on 0.0.0.0:8100 -- others open http://<vm>:8100):
+Rscript scripts/run_app.R
+# ...or just for yourself on this machine (loopback, random port):
 R -e 'shiny::runApp(".", launch.browser = TRUE)'
 ```
 
@@ -109,13 +111,13 @@ The engine is a plain folder of R files. On a Debian/Ubuntu host:
 ```sh
 # R + the packages the engine uses (all via apt, no CRAN required)
 apt-get install -y r-base-core \
-  r-cran-yaml r-cran-jsonlite r-cran-openxlsx r-cran-pdftools
+  r-cran-yaml r-cran-jsonlite r-cran-openxlsx r-cran-pdftools r-cran-readxl
 
 # GUI + wizard:
 apt-get install -y r-cran-shiny r-cran-dt
 
-# OCR (optional but recommended — enables scanned-PDF reading):
-apt-get install -y tesseract-ocr poppler-utils
+# OCR (optional but recommended — enables scanned-PDF reading + pre-processing):
+apt-get install -y tesseract-ocr poppler-utils r-cran-magick
 
 # tests only:
 apt-get install -y r-cran-testthat

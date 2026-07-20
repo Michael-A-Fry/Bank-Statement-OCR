@@ -12,8 +12,8 @@ On a Debian/Ubuntu machine or server:
 
 ```sh
 apt-get install -y r-base-core \
-  r-cran-yaml r-cran-jsonlite r-cran-openxlsx r-cran-pdftools \
-  r-cran-shiny r-cran-dt r-cran-testthat \
+  r-cran-yaml r-cran-jsonlite r-cran-openxlsx r-cran-pdftools r-cran-readxl \
+  r-cran-shiny r-cran-dt r-cran-magick r-cran-testthat \
   tesseract-ocr poppler-utils
 git clone -b bank-statement-ocr-platform <your-repo-url>
 cd Bank-Statement-OCR
@@ -23,7 +23,8 @@ Rscript tests/run_tests.R     # sanity: should print "292 passed, 0 failed"
 Start the app:
 
 ```sh
-R -e 'shiny::runApp(".", launch.browser = TRUE)'
+# for the team (0.0.0.0:8100):        Rscript scripts/run_app.R
+# just for you (loopback, dev only):  R -e 'shiny::runApp(".", launch.browser = TRUE)'
 ```
 
 ---

@@ -65,25 +65,23 @@ Rscript scripts/run_app.R        # serves on port 8100
 ```
 Users then open **`http://<vm-name-or-ip>:8100`** in any browser.
 
-Keep it running after logout / reboot:
-- **Windows:** install [NSSM](https://nssm.cc/) and register a service:
-  `nssm install BankStatements "C:\Program Files\R\R-4.x\bin\Rscript.exe" "C:\BankStatements\scripts\run_app.R"`,
-  set its working directory to the app folder, then `nssm start BankStatements`.
-  (Or a Task Scheduler task "At startup".)
-- **Linux:** a tiny systemd unit:
-  ```ini
-  # /etc/systemd/system/bankstatements.service
-  [Unit]
-  Description=Bank Statement OCR
-  [Service]
-  WorkingDirectory=/opt/bankstatements
-  ExecStart=/usr/bin/Rscript scripts/run_app.R
-  Restart=always
-  Environment=BSO_PORT=8100
-  [Install]
-  WantedBy=multi-user.target
-  ```
-  `sudo systemctl enable --now bankstatements`.
+**Make it come online automatically on every reboot — one command.** You do not
+hand-write any service file; a script installs it, enables it at boot, and keeps
+it alive if it ever crashes:
+- **Linux:** `sudo bash scripts/install-service.sh`
+  (add `--inbox` to also run the folder poller as a service). Then:
+  `systemctl status bankstatements` to check, `journalctl -u bankstatements -f`
+  for logs, `sudo systemctl restart bankstatements` after a folder update.
+- **Windows:** in an **Administrator** PowerShell,
+  `powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1`
+  (add `-Inbox` for the poller). It registers a Task Scheduler job that runs at
+  startup as SYSTEM, with the working directory set and auto-restart on. Manage
+  it under **Task Scheduler → BankStatementsApp**.
+
+Both installers set the port from `BSO_PORT` (default 8100) and create the
+`logs/ out/ inbox/ outbox/ processed/ failed/` folders. To remove auto-start:
+Linux `sudo systemctl disable --now bankstatements`; Windows
+`Unregister-ScheduledTask -TaskName BankStatementsApp -Confirm:$false`.
 
 **The firewall question:** this only needs users to reach the VM on **one port
 (8100)** over the internal network — no firewall *changes*, just that internal
