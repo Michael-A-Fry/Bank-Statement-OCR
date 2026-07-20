@@ -254,6 +254,30 @@ ui <- fluidPage(
           )
         ),
         tabPanel(
+          "Bulk audit & gaps",
+          br(),
+          helpText(HTML("Drop a whole pile of statements (any bank, any variant, selectable or scanned). Get a <b>safe-to-share</b> picture — nothing but shapes, counts and layout hashes leave the machine — of what parses, the unsupported layouts <b>clustered biggest-gap-first</b>, and <b>editable draft templates</b> for those gaps. Paste a draft into the Templates tab to save it.")),
+          fluidRow(
+            column(4,
+              fileInput("adm_ba_files", "Statements to audit", multiple = TRUE),
+              actionButton("adm_ba_run", "Run bulk audit", class = "btn-primary"),
+              br(), br(),
+              downloadButton("adm_ba_report", "Download safe report (.md)"),
+              br(), br(),
+              helpText("Also available headless: Rscript scripts/bulk-audit.R <folder>")),
+            column(8,
+              uiOutput("adm_ba_summary"),
+              h4("Gaps — unsupported layouts, biggest first"), DTOutput("adm_ba_clusters"),
+              h4("Per-file (shapes only, no PII)"), DTOutput("adm_ba_files_tbl"))),
+          h4("Recommended draft templates (editable — copy into the Templates tab to save)"),
+          uiOutput("adm_ba_recs"),
+          tags$hr(),
+          h4("Single statement — safe audit"),
+          helpText("Upload one statement to download its shapes-only audit (no PII) for sharing."),
+          fileInput("adm_audit_one", "Statement", multiple = FALSE),
+          downloadButton("adm_audit_dl", "Download safe audit (.md)")
+        ),
+        tabPanel(
           "Batch intake",
           br(),
           sidebarLayout(
@@ -361,6 +385,51 @@ server <- function(input, output, session) {
     } else output$adm_tpl_msg <- .tpl_note(paste("Could not save:", path), FALSE)
   })
 
+  # ---- Admin: bulk audit & gaps ----
+  adm_ba <- reactiveVal(NULL)
+  observeEvent(input$adm_ba_run, {
+    req(input$adm_ba_files)
+    fs <- input$adm_ba_files
+    sess <- file.path(tempdir(), paste0("ba_", as.integer(runif(1, 1, 1e9)))); dir.create(sess, showWarnings = FALSE)
+    paths <- vapply(seq_len(nrow(fs)), function(i) {
+      d <- file.path(sess, fs$name[i]); file.copy(fs$datapath[i], d, overwrite = TRUE); d }, character(1))
+    withProgress(message = "Auditing statements (scanned pages are OCR'd)", value = NULL,
+                 adm_ba(batch_audit(paths, templates = templates())))
+  })
+  output$adm_ba_summary <- renderUI({
+    b <- adm_ba(); if (is.null(b)) return(helpText("Upload statements and click Run bulk audit."))
+    g <- b$feature_gaps
+    tagList(
+      p(strong(sprintf("%d statements: ", g$total)),
+        paste(sprintf("%s=%s", names(g$by_status), g$by_status), collapse = ", ")),
+      p(sprintf("scanned %d · with redactions %d · multi-account %d · multi-period %d · unsupported %d across %d layouts",
+        g$scanned, g$with_redactions, g$multi_account, g$multi_period, g$unsupported, g$distinct_gap_layouts)),
+      p(class = "muted", sprintf("amount styles: %s | date formats: %s",
+        paste(names(g$amount_styles), collapse = ", "), paste(names(g$date_formats), collapse = ", "))))
+  })
+  output$adm_ba_clusters <- renderDT({
+    b <- adm_ba(); req(b); if (!nrow(b$clusters)) return(data.frame(note = "no gaps — everything parsed"))
+    b$clusters[, c("count", "kind", "layout_hint", "signature")]
+  }, options = list(pageLength = 10, dom = "tp"), rownames = FALSE)
+  output$adm_ba_files_tbl <- renderDT({
+    b <- adm_ba(); req(b)
+    b$per_file[, c("idx", "kind", "status", "template", "bank", "n_rows", "redacted", "amount_style", "date_format", "trust")]
+  }, options = list(pageLength = 15, dom = "tip"), rownames = FALSE)
+  output$adm_ba_recs <- renderUI({
+    b <- adm_ba(); if (is.null(b) || !length(b$recommendations))
+      return(helpText("Run a bulk audit to see recommended draft templates."))
+    do.call(tagList, lapply(b$recommendations, function(r) tagList(
+      h5(sprintf("%d file(s), %s — draft id: %s", r$count, r$kind, r$draft_id %||% "?")),
+      tags$pre(style = "font-size:11px;max-height:260px;overflow:auto;background:#f7f7f7;padding:8px", r$draft_yaml))))
+  })
+  output$adm_ba_report <- downloadHandler(
+    filename = function() "bulk-audit.md",
+    content = function(file) { b <- adm_ba(); req(b); writeLines(format_batch_audit(b), file) })
+  output$adm_audit_dl <- downloadHandler(
+    filename = function() "statement.audit.md",
+    content = function(file) { req(input$adm_audit_one)
+      writeLines(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())), file) })
+
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
   cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
@@ -434,24 +503,13 @@ server <- function(input, output, session) {
   })
 
   output$cv_downloads <- renderUI({
-    res <- cv_res(); src <- cv_src()
-    els <- list()
-    if (!is.null(res) && !is.null(res$outputs))
-      els <- list(strong("Download:"), br(),
-        downloadButton("dl_xlsx", "Excel"), downloadButton("dl_csv", "CSV"),
-        downloadButton("dl_json", "JSON"), br(), br())
-    if (!is.null(src))
-      els <- c(els, list(
-        downloadButton("dl_audit", "Safe audit (no PII)", class = "btn-info"),
-        helpText("A shapes-only structural report (no names, amounts or dates) you can share to build or fix a template.")))
-    if (length(els)) do.call(tagList, els) else NULL
+    res <- cv_res(); if (is.null(res) || is.null(res$outputs)) return(NULL)
+    tagList(
+      strong("Download:"), br(),
+      downloadButton("dl_xlsx", "Excel"),
+      downloadButton("dl_csv", "CSV"),
+      downloadButton("dl_json", "JSON"))
   })
-  output$dl_audit <- downloadHandler(
-    filename = function() "statement.audit.md",
-    content = function(file) {
-      src <- cv_src(); req(src)
-      writeLines(format_audit(statement_audit(src$path, templates = templates())), file)
-    })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
       p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)][1]
