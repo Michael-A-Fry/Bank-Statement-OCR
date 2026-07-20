@@ -19,6 +19,7 @@ for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 TEMPLATES_DIR <- "templates"            # curated, team-maintained (default) templates
 USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guided setup
 LOGDIR <- "logs"   # run log + feedback log live together, next to the app
+UPLOADS_DIR <- "uploads"  # every uploaded statement + its lifecycle status (git-ignored)
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
 
@@ -219,6 +220,14 @@ ui <- fluidPage(
           actionButton("adm_refresh", "↻ Refresh from logs", class = "btn-primary"),
           helpText(HTML(paste0("Built from the real run + feedback logs in <code>",
             LOGDIR, "/</code> — every conversion the team runs (including batches below)."))),
+          h4("Uploads — new formats to pick up"),
+          helpText("Every statement anyone converts is saved with its outcome. A row that stayed unsupported/failed and was never taught is a pickup: grab its safe audit (no PII) and build a template."),
+          fluidRow(
+            column(8, DTOutput("adm_uploads")),
+            column(4,
+              selectInput("adm_up_pick", "Pickup — a saved upload", choices = NULL),
+              downloadButton("adm_up_audit", "Download its safe audit (no PII)"))),
+          tags$hr(),
           fluidRow(
             column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
                    DTOutput("adm_overview")),
@@ -430,10 +439,32 @@ server <- function(input, output, session) {
     content = function(file) { req(input$adm_audit_one)
       writeLines(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())), file) })
 
+  # ---- Admin: uploads & pickups ----
+  output$adm_uploads <- renderDT({
+    cv_upload_id(); input$adm_refresh          # refresh after a convert or on demand
+    u <- read_uploads(UPLOADS_DIR)
+    if (!nrow(u)) return(data.frame(note = "no uploads yet"))
+    u[, c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "run_id")]
+  }, options = list(pageLength = 8, dom = "tip"), rownames = FALSE)
+  observe({
+    cv_upload_id(); input$adm_refresh
+    u <- read_uploads(UPLOADS_DIR)
+    updateSelectInput(session, "adm_up_pick",
+      choices = if (nrow(u)) u$id[u$needs_pickup] else character(0))
+  })
+  output$adm_up_audit <- downloadHandler(
+    filename = function() "upload.audit.md",
+    content = function(file) {
+      id <- input$adm_up_pick; req(id, nzchar(id))
+      p <- upload_file_path(id, UPLOADS_DIR); req(!is.na(p))
+      writeLines(format_audit(statement_audit(p, templates = templates())), file)
+    })
+
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
   cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
   cv_fb_done <- reactiveVal(FALSE)
+  cv_upload_id <- reactiveVal(NA_character_)   # the tracked upload for this conversion
 
   observeEvent(input$cv_go, {
     req(input$cv_file)
@@ -450,6 +481,14 @@ server <- function(input, output, session) {
                                messages = paste("error:", conditionMessage(e))))
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
+    # Capture the upload + its outcome so a failed/abandoned new format is a
+    # 2-second pickup in Admin -> Uploads (the file is saved for a safe re-audit).
+    uid <- safe(record_upload(src, name = input$cv_file$name, requested_by = "shiny",
+      status = res$status %||% "failed", run_id = res$run_id %||% NA_character_,
+      template = res$template_id %||% NA_character_,
+      trust = res$trust$level %||% NA_character_,
+      detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
+    cv_upload_id(uid)
   })
 
   output$cv_status <- renderUI({
@@ -628,6 +667,10 @@ server <- function(input, output, session) {
     ok <- tryCatch({ save_user_template(guided_live(), USER_TEMPLATES_DIR); TRUE }, error = function(e) FALSE)
     if (isTRUE(ok)) {
       tpl_bump(isolate(tpl_bump()) + 1); removeModal()
+      # mark this upload as taught, so it drops off the "needs pickup" list
+      if (!is.na(cv_upload_id()))
+        safe(set_upload_status(cv_upload_id(), "wizard_saved",
+          template = guided_live()$id %||% NA_character_, dir = UPLOADS_DIR))
       showNotification("Saved as your template. Click Convert again to run this statement with it.",
                        type = "message", duration = 8)
     } else showNotification("Couldn't save — adjust the settings and try again.", type = "error")

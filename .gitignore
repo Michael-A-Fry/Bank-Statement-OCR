@@ -24,6 +24,10 @@ Thumbs.db
 /processed/
 /failed/
 /stuck/
+/uploads/
+/audit-drafts/
+*.audit.md
+bulk-audit.md
 /logs/
 *.log
 
