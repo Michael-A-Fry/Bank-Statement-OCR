@@ -74,21 +74,33 @@ extract_metadata <- function(input, dict = default_label_dict()) {
 }
 
 # detect_multiple_statements(input, meta) -- flags a bundle of >1 statement in a
-# single upload (which would corrupt a single parse). STRONG signals only:
-# more than one distinct account number, or more than one distinct statement
-# period. (Repeated "Page 1 of N" alone is noisy on guides/cover pages, so it is
-# only a supporting reason, never the sole trigger.)
+# single upload (which would corrupt a single parse).
+#
+# The reliable STRONG signal is more than one distinct statement PERIOD: two
+# different date ranges in one file means two statements. (Confirmed on real
+# data: a 46-page bundle shows 6 distinct periods.)
+#
+# A count of distinct ACCOUNT NUMBERS is NOT reliable and is deliberately only
+# supporting context: real statements name other accounts in transaction
+# narratives (transfers) and list several products of one account, so a normal
+# single statement routinely shows several account numbers. (Confirmed on real
+# data: a single ANZ statement showed 5 account numbers yet had one continuous
+# running balance.) Multiple accounts within ONE period => a combined statement,
+# flagged separately, not a bundle.
 detect_multiple_statements <- function(input, meta = NULL) {
   if (is.null(meta)) meta <- extract_metadata(input)
   reasons <- character(0)
-  if (isTRUE(meta$n_accounts > 1))
-    reasons <- c(reasons, sprintf("%d distinct account numbers found", meta$n_accounts))
-  if (isTRUE(meta$n_periods > 1))
+  strong <- isTRUE(meta$n_periods > 1)
+  if (strong)
     reasons <- c(reasons, sprintf("%d distinct statement periods found", meta$n_periods))
-  strong <- length(reasons) > 0
+  if (isTRUE(meta$n_accounts > 1))
+    reasons <- c(reasons, sprintf("%d account numbers seen (transfers/products may inflate this)", meta$n_accounts))
   if (strong && isTRUE(meta$page1_markers > 1))
     reasons <- c(reasons, sprintf("%d 'Page 1 of N' markers", meta$page1_markers))
-  list(likely_multiple = strong, reasons = reasons)
+  list(likely_multiple = strong,
+       combined_accounts = isTRUE(meta$n_accounts > 1) && !strong,
+       n_accounts = meta$n_accounts %||% 0L,
+       reasons = reasons)
 }
 
 # metadata_df(meta) -- flatten metadata to a two-column field/value frame for the

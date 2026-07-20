@@ -50,6 +50,7 @@ parse_pdf_table <- function(input, template) {
       rec <- list(page = p,
         date = .pdf_cell(rw, cols$date), description = .pdf_cell(rw, cols$description),
         amount = .pdf_cell(rw, cols$amount), balance = .pdf_cell(rw, cols$balance),
+        debit = .pdf_cell(rw, cols$debit), credit = .pdf_cell(rw, cols$credit),
         particulars = .pdf_cell(rw, cols$particulars), code = .pdf_cell(rw, cols$code),
         reference = .pdf_cell(rw, cols$reference), other_party = .pdf_cell(rw, cols$other_party),
         type = .pdf_cell(rw, cols$type),
@@ -59,9 +60,43 @@ parse_pdf_table <- function(input, template) {
     }
   }
 
+  # Year context: many statements show the day/month only ("21 Apr") and put the
+  # year in the statement period. When the date_format has no year token, attach
+  # the year from the period (single year -> that year; a period spanning a
+  # year-end -> the year that lands each date inside the period). Generic: no
+  # bank-specific logic, driven entirely by the statement's own period text.
+  has_year <- grepl("%[Yy]", date_fmt)
+  full_date <- function(raw) raw
+  eff_fmt <- date_fmt
+  if (!has_year) {
+    eff_fmt <- paste(date_fmt, "%Y")
+    md <- safe(extract_metadata(input), NULL)
+    yrs <- suppressWarnings(as.integer(unlist(regmatches(
+      c(md$period_start, md$period_end),
+      gregexpr("(19|20)[0-9]{2}", c(md$period_start, md$period_end))))))
+    yrs <- unique(yrs[!is.na(yrs)])
+    pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%Y-%m-%d")) {
+      dd <- suppressWarnings(as.Date(s, f)); if (!is.na(dd)) return(dd) }; as.Date(NA) }
+    p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
+    full_date <- function(raw) {
+      if (!length(yrs)) return(raw)
+      bad <- is.na(raw) | !nzchar(trimws(raw))
+      if (length(yrs) == 1) { out <- paste(raw, yrs[1]); out[bad] <- raw[bad]; return(out) }
+      out <- vapply(raw, function(r) {
+        if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
+        cand <- suppressWarnings(as.Date(paste(r, yrs), eff_fmt))
+        inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
+        pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
+        if (is.na(pick)) pick <- 1L
+        paste(r, yrs[pick])
+      }, character(1))
+      out
+    }
+  }
+
   # Keep only rows whose date cell parses -> the actual transaction rows.
   keep <- vapply(recs, function(r)
-    !is.na(suppressWarnings(parse_date(r$date, date_fmt)$iso)), logical(1))
+    !is.na(suppressWarnings(parse_date(full_date(r$date), eff_fmt)$iso)), logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
@@ -71,9 +106,18 @@ parse_pdf_table <- function(input, template) {
     date_iso <- character(0); date_raw <- character(0); description <- character(0)
     amt <- list(value = numeric(0), direction = character(0), raw = character(0))
   } else {
-    d <- parse_date(getc("date"), date_fmt); date_iso <- d$iso; date_raw <- d$raw
-    amt_raw <- getc("amount")
-    amt <- parse_amount(.clean_money(amt_raw), style, list()); amt$raw <- amt_raw
+    d <- parse_date(full_date(getc("date")), eff_fmt)
+    date_iso <- d$iso; date_raw <- getc("date")   # date_raw stays verbatim (no injected year)
+    if (identical(style, "debit_credit_cols")) {
+      deb_raw <- getc("debit"); cr_raw <- getc("credit")
+      amt <- parse_amount(NULL, "debit_credit_cols",
+                          list(debit = .clean_money(deb_raw), credit = .clean_money(cr_raw)))
+      cr_has <- !is.na(cr_raw) & nzchar(trimws(cr_raw))
+      amt$raw <- ifelse(cr_has, cr_raw, deb_raw)
+    } else {
+      amt_raw <- getc("amount")
+      amt <- parse_amount(.clean_money(amt_raw), style, list()); amt$raw <- amt_raw
+    }
     description <- clean_description(getc("description"))
   }
   vb <- function(f) if (n == 0) character(0) else blank_to_na(getc(f))

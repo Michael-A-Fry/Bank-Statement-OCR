@@ -13,16 +13,20 @@ test_that("generic metadata is extracted from a real statement", {
   expect_match(m$period_end, "31 March 2026", fixed = TRUE)
 })
 
-test_that("multi-statement detection needs a STRONG signal (not page-1 count alone)", {
-  # two distinct accounts -> flagged
-  m <- list(n_accounts = 2, n_periods = 1, page1_markers = 2)
-  expect_true(detect_multiple_statements(NULL, m)$likely_multiple)
-  # one account but repeated 'Page 1 of N' (e.g. a guide) -> NOT flagged
-  m2 <- list(n_accounts = 1, n_periods = 1, page1_markers = 3)
-  expect_false(detect_multiple_statements(NULL, m2)$likely_multiple)
-  # two distinct statement periods -> flagged
+test_that("multi-statement detection keys on PERIODS, not account count", {
+  # two distinct periods -> flagged as a genuine bundle
   m3 <- list(n_accounts = 0, n_periods = 2, page1_markers = 1)
   expect_true(detect_multiple_statements(NULL, m3)$likely_multiple)
+  # several accounts but ONE period -> NOT a bundle; it's a combined statement.
+  # (Real data: a single ANZ statement showed 5 account numbers via transfer
+  # narratives yet had one continuous running balance.)
+  m <- list(n_accounts = 5, n_periods = 1, page1_markers = 1)
+  d <- detect_multiple_statements(NULL, m)
+  expect_false(d$likely_multiple)
+  expect_true(d$combined_accounts)
+  # one account, repeated 'Page 1 of N' (e.g. a guide) -> NOT flagged
+  m2 <- list(n_accounts = 1, n_periods = 1, page1_markers = 3)
+  expect_false(detect_multiple_statements(NULL, m2)$likely_multiple)
 })
 
 test_that("account and card regexes are generic", {

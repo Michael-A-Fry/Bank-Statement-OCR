@@ -1,0 +1,27 @@
+# ANZ everyday / "Go" account PDF statement.
+# Columns: Date | Transaction type and details | Withdrawals | Deposits | Balance
+# Dates are shown day+month only ("21 Apr"); the year comes from the statement
+# period (handled generically by the PDF parser). Withdrawals/Deposits are two
+# columns -> debit_credit_cols. Built from real statement word coordinates via
+# the PDF wizard approach (no hardcoded bank logic; this is just a template).
+id: anz_everyday_pdf
+bank: ANZ
+statement_type: everyday
+format: pdf
+version: 1
+effective_from: null
+effective_to: null
+min_score: 3
+fingerprint:
+  page_contains_all: ["Transaction type and details", "Withdrawals", "Deposits"]
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: debit_credit_cols
+  columns:
+    date:        {x_min: 40,  x_max: 80}
+    description: {x_min: 80,  x_max: 330}
+    debit:       {x_min: 330, x_max: 395}
+    credit:      {x_min: 395, x_max: 472}
+    balance:     {x_min: 472, x_max: 545}
+currency: NZD

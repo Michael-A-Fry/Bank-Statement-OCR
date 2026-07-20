@@ -28,9 +28,18 @@ validate_template <- function(t) {
     if (is.null(tab)) {
       problems <- c(problems, "pdf templates require a 'table' block")
     } else {
-      for (k in c("date", "description", "amount"))
+      for (k in c("date", "description"))
         if (is.null(tab$columns[[k]]))
           problems <- c(problems, sprintf("table.columns.%s is required", k))
+      # amount source depends on the sign style, exactly like the delimited path:
+      # debit_credit_cols needs debit+credit bands; everything else needs amount.
+      if (identical(tab$amount_sign, "debit_credit_cols")) {
+        for (k in c("debit", "credit"))
+          if (is.null(tab$columns[[k]]))
+            problems <- c(problems, sprintf("table.amount_sign 'debit_credit_cols' requires table.columns.%s", k))
+      } else if (is.null(tab$columns[["amount"]])) {
+        problems <- c(problems, "table.columns.amount is required")
+      }
       if (!is.null(tab$amount_sign) && !(tab$amount_sign %in% .VALID_SIGN))
         problems <- c(problems, sprintf("table.amount_sign '%s' is invalid", tab$amount_sign))
     }

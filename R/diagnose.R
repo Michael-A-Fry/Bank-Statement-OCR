@@ -42,6 +42,10 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("upload", "multiple_statements", "high",
           paste(metadata$multi$reasons, collapse = "; "),
           "This upload looks like more than one statement bundled together, which corrupts a single parse. Split it into one statement per file and re-run.")
+    else if (isTRUE(metadata$multi$combined_accounts))
+      add("upload", "combined_statement", "info",
+          sprintf("%d account numbers appear in one statement period", metadata$multi$n_accounts %||% 0L),
+          "Looks like a combined statement (several accounts/products, or transfer counterparties named in transactions). If transactions from more than one account are mixed, running balances won't be continuous across them — review per account.")
     p <- suppressWarnings(as.integer(metadata$pages %||% NA))
     if (!is.na(p) && p > 100)
       add("upload", "oversized", "medium",
