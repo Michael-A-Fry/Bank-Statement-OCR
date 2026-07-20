@@ -45,7 +45,6 @@ header_phrases <- function(input, n = 3) {
 suggest_pdf_columns <- function(input, gap = 18) {
   wl <- input$words %||% list()
   if (!length(wl)) return(data.frame())
-  # transaction page = most money-like tokens
   cnt <- vapply(wl, function(w) if (is.null(w) || !nrow(w)) 0L else
     sum(grepl(.WA_MONEY, w$text)), integer(1))
   pg <- which.max(cnt); if (!length(pg) || cnt[pg] == 0) return(data.frame())
@@ -61,8 +60,6 @@ suggest_pdf_columns <- function(input, gap = 18) {
       x_min = floor(min(w$x[sel])) - 3, x_max = ceiling(max(w$x[sel] + w$width[sel])) + 3,
       kind = kind, stringsAsFactors = FALSE)
   }
-
-  # money columns, left-to-right
   if (any(is_money)) {
     mg <- .cluster_1d(w$cx[is_money], gap)
     centres <- tapply(w$cx[is_money], mg, mean)
@@ -76,18 +73,14 @@ suggest_pdf_columns <- function(input, gap = 18) {
       add(labels[k], selk, "money")
     }
   }
-  # date column (leftmost date-ish cluster)
   if (any(is_date)) {
-    dg <- .cluster_1d(w$cx[is_date], gap)
-    idxd <- which(is_date)
+    dg <- .cluster_1d(w$cx[is_date], gap); idxd <- which(is_date)
     leftmost <- dg[which.min(w$cx[is_date])]
     seld <- rep(FALSE, nrow(w)); seld[idxd[dg == leftmost]] <- TRUE
     add("date", seld, "date")
   }
   if (!length(cols)) return(data.frame())
   out <- do.call(rbind, cols)
-
-  # description = between the date column and the first money column
   drow <- out[out$field == "date", , drop = FALSE]
   mrows <- out[out$kind == "money", , drop = FALSE]
   if (nrow(drow) && nrow(mrows)) {
