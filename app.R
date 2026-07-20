@@ -21,6 +21,8 @@ USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guide
 LOGDIR <- "logs"   # run log + feedback log live together, next to the app
 UPLOADS_DIR <- "uploads"  # every uploaded statement + its lifecycle status (git-ignored)
 REQUESTS_DIR <- "requests"  # "none of these fits -- tell our team" raises (git-ignored)
+FIELDS_DIR <- "fields_templates"            # curated mode:fields (IRD/form) templates
+USER_FIELDS_DIR <- "fields_templates_user"  # form templates built in the app
 DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictionary
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
@@ -216,6 +218,53 @@ ui <- fluidPage(
         )
       )
     )
+      )
+    ),
+    # ---- Forms (IRD / labelled-value documents) -----------------------
+    tabPanel(
+      "Forms (IRD)",
+      br(),
+      helpText("Some documents — IRD summaries, KiwiSaver / account summaries — aren't transaction tables; they're labelled values. Extract those here, or teach the tool a new form's labels."),
+      tabsetPanel(
+        tabPanel(
+          "Extract from a form", br(),
+          sidebarLayout(
+            sidebarPanel(
+              width = 4,
+              fileInput("fm_file", "Form document (.pdf)"),
+              actionButton("fm_go", "Extract fields", class = "btn-primary"),
+              br(), br(), uiOutput("fm_downloads"),
+              helpText("Detection uses the identifying phrases in each form template. Build one on the next tab if nothing matches.")),
+            mainPanel(
+              width = 8,
+              uiOutput("fm_status"),
+              h4("Fields found"), DTOutput("fm_table")))),
+        tabPanel(
+          "Build a form template", br(),
+          sidebarLayout(
+            sidebarPanel(
+              width = 4,
+              textInput("fb_id", "Template id", "newform_fields"),
+              textInput("fb_bank", "Bank / issuer", "NewIssuer"),
+              textInput("fb_type", "Document type", "summary"),
+              textAreaInput("fb_fp", "Identifying phrases (one per line — text that appears on this form)",
+                            rows = 3, value = "KiwiSaver\nOpening balance"),
+              textAreaInput("fb_fields",
+                            "Fields — one per line:  field_name = Label; Other label | money",
+                            rows = 8,
+                            value = paste("opening_balance = Opening balance; Balance brought forward | money",
+                                          "closing_balance = Closing balance | money",
+                                          "government_contribution = Government contribution; Member tax credit | money",
+                                          sep = "\n")),
+              fileInput("fb_sample", "Optional: a sample form to test on (.pdf)"),
+              actionButton("fb_preview", "Preview on the sample", class = "btn-primary"),
+              actionButton("fb_save", "Save form template"),
+              br(), br(), uiOutput("fb_msg")),
+            mainPanel(
+              width = 8,
+              helpText("Value type after | can be money, date, date_range or text (default). Any field whose name matches the shared dictionary also inherits its synonyms automatically."),
+              h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
+              h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml")))))
       )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -556,6 +605,105 @@ server <- function(input, output, session) {
   observeEvent(input$adm_req_dismiss, {
     id <- input$adm_req_pick; req(id, nzchar(id))
     if (isTRUE(set_request_status(id, "dismissed", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
+  })
+
+  # ---- Forms (IRD): extract labelled values from a form document ----------
+  fm_res <- reactiveVal(NULL); fm_dir <- reactiveVal(NULL)
+  observeEvent(input$fm_go, {
+    req(input$fm_file)
+    sess <- file.path(tempdir(), paste0("fm_", as.integer(runif(1, 1, 1e9))))
+    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+    src <- file.path(sess, input$fm_file$name)
+    file.copy(input$fm_file$datapath, src, overwrite = TRUE)
+    res <- withProgress(message = "Reading the form…", value = 0.4,
+      convert_form(src, fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
+                   outdir = sess, formats = c("xlsx", "csv", "json")))
+    fm_res(res); fm_dir(sess)
+  })
+  output$fm_status <- renderUI({
+    res <- fm_res(); if (is.null(res)) return(helpText("Upload a form and click Extract fields."))
+    cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
+    tagList(
+      h4(HTML(sprintf('<span class="%s">%s</span>', cls, toupper(res$status %||% "?")))),
+      p(class = "muted", paste(res$messages, collapse = "; ")),
+      if (!is.null(res$template_id) && !is.na(res$template_id))
+        p(class = "muted", paste("form template:", res$template_id)))
+  })
+  output$fm_table <- renderDT({
+    res <- fm_res(); req(res, !is.null(res$fields))
+    d <- res$fields[, intersect(c("field", "label", "value", "matched", "required", "flagged"),
+                                names(res$fields)), drop = FALSE]
+    datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 25))
+  })
+  output$fm_downloads <- renderUI({
+    res <- fm_res(); if (is.null(res) || !length(res$outputs)) return(NULL)
+    tagList(strong("Download:"), br(),
+      downloadButton("fm_dl_xlsx", "Excel"), downloadButton("fm_dl_csv", "CSV"),
+      downloadButton("fm_dl_json", "JSON"))
+  })
+  fm_dl <- function(ext) downloadHandler(
+    filename = function() basename(fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)][1]),
+    content = function(file) file.copy(
+      fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)][1], file, overwrite = TRUE))
+  output$fm_dl_xlsx <- fm_dl("xlsx"); output$fm_dl_csv <- fm_dl("csv"); output$fm_dl_json <- fm_dl("json")
+
+  # ---- Forms (IRD): build a form template from labels ----------------------
+  # parse_fields_spec -- turn the friendly "name = Label; Label2 | money" lines
+  # into a fields{} block. Value type after "|" is optional (default text).
+  parse_fields_spec <- function(text) {
+    lines <- trimws(strsplit(text %||% "", "\n")[[1]])
+    lines <- lines[nzchar(lines) & grepl("=", lines)]
+    fields <- list()
+    for (ln in lines) {
+      name <- trimws(sub("=.*$", "", ln))
+      rhs  <- trimws(sub("^[^=]*=", "", ln))
+      vtype <- NULL
+      if (grepl("\\|", rhs)) { vtype <- trimws(sub("^.*\\|", "", rhs)); rhs <- trimws(sub("\\|.*$", "", rhs)) }
+      labels <- trimws(strsplit(rhs, ";")[[1]]); labels <- labels[nzchar(labels)]
+      if (!nzchar(name) || !length(labels)) next
+      spec <- list(any_of = as.list(labels))
+      if (!is.null(vtype) && vtype %in% c("money", "date", "date_range", "text")) spec$value <- vtype
+      fields[[name]] <- spec
+    }
+    fields
+  }
+  fb_template <- reactive({
+    phrases <- trimws(strsplit(input$fb_fp %||% "", "\n")[[1]]); phrases <- phrases[nzchar(phrases)]
+    list(id = gsub("[^A-Za-z0-9_]+", "_", input$fb_id %||% "newform_fields"),
+         bank = input$fb_bank %||% "NewIssuer", statement_type = input$fb_type %||% "summary",
+         format = "pdf", mode = "fields", version = 1,
+         fingerprint = list(page_contains_all = as.list(phrases)),
+         fields = parse_fields_spec(input$fb_fields), currency = "NZD")
+  })
+  output$fb_yaml <- renderText({ t <- fb_template(); t$origin <- NULL; yaml::as.yaml(t) })
+
+  fb_preview <- reactiveVal(NULL)
+  observeEvent(input$fb_preview, {
+    if (is.null(input$fb_sample)) { showNotification("Upload a sample form to preview on.", type = "warning"); return() }
+    inp <- tryCatch(read_input(input$fb_sample$datapath), error = function(e) NULL)
+    if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return() }
+    f <- tryCatch(extract_fields(inp, fb_template()), error = function(e) NULL)
+    fb_preview(f)
+  })
+  output$fb_prev_status <- renderText({
+    f <- fb_preview()
+    if (is.null(f)) return("Upload a sample and click Preview to see what the labels pull out.")
+    sprintf("%d field(s); %d matched.", nrow(f), sum(f$matched))
+  })
+  output$fb_prev_tbl <- renderDT({
+    f <- fb_preview(); req(!is.null(f))
+    datatable(f[, intersect(c("field", "label", "value", "matched"), names(f))],
+              rownames = FALSE, options = list(dom = "t", pageLength = 25))
+  })
+  observeEvent(input$fb_save, {
+    t <- fb_template()
+    probs <- validate_fields_template(t)
+    if (length(probs)) {
+      output$fb_msg <- renderUI(span(class = "bad", paste("Not valid:", paste(probs, collapse = "; ")))); return() }
+    ok <- tryCatch({ save_fields_template(t, USER_FIELDS_DIR); TRUE }, error = function(e) FALSE)
+    output$fb_msg <- renderUI(if (isTRUE(ok))
+      span(class = "ok", sprintf("Saved '%s'. Upload it on 'Extract from a form' to use it.", t$id))
+      else span(class = "bad", "Couldn't save — check the fields."))
   })
 
   # Remediate a stuck upload right here: load the saved file into the SAME guided
