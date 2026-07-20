@@ -785,12 +785,22 @@ server <- function(input, output, session) {
         tabPanel(
           "Advanced (full template)", br(),
           helpText(HTML("This is the <b>complete</b> template. Edit anything — identifiers/fingerprints, column mapping, label synonyms, region bounds, row tolerance, metadata labels — to read even wildly different statements. Load your Basic choices in, edit, then Check &amp; apply.")),
+          if (identical(tmpl$format, "pdf")) tagList(
+            strong("Visual column editor"),
+            p(class = "muted", "Draw a box across a column on the page, choose which field it is, then Assign. The bands you set are drawn on the page and drive the preview — no need to type coordinates."),
+            fluidRow(
+              column(4, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
+              column(5, selectInput("g_pdf_field", "The box I draw is the…",
+                                    c("date", "description", "amount", "balance", "particulars",
+                                      "reference", "type", "debit", "credit"))),
+              column(3, br(), actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"))),
+            plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "520px"),
+            tags$hr()),
+          strong("Full template (YAML)"),
           div(actionButton("g_adv_load", "↻ Load current settings into the editor"),
               actionButton("g_adv_apply", "✓ Check & apply my edits", class = "btn-primary")),
           br(), uiOutput("g_adv_msg"),
-          textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 18),
-          if (identical(tmpl$format, "pdf"))
-            helpText(HTML("Prefer to set PDF columns visually? Draw them on the page under <b>Add a template → PDF</b>; paste the resulting band numbers here for the rest.")))),
+          textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 18))),
       tags$hr(),
       h4("Preview — what we'll pull out"),
       verbatimTextOutput("g_status"),
@@ -916,6 +926,51 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_col_bal",  selected = parsed$columns$balance$source %||% "")
     output$g_adv_msg <- renderUI(span(class = "ok", "Applied — preview updated below."))
   })
+
+  # ---- Advanced tab: visual PDF column editor (folded in, same as the wp_ tab) --
+  # Renders the chosen page and draws the working template's column bands on it;
+  # a drawn box assigns/updates a column, keeping the YAML editor and preview in
+  # sync so PDF setup is fully visual and in one place.
+  g_pdf_render <- reactive({
+    g <- guided(); req(g); req(identical(g$tmpl$format, "pdf"))
+    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
+    sz <- tryCatch(pdftools::pdf_pagesize(g$path), error = function(e) NULL)
+    if (is.null(sz) || pg > nrow(sz)) return(NULL)
+    ras <- tryCatch(as.raster(magick::image_read(
+      pdftools::pdf_render_page(g$path, page = pg, dpi = 100))), error = function(e) NULL)
+    if (is.null(ras)) return(NULL)
+    list(ras = ras, w = sz$width[pg], h = sz$height[pg])
+  })
+  output$g_pdf_plot <- renderPlot({
+    r <- g_pdf_render(); req(r)
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+         xlab = "", ylab = "", axes = FALSE)
+    rasterImage(r$ras, 0, r$h, r$w, 0)
+    cols <- guided()$tmpl$table$columns %||% list()
+    if (length(cols)) {
+      pal <- grDevices::hcl(seq(0, 300, length.out = length(cols)), 70, 55)
+      for (i in seq_along(cols)) {
+        b <- cols[[i]]; if (is.null(b$x_min) || is.null(b$x_max)) next
+        rect(b$x_min, 0, b$x_max, r$h, border = pal[i], lwd = 2)
+        text(mean(c(b$x_min, b$x_max)), 16, names(cols)[i], col = pal[i], font = 2)
+      }
+    }
+  })
+  observeEvent(input$g_pdf_assign, {
+    g <- guided(); req(g); br <- input$g_pdf_brush
+    if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
+    f <- input$g_pdf_field
+    g$tmpl$table$columns[[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
+    # keep the table region wide enough to include every band
+    xs <- unlist(lapply(g$tmpl$table$columns, function(c) c(c$x_min, c$x_max)))
+    if (length(xs)) g$tmpl$table$region <- list(x_min = min(xs) - 5, x_max = max(xs) + 5)
+    guided(g)
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "ok",
+      sprintf("Set the '%s' column. Page and preview updated.", f)))
+  })
+
   output$g_preview <- renderDT({
     g <- guided(); req(g); tx <- draft_preview(g$path, guided_live()); req(!is.null(tx))
     datatable(utils::head(tx, 12)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
