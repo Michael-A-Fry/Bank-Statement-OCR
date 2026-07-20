@@ -242,6 +242,14 @@ read_pdf <- function(path, redaction_rects = NULL,
           pages[p] <- otxt
           ocr_flags[p] <- TRUE
           ocr_conf[p] <- res$conf %||% NA_real_
+          # Wire OCR word boxes (positioned, in points) through the SAME redaction
+          # guard, so a scanned statement gets a real word table for column
+          # assignment -- OCR only ever sees visible pixels, so redactions hold.
+          if (!is.null(res$words) && nrow(res$words)) {
+            guarded_ocr <- apply_redaction_guard(res$words, .rects_for_page(redaction_rects, p), markers)
+            words[[p]] <- guarded_ocr
+            red_counts[p] <- sum(guarded_ocr$redacted)
+          }
         }
       }
       next

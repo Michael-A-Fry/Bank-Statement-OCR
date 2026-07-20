@@ -51,10 +51,29 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   if (!length(w)) NA_real_ else round(mean(w), 1)
 }
 
+# .ocr_tsv_to_words(tsv, scale) -- Tesseract TSV -> word boxes in PDF POINTS
+# (columns x,y,width,height,space,text -- the same shape pdftools::pdf_data uses),
+# so the PDF table parser can assign columns for a SCANNED statement exactly as
+# for a text-layer one. `scale` = 72/dpi maps image pixels to points.
+.ocr_tsv_to_words <- function(tsv, scale) {
+  if (is.null(tsv) || !nrow(tsv) ||
+      !all(c("left", "top", "width", "height", "text") %in% names(tsv))) return(NULL)
+  conf <- suppressWarnings(as.numeric(tsv$conf))
+  keep <- !is.na(conf) & conf >= 0 & nzchar(trimws(as.character(tsv$text)))
+  d <- tsv[keep, , drop = FALSE]
+  if (!nrow(d)) return(NULL)
+  data.frame(width = d$width * scale, height = d$height * scale,
+             x = d$left * scale, y = d$top * scale, space = TRUE,
+             text = trimws(as.character(d$text)), stringsAsFactors = FALSE)
+}
+
 # Render one PDF page to PNG (poppler pdftoppm) and OCR it.
-# Returns list(text = character lines, ok = logical).
+# Returns list(text = character lines, words = positioned boxes in PDF points,
+# conf = mean confidence, ok = logical). The text uses the preprocessed image
+# (accuracy); the word boxes use the RAW render (clean, known-scale geometry).
 ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE) {
-  if (!ocr_available() || !file.exists(pdf)) return(list(text = character(0), ok = FALSE))
+  if (!ocr_available() || !file.exists(pdf))
+    return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   prefix <- tempfile("ocrpg_")
   on.exit(unlink(Sys.glob(paste0(prefix, "*")), force = TRUE), add = TRUE)
   rc <- tryCatch(
@@ -66,11 +85,12 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
     error = function(e) 1L
   )
   img <- Sys.glob(paste0(prefix, "*.png"))
-  if (!length(img)) return(list(text = character(0), ok = FALSE, conf = NA_real_))
+  if (!length(img)) return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   use_img <- if (isTRUE(preprocess) && exists("preprocess_image", mode = "function"))
                preprocess_image(img[1]) else img[1]
   txt <- ocr_image(use_img, lang = lang)
-  list(text = txt, ok = length(txt) > 0L,
+  words <- .ocr_tsv_to_words(ocr_image_tsv(img[1], lang = lang), scale = 72 / dpi)
+  list(text = txt, words = words, ok = length(txt) > 0L,
        conf = ocr_word_confidence(use_img, lang = lang))
 }
 
