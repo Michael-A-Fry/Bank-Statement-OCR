@@ -89,6 +89,27 @@
   invisible(TRUE)
 }
 
+# .neutralize_formula(v) -- defend the SPREADSHEET outputs (xlsx/csv) against
+# formula injection: a merchant/description beginning with = + @ (or a leading
+# tab/CR) executes as a formula when opened in Excel. Prefix those with a single
+# quote so Excel shows the literal text. Characters are preserved (nothing is
+# stripped); only a display-safety marker is added, and ONLY for spreadsheets --
+# the JSON output stays byte-for-byte verbatim (it is never executed). Applied to
+# free-text columns only, so numeric-looking raw fields are untouched.
+.SS_TEXT_COLS <- c("description", "particulars", "code", "reference",
+                   "other_party", "type", "raw")
+.neutralize_formula <- function(v) {
+  v <- as.character(v)
+  hit <- !is.na(v) & grepl("^[=+@\t\r]", v)
+  v[hit] <- paste0("'", v[hit])
+  v
+}
+.spreadsheet_safe <- function(df) {
+  for (col in intersect(.SS_TEXT_COLS, names(df)))
+    df[[col]] <- .neutralize_formula(df[[col]])
+  df
+}
+
 # write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
@@ -100,13 +121,13 @@ write_outputs <- function(parsed, recon, outdir, basename,
     xlsx_path <- file.path(outdir, paste0(basename, ".xlsx"))
     wb <- openxlsx::createWorkbook()
     openxlsx::addWorksheet(wb, "Transactions")
-    openxlsx::writeData(wb, "Transactions", parsed$transactions)
+    openxlsx::writeData(wb, "Transactions", .spreadsheet_safe(parsed$transactions))
     openxlsx::addWorksheet(wb, "Summary")
     openxlsx::writeData(wb, "Summary", .header_df(parsed$header))
     openxlsx::addWorksheet(wb, "Checks")
     openxlsx::writeData(wb, "Checks", .checks_df(recon))
     openxlsx::addWorksheet(wb, "Provenance")
-    openxlsx::writeData(wb, "Provenance", parsed$provenance)
+    openxlsx::writeData(wb, "Provenance", .spreadsheet_safe(parsed$provenance))
     if (!is.null(diagnostics)) {
       openxlsx::addWorksheet(wb, "Diagnostics")
       openxlsx::writeData(wb, "Diagnostics", diagnostics)
@@ -127,7 +148,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
 
   if ("csv" %in% formats) {
     csv_path <- file.path(outdir, paste0(basename, ".csv"))
-    utils::write.csv(parsed$transactions, csv_path, row.names = FALSE, na = "")
+    utils::write.csv(.spreadsheet_safe(parsed$transactions), csv_path, row.names = FALSE, na = "")
     paths["csv"] <- csv_path
   }
 
