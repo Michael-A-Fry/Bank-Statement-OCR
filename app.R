@@ -119,9 +119,13 @@ ui <- fluidPage(
           textInput("wz_id", "Template id", value = "newbank_everyday_csv"),
           textInput("wz_bank", "Bank", value = "NewBank"),
           textInput("wz_type", "Statement type", value = "everyday"),
-          selectInput("wz_amount_sign", "Amount style",
-                      c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc")),
-          textInput("wz_datefmt", "Date format (strptime)", value = "%d/%m/%Y"),
+          selectInput("wz_amount_sign", "How are amounts shown?",
+                      choices = setNames(names(wd_amount_labels()),
+                                         unname(wd_amount_labels()))),
+          selectInput("wz_datefmt", "How are dates written?",
+                      choices = setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+                                         vapply(wd_date_table(), `[[`, "", "label"))),
+          helpText("Auto-detected from your sample — change only if wrong."),
           textInput("wz_currency", "Currency", value = "NZD"),
           actionButton("wz_preview", "Preview parse", class = "btn-primary"),
           actionButton("wz_save", "Save template"),
@@ -129,7 +133,8 @@ ui <- fluidPage(
         ),
         mainPanel(
           width = 8,
-          h4("Map each field to a source column"),
+          uiOutput("wz_detected"),
+          h4("Check each field points at the right column"),
           uiOutput("wz_maps"),
           h4("Fingerprint columns (must all be present to match)"),
           uiOutput("wz_fingerprint"),
@@ -244,6 +249,36 @@ server <- function(input, output, session) {
   wz_headers <- reactive({
     req(input$wz_file)
     read_headers(input$wz_file$datapath, input$wz_delim %||% ",")
+  })
+
+  # Auto-detect everything from the sample so the analyst only has to confirm.
+  observeEvent(input$wz_file, {
+    delim <- detect_delimiter(input$wz_file$datapath)
+    updateTextInput(session, "wz_delim", value = delim)
+    df <- tryCatch(utils::read.csv(
+      input$wz_file$datapath, sep = if (identical(delim, "\t")) "\t" else delim,
+      stringsAsFactors = FALSE, colClasses = "character", nrows = 50L,
+      check.names = FALSE, header = TRUE), error = function(e) NULL)
+    h <- if (!is.null(df)) names(df) else read_headers(input$wz_file$datapath, delim)
+    dcol <- guess_mapping(h, "date")
+    if (!is.null(df) && dcol %in% names(df)) {
+      fmt <- detect_date_format(df[[dcol]])
+      if (nzchar(fmt)) updateSelectInput(session, "wz_datefmt", selected = fmt)
+    }
+    updateSelectInput(session, "wz_amount_sign", selected = detect_amount_style(h, df))
+    base <- tools::file_path_sans_ext(input$wz_file$name)
+    updateTextInput(session, "wz_id",
+                    value = paste0(gsub("[^A-Za-z0-9]+", "_", tolower(base)), "_csv"))
+  })
+
+  output$wz_detected <- renderUI({
+    req(input$wz_file)
+    dl <- if (identical(input$wz_delim, "\t")) "tab" else (input$wz_delim %||% ",")
+    div(style = "background:#eef7ee;border:1px solid #cfe8cf;padding:8px 12px;border-radius:6px;margin-bottom:8px",
+        strong("Auto-detected: "),
+        sprintf("columns split by '%s'  |  dates look like %s  |  %s",
+                dl, date_format_label(input$wz_datefmt %||% "%d/%m/%Y"),
+                wd_amount_labels()[[input$wz_amount_sign %||% "signed"]]))
   })
 
   output$wz_maps <- renderUI({
