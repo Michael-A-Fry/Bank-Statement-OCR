@@ -550,6 +550,14 @@ server <- function(input, output, session) {
   cv_fb_done <- reactiveVal(FALSE)
   cv_upload_id <- reactiveVal(NA_character_)   # the tracked upload for this conversion
 
+  # who_now() -- the single source of truth for WHO is doing this, so the audit
+  # trail records a real person, never a placeholder. Preference: the name typed
+  # on Convert, then the Shiny session user, then the OS login.
+  who_now <- function() {
+    if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) return(trimws(input$cv_by))
+    session$user %||% current_user()
+  }
+
   observeEvent(input$cv_go, {
     req(input$cv_file)
     sess <- file.path(tempdir(), paste0("cv_", as.integer(runif(1, 1, 1e9))))
@@ -557,8 +565,7 @@ server <- function(input, output, session) {
     src <- file.path(sess, input$cv_file$name)
     file.copy(input$cv_file$datapath, src, overwrite = TRUE)
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
-    who <- if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) trimws(input$cv_by)
-           else (session$user %||% current_user())
+    who <- who_now()
     # Wrap the convert in a progress bar. Scanned PDFs go through OCR (poppler +
     # tesseract) and can take many seconds, during which the button used to look
     # frozen. A visible bar tells the user it IS working, not stuck.
@@ -675,7 +682,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res, res$run_id)
     ok <- tryCatch({
       submit_feedback(run_id = res$run_id, verdict = input$cv_fb_verdict,
-                      comment = input$cv_fb_comment, requested_by = "shiny",
+                      comment = input$cv_fb_comment, requested_by = who_now(),
                       template_id = res$template_id, logdir = LOGDIR)
       TRUE
     }, error = function(e) FALSE)
