@@ -1,0 +1,14 @@
+bank,filename,format,bytes,path
+anz,anz_creditcard_01.csv,csv,646,samples/raw/anz/anz_creditcard_01.csv
+anz,anz_transaction_export_01.csv,csv,585,samples/raw/anz/anz_transaction_export_01.csv
+anz,anz_transaction_export_02.csv,csv,271,samples/raw/anz/anz_transaction_export_02.csv
+asb,asb_transaction_export_01.csv,csv,528,samples/raw/asb/asb_transaction_export_01.csv
+asb,asb_transaction_export_02.tdv,tdv,528,samples/raw/asb/asb_transaction_export_02.tdv
+asb,asb_transaction_export_03.csv,csv,652,samples/raw/asb/asb_transaction_export_03.csv
+bnz,bnz_savings_01.csv,csv,401,samples/raw/bnz/bnz_savings_01.csv
+bnz,bnz_transaction_export_01.csv,csv,499,samples/raw/bnz/bnz_transaction_export_01.csv
+bnz,bnz_transaction_export_02.csv,csv,541,samples/raw/bnz/bnz_transaction_export_02.csv
+kiwibank,kiwibank_savings_01.ofx,ofx,1015,samples/raw/kiwibank/kiwibank_savings_01.ofx
+kiwibank,kiwibank_transaction_01.csv,csv,711,samples/raw/kiwibank/kiwibank_transaction_01.csv
+westpac,westpac_debitcard_01.csv,csv,384,samples/raw/westpac/westpac_debitcard_01.csv
+westpac,westpac_transaction_export_01.csv,csv,453,samples/raw/westpac/westpac_transaction_export_01.csv
