@@ -143,8 +143,13 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       "OCR pages can contain recognition errors. Spot-check machine-read values against the image.")
     ocrc <- suppressWarnings(as.numeric(parsed$header$ocr_min_confidence %||% NA))
     if (!is.na(ocrc) && ocrc < 70) add("OCR text", "low_ocr_confidence", "high",
-      sprintf("lowest OCR word-confidence was %.0f%%", ocrc),
-      "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals.")
+      sprintf("lowest page-mean OCR confidence was %.0f%%", ocrc),
+      "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals. Rows with a doubtful cell carry an 'ocr_low_conf' flag.")
+    # OCR ran but confidence could not be measured (the TSV pass failed): a
+    # distinct caveat, since the generic info note above understates it.
+    if (!is.na(ocrp) && ocrp > 0 && is.na(ocrc)) add("OCR text", "ocr_confidence_unknown", "high",
+      "OCR ran but its confidence could not be measured",
+      "Treat the machine-read values as unverified and check them against the image.")
   }
 
   if (!length(rows)) {

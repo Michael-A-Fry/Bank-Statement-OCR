@@ -62,9 +62,13 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   keep <- !is.na(conf) & conf >= 0 & nzchar(trimws(as.character(tsv$text)))
   d <- tsv[keep, , drop = FALSE]
   if (!nrow(d)) return(NULL)
+  # `conf` (0-100 per-word confidence) is carried through so the table parser can
+  # flag a transaction whose amount/date/balance cell contains a low-confidence
+  # word -- a misread digit that a page-mean confidence would otherwise hide.
   data.frame(width = d$width * scale, height = d$height * scale,
              x = d$left * scale, y = d$top * scale, space = TRUE,
-             text = trimws(as.character(d$text)), stringsAsFactors = FALSE)
+             text = trimws(as.character(d$text)),
+             conf = suppressWarnings(as.numeric(d$conf)), stringsAsFactors = FALSE)
 }
 
 # Render one PDF page to PNG (poppler pdftoppm) and OCR it.

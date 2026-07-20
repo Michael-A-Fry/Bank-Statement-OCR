@@ -109,6 +109,11 @@ reconcile <- function(parsed, template = NULL) {
     discrepancy = expected_rows - good,
     detail = if (lost > 0)
       sprintf("%d source line(s) unaccounted for; %d malformed row(s)", lost, malformed)
+    else if (is.na(src_lines))
+      sprintf(paste0("%d malformed row(s). Note: for this format the total source ",
+                     "line count is not independently known, so rows dropped by ",
+                     "column/date filtering are NOT counted here -- rely on ",
+                     "balance_reconciliation for completeness."), malformed)
     else sprintf("%d malformed row(s)", malformed))
 
   # 6. redaction_summary: informational count of redacted rows.
@@ -117,6 +122,24 @@ reconcile <- function(parsed, template = NULL) {
     "redaction_summary", "na", expected = NA, actual = redacted,
     discrepancy = NA, detail = sprintf("%d redacted row(s)", redacted),
     informational = TRUE)
+
+  # 7. ocr_confidence: informational -- was any page machine-read (OCR), and how
+  # confident was the worst page? OCR is never 100% accurate, so this must be
+  # visible to a forensic reviewer alongside the confidence figure. It does not
+  # move the score (it is informational) but it DOES cap the trust level below --
+  # an OCR'd statement is never rated "high".
+  ocr_pages <- suppressWarnings(as.integer(h$ocr_pages %||% 0L))
+  if (is.na(ocr_pages)) ocr_pages <- 0L
+  ocr_conf <- suppressWarnings(as.numeric(h$ocr_min_confidence %||% NA))
+  if (ocr_pages > 0) {
+    rows$ocr_confidence <- .kpi(
+      "ocr_confidence", "na", expected = NA,
+      actual = if (is.na(ocr_conf)) sprintf("%d page(s) OCR-read", ocr_pages)
+               else sprintf("%d page(s) OCR-read, min page confidence %.0f%%", ocr_pages, ocr_conf),
+      discrepancy = NA,
+      detail = "machine-read (OCR) text is not guaranteed 100% accurate -- verify amounts and descriptions against the source PDF",
+      informational = TRUE)
+  }
 
   kpis <- do.call(rbind, rows)
   rownames(kpis) <- NULL
@@ -172,10 +195,41 @@ reconcile <- function(parsed, template = NULL) {
       "completeness UNVERIFIED: no balance or stated count to reconcile against, so a dropped/missing transaction cannot be detected automatically — check the row count against the statement")
   }
 
+  # Unresolved-year caveat: rows kept with date_unresolved carry a verbatim
+  # day/month but NO year (no statement period was found). Say so explicitly --
+  # the money is preserved but the dates are not fully known.
+  n_dateunres <- sum(grepl("date_unresolved", tx$flags))
+  if (n_dateunres > 0) {
+    if (identical(level, "high")) level <- "medium"
+    reasons <- c(reasons, sprintf(
+      "%d row(s) have an UNRESOLVED year (no statement period found); day and month are captured verbatim but the year could not be determined — assign it before relying on the dates",
+      n_dateunres))
+  }
+
+  # OCR caveat (forensic): a statement where ANY page was machine-read by OCR is
+  # never rated "high" -- OCR is not guaranteed accurate, and reconciliation math
+  # only cross-checks amounts, not the verbatim descriptions. Always surface that
+  # OCR was used and the confidence figure so the reviewer verifies the source.
+  if (ocr_pages > 0) {
+    if (identical(level, "high")) level <- "medium"
+    reasons <- c(reasons, sprintf(
+      "%d page(s) were read by OCR%s; machine-read text is not guaranteed 100%% accurate — verify amounts and descriptions against the source PDF",
+      ocr_pages,
+      if (is.na(ocr_conf)) " (page confidence could not be measured)"
+      else sprintf(" (min page confidence %.0f%%)", ocr_conf)))
+    # A per-cell flag is stronger than the page mean: it points at the exact rows
+    # whose date/amount/balance may have been misread.
+    n_ocrlow <- sum(grepl("ocr_low_conf", tx$flags))
+    if (n_ocrlow > 0)
+      reasons <- c(reasons, sprintf(
+        "%d row(s) have a LOW-CONFIDENCE OCR value in a date/amount/balance cell — check those cells against the source", n_ocrlow))
+  }
+
   # Return KPIs without the internal informational flag column exposed downstream.
   kpis_out <- kpis[, c("name", "status", "expected", "actual", "discrepancy", "detail")]
 
   list(kpis = kpis_out,
        trust = list(level = level, score = score, reasons = reasons,
-                    completeness_verified = completeness_verified))
+                    completeness_verified = completeness_verified,
+                    ocr_pages = ocr_pages, ocr_min_confidence = ocr_conf))
 }

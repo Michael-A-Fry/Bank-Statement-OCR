@@ -122,8 +122,18 @@ match_label <- function(spec, pages, dict = NULL) {
     vv <- character(0); rr <- character(0); tt <- character(0)
     for (i in seq_along(hits)) {
       li <- hits[i]; term <- hit_terms[i]; line <- lines[li]
-      v <- if (identical(vtype, "text")) .text_after(line, term)
-           else .value_from_line(.after_label(line, term), vtype)
+      v <- if (identical(vtype, "text")) {
+        .text_after(line, term)
+      } else {
+        # Prefer a value to the RIGHT of the label (handles two labels on one
+        # line); if none, fall back to the WHOLE label line (handles a value that
+        # sits to the LEFT, e.g. "1,234.56 Closing balance") BEFORE ever reading
+        # the next line -- otherwise a right-empty label would wrongly grab the
+        # following line's number.
+        vr <- .value_from_line(.after_label(line, term), vtype)
+        if (is.na(vr) || !nzchar(vr)) vr <- .value_from_line(line, vtype)
+        vr
+      }
       if ((is.na(v) || !nzchar(v)) && use_next && !identical(vtype, "text") && li < length(lines))
         v <- .value_from_line(lines[li + 1L], vtype)
       if (!is.na(v) && nzchar(v)) { vv <- c(vv, v); rr <- c(rr, line); tt <- c(tt, term) }

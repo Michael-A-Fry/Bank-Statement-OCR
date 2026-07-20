@@ -102,15 +102,80 @@ test_that(".is_summary drops only true summary lines, never real transactions", 
               list(c("10.00", 415, 40, 25), c("95.50", 488, 40, 30)))
     nrow(parse_pdf_table(.rb_input(.rb_words(rows)), .rb_tmpl("signed"))$transactions)
   }
-  # real transactions that merely LOOK summary-ish -> kept
+  # real transactions that merely LOOK summary-ish (label is not the WHOLE
+  # description) -> always kept; money must never vanish silently
   expect_equal(count_kept("Total Credit Union deposit"), 1L)
   expect_equal(count_kept("Total Payment to ACME"), 1L)
+  expect_equal(count_kept("Total Payments to ACME Ltd"), 1L)
   expect_equal(count_kept("Transfer carried forward interest"), 1L)
-  # genuine summary rows -> dropped
+  expect_equal(count_kept("Carried forward interest adj"), 1L)
+  expect_equal(count_kept("brought forward stock purchase"), 1L)
+  # genuine summary rows (the description IS the label) -> dropped
   expect_equal(count_kept("Opening Balance"), 0L)
   expect_equal(count_kept("Balance Brought Fwd"), 0L)
   expect_equal(count_kept("Total Credits"), 0L)
   expect_equal(count_kept("Carried Forward"), 0L)
+})
+
+test_that("a label's value to its LEFT is read, not the next line's number", {
+  # "1,234.56 Closing balance" then a following line with its own number: the
+  # closing balance must be 1,234.56, never the next line's 5.00.
+  v <- match_label(list(any_of = "closing balance", value = "money"),
+                   "1,234.56 Closing balance\nInterest charged 5.00")$value
+  expect_identical(v, "1,234.56")
+})
+
+# ---- OCR: confidence surfaced + trust never "high" -------------------------
+test_that("an OCR-read statement is capped below high and carries a caveat", {
+  tx <- coerce_core(data.frame(row_id = 1:2,
+    date = c("2026-01-05", "2026-01-06"), date_raw = c("05 Jan", "06 Jan"),
+    description = c("A", "B"), amount = c(-4.5, 10), amount_raw = c("4.50", "10.00"),
+    direction = c("debit", "credit"), balance = c(95.5, 105.5),
+    balance_raw = c("95.50", "105.50"), particulars = NA, code = NA, reference = NA,
+    other_party = NA, type = NA, currency = "NZD", flags = "", stringsAsFactors = FALSE))
+  h <- list(opening_balance = 100, closing_balance = 105.5,
+            period_start = "1 Jan 2026", period_end = "31 Jan 2026", row_count = 2L,
+            ocr_pages = 2L, ocr_min_confidence = 94)
+  r <- reconcile(list(transactions = tx, header = h, source_line_count = NA_integer_))
+  expect_false(identical(r$trust$level, "high"))          # OCR is never "high"
+  expect_equal(r$trust$ocr_pages, 2L)
+  expect_equal(r$trust$ocr_min_confidence, 94)
+  expect_true(any(grepl("OCR", r$trust$reasons)))         # caveat present
+  expect_true(any(r$kpis$name == "ocr_confidence"))       # confidence figure shown
+})
+
+test_that("a low-confidence OCR word in a critical cell flags that row", {
+  # OCR word boxes carry per-word `conf`; a doubtful digit in the amount cell must
+  # flag the row even when the page-mean confidence looks healthy.
+  w <- data.frame(stringsAsFactors = FALSE,
+    text = c("05","Jan","COFFEE","4.50","95.50", "06","Jan","RENT","500.00","595.50"),
+    x = c(45,60,110,415,488, 45,60,110,415,488),
+    y = c(40,40,40,40,40, 70,70,70,70,70), width = rep(20,10), height = rep(10,10),
+    conf = c(96,95,93,97,94, 96,95,93,42,94))              # row 2 amount @ 42%
+  tx <- parse_pdf_table(.rb_input(w), .rb_tmpl("signed"))$transactions
+  expect_false(grepl("ocr_low_conf", tx$flags[1]))         # all high-conf
+  expect_true(grepl("ocr_low_conf", tx$flags[2]))          # the 42% amount
+  # a text-layer page (no conf column) must never raise the flag
+  tx2 <- parse_pdf_table(.rb_input(w[, setdiff(names(w), "conf")]), .rb_tmpl("signed"))$transactions
+  expect_false(any(grepl("ocr_low_conf", tx2$flags)))
+})
+
+# ---- stated transaction count -> real completeness check -------------------
+test_that("a stated transaction count is extracted and reconciled", {
+  m <- extract_metadata(list(pages = "Number of transactions: 42"))
+  expect_equal(m$stated_count, 42L)
+  # a bare dollar total must not be misread as a count
+  expect_true(is.na(extract_metadata(list(pages = "Total transactions value 1,234.56"))$stated_count))
+})
+
+# ---- formula-injection neutralisation covers verbatim *_raw cells ----------
+test_that("date_raw / amount_raw / balance_raw are neutralised for spreadsheets", {
+  df <- data.frame(description = "ok", date_raw = "=1+1", amount_raw = "@SUM(A1)",
+                   balance_raw = "=9*9", stringsAsFactors = FALSE)
+  safe_df <- .spreadsheet_safe(df)
+  expect_identical(safe_df$date_raw, "'=1+1")
+  expect_identical(safe_df$amount_raw, "'@SUM(A1)")
+  expect_identical(safe_df$balance_raw, "'=9*9")
 })
 
 # ---- year-less dates with NO resolvable period: preserve, never drop -------

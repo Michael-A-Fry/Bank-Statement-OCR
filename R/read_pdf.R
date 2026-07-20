@@ -212,8 +212,18 @@ read_pdf <- function(path, redaction_rects = NULL,
   ocr_flags <- rep(FALSE, np)
   ocr_conf <- rep(NA_real_, np)
 
+  # OCR is attempted whenever the page's TEXT is effectively empty/sparse -- not
+  # only when there are zero word boxes. That covers a scanned transaction page
+  # that also carries a thin digital text layer (a Bates stamp, footer or
+  # watermark): box-count alone would treat it as a text page and silently yield
+  # no rows. Safely no-ops where the OCR tools (R/ocr.R + tesseract/poppler) are
+  # absent.
+  ocr_ready <- exists("ocr_available", mode = "function") && ocr_available() &&
+               exists("page_needs_ocr", mode = "function")
+
   for (p in seq_len(np)) {
     wp <- word_list[[p]]
+    rects_p <- .rects_for_page(redaction_rects, p)
     if (is.null(wp) || nrow(wp) == 0) {
       # No word boxes -> emit raw text as-is; a marker sweep still applies so
       # baked-in redaction tokens never survive even without geometry.
@@ -226,46 +236,42 @@ read_pdf <- function(path, redaction_rects = NULL,
                    y = integer(0), space = logical(0), text = character(0),
                    stringsAsFactors = FALSE), NULL, markers)
       red_counts[p] <- 0L
-      # OCR fallback for image-only pages: no text layer and no word boxes.
-      # Tesseract reads only VISIBLE pixels, so any redaction painted on the
-      # page is inherently unreadable -- text under a black box cannot be
-      # recovered by OCR. Each OCR'd page is flagged so downstream consumers
-      # know the text was machine-read, not extracted. Safely no-ops where the
-      # OCR tools (R/ocr.R + system tesseract/poppler) are absent.
-      if (exists("ocr_available", mode = "function") && ocr_available() &&
-          exists("page_needs_ocr", mode = "function") && page_needs_ocr(pages[p])) {
-        res <- ocr_pdf_page(path, p)
-        if (isTRUE(res$ok)) {
-          otxt <- paste(res$text, collapse = "\n")
-          for (m in markers) otxt <- gsub(m, REDACTION_TOKEN, otxt,
-                                          perl = TRUE, useBytes = TRUE)
+    } else {
+      wp <- as.data.frame(wp, stringsAsFactors = FALSE)
+      guarded <- apply_redaction_guard(wp, rects_p, markers)
+      words[[p]] <- guarded
+      n_red <- sum(guarded$redacted)
+      red_counts[p] <- n_red
+      # If ANY redaction touched this page, do NOT trust the raw text layer
+      # (it exposes text under overlays); rebuild the page from guarded boxes.
+      pages[p] <- if (n_red > 0) words_to_text(guarded) else raw_text[[p]]
+    }
+
+    # OCR fallback. Tesseract reads only VISIBLE pixels, so any redaction painted
+    # on the page is inherently unreadable, and the OCR word boxes go through the
+    # SAME redaction guard. Each OCR'd page is flagged so downstream knows the
+    # text was machine-read, not extracted.
+    if (ocr_ready && page_needs_ocr(pages[p])) {
+      res <- ocr_pdf_page(path, p)
+      if (isTRUE(res$ok)) {
+        otxt <- paste(res$text, collapse = "\n")
+        for (m in markers) otxt <- gsub(m, REDACTION_TOKEN, otxt,
+                                        perl = TRUE, useBytes = TRUE)
+        ocr_flags[p] <- TRUE
+        ocr_conf[p] <- res$conf %||% NA_real_
+        if (!is.null(res$words) && nrow(res$words)) {
+          guarded_ocr <- apply_redaction_guard(res$words, rects_p, markers)
+          words[[p]] <- guarded_ocr
+          nred_ocr <- sum(guarded_ocr$redacted)
+          red_counts[p] <- nred_ocr
+          # Keep pages[p] consistent with the guarded OCR boxes, so an overlay
+          # redaction reaches the metadata/section text too (parity with the
+          # text-layer path above).
+          pages[p] <- if (nred_ocr > 0) words_to_text(guarded_ocr) else otxt
+        } else {
           pages[p] <- otxt
-          ocr_flags[p] <- TRUE
-          ocr_conf[p] <- res$conf %||% NA_real_
-          # Wire OCR word boxes (positioned, in points) through the SAME redaction
-          # guard, so a scanned statement gets a real word table for column
-          # assignment -- OCR only ever sees visible pixels, so redactions hold.
-          if (!is.null(res$words) && nrow(res$words)) {
-            guarded_ocr <- apply_redaction_guard(res$words, .rects_for_page(redaction_rects, p), markers)
-            words[[p]] <- guarded_ocr
-            red_counts[p] <- sum(guarded_ocr$redacted)
-          }
         }
       }
-      next
-    }
-    wp <- as.data.frame(wp, stringsAsFactors = FALSE)
-    rects_p <- .rects_for_page(redaction_rects, p)
-    guarded <- apply_redaction_guard(wp, rects_p, markers)
-    words[[p]] <- guarded
-    n_red <- sum(guarded$redacted)
-    red_counts[p] <- n_red
-    # If ANY redaction touched this page, do NOT trust the raw text layer
-    # (it exposes text under overlays); rebuild the page from guarded boxes.
-    if (n_red > 0) {
-      pages[p] <- words_to_text(guarded)
-    } else {
-      pages[p] <- raw_text[[p]]
     }
   }
 

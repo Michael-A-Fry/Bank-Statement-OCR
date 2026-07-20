@@ -96,8 +96,12 @@
 # stripped); only a display-safety marker is added, and ONLY for spreadsheets --
 # the JSON output stays byte-for-byte verbatim (it is never executed). Applied to
 # free-text columns only, so numeric-looking raw fields are untouched.
+# Includes the verbatim *_raw source cells: they are copied straight from the
+# statement, so a hostile PDF could put "=cmd" in an amount/date/balance cell and
+# it would execute when the xlsx/csv is opened in Excel unless neutralised here.
 .SS_TEXT_COLS <- c("description", "particulars", "code", "reference",
-                   "other_party", "type", "raw")
+                   "other_party", "type", "raw",
+                   "date_raw", "amount_raw", "balance_raw")
 .neutralize_formula <- function(v) {
   v <- as.character(v)
   hit <- !is.na(v) & grepl("^[=+@\t\r]", v)

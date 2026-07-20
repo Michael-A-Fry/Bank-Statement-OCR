@@ -81,6 +81,16 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
           sprintf("parsed %d row(s) but review needed", row_count),
           paste(recon$trust$reasons, collapse = "; "))
       }
+      # OCR caveat is in the trust reasons already (so it shows on needs_review);
+      # add it to the ok message too, so a clean scanned statement still warns the
+      # reviewer that machine-read text is not guaranteed accurate.
+      if (isTRUE(recon$trust$ocr_pages > 0) && status == "ok") {
+        msg <- c(msg, status_message("ok", sprintf(
+          "%d page(s) were read by OCR%s — verify amounts and descriptions against the source PDF",
+          recon$trust$ocr_pages,
+          if (is.na(recon$trust$ocr_min_confidence)) ""
+          else sprintf(" (min page confidence %.0f%%)", recon$trust$ocr_min_confidence))))
+      }
 
       result$status <- status
       result$template_id <- template$id

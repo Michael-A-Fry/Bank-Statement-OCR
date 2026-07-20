@@ -41,6 +41,12 @@ parse_date <- function(x, fmt) {
   if (grepl("-", s)) neg <- TRUE                        # any minus -> negative
   s <- gsub("[()+-]", "", s)
   if (!nzchar(s)) return(NA_real_)
+  # Locale note: with only ONE kind of separator present, a lone dot is read as a
+  # decimal point and a lone comma uses the 1-2-trailing-digits rule. This is
+  # correct for the NZ/AU/UK/US statements this tool targets ("1.234" = 1.234,
+  # "1,234" = 1234). A purely European statement writing "1.234" to mean 1 234
+  # would be mis-scaled -- add a per-template decimal hint if such statements ever
+  # need first-class support. Mixed "1.234,56" / "1,234.56" is handled exactly.
   hasdot <- grepl("\\.", s); hascomma <- grepl(",", s)
   if (hasdot && hascomma) {
     # the LAST separator is the decimal one

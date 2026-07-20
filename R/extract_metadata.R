@@ -69,6 +69,19 @@ extract_metadata <- function(input, dict = default_label_dict()) {
   cb <- match_label(dict$closing_balance %||% list(any_of = "closing balance", value = "money"),
                     pages, dict)
 
+  # Stated transaction count: many statements print "Number of transactions: 42".
+  # When present it becomes an INDEPENDENT completeness check (reconcile compares
+  # it to the parsed row count). Only very specific labels are used so a stray
+  # word never invents a count; absent -> NA -> the check simply doesn't run.
+  sc <- match_label(dict$transaction_count %||% list(
+          any_of = c("number of transactions", "no. of transactions",
+                     "no of transactions", "total number of transactions",
+                     "transaction count"),
+          value = "regex:[0-9]{1,6}"), pages, dict)
+  stated_count <- suppressWarnings(as.integer(sc$value))
+  if (!is.na(stated_count) && (stated_count < 1L || stated_count > 100000L))
+    stated_count <- NA_integer_
+
   list(
     pages_actual   = pages_actual,
     max_page_pt    = max_page_pt,
@@ -80,7 +93,8 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     accounts       = accounts,
     n_accounts     = length(accounts),
     opening_balance = ob$value,
-    closing_balance = cb$value
+    closing_balance = cb$value,
+    stated_count    = stated_count
   )
 }
 

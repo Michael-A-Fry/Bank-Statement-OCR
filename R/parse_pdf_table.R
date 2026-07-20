@@ -19,11 +19,29 @@
   paste(sel$text[order(sel$x)], collapse = " ")
 }
 
+# .cell_minconf(rw, cspec) -- lowest OCR word confidence (0-100) among the words
+# that fall in a column band; NA when there is no confidence data (a text-layer
+# page has none) or the band is empty. Used to flag a low-confidence value in a
+# CRITICAL cell (date/amount/balance) that a page-mean confidence would hide.
+.cell_minconf <- function(rw, cspec) {
+  if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max)) return(NA_real_)
+  if (!("conf" %in% names(rw))) return(NA_real_)
+  cx <- rw$x + rw$width / 2
+  sel <- rw[cx >= cspec$x_min & cx <= cspec$x_max, , drop = FALSE]
+  cf <- suppressWarnings(as.numeric(sel$conf)); cf <- cf[!is.na(cf) & cf >= 0]
+  if (!length(cf)) NA_real_ else min(cf)
+}
+
 # .has_money(x) -- TRUE when a cell carries any digit (used only to decide a row
 # is a transaction). Parsing itself is left to the sign-aware parse_amount/.num,
 # which read the raw cell verbatim: pre-stripping here used to remove a trailing
 # OD/DR/CR and silently flip an overdrawn balance's sign.
 .has_money <- function(x) grepl("[0-9]", as.character(x))
+
+# Per-cell OCR confidence floor: a word below this (0-100) in a date/amount/
+# balance cell earns an `ocr_low_conf` flag. Deliberately conservative -- only
+# clearly-doubtful reads are flagged, so the signal stays meaningful.
+.OCR_CELL_MIN_CONF <- 60
 
 parse_pdf_table <- function(input, template) {
   t <- template$table %||% list()
@@ -57,6 +75,12 @@ parse_pdf_table <- function(input, template) {
         reference = .pdf_cell(rw, cols$reference), other_party = .pdf_cell(rw, cols$other_party),
         type = .pdf_cell(rw, cols$type),
         raw = paste(rw$text[order(rw$x)], collapse = " "))
+      # lowest OCR confidence across this row's CRITICAL cells (NA on text pages).
+      cc <- c(.cell_minconf(rw, cols$date), .cell_minconf(rw, cols$amount),
+              .cell_minconf(rw, cols$balance), .cell_minconf(rw, cols$debit),
+              .cell_minconf(rw, cols$credit))
+      cc <- cc[!is.na(cc)]
+      rec$ocr_minconf <- if (length(cc)) min(cc) else NA_real_
       for (ef in names(extras_cols)) rec[[paste0("x.", ef)]] <- .pdf_cell(rw, extras_cols[[ef]])
       recs[[length(recs) + 1L]] <- rec
     }
@@ -131,23 +155,26 @@ parse_pdf_table <- function(input, template) {
   # transactions even though they carry a money value on a dated line. Drop them
   # generically -- a real transaction is never *named* "closing balance". This
   # stops a statement's own summary row from corrupting the reconciliation.
+  # A summary line's description IS the label ("Closing Balance", "Total Credits"),
+  # never a label buried in a longer narrative. So match the WHOLE label, not a
+  # substring: "Total Payments to ACME Ltd" or "Carried forward interest adj" are
+  # real transactions and must be KEPT. This deliberately errs toward keeping a
+  # row -- a stray summary row that slips through breaks balance_reconciliation
+  # LOUDLY (the reviewer investigates), whereas dropping a real transaction loses
+  # money SILENTLY, which the forensic contract forbids.
   .is_summary <- function(r) {
-    d   <- tolower(trimws(r$description %||% ""))
-    txt <- if (nzchar(d)) d else tolower(trimws(r$raw %||% ""))
-    # Balance/total labels are distinctive enough to match anywhere. "brought/
-    # carried forward" is required to carry "balance" OR the abbreviations (b/f,
-    # c/f, fwd) so a real narrative like "Transfer carried forward interest" is
-    # NOT dropped; the totals category is PLURAL ("Total Credits", not the
-    # transaction "Total Credit Union" / "Total Payment to ACME").
-    bal <- grepl(paste0(
-      "\\b(opening|closing)\\s+balance\\b",
-      "|\\bbalance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)\\b",
-      "|\\bbalance\\s+[bc]/f\\b",
-      "|\\btotal\\s+(withdrawals|deposits|credits|debits|payments|fees)\\b"), txt)
-    # bare "brought/carried forward" only when it HEADS the description (the label
-    # itself), never mid-narrative.
-    cf <- grepl("^(brought|carried)\\s+forward\\b", d)
-    bal || cf
+    d <- tolower(trimws(r$description %||% ""))
+    if (!nzchar(d)) d <- tolower(trimws(r$raw %||% ""))
+    # strip a trailing amount / colon / dashes so "Closing Balance: 1,234.56 DR"
+    # still reduces to the bare label.
+    lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d))
+    grepl(paste0(
+      "^(statement\\s+)?(opening|closing)\\s+balance$",
+      "|^balance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)$",
+      "|^balance\\s+[bc]/f$",
+      "|^(brought|carried)\\s+forward$",
+      "|^total\\s+(withdrawals|deposits|credits|debits|payments|fees|transactions)$"),
+      lbl)
   }
   # Did we manage to resolve a year for a year-less date format? When we did NOT
   # (no period, no year anywhere in the text), dropping every row would silently
@@ -206,11 +233,19 @@ parse_pdf_table <- function(input, template) {
   # but the transaction is preserved. Marked so trust/review reflect the gap.
   date_unresolved <- if (n == 0) logical(0)
     else (!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw)))
+  # ocr_low_conf: an OCR'd date/amount/balance cell held a word below the
+  # per-cell confidence floor -- a likely misread digit that the page-mean
+  # confidence would mask. Only fires on OCR pages (text pages carry no conf).
+  ocr_minconf <- if (n == 0) numeric(0) else vapply(recs, function(r)
+    if (is.null(r$ocr_minconf)) NA_real_ else as.numeric(r$ocr_minconf), numeric(1))
+  ocr_low <- if (n == 0) logical(0) else (!is.na(ocr_minconf) & ocr_minconf < .OCR_CELL_MIN_CONF)
   flags <- if (n == 0) character(0) else {
-    base <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
-    ifelse(date_unresolved,
-           ifelse(nzchar(base), paste0(base, ",date_unresolved"), "date_unresolved"),
-           base)
+    add <- function(base, cond, tok)
+      ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
+    f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
+    f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, ocr_low, "ocr_low_conf")
+    f
   }
   if (n > 0) amt$value[redacted] <- NA_real_
 
@@ -243,6 +278,7 @@ parse_pdf_table <- function(input, template) {
     currency = template$currency %||% "NZD",
     source_file = basename(input$path), source_sha256 = input$sha256,
     page_count = input$meta$page_count %||% NA_integer_, row_count = n,
+    stated_count = md$stated_count %||% NA_integer_,
     ocr_pages = input$meta$ocr_pages %||% 0L,
     ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_)
 
