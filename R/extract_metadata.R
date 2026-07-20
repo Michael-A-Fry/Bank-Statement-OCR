@@ -4,19 +4,19 @@
 # Feeds the Metadata output sheet, the run log (to understand what people convert
 # and what errors), and diagnostics.
 
-.MONEY_RX <- "-?\\$?-?[0-9][0-9,]*\\.[0-9]{2}"
-.DATE_RX  <- "[0-9]{1,2}[/ .-][A-Za-z0-9]{2,9}[/ .-][0-9]{2,4}"
+# .MONEY_RX / .DATE_RX are defined in labels.R (single source of truth).
 .ACCT_RX  <- "[0-9]{2}-[0-9]{4}-[0-9]{6,7}-[0-9]{2,3}"          # NZ bank account
 .CARD_RX  <- "[0-9]{4}[- ]?[0-9X*]{4}[- ]?[0-9X*]{4}[- ]?[0-9]{4}" # masked card
 
 .all_matches <- function(text, rx, perl = FALSE)
   unique(regmatches(text, gregexpr(rx, text, perl = perl))[[1]])
 
-# extract_metadata(input) -> named list of statement-level metadata.
-extract_metadata <- function(input) {
+# extract_metadata(input, dict) -> named list of statement-level metadata.
+# Labelled scalars (opening/closing balance) come from the label dictionary --
+# synonyms live in dictionaries/labels.yaml, NOT hardcoded here.
+extract_metadata <- function(input, dict = default_label_dict()) {
   pages <- input$pages %||% character(0)
   text <- paste(pages, collapse = "\n")
-  lines <- trimws(unlist(strsplit(text, "\n", fixed = TRUE)))
 
   pages_actual <- input$meta$page_count %||% (if (length(pages)) length(pages) else NA_integer_)
 
@@ -34,9 +34,16 @@ extract_metadata <- function(input) {
     suppressWarnings(max(as.integer(sub(".*of\\s+([0-9]+).*", "\\1", pageofs)), na.rm = TRUE)) else NA_integer_
   page1_markers <- length(regmatches(text, gregexpr("[Pp]age\\s+1\\s+of\\s+[0-9]+", text))[[1]])
 
-  # statement period(s): every "From <date> to <date>" block, distinct.
-  per_rx <- sprintf("[Ff]rom\\s+%s\\s+to\\s+%s", .DATE_RX, .DATE_RX)
-  periods <- .all_matches(text, per_rx, perl = TRUE)
+  # statement period(s): two dates joined by a connective (to / through / dash),
+  # regardless of wording around them ("From X to Y", "Statement period X - Y",
+  # "X through Y"). Generic: no bank-specific phrase. Distinct ranges are counted.
+  # connective between the two dates: a word or a dash. The dash class is built
+  # from code points (ASCII hyphen, en-dash, em-dash) so the pattern is valid
+  # UTF-8 regardless of the source file's locale -- no raw non-ASCII literal.
+  dash <- paste0("-", intToUtf8(0x2013), intToUtf8(0x2014))
+  per_rx <- sprintf("(?:%s)\\s*(?:to|through|thru|until|[%s])\\s*(?:%s)",
+                    .DATE_RX, dash, .DATE_RX)
+  periods <- .all_matches(enc2utf8(text), per_rx, perl = TRUE)
   period_start <- NA_character_; period_end <- NA_character_
   if (length(periods)) {
     ds <- regmatches(periods[1], gregexpr(.DATE_RX, periods[1]))[[1]]
@@ -45,12 +52,11 @@ extract_metadata <- function(input) {
 
   accounts <- unique(c(.all_matches(text, .ACCT_RX), .all_matches(text, .CARD_RX)))
 
-  grab_after <- function(label) {
-    ln <- lines[grepl(label, lines, ignore.case = TRUE) & grepl(.MONEY_RX, lines)]
-    if (!length(ln)) return(NA_character_)
-    m <- regmatches(ln[1], gregexpr(.MONEY_RX, ln[1]))[[1]]
-    if (length(m)) m[length(m)] else NA_character_
-  }
+  # opening/closing balance via the label dictionary (synonyms, not hardcoded).
+  ob <- match_label(dict$opening_balance %||% list(any_of = "opening balance", value = "money"),
+                    pages, dict)
+  cb <- match_label(dict$closing_balance %||% list(any_of = "closing balance", value = "money"),
+                    pages, dict)
 
   list(
     pages_actual   = pages_actual,
@@ -62,8 +68,8 @@ extract_metadata <- function(input) {
     n_periods      = length(periods),
     accounts       = accounts,
     n_accounts     = length(accounts),
-    opening_balance = grab_after("opening balance"),
-    closing_balance = grab_after("closing balance")
+    opening_balance = ob$value,
+    closing_balance = cb$value
   )
 }
 

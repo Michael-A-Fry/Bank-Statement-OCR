@@ -1,0 +1,61 @@
+# dictionaries/labels.yaml -- the shared BASE label dictionary.
+#
+# THIS is the single place a maintainer teaches the engine new wording for
+# labelled VALUES. No R code, no per-bank copy/paste. Matching is
+# case-insensitive substring, so "Opening Balance", "opening balance" and
+# "OPENING BALANCE:" all match "opening balance".
+#
+# A field inherits an entry automatically when its name matches a key here
+# (e.g. a template field `opening_balance:` picks up every phrase below). A
+# template can also add its own synonyms inline with `any_of:` or point at a
+# key with `dict:`. Add as many phrases as real statements need -- that is the
+# whole point: the weirdest statement is one more line here, not a code change.
+#
+# value: money (default) | date | date_range | text | regex:<pattern>
+
+opening_balance:
+  any_of:
+    - "opening balance"
+    - "balance brought forward"
+    - "balance b/f"
+    - "brought forward"
+    - "opening ledger balance"
+    - "beginning balance"
+    - "starting balance"
+    - "balance forward"
+    - "previous balance"        # credit-card wording
+    - "balance from previous statement"
+  value: money
+
+closing_balance:
+  any_of:
+    - "closing balance"
+    - "balance carried forward"
+    - "balance c/f"
+    - "carried forward"
+    - "closing ledger balance"
+    - "ending balance"
+    - "new balance"             # credit-card wording
+    - "balance at end"
+    - "final balance"
+  value: money
+
+total_credits:
+  any_of: ["total credits", "total deposits", "total money in", "payments in",
+           "total received", "credits", "deposits"]
+  value: money
+
+total_debits:
+  any_of: ["total debits", "total withdrawals", "total money out", "payments out",
+           "total spent", "debits", "withdrawals"]
+  value: money
+
+account_name:
+  any_of: ["account name", "account holder", "customer name", "name of account holder"]
+  value: text
+  where: page1
+
+statement_date:
+  any_of: ["statement date", "date of issue", "issue date", "date issued", "issued"]
+  value: date
+  where: page1

@@ -386,3 +386,42 @@ Written up in `docs/architecture/deployment-integration-plan.md`:
   wizards; Qlik is for *selecting a template + converting + giving feedback*.
   Adding a new bank = the analyst, in the wizard, once — then every Qlik user
   gets it for free. Keeps templates consistent for the whole team.
+
+---
+
+## 12. Label dictionary — the "hundreds of wordings" problem (2026-07-20)
+Question raised: how do we handle the 100s of different labels/items that appear
+in different places, may repeat, may not exist — "Opening balance" vs "starting
+balance" vs "balance b/f" vs "balance:" — and does the YAML actually conform to
+that level of customisation?
+
+**Honest audit + fix.** Two variability problems, solved two ways:
+- **Transaction tables (the core, ~95% of the deliverable): already conformed.**
+  Rows have no per-row labels; they map by column header (delimited/excel) or
+  x-band (pdf), once, in `columns:`. Names/places/repeat/absent are handled by
+  column mapping + the keep-only-date-parseable-rows filter + `null` fields. No
+  synonyms involved by design.
+- **Single labelled values (opening/closing balance, period, account name, IRD
+  fields): did NOT conform.** `extract_metadata.R` hardcoded the English label
+  words in R; `extract_fields.R` allowed one label per field. Wording like
+  "balance brought forward" was missed — exactly the "no hardcoded bs" violation.
+
+**Built (option: build it fully):**
+- `R/labels.R` — a declarative matcher: `any_of` synonyms, `value`
+  (money/date/date_range/text/regex), `occurrence` (first/last/all → repeats),
+  `where` (page1/last_page/int → places), `required` (exist/not), `on_conflict`
+  (disagreeing matches flagged, never guessed). Value read from the label line or
+  the next line if the label is a heading. Back-compat with bare-string/`label:`.
+- `dictionaries/labels.yaml` — the shared base synonym dictionary; the single
+  place a maintainer teaches new wording (a list of phrases, no code).
+- `extract_metadata.R` de-hardcoded: opening/closing balance now come from the
+  dictionary; period broadened to any two dates joined by a connective.
+- `extract_fields.R` routed through the matcher; a field auto-inherits the base
+  dictionary entry matching its name (or `dict:`), so "opening_balance"
+  understands "balance brought forward" with zero extra config.
+- Proven: "Balance brought forward" → opening, "New balance" → closing, with no
+  code change. Suite: 28 files / 125 tests / 444 assertions, 0 failures.
+
+Net: adding a bank's odd wording is one line in `dictionaries/labels.yaml`, not a
+code change — which makes the engine *more* aligned with "no hardcoded bs,
+maintainable by one analyst," not less.

@@ -22,6 +22,12 @@ point-and-click wizard (or editing a YAML file), not by writing code.
 - **Visual PDF wizard** — draw boxes over the columns, preview live, generate the
   `format: pdf` template. No YAML by hand.
 - **Key-value (`mode: fields`)** extraction foundation for IRD/form documents. `read_input → detect → parse → reconcile → outputs`.
+- **Label dictionary** — the hundreds-of-wordings problem for labelled values
+  ("opening balance" vs "balance brought forward" vs "starting balance") is
+  handled by a synonym dictionary (`dictionaries/labels.yaml`) with
+  first/last/all occurrence, page scoping, required flags and conflict flagging —
+  edited as a list of phrases, never in code. Transaction tables don't use it
+  (they map by column/band), so wording never affects the core parse.
 - **Interactive GUI + template wizard (Shiny)** — upload → convert → review the
   checks → download; plus a wizard that builds a *new bank template for you*
   from a sample (map columns by dropdown, preview, save).
@@ -44,7 +50,7 @@ point-and-click wizard (or editing a YAML file), not by writing code.
   wrong) with an optional comment — appended to `logs/feedback.jsonl`, flagged
   when not clean, keyed by `run_id` back to the run log so maintenance can triage
   exactly what the engine got wrong.
-- **Test suite**: `27 files / 115 tests / 419 assertions, 0 failures`.
+- **Test suite**: `28 files / 125 tests / 444 assertions, 0 failures`.
 
 ## Not done yet (data-gated, not code)
 
@@ -145,9 +151,11 @@ Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/disco
 
 ```
 app.R         Shiny GUI + template wizard
-R/            engine (schema, readers, detect, normalise, parse, reconcile,
-              outputs, logging, ocr, convert)
+R/            engine (schema, readers, detect, normalise, labels, parse,
+              reconcile, metadata, fields, outputs, logging, feedback, ocr, convert)
 templates/    declarative per-bank YAML templates
+dictionaries/ shared synonym dictionary for labelled values (labels.yaml)
+fields_templates/ key-value templates (IRD/form-style, mode: fields)
 samples/      specimen corpus (public samples + guides)
 tests/        golden-file + unit tests (run: Rscript tests/run_tests.R)
 run.R         CLI entrypoint

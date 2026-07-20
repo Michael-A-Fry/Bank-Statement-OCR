@@ -17,12 +17,18 @@ R/                      engine functions (one concern per file)
   templates.R           load + validate YAML templates
   detect.R              deterministic bank/statement detection + trust
   normalise.R           parse_date / parse_amount / clean_description (verbatim)
+  labels.R              label dictionary + matcher (single labelled values)
   parse.R               parse_statement(input, template) -> parsed object
   reconcile.R           reconciliation KPIs + trust score
+  extract_metadata.R    generic statement metadata + multi-statement detection
+  extract_fields.R      key-value ("mode: fields") extraction (IRD/forms)
   outputs.R             write xlsx (multi-sheet) / csv / json
-  logging.R             append-only run log
+  logging.R             append-only run + feedback logs
+  feedback.R            per-conversion feedback capture (feedback.jsonl)
   convert.R             convert_statement(...) orchestrator (never throws)
 templates/              declarative per-bank YAML templates (runtime-loadable)
+dictionaries/labels.yaml  shared synonym dictionary for labelled values
+fields_templates/       key-value templates (fields mode)
 samples/                specimen corpus (already present)
 tests/testthat/         golden-file + unit tests
 run.R                   thin CLI entrypoint
@@ -97,6 +103,45 @@ currency: NZD
 `amount_sign` handlers: `signed` (one signed column); `debit_credit_cols`
 (separate debit/credit columns → `columns.debit`/`columns.credit`); `dr_cr_suffix`
 (`123.45 DR`); `type_dc` (a type column where `type_debit_value: "D"` means debit).
+
+### 5a. Two ways variability is absorbed — read this before "add a synonym"
+The engine faces two *different* variability problems and solves them two ways:
+
+1. **Transaction tables (the core).** Rows have no per-row labels — they live in
+   columns. Wording never matters: `columns:` maps a source column (delimited /
+   excel) or an x-band (pdf) to a canonical field, once. "Different names /
+   places / repeat / absent" are all handled by column mapping + the
+   *keep-only-date-parseable-rows* filter + `null` for absent fields. **No
+   synonym list is involved, and none should be added.**
+
+2. **Single labelled values** (opening/closing balance, statement period,
+   account name, IRD form fields). *Here* wording varies wildly — "opening
+   balance" vs "balance brought forward" vs "starting balance" vs "opening:".
+   These are matched through the **label dictionary** (§5b), never hardcoded in R.
+
+### 5b. Label dictionary + matcher (single labelled values)
+`dictionaries/labels.yaml` is the one place a maintainer teaches the engine new
+wording. Matching is case-insensitive substring. A **matcher spec** (used in the
+dictionary and in `fields`-mode templates) is:
+```yaml
+opening_balance:
+  any_of:                        # SYNONYMS — list as many as real statements need
+    - "opening balance"
+    - "balance brought forward"
+    - "starting balance"
+  value: money                   # money(default) | date | date_range | text | regex:<pat>
+  occurrence: first              # first(default) | last | all      -> REPEATS
+  where: page1                   # any(default) | page1 | last_page | <int>  -> PLACES
+  required: false                # default false                    -> EXIST/NOT
+  on_conflict: flag              # flag(default) | first | last      -> disagreeing matches
+```
+Rules: a bare string or `{label: "..."}` is accepted (back-compat); a value is
+read from the label line, or the next line if the label is a heading; a field in
+a `fields`-mode template auto-inherits the base-dictionary entry whose key
+matches its name (or one named by `dict:`); disagreeing repeats are **flagged,
+never silently guessed**. `extract_metadata()` reads opening/closing balance
+through this dictionary — no label words live in R. Adding a bank's odd wording
+is one line in `dictionaries/labels.yaml`, not a code change.
 
 ## 6. Function interfaces (exact signatures)
 - `load_templates(dir) -> list<template>` (parsed + validated; invalid template = hard error at load, listed by id).

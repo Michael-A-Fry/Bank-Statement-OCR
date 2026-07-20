@@ -2,43 +2,51 @@
 # documents (IRD summaries, KiwiSaver/account summaries) where the useful data
 # is labelled values, not a transaction table. This is the second extraction
 # paradigm (build-contract side quest): the SAME declarative-template idea, but
-# a template declares FIELDS (a label to find + optional regex) instead of
-# columns, and the output is a named record.
+# a template declares FIELDS (labels to find) instead of columns.
 #
-# Deliberately standalone and simple: it does not touch the transaction pipeline
-# (convert_statement / reconcile), so the core stays unchanged. Full wiring into
-# a fields-mode output awaits a real IRD document to model against.
+# Each field is a label-matcher spec (see R/labels.R): synonyms via `any_of`,
+# `occurrence` (first/last/all) for repeats, `where` to scope to a page,
+# `required` to flag a mandatory-but-missing field, and value types
+# (money/date/date_range/text/regex). A bare string or `{label: "..."}` still
+# works (back-compat), and a field auto-inherits base-dictionary synonyms when
+# its name matches a dictionary key -- so "opening_balance" understands
+# "balance brought forward" etc. with no extra config.
 #
-# extract_fields(input, template) -> data.frame(field, label, value, raw)
+# Deliberately standalone: it does not touch the transaction pipeline, so the
+# core stays unchanged.
+#
+# extract_fields(input, template, dict)
+#   -> data.frame(field, label, value, raw, matched, required, flagged, conflict)
 
-extract_fields <- function(input, template) {
+extract_fields <- function(input, template, dict = default_label_dict()) {
   fields <- template$fields %||% list()
   pages <- input$pages %||% character(0)
-  lines <- trimws(unlist(strsplit(paste(pages, collapse = "\n"), "\n", fixed = TRUE)))
-  money_rx <- "-?\\$?-?[0-9][0-9,]*\\.[0-9]{2}"
 
   rows <- lapply(names(fields), function(fn) {
     spec <- fields[[fn]]
-    label <- if (is.list(spec)) spec$label else as.character(spec)
-    pat <- if (is.list(spec)) spec$pattern else NULL
-    cand <- lines[grepl(label, lines, fixed = TRUE)]
-    val <- NA_character_; raw <- NA_character_
-    if (length(cand)) {
-      if (!is.null(pat) && nzchar(pat)) {
-        for (ln in cand) {
-          m <- regmatches(ln, regexpr(pat, ln, perl = TRUE))
-          if (length(m) && nzchar(m)) { val <- m; raw <- ln; break }
-        }
-      } else {
-        # prefer a line that actually carries a money value (skips annotations),
-        # then take the LAST money token on it (the value sits to the right).
-        withmoney <- cand[grepl(money_rx, cand)]
-        raw <- if (length(withmoney)) withmoney[1] else cand[1]
-        m <- regmatches(raw, gregexpr(money_rx, raw))[[1]]
-        if (length(m)) val <- m[length(m)]
-      }
+    if (is.character(spec)) spec <- list(any_of = spec)
+
+    # Inherit synonyms from the base dictionary: an explicit `dict:` key, else
+    # the field's own name if it matches a dictionary entry.
+    key <- spec$dict %||% fn
+    if (!is.null(dict[[key]])) {
+      spec$any_of <- unique(c(.spec_terms(spec), .spec_terms(dict[[key]])))
+      if (is.null(spec$value) && is.null(spec$pattern)) spec$value <- dict[[key]]$value
     }
-    data.frame(field = fn, label = label, value = val, raw = raw, stringsAsFactors = FALSE)
+
+    res <- match_label(spec, pages, dict)
+    required <- isTRUE(spec$required)
+    terms <- .spec_terms(spec)
+    data.frame(
+      field    = fn,
+      label    = res$term %||% (if (length(terms)) terms[1] else fn),
+      value    = res$value,
+      raw      = res$raw,
+      matched  = res$matched,
+      required = required,
+      flagged  = required && !res$matched,   # required-but-missing -> flag
+      conflict = res$conflict,
+      stringsAsFactors = FALSE)
   })
   do.call(rbind, rows)
 }
