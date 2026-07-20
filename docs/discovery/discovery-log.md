@@ -24,8 +24,10 @@ front-end agnostic.
 ### Hard constraints
 - **Language:** R only. No `reticulate`, no Python, ever.
 - **Attribution:** every commit authored as *Michael Fry
-  `<95201544+Michael-A-Fry@users.noreply.github.com>`*. No mention of AI /
-  assistants / Claude anywhere in commits, code, comments, or docs.
+  `<95201544+Michael-A-Fry@users.noreply.github.com>`*. No mention of AI,
+  automated assistants, or any such tooling anywhere in commits, code,
+  comments, docs, branch names, or artifacts — everything is authored as
+  Michael.
 - **Environment:** cannot self-host a Shiny app for users outside the immediate
   team. Core capability must therefore be usable when plugged into whatever
   analytics tool is adopted.
@@ -239,18 +241,91 @@ The dominant, repeated requirement. Every design choice is judged against it:
 
 ---
 
-## 6. Open items (to be resolved in later banks)
-- Bank 5 — Consistency, maintainability & governance; non-bank docs.
+## 6. Confirmed decisions — Bank 5 (Consistency, maintainability & governance)
+
+_All recommended defaults accepted._
+
+### 6.1 Deliverable format
+- Primary output: an **Excel workbook** — Sheet 1 core transactions (standard
+  schema), Sheet 2 statement header/summary, Sheet 3 reconciliation KPIs +
+  provenance/metadata, (later) Sheet 4 extras.
+- **Plus** a plain **CSV** of the core table (tool-agnostic) and a **JSON**
+  (future machine consumption).
+
+### 6.2 Frozen data contract
+- One **documented, versioned core schema**, identical for every
+  bank/statement, so downstream tools never break. Working draft columns:
+  `row_id, source_page, date_raw, date, description (verbatim), amount_raw,
+  amount, debit, credit, balance, currency, direction, section, flags`.
+- Final field list to be confirmed against the real specimens (guarantee the
+  fields forensic accountants always need — running balance, unique row id,
+  as-shown date string).
+
+### 6.3 Quality gate ("foolproof")
+- **Golden-file regression tests** on GitHub: each specimen has an expected
+  output; no change is accepted unless **all banks still pass and
+  reconciliation passes**. A template is not "live" until it matches its
+  golden file.
+
+### 6.4 Maintainability
+- Everything the analyst touches is **plain files** (templates, config), with
+  **one documented entrypoint** and a plain-English "add a new statement in N
+  steps" guide. No build tooling required on the deployment side.
+
+### 6.5 Logging & security
+- **File-based logging** (CSV/JSONL in a logs folder, no database): who
+  requested, when, file name + hash, bank selected, status, reason,
+  reconciliation result, template version.
+- **No raw statement content in logs.** **100% local — no external/cloud
+  calls** (rules out cloud OCR). Test fixtures use public specimens only.
+
+### 6.6 Non-bank documents (side quest, post-MVP)
+- Same engine + a `doc_type` dimension; IRD and similar docs become **more
+  templates in the same folder** using the same section-anchor approach — a
+  **config add-on, not a rebuild**. Explicitly **out of MVP scope**, but the
+  frozen schema must not box it out.
+
+---
+
+## 7. Items still to confirm with real-world input
+These were accepted "as designed" but need Michael's concrete answer before/at
+build time; recorded as working assumptions until confirmed:
+1. **Deployment server runtime** — is R installed on the release server, able
+   to run scripts and install `pdftools` / `tesseract` etc.? (Gates the
+   deployment design.) _Assumption: R available; design a self-contained
+   folder regardless._
+2. **Requester identity** for logs — does the calling tool pass a user/analyst
+   id, or is it "whoever runs the script"? _Assumption: accept an optional
+   `requested_by` argument, default to system user._
+3. **Data-retention rule** — auto-purge uploaded files/outputs after N days?
+   _Assumption: configurable retention, default keep-nothing-extra._
+4. **#1 IRD document** to target first (post-MVP) so the schema stays
+   future-proof. _Assumption: income-summary style doc._
+5. **Existing categorisation CSV** structure + rough size (post-MVP) — Michael
+   to supply the Auckland analysts' file.
+
+---
+
+## 8. Immediate next actions (post-discovery)
+1. Pull as many **public specimen statements** as possible from NZ banks
+   (big-six focus + others; PDF **and** Excel).
+2. From that real data, **define the definitive reconciliation KPI set and
+   finalise the core schema** — proposed back to Michael, not guessed.
+3. Validate the **declarative-template approach** actually matches a high
+   proportion of real statements before locking it in.
+4. Scaffold the **plain-R, folder-deployable engine** with golden-file tests.
 - Bank 4 — Categorisation, reconciliation & manual review.
 - Bank 5 — Consistency, maintainability, governance, and non-bank docs (IRD
   etc.).
 
 ---
 
-## 7. Interview progress
+## 9. Interview progress
 - [x] Bank 1 — Foundations
 - [x] Bank 2 — OCR & parsing engine
 - [x] Bank 3 — Template system & wizard
 - [x] Bank 4 — Categorisation, reconciliation & review
+- [x] Bank 5 — Consistency, maintainability & governance
+- **Discovery complete.**
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
