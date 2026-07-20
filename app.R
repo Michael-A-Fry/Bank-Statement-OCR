@@ -1266,8 +1266,11 @@ server <- function(input, output, session) {
     # customised copy a distinct id so the accountant's fix actually takes effect.
     if (!is.null(g$default_ids) && (tmpl$id %||% "") %in% g$default_ids)
       tmpl$id <- paste0(tmpl$id, "_custom")
-    ok <- tryCatch({ save_user_template(tmpl, USER_TEMPLATES_DIR); TRUE }, error = function(e) FALSE)
-    if (isTRUE(ok)) {
+    # Surface the ACTUAL reason a save fails (validation problems name the field,
+    # never any statement content) instead of a dead-end generic toast.
+    err <- tryCatch({ save_user_template(tmpl, USER_TEMPLATES_DIR); NULL },
+                    error = function(e) conditionMessage(e))
+    if (is.null(err)) {
       tpl_bump(isolate(tpl_bump()) + 1); removeModal()
       # mark this upload as taught, so it drops off the "needs pickup" list
       if (!is.na(cv_upload_id()))
@@ -1276,7 +1279,12 @@ server <- function(input, output, session) {
       showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
                                tmpl$id %||% "template"),
                        type = "message", duration = 8)
-    } else showNotification("Couldn't save — adjust the settings and try again.", type = "error")
+    } else {
+      # Show the specific problem + point at the Advanced tab where it's fixable.
+      showNotification(HTML(paste0("<b>Couldn't save.</b> ", htmltools::htmlEscape(err),
+        "<br>Open the <b>Advanced</b> tab to fix it, or adjust the fields above.")),
+        type = "error", duration = 12)
+    }
   })
 
   # ---- PDF wizard ---------------------------------------------------

@@ -53,7 +53,14 @@ validate_template <- function(t) {
     if (is.null(t$amount_sign)) problems <- c(problems, "missing key 'amount_sign'")
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$header_contains_all))
       problems <- c(problems, "fingerprint.header_contains_all is required")
-    if (!is.null(t$columns)) for (k in c("date", "amount", "description"))
+    # date + description are always required; the money column depends on the
+    # sign style, exactly like the pdf branch above. A debit_credit_cols template
+    # (separate money-in / money-out columns) has NO single 'amount' column -- it
+    # supplies debit + credit instead (checked below), so requiring 'amount' here
+    # would reject the tool's own draft of a very common CSV shape.
+    always <- if (identical(t$amount_sign, "debit_credit_cols")) c("date", "description")
+              else c("date", "amount", "description")
+    if (!is.null(t$columns)) for (k in always)
       if (is.null(t$columns[[k]])) problems <- c(problems, sprintf("columns.%s is required", k))
     if (!is.null(t$amount_sign) && !(t$amount_sign %in% .VALID_SIGN))
       problems <- c(problems, sprintf("amount_sign '%s' is not one of %s",

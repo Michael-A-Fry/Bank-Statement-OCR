@@ -35,15 +35,31 @@ test_that("type_dc without a type column is rejected at load", {
 })
 
 test_that("valid debit_credit_cols / type_dc templates pass", {
+  # debit_credit_cols has NO single 'amount' column -- it supplies debit + credit.
+  # (Do not add an 'amount' key here: that masked the bug where validate_template
+  # wrongly demanded columns.amount for this style, breaking guided-setup save.)
   ok1 <- .min_tmpl(amount_sign = "debit_credit_cols",
-    columns = list(date = list(source = "Date"), amount = list(source = "Amount"),
-      description = list(source = "Amount"), debit = list(source = "Dr"),
-      credit = list(source = "Cr")))
+    columns = list(date = list(source = "Date"), description = list(source = "Details"),
+      debit = list(source = "Dr"), credit = list(source = "Cr")))
   expect_length(validate_template(ok1), 0L)
   ok2 <- .min_tmpl(amount_sign = "type_dc",
     columns = list(date = list(source = "Date"), amount = list(source = "Amount"),
       description = list(source = "Amount"), type = list(source = "T")))
   expect_length(validate_template(ok2), 0L)
+})
+
+test_that("a debit_credit_cols draft round-trips through save (guided-setup save bug)", {
+  # The tool's OWN draft of a Debit/Credit CSV must validate + save -- otherwise
+  # guided setup dead-ends with 'Couldn't save'.
+  f <- fixture("tests/testthat/fixtures/debit_credit_cols.csv")
+  skip_if_not(file.exists(f))
+  d <- draft_template(f, bank = "TestBank")
+  expect_equal(d$amount_sign, "debit_credit_cols")
+  expect_null(d$columns$amount)                       # the draft has no amount column
+  expect_length(validate_template(d), 0L)             # ...and that is valid
+  dir <- tempfile(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  expect_silent(save_user_template(d, dir))           # save must not throw
+  expect_true(file.exists(file.path(dir, paste0(d$id, ".yaml"))))
 })
 
 test_that("extras with a missing source column is rejected", {
