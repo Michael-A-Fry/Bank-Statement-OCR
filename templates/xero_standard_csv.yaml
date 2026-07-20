@@ -1,0 +1,26 @@
+id: xero_standard_csv
+bank: Xero
+statement_type: xero-import
+format: delimited
+version: 1
+effective_from: null
+effective_to: null
+min_score: 4
+fingerprint:
+  header_contains_all: [transaction_date, description, amount, debit_credit, unique_id]
+  filename_regex: null
+delimiter: ","
+preamble: null
+columns:
+  date:        {source: transaction_date, format: "%d/%m/%Y"}
+  amount:      {source: amount}
+  description: {source: description}
+  reference:   {source: unique_id}
+  balance:     {source: balance}
+  type:        {source: debit_credit}
+amount_sign: type_dc
+type_debit_value: debit
+extras:
+  memo:            {source: memo}
+  source_currency: {source: currency}
+currency: NZD
