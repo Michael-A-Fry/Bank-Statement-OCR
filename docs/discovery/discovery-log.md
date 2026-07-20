@@ -206,17 +206,51 @@ The dominant, repeated requirement. Every design choice is judged against it:
 
 ---
 
-## 5. Open items (to be resolved in later banks)
-- Bank 4 — Categorisation, reconciliation & review.
+## 5. Confirmed decisions — Bank 4 (Categorisation, reconciliation & trust)
+
+### 5.1 Categorisation is OUT of the MVP
+- Not a v1 must-have. Belongs to some downstream targets, not this engine's
+  MVP.
+- When built later, ingest the **existing keyword CSV lookup already
+  maintained by the Auckland analysts** (Michael can supply it) rather than
+  designing a new scheme. Leave a clean, unobtrusive hook only — build nothing
+  now.
+
+### 5.2 Reconciliation KPIs = the trust signal
+- Bake in **as many reliable checks as possible**, surfaced as **clear
+  single-line KPIs displayed alongside each statement** (e.g. balance check,
+  transaction check, and others).
+- The **definitive KPI set is to be derived from the real specimen statements**
+  once pulled — only include checks that work **reliably across all banks**.
+  Do not pre-guess the list; propose it from the data.
+- Mismatches are **flagged, never auto-corrected**.
+
+### 5.3 No manual correction
+- **No manual transaction editing, ever.** "If it's wrong, it's wrong" — the
+  fix is a template/engine correction + re-run, preserving provenance and
+  reproducibility.
+
+### 5.4 Actionable failure reporting
+- Never crash. Every failure returns a **clear, actionable reason** — not just
+  a status, but *why* it failed and *what it needs to work* (e.g. "statement
+  type not supported", "no text layer on p.2 — OCR required", "reconciliation
+  off by $X.XX", "redaction over transaction rows 5–9"). All logged for
+  failure-mode analysis.
+
+---
+
+## 6. Open items (to be resolved in later banks)
+- Bank 5 — Consistency, maintainability & governance; non-bank docs.
 - Bank 4 — Categorisation, reconciliation & manual review.
 - Bank 5 — Consistency, maintainability, governance, and non-bank docs (IRD
   etc.).
 
 ---
 
-## 6. Interview progress
+## 7. Interview progress
 - [x] Bank 1 — Foundations
 - [x] Bank 2 — OCR & parsing engine
 - [x] Bank 3 — Template system & wizard
+- [x] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
