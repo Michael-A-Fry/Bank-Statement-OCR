@@ -32,6 +32,11 @@ scratch/
 tmp/
 *.tmp
 
+# Offline package bundle produced by scripts/bundle-offline.R (large binaries;
+# generated on the laptop, copied to the PC -- never committed).
+/bso-offline/
+/bso-offline-repo/
+
 # NOTE: samples/ is intentionally tracked — it is the public specimen corpus
 # used for template design and golden-file tests.
 

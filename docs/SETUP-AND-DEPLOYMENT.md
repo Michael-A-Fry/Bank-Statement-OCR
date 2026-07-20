@@ -26,6 +26,10 @@ access you already have.
 
 ## Part 2 — Install R + the packages, once, on the VM
 
+> **Air-gapped / no-internet PC?** See **`docs/OFFLINE-INSTALL.md`** — you bundle
+> the packages on an internet laptop (`scripts/bundle-offline.R`), carry the
+> folder over, and install with `scripts/install-offline.R`. No compiling.
+
 **Windows VM**
 1. Download and run the R installer from https://cran.r-project.org/bin/windows/base/ .
 2. Open "Rgui" or a terminal and run:
