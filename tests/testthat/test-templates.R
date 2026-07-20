@@ -59,3 +59,22 @@ test_that("load_templates hard-errors listing the bad template id", {
                    file.path(dir, "broken.yaml"))
   expect_error(load_templates(dir), "broken")
 })
+
+test_that("template_overview summarises every template with tested/user origin", {
+  ov <- template_overview(load_template_set(templates_dir(), "does_not_exist"))
+  expect_true(all(c("id","bank","type","format","amount_sign","date_format","origin","version")
+                  %in% names(ov)))
+  expect_true(nrow(ov) >= 10)
+  expect_true(all(ov$origin == "tested"))                 # shipped defaults
+  # a pdf template reports its table amount_sign / date_format, not NA
+  anz <- ov[ov$id == "anz_everyday_pdf", ]
+  expect_equal(anz$amount_sign, "debit_credit_cols")
+  expect_equal(anz$date_format, "%d %b")
+})
+
+test_that("template_yaml round-trips back to a valid template", {
+  t <- load_template_set(templates_dir(), "does_not_exist")[["westpac_everyday_pdf"]]
+  back <- yaml::yaml.load(template_yaml(t))
+  expect_length(validate_template(back), 0)
+  expect_null(back$origin)                                 # origin stripped for edit
+})

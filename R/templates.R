@@ -135,6 +135,34 @@ load_template_set <- function(default_dir = "templates", user_dir = "templates_u
   d
 }
 
+# template_overview(tset) -- a flat data.frame summarising every loaded template,
+# for the Admin overview and the Convert "what's covered" panel. `origin` reads as
+# "tested" (a shipped, golden-file-tested default) or "user" (built on this box).
+template_overview <- function(tset) {
+  cols <- c("id", "bank", "type", "format", "amount_sign", "date_format", "origin", "version")
+  if (!length(tset))
+    return(setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
+  rows <- lapply(tset, function(t) {
+    is_pdf <- identical(t$format %||% "delimited", "pdf")
+    data.frame(
+      id          = t$id %||% NA_character_,
+      bank        = t$bank %||% NA_character_,
+      type        = t$statement_type %||% NA_character_,
+      format      = t$format %||% "delimited",
+      amount_sign = (if (is_pdf) t$table$amount_sign else t$amount_sign) %||% "signed",
+      date_format = (if (is_pdf) t$table$date_format else t$columns$date$format) %||% NA_character_,
+      origin      = if (identical(t$origin %||% "default", "user")) "user" else "tested",
+      version     = as.character(t$version %||% NA),
+      stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, rows); rownames(out) <- NULL
+  out[order(out$bank, out$type, out$id), , drop = FALSE]
+}
+
+# template_yaml(t) -- the template rendered as YAML text for preview/edit, with the
+# load-time `origin` marker stripped so it round-trips cleanly.
+template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
+
 # save_user_template(template, dir) -> path. Validates first (fail loud), writes
 # <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
 save_user_template <- function(template, dir = "templates_user") {

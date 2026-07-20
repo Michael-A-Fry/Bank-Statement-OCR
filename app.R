@@ -105,7 +105,9 @@ ui <- fluidPage(
           actionButton("cv_go", "Convert", class = "btn-primary"),
           br(), br(),
           uiOutput("cv_downloads"),
-          helpText("Detection is automatic; pick a bank only to force one.")
+          helpText("Detection is automatic; pick a bank only to force one."),
+          tags$hr(),
+          uiOutput("cv_templates")
         ),
         mainPanel(
           width = 8,
@@ -234,6 +236,24 @@ ui <- fluidPage(
           uiOutput("adm_rollup_msg")
         ),
         tabPanel(
+          "Templates",
+          br(),
+          helpText(HTML("Every statement layout the tool can read. <b>tested</b> = shipped and covered by golden-file tests; <b>user</b> = built on this machine. Click a row or pick below to preview and edit its YAML.")),
+          DTOutput("adm_tpl_overview"),
+          br(),
+          fluidRow(
+            column(5,
+              selectInput("adm_tpl_pick", "Preview / edit a template", choices = NULL),
+              actionButton("adm_tpl_validate", "Check it's valid"),
+              actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
+              br(), br(), uiOutput("adm_tpl_msg"),
+              helpText("Editing a 'tested' template and saving keeps a user copy; give it a new id to make your version take effect (shipped templates win on an id clash).")),
+            column(7,
+              h4("Template YAML"),
+              textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
+          )
+        ),
+        tabPanel(
           "Batch intake",
           br(),
           sidebarLayout(
@@ -280,6 +300,65 @@ server <- function(input, output, session) {
   output$cv_bank_ui <- renderUI({
     banks <- sort(unique(vapply(templates(), function(t) t$bank %||% "", character(1))))
     selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks))
+  })
+
+  # ---- Which templates are available (Convert visibility) ----
+  output$cv_templates <- renderUI({
+    ov <- template_overview(templates())
+    nt <- sum(ov$origin == "tested"); nu <- sum(ov$origin == "user")
+    lines <- sprintf("%s &middot; %s &middot; <i>%s</i> (%s)", ov$bank, ov$type, ov$format, ov$origin)
+    tags$details(
+      tags$summary(sprintf("Templates available: %d  (%d tested, %d user)", nrow(ov), nt, nu)),
+      tags$div(style = "font-size:12px;color:#555;margin-top:6px;max-height:220px;overflow:auto",
+               HTML(paste(lines, collapse = "<br>"))),
+      tags$div(style = "font-size:11px;color:#888;margin-top:6px",
+               "Full detail and editing in Admin → Templates."))
+  })
+
+  # ---- Admin: template overview / preview / edit ----
+  output$adm_tpl_overview <- renderDT(
+    template_overview(templates()),
+    options = list(pageLength = 25, dom = "tip"), rownames = FALSE, selection = "single")
+
+  observe(updateSelectInput(session, "adm_tpl_pick", choices = sort(names(templates()))))
+
+  # clicking a row selects it in the picker
+  observeEvent(input$adm_tpl_overview_rows_selected, {
+    ov <- template_overview(templates())
+    i <- input$adm_tpl_overview_rows_selected
+    if (length(i) && i <= nrow(ov)) updateSelectInput(session, "adm_tpl_pick", selected = ov$id[i])
+  })
+
+  observeEvent(input$adm_tpl_pick, {
+    t <- templates()[[input$adm_tpl_pick]]; req(t)
+    updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
+    output$adm_tpl_msg <- renderUI(NULL)
+  })
+
+  .tpl_from_editor <- function() tryCatch(yaml::yaml.load(input$adm_tpl_edit), error = function(e) NULL)
+  .tpl_note <- function(html, ok = TRUE)
+    renderUI(div(style = sprintf("color:%s;font-size:12px", if (ok) "#137333" else "#b00020"), HTML(html)))
+
+  observeEvent(input$adm_tpl_validate, {
+    t <- .tpl_from_editor()
+    if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
+    probs <- validate_template(t)
+    output$adm_tpl_msg <- if (!length(probs)) .tpl_note("Valid ✓")
+      else .tpl_note(paste("Problems:<br>", paste(probs, collapse = "<br>")), FALSE)
+  })
+
+  observeEvent(input$adm_tpl_save, {
+    t <- .tpl_from_editor()
+    if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
+    path <- tryCatch(save_user_template(t, USER_TEMPLATES_DIR), error = function(e) conditionMessage(e))
+    if (is.character(path) && file.exists(path)) {
+      tpl_bump(tpl_bump() + 1)
+      shadowed <- !is.null(safe(load_templates(TEMPLATES_DIR), list())[[t$id %||% ""]])
+      msg <- sprintf("Saved to %s.", path)
+      if (shadowed) msg <- paste0(msg, "<br><b>Note:</b> a shipped 'tested' template with id '",
+        t$id, "' takes precedence — rename the id for your edit to apply.")
+      output$adm_tpl_msg <- .tpl_note(msg, !shadowed)
+    } else output$adm_tpl_msg <- .tpl_note(paste("Could not save:", path), FALSE)
   })
 
   cv_res <- reactiveVal(NULL)
