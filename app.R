@@ -129,7 +129,13 @@ ui <- fluidPage(
     tabPanel(
       "Add a template",
       br(),
-      helpText(HTML("Most banks set themselves up automatically via <b>Guided setup</b> on the Convert tab. Use these wizards to build or fine-tune a template by hand. Click <b>ⓘ</b> for the full step-by-step.")),
+      wellPanel(
+        strong("🪄 Guided setup — one place, Basic + Advanced (recommended)"),
+        p(class = "muted", "Upload any statement and we set up the common cases for you; open the Advanced tab for full control over wildly different formats. This is the same wizard the Convert tab uses."),
+        fluidRow(
+          column(7, fileInput("ts_file", "Statement file (.csv / .tsv / .tdv / .pdf)")),
+          column(5, br(), actionButton("ts_go", "🪄 Open guided setup", class = "btn-warning")))),
+      helpText(HTML("Prefer to build a template by hand, field by field? Use the wizards below. Click <b>ⓘ</b> for the full step-by-step.")),
       tabsetPanel(
     tabPanel(
       "Spreadsheet (CSV / Excel)",
@@ -528,20 +534,9 @@ server <- function(input, output, session) {
     p <- upload_file_path(id, UPLOADS_DIR)
     if (is.na(p) || !file.exists(p)) {
       showNotification("That upload's file is no longer available.", type = "error"); return() }
-    bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(basename(p)))))
-    tmpl <- withProgress(message = "Opening in wizard…", value = 0.4, {
-      # A scanned PDF is OCR'd while drafting, so this can take a few seconds.
-      tryCatch(draft_template(p, bank = if (nzchar(bankguess)) bankguess else "New bank"),
-               error = function(e) NULL)
-    })
-    if (is.null(tmpl)) {
-      showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error"); return() }
-    default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
-                            error = function(e) character(0))
-    # Remember which upload this is so a successful Save marks it picked-up.
-    cv_upload_id(id)
-    guided(list(path = p, name = basename(p), tmpl = tmpl, default_ids = default_ids))
-    show_guided_modal()
+    # Same setup surface as Convert; upload_id ties a successful Save back to this
+    # pickup so it drops off the list.
+    open_guided(p, basename(p), upload_id = id)
   })
 
   cv_res <- reactiveVal(NULL)
@@ -698,7 +693,16 @@ server <- function(input, output, session) {
     setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
              vapply(wd_date_table(), `[[`, "", "label"))
 
-  apply_overrides <- function(tmpl, bank, datefmt, sign) {
+  # The current date-format / amount-sign of a template, wherever the format
+  # stores them (PDF keeps them under `table`, delimited at the top / in columns).
+  gv_datefmt <- function(tmpl) if (identical(tmpl$format, "pdf")) (tmpl$table$date_format %||% "%d/%m/%Y")
+                               else (tmpl$columns$date$format %||% "%d/%m/%Y")
+  gv_sign    <- function(tmpl) if (identical(tmpl$format, "pdf")) (tmpl$table$amount_sign %||% "signed")
+                               else (tmpl$amount_sign %||% "signed")
+
+  # apply_overrides -- fold the Basic-tab choices onto the working template. Only
+  # the common fields live here; everything else is edited as YAML on Advanced.
+  apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL, unsigned_default = NULL) {
     if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
     if (identical(tmpl$format, "pdf")) {
       if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
@@ -708,29 +712,102 @@ server <- function(input, output, session) {
         tmpl$columns$date$format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$amount_sign <- sign
     }
+    # decimal_mark / unsigned_default are top-level keys the engine reads.
+    if (!is.null(decimal) && nzchar(decimal))
+      tmpl$decimal_mark <- if (identical(decimal, "auto")) NULL else decimal
+    if (!is.null(unsigned_default) && nzchar(unsigned_default) &&
+        identical(sign, "unsigned"))
+      tmpl$unsigned_default <- unsigned_default
     tmpl
   }
 
+  # ONE cohesive setup surface. Basic = friendly dropdowns for the common case;
+  # Advanced = the COMPLETE template as YAML for wildly different statements
+  # (fingerprints, column mapping, label synonyms, region bounds, row tolerance,
+  # metadata labels). A live preview under both tabs shows what will be pulled out.
   show_guided_modal <- function() {
     g <- guided(); req(g); tmpl <- g$tmpl
-    cur_fmt  <- if (identical(tmpl$format, "pdf")) tmpl$table$date_format else (tmpl$columns$date$format %||% "%d/%m/%Y")
-    cur_sign <- if (identical(tmpl$format, "pdf")) tmpl$table$amount_sign else tmpl$amount_sign
+    cur_fmt  <- gv_datefmt(tmpl); cur_sign <- gv_sign(tmpl)
+    cur_dec  <- tmpl$decimal_mark %||% "auto"
+    cur_ud   <- tmpl$unsigned_default %||% "debit"
     showModal(modalDialog(
       title = "Guided setup — teach the tool to read this statement", size = "l", easyClose = FALSE,
-      p(class = "muted", "We filled this in from your file. Only change something if the preview below looks wrong. When it looks right, click Save."),
-      textInput("g_bank", "Which bank is this?", value = tmpl$bank),
-      fluidRow(
-        column(6, selectInput("g_date", "How are the dates written?",
-                              choices = guided_date_choices(), selected = cur_fmt)),
-        column(6, selectInput("g_sign", "How are amounts shown?",
-                              choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels())),
-                              selected = cur_sign))),
+      p(class = "muted", "We filled this in from your file. Change anything that looks wrong — the preview at the bottom updates as you go. Basic covers most statements; open Advanced for full control."),
+      tabsetPanel(
+        id = "g_tabs",
+        tabPanel(
+          "Basic", br(),
+          textInput("g_bank", "Which bank is this?", value = tmpl$bank),
+          fluidRow(
+            column(6, selectInput("g_date", "How are the dates written?",
+                                  choices = guided_date_choices(), selected = cur_fmt)),
+            column(6, selectInput("g_sign", "How are amounts shown?",
+                                  choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels())),
+                                  selected = cur_sign))),
+          fluidRow(
+            column(6, selectInput("g_decimal", "Number format (thousands / decimal)",
+                                  choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
+                                              "1,234.56 — dot is the decimal point" = "dot",
+                                              "1.234,56 — comma is the decimal (European)" = "comma"),
+                                  selected = cur_dec)),
+            column(6, conditionalPanel(
+              "input.g_sign == 'unsigned'",
+              selectInput("g_unsigned_default", "For unsigned amounts, a plain number is a…",
+                          choices = c("Charge — money out" = "debit",
+                                      "Payment — money in" = "credit"),
+                          selected = cur_ud))))),
+        tabPanel(
+          "Advanced (full template)", br(),
+          helpText(HTML("This is the <b>complete</b> template. Edit anything — identifiers/fingerprints, column mapping, label synonyms, region bounds, row tolerance, metadata labels — to read even wildly different statements. Load your Basic choices in, edit, then Check &amp; apply.")),
+          div(actionButton("g_adv_load", "↻ Load current settings into the editor"),
+              actionButton("g_adv_apply", "✓ Check & apply my edits", class = "btn-primary")),
+          br(), uiOutput("g_adv_msg"),
+          textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 18),
+          if (identical(tmpl$format, "pdf"))
+            helpText(HTML("Prefer to set PDF columns visually? Draw them on the page under <b>Add a template → PDF</b>; paste the resulting band numbers here for the rest.")))),
+      tags$hr(),
       h4("Preview — what we'll pull out"),
       verbatimTextOutput("g_status"),
       DTOutput("g_preview"),
       footer = tagList(modalButton("Cancel"),
         actionButton("g_save", "Save — teach the tool", class = "btn-primary"))))
   }
+
+  # open_guided -- the single entry into the setup modal, shared by every launch
+  # point (Convert result, Admin pickup, Add-a-template). Drafts a template from
+  # the file unless the caller already has one (e.g. the matched template).
+  open_guided <- function(path, name, seed_tmpl = NULL, upload_id = NA_character_) {
+    tmpl <- seed_tmpl
+    if (is.null(tmpl)) {
+      bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(name))))
+      tmpl <- withProgress(message = "Opening in wizard…", value = 0.4,
+        tryCatch(draft_template(path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
+                 error = function(e) NULL))
+    }
+    if (is.null(tmpl)) {
+      showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error")
+      return(invisible(FALSE))
+    }
+    # Ids of the curated (tested) templates: saving a customised copy under one of
+    # these would be shadowed (defaults win), so g_save gives it a distinct id.
+    default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
+                            error = function(e) character(0))
+    cv_upload_id(upload_id)
+    guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids))
+    show_guided_modal()
+    invisible(TRUE)
+  }
+
+  # Launch the same setup modal from the Add-a-template tab (not tied to a Convert
+  # upload, so a successful Save just adds the template).
+  observeEvent(input$ts_go, {
+    req(input$ts_file)
+    sess <- file.path(tempdir(), paste0("ts_", as.integer(runif(1, 1, 1e9))))
+    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+    src <- file.path(sess, input$ts_file$name)
+    file.copy(input$ts_file$datapath, src, overwrite = TRUE)
+    open_guided(src, input$ts_file$name)
+  })
 
   output$cv_teach <- renderUI({
     res <- cv_res(); req(res)
@@ -758,30 +835,53 @@ server <- function(input, output, session) {
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)
     res <- cv_res()
-    tmpl <- NULL
-    # If the conversion matched a template, open THAT template so the user
-    # refines the real one (bank / date / sign) instead of starting from scratch.
+    seed <- NULL
+    # If the conversion matched a template, open THAT template so the user refines
+    # the real one instead of starting from scratch; otherwise draft from the file.
     tid <- (res$template_id %||% NA_character_)[1]
     if (!is.na(tid) && nzchar(tid)) {
       tset <- tryCatch(templates(), error = function(e) list())
-      if (!is.null(tset[[tid]])) tmpl <- tset[[tid]]
+      if (!is.null(tset[[tid]])) seed <- tset[[tid]]
     }
-    if (is.null(tmpl)) {
-      bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(src$name))))
-      tmpl <- tryCatch(draft_template(src$path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
-                       error = function(e) NULL)
-    }
-    if (is.null(tmpl)) { showNotification("Couldn't auto-detect this file type — use the Template/PDF wizard.", type = "error"); return() }
-    # Ids of the curated (tested) templates: saving a customised copy under one of
-    # these ids would be shadowed (defaults win), so g_save gives it a new id.
-    default_ids <- tryCatch(names(load_templates(TEMPLATES_DIR, strict = FALSE)),
-                            error = function(e) character(0))
-    guided(list(path = src$path, name = src$name, tmpl = tmpl, default_ids = default_ids))
-    show_guided_modal()
+    open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
 
   guided_live <- reactive({ g <- guided(); req(g)
-    apply_overrides(g$tmpl, input$g_bank, input$g_date, input$g_sign) })
+    apply_overrides(g$tmpl, input$g_bank, input$g_date, input$g_sign,
+                    input$g_decimal, input$g_unsigned_default) })
+
+  # Advanced tab: pull the current Basic settings into the YAML editor on demand.
+  observeEvent(input$g_adv_load, {
+    req(guided())
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "muted", "Loaded current settings into the editor."))
+  })
+
+  # Advanced tab: validate the edited YAML and adopt it as the working template.
+  # On success we re-seed the Basic controls so their live overrides match (never
+  # clobbering an advanced-only change). Fail loud on bad YAML / invalid template.
+  observeEvent(input$g_adv_apply, {
+    g <- guided(); req(g)
+    parsed <- tryCatch(yaml::yaml.load(input$g_yaml %||% ""), error = function(e) e)
+    if (inherits(parsed, "error") || !is.list(parsed)) {
+      output$g_adv_msg <- renderUI(span(class = "bad",
+        paste("YAML error:", if (inherits(parsed, "error")) conditionMessage(parsed) else "not a template")))
+      return()
+    }
+    probs <- tryCatch(validate_template(parsed), error = function(e) conditionMessage(e))
+    if (length(probs)) {
+      output$g_adv_msg <- renderUI(span(class = "bad",
+        paste("Not a valid template:", paste(probs, collapse = "; "))))
+      return()
+    }
+    g$tmpl <- parsed; guided(g)
+    updateTextInput(session, "g_bank", value = parsed$bank %||% "")
+    updateSelectInput(session, "g_date", selected = gv_datefmt(parsed))
+    updateSelectInput(session, "g_sign", selected = gv_sign(parsed))
+    updateSelectInput(session, "g_decimal", selected = parsed$decimal_mark %||% "auto")
+    updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
+    output$g_adv_msg <- renderUI(span(class = "ok", "Applied — preview updated below."))
+  })
   output$g_preview <- renderDT({
     g <- guided(); req(g); tx <- draft_preview(g$path, guided_live()); req(!is.null(tx))
     datatable(utils::head(tx, 12)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
