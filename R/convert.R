@@ -20,15 +20,25 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   row_count <- 0L
   kpi_fail_count <- 0L
   trust_level <- NA_character_
+  # layout/detection signals for the admin reports (clustering unsupported files)
+  closest_template <- NA_character_
+  detect_detail <- NA_character_
+  layout_sig <- NA_character_
+  layout_hint <- NA_character_
 
   outcome <- tryCatch({
     templates <- load_templates(templates_dir)
     input <- read_input(path, redaction_rects = redaction_rects)
     meta <- extract_metadata(input)
     multi <- detect_multiple_statements(input, meta)
+    lsig <- layout_signature(input)
+    layout_sig <- lsig$signature
+    layout_hint <- lsig$hint
 
     det <- detect_statement(input, templates, hint_bank = bank,
                             hint_type = statement_type)
+    closest_template <- det$template_id
+    detect_detail <- det$detail
 
     if (!isTRUE(det$matched)) {
       result$status <- "unsupported"
@@ -101,7 +111,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     source_file = basename(path %||% NA_character_),
     source_sha256 = sha,
     bank_hint = bank %||% NA_character_,
-    detected_template = result$template_id,
+    detected_template = if (result$status %in% c("ok", "needs_review")) result$template_id else NA_character_,
+    closest_template = closest_template,
+    detect_detail = detect_detail,
+    layout_signature = layout_sig,
+    layout_hint = layout_hint,
     template_version = template_version,
     status = result$status,
     trust_level = result$trust$level %||% NA_character_,

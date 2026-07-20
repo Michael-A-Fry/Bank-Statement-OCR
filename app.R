@@ -267,6 +267,55 @@ ui <- fluidPage(
         )
       )
     ),
+    # ---- Admin (insights + batch intake) ------------------------------
+    tabPanel(
+      "Admin",
+      br(),
+      tabsetPanel(
+        tabPanel(
+          "Insights",
+          br(),
+          actionButton("adm_refresh", "↻ Refresh from logs", class = "btn-primary"),
+          helpText(HTML(paste0("Built from the real run + feedback logs in <code>",
+            LOGDIR, "/</code> — every conversion the team runs (including batches below)."))),
+          fluidRow(
+            column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
+                   DTOutput("adm_overview")),
+            column(7, h4("Feedback flagged as wrong / minor issues"), DTOutput("adm_feedback"))),
+          h4("Where the gaps are — unsupported statements to fix"),
+          helpText("Each row is one unknown layout (same format collapses together). Highest count = build that template first to unblock the most statements."),
+          DTOutput("adm_gaps"),
+          h4("Template usage"),
+          DTOutput("adm_usage")
+        ),
+        tabPanel(
+          "Batch intake",
+          br(),
+          sidebarLayout(
+            sidebarPanel(
+              width = 4,
+              fileInput("adm_batch", "Drop many statements at once (.csv / .tsv / .pdf / .xlsx)",
+                        multiple = TRUE),
+              actionButton("adm_run", "Run batch", class = "btn-primary"),
+              br(), br(),
+              downloadButton("adm_dl_report", "Download report (CSV)"),
+              helpText("Every file is converted and logged, so the results also feed the Insights tab. Unsupported files are clustered, and the biggest gap gets a starting template drafted for you.")
+            ),
+            mainPanel(
+              width = 8,
+              uiOutput("adm_batch_summary"),
+              h4("Per-file results"), DTOutput("adm_batch_tbl"),
+              h4("Unsupported in this batch — clustered"), DTOutput("adm_batch_clusters"),
+              h4("Auto-draft: a starting template for the biggest gap"),
+              helpText("A best-effort draft from the file's own structure. Confirm/adjust it in the Template or PDF wizard, then Save."),
+              verbatimTextOutput("adm_draft_status"),
+              tableOutput("adm_draft_cols"),
+              div(class = "mono", verbatimTextOutput("adm_draft"))
+            )
+          )
+        )
+      )
+    ),
     tabPanel(
       "Help",
       br(),
@@ -619,6 +668,174 @@ server <- function(input, output, session) {
       if (isTRUE(ok)) span(class = "ok", paste("Saved", path, "- add a golden test next (see Help)."))
       else span(class = "bad", "Save failed - check the mappings."))
   })
+
+  # ---- Admin: insights from the logs -------------------------------
+  adm_data <- reactiveVal(NULL)
+  load_admin <- function() adm_data(list(
+    runs = tryCatch(read_runs(LOGDIR), error = function(e) data.frame()),
+    fb   = tryCatch(read_feedback(LOGDIR), error = function(e) data.frame())))
+  observeEvent(input$adm_refresh, load_admin())
+  observe({ if (is.null(adm_data())) load_admin() })
+
+  output$adm_overview <- renderDT({
+    d <- adm_data(); req(d)
+    datatable(runs_overview(d$runs), rownames = FALSE, options = list(dom = "t"))
+  })
+  output$adm_status_plot <- renderPlot({
+    d <- adm_data(); req(d); ov <- runs_overview(d$runs); if (!nrow(ov)) return(NULL)
+    cols <- c(ok = "#137333", needs_review = "#e3b341", unsupported = "#b00020",
+              failed = "#7d1a1a")[ov$status]
+    cols[is.na(cols)] <- "#888"
+    op <- par(mar = c(5, 4, 1, 1)); on.exit(par(op))
+    barplot(setNames(ov$n, ov$status), col = cols, las = 2, ylab = "conversions")
+  })
+  output$adm_gaps <- renderDT({
+    d <- adm_data(); req(d)
+    g <- unsupported_clusters(d$runs)
+    if (!nrow(g)) return(datatable(data.frame(message = "No unsupported statements logged yet."),
+                                   rownames = FALSE, options = list(dom = "t")))
+    datatable(g[, c("count", "layout", "closest_template", "why", "last_seen", "example_file")],
+              rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE)) |>
+      formatStyle("count", fontWeight = "bold")
+  })
+  output$adm_usage <- renderDT({
+    d <- adm_data(); req(d)
+    u <- template_usage(d$runs, d$fb)
+    if (!nrow(u)) return(datatable(data.frame(message = "No matched conversions yet."),
+                                   rownames = FALSE, options = list(dom = "t")))
+    datatable(u, rownames = FALSE, options = list(dom = "t", pageLength = 20))
+  })
+  output$adm_feedback <- renderDT({
+    d <- adm_data(); req(d); fb <- d$fb
+    if (is.null(fb) || !nrow(fb) || !("flagged" %in% names(fb)))
+      return(datatable(data.frame(message = "No feedback yet."), rownames = FALSE, options = list(dom = "t")))
+    fl <- fb[isTRUE(TRUE) & as.logical(fb$flagged) %in% TRUE, , drop = FALSE]
+    if (!nrow(fl)) return(datatable(data.frame(message = "No flagged feedback."),
+                                    rownames = FALSE, options = list(dom = "t")))
+    datatable(fl[, intersect(c("ts", "verdict", "comment", "template_id", "run_id"), names(fl))],
+              rownames = FALSE, options = list(pageLength = 8, scrollX = TRUE))
+  })
+
+  # ---- Admin: batch intake + auto-draft ----------------------------
+  adm_batch <- reactiveVal(NULL)
+
+  adm_draft_for <- function(row) {
+    path <- row$path
+    if (identical(row$kind, "delimited")) {
+      delim <- detect_delimiter(path)
+      df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
+        stringsAsFactors = FALSE, colClasses = "character", nrows = 50L, check.names = FALSE),
+        error = function(e) NULL)
+      h <- if (!is.null(df)) names(df) else read_headers(path, delim)
+      dcol <- guess_mapping(h, "date")
+      fmt <- if (!is.null(df) && dcol %in% names(df)) detect_date_format(df[[dcol]]) else "%d/%m/%Y"
+      cfg <- list(
+        id = paste0(gsub("[^a-z0-9]+", "_", tolower(tools::file_path_sans_ext(row$file))), "_csv"),
+        bank = "NewBank", statement_type = "everyday", delimiter = delim, currency = "NZD",
+        amount_sign = detect_amount_style(h, df), date_format = if (nzchar(fmt)) fmt else "%d/%m/%Y",
+        min_score = max(1, length(h)), fingerprint = h,
+        date_source = guess_col(h, c("date")), amount_source = guess_col(h, c("amount")),
+        description_source = guess_col(h, c("payee", "description", "details", "memo", "narrative")),
+        particulars_source = guess_col(h, c("particulars")), code_source = guess_col(h, c("^code$", "analysis")),
+        reference_source = guess_col(h, c("reference", "unique")), type_source = guess_col(h, c("type")),
+        other_party_source = guess_col(h, c("other party", "counterparty")), balance_source = guess_col(h, c("balance")))
+      return(list(kind = "delimited", yaml = build_tpl_yaml(cfg), cols = NULL))
+    }
+    if (identical(row$kind, "pdf")) {
+      inp <- tryCatch(read_input(path), error = function(e) NULL)
+      sug <- if (!is.null(inp)) suggest_pdf_columns(inp) else data.frame()
+      if (!nrow(sug)) return(list(kind = "pdf", yaml = "(could not detect columns automatically — open the PDF wizard and draw them)", cols = sug))
+      cols <- list()
+      for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
+      fp <- header_phrases(inp)
+      if (!length(fp)) fp <- "Balance"
+      tmpl <- list(id = paste0(gsub("[^a-z0-9]+", "_", tolower(tools::file_path_sans_ext(row$file))), "_pdf"),
+        bank = "NewBank", statement_type = "statement", format = "pdf", version = 1,
+        min_score = max(1, length(fp)), fingerprint = list(page_contains_all = as.list(fp)),
+        table = list(row_tol = 3, date_format = "%d/%m/%Y", amount_sign = "signed", columns = cols),
+        currency = "NZD")
+      return(list(kind = "pdf", yaml = yaml::as.yaml(tmpl), cols = sug))
+    }
+    list(kind = "other", yaml = "(auto-draft supports delimited and PDF files)", cols = NULL)
+  }
+
+  observeEvent(input$adm_run, {
+    req(input$adm_batch)
+    files <- input$adm_batch
+    sess <- file.path(tempdir(), paste0("batch_", as.integer(runif(1, 1, 1e9))))
+    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+    rows <- vector("list", nrow(files))
+    withProgress(message = "Converting batch", value = 0, {
+      for (i in seq_len(nrow(files))) {
+        incProgress(1 / nrow(files), detail = files$name[i])
+        src <- file.path(sess, files$name[i]); file.copy(files$datapath[i], src, overwrite = TRUE)
+        r <- tryCatch(convert_statement(src, outdir = sess, templates_dir = TEMPLATES_DIR,
+          logdir = LOGDIR, requested_by = "batch"), error = function(e) NULL)
+        inp <- tryCatch(read_input(src), error = function(e) NULL)
+        lsig <- if (!is.null(inp)) layout_signature(inp) else list(signature = NA_character_, hint = "")
+        csv <- if (!is.null(r)) r$outputs[grepl("\\.csv$", r$outputs)] else character(0)
+        nrw <- if (length(csv) && file.exists(csv[1]))
+          tryCatch(nrow(utils::read.csv(csv[1], check.names = FALSE)), error = function(e) NA_integer_) else NA_integer_
+        rows[[i]] <- data.frame(file = files$name[i], status = r$status %||% "failed",
+          template = r$template_id %||% NA_character_, trust = r$trust$level %||% NA_character_,
+          n_rows = nrw, layout = lsig$hint, signature = lsig$signature %||% NA_character_,
+          kind = inp$kind %||% NA_character_, path = src, stringsAsFactors = FALSE)
+      }
+    })
+    adm_batch(do.call(rbind, rows))
+    load_admin()   # the batch just wrote logs; refresh insights
+  })
+
+  output$adm_batch_summary <- renderUI({
+    df <- adm_batch(); if (is.null(df)) return(helpText("Upload statements and click Run batch."))
+    n <- nrow(df); ok <- sum(df$status == "ok"); rev <- sum(df$status == "needs_review")
+    uns <- sum(df$status %in% c("unsupported", "failed"))
+    div(style = "background:#eef;padding:8px 12px;border-radius:6px",
+      sprintf("%d file(s): %d ok, %d need review, %d unsupported/failed.", n, ok, rev, uns))
+  })
+  output$adm_batch_tbl <- renderDT({
+    df <- adm_batch(); req(df)
+    datatable(df[, c("file", "status", "template", "trust", "n_rows", "kind", "layout")],
+              rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+  })
+  output$adm_batch_clusters <- renderDT({
+    df <- adm_batch(); req(df)
+    uns <- df[df$status %in% c("unsupported", "failed"), , drop = FALSE]
+    if (!nrow(uns)) return(datatable(data.frame(message = "Nothing unsupported in this batch 🎉"),
+                                     rownames = FALSE, options = list(dom = "t")))
+    cl <- as.data.frame(table(signature = uns$signature), stringsAsFactors = FALSE)
+    hint <- vapply(cl$signature, function(s) uns$layout[uns$signature == s][1], character(1))
+    kind <- vapply(cl$signature, function(s) uns$kind[uns$signature == s][1], character(1))
+    out <- data.frame(count = cl$Freq, layout = hint, kind = kind, stringsAsFactors = FALSE)
+    datatable(out[order(-out$count), ], rownames = FALSE, options = list(dom = "t"))
+  })
+
+  adm_draft <- reactive({
+    df <- adm_batch(); req(df)
+    uns <- df[df$status %in% c("unsupported", "failed") & !is.na(df$signature), , drop = FALSE]
+    if (!nrow(uns)) return(NULL)
+    top_sig <- names(sort(table(uns$signature), decreasing = TRUE))[1]
+    adm_draft_for(uns[uns$signature == top_sig, , drop = FALSE][1, ])
+  })
+  output$adm_draft_status <- renderText({
+    df <- adm_batch(); if (is.null(df)) return("Run a batch to draft a template for the biggest gap.")
+    d <- adm_draft(); if (is.null(d)) return("No unsupported files in this batch — nothing to draft.")
+    sprintf("Drafted a %s template. Confirm it in the %s wizard, then Save.", d$kind,
+            if (identical(d$kind, "pdf")) "PDF" else "Template")
+  })
+  output$adm_draft_cols <- renderTable({
+    d <- adm_draft(); if (is.null(d) || is.null(d$cols) || !nrow(d$cols)) return(NULL)
+    d$cols
+  })
+  output$adm_draft <- renderText({ d <- adm_draft(); if (is.null(d)) "" else d$yaml })
+
+  output$adm_dl_report <- downloadHandler(
+    filename = function() "batch_report.csv",
+    content = function(file) {
+      df <- adm_batch()
+      if (is.null(df)) df <- data.frame(message = "no batch run")
+      utils::write.csv(df[, setdiff(names(df), "path"), drop = FALSE], file, row.names = FALSE)
+    })
 }
 
 shinyApp(ui, server)
