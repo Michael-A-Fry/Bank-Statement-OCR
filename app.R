@@ -572,10 +572,16 @@ server <- function(input, output, session) {
   })
   output$adm_ba_report <- downloadHandler(
     filename = function() "bulk-audit.md",
-    content = function(file) { b <- adm_ba(); req(b); writeLines(format_batch_audit(b), file) })
+    content = function(file) {
+      b <- adm_ba()
+      if (is.null(b)) { showNotification("Run a bulk audit first — nothing to download yet.",
+                                         type = "warning", duration = 6); req(FALSE) }
+      writeLines(format_batch_audit(b), file) })
   output$adm_audit_dl <- downloadHandler(
     filename = function() "statement.audit.md",
-    content = function(file) { req(input$adm_audit_one)
+    content = function(file) {
+      if (is.null(input$adm_audit_one)) { showNotification("Upload a statement to audit first.",
+                                          type = "warning", duration = 6); req(FALSE) }
       writeLines(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())), file) })
 
   # ---- Admin: uploads & pickups ----
@@ -594,9 +600,9 @@ server <- function(input, output, session) {
   output$adm_up_audit <- downloadHandler(
     filename = function() "upload.audit.md",
     content = function(file) {
-      id <- input$adm_up_pick; req(id, nzchar(id))
-      p <- upload_file_path(id, UPLOADS_DIR); req(!is.na(p))
-      writeLines(format_audit(statement_audit(p, templates = templates())), file)
+      id <- input$adm_up_pick
+      p <- if (!is.null(id) && nzchar(id)) upload_file_path(id, UPLOADS_DIR) else NA_character_
+      writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
     })
 
   # ---- Admin: format requests raised via the "tell our team" escape hatch ----
@@ -654,9 +660,9 @@ server <- function(input, output, session) {
   output$adm_inbox_audit <- downloadHandler(
     filename = function() paste0(input$adm_inbox_pick %||% "file", ".audit.md"),
     content = function(file) {
-      nm <- input$adm_inbox_pick; req(nm, nzchar(nm))
-      p <- failed_file_path(nm, "."); req(!is.na(p))
-      writeLines(format_audit(statement_audit(p, templates = templates())), file)
+      nm <- input$adm_inbox_pick
+      p <- if (!is.null(nm) && nzchar(nm)) failed_file_path(nm, ".") else NA_character_
+      writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
     })
 
   # ---- Forms (IRD): extract labelled values from a form document ----------
@@ -694,9 +700,14 @@ server <- function(input, output, session) {
       downloadButton("fm_dl_json", "JSON"))
   })
   fm_dl <- function(ext) downloadHandler(
-    filename = function() basename(fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)][1]),
-    content = function(file) file.copy(
-      fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)][1], file, overwrite = TRUE))
+    filename = function() {
+      p <- fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)]
+      if (length(p)) basename(p[1]) else paste0("download.", ext)
+    },
+    content = function(file) {
+      p <- fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)]
+      file.copy(need_file(if (length(p)) p[1] else NA_character_), file, overwrite = TRUE)
+    })
   output$fm_dl_xlsx <- fm_dl("xlsx"); output$fm_dl_csv <- fm_dl("csv"); output$fm_dl_json <- fm_dl("json")
 
   # ---- Forms (IRD): build a form template from labels ----------------------
@@ -871,8 +882,20 @@ server <- function(input, output, session) {
               rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE))
   })
 
+  # need_file(p) -- a download with nothing to give tells the user (a toast) and
+  # aborts, instead of handing the browser an empty "NA" file. `character(0)` is
+  # NOT NULL, so an unsupported/failed result (outputs = character(0)) must be
+  # length-checked, not null-checked.
+  need_file <- function(p) {
+    if (length(p) != 1 || is.na(p) || !nzchar(p) || !file.exists(p)) {
+      showNotification("Nothing to download — this produced no output (convert/run it first).",
+                       type = "warning", duration = 6)
+      req(FALSE)
+    }
+    p
+  }
   output$cv_downloads <- renderUI({
-    res <- cv_res(); if (is.null(res) || is.null(res$outputs)) return(NULL)
+    res <- cv_res(); if (is.null(res) || !length(res$outputs)) return(NULL)
     tagList(
       strong("Download:"), br(),
       downloadButton("dl_xlsx", "Excel"),
@@ -881,12 +904,12 @@ server <- function(input, output, session) {
   })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
-      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)][1]
-      basename(p)
+      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
+      if (length(p)) basename(p[1]) else paste0("download.", ext)
     },
     content = function(file) {
-      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)][1]
-      file.copy(p, file, overwrite = TRUE)
+      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
+      file.copy(need_file(if (length(p)) p[1] else NA_character_), file, overwrite = TRUE)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
 
@@ -1650,7 +1673,8 @@ server <- function(input, output, session) {
     filename = function() "batch_report.csv",
     content = function(file) {
       df <- adm_batch()
-      if (is.null(df)) df <- data.frame(message = "no batch run")
+      if (is.null(df)) { showNotification("Run a batch first — no report to download yet.",
+                                          type = "warning", duration = 6); req(FALSE) }
       utils::write.csv(df[, setdiff(names(df), "path"), drop = FALSE], file, row.names = FALSE)
     })
 }
