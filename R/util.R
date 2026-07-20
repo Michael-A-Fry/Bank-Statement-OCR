@@ -61,6 +61,21 @@ safe <- function(expr, default = NULL) {
   tryCatch(expr, error = function(e) default)
 }
 
+# current_user() -- the OS-authenticated logged-in user (Windows %USERNAME%,
+# else $USER/$LOGNAME). This is how the tool records WHO ran a conversion
+# without any password, prompt, or login screen: the person is already
+# authenticated by Windows at sign-in, and only members of the authorised AD
+# group can reach the tool at all (folder permissions), so this name is
+# trustworthy. It is only ever stored as a string -- never used in a query or
+# evaluated -- so there is no injection surface.
+current_user <- function() {
+  for (v in c("USERNAME", "USER", "LOGNAME")) {
+    u <- Sys.getenv(v)
+    if (nzchar(u)) return(u)
+  }
+  "unknown"
+}
+
 # safe_readlines(path) -- read text lines without warnings/crashes.
 safe_readlines <- function(path) {
   safe(readLines(path, warn = FALSE, encoding = "UTF-8"), character(0))

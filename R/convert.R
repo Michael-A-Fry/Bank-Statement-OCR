@@ -91,11 +91,13 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   result <- outcome
   result$run_id <- run_id
 
-  # ---- run log (no raw statement content) ----
-  safe(log_event(logdir, list(
+  # ---- run log: one file per run (concurrency-safe, no shared append) ----
+  # requested_by defaults to the OS-authenticated user, so every conversion is
+  # attributed to a real person without any login prompt.
+  safe(write_log_record(logdir, "runs", run_id, list(
     ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     run_id = run_id,
-    requested_by = requested_by %||% NA_character_,
+    requested_by = requested_by %||% current_user(),
     source_file = basename(path %||% NA_character_),
     source_sha256 = sha,
     bank_hint = bank %||% NA_character_,

@@ -295,7 +295,7 @@ server <- function(input, output, session) {
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
 
-  # ---- Feedback (every conversion can be rated; kept in feedback.jsonl) ----
+  # ---- Feedback (every conversion can be rated; one file per logs/feedback/) ----
   output$cv_feedback <- renderUI({
     res <- cv_res(); if (is.null(res) || is.null(res$run_id)) return(NULL)
     if (isTRUE(cv_fb_done()))

@@ -26,5 +26,14 @@ tmp/
 # NOTE: samples/ is intentionally tracked — it is the public specimen corpus
 # used for template design and golden-file tests.
 
-# Real third-party statement data staged for review (never auto-publish)
-samples/_private_staging/
+# Real / personal statement data staged for LOCAL testing only.
+# NEVER committed. Drop your files in samples/_private_staging/ -- everything
+# there is ignored except its README, which documents the folder.
+samples/_private_staging/*
+!samples/_private_staging/README.md
+
+# Belt-and-braces: never commit real statements dropped anywhere private,
+# whatever the extension.
+/private/
+/incoming/
+**/*.private.*

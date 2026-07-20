@@ -41,9 +41,20 @@ test_that("convert_statement stamps a run_id that feedback can reference", {
   out <- tempfile("cv_"); ld <- tempfile("l_")
   res <- convert_statement(fx, outdir = out, templates_dir = templates_dir(), logdir = ld)
   expect_true(nzchar(res$run_id))
+  # one file per run, named by run_id (concurrency-safe, no shared append)
+  expect_true(file.exists(file.path(ld, "runs", paste0(res$run_id, ".json"))))
 
   submit_feedback(res$run_id, "correct", requested_by = "test",
                   template_id = res$template_id, logdir = ld)
   fb <- read_feedback(ld)
   expect_true(res$run_id %in% fb$run_id)
+})
+
+test_that("many concurrent runs/feedback each get their own file (no collisions)", {
+  ld <- tempfile("cc_")
+  ids <- sprintf("run-%03d", 1:25)
+  for (id in ids) submit_feedback(id, "correct", logdir = ld)
+  fb <- read_feedback(ld)
+  expect_equal(nrow(fb), 25L)
+  expect_equal(length(unique(fb$run_id)), 25L)
 })
