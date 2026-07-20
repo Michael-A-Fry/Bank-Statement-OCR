@@ -1,4 +1,8 @@
 bank,filename,format,bytes,path
+_guides,file_download_format_guide.pdf,pdf,204194,samples/raw/_guides/file_download_format_guide.pdf
+_guides,how_to_view_account_balance.pdf,pdf,428706,samples/raw/_guides/how_to_view_account_balance.pdf
+_guides,how_to_view_and_download_statements.pdf,pdf,454131,samples/raw/_guides/how_to_view_and_download_statements.pdf
+_guides,qrg_view_statements_internet_banking.pdf,pdf,455640,samples/raw/_guides/qrg_view_statements_internet_banking.pdf
 anz,anz_card_summary_sample.pdf,pdf,83132,samples/raw/anz/anz_card_summary_sample.pdf
 anz,anz_creditcard_01.csv,csv,646,samples/raw/anz/anz_creditcard_01.csv
 anz,anz_investmentfunds_statement_guide_sample.pdf,pdf,207747,samples/raw/anz/anz_investmentfunds_statement_guide_sample.pdf
@@ -15,5 +19,8 @@ bnz,bnz_transaction_export_02.csv,csv,541,samples/raw/bnz/bnz_transaction_export
 kiwibank,kiwibank_savings_01.ofx,ofx,1015,samples/raw/kiwibank/kiwibank_savings_01.ofx
 kiwibank,kiwibank_transaction_01.csv,csv,711,samples/raw/kiwibank/kiwibank_transaction_01.csv
 tsb,tsb_mastercard_card_summary_sample_2022.pdf,pdf,222977,samples/raw/tsb/tsb_mastercard_card_summary_sample_2022.pdf
+westpac,westpac_choices_home_loan_summary_sample_2015.pdf,pdf,118181,samples/raw/westpac/westpac_choices_home_loan_summary_sample_2015.pdf
+westpac,westpac_choices_home_loan_summary_sample_2020.pdf,pdf,128428,samples/raw/westpac/westpac_choices_home_loan_summary_sample_2020.pdf
 westpac,westpac_debitcard_01.csv,csv,384,samples/raw/westpac/westpac_debitcard_01.csv
+westpac,westpac_how_to_read_credit_card_statement_guide.pdf,pdf,256361,samples/raw/westpac/westpac_how_to_read_credit_card_statement_guide.pdf
 westpac,westpac_transaction_export_01.csv,csv,453,samples/raw/westpac/westpac_transaction_export_01.csv
