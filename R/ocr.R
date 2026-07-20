@@ -27,7 +27,7 @@ ocr_image <- function(path, lang = "eng", psm = 6L) {
 
 # Render one PDF page to PNG (poppler pdftoppm) and OCR it.
 # Returns list(text = character lines, ok = logical).
-ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng") {
+ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE) {
   if (!ocr_available() || !file.exists(pdf)) return(list(text = character(0), ok = FALSE))
   prefix <- tempfile("ocrpg_")
   on.exit(unlink(Sys.glob(paste0(prefix, "*")), force = TRUE), add = TRUE)
@@ -41,7 +41,9 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng") {
   )
   img <- Sys.glob(paste0(prefix, "*.png"))
   if (!length(img)) return(list(text = character(0), ok = FALSE))
-  txt <- ocr_image(img[1], lang = lang)
+  use_img <- if (isTRUE(preprocess) && exists("preprocess_image", mode = "function"))
+               preprocess_image(img[1]) else img[1]
+  txt <- ocr_image(use_img, lang = lang)
   list(text = txt, ok = length(txt) > 0L)
 }
 
