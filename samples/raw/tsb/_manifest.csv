@@ -1,2 +1,2 @@
 filename,bank,statement_type,format,source_url,authenticity,notes
-tsb_mastercard_card_summary_sample_2022.pdf,tsb,credit-card,pdf,user-upload,specimen,"TSB credit Mastercard card summary sample v1 eff 29 Nov 2022"
+tsb_mastercard_card_summary_sample_2022.pdf,tsb,credit-card,pdf,user-upload,specimen,"TSB credit Mastercard 'Card Summary' disclosure/contract, sample v1 eff 29 Nov 2022 (10 pages). PLACEHOLDER ONLY - no example rows: descriptive fill-ins ('credit limit amount', 'We will include your credit limit amount here'). No transaction table; card-contract/interest-terms layout only."
