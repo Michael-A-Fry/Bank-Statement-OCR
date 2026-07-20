@@ -109,11 +109,15 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 
 ---
 
-## The honest bottom line
+## The honest bottom line (updated)
 
-The **delimited path is real‑world‑hardened and tested**. The **redaction guard
-and OCR are built and tested**. The **PDF transaction‑table parser is the one
-substantial unbuilt piece**, and every ⛔ above collapses into it — multi‑page
-stitching, mid‑block gaps, heavy in‑table redaction. It is deliberately not
-guessed: give me **one real multi‑page PDF statement per bank** and each ⛔
-becomes a tested ✅ the same way the six delimited banks did.
+The delimited path, redaction guard and OCR are built and tested. The **PDF
+transaction‑table parser is now built** (declarative `format: pdf`), tested on a
+real populated table, and **mid‑block gaps / headings / annotations are handled**
+by the date‑parse row filter (a row is kept only if its date cell parses).
+**Excel (.xlsx)** and **key‑value (IRD‑style) extraction** are in too, and a
+**visual PDF wizard** creates PDF templates by drawing boxes.
+
+What remains is **data‑gated, not code**: real native export files for more
+banks, and real per‑bank PDF statements to add more `format: pdf` templates —
+each is a YAML + a wizard session, not an engine change.

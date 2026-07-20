@@ -15,7 +15,13 @@ point-and-click wizard (or editing a YAML file), not by writing code.
 
 - **Delimited path (CSV/TSV/TDV): end-to-end for six banks** — ANZ everyday,
   ANZ credit card, ASB, BNZ, Kiwibank, Westpac — each with a passing golden-file
-  test. `read_input → detect → parse → reconcile → outputs`.
+  test — plus a cross-bank **Xero-standard** import template.
+- **PDF statements** convert end-to-end via declarative `format: pdf` templates
+  (x-band columns; headings/notes/gaps ignored by the date-parse row filter),
+  and **Excel (.xlsx)** is supported too.
+- **Visual PDF wizard** — draw boxes over the columns, preview live, generate the
+  `format: pdf` template. No YAML by hand.
+- **Key-value (`mode: fields`)** extraction foundation for IRD/form documents. `read_input → detect → parse → reconcile → outputs`.
 - **Interactive GUI + template wizard (Shiny)** — upload → convert → review the
   checks → download; plus a wizard that builds a *new bank template for you*
   from a sample (map columns by dropdown, preview, save).
@@ -35,13 +41,13 @@ point-and-click wizard (or editing a YAML file), not by writing code.
   status with an *actionable* message; one JSON line is logged per run.
 - **Test suite**: `16 files / 76 tests / 292 assertions, 0 failures`.
 
-## Not done yet (needs real data, not code)
+## Not done yet (data-gated, not code)
 
-- **Per-bank PDF transaction-table templates** — the committed PDF samples are
-  specimen/"how-to" documents with placeholder fields, not real transaction
-  tables. Real PDF statements are needed to derive column geometry.
-- **Excel (.xlsx) templates** — the reader exists; no `.xlsx` fixtures/templates
-  yet. Auto-categorisation is intentionally out of v1 scope.
+- **More per-bank PDF templates** — the PDF table parser + visual wizard are
+  built and tested; adding a bank's PDF is a wizard session against a real
+  statement (a YAML, not engine work).
+- **Real native SBS/TSB/Co-op/Heartland exports** and a **real IRD document** to
+  wire key-value mode into the full output. Auto-categorisation stays out of scope.
 
 ---
 

@@ -15,8 +15,23 @@ _Last updated: 2026-07-20._
 - Redaction guard (forensic no-leak); OCR (tesseract/poppler) + pre-processing.
 - **Zero-background wizard** (auto-detect delimiter/date/amount, plain English).
 - Shiny GUI (convert · wizard · help); onboarding, edge-case register, research.
-- Corpus: 45 sample files (incl. 3 real PDF tables + 20 edge-case fixtures).
-- Test suite: **326 assertions, 0 failures.**
+- Corpus: 46 sample files (incl. 3 real PDF tables + 20 edge-case fixtures).
+- Test suite: **390 assertions across 104 tests, 0 failures.**
+
+## ✅ Delivered in the C→B→A pass
+- **C** PDF transaction-table parser (declarative `format: pdf`; real ANZ table, tested).
+- **2** Cross-bank Xero-standard import template.
+- **3** OCR TSV per-word confidence + `low_ocr_confidence` diagnostic.
+- **B** Visual PDF wizard (draw column boxes → live preview → generate template).
+- **5** Adaptive-threshold (Sauvola) scan profile.
+- **6** Excel (.xlsx) path + generic template.
+- **A** Key-value (`mode: fields`) extraction foundation for IRD/form docs.
+- **cleanup** `debit_credit_cols` + `dr_cr_suffix` promoted to tested.
+
+**Remaining is data-gated, not code:** real native SBS/TSB/Co-op/Heartland export
+files; real per-bank PDF statements to add more `format: pdf` templates (each a
+wizard session, not engine work); a real IRD document to wire `mode: fields` into
+the full output. Categorisation stays a downstream concern.
 
 ## 🎯 Backlog — highest ROI first
 
