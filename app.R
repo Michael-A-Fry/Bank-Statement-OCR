@@ -79,6 +79,82 @@ build_tpl_yaml <- function(cfg) {
   )
 }
 
+# tutorial_html() -- the step-by-step "how to build a template" walkthrough shown
+# in a modal from either wizard. Mirrors docs/wizard-tutorial.md (the canonical,
+# fuller version). Teaches the WAYS statements differ so nothing is a surprise.
+tutorial_html <- function() HTML('
+<style>
+ .tut h4{margin:16px 0 6px;color:#137333} .tut table{border-collapse:collapse;width:100%;margin:6px 0}
+ .tut th,.tut td{border:1px solid #ddd;padding:5px 8px;text-align:left;vertical-align:top;font-size:13px}
+ .tut th{background:#f2f6f2} .tut code{background:#eef;padding:0 3px;border-radius:3px}
+ .tut ol,.tut ul{margin:4px 0 4px 18px} .tut .lead{color:#555}
+</style>
+<div class="tut">
+<p class="lead">The engine has <b>zero</b> banks built in. A template just says: the date is in
+<i>this</i> column, the amount in <i>that</i> one, amounts are shown <i>this</i> way, and here is a
+phrase that proves it is this bank. Add a bank = add one template. Follow along with the worked
+example <code>samples/raw/tutorial/sample_everyday_statement.pdf</code>.</p>
+
+<h4>Step 0 &mdash; read the statement&#39;s shape (9 questions)</h4>
+<table><tr><th>#</th><th>Question</th><th>What it sets</th></tr>
+<tr><td>1</td><td>File type: CSV/TSV, Excel, PDF-with-text, or scanned PDF?</td><td>Which wizard. Scanned PDFs are OCR&#39;d automatically &mdash; check the numbers.</td></tr>
+<tr><td>2</td><td>How are amounts shown?</td><td>The amount style &mdash; see below. The #1 setting.</td></tr>
+<tr><td>3</td><td>How are dates written?</td><td>The date format &mdash; see below.</td></tr>
+<tr><td>4</td><td>Which columns exist?</td><td>Map what&#39;s there; leave the rest blank (e.g. no balance column).</td></tr>
+<tr><td>5</td><td>A preamble before the table?</td><td>Header/junk lines above the real header row.</td></tr>
+<tr><td>6</td><td>Multi-line rows?</td><td>Nothing to do &mdash; the 2nd line has no date, so it&#39;s ignored.</td></tr>
+<tr><td>7</td><td>Redactions (black boxes)?</td><td>Nothing to do &mdash; never read under a redaction; marked <code>[REDACTED]</code>.</td></tr>
+<tr><td>8</td><td>One account or several?</td><td>Combined statements parse but flag &mdash; balances aren&#39;t continuous across accounts.</td></tr>
+<tr><td>9</td><td>How many statements in the file?</td><td>Merged bundles are flagged up front &mdash; split into one statement per file.</td></tr></table>
+
+<h4>The ways AMOUNTS differ (pick one)</h4>
+<ul>
+<li><b>One signed column</b> (<code>signed</code>): <code>-45.00</code> out, <code>45.00</code> in.</li>
+<li><b>Two columns: Withdrawals &amp; Deposits</b> (<code>debit_credit_cols</code>): map <b>both</b>. <i>(worked example)</i></li>
+<li><b>DR/CR suffix</b> (<code>dr_cr_suffix</code>): <code>123.45 DR</code> / <code>123.45 CR</code> &mdash; common on cards.</li>
+<li><b>A Type column of D/C</b> (<code>type_dc</code>): a column says D or C; map it too.</li>
+</ul>
+<p class="lead">Balance going the wrong way? Wrong amount style. Change it, Preview again.</p>
+
+<h4>The ways DATES differ</h4>
+<table><tr><th>On the statement</th><th>Setting</th></tr>
+<tr><td>21/04/2026</td><td>day/month/year (NZ/UK)</td></tr>
+<tr><td>04/21/2026</td><td>month/day/year (US)</td></tr>
+<tr><td>2026-04-21</td><td>year/month/day (ISO)</td></tr>
+<tr><td>1 April 2025</td><td>day month-name year</td></tr>
+<tr><td><b>21 Apr</b> (no year)</td><td><b>day month-name, no year</b> &mdash; year taken from the statement period automatically <i>(worked example)</i></td></tr>
+<tr><td>21/04/26</td><td>day/month/2-digit-year</td></tr></table>
+
+<h4>PDF wizard &mdash; draw the boxes</h4>
+<ol>
+<li>Upload the PDF, pick the page with the table (often page 2).</li>
+<li>For each column: choose the <b>field</b>, drag a box across that column, click <b>Assign</b>. Do date, description, the amount column(s), balance. For two-column amounts, draw <b>debit</b> and <b>credit</b> boxes.</li>
+<li>Set the <b>date format</b> and <b>amount style</b>.</li>
+<li>Type a <b>fingerprint phrase</b> that&#39;s on this statement and few others (e.g. <code>Transaction details</code>).</li>
+<li><b>Preview</b> &mdash; only rows whose date box reads as a real date are kept, so headings/notes/gaps drop out by themselves.</li>
+<li><b>Save</b>. Boxes are x-position only (full height) &mdash; you&#39;re defining columns; rows are found by the date.</li>
+</ol>
+
+<h4>Delimited (CSV/Excel) wizard</h4>
+<ol><li>Upload the sample &mdash; delimiter, dates and amount style auto-detect.</li>
+<li>Check each field&#39;s dropdown points at the right column (set <code>(none)</code> if absent).</li>
+<li>Tick fingerprint columns, <b>Preview</b>, <b>Save</b>.</li></ol>
+
+<h4>Trust it when it reconciles</h4>
+<p class="lead">In <b>Checks</b>: <code>running_balance_continuity</code> pass = columns mapped right;
+<code>balance_reconciliation</code> pass = opening + all transactions = closing (provably correct).
+If a check fails, <b>Diagnostics</b> says where/why/how to fix &mdash; usually wrong amount style or date format.</p>
+
+<h4>Troubleshooting</h4>
+<table><tr><th>Symptom</th><th>Fix</th></tr>
+<tr><td>No template matched</td><td>Loosen/repick the fingerprint; check you&#39;re on the table page</td></tr>
+<tr><td>Deposits look like withdrawals</td><td>Wrong amount style &mdash; switch it</td></tr>
+<tr><td>Dates blank/wrong</td><td>Wrong date format; for year-less dates confirm the period is detected</td></tr>
+<tr><td>Column empty / description cut off</td><td>Redraw / widen the box (stop before the amount column)</td></tr>
+<tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date &mdash; widen/move it</td></tr></table>
+<p class="lead" style="margin-top:12px">Full version with more detail: <code>docs/wizard-tutorial.md</code>.</p>
+</div>')
+
 # ---------------------------------------------------------------------------
 ui <- fluidPage(
   tags$head(tags$style(HTML(
@@ -117,6 +193,8 @@ ui <- fluidPage(
       sidebarLayout(
         sidebarPanel(
           width = 4,
+          actionButton("wz_help", "ⓘ How to build a template (step-by-step)",
+                       class = "btn-info", style = "margin-bottom:8px;width:100%"),
           fileInput("wz_file", "Sample statement (delimited)"),
           textInput("wz_delim", "Delimiter", value = ","),
           textInput("wz_id", "Template id", value = "newbank_everyday_csv"),
@@ -156,6 +234,8 @@ ui <- fluidPage(
       sidebarLayout(
         sidebarPanel(
           width = 4,
+          actionButton("wp_help", "ⓘ How to build a template (step-by-step)",
+                       class = "btn-info", style = "margin-bottom:8px;width:100%"),
           fileInput("wp_file", "Sample PDF statement (.pdf)"),
           numericInput("wp_page", "Page", 1, min = 1, step = 1),
           selectInput("wp_field", "Field for the next box you draw",
@@ -200,9 +280,11 @@ Rscript run.R samples/raw/bnz/bnz_transaction_export_01.csv BNZ outputs
 Rscript tests/run_tests.R"),
         h4("Adding a bank"),
         tags$ol(
-          tags$li("Use the Template wizard tab: upload a sample, map the columns, Preview, Save."),
-          tags$li("Or copy a templates/*.yaml file and edit the columns map."),
-          tags$li("See tests/HOWTO-add-template-test.md to add a golden test.")
+          tags$li(HTML("Click <b>ⓘ How to build a template (step-by-step)</b> at the top of either wizard for the full walkthrough — it explains every way statements differ (amount styles, date formats, redactions, combined/merged statements).")),
+          tags$li("Template wizard tab: upload a sample, map the columns, Preview, Save."),
+          tags$li("PDF wizard tab: draw a box over each column, Preview, Save."),
+          tags$li(HTML("A worked example lives at <code>samples/raw/tutorial/sample_everyday_statement.pdf</code> — open it in the PDF wizard and follow along.")),
+          tags$li(HTML("Full written guide: <code>docs/wizard-tutorial.md</code>. Golden tests: <code>tests/HOWTO-add-template-test.md</code>."))
         ),
         p(class = "muted",
           "The wizard handles single-header delimited exports. Statements with a ",
@@ -215,6 +297,13 @@ Rscript tests/run_tests.R"),
 
 # ---------------------------------------------------------------------------
 server <- function(input, output, session) {
+
+  # ---- Tutorial: step-by-step "how to build a template" (either wizard) ----
+  show_tutorial <- function() showModal(modalDialog(
+    title = "Building a template from scratch", size = "l", easyClose = TRUE,
+    tutorial_html(), footer = modalButton("Close")))
+  observeEvent(input$wp_help, show_tutorial())
+  observeEvent(input$wz_help, show_tutorial())
 
   templates <- reactive({ load_templates(TEMPLATES_DIR) })
 

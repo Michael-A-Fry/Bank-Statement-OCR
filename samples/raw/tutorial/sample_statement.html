@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  @page { size: A4; margin: 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { font: 11pt/1.45 Arial, Helvetica, sans-serif; color: #111; margin: 0; }
+  h1 { font-size: 17pt; margin: 0 0 2pt; }
+  .muted { color: #444; }
+  .sumtbl { border-collapse: collapse; margin-top: 14pt; }
+  .sumtbl td { padding: 3pt 26pt 3pt 0; vertical-align: top; }
+  .sumtbl td.k { font-weight: bold; }
+  table.tx { border-collapse: collapse; width: 100%; margin-top: 10pt; }
+  table.tx th, table.tx td { padding: 4pt 4pt; border-bottom: 0.5pt solid #ccc; font-size: 10.5pt; vertical-align: top; }
+  table.tx th { text-align: left; border-bottom: 1pt solid #333; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .col-date { width: 62pt; } .col-wd { width: 78pt; } .col-dep { width: 78pt; } .col-bal { width: 84pt; }
+  .sub { color: #555; font-size: 9pt; }
+  .pagebreak { page-break-before: always; }
+  .foot { margin-top: 16pt; color: #666; font-size: 9pt; }
+</style></head><body>
+
+<!-- PAGE 1: summary -->
+<h1>Kowhai Bank NZ</h1>
+<div class="muted">Statement of Account</div>
+<div style="margin-top:16pt">JAMIE SAMPLE<br>1 Example Street<br>Wellington 6011</div>
+<table class="sumtbl">
+  <tr><td class="k">Account name</td><td>Everyday account</td></tr>
+  <tr><td class="k">Account number</td><td>02-1234-0567890-00</td></tr>
+  <tr><td class="k">Statement period</td><td>from 1 May 2026 to 31 May 2026</td></tr>
+  <tr><td class="k">Opening balance</td><td>$1,250.00</td></tr>
+  <tr><td class="k">Closing balance</td><td>$2,716.50</td></tr>
+  <tr><td class="k">Total withdrawals</td><td>$1,776.85</td></tr>
+  <tr><td class="k">Total deposits</td><td>$3,243.35</td></tr>
+</table>
+<div class="foot">Page 1 of 2</div>
+
+<!-- PAGE 2: transactions -->
+<div class="pagebreak"></div>
+<div style="font-weight:bold">Everyday account 02-1234-0567890-00 &mdash; continued</div>
+<table class="tx">
+  <thead><tr>
+    <th class="col-date">Date</th><th>Transaction details</th>
+    <th class="col-wd num">Withdrawals</th><th class="col-dep num">Deposits</th><th class="col-bal num">Balance</th>
+  </tr></thead>
+  <tbody>
+    <tr><td></td><td>Balance brought forward</td><td class="num"></td><td class="num"></td><td class="num">1,250.00</td></tr>
+    <tr><td>02 May</td><td>EFTPOS COFFEE HOUSE</td><td class="num">5.50</td><td class="num"></td><td class="num">1,244.50</td></tr>
+    <tr><td>03 May</td><td>SALARY ACME LTD</td><td class="num"></td><td class="num">3,200.00</td><td class="num">4,444.50</td></tr>
+    <tr><td>05 May</td><td>DD POWER CO 123456</td><td class="num">180.20</td><td class="num"></td><td class="num">4,264.30</td></tr>
+    <tr><td>07 May</td><td>VISA NEW WORLD KH<div class="sub">4835******1234 Orig date 06/05/2026</div></td><td class="num">85.40</td><td class="num"></td><td class="num">4,178.90</td></tr>
+    <tr><td>10 May</td><td>ATM CASH WITHDRAWAL</td><td class="num">100.00</td><td class="num"></td><td class="num">4,078.90</td></tr>
+    <tr><td>12 May</td><td>AUTOMATIC TRANSFER TO SAVINGS</td><td class="num">500.00</td><td class="num"></td><td class="num">3,578.90</td></tr>
+    <tr><td>15 May</td><td>REFUND TRADEME</td><td class="num"></td><td class="num">42.00</td><td class="num">3,620.90</td></tr>
+    <tr><td>18 May</td><td>DD RENT PROP MGR</td><td class="num">650.00</td><td class="num"></td><td class="num">2,970.90</td></tr>
+    <tr><td>20 May</td><td>VISA Z ENERGY<div class="sub">4835******1234 Orig date 19/05/2026</div></td><td class="num">72.30</td><td class="num"></td><td class="num">2,898.60</td></tr>
+    <tr><td>24 May</td><td>CREDIT INTEREST</td><td class="num"></td><td class="num">1.35</td><td class="num">2,899.95</td></tr>
+    <tr><td>28 May</td><td>EFTPOS COUNTDOWN</td><td class="num">123.45</td><td class="num"></td><td class="num">2,776.50</td></tr>
+    <tr><td>31 May</td><td>DD SUNSHINE INSURANCE</td><td class="num">60.00</td><td class="num"></td><td class="num">2,716.50</td></tr>
+  </tbody>
+</table>
+<div class="foot">Page 2 of 2</div>
+</body></html>

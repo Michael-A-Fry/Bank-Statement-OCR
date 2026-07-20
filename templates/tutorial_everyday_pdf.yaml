@@ -1,0 +1,25 @@
+# Tutorial / worked-example template for the PDF wizard walkthrough.
+# Matches the SYNTHETIC sample (samples/raw/tutorial/sample_everyday_statement.pdf).
+# Demonstrates the two features that trip people up: Withdrawals/Deposits as two
+# columns (debit_credit_cols) and day+month-only dates (year from the period).
+id: tutorial_everyday_pdf
+bank: Kowhai Bank NZ (sample)
+statement_type: everyday
+format: pdf
+version: 1
+effective_from: null
+effective_to: null
+min_score: 3
+fingerprint:
+  page_contains_all: ["Transaction details", "Withdrawals", "Deposits"]
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: debit_credit_cols
+  columns:
+    date:        {x_min: 28,  x_max: 92}
+    description: {x_min: 95,  x_max: 355}
+    debit:       {x_min: 355, x_max: 405}
+    credit:      {x_min: 405, x_max: 480}
+    balance:     {x_min: 480, x_max: 560}
+currency: NZD
