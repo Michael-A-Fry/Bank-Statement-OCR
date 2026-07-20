@@ -1,77 +1,116 @@
-# install-service.ps1 -- make the Bank Statement OCR app start AUTOMATICALLY on
-# every server boot (Windows / Task Scheduler). Run ONCE in an ADMIN PowerShell:
+# install-service.ps1 -- create a Windows Scheduled Task for Bank Statement OCR.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1           # web app at boot
-#   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -Inbox    # + folder poller every 2 min
+# Admin mode, machine-wide at boot:
+#   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -Machine
 #
-# After this the app comes online by itself whenever the machine powers on, and
-# restarts itself if it ever crashes. No NSSM, no extra software needed.
+# Non-admin mode, current user at logon:
+#   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1
 #
-#   Manage:  open "Task Scheduler" -> BankStatementsApp
-#   Stop:    Stop-ScheduledTask   -TaskName BankStatementsApp
-#   Update:  replace the folder, then  Restart-ScheduledTask -TaskName BankStatementsApp
-#   Remove:  Unregister-ScheduledTask -TaskName BankStatementsApp -Confirm:$false
+# Optional folder poller:
+#   powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -Inbox
 #
-# Env override: set BSO_PORT before running to change the port (default 8100).
-param([switch]$Inbox)
+# Remove tasks:
+#   Unregister-ScheduledTask -TaskName BankStatementsApp -Confirm:$false
+#   Unregister-ScheduledTask -TaskName BankStatementsInbox -Confirm:$false
+
+param(
+  [switch]$Inbox,
+  [switch]$Machine,
+  [switch]$NoPause
+)
+
 $ErrorActionPreference = "Stop"
 
-# Must be admin to register a machine-wide, run-at-boot task.
-$admin = ([Security.Principal.WindowsPrincipal] `
-  [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-  [Security.Principal.WindowsBuiltinRole]::Administrator)
-if (-not $admin) { throw "Please run this in an Administrator PowerShell window." }
-
-$AppDir  = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$Rscript = (Get-Command Rscript.exe -ErrorAction SilentlyContinue).Source
-if (-not $Rscript) { throw "Rscript.exe not found on PATH. Run scripts\setup.ps1 first." }
-
-Write-Host "==> App folder : $AppDir"
-Write-Host "==> Rscript    : $Rscript"
-
-# Ensure the folders the task writes to exist.
-foreach ($d in "logs","out","inbox","outbox","processed","failed") {
-  New-Item -ItemType Directory -Force -Path (Join-Path $AppDir $d) | Out-Null
-}
-if ($env:BSO_PORT) {
-  [Environment]::SetEnvironmentVariable("BSO_PORT", $env:BSO_PORT, "Machine")
-  Write-Host "==> Web port   : $($env:BSO_PORT)"
-} else {
-  Write-Host "==> Web port   : 8100 (default)"
+function Test-IsAdmin {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 }
 
-# Run as SYSTEM so it starts at boot with no one logged in.
-$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-
-# --- Web app: at every startup, kept alive, WITH the working directory set ---
-$appAction = New-ScheduledTaskAction -Execute $Rscript `
-  -Argument "scripts\run_app.R" -WorkingDirectory $AppDir
-$appTrigger = New-ScheduledTaskTrigger -AtStartup
-$appSettings = New-ScheduledTaskSettingsSet `
-  -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-  -ExecutionTimeLimit ([TimeSpan]::Zero) `
-  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName "BankStatementsApp" -Action $appAction `
-  -Trigger $appTrigger -Principal $principal -Settings $appSettings -Force | Out-Null
-Start-ScheduledTask -TaskName "BankStatementsApp"
-Write-Host "==> Installed 'BankStatementsApp' (web app), runs at boot and started now."
-
-if ($Inbox) {
-  # Folder poller every 2 minutes; IgnoreNew stops a slow batch overlapping itself.
-  $inAction = New-ScheduledTaskAction -Execute $Rscript `
-    -Argument "scripts\serve_inbox.R" -WorkingDirectory $AppDir
-  $inTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration ([TimeSpan]::MaxValue)
-  $inSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-  Register-ScheduledTask -TaskName "BankStatementsInbox" -Action $inAction `
-    -Trigger $inTrigger -Principal $principal -Settings $inSettings -Force | Out-Null
-  Write-Host "==> Installed 'BankStatementsInbox' (folder poller, every 2 min)."
+function Resolve-AppDir {
+  if ($PSScriptRoot) { return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path }
+  return (Get-Location).Path
 }
 
-Write-Host ""
-Write-Host "======================================================================"
-Write-Host " Auto-start is on. The app returns by itself after any reboot."
-Write-Host " Open:   http://<this-vm>:$(if($env:BSO_PORT){$env:BSO_PORT}else{'8100'})"
-Write-Host " Manage: Task Scheduler -> BankStatementsApp"
-Write-Host "======================================================================"
+function Resolve-Rscript {
+  $cmd = Get-Command Rscript.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+
+  $roots = @(
+    (Join-Path $env:ProgramFiles "R"),
+    (Join-Path ${env:ProgramFiles(x86)} "R"),
+    (Join-Path $env:LOCALAPPDATA "Programs\R"),
+    (Join-Path $env:USERPROFILE "AppData\Local\Programs\R")
+  ) | Where-Object { $_ -and (Test-Path $_) }
+
+  $candidate = foreach ($root in $roots) {
+    Get-ChildItem $root -Recurse -Filter Rscript.exe -ErrorAction SilentlyContinue
+  } | Where-Object { $_.FullName -notmatch "rtools" } | Sort-Object FullName -Descending | Select-Object -First 1
+
+  if ($candidate) { return $candidate.FullName }
+  throw "Rscript.exe not found. Run scripts\setup.ps1 first, or install R for Windows."
+}
+
+try {
+  $AppDir = Resolve-AppDir
+  Set-Location $AppDir
+
+  foreach ($d in @("logs","out","inbox","outbox","processed","failed","templates_user")) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $AppDir $d) | Out-Null
+  }
+
+  $Rscript = Resolve-Rscript
+  $port = if ($env:BSO_PORT) { $env:BSO_PORT } else { "8100" }
+  $isAdmin = Test-IsAdmin
+
+  if ($Machine -and -not $isAdmin) {
+    throw "-Machine requires an Administrator PowerShell. Re-run without -Machine to install a current-user logon task instead."
+  }
+
+  Write-Host "==> App folder : $AppDir" -ForegroundColor Cyan
+  Write-Host "==> Rscript    : $Rscript"
+  Write-Host "==> Web port   : $port"
+
+  $appAction = New-ScheduledTaskAction -Execute $Rscript -Argument "scripts\run_app.R" -WorkingDirectory $AppDir
+  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
+  if ($Machine) {
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    Write-Host "==> Registering machine-wide startup task as SYSTEM..."
+  } else {
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel LeastPrivilege
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    Write-Host "==> Registering current-user logon task for $user..." -ForegroundColor Yellow
+    Write-Host "    This does not require admin rights, but it starts when this user logs on, not at machine boot."
+  }
+
+  Register-ScheduledTask -TaskName "BankStatementsApp" -Action $appAction -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  Start-ScheduledTask -TaskName "BankStatementsApp"
+  Write-Host "==> Installed and started 'BankStatementsApp'."
+
+  if ($Inbox) {
+    $inAction = New-ScheduledTaskAction -Execute $Rscript -Argument "scripts\serve_inbox.R" -WorkingDirectory $AppDir
+    $inTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration ([TimeSpan]::MaxValue)
+    $inSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName "BankStatementsInbox" -Action $inAction -Trigger $inTrigger -Principal $principal -Settings $inSettings -Force | Out-Null
+    Start-ScheduledTask -TaskName "BankStatementsInbox"
+    Write-Host "==> Installed and started 'BankStatementsInbox' folder poller."
+  }
+
+  Write-Host ""
+  Write-Host "======================================================================"
+  Write-Host " Scheduled task installed."
+  Write-Host " Open locally: http://localhost:$port"
+  Write-Host " Manage: Task Scheduler -> BankStatementsApp"
+  Write-Host "======================================================================"
+}
+catch {
+  Write-Host ""
+  Write-Host "INSTALL-SERVICE FAILED" -ForegroundColor Red
+  Write-Host $_.Exception.Message -ForegroundColor Red
+  Write-Host ""
+  if (-not $NoPause) { Read-Host "Press Enter to close" | Out-Null }
+  exit 1
+}
