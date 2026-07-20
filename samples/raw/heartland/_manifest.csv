@@ -1,0 +1,2 @@
+filename,bank,statement_type,format,source_url,authenticity,notes
+(not downloaded),Heartland Bank,other,html,https://www.heartland.co.nz/accepted-bank-statements,unknown,"Heartland NZ help page describing accepted statement types (e-statement vs transactional export). No downloadable sample-statement file offered. Host blocked by egress policy; no specimen statement exists to download."

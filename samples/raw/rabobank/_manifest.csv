@@ -1,0 +1,2 @@
+filename,bank,statement_type,format,source_url,authenticity,notes
+(not downloaded),Rabobank NZ,other,html,https://www.rabobank.co.nz/help-and-support/eStatement,unknown,"Rabobank NZ eStatement FAQ - states eStatement 'looks identical to the paper statement' but provides NO downloadable sample file. Host blocked by egress policy; no specimen statement exists to download."
