@@ -14,9 +14,18 @@ preprocess_opts <- function() list(
   deskew_threshold = 40L,   # % of pixels that must agree on the skew angle
   normalize        = TRUE,
   upscale_min_width = 2000L, # upscale pages narrower than this (small text)
-  threshold        = FALSE,  # hard binarisation -- off by default (see note above)
+  adaptive         = FALSE,  # Sauvola-style local threshold (image_lat) -- best
+  adaptive_geometry = "25x25+10%", #   for uneven illumination / faded / tinted scans
+  threshold        = FALSE,  # hard global binarisation -- off by default
   despeckle        = FALSE
 )
+
+# preprocess_opts_scan() -- a stronger profile for difficult SCANS / phone photos:
+# deskew + adaptive local threshold + despeckle. Use for image-only pages where
+# the default (safe) profile under-reads.
+preprocess_opts_scan <- function() {
+  o <- preprocess_opts(); o$adaptive <- TRUE; o$despeckle <- TRUE; o
+}
 
 # preprocess_image(in_path, out_path, opts) -> path to the processed image
 # (or the original path if pre-processing is unavailable/failed).
@@ -33,6 +42,8 @@ preprocess_image <- function(in_path, out_path = NULL, opts = preprocess_opts())
     if (!is.null(opts$upscale_min_width) && isTRUE(info$width < opts$upscale_min_width))
       img <- magick::image_resize(img, paste0(opts$upscale_min_width, "x"))
     if (isTRUE(opts$despeckle))  img <- magick::image_despeckle(img)
+    if (isTRUE(opts$adaptive) && exists("image_lat", where = asNamespace("magick")))
+      img <- magick::image_lat(img, geometry = opts$adaptive_geometry %||% "25x25+10%")
     if (isTRUE(opts$threshold))  img <- magick::image_threshold(img, type = "black", threshold = "50%")
     magick::image_write(img, out_path, format = "png")
     out_path
