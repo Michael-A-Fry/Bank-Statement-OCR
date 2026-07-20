@@ -27,6 +27,17 @@ preprocess_opts_scan <- function() {
   o <- preprocess_opts(); o$adaptive <- TRUE; o$despeckle <- TRUE; o
 }
 
+# preprocess_opts_geometry() -- GEOMETRY-PRESERVING profile for the word-BOX OCR
+# pass. Pixel-VALUE cleanups only (greyscale + normalize + despeckle); NO deskew
+# and NO resize, so every word's bounding box stays in a known 1:1 scale with the
+# rendered page (pixel -> point = 72/dpi holds exactly). This lets the box pass
+# get the SAME accuracy lift as the text pass WITHOUT shifting column positions --
+# the parallel "location-safe" pre-processing the table parser needs.
+preprocess_opts_geometry <- function() {
+  list(greyscale = TRUE, deskew = FALSE, normalize = TRUE,
+       upscale_min_width = NULL, adaptive = FALSE, despeckle = TRUE, threshold = FALSE)
+}
+
 # preprocess_image(in_path, out_path, opts) -> path to the processed image
 # (or the original path if pre-processing is unavailable/failed).
 preprocess_image <- function(in_path, out_path = NULL, opts = preprocess_opts()) {

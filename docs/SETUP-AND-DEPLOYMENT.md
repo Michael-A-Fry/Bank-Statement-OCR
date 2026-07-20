@@ -30,7 +30,7 @@ access you already have.
 1. Download and run the R installer from https://cran.r-project.org/bin/windows/base/ .
 2. Open "Rgui" or a terminal and run:
    ```r
-   install.packages(c("shiny","DT","yaml","jsonlite","openxlsx","readxl","pdftools"))
+   install.packages(c("shiny","DT","yaml","jsonlite","openxlsx","readxl","pdftools","magick"))
    ```
 3. For scanned-PDF OCR (optional but recommended), install **Tesseract** and
    **Poppler** for Windows and make sure they're on the PATH. Text PDFs, CSV and
@@ -40,7 +40,7 @@ access you already have.
 ```sh
 sudo apt-get update
 sudo apt-get install -y r-base r-cran-shiny r-cran-dt r-cran-yaml \
-  r-cran-jsonlite r-cran-openxlsx r-cran-readxl r-cran-pdftools \
+  r-cran-jsonlite r-cran-openxlsx r-cran-readxl r-cran-pdftools r-cran-magick \
   tesseract-ocr poppler-utils
 ```
 If your VM's network blocks CRAN, the `apt` route above pulls everything from the

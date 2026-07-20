@@ -86,10 +86,14 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
   )
   img <- Sys.glob(paste0(prefix, "*.png"))
   if (!length(img)) return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
-  use_img <- if (isTRUE(preprocess) && exists("preprocess_image", mode = "function"))
-               preprocess_image(img[1]) else img[1]
+  have_pp <- isTRUE(preprocess) && exists("preprocess_image", mode = "function")
+  # Text pass: full preprocessing (deskew/upscale allowed) for best accuracy.
+  use_img <- if (have_pp) preprocess_image(img[1]) else img[1]
   txt <- ocr_image(use_img, lang = lang)
-  words <- .ocr_tsv_to_words(ocr_image_tsv(img[1], lang = lang), scale = 72 / dpi)
+  # Word-box pass: GEOMETRY-PRESERVING preprocessing (no deskew/resize), so the
+  # accuracy lift doesn't move any column. Runs in parallel to the text pass.
+  box_img <- if (have_pp) preprocess_image(img[1], opts = preprocess_opts_geometry()) else img[1]
+  words <- .ocr_tsv_to_words(ocr_image_tsv(box_img, lang = lang), scale = 72 / dpi)
   list(text = txt, words = words, ok = length(txt) > 0L,
        conf = ocr_word_confidence(use_img, lang = lang))
 }

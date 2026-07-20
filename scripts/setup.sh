@@ -17,11 +17,11 @@ if ! command -v Rscript >/dev/null 2>&1; then
   echo "==> Installing R and packages (apt)…"
   sudo apt-get update
   sudo apt-get install -y r-base r-cran-shiny r-cran-dt r-cran-yaml \
-    r-cran-jsonlite r-cran-openxlsx r-cran-readxl r-cran-pdftools \
+    r-cran-jsonlite r-cran-openxlsx r-cran-readxl r-cran-pdftools r-cran-magick \
     tesseract-ocr poppler-utils
 else
   echo "==> R present. Ensuring packages…"
-  Rscript -e 'pkgs<-c("shiny","DT","yaml","jsonlite","openxlsx","readxl","pdftools");
+  Rscript -e 'pkgs<-c("shiny","DT","yaml","jsonlite","openxlsx","readxl","pdftools","magick");
     miss<-pkgs[!vapply(pkgs,requireNamespace,logical(1),quietly=TRUE)];
     if(length(miss)){cat("installing:",paste(miss,collapse=", "),"\n");
       try(install.packages(miss,repos="https://cloud.r-project.org"))}else cat("all packages present\n")'

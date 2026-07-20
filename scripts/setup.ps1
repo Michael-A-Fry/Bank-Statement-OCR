@@ -26,7 +26,7 @@ if (-not $rscript) {
 
 # 2. Packages
 Write-Host "==> Ensuring R packages..."
-Rscript -e "pkgs<-c('shiny','DT','yaml','jsonlite','openxlsx','readxl','pdftools'); miss<-pkgs[!vapply(pkgs,requireNamespace,logical(1),quietly=TRUE)]; if(length(miss)){install.packages(miss,repos='https://cloud.r-project.org')} else cat('all packages present\n')"
+Rscript -e "pkgs<-c('shiny','DT','yaml','jsonlite','openxlsx','readxl','pdftools','magick'); miss<-pkgs[!vapply(pkgs,requireNamespace,logical(1),quietly=TRUE)]; if(length(miss)){install.packages(miss,repos='https://cloud.r-project.org')} else cat('all packages present\n')"
 Write-Host "   (For scanned-PDF OCR, also install Tesseract + Poppler for Windows and add them to PATH. Text PDF / CSV / Excel work without them.)"
 
 # 3. Folders
