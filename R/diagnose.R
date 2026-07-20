@@ -12,6 +12,26 @@
              detail = detail, how_to_fix = how_to_fix, stringsAsFactors = FALSE)
 }
 
+# .diag_fix_owner(category) -- WHO fixes this, so a lone analyst never wonders
+# whether to draw a box or phone a developer:
+#   template = the analyst, in the wizard (a column/box/date/amount setting)
+#   input    = the person who supplied the file (split a bundle, re-export, rescan)
+#   review   = just eyeball the data (expected situation, not an error)
+#   none     = informational, no action
+#   escalate = a genuine engine gap -> send it to a developer (rare)
+# Unknown categories default to escalate (fail safe: surface it, don't hide it).
+.diag_fix_owner <- function(category) {
+  vapply(category, function(c) switch(c,
+    unknown_format = , reconciliation_mismatch = , balance_break = ,
+    row_count = , row_parse = , date_parse = , amount_parse = ,
+    date_out_of_range = "template",
+    unreadable = , multiple_statements = , oversized = , oversized_page = ,
+    low_ocr_confidence = , completeness_unverified = "input",
+    combined_statement = , mixed_currency = "review",
+    redaction = , ocr = , none = "none",
+    "escalate"), character(1))
+}
+
 # Compact a set of row indices for display.
 .rng <- function(idx) {
   if (!length(idx)) return("")
@@ -127,10 +147,25 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals.")
   }
 
-  if (!length(rows))
-    return(.diag_row("-", "none", "info",
-                     "No issues detected; all applicable checks passed.", "-"))
+  if (!length(rows)) {
+    clean <- .diag_row("-", "none", "info",
+                       "No issues detected; all applicable checks passed.", "-")
+    clean$fix_owner <- "none"
+    return(clean)
+  }
 
   out <- do.call(rbind, rows)
+  out$fix_owner <- .diag_fix_owner(out$category)
   out[order(match(out$severity, c("high", "medium", "info"))), , drop = FALSE]
+}
+
+# diag_fix_owner_label(owner) -- plain-language "who fixes this" for display.
+diag_fix_owner_label <- function(owner) {
+  unname(c(
+    template = "You — adjust the template (wizard)",
+    input    = "You — fix the file (split / re-export / rescan)",
+    review   = "You — review the data (expected, not an error)",
+    none     = "No action",
+    escalate = "Developer — engine gap (escalate)"
+  )[owner])
 }

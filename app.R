@@ -451,8 +451,19 @@ server <- function(input, output, session) {
 
   output$cv_diag <- renderDT({
     res <- cv_res(); req(res); req(!is.null(res$diagnostics))
-    datatable(res$diagnostics, rownames = FALSE,
-              options = list(dom = "t", pageLength = 20, scrollX = TRUE))
+    d <- res$diagnostics
+    if ("fix_owner" %in% names(d)) {
+      d$who_fixes <- diag_fix_owner_label(d$fix_owner)
+      d <- d[, c("where", "category", "severity", "detail", "who_fixes", "how_to_fix")]
+    }
+    datatable(d, rownames = FALSE,
+              options = list(dom = "t", pageLength = 20, scrollX = TRUE)) |>
+      formatStyle("who_fixes", fontWeight = "bold",
+        color = styleEqual(
+          c("You — adjust the template (wizard)", "You — fix the file (split / re-export / rescan)",
+            "You — review the data (expected, not an error)", "No action",
+            "Developer — engine gap (escalate)"),
+          c("#0b7a34", "#b06a00", "#555", "#999", "#b00020")))
   })
 
   output$cv_cov_summary <- renderUI({

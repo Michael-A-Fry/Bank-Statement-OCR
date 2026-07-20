@@ -68,3 +68,21 @@ test_that("convert_statement attaches diagnostics and writes a Diagnostics sheet
   wb <- openxlsx::loadWorkbook(res$outputs[["xlsx"]])
   expect_true("Diagnostics" %in% names(wb))
 })
+
+test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly", {
+  d <- build_diagnostics("unsupported", det = list(detail = "no match"))
+  expect_true("fix_owner" %in% names(d))
+  expect_equal(d$fix_owner[d$category == "unknown_format"], "template")
+  # a multi-statement bundle is an input fix
+  d2 <- build_diagnostics("ok", parsed = list(transactions =
+      data.frame(row_id=1L, date="2025-01-01", date_raw="x", description="a", amount=-1,
+        amount_raw="-1", direction="debit", balance=NA_real_, balance_raw=NA_character_,
+        particulars=NA_character_, code=NA_character_, reference=NA_character_,
+        other_party=NA_character_, type=NA_character_, currency="NZD", flags="",
+        stringsAsFactors=FALSE)),
+    recon = list(kpis=NULL),
+    metadata = list(multi = list(likely_multiple = TRUE, reasons = "2 periods")))
+  expect_equal(d2$fix_owner[d2$category == "multiple_statements"], "input")
+  expect_match(diag_fix_owner_label("template"), "wizard")
+  expect_match(diag_fix_owner_label("escalate"), "Developer")
+})
