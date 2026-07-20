@@ -144,17 +144,79 @@ front-end agnostic.
 
 ---
 
-## 4. Open items (to be resolved in later banks)
-- Bank 3 — Template system & wizard.
+## 4. Confirmed decisions — Bank 3 (Template system & wizard)
+
+### 4.0 North-star principle: RADICAL SIMPLICITY
+The dominant, repeated requirement. Every design choice is judged against it:
+- **No machine learning, no complex/clever algorithms, no ambiguity.**
+  Deterministic behaviour only — "if it matches, it matches; if it doesn't,
+  it doesn't."
+- **Maintainable by a single data analyst with little-to-no software
+  engineering skill** — adding a new bank/statement or an IRD-type document
+  must be easy for that person.
+- **Prove it on real data before committing.** Approaches (incl. YAML
+  templates) are provisional until validated against real specimen statements;
+  keep whatever actually works at a high hit-rate, drop what doesn't.
+
+### 4.1 Template definition
+- Plan of record: **declarative templates** (e.g. YAML) describing identity,
+  fingerprint anchors, section markers, table column-bands, field formats,
+  redaction settings, reconciliation rules — **no per-bank code**, with any
+  genuinely odd behaviour handled via a small library of **named, reusable,
+  parameterised transforms**.
+- **Caveat (Michael):** not yet assumed sufficient. We must gather real
+  statements and confirm the declarative approach matches a high proportion of
+  them before locking it in. Do what works.
+
+### 4.2 Matching / detection (dead simple, never wrong)
+- Keep **user-selectable bank and/or bank+statement type** (as today).
+- Produce a **trust / confidence score** telling the user whether the output
+  can be relied on.
+- Deterministic matching only — **never guess wrong**, even if that means more
+  manual selection. Ambiguous / below-confidence → clear `unsupported` /
+  `needs_review` status, never a silent wrong match.
+
+### 4.3 Wizard
+- Whatever is **simplest on our end and mistake-proof** — the tool must be
+  100% foolproof, tested and audited, with maximum confidence.
+- Real data required to design and test the wizard properly.
+- Family model accepted (bank family → versioned/variant templates), kept as
+  simple as the data allows.
+
+### 4.4 Real-data corpus (explicit work item)
+- Pull **as many public specimen statements as possible** from NZ banks —
+  primary focus the **big six** (ANZ, BNZ, Westpac, Kiwibank, ASB,
+  Co-operative), plus Excel + PDF statements from **other** banks (SBS, TSB,
+  HSBC, etc.).
+- Public specimens only — **never real customer data**. Used to validate
+  methods and build the golden-file test set. **Fully tested before go-live.**
+
+### 4.5 Build vs deployment reality
+- **Development:** here, on GitHub — real version control, structured project,
+  automated tests.
+- **Deployment:** a **plain folder structure on an internal server** with **no
+  version control** on that side, inside their environment.
+- Therefore the **core is plain callable R functions in a folder**
+  (e.g. `convert_statement(file, bank)` → structured data + output files) that
+  any analytics tool can call and one analyst can run/maintain. Shiny app and
+  any API are **optional convenience wrappers**, never required for the core to
+  work.
+- Must be simple to build on, maintain, add new statement types to, and later
+  extend to non-bank documents (e.g. Inland Revenue).
+
+---
+
+## 5. Open items (to be resolved in later banks)
+- Bank 4 — Categorisation, reconciliation & review.
 - Bank 4 — Categorisation, reconciliation & manual review.
 - Bank 5 — Consistency, maintainability, governance, and non-bank docs (IRD
   etc.).
 
 ---
 
-## 5. Interview progress
+## 6. Interview progress
 - [x] Bank 1 — Foundations
 - [x] Bank 2 — OCR & parsing engine
-- [ ] Bank 3 — Template system & wizard
+- [x] Bank 3 — Template system & wizard
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
