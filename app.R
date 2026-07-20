@@ -189,8 +189,7 @@ ui <- fluidPage(
                       choices = setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
                                          vapply(wd_date_table(), `[[`, "", "label"))),
           selectInput("wp_sign", "How are amounts shown?",
-                      choices = c("One amount column, a minus sign means money out" = "signed",
-                                  "Amounts ending in DR / CR" = "dr_cr_suffix")),
+                      choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels()))),
           actionButton("wp_preview", "Preview parse", class = "btn-primary"),
           actionButton("wp_save", "Save PDF template"),
           br(), br(), uiOutput("wp_msg")

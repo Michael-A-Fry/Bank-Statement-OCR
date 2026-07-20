@@ -57,6 +57,20 @@ parse_pdf_table <- function(input, template) {
   udef <- template$unsigned_default %||% t$unsigned_default %||% "debit"
   words_by_page <- input$words %||% list()
 
+  # .first_date(cell) -- keep only the FIRST date in a date cell. A PDF date band
+  # can capture two dates on a row (a transaction date AND a processed/value
+  # date); appending a year to "17 Oct 17 Sep" makes R read the second day as the
+  # year (-> 0017-10-17), so dates come out wildly wrong. Trim to the leading date
+  # (this format's count of whitespace-separated pieces). It also drops a stray
+  # word that bleeds into the band. date_raw keeps the verbatim cell.
+  .date_fields <- length(strsplit(trimws(date_fmt), "[[:space:]]+")[[1]])
+  .first_date <- function(cells) vapply(cells, function(cc) {
+    if (is.na(cc)) return(NA_character_)
+    toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
+    if (length(toks) <= .date_fields) as.character(cc)
+    else paste(toks[seq_len(.date_fields)], collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+
   recs <- list()
   for (p in seq_along(words_by_page)) {
     w <- words_by_page[[p]]
@@ -189,6 +203,7 @@ parse_pdf_table <- function(input, template) {
   # so the reviewer can assign the year -- data preserved, never silently wrong.
   year_resolved <- has_year || length(yrs) > 0
   .date_ok <- function(raw) {
+    raw <- .first_date(raw)
     if (year_resolved)
       return(!is.na(suppressWarnings(parse_date(full_date(raw), eff_fmt)$iso)))
     !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
@@ -205,8 +220,8 @@ parse_pdf_table <- function(input, template) {
     date_iso <- character(0); date_raw <- character(0); description <- character(0)
     amt <- list(value = numeric(0), direction = character(0), raw = character(0))
   } else {
-    d <- parse_date(full_date(getc("date")), eff_fmt)
-    date_iso <- d$iso; date_raw <- getc("date")   # date_raw stays verbatim (no injected year)
+    d <- parse_date(full_date(.first_date(getc("date"))), eff_fmt)
+    date_iso <- d$iso; date_raw <- getc("date")   # date_raw stays verbatim (both dates, no year)
     if (identical(style, "debit_credit_cols")) {
       deb_raw <- getc("debit"); cr_raw <- getc("credit")
       amt <- parse_amount(NULL, "debit_credit_cols",

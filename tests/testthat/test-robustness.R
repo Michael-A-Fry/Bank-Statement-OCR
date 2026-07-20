@@ -199,6 +199,26 @@ test_that("date_raw / amount_raw / balance_raw are neutralised for spreadsheets"
   expect_identical(safe_df$balance_raw, "'=9*9")
 })
 
+# ---- PDF date band that captures TWO dates (txn + processed) ---------------
+test_that("a date cell with two dates parses the FIRST, not a mangled year", {
+  # "22 Aug 24 Aug" -> appending a year makes R read the 2nd day (24) as the
+  # year (0024) unless we trim to the first date. Trim keeps the leading date;
+  # date_raw stays verbatim (both dates).
+  w <- data.frame(stringsAsFactors = FALSE,
+    text = c("22","Aug","24","Aug","COFFEE","4.50", "17","Sep","19","Sep","RENT","9.00"),
+    x = c(45,60,80,95,150,415,  45,60,80,95,150,415),
+    y = c(40,40,40,40,40,40,     70,70,70,70,70,70), width = rep(14,12), height = rep(10,12))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("period from 22 Aug 2024 to 18 Oct 2024"), words = list(w), meta = list(page_count = 1L))
+  tmpl <- list(id = "anz", bank = "ANZ", statement_type = "e", format = "pdf", version = 1,
+    currency = "NZD", table = list(row_tol = 3, date_format = "%d %b", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110), description = list(x_min = 110, x_max = 360),
+      amount = list(x_min = 360, x_max = 470))))
+  tx <- parse_pdf_table(input, tmpl)$transactions
+  expect_equal(tx$date, c("2024-08-22", "2024-09-17"))     # first date, correct year
+  expect_identical(tx$date_raw, c("22 Aug 24 Aug", "17 Sep 19 Sep"))  # verbatim, both dates
+})
+
 # ---- year-less dates with NO resolvable period: preserve, never drop -------
 test_that("year-less PDF dates with no period are preserved, not dropped", {
   # No period anywhere and a year-less date_format: rather than silently drop the
