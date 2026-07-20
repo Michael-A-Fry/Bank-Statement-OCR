@@ -38,8 +38,13 @@ point-and-click wizard (or editing a YAML file), not by writing code.
 - **OCR pre-processing**: greyscale → deskew → normalise → upscale (ImageMagick)
   before Tesseract, to lift accuracy on scanned pages.
 - **Never crashes**: any failure returns a `failed`/`unsupported`/`needs_review`
-  status with an *actionable* message; one JSON line is logged per run.
-- **Test suite**: `16 files / 76 tests / 292 assertions, 0 failures`.
+  status with an *actionable* message; one JSON line is logged per run, each
+  carrying a stable `run_id`.
+- **Feedback on every conversion**: rate any result (correct / minor issues /
+  wrong) with an optional comment — appended to `logs/feedback.jsonl`, flagged
+  when not clean, keyed by `run_id` back to the run log so maintenance can triage
+  exactly what the engine got wrong.
+- **Test suite**: `27 files / 115 tests / 419 assertions, 0 failures`.
 
 ## Not done yet (data-gated, not code)
 
@@ -131,6 +136,7 @@ Real-world edge cases + honest status: [`docs/edge-cases.md`](docs/edge-cases.md
 Visual-wizard design + A/B/C roadmap: [`docs/wizard-vision-and-roadmap.md`](docs/wizard-vision-and-roadmap.md).
 OCR pre-processing research: [`docs/research/ocr-preprocessing.md`](docs/research/ocr-preprocessing.md).
 Template format and the full data contract: [`docs/architecture/build-contract.md`](docs/architecture/build-contract.md).
+Server deployment, concurrency, AD-group auth & Qlik integration (design): [`docs/architecture/deployment-integration-plan.md`](docs/architecture/deployment-integration-plan.md).
 Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/discovery/discovery-log.md).
 
 ---

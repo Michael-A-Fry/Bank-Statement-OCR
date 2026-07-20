@@ -347,3 +347,42 @@ Engine built, adversarially audited and tested in pure R.
 See `README.md` and `docs/architecture/build-contract.md`.
 - [ ] Bank 4 — Categorisation, reconciliation & review
 - [ ] Bank 5 — Consistency, maintainability & governance
+
+---
+
+## 11. Feedback + deployment/integration requirements (2026-07-20)
+Final requirements captured after the V1 engine milestone.
+
+**Feedback on every conversion — BUILT.**
+- Requirement: users must be able to submit feedback on every statement
+  converted; at minimum it is added to the logs and flagged.
+- Delivered: every conversion now carries a stable `run_id` (content hash +
+  timestamp), written to the result and the run log. `submit_feedback(run_id,
+  verdict, comment, ...)` appends to `logs/feedback.jsonl` with
+  `flagged = verdict != "correct"`; `read_feedback()` reads it back for
+  maintenance triage. The Shiny Convert tab shows a rating panel
+  (Correct / Minor issues / Wrong + optional comment) after every conversion.
+  Verdicts are the forensic user's ground truth — kept, never discarded.
+
+**Concurrency, authorisation, Qlik — PLAN ONLY (design on record, no code).**
+Written up in `docs/architecture/deployment-integration-plan.md`:
+- **Concurrency:** the engine is already a stateless, re-entrant pure function
+  of a file. Plan = a bounded pool of stateless workers (plumber REST) or a
+  folder-inbox cron watcher; per-run output dirs (`out/<run_id>/`) so filenames
+  never collide; append-only JSONL logs are atomic per-line on POSIX, with a
+  documented SQLite upgrade path if load ever demands it. One config number caps
+  concurrency; OCR optionally single-slotted.
+- **Authorisation:** authorise at the corporate gateway (Windows/SAML/Qlik),
+  verify AD group membership in the engine shell. Allowed groups are a
+  **modifiable OR-list** in `config/auth.yaml` (default `RES_QLIKSENSE_PROD`),
+  `fail_closed: true`. Interchangeable checks (LDAP / PowerShell / Qlik-ticket)
+  behind one `user_in_allowed_group()` signature. The gateway user flows into
+  the existing `requested_by` field, so audit + auth share one identity.
+- **Qlik:** submit-in-Qlik / data-back-in-Qlik via a folder inbox↔outbox
+  handshake (ODAG-native, recommended first) or a live REST call from the Qlik
+  load script. The engine's existing outputs are already Qlik-ready; `run_id`
+  ties Qlik reloads back to the run + feedback logs. **Limitation (deliberate):**
+  template *creation* stays a visual, team activity in the internal Shiny
+  wizards; Qlik is for *selecting a template + converting + giving feedback*.
+  Adding a new bank = the analyst, in the wizard, once — then every Qlik user
+  gets it for free. Keeps templates consistent for the whole team.
