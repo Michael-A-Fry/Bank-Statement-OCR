@@ -1,6 +1,26 @@
 # normalise.R -- deterministic field normalisation.
 # parse_date / parse_amount / clean_description. No locale guessing, no ML.
 
+# .normalise_date_str(s) -- fold the human spellings of a date onto the canonical
+# form the strptime codes expect. For PARSING/DETECTION ONLY -- the raw cell is
+# always kept verbatim elsewhere. This is the SINGLE source of truth shared by
+# parse_date and the wizard's detect_date_format, so the reader and the detector
+# can never disagree about what a date looks like. It:
+#   * drops a leading weekday word     "Tuesday 12 October" -> "12 October"
+#   * drops ordinal suffixes           "12th October" / "21st" -> "12 October" / "21"
+#   * drops the connective "of"        "12 of October" -> "12 October"
+#   * folds the 4-letter "Sept"->"Sep" that %b expects ("September"/%B is untouched:
+#     the word boundary after "Sept" fails inside the longer word)
+#   * collapses any doubled spaces the removals leave behind
+.normalise_date_str <- function(s) {
+  s <- trimws(as.character(s))
+  s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
+  s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
+  s <- gsub("\\bof\\b", "", s, perl = TRUE, ignore.case = TRUE)
+  s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
+  trimws(gsub("\\s+", " ", s))
+}
+
 # parse_date(x, fmt) -> list(iso, raw)
 # `iso` is YYYY-MM-DD (NA when unparseable); `raw` is the input verbatim.
 parse_date <- function(x, fmt) {
@@ -8,13 +28,7 @@ parse_date <- function(x, fmt) {
   iso <- rep(NA_character_, length(raw))
   ok <- !is.na(raw) & nzchar(trimws(raw))
   if (any(ok)) {
-    s <- trimws(raw[ok])
-    # Normalise for PARSING ONLY (raw is kept verbatim): drop ordinal suffixes
-    # ("1st April" -> "1 April", "21st" -> "21") and fold the 4-letter "Sept"
-    # to the 3-letter "Sep" that %b expects. "September" (%B) is untouched -- the
-    # word boundary after "Sept" fails inside it.
-    s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
-    s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
+    s <- .normalise_date_str(raw[ok])
     d <- suppressWarnings(as.Date(s, format = fmt))
     iso[ok] <- format(d, "%Y-%m-%d")  # format(NA) -> NA
   }

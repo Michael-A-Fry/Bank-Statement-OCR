@@ -24,6 +24,15 @@ test_that("date detection covers month-name, year-less and US formats", {
   # ordinals and the 4-letter "Sept" are normalised, matching parse_date
   expect_equal(detect_date_format(c("2nd Dec", "3rd Jan")), "%d %b")
   expect_equal(detect_date_format(c("2 Sept")), "%d %b")
+  # "12th October"-style: ordinal + full/short month, with and without a year
+  expect_equal(detect_date_format(c("12th October", "3rd November")), "%d %b")
+  expect_equal(detect_date_format(c("12th October 2025", "1st Nov 2025")), "%d %b %Y")
+  expect_equal(detect_date_format(c("12th of October", "1st of November")), "%d %b")
+  # a leading weekday word is folded away
+  expect_equal(detect_date_format(c("Tuesday 12 October", "Wed 3 September")), "%d %b")
+  # month-first, year-less ("October 12" / "Oct 12")
+  expect_equal(detect_date_format(c("October 12", "November 3")), "%b %d")
+  expect_equal(detect_date_format(c("Oct 12", "Nov 3")), "%b %d")
   # US month/day is detected when the day (>12) makes day/month impossible
   expect_equal(detect_date_format(c("12/31/2025", "06/15/2025")), "%m/%d/%Y")
   # every offered format round-trips through parse_date on its own label example

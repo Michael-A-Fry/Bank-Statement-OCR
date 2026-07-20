@@ -58,3 +58,30 @@ test_that("clean_description is verbatim: only outer whitespace trimmed", {
     clean_description(c("  O'Connor & Sons  ", "A  B", "café")),
     c("O'Connor & Sons", "A  B", "café"))
 })
+
+test_that("parse_date folds ordinals, weekday prefix and 'of'; raw kept verbatim", {
+  # "12th October"-style with an explicit year
+  expect_equal(parse_date("12th October 2025", "%d %b %Y")$iso, "2025-10-12")
+  expect_equal(parse_date("1st Nov 2025", "%d %b %Y")$iso,      "2025-11-01")
+  # the connective "of"
+  expect_equal(parse_date("12th of October 2025", "%d %b %Y")$iso, "2025-10-12")
+  # a leading weekday word is dropped before parsing
+  expect_equal(parse_date("Tuesday 12 October 2025", "%d %b %Y")$iso, "2025-10-12")
+  expect_equal(parse_date("Wed 3 Sep 2025", "%d %b %Y")$iso,         "2025-09-03")
+  # month-first form
+  expect_equal(parse_date("October 12 2025", "%B %d %Y")$iso, "2025-10-12")
+  # raw is ALWAYS kept verbatim, never the normalised copy
+  expect_identical(parse_date("Tuesday 12th of October 2025", "%d %b %Y")$raw,
+                   "Tuesday 12th of October 2025")
+  # a genuinely unparseable value stays NA (never silently wrong)
+  expect_true(is.na(parse_date("not a date", "%d %b %Y")$iso))
+})
+
+test_that(".normalise_date_str is the shared fold used by reader and detector", {
+  expect_equal(.normalise_date_str("12th October"),       "12 October")
+  expect_equal(.normalise_date_str("12th of October"),    "12 October")
+  expect_equal(.normalise_date_str("Tuesday 12 October"), "12 October")
+  expect_equal(.normalise_date_str("2 Sept"),             "2 Sep")
+  # "September" (%B) must be left intact -- only the 4-letter "Sept" folds
+  expect_equal(.normalise_date_str("2 September"),        "2 September")
+})

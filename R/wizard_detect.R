@@ -37,22 +37,27 @@ wd_date_table <- function() list(
   list(fmt = "%d-%b-%Y", label = "31-Dec-2025  (day-month-name-year)",       rx = "^[0-9]{1,2}-[A-Za-z]{3,9}-[0-9]{4}$"),
   list(fmt = "%b %d, %Y", label = "Dec 31, 2025  (US month-name day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
   list(fmt = "%B %d, %Y", label = "December 31, 2025  (US full-month day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
-  # YEAR-LESS: the year comes from the statement period, not the cell
-  list(fmt = "%d %b", label = "2 Dec  (day + month-name; year from the statement)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
+  # YEAR-LESS: the year comes from the statement period, not the cell. Ordinal
+  # suffixes ("12th"), a leading weekday ("Tue 12 Oct") and the connective "of"
+  # ("12 of October") are folded away by .normalise_date_str before these match,
+  # so "12th October" and "12 October" are the same format to the tool.
+  list(fmt = "%d %b", label = "2 Dec  (day + month-name, e.g. 12th October; year from the statement)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
   list(fmt = "%d %B", label = "2 December  (day + full month; year from the statement)", rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
+  list(fmt = "%b %d", label = "Oct 12  (month-name + day; year from the statement)",   rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
+  list(fmt = "%B %d", label = "October 12  (full month + day; year from the statement)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
   list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE)
 )
 
 # Return the strptime code that parses ALL sample values, or "" if none fit.
-# Normalises exactly like parse_date (drops ordinal suffixes "2nd"->"2", folds
-# "Sept"->"Sep") so detection agrees with parsing. A year-less format is validated
-# by appending a sentinel year (a bare "2 Dec" can't be an R Date on its own).
+# Folds the human spellings via the SAME .normalise_date_str() the reader uses
+# (weekday / ordinal / "of" / Sept), so detection can never disagree with parsing.
+# A year-less format is validated by appending a sentinel year (a bare "2 Dec"
+# can't be an R Date on its own).
 detect_date_format <- function(values) {
   v <- trimws(as.character(values)); v <- v[nzchar(v) & !is.na(v)]
   if (!length(v)) return("")
   v <- utils::head(v, 50L)
-  v <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", v, perl = TRUE, ignore.case = TRUE)
-  v <- gsub("\\bSept\\b", "Sep", v, ignore.case = TRUE)
+  v <- .normalise_date_str(v)   # same folding the reader uses -> they agree
   parses <- function(fmt, yearless)
     if (isTRUE(yearless)) !any(is.na(as.Date(paste(v, "2000"), paste(fmt, "%Y"))))
     else !any(is.na(as.Date(v, format = fmt)))
