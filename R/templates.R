@@ -21,6 +21,11 @@ validate_template <- function(t) {
     problems <- c(problems, sprintf("format '%s' is not one of %s", fmt,
                                     paste(valid_fmt, collapse = "/")))
 
+  # decimal_mark is optional; when present it must name a known locale.
+  dm <- t$decimal_mark %||% t$table$decimal_mark
+  if (!is.null(dm) && !(dm %in% c("auto", "dot", "comma")))
+    problems <- c(problems, sprintf("decimal_mark '%s' is not one of auto/dot/comma", dm))
+
   if (identical(fmt, "pdf")) {
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$page_contains_all))
       problems <- c(problems, "fingerprint.page_contains_all is required for pdf templates")

@@ -51,6 +51,9 @@ parse_pdf_table <- function(input, template) {
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
   date_fmt <- t$date_format %||% "%d/%m/%Y"
   style <- t$amount_sign %||% "signed"
+  # decimal_mark: dot | comma | auto. Accepted top-level or inside the table block
+  # so a European PDF template can declare its locale.
+  dec <- template$decimal_mark %||% t$decimal_mark %||% "auto"
   words_by_page <- input$words %||% list()
 
   recs <- list()
@@ -206,18 +209,18 @@ parse_pdf_table <- function(input, template) {
     if (identical(style, "debit_credit_cols")) {
       deb_raw <- getc("debit"); cr_raw <- getc("credit")
       amt <- parse_amount(NULL, "debit_credit_cols",
-                          list(debit = deb_raw, credit = cr_raw))
+                          list(debit = deb_raw, credit = cr_raw, decimal = dec))
       cr_has <- !is.na(cr_raw) & nzchar(trimws(cr_raw))
       amt$raw <- ifelse(cr_has, cr_raw, deb_raw)
     } else {
       amt_raw <- getc("amount")
-      amt <- parse_amount(amt_raw, style, list()); amt$raw <- amt_raw
+      amt <- parse_amount(amt_raw, style, list(decimal = dec)); amt$raw <- amt_raw
     }
     description <- clean_description(getc("description"))
   }
   vb <- function(f) if (n == 0) character(0) else blank_to_na(getc(f))
   has_bal <- !is.null(cols$balance)
-  balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(getc("balance"), "signed")$value
+  balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(getc("balance"), "signed", list(decimal = dec))$value
   balance_raw <- if (n == 0 || !has_bal) rep(NA_character_, n) else getc("balance")
 
   redacted <- if (n == 0) logical(0) else
@@ -267,8 +270,9 @@ parse_pdf_table <- function(input, template) {
   } else extras <- data.frame(row_id = integer(0))
 
   # sign-aware: a "$1,234.56 DR" / "(1,234.56)" opening/closing balance keeps its
-  # negative sign (via .num) instead of being read as a positive number.
-  .money_num <- function(x) .num(x %||% NA_character_)
+  # negative sign (via .num) instead of being read as a positive number; the
+  # template's decimal locale applies here too.
+  .money_num <- function(x) .num(x %||% NA_character_, dec)
   header <- list(
     bank = template$bank %||% NA_character_, statement_type = template$statement_type %||% NA_character_,
     template_id = template$id %||% NA_character_, template_version = template$version %||% NA,

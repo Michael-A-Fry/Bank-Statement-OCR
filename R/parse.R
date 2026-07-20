@@ -62,7 +62,10 @@ parse_statement <- function(input, template) {
 
   # ---- amount (sign handling per template$amount_sign) ----
   style <- template$amount_sign %||% "signed"
-  amt_opts <- list()
+  # decimal_mark: dot | comma | auto (default). Lets a European template declare
+  # its locale so "1.234,56" and bare "1.234" are read correctly.
+  dec <- template$decimal_mark %||% "auto"
+  amt_opts <- list(decimal = dec)
   if (style == "signed") {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
   } else if (style == "debit_credit_cols") {
@@ -114,7 +117,7 @@ parse_statement <- function(input, template) {
   if (is.null(bal_col)) {
     balance <- rep(NA_real_, n); balance_raw <- rep(NA_character_, n)
   } else {
-    b <- parse_amount(bal_col, "signed")
+    b <- parse_amount(bal_col, "signed", list(decimal = dec))
     balance <- b$value; balance_raw <- as.character(bal_col)
   }
 

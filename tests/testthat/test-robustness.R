@@ -27,6 +27,27 @@ test_that("currency symbols are stripped, value preserved", {
                c(1000, 2500))
 })
 
+test_that("a European template's decimal_mark reads dot-thousands correctly", {
+  # comma locale: dot is thousands, comma is the decimal -> "1.234" is 1234, not
+  # 1.234; "1.234,56" is 1234.56.
+  eu <- parse_amount(c("1.234,56", "1.234", "2.000,00", "1234,56"),
+                     "signed", list(decimal = "comma"))$value
+  expect_equal(eu, c(1234.56, 1234, 2000, 1234.56))
+  # explicit dot locale is the US/UK/NZ reading
+  us <- parse_amount(c("1,234.56", "1.234"), "signed", list(decimal = "dot"))$value
+  expect_equal(us, c(1234.56, 1.234))
+  # default (auto) is unchanged
+  expect_equal(parse_amount(c("1,234.56", "1.234"), "signed")$value, c(1234.56, 1.234))
+  # the template field is validated
+  base <- list(id = "eu", bank = "EU", statement_type = "e", format = "delimited",
+    version = 1, currency = "EUR", amount_sign = "signed", min_score = 1,
+    fingerprint = list(header_contains_all = list("Datum")),
+    columns = list(date = list(source = "Datum", format = "%d.%m.%Y"),
+      amount = list(source = "Betrag"), description = list(source = "Text")))
+  expect_length(validate_template(c(base, list(decimal_mark = "comma"))), 0)
+  expect_true(length(validate_template(c(base, list(decimal_mark = "franc")))) > 0)
+})
+
 # ---- dates: ordinals + Sept, raw kept verbatim ----------------------------
 test_that("parse_date handles ordinal suffixes and 4-letter Sept", {
   d <- parse_date(c("1st April 2024", "3rd September 2024", "21st June 2024"), "%d %B %Y")

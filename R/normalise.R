@@ -21,14 +21,24 @@ parse_date <- function(x, fmt) {
   list(iso = iso, raw = raw)
 }
 
-# .num(s) -- parse a money string to numeric, ROBUSTLY. Handles the real formats
-# that appear on statements, and returns NA (never a silently-wrong value) when
-# it can't be sure -- the caller then flags the NA. Covered:
+# .num(s, decimal) -- parse a money string to numeric, ROBUSTLY. Handles the real
+# formats that appear on statements, and returns NA (never a silently-wrong value)
+# when it can't be sure -- the caller then flags the NA. Covered:
 #   thousands : 1,234.56  /  1 234.56  /  1'234.56
 #   decimals  : 1,234.56 (US)  and  1.234,56 (European comma) via last-separator
 #   negatives : -123.45  /  (123.45)  /  123.45-  /  trailing DR or OD ; CR = +ve
 #   currency  : $ £ € and any other symbol/letters stripped
-.num_one <- function(raw) {
+#
+# `decimal` selects how a LONE separator is read (a template can declare its
+# bank's locale via `decimal_mark:` so nothing is guessed):
+#   "auto"  (default) -- lone dot = decimal, lone comma uses the 1-2-digit rule.
+#             Correct for NZ/AU/UK/US ("1.234"=1.234, "1,234"=1234).
+#   "dot"   -- dot is the decimal point, comma is thousands (US/UK/NZ explicit).
+#   "comma" -- comma is the decimal, dot is thousands (European: "1.234"=1234,
+#             "1.234,56"=1234.56, "1234,56"=1234.56).
+# The mixed case ("1.234,56" / "1,234.56", both separators present) is
+# unambiguous and read the same way under every mode.
+.num_one <- function(raw, decimal = "auto") {
   if (is.na(raw)) return(NA_real_)
   raw <- trimws(as.character(raw))
   if (!nzchar(raw)) return(NA_real_)
@@ -41,19 +51,18 @@ parse_date <- function(x, fmt) {
   if (grepl("-", s)) neg <- TRUE                        # any minus -> negative
   s <- gsub("[()+-]", "", s)
   if (!nzchar(s)) return(NA_real_)
-  # Locale note: with only ONE kind of separator present, a lone dot is read as a
-  # decimal point and a lone comma uses the 1-2-trailing-digits rule. This is
-  # correct for the NZ/AU/UK/US statements this tool targets ("1.234" = 1.234,
-  # "1,234" = 1234). A purely European statement writing "1.234" to mean 1 234
-  # would be mis-scaled -- add a per-template decimal hint if such statements ever
-  # need first-class support. Mixed "1.234,56" / "1,234.56" is handled exactly.
   hasdot <- grepl("\\.", s); hascomma <- grepl(",", s)
-  if (hasdot && hascomma) {
-    # the LAST separator is the decimal one
+  if (identical(decimal, "dot")) {
+    s <- gsub(",", "", s)                              # comma = thousands, dot = decimal
+  } else if (identical(decimal, "comma")) {
+    s <- gsub("\\.", "", s); s <- sub(",", ".", s)     # dot = thousands, comma = decimal
+  } else if (hasdot && hascomma) {
+    # auto + both separators: the LAST separator is the decimal one (unambiguous).
     if (max(gregexpr(",", s)[[1]]) > max(gregexpr("\\.", s)[[1]])) {
       s <- gsub("\\.", "", s); s <- sub(",", ".", s)  # European: . thousands, , decimal
     } else s <- gsub(",", "", s)                       # US/UK: , thousands
   } else if (hascomma) {
+    # auto + lone comma: treat as decimal only when it looks like cents.
     parts <- strsplit(s, ",", fixed = TRUE)[[1]]
     if (length(parts) == 2 && nchar(parts[2]) %in% c(1L, 2L))
       s <- sub(",", ".", s)                            # decimal comma "1234,56"
@@ -63,7 +72,8 @@ parse_date <- function(x, fmt) {
   if (is.na(v)) return(NA_real_)
   if (neg) -abs(v) else v
 }
-.num <- function(s) vapply(as.character(s), .num_one, numeric(1), USE.NAMES = FALSE)
+.num <- function(s, decimal = "auto")
+  vapply(as.character(s), .num_one, numeric(1), decimal = decimal, USE.NAMES = FALSE)
 
 # .direction(v) -- sign -> "debit" (<0) / "credit" (>0) / NA (0 or NA).
 .direction <- function(v) {
@@ -75,17 +85,18 @@ parse_date <- function(x, fmt) {
 # Styles: signed | debit_credit_cols | dr_cr_suffix | type_dc.
 parse_amount <- function(x, style = "signed", opts = list()) {
   style <- style %||% "signed"
+  dec <- opts[["decimal"]] %||% "auto"     # locale of the decimal separator
 
   if (style == "signed") {
     raw <- as.character(x)
-    value <- .num(raw)
+    value <- .num(raw, dec)
     return(list(value = value, direction = .direction(value), raw = raw))
   }
 
   if (style == "debit_credit_cols") {
     deb <- opts[["debit"]]
     cr  <- opts[["credit"]]
-    dv <- .num(deb); cv <- .num(cr)
+    dv <- .num(deb, dec); cv <- .num(cr, dec)
     dz <- ifelse(is.na(dv), 0, dv)
     cz <- ifelse(is.na(cv), 0, cv)
     value <- cz - abs(dz)
@@ -101,7 +112,7 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   if (style == "dr_cr_suffix") {
     raw <- as.character(x)
     suf <- toupper(sub(".*?([A-Za-z]{2})\\s*$", "\\1", trimws(raw)))
-    mag <- .num(sub("(?i)\\s*(DR|CR)\\s*$", "", trimws(raw), perl = TRUE))
+    mag <- .num(sub("(?i)\\s*(DR|CR)\\s*$", "", trimws(raw), perl = TRUE), dec)
     sign <- ifelse(suf == "DR", -1, ifelse(suf == "CR", 1, NA_real_))
     value <- mag * sign
     return(list(value = value, direction = .direction(value), raw = raw))
@@ -109,7 +120,7 @@ parse_amount <- function(x, style = "signed", opts = list()) {
 
   if (style == "type_dc") {
     raw <- as.character(x)
-    mag <- abs(.num(raw))
+    mag <- abs(.num(raw, dec))
     # Exact indexing (`[[`) -- `$` partial-matches `type` to `type_debit_value`
     # when the type column is unmapped, which would flip every row to debit.
     tv  <- as.character(opts[["type"]] %||% rep(NA_character_, length(raw)))

@@ -38,8 +38,10 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | `D`/`C` type column (credit cards) | ✅ | `amount_sign: type_dc` (ANZ Visa, tested) |
 | Separate debit / credit columns | 🟡 | `amount_sign: debit_credit_cols` implemented; needs a fixture to mark ✅ |
 | `DR`/`CR` suffix | 🟡 | `amount_sign: dr_cr_suffix` implemented; needs a fixture |
-| Parentheses negatives `(45.00)` | 🟡 | normaliser handles; add a fixture to lock it |
+| Parentheses negatives `(45.00)` | ✅ | normaliser handles `(45.00)` / `45.00-` (tested) |
 | Thousands separators `1,234.56` | ✅ | stripped in normalise, raw kept in `amount_raw` |
+| `DR`/`OD` = negative, `CR` = positive balance markers | ✅ | read by `.num` (tested) |
+| European decimal comma `1.234,56` | ✅ | auto when both separators present; per-template `decimal_mark: comma` for bare `1.234`=1234 (tested) |
 | Foreign currency + conversion (FX) | ✅ | captured as `extras` (`anz_creditcard_fx`, `test-extras`) |
 | Blank / zero amounts | ✅ | `NA` amount, row kept, flagged |
 
