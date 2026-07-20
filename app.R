@@ -20,6 +20,7 @@ TEMPLATES_DIR <- "templates"            # curated, team-maintained (default) tem
 USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guided setup
 LOGDIR <- "logs"   # run log + feedback log live together, next to the app
 UPLOADS_DIR <- "uploads"  # every uploaded statement + its lifecycle status (git-ignored)
+REQUESTS_DIR <- "requests"  # "none of these fits -- tell our team" raises (git-ignored)
 DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictionary
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
@@ -246,6 +247,16 @@ ui <- fluidPage(
               br(), br(),
               actionButton("adm_up_wizard", "🪄 Remediate — open in wizard",
                            class = "btn-warning"))),
+          tags$hr(),
+          h4("🚩 Format requests — raised by the team"),
+          helpText("When a statement matched nothing, the user described the format (no PII) and raised it here. Build a template, then mark it actioned."),
+          fluidRow(
+            column(9, DTOutput("adm_requests")),
+            column(3,
+              selectInput("adm_req_pick", "A request", choices = NULL),
+              actionButton("adm_req_actioned", "Mark actioned", class = "btn-primary"),
+              br(), br(),
+              actionButton("adm_req_dismiss", "Dismiss"))),
           tags$hr(),
           fluidRow(
             column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
@@ -524,6 +535,29 @@ server <- function(input, output, session) {
       writeLines(format_audit(statement_audit(p, templates = templates())), file)
     })
 
+  # ---- Admin: format requests raised via the "tell our team" escape hatch ----
+  req_bump <- reactiveVal(0)   # bump to refresh after a triage action
+  output$adm_requests <- renderDT({
+    req_bump(); input$adm_refresh
+    q <- read_template_requests(REQUESTS_DIR)
+    if (!nrow(q)) return(data.frame(note = "no format requests raised yet"))
+    q[, c("ts", "requested_by", "status", "detail", "context")]
+  }, options = list(pageLength = 6, dom = "tip"), rownames = FALSE)
+  observe({
+    req_bump(); input$adm_refresh
+    q <- read_template_requests(REQUESTS_DIR)
+    open <- if (nrow(q)) q$id[q$status == "open"] else character(0)
+    updateSelectInput(session, "adm_req_pick", choices = open)
+  })
+  observeEvent(input$adm_req_actioned, {
+    id <- input$adm_req_pick; req(id, nzchar(id))
+    if (isTRUE(set_request_status(id, "actioned", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
+  })
+  observeEvent(input$adm_req_dismiss, {
+    id <- input$adm_req_pick; req(id, nzchar(id))
+    if (isTRUE(set_request_status(id, "dismissed", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
+  })
+
   # Remediate a stuck upload right here: load the saved file into the SAME guided
   # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
   # pickup — identify it in the table (A), open it, teach the tool, save (B).
@@ -689,9 +723,14 @@ server <- function(input, output, session) {
   # ---- Guided setup: teach the tool from a statement it couldn't read ----
   guided <- reactiveVal(NULL)   # list(path, name, tmpl)
 
+  # "__report__" is the escape hatch: picking it means "none of these fit" and
+  # reveals the "tell our team" box. guided_live treats it as no-override.
+  REPORT_OPT <- c("🚩 None of these — tell our team" = "__report__")
   guided_date_choices <- function()
-    setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
-             vapply(wd_date_table(), `[[`, "", "label"))
+    c(setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+               vapply(wd_date_table(), `[[`, "", "label")), REPORT_OPT)
+  guided_sign_choices <- function()
+    c(setNames(names(wd_amount_labels()), unname(wd_amount_labels())), REPORT_OPT)
 
   # The current date-format / amount-sign of a template, wherever the format
   # stores them (PDF keeps them under `table`, delimited at the top / in columns).
@@ -755,8 +794,7 @@ server <- function(input, output, session) {
             column(6, selectInput("g_date", "How are the dates written?",
                                   choices = guided_date_choices(), selected = cur_fmt)),
             column(6, selectInput("g_sign", "How are amounts shown?",
-                                  choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels())),
-                                  selected = cur_sign))),
+                                  choices = guided_sign_choices(), selected = cur_sign))),
           fluidRow(
             column(6, selectInput("g_decimal", "Number format (thousands / decimal)",
                                   choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
@@ -781,7 +819,16 @@ server <- function(input, output, session) {
                                     selected = tmpl$columns$reference$source %||% "")),
               column(4, selectInput("g_col_bal", "Running balance (optional)",
                                     choices = c("(none)" = "", g$cols),
-                                    selected = tmpl$columns$balance$source %||% ""))))),
+                                    selected = tmpl$columns$balance$source %||% "")))),
+          tags$hr(),
+          # Escape hatch: when nothing in the lists fits, raise it for review.
+          div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
+            strong("🚩 None of these fit? Tell our team"),
+            p(class = "muted", "If your dates or amounts aren't in the lists — or anything else won't match — describe the format in plain words and we'll build a template. Describe the FORMAT only; please do NOT paste names, account numbers or any statement details."),
+            textAreaInput("g_req_detail", NULL, width = "100%", rows = 3,
+              placeholder = "e.g. Dates look like 2 Dez (German). Amounts have a comma decimal and a trailing 'H' for Haben (credit)."),
+            actionButton("g_req_send", "Send to our team for review", class = "btn-warning"),
+            uiOutput("g_req_msg"))),
         tabPanel(
           "Advanced (full template)", br(),
           helpText(HTML("This is the <b>complete</b> template. Edit anything — identifiers/fingerprints, column mapping, label synonyms, region bounds, row tolerance, metadata labels — to read even wildly different statements. Load your Basic choices in, edit, then Check &amp; apply.")),
@@ -887,9 +934,39 @@ server <- function(input, output, session) {
   })
 
   guided_live <- reactive({ g <- guided(); req(g)
-    apply_overrides(g$tmpl, input$g_bank, input$g_date, input$g_sign,
+    # "__report__" (the "none of these fit" option) is a no-override sentinel.
+    no_sentinel <- function(v) if (identical(v, "__report__")) "" else v
+    apply_overrides(g$tmpl, input$g_bank, no_sentinel(input$g_date), no_sentinel(input$g_sign),
                     input$g_decimal, input$g_unsigned_default,
                     input$g_col_desc, input$g_col_ref, input$g_col_bal) })
+
+  # Nudge the user to the "tell our team" box when they pick "none of these".
+  observeEvent(list(input$g_date, input$g_sign), {
+    if (identical(input$g_date, "__report__") || identical(input$g_sign, "__report__"))
+      showNotification("None of the options fit? Use the '🚩 Tell our team' box below to describe it.",
+                       type = "message", duration = 6)
+  }, ignoreInit = TRUE)
+
+  # Raise a template request (PII-safe: free-text + generic context only).
+  observeEvent(input$g_req_send, {
+    g <- guided(); req(g)
+    detail <- trimws(input$g_req_detail %||% "")
+    if (!nzchar(detail)) {
+      output$g_req_msg <- renderUI(span(class = "bad", "Please describe the format first.")); return() }
+    ctx <- list(
+      file_ext      = tolower(tools::file_ext(g$name %||% "")),
+      format        = g$tmpl$format %||% "delimited",
+      bank          = input$g_bank %||% (g$tmpl$bank %||% ""),
+      date_choice   = input$g_date %||% "",
+      amount_choice = input$g_sign %||% "")
+    id <- tryCatch(record_template_request(detail, ctx, requested_by = who_now(), dir = REQUESTS_DIR),
+                   error = function(e) NULL)
+    if (is.null(id)) {
+      output$g_req_msg <- renderUI(span(class = "bad", "Couldn't save — try again.")); return() }
+    updateTextAreaInput(session, "g_req_detail", value = "")
+    output$g_req_msg <- renderUI(span(class = "ok",
+      "Thanks — raised for review. Our team will build a template for this format."))
+  })
 
   # Advanced tab: pull the current Basic settings into the YAML editor on demand.
   observeEvent(input$g_adv_load, {

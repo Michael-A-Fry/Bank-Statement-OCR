@@ -25,6 +25,7 @@ Thumbs.db
 /failed/
 /stuck/
 /uploads/
+/requests/
 /audit-drafts/
 *.audit.md
 bulk-audit.md
