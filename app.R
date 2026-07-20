@@ -147,6 +147,44 @@ ui <- fluidPage(
       )
     ),
     # ---- Help ----------------------------------------------------------
+    # ---- PDF wizard ----------------------------------------------------
+    tabPanel(
+      "PDF wizard",
+      br(),
+      sidebarLayout(
+        sidebarPanel(
+          width = 4,
+          fileInput("wp_file", "Sample PDF statement (.pdf)"),
+          numericInput("wp_page", "Page", 1, min = 1, step = 1),
+          selectInput("wp_field", "Field for the next box you draw",
+                      c("date", "description", "amount", "balance", "particulars",
+                        "code", "reference", "other_party", "type")),
+          actionButton("wp_assign", "Assign drawn box → field", class = "btn-primary"),
+          actionButton("wp_clear", "Clear boxes"),
+          tags$hr(),
+          textInput("wp_id", "Template id", "newbank_pdf"),
+          textInput("wp_bank", "Bank", "NewBank"),
+          textInput("wp_fingerprint", "A phrase unique to this statement (for matching)", ""),
+          selectInput("wp_datefmt", "How are dates written?",
+                      choices = setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+                                         vapply(wd_date_table(), `[[`, "", "label"))),
+          selectInput("wp_sign", "How are amounts shown?",
+                      choices = c("One amount column, a minus sign means money out" = "signed",
+                                  "Amounts ending in DR / CR" = "dr_cr_suffix")),
+          actionButton("wp_preview", "Preview parse", class = "btn-primary"),
+          actionButton("wp_save", "Save PDF template"),
+          br(), br(), uiOutput("wp_msg")
+        ),
+        mainPanel(
+          width = 8,
+          helpText("Draw a box across a column on the page, pick which field it is, and click Assign. Rows are kept only where the date reads as a real date — so headings, notes and gaps are ignored automatically."),
+          plotOutput("wp_plot", brush = brushOpts("wp_brush", direction = "x"), height = "760px"),
+          h4("Columns you've assigned"), tableOutput("wp_bands"),
+          h4("Live preview"), verbatimTextOutput("wp_prev_status"), DTOutput("wp_prev_tbl"),
+          h4("Generated PDF template"), div(class = "mono", verbatimTextOutput("wp_yaml"))
+        )
+      )
+    ),
     tabPanel(
       "Help",
       br(),
@@ -251,6 +289,99 @@ server <- function(input, output, session) {
       file.copy(p, file, overwrite = TRUE)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
+
+  # ---- PDF wizard ---------------------------------------------------
+  wp_bands <- reactiveVal(list())
+
+  wp_render <- reactive({
+    req(input$wp_file)
+    pg <- max(1L, as.integer(input$wp_page %||% 1))
+    sz <- tryCatch(pdftools::pdf_pagesize(input$wp_file$datapath), error = function(e) NULL)
+    if (is.null(sz) || pg > nrow(sz)) return(NULL)
+    ras <- tryCatch(as.raster(magick::image_read(
+      pdftools::pdf_render_page(input$wp_file$datapath, page = pg, dpi = 100))),
+      error = function(e) NULL)
+    if (is.null(ras)) return(NULL)
+    list(ras = ras, w = sz$width[pg], h = sz$height[pg])
+  })
+
+  output$wp_plot <- renderPlot({
+    r <- wp_render(); req(r)
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+         xlab = "", ylab = "", axes = FALSE)
+    rasterImage(r$ras, 0, r$h, r$w, 0)
+    b <- wp_bands()
+    if (length(b)) {
+      cols <- grDevices::hcl(seq(0, 300, length.out = length(b)), 70, 55)
+      for (i in seq_along(b)) {
+        rect(b[[i]][1], 0, b[[i]][2], r$h, border = cols[i], lwd = 2)
+        text(mean(b[[i]]), 16, names(b)[i], col = cols[i], font = 2)
+      }
+    }
+  })
+
+  observeEvent(input$wp_assign, {
+    br <- input$wp_brush; req(br)
+    b <- wp_bands(); b[[input$wp_field]] <- c(round(br$xmin), round(br$xmax)); wp_bands(b)
+  })
+  observeEvent(input$wp_clear, wp_bands(list()))
+
+  output$wp_bands <- renderTable({
+    b <- wp_bands()
+    if (!length(b)) return(data.frame(field = character(0), x_min = numeric(0), x_max = numeric(0)))
+    data.frame(field = names(b), x_min = vapply(b, `[`, 0, 1),
+               x_max = vapply(b, `[`, 0, 2), row.names = NULL)
+  })
+
+  wp_template <- reactive({
+    b <- wp_bands()
+    cols <- list()
+    for (f in names(b)) cols[[f]] <- list(x_min = b[[f]][1], x_max = b[[f]][2])
+    xs <- unlist(b)
+    fp <- if (nzchar(input$wp_fingerprint %||% "")) list(input$wp_fingerprint) else list()
+    list(id = input$wp_id, bank = input$wp_bank, statement_type = "statement",
+         format = "pdf", version = 1, min_score = if (length(fp)) 1 else 0,
+         fingerprint = list(page_contains_all = fp),
+         table = list(
+           region = list(x_min = if (length(xs)) min(xs) - 5 else 0,
+                         x_max = if (length(xs)) max(xs) + 5 else 9999),
+           row_tol = 3, date_format = input$wp_datefmt, amount_sign = input$wp_sign,
+           columns = cols),
+         currency = "NZD")
+  })
+
+  wp_preview <- reactiveVal(NULL)
+  observeEvent(input$wp_preview, {
+    req(input$wp_file); b <- wp_bands()
+    if (is.null(b$date) || is.null(b$amount)) {
+      wp_preview(list(status = "Draw and assign at least the date and amount columns first.", tbl = NULL)); return()
+    }
+    out <- tryCatch({
+      parsed <- parse_pdf_table(read_input(input$wp_file$datapath), wp_template())
+      list(status = sprintf("%d transaction row(s) extracted", nrow(parsed$transactions)),
+           tbl = parsed$transactions)
+    }, error = function(e) list(status = paste("error:", conditionMessage(e)), tbl = NULL))
+    wp_preview(out)
+  })
+  output$wp_prev_status <- renderText({ p <- wp_preview(); if (is.null(p)) "Draw the columns, then Preview." else p$status })
+  output$wp_prev_tbl <- renderDT({ p <- wp_preview(); req(!is.null(p$tbl))
+    datatable(p$tbl, rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE)) })
+  output$wp_yaml <- renderText({ req(input$wp_file); yaml::as.yaml(wp_template()) })
+
+  observeEvent(input$wp_save, {
+    req(input$wp_file); b <- wp_bands()
+    if (is.null(b$date) || is.null(b$amount)) {
+      output$wp_msg <- renderUI(span(class = "bad", "Assign at least the date and amount columns first.")); return()
+    }
+    id <- gsub("[^A-Za-z0-9_]+", "_", input$wp_id)
+    path <- file.path(TEMPLATES_DIR, paste0(id, ".yaml"))
+    ok <- tryCatch({ yaml::write_yaml(wp_template(), path); load_templates(TEMPLATES_DIR); TRUE },
+                   error = function(e) FALSE)
+    output$wp_msg <- renderUI(
+      if (isTRUE(ok)) span(class = "ok", paste("Saved", path, "- add a golden test next (see Help)."))
+      else span(class = "bad", "Save failed - check the boxes and settings."))
+  })
 
   # ---- Wizard -------------------------------------------------------
   wz_headers <- reactive({
