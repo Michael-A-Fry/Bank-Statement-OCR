@@ -110,3 +110,31 @@ test_that("user templates can be listed, renamed, and deleted (management)", {
   expect_false("mybank_everyday_csv" %in% user_template_ids(dir))
   expect_false(delete_user_template("does_not_exist", dir))
 })
+
+test_that("a user template can be hidden and un-hidden without deleting it", {
+  udir <- tempfile(); on.exit(unlink(udir, recursive = TRUE), add = TRUE)
+  t <- .min_tmpl(); t$id <- "parkme_csv"
+  save_user_template(t, udir)
+
+  # visible by default, and part of the active set used for detection/conversion
+  expect_true("parkme_csv" %in% user_template_ids(udir))
+  expect_true("parkme_csv" %in% names(load_template_set(templates_dir(), udir)))
+
+  expect_true(set_user_template_hidden("parkme_csv", TRUE, udir))
+  # gone from the active set (won't take part in detection) but still on disk
+  expect_false("parkme_csv" %in% names(load_template_set(templates_dir(), udir)))
+  expect_true("parkme_csv" %in% user_template_ids(udir))
+  # ...and still visible to the management view
+  active_ids <- names(load_template_set(templates_dir(), udir, include_hidden = TRUE))
+  expect_true("parkme_csv" %in% active_ids)
+  ov <- template_overview(load_template_set(templates_dir(), udir, include_hidden = TRUE))
+  expect_equal(ov$hidden[ov$id == "parkme_csv"], "hidden")
+
+  expect_false(set_user_template_hidden("parkme_csv", FALSE, udir))   # un-hide
+  expect_true("parkme_csv" %in% names(load_template_set(templates_dir(), udir)))
+})
+
+test_that("shipped templates cannot be hidden", {
+  udir <- tempfile(); on.exit(unlink(udir, recursive = TRUE), add = TRUE)
+  expect_error(set_user_template_hidden("anz_everyday_pdf", TRUE, udir), "user-created")
+})

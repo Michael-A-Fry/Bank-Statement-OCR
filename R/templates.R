@@ -130,13 +130,20 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
   templates
 }
 
-# load_template_set(default_dir, user_dir) -> merged templates. Curated defaults
-# load first and WIN on any id clash (a user template can never shadow a
-# team-blessed one). User templates fill in the rest and are marked origin="user".
-load_template_set <- function(default_dir = "templates", user_dir = "templates_user") {
+# load_template_set(default_dir, user_dir, include_hidden) -> merged templates.
+# Curated defaults load first and WIN on any id clash (a user template can never
+# shadow a team-blessed one). User templates fill in the rest and are marked
+# origin="user". A user template flagged `hidden: true` is EXCLUDED by default, so
+# it stops taking part in detection/conversion without being deleted (a cluttered
+# pile of near-duplicate drafts can be parked, not lost). include_hidden = TRUE
+# returns them too, for the Admin management view that can un-hide them.
+load_template_set <- function(default_dir = "templates", user_dir = "templates_user",
+                              include_hidden = FALSE) {
   d <- load_templates(default_dir, origin = "default", strict = TRUE)
   if (!is.null(user_dir) && dir.exists(user_dir)) {
     u <- load_templates(user_dir, origin = "user", strict = FALSE)
+    if (!include_hidden)
+      u <- u[!vapply(u, function(t) isTRUE(t$hidden), logical(1))]
     for (id in names(u)) if (is.null(d[[id]])) d[[id]] <- u[[id]]
   }
   d
@@ -146,7 +153,7 @@ load_template_set <- function(default_dir = "templates", user_dir = "templates_u
 # for the Admin overview and the Convert "what's covered" panel. `origin` reads as
 # "tested" (a shipped, golden-file-tested default) or "user" (built on this box).
 template_overview <- function(tset) {
-  cols <- c("id", "bank", "type", "format", "amount_sign", "date_format", "origin", "version")
+  cols <- c("id", "bank", "type", "format", "amount_sign", "date_format", "origin", "hidden", "version")
   if (!length(tset))
     return(setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
   rows <- lapply(tset, function(t) {
@@ -159,6 +166,7 @@ template_overview <- function(tset) {
       amount_sign = (if (is_pdf) t$table$amount_sign else t$amount_sign) %||% "signed",
       date_format = (if (is_pdf) t$table$date_format else t$columns$date$format) %||% NA_character_,
       origin      = if (identical(t$origin %||% "default", "user")) "user" else "tested",
+      hidden      = if (isTRUE(t$hidden)) "hidden" else "",
       version     = as.character(t$version %||% NA),
       stringsAsFactors = FALSE)
   })
@@ -206,6 +214,25 @@ delete_user_template <- function(id, dir = "templates_user") {
     }
   }
   invisible(hit)
+}
+
+# set_user_template_hidden(id, hidden, dir) -> the new hidden state. Writes (or
+# clears) `hidden: true` in the user template's own file, keeping its filename.
+# Hidden templates drop out of detection/conversion (load_template_set default)
+# but stay on disk and in the Admin management view, so they can be un-hidden or
+# merged later. Only user templates -- shipped ones are read-only.
+set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates_user") {
+  if (!(id %in% user_template_ids(dir))) stop("only user-created templates can be hidden")
+  for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
+    t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
+    if (identical(t$id %||% "", id)) {
+      t$origin <- NULL
+      if (isTRUE(hidden)) t$hidden <- TRUE else t$hidden <- NULL
+      yaml::write_yaml(t, f)
+      return(invisible(isTRUE(hidden)))
+    }
+  }
+  stop("template not found: ", id)
 }
 
 # rename_user_template(old_id, new_id, dir) -> new id. Saves under the new id and

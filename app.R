@@ -404,9 +404,10 @@ ui <- fluidPage(
               actionButton("adm_tpl_dup", "⧉ Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
               actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
+              actionButton("adm_tpl_hide", "🙈 Hide / Un-hide (user template)"),
               actionButton("adm_tpl_delete", "🗑 Delete (user template)", class = "btn-danger"),
               br(), br(), uiOutput("adm_tpl_msg"),
-              helpText("Make a variation: Duplicate copies this template with a new id into the editor — tweak it and Save. Rename by changing the id and saving, then Delete the old one. Delete only removes USER templates; shipped 'tested' templates are read-only. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
+              helpText("Make a variation: Duplicate copies this template with a new id into the editor — tweak it and Save. Rename by changing the id and saving, then Delete the old one. Hide parks a user template you don't want detection to use, without deleting it — un-hide the same way. Delete only removes USER templates; shipped 'tested' templates are read-only. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
             column(7,
               h4("Template YAML"),
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
@@ -468,7 +469,11 @@ server <- function(input, output, session) {
   observeEvent(input$wz_help, show_tutorial())
 
   tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
+  # Active set: hidden user templates are excluded, so they take no part in
+  # detection / conversion / the Convert picker.
   templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR) })
+  # Management set: EVERYTHING, including hidden, so Admin can preview and un-hide.
+  all_templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR, include_hidden = TRUE) })
 
   # ---- Admin password gate. Hidden outputs are suspended, so no admin data is
   # computed or sent to the browser until the password is entered. Set it with
@@ -514,21 +519,23 @@ server <- function(input, output, session) {
   })
 
   # ---- Admin: template overview / preview / edit ----
+  # The management view shows ALL templates, hidden ones included, so a parked
+  # draft can be found and un-hidden.
   output$adm_tpl_overview <- renderDT(
-    template_overview(templates()),
+    template_overview(all_templates()),
     options = list(pageLength = 25, dom = "tip"), rownames = FALSE, selection = "single")
 
-  observe(updateSelectInput(session, "adm_tpl_pick", choices = sort(names(templates()))))
+  observe(updateSelectInput(session, "adm_tpl_pick", choices = sort(names(all_templates()))))
 
   # clicking a row selects it in the picker
   observeEvent(input$adm_tpl_overview_rows_selected, {
-    ov <- template_overview(templates())
+    ov <- template_overview(all_templates())
     i <- input$adm_tpl_overview_rows_selected
     if (length(i) && i <= nrow(ov)) updateSelectInput(session, "adm_tpl_pick", selected = ov$id[i])
   })
 
   observeEvent(input$adm_tpl_pick, {
-    t <- templates()[[input$adm_tpl_pick]]; req(t)
+    t <- all_templates()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
   })
@@ -538,9 +545,29 @@ server <- function(input, output, session) {
   output$adm_tpl_origin <- renderUI({
     id <- input$adm_tpl_pick; if (is.null(id) || !nzchar(id)) return(NULL)
     is_user <- id %in% user_template_ids(USER_TEMPLATES_DIR)
-    span(class = if (is_user) "muted" else "muted",
-         if (is_user) "This is a USER template (yours) — editable & deletable."
-         else "This is a shipped 'tested' template — read-only (Save makes a user copy).")
+    hidden <- isTRUE(all_templates()[[id]]$hidden)
+    tagList(
+      span(class = "muted",
+        if (is_user) "This is a USER template (yours) — editable, hideable & deletable."
+        else "This is a shipped 'tested' template — read-only (Save makes a user copy)."),
+      if (hidden) tagList(br(), span(class = "bad",
+        "Hidden — it is NOT used for detection. Un-hide to bring it back.")))
+  })
+  # Hide / un-hide a USER template: parks it out of detection without deleting.
+  observeEvent(input$adm_tpl_hide, {
+    id <- input$adm_tpl_pick
+    if (is.null(id) || !nzchar(id)) return()
+    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+      output$adm_tpl_msg <- .tpl_note("Only USER templates can be hidden; this one is shipped/read-only.", ok = FALSE)
+      return()
+    }
+    now_hidden <- isTRUE(all_templates()[[id]]$hidden)
+    res <- safe(set_user_template_hidden(id, !now_hidden, USER_TEMPLATES_DIR), NULL)
+    if (is.null(res)) { output$adm_tpl_msg <- .tpl_note("Couldn't change it.", ok = FALSE); return() }
+    tpl_bump(isolate(tpl_bump()) + 1)
+    output$adm_tpl_msg <- .tpl_note(if (isTRUE(res))
+      sprintf("Hid <b>%s</b> — it won't be used for detection until you un-hide it.", id)
+      else sprintf("Un-hid <b>%s</b> — it's active again.", id))
   })
   # Delete a USER template (never a shipped one), then refresh the picker.
   observeEvent(input$adm_tpl_delete, {
