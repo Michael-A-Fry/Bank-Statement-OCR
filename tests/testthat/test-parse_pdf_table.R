@@ -176,12 +176,13 @@ test_that("split-row recovery does NOT merge a carried-forward line with a real 
   expect_false(any(grepl("row_stitched", tx$flags)))      # nothing was stitched
 })
 
-test_that("redacted cells keep the row, null the hidden value, and flag it (never silent)", {
-  # A redaction overlay replaces the covered words with [REDACTED] (read_pdf's
-  # apply_redaction_guard). Whichever field is hidden -- date, amount, balance, or a
-  # whole row -- the transaction MUST survive: losing it silently deletes real data,
-  # the worst forensic outcome. Hidden values are NULLED (never fabricated) and the
-  # row carries a `redacted` flag so a reviewer always sees what was covered.
+test_that("partial redactions keep the row (null+flag); a wholly-redacted row does not appear", {
+  # Statements ARRIVE already redacted; the reader records what is still visible.
+  # A PARTIALLY-redacted transaction (date, amount or balance hidden but a real
+  # date or amount still showing) is kept: the hidden value is NULLED (never
+  # fabricated) and the row is flagged. A row that is WHOLLY redacted has no real
+  # date or amount, so it is not a transaction -- it simply does not appear, and we
+  # never guess it was there. Neighbours above/below are untouched.
   R <- "[REDACTED]"
   words <- data.frame(stringsAsFactors = FALSE,
     text  = c("05","Jan","COFFEE","-40.00","955.50",  # y=40 clean baseline row
@@ -201,31 +202,32 @@ test_that("redacted cells keep the row, null the hidden value, and flag it (neve
     page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
   tx <- parse_pdf_table(input, .simple_tmpl())$transactions
 
-  expect_equal(nrow(tx), 5L)                              # NO row dropped by any redaction
+  # 4 partial rows recorded; the wholly-redacted 5th row does NOT appear.
+  expect_equal(nrow(tx), 4L)
   isred <- grepl("redacted", tx$flags, ignore.case = TRUE)
 
   # row 1: clean -> no redaction flag, values intact
   expect_false(isred[1])
   expect_equal(tx$amount[1], -40.00); expect_equal(tx$balance[1], 955.50)
 
-  # row 2: DATE hidden -> row kept, date_iso NA, amount preserved, flagged
+  # row 2: DATE hidden -> row kept (real amount), date_iso NA, amount preserved, flagged
   expect_true(isred[2])
   expect_true(is.na(tx$date[2]))
   expect_equal(tx$amount[2], -10.00)                      # a redacted DATE never loses the amount
 
-  # row 3: AMOUNT hidden -> amount NULLED (not fabricated), balance intact, flagged
+  # row 3: AMOUNT hidden -> row kept (real date), amount NULLED (not fabricated), flagged
   expect_true(isred[3])
   expect_true(is.na(tx$amount[3]))
   expect_equal(tx$balance[3], 935.50)
 
-  # row 4: BALANCE hidden -> balance NULLED, amount intact, flagged (the balance fix)
+  # row 4: BALANCE hidden -> balance NULLED, amount intact, flagged
   expect_true(isred[4])
   expect_true(is.na(tx$balance[4]))
   expect_equal(tx$amount[4], -5.00)
 
-  # row 5: WHOLE row hidden -> preserved as an all-NA flagged row, never dropped
-  expect_true(isred[5])
-  expect_true(is.na(tx$amount[5]) && is.na(tx$balance[5]) && is.na(tx$date[5]))
+  # row 5 was WHOLLY redacted (no real date, no real amount) -> not a transaction,
+  # so it is absent. We never fabricate a row from redaction alone.
+  expect_equal(sum(is.na(tx$date) & is.na(tx$amount) & is.na(tx$balance)), 0L)
 })
 
 test_that("redacting the date of an EDGE transaction keeps it (never dropped)", {

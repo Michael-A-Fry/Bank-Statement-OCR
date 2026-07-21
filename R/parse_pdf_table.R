@@ -42,6 +42,13 @@
 # really there. Kept this way, the row survives, its amount is nulled, and it is
 # flagged redacted -- hidden, never lost.
 .has_money <- function(x) { x <- as.character(x); grepl("[0-9]", x) | grepl("REDACT", x, ignore.case = TRUE) }
+# .has_real_money -- a VISIBLE money value: a digit that is NOT a redaction token.
+# Used for the keep decision's evidence test: a row is only a transaction when it
+# still shows a real date or a real amount. A cell that is only [REDACTED] does
+# NOT count -- we never invent a transaction out of a redaction (the statement
+# arrives already redacted; our job is to read what is there, not guess what is
+# hidden). A row with a redacted amount is still kept when its DATE is real.
+.has_real_money <- function(x) { x <- as.character(x); grepl("[0-9]", x) & !grepl("REDACT", x, ignore.case = TRUE) }
 
 # .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
 # A new row starts when a word's top is more than `tol` below the CURRENT row's
@@ -343,6 +350,10 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # rule -- errs toward keeping (a stray summary breaks reconciliation LOUDLY,
   # dropping a real transaction loses money SILENTLY, which the contract forbids).
   .has_amount <- function(r) .pdf_has_amount(r, style)
+  # .real_amount -- the amount is a VISIBLE number, not a redaction token. This is
+  # the evidence half of the keep test alongside a real date.
+  .real_amount <- function(r) .has_real_money(if (identical(style, "debit_credit_cols"))
+    paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
   .is_summary <- function(r) .pdf_is_summary(r$description, r$raw)
   # Did we manage to resolve a year for a year-less date format? When we did NOT
   # (no period, no year anywhere in the text), dropping every row would silently
@@ -359,13 +370,28 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
                                        paste(date_fmt, "%Y"))$iso))
   }
-  # A REDACTED date cell must NOT drop a real transaction: if a redaction overlay
-  # sits over the date column, the amount/description are still there, so keep the
-  # row (it is flagged redacted below and its date_iso is left NA). Losing it would
-  # silently delete a transaction -- forbidden.
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
-  .is_txn <- function(r) (.date_ok(r$date) || .redacted_cell(r$date)) &&
-                         .has_amount(r) && !.is_summary(r)
+  # KEEP RULE. A row is a transaction when it still shows REAL evidence -- a real
+  # date OR a real amount -- and carries an amount slot (real, or redacted so the
+  # value is merely hidden) and is not a summary line. The statement ARRIVES
+  # already redacted; we read what is visible, we never fabricate a transaction
+  # from redaction alone:
+  #   * amount blacked out, date visible  -> kept (real date), amount = NA, flagged
+  #   * date blacked out, amount visible  -> kept (real amount), date = NA, flagged
+  #   * a WHOLE row blacked out           -> no real date, no real amount -> NOT a
+  #       row; it simply does not appear (rows above/below are unaffected). This is
+  #       correct: we don't guess how many transactions a black block hid.
+  #   * a header / non-transaction line covered by a box -> no real date/amount ->
+  #       never becomes a transaction.
+  # A date that is merely UNPARSEABLE (e.g. a template mis-map "13-14-9999") is NOT
+  # a redaction: the row is dropped and flagged "date didn't parse" so the template
+  # gets fixed. Only an explicitly REDACTED date (hidden) is carried on a real
+  # amount.
+  .is_txn <- function(r) {
+    if (.is_summary(r)) return(FALSE)
+    if (.date_ok(r$date)) return(.has_amount(r))              # real date + an amount slot
+    .redacted_cell(r$date) && .real_amount(r) && .has_amount(r)
+  }
 
   # Split-row recovery: some statements render one transaction's cells on slightly
   # different baselines, so the DATE and the AMOUNT land in DIFFERENT visual rows (a

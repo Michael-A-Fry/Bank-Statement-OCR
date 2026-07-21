@@ -118,8 +118,15 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
         rec <- list(amount = .pdf_cell(rg, cols_p$amount), debit = .pdf_cell(rg, cols_p$debit),
                     credit = .pdf_cell(rg, cols_p$credit), description = .pdf_cell(rg, cols_p$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
-        date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)
-        natural_keep <- date_ok && .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
+        date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)   # for the skipped-reason text
+        # KEEP RULE (mirrors parse_pdf_table.is_txn): a real date keeps a row with
+        # any amount slot; a REDACTED date keeps it only on a real amount; a merely
+        # unparseable date is dropped; a whole-row / header box (no real value) is
+        # never a transaction.
+        real_amount <- .has_real_money(if (identical(style, "debit_credit_cols"))
+          paste(rec$debit %||% "", rec$credit %||% "") else (rec$amount %||% ""))
+        natural_keep <- !.pdf_is_summary(rec$description, rec$raw) && .pdf_has_amount(rec, style) &&
+          (isTRUE(d_ok) || (isTRUE(redacted_date) && real_amount))
         # A row the user forced in (from the skipped list) is painted kept here too,
         # so the X-ray reflects exactly what the reader now emits.
         forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), fr_p)

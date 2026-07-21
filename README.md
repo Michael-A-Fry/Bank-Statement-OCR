@@ -33,8 +33,11 @@ point-and-click wizard (or editing a YAML file), not by writing code.
   from a sample (map columns by dropdown, preview, save).
 - **OCR**: image-only / scanned PDF pages are read via the system Tesseract
   engine (driven from R, no binding required); each OCR'd page is flagged.
-- **PDF reader + forensic redaction guard**: text under a redaction overlay is
-  never emitted; OCR only reads visible pixels so redactions stay honoured.
+- **PDF reader that honours incoming redactions**: the tool never redacts —
+  statements arrive already redacted and it only reads what is visible. A
+  partially‑redacted row is recorded with its visible cells (hidden cell
+  `[REDACTED]` + flagged); a wholly‑hidden row simply does not appear; hidden
+  counts are never estimated. Solid black boxes on scanned pages are auto‑detected.
 - **Reconciliation KPIs + trust score**: balance reconciliation, running-balance
   continuity, transaction count, dates-in-period, completeness, redaction
   summary — surfaced as single-line checks with a high/medium/low trust level.
@@ -169,8 +172,10 @@ docs/         build contract + discovery log
 ## Forensic guarantees (all covered by tests)
 
 1. Descriptions preserved **verbatim** (special characters intact).
-2. Redactions honoured as-shown, **never derived**; text under a redaction is
-   never emitted or OCR'd out.
+2. The tool **never redacts** — statements arrive redacted and it reads only
+   what is visible. Hidden values are **never derived** or estimated; a
+   partially‑redacted row is kept (hidden cell `[REDACTED]` + flagged), a
+   wholly‑hidden row simply does not appear.
 3. **No silent drops** — completeness is proven by a KPI.
 4. **Reproducible** — same input + template ⇒ identical output; no manual edits.
 5. **Never crashes** — every error becomes a status with an actionable reason.

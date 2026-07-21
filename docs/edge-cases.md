@@ -80,14 +80,28 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 
 ## F. Redaction (forensic‑critical)
 
+**The tool never redacts anything.** Statements ARRIVE already redacted (by
+whoever sent them); the reader only pulls what is visible. The requirement is
+that a redaction must not *break* the read — never that we reconstruct or
+estimate what is hidden. Expected outcomes:
+
+- **Part of a row hidden** (e.g. amount blacked, date/description still visible):
+  the row is recorded with its visible cells, the hidden cell is `[REDACTED]`
+  (value `NA`, never back‑calculated), and the row carries a `redacted` flag.
+- **A whole row hidden**: it simply does not appear. Its neighbours above and
+  below are unaffected. We do **not** guess it was there.
+- **A block of many rows hidden**: rows above and below are recorded; the hidden
+  ones do not appear. We do **not** estimate how many transactions the block hid.
+- **A header / non‑transaction area covered**: no transaction is produced there.
+
 | Case | Status | How |
 |---|---|---|
-| Text‑layer marker (`[REDACTED]`, block glyphs, `XXXXXX`) | ✅ | swept to `[REDACTED]`, original discarded (tested) |
-| Black box **over** text (text still in layer) | ✅ | overlay guard rebuilds page text from guarded word boxes — **text under the box never leaks** (tested, incl. partial overlap) |
+| Text‑layer marker (`[REDACTED]`, block glyphs, `XXXXXX`) | ✅ | read as `[REDACTED]`; original text under a supplied overlay is never emitted (tested) |
 | Redacted value never derived/inferred | ✅ | as‑shown only; never back‑calculated from balance |
-| Heavy / full‑block redaction (many rows blacked out) | 🟡→⛔ | the *guard* scales (any covered word is dropped); turning a heavily‑redacted **table** into flagged rows needs the PDF parser + real sample |
-| Redaction inside an OCR'd (scanned) page | ✅ | OCR reads only visible pixels — a black box is unreadable, so nothing under it is recovered |
-| Auto‑detect the black rectangle itself (no supplied coords) | ⛔ | documented hook in `read_pdf.R`; needs content‑stream/raster analysis on a real file |
+| Partial‑row redaction on a scanned page | ✅ | the black box is auto‑detected; the visible cells are kept, the blacked cell is `[REDACTED]` + flagged (tested) |
+| Whole‑row / full‑block redaction on a scanned page | ✅ | no visible anchor → the hidden rows do not appear; neighbours untouched; **no count estimated** |
+| Auto‑detect a rasterised black rectangle (no supplied coords) | ✅ | `detect_dark_regions()` finds solid black boxes on OCR pages (tested) |
+| Black **vector** box over still‑live text (improper redaction by sender) | ⛔ | not yet detected from the content stream — a known follow‑up |
 
 ## G. PDF‑specific
 

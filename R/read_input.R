@@ -39,9 +39,11 @@ read_pdf_input <- function(path, redaction_rects = NULL,
 }
 
 # read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table,
-# pages, meta). `redaction_rects` lets the caller feed overlay rectangles (per
-# build-contract 11.2) so text under a drawn redaction is dropped before it ever
-# leaves the reader; NULL keeps the text-layer marker sweep only.
+# pages, meta). The tool never redacts; statements arrive already redacted.
+# `redaction_rects` is an optional way to tell the reader where a redaction
+# ALREADY sits (belt-and-braces alongside the automatic detection of rasterised
+# black boxes), so any text a supplied box covers is not emitted; NULL relies on
+# the text-layer marker sweep and the scanned-page black-box detector.
 read_input <- function(path, redaction_rects = NULL) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))

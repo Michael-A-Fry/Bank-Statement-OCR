@@ -84,53 +84,39 @@ detect_dark_regions <- function(img, scale, min_frac_w = 0.10, min_band_pts = 10
 }
 
 # inject_redaction_tokens(words, rects, row_tol) -> words with synthetic
-# [REDACTED] boxes added inside each rect. Anchored to the visible OCR rows the
-# rect overlaps (a partially-blacked row keeps its visible cells and gains
-# [REDACTED] where the box covers it) and grid-filled where the band carries no
-# visible row (a fully-blacked block becomes flagged rows, never silently gone).
+# [REDACTED] boxes added ONLY onto the visible OCR rows a rect overlaps, so a
+# PARTIALLY-blacked transaction keeps its visible cells and gains a [REDACTED]
+# marker where the box covers it (recorded, flagged -- not dropped). It does NOT
+# reconstruct rows that are fully hidden: a solid block has no visible row to
+# anchor to, so nothing is added and the hidden transactions simply do not appear
+# (their neighbours above/below are untouched). We never estimate how many rows a
+# black block hid, and a box over a header / non-transaction line -- which has no
+# real date or amount -- is never turned into a transaction (the evidence gate).
 inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
   if (is.null(rects) || !nrow(rects) || is.null(words)) return(words)
   vis <- words[!(words$redacted %in% TRUE) & nzchar(trimws(words$text)), , drop = FALSE]
-  med_h <- if (nrow(vis)) stats::median(vis$height, na.rm = TRUE) else 10
-  if (!is.finite(med_h) || med_h <= 0) med_h <- 10
-  # visible row anchors: top-y and height of each visible OCR row.
-  rows_y <- numeric(0); rows_h <- numeric(0)
-  if (nrow(vis)) {
-    o <- order(vis$y); vy <- vis$y[o]; vh <- vis$height[o]
-    grp <- .group_rows(vy, row_tol)
-    rows_y <- as.numeric(tapply(vy, grp, min))
-    rows_h <- as.numeric(tapply(vh, grp, stats::median))
-  }
-  # row pitch for grid-filling a fully-black band. Use the GLOBAL average spacing
-  # (span / count) rather than a local median of diffs: the average is robust to
-  # OCR sub-baselines and matches how many real rows a band's height represents,
-  # so a solid block reconstructs ~the number of rows it actually hid (not 50%
-  # more). Falls back to ~1.5 line heights when there are too few visible rows.
-  pitch <- if (length(rows_y) > 1) {
-    sp <- max(rows_y) - min(rows_y); p1 <- sp / (length(rows_y) - 1)
-    if (is.finite(p1) && p1 >= med_h * 0.8) p1 else med_h * 1.5
-  } else med_h * 1.5
+  if (!nrow(vis)) return(words)   # nothing visible to anchor to -> invent nothing
+  o <- order(vis$y); vy <- vis$y[o]; vh <- vis$height[o]; vt <- vis$text[o]
+  grp <- .group_rows(vy, row_tol)
 
   add_x <- numeric(0); add_y <- numeric(0); add_w <- numeric(0); add_h <- numeric(0)
-  for (r in seq_len(nrow(rects))) {
-    x0 <- rects$x0[r]; y0 <- rects$y0[r]; x1 <- rects$x1[r]; y1 <- rects$y1[r]
-    if (!all(is.finite(c(x0, y0, x1, y1))) || x1 <= x0 || y1 <= y0) next
-    # anchor lines: visible rows whose top-y sits within the band.
-    anch <- which(rows_y >= (y0 - med_h) & rows_y <= (y1 + 0.25 * med_h))
-    lines_y <- rows_y[anch]; lines_h <- rows_h[anch]
-    # grid-fill any part of the band with no anchor within ~one pitch.
-    yy <- y0
-    while (yy <= y1 - med_h * 0.5) {
-      if (!length(lines_y) || min(abs(lines_y - yy)) > pitch * 0.6) {
-        lines_y <- c(lines_y, yy); lines_h <- c(lines_h, med_h)
+  for (g in unique(grp)) {
+    idx <- which(grp == g)
+    ry0 <- min(vy[idx]); ry1 <- max(vy[idx] + vh[idx])
+    rowy <- min(vy[idx]); rowh <- stats::median(vh[idx])
+    # evidence gate: only a row that still shows a real DATE or AMOUNT is a
+    # transaction whose blacked cells we should record. A header/address line has
+    # neither, so a box over it never becomes a row.
+    if (!.redaction_row_evidence(paste(vt[idx], collapse = " "))) next
+    for (r in seq_len(nrow(rects))) {
+      x0 <- rects$x0[r]; y0 <- rects$y0[r]; x1 <- rects$x1[r]; y1 <- rects$y1[r]
+      if (!all(is.finite(c(x0, y0, x1, y1))) || x1 <= x0 || y1 <= y0) next
+      if (!(ry1 >= y0 && ry0 <= y1)) next          # rect must overlap THIS row's band
+      xs <- seq(x0, x1 - 1, by = x_step); if (!length(xs)) xs <- x0
+      for (xx in xs) {
+        add_x <- c(add_x, xx); add_y <- c(add_y, rowy)
+        add_w <- c(add_w, min(x_step - 4, x1 - xx)); add_h <- c(add_h, rowh)
       }
-      yy <- yy + pitch
-    }
-    if (!length(lines_y)) { lines_y <- (y0 + y1) / 2 - med_h / 2; lines_h <- med_h }
-    xs <- seq(x0, x1 - 1, by = x_step); if (!length(xs)) xs <- x0
-    for (j in seq_along(lines_y)) for (xx in xs) {
-      add_x <- c(add_x, xx); add_y <- c(add_y, lines_y[j])
-      add_w <- c(add_w, min(x_step - 4, x1 - xx)); add_h <- c(add_h, lines_h[j])
     }
   }
   if (!length(add_x)) return(words)
@@ -141,4 +127,15 @@ inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
   for (cn in setdiff(names(words), names(addf))) addf[[cn]] <- NA
   addf <- addf[, names(words), drop = FALSE]
   rbind(words, addf)
+}
+
+# .redaction_row_evidence(text) -- TRUE when a visible row still shows a real
+# transaction anchor (a money amount or a date). Keeps a partially-redacted
+# transaction row eligible; rejects a header / name / address line so a box over
+# it is never fabricated into a transaction.
+.redaction_row_evidence <- function(text) {
+  t <- as.character(text)
+  grepl("[0-9]+[.,][0-9]{2}", t) ||                          # a money amount (40.00)
+  grepl("\\b[0-9]{1,2}[ /-][A-Za-z]{3}", t) ||               # a date (21 Apr / 21-Apr)
+  grepl("\\b[0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}\\b", t)   # a date (21/04/2026)
 }
