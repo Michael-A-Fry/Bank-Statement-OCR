@@ -393,11 +393,13 @@ ui <- fluidPage(
           fluidRow(
             column(5,
               selectInput("adm_tpl_pick", "Preview / edit a template", choices = NULL),
+              uiOutput("adm_tpl_origin"),
               actionButton("adm_tpl_dup", "⧉ Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
               actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
+              actionButton("adm_tpl_delete", "🗑 Delete (user template)", class = "btn-danger"),
               br(), br(), uiOutput("adm_tpl_msg"),
-              helpText("Make a variation: Duplicate copies this template with a new id into the editor — tweak it and Save. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
+              helpText("Make a variation: Duplicate copies this template with a new id into the editor — tweak it and Save. Rename by changing the id and saving, then Delete the old one. Delete only removes USER templates; shipped 'tested' templates are read-only. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
             column(7,
               h4("Template YAML"),
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
@@ -543,6 +545,30 @@ server <- function(input, output, session) {
     t <- templates()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
+  })
+
+  # Show whether the selected template is a read-only shipped one or a deletable
+  # user one, so the analyst knows what Delete will do.
+  output$adm_tpl_origin <- renderUI({
+    id <- input$adm_tpl_pick; if (is.null(id) || !nzchar(id)) return(NULL)
+    is_user <- id %in% user_template_ids(USER_TEMPLATES_DIR)
+    span(class = if (is_user) "muted" else "muted",
+         if (is_user) "This is a USER template (yours) — editable & deletable."
+         else "This is a shipped 'tested' template — read-only (Save makes a user copy).")
+  })
+  # Delete a USER template (never a shipped one), then refresh the picker.
+  observeEvent(input$adm_tpl_delete, {
+    id <- input$adm_tpl_pick
+    if (is.null(id) || !nzchar(id)) return()
+    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+      output$adm_tpl_msg <- .tpl_note("Only USER templates can be deleted; this one is shipped/read-only.", ok = FALSE)
+      return()
+    }
+    ok <- safe(delete_user_template(id, USER_TEMPLATES_DIR), FALSE)
+    if (isTRUE(ok)) {
+      tpl_bump(isolate(tpl_bump()) + 1)
+      output$adm_tpl_msg <- .tpl_note(sprintf("Deleted user template <b>%s</b>.", id))
+    } else output$adm_tpl_msg <- .tpl_note("Couldn't delete it.", ok = FALSE)
   })
 
   # Duplicate the selected template with a fresh id, into the editor to tweak+save.

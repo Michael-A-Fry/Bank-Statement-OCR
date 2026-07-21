@@ -94,3 +94,19 @@ test_that("template_yaml round-trips back to a valid template", {
   expect_length(validate_template(back), 0)
   expect_null(back$origin)                                 # origin stripped for edit
 })
+
+test_that("user templates can be listed, renamed, and deleted (management)", {
+  dir <- tempfile(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  t <- .min_tmpl(); t$id <- "mybank_csv"
+  save_user_template(t, dir)
+  expect_true("mybank_csv" %in% user_template_ids(dir))
+
+  new_id <- rename_user_template("mybank_csv", "mybank everyday csv", dir)  # spaces sanitised
+  expect_equal(new_id, "mybank_everyday_csv")
+  expect_true("mybank_everyday_csv" %in% user_template_ids(dir))
+  expect_false("mybank_csv" %in% user_template_ids(dir))                    # old removed
+
+  expect_true(delete_user_template("mybank_everyday_csv", dir))
+  expect_false("mybank_everyday_csv" %in% user_template_ids(dir))
+  expect_false(delete_user_template("does_not_exist", dir))
+})

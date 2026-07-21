@@ -182,3 +182,45 @@ save_user_template <- function(template, dir = "templates_user") {
   yaml::write_yaml(template, path)
   invisible(path)
 }
+
+# user_template_ids(dir) -> ids of templates that live in the user dir (the only
+# ones the app may delete / rename -- shipped "tested" templates are read-only).
+user_template_ids <- function(dir = "templates_user") {
+  if (!dir.exists(dir)) return(character(0))
+  ids <- vapply(list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE), function(f) {
+    t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL); t$id %||% NA_character_
+  }, character(1))
+  unname(ids[!is.na(ids)])
+}
+
+# delete_user_template(id, dir) -> TRUE if a user template file was removed. Only
+# ever touches the user dir; shipped templates cannot be deleted from the app.
+delete_user_template <- function(id, dir = "templates_user") {
+  if (!dir.exists(dir) || is.null(id) || !nzchar(id)) return(invisible(FALSE))
+  safe_id <- gsub("[^A-Za-z0-9_]+", "_", id)
+  hit <- FALSE
+  for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
+    t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
+    if (identical(t$id %||% "", id) || identical(tools::file_path_sans_ext(basename(f)), safe_id)) {
+      if (file.remove(f)) hit <- TRUE
+    }
+  }
+  invisible(hit)
+}
+
+# rename_user_template(old_id, new_id, dir) -> new id. Saves under the new id and
+# removes the old file. Only for user templates.
+rename_user_template <- function(old_id, new_id, dir = "templates_user") {
+  ids <- user_template_ids(dir)
+  if (!(old_id %in% ids)) stop("only user-created templates can be renamed")
+  t <- NULL
+  for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
+    cand <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
+    if (identical(cand$id %||% "", old_id)) { t <- cand; break }
+  }
+  if (is.null(t)) stop("template not found: ", old_id)
+  t$id <- gsub("[^A-Za-z0-9_]+", "_", new_id)
+  save_user_template(t, dir)
+  if (!identical(t$id, old_id)) delete_user_template(old_id, dir)
+  invisible(t$id)
+}
