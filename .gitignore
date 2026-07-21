@@ -64,3 +64,8 @@ screenshots/
 
 # stray R plotting-device output
 Rplots.pdf
+
+# Playwright tooling used only for local UI screenshots (not part of the app)
+node_modules/
+package.json
+package-lock.json
