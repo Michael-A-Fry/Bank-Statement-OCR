@@ -119,6 +119,7 @@ ui <- fluidPage(
           width = 8,
           uiOutput("cv_status"),
           uiOutput("cv_teach"),
+          uiOutput("cv_candidates"),
           h4("Checks"), DTOutput("cv_kpis"),
           h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
           h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
@@ -1153,6 +1154,38 @@ server <- function(input, output, session) {
       tset <- tryCatch(templates(), error = function(e) list())
       if (!is.null(tset[[tid]])) seed <- tset[[tid]]
     }
+    open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
+  })
+
+  # "Matched but maybe wrong": when a near-duplicate template nearly matched too,
+  # show the candidates + margin and let the analyst re-open the wizard with a
+  # different one. Only appears when there's a genuine runner-up, so an
+  # unambiguous match stays clutter-free.
+  output$cv_candidates <- renderUI({
+    res <- cv_res(); req(res); req(!is.null(res$candidates))
+    cand <- res$candidates
+    if (is.null(nrow(cand)) || nrow(cand) < 2) return(NULL)
+    thin <- isTRUE(res$detect$thin)
+    top <- utils::head(cand, 4L)
+    others <- setdiff(top$id, res$template_id)
+    style <- if (thin) "border:1px solid #f0c36d;background:#fff8e6"
+             else "border:1px solid #e3e3e3;background:#fafafa"
+    tagList(div(style = sprintf("margin:12px 0;padding:10px 12px;border-radius:8px;%s", style),
+      strong(if (thin) "⚠ Close call — please confirm this is the right template"
+             else "Template match"),
+      p(class = "muted", sprintf("Matched %s. Nearest others: %s.",
+        res$template_id,
+        paste(sprintf("%s (score %s)", top$id, top$score), collapse = ", "))),
+      if (length(others)) tagList(
+        selectInput("cv_cand_pick", "Wrong one? Open the wizard with a different template:",
+                    choices = others, width = "100%"),
+        actionButton("cv_cand_go", "🪄 Open in wizard with this template", class = "btn-default"))))
+  })
+  observeEvent(input$cv_cand_go, {
+    src <- cv_src(); req(src); tid <- input$cv_cand_pick; req(tid, nzchar(tid))
+    tset <- tryCatch(templates(), error = function(e) list())
+    seed <- tset[[tid]]
+    if (is.null(seed)) { showNotification("That template isn't available.", type = "error"); return() }
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
 

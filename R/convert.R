@@ -62,8 +62,13 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       kpi_fail_count <- sum(recon$kpis$status == "fail")
       trust_level <- recon$trust$level
 
+      # A THIN detection margin (won over the runner-up by only 1 fingerprint
+      # phrase) means a near-duplicate template nearly matched too -- exactly the
+      # "matched but maybe the wrong variant" case. Treat it as needs_review so the
+      # analyst confirms the template, even when every KPI passes.
+      thin_match <- is.finite(det$margin) && det$margin <= 1 && !is.na(det$runner_up)
       status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                    isTRUE(multi$likely_multiple)) {
+                    isTRUE(multi$likely_multiple) || thin_match) {
         "needs_review"
       } else {
         "ok"
@@ -91,6 +96,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
           if (is.na(recon$trust$ocr_min_confidence)) ""
           else sprintf(" (min page confidence %.0f%%)", recon$trust$ocr_min_confidence))))
       }
+      if (thin_match) {
+        msg <- c(msg, status_message("needs_review",
+          sprintf("this matched %s by only %s over %s", template$id, det$margin, det$runner_up),
+          "confirm it's the right template — see the candidate templates below"))
+      }
 
       result$status <- status
       result$template_id <- template$id
@@ -102,6 +112,10 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$coverage <- field_coverage(parsed, template)
       result$metadata <- c(meta, list(multiple = multi))
       result$messages <- msg
+      # Candidate templates + margin, for the "matched but maybe wrong" panel.
+      result$candidates <- det$candidates
+      result$detect <- list(margin = det$margin, runner_up = det$runner_up,
+                            thin = thin_match)
     }
     result
   }, error = function(e) {

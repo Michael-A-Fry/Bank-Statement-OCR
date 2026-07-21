@@ -91,7 +91,12 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     matched <- unambiguous
     if (matched) {
       detail <- sprintf("matched %s (score %s/%s)", win_id, win_score, win_min)
+      # margin over the runner-up: a THIN margin (won by 1) means a near-duplicate
+      # template nearly matched too, so downstream should treat it as needs-review.
+      margin <- if (is.finite(second)) win_score - second else Inf
       return(list(template_id = win_id, score = win_score, matched = TRUE,
+                  margin = margin,
+                  runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
                   candidates = data.frame(id = ids, score = scores,
                                           stringsAsFactors = FALSE),
                   detail = detail))
@@ -109,6 +114,8 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     template_id = best_id,
     score = best_score,
     matched = FALSE,
+    margin = NA_real_,
+    runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
     candidates = data.frame(id = ids, score = scores, stringsAsFactors = FALSE),
     detail = detail
   )
