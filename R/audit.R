@@ -119,7 +119,7 @@ format_audit <- function(a) {
   if (!is.null(a$error)) return(paste("Audit failed:", a$error))
   L <- c()
   add <- function(...) L[[length(L) + 1L]] <<- paste0(...)
-  add("# Statement audit (safe to share — no PII, shapes only)\n")
+  add("# Statement audit (safe to share - no PII, shapes only)\n")
   add("_Every value is masked to its shape: letters -> x/X, digits -> 9. No merchant names, amounts, account numbers or dates are included._\n")
   add(sprintf("- file: %s (sha %s)", a$file_type, a$sha256_10 %||% "?"))
   add(sprintf("- format: %s, pages: %s, max page: %s pt", a$format, a$pages, a$max_page_pt))
@@ -142,13 +142,13 @@ format_audit <- function(a) {
   if (!is.null(a$trust)) add(sprintf("\n- trust: %s\n  - %s", a$trust$level,
       paste(a$trust$reasons, collapse = "\n  - ")))
   if (!is.null(a$rows_masked) && nrow(a$rows_masked)) {
-    add("\n## Row shapes (first rows; masked) — spot dropped/odd rows here")
+    add("\n## Row shapes (first rows; masked) - spot dropped/odd rows here")
     add("```")
     add(paste(capture.output(print(a$rows_masked, row.names = FALSE)), collapse = "\n"))
     add("```")
   }
   if (!is.null(a$words_masked) && nrow(a$words_masked)) {
-    add("\n## Page-1 word layout (masked) — for building a template")
+    add("\n## Page-1 word layout (masked) - for building a template")
     add("```")
     add(paste(capture.output(print(a$words_masked, row.names = FALSE)), collapse = "\n"))
     add("```")

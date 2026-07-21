@@ -2,13 +2,13 @@
 
 Every real-world statement edge case we know of, with an **honest** status and
 how it is (or will be) handled. This is the checklist the engine is measured
-against — "this is real world."
+against - "this is real world."
 
 **Status key**
-- ✅ **handled + tested** — covered by the engine with a passing test.
-- 🟡 **handled (reader) / partial** — mechanism exists but not proven on a real
+- ✅ **handled + tested** - covered by the engine with a passing test.
+- 🟡 **handled (reader) / partial** - mechanism exists but not proven on a real
   statement, or only part of the flow covers it.
-- ⛔ **needs real data** — cannot be built correctly without a real sample; the
+- ⛔ **needs real data** - cannot be built correctly without a real sample; the
   design is known, the code is not written/verified.
 
 Tests proving the ✅ items live in `tests/testthat/` (fixtures under
@@ -21,7 +21,7 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | Case | Status | How |
 |---|---|---|
 | UTF‑8 special chars in descriptions (`O'Connor & Sons`) | ✅ | preserved verbatim; only outer whitespace trimmed |
-| Ragged rows (fewer/more fields than header) | ✅ | `bnz_ragged_short/long` fixtures — row flagged `malformed`, **never dropped** |
+| Ragged rows (fewer/more fields than header) | ✅ | `bnz_ragged_short/long` fixtures - row flagged `malformed`, **never dropped** |
 | Embedded newlines inside quoted fields | ✅ | `bnz_embedded_newline` fixture |
 | Merged / escaped quotes | ✅ | `bnz_merged_quote` fixture |
 | Trailing/leading empty columns, CRLF endings | ✅ | reader normalises; fixtures carry CRLF |
@@ -38,7 +38,7 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | `D`/`C` type column (credit cards) | ✅ | `amount_sign: type_dc` (ANZ Visa, tested) |
 | Separate debit / credit columns | 🟡 | `amount_sign: debit_credit_cols` implemented; needs a fixture to mark ✅ |
 | `DR`/`CR` suffix | 🟡 | `amount_sign: dr_cr_suffix` implemented; needs a fixture |
-| Unsigned amounts, `CR` = payment (credit cards) | ✅ | `amount_sign: unsigned` — bare = charge (−), `CR` = payment (+); `unsigned_default: credit` to reconcile an owed balance (tested) |
+| Unsigned amounts, `CR` = payment (credit cards) | ✅ | `amount_sign: unsigned` - bare = charge (−), `CR` = payment (+); `unsigned_default: credit` to reconcile an owed balance (tested) |
 | Closing/opening balance printed in the amount column | ✅ | dropped as a summary row, still captured for reconciliation (tested) |
 | Parentheses negatives `(45.00)` | ✅ | normaliser handles `(45.00)` / `45.00-` (tested) |
 | Thousands separators `1,234.56` | ✅ | stripped in normalise, raw kept in `amount_raw` |
@@ -63,7 +63,7 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | Verbatim special characters | ✅ | never stripped (tested) |
 | Interior double spaces preserved | ✅ | `Auckland      Nz` kept byte‑for‑byte (ANZ Visa test) |
 | Very long / embedded delimiters (quoted) | ✅ | quoted‑field parsing |
-| Wrapped multi‑line description (one txn, several lines) — **PDF** | ⛔ | needs the PDF row parser + a real sample |
+| Wrapped multi‑line description (one txn, several lines) - **PDF** | ⛔ | needs the PDF row parser + a real sample |
 
 ## E. Transaction structure
 
@@ -76,13 +76,13 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | Redacted amount mid‑statement | ✅ | `bnz_redacted_amount` → `[REDACTED]` + `redacted` flag, row kept |
 | No silent drops (completeness) | ✅ | `no_unparsed_rows` KPI proves every data row became a transaction |
 | Reversals / duplicates / out‑of‑order dates | 🟡 | preserved verbatim; not *flagged* as such yet (design: an optional advisory KPI) |
-| Subtotals / carried‑forward lines interleaved — **PDF** | ⛔ | this is the "gap in the middle of a block" case; needs the PDF parser + real sample |
+| Subtotals / carried‑forward lines interleaved - **PDF** | ⛔ | this is the "gap in the middle of a block" case; needs the PDF parser + real sample |
 
 ## F. Redaction (forensic‑critical)
 
 **The tool never redacts anything.** Statements ARRIVE already redacted (by
 whoever sent them); the reader only pulls what is visible. The requirement is
-that a redaction must not *break* the read — never that we reconstruct or
+that a redaction must not *break* the read - never that we reconstruct or
 estimate what is hidden. Expected outcomes:
 
 - **Part of a row hidden** (e.g. amount blacked, date/description still visible):
@@ -101,7 +101,7 @@ estimate what is hidden. Expected outcomes:
 | Partial‑row redaction on a scanned page | ✅ | the black box is auto‑detected; the visible cells are kept, the blacked cell is `[REDACTED]` + flagged (tested) |
 | Whole‑row / full‑block redaction on a scanned page | ✅ | no visible anchor → the hidden rows do not appear; neighbours untouched; **no count estimated** |
 | Auto‑detect a rasterised black rectangle (no supplied coords) | ✅ | `detect_dark_regions()` finds solid black boxes on OCR pages (tested) |
-| Black **vector** box over still‑live text (improper redaction by sender) | ⛔ | not yet detected from the content stream — a known follow‑up |
+| Black **vector** box over still‑live text (improper redaction by sender) | ⛔ | not yet detected from the content stream - a known follow‑up |
 
 ## G. PDF‑specific
 
@@ -111,7 +111,7 @@ estimate what is hidden. Expected outcomes:
 | Mixed selectable + scanned pages | ✅ (reader) | per‑page: text layer where present, **OCR fallback** where empty, `ocr` flag |
 | Scanned / image‑only page | ✅ (reader) | Tesseract via `pdftoppm`, flagged `ocr`, lower trust |
 | Section detection by anchor phrases | ✅ | `detect_pdf_sections` |
-| **Transaction table → rows** | ⛔ | **not built** — the core missing piece; needs a real statement |
+| **Transaction table → rows** | ⛔ | **not built** - the core missing piece; needs a real statement |
 | Table split across a page break | ⛔ | design: stitch by column‑band continuity; needs real multi‑page sample |
 | Repeated page headers/footers, page numbers | ⛔ | design: drop by y‑band + repetition; needs real sample |
 | Rotated / multi‑column pages | ⛔ | needs real sample |
@@ -137,5 +137,5 @@ by the date‑parse row filter (a row is kept only if its date cell parses).
 **visual PDF wizard** creates PDF templates by drawing boxes.
 
 What remains is **data‑gated, not code**: real native export files for more
-banks, and real per‑bank PDF statements to add more `format: pdf` templates —
+banks, and real per‑bank PDF statements to add more `format: pdf` templates -
 each is a YAML + a wizard session, not an engine change.

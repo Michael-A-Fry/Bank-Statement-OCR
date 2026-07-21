@@ -182,7 +182,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     lh <- if (is.finite(rows$h[i]) && rows$h[i] > 0) rows$h[i] else 10
     gap <- rows$y0[i] - rows$y1[last_kept]
     if (is.finite(gap) && gap <= 0.9 * lh && gap >= -lh && !.is_footer_noise(rows$raw[i])) {
-      rows$reason[i] <- "continuation — its text is folded into the transaction above"
+      rows$reason[i] <- "continuation - its text is folded into the transaction above"
       rows$x0[last_kept] <- min(rows$x0[last_kept], rows$x0[i])
       rows$x1[last_kept] <- max(rows$x1[last_kept], rows$x1[i])
       rows$y1[last_kept] <- max(rows$y1[last_kept], rows$y1[i])

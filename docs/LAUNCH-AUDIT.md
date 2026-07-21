@@ -1,7 +1,7 @@
-# Launch audit — is it ready, what's missing, and the honest boundaries
+# Launch audit - is it ready, what's missing, and the honest boundaries
 
 A straight audit against the three things that matter: **usability, simplicity,
-maintenance** — plus your specific questions on **drift** and **missing data**,
+maintenance** - plus your specific questions on **drift** and **missing data**,
 and a **go/no-go** at the end. No spin.
 
 ---
@@ -22,8 +22,8 @@ and a **go/no-go** at the end. No spin.
   per-feedback, concurrency-safe.
 - **Test suite:** 34 files / 152 tests / 544 assertions, 0 failures.
 
-## 2. Usability — B+
-- **Great:** the live PREVIEW everywhere (Convert, guided, wizard, batch) — you
+## 2. Usability - B+
+- **Great:** the live PREVIEW everywhere (Convert, guided, wizard, batch) - you
   always see what will be extracted before trusting it. Plain-language settings
   ("how are amounts shown?"). Guided setup for the common case is genuinely
   one-confirmation. Diagnostics tell you exactly what to fix.
@@ -31,7 +31,7 @@ and a **go/no-go** at the end. No spin.
   a non-technical user; complex PDFs sometimes need it. Mitigated by auto-draft +
   the coverage report flagging what's empty, but not zero-effort on every PDF.
 
-## 3. Simplicity — A
+## 3. Simplicity - A
 - Engine is pure R, deterministic, no ML, no database, no build step.
 - A bank = one YAML file. Config is YAML; logs are JSON; both open in Notepad.
 - Deploy = unzip a folder. Maintain = edit a list of phrases / draw a box.
@@ -39,7 +39,7 @@ and a **go/no-go** at the end. No spin.
   read, but it's the piece most likely to intimidate. The *engine* stays small
   and clean, which is what matters for correctness.
 
-## 4. Maintenance — A-
+## 4. Maintenance - A-
 - One analyst can run it: add banks via wizard/guided, watch Admin, tidy logs.
 - Every template should get a golden test (documented); the curated set has them.
 - No external services to keep alive except the one R process (Option A) or the
@@ -47,8 +47,8 @@ and a **go/no-go** at the end. No spin.
 
 ---
 
-## 5. DRIFT — when a statement subtly changes, when is it caught?
-**Answer: automatically, at the next conversion, through reconciliation — and
+## 5. DRIFT - when a statement subtly changes, when is it caught?
+**Answer: automatically, at the next conversion, through reconciliation - and
 surfaced in Admin.**
 
 - If a bank moves/renames a field so a value lands in the wrong column, the
@@ -56,20 +56,20 @@ surfaced in Admin.**
   logged `needs_review` with a `low` trust and a diagnostic naming the broken
   check. The user sees it immediately on that conversion.
 - Across many runs, `template_drift()` (Admin → "Drift") flags a template whose
-  **recent health dropped** vs its earlier baseline — i.e. it used to produce
+  **recent health dropped** vs its earlier baseline - i.e. it used to produce
   clean `ok` runs and now produces review/low-trust ones. That's your early
-  warning that "template X is starting to fail — the bank changed something."
+  warning that "template X is starting to fail - the bank changed something."
 - **Caveat (important):** drift is only auto-caught when there's something to
   reconcile against (a balance, running balance, or stated count). If a field
-  changes on a statement that has none of those, see §6 — the tool flags
+  changes on a statement that has none of those, see §6 - the tool flags
   "completeness unverified" rather than silently passing.
 
-## 6. MISSING DATA — when does it work, when does it flag?
+## 6. MISSING DATA - when does it work, when does it flag?
 Deterministic rules, no guessing:
-- **A field is blank on some rows** (e.g. no reference on cash rows): fine —
+- **A field is blank on some rows** (e.g. no reference on cash rows): fine -
   extracted as blank, shown as `partial` in the coverage report. No flag.
 - **A field the template maps is blank on EVERY row**: coverage shows
-  `present-but-empty` — the signal that a column/box is probably wrong. Visible,
+  `present-but-empty` - the signal that a column/box is probably wrong. Visible,
   not fatal.
 - **A whole optional column isn't on the statement** (no balance column): mapped
   as `null`; coverage shows `unmapped`. Fine by design.
@@ -78,9 +78,9 @@ Deterministic rules, no guessing:
 - **A row can't be parsed** (bad date/amount): kept and flagged (`row_parse` /
   `amount_parse` diagnostic), never silently dropped for delimited input.
 - **The engine can't prove completeness** (no balance / running balance / stated
-  count — e.g. some Westpac PDFs): **completeness guard** fires. The run is never
+  count - e.g. some Westpac PDFs): **completeness guard** fires. The run is never
   rated `high`, and a `completeness_unverified` diagnostic says: "can't confirm
-  every transaction was captured — check the row count, or use a CSV/Excel
+  every transaction was captured - check the row count, or use a CSV/Excel
   export." This is the one place "missing data" could hide, and it is called out
   loudly instead of hidden.
 
@@ -93,12 +93,12 @@ Deterministic rules, no guessing:
 2. **Clean single-account PDFs** (tutorial-style, ANZ everyday) auto-draft and
    reconcile well.
 3. **Complex PDFs** (multi-column with type codes, balance shown only at day
-   boundaries, layout that varies between accounts — e.g. Westpac) are
+   boundaries, layout that varies between accounts - e.g. Westpac) are
    **best-effort**: auto-draft gets a starting point, a person confirms boxes in
    the wizard, and because balance is boundary-only the **completeness guard**
    does the protecting. Do NOT treat a PDF parse with no reconciliation as
    audit-final without eyeballing the row count.
-4. **Merged multi-statement bundles** are detected and flagged, not parsed — split
+4. **Merged multi-statement bundles** are detected and flagged, not parsed - split
    into one statement per file (the tool tells the user).
 5. **OCR'd scans** can have character errors on low-quality images; flagged with
    confidence, reconciliation still guards the totals.
@@ -107,13 +107,13 @@ Deterministic rules, no guessing:
 - Auto-draft that opens straight into the PDF wizard with boxes pre-drawn (today
   it hands you the draft + suggested boxes to confirm).
 - Header-anchored PDF column detection for messier layouts (attempted; reverted
-  as it regressed clean statements — needs more care).
+  as it regressed clean statements - needs more care).
 - Golden tests for user-contributed templates (process documented; encourage it).
 - AD-group check *inside* the app as a friendly gate (folder permission already
   enforces it; this is cosmetic).
 
 ## 9. Go / No-Go
-**GO to launch — with a scoped message.** Ship it for:
+**GO to launch - with a scoped message.** Ship it for:
 - **CSV / Excel exports and clean PDFs** → trust it (reconciles).
 - **Complex PDFs** → use it, but as *best-effort*: check the coverage report and
   the completeness warning, confirm the row count. Never treat an unreconciled
@@ -121,7 +121,7 @@ Deterministic rules, no guessing:
 
 The forensic-safety net (fail-loud diagnostics, trust levels, the completeness
 guard, redaction handling) means the tool **won't silently give a wrong answer**
-— its failure mode is "flagged for review", which is exactly right for auditors.
+- its failure mode is "flagged for review", which is exactly right for auditors.
 That's what makes it launchable tomorrow: not that it parses everything, but that
 it's honest about what it couldn't.
 

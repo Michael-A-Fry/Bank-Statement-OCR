@@ -51,7 +51,7 @@ test_that("inspect kept mirrors the engine: no amount / summary rows are NOT kep
   p <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
   expect_equal(nrow(p$rows), 3L)
   # only the real transaction is kept; the date-only line (no amount) and the
-  # 'Closing Balance' summary line are NOT — exactly as parse_pdf_table drops them.
+  # 'Closing Balance' summary line are NOT - exactly as parse_pdf_table drops them.
   expect_equal(sum(p$rows$kept), 1L)
   expect_true(p$rows$kept[grepl("^01/04", p$rows$date)])
   expect_false(p$rows$kept[grepl("^02/04", p$rows$date)])   # no amount

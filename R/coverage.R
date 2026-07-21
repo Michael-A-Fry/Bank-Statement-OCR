@@ -37,9 +37,9 @@ field_coverage <- function(parsed, template) {
       else if (pop < n) "partial"
       else "populated"
     note <- switch(verdict,
-      empty = "Template maps this but every row is blank — likely the wrong column/box.",
-      partial = sprintf("%d of %d rows blank — some statements just leave it empty.", n - pop, n),
-      unmapped = "Not mapped — this statement/template doesn't include it.",
+      empty = "Template maps this but every row is blank - likely the wrong column/box.",
+      partial = sprintf("%d of %d rows blank - some statements just leave it empty.", n - pop, n),
+      unmapped = "Not mapped - this statement/template doesn't include it.",
       "")
     data.frame(field = f, mapped = mapped, populated = pop, empty = n - pop,
                n = n, verdict = verdict, note = note, stringsAsFactors = FALSE)

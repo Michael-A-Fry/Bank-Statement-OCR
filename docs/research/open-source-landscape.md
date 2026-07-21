@@ -1,4 +1,4 @@
-# Open-source landscape — statement extraction, PDF tables & OCR
+# Open-source landscape - statement extraction, PDF tables & OCR
 
 A practical survey of open-source projects and techniques for **bank-statement
 extraction, PDF table recovery, and OCR**, read through the lens of *our* engine:
@@ -14,15 +14,15 @@ and the cross-cutting backlog. It does not repeat the binarise/deskew mechanics.
 
 ## The license lens (read first)
 
-- **Permissive — MIT / BSD / Apache-2.0 / MPL-2.0:** safe to *learn from* and even
+- **Permissive - MIT / BSD / Apache-2.0 / MPL-2.0:** safe to *learn from* and even
   to vendor small, attributed snippets. Most of the best table/parse work is here.
-- **Copyleft — GPL-2.0/3.0, AGPL:** *learn the technique, never copy the source*
+- **Copyleft - GPL-2.0/3.0, AGPL:** *learn the technique, never copy the source*
   into our R. Copying a GPL function makes the whole engine GPL.
 - **NOASSERTION / custom:** treat as "learn from structure only" until the licence
   is confirmed.
 - **Running a binary is not copying.** We shell out to `tesseract` (Apache-2.0) and
   use poppler via `pdftools` (poppler is GPL-2.0+, but `pdftools` itself is MIT and
-  we only *call* it). Invoking a separate process/CLI is not a derivative work — so
+  we only *call* it). Invoking a separate process/CLI is not a derivative work - so
   our poppler/tesseract usage is clean even where the tool is GPL. The rule only
   bites if we paste GPL *source* into `R/`.
 
@@ -35,34 +35,34 @@ and the cross-cutting backlog. It does not repeat the binarise/deskew mechanics.
 | [Camelot](https://github.com/camelot-dev/camelot) | Python | MIT | Two modes: **lattice** (OpenCV morphology finds ruling lines → cell grid from line intersections) and **stream** (whitespace/text clustering; accepts explicit column x-separators) |
 | [Tabula / tabula-java](https://github.com/tabulapdf/tabula-java) | Java | MIT | "Spreadsheet/lattice" (ruling lines) vs "guess/stream" (whitespace-gap column detection); GUI to draw the table area |
 | [pdfplumber](https://github.com/jsvine/pdfplumber) | Python | MIT | Word/char objects with x0/x1/top/bottom; table finder with `vertical_strategy`/`horizontal_strategy` = `lines`\|`text`\|`explicit` + snap/join/text tolerances; visual debugger |
-| [Excalibur](https://github.com/camelot-dev/excalibur) | Python | MIT | Web UI over Camelot — point-and-click table area + column separators |
+| [Excalibur](https://github.com/camelot-dev/excalibur) | Python | MIT | Web UI over Camelot - point-and-click table area + column separators |
 | pdftotext `-layout` | C++ (poppler) | GPL-2.0+ | Reflows the text layer preserving column whitespace; no cell model |
 
-**Lattice vs stream — and where we sit.** *Lattice* needs drawn gridlines and
+**Lattice vs stream - and where we sit.** *Lattice* needs drawn gridlines and
 recovers cells from line intersections; it is unbeatable on boxed credit-card
 tables but useless on the whitespace-column layouts most NZ statements use.
 *Stream* infers columns from whitespace: group words into rows by `y`, then find
 the vertical gutters between `x`-clusters. **Our `format: pdf` x-band approach is
-stream mode with human-supplied column separators** — i.e. exactly Camelot
+stream mode with human-supplied column separators** - i.e. exactly Camelot
 `stream` with an explicit `columns=` list, or pdfplumber
 `vertical_strategy="explicit"`. That is deliberately the *most robust* variant:
 the wizard lets an analyst draw the gutters instead of trusting a gap-detector, so
 we never mis-split a sparse column. `parse_pdf_table.R` already does row-grouping
-by `y` (`row_tol`) and column assignment by band — the same primitives these
+by `y` (`row_tol`) and column assignment by band - the same primitives these
 tools use.
 
 - **Adopt (Camelot/pdfplumber → wizard auto-suggest):** their whitespace column
-  detection is worth porting *as a suggestion* in `wizard_detect.R` — build an
+  detection is worth porting *as a suggestion* in `wizard_detect.R` - build an
   x-histogram of word left-edges (and, for amounts, **right-edges** so decimal
   points align) and pre-place the band boundaries at the valleys, which the analyst
   then nudges. Learn-from only, both MIT so a small snippet is fine.
 - **Adopt (pdfplumber tolerances → template schema):** their `snap_tolerance` /
   `text_tolerance` / `join_tolerance` are the exact knobs a real statement needs;
-  we have `row_tol` — add an optional column-snap tolerance for wobbly renders.
+  we have `row_tol` - add an optional column-snap tolerance for wobbly renders.
 - **Adopt (Tabula/Excalibur → our wizard):** their "draw the area + columns" UX is
   precisely our visual wizard; validates the design. Nothing to port, but their
   `area`+`columns` model = our `region`+`columns.x_min/x_max`.
-- **Skip:** pdftotext `-layout` — it throws away the cell geometry `pdf_data`
+- **Skip:** pdftotext `-layout` - it throws away the cell geometry `pdf_data`
   already gives us, and it is GPL.
 
 ---
@@ -78,9 +78,9 @@ tools use.
 | [hledger](https://github.com/simonmichael/hledger) CSV rules | Haskell | GPL-3.0 | Declarative `.rules` file: `fields`, `if` blocks (regex match → set field), `date-format`, `skip` |
 | [Benrnz/BudgetAnalyser](https://github.com/Benrnz/BudgetAnalyser) | C# | MIT | NZ-built PFM with per-bank CSV import matching |
 
-**Config vs code — the key finding.** The projects that scale to many banks all
+**Config vs code - the key finding.** The projects that scale to many banks all
 push the format into *data*, and the cleanest of them (**bank2ynab**) proves our
-central thesis: ~100 banks as pure config, no per-bank code — the same bet our
+central thesis: ~100 banks as pure config, no per-bank code - the same bet our
 YAML-template rule makes. Its section keys are effectively a **schema checklist**
 we should measure our template format against:
 
@@ -91,27 +91,27 @@ we should measure our template format against:
 - `Input Columns` → our `columns:` map (we already do this, by name not position).
 - `Date Format` → we have `columns.date.format`.
 - `Delimiter`, `Encoding`, `Has Headers` → we have `delimiter`; **encoding is
-  implicit** — worth an explicit key given the UTF-8-BOM / cp1252 edge cases in
+  implicit** - worth an explicit key given the UTF-8-BOM / cp1252 edge cases in
   `samples/`.
 - `Inverted` (flip sign), `Fill/Swap` → maps to our `amount_sign`; an explicit
   per-column sign-inversion flag would cover debit-positive exports.
 
   **Adopt (bank2ynab → `templates/` schema + `schema.R`):** treat its config keys
-  as the gap-analysis for our YAML — add explicit `encoding`, `skip_rows`, and a
+  as the gap-analysis for our YAML - add explicit `encoding`, `skip_rows`, and a
   per-amount `invert` flag. Pure config, no engine code, fits the rule exactly.
   *License is unspecified (NOASSERTION) → copy the idea/keys, not the file.*
 
 - **Adopt (bankstatementparser → `reconcile.R` + tests):** its **"Golden Rule"**
   (opening + Σ movements = closing) and running-continuity check are what we
-  already do in `reconcile.R`; borrow two refinements — (a) **localise** the first
+  already do in `reconcile.R`; borrow two refinements - (a) **localise** the first
   row where running balance diverges and point the diagnostic there, and (b) its
   **accuracy-eval harness** idea to formalise our golden-file tests into a scored
   regression. Also its **input-format breadth** (MT940 / OFX-QFX / CAMT) is a
-  future declarative path — and we already ship synthetic `.mt940` / `.qfx`
+  future declarative path - and we already ship synthetic `.mt940` / `.qfx`
   samples. *Apache-2.0 → safe to learn from generously (attribute if we vendor).*
 - **Adopt (ofxstatement → schema sanity):** its `StatementLine` field set
   (date, amount, payee, memo, check_no, refnum, trntype) is a battle-tested
-  superset — a good cross-check that our 16-col core schema isn't missing a common
+  superset - a good cross-check that our 16-col core schema isn't missing a common
   field. *GPL-3.0 → technique/shape only, never copy the parser code.*
 - **Adopt (hledger `if` rules → optional template rules):** conditional field
   logic ("if description matches FEE → force sign negative", "if TYPE=DR →
@@ -121,7 +121,7 @@ we should measure our template format against:
 - **Adopt (GnuCash → nothing new):** its saved import presets == our saved YAML;
   confirms persistence approach. *GPL.*
 - **Adopt (bank2ynab NZ sections / BudgetAnalyser):** bank2ynab ships configs for
-  ASB, ANZ, BNZ, Kiwibank, Westpac — **our exact banks** — so their column maps are
+  ASB, ANZ, BNZ, Kiwibank, Westpac - **our exact banks** - so their column maps are
   a free correctness cross-check for our six delimited templates. *MIT (BudgetAnalyser)
   / NOASSERTION (bank2ynab) → compare, don't copy.*
 
@@ -137,15 +137,15 @@ space this engine fills.
 | Project | Lang | License | Notes for us |
 |---|---|---|---|
 | [Tesseract](https://github.com/tesseract-ocr/tesseract) | C++ | Apache-2.0 | Already our engine (shelled out). LSTM (`--oem 1`), PSM, `tsv` conf/bbox output |
-| [OCRmyPDF](https://github.com/ocrmypdf/OCRmyPDF) | Python | MPL-2.0 | Orchestrates the *right* pipeline around Tesseract — the recipe to mirror |
-| [kraken](https://github.com/mittagessen/kraken) | Python | Apache-2.0 | Trainable line recogniser; ML models, PyTorch — **not portable to pure R** |
-| [docTR](https://github.com/mindee/doctr) | Python | Apache-2.0 | Strong detection+recognition+layout, but TF/PyTorch + model weights — **Python-only, out of scope** |
-| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python | Apache-2.0 | Best-in-class layout/table, but Paddle runtime + weights — **out of scope** |
+| [OCRmyPDF](https://github.com/ocrmypdf/OCRmyPDF) | Python | MPL-2.0 | Orchestrates the *right* pipeline around Tesseract - the recipe to mirror |
+| [kraken](https://github.com/mittagessen/kraken) | Python | Apache-2.0 | Trainable line recogniser; ML models, PyTorch - **not portable to pure R** |
+| [docTR](https://github.com/mindee/doctr) | Python | Apache-2.0 | Strong detection+recognition+layout, but TF/PyTorch + model weights - **Python-only, out of scope** |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) | Python | Apache-2.0 | Best-in-class layout/table, but Paddle runtime + weights - **out of scope** |
 
 **The portable one is OCRmyPDF.** It is the canonical "wrap Tesseract properly"
 tool and its *order of operations* is exactly what our `magick` pipeline should
 do: **skip pages that already have a text layer** (`--skip-text` == our
-text-layer-first rule), **deskew**, **clean** (via `unpaper` — our
+text-layer-first rule), **deskew**, **clean** (via `unpaper` - our
 `image_deskew`/`image_lat`/`image_despeckle` equivalents), **rotate by OSD**, then
 OCR, then attach a searchable layer. It also proves the "don't OCR digital PDFs"
 decision at scale.
@@ -155,9 +155,9 @@ decision at scale.
   already written up in `ocr-preprocessing.md` but not yet fully wired. *MPL-2.0 is
   file-level copyleft → learn freely, don't copy whole files into `R/`.*
 - **Adopt (Tesseract → `ocr.R`):** switch to `tsv` output for per-word
-  `conf`+bbox, `--oem 1`, PSM 4/6 for tables, and per-column char allowlists — all
+  `conf`+bbox, `--oem 1`, PSM 4/6 for tables, and per-column char allowlists - all
   detailed in `ocr-preprocessing.md`. *Apache-2.0.*
-- **Avoid:** kraken / docTR / PaddleOCR — all require Python + ML runtimes + model
+- **Avoid:** kraken / docTR / PaddleOCR - all require Python + ML runtimes + model
   weights, which violates the no-Python / no-heavy-deps constraint outright. Note
   them only as the "if we ever leave pure-R" ceiling for scanned-table accuracy.
 
@@ -165,7 +165,7 @@ decision at scale.
 
 ## 4. Statement validation / requirements (mirror Hubdoc)
 
-Hubdoc/Xero publish a crisp set of ingest rules for statement extraction — a good
+Hubdoc/Xero publish a crisp set of ingest rules for statement extraction - a good
 template for **pre-flight input validation** that produces our fail-loud
 diagnostics *before* wasting a parse. Rules (per
 [Xero Central / Hubdoc](https://central.xero.com/s/article/About-bank-statement-extraction-in-Hubdoc)):
@@ -177,9 +177,9 @@ height/width **40 in / 2880 pt**.
 |---|---|---|
 | Single statement only | reject/flag if multi-statement detected | **Have** multi-statement detection → wire it to a hard diagnostic |
 | All pages present | continuity KPI + parse "Page X of Y" if printed | **Partly** (reconciliation + page_count) → add page-sequence check |
-| Min 200 DPI (scans) | measure source/render DPI; warn `<200`, block very low | **New** — cheap `pdftools`/`magick` check on the OCR path |
-| ≤ 100 pages | input guard | **New** — trivial pre-flight |
-| ≤ 2880 pt (40 in) page size | input guard from `pdf_pagesize` | **New** — trivial pre-flight |
+| Min 200 DPI (scans) | measure source/render DPI; warn `<200`, block very low | **New** - cheap `pdftools`/`magick` check on the OCR path |
+| ≤ 100 pages | input guard | **New** - trivial pre-flight |
+| ≤ 2880 pt (40 in) page size | input guard from `pdf_pagesize` | **New** - trivial pre-flight |
 | English only | `-l eng`; flag script/lang mismatch via OSD | **Partly** (we only load `eng`) → make the assumption explicit + flagged |
 | Debit/credit statement, not a form | detect step / metadata | **Have** (`detect.R`, metadata) |
 | Not empty / no text and no image | guard → `unsupported` | **Partly** (`page_needs_ocr`) → add explicit empty-doc guard |
@@ -190,7 +190,7 @@ height/width **40 in / 2880 pt**.
   a single cheap **pre-flight validation pass** that emits our structured
   where/why/how-bad/how-to-fix diagnostics. The four "New" ones (DPI floor, page
   count, page dimensions, empty doc) are a few lines of `pdftools` each and turn
-  silent bad-input failures into actionable messages. *Hubdoc is a spec, not code —
+  silent bad-input failures into actionable messages. *Hubdoc is a spec, not code -
   nothing to license; we mirror the requirements.*
 
 ---
@@ -199,13 +199,13 @@ height/width **40 in / 2880 pt**.
 
 | Package | License | Verdict |
 |---|---|---|
-| [`pdftools`](https://github.com/ropensci/pdftools) | MIT | **Keep — our foundation.** `pdf_text` + `pdf_data` (word boxes x/y/w/h) is exactly the stream primitive; no Java, no Python |
+| [`pdftools`](https://github.com/ropensci/pdftools) | MIT | **Keep - our foundation.** `pdf_text` + `pdf_data` (word boxes x/y/w/h) is exactly the stream primitive; no Java, no Python |
 | [`magick`](https://github.com/ropensci/magick) | MIT | **Keep.** All preprocessing (greyscale/deskew/lat/despeckle/trim) in one MIT package |
-| [`tesseract`](https://github.com/ropensci/tesseract) (R pkg) | (Apache-2.0/MIT) | **Optional.** `ocr_data()` returns word+conf+bbox as a data frame — the `tsv` glue for free. We deliberately shell out (no binding). Legitimate low-cost alt, but adds a package that bundles libtesseract; given "no new deps", keep shelling out unless the glue gets painful |
+| [`tesseract`](https://github.com/ropensci/tesseract) (R pkg) | (Apache-2.0/MIT) | **Optional.** `ocr_data()` returns word+conf+bbox as a data frame - the `tsv` glue for free. We deliberately shell out (no binding). Legitimate low-cost alt, but adds a package that bundles libtesseract; given "no new deps", keep shelling out unless the glue gets painful |
 | `tabulizer` (retired from CRAN) / [`tabulapdf`](https://cran.r-project.org/package=tabulapdf) | MIT | **Avoid.** R bindings to Tabula (Java) via `rJava` → drags in a full JVM + `rJava`. That is precisely the heavy dep we forbid, and it buys nothing: our `pdf_data` + x-band already reproduces Tabula **stream** without Java. Lattice-only tables would be the only reason, and we don't have those yet |
 
 **Honest bottom line for R:** there is **no mature R-native bank-statement
-parser** to adopt — the space is empty, which is why this engine exists. The right
+parser** to adopt - the space is empty, which is why this engine exists. The right
 R stack is exactly what we run: `pdftools` for geometry, `magick` for pixels,
 `tesseract` CLI for OCR, `yaml`/`openxlsx` for config/output. Adding `tabulapdf`
 (Java) or any Python OCR would trade our clean deployment story for marginal gains
@@ -223,11 +223,11 @@ Highest leverage first; each fits pure-R / YAML-template / no-new-deps. Tags:
    ≤100, page-size ≤2880 pt, non-empty, DPI≥200 on scans, single-statement (wire
    existing detection), explicit English assumption. A few lines of `pdftools`
    each; converts silent bad-input into actionable diagnostics. *Highest ROI,
-   lowest cost.* (Source: Hubdoc/Xero spec — no license.)
+   lowest cost.* (Source: Hubdoc/Xero spec - no license.)
 2. **[enhance] bank2ynab-style config-key gap-fill** → template schema +
    `schema.R`. Add explicit `encoding`, `skip_rows`, and per-amount `invert`
    keys; audit our six templates against bank2ynab's ASB/ANZ/BNZ/Kiwibank/Westpac
-   sections. Pure config, no code path per bank — dead-on the design rule. (MIT
+   sections. Pure config, no code path per bank - dead-on the design rule. (MIT
    cross-checks / NOASSERTION config → copy ideas only.)
 3. **[enhance] Continuity-diagnostic localisation** → `reconcile.R`. Keep our
    Golden-Rule/running-balance checks (already **[done]**) but, per
@@ -243,11 +243,11 @@ Highest leverage first; each fits pure-R / YAML-template / no-new-deps. Tags:
    `ocr-preprocessing.md`; OCRmyPDF is the reference for ordering and the
    skip-if-text-layer gate. (Tesseract Apache-2.0; OCRmyPDF MPL-2.0 → mirror,
    don't copy files.)
-6. **[new, optional] hledger-style `rules:` block** in templates — conditional
-   match→set for sign flips / type mapping — *only if* a real statement needs
+6. **[new, optional] hledger-style `rules:` block** in templates - conditional
+   match→set for sign flips / type mapping - *only if* a real statement needs
    logic a static column map can't express. Keeps banks declarative. (GPL →
    concept only.)
-7. **[new, data-gated] Declarative MT940 / OFX-QFX / CAMT input paths** — we ship
+7. **[new, data-gated] Declarative MT940 / OFX-QFX / CAMT input paths** - we ship
    synthetic samples already; bankstatementparser (Apache-2.0) shows the parse
    shape. Adds new *formats*, still no per-bank code.
 
@@ -262,7 +262,7 @@ GPL source (ofxstatement, hledger, GnuCash, poppler) into `R/`.
 - Camelot vs Tabula vs pdfplumber (lattice/stream): [Camelot comparison wiki](https://github.com/camelot-dev/camelot/wiki/Comparison-with-other-PDF-Table-Extraction-libraries-and-tools), [pdfplumber](https://github.com/jsvine/pdfplumber), [invoicedataextraction comparison](https://invoicedataextraction.com/blog/python-pdf-table-extraction-invoices)
 - Bank importers: [bank2ynab](https://github.com/bank2ynab/bank2ynab) (NOASSERTION), [ofxstatement](https://github.com/kedder/ofxstatement) (GPL-3.0), [sebastienrousseau/bankstatementparser](https://github.com/sebastienrousseau/bankstatementparser) (Apache-2.0), [hledger CSV rules](https://hledger.org/hledger.html#csv), [Benrnz/BudgetAnalyser](https://github.com/Benrnz/BudgetAnalyser) (MIT)
 - OCR tooling: [OCRmyPDF](https://github.com/ocrmypdf/OCRmyPDF) (MPL-2.0), [Tesseract](https://github.com/tesseract-ocr/tesseract) (Apache-2.0), [open-source OCR comparison 2025/26](https://unstract.com/blog/best-opensource-ocr-tools/), [modal.com OCR model comparison](https://modal.com/blog/8-top-open-source-ocr-models-compared)
-- Statement validation: [About bank statement extraction in Hubdoc — Xero Central](https://central.xero.com/s/article/About-bank-statement-extraction-in-Hubdoc)
+- Statement validation: [About bank statement extraction in Hubdoc - Xero Central](https://central.xero.com/s/article/About-bank-statement-extraction-in-Hubdoc)
 - R-native: [tabulapdf on CRAN](https://cran.r-project.org/package=tabulapdf) & [tabulapdf paper (arXiv 2409.14524)](https://arxiv.org/pdf/2409.14524) (Java/rJava), [pdftools](https://github.com/ropensci/pdftools), [R-bloggers tabulapdf intro](https://www.r-bloggers.com/2024/04/tabulapdf-extract-tables-from-pdf-documents/)
 
 *Licences verified via the GitHub API where shown; permissive projects (MIT/Apache-2.0/

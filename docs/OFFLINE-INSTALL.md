@@ -1,7 +1,7 @@
-# Offline install — for a locked-down PC with no internet
+# Offline install - for a locked-down PC with no internet
 
 Two files do it. You run one on an internet **laptop**, drag one folder across,
-and run the other on the offline **Windows PC**. No compiling, no Rtools — you're
+and run the other on the offline **Windows PC**. No compiling, no Rtools - you're
 moving prebuilt Windows binaries.
 
 ## The one rule that makes it work
@@ -19,11 +19,11 @@ From the repo folder, under **R 4.6**, run one command:
 Rscript scripts/bundle-offline.R
 ```
 It builds a single **`bso-offline/`** folder containing:
-- `repo/` — every R package + all dependencies (Windows binaries)
-- `prereqs/` — the R 4.6 installer, plus the Tesseract and Poppler installers
+- `repo/` - every R package + all dependencies (Windows binaries)
+- `prereqs/` - the R 4.6 installer, plus the Tesseract and Poppler installers
   (best effort; if a download is blocked it prints the URL to grab by hand)
-- `install-on-pc.R` — the PC-side script
-- `packages.txt` — the list, for reference
+- `install-on-pc.R` - the PC-side script
+- `packages.txt` - the list, for reference
 
 Then **drag the whole `bso-offline` folder to the PC** (USB / share), along with
 the **app folder** (this repo as a ZIP).

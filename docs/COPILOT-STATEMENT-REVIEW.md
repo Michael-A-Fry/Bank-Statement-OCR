@@ -1,7 +1,7 @@
-# Reviewing a statement safely (for Copilot) — no PII, structure only
+# Reviewing a statement safely (for Copilot) - no PII, structure only
 
 Use this when a statement doesn't convert cleanly and you want a **safe-to-share
-description of its layout** to pass back for a template or engine fix — **without
+description of its layout** to pass back for a template or engine fix - **without
 ever sending personal data**.
 
 ## The golden rule
@@ -11,7 +11,7 @@ ever sending personal data**.
 > A real value like `Countdown 47.20 on 17 Sep` must become a **shape**, e.g.
 > `<merchant text> <amount 9.99> on <date "99 Xxx">`.
 
-## Preferred path — let the engine do it (guaranteed safe)
+## Preferred path - let the engine do it (guaranteed safe)
 Run the built-in audit; it masks every value to its shape automatically (letters
 → `x`/`X`, digits → `9`) so the output is safe by construction:
 
@@ -19,12 +19,12 @@ Run the built-in audit; it masks every value to its shape automatically (letters
 Rscript scripts/audit-statement.R  path/to/statement.pdf
 ```
 
-It writes `statement.audit.md` — read it, confirm it looks safe, then share **that
+It writes `statement.audit.md` - read it, confirm it looks safe, then share **that
 file**. It already contains the format, page layout, detected template, date/
 amount styles, redaction map, KPI statuses, masked row shapes, and a masked
 page-1 word layout. This is the best thing to send back.
 
-## Copilot path — when you can only use Copilot on the PDF
+## Copilot path - when you can only use Copilot on the PDF
 Paste the prompt below into Copilot along with the PDF. It asks Copilot to produce
 the same kind of PII-free structural summary.
 
@@ -42,7 +42,7 @@ HARD RULES:
 
 Describe ONLY:
 1. Document kind: bank transaction statement, or a form/summary (e.g. IRD/
-   KiwiSaver — labelled values, not a transaction table)?
+   KiwiSaver - labelled values, not a transaction table)?
 2. Pages, and roughly how many transaction rows.
 3. The columns, left to right, with the FIELD each holds (date / description /
    withdrawal / deposit / amount / balance / type / reference) and their rough
@@ -66,5 +66,5 @@ Output as short bullet points. Shapes only. No real values anywhere.
 ## Sending it back
 Share the resulting `*.audit.md` (or Copilot's bullet points). Because it is
 shapes-only, it is safe to paste. From it, a template can be built or the engine
-adjusted — column positions, date/amount handling, redaction behaviour — with no
+adjusted - column positions, date/amount handling, redaction behaviour - with no
 personal data ever leaving your environment.

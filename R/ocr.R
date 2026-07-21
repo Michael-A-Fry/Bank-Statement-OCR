@@ -4,8 +4,8 @@
 #
 # Used as the fallback path in read_pdf.R for pages with no usable text layer
 # (scanned / image-only statements). OCR only ever reads VISIBLE pixels, so any
-# redaction painted over the page is inherently respected — Tesseract cannot read
-# what a black box covers — and every OCR'd value is flagged `ocr` with lower
+# redaction painted over the page is inherently respected - Tesseract cannot read
+# what a black box covers - and every OCR'd value is flagged `ocr` with lower
 # confidence so forensic reviewers always know machine-read vs. extracted text.
 
 # TRUE only when both external tools are present on PATH.

@@ -95,7 +95,7 @@ about_html <- function() HTML('
 </style>
 <div class="ab">
 <h2 style="margin:0">Bank Statement OCR</h2>
-<p class="muted">Turn any bank statement — PDF, Excel or CSV — into clean, audit-grade transaction data you can trust. Built for forensic accountants. Deterministic (no AI guessing): if it can&#39;t be sure, it tells you exactly why.</p>
+<p class="muted">Turn any bank statement - PDF, Excel or CSV - into clean, audit-grade transaction data you can trust. Built for forensic accountants. Deterministic (no AI guessing): if it can&#39;t be sure, it tells you exactly why.</p>
 
 <h3>How it flows, end to end</h3>
 <div class="flow">
@@ -127,7 +127,7 @@ about_html <- function() HTML('
 <h3>Get started in 3 steps</h3>
 <ol>
 <li><b>Convert tab</b> &rarr; upload a statement &rarr; <b>Convert</b>. Review the checks &amp; coverage, then download.</li>
-<li>If it says <b>unsupported</b>, click <b>🪄 Set up this statement (guided)</b> — confirm the pre-filled preview, Save. Convert again.</li>
+<li>If it says <b>unsupported</b>, click <b>🪄 Set up this statement (guided)</b> - confirm the pre-filled preview, Save. Convert again.</li>
 <li>Rate the result (the thumbs) so the team can see what works. That&#39;s it.</li>
 </ol>
 <p class="muted">Deeper how-to (drawing PDF columns, every way statements differ): the <b>ⓘ</b> button on the Add-a-template tab, or <code>docs/wizard-tutorial.md</code>. Best results come from CSV/Excel exports where your bank offers them.</p>

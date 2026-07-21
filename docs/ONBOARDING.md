@@ -1,4 +1,4 @@
-# Onboarding — running and maintaining the statement engine
+# Onboarding - running and maintaining the statement engine
 
 For the analyst who looks after this. No software-engineering background needed.
 You will do three things: **convert** statements, **add a bank** when a new
@@ -35,22 +35,22 @@ Start the app:
 2. Leave **Bank** on *auto-detect* (only force a bank if detection is wrong).
 3. Click **Convert**.
 4. Read the result:
-   - **Status** — `OK` (good), `NEEDS_REVIEW` (parsed but a check failed),
-     `UNSUPPORTED` (no template matched — add one, see §2), `FAILED` (unreadable
-     — the message says why).
-   - **Trust** — high / medium / low, from the checks.
-   - **Checks** — the reconciliation KPIs (balance, running-balance, count,
+   - **Status** - `OK` (good), `NEEDS_REVIEW` (parsed but a check failed),
+     `UNSUPPORTED` (no template matched - add one, see §2), `FAILED` (unreadable
+     - the message says why).
+   - **Trust** - high / medium / low, from the checks.
+   - **Checks** - the reconciliation KPIs (balance, running-balance, count,
      completeness…). A `fail` is flagged, never silently corrected.
-   - **Transactions** — a preview of the exact table you'll download.
+   - **Transactions** - a preview of the exact table you'll download.
 5. **Download** the Excel / CSV / JSON.
 
 > Rule of thumb: **trust `high`** = ship it. **`medium`** = usually a CSV export
-> with no balance to reconcile against — fine, but glance at the preview.
+> with no balance to reconcile against - fine, but glance at the preview.
 > **`low` / a failed check** = open the source and compare before you rely on it.
 
 ---
 
-## 2. Add a new bank — the wizard (no code)
+## 2. Add a new bank - the wizard (no code)
 
 When a statement comes in that says `UNSUPPORTED`, you teach the engine its
 layout **once**:
@@ -69,20 +69,20 @@ layout **once**:
    | **balance** | running balance column | pick it if present → unlocks the balance check |
 
 3. Set the small settings:
-   - **Delimiter** — `,` for CSV, `\t`-style for TSV.
-   - **Date format** — strptime codes: `%d/%m/%Y` (31/12/2025),
+   - **Delimiter** - `,` for CSV, `\t`-style for TSV.
+   - **Date format** - strptime codes: `%d/%m/%Y` (31/12/2025),
      `%d/%m/%y` (31/12/25), `%Y-%m-%d` (2025-12-31), `%d %b %Y` (31 Dec 2025).
    - **Amount style**:
-     - `signed` — one column, minus = debit *(most NZ CSV exports)*
-     - `type_dc` — a `D`/`C` column decides the sign *(credit cards)*
-     - `debit_credit_cols` — separate debit and credit columns
-     - `dr_cr_suffix` — `123.45 DR`
-   - **Fingerprint columns** — tick the header names that uniquely identify this
+     - `signed` - one column, minus = debit *(most NZ CSV exports)*
+     - `type_dc` - a `D`/`C` column decides the sign *(credit cards)*
+     - `debit_credit_cols` - separate debit and credit columns
+     - `dr_cr_suffix` - `123.45 DR`
+   - **Fingerprint columns** - tick the header names that uniquely identify this
      bank. The engine matches a file to this template only if **all** ticked
      columns are present, so pick distinctive ones.
-4. **Preview parse** — the table on the right updates. Check: dates look ISO,
+4. **Preview parse** - the table on the right updates. Check: dates look ISO,
    debits are negative, descriptions are intact, no rows missing.
-5. **Save template** — writes `templates/<id>.yaml`. Done — that bank is now
+5. **Save template** - writes `templates/<id>.yaml`. Done - that bank is now
    supported for everyone.
 
 ### Worked example (BNZ everyday)
@@ -110,21 +110,21 @@ Rscript tests/run_tests.R
 ```
 
 To lock in a new bank so it can never silently regress, add a **golden test**:
-see [`tests/HOWTO-add-template-test.md`](../tests/HOWTO-add-template-test.md) —
+see [`tests/HOWTO-add-template-test.md`](../tests/HOWTO-add-template-test.md) -
 it is: save one correct output as the "expected" file, add a 1-line test. If a
 future change alters that bank's output, the test goes red immediately.
 
 ---
 
-## 5. PDFs — the honest state, and what "coding in the fields" means
+## 5. PDFs - the honest state, and what "coding in the fields" means
 
 Today the engine **reads** PDFs (all pages, word positions, sections, the
 redaction guard, and OCR for scanned pages) but does **not yet turn a PDF into
-transaction rows** — because doing that correctly needs a real statement to
+transaction rows** - because doing that correctly needs a real statement to
 measure the column positions from. See [`docs/edge-cases.md`](edge-cases.md) §G.
 
 When you have a real multi-page PDF statement, adding it is **not** free-hand
-coding — it's the same fill-in-the-blanks as a CSV, plus geometry:
+coding - it's the same fill-in-the-blanks as a CSV, plus geometry:
 
 ```yaml
 id: anz_everyday_pdf
@@ -147,7 +147,7 @@ table:
 
 That template is the "fields you code in." The one thing that has to be built
 **once** (by me, or whoever maintains this) is the small PDF table reader that
-consumes it — a ~day of work against a real sample, then it's tested and it's
+consumes it - a ~day of work against a real sample, then it's tested and it's
 just-add-a-YAML forever after, exactly like the CSV path.
 
 ---

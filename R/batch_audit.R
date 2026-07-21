@@ -93,7 +93,7 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
         recs[[length(recs) + 1L]] <- list(
           signature = top$signature[k], count = top$count[k], kind = top$kind[k],
           draft_id = t$id %||% NA_character_,
-          draft_yaml = if (is.null(t)) "(could not auto-draft — build in the wizard)"
+          draft_yaml = if (is.null(t)) "(could not auto-draft - build in the wizard)"
                        else template_yaml(t))
       }
     }
@@ -120,7 +120,7 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
 format_batch_audit <- function(b) {
   L <- c(); add <- function(...) L[[length(L) + 1L]] <<- paste0(...)
   g <- b$feature_gaps
-  add("# Bulk statement audit (safe to share — no PII)\n")
+  add("# Bulk statement audit (safe to share - no PII)\n")
   add(sprintf("**%d statements.** Status: %s.", g$total,
       paste(sprintf("%s=%s", names(g$by_status), g$by_status), collapse = ", ")))
   add(sprintf("Kinds: %s.", paste(sprintf("%s=%s", names(g$by_kind), g$by_kind), collapse = ", ")))
@@ -130,16 +130,16 @@ format_batch_audit <- function(b) {
   add(sprintf("- amount styles seen: %s", paste(sprintf("%s(%s)", names(g$amount_styles), g$amount_styles), collapse = ", ")))
   add(sprintf("- date formats seen: %s", paste(sprintf("%s(%s)", names(g$date_formats), g$date_formats), collapse = ", ")))
   add(sprintf("- banks matched: %s", paste(sprintf("%s(%s)", names(g$banks), g$banks), collapse = ", ")))
-  add(sprintf("\n## The gaps — %d unsupported/failed across %d distinct layouts", g$unsupported, g$distinct_gap_layouts))
+  add(sprintf("\n## The gaps - %d unsupported/failed across %d distinct layouts", g$unsupported, g$distinct_gap_layouts))
   if (nrow(b$clusters)) {
     add("```")
     add(paste(capture.output(print(b$clusters[, c("count", "kind", "layout_hint", "signature")], row.names = FALSE)), collapse = "\n"))
     add("```")
   }
   if (length(b$recommendations)) {
-    add(sprintf("\n## Recommended templates (%d) — editable drafts for the biggest gaps", length(b$recommendations)))
+    add(sprintf("\n## Recommended templates (%d) - editable drafts for the biggest gaps", length(b$recommendations)))
     for (r in b$recommendations) {
-      add(sprintf("\n### %d file(s), %s layout — draft id `%s`", r$count, r$kind, r$draft_id %||% "?"))
+      add(sprintf("\n### %d file(s), %s layout - draft id `%s`", r$count, r$kind, r$draft_id %||% "?"))
       add("```yaml"); add(r$draft_yaml); add("```")
     }
   }

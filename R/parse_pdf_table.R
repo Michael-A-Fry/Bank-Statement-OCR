@@ -161,10 +161,10 @@
   has_amt <- .pdf_has_amount(rec, style)
   is_summ <- .pdf_is_summary(rec$description, rec$raw)
   if (isTRUE(date_ok) && has_amt && !is_summ) return("")
-  if (is_summ)  return("summary line (opening / closing balance, carried forward, or a total) — not a transaction")
-  if (!isTRUE(date_ok) && !has_amt) return("no date and no amount — treated as a heading, note or wrapped line")
-  if (!isTRUE(date_ok)) return("the date didn't parse — usually the date format in the template is wrong")
-  "no amount in the money column(s) — check the amount / debit / credit bands"
+  if (is_summ)  return("summary line (opening / closing balance, carried forward, or a total) - not a transaction")
+  if (!isTRUE(date_ok) && !has_amt) return("no date and no amount - treated as a heading, note or wrapped line")
+  if (!isTRUE(date_ok)) return("the date didn't parse - usually the date format in the template is wrong")
+  "no amount in the money column(s) - check the amount / debit / credit bands"
 }
 
 # .forced_band_hit(page, y0, y1, force_rows) -- does a visual row [y0,y1] on `page`

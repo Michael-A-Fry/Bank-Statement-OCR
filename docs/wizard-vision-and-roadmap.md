@@ -1,7 +1,7 @@
 # Visual wizard vision + A/B/C roadmap
 
 How template creation stays **easy for a zero-background analyst** and **generic
-enough for the weirdest statement** — and the build order for the three
+enough for the weirdest statement** - and the build order for the three
 outstanding capabilities.
 
 ## 1. The visual, confirm-or-drag wizard
@@ -21,7 +21,7 @@ page** and works like this:
    **drag** its edges, **redraw** it, **relabel** it, or **delete** it. They can
    also **draw a new box** the engine missed.
 4. **"Ignore" is the default for anything untagged.** Logos, marketing blocks,
-   footers, page numbers, irrelevant regions — if nobody tags them, they are
+   footers, page numbers, irrelevant regions - if nobody tags them, they are
    simply never extracted. Weirdness costs a little human correction, never a
    crash or a wrong row.
 5. **The template stores the CONFIRMED geometry + anchors**, not assumptions.
@@ -30,14 +30,14 @@ page** and works like this:
 ## 2. Why this is generic (covers the weirdest statements)
 
 - **Geometry + content, not per-bank code.** Detection is based on where words
-  sit and what they look like — so it works on a layout it has never seen. No
+  sit and what they look like - so it works on a layout it has never seen. No
   bank is hard-coded.
 - **Auto-detect is only a starting guess.** When it is completely wrong, or the
   region is irrelevant, the human overrides it in seconds. The floor is never
-  "it failed" — it is "the analyst drew the boxes."
+  "it failed" - it is "the analyst drew the boxes."
 - **Two extraction strategies per field, pick what fits:**
-  - **Positional bands** — `x_min/x_max` per column (clean tabular statements).
-  - **Anchored / regex** — "the value after the label 'Closing balance'", or a
+  - **Positional bands** - `x_min/x_max` per column (clean tabular statements).
+  - **Anchored / regex** - "the value after the label 'Closing balance'", or a
     regex on a line (free-text statements where columns don't align).
   A template can mix both.
 - **Key-value mode for forms (IRD etc.).** Same canvas, but the analyst boxes a
@@ -50,7 +50,7 @@ page** and works like this:
 Net: genericness = *geometry-based proposal + human-confirmable boxes on the
 real page + "ignore by default" + two strategies + never-guess forensics.*
 
-## 3. Roadmap — A, B, C (all wanted)
+## 3. Roadmap - A, B, C (all wanted)
 
 Dependency: **B (visual) and C (parser) need one real bank PDF; A needs one real
 IRD PDF.** Sourcing those is in progress (bank-published sample statements with

@@ -80,7 +80,7 @@ row_coverage <- function(input, template) {
 format_row_coverage <- function(cov) {
   if (!isTRUE(cov$applicable)) return(paste0("Row coverage not available: ", cov$reason %||% "n/a"))
   L <- c(); add <- function(...) L[[length(L) + 1L]] <<- paste0(...)
-  add("# Statement row-coverage diagnostic (safe to share — no statement contents)\n")
+  add("# Statement row-coverage diagnostic (safe to share - no statement contents)\n")
   add(sprintf("Template reference page: **%g x %g pt**. Pages: **%d**. Rows kept: **%d**. Rows skipped as unreadable-date / missing-amount: **%d**.",
       cov$ref_width, cov$ref_height, cov$page_count, cov$kept_total, cov$actionable_skips_total))
   add(sprintf("\n**Diagnosis:** %s\n", cov$diagnosis))

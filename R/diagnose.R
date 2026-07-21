@@ -65,7 +65,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     else if (isTRUE(metadata$multi$combined_accounts))
       add("upload", "combined_statement", "info",
           sprintf("%d account numbers appear in one statement period", metadata$multi$n_accounts %||% 0L),
-          "Looks like a combined statement (several accounts/products, or transfer counterparties named in transactions). If transactions from more than one account are mixed, running balances won't be continuous across them — review per account.")
+          "Looks like a combined statement (several accounts/products, or transfer counterparties named in transactions). If transactions from more than one account are mixed, running balances won't be continuous across them - review per account.")
     p <- suppressWarnings(as.integer(metadata$pages %||% NA))
     if (!is.na(p) && p > 100)
       add("upload", "oversized", "medium",
@@ -167,10 +167,10 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
 # diag_fix_owner_label(owner) -- plain-language "who fixes this" for display.
 diag_fix_owner_label <- function(owner) {
   unname(c(
-    template = "You — adjust the template (wizard)",
-    input    = "You — fix the file (split / re-export / rescan)",
-    review   = "You — review the data (expected, not an error)",
+    template = "You - adjust the template (wizard)",
+    input    = "You - fix the file (split / re-export / rescan)",
+    review   = "You - review the data (expected, not an error)",
     none     = "No action",
-    escalate = "Developer — engine gap (escalate)"
+    escalate = "Developer - engine gap (escalate)"
   )[owner])
 }

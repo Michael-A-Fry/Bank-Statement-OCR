@@ -1,4 +1,4 @@
-# Deployment, authorisation & concurrency — the dead-simple plan
+# Deployment, authorisation & concurrency - the dead-simple plan
 
 **Status: PLAN + the concurrency piece is already built.** This is deliberately
 the *stupidly simple* version. No web server, no API, no database, no login
@@ -20,7 +20,7 @@ stops you before a single line of our code runs. Everyone runs the same tool off
 the same share at the same time, and because **every conversion writes its own
 little file** (its outputs and its one-line log), nobody ever steps on anyone
 else. To change who has access, IT changes the AD group. To see who did what,
-open the `logs/runs/` folder — each conversion left a file stamped with the
+open the `logs/runs/` folder - each conversion left a file stamped with the
 Windows username.
 
 That's it. The rest of this document just explains *why* each choice is the
@@ -35,14 +35,14 @@ simple one, and lists the complicated things we deliberately did **not** build.
 2. IT opens that folder's **Properties → Security**, and grants access to the AD
    group **`RES_QLIKSENSE_PROD`**. (Point-and-click, the thing IT does every day.)
 3. Windows now enforces it: a person in the group can open and run the tool; a
-   person who isn't gets "access denied" from Windows itself — our code is never
+   person who isn't gets "access denied" from Windows itself - our code is never
    even reached.
 
 ### Why this is the right answer
 - **Nothing to code, nothing to inject.** We do not read a username and password,
   we do not build a query, we do not call an API. There is no login form to
   attack and no string that reaches a database or a shell. The attack surface for
-  "someone bypasses auth" is *the Windows file system* — the most battle-tested
+  "someone bypasses auth" is *the Windows file system* - the most battle-tested
   permission system in the building.
 - **You already trust it.** This is exactly how the Qlik/finance shares are
   already secured. We are not inventing a new security model; we are reusing the
@@ -51,20 +51,20 @@ simple one, and lists the complicated things we deliberately did **not** build.
   additionally drops a run-log file stamped with `%USERNAME%` (see §3). "Who
   converted what, when" is answerable without us building anything.
 
-### Modifiable, and OR-of-groups — still zero code
+### Modifiable, and OR-of-groups - still zero code
 You said the group must be changeable and there might be more than one (an OR).
 Both are free here: **add another AD group to the folder's Security tab.** Being
-in *any* of the listed groups grants access — that is literally how NTFS
+in *any* of the listed groups grants access - that is literally how NTFS
 permissions combine. Renaming `RES_QLIKSENSE_PROD` later? IT renames the group;
 the tool doesn't know or care.
 
 ### Optional, ONLY if you want a friendly message instead of a Windows error
-Strictly not required — the folder permission is the real gate. But if you'd
+Strictly not required - the folder permission is the real gate. But if you'd
 like the app to greet an unauthorised person with *"You're not in the
 BankStatements group, ask IT"* rather than a raw Windows denial, drop a plain
 text file `config/allowed_groups.txt` (one AD group per line) and the app can do
 a 3-line check using the built-in Windows command `whoami /groups`. It passes no
-user input to anything — it just asks Windows "what groups am I in?" and compares
+user input to anything - it just asks Windows "what groups am I in?" and compares
 to the list. This is a nicety, not a security boundary, and it ships **off**.
 ```
 # config/allowed_groups.txt  (optional; edit this list, no code)
@@ -88,14 +88,14 @@ making sure two runs never write the *same* place:
 - **Feedback:** each submission writes one file, `logs/feedback/<id>.json`.
 
 Because nobody ever appends to a shared file, there is **nothing to lock, nothing
-to corrupt, and nothing to configure.** Ten people, a hundred conversions —
+to corrupt, and nothing to configure.** Ten people, a hundred conversions -
 each is a separate little file. To read the log you list the folder; to read one
 record you open a `.json` in Notepad.
 
 > Why this matters specifically on a share: appending to one shared log file from
 > several PCs over a network share (SMB) is the one operation that genuinely can
 > interleave and corrupt. One-file-per-run sidesteps it completely. This is why
-> the logging was rewritten to per-file — the plan and the code agree.
+> the logging was rewritten to per-file - the plan and the code agree.
 
 ### How the tool actually runs (pick the simpler one for your site)
 - **Simplest: a desktop shortcut per analyst.** A `Run-BankStatements.bat` on the
@@ -106,13 +106,13 @@ record you open a `.json` in Notepad.
 - **If you prefer one address for everyone: Shiny Server (open-source).** One
   install, everyone browses to it. Shiny already isolates each person's session.
   Still no API, still per-file logs. This is one piece of infrastructure and the
-  only "install" in the whole plan — use it only if a shared URL is worth it.
+  only "install" in the whole plan - use it only if a shared URL is worth it.
 
 Either way the engine, templates, dictionary, and logs are identical.
 
 ### Heavy jobs (OCR) don't need managing either
 The only slow step is OCR of scanned PDFs. If the box ever feels busy, the
-single knob is *"how many at once"* — and with the desktop-shortcut model that's
+single knob is *"how many at once"* - and with the desktop-shortcut model that's
 just "how many people clicked convert," which self-limits in practice. No queue
 to build. If you outgrow that, you host the Shiny Server version on a slightly
 bigger box. That's the entire scaling story.
@@ -122,7 +122,7 @@ bigger box. That's the entire scaling story.
 ## 3. Who-did-what = the Windows username, captured automatically
 
 Every run-log and feedback file records `requested_by`. The tool fills it with
-the **Windows logged-in username** (`%USERNAME%`) automatically — no login
+the **Windows logged-in username** (`%USERNAME%`) automatically - no login
 prompt, because Windows already authenticated the person at sign-in and only
 group members can run the tool at all. It is stored as a plain string and never
 used in a query or evaluated, so it carries **no injection or audit risk**. If a
@@ -131,7 +131,7 @@ instead.
 
 ---
 
-## 4. Qlik — the same folder idea, nothing new
+## 4. Qlik - the same folder idea, nothing new
 
 Keep it identical in spirit: **folders, not an API.**
 1. The Qlik app writes the uploaded statement into an `inbox/` folder on the same
@@ -146,7 +146,7 @@ want it, writes a `logs/feedback/` file exactly like the app does.
 
 **Template creation stays in the Shiny wizards (a team activity); Qlik is for
 selecting a template + converting + optional feedback.** Adding a new bank =
-the analyst, in the wizard, once — then everyone (including Qlik) gets it. This
+the analyst, in the wizard, once - then everyone (including Qlik) gets it. This
 keeps every conversion consistent, which is one of the three core constraints.
 
 ---
@@ -177,7 +177,7 @@ analyst would eventually have to understand. Rejected on purpose:
 | LDAP / PowerShell AD lookups in code | The folder permission already does the check, in the OS, with no code to get wrong. |
 | A database for logs (SQLite/SQL Server) | One file per run needs no schema, no driver, no backup job. The folder *is* the database. |
 | A login screen / tokens / service account | Windows already logged the person in; reusing that is both simpler and safer. |
-| A job queue / worker pool | Per-file writes + per-user desktop launch self-limit. Build a queue only if load ever proves it — it hasn't. |
+| A job queue / worker pool | Per-file writes + per-user desktop launch self-limit. Build a queue only if load ever proves it - it hasn't. |
 
 If load or requirements ever genuinely outgrow this, the upgrade path is
 additive (host the Shiny Server version; if logs ever get huge, a nightly script

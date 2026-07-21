@@ -1,9 +1,9 @@
-# Build contract — statement conversion engine (v1)
+# Build contract - statement conversion engine (v1)
 
 The single source of truth every module and agent codes against. Pure **R only**
 (no reticulate, no Python). Base R + minimal packages (`yaml`, `jsonlite`,
 `openxlsx`, `testthat`; `pdftools`/`tesseract` optional for the PDF path).
-Deterministic — **no machine learning**. Never crash — return structured status.
+Deterministic - **no machine learning**. Never crash - return structured status.
 
 ## 1. Directory layout
 ```
@@ -35,7 +35,7 @@ run.R                   thin CLI entrypoint
 docs/                   architecture + maintainer guide
 ```
 
-## 2. Canonical core schema (per transaction) — STABLE, identical across banks
+## 2. Canonical core schema (per transaction) - STABLE, identical across banks
 `transactions` is a `data.frame` with exactly these columns, in this order:
 
 | column        | type    | notes |
@@ -43,7 +43,7 @@ docs/                   architecture + maintainer guide
 | `row_id`      | integer | 1-based within the statement |
 | `date`        | character (ISO `YYYY-MM-DD`) | normalised; `NA` if unpar04able |
 | `date_raw`    | character | exactly as shown |
-| `description` | character | **verbatim** — never strip special chars (`O'Connor & Sons`), only trim outer whitespace |
+| `description` | character | **verbatim** - never strip special chars (`O'Connor & Sons`), only trim outer whitespace |
 | `amount`      | numeric  | signed; debit negative, credit positive; `NA` if redacted/unparsed |
 | `amount_raw`  | character | exactly as shown (incl. `[REDACTED]`) |
 | `direction`   | character | `"debit"` / `"credit"` / `NA` |
@@ -59,17 +59,17 @@ docs/                   architecture + maintainer guide
 
 Statement-type **extras** (card `fx_amount`/`posted_date`, KiwiSaver
 `units`/`unit_price`, …) go in a SEPARATE `extras` data.frame keyed by
-`row_id` — never added to the core schema.
+`row_id` - never added to the core schema.
 
-## 3. Statement header (metadata) — `parsed$header` named list
+## 3. Statement header (metadata) - `parsed$header` named list
 `bank, statement_type, template_id, template_version, account_number,
 account_name, period_start, period_end, opening_balance, closing_balance,
 currency, source_file, source_sha256, page_count, row_count`.
 Unknown fields are `NA`. Account numbers stored **as shown** (specimen data).
 
-## 4. Provenance — `parsed$provenance` data.frame
+## 4. Provenance - `parsed$provenance` data.frame
 `row_id, source_ref` (e.g. `"csv:line=5"`, `"pdf:p2:y=412"`), `raw` (raw source
-line/cell text). Lives in the metadata sheet only — kept OUT of core data.
+line/cell text). Lives in the metadata sheet only - kept OUT of core data.
 
 ## 5. Template YAML spec (delimited path, v1)
 ```yaml
@@ -85,7 +85,7 @@ fingerprint:
   header_contains_all: [Date, Amount, Payee, "Tran Type", "This Party Account"]
   filename_regex: null
 delimiter: ","
-preamble:                      # optional (e.g. ASB) — lines before header
+preamble:                      # optional (e.g. ASB) - lines before header
   header_regex: "^Date,Unique Id,Tran Type"
 columns:                       # canonical field -> source column name
   date:        {source: Date, format: "%d/%m/%y"}
@@ -104,10 +104,10 @@ currency: NZD
 (separate debit/credit columns → `columns.debit`/`columns.credit`); `dr_cr_suffix`
 (`123.45 DR`); `type_dc` (a type column where `type_debit_value: "D"` means debit).
 
-### 5a. Two ways variability is absorbed — read this before "add a synonym"
+### 5a. Two ways variability is absorbed - read this before "add a synonym"
 The engine faces two *different* variability problems and solves them two ways:
 
-1. **Transaction tables (the core).** Rows have no per-row labels — they live in
+1. **Transaction tables (the core).** Rows have no per-row labels - they live in
    columns. Wording never matters: `columns:` maps a source column (delimited /
    excel) or an x-band (pdf) to a canonical field, once. "Different names /
    places / repeat / absent" are all handled by column mapping + the
@@ -115,7 +115,7 @@ The engine faces two *different* variability problems and solves them two ways:
    synonym list is involved, and none should be added.**
 
 2. **Single labelled values** (opening/closing balance, statement period,
-   account name, IRD form fields). *Here* wording varies wildly — "opening
+   account name, IRD form fields). *Here* wording varies wildly - "opening
    balance" vs "balance brought forward" vs "starting balance" vs "opening:".
    These are matched through the **label dictionary** (§5b), never hardcoded in R.
 
@@ -125,7 +125,7 @@ wording. Matching is case-insensitive substring. A **matcher spec** (used in the
 dictionary and in `fields`-mode templates) is:
 ```yaml
 opening_balance:
-  any_of:                        # SYNONYMS — list as many as real statements need
+  any_of:                        # SYNONYMS - list as many as real statements need
     - "opening balance"
     - "balance brought forward"
     - "starting balance"
@@ -140,7 +140,7 @@ read from the label line, or the next line if the label is a heading; a field in
 a `fields`-mode template auto-inherits the base-dictionary entry whose key
 matches its name (or one named by `dict:`); disagreeing repeats are **flagged,
 never silently guessed**. `extract_metadata()` reads opening/closing balance
-through this dictionary — no label words live in R. Adding a bank's odd wording
+through this dictionary - no label words live in R. Adding a bank's odd wording
 is one line in `dictionaries/labels.yaml`, not a code change.
 
 ## 6. Function interfaces (exact signatures)
@@ -183,12 +183,12 @@ template_version, status, trust_level, row_count, kpi_fail_count, message`.
 No raw statement content in logs.
 
 ## 11. Forensic guarantees (non-negotiable, must be tested)
-1. **Descriptions verbatim** — special characters preserved byte-for-byte.
-2. **Redactions honoured** — a redacted value is `[REDACTED]`+`redacted` flag,
+1. **Descriptions verbatim** - special characters preserved byte-for-byte.
+2. **Redactions honoured** - a redacted value is `[REDACTED]`+`redacted` flag,
    never derived; for PDFs, text under a redaction overlay is NOT extracted.
-3. **No silent drops** — `no_unparsed_rows` proves completeness.
-4. **Reproducible** — same input + template ⇒ identical output (no manual edits).
-5. **Never crashes** — all errors become a `failed` status with a reason.
+3. **No silent drops** - `no_unparsed_rows` proves completeness.
+4. **Reproducible** - same input + template ⇒ identical output (no manual edits).
+5. **Never crashes** - all errors become a `failed` status with a reason.
 
 ## 12. Testing (golden-file + unit)
 Each committed fixture has an expected core-table snapshot under

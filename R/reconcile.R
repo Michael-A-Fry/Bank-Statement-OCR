@@ -210,7 +210,7 @@ reconcile <- function(parsed, template = NULL) {
   if (!completeness_verified && n > 0) {
     if (identical(level, "high")) level <- "medium"
     reasons <- c(reasons,
-      "completeness UNVERIFIED: no balance or stated count to reconcile against, so a dropped/missing transaction cannot be detected automatically — check the row count against the statement")
+      "completeness UNVERIFIED: no balance or stated count to reconcile against, so a dropped/missing transaction cannot be detected automatically - check the row count against the statement")
   }
 
   # Unresolved-year caveat: rows kept with date_unresolved carry a verbatim
@@ -220,7 +220,7 @@ reconcile <- function(parsed, template = NULL) {
   if (n_dateunres > 0) {
     if (identical(level, "high")) level <- "medium"
     reasons <- c(reasons, sprintf(
-      "%d row(s) have an UNRESOLVED year (no statement period found); day and month are captured verbatim but the year could not be determined — assign it before relying on the dates",
+      "%d row(s) have an UNRESOLVED year (no statement period found); day and month are captured verbatim but the year could not be determined - assign it before relying on the dates",
       n_dateunres))
   }
 
@@ -231,7 +231,7 @@ reconcile <- function(parsed, template = NULL) {
   if (ocr_pages > 0) {
     if (identical(level, "high")) level <- "medium"
     reasons <- c(reasons, sprintf(
-      "%d page(s) were read by OCR%s; machine-read text is not guaranteed 100%% accurate — verify amounts and descriptions against the source PDF",
+      "%d page(s) were read by OCR%s; machine-read text is not guaranteed 100%% accurate - verify amounts and descriptions against the source PDF",
       ocr_pages,
       if (is.na(ocr_conf)) " (page confidence could not be measured)"
       else sprintf(" (min page confidence %.0f%%)", ocr_conf)))
@@ -240,7 +240,7 @@ reconcile <- function(parsed, template = NULL) {
     n_ocrlow <- sum(grepl("ocr_low_conf", tx$flags))
     if (n_ocrlow > 0)
       reasons <- c(reasons, sprintf(
-        "%d row(s) have a LOW-CONFIDENCE OCR value in a date/amount/balance cell — check those cells against the source", n_ocrlow))
+        "%d row(s) have a LOW-CONFIDENCE OCR value in a date/amount/balance cell - check those cells against the source", n_ocrlow))
   }
 
   # Return KPIs without the internal informational flag column exposed downstream.
