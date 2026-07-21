@@ -31,6 +31,8 @@ Thumbs.db
 bulk-audit.md
 /logs/
 *.log
+# run/feedback logs the test suite generates
+tests/testthat/logs/
 
 # Scratch / temp
 scratch/
