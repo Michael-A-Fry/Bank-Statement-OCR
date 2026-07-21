@@ -110,3 +110,46 @@ test_that("summary lines are dropped and 2-digit period years resolve", {
   expect_equal(nrow(tx), 1L)                        # "Closing Balance" row dropped
   expect_equal(tx$date, "2026-01-05")              # 2-digit year -> 2026, not 0026
 })
+
+.simple_tmpl <- function(row_tol = 3) list(id = "s", bank = "S", statement_type = "e",
+  format = "pdf", version = 1, currency = "NZD",
+  table = list(row_tol = row_tol, date_format = "%d %b", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 74), description = list(x_min = 74, x_max = 360),
+      amount = list(x_min = 360, x_max = 470), balance = list(x_min = 470, x_max = 545))))
+
+test_that("multi-line descriptions are folded into the transaction, footers are not", {
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","VISA","SHOP","-40.00","955.50",   # y=40 txn line
+              "CARD","1234","Orig","06/01",                  # y=52 continuation (no date, no money)
+              "06","Jan","PAY","-10.00","945.50",            # y=80 next txn
+              "Page","1","of","1"),                          # y=300 footer -> must NOT merge
+    x     = c(45,60,110,150,415,490,   110,150,190,230,   45,60,110,415,490,   250,275,290,305),
+    y     = c(40,40,40,40,40,40,       52,52,52,52,        80,80,80,80,80,      300,300,300,300),
+    width = c(12,16,30,40,34,30,       30,30,30,30,        12,16,30,34,30,      25,10,15,10),
+    height = rep(10, 19))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 2L)                                  # 2 txns; footer + continuation not counted
+  expect_true(grepl("SHOP", tx$description[1]) && grepl("CARD 1234", tx$description[1]))  # continuation folded in
+  expect_false(grepl("Page", paste(tx$description, collapse = " ")))  # footer excluded
+})
+
+test_that("tightly-set lines are NOT merged into one giant row (row-height grouping)", {
+  # line pitch 4pt: the OLD cumsum(diff(y)>tol) merged both lines into one row
+  # (no word-gap exceeded 3); the anchored grouping keeps them as two transactions.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","AAA","-1.00","10.00",     # y=40
+              "06","Jan","BBB","-2.00","8.00"),      # y=44 (only 4pt below)
+    x     = c(45,60,110,415,490,   45,60,110,415,490),
+    y     = c(40,40,40,40,40,      44,44,44,44,44),
+    width = c(12,16,30,30,30,      12,16,30,30,30),
+    height = rep(9, 10))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 2L)                          # two rows, not one merged blob
+  expect_equal(tx$date, c("2026-01-05", "2026-01-06"))
+})

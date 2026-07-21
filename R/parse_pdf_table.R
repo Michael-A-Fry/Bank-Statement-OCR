@@ -38,6 +38,24 @@
 # OD/DR/CR and silently flip an overdrawn balance's sign.
 .has_money <- function(x) grepl("[0-9]", as.character(x))
 
+# .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
+# A new row starts when a word's top is more than `tol` below the CURRENT row's
+# top -- anchored to the row's start, NOT cumulative pairwise gaps. The old
+# gap method (cumsum(diff(y) > tol)) collapsed a whole block of tightly-set lines
+# into ONE giant row whenever no single word-to-word gap exceeded tol (dense
+# leading), which silently merged many transactions -- the "only 3 rows on the
+# page" bug. Anchoring to the row start separates lines correctly as long as the
+# line pitch exceeds tol, and is identical to the old method on well-spaced pages.
+.group_rows <- function(ys, tol) {
+  n <- length(ys); if (n == 0) return(integer(0))
+  grp <- integer(n); cur <- 1L; ref <- ys[1]
+  for (i in seq_len(n)) {
+    if (ys[i] > ref + tol) { cur <- cur + 1L; ref <- ys[i] }
+    grp[i] <- cur
+  }
+  grp
+}
+
 # .pdf_has_amount(r, style) / .pdf_is_summary(description, raw) -- the amount and
 # summary-line halves of the row KEEP predicate, lifted to module level so the
 # table reader (parse_pdf_table) and the Inspect overlay (inspect_pdf_layout)
@@ -106,10 +124,12 @@ parse_pdf_table <- function(input, template) {
     if (!is.null(region$y_max)) w <- w[w$y <= region$y_max, , drop = FALSE]
     if (!nrow(w)) next
     w <- w[order(w$y, w$x), , drop = FALSE]
-    grp <- cumsum(c(TRUE, diff(w$y) > row_tol))
+    grp <- .group_rows(w$y, row_tol)
     for (g in unique(grp)) {
       rw <- w[grp == g, , drop = FALSE]
       rec <- list(page = p,
+        .y0 = min(rw$y), .y1 = max(rw$y + rw$height),
+        .h = suppressWarnings(stats::median(rw$height, na.rm = TRUE)),
         date = .pdf_cell(rw, cols$date), description = .pdf_cell(rw, cols$description),
         amount = .pdf_cell(rw, cols$amount), balance = .pdf_cell(rw, cols$balance),
         debit = .pdf_cell(rw, cols$debit), credit = .pdf_cell(rw, cols$credit),
@@ -216,9 +236,51 @@ parse_pdf_table <- function(input, template) {
   # row (it is flagged redacted below and its date_iso is left NA). Losing it would
   # silently delete a transaction -- forbidden.
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
-  keep <- vapply(recs, function(r)
-    (.date_ok(r$date) || .redacted_cell(r$date)) && .has_amount(r) && !.is_summary(r),
-    logical(1))
+  .is_txn <- function(r) (.date_ok(r$date) || .redacted_cell(r$date)) &&
+                         .has_amount(r) && !.is_summary(r)
+
+  # Multi-line descriptions: a wrapped payee / particulars spills onto the next
+  # visual row, which carries NO date and NO money. Instead of dropping it (losing
+  # verbatim content), fold its text into the PRECEDING kept transaction. Only a
+  # clear continuation merges (no parseable date, no money anywhere, not a summary)
+  # so it can never invent a transaction or join two real ones. Template can turn
+  # it off with merge_continuation: false.
+  # a page footer / running header is NOT a transaction continuation, even though
+  # it is a dated-less, money-less text line.
+  .is_footer_noise <- function(s) {
+    s <- tolower(trimws(s))
+    grepl(paste0("^page\\s+\\d+(\\s+of\\s+\\d+)?$",         # "Page 2 of 2"
+                 "|^\\d+\\s+of\\s+\\d+$",
+                 "|continued\\s+(on\\s+)?(next|over)",       # "continued on next page"
+                 "|^statement\\s+(continued|continues)"), s)
+  }
+  if (!identical(t$merge_continuation %||% TRUE, FALSE) && length(recs) > 1) {
+    is_txn <- vapply(recs, .is_txn, logical(1))
+    last_txn <- 0L; drop <- logical(length(recs))
+    for (i in seq_along(recs)) {
+      if (is_txn[i]) { last_txn <- i; next }
+      if (last_txn == 0L) next
+      r <- recs[[i]]; prev <- recs[[last_txn]]
+      cont <- r$description %||% NA_character_
+      if (is.na(cont) || !nzchar(trimws(cont))) cont <- r$raw %||% NA_character_
+      cont <- if (is.na(cont)) "" else trimws(cont)   # nzchar(NA) is TRUE -> guard it
+      money_here <- .has_amount(r) || .has_money(r$balance %||% "")
+      # Proximity: a continuation is the line right below its transaction (same
+      # page, gap under ~one line height). A footer far down the page is excluded.
+      lh <- if (is.finite(r$.h) && r$.h > 0) r$.h else 10
+      close <- identical(r$page, prev$page) &&
+               is.finite(r$.y0) && is.finite(prev$.y1) &&
+               (r$.y0 - prev$.y1) <= 0.9 * lh && (r$.y0 - prev$.y1) >= -lh
+      if (nzchar(cont) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
+          !.is_summary(r) && !.is_footer_noise(cont) && close) {
+        recs[[last_txn]]$description <- trimws(paste(prev$description %||% "", cont))
+        drop[i] <- TRUE
+      }
+    }
+    recs <- recs[!drop]
+  }
+
+  keep <- vapply(recs, .is_txn, logical(1))
   recs <- recs[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else

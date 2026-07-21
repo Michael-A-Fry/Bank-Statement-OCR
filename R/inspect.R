@@ -65,7 +65,7 @@ inspect_pdf_layout <- function(input, template) {
     rows <- .empty_rows()
     if (nrow(rw)) {
       rw <- rw[order(rw$y, rw$x), , drop = FALSE]
-      grp <- cumsum(c(TRUE, diff(rw$y) > row_tol))
+      grp <- .group_rows(rw$y, row_tol)   # SAME grouping as parse_pdf_table -> counts match
       rows <- do.call(rbind, lapply(unique(grp), function(g) {
         rg <- rw[grp == g, , drop = FALSE]
         dcell <- .pdf_cell(rg, cols$date)
