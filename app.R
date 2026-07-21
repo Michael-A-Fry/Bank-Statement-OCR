@@ -8,6 +8,13 @@
 # Run locally:  R -e 'shiny::runApp(".", launch.browser = TRUE)'
 # (from the repo root, so R/ and templates/ resolve.)
 
+# Force a UTF-8 locale FIRST. On a host whose default locale is C/ASCII
+# (ANSI_X3.4-1968), R cannot represent the em-dashes and symbols used throughout
+# the UI and renders them as mojibake ("<80><94>"), which makes the whole app look
+# broken. Try the common UTF-8 locale names and stop at the first that takes.
+suppressWarnings(for (.loc in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"))
+  if (nzchar(Sys.setlocale("LC_CTYPE", .loc))) break)
+
 suppressMessages({
   library(shiny)
   library(DT)
