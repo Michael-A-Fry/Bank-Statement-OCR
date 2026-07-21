@@ -417,15 +417,20 @@ ui <- fluidPage(
               textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))
         ),
         tabPanel(
-          "Bulk audit & gaps",
+          "Batch & audit",
           br(),
-          helpText(HTML("Drop a whole pile of statements (any bank, any variant, selectable or scanned). Get a <b>safe-to-share</b> picture — nothing but shapes, counts and layout hashes leave the machine — of what parses, the unsupported layouts <b>clustered biggest-gap-first</b>, and <b>editable draft templates</b> for those gaps. Paste a draft into the Templates tab to save it.")),
+          helpText(HTML("Drop a whole pile of statements (any bank, any variant, selectable or scanned) and get one picture: what parses, the unsupported layouts <b>clustered biggest-gap-first</b>, the amount styles / date formats / banks seen, and <b>editable draft templates</b> for the gaps. The audit is <b>safe to share</b> — only shapes, counts and layout hashes leave the machine. Tick <b>convert &amp; save</b> to also write the real outputs and log every run so they feed the Insights tab.")),
           fluidRow(
             column(4,
-              fileInput("adm_ba_files", "Statements to audit", multiple = TRUE),
-              actionButton("adm_ba_run", "Run bulk audit", class = "btn-primary"),
+              fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE),
+              checkboxInput("adm_ba_convert",
+                            "Also convert & save outputs (writes files, logs runs, feeds Insights)",
+                            value = FALSE),
+              actionButton("adm_ba_run", "Run", class = "btn-primary"),
               br(), br(),
-              downloadButton("adm_ba_report", "Download safe report (.md)"),
+              downloadButton("adm_ba_report", "Safe audit report (.md)"),
+              br(), br(),
+              downloadButton("adm_ba_csv", "Converted report (.csv)"),
               br(), br(),
               helpText("Also available headless: Rscript scripts/bulk-audit.R <folder>")),
             column(8,
@@ -439,32 +444,6 @@ ui <- fluidPage(
           helpText("Upload one statement to download its shapes-only audit (no PII) for sharing."),
           fileInput("adm_audit_one", "Statement", multiple = FALSE),
           downloadButton("adm_audit_dl", "Download safe audit (.md)")
-        ),
-        tabPanel(
-          "Batch intake",
-          br(),
-          sidebarLayout(
-            sidebarPanel(
-              width = 4,
-              fileInput("adm_batch", "Drop many statements at once (.csv / .tsv / .pdf / .xlsx)",
-                        multiple = TRUE),
-              actionButton("adm_run", "Run batch", class = "btn-primary"),
-              br(), br(),
-              downloadButton("adm_dl_report", "Download report (CSV)"),
-              helpText("Every file is converted and logged, so the results also feed the Insights tab. Unsupported files are clustered, and the biggest gap gets a starting template drafted for you.")
-            ),
-            mainPanel(
-              width = 8,
-              uiOutput("adm_batch_summary"),
-              h4("Per-file results"), DTOutput("adm_batch_tbl"),
-              h4("Unsupported in this batch — clustered"), DTOutput("adm_batch_clusters"),
-              h4("Auto-draft: a starting template for the biggest gap"),
-              helpText("A best-effort draft from the file's own structure. Confirm/adjust it in the Template or PDF wizard, then Save."),
-              verbatimTextOutput("adm_draft_status"),
-              tableOutput("adm_draft_cols"),
-              div(class = "mono", verbatimTextOutput("adm_draft"))
-            )
-          )
         )
       )
       )
@@ -633,25 +612,54 @@ server <- function(input, output, session) {
 
   # ---- Admin: bulk audit & gaps ----
   adm_ba <- reactiveVal(NULL)
+  adm_ba_conv <- reactiveVal(NULL)   # converted-report rows, when "convert & save" was ticked
   observeEvent(input$adm_ba_run, {
     req(input$adm_ba_files)
     fs <- input$adm_ba_files
     sess <- file.path(tempdir(), paste0("ba_", as.integer(runif(1, 1, 1e9)))); dir.create(sess, showWarnings = FALSE)
     paths <- vapply(seq_len(nrow(fs)), function(i) {
       d <- file.path(sess, fs$name[i]); file.copy(fs$datapath[i], d, overwrite = TRUE); d }, character(1))
+    adm_ba_conv(NULL)
     withProgress(message = "Auditing statements (scanned pages are OCR'd)", value = NULL,
                  adm_ba(batch_audit(paths, templates = templates())))
+    # Optional heavier pass: actually convert & log each file so the runs feed
+    # Insights (this is what the old separate "Batch intake" tab did).
+    if (isTRUE(input$adm_ba_convert)) {
+      rows <- vector("list", length(paths))
+      withProgress(message = "Converting & logging", value = 0, {
+        for (i in seq_along(paths)) {
+          incProgress(1 / length(paths), detail = fs$name[i])
+          r <- tryCatch(convert_statement(paths[i], outdir = sess, templates_dir = TEMPLATES_DIR,
+            user_templates_dir = USER_TEMPLATES_DIR, logdir = LOGDIR, requested_by = "batch"),
+            error = function(e) NULL)
+          csv <- if (!is.null(r)) r$outputs[grepl("\\.csv$", r$outputs)] else character(0)
+          nrw <- if (length(csv) && file.exists(csv[1]))
+            tryCatch(nrow(utils::read.csv(csv[1], check.names = FALSE)), error = function(e) NA_integer_) else NA_integer_
+          rows[[i]] <- data.frame(file = fs$name[i], status = r$status %||% "failed",
+            template = r$template_id %||% NA_character_, trust = r$trust$level %||% NA_character_,
+            n_rows = nrw, stringsAsFactors = FALSE)
+        }
+      })
+      adm_ba_conv(do.call(rbind, rows))
+      load_admin()   # the batch just wrote logs; refresh Insights
+    }
   })
   output$adm_ba_summary <- renderUI({
-    b <- adm_ba(); if (is.null(b)) return(helpText("Upload statements and click Run bulk audit."))
+    b <- adm_ba(); if (is.null(b)) return(helpText("Upload statements and click Run."))
     g <- b$feature_gaps
+    conv <- adm_ba_conv()
+    none <- function(x) if (length(x)) paste(names(x), collapse = ", ") else "(none seen)"
     tagList(
       p(strong(sprintf("%d statements: ", g$total)),
         paste(sprintf("%s=%s", names(g$by_status), g$by_status), collapse = ", ")),
       p(sprintf("scanned %d · with redactions %d · multi-account %d · multi-period %d · unsupported %d across %d layouts",
         g$scanned, g$with_redactions, g$multi_account, g$multi_period, g$unsupported, g$distinct_gap_layouts)),
-      p(class = "muted", sprintf("amount styles: %s | date formats: %s",
-        paste(names(g$amount_styles), collapse = ", "), paste(names(g$date_formats), collapse = ", "))))
+      p(class = "muted", sprintf("amount styles: %s | date formats: %s | banks: %s",
+        none(g$amount_styles), none(g$date_formats), none(g$banks))),
+      if (!is.null(conv)) div(style = "background:#eef;padding:6px 10px;border-radius:6px;margin-top:6px",
+        sprintf("Converted & logged %d file(s): %d ok, %d need review, %d unsupported/failed — now in Insights.",
+                nrow(conv), sum(conv$status == "ok"), sum(conv$status == "needs_review"),
+                sum(conv$status %in% c("unsupported", "failed")))))
   })
   output$adm_ba_clusters <- renderDT({
     b <- adm_ba(); req(b); if (!nrow(b$clusters)) return(data.frame(note = "no gaps — everything parsed"))
@@ -675,6 +683,13 @@ server <- function(input, output, session) {
       if (is.null(b)) { showNotification("Run a bulk audit first — nothing to download yet.",
                                          type = "warning", duration = 6); req(FALSE) }
       writeLines(format_batch_audit(b), file) })
+  output$adm_ba_csv <- downloadHandler(
+    filename = function() "batch_converted.csv",
+    content = function(file) {
+      conv <- adm_ba_conv()
+      if (is.null(conv)) { showNotification("Tick 'Also convert & save' and run first — no converted report yet.",
+                                            type = "warning", duration = 6); req(FALSE) }
+      utils::write.csv(conv, file, row.names = FALSE) })
   output$adm_audit_dl <- downloadHandler(
     filename = function() "statement.audit.md",
     content = function(file) {
@@ -1955,104 +1970,6 @@ server <- function(input, output, session) {
     datatable(fl[, intersect(c("ts", "verdict", "comment", "template_id", "run_id"), names(fl))],
               rownames = FALSE, options = list(pageLength = 8, scrollX = TRUE))
   })
-
-  # ---- Admin: batch intake + auto-draft ----------------------------
-  adm_batch <- reactiveVal(NULL)
-
-  # Reuses the same draft_template() the guided flow uses -> one source of truth.
-  adm_draft_for <- function(row) {
-    tmpl <- tryCatch(draft_template(row$path, bank = "NewBank"), error = function(e) NULL)
-    if (is.null(tmpl)) return(list(kind = row$kind %||% "other",
-      yaml = "(could not auto-draft this file — open the wizard)", cols = NULL))
-    cols <- NULL
-    if (identical(tmpl$format, "pdf")) {
-      cd <- tmpl$table$columns
-      cols <- data.frame(field = names(cd),
-        x_min = vapply(cd, function(z) z$x_min, numeric(1)),
-        x_max = vapply(cd, function(z) z$x_max, numeric(1)), row.names = NULL)
-    }
-    list(kind = tmpl$format, yaml = yaml::as.yaml(tmpl), cols = cols)
-  }
-
-  observeEvent(input$adm_run, {
-    req(input$adm_batch)
-    files <- input$adm_batch
-    sess <- file.path(tempdir(), paste0("batch_", as.integer(runif(1, 1, 1e9))))
-    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
-    rows <- vector("list", nrow(files))
-    withProgress(message = "Converting batch", value = 0, {
-      for (i in seq_len(nrow(files))) {
-        incProgress(1 / nrow(files), detail = files$name[i])
-        src <- file.path(sess, files$name[i]); file.copy(files$datapath[i], src, overwrite = TRUE)
-        r <- tryCatch(convert_statement(src, outdir = sess, templates_dir = TEMPLATES_DIR,
-          user_templates_dir = USER_TEMPLATES_DIR, logdir = LOGDIR, requested_by = "batch"),
-          error = function(e) NULL)
-        inp <- tryCatch(read_input(src), error = function(e) NULL)
-        lsig <- if (!is.null(inp)) layout_signature(inp) else list(signature = NA_character_, hint = "")
-        csv <- if (!is.null(r)) r$outputs[grepl("\\.csv$", r$outputs)] else character(0)
-        nrw <- if (length(csv) && file.exists(csv[1]))
-          tryCatch(nrow(utils::read.csv(csv[1], check.names = FALSE)), error = function(e) NA_integer_) else NA_integer_
-        rows[[i]] <- data.frame(file = files$name[i], status = r$status %||% "failed",
-          template = r$template_id %||% NA_character_, trust = r$trust$level %||% NA_character_,
-          n_rows = nrw, layout = lsig$hint, signature = lsig$signature %||% NA_character_,
-          kind = inp$kind %||% NA_character_, path = src, stringsAsFactors = FALSE)
-      }
-    })
-    adm_batch(do.call(rbind, rows))
-    load_admin()   # the batch just wrote logs; refresh insights
-  })
-
-  output$adm_batch_summary <- renderUI({
-    df <- adm_batch(); if (is.null(df)) return(helpText("Upload statements and click Run batch."))
-    n <- nrow(df); ok <- sum(df$status == "ok"); rev <- sum(df$status == "needs_review")
-    uns <- sum(df$status %in% c("unsupported", "failed"))
-    div(style = "background:#eef;padding:8px 12px;border-radius:6px",
-      sprintf("%d file(s): %d ok, %d need review, %d unsupported/failed.", n, ok, rev, uns))
-  })
-  output$adm_batch_tbl <- renderDT({
-    df <- adm_batch(); req(df)
-    datatable(df[, c("file", "status", "template", "trust", "n_rows", "kind", "layout")],
-              rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
-  })
-  output$adm_batch_clusters <- renderDT({
-    df <- adm_batch(); req(df)
-    uns <- df[df$status %in% c("unsupported", "failed"), , drop = FALSE]
-    if (!nrow(uns)) return(datatable(data.frame(message = "Nothing unsupported in this batch 🎉"),
-                                     rownames = FALSE, options = list(dom = "t")))
-    cl <- as.data.frame(table(signature = uns$signature), stringsAsFactors = FALSE)
-    hint <- vapply(cl$signature, function(s) uns$layout[uns$signature == s][1], character(1))
-    kind <- vapply(cl$signature, function(s) uns$kind[uns$signature == s][1], character(1))
-    out <- data.frame(count = cl$Freq, layout = hint, kind = kind, stringsAsFactors = FALSE)
-    datatable(out[order(-out$count), ], rownames = FALSE, options = list(dom = "t"))
-  })
-
-  adm_draft <- reactive({
-    df <- adm_batch(); req(df)
-    uns <- df[df$status %in% c("unsupported", "failed") & !is.na(df$signature), , drop = FALSE]
-    if (!nrow(uns)) return(NULL)
-    top_sig <- names(sort(table(uns$signature), decreasing = TRUE))[1]
-    adm_draft_for(uns[uns$signature == top_sig, , drop = FALSE][1, ])
-  })
-  output$adm_draft_status <- renderText({
-    df <- adm_batch(); if (is.null(df)) return("Run a batch to draft a template for the biggest gap.")
-    d <- adm_draft(); if (is.null(d)) return("No unsupported files in this batch — nothing to draft.")
-    sprintf("Drafted a %s template. Confirm it in the %s wizard, then Save.", d$kind,
-            if (identical(d$kind, "pdf")) "PDF" else "Template")
-  })
-  output$adm_draft_cols <- renderTable({
-    d <- adm_draft(); if (is.null(d) || is.null(d$cols) || !nrow(d$cols)) return(NULL)
-    d$cols
-  })
-  output$adm_draft <- renderText({ d <- adm_draft(); if (is.null(d)) "" else d$yaml })
-
-  output$adm_dl_report <- downloadHandler(
-    filename = function() "batch_report.csv",
-    content = function(file) {
-      df <- adm_batch()
-      if (is.null(df)) { showNotification("Run a batch first — no report to download yet.",
-                                          type = "warning", duration = 6); req(FALSE) }
-      utils::write.csv(df[, setdiff(names(df), "path"), drop = FALSE], file, row.names = FALSE)
-    })
 }
 
 shinyApp(ui, server)
