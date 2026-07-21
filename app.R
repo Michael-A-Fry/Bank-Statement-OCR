@@ -149,7 +149,19 @@ ui <- fluidPage(
           h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
           h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
           uiOutput("cv_cov_summary"), DTOutput("cv_coverage"),
-          h4("Transactions (preview)"), DTOutput("cv_txns"),
+          tabsetPanel(
+            tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
+            tabPanel("X-ray — see it on the page", br(),
+              conditionalPanel("output.ix_is_pdf == true",
+                p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · orange = a balance / date / account detail · red = a redaction (never read)."),
+                fluidRow(
+                  column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
+                  column(4, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
+                  column(5, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE))),
+                plotOutput("ix_plot", height = "780px"),
+                uiOutput("ix_legend")),
+              conditionalPanel("output.ix_is_pdf != true",
+                helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field.")))),
           uiOutput("cv_feedback")
         )
       )
@@ -307,35 +319,6 @@ ui <- fluidPage(
                 tableOutput("fb_regions_tbl")),
               h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
               h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml")))))
-      )
-    ),
-    # ---- Inspect (X-ray): SEE what the tool reads ---------------------
-    tabPanel(
-      "Inspect (X-ray)",
-      br(),
-      helpText("Open any statement and SEE exactly what the tool reads: the columns it uses, every word it selects into each column, the transaction rows it keeps, and a box around where each balance, date and account detail is pulled from. Nothing is hidden."),
-      sidebarLayout(
-        sidebarPanel(
-          width = 3,
-          fileInput("ix_file", "Statement (.pdf / .csv / .xlsx)"),
-          selectInput("ix_tmpl", "Template", choices = c("(auto-detect)" = "")),
-          actionButton("ix_go", "🔎 Inspect", class = "btn-primary"),
-          tags$hr(),
-          conditionalPanel("output.ix_is_pdf == true",
-            numericInput("ix_page", "Page", 1, min = 1, step = 1),
-            checkboxInput("ix_show_words", "Faint box on every word", TRUE),
-            checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE)),
-          uiOutput("ix_legend")),
-        mainPanel(
-          width = 9,
-          uiOutput("ix_status"),
-          conditionalPanel("output.ix_is_pdf == true",
-            plotOutput("ix_plot", height = "820px")),
-          conditionalPanel("output.ix_ready == true && output.ix_is_pdf != true",
-            h4("Which source column feeds each field"), DTOutput("ix_map")),
-          conditionalPanel("output.ix_ready == true",
-            h4("Rows the tool read (preview)"), DTOutput("ix_rows"),
-            h4("Balances, dates & account details found"), DTOutput("ix_meta")))
       )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -891,74 +874,36 @@ server <- function(input, output, session) {
       else span(class = "bad", "Couldn't save — check the fields."))
   })
 
-  # ---- Inspect (X-ray): render exactly what the tool reads ------------------
-  ix_state <- reactiveVal(NULL)
-  observe({
-    ts <- templates()
-    updateSelectInput(session, "ix_tmpl",
-      choices = c("(auto-detect)" = "", stats::setNames(names(ts), names(ts))),
-      selected = isolate(input$ix_tmpl) %||% "")
-  })
-  observeEvent(input$ix_go, {
-    req(input$ix_file)
-    sess <- file.path(tempdir(), paste0("ix_", as.integer(runif(1, 1, 1e9))))
-    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
-    src <- file.path(sess, input$ix_file$name)
-    file.copy(input$ix_file$datapath, src, overwrite = TRUE)
-    forced <- input$ix_tmpl
-    st <- withProgress(message = "Reading & inspecting…", value = 0.3, {
-      inp <- tryCatch(read_input(src), error = function(e) NULL)
-      if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return(NULL) }
-      ts <- templates()
-      det <- tryCatch(detect_statement(inp, ts), error = function(e) NULL)
-      tid <- if (!is.null(forced) && nzchar(forced) && !is.null(ts[[forced]])) forced
-             else if (isTRUE(det$matched)) det$template_id else NA_character_
-      tmpl <- if (!is.na(tid)) ts[[tid]] else NULL
-      is_pdf <- identical(inp$kind, "pdf")
-      layout <- NULL; meta_loc <- NULL; mapdf <- NULL; parsed <- NULL; meta <- NULL
-      if (!is.null(tmpl)) {
-        parsed <- tryCatch(parse_statement(inp, tmpl), error = function(e) NULL)
-        if (is_pdf) {
-          layout <- tryCatch(inspect_pdf_layout(inp, tmpl), error = function(e) NULL)
-          meta <- tryCatch(extract_metadata(inp), error = function(e) NULL)
-          if (!is.null(meta)) {
-            targets <- list(opening_balance = meta$opening_balance,
-                            closing_balance = meta$closing_balance,
-                            period_start = meta$period_start, period_end = meta$period_end)
-            if (length(meta$accounts)) targets$account <- meta$accounts[1]
-            wbp <- inp$words %||% list()
-            meta_loc <- lapply(seq_along(wbp), function(p)
-              tryCatch(locate_values_on_page(wbp[[p]], targets), error = function(e) NULL))
-          }
-        } else {
-          mapdf <- field_source_map(tmpl)
-        }
-      }
-      list(path = src, name = input$ix_file$name, inp = inp, tmpl = tmpl, tid = tid,
-           det = det, is_pdf = is_pdf, layout = layout, meta_loc = meta_loc,
-           map = mapdf, parsed = parsed, meta = meta)
-    })
-    ix_state(st)
+  # ---- X-ray, shown inline on the Convert tab (no separate upload/section).
+  # Derived from the conversion result: read the converted file with its matched
+  # template and lay out exactly what the engine selected on the page.
+  ix_state <- reactive({
+    res <- cv_res(); src <- cv_src(); if (is.null(res) || is.null(src)) return(NULL)
+    tid <- (res$template_id %||% NA_character_)[1]
+    if (is.na(tid) || !nzchar(tid)) return(NULL)
+    tmpl <- tryCatch(templates()[[tid]], error = function(e) NULL); if (is.null(tmpl)) return(NULL)
+    inp <- tryCatch(read_input(src$path), error = function(e) NULL); if (is.null(inp)) return(NULL)
+    if (!identical(inp$kind, "pdf")) return(list(is_pdf = FALSE))
+    layout <- tryCatch(inspect_pdf_layout(inp, tmpl), error = function(e) NULL)
+    meta <- tryCatch(extract_metadata(inp), error = function(e) NULL)
+    meta_loc <- NULL
+    if (!is.null(meta)) {
+      targets <- list(opening_balance = meta$opening_balance, closing_balance = meta$closing_balance,
+                      period_start = meta$period_start, period_end = meta$period_end)
+      if (length(meta$accounts)) targets$account <- meta$accounts[1]
+      wbp <- inp$words %||% list()
+      meta_loc <- lapply(seq_along(wbp), function(p)
+        tryCatch(locate_values_on_page(wbp[[p]], targets), error = function(e) NULL))
+    }
+    list(is_pdf = TRUE, path = src$path, layout = layout, meta_loc = meta_loc)
   })
   output$ix_is_pdf <- reactive({ st <- ix_state(); isTRUE(st$is_pdf) })
   outputOptions(output, "ix_is_pdf", suspendWhenHidden = FALSE)
-  output$ix_ready <- reactive({ !is.null(ix_state()) })  # gate result sections until inspected
-  outputOptions(output, "ix_ready", suspendWhenHidden = FALSE)
 
   ix_pal <- function(bands) {
     if (!length(bands)) return(character(0))
     stats::setNames(grDevices::hcl(seq(5, 320, length.out = length(bands)), 75, 50), names(bands))
   }
-  output$ix_status <- renderUI({
-    st <- ix_state(); if (is.null(st)) return(helpText("Upload a statement and click Inspect."))
-    if (is.null(st$tmpl)) return(div(class = "bad",
-      "No template matched — nothing to inspect. Pick a template above, or teach one in Guided setup."))
-    tr <- if (!is.null(st$parsed)) sprintf(" · %d row(s) read", nrow(st$parsed$transactions)) else ""
-    tagList(h4(HTML(sprintf('Reading with <span class="ok">%s</span>%s', st$tid, tr))),
-      p(class = "muted", if (isTRUE(st$is_pdf))
-        "Boxes: coloured = a column (see legend); green = a transaction row the tool kept; orange = a balance / date / account detail; red = a redaction (never read)."
-        else "This is a spreadsheet/CSV — the table below shows which source column feeds each field."))
-  })
   output$ix_legend <- renderUI({
     st <- ix_state(); req(st, st$is_pdf, !is.null(st$layout))
     pg <- as.character(max(1L, as.integer(input$ix_page %||% 1)))
@@ -1018,30 +963,6 @@ server <- function(input, output, session) {
           text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
   })
-  output$ix_map <- renderDT({
-    st <- ix_state(); req(st, !is.null(st$map))
-    datatable(st$map, rownames = FALSE, options = list(dom = "t", pageLength = 20))
-  })
-  output$ix_rows <- renderDT({
-    st <- ix_state(); req(st, !is.null(st$parsed))
-    tx <- st$parsed$transactions
-    datatable(utils::head(tx, 15)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
-              rownames = FALSE, options = list(dom = "tp", pageLength = 15, scrollX = TRUE))
-  })
-  output$ix_meta <- renderDT({
-    st <- ix_state(); req(st, !is.null(st$meta))
-    m <- st$meta
-    df <- data.frame(
-      field = c("opening balance", "closing balance", "period start", "period end", "account"),
-      value = c(m$opening_balance %||% NA, m$closing_balance %||% NA,
-                m$period_start %||% NA, m$period_end %||% NA,
-                if (length(m$accounts)) m$accounts[1] else NA),
-      stringsAsFactors = FALSE)
-    df <- df[!is.na(df$value), , drop = FALSE]
-    if (!nrow(df)) df <- data.frame(field = "—", value = "no balances/metadata detected")
-    datatable(df, rownames = FALSE, options = list(dom = "t"))
-  })
-
   # Remediate a stuck upload right here: load the saved file into the SAME guided
   # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
   # pickup — identify it in the table (A), open it, teach the tool, save (B).
@@ -1436,20 +1357,23 @@ server <- function(input, output, session) {
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
         strong("This statement doesn't match any template yet."),
         p(class = "muted", "Teach the tool to read it — we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-        actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"))
+        actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"), " ",
+        actionLink("cv_goto_templates", "or build one from scratch →"))
     } else {
-      # ANY result — ok, needs_review, or failed — can be opened in the wizard to
-      # remediate it. For ok/needs_review this seeds from the matched template so
-      # the accountant refines the real thing rather than starting from scratch.
+      # ANY result — ok, needs_review, or failed — links into template setup, so
+      # even a clean conversion can be refined or saved as a reusable template.
       label <- if (identical(st, "ok"))
-        "Something look off? Open this statement in the wizard to adjust how it's read."
+        "Looks good. Want to tweak how it's read, or save a refined version of this template?"
       else
-        "Open this statement in the wizard to fix how it's read and save an improved template."
+        "Open this statement in setup to fix how it's read and save an improved template."
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", label), " ",
-        actionButton("cv_teach_go", "🪄 Open in wizard", class = "btn-default"))
+        actionButton("cv_teach_go", "🪄 Open in setup / edit template", class = "btn-default"), " ",
+        actionLink("cv_goto_templates", "or build one from scratch →"))
     }
   })
+  observeEvent(input$cv_goto_templates,
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
 
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)
