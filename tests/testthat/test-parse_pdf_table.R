@@ -356,6 +356,35 @@ test_that("metadata_regions pins a header value the label engine misses", {
   expect_equal(nrow(parse_pdf_table(input, tmpl)$transactions), 1L)
 })
 
+test_that("a redacted header field is honest: text shows [REDACTED], money stays NA", {
+  # A redaction overlay can cover a HEADER value (account number, opening balance),
+  # not just the transaction table. The extracted header must never silently drop
+  # the field or invent a number: a text field surfaces the [REDACTED] token
+  # (present-but-hidden) and a money field is NA (unknown), never fabricated.
+  R <- "[REDACTED]"
+  mk <- function(acct, ob) data.frame(stringsAsFactors = FALSE,
+    text  = c("Account", acct, "Opening", "Balance", ob, "05","Jan","COFFEE","-40.00","955.50"),
+    x     = c(45,140,45,100,200,   45,60,110,415,490),
+    y     = c(12,12,24,24,24,      60,60,60,60,60),
+    width = c(50,90,50,45,60,      12,16,45,34,30),
+    height= rep(10, 10))
+  tmpl <- .simple_tmpl()
+  tmpl$table$metadata_regions <- list(
+    account_number  = list(page = 1, x_min = 120, x_max = 260, y_min = 8,  y_max = 20),
+    opening_balance = list(page = 1, x_min = 150, x_max = 300, y_min = 20, y_max = 34))
+  mkinput <- function(w) list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(w),
+    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+
+  clean  <- parse_pdf_table(mkinput(mk("1234567", "500.00")), tmpl)$header
+  redact <- parse_pdf_table(mkinput(mk(R, R)), tmpl)$header
+
+  expect_equal(clean$account_number, "1234567")        # sanity: read correctly when visible
+  expect_equal(clean$opening_balance, 500.00)
+  expect_true(grepl("REDACT", redact$account_number))  # hidden text is surfaced, not dropped
+  expect_true(is.na(redact$opening_balance))           # hidden money is NA, never invented
+})
+
 test_that("metadata_regions validates: good passes, malformed / unknown rejected", {
   base <- c(.tmpl, list(min_score = 1, fingerprint = list(page_contains_all = list("Withdrawals"))))
   ok <- base
