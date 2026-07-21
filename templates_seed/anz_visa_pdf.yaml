@@ -1,0 +1,24 @@
+# ANZ Visa (credit card) PDF. Legacy shape: Date | Details | Amount (no running
+# balance in the table). Dates are day+month ("21 Apr"); year comes from the
+# statement period. Opening/closing balance sit outside the table -> pin them.
+# Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+id: anz_visa_pdf
+bank: ANZ
+statement_type: visa
+format: pdf
+version: 1
+currency: NZD
+min_score: 2
+fingerprint:
+  page_contains_all: ["ANZ", "Visa"]          # TODO confirm exact phrases on a real statement
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: signed                          # single Amount column (charges +, payments/credits -)
+  columns:
+    date:        {x_min: 40,  x_max: 110}      # TODO draw
+    description: {x_min: 110, x_max: 430}      # TODO draw
+    amount:      {x_min: 430, x_max: 545}      # TODO draw
+  metadata_regions:                            # balances are outside the table -> pin them
+    opening_balance: {x_min: 380, x_max: 545, y_min: 60, y_max: 82}   # TODO draw around the opening balance
+    closing_balance: {x_min: 380, x_max: 545, y_min: 90, y_max: 112}  # TODO draw around the closing balance

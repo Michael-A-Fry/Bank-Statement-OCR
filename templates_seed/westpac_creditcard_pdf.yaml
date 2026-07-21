@@ -1,0 +1,24 @@
+# Westpac Credit Card PDF. Legacy shape: Date | Details | Amount (no running
+# balance in the table). Closing balance labelled "Closing Balance" -> pin it.
+# Day+month dates; year from the statement period.
+# Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+id: westpac_creditcard_pdf
+bank: Westpac
+statement_type: credit_card
+format: pdf
+version: 1
+currency: NZD
+min_score: 2
+fingerprint:
+  page_contains_all: ["Westpac", "Closing Balance"]   # TODO confirm exact phrases
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: signed
+  columns:
+    date:        {x_min: 40,  x_max: 110}      # TODO draw
+    description: {x_min: 110, x_max: 430}      # TODO draw
+    amount:      {x_min: 430, x_max: 545}      # TODO draw
+  metadata_regions:
+    opening_balance: {x_min: 380, x_max: 545, y_min: 60, y_max: 82}   # TODO draw
+    closing_balance: {x_min: 380, x_max: 545, y_min: 90, y_max: 112}  # TODO draw around "Closing Balance"

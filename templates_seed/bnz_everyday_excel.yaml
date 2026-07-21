@@ -1,0 +1,22 @@
+# BNZ everyday Excel (.xlsx) export. Column map mirrors bnz_everyday_csv; the .xlsx
+# export may use slightly different header text -> confirm the header names against
+# a real file (open it, or use the toolkit's Basic field pickers).
+id: bnz_everyday_excel
+bank: BNZ
+statement_type: everyday
+format: excel
+version: 1
+currency: NZD
+min_score: 3
+fingerprint:
+  header_contains_all: [Date, Amount, Payee, "Tran Type"]   # TODO confirm against a real .xlsx
+columns:
+  date:        {source: Date, format: "%d/%m/%y"}   # TODO confirm date format on a real file
+  amount:      {source: Amount}
+  description: {source: Payee}
+  particulars: {source: Particulars}
+  code:        {source: Code}
+  reference:   {source: Reference}
+  type:        {source: "Tran Type"}
+  other_party: {source: "Other Party Account"}
+amount_sign: signed

@@ -1,0 +1,22 @@
+# Kiwibank everyday Excel (.xlsx) export. Column map mirrors kiwibank_everyday_csv;
+# confirm the header names + date format against a real .xlsx.
+id: kiwibank_everyday_excel
+bank: Kiwibank
+statement_type: everyday
+format: excel
+version: 1
+currency: NZD
+min_score: 3
+fingerprint:
+  header_contains_all: ["Transaction Date", Description, Amount, Balance]   # TODO confirm against a real .xlsx
+columns:
+  date:        {source: "Transaction Date", format: "%Y-%m-%d"}   # TODO confirm date format
+  amount:      {source: Amount}
+  description: {source: Description}
+  particulars: {source: Particulars}
+  code:        {source: Code}
+  reference:   {source: Reference}
+  type:        {source: "Transaction Code"}
+  other_party: {source: "Other Party Name"}
+  balance:     {source: Balance}
+amount_sign: signed

@@ -1,0 +1,23 @@
+# ANZ Loan PDF. Legacy shape: Date | Details | Amount | Balance (running balance
+# in the table). Day+month dates; year from the statement period. If the loan
+# statement splits money in/out into two columns instead of one signed Amount,
+# switch amount_sign to debit_credit_cols and give debit/credit bands.
+# Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+id: anz_loan_pdf
+bank: ANZ
+statement_type: loan
+format: pdf
+version: 1
+currency: NZD
+min_score: 2
+fingerprint:
+  page_contains_all: ["ANZ", "Loan"]           # TODO confirm exact phrases
+table:
+  row_tol: 3
+  date_format: "%d %b"
+  amount_sign: signed
+  columns:
+    date:        {x_min: 40,  x_max: 90}       # TODO draw
+    description: {x_min: 90,  x_max: 355}      # TODO draw
+    amount:      {x_min: 355, x_max: 455}      # TODO draw
+    balance:     {x_min: 455, x_max: 545}      # TODO draw
