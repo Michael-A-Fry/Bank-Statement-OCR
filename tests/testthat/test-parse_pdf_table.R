@@ -136,6 +136,46 @@ test_that("multi-line descriptions are folded into the transaction, footers are 
   expect_false(grepl("Page", paste(tx$description, collapse = " ")))  # footer excluded
 })
 
+test_that("split-row recovery stitches a staggered date + amount back together", {
+  # One transaction whose DATE sits 5pt below its amount/balance -> with row_tol 3
+  # the date and the amount fall into different groups. Each half fails the keep
+  # test on its own; the recovery re-joins them into one row, flagged row_stitched.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("COFFEE","4.50","95.50",   "05","Jan",       # row 1: amount y=40, date y=45
+              "RENT","10.00","85.50",     "06","Jan"),      # row 2: amount y=70, date y=75
+    x     = c(110,415,490,   45,60,        110,415,490,     45,60),
+    y     = c(40,40,40,       45,45,        70,70,70,        75,75),
+    width = c(45,25,30,       12,16,        30,30,30,        12,16),
+    height= rep(9, 10))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 2L)                              # both staggered rows recovered
+  expect_equal(tx$date, c("2026-01-05", "2026-01-06"))
+  expect_equal(tx$amount, c(4.50, 10.00))
+  expect_true(all(grepl("row_stitched", tx$flags)))       # honestly flagged as re-joined
+})
+
+test_that("split-row recovery does NOT merge a carried-forward line with a real row", {
+  # A "Balance brought forward" line (date + balance, NO amount) followed by a real
+  # transaction (its OWN date + amount). The amount row has a date -> not amount-only
+  # -> the recovery must NOT fire, and only the real transaction is kept.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","Balance","brought","forward","225.89",   # carried fwd: date + balance, no amount
+              "06","Jan","COFFEE","4.50","220.00"),                 # real txn: date + amount
+    x     = c(45,60,110,150,190,490,   45,60,110,415,490),
+    y     = c(40,40,40,40,40,40,        70,70,70,70,70),
+    width = c(12,16,45,45,45,30,        12,16,45,25,30),
+    height= rep(9, 11))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 1L)                              # only the real transaction
+  expect_false(any(grepl("row_stitched", tx$flags)))      # nothing was stitched
+})
+
 test_that("a differently-sized page normalises to the reference (scan/scale fix)", {
   # Same statement, two physical sizes. A template has no explicit ref -> defaults
   # to A4; the A4 page is untouched and the 2x page is normalised back to it, so

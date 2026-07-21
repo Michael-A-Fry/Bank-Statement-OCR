@@ -73,6 +73,26 @@
   w
 }
 
+# .stitch_split(a, b) -- combine a date-bearing half-row (a) and an amount-bearing
+# half-row (b) into one transaction: keep a's date, fill the money/other cells from
+# whichever half has them, concatenate descriptions. Used by the split-row recovery
+# when a statement staggers a single row's cells onto different baselines.
+.stitch_split <- function(a, b) {
+  fld <- function(x, y) { x <- x %||% NA_character_
+    if (!is.na(x) && nzchar(trimws(x))) x else (y %||% NA_character_) }
+  cat_txt <- function(x, y) { x <- x %||% ""; y <- y %||% ""
+    trimws(paste(if (is.na(x)) "" else x, if (is.na(y)) "" else y)) }
+  m <- a
+  for (f in c("amount", "debit", "credit", "balance", "particulars", "code",
+              "reference", "other_party", "type")) m[[f]] <- fld(a[[f]], b[[f]])
+  m$description <- cat_txt(a$description, b$description)
+  m$raw <- cat_txt(a$raw, b$raw)
+  m$.y0 <- min(a$.y0, b$.y0, na.rm = TRUE); m$.y1 <- max(a$.y1, b$.y1, na.rm = TRUE)
+  for (nm in union(names(a), names(b))) if (startsWith(nm, "x.")) m[[nm]] <- fld(a[[nm]], b[[nm]])
+  m$.stitched <- TRUE
+  m
+}
+
 .group_rows <- function(ys, tol) {
   n <- length(ys); if (n == 0) return(integer(0))
   grp <- integer(n); cur <- 1L; ref <- ys[1]
@@ -342,6 +362,40 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   .is_txn <- function(r) (.date_ok(r$date) || .redacted_cell(r$date)) &&
                          .has_amount(r) && !.is_summary(r)
 
+  # Split-row recovery: some statements render one transaction's cells on slightly
+  # different baselines, so the DATE and the AMOUNT land in DIFFERENT visual rows (a
+  # stagger larger than row_tol). Each half then fails the keep test and a whole
+  # block of them vanishes -- the "half the page is missing" bug. Stitch an adjacent
+  # date-only group and amount-only group back into one transaction. It fires ONLY
+  # on a genuine split -- one side has a real date but no money, the other has money
+  # but no date at all -- so a well-formed statement is never touched, a summary or
+  # carried-forward line (which keeps its own date) is never merged, and the
+  # stitched row is flagged (row_stitched) for review.
+  if (length(recs) > 1) {
+    d_ok  <- vapply(recs, function(r) .date_ok(r$date) || .redacted_cell(r$date), logical(1))
+    has_a <- vapply(recs, .has_amount, logical(1))
+    d_txt <- vapply(recs, function(r) !is.na(r$date) && nzchar(trimws(r$date)), logical(1))
+    date_only <- function(k) d_ok[k] && !has_a[k] && !.is_summary(recs[[k]])
+    amt_only  <- function(k) has_a[k] && !d_ok[k] && !d_txt[k] && !.is_summary(recs[[k]])
+    drop <- logical(length(recs)); i <- 1L
+    while (i < length(recs)) {
+      if (drop[i]) { i <- i + 1L; next }
+      j <- i + 1L; while (j <= length(recs) && drop[j]) j <- j + 1L
+      if (j > length(recs)) break
+      a <- recs[[i]]; b <- recs[[j]]
+      lh <- if (is.finite(a$.h) && a$.h > 0) a$.h else 10
+      close <- identical(a$page, b$page) && is.finite(a$.y1) && is.finite(b$.y0) &&
+               (b$.y0 - a$.y1) <= 1.2 * lh && (b$.y0 - a$.y1) >= -1.2 * lh
+      if (close && ((date_only(i) && amt_only(j)) || (amt_only(i) && date_only(j)))) {
+        dk <- if (date_only(i)) i else j; ak <- if (amt_only(i)) i else j
+        recs[[i]] <- .stitch_split(recs[[dk]], recs[[ak]])
+        drop[j] <- TRUE; d_ok[i] <- TRUE; has_a[i] <- TRUE; d_txt[i] <- TRUE
+        i <- j + 1L
+      } else i <- i + 1L
+    }
+    recs <- recs[!drop]
+  }
+
   # Multi-line descriptions: a wrapped payee / particulars spills onto the next
   # visual row, which carries NO date and NO money. Instead of dropping it (losing
   # verbatim content), fold its text into the PRECEDING kept transaction. Only a
@@ -380,6 +434,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   keep <- vapply(recs, .is_txn, logical(1)) | forced_vec
   recs <- recs[keep]
   forced_vec <- forced_vec[keep]
+  stitched_vec <- vapply(recs, function(r) isTRUE(r$.stitched), logical(1))
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
     vapply(recs, function(r) r[[f]] %||% NA_character_, character(1))
@@ -443,7 +498,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
-    f <- add(f, forced_vec, "forced")   # a row the user added by hand from the X-ray
+    f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray
+    f <- add(f, stitched_vec, "row_stitched")   # two half-rows the reader re-joined
     f <- add(f, ocr_low, "ocr_low_conf")
     f
   }
