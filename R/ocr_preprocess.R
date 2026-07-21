@@ -83,25 +83,64 @@ preprocess_opts_geometry <- function() {
   if (!is.finite(ok)) 0 else ok
 }
 
+# .content_centre(img, work_width) -- centre (in FULL-resolution pixels) of the
+# dark-ink bounding box, measured on a downscaled greyscale copy. NULL when the
+# page holds no measurable ink. Used to anchor the deskew crop to the CONTENT,
+# not the canvas.
+.content_centre <- function(img, work_width = 1000L) {
+  tryCatch({
+    info <- magick::image_info(img)
+    g <- magick::image_convert(img, colorspace = "gray")
+    s <- 1
+    if (info$width > work_width) {
+      s <- info$width / work_width
+      g <- magick::image_resize(g, paste0(work_width, "x"))
+    }
+    g <- magick::image_normalize(g)
+    hh <- magick::image_info(g)$height
+    v <- as.integer(magick::image_data(g, channels = "gray"))
+    idx <- which(v < 100L)
+    if (length(idx) < 200L) return(NULL)
+    y <- (idx - 1L) %% hh
+    x <- (idx - 1L) %/% hh
+    c(x = (min(x) + max(x)) / 2 * s, y = (min(y) + max(y)) / 2 * s)
+  }, error = function(e) NULL)
+}
+
 # .deskew_image(img, min_angle, max_angle) -- straighten a skewed page: measure
 # the skew, and only when it is a REAL tilt (above min_angle, within the search
 # range) rotate by the opposite angle on a white background and crop back to the
-# ORIGINAL canvas about the centre. The crop matters: rotation expands the
+# ORIGINAL canvas size. The crop matters twice over. First, rotation expands the
 # canvas, which would shift every word box and mis-report the page size; the
 # crop keeps the frame identical to the raw render so downstream geometry
 # (72/dpi scaling, template x-bands, page-size normalisation) is untouched.
-# A straight page is returned as-is, never resampled.
+# Second, the crop is anchored so the CONTENT's bounding-box centre lands where
+# it was before the rotation -- a rotation about the canvas centre alone adds a
+# sideways translation (tens of points at 2-3 degrees, enough to push every
+# word out of its template band), because the printed content is never
+# perfectly centred on the canvas. Anchoring to the ink undoes the tilt without
+# moving the words. A straight page is returned as-is, never resampled.
 .deskew_image <- function(img, min_angle = 0.3, max_angle = 5) {
   ang <- .detect_skew_angle(img, max_angle = max_angle)
   if (!is.finite(ang) || abs(ang) <= min_angle) return(img)
   tryCatch({
     info <- magick::image_info(img)
+    c_before <- .content_centre(img)
     out <- magick::image_rotate(
       magick::image_background(img, "white", flatten = TRUE), -ang)
     oi <- magick::image_info(out)
-    magick::image_crop(out, sprintf("%dx%d+%d+%d", info$width, info$height,
-                                    max(0L, (oi$width - info$width) %/% 2),
-                                    max(0L, (oi$height - info$height) %/% 2)))
+    # Default: centred crop. With a measurable content centre, offset the crop so
+    # the ink sits exactly where it did in the raw render.
+    ox <- (oi$width - info$width) %/% 2
+    oy <- (oi$height - info$height) %/% 2
+    c_after <- if (is.null(c_before)) NULL else .content_centre(out)
+    if (!is.null(c_before) && !is.null(c_after)) {
+      ox <- as.integer(round(c_after[["x"]] - c_before[["x"]]))
+      oy <- as.integer(round(c_after[["y"]] - c_before[["y"]]))
+    }
+    ox <- min(max(ox, 0L), max(0L, oi$width - info$width))
+    oy <- min(max(oy, 0L), max(0L, oi$height - info$height))
+    magick::image_crop(out, sprintf("%dx%d+%d+%d", info$width, info$height, ox, oy))
   }, error = function(e) img)
 }
 

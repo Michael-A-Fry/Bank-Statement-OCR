@@ -30,6 +30,31 @@ test_that("OCR still reads real text after pre-processing", {
   expect_match(toupper(paste(res$text, collapse = " ")), "CARD SUMMARY", fixed = TRUE)
 })
 
+test_that("the skew estimator recovers a known rotation and leaves straight pages alone", {
+  skip_if_not(ocr_preprocess_available(), "magick not available")
+  img <- magick::image_blank(800, 1100, "white")
+  img <- magick::image_draw(img)
+  for (yy in seq(100, 1000, by = 60)) rect(100, yy, 700, yy + 4, col = "black", border = NA)
+  dev.off()
+  rot <- magick::image_background(magick::image_rotate(img, 2), "white", flatten = TRUE)
+  expect_lt(abs(.detect_skew_angle(rot) - 2), 0.2)   # finds the 2 degree tilt
+  expect_lt(abs(.detect_skew_angle(img)), 0.3)       # a straight page measures straight
+})
+
+test_that("deskew straightens the page without changing the canvas", {
+  skip_if_not(ocr_preprocess_available(), "magick not available")
+  img <- magick::image_blank(800, 1100, "white")
+  img <- magick::image_draw(img)
+  for (yy in seq(100, 1000, by = 60)) rect(100, yy, 700, yy + 4, col = "black", border = NA)
+  dev.off()
+  rot <- magick::image_background(magick::image_rotate(img, 2), "white", flatten = TRUE)
+  fixed <- .deskew_image(rot)
+  ri <- magick::image_info(rot); fi <- magick::image_info(fixed)
+  expect_equal(fi$width, ri$width)    # crop-back keeps the frame: word geometry
+  expect_equal(fi$height, ri$height)  # and page size stay consistent downstream
+  expect_lt(abs(.detect_skew_angle(fixed)), 0.3)
+})
+
 test_that("scan profile (adaptive local threshold) yields a readable image", {
   skip_if_not(ocr_preprocess_available(), "magick not available")
   skip_if_not(nzchar(Sys.which("pdftoppm")), "pdftoppm not available")

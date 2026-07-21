@@ -1052,11 +1052,13 @@ server <- function(input, output, session) {
     sw <- function(col, lab) tags$div(style = "margin:2px 0",
       tags$span(style = sprintf("display:inline-block;width:12px;height:12px;border:2px solid %s;margin-right:6px;vertical-align:middle", col)),
       tags$span(lab))
+    has_ocr <- !is.null(P$words$ocr_conf) && any(!is.na(P$words$ocr_conf))
     tagList(strong("Legend"),
       lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
       sw("#137333", "transaction row (kept)"),
       sw("#a15c00", "balance / account details"),
-      sw("#b00020", "redaction (not read)"))
+      sw("#b00020", "redaction (not read)"),
+      if (has_ocr) sw("#c77700", "shaded amber = machine-read word the tool is unsure about - double-check it"))
   })
   ix_render <- reactive({
     st <- ix_state(); req(st, st$is_pdf)
@@ -1083,6 +1085,14 @@ server <- function(input, output, session) {
     w <- P$words
     if (isTRUE(input$ix_show_words) && nrow(w))
       rect(w$x, w$y, w$x + w$width, w$y + w$height, border = "#cfcfcf", lwd = 0.4)
+    # Machine-read (OCR) words the engine itself is unsure about: shaded amber so
+    # "double-check the numbers" points at exactly the doubtful words. Same floor
+    # (60) as the engine's ocr_low_conf row flag.
+    if (!is.null(w$ocr_conf)) {
+      lc <- w[!is.na(w$ocr_conf) & w$ocr_conf < 60, , drop = FALSE]
+      if (nrow(lc)) rect(lc$x, lc$y, lc$x + lc$width, lc$y + lc$height,
+                         border = "#c77700", col = "#c7770040", lwd = 1.2)
+    }
     sel <- w[!is.na(w$column), , drop = FALSE]
     if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
                         border = pal[sel$column], lwd = 1.3)

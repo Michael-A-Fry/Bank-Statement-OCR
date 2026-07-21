@@ -39,4 +39,9 @@ test_that("read_pdf exposes ocr flags and does not OCR a text-layer page", {
   idx <- which(grepl("CARD SUMMARY", r$pages, ignore.case = TRUE))
   expect_gte(length(idx), 1L)
   expect_false(any(r$ocr[idx]))
+  # words-frame contract: ocr_conf is always present; on a text-layer page it is
+  # all NA (typeset text has no recognition step to be unsure about).
+  w <- r$words[[idx[1]]]
+  expect_true("ocr_conf" %in% names(w))
+  expect_true(all(is.na(w$ocr_conf)))
 })

@@ -52,9 +52,10 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
 }
 
 # .ocr_tsv_to_words(tsv, scale) -- Tesseract TSV -> word boxes in PDF POINTS
-# (columns x,y,width,height,space,text -- the same shape pdftools::pdf_data uses),
-# so the PDF table parser can assign columns for a SCANNED statement exactly as
-# for a text-layer one. `scale` = 72/dpi maps image pixels to points.
+# (columns x,y,width,height,space,text -- the same shape pdftools::pdf_data uses,
+# plus per-word conf/ocr_conf), so the PDF table parser can assign columns for a
+# SCANNED statement exactly as for a text-layer one. `scale` = 72/dpi maps image
+# pixels to points.
 .ocr_tsv_to_words <- function(tsv, scale) {
   if (is.null(tsv) || !nrow(tsv) ||
       !all(c("left", "top", "width", "height", "text") %in% names(tsv))) return(NULL)
@@ -65,10 +66,13 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   # `conf` (0-100 per-word confidence) is carried through so the table parser can
   # flag a transaction whose amount/date/balance cell contains a low-confidence
   # word -- a misread digit that a page-mean confidence would otherwise hide.
+  # `ocr_conf` is the same figure under the words-frame contract name, so the
+  # X-ray view can shade doubtful words; text-layer pages carry it as NA.
+  cf <- suppressWarnings(as.numeric(d$conf))
   data.frame(width = d$width * scale, height = d$height * scale,
              x = d$left * scale, y = d$top * scale, space = TRUE,
              text = trimws(as.character(d$text)),
-             conf = suppressWarnings(as.numeric(d$conf)), stringsAsFactors = FALSE)
+             conf = cf, ocr_conf = cf, stringsAsFactors = FALSE)
 }
 
 # Render one PDF page to PNG (poppler pdftoppm) and OCR it.

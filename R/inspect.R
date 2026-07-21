@@ -31,7 +31,7 @@
 #   list(pages = list(<page> = list(
 #     region = list(x_min,x_max,y_min,y_max) | NULL,
 #     bands  = named list(field -> list(x_min,x_max)),
-#     words  = data.frame(x,y,width,height,text,redacted,in_region,column),
+#     words  = data.frame(x,y,width,height,text,redacted,in_region,column,ocr_conf),
 #     rows   = data.frame(x0,y0,x1,y1,kept,date)   # one per visual row in-region
 #   )))
 # `column` is which template column a word is selected into (NA = none / outside
@@ -95,9 +95,13 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     inreg <- .in_region(w, region_p)
     colassign <- vapply(seq_len(nrow(w)), function(i)
       if (inreg[i]) .word_column(cx[i], cols_p) else NA_character_, character(1))
+    # ocr_conf: per-word OCR confidence (0-100) on a machine-read page, NA on a
+    # text-layer page -- always present so the app can shade doubtful words.
     words <- data.frame(x = w$x, y = w$y, width = w$width, height = w$height,
       text = as.character(w$text), redacted = as.logical(w$redacted),
-      in_region = inreg, column = colassign, stringsAsFactors = FALSE)
+      in_region = inreg, column = colassign,
+      ocr_conf = suppressWarnings(as.numeric(w$ocr_conf %||% rep(NA_real_, nrow(w)))),
+      stringsAsFactors = FALSE)
 
     # Row boxes: group the in-region words by y exactly like parse_pdf_table.
     rw <- w[inreg, , drop = FALSE]
@@ -160,7 +164,8 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
 
 .empty_words <- function() data.frame(x = numeric(0), y = numeric(0), width = numeric(0),
   height = numeric(0), text = character(0), redacted = logical(0),
-  in_region = logical(0), column = character(0), stringsAsFactors = FALSE)
+  in_region = logical(0), column = character(0), ocr_conf = numeric(0),
+  stringsAsFactors = FALSE)
 .empty_rows <- function() data.frame(x0 = numeric(0), y0 = numeric(0), x1 = numeric(0),
   y1 = numeric(0), kept = logical(0), date = character(0), reason = character(0),
   raw = character(0), h = numeric(0), stringsAsFactors = FALSE)
