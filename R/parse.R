@@ -12,10 +12,14 @@
 }
 
 # .pick(tbl, name) -- fetch a column by name as character, or NULL if absent.
+# Exact match first; then a UNIQUE case-insensitive match ("DATE" for "Date"),
+# so a bank flipping its header casing doesn't silently blank the column.
 .pick <- function(tbl, name) {
   if (is.null(name)) return(NULL)
-  if (!(name %in% names(tbl))) return(NULL)
-  as.character(tbl[[name]])
+  if (name %in% names(tbl)) return(as.character(tbl[[name]]))
+  hit <- which(tolower(names(tbl)) == tolower(name))
+  if (length(hit) == 1) return(as.character(tbl[[hit]]))
+  NULL
 }
 
 REDACTION_TOKEN <- "[REDACTED]"

@@ -49,6 +49,7 @@ CHECK_PLAIN <- c(
   running_balance_continuity = "Each running balance follows from the last",
   transaction_count          = "Row count matches the statement",
   dates_within_period        = "All dates fall in the statement period",
+  dates_readable             = "Row dates could be read",
   no_unparsed_rows           = "Every row was read",
   redaction_summary          = "Redactions found and honoured",
   ocr_confidence             = "Scan / OCR read quality")
