@@ -230,103 +230,31 @@ ui <- fluidPage(
       "Add a template",
       br(),
       wellPanel(
-        strong("🛠 Statement template toolkit (recommended)"),
-        p(class = "muted", "Upload any statement and set up a perfect template: your statement stays on screen while you set the bank, dates and amounts, with a live preview. Simple for the common case, Advanced for anything unusual. Same toolkit the Convert tab opens."),
-        fluidRow(
-          column(7, fileInput("ts_file", "Statement file (.csv / .tsv / .tdv / .pdf)")),
-          column(5, br(), actionButton("ts_go", "🛠 Open the toolkit", class = "btn-warning")))),
+        strong("🛠 Add a template"),
+        p(class = "muted", "Upload the document and set it up with it on screen the whole time. There's one toolkit: it opens Simple for the common case, and Advanced (the full field-by-field / YAML editor) is one click away inside it - no separate path to learn."),
+        fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)"),
+        radioButtons("ts_doctype", "What kind of document is this?",
+          c("A bank or card statement - a table of transactions" = "statement",
+            "Something else - labelled values (an IRD form, an account summary, a letter)" = "other"),
+          selected = "statement"),
+        conditionalPanel("input.ts_doctype == 'statement'",
+          actionButton("ts_go", "🛠 Open the toolkit", class = "btn-warning")),
+        conditionalPanel("input.ts_doctype == 'other'",
+          div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
+            strong("Heads up - an 'Other' document is read differently"),
+            tags$ul(style = "margin:6px 0 0",
+              tags$li("It has no transaction table and no running balance, so the completeness checks (opening + transactions = closing) don't apply."),
+              tags$li("The tool pulls the specific labelled values you name (e.g. 'Closing balance'), not a table of rows."),
+              tags$li("There is nothing to reconcile against, so trust is lower by nature - eyeball each value.")),
+            p(class = "muted", style = "margin:6px 0 0", "Set it up with the labelled-value builder below.")))),
       # One flow: the toolkit above is THE way to add a template. The manual
       # field-by-field wizards are still here for anything unusual, but tucked into
       # an "Advanced" section so a normal user isn't faced with two competing paths.
-      tags$details(style = "margin-top:12px",
-      tags$summary(style = "cursor:pointer;font-weight:600;color:#555",
-                   "Advanced: build a template by hand"),
-      helpText(HTML("You almost never need this - the toolkit above does the same thing visually, with your statement on screen. These manual wizards build a template one field at a time. Click <b>ⓘ</b> for the full step-by-step.")),
-      tabsetPanel(
-    tabPanel(
-      "Spreadsheet (CSV / Excel)",
-      br(),
-      sidebarLayout(
-        sidebarPanel(
-          width = 4,
-          actionButton("wz_help", "ⓘ How to build a template (step-by-step)",
-                       class = "btn-info", style = "margin-bottom:8px;width:100%"),
-          fileInput("wz_file", "Sample statement (delimited)"),
-          textInput("wz_delim", "How columns are separated (comma, tab…)", value = ","),
-          textInput("wz_id", "A short name for this layout", value = "newbank_everyday_csv"),
-          textInput("wz_bank", "Bank", value = "NewBank"),
-          textInput("wz_type", "Kind of statement", value = "everyday"),
-          selectInput("wz_amount_sign", "How are amounts shown?",
-                      choices = setNames(names(wd_amount_labels()),
-                                         unname(wd_amount_labels()))),
-          selectInput("wz_datefmt", "How are dates written?",
-                      choices = setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
-                                         vapply(wd_date_table(), `[[`, "", "label"))),
-          helpText("Auto-detected from your sample - change only if wrong."),
-          textInput("wz_currency", "Currency", value = "NZD"),
-          actionButton("wz_preview", "Preview parse", class = "btn-primary"),
-          actionButton("wz_save", "Save template"),
-          br(), br(), uiOutput("wz_msg")
-        ),
-        mainPanel(
-          width = 8,
-          conditionalPanel("output.wz_has_sample != true", uiOutput("wz_empty")),
-          uiOutput("wz_detected"),
-          conditionalPanel("output.wz_has_sample == true",
-            h4("Check each field points at the right column"),
-            uiOutput("wz_maps"),
-            h4("Which column headings prove it's this bank (must all be present to match)"),
-            uiOutput("wz_fingerprint"),
-            h4("Live preview"), verbatimTextOutput("wz_preview_status"),
-            DTOutput("wz_preview_tbl"),
-            h4("Generated template (templates/<id>.yaml)"),
-            div(class = "mono", verbatimTextOutput("wz_yaml")))
-        )
-      )
-    ),
-    # ---- PDF wizard (nested under Add a template) ----------------------
-    tabPanel(
-      "PDF",
-      br(),
-      sidebarLayout(
-        sidebarPanel(
-          width = 4,
-          actionButton("wp_help", "ⓘ How to build a template (step-by-step)",
-                       class = "btn-info", style = "margin-bottom:8px;width:100%"),
-          fileInput("wp_file", "Sample PDF statement (.pdf)"),
-          numericInput("wp_page", "Page", 1, min = 1, step = 1),
-          selectInput("wp_field", "Field for the next box you draw",
-                      c("date", "description", "amount", "balance", "particulars",
-                        "code", "reference", "other_party", "type")),
-          actionButton("wp_assign", "Assign drawn box → field", class = "btn-primary"),
-          actionButton("wp_remove", "🗑 Remove this field"),
-          actionButton("wp_clear", "Clear all boxes"),
-          tags$hr(),
-          textInput("wp_id", "Template id", "newbank_pdf"),
-          textInput("wp_bank", "Bank", "NewBank"),
-          textInput("wp_fingerprint", "A phrase unique to this statement (for matching)", ""),
-          selectInput("wp_datefmt", "How are dates written?",
-                      choices = setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
-                                         vapply(wd_date_table(), `[[`, "", "label"))),
-          selectInput("wp_sign", "How are amounts shown?",
-                      choices = setNames(names(wd_amount_labels()), unname(wd_amount_labels()))),
-          actionButton("wp_preview", "Preview parse", class = "btn-primary"),
-          actionButton("wp_save", "Save PDF template"),
-          br(), br(), uiOutput("wp_msg")
-        ),
-        mainPanel(
-          width = 8,
-          helpText("Draw a box across a column on the page, pick which field it is, and click Assign. Rows are kept only where the date reads as a real date - so headings, notes and gaps are ignored automatically."),
-          plotOutput("wp_plot", brush = brushOpts("wp_brush", direction = "x"), height = "760px"),
-          h4("Columns you've assigned"), tableOutput("wp_bands"),
-          h4("Live preview"), verbatimTextOutput("wp_prev_status"), DTOutput("wp_prev_tbl"),
-          h4("Generated PDF template"), div(class = "mono", verbatimTextOutput("wp_yaml"))
-        )
-      )
-    ),
-    # ---- PDF form / labelled values (nested under Add a template) ------
-    tabPanel(
-      "PDF form (labelled values)",
+      # 'Other' documents (labelled values) are set up with this builder, shown
+      # right here when "Something else" is picked above. Statements use the one
+      # toolkit (its Advanced tab already covers field-by-field / YAML editing), so
+      # there is no separate "build by hand" path any more.
+      conditionalPanel("input.ts_doctype == 'other'",
       br(),
       helpText("For a PDF that ISN'T a transaction table - an IRD / KiwiSaver / account summary, a letter, a form. Teach the tool which labelled values to pull; when a value sits far from its label, draw a box to say exactly where it is. (To just READ one, upload it on Convert - it's detected automatically.)"),
       sidebarLayout(
@@ -369,7 +297,6 @@ ui <- fluidPage(
           h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
           h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml"))))
     )
-      ))
     ),
     # ---- Admin (insights + batch intake) ------------------------------
     tabPanel(
