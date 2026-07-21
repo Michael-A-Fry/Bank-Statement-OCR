@@ -247,49 +247,64 @@ ui <- fluidPage(
     )
       )
     ),
-    # ---- Forms (IRD / labelled-value documents) -----------------------
+    # ---- Other PDFs (labelled-value / form documents) -----------------
     tabPanel(
-      "Forms (IRD)",
+      "Other PDFs",
       br(),
-      helpText("Some documents — IRD summaries, KiwiSaver / account summaries — aren't transaction tables; they're labelled values. Extract those here, or teach the tool a new form's labels."),
+      helpText("For PDFs that AREN'T transaction tables — IRD summaries, KiwiSaver / account summaries, letters, forms. These carry labelled values, not rows. Extract them here, or teach the tool a new one. When a value sits far from its label, draw a box to say exactly where it is."),
       tabsetPanel(
         tabPanel(
-          "Extract from a form", br(),
+          "Extract from a PDF", br(),
           sidebarLayout(
             sidebarPanel(
               width = 4,
-              fileInput("fm_file", "Form document (.pdf)"),
+              fileInput("fm_file", "PDF document (.pdf)"),
               actionButton("fm_go", "Extract fields", class = "btn-primary"),
               br(), br(), uiOutput("fm_downloads"),
-              helpText("Detection uses the identifying phrases in each form template. Build one on the next tab if nothing matches.")),
+              helpText("Detection uses the identifying phrases in each template. Build one on the next tab if nothing matches.")),
             mainPanel(
               width = 8,
               uiOutput("fm_status"),
               h4("Fields found"), DTOutput("fm_table")))),
         tabPanel(
-          "Build a form template", br(),
+          "Build a PDF template", br(),
           sidebarLayout(
             sidebarPanel(
               width = 4,
-              textInput("fb_id", "Template id", "newform_fields"),
+              textInput("fb_id", "Template id", "newpdf_fields"),
               textInput("fb_bank", "Bank / issuer", "NewIssuer"),
               textInput("fb_type", "Document type", "summary"),
-              textAreaInput("fb_fp", "Identifying phrases (one per line — text that appears on this form)",
+              textAreaInput("fb_fp", "Identifying phrases (one per line — text that appears on this PDF)",
                             rows = 3, value = "KiwiSaver\nOpening balance"),
               textAreaInput("fb_fields",
-                            "Fields — one per line:  field_name = Label; Other label | money",
-                            rows = 8,
+                            "Values found NEAR their label — one per line:  field_name = Label; Other label | money",
+                            rows = 6,
                             value = paste("opening_balance = Opening balance; Balance brought forward | money",
-                                          "closing_balance = Closing balance | money",
-                                          "government_contribution = Government contribution; Member tax credit | money",
-                                          sep = "\n")),
-              fileInput("fb_sample", "Optional: a sample form to test on (.pdf)"),
-              actionButton("fb_preview", "Preview on the sample", class = "btn-primary"),
-              actionButton("fb_save", "Save form template"),
+                                          "closing_balance = Closing balance | money", sep = "\n")),
+              tags$hr(),
+              strong("Value in a different place than its label?"),
+              helpText("Upload a sample, draw a box on the page, name the field and pick its type, then Set — the value is read from that box, wherever the label is."),
+              fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)"),
+              fluidRow(
+                column(6, textInput("fb_rf_field", "Field name", "")),
+                column(6, selectInput("fb_rf_type", "Value type",
+                                      c("money", "date", "date_range", "text")))),
+              fluidRow(
+                column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
+                column(8, br(),
+                       actionButton("fb_rf_set", "📍 Set value box", class = "btn-primary"),
+                       actionButton("fb_rf_clear", "Clear boxes"))),
+              tags$hr(),
+              actionButton("fb_preview", "Preview on the sample"),
+              actionButton("fb_save", "Save template", class = "btn-primary"),
               br(), br(), uiOutput("fb_msg")),
             mainPanel(
               width = 8,
-              helpText("Value type after | can be money, date, date_range or text (default). Any field whose name matches the shared dictionary also inherits its synonyms automatically."),
+              helpText("Label value types: money, date, date_range, text (default). A field whose name matches the shared dictionary inherits its synonyms automatically."),
+              conditionalPanel("output.fb_has_sample == true",
+                h4("Draw a box to place a value (optional)"),
+                plotOutput("fb_plot", brush = brushOpts("fb_brush", direction = "xy"), height = "540px"),
+                tableOutput("fb_regions_tbl")),
               h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
               h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml")))))
       )
@@ -723,7 +738,7 @@ server <- function(input, output, session) {
       writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
     })
 
-  # ---- Forms (IRD): extract labelled values from a form document ----------
+  # ---- Other PDFs: extract labelled values from a form-style document ------
   fm_res <- reactiveVal(NULL); fm_dir <- reactiveVal(NULL)
   observeEvent(input$fm_go, {
     req(input$fm_file)
@@ -766,7 +781,7 @@ server <- function(input, output, session) {
     })
   output$fm_dl_xlsx <- fm_dl("xlsx"); output$fm_dl_csv <- fm_dl("csv"); output$fm_dl_json <- fm_dl("json")
 
-  # ---- Forms (IRD): build a form template from labels ----------------------
+  # ---- Other PDFs: build a template from labels + placed value boxes --------
   # parse_fields_spec -- turn the friendly "name = Label; Label2 | money" lines
   # into a fields{} block. Value type after "|" is optional (default text).
   parse_fields_spec <- function(text) {
@@ -786,19 +801,70 @@ server <- function(input, output, session) {
     }
     fields
   }
+  # Positional value boxes drawn on the sample: field -> list(page,x_min..y_max,value).
+  fb_regions <- reactiveVal(list())
+  output$fb_has_sample <- reactive({ !is.null(input$fb_sample) })
+  outputOptions(output, "fb_has_sample", suspendWhenHidden = FALSE)
+  observeEvent(input$fb_rf_set, {
+    nm <- gsub("[^A-Za-z0-9_]+", "_", trimws(input$fb_rf_field %||% ""))
+    br <- input$fb_brush
+    if (!nzchar(nm)) { showNotification("Name the field first.", type = "warning"); return() }
+    if (is.null(br)) { showNotification("Draw a box on the page around the value first.", type = "warning"); return() }
+    r <- fb_regions()
+    r[[nm]] <- list(page = max(1L, as.integer(input$fb_rf_page %||% 1)),
+                    x_min = round(br$xmin), x_max = round(br$xmax),
+                    y_min = round(br$ymin), y_max = round(br$ymax),
+                    value = input$fb_rf_type %||% "text")
+    fb_regions(r)
+    showNotification(sprintf("Placed the value box for '%s'.", nm), type = "message")
+  })
+  observeEvent(input$fb_rf_clear, fb_regions(list()))
+  output$fb_regions_tbl <- renderTable({
+    r <- fb_regions(); if (!length(r)) return(NULL)
+    do.call(rbind, lapply(names(r), function(nm) data.frame(field = nm, page = r[[nm]]$page,
+      box = sprintf("x %d–%d, y %d–%d", r[[nm]]$x_min, r[[nm]]$x_max, r[[nm]]$y_min, r[[nm]]$y_max),
+      value = r[[nm]]$value, stringsAsFactors = FALSE)))
+  })
+  fb_render <- reactive({
+    req(input$fb_sample); pg <- max(1L, as.integer(input$fb_rf_page %||% 1))
+    sz <- tryCatch(pdftools::pdf_pagesize(input$fb_sample$datapath), error = function(e) NULL)
+    if (is.null(sz) || pg > nrow(sz)) return(NULL)
+    ras <- tryCatch(as.raster(magick::image_read(
+      pdftools::pdf_render_page(input$fb_sample$datapath, page = pg, dpi = 100))), error = function(e) NULL)
+    if (is.null(ras)) return(NULL)
+    list(ras = ras, w = sz$width[pg], h = sz$height[pg], pg = pg)
+  })
+  output$fb_plot <- renderPlot({
+    r <- fb_render(); req(r)
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i", xlab = "", ylab = "", axes = FALSE)
+    rasterImage(r$ras, 0, r$h, r$w, 0)
+    for (nm in names(fb_regions())) { b <- fb_regions()[[nm]]
+      if (isTRUE(b$page == r$pg)) {
+        rect(b$x_min, b$y_max, b$x_max, b$y_min, border = "#a15c00", lwd = 2)
+        text(b$x_min, b$y_min, nm, col = "#a15c00", font = 2, cex = 0.9, adj = c(0, 1))
+      } }
+  })
   fb_template <- reactive({
     phrases <- trimws(strsplit(input$fb_fp %||% "", "\n")[[1]]); phrases <- phrases[nzchar(phrases)]
-    list(id = gsub("[^A-Za-z0-9_]+", "_", input$fb_id %||% "newform_fields"),
+    flds <- parse_fields_spec(input$fb_fields)
+    # Merge the drawn value boxes: a positional field reads its value from the box,
+    # regardless of where (or whether) a label appears.
+    for (nm in names(fb_regions())) { b <- fb_regions()[[nm]]
+      flds[[nm]] <- list(region = list(page = b$page, x_min = b$x_min, x_max = b$x_max,
+                                       y_min = b$y_min, y_max = b$y_max), value = b$value)
+    }
+    list(id = gsub("[^A-Za-z0-9_]+", "_", input$fb_id %||% "newpdf_fields"),
          bank = input$fb_bank %||% "NewIssuer", statement_type = input$fb_type %||% "summary",
          format = "pdf", mode = "fields", version = 1,
          fingerprint = list(page_contains_all = as.list(phrases)),
-         fields = parse_fields_spec(input$fb_fields), currency = "NZD")
+         fields = flds, currency = "NZD")
   })
   output$fb_yaml <- renderText({ t <- fb_template(); t$origin <- NULL; yaml::as.yaml(t) })
 
   fb_preview <- reactiveVal(NULL)
   observeEvent(input$fb_preview, {
-    if (is.null(input$fb_sample)) { showNotification("Upload a sample form to preview on.", type = "warning"); return() }
+    if (is.null(input$fb_sample)) { showNotification("Upload a sample PDF to preview on.", type = "warning"); return() }
     inp <- tryCatch(read_input(input$fb_sample$datapath), error = function(e) NULL)
     if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return() }
     f <- tryCatch(extract_fields(inp, fb_template()), error = function(e) NULL)

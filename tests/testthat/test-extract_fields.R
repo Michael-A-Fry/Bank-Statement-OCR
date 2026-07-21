@@ -26,3 +26,30 @@ test_that("extract_fields skips annotation lines without a value", {
   f <- extract_fields(input, tmpl)
   expect_equal(f$value, "$521.43")
 })
+
+test_that("positional (region) fields read the value by location, not by label", {
+  mkw <- function(text, x, y, wd = 20, ht = 8)
+    data.frame(text = text, x = x, y = y, width = wd, height = ht, stringsAsFactors = FALSE)
+  # label 'Total GST' top-left; the value sits bottom-right with no nearby label
+  page <- do.call(rbind, list(
+    mkw("Total", 40, 40), mkw("GST", 70, 40),
+    mkw("Acme", 40, 200), mkw("Ltd", 75, 200),
+    mkw("$1,234.56", 400, 320)))
+  input <- list(words = list(page), pages = "Total GST Acme Ltd $1,234.56")
+
+  # money value pulled from its box, far from the label
+  f <- extract_fields(input, list(fields = list(
+    gst = list(region = list(page = 1, x_min = 380, x_max = 460, y_min = 310, y_max = 330), value = "money"))))
+  expect_true(f$matched); expect_equal(f$value, "$1,234.56")
+
+  # text box (default type) grabs the box contents in reading order
+  f2 <- extract_fields(input, list(fields = list(
+    name = list(at = list(page = 1, x_min = 35, x_max = 90, y_min = 195, y_max = 210)))))
+  expect_equal(f2$value, "Acme Ltd")
+
+  # an empty box is honestly "not found" (never a wrong guess)
+  f3 <- extract_fields(input, list(fields = list(
+    x = list(region = list(page = 1, x_min = 900, x_max = 950)))))
+  expect_false(f3$matched)
+  expect_true(is.na(f3$value))
+})
