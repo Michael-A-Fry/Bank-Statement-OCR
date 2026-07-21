@@ -388,10 +388,11 @@ ui <- fluidPage(
           fluidRow(
             column(5,
               selectInput("adm_tpl_pick", "Preview / edit a template", choices = NULL),
+              actionButton("adm_tpl_dup", "⧉ Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
               actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
               br(), br(), uiOutput("adm_tpl_msg"),
-              helpText("Editing a 'tested' template and saving keeps a user copy; give it a new id to make your version take effect (shipped templates win on an id clash).")),
+              helpText("Make a variation: Duplicate copies this template with a new id into the editor — tweak it and Save. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
             column(7,
               h4("Template YAML"),
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
@@ -491,8 +492,17 @@ server <- function(input, output, session) {
   })
 
   output$cv_bank_ui <- renderUI({
-    banks <- sort(unique(vapply(templates(), function(t) t$bank %||% "", character(1))))
-    selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks))
+    ts <- templates()
+    banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
+    # Template picker: labelled "Bank · type — id" so you can force an EXACT
+    # template, not just a bank, when you need to be specific.
+    ov <- template_overview(ts)
+    tpl_choices <- c("(auto-detect)" = "")
+    if (nrow(ov)) tpl_choices <- c(tpl_choices,
+      stats::setNames(ov$id, sprintf("%s · %s — %s", ov$bank, ov$type, ov$id)))
+    tagList(
+      selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks)),
+      selectInput("cv_template", "…or force an exact template (optional)", choices = tpl_choices))
   })
 
   # ---- Which templates are available (Convert visibility) ----
@@ -528,6 +538,19 @@ server <- function(input, output, session) {
     t <- templates()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
+  })
+
+  # Duplicate the selected template with a fresh id, into the editor to tweak+save.
+  observeEvent(input$adm_tpl_dup, {
+    t <- tryCatch(yaml::yaml.load(input$adm_tpl_edit %||% ""), error = function(e) NULL)
+    if (is.null(t) || is.null(t$id)) t <- templates()[[input$adm_tpl_pick]]
+    req(t)
+    ids <- names(templates())
+    new_id <- paste0(t$id, "_copy"); k <- 2L
+    while (new_id %in% ids) { new_id <- paste0(t$id, "_copy", k); k <- k + 1L }
+    t$id <- new_id; t$origin <- NULL
+    updateTextAreaInput(session, "adm_tpl_edit", value = yaml::as.yaml(t))
+    output$adm_tpl_msg <- .tpl_note(sprintf("Duplicated as <b>%s</b> — edit it and click Save.", new_id))
   })
 
   .tpl_from_editor <- function() tryCatch(yaml::yaml.load(input$adm_tpl_edit), error = function(e) NULL)
@@ -950,11 +973,12 @@ server <- function(input, output, session) {
     # frozen. A visible bar tells the user it IS working, not stuck.
     res <- withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
+      forced_tpl <- if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL
       out <- tryCatch(
         convert_document(src, bank = bank, outdir = sess,
                           templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
                           fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
-                          requested_by = who, logdir = LOGDIR),
+                          requested_by = who, logdir = LOGDIR, force_template = forced_tpl),
         error = function(e) {
           # Log the technical detail for Admin; show the user a plain sentence.
           safe(cat(sprintf("[%s] convert error (%s): %s\n", format(Sys.time()),
@@ -1268,10 +1292,12 @@ server <- function(input, output, session) {
               column(4, selectInput("g_pdf_field", "The box I draw is the…",
                                     c("date", "description", "amount", "balance", "particulars",
                                       "reference", "type", "debit", "credit", "other_party", "code"))),
-              column(5, br(),
+              column(5, textInput("g_pdf_custom", "…or a custom column name", ""))),
+            fluidRow(
+              column(12,
                 actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
                 actionButton("g_pdf_remove", "🗑 Remove this column"))),
-            helpText("Auto-setup can add a column that isn't really on this statement. Pick it above and click Remove to delete its box."),
+            helpText("Draw a box, pick a field (or type a custom column name — it's added as an extra column). Auto-setup can add a column that isn't really there: pick it and Remove to delete its box."),
             plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "520px"),
             tags$hr()),
           strong("Full template (YAML)"),
@@ -1518,37 +1544,45 @@ server <- function(input, output, session) {
       }
     }
   })
-  observeEvent(input$g_pdf_assign, {
-    g <- guided(); req(g); br <- input$g_pdf_brush
-    if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
-    f <- input$g_pdf_field
-    g$tmpl$table$columns[[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
-    # Widen the region's x-bounds to include every band, but PRESERVE any y-bounds
-    # the template set (don't silently un-scope the table vertically).
-    xs <- unlist(lapply(g$tmpl$table$columns, function(c) c(c$x_min, c$x_max)))
-    if (length(xs)) {
-      reg <- g$tmpl$table$region %||% list()
-      reg$x_min <- min(xs) - 5; reg$x_max <- max(xs) + 5
-      g$tmpl$table$region <- reg
-    }
-    guided(g)
-    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-    output$g_adv_msg <- renderUI(span(class = "ok",
-      sprintf("Set the '%s' column. Page and preview updated.", f)))
-  })
-  # Delete a column band the auto-setup got wrong (a column that isn't on this
-  # statement). Recomputes the table region from whatever bands remain.
-  observeEvent(input$g_pdf_remove, {
-    g <- guided(); req(g); f <- input$g_pdf_field
-    if (is.null(g$tmpl$table$columns[[f]])) {
-      showNotification(sprintf("There's no '%s' column to remove.", f), type = "warning"); return() }
-    g$tmpl$table$columns[[f]] <- NULL
-    xs <- unlist(lapply(g$tmpl$table$columns, function(c) c(c$x_min, c$x_max)))
+  .CANON_PDF_COLS <- c("date", "description", "amount", "balance", "debit", "credit",
+                       "particulars", "code", "reference", "other_party", "type")
+  # A custom name (typed) becomes an EXTRA column (output as x.<name>); a canonical
+  # name is a normal table column. Which "slot" a field lives in for assign/remove.
+  .pdf_field_ref <- function(f) if (f %in% .CANON_PDF_COLS) "columns" else "extras"
+  .pdf_all_bands <- function(tbl) c(tbl$columns %||% list(), tbl$extras %||% list())
+  .pdf_resize_region <- function(g) {
+    xs <- unlist(lapply(.pdf_all_bands(g$tmpl$table), function(c) c(c$x_min, c$x_max)))
     reg <- g$tmpl$table$region %||% list()
     if (length(xs)) { reg$x_min <- min(xs) - 5; reg$x_max <- max(xs) + 5 }
     else { reg$x_min <- NULL; reg$x_max <- NULL }   # no bands left -> drop x-scope, keep y
     g$tmpl$table$region <- if (length(reg)) reg else NULL
-    guided(g)
+    g
+  }
+  .pdf_chosen_field <- function()
+    if (nzchar(trimws(input$g_pdf_custom %||% "")))
+      gsub("[^A-Za-z0-9_]+", "_", trimws(input$g_pdf_custom)) else input$g_pdf_field
+
+  observeEvent(input$g_pdf_assign, {
+    g <- guided(); req(g); br <- input$g_pdf_brush
+    if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
+    f <- .pdf_chosen_field(); slot <- .pdf_field_ref(f)
+    g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
+    g <- .pdf_resize_region(g); guided(g)
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "ok",
+      sprintf("Set the '%s' column%s. Page and preview updated.", f,
+              if (identical(slot, "extras")) " (custom / extra)" else "")))
+  })
+  # Delete a column band the auto-setup got wrong (a column that isn't on this
+  # statement). Recomputes the table region from whatever bands remain.
+  observeEvent(input$g_pdf_remove, {
+    g <- guided(); req(g); f <- .pdf_chosen_field()
+    slot <- if (!is.null(g$tmpl$table$columns[[f]])) "columns"
+            else if (!is.null(g$tmpl$table$extras[[f]])) "extras" else NA
+    if (is.na(slot)) {
+      showNotification(sprintf("There's no '%s' column to remove.", f), type = "warning"); return() }
+    g$tmpl$table[[slot]][[f]] <- NULL
+    g <- .pdf_resize_region(g); guided(g)
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
     output$g_adv_msg <- renderUI(span(class = "ok",
       sprintf("Removed the '%s' column. Page and preview updated.", f)))

@@ -7,7 +7,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               user_templates_dir = "templates_user",
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
-                              logdir = "logs", redaction_rects = NULL) {
+                              logdir = "logs", redaction_rects = NULL,
+                              force_template = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
   # run_id: a stable, human-readable handle for this conversion. Content hash
   # (first 10 chars) + timestamp, so feedback and logs can point back to it.
@@ -37,8 +38,19 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     layout_sig <- lsig$signature
     layout_hint <- lsig$hint
 
-    det <- detect_statement(input, templates, hint_bank = bank,
-                            hint_type = statement_type)
+    # force_template: the user picked an exact template on Convert -> skip
+    # detection and use it directly (still runs full reconciliation, so a wrong
+    # forced pick still surfaces as needs_review, never silently trusted).
+    if (!is.null(force_template) && nzchar(force_template) && !is.null(templates[[force_template]])) {
+      det <- list(template_id = force_template, matched = TRUE, score = NA_real_,
+                  margin = Inf, runner_up = NA_character_,
+                  candidates = data.frame(id = force_template, score = NA_real_,
+                                          stringsAsFactors = FALSE),
+                  detail = "template chosen by the user")
+    } else {
+      det <- detect_statement(input, templates, hint_bank = bank,
+                              hint_type = statement_type)
+    }
     closest_template <- det$template_id
     detect_detail <- det$detail
 

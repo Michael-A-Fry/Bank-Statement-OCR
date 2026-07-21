@@ -161,14 +161,15 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
                              templates_dir = "templates", user_templates_dir = "templates_user",
                              fields_dir = "fields_templates", user_fields_dir = NULL,
                              requested_by = NULL, formats = c("xlsx", "csv", "json"),
-                             logdir = "logs") {
+                             logdir = "logs", force_template = NULL) {
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
                            templates_dir = templates_dir, user_templates_dir = user_templates_dir,
-                           requested_by = requested_by, formats = formats, logdir = logdir)
+                           requested_by = requested_by, formats = formats, logdir = logdir,
+                           force_template = force_template)
   res$kind <- "statement"
-  # Only fall back to form extraction when the transaction pipeline found nothing
-  # to match -- a matched-but-needs-review statement is still a statement.
-  if (identical(res$status, "unsupported")) {
+  # Fall back to form extraction only when nothing matched AND the user didn't
+  # force a transaction template.
+  if (is.null(force_template) && identical(res$status, "unsupported")) {
     fr <- tryCatch(convert_form(path, fields_dir = fields_dir, user_fields_dir = user_fields_dir,
                                 outdir = outdir, formats = formats), error = function(e) NULL)
     if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
