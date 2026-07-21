@@ -109,7 +109,8 @@ ui <- fluidPage(
      .modal-lg{width:95%;max-width:1240px}
      .modal-content{border-radius:12px}
      /* header */
-     .app-header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:14px 0 10px}
+     .app-header{display:flex;align-items:baseline;flex-wrap:wrap;padding:14px 0 10px}
+     .app-header>*{margin-right:12px}
      .app-mark{display:inline-block;width:13px;height:13px;border-radius:4px;background:var(--brand);align-self:center}
      .app-title{font-size:21px;font-weight:700;letter-spacing:.2px}
      .app-tagline{font-size:13px;color:var(--muted)}
@@ -146,7 +147,7 @@ ui <- fluidPage(
      /* tables (DT) */
      table.dataTable{font-size:13px}
      table.dataTable thead th,table.dataTable thead td{
-       background:var(--panel)!important;border-bottom:2px solid var(--line)!important;font-size:12.5px}
+       background-color:var(--panel)!important;border-bottom:2px solid var(--line)!important;font-size:12.5px}
      table.dataTable tbody tr:hover{background:#f3f8f4}
      /* collapsed sections */
      details>summary{cursor:pointer}
