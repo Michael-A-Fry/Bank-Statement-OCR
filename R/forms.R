@@ -151,3 +151,31 @@ save_fields_template <- function(tmpl, dir = "fields_templates_user") {
   yaml::write_yaml(tmpl, path)
   invisible(path)
 }
+
+# convert_document(path, ...) -> result. The single front door: try the normal
+# transaction pipeline first; if nothing matched, fall back to form (mode:fields)
+# extraction, so ONE upload handles bank statements AND labelled-value PDFs (IRD
+# summaries, KiwiSaver, letters). The result carries `kind` = "statement" or
+# "form" so the UI knows which way to render it. Never throws.
+convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
+                             templates_dir = "templates", user_templates_dir = "templates_user",
+                             fields_dir = "fields_templates", user_fields_dir = NULL,
+                             requested_by = NULL, formats = c("xlsx", "csv", "json"),
+                             logdir = "logs") {
+  res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
+                           templates_dir = templates_dir, user_templates_dir = user_templates_dir,
+                           requested_by = requested_by, formats = formats, logdir = logdir)
+  res$kind <- "statement"
+  # Only fall back to form extraction when the transaction pipeline found nothing
+  # to match -- a matched-but-needs-review statement is still a statement.
+  if (identical(res$status, "unsupported")) {
+    fr <- tryCatch(convert_form(path, fields_dir = fields_dir, user_fields_dir = user_fields_dir,
+                                outdir = outdir, formats = formats), error = function(e) NULL)
+    if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
+      fr$kind <- "form"
+      fr$run_id <- res$run_id      # keep the run id so logging/feedback still line up
+      return(fr)
+    }
+  }
+  res
+}

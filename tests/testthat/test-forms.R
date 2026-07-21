@@ -64,6 +64,29 @@ test_that("validate_fields_template flags a non-fields or empty template", {
   expect_true(length(validate_fields_template(list(id = "x", fields = list(a = "A")))) > 0)
 })
 
+test_that("convert_document routes a statement vs a form through one front door", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  fdir <- file.path(engine_root(), "fields_templates")
+  tdir <- file.path(engine_root(), "templates")
+  od <- tempfile(); on.exit(unlink(od, recursive = TRUE), add = TRUE)
+
+  # a form PDF: no transaction template matches -> falls back to form extraction
+  fpdf <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
+  skip_if_not(file.exists(fpdf))
+  fr <- convert_document(fpdf, outdir = od, templates_dir = tdir,
+                         user_templates_dir = NULL, fields_dir = fdir)
+  expect_equal(fr$kind, "form")
+  expect_equal(fr$status, "ok")
+  expect_true(fr$n_fields >= 4)
+
+  # a document that matches nothing at all stays an unsupported statement
+  bad <- tempfile(fileext = ".csv"); writeLines(c("a,b", "1,2"), bad)
+  r2 <- convert_document(bad, outdir = od, templates_dir = tdir,
+                         user_templates_dir = NULL, fields_dir = fdir)
+  expect_equal(r2$kind, "statement")
+  expect_equal(r2$status, "unsupported")
+})
+
 test_that("convert_form on the sample PDF extracts fields (skips if absent)", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   pdf <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")

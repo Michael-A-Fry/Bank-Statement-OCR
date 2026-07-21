@@ -145,23 +145,27 @@ ui <- fluidPage(
           uiOutput("cv_status"),
           uiOutput("cv_teach"),
           uiOutput("cv_candidates"),
-          h4("Checks"), DTOutput("cv_kpis"),
-          h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
-          h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
-          uiOutput("cv_cov_summary"), DTOutput("cv_coverage"),
-          tabsetPanel(
-            tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
-            tabPanel("X-ray — see it on the page", br(),
-              conditionalPanel("output.ix_is_pdf == true",
-                p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · orange = a balance / date / account detail · red = a redaction (never read)."),
-                fluidRow(
-                  column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
-                  column(4, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
-                  column(5, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE))),
-                plotOutput("ix_plot", height = "780px"),
-                uiOutput("ix_legend")),
-              conditionalPanel("output.ix_is_pdf != true",
-                helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field.")))),
+          # Form / labelled-value PDF result (renders only when kind == "form").
+          uiOutput("cv_form"),
+          # Transaction-statement result panels (hidden for a form result).
+          conditionalPanel("output.cv_is_form != true",
+            h4("Checks"), DTOutput("cv_kpis"),
+            h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
+            h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
+            uiOutput("cv_cov_summary"), DTOutput("cv_coverage"),
+            tabsetPanel(
+              tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
+              tabPanel("X-ray — see it on the page", br(),
+                conditionalPanel("output.ix_is_pdf == true",
+                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · orange = a balance / date / account detail · red = a redaction (never read)."),
+                  fluidRow(
+                    column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
+                    column(4, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
+                    column(5, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE))),
+                  plotOutput("ix_plot", height = "780px"),
+                  uiOutput("ix_legend")),
+                conditionalPanel("output.ix_is_pdf != true",
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field."))))),
           uiOutput("cv_feedback")
         )
       )
@@ -256,69 +260,52 @@ ui <- fluidPage(
           h4("Generated PDF template"), div(class = "mono", verbatimTextOutput("wp_yaml"))
         )
       )
-    )
-      )
     ),
-    # ---- Other PDFs (labelled-value / form documents) -----------------
+    # ---- PDF form / labelled values (nested under Add a template) ------
     tabPanel(
-      "Other PDFs",
+      "PDF form (labelled values)",
       br(),
-      helpText("For PDFs that AREN'T transaction tables — IRD summaries, KiwiSaver / account summaries, letters, forms. These carry labelled values, not rows. Extract them here, or teach the tool a new one. When a value sits far from its label, draw a box to say exactly where it is."),
-      tabsetPanel(
-        tabPanel(
-          "Extract from a PDF", br(),
-          sidebarLayout(
-            sidebarPanel(
-              width = 4,
-              fileInput("fm_file", "PDF document (.pdf)"),
-              actionButton("fm_go", "Extract fields", class = "btn-primary"),
-              br(), br(), uiOutput("fm_downloads"),
-              helpText("Detection uses the identifying phrases in each template. Build one on the next tab if nothing matches.")),
-            mainPanel(
-              width = 8,
-              uiOutput("fm_status"),
-              h4("Fields found"), DTOutput("fm_table")))),
-        tabPanel(
-          "Build a PDF template", br(),
-          sidebarLayout(
-            sidebarPanel(
-              width = 4,
-              textInput("fb_id", "Template id", "newpdf_fields"),
-              textInput("fb_bank", "Bank / issuer", "NewIssuer"),
-              textInput("fb_type", "Document type", "summary"),
-              textAreaInput("fb_fp", "Identifying phrases (one per line — text that appears on this PDF)",
-                            rows = 3, value = "KiwiSaver\nOpening balance"),
-              textAreaInput("fb_fields",
-                            "Values found NEAR their label — one per line:  field_name = Label; Other label | money",
-                            rows = 6,
-                            value = paste("opening_balance = Opening balance; Balance brought forward | money",
-                                          "closing_balance = Closing balance | money", sep = "\n")),
-              tags$hr(),
-              strong("Value in a different place than its label?"),
-              helpText("Upload a sample, draw a box on the page, name the field and pick its type, then Set — the value is read from that box, wherever the label is."),
-              fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)"),
-              fluidRow(
-                column(6, textInput("fb_rf_field", "Field name", "")),
-                column(6, selectInput("fb_rf_type", "Value type",
-                                      c("money", "date", "date_range", "text")))),
-              fluidRow(
-                column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
-                column(8, br(),
-                       actionButton("fb_rf_set", "📍 Set value box", class = "btn-primary"),
-                       actionButton("fb_rf_clear", "Clear boxes"))),
-              tags$hr(),
-              actionButton("fb_preview", "Preview on the sample"),
-              actionButton("fb_save", "Save template", class = "btn-primary"),
-              br(), br(), uiOutput("fb_msg")),
-            mainPanel(
-              width = 8,
-              helpText("Label value types: money, date, date_range, text (default). A field whose name matches the shared dictionary inherits its synonyms automatically."),
-              conditionalPanel("output.fb_has_sample == true",
-                h4("Draw a box to place a value (optional)"),
-                plotOutput("fb_plot", brush = brushOpts("fb_brush", direction = "xy"), height = "540px"),
-                tableOutput("fb_regions_tbl")),
-              h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
-              h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml")))))
+      helpText("For a PDF that ISN'T a transaction table — an IRD / KiwiSaver / account summary, a letter, a form. Teach the tool which labelled values to pull; when a value sits far from its label, draw a box to say exactly where it is. (To just READ one, upload it on Convert — it's detected automatically.)"),
+      sidebarLayout(
+        sidebarPanel(
+          width = 4,
+          textInput("fb_id", "Template id", "newpdf_fields"),
+          textInput("fb_bank", "Bank / issuer", "NewIssuer"),
+          textInput("fb_type", "Document type", "summary"),
+          textAreaInput("fb_fp", "Identifying phrases (one per line — text that appears on this PDF)",
+                        rows = 3, value = "KiwiSaver\nOpening balance"),
+          textAreaInput("fb_fields",
+                        "Values found NEAR their label — one per line:  field_name = Label; Other label | money",
+                        rows = 6,
+                        value = paste("opening_balance = Opening balance; Balance brought forward | money",
+                                      "closing_balance = Closing balance | money", sep = "\n")),
+          tags$hr(),
+          strong("Value in a different place than its label?"),
+          helpText("Upload a sample, draw a box on the page, name the field and pick its type, then Set — the value is read from that box, wherever the label is."),
+          fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)"),
+          fluidRow(
+            column(6, textInput("fb_rf_field", "Field name", "")),
+            column(6, selectInput("fb_rf_type", "Value type",
+                                  c("money", "date", "date_range", "text")))),
+          fluidRow(
+            column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
+            column(8, br(),
+                   actionButton("fb_rf_set", "📍 Set value box", class = "btn-primary"),
+                   actionButton("fb_rf_clear", "Clear boxes"))),
+          tags$hr(),
+          actionButton("fb_preview", "Preview on the sample"),
+          actionButton("fb_save", "Save template", class = "btn-primary"),
+          br(), br(), uiOutput("fb_msg")),
+        mainPanel(
+          width = 8,
+          helpText("Label value types: money, date, date_range, text (default). A field whose name matches the shared dictionary inherits its synonyms automatically."),
+          conditionalPanel("output.fb_has_sample == true",
+            h4("Draw a box to place a value (optional)"),
+            plotOutput("fb_plot", brush = brushOpts("fb_brush", direction = "xy"), height = "540px"),
+            tableOutput("fb_regions_tbl")),
+          h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
+          h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml"))))
+    )
       )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -721,50 +708,8 @@ server <- function(input, output, session) {
       writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
     })
 
-  # ---- Other PDFs: extract labelled values from a form-style document ------
-  fm_res <- reactiveVal(NULL); fm_dir <- reactiveVal(NULL)
-  observeEvent(input$fm_go, {
-    req(input$fm_file)
-    sess <- file.path(tempdir(), paste0("fm_", as.integer(runif(1, 1, 1e9))))
-    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
-    src <- file.path(sess, input$fm_file$name)
-    file.copy(input$fm_file$datapath, src, overwrite = TRUE)
-    res <- withProgress(message = "Reading the form…", value = 0.4,
-      convert_form(src, fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
-                   outdir = sess, formats = c("xlsx", "csv", "json")))
-    fm_res(res); fm_dir(sess)
-  })
-  output$fm_status <- renderUI({
-    res <- fm_res(); if (is.null(res)) return(helpText("Upload a form and click Extract fields."))
-    cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
-    tagList(
-      h4(HTML(sprintf('<span class="%s">%s</span>', cls, toupper(res$status %||% "?")))),
-      p(class = "muted", paste(res$messages, collapse = "; ")),
-      if (!is.null(res$template_id) && !is.na(res$template_id))
-        p(class = "muted", paste("form template:", res$template_id)))
-  })
-  output$fm_table <- renderDT({
-    res <- fm_res(); req(res, !is.null(res$fields))
-    d <- res$fields[, intersect(c("field", "label", "value", "matched", "required", "flagged"),
-                                names(res$fields)), drop = FALSE]
-    datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 25))
-  })
-  output$fm_downloads <- renderUI({
-    res <- fm_res(); if (is.null(res)) return(NULL)
-    dl_buttons(res$outputs, c(xlsx = "fm_dl_xlsx", csv = "fm_dl_csv", json = "fm_dl_json"))
-  })
-  fm_dl <- function(ext) downloadHandler(
-    filename = function() {
-      p <- fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)]
-      if (length(p)) basename(p[1]) else paste0("download.", ext)
-    },
-    content = function(file) {
-      p <- fm_res()$outputs[grepl(paste0("\\.", ext, "$"), fm_res()$outputs)]
-      file.copy(need_file(if (length(p)) p[1] else NA_character_), file, overwrite = TRUE)
-    })
-  output$fm_dl_xlsx <- fm_dl("xlsx"); output$fm_dl_csv <- fm_dl("csv"); output$fm_dl_json <- fm_dl("json")
-
-  # ---- Other PDFs: build a template from labels + placed value boxes --------
+  # ---- Add a template: build a PDF-form template from labels + placed boxes --
+  # (Extraction/running of form PDFs now happens on the Convert tab — one door.)
   # parse_fields_spec -- turn the friendly "name = Label; Label2 | money" lines
   # into a fields{} block. Value type after "|" is optional (default text).
   parse_fields_spec <- function(text) {
@@ -1006,8 +951,9 @@ server <- function(input, output, session) {
     res <- withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
       out <- tryCatch(
-        convert_statement(src, bank = bank, outdir = sess,
+        convert_document(src, bank = bank, outdir = sess,
                           templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
+                          fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
                           requested_by = who, logdir = LOGDIR),
         error = function(e) {
           # Log the technical detail for Admin; show the user a plain sentence.
@@ -1032,7 +978,7 @@ server <- function(input, output, session) {
   })
 
   output$cv_status <- renderUI({
-    res <- cv_res(); if (is.null(res)) return(helpText("Upload a statement and click Convert."))
+    res <- cv_res(); if (is.null(res)) return(helpText("Upload a statement or any PDF and click Convert."))
     cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
     # Plain English headline + a word (not a raw number) for confidence.
     trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
@@ -1041,6 +987,23 @@ server <- function(input, output, session) {
       p(class = "muted", res$messages %||% ""),
       if (!is.null(res$template_id)) p(class = "muted", paste("template:", res$template_id))
     )
+  })
+  # Is this result a form (labelled values) rather than a transaction statement?
+  output$cv_is_form <- reactive({ isTRUE((cv_res()$kind %||% "") == "form") })
+  outputOptions(output, "cv_is_form", suspendWhenHidden = FALSE)
+  output$cv_form <- renderUI({
+    res <- cv_res(); req(res); req(identical(res$kind, "form"))
+    tagList(
+      div(style = "margin:8px 0;padding:8px 12px;background:#eef4ff;border-radius:6px",
+        HTML(sprintf("Read as a <b>form / labelled-value PDF</b> (not a transaction statement). Template: <b>%s</b>. Download it from the sidebar on the left.",
+                     htmltools::htmlEscape(res$template_id %||% "?")))),
+      h4("Values found"), DTOutput("cv_fields"))
+  })
+  output$cv_fields <- renderDT({
+    res <- cv_res(); req(res, !is.null(res$fields))
+    d <- res$fields[, intersect(c("field", "label", "value", "matched", "required", "flagged"),
+                                names(res$fields)), drop = FALSE]
+    datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 30))
   })
 
   output$cv_kpis <- renderDT({
@@ -1368,6 +1331,12 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res)
     if (is.null(cv_src())) return(NULL)
     st <- res$status %||% "failed"
+    if (identical(res$kind, "form")) {
+      # A form result is set up in the PDF form builder, not the table wizard.
+      return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
+        span(class = "muted", "Want to change which values are pulled, or add more (including a value in a different place than its label)? "),
+        actionLink("cv_goto_templates", "Open the PDF form builder →")))
+    }
     if (identical(st, "unsupported")) {
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
         strong("This statement doesn't match any template yet."),
