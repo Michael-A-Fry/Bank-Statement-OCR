@@ -418,12 +418,27 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # negative sign (via .num) instead of being read as a positive number; the
   # template's decimal locale applies here too.
   .money_num <- function(x) .num(x %||% NA_character_, dec)
+  # metadata_regions: user-drawn boxes that PIN a header value (balances, statement
+  # period, account details) for statements whose label wording the dictionary
+  # can't find. A box wins ONLY when it yields a value -- a correctly-read value is
+  # never overwritten with nothing. Stored under table$metadata_regions, separate
+  # from the column bands so it never widens the transaction region.
+  mregions <- t$metadata_regions %||% list()
+  .mr <- function(field, vtype) {
+    reg <- mregions[[field]]; if (is.null(reg)) return(NA_character_)
+    v <- safe(.field_from_region(words_by_page, reg, vtype)$value, NA_character_)
+    if (is.null(v) || is.na(v) || !nzchar(v)) NA_character_ else v
+  }
+  .mr_or <- function(field, vtype, fallback) { v <- .mr(field, vtype); if (!is.na(v)) v else fallback }
   header <- list(
     bank = template$bank %||% NA_character_, statement_type = template$statement_type %||% NA_character_,
     template_id = template$id %||% NA_character_, template_version = template$version %||% NA,
-    account_number = NA_character_, account_name = NA_character_,
-    period_start = md$period_start %||% NA_character_, period_end = md$period_end %||% NA_character_,
-    opening_balance = .money_num(md$opening_balance), closing_balance = .money_num(md$closing_balance),
+    account_number = .mr_or("account_number", "text", NA_character_),
+    account_name   = .mr_or("account_name", "text", NA_character_),
+    period_start = .mr_or("period_start", "text", md$period_start %||% NA_character_),
+    period_end   = .mr_or("period_end", "text", md$period_end %||% NA_character_),
+    opening_balance = .money_num(.mr_or("opening_balance", "money", md$opening_balance)),
+    closing_balance = .money_num(.mr_or("closing_balance", "money", md$closing_balance)),
     currency = template$currency %||% "NZD",
     source_file = basename(input$path), source_sha256 = input$sha256,
     page_count = input$meta$page_count %||% NA_integer_, row_count = n,

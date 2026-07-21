@@ -4,6 +4,10 @@
 .TEMPLATE_COMMON <- c("id", "bank", "statement_type", "format", "version",
                       "min_score", "fingerprint", "currency")
 .VALID_SIGN <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc", "unsigned")
+# Header values a PDF template may pin with a drawn box (table.metadata_regions),
+# for statements whose label wording the dictionary doesn't recognise.
+.META_REGION_FIELDS <- c("opening_balance", "closing_balance", "period_start",
+                         "period_end", "account_number", "account_name")
 
 # validate_template(t) -> character vector of problems (length 0 if valid).
 # Format-aware: delimited/excel carry columns+amount_sign at the top level and
@@ -47,6 +51,21 @@ validate_template <- function(t) {
       }
       if (!is.null(tab$amount_sign) && !(tab$amount_sign %in% .VALID_SIGN))
         problems <- c(problems, sprintf("table.amount_sign '%s' is invalid", tab$amount_sign))
+      # metadata_regions (optional): each entry pins a header value to a drawn box.
+      # The field must be one we actually wire into the header, and the box needs an
+      # x-band. Absent metadata_regions leaves validation exactly as it was.
+      if (!is.null(tab$metadata_regions)) {
+        mr <- tab$metadata_regions
+        if (!is.list(mr)) problems <- c(problems, "table.metadata_regions must be a mapping")
+        else for (field in names(mr)) {
+          if (!(field %in% .META_REGION_FIELDS))
+            problems <- c(problems, sprintf("table.metadata_regions.%s is not a header field (one of %s)",
+                                            field, paste(.META_REGION_FIELDS, collapse = "/")))
+          reg <- mr[[field]]
+          if (!is.list(reg) || is.null(reg$x_min) || is.null(reg$x_max))
+            problems <- c(problems, sprintf("table.metadata_regions.%s is malformed (needs x_min and x_max)", field))
+        }
+      }
     }
   } else {
     if (is.null(t$columns)) problems <- c(problems, "missing key 'columns'")

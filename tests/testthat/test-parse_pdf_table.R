@@ -193,6 +193,43 @@ test_that("force_rows that overlaps nothing is a safe no-op", {
   expect_equal(nrow(same), nrow(base))
 })
 
+test_that("metadata_regions pins a header value the label engine misses", {
+  # A closing-balance value that sits below the table with no wording the label
+  # dictionary recognises: the automatic reader can't find it, but a drawn box can.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",    # a normal transaction row
+              "1,234.56"),                            # the closing balance value, on its own
+    x     = c(45,60,110,415,490,   200),
+    y     = c(40,40,40,40,40,      120),
+    width = c(12,16,45,25,30,      60),
+    height = rep(10, 6))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  base <- parse_pdf_table(input, .simple_tmpl())$header
+  expect_true(is.na(base$closing_balance))           # not found without a region
+
+  tmpl <- .simple_tmpl()
+  tmpl$table$metadata_regions <- list(
+    closing_balance = list(page = 1, x_min = 195, x_max = 265, y_min = 115, y_max = 132))
+  h <- parse_pdf_table(input, tmpl)$header
+  expect_equal(h$closing_balance, 1234.56)           # the box pins it
+  # the pinned box must NOT invent a transaction row
+  expect_equal(nrow(parse_pdf_table(input, tmpl)$transactions), 1L)
+})
+
+test_that("metadata_regions validates: good passes, malformed / unknown rejected", {
+  base <- c(.tmpl, list(min_score = 1, fingerprint = list(page_contains_all = list("Withdrawals"))))
+  ok <- base
+  ok$table$metadata_regions <- list(
+    closing_balance = list(page = 1, x_min = 195, x_max = 265, y_min = 115, y_max = 132))
+  expect_length(validate_template(ok), 0)
+  bad1 <- base; bad1$table$metadata_regions <- list(closing_balance = list(x_min = 195))  # no x_max
+  expect_true(any(grepl("metadata_regions.closing_balance", validate_template(bad1))))
+  bad2 <- base; bad2$table$metadata_regions <- list(total_spend = list(x_min = 1, x_max = 2))  # unknown
+  expect_true(any(grepl("metadata_regions.total_spend", validate_template(bad2))))
+})
+
 test_that("tightly-set lines are NOT merged into one giant row (row-height grouping)", {
   # line pitch 4pt: the OLD cumsum(diff(y)>tol) merged both lines into one row
   # (no word-gap exceeded 3); the anchored grouping keeps them as two transactions.

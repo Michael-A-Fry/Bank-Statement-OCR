@@ -163,7 +163,7 @@ ui <- fluidPage(
               tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
               tabPanel("X-ray — see it on the page", br(),
                 conditionalPanel("output.ix_is_pdf == true",
-                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · amber dashed = a row it skipped that looks like a transaction · orange = a balance / date / account detail · red = a redaction (never read)."),
+                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · amber dashed = a row it skipped that looks like a transaction · orange = a balance / date / account detail · purple dotted = a value pinned by a drawn box · red = a redaction (never read)."),
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
                     column(3, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
@@ -1044,6 +1044,14 @@ server <- function(input, output, session) {
         if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
           text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
+    # pinned header-value boxes (metadata_regions) the template defines for this page
+    mr <- P$meta_regions %||% list()
+    for (nm in names(mr)) { b <- mr[[nm]]
+      if (is.null(b$x_min) || is.null(b$x_max)) next
+      y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
+      rect(b$x_min, y0, b$x_max, y1, border = "#7b1fa2", lwd = 2, lty = 3)
+      text(b$x_min, y0, paste0("📌 ", nm), col = "#7b1fa2", font = 2, cex = 0.8, pos = 3, offset = 0.2)
+    }
   })
   # "Why aren't you seeing it": every row the engine skipped on this page, with the
   # plain-English reason. Kept rows are excluded (they're the transactions). The
@@ -1406,16 +1414,29 @@ server <- function(input, output, session) {
     # LEFT: the statement itself, always visible.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
-      p(class = "muted", "Draw a box across a column, choose which field it is, then Assign. Bands are drawn here and drive the preview below."),
+      p(class = "muted", "Draw a box on the page, then either assign it as a column (for the transaction table) or pin it as a header value (balance / period / account). Boxes are drawn here and drive the preview below."),
       fluidRow(
         column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
-        column(5, selectInput("g_pdf_field", "The box I draw is the…",
+        column(5, selectInput("g_pdf_field", "Column the box is…",
                               c("date", "description", "amount", "balance", "particulars",
                                 "reference", "type", "debit", "credit", "other_party", "code"))),
         column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
       div(actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
           actionButton("g_pdf_remove", "🗑 Remove this column")),
-      plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "560px"))
+      tags$hr(style = "margin:8px 0"),
+      p(class = "muted", "Value not on every row (opening / closing balance, statement period, account details)? Draw a box around just that value and pin it here — used when the automatic reader can't find it."),
+      fluidRow(
+        column(8, selectInput("g_meta_field", "Pin the box as this header value",
+                              c("(choose)" = "",
+                                "opening balance" = "opening_balance",
+                                "closing balance" = "closing_balance",
+                                "statement period — start" = "period_start",
+                                "statement period — end" = "period_end",
+                                "account number" = "account_number",
+                                "account name" = "account_name"))),
+        column(4, br(), actionButton("g_meta_assign", "📌 Pin box → value"),
+               actionButton("g_meta_remove", "🗑"))),
+      plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush"), height = "560px"))
     else tagList(
       strong("Your statement — sample rows"),
       p(class = "muted", "The first rows of your file, so you can see the columns while you set things up."),
@@ -1732,6 +1753,16 @@ server <- function(input, output, session) {
         text(mean(c(b$x_min, b$x_max)), 16, names(cols)[i], col = pal[i], font = 2)
       }
     }
+    # pinned header-value boxes (metadata_regions) for the CURRENT page, in orange
+    mr <- guided()$tmpl$table$metadata_regions %||% list()
+    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
+    for (nm in names(mr)) { b <- mr[[nm]]
+      if (is.null(b$x_min) || is.null(b$x_max)) next
+      if (!identical(as.integer(b$page %||% 1), pg)) next
+      y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
+      rect(b$x_min, y0, b$x_max, y1, border = "#a15c00", lwd = 2)
+      text(b$x_min, y0, nm, col = "#a15c00", font = 2, cex = 0.85, pos = 3, offset = 0.2)
+    }
   })
   .CANON_PDF_COLS <- c("date", "description", "amount", "balance", "debit", "credit",
                        "particulars", "code", "reference", "other_party", "type")
@@ -1775,6 +1806,36 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
     output$g_adv_msg <- renderUI(span(class = "ok",
       sprintf("Removed the '%s' column. Page and preview updated.", f)))
+  })
+
+  # Pin a drawn box to a header value (metadata_regions). Unlike a column, this is a
+  # specific box (x AND y) around ONE value that isn't on every row -- a balance,
+  # the statement period, an account detail -- read straight from that spot when the
+  # automatic reader can't label it. It never touches the transaction region.
+  observeEvent(input$g_meta_assign, {
+    g <- guided(); req(g); br <- input$g_pdf_brush; f <- input$g_meta_field
+    if (is.null(f) || !nzchar(f)) {
+      showNotification("Choose which header value first.", type = "warning"); return() }
+    if (is.null(br)) {
+      showNotification("Draw a box around just that value on the page first.", type = "warning"); return() }
+    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
+    g$tmpl$table$metadata_regions[[f]] <- list(page = pg,
+      x_min = round(br$xmin), x_max = round(br$xmax),
+      y_min = round(br$ymin), y_max = round(br$ymax))
+    guided(g)
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "ok",
+      sprintf("Pinned '%s' to the box you drew on page %d.", f, pg)))
+  })
+  observeEvent(input$g_meta_remove, {
+    g <- guided(); req(g); f <- input$g_meta_field
+    if (is.null(f) || !nzchar(f) || is.null(g$tmpl$table$metadata_regions[[f]])) {
+      showNotification("No pinned box for that value to remove.", type = "warning"); return() }
+    g$tmpl$table$metadata_regions[[f]] <- NULL
+    if (!length(g$tmpl$table$metadata_regions)) g$tmpl$table$metadata_regions <- NULL
+    guided(g)
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "ok", sprintf("Removed the pinned box for '%s'.", f)))
   })
 
   output$g_preview <- renderDT({

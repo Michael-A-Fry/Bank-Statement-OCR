@@ -40,16 +40,24 @@
 inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   t <- template$table %||% list()
   cols <- t$columns %||% list()
+  meta_regions <- t$metadata_regions %||% list()
   region <- t$region %||% list()
   date_fmt <- t$date_format %||% "%d/%m/%Y"
   style <- t$amount_sign %||% "signed"
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
   wbp <- input$words %||% list()
 
+  # metadata_regions that belong on page p (default page 1) -> drawn as pinned
+  # header-value boxes, so the X-ray shows where each pinned value is read from.
+  .page_meta <- function(p) {
+    if (!length(meta_regions)) return(list())
+    keep <- vapply(meta_regions, function(b) identical(as.integer(b$page %||% 1), as.integer(p)), logical(1))
+    meta_regions[keep]
+  }
   pages <- lapply(seq_along(wbp), function(p) {
     w <- wbp[[p]]
     if (is.null(w) || !nrow(w)) return(list(region = region, bands = cols,
-      words = .empty_words(), rows = .empty_rows()))
+      words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p)))
     w <- as.data.frame(w, stringsAsFactors = FALSE)
     if (is.null(w$redacted)) w$redacted <- FALSE
     cx <- w$x + w$width / 2
@@ -98,7 +106,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
       }))
       rows <- .mark_continuations(rows)
     }
-    list(region = region, bands = cols, words = words, rows = rows)
+    list(region = region, bands = cols, words = words, rows = rows, meta_regions = .page_meta(p))
   })
   names(pages) <- as.character(seq_along(wbp))
   list(pages = pages)
