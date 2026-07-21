@@ -1831,14 +1831,13 @@ server <- function(input, output, session) {
                  error = function(e) NULL))
     }
     if (is.null(tmpl)) {
-      # Fail loud AND specific: Excel can't be drafted in the toolkit (the
-      # engine's auto-draft has no sheet-aware mapping), so say exactly that and
-      # give the 10-second workaround, instead of a generic "couldn't read it".
-      if (tolower(tools::file_ext(name %||% "")) %in% c("xlsx", "xls")) {
-        showNotification(paste("Excel files can't be set up in the toolkit yet. Most Excel exports",
-                               "convert as-is on the Convert tab (a generic Excel template ships with the tool).",
-                               "For a custom layout, save the sheet as CSV (File > Save As in Excel) and set that up here instead."),
-                         type = "warning", duration = 12)
+      # Fail loud AND specific. An Excel draft comes back NULL only when no sheet
+      # held a recognisable transaction table (a date column + a money column).
+      if (tolower(tools::file_ext(name %||% "")) %in% c("xlsx", "xlsm", "xls")) {
+        showNotification(paste("No transaction table found in this workbook - the toolkit needs a sheet",
+                               "with a date column and an amount column. If the table is unusual,",
+                               "save the sheet as CSV (File > Save As in Excel) and set that up instead."),
+                         type = "warning", duration = 10)
       } else {
         showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
                                "or try a text PDF / CSV export. If it isn't a transaction table, pick 'Something else' above."),

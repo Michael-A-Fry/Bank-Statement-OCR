@@ -67,14 +67,13 @@ kept, so headings/notes/gaps drop out by themselves.</li>
 are found by the date.</li>
 </ol>
 
-<h4>CSV / TSV statements - confirm what was detected</h4>
+<h4>CSV / Excel statements - confirm what was detected</h4>
 <ol><li>On <b>Add a template</b>, upload the export and click <b>Open the toolkit</b> - the
-separator, date format and amount style are detected for you, and sample rows show on the left.</li>
-<li>Check the description / reference / balance pickers point at the right columns.</li>
+date format, amount style and column mapping are detected for you. For Excel the right sheet is
+picked automatically, junk rows above the header are skipped, and dates stored as Excel serial
+numbers are read correctly.</li>
+<li>Check the field pickers point at the right columns.</li>
 <li>If the preview looks right, <b>Save</b>. That bank converts automatically from then on.</li></ol>
-<p class="lead"><b>Excel (.xlsx)?</b> Most Excel exports convert as-is on the Convert tab (a generic
-Excel template ships with the tool). A custom Excel layout can&#39;t be drafted in the toolkit yet -
-save the sheet as CSV (File &gt; Save As in Excel) and set that up here instead.</p>
 
 <h4>Trust it when it reconciles</h4>
 <p class="lead">In <b>Checks &amp; detail</b>: &quot;Each running balance follows from the last&quot; passing means

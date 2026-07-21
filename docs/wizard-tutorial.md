@@ -103,10 +103,10 @@ keeps it inside the period.
 
 ## 5. Step-by-step: a DELIMITED (CSV / Excel) template
 
-1. **Add a template** tab → **upload** your sample `.csv`/`.tsv` → **Open the
-   toolkit**. (**Excel?** Most `.xlsx` exports convert as-is via the generic
-   Excel template; a custom Excel layout can't be drafted in the toolkit yet -
-   save the sheet as CSV and set that up instead.)
+1. **Add a template** tab → **upload** your sample `.csv`/`.tsv`/`.xlsx` →
+   **Open the toolkit**. (For Excel the right sheet is picked automatically,
+   junk rows above the header are skipped, and dates stored as Excel serial
+   numbers are read correctly.)
 2. The toolkit **auto-detects** the delimiter, date format, amount style and
    column mapping, and shows the first rows of your file on the left the whole
    time.

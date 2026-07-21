@@ -86,6 +86,37 @@
     table = tbl, currency = "NZD", origin = "user")
 }
 
+# .draft_excel -- the sheet-aware Excel draft. read_input has already picked the
+# sheet, skipped any preamble and fixed serial dates, so drafting mirrors the
+# delimited path: map the headers, sniff the date format and amount style.
+# Returns NULL (honest "can't draft") when there's no date or no money column.
+.draft_excel <- function(input, id, bank) {
+  df <- input$table
+  if (is.null(df) || !nrow(df) || !ncol(df)) return(NULL)
+  h <- names(df)
+  mapcol <- function(field) { c <- guess_mapping(h, field); if (identical(c, "(none)")) NULL else c }
+  cols <- list()
+  dcol <- mapcol("date")
+  if (is.null(dcol)) return(NULL)   # no date column -> not a transaction table
+  fmt <- detect_date_format(df[[dcol]])
+  cols$date <- list(source = dcol, format = if (nzchar(fmt)) fmt else "%Y-%m-%d")
+  for (f in c("amount", "description", "particulars", "code", "reference", "type", "other_party", "balance")) {
+    cc <- mapcol(f); if (!is.null(cc)) cols[[f]] <- list(source = cc)
+  }
+  style <- detect_amount_style(h, df)
+  if (identical(style, "debit_credit_cols")) {
+    dc <- h[grepl("debit|withdrawal|money out|paid out", tolower(h))][1]
+    cc <- h[grepl("credit|deposit|money in|paid in", tolower(h))][1]
+    if (!is.na(dc)) cols$debit <- list(source = dc)
+    if (!is.na(cc)) cols$credit <- list(source = cc)
+  }
+  if (is.null(cols$amount) && is.null(cols$debit)) return(NULL)   # nothing to read money from
+  list(id = paste0(id, "_xlsx"), bank = bank, statement_type = "everyday", format = "excel",
+    version = 1, min_score = max(1L, length(h)),
+    fingerprint = list(header_contains_all = as.list(h)),
+    columns = cols, amount_sign = style, currency = "NZD", origin = "user")
+}
+
 # draft_template(path, bank) -> a template list (or NULL if unsupported kind).
 draft_template <- function(path, bank = "New bank") {
   input <- tryCatch(read_input(path), error = function(e) NULL)
@@ -93,7 +124,8 @@ draft_template <- function(path, bank = "New bank") {
   id <- .draft_id(path)
   if (identical(input$kind, "delimited")) return(.draft_delimited(path, id, bank))
   if (identical(input$kind, "pdf"))       return(.draft_pdf(input, id, bank))
-  NULL   # excel: use the Template wizard (needs sheet-aware mapping)
+  if (identical(input$kind, "excel"))     return(.draft_excel(input, id, bank))
+  NULL
 }
 
 # draft_preview(path, template) -> the parsed transactions from a draft, or NULL.

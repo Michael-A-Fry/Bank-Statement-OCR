@@ -1,15 +1,77 @@
 # read_input.R -- dispatch by file extension to the right reader and compute
 # the content hash. Returns a uniform `input` object (build-contract section 6).
 
-# read_excel_input(path) -- stub .xlsx reader (openxlsx/readxl). Reads the first
-# sheet as character. Cell parsing into the core schema is template-driven.
+# read_excel_input(path) -- .xlsx reader (readxl). Real workbooks are messy, so
+# three deterministic clean-ups happen here, before the engine sees the table:
+#   sheet  - pick the sheet that actually holds the transaction table (a header
+#            row with a date + a money-ish name and data rows under it) instead
+#            of blindly taking sheet 1;
+#   header - find the real header row within the first 30 rows, skipping the
+#            logo / account-info preamble rows exports often carry;
+#   dates  - a date-NAMED column stored as Excel serial numbers (e.g. 46023) is
+#            turned back into ISO dates. Only date-named columns: an amount
+#            column full of five-digit values must never become dates.
+# A clean single-sheet file (header on row 1) reads exactly as before, so the
+# shipped generic template and its golden test are unaffected.
 read_excel_input <- function(path) {
-  tbl <- NULL
-  if (requireNamespace("readxl", quietly = TRUE)) {
+  if (!requireNamespace("readxl", quietly = TRUE)) return(list(table = NULL))
+  sheets <- safe(readxl::excel_sheets(path), character(0))
+  if (!length(sheets)) return(list(table = NULL))
+  moneyish <- function(v) grepl(
+    "amount|balance|debit|credit|withdraw|deposit|paid in|paid out|money in|money out|value",
+    tolower(v %||% ""))
+  best <- NULL
+  for (sh in sheets) {
+    raw <- safe(suppressMessages(as.data.frame(
+      readxl::read_excel(path, sheet = sh, col_names = FALSE, col_types = "text",
+                         n_max = 2000, .name_repair = "minimal"),
+      stringsAsFactors = FALSE)))
+    if (is.null(raw) || !nrow(raw) || !ncol(raw)) next
+    hdr <- NA_integer_
+    for (r in seq_len(min(30L, nrow(raw)))) {
+      cells <- trimws(as.character(unlist(raw[r, ], use.names = FALSE)))
+      cells <- cells[!is.na(cells) & nzchar(cells)]
+      if (length(cells) < 2 || any(nchar(cells) > 60)) next
+      if (any(grepl("date", tolower(cells))) && any(moneyish(cells))) { hdr <- r; break }
+    }
+    if (is.na(hdr) || hdr >= nrow(raw)) next
+    score <- nrow(raw) - hdr   # the sheet with the most rows under its header wins
+    if (is.null(best) || score > best$score)
+      best <- list(sheet = sh, raw = raw, hdr = hdr, score = score)
+  }
+  # No sheet looked like a transaction table -> old behaviour (sheet 1 as-is),
+  # so a plain grid with unusual header names still reads.
+  if (is.null(best)) {
     tbl <- safe(as.data.frame(readxl::read_excel(path, col_types = "text"),
                               stringsAsFactors = FALSE))
+    return(list(table = tbl))
   }
-  list(table = tbl)
+  raw <- best$raw
+  h <- trimws(as.character(unlist(raw[best$hdr, ], use.names = FALSE)))
+  blank <- which(is.na(h) | !nzchar(h))
+  if (length(blank)) h[blank] <- paste0("col", blank)
+  tbl <- raw[seq.int(best$hdr + 1L, nrow(raw)), , drop = FALSE]
+  names(tbl) <- make.unique(h)
+  rownames(tbl) <- NULL
+  # drop fully-empty spacer rows (merged cells / section gaps)
+  keep <- vapply(seq_len(nrow(tbl)), function(i) {
+    rr <- as.character(unlist(tbl[i, ], use.names = FALSE))
+    any(!is.na(rr) & nzchar(trimws(rr)))
+  }, logical(1))
+  tbl <- tbl[keep, , drop = FALSE]
+  # serial-date fix, date-named columns only
+  for (cn in names(tbl)) {
+    if (!grepl("date", tolower(cn))) next
+    v <- trimws(as.character(tbl[[cn]]))
+    num <- suppressWarnings(as.numeric(v))
+    ok <- !is.na(num) & num > 20000 & num < 80000
+    filled <- !is.na(v) & nzchar(v)
+    if (sum(filled) > 0 && sum(ok) >= 0.6 * sum(filled)) {
+      v[ok] <- format(as.Date(round(num[ok]), origin = "1899-12-30"), "%Y-%m-%d")
+      tbl[[cn]] <- v
+    }
+  }
+  list(table = tbl, sheet = best$sheet, header_row = best$hdr)
 }
 
 # read_pdf_input(path) -- PDF reader delegating to read_pdf() (R/read_pdf.R):
