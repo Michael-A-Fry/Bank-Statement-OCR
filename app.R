@@ -268,6 +268,34 @@ ui <- fluidPage(
               h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml")))))
       )
     ),
+    # ---- Inspect (X-ray): SEE what the tool reads ---------------------
+    tabPanel(
+      "Inspect (X-ray)",
+      br(),
+      helpText("Open any statement and SEE exactly what the tool reads: the columns it uses, every word it selects into each column, the transaction rows it keeps, and a box around where each balance & metadata value is pulled from. Nothing is hidden."),
+      sidebarLayout(
+        sidebarPanel(
+          width = 3,
+          fileInput("ix_file", "Statement (.pdf / .csv / .xlsx)"),
+          selectInput("ix_tmpl", "Template", choices = c("(auto-detect)" = "")),
+          actionButton("ix_go", "🔎 Inspect", class = "btn-primary"),
+          tags$hr(),
+          conditionalPanel("output.ix_is_pdf == true",
+            numericInput("ix_page", "Page", 1, min = 1, step = 1),
+            checkboxInput("ix_show_words", "Faint box on every word", TRUE),
+            checkboxInput("ix_show_meta", "Box balances & metadata", TRUE)),
+          uiOutput("ix_legend")),
+        mainPanel(
+          width = 9,
+          uiOutput("ix_status"),
+          conditionalPanel("output.ix_is_pdf == true",
+            plotOutput("ix_plot", height = "820px")),
+          conditionalPanel("output.ix_is_pdf != true",
+            h4("Which source column feeds each field"), DTOutput("ix_map")),
+          h4("Rows the tool read (preview)"), DTOutput("ix_rows"),
+          h4("Balances & metadata found"), DTOutput("ix_meta"))
+      )
+    ),
     # ---- Admin (insights + batch intake) ------------------------------
     tabPanel(
       "Admin",
@@ -768,6 +796,155 @@ server <- function(input, output, session) {
     output$fb_msg <- renderUI(if (isTRUE(ok))
       span(class = "ok", sprintf("Saved '%s'. Upload it on 'Extract from a form' to use it.", t$id))
       else span(class = "bad", "Couldn't save — check the fields."))
+  })
+
+  # ---- Inspect (X-ray): render exactly what the tool reads ------------------
+  ix_state <- reactiveVal(NULL)
+  observe({
+    ts <- templates()
+    updateSelectInput(session, "ix_tmpl",
+      choices = c("(auto-detect)" = "", stats::setNames(names(ts), names(ts))),
+      selected = isolate(input$ix_tmpl) %||% "")
+  })
+  observeEvent(input$ix_go, {
+    req(input$ix_file)
+    sess <- file.path(tempdir(), paste0("ix_", as.integer(runif(1, 1, 1e9))))
+    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+    src <- file.path(sess, input$ix_file$name)
+    file.copy(input$ix_file$datapath, src, overwrite = TRUE)
+    forced <- input$ix_tmpl
+    st <- withProgress(message = "Reading & inspecting…", value = 0.3, {
+      inp <- tryCatch(read_input(src), error = function(e) NULL)
+      if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return(NULL) }
+      ts <- templates()
+      det <- tryCatch(detect_statement(inp, ts), error = function(e) NULL)
+      tid <- if (!is.null(forced) && nzchar(forced) && !is.null(ts[[forced]])) forced
+             else if (isTRUE(det$matched)) det$template_id else NA_character_
+      tmpl <- if (!is.na(tid)) ts[[tid]] else NULL
+      is_pdf <- identical(inp$kind, "pdf")
+      layout <- NULL; meta_loc <- NULL; mapdf <- NULL; parsed <- NULL; meta <- NULL
+      if (!is.null(tmpl)) {
+        parsed <- tryCatch(parse_statement(inp, tmpl), error = function(e) NULL)
+        if (is_pdf) {
+          layout <- tryCatch(inspect_pdf_layout(inp, tmpl), error = function(e) NULL)
+          meta <- tryCatch(extract_metadata(inp), error = function(e) NULL)
+          if (!is.null(meta)) {
+            targets <- list(opening_balance = meta$opening_balance,
+                            closing_balance = meta$closing_balance,
+                            period_start = meta$period_start, period_end = meta$period_end)
+            if (length(meta$accounts)) targets$account <- meta$accounts[1]
+            wbp <- inp$words %||% list()
+            meta_loc <- lapply(seq_along(wbp), function(p)
+              tryCatch(locate_values_on_page(wbp[[p]], targets), error = function(e) NULL))
+          }
+        } else {
+          mapdf <- field_source_map(tmpl)
+        }
+      }
+      list(path = src, name = input$ix_file$name, inp = inp, tmpl = tmpl, tid = tid,
+           det = det, is_pdf = is_pdf, layout = layout, meta_loc = meta_loc,
+           map = mapdf, parsed = parsed, meta = meta)
+    })
+    ix_state(st)
+  })
+  output$ix_is_pdf <- reactive({ st <- ix_state(); isTRUE(st$is_pdf) })
+  outputOptions(output, "ix_is_pdf", suspendWhenHidden = FALSE)
+
+  ix_pal <- function(bands) {
+    if (!length(bands)) return(character(0))
+    stats::setNames(grDevices::hcl(seq(5, 320, length.out = length(bands)), 75, 50), names(bands))
+  }
+  output$ix_status <- renderUI({
+    st <- ix_state(); if (is.null(st)) return(helpText("Upload a statement and click Inspect."))
+    if (is.null(st$tmpl)) return(div(class = "bad",
+      "No template matched — nothing to inspect. Pick a template above, or teach one in Guided setup."))
+    tr <- if (!is.null(st$parsed)) sprintf(" · %d row(s) read", nrow(st$parsed$transactions)) else ""
+    tagList(h4(HTML(sprintf('Reading with <span class="ok">%s</span>%s', st$tid, tr))),
+      p(class = "muted", if (isTRUE(st$is_pdf))
+        "Boxes: coloured = a column (see legend); green = a transaction row the tool kept; orange = a balance/metadata value; red = a redaction (never read)."
+        else "This is a spreadsheet/CSV — the table below shows which source column feeds each field."))
+  })
+  output$ix_legend <- renderUI({
+    st <- ix_state(); req(st, st$is_pdf, !is.null(st$layout))
+    pg <- as.character(max(1L, as.integer(input$ix_page %||% 1)))
+    P <- st$layout$pages[[pg]]; req(P)
+    pal <- ix_pal(P$bands)
+    sw <- function(col, lab) tags$div(style = "margin:2px 0",
+      tags$span(style = sprintf("display:inline-block;width:12px;height:12px;border:2px solid %s;margin-right:6px;vertical-align:middle", col)),
+      tags$span(lab))
+    tagList(strong("Legend"),
+      lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
+      sw("#137333", "transaction row (kept)"),
+      sw("#a15c00", "balance / metadata"),
+      sw("#b00020", "redaction (not read)"))
+  })
+  ix_render <- reactive({
+    st <- ix_state(); req(st, st$is_pdf)
+    pg <- max(1L, as.integer(input$ix_page %||% 1))
+    sz <- tryCatch(pdftools::pdf_pagesize(st$path), error = function(e) NULL)
+    if (is.null(sz) || pg > nrow(sz)) return(NULL)
+    ras <- tryCatch(as.raster(magick::image_read(
+      pdftools::pdf_render_page(st$path, page = pg, dpi = 100))), error = function(e) NULL)
+    if (is.null(ras)) return(NULL)
+    list(ras = ras, w = sz$width[pg], h = sz$height[pg], pg = pg)
+  })
+  output$ix_plot <- renderPlot({
+    st <- ix_state(); req(st, st$is_pdf); r <- ix_render(); req(r)
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+         xlab = "", ylab = "", axes = FALSE)
+    rasterImage(r$ras, 0, r$h, r$w, 0)
+    lay <- st$layout; if (is.null(lay)) return(invisible())
+    P <- lay$pages[[as.character(r$pg)]]; if (is.null(P)) return(invisible())
+    reg <- P$region; ytop <- reg$y_min %||% 0; ybot <- reg$y_max %||% r$h
+    pal <- ix_pal(P$bands)
+    if (!is.null(reg$x_min)) rect(reg$x_min, ybot, reg$x_max %||% r$w, ytop,
+                                  border = "#666", lty = 2, lwd = 1.4)
+    w <- P$words
+    if (isTRUE(input$ix_show_words) && nrow(w))
+      rect(w$x, w$y, w$x + w$width, w$y + w$height, border = "#cfcfcf", lwd = 0.4)
+    sel <- w[!is.na(w$column), , drop = FALSE]
+    if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
+                        border = pal[sel$column], lwd = 1.3)
+    red <- w[isTRUE(w$redacted) | w$redacted %in% TRUE, , drop = FALSE]
+    if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
+                        border = "#b00020", col = "#b0002022", lwd = 1)
+    for (nm in names(P$bands)) { b <- P$bands[[nm]]
+      if (!is.null(b$x_min) && !is.null(b$x_max)) {
+        rect(b$x_min, ybot, b$x_max, ytop, border = pal[[nm]], lwd = 2)
+        text((b$x_min + b$x_max) / 2, ytop, nm, col = pal[[nm]], font = 2, cex = 0.9, pos = 3, offset = 0.2)
+      } }
+    kr <- P$rows[P$rows$kept, , drop = FALSE]
+    if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
+    if (isTRUE(input$ix_show_meta) && !is.null(st$meta_loc)) {
+      ml <- st$meta_loc[[r$pg]]
+      if (!is.null(ml)) { f <- ml[isTRUE(ml$found) | ml$found %in% TRUE, , drop = FALSE]
+        if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
+          text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
+    }
+  })
+  output$ix_map <- renderDT({
+    st <- ix_state(); req(st, !is.null(st$map))
+    datatable(st$map, rownames = FALSE, options = list(dom = "t", pageLength = 20))
+  })
+  output$ix_rows <- renderDT({
+    st <- ix_state(); req(st, !is.null(st$parsed))
+    tx <- st$parsed$transactions
+    datatable(utils::head(tx, 15)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
+              rownames = FALSE, options = list(dom = "tp", pageLength = 15, scrollX = TRUE))
+  })
+  output$ix_meta <- renderDT({
+    st <- ix_state(); req(st, !is.null(st$meta))
+    m <- st$meta
+    df <- data.frame(
+      field = c("opening balance", "closing balance", "period start", "period end", "account"),
+      value = c(m$opening_balance %||% NA, m$closing_balance %||% NA,
+                m$period_start %||% NA, m$period_end %||% NA,
+                if (length(m$accounts)) m$accounts[1] else NA),
+      stringsAsFactors = FALSE)
+    df <- df[!is.na(df$value), , drop = FALSE]
+    if (!nrow(df)) df <- data.frame(field = "—", value = "no balances/metadata detected")
+    datatable(df, rownames = FALSE, options = list(dom = "t"))
   })
 
   # Remediate a stuck upload right here: load the saved file into the SAME guided

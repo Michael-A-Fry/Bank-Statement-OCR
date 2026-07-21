@@ -1,0 +1,53 @@
+# Tests for the "X-ray" overlay geometry (R/inspect.R).
+
+.mkw <- function(text, x, y, wd = 20, ht = 8, red = FALSE)
+  data.frame(text = text, x = x, y = y, width = wd, height = ht,
+             redacted = red, stringsAsFactors = FALSE)
+
+.demo_input <- function() {
+  page <- do.call(rbind, list(
+    .mkw("Date", 50, 40), .mkw("Details", 120, 40), .mkw("Amount", 300, 40),      # header
+    .mkw("01/04/2025", 50, 60), .mkw("Salary", 120, 60), .mkw("2,500.00", 300, 60),
+    .mkw("02/04/2025", 50, 80), .mkw("Rent", 120, 80), .mkw("1,200.00", 300, 80),
+    .mkw("Closing", 120, 120), .mkw("Balance", 160, 120), .mkw("3,800.00", 300, 120)))
+  list(words = list(page))
+}
+.demo_tmpl <- function() list(format = "pdf", table = list(
+  region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+  date_format = "%d/%m/%Y", amount_sign = "signed",
+  columns = list(date = list(x_min = 40, x_max = 110),
+                 description = list(x_min = 111, x_max = 280),
+                 amount = list(x_min = 281, x_max = 360))))
+
+test_that("inspect_pdf_layout assigns words to columns exactly as the engine", {
+  p <- inspect_pdf_layout(.demo_input(), .demo_tmpl())$pages[["1"]]
+  # header (y=40) and summary (y=120) are outside the region -> not assigned
+  expect_equal(sum(p$words$in_region), 6L)
+  incol <- p$words$column[p$words$in_region]
+  expect_setequal(incol, c("date", "description", "amount"))
+  expect_equal(sum(p$words$column == "amount", na.rm = TRUE), 2L)
+})
+
+test_that("inspect_pdf_layout boxes the kept transaction rows only", {
+  p <- inspect_pdf_layout(.demo_input(), .demo_tmpl())$pages[["1"]]
+  expect_equal(nrow(p$rows), 2L)          # two in-region visual rows
+  expect_true(all(p$rows$kept))           # both have a parseable date
+  expect_true(all(p$rows$x1 > p$rows$x0 & p$rows$y1 > p$rows$y0))
+})
+
+test_that("locate_values_on_page boxes single- and multi-token values", {
+  page <- .demo_input()$words[[1]]
+  loc <- locate_values_on_page(page, list(closing_balance = "3,800.00",
+                                          period_start = "01/04/2025",
+                                          missing = "9,999.99"))
+  expect_true(loc$found[loc$field == "closing_balance"])
+  expect_equal(loc$x0[loc$field == "closing_balance"], 300)
+  expect_false(loc$found[loc$field == "missing"])   # not on the page -> not found
+})
+
+test_that("inspect_pdf_layout is well-formed on an empty / word-less page", {
+  lay <- inspect_pdf_layout(list(words = list(NULL)), .demo_tmpl())
+  p <- lay$pages[["1"]]
+  expect_equal(nrow(p$words), 0L)
+  expect_equal(nrow(p$rows), 0L)
+})
