@@ -58,3 +58,6 @@ samples/_private_staging/*
 /private/
 /incoming/
 **/*.private.*
+
+# X-ray screenshots may render real statements -- never commit
+screenshots/
