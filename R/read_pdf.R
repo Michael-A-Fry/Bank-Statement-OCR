@@ -273,7 +273,20 @@ read_pdf <- function(path, redaction_rects = NULL,
         if (!is.null(res$width) && is.finite(res$width) && res$width > 0)   page_width[p]  <- res$width
         if (!is.null(res$height) && is.finite(res$height) && res$height > 0) page_height[p] <- res$height
         if (!is.null(res$words) && nrow(res$words)) {
-          guarded_ocr <- apply_redaction_guard(res$words, rects_p, markers)
+          # Auto-detected rasterised redactions (solid black boxes) are added to
+          # any caller-supplied rects, then the hidden cells are reconstructed as
+          # [REDACTED] tokens so a blacked-out value keeps its row (flagged), never
+          # dropped silently. detect_dark_regions found these in the same frame.
+          auto_rects <- res$dark_rects
+          all_rects <- if (!is.null(auto_rects) && nrow(auto_rects)) {
+            base_rects <- if (is.null(rects_p)) NULL else rects_p[, c("x0","y0","x1","y1"), drop = FALSE]
+            rbind(base_rects, auto_rects)
+          } else rects_p
+          guarded_ocr <- apply_redaction_guard(res$words, all_rects, markers)
+          if (!is.null(auto_rects) && nrow(auto_rects) &&
+              exists("inject_redaction_tokens", mode = "function"))
+            guarded_ocr <- inject_redaction_tokens(guarded_ocr, auto_rects,
+                                                   row_tol = 3)
           words[[p]] <- guarded_ocr
           nred_ocr <- sum(guarded_ocr$redacted)
           red_counts[p] <- nred_ocr

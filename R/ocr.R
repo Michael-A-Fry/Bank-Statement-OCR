@@ -103,9 +103,17 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
   # normalisation consistent with where the words actually are.
   bw <- tryCatch({ ii <- magick::image_info(magick::image_read(box_img)); c(ii$width, ii$height) * 72 / dpi },
                  error = function(e) c(NA_real_, NA_real_))
+  # Rasterised-redaction detection: solid black rectangles a scanner captured as
+  # image (a real blacked-out value) leave no OCR word behind, so find them by
+  # pixels here -- in the SAME box-image frame the word boxes use -- and hand the
+  # regions back so read_pdf can reconstruct the hidden cells as [REDACTED]
+  # (preserved + flagged) instead of silently losing the row.
+  dark_rects <- if (exists("detect_dark_regions", mode = "function"))
+    tryCatch(detect_dark_regions(magick::image_read(box_img), scale = 72 / dpi),
+             error = function(e) NULL) else NULL
   list(text = txt, words = words, ok = length(txt) > 0L,
        conf = ocr_word_confidence(use_img, lang = lang),
-       width = bw[1], height = bw[2])
+       width = bw[1], height = bw[2], dark_rects = dark_rects)
 }
 
 # Decide whether a page needs OCR: TRUE when its extracted text layer is
