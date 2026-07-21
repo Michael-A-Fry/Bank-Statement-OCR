@@ -1666,7 +1666,9 @@ server <- function(input, output, session) {
                  error = function(e) NULL))
     }
     if (is.null(tmpl)) {
-      showNotification("Couldn't auto-detect this file type - use the Template/PDF wizard.", type = "error")
+      showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
+                             "or try a text PDF / CSV export. If it isn't a transaction table, pick 'Something else' above."),
+                       type = "error", duration = 10)
       return(invisible(FALSE))
     }
     # Ids of the curated (tested) templates: saving a customised copy under one of
