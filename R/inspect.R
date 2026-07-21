@@ -47,23 +47,54 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
   wbp <- input$words %||% list()
 
-  # metadata_regions that belong on page p (default page 1) -> drawn as pinned
-  # header-value boxes, so the X-ray shows where each pinned value is read from.
-  .page_meta <- function(p) {
+  # Bands live in the template's reference space. The X-ray draws overlays ON each
+  # page's rendered raster, which is in that page's OWN point space, so scale the
+  # bands INTO the page's space per page. Membership then matches parse_pdf_table
+  # (which does the mirror -- scaling the words into the reference space). Same-size
+  # pages are unchanged (snap-to-1), so text-layer X-rays are identical to before.
+  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% .A4_W)); if (is.na(ref_w) || ref_w <= 0) ref_w <- .A4_W
+  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% .A4_H)); if (is.na(ref_h) || ref_h <= 0) ref_h <- .A4_H
+  page_w <- input$page_width  %||% rep(NA_real_, length(wbp))
+  page_h <- input$page_height %||% rep(NA_real_, length(wbp))
+  .band_to_page <- function(b, sx, sy) {
+    if (is.null(b) || !length(b)) return(b)
+    if (!is.null(b$x_min)) b$x_min <- b$x_min * sx
+    if (!is.null(b$x_max)) b$x_max <- b$x_max * sx
+    if (!is.null(b$y_min)) b$y_min <- b$y_min * sy
+    if (!is.null(b$y_max)) b$y_max <- b$y_max * sy
+    b
+  }
+  .page_scale <- function(p) {
+    sx <- if (is.finite(page_w[p]) && page_w[p] > 0) page_w[p] / ref_w else 1
+    sy <- if (is.finite(page_h[p]) && page_h[p] > 0) page_h[p] / ref_h else 1
+    if (abs(sx - 1) < .PAGE_SCALE_SNAP) sx <- 1
+    if (abs(sy - 1) < .PAGE_SCALE_SNAP) sy <- 1
+    c(sx, sy)
+  }
+
+  # metadata_regions that belong on page p (default page 1), scaled into page space
+  # -> drawn as pinned header-value boxes so the X-ray shows where each is read from.
+  .page_meta <- function(p, sx = 1, sy = 1) {
     if (!length(meta_regions)) return(list())
     keep <- vapply(meta_regions, function(b) identical(as.integer(b$page %||% 1), as.integer(p)), logical(1))
-    meta_regions[keep]
+    lapply(meta_regions[keep], .band_to_page, sx, sy)
   }
   pages <- lapply(seq_along(wbp), function(p) {
+    s <- .page_scale(p); sx <- s[1]; sy <- s[2]
+    cols_p   <- lapply(cols, .band_to_page, sx, sy)
+    region_p <- .band_to_page(region, sx, sy)
+    # force_rows are stored in reference space; scale to this page for the overlay.
+    fr_p <- if (is.null(force_rows) || !length(force_rows)) force_rows
+            else lapply(force_rows, function(fb) { fb$y_min <- (fb$y_min %||% NA) * sy; fb$y_max <- (fb$y_max %||% NA) * sy; fb })
     w <- wbp[[p]]
-    if (is.null(w) || !nrow(w)) return(list(region = region, bands = cols,
-      words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p)))
+    if (is.null(w) || !nrow(w)) return(list(region = region_p, bands = cols_p,
+      words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p, sx, sy)))
     w <- as.data.frame(w, stringsAsFactors = FALSE)
     if (is.null(w$redacted)) w$redacted <- FALSE
     cx <- w$x + w$width / 2
-    inreg <- .in_region(w, region)
+    inreg <- .in_region(w, region_p)
     colassign <- vapply(seq_len(nrow(w)), function(i)
-      if (inreg[i]) .word_column(cx[i], cols) else NA_character_, character(1))
+      if (inreg[i]) .word_column(cx[i], cols_p) else NA_character_, character(1))
     words <- data.frame(x = w$x, y = w$y, width = w$width, height = w$height,
       text = as.character(w$text), redacted = as.logical(w$redacted),
       in_region = inreg, column = colassign, stringsAsFactors = FALSE)
@@ -76,22 +107,22 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
       grp <- .group_rows(rw$y, row_tol)   # SAME grouping as parse_pdf_table -> counts match
       rows <- do.call(rbind, lapply(unique(grp), function(g) {
         rg <- rw[grp == g, , drop = FALSE]
-        dcell <- .pdf_cell(rg, cols$date)
+        dcell <- .pdf_cell(rg, cols_p$date)
         d_ok <- !is.na(dcell) && !is.na(parse_date(.first_n_date(dcell, date_fmt), date_fmt)$iso)
         redacted_date <- any(rg$redacted[
-          (rg$x + rg$width / 2) >= (cols$date$x_min %||% Inf) &
-          (rg$x + rg$width / 2) <= (cols$date$x_max %||% -Inf)])
+          (rg$x + rg$width / 2) >= (cols_p$date$x_min %||% Inf) &
+          (rg$x + rg$width / 2) <= (cols_p$date$x_max %||% -Inf)])
         # Apply the ENGINE's full keep predicate, not just the date test: a dated
         # line still has to carry a money amount AND not be a summary line, or the
         # reader drops it. Sharing .pdf_has_amount/.pdf_is_summary keeps them in step.
-        rec <- list(amount = .pdf_cell(rg, cols$amount), debit = .pdf_cell(rg, cols$debit),
-                    credit = .pdf_cell(rg, cols$credit), description = .pdf_cell(rg, cols$description),
+        rec <- list(amount = .pdf_cell(rg, cols_p$amount), debit = .pdf_cell(rg, cols_p$debit),
+                    credit = .pdf_cell(rg, cols_p$credit), description = .pdf_cell(rg, cols_p$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
         date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)
         natural_keep <- date_ok && .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
         # A row the user forced in (from the skipped list) is painted kept here too,
         # so the X-ray reflects exactly what the reader now emits.
-        forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), force_rows)
+        forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), fr_p)
         kept <- natural_keep || forced
         # reason: why the engine did NOT keep this row (empty when kept). Same
         # helper the engine uses, so the X-ray can never explain it differently.
@@ -106,7 +137,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
       }))
       rows <- .mark_continuations(rows)
     }
-    list(region = region, bands = cols, words = words, rows = rows, meta_regions = .page_meta(p))
+    list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, sx, sy))
   })
   names(pages) <- as.character(seq_along(wbp))
   list(pages = pages)

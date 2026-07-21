@@ -29,6 +29,8 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     pages = if (isTRUE(pdf$ok)) pdf$pages else NULL,
     words = pdf$words,
     page_count = pdf$page_count,
+    page_width = pdf$page_width,
+    page_height = pdf$page_height,
     sections = pdf$sections,
     redactions = pdf$redactions,
     ocr = pdf$ocr,
@@ -60,6 +62,9 @@ read_input <- function(path, redaction_rects = NULL) {
     x <- read_pdf_input(path, redaction_rects = redaction_rects)
     input$pages <- x$pages
     input$words <- x$words
+    input$page_width <- x$page_width
+    input$page_height <- x$page_height
+    input$page_ocr <- x$ocr    # per-page: was this page machine-read (OCR)?
     input$meta$page_count <- x$page_count
     input$meta$sections <- x$sections
     input$meta$redactions <- x$redactions

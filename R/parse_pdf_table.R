@@ -46,6 +46,33 @@
 # leading), which silently merged many transactions -- the "only 3 rows on the
 # page" bug. Anchoring to the row start separates lines correctly as long as the
 # line pitch exceeds tol, and is identical to the old method on well-spaced pages.
+# A4 portrait in points -- the size virtually every NZ bank statement PDF uses.
+# When a template doesn't record the page size it was built on, we assume this, so
+# a scanned/re-exported A4 statement still normalises correctly.
+.A4_W <- 595.28
+.A4_H <- 841.89
+.PAGE_SCALE_SNAP <- 0.02   # treat a page within 2% of the reference as same-size
+
+# .scale_words_to_ref(w, page_w, page_h, ref_w, ref_h) -- map one page's word
+# boxes into the template's REFERENCE point space, so absolute x-bands line up even
+# when this copy of the statement is a different physical size (a rescan, a
+# different export, a different scanner DPI). A page the same size as the reference
+# is left untouched (snap-to-1), so same-size parsing is bit-for-bit unchanged.
+# Without this, a differently-sized page pushes every value out of its band (all
+# rows drop) or, for a small difference, pushes right-aligned amounts out on SOME
+# rows only -- the "match a chunk, miss a chunk" bug.
+.scale_words_to_ref <- function(w, page_w, page_h, ref_w, ref_h) {
+  if (is.null(w) || !nrow(w)) return(w)
+  sx <- if (is.finite(page_w) && page_w > 0 && is.finite(ref_w) && ref_w > 0) ref_w / page_w else 1
+  sy <- if (is.finite(page_h) && page_h > 0 && is.finite(ref_h) && ref_h > 0) ref_h / page_h else 1
+  if (abs(sx - 1) < .PAGE_SCALE_SNAP) sx <- 1
+  if (abs(sy - 1) < .PAGE_SCALE_SNAP) sy <- 1
+  if (sx == 1 && sy == 1) return(w)
+  w$x <- w$x * sx; w$width  <- w$width  * sx
+  w$y <- w$y * sy; w$height <- w$height * sy
+  w
+}
+
 .group_rows <- function(ys, tol) {
   n <- length(ys); if (n == 0) return(integer(0))
   grp <- integer(n); cur <- 1L; ref <- ys[1]
@@ -141,6 +168,31 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   dec <- template$decimal_mark %||% t$decimal_mark %||% "auto"
   udef <- template$unsigned_default %||% t$unsigned_default %||% "debit"
   words_by_page <- input$words %||% list()
+  # Reference page size the bands were drawn in (recorded when the template was
+  # built; A4 otherwise). Each page's words are scaled into this space below.
+  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% .A4_W)); if (is.na(ref_w) || ref_w <= 0) ref_w <- .A4_W
+  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% .A4_H)); if (is.na(ref_h) || ref_h <= 0) ref_h <- .A4_H
+  page_w <- input$page_width  %||% rep(NA_real_, length(words_by_page))
+  page_h <- input$page_height %||% rep(NA_real_, length(words_by_page))
+  # Normalise every page's words into the template's reference space ONCE, so the
+  # row loop, the metadata_regions lookups and the force_rows bands all share one
+  # coordinate space. Same-size pages are untouched (snap-to-1).
+  words_by_page <- lapply(seq_along(words_by_page), function(p) {
+    wp <- words_by_page[[p]]
+    if (is.null(wp) || !nrow(wp)) return(wp)
+    .scale_words_to_ref(as.data.frame(wp, stringsAsFactors = FALSE), page_w[p], page_h[p], ref_w, ref_h)
+  })
+  # force_rows y-bands come from the X-ray, which is drawn in each page's own space;
+  # bring them into the reference space too so a forced row on a rescaled page still
+  # matches the (now normalised) word rows.
+  if (!is.null(force_rows) && length(force_rows)) force_rows <- lapply(force_rows, function(fb) {
+    pg <- suppressWarnings(as.integer(fb$page %||% 1L))
+    s <- if (!is.na(pg) && pg >= 1 && pg <= length(page_h) && is.finite(page_h[pg]) && page_h[pg] > 0) ref_h / page_h[pg] else 1
+    if (abs(s - 1) < .PAGE_SCALE_SNAP) s <- 1
+    if (!is.null(fb$y_min)) fb$y_min <- fb$y_min * s
+    if (!is.null(fb$y_max)) fb$y_max <- fb$y_max * s
+    fb
+  })
 
   # force_rows: user-confirmed "this IS a transaction" bands (from the X-ray's
   # skipped-row list), each list(page, y_min, y_max) in PDF points. A visual row
@@ -168,7 +220,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   for (p in seq_along(words_by_page)) {
     w <- words_by_page[[p]]
     if (is.null(w) || !nrow(w)) next
-    w <- as.data.frame(w, stringsAsFactors = FALSE)
+    w <- as.data.frame(w, stringsAsFactors = FALSE)   # already normalised to ref space above
     if (!is.null(region$x_min)) w <- w[(w$x + w$width) >= region$x_min, , drop = FALSE]
     if (!is.null(region$x_max)) w <- w[w$x <= region$x_max, , drop = FALSE]
     if (!is.null(region$y_min)) w <- w[w$y >= region$y_min, , drop = FALSE]

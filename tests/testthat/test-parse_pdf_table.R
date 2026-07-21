@@ -136,6 +136,52 @@ test_that("multi-line descriptions are folded into the transaction, footers are 
   expect_false(grepl("Page", paste(tx$description, collapse = " ")))  # footer excluded
 })
 
+test_that("a differently-sized page normalises to the reference (scan/scale fix)", {
+  # Same statement, two physical sizes. A template has no explicit ref -> defaults
+  # to A4; the A4 page is untouched and the 2x page is normalised back to it, so
+  # BOTH yield the same rows. Before the fix the 2x page dropped every row.
+  base_words <- function(mult) data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",  "06","Jan","PAY","10.00","105.50"),
+    x     = c(45,60,110,415,490,   45,60,110,415,490) * mult,
+    y     = c(40,40,40,40,40,      70,70,70,70,70)    * mult,
+    width = c(12,16,45,25,30,      12,16,30,30,30)    * mult,
+    height= rep(10 * mult, 10))
+  mkinput <- function(mult, pw, ph) list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"),
+    words = list(base_words(mult)), page_width = pw, page_height = ph,
+    meta = list(page_count = 1L))
+  ref <- parse_pdf_table(mkinput(1, 595.28, 841.89), .simple_tmpl())$transactions
+  big <- parse_pdf_table(mkinput(2, 1190.56, 1683.78), .simple_tmpl())$transactions
+  expect_equal(nrow(ref), 2L)
+  expect_equal(nrow(big), 2L)                       # 2x page: rows recovered, not dropped
+  expect_equal(big$date, ref$date)
+  expect_equal(big$amount, ref$amount)              # amounts land in the same bands
+})
+
+test_that("a template's recorded reference page size drives normalisation", {
+  # A template built on a 1190-wide page: its bands AND its ref live in that space.
+  # An A4 copy (595 wide) of the statement is scaled UP into the 1190 bands.
+  tmpl <- .simple_tmpl(); tmpl$table$ref_width <- 1190.56; tmpl$table$ref_height <- 1683.78
+  for (k in names(tmpl$table$columns)) { b <- tmpl$table$columns[[k]]
+    tmpl$table$columns[[k]] <- list(x_min = b$x_min * 2, x_max = b$x_max * 2) }
+  w <- data.frame(stringsAsFactors = FALSE,
+    text=c("05","Jan","COFFEE","4.50","95.50"), x=c(45,60,110,415,490), y=rep(40,5),
+    width=c(12,16,45,25,30), height=rep(10,5))
+  inp <- list(kind="pdf", path=tempfile(fileext=".pdf"), pages="period 1 Jan 2026 to 31 Jan 2026",
+    words=list(w), page_width=595.28, page_height=841.89, meta=list(page_count=1L))
+  expect_equal(nrow(parse_pdf_table(inp, tmpl)$transactions), 1L)
+})
+
+test_that("missing page dimensions are a safe no-op (backward compatible)", {
+  # An input without page_width/height (older reader) must parse exactly as before.
+  w <- data.frame(stringsAsFactors = FALSE,
+    text=c("05","Jan","COFFEE","4.50","95.50"), x=c(45,60,110,415,490), y=rep(40,5),
+    width=c(12,16,45,25,30), height=rep(10,5))
+  inp <- list(kind="pdf", path=tempfile(fileext=".pdf"), pages="period 1 Jan 2026 to 31 Jan 2026",
+    words=list(w), meta=list(page_count=1L))   # no page_width/height
+  expect_equal(nrow(parse_pdf_table(inp, .simple_tmpl())$transactions), 1L)
+})
+
 test_that("force_rows adds a dropped row back as a transaction, flagged 'forced'", {
   # y=70 is a dated line with NO amount -> normally dropped. The user boxes it in
   # the X-ray ("this IS a transaction"), so force_rows keeps it -- flagged forced

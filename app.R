@@ -175,7 +175,10 @@ ui <- fluidPage(
                   helpText(HTML("If a real transaction is here, the reason usually points at a one-line fix in the template toolkit (most often the <b>date format</b> or an <b>amount / debit / credit</b> band) that brings back <b>all</b> the rows like it — not just this one. For a genuine one-off, select the row and add it by hand — it's kept, flagged <b>forced</b> so it's never mistaken for a clean read.")),
                   DTOutput("ix_skipped"),
                   br(),
-                  actionButton("ix_add_row", "➕ This IS a transaction — add the selected row", class = "btn-warning")),
+                  actionButton("ix_add_row", "➕ This IS a transaction — add the selected row", class = "btn-warning"),
+                  tags$hr(),
+                  helpText(HTML("Rows still going missing and you can't share the statement? Download the <b>shareable diagnostic</b> below — it explains what happened using only page sizes and counts (no dates, names or amounts leave your machine) so it can be sent to whoever maintains the tool.")),
+                  downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
                   helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field."))))),
           uiOutput("cv_feedback")
@@ -1086,6 +1089,21 @@ server <- function(input, output, session) {
     datatable(out, rownames = FALSE, selection = "single",
               options = list(pageLength = 10, dom = "tp", scrollX = TRUE))
   })
+  # Shareable, PII-safe row-coverage diagnostic for the current statement: page
+  # sizes vs the template reference, kept/skipped counts and reasons -- the numbers
+  # needed to see why rows go missing WITHOUT the statement contents.
+  output$ix_coverage_dl <- downloadHandler(
+    filename = function() "row-coverage-diagnostic.md",
+    content = function(file) {
+      st <- ix_state(); src <- cv_src(); res <- cv_res()
+      tid <- (res$template_id %||% NA_character_)[1]
+      tmpl <- if (!is.na(tid) && nzchar(tid)) tryCatch(templates()[[tid]], error = function(e) NULL) else NULL
+      if (is.null(src) || is.null(tmpl)) {
+        showNotification("Convert a PDF statement first — nothing to diagnose yet.", type = "warning", duration = 6); req(FALSE) }
+      inp <- tryCatch(read_input(src$path), error = function(e) NULL)
+      if (is.null(inp)) { showNotification("Couldn't re-read the file for the diagnostic.", type = "error"); req(FALSE) }
+      writeLines(format_row_coverage(row_coverage(inp, tmpl)), file)
+    })
   # "This IS a transaction": select a skipped row and add it. We record its page +
   # y-band as a force_rows entry and re-run the conversion, so the row lands in the
   # output flagged `forced` (and malformed / date_unresolved if its amount or date

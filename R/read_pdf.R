@@ -203,6 +203,15 @@ read_pdf <- function(path, redaction_rects = NULL,
   if (is.null(raw_text)) return(empty)
 
   np <- length(raw_text)
+  # Per-page point dimensions. A template's x-bands are drawn in ONE page's point
+  # space; the parser normalises each page's words into that space (see
+  # parse_pdf_table), which needs the page size. Same for OCR pages -- pdf_pagesize
+  # reports the page's own point size, which is what the OCR word coordinates use.
+  psize <- safe(suppressMessages(pdftools::pdf_pagesize(path)), NULL)
+  page_width  <- if (!is.null(psize) && "width"  %in% names(psize)) as.numeric(psize$width)  else rep(NA_real_, np)
+  page_height <- if (!is.null(psize) && "height" %in% names(psize)) as.numeric(psize$height) else rep(NA_real_, np)
+  length(page_width)  <- np
+  length(page_height) <- np
   # pdf_data may return fewer/NULL entries on odd pages; normalise to np slots.
   if (is.null(word_list)) word_list <- vector("list", np)
 
@@ -279,6 +288,8 @@ read_pdf <- function(path, redaction_rects = NULL,
     pages = pages,
     words = words,
     page_count = np,
+    page_width = page_width,
+    page_height = page_height,
     sections = detect_pdf_sections(pages, anchors),
     redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
                             stringsAsFactors = FALSE),

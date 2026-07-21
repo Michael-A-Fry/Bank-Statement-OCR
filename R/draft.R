@@ -71,11 +71,19 @@
   for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
   date_band <- if (!is.null(cols$date)) cols$date else list(x_min = 0, x_max = 90)
   fp <- header_phrases(input); if (!length(fp)) fp <- "Balance"
+  # Record the page size the bands were drawn in, so a differently-sized copy of
+  # the statement (a rescan, another export) is normalised to this space at parse
+  # time instead of dropping rows. Falls back to A4 when the size is unknown.
+  ref_w <- suppressWarnings(as.numeric((input$page_width  %||% NA)[1]))
+  ref_h <- suppressWarnings(as.numeric((input$page_height %||% NA)[1]))
+  tbl <- list(row_tol = 3, date_format = .guess_pdf_date_format(input, date_band),
+      amount_sign = style, columns = cols)
+  if (!is.na(ref_w) && ref_w > 0) tbl$ref_width  <- round(ref_w, 2)
+  if (!is.na(ref_h) && ref_h > 0) tbl$ref_height <- round(ref_h, 2)
   list(id = paste0(id, "_pdf"), bank = bank, statement_type = "statement", format = "pdf",
     version = 1, min_score = max(1L, length(fp)),
     fingerprint = list(page_contains_all = as.list(fp)),
-    table = list(row_tol = 3, date_format = .guess_pdf_date_format(input, date_band),
-      amount_sign = style, columns = cols), currency = "NZD", origin = "user")
+    table = tbl, currency = "NZD", origin = "user")
 }
 
 # draft_template(path, bank) -> a template list (or NULL if unsupported kind).
