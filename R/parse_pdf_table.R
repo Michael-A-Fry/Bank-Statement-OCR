@@ -359,16 +359,31 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
     if (length(toks) >= 2) paste(toks[1:2], collapse = " ") else as.character(cc)
   }, character(1), USE.NAMES = FALSE)
+  # The name-month family, BOTH orders: "17 Sep" can only be day-month and
+  # "Sep 17" only month-day (a month name is never a day), so trying both is
+  # deterministic - a user who picked the wrong year-less variant in the
+  # toolkit still gets every row.
+  .FB_FMTS <- c("%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y")
   .fb_parse <- function(raw) {
     out <- rep(NA_character_, length(raw))
     if (!length(yrs) || !length(raw)) return(out)
     raw <- .fb_first(raw)
-    for (f in c("%d %b %Y", "%d %B %Y")) {
+    for (f in .FB_FMTS) {
       need <- is.na(out)
       if (!any(need)) break
       out[need] <- suppressWarnings(parse_date(.with_year(raw[need], f), f)$iso)
     }
     out
+  }
+  # Sentinel variant for when NO year is known anywhere: does the cell read as
+  # a name-month date at all (either order)? Used to KEEP the row - date_iso
+  # stays NA and the row is flagged date_unresolved, same as the existing
+  # unknown-year path: data preserved, never silently wrong.
+  .fb_sentinel_ok <- function(raw) {
+    raw <- .fb_first(raw)
+    for (f in .FB_FMTS)
+      if (!is.na(suppressWarnings(parse_date(paste(raw, "2000"), f)$iso))) return(TRUE)
+    FALSE
   }
 
   # Keep only genuine transaction rows: the date cell must parse AND the row must
@@ -397,23 +412,31 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # so the reviewer can assign the year -- data preserved, never silently wrong.
   year_resolved <- has_year || length(yrs) > 0
   # Document-level gate for the fallback: it exists for statements whose WHOLE
-  # table is year-less under a full-date template (the reported real case). If
-  # the template's own format reads even ONE date in the document, the fallback
-  # stays off - on such documents a stray day+month fragment carrying a number
-  # (a distribution note, a wrapped line) must not sneak in as a transaction.
-  fb_active <- length(yrs) > 0 && length(recs) > 0 &&
-    !any(vapply(recs, function(r) {
-      rw <- .first_date(r$date %||% NA_character_)
+  # table is unreadable under the template's declared format (the reported real
+  # cases: "17 Sep" rows under a %d/%m/%Y template, or under the WRONG year-less
+  # variant, month-day picked for a day-month statement). If the template's own
+  # format reads even ONE date in the document, the fallback stays off - on such
+  # documents a stray day+month fragment carrying a number (a distribution note,
+  # a wrapped line) must not sneak in as a transaction.
+  prim_zero <- length(recs) > 0 && !any(vapply(recs, function(r) {
+    rw <- .first_date(r$date %||% NA_character_)
+    if (year_resolved)
       !is.na(suppressWarnings(parse_date(full_date(rw), eff_fmt)$iso))
-    }, logical(1)))
+    else
+      !is.na(suppressWarnings(parse_date(paste(rw, "2000"), paste(date_fmt, "%Y"))$iso))
+  }, logical(1)))
+  fb_active <- prim_zero && length(yrs) > 0
   .date_ok <- function(raw) {
     raw1 <- .first_date(raw)
     if (year_resolved) {
       if (!is.na(suppressWarnings(parse_date(full_date(raw1), eff_fmt)$iso))) return(TRUE)
-      return(fb_active && !is.na(.fb_parse(raw)))   # "17 Sep" under a %d/%m/%Y template
+      return(fb_active && !is.na(.fb_parse(raw)))
     }
-    !is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
-                                       paste(date_fmt, "%Y"))$iso))
+    if (!is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
+                                           paste(date_fmt, "%Y"))$iso))) return(TRUE)
+    # No year known anywhere AND the declared format reads nothing: still keep
+    # clear name-month rows (either order) - flagged date_unresolved downstream.
+    prim_zero && .fb_sentinel_ok(raw)
   }
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
   # KEEP RULE. A row is a transaction when it still shows REAL evidence -- a real

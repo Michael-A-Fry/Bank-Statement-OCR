@@ -172,23 +172,24 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
       }
     }
     yr <- unique(yr)
-    if (length(yr) >= 1) {
-      fb_ok <- function(cell) {
-        if (is.na(cell)) return(FALSE)
-        toks <- strsplit(trimws(cell), "[[:space:]]+")[[1]]
-        if (length(toks) >= 2) cell <- paste(toks[1:2], collapse = " ")
-        s <- paste(.normalise_date_str(cell), yr)
-        for (f in c("%d %b %Y", "%d %B %Y"))
-          if (any(!is.na(suppressWarnings(as.Date(s, f))))) return(TRUE)
-        FALSE
-      }
-      for (p in names(pages)) {
-        R <- pages[[p]]$rows
-        if (is.null(R) || !nrow(R)) next
-        flip <- !R$kept & grepl("didn't parse", R$reason %||% "") &
-          vapply(R$date, fb_ok, logical(1), USE.NAMES = FALSE)
-        if (any(flip)) { R$kept[flip] <- TRUE; R$reason[flip] <- "" ; pages[[p]]$rows <- R }
-      }
+    # With no year found anywhere, mirror the reader's sentinel keep: a clear
+    # name-month cell (either order) still keeps its row, flagged upstream.
+    yr_eff <- if (length(yr)) yr else 2000L
+    fb_ok <- function(cell) {
+      if (is.na(cell)) return(FALSE)
+      toks <- strsplit(trimws(cell), "[[:space:]]+")[[1]]
+      if (length(toks) >= 2) cell <- paste(toks[1:2], collapse = " ")
+      s <- paste(.normalise_date_str(cell), yr_eff)
+      for (f in c("%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y"))
+        if (any(!is.na(suppressWarnings(as.Date(s, f))))) return(TRUE)
+      FALSE
+    }
+    for (p in names(pages)) {
+      R <- pages[[p]]$rows
+      if (is.null(R) || !nrow(R)) next
+      flip <- !R$kept & grepl("didn't parse", R$reason %||% "") &
+        vapply(R$date, fb_ok, logical(1), USE.NAMES = FALSE)
+      if (any(flip)) { R$kept[flip] <- TRUE; R$reason[flip] <- "" ; pages[[p]]$rows <- R }
     }
   }
   list(pages = pages)

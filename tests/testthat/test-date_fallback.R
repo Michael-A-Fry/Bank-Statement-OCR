@@ -44,3 +44,23 @@ test_that("a wrong-year-format template still reads year-less dates via the fall
     if (is.null(P$rows) || !nrow(P$rows)) 0L else sum(P$rows$kept), integer(1)))
   expect_gte(kept, 12)
 })
+
+test_that("the WRONG year-less variant (month-day for a day-month table) still reads every row", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE), "pdftools not installed")
+  pdf <- fixture("samples/raw/tutorial/sample_everyday_statement.pdf")
+  skip_if_not(file.exists(pdf), "tutorial sample not present")
+  tpls <- load_templates(templates_dir())
+  tmpl <- tpls[["tutorial_everyday_pdf"]]
+  skip_if_not(!is.null(tmpl), "tutorial template not present")
+
+  input <- read_input(pdf)
+  base <- parse_statement(input, tmpl)
+
+  # The user picked "month-name + day" for a statement that prints "02 May":
+  # name-month dates are never ambiguous, so the family fallback reads them.
+  tmpl$table$date_format <- "%b %d"
+  out <- parse_statement(input, tmpl)
+  expect_equal(nrow(out$transactions), 12)
+  expect_equal(out$transactions$date, base$transactions$date)
+  expect_true(all(grepl("date_alt_format", out$transactions$flags)))
+})
