@@ -169,6 +169,23 @@ ui <- fluidPage(
           # detail" section for whoever wants to dig in - depth as an option, not a
           # wall in front of a first-time user.
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
+            # Analysis: the useful numbers pulled from the statement (money in/out,
+            # net, period, balances, account) as plain cards, then a graph the
+            # reviewer can switch (balance over time / money in vs out / cumulative;
+            # by dollars or by count; grouped by day, week or month).
+            uiOutput("cv_summary"),
+            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
+              fluidRow(
+                column(4, selectInput("an_view", "Show",
+                  c("Money in vs out" = "inout", "Balance over time" = "balance",
+                    "Cumulative net" = "cumnet"), width = "100%")),
+                column(4, selectInput("an_group", "Group by",
+                  c("Day" = "day", "Week" = "week", "Month" = "month"),
+                  selected = "week", width = "100%")),
+                column(4, radioButtons("an_unit", "Measure",
+                  c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
+              plotOutput("cv_trend", height = "300px"),
+              uiOutput("cv_trend_note")),
             h4("Your transactions"),
             tabsetPanel(
               tabPanel("Preview", br(), DTOutput("cv_txns")),
@@ -1299,6 +1316,98 @@ server <- function(input, output, session) {
       p(style = "margin:0 0 6px;color:#333", pt$line),
       p(class = "muted", style = "margin:0",
         "Download it on the left (Excel, CSV or JSON). Full detail is under 'Checks & detail' below."))
+  })
+
+  # --- Analysis: the useful numbers + graphs pulled from the conversion -------
+  # The displayed transactions come from the produced CSV; read them once here as
+  # a data frame for the summary cards and the trend graph. No new dependency -
+  # base graphics, the same ones the X-ray uses.
+  cv_data <- reactive({
+    res <- cv_res(); if (is.null(res) || is.null(res$outputs)) return(NULL)
+    csv <- res$outputs[grepl("\\.csv$", res$outputs)]
+    if (length(csv) != 1 || !file.exists(csv)) return(NULL)
+    d <- tryCatch(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE),
+                  error = function(e) NULL)
+    if (is.null(d) || !nrow(d)) return(NULL)
+    d$.date <- suppressWarnings(as.Date(d$date))
+    d$.amt  <- suppressWarnings(as.numeric(d$amount))
+    d$.bal  <- if ("balance" %in% names(d)) suppressWarnings(as.numeric(d$balance)) else NA_real_
+    d
+  })
+  fmt_money <- function(x, cur = "") {
+    if (length(x) != 1 || is.na(x)) return("-")
+    sprintf("%s%s%s", if (x < 0) "-" else "", cur,
+            formatC(abs(x), format = "f", digits = 2, big.mark = ","))
+  }
+  cur_symbol <- function(h) switch(h$currency %||% "", NZD = "$", AUD = "$", USD = "$",
+                                   GBP = "£", EUR = "€", "")
+
+  output$cv_summary <- renderUI({
+    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    d <- cv_data(); h <- res$header %||% list(); cur <- cur_symbol(h)
+    n   <- if (!is.null(d)) nrow(d) else (h$row_count %||% NA)
+    amt <- if (!is.null(d)) d$.amt[!is.na(d$.amt)] else numeric(0)
+    money_in <- sum(amt[amt > 0]); money_out <- sum(amt[amt < 0]); net <- sum(amt)
+    drange <- if (!is.null(d) && any(!is.na(d$.date)))
+        sprintf("%s to %s", format(min(d$.date, na.rm = TRUE), "%d %b %Y"),
+                format(max(d$.date, na.rm = TRUE), "%d %b %Y"))
+      else if (!is.na(h$period_start %||% NA_character_))
+        sprintf("%s to %s", h$period_start, h$period_end %||% "?") else "-"
+    card <- function(label, value, col = "#333")
+      div(style = "flex:1 1 130px;min-width:120px;background:#fafafa;border:1px solid #e6e6e6;border-radius:8px;padding:8px 12px",
+          div(style = "font-size:12px;color:#888", label),
+          div(style = sprintf("font-size:19px;font-weight:600;color:%s", col), value))
+    has_close <- !is.na(suppressWarnings(as.numeric(h$closing_balance %||% NA)))
+    tagList(
+      div(style = "display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 10px",
+        card("Transactions", if (is.na(n)) "-" else n),
+        card("Money in",  fmt_money(money_in, cur),  "#137333"),
+        card("Money out", fmt_money(money_out, cur), "#b00020"),
+        card("Net",       fmt_money(net, cur), if (isTRUE(net < 0)) "#b00020" else "#137333"),
+        if (has_close) card("Closing balance", fmt_money(as.numeric(h$closing_balance), cur))),
+      p(class = "muted", style = "margin:0 0 4px", sprintf("Period: %s%s%s", drange,
+        if (!is.na(h$account_number %||% NA_character_)) sprintf("  ·  Account: %s", h$account_number) else "",
+        if (!is.na(h$bank %||% NA_character_)) sprintf("  ·  %s", h$bank) else "")))
+  })
+
+  output$cv_trend_note <- renderUI({
+    req(cv_data())
+    msg <- switch(input$an_view %||% "inout",
+      inout   = "Green = money in, red = money out, per period. Switch 'Measure' to count transactions instead of dollars.",
+      balance = "The running balance as it moves through the statement (only if the statement shows a balance column).",
+      cumnet  = "The running total of every transaction added up over time - where the account net sits at each point.")
+    p(class = "muted", style = "margin:6px 0 0", msg)
+  })
+
+  output$cv_trend <- renderPlot({
+    d <- cv_data(); req(d); d <- d[!is.na(d$.date), , drop = FALSE]; req(nrow(d) > 0)
+    view <- input$an_view %||% "inout"; grp <- input$an_group %||% "week"; unit <- input$an_unit %||% "amount"
+    op <- par(mar = c(5, 4.5, 1, 1)); on.exit(par(op))
+    if (view == "balance") {
+      b <- d[!is.na(d$.bal), , drop = FALSE]
+      if (!nrow(b)) { plot.new(); text(0.5, 0.5, "This statement has no running balance column.", col = "#888"); return(invisible()) }
+      b <- b[order(b$.date), , drop = FALSE]
+      plot(b$.date, b$.bal, type = "l", col = "#2563eb", lwd = 2, xlab = "", ylab = "Balance", las = 1)
+      points(b$.date, b$.bal, pch = 19, cex = 0.5, col = "#2563eb"); grid(nx = NA, ny = NULL)
+    } else if (view == "cumnet") {
+      dd <- d[order(d$.date), , drop = FALSE]; cn <- cumsum(ifelse(is.na(dd$.amt), 0, dd$.amt))
+      plot(dd$.date, cn, type = "l", col = "#0b7a34", lwd = 2, xlab = "", ylab = "Cumulative net", las = 1)
+      abline(h = 0, col = "#ccc", lty = 2); grid(nx = NA, ny = NULL)
+    } else {
+      per <- switch(grp, day = as.character(d$.date),
+                    week = as.character(cut(d$.date, "week")),
+                    month = format(d$.date, "%Y-%m"))
+      pf <- factor(per, levels = sort(unique(per)))
+      val_in  <- ifelse(d$.amt > 0, if (unit == "count") 1 else d$.amt, 0)
+      val_out <- ifelse(d$.amt < 0, if (unit == "count") 1 else -d$.amt, 0)
+      ins  <- tapply(val_in,  pf, sum); ins[is.na(ins)] <- 0
+      outs <- tapply(val_out, pf, sum); outs[is.na(outs)] <- 0
+      m <- rbind("Money in" = as.numeric(ins), "Money out" = as.numeric(outs))
+      colnames(m) <- levels(pf)
+      barplot(m, beside = TRUE, col = c("#137333", "#b00020"), las = 2, cex.names = 0.75,
+              ylab = if (unit == "count") "Transactions" else "Dollars",
+              legend.text = TRUE, args.legend = list(x = "topleft", bty = "n", cex = 0.9))
+    }
   })
   # Is this result a form (labelled values) rather than a transaction statement?
   output$cv_is_form <- reactive({ isTRUE((cv_res()$kind %||% "") == "form") })
