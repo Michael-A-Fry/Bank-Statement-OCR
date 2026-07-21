@@ -1310,10 +1310,10 @@ server <- function(input, output, session) {
         " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
       p(class = "muted", style = "margin-bottom:6px", "You'll get back, right here:"),
       tags$ul(style = "color:#444",
-        tags$li(tags$b("Every transaction"), " - date, description, amount, balance, read verbatim."),
-        tags$li(tags$b("Checks that prove nothing's missing"), " - the balance reconciles and the row count adds up, with a plain confidence level."),
-        tags$li(tags$b("A download"), " - Excel, CSV or JSON.")),
-      p(class = "muted", "Your bank is detected automatically. If it's a statement layout the tool hasn't seen, it'll say so and point you to ",
+        tags$li(tags$b("Every transaction"), ", read verbatim - date, description, amount, balance."),
+        tags$li(tags$b("Proof nothing's missing"), " - the balance reconciles, with a plain confidence level."),
+        tags$li(tags$b("Your download"), " - Excel, CSV or JSON.")),
+      p(class = "muted", "Your bank is detected automatically. A layout the tool hasn't seen points you to ",
         actionLink("cv_empty_to_tmpl", "Add a template"), " - a 2-minute, no-code setup."),
       # First visit, nothing to upload yet? One click shows the whole payoff on
       # a bundled specimen statement (public sample - not anyone's real data).
