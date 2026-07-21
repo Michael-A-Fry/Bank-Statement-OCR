@@ -274,9 +274,10 @@ read_pdf <- function(path, redaction_rects = NULL,
         if (!is.null(res$height) && is.finite(res$height) && res$height > 0) page_height[p] <- res$height
         if (!is.null(res$words) && nrow(res$words)) {
           # Auto-detected rasterised redactions (solid black boxes) are added to
-          # any caller-supplied rects, then the hidden cells are reconstructed as
-          # [REDACTED] tokens so a blacked-out value keeps its row (flagged), never
-          # dropped silently. detect_dark_regions found these in the same frame.
+          # any caller-supplied rects, then any VISIBLE row a box covers has its
+          # blacked cell marked [REDACTED] so that partial row keeps its visible
+          # data (flagged), never dropped. Fully-hidden rows have no visible anchor
+          # and simply do not appear -- we never guess how many a block hid.
           auto_rects <- res$dark_rects
           all_rects <- if (!is.null(auto_rects) && nrow(auto_rects)) {
             base_rects <- if (is.null(rects_p)) NULL else rects_p[, c("x0","y0","x1","y1"), drop = FALSE]

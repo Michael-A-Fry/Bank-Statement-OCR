@@ -15,12 +15,13 @@
 #
 # APPROACH. On an OCR (image) page: (1) find solid dark rectangles by a row-run
 # projection with a fill-ratio gate (a redaction box is WIDE, TALL and ~solid --
-# unlike text, thin rules, or a logo); (2) inject [REDACTED] word boxes back into
-# the detected regions, anchored to the visible OCR rows they overlap (so a row
-# with a blacked amount keeps its real date and is flagged, not dropped) and
-# grid-filled where a band is fully black (so a block of hidden rows is preserved
-# as flagged rows, never silently zero). Over-redaction (a slightly generous box)
-# is deliberately acceptable; under-redaction is not.
+# unlike text, thin rules, or a logo); (2) mark the cells of VISIBLE transaction
+# rows that a box covers as [REDACTED], so a row with a blacked amount keeps its
+# real date/description and is flagged, not dropped. We do NOT reconstruct rows
+# that are fully hidden: a solid block has no visible row to anchor to, so nothing
+# is added and those transactions simply do not appear (their neighbours above and
+# below are untouched). We NEVER guess how many rows a black block hid. Reading
+# only what is visible; accounting for it; inventing nothing.
 
 .empty_rects <- function() data.frame(x0 = numeric(0), y0 = numeric(0),
                                       x1 = numeric(0), y1 = numeric(0),
