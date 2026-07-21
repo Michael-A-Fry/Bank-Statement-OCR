@@ -220,7 +220,8 @@ ui <- fluidPage(
                       c("date", "description", "amount", "balance", "particulars",
                         "code", "reference", "other_party", "type")),
           actionButton("wp_assign", "Assign drawn box → field", class = "btn-primary"),
-          actionButton("wp_clear", "Clear boxes"),
+          actionButton("wp_remove", "🗑 Remove this field"),
+          actionButton("wp_clear", "Clear all boxes"),
           tags$hr(),
           textInput("wp_id", "Template id", "newbank_pdf"),
           textInput("wp_bank", "Bank", "NewBank"),
@@ -1298,11 +1299,14 @@ server <- function(input, output, session) {
             strong("Visual column editor"),
             p(class = "muted", "Draw a box across a column on the page, choose which field it is, then Assign. The bands you set are drawn on the page and drive the preview — no need to type coordinates."),
             fluidRow(
-              column(4, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
-              column(5, selectInput("g_pdf_field", "The box I draw is the…",
+              column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
+              column(4, selectInput("g_pdf_field", "The box I draw is the…",
                                     c("date", "description", "amount", "balance", "particulars",
-                                      "reference", "type", "debit", "credit"))),
-              column(3, br(), actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"))),
+                                      "reference", "type", "debit", "credit", "other_party", "code"))),
+              column(5, br(),
+                actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
+                actionButton("g_pdf_remove", "🗑 Remove this column"))),
+            helpText("Auto-setup can add a column that isn't really on this statement. Pick it above and click Remove to delete its box."),
             plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "520px"),
             tags$hr()),
           strong("Full template (YAML)"),
@@ -1541,13 +1545,35 @@ server <- function(input, output, session) {
     if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
     f <- input$g_pdf_field
     g$tmpl$table$columns[[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
-    # keep the table region wide enough to include every band
+    # Widen the region's x-bounds to include every band, but PRESERVE any y-bounds
+    # the template set (don't silently un-scope the table vertically).
     xs <- unlist(lapply(g$tmpl$table$columns, function(c) c(c$x_min, c$x_max)))
-    if (length(xs)) g$tmpl$table$region <- list(x_min = min(xs) - 5, x_max = max(xs) + 5)
+    if (length(xs)) {
+      reg <- g$tmpl$table$region %||% list()
+      reg$x_min <- min(xs) - 5; reg$x_max <- max(xs) + 5
+      g$tmpl$table$region <- reg
+    }
     guided(g)
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
     output$g_adv_msg <- renderUI(span(class = "ok",
       sprintf("Set the '%s' column. Page and preview updated.", f)))
+  })
+  # Delete a column band the auto-setup got wrong (a column that isn't on this
+  # statement). Recomputes the table region from whatever bands remain.
+  observeEvent(input$g_pdf_remove, {
+    g <- guided(); req(g); f <- input$g_pdf_field
+    if (is.null(g$tmpl$table$columns[[f]])) {
+      showNotification(sprintf("There's no '%s' column to remove.", f), type = "warning"); return() }
+    g$tmpl$table$columns[[f]] <- NULL
+    xs <- unlist(lapply(g$tmpl$table$columns, function(c) c(c$x_min, c$x_max)))
+    reg <- g$tmpl$table$region %||% list()
+    if (length(xs)) { reg$x_min <- min(xs) - 5; reg$x_max <- max(xs) + 5 }
+    else { reg$x_min <- NULL; reg$x_max <- NULL }   # no bands left -> drop x-scope, keep y
+    g$tmpl$table$region <- if (length(reg)) reg else NULL
+    guided(g)
+    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    output$g_adv_msg <- renderUI(span(class = "ok",
+      sprintf("Removed the '%s' column. Page and preview updated.", f)))
   })
 
   output$g_preview <- renderDT({
@@ -1623,6 +1649,12 @@ server <- function(input, output, session) {
   observeEvent(input$wp_assign, {
     br <- input$wp_brush; req(br)
     b <- wp_bands(); b[[input$wp_field]] <- c(round(br$xmin), round(br$xmax)); wp_bands(b)
+  })
+  observeEvent(input$wp_remove, {
+    b <- wp_bands()
+    if (is.null(b[[input$wp_field]])) {
+      showNotification(sprintf("There's no '%s' box to remove.", input$wp_field), type = "warning"); return() }
+    b[[input$wp_field]] <- NULL; wp_bands(b)
   })
   observeEvent(input$wp_clear, wp_bands(list()))
 
