@@ -176,6 +176,58 @@ test_that("split-row recovery does NOT merge a carried-forward line with a real 
   expect_false(any(grepl("row_stitched", tx$flags)))      # nothing was stitched
 })
 
+test_that("redacted cells keep the row, null the hidden value, and flag it (never silent)", {
+  # A redaction overlay replaces the covered words with [REDACTED] (read_pdf's
+  # apply_redaction_guard). Whichever field is hidden -- date, amount, balance, or a
+  # whole row -- the transaction MUST survive: losing it silently deletes real data,
+  # the worst forensic outcome. Hidden values are NULLED (never fabricated) and the
+  # row carries a `redacted` flag so a reviewer always sees what was covered.
+  R <- "[REDACTED]"
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","-40.00","955.50",  # y=40 clean baseline row
+              R,"SHOP","-10.00","945.50",              # y=70 DATE redacted
+              "07","Jan","RENT",R,"935.50",            # y=100 AMOUNT redacted
+              "08","Jan","BILL","-5.00",R,             # y=130 BALANCE redacted
+              R,R,R,R),                                # y=160 WHOLE row redacted
+    x     = c(45,60,110,415,490,   45,110,415,490,   45,60,110,415,490,
+              45,60,110,415,490,   45,110,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,70,       100,100,100,100,100,
+              130,130,130,130,130, 160,160,160,160),
+    width = c(12,16,45,34,30,      55,45,34,30,       12,16,45,34,30,
+              12,16,45,34,30,      55,45,34,30),
+    height = rep(10, 23))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+
+  expect_equal(nrow(tx), 5L)                              # NO row dropped by any redaction
+  isred <- grepl("redacted", tx$flags, ignore.case = TRUE)
+
+  # row 1: clean -> no redaction flag, values intact
+  expect_false(isred[1])
+  expect_equal(tx$amount[1], -40.00); expect_equal(tx$balance[1], 955.50)
+
+  # row 2: DATE hidden -> row kept, date_iso NA, amount preserved, flagged
+  expect_true(isred[2])
+  expect_true(is.na(tx$date[2]))
+  expect_equal(tx$amount[2], -10.00)                      # a redacted DATE never loses the amount
+
+  # row 3: AMOUNT hidden -> amount NULLED (not fabricated), balance intact, flagged
+  expect_true(isred[3])
+  expect_true(is.na(tx$amount[3]))
+  expect_equal(tx$balance[3], 935.50)
+
+  # row 4: BALANCE hidden -> balance NULLED, amount intact, flagged (the balance fix)
+  expect_true(isred[4])
+  expect_true(is.na(tx$balance[4]))
+  expect_equal(tx$amount[4], -5.00)
+
+  # row 5: WHOLE row hidden -> preserved as an all-NA flagged row, never dropped
+  expect_true(isred[5])
+  expect_true(is.na(tx$amount[5]) && is.na(tx$balance[5]) && is.na(tx$date[5]))
+})
+
 test_that("a differently-sized page normalises to the reference (scan/scale fix)", {
   # Same statement, two physical sizes. A template has no explicit ref -> defaults
   # to A4; the A4 page is untouched and the 2x page is normalised back to it, so

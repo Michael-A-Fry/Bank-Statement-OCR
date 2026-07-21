@@ -36,7 +36,12 @@
 # is a transaction). Parsing itself is left to the sign-aware parse_amount/.num,
 # which read the raw cell verbatim: pre-stripping here used to remove a trailing
 # OD/DR/CR and silently flip an overdrawn balance's sign.
-.has_money <- function(x) grepl("[0-9]", as.character(x))
+# A REDACTED money cell counts as "has money": the amount existed, it is just
+# hidden. Without this, redacting an amount (or a whole row) makes the keep test
+# see no digit and DROP the whole transaction -- silently losing a row that was
+# really there. Kept this way, the row survives, its amount is nulled, and it is
+# flagged redacted -- hidden, never lost.
+.has_money <- function(x) { x <- as.character(x); grepl("[0-9]", x) | grepl("REDACT", x, ignore.case = TRUE) }
 
 # .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
 # A new row starts when a word's top is more than `tol` below the CURRENT row's
@@ -470,10 +475,12 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     grepl("REDACTED", getc("debit"), ignore.case = TRUE) |
     grepl("REDACTED", getc("credit"), ignore.case = TRUE)
   else grepl("REDACTED", getc("amount"), ignore.case = TRUE)
+  # The row flag fires when ANY cell was hidden -- date, amount, description,
+  # balance, particulars, reference, account, code, type -- so a redaction of any
+  # field is never silent. Read it off the row's raw text (which already carries
+  # the [REDACTED] token for every guarded word) rather than a hand-listed subset.
   redacted <- if (n == 0) logical(0) else
-    amt_redacted |
-    grepl("REDACTED", getc("description"), ignore.case = TRUE) |
-    grepl("REDACTED", getc("date"), ignore.case = TRUE)
+    (amt_redacted | grepl("REDACT", getc("raw"), ignore.case = TRUE))
   # malformed: the row was kept (dated line carrying a money-looking amount) yet
   # the amount could not be parsed to a number -- a genuine parse failure, not a
   # redaction. Flagging it lets the no_unparsed_rows KPI catch PDF parse gaps the
