@@ -92,59 +92,43 @@ usually a wrong amount style or date format.</p>
 <p class="lead" style="margin-top:12px">Full version with more detail: <code>docs/wizard-tutorial.md</code>.</p>
 </div>')
 
-# about_html() -- the one-stop-shop for a brand-new forensic accountant: what the
-# tool is, how it flows end to end (visual), how it proves it's right, and how to
-# start. Rendered on the About tab (the landing tab). The product name lives in
-# the app header above, so this page opens with the promise, not a repeat title.
+# about_html() -- the proof story under the About hub cards: how a conversion
+# flows and how the tool earns trust. Deliberately short - the hub cards above
+# (built in app.R) are the doors; this is the "why you can rely on it".
 about_html <- function() HTML('
 <style>
- .ab{max-width:1000px} .ab h3{color:#0b7a34;margin:22px 0 6px} .ab p{color:#333}
- .ab .lead{font-size:15px;color:#444;margin:2px 0 4px}
- .ab .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:8px 0 6px}
- .ab .box{background:#f2f8f4;border:1px solid #bfe0c8;border-radius:8px;padding:10px 12px;min-width:110px;max-width:150px;font-size:12.5px}
- .ab .box b{display:block;color:#0b5} .ab .arrow{display:flex;align-items:center;padding:0 8px;color:#888;font-size:20px}
- .ab .branch{background:#fff8e6;border-color:#f0c36d} .ab .term{background:#eef;border-color:#c9c9ef}
- .ab table{border-collapse:collapse;margin:6px 0} .ab td,.ab th{border:1px solid #ddd;padding:5px 9px;font-size:13px;text-align:left}
- .ab th{background:#f2f6f2} .ab code{background:#eef;padding:0 3px;border-radius:3px} .ab .muted{color:#777}
- .ab ol{margin:4px 0 4px 18px}
+ .ab{max-width:1020px} .ab h3{color:#0b7a34;margin:26px 0 10px;font-size:16px}
+ .ab .steps{display:flex;flex-wrap:wrap;counter-reset:step}
+ .ab .step{flex:1 1 170px;max-width:196px;margin:0 12px 10px 0;font-size:12.5px;color:#555;
+   padding-top:8px;border-top:3px solid #bfe0c8}
+ .ab .step b{display:block;color:#1f2a33;font-size:13px;margin-bottom:2px}
+ .ab .step b::before{counter-increment:step;content:counter(step) ".  ";color:#0b7a34}
+ .ab .trust{display:grid;grid-template-columns:190px 1fr;max-width:860px;font-size:13px}
+ .ab .trust dt{font-weight:600;color:#1f2a33;padding:7px 10px 7px 0;border-top:1px solid #eceeed}
+ .ab .trust dd{margin:0;color:#555;padding:7px 0;border-top:1px solid #eceeed}
+ .ab code{background:#eef;padding:0 3px;border-radius:3px} .ab .muted{color:#777;font-size:12.5px}
 </style>
 <div class="ab">
-<p class="lead">Turn any bank statement - PDF, Excel or CSV - into clean, audit-grade transaction
-data you can trust. Built for forensic accountants. Deterministic (no AI guessing): if it
-can&#39;t be sure, it tells you exactly why.</p>
-
-<h3>How it flows, end to end</h3>
-<div class="flow">
-  <div class="box"><b>1. Upload</b>your statement (PDF / Excel / CSV) on the Convert tab</div>
-  <div class="arrow">&rarr;</div>
-  <div class="box"><b>2. Detect</b>it matches your bank to a saved template automatically</div>
-  <div class="arrow">&rarr;</div>
-  <div class="box"><b>3. Extract</b>date, description, amount, balance - verbatim</div>
-  <div class="arrow">&rarr;</div>
-  <div class="box"><b>4. Check</b>reconciles the balance &amp; flags anything off (trust score)</div>
-  <div class="arrow">&rarr;</div>
-  <div class="box term"><b>5. Download</b>Excel / CSV / JSON, and rate the result</div>
+<h3>How a conversion flows</h3>
+<div class="steps">
+  <div class="step"><b>Upload</b>Your bank&#39;s export - PDF, CSV or Excel - on Convert.</div>
+  <div class="step"><b>Detect</b>The statement is matched to a saved template automatically.</div>
+  <div class="step"><b>Extract</b>Date, description, amount, balance - read verbatim, never edited.</div>
+  <div class="step"><b>Check</b>Opening + transactions vs closing balance; anything off is flagged with the reason.</div>
+  <div class="step"><b>Download</b>Excel, CSV or JSON - and rate the result so the team sees what works.</div>
 </div>
-<div class="flow">
-  <div class="box branch" style="max-width:360px"><b>New bank? No template yet &rarr; Guided setup</b>The tool pre-fills a template from your file; you check the preview and click Save. Next upload of that bank just works. No coding, no jargon.</div>
-</div>
+<p class="muted">No template for it yet? The toolkit pre-fills one from your file; you confirm
+against a live preview and save. Next time that bank just works.</p>
 
 <h3>How you know it&#39;s right</h3>
-<table>
-<tr><th>Signal</th><th>What it tells you</th></tr>
-<tr><td><b>High confidence</b></td><td>Opening balance + every transaction = the closing balance the statement prints. Provably complete.</td></tr>
-<tr><td><b>Medium confidence</b></td><td>Parsed, but a check couldn&#39;t run (e.g. no balance on the statement). Eyeball it.</td></tr>
-<tr><td><b>Completeness could not be auto-verified</b></td><td>Nothing to reconcile against - confirm the row count matches the statement.</td></tr>
-<tr><td><b>Field coverage</b></td><td>Which fields are populated, which are empty (maybe a wrong column), which aren&#39;t on this statement.</td></tr>
-<tr><td><b>Diagnostics</b></td><td>If anything&#39;s off: where, why, and how to fix it.</td></tr>
-</table>
-<p class="muted">Statements often arrive already redacted. Nothing under a redaction is ever read or guessed: a redacted cell is left <code>[REDACTED]</code> and its row is kept, a fully-hidden row simply doesn&#39;t appear, and the tool never estimates how many rows a black block hid. Merged multi-statement PDFs are detected and you&#39;re asked to split them.</p>
-
-<h3>Get started in 3 steps</h3>
-<ol>
-<li><b>Convert tab</b> &rarr; upload a statement &rarr; <b>Convert</b>. Review the verdict and the analysis, then download. (No statement handy? There&#39;s a <b>Try it on a sample statement</b> button.)</li>
-<li>If it says <b>&quot;No template for this statement yet&quot;</b>, click <b>&#128736; Set up a template for this</b> - the toolkit opens with most of it already worked out; check the preview, Save, then Convert again.</li>
-<li>Rate the result at the bottom of the page (Correct / Minor issues / Wrong) so the team can see what works. That&#39;s it.</li>
-</ol>
-<p class="muted">Deeper how-to (drawing PDF columns, every way statements differ): the &#9432; guide on the Add-a-template tab, or <code>docs/wizard-tutorial.md</code>. Best results come from CSV/Excel exports where your bank offers them.</p>
+<dl class="trust">
+<dt>High confidence</dt><dd>Opening balance + every transaction = the closing balance the statement prints. Provably complete.</dd>
+<dt>Medium confidence</dt><dd>Read cleanly, but a completeness check couldn&#39;t run (e.g. no running balance on the statement). Worth an eyeball.</dd>
+<dt>Field coverage</dt><dd>Which fields are populated, which came back empty (maybe a wrong column), which aren&#39;t on this statement at all.</dd>
+<dt>Diagnostics</dt><dd>When anything is off: where, why, and how to fix it - in plain words.</dd>
+<dt>Redactions</dt><dd>Nothing under a redaction is ever read or guessed. A redacted cell stays <code>[REDACTED]</code>, its row is kept, and the tool never estimates what a black block hid.</dd>
+</dl>
+<p class="muted" style="margin-top:14px">Deeper how-to - drawing PDF columns, every way statements
+differ - lives in the 2-minute guide on the Add-a-template tab, or <code>docs/wizard-tutorial.md</code>.
+Best results come from CSV/Excel exports where your bank offers them.</p>
 </div>')

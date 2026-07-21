@@ -161,6 +161,22 @@ ui <- fluidPage(
      .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
      .shiny-notification{border-radius:10px;border:1px solid var(--line);
        box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:13.5px}
+     /* About hub: the journey entry - two doors and a quiet third */
+     .hub{max-width:1020px}
+     .hub-lead{font-size:15.5px;color:#3a4652;max-width:780px;line-height:1.55;margin:4px 0 18px}
+     .hub-cards{display:flex;flex-wrap:wrap}
+     a.hub-card{flex:1 1 260px;max-width:330px;margin:0 14px 14px 0;padding:16px 18px;
+       border:1px solid var(--line);border-radius:12px;background:#fff;display:block;
+       color:var(--ink);text-decoration:none}
+     a.hub-card:hover,a.hub-card:focus{border-color:var(--brand-line);
+       box-shadow:0 4px 14px rgba(11,122,52,.10);text-decoration:none;color:var(--ink)}
+     a.hub-card-primary{background:var(--brand-tint);border-color:var(--brand-line)}
+     a.hub-card-quiet{background:var(--panel)}
+     .hub-card-kicker{font-size:11.5px;font-weight:700;letter-spacing:.6px;
+       text-transform:uppercase;color:var(--brand);margin-bottom:4px}
+     .hub-card-title{font-size:17px;font-weight:700;margin-bottom:6px}
+     .hub-card-body{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:10px}
+     .hub-card-go{font-size:13px;font-weight:700;color:var(--brand)}
     ")),
     # Enter in the Admin password box = click Enter (no mouse trip). The
     # trigger('change') first flushes the debounced text value, so a fast
@@ -173,15 +189,37 @@ ui <- fluidPage(
   div(class = "app-header",
     span(class = "app-mark"),
     span(class = "app-title", "Bank Statement OCR"),
-    span(class = "app-tagline",
-         "Turn bank statements into audit-grade data - every number checked, nothing guessed.")),
+    span(class = "app-tagline", "Statements in - audit-grade data out.")),
   tabsetPanel(
     id = "main_tabs",
-    # ---- About (landing) ----------------------------------------------
-    tabPanel("About", br(), about_html(),
-      div(style = "margin:6px 0 28px",
-        actionButton("ab_go_convert", "Convert your first statement →",
-                     class = "btn-primary btn-lg"))),
+    # ---- About (landing): the journey hub. Everything starts here - one
+    # promise, then the two doors (convert / teach), then the proof story.
+    tabPanel("About", br(),
+      div(class = "hub",
+        div(class = "hub-lead",
+          "Turn any bank statement - PDF, CSV or Excel - into clean, checked,",
+          " audit-grade transaction data. Deterministic: nothing is guessed,",
+          " and anything uncertain is flagged with the reason."),
+        div(class = "hub-cards",
+          actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
+            div(class = "hub-card-kicker", "Most days"),
+            div(class = "hub-card-title", "Convert a statement"),
+            div(class = "hub-card-body",
+                "Upload your bank's export, click Convert. You get the verdict, the analysis, every transaction, and the download."),
+            div(class = "hub-card-go", "Open Convert →"))),
+          actionLink("ab_go_template", class = "hub-card", label = div(
+            div(class = "hub-card-kicker", "New bank or layout"),
+            div(class = "hub-card-title", "Teach it a template"),
+            div(class = "hub-card-body",
+                "The toolkit pre-fills everything it can detect from your sample; you confirm against a live preview and save. About 2 minutes, no code."),
+            div(class = "hub-card-go", "Open Add a template →"))),
+          actionLink("ab_go_admin", class = "hub-card hub-card-quiet", label = div(
+            div(class = "hub-card-kicker", "Looking after the tool"),
+            div(class = "hub-card-title", "Admin"),
+            div(class = "hub-card-body",
+                "Team insights from every run, template management, batch audits and folder intake."),
+            div(class = "hub-card-go", "Open Admin →"))))),
+      about_html()),
     # ---- Convert -------------------------------------------------------
     tabPanel(
       "Convert",
@@ -238,7 +276,7 @@ ui <- fluidPage(
               tabPanel("Preview", br(), DTOutput("cv_txns")),
               tabPanel("See it on the page (X-ray)", br(),
                 conditionalPanel("output.ix_is_pdf == true",
-                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · amber dashed = a row it skipped that looks like a transaction · orange = a balance / date / account detail · purple dotted = a value pinned by a drawn box · red = a redaction (never read)."),
+                  p(class = "muted", "Your statement page, with everything the tool read drawn on it. Green = kept transaction rows; amber dashed = skipped rows that look like transactions; the legend below names the rest."),
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
                     column(3, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
@@ -246,13 +284,13 @@ ui <- fluidPage(
                     column(3, br(), checkboxInput("ix_show_skipped", "Show skipped rows", TRUE))),
                   plotOutput("ix_plot", height = "780px"),
                   uiOutput("ix_legend"),
-                  h4("Seeing a transaction that's missing? Here's every row skipped on this page - and why"),
-                  helpText(HTML("If a real transaction is here, the reason usually points at a one-line fix in the template toolkit (most often the <b>date format</b> or an <b>amount / debit / credit</b> band) that brings back <b>all</b> the rows like it - not just this one. For a genuine one-off, select the row and add it by hand - it's kept, flagged <b>forced</b> so it's never mistaken for a clean read.")),
+                  h4("Rows skipped on this page - and why"),
+                  helpText(HTML("A real transaction in here usually means a one-line template fix (most often the <b>date format</b> or an amount band) - that brings back every row like it. A genuine one-off? Select it and add it by hand; it's kept, flagged <b>forced</b>.")),
                   DTOutput("ix_skipped"),
                   br(),
-                  actionButton("ix_add_row", "➕ This IS a transaction - add the selected row", class = "btn-warning"),
+                  actionButton("ix_add_row", "This IS a transaction - add the selected row", class = "btn-warning"),
                   tags$hr(),
-                  helpText(HTML("Rows still going missing and you can't share the statement? Download the <b>shareable diagnostic</b> below - it explains what happened using only page sizes and counts (no dates, names or amounts leave your machine) so it can be sent to whoever maintains the tool.")),
+                  helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
                   helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
@@ -277,9 +315,9 @@ ui <- fluidPage(
       "Add a template",
       br(),
       wellPanel(
-        strong("🛠 Add a template"),
-        p(class = "muted", "Upload the document and set it up with it on screen the whole time. There's one toolkit: it opens Simple for the common case, and Advanced (the full field-by-field / YAML editor) is one click away inside it - no separate path to learn."),
-        p(actionLink("ts_help", "ⓘ First time? The 2-minute guide - the ways statements differ and what each setting means")),
+        strong("Add a template"),
+        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (full field-by-field / YAML) is one click away inside."),
+        p(actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means")),
         fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
@@ -287,22 +325,19 @@ ui <- fluidPage(
             "Something else - labelled values (an IRD form, an account summary, a letter)" = "other"),
           selected = "statement"),
         conditionalPanel("input.ts_doctype == 'statement'",
-          actionButton("ts_go", "🛠 Open the toolkit", class = "btn-warning")),
+          actionButton("ts_go", "Open the toolkit", class = "btn-primary")),
         conditionalPanel("input.ts_doctype == 'other'",
           div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
             strong("Heads up - an 'Other' document is read differently"),
-            tags$ul(style = "margin:6px 0 0",
-              tags$li("It has no transaction table and no running balance, so the completeness checks (opening + transactions = closing) don't apply."),
-              tags$li("The tool pulls the specific labelled values you name (e.g. 'Closing balance'), not a table of rows."),
-              tags$li("There is nothing to reconcile against, so trust is lower by nature - eyeball each value.")),
-            p(class = "muted", style = "margin:6px 0 0", "Set it up with the labelled-value builder below.")))),
+            p(style = "margin:6px 0 0;color:#555",
+              "It has no transaction table or running balance, so the completeness checks don't apply: the tool pulls the labelled values you name, and you eyeball each one. Set it up with the builder below.")))),
       # One flow: the toolkit above is THE way to add a statement template (its
       # Advanced tab covers field-by-field / YAML editing, so there is no separate
       # "build by hand" path). 'Other' documents (labelled values) are set up with
       # this builder, shown right here when "Something else" is picked above.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
-      helpText("For a PDF that ISN'T a transaction table - an IRD / KiwiSaver / account summary, a letter, a form. Teach the tool which labelled values to pull; when a value sits far from its label, draw a box to say exactly where it is. (To just READ one, upload it on Convert - it's detected automatically.)"),
+      helpText("Teach the tool which labelled values to pull from a non-statement PDF (an IRD form, a summary, a letter). When a value sits far from its label, draw a box to say exactly where."),
       sidebarLayout(
         sidebarPanel(
           width = 4,
@@ -318,7 +353,7 @@ ui <- fluidPage(
                                       "closing_balance = Closing balance | money", sep = "\n")),
           tags$hr(),
           strong("Value in a different place than its label?"),
-          helpText("Upload a sample, draw a box on the page, name the field and pick its type, then Set - the value is read from that box, wherever the label is."),
+          helpText("Upload a sample, draw a box, name the field, click Set - the value reads from that box."),
           fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)", accept = ".pdf"),
           fluidRow(
             column(6, textInput("fb_rf_field", "Field name", "")),
@@ -327,7 +362,7 @@ ui <- fluidPage(
           fluidRow(
             column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
             column(8, br(),
-                   actionButton("fb_rf_set", "📍 Set value box", class = "btn-primary"),
+                   actionButton("fb_rf_set", "Set value box", class = "btn-primary"),
                    actionButton("fb_rf_clear", "Clear boxes"))),
           tags$hr(),
           actionButton("fb_preview", "Preview on the sample"),
@@ -360,22 +395,21 @@ ui <- fluidPage(
         tabPanel(
           "Insights",
           br(),
-          actionButton("adm_refresh", "↻ Refresh from logs", class = "btn-primary"),
-          helpText(HTML(paste0("A live picture built from every conversion the team has run and every bit of feedback left (saved in <code>",
-            LOGDIR, "/</code>, including the batches below)."))),
+          actionButton("adm_refresh", "Refresh from logs", class = "btn-primary"),
+          helpText("A live picture from every conversion the team has run and every rating left."),
           h4("Uploads - new formats to pick up"),
-          helpText("Every statement anyone converts is saved with what happened to it. A statement the tool couldn't read, that nobody has set up yet, is one to pick up: download its safe summary (no personal data) and build a template for it."),
+          helpText("Statements the tool couldn't read, that nobody has set up yet. Pick one up: download its safe summary (no personal data) or open it in the toolkit."),
           fluidRow(
             column(8, DTOutput("adm_uploads")),
             column(4,
               selectInput("adm_up_pick", "Pick a saved upload", choices = NULL),
               downloadButton("adm_up_audit", "Download its safe summary (no personal data)"),
               br(), br(),
-              actionButton("adm_up_wizard", "🛠 Set it up - open the toolkit",
+              actionButton("adm_up_wizard", "Set it up - open the toolkit",
                            class = "btn-warning"))),
           tags$hr(),
-          h4("🚩 Format requests - raised by the team"),
-          helpText("When a statement matched no template, the person converting it described the layout (no personal data) and flagged it here. Build a template for it, then mark it done."),
+          h4("Format requests - raised by the team"),
+          helpText("Layouts the team flagged as unsupported, in their own words (no personal data). Build the template, then mark it done."),
           fluidRow(
             column(9, DTOutput("adm_requests")),
             column(3,
@@ -384,14 +418,14 @@ ui <- fluidPage(
               br(), br(),
               actionButton("adm_req_dismiss", "Dismiss"))),
           tags$hr(),
-          h4("📂 Folder intake - inbox / processed / failed"),
-          helpText("If the team drops statements into the inbox/ folder (instead of uploading in the browser), this is where they land. A file in failed/ is worth a look: open it in the toolkit or download its safe summary."),
+          h4("Folder intake - inbox / processed / failed"),
+          helpText("Statements dropped into the inbox/ folder land here. Anything in failed/ is worth a look."),
           uiOutput("adm_inbox_counts"),
           fluidRow(
             column(8, h5("Failed - needs attention"), DTOutput("adm_inbox_failed")),
             column(4,
               selectInput("adm_inbox_pick", "A failed file", choices = NULL),
-              actionButton("adm_inbox_wizard", "🛠 Open in the toolkit", class = "btn-warning"),
+              actionButton("adm_inbox_wizard", "Open in the toolkit", class = "btn-warning"),
               br(), br(),
               downloadButton("adm_inbox_audit", "Download its safe summary (no personal data)"))),
           fluidRow(
@@ -406,7 +440,7 @@ ui <- fluidPage(
           h4("Statements the tool can't read yet - the gaps to fill"),
           helpText("Each row is one layout the tool doesn't recognise yet (identical layouts are grouped). The biggest count is the one to build a template for first - it unblocks the most statements."),
           DTOutput("adm_gaps"),
-          h4("⚠ Templates that started failing recently"),
+          h4("Templates that started failing recently"),
           helpText("A statement's layout can change slightly - a field moves or gets renamed - and stop adding up. When that happens the tool flags the conversion for a check, and any template that's suddenly getting more of those shows here. Empty is good."),
           DTOutput("adm_drift"),
           h4("Template usage"),
@@ -418,20 +452,22 @@ ui <- fluidPage(
         tabPanel(
           "Templates",
           br(),
-          helpText(HTML("Every statement layout the tool can read. <b>tested</b> = shipped with the tool and checked; <b>user</b> = built on this machine. Click a row, or pick one below, to view and edit its settings.")),
+          helpText(HTML("Every layout the tool can read: <b>tested</b> = shipped and checked, <b>user</b> = built here. Click a row to view and edit it.")),
           DTOutput("adm_tpl_overview"),
           br(),
           fluidRow(
             column(5,
               selectInput("adm_tpl_pick", "Preview / edit a template", choices = NULL),
               uiOutput("adm_tpl_origin"),
-              actionButton("adm_tpl_dup", "⧉ Duplicate (new id)"),
+              actionButton("adm_tpl_dup", "Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
               actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
-              actionButton("adm_tpl_hide", "🙈 Hide / Un-hide (user template)"),
-              actionButton("adm_tpl_delete", "🗑 Delete (user template)", class = "btn-danger"),
+              actionButton("adm_tpl_hide", "Hide / un-hide (user template)"),
+              actionButton("adm_tpl_delete", "Delete (user template)", class = "btn-danger"),
               br(), br(), uiOutput("adm_tpl_msg"),
-              helpText("Make a variation: Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id and saving, then Delete the old one. Hide parks a user template you don't want the tool to use when matching statements, without deleting it - un-hide the same way. Delete only removes USER templates; shipped 'tested' templates are read-only. (Shipped templates win on an id clash, so a copy needs its own id to take effect.)")),
+              tags$details(
+                tags$summary(class = "muted", style = "cursor:pointer;font-size:12.5px", "How these actions work"),
+                helpText("Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id, saving, then deleting the old one. Hide parks a user template out of detection without deleting it. Delete only removes USER templates; shipped 'tested' ones are read-only and win on an id clash, so a copy needs its own id."))),
             column(7,
               h4("Template YAML"),
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
@@ -442,7 +478,7 @@ ui <- fluidPage(
           uiOutput("adm_tpl_dupes"),
           tags$hr(),
           h4("Label dictionary - the wordings the tool looks for"),
-          helpText(HTML("This is usually why a value comes up <b>blank</b> - the statement labels its opening/closing balance, period or totals with wording the tool hasn't seen before. Add the exact phrases your statements use (upper/lower case doesn't matter) and Save. It applies to every statement straight away.")),
+          helpText(HTML("The usual reason a value comes up <b>blank</b>: the statement uses a wording the tool hasn't seen. Add the exact phrases your statements use and Save - it applies straight away.")),
           fluidRow(
             column(5,
               actionButton("adm_dict_reload", "Reload from file"),
@@ -454,7 +490,7 @@ ui <- fluidPage(
         tabPanel(
           "Batch & audit",
           br(),
-          helpText(HTML("Drop in a whole pile of statements (any bank, any version, typed or scanned) and get one picture: what the tool can read, the layouts it can't - <b>grouped biggest-gap-first</b> - the amount styles, date formats and banks it saw, and <b>ready-to-edit draft templates</b> for the gaps. It's <b>safe to share</b> - only shapes and counts leave this machine, never the statement contents. Tick <b>convert &amp; save</b> to also produce the real converted files and log every run into the Insights tab.")),
+          helpText(HTML("Drop in a pile of statements and get one picture: what converts, the gap layouts <b>biggest-first</b>, and <b>ready-to-edit draft templates</b> for them. Safe to share - only shapes and counts, never contents. Tick <b>convert &amp; save</b> to also produce real outputs and feed Insights.")),
           fluidRow(
             column(4,
               fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE,
@@ -607,7 +643,7 @@ server <- function(input, output, session) {
   output$adm_tpl_dupes <- renderUI({
     groups <- duplicate_template_groups(all_templates())
     if (!length(groups))
-      return(helpText("No duplicate user templates - nothing to consolidate. 🎉"))
+      return(helpText("No duplicate user templates - nothing to consolidate."))
     ov <- template_overview(all_templates())
     do.call(tagList, lapply(seq_along(groups), function(gi) {
       ids <- groups[[gi]]
@@ -1082,7 +1118,7 @@ server <- function(input, output, session) {
       if (is.null(b$x_min) || is.null(b$x_max)) next
       y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
       rect(b$x_min, y0, b$x_max, y1, border = "#7b1fa2", lwd = 2, lty = 3)
-      text(b$x_min, y0, paste0("📌 ", nm), col = "#7b1fa2", font = 2, cex = 0.8, pos = 3, offset = 0.2)
+      text(b$x_min, y0, nm, col = "#7b1fa2", font = 2, cex = 0.8, pos = 3, offset = 0.2)
     }
   })
   # "Why aren't you seeing it": every row the engine skipped on this page, with the
@@ -1107,7 +1143,7 @@ server <- function(input, output, session) {
     if (is.null(sk)) return(datatable(data.frame(message = "Nothing to show for this page yet."),
                                       rownames = FALSE, options = list(dom = "t")))
     if (!nrow(sk)) return(datatable(
-      data.frame(message = "Every row on this page was either kept or is a heading / footer 🎉"),
+      data.frame(message = "Every row on this page was either kept or is a heading / footer."),
       rownames = FALSE, options = list(dom = "t")))
     trunc <- function(s, n = 90) ifelse(nchar(s) > n, paste0(substr(s, 1, n), "…"), s)
     out <- data.frame(
@@ -1283,7 +1319,7 @@ server <- function(input, output, session) {
       # a bundled specimen statement (public sample - not anyone's real data).
       if (file.exists(SAMPLE_STATEMENT))
         div(style = "margin-top:14px;padding:12px 14px;background:#f8faf9;border:1px dashed #bfe0c8;border-radius:10px",
-          actionButton("cv_try_sample", "▶ Try it on a sample statement", class = "btn-default"),
+          actionButton("cv_try_sample", "Try it on a sample statement", class = "btn-default"),
           div(class = "muted", style = "margin-top:6px",
               "No file needed - converts a bundled specimen so you can see a full result in seconds.")))
   })
@@ -1608,9 +1644,7 @@ server <- function(input, output, session) {
 
   # "__report__" is the escape hatch: picking it means "none of these fit" and
   # reveals the "tell our team" box. guided_live treats it as no-override.
-  # setNames, NOT c(name = value): the emoji as an argument name would become a
-  # symbol at parse time and mangle to '<U+1F6A9>' on a C-locale host.
-  REPORT_OPT <- stats::setNames("__report__", "🚩 None of these - tell our team")
+  REPORT_OPT <- stats::setNames("__report__", "None of these - tell our team")
   guided_date_choices <- function(extra = NULL) {
     base <- setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
                      vapply(wd_date_table(), `[[`, "", "label"))
@@ -1684,7 +1718,7 @@ server <- function(input, output, session) {
     # LEFT: the statement itself, always visible.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
-      p(class = "muted", "Draw a box on the page, then either assign it as a column (for the transaction table) or pin it as a header value (balance / period / account). Boxes are drawn here and drive the preview below."),
+      p(class = "muted", "Draw a box on the page, then assign it as a column or pin it as a header value. The preview below updates as you go."),
       fluidRow(
         column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
         column(5, selectInput("g_pdf_field", "Column the box is…",
@@ -1692,9 +1726,9 @@ server <- function(input, output, session) {
                                 "reference", "type", "debit", "credit", "other_party", "code"))),
         column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
       div(actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
-          actionButton("g_pdf_remove", "🗑 Remove this column")),
+          actionButton("g_pdf_remove", "Remove this column")),
       tags$hr(style = "margin:8px 0"),
-      p(class = "muted", "Value not on every row (opening / closing balance, statement period, account details)? Draw a box around just that value and pin it here - used when the automatic reader can't find it."),
+      p(class = "muted", "A one-off value (opening / closing balance, period, account)? Draw a box around it and pin it here."),
       fluidRow(
         column(8, selectInput("g_meta_field", "Pin the box as this header value",
                               c("(choose)" = "",
@@ -1704,8 +1738,8 @@ server <- function(input, output, session) {
                                 "statement period - end" = "period_end",
                                 "account number" = "account_number",
                                 "account name" = "account_name"))),
-        column(4, br(), actionButton("g_meta_assign", "📌 Pin box → value"),
-               actionButton("g_meta_remove", "🗑"))),
+        column(4, br(), actionButton("g_meta_assign", "Pin box → value"),
+               actionButton("g_meta_remove", "Remove"))),
       plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush"), height = "560px"))
     else tagList(
       strong("Your statement - sample rows"),
@@ -1756,7 +1790,7 @@ server <- function(input, output, session) {
                                   selected = tmpl$columns$balance$source %||% "")))),
         tags$hr(),
         div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
-          strong("🚩 None of these fit? Tell our team"),
+          strong("None of these fit? Tell our team"),
           p(class = "muted", "Describe the FORMAT in plain words (no names / account numbers / statement details) and we'll build a template."),
           textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
             placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for Haben (credit)."),
@@ -1765,8 +1799,8 @@ server <- function(input, output, session) {
       tabPanel(
         "Advanced", br(),
         helpText(HTML("The <b>complete</b> template as text - edit anything (identifiers, column mapping, label synonyms, region bounds, row tolerance, metadata labels). Load your Simple choices in, edit, then Check &amp; apply.")),
-        div(actionButton("g_adv_load", "↻ Load current settings"),
-            actionButton("g_adv_apply", "✓ Check & apply", class = "btn-primary")),
+        div(actionButton("g_adv_load", "Load current settings"),
+            actionButton("g_adv_apply", "Check & apply", class = "btn-primary")),
         br(), uiOutput("g_adv_msg"),
         textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 24)))
 
@@ -1855,7 +1889,7 @@ server <- function(input, output, session) {
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
         strong("This statement doesn't match any template yet."),
         p(class = "muted", "Teach the tool to read it - we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-        actionButton("cv_teach_go", "🛠 Set up a template for this", class = "btn-warning"), " ",
+        actionButton("cv_teach_go", "Set up a template for this", class = "btn-warning"), " ",
         actionLink("cv_goto_templates", "or build one from scratch →"))
     } else {
       # ANY result - ok, needs_review, or failed - links into template setup, so
@@ -1866,7 +1900,7 @@ server <- function(input, output, session) {
         "Open this statement in setup to fix how it's read and save an improved template."
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", label), " ",
-        actionButton("cv_teach_go", "🛠 Open the template toolkit", class = "btn-default"), " ",
+        actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"), " ",
         actionLink("cv_goto_templates", "or build one from scratch →"))
     }
   })
@@ -1876,6 +1910,10 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
   observeEvent(input$ab_go_convert,
     updateTabsetPanel(session, "main_tabs", selected = "Convert"))
+  observeEvent(input$ab_go_template,
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
+  observeEvent(input$ab_go_admin,
+    updateTabsetPanel(session, "main_tabs", selected = "Admin"))
 
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)
@@ -1909,7 +1947,7 @@ server <- function(input, output, session) {
     style <- if (thin) "border:1px solid #f0c36d;background:#fff8e6"
              else "border:1px solid #e3e3e3;background:#fafafa"
     tagList(div(style = sprintf("margin:12px 0;padding:10px 12px;border-radius:8px;%s", style),
-      strong(if (thin) "⚠ Close call - please confirm this is the right template"
+      strong(if (thin) "Close call - please confirm this is the right template"
              else "Template match"),
       p(class = "muted", if (nrow(others_df))
         sprintf("Matched %s. Nearest others: %s.", res$template_id,
@@ -1918,7 +1956,7 @@ server <- function(input, output, session) {
       if (length(others)) tagList(
         selectInput("cv_cand_pick", "Wrong one? Open the toolkit with a different template:",
                     choices = others, width = "100%"),
-        actionButton("cv_cand_go", "🪄 Open the toolkit with this template", class = "btn-default"))))
+        actionButton("cv_cand_go", "Open the toolkit with this template", class = "btn-default"))))
   })
   observeEvent(input$cv_cand_go, {
     src <- cv_src(); req(src); tid <- input$cv_cand_pick; req(tid, nzchar(tid))
@@ -1939,7 +1977,7 @@ server <- function(input, output, session) {
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
     if (identical(input$g_date, "__report__") || identical(input$g_sign, "__report__"))
-      showNotification("None of the options fit? Use the '🚩 Tell our team' box below to describe it.",
+      showNotification("None of the options fit? Use the 'Tell our team' box below to describe it.",
                        type = "message", duration = 6)
   }, ignoreInit = TRUE)
 
@@ -2206,7 +2244,7 @@ server <- function(input, output, session) {
   output$adm_drift <- renderDT({
     d <- adm_data(); req(d)
     dr <- template_drift(d$runs)
-    if (!nrow(dr)) return(datatable(data.frame(message = "No drift detected 🎉"),
+    if (!nrow(dr)) return(datatable(data.frame(message = "No drift detected."),
                                     rownames = FALSE, options = list(dom = "t")))
     datatable(dr, rownames = FALSE, options = list(dom = "t")) |>
       formatStyle("drop", fontWeight = "bold", color = "#b00020")
