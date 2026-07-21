@@ -1852,7 +1852,10 @@ server <- function(input, output, session) {
     # For delimited statements, offer the file's actual columns in the Basic
     # field-pickers (PDF columns are bands, edited visually / in Advanced).
     cols <- if (identical(tmpl$format, "delimited"))
-      tryCatch(names(read_delimited(read_input(path), tmpl)$table), error = function(e) NULL) else NULL
+      tryCatch(names(read_delimited(read_input(path), tmpl)$table), error = function(e) NULL)
+    else if (identical(tmpl$format, "excel"))
+      tryCatch(names(read_input(path)$table), error = function(e) NULL)
+    else NULL
     cv_upload_id(upload_id)
     guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids, cols = cols))
     show_guided_modal()
@@ -2051,6 +2054,14 @@ server <- function(input, output, session) {
   # can see the columns while answering bank / date / amount.
   output$g_raw_sample <- renderText({
     g <- guided(); req(g); req(!identical(g$tmpl$format, "pdf"))
+    # Excel is binary - show the cleaned table (right sheet, preamble skipped),
+    # not raw bytes. Delimited files show their first lines verbatim.
+    if (identical(g$tmpl$format, "excel")) {
+      t <- tryCatch(read_input(g$path)$table, error = function(e) NULL)
+      if (is.null(t) || !nrow(t)) return("(couldn't read the workbook)")
+      return(paste(utils::capture.output(print(utils::head(t, 25), row.names = FALSE)),
+                   collapse = "\n"))
+    }
     lines <- tryCatch(readLines(g$path, n = 40, warn = FALSE), error = function(e) character(0))
     if (!length(lines)) "(couldn't read the file)" else paste(lines, collapse = "\n")
   })
