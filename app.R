@@ -50,7 +50,7 @@ plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, 
 # The friendly line shown when a file simply can't be read (technical detail -> log).
 FRIENDLY_READ_ERROR <- paste(
   "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
-  "or not a bank statement. Try re-saving it as a PDF or CSV, or use Guided setup to teach the format.")
+  "or not a bank statement. Try re-saving it as a PDF or CSV, or open the template toolkit to set it up.")
 
 # Read the header row of a delimited sample -> character vector of column names.
 read_headers <- function(path, delim = ",") {
@@ -122,7 +122,8 @@ source("ui_content.R")
 ui <- fluidPage(
   tags$head(tags$style(HTML(
     ".ok{color:#137333;font-weight:600}.bad{color:#b00020;font-weight:600}
-     .muted{color:#666}.mono{font-family:monospace;white-space:pre-wrap}"))),
+     .muted{color:#666}.mono{font-family:monospace;white-space:pre-wrap}
+     .modal-lg{width:95%;max-width:1240px}"))),
   titlePanel("Bank statement conversion"),
   tabsetPanel(
     id = "main_tabs",
@@ -180,12 +181,12 @@ ui <- fluidPage(
       "Add a template",
       br(),
       wellPanel(
-        strong("🪄 Guided setup — one place, Basic + Advanced (recommended)"),
-        p(class = "muted", "Upload any statement and we set up the common cases for you; open the Advanced tab for full control over wildly different formats. This is the same wizard the Convert tab uses."),
+        strong("🛠 Statement template toolkit (recommended)"),
+        p(class = "muted", "Upload any statement and set up a perfect template: your statement stays on screen while you set the bank, dates and amounts, with a live preview. Simple for the common case, Advanced for anything unusual. Same toolkit the Convert tab opens."),
         fluidRow(
           column(7, fileInput("ts_file", "Statement file (.csv / .tsv / .tdv / .pdf)")),
-          column(5, br(), actionButton("ts_go", "🪄 Open guided setup", class = "btn-warning")))),
-      helpText(HTML("<b>Advanced — build a template by hand.</b> Most people should use Guided setup above; these manual wizards are for building a template field by field. Click <b>ⓘ</b> for the full step-by-step.")),
+          column(5, br(), actionButton("ts_go", "🛠 Open the toolkit", class = "btn-warning")))),
+      helpText(HTML("<b>Build by hand (advanced).</b> Most people use the toolkit above; these manual wizards build a template field by field. Click <b>ⓘ</b> for the full step-by-step.")),
       tabsetPanel(
     tabPanel(
       "Spreadsheet (CSV / Excel)",
@@ -1246,102 +1247,106 @@ server <- function(input, output, session) {
     tmpl
   }
 
-  # ONE cohesive setup surface. Basic = friendly dropdowns for the common case;
-  # Advanced = the COMPLETE template as YAML for wildly different statements
-  # (fingerprints, column mapping, label synonyms, region bounds, row tolerance,
-  # metadata labels). A live preview under both tabs shows what will be pulled out.
+  # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
+  # or sample rows for a CSV) so you can see what you're answering; the controls
+  # are on the right (Simple for the common case, Advanced for the full YAML). A
+  # live preview underneath shows exactly what will be pulled out.
   show_guided_modal <- function() {
     g <- guided(); req(g); tmpl <- g$tmpl
+    is_pdf   <- identical(tmpl$format, "pdf")
     cur_fmt  <- gv_datefmt(tmpl); cur_sign <- gv_sign(tmpl)
     cur_dec  <- tmpl$decimal_mark %||% "auto"
     cur_ud   <- tmpl$unsigned_default %||% "debit"
+
+    # LEFT: the statement itself, always visible.
+    left_panel <- if (is_pdf) tagList(
+      strong("Your statement"),
+      p(class = "muted", "Draw a box across a column, choose which field it is, then Assign. Bands are drawn here and drive the preview below."),
+      fluidRow(
+        column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
+        column(5, selectInput("g_pdf_field", "The box I draw is the…",
+                              c("date", "description", "amount", "balance", "particulars",
+                                "reference", "type", "debit", "credit", "other_party", "code"))),
+        column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
+      div(actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
+          actionButton("g_pdf_remove", "🗑 Remove this column")),
+      plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "560px"))
+    else tagList(
+      strong("Your statement — sample rows"),
+      p(class = "muted", "The first rows of your file, so you can see the columns while you set things up."),
+      div(class = "mono", style = "max-height:560px;overflow:auto;border:1px solid #eee;padding:8px;font-size:12px",
+          verbatimTextOutput("g_raw_sample")))
+
+    # RIGHT: the controls.
+    right_panel <- tabsetPanel(
+      id = "g_tabs",
+      tabPanel(
+        "Simple", br(),
+        fluidRow(
+          column(6, textInput("g_id", "Template name (saves as this)", value = tmpl$id %||% "")),
+          column(6, textInput("g_bank", "Which bank?", value = tmpl$bank))),
+        fluidRow(
+          column(6, textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday")),
+          column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
+        fluidRow(
+          column(6, selectInput("g_date", "How are the dates written?",
+                                choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
+          column(6, selectInput("g_sign", "How are amounts shown?",
+                                choices = guided_sign_choices(), selected = cur_sign))),
+        fluidRow(
+          column(6, selectInput("g_decimal", "Number format (thousands / decimal)",
+                                choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
+                                            "1,234.56 — dot is the decimal point" = "dot",
+                                            "1.234,56 — comma is the decimal (European)" = "comma"),
+                                selected = cur_dec)),
+          column(6, conditionalPanel(
+            "input.g_sign == 'unsigned'",
+            selectInput("g_unsigned_default", "A plain number (no + / − / CR) is a…",
+                        choices = c("Charge — money out" = "debit",
+                                    "Payment — money in" = "credit"),
+                        selected = cur_ud)))),
+        if (!is.null(g$cols) && length(g$cols)) tagList(
+          tags$hr(),
+          p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
+          fluidRow(
+            column(4, selectInput("g_col_desc", "Description (required)",
+                                  choices = g$cols,
+                                  selected = tmpl$columns$description$source %||% g$cols[1])),
+            column(4, selectInput("g_col_ref", "Reference (optional)",
+                                  choices = c("(none)" = "", g$cols),
+                                  selected = tmpl$columns$reference$source %||% "")),
+            column(4, selectInput("g_col_bal", "Balance (optional)",
+                                  choices = c("(none)" = "", g$cols),
+                                  selected = tmpl$columns$balance$source %||% "")))),
+        tags$hr(),
+        div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
+          strong("🚩 None of these fit? Tell our team"),
+          p(class = "muted", "Describe the FORMAT in plain words (no names / account numbers / statement details) and we'll build a template."),
+          textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
+            placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for Haben (credit)."),
+          actionButton("g_req_send", "Send to our team", class = "btn-warning"),
+          uiOutput("g_req_msg"))),
+      tabPanel(
+        "Advanced", br(),
+        helpText(HTML("The <b>complete</b> template as text — edit anything (identifiers, column mapping, label synonyms, region bounds, row tolerance, metadata labels). Load your Simple choices in, edit, then Check &amp; apply.")),
+        div(actionButton("g_adv_load", "↻ Load current settings"),
+            actionButton("g_adv_apply", "✓ Check & apply", class = "btn-primary")),
+        br(), uiOutput("g_adv_msg"),
+        textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 24)))
+
     showModal(modalDialog(
-      title = "Guided setup — teach the tool to read this statement", size = "l", easyClose = FALSE,
+      title = "Statement template toolkit", size = "l", easyClose = FALSE,
       div(style = "padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px;margin-bottom:8px",
         HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s",
              htmltools::htmlEscape(g$name %||% "your file"),
-             if (identical(tmpl$format, "pdf")) "PDF"
-             else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
-      p(class = "muted", "We filled this in from your file. Change anything that looks wrong — the preview at the bottom updates as you go. Basic covers most statements; open Advanced for full control."),
-      tabsetPanel(
-        id = "g_tabs",
-        tabPanel(
-          "Basic", br(),
-          fluidRow(
-            column(6, textInput("g_id", "Template name (this is what it saves as)", value = tmpl$id %||% "")),
-            column(6, textInput("g_bank", "Which bank is this?", value = tmpl$bank))),
-          fluidRow(
-            column(6, textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday")),
-            column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
-          fluidRow(
-            column(6, selectInput("g_date", "How are the dates written?",
-                                  choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
-            column(6, selectInput("g_sign", "How are amounts shown?",
-                                  choices = guided_sign_choices(), selected = cur_sign))),
-          fluidRow(
-            column(6, selectInput("g_decimal", "Number format (thousands / decimal)",
-                                  choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
-                                              "1,234.56 — dot is the decimal point" = "dot",
-                                              "1.234,56 — comma is the decimal (European)" = "comma"),
-                                  selected = cur_dec)),
-            column(6, conditionalPanel(
-              "input.g_sign == 'unsigned'",
-              selectInput("g_unsigned_default", "When an amount has no + / − and no CR, treat it as a…",
-                          choices = c("Charge — money out" = "debit",
-                                      "Payment — money in" = "credit"),
-                          selected = cur_ud)))),
-          if (!is.null(g$cols) && length(g$cols)) tagList(
-            tags$hr(),
-            p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
-            fluidRow(
-              column(4, selectInput("g_col_desc", "Description / particulars (required)",
-                                    choices = g$cols,
-                                    selected = tmpl$columns$description$source %||% g$cols[1])),
-              column(4, selectInput("g_col_ref", "Reference (optional)",
-                                    choices = c("(none)" = "", g$cols),
-                                    selected = tmpl$columns$reference$source %||% "")),
-              column(4, selectInput("g_col_bal", "Running balance (optional)",
-                                    choices = c("(none)" = "", g$cols),
-                                    selected = tmpl$columns$balance$source %||% "")))),
-          tags$hr(),
-          # Escape hatch: when nothing in the lists fits, raise it for review.
-          div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
-            strong("🚩 None of these fit? Tell our team"),
-            p(class = "muted", "If your dates or amounts aren't in the lists — or anything else won't match — describe the format in plain words and we'll build a template. Describe the FORMAT only; please do NOT paste names, account numbers or any statement details."),
-            textAreaInput("g_req_detail", NULL, width = "100%", rows = 3,
-              placeholder = "e.g. Dates look like 2 Dez (German). Amounts have a comma decimal and a trailing 'H' for Haben (credit)."),
-            actionButton("g_req_send", "Send to our team for review", class = "btn-warning"),
-            uiOutput("g_req_msg"))),
-        tabPanel(
-          "Advanced (full template)", br(),
-          helpText(HTML("This is the <b>complete</b> template. Edit anything — identifiers/fingerprints, column mapping, label synonyms, region bounds, row tolerance, metadata labels — to read even wildly different statements. Load your Basic choices in, edit, then Check &amp; apply.")),
-          if (identical(tmpl$format, "pdf")) tagList(
-            strong("Visual column editor"),
-            p(class = "muted", "Draw a box across a column on the page, choose which field it is, then Assign. The bands you set are drawn on the page and drive the preview — no need to type coordinates."),
-            fluidRow(
-              column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
-              column(4, selectInput("g_pdf_field", "The box I draw is the…",
-                                    c("date", "description", "amount", "balance", "particulars",
-                                      "reference", "type", "debit", "credit", "other_party", "code"))),
-              column(5, textInput("g_pdf_custom", "…or a custom column name", ""))),
-            fluidRow(
-              column(12,
-                actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
-                actionButton("g_pdf_remove", "🗑 Remove this column"))),
-            helpText("Draw a box, pick a field (or type a custom column name — it's added as an extra column). Auto-setup can add a column that isn't really there: pick it and Remove to delete its box."),
-            plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush", direction = "x"), height = "520px"),
-            tags$hr()),
-          strong("Full template (YAML)"),
-          div(actionButton("g_adv_load", "↻ Load current settings into the editor"),
-              actionButton("g_adv_apply", "✓ Check & apply my edits", class = "btn-primary")),
-          br(), uiOutput("g_adv_msg"),
-          textAreaInput("g_yaml", NULL, value = template_yaml(tmpl), width = "100%", rows = 18))),
+             if (is_pdf) "PDF" else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
+      fluidRow(column(6, left_panel), column(6, right_panel)),
       tags$hr(),
       h4("Preview — what we'll pull out"),
       verbatimTextOutput("g_status"),
       DTOutput("g_preview"),
       footer = tagList(modalButton("Cancel"),
-        actionButton("g_save", "Save — teach the tool", class = "btn-primary"))))
+        actionButton("g_save", "Save template", class = "btn-primary"))))
   }
 
   # open_guided -- the single entry into the setup modal, shared by every launch
@@ -1398,7 +1403,7 @@ server <- function(input, output, session) {
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
         strong("This statement doesn't match any template yet."),
         p(class = "muted", "Teach the tool to read it — we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-        actionButton("cv_teach_go", "🪄 Set up this statement (guided)", class = "btn-warning"), " ",
+        actionButton("cv_teach_go", "🛠 Set up a template for this", class = "btn-warning"), " ",
         actionLink("cv_goto_templates", "or build one from scratch →"))
     } else {
       # ANY result — ok, needs_review, or failed — links into template setup, so
@@ -1409,7 +1414,7 @@ server <- function(input, output, session) {
         "Open this statement in setup to fix how it's read and save an improved template."
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", label), " ",
-        actionButton("cv_teach_go", "🪄 Open in setup / edit template", class = "btn-default"), " ",
+        actionButton("cv_teach_go", "🛠 Open the template toolkit", class = "btn-default"), " ",
         actionLink("cv_goto_templates", "or build one from scratch →"))
     }
   })
@@ -1549,6 +1554,14 @@ server <- function(input, output, session) {
   # Renders the chosen page and draws the working template's column bands on it;
   # a drawn box assigns/updates a column, keeping the YAML editor and preview in
   # sync so PDF setup is fully visual and in one place.
+  # Sample rows of a delimited file, shown on the left of the toolkit so the user
+  # can see the columns while answering bank / date / amount.
+  output$g_raw_sample <- renderText({
+    g <- guided(); req(g); req(!identical(g$tmpl$format, "pdf"))
+    lines <- tryCatch(readLines(g$path, n = 40, warn = FALSE), error = function(e) character(0))
+    if (!length(lines)) "(couldn't read the file)" else paste(lines, collapse = "\n")
+  })
+
   g_pdf_render <- reactive({
     g <- guided(); req(g); req(identical(g$tmpl$format, "pdf"))
     pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
