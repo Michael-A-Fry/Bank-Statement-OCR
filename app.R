@@ -27,6 +27,31 @@ DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictio
 CANON_FIELDS <- c("date", "amount", "description", "particulars",
                   "code", "reference", "type", "other_party", "balance")
 
+# Plain-English labels for the everyday screen. The engine's internal codes
+# (needs_review, balance_reconciliation, ...) stay in the logs; a non-technical
+# user only ever sees these sentences.
+STATUS_PLAIN <- c(
+  ok           = "Converted successfully",
+  needs_review = "Converted — please double-check it",
+  unsupported  = "No template for this statement yet",
+  failed       = "Could not read this file")
+CHECK_PLAIN <- c(
+  balance_reconciliation     = "Opening + transactions = closing balance",
+  running_balance_continuity = "Each running balance follows from the last",
+  transaction_count          = "Row count matches the statement",
+  dates_within_period        = "All dates fall in the statement period",
+  no_unparsed_rows           = "Every row was read",
+  redaction_summary          = "Redactions found and honoured",
+  ocr_confidence             = "Scan / OCR read quality")
+COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
+                    empty = "empty (check the mapping)", unmapped = "not on this statement")
+plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
+plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
+# The friendly line shown when a file simply can't be read (technical detail -> log).
+FRIENDLY_READ_ERROR <- paste(
+  "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
+  "or not a bank statement. Try re-saving it as a PDF or CSV, or use Guided setup to teach the format.")
+
 # Read the header row of a delimited sample -> character vector of column names.
 read_headers <- function(path, delim = ",") {
   line <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) "")
@@ -139,7 +164,7 @@ ui <- fluidPage(
         fluidRow(
           column(7, fileInput("ts_file", "Statement file (.csv / .tsv / .tdv / .pdf)")),
           column(5, br(), actionButton("ts_go", "🪄 Open guided setup", class = "btn-warning")))),
-      helpText(HTML("Prefer to build a template by hand, field by field? Use the wizards below. Click <b>ⓘ</b> for the full step-by-step.")),
+      helpText(HTML("<b>Advanced — build a template by hand.</b> Most people should use Guided setup above; these manual wizards are for building a template field by field. Click <b>ⓘ</b> for the full step-by-step.")),
       tabsetPanel(
     tabPanel(
       "Spreadsheet (CSV / Excel)",
@@ -150,10 +175,10 @@ ui <- fluidPage(
           actionButton("wz_help", "ⓘ How to build a template (step-by-step)",
                        class = "btn-info", style = "margin-bottom:8px;width:100%"),
           fileInput("wz_file", "Sample statement (delimited)"),
-          textInput("wz_delim", "Delimiter", value = ","),
-          textInput("wz_id", "Template id", value = "newbank_everyday_csv"),
+          textInput("wz_delim", "How columns are separated (comma, tab…)", value = ","),
+          textInput("wz_id", "A short name for this layout", value = "newbank_everyday_csv"),
           textInput("wz_bank", "Bank", value = "NewBank"),
-          textInput("wz_type", "Statement type", value = "everyday"),
+          textInput("wz_type", "Kind of statement", value = "everyday"),
           selectInput("wz_amount_sign", "How are amounts shown?",
                       choices = setNames(names(wd_amount_labels()),
                                          unname(wd_amount_labels()))),
@@ -171,7 +196,7 @@ ui <- fluidPage(
           uiOutput("wz_detected"),
           h4("Check each field points at the right column"),
           uiOutput("wz_maps"),
-          h4("Fingerprint columns (must all be present to match)"),
+          h4("Which column headings prove it's this bank (must all be present to match)"),
           uiOutput("wz_fingerprint"),
           h4("Live preview"), verbatimTextOutput("wz_preview_status"),
           DTOutput("wz_preview_tbl"),
@@ -272,7 +297,7 @@ ui <- fluidPage(
     tabPanel(
       "Inspect (X-ray)",
       br(),
-      helpText("Open any statement and SEE exactly what the tool reads: the columns it uses, every word it selects into each column, the transaction rows it keeps, and a box around where each balance & metadata value is pulled from. Nothing is hidden."),
+      helpText("Open any statement and SEE exactly what the tool reads: the columns it uses, every word it selects into each column, the transaction rows it keeps, and a box around where each balance, date and account detail is pulled from. Nothing is hidden."),
       sidebarLayout(
         sidebarPanel(
           width = 3,
@@ -283,17 +308,18 @@ ui <- fluidPage(
           conditionalPanel("output.ix_is_pdf == true",
             numericInput("ix_page", "Page", 1, min = 1, step = 1),
             checkboxInput("ix_show_words", "Faint box on every word", TRUE),
-            checkboxInput("ix_show_meta", "Box balances & metadata", TRUE)),
+            checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE)),
           uiOutput("ix_legend")),
         mainPanel(
           width = 9,
           uiOutput("ix_status"),
           conditionalPanel("output.ix_is_pdf == true",
             plotOutput("ix_plot", height = "820px")),
-          conditionalPanel("output.ix_is_pdf != true",
+          conditionalPanel("output.ix_ready == true && output.ix_is_pdf != true",
             h4("Which source column feeds each field"), DTOutput("ix_map")),
-          h4("Rows the tool read (preview)"), DTOutput("ix_rows"),
-          h4("Balances & metadata found"), DTOutput("ix_meta"))
+          conditionalPanel("output.ix_ready == true",
+            h4("Rows the tool read (preview)"), DTOutput("ix_rows"),
+            h4("Balances, dates & account details found"), DTOutput("ix_meta")))
       )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -490,6 +516,8 @@ server <- function(input, output, session) {
     lines <- sprintf("%s &middot; %s &middot; <i>%s</i> (%s)", ov$bank, ov$type, ov$format, ov$origin)
     tags$details(
       tags$summary(sprintf("Templates available: %d  (%d tested, %d user)", nrow(ov), nt, nu)),
+      tags$div(style = "font-size:11px;color:#888;margin-top:4px",
+               HTML("<b>tested</b> = shipped with the tool; <b>user</b> = set up on this machine.")),
       tags$div(style = "font-size:12px;color:#555;margin-top:6px;max-height:220px;overflow:auto",
                HTML(paste(lines, collapse = "<br>"))),
       tags$div(style = "font-size:11px;color:#888;margin-top:6px",
@@ -723,10 +751,8 @@ server <- function(input, output, session) {
     datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 25))
   })
   output$fm_downloads <- renderUI({
-    res <- fm_res(); if (is.null(res) || !length(res$outputs)) return(NULL)
-    tagList(strong("Download:"), br(),
-      downloadButton("fm_dl_xlsx", "Excel"), downloadButton("fm_dl_csv", "CSV"),
-      downloadButton("fm_dl_json", "JSON"))
+    res <- fm_res(); if (is.null(res)) return(NULL)
+    dl_buttons(res$outputs, c(xlsx = "fm_dl_xlsx", csv = "fm_dl_csv", json = "fm_dl_json"))
   })
   fm_dl <- function(ext) downloadHandler(
     filename = function() {
@@ -849,6 +875,8 @@ server <- function(input, output, session) {
   })
   output$ix_is_pdf <- reactive({ st <- ix_state(); isTRUE(st$is_pdf) })
   outputOptions(output, "ix_is_pdf", suspendWhenHidden = FALSE)
+  output$ix_ready <- reactive({ !is.null(ix_state()) })  # gate result sections until inspected
+  outputOptions(output, "ix_ready", suspendWhenHidden = FALSE)
 
   ix_pal <- function(bands) {
     if (!length(bands)) return(character(0))
@@ -861,7 +889,7 @@ server <- function(input, output, session) {
     tr <- if (!is.null(st$parsed)) sprintf(" · %d row(s) read", nrow(st$parsed$transactions)) else ""
     tagList(h4(HTML(sprintf('Reading with <span class="ok">%s</span>%s', st$tid, tr))),
       p(class = "muted", if (isTRUE(st$is_pdf))
-        "Boxes: coloured = a column (see legend); green = a transaction row the tool kept; orange = a balance/metadata value; red = a redaction (never read)."
+        "Boxes: coloured = a column (see legend); green = a transaction row the tool kept; orange = a balance / date / account detail; red = a redaction (never read)."
         else "This is a spreadsheet/CSV — the table below shows which source column feeds each field."))
   })
   output$ix_legend <- renderUI({
@@ -875,7 +903,7 @@ server <- function(input, output, session) {
     tagList(strong("Legend"),
       lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
       sw("#137333", "transaction row (kept)"),
-      sw("#a15c00", "balance / metadata"),
+      sw("#a15c00", "balance / account details"),
       sw("#b00020", "redaction (not read)"))
   })
   ix_render <- reactive({
@@ -993,8 +1021,13 @@ server <- function(input, output, session) {
         convert_statement(src, bank = bank, outdir = sess,
                           templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
                           requested_by = who, logdir = LOGDIR),
-        error = function(e) list(status = "failed",
-                                 messages = paste("error:", conditionMessage(e))))
+        error = function(e) {
+          # Log the technical detail for Admin; show the user a plain sentence.
+          safe(cat(sprintf("[%s] convert error (%s): %s\n", format(Sys.time()),
+                           input$cv_file$name, conditionMessage(e)),
+                   file = file.path(LOGDIR, "errors.log"), append = TRUE))
+          list(status = "failed", messages = FRIENDLY_READ_ERROR)
+        })
       incProgress(0.5, detail = "Running checks and writing outputs…")
       out
     })
@@ -1013,9 +1046,10 @@ server <- function(input, output, session) {
   output$cv_status <- renderUI({
     res <- cv_res(); if (is.null(res)) return(helpText("Upload a statement and click Convert."))
     cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
-    trust <- if (!is.null(res$trust)) sprintf(" | trust: %s (%s)", res$trust$level, res$trust$score) else ""
+    # Plain English headline + a word (not a raw number) for confidence.
+    trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
     tagList(
-      h4(HTML(sprintf('<span class="%s">%s</span>%s', cls, toupper(res$status %||% "?"), trust))),
+      h4(HTML(sprintf('<span class="%s">%s</span>%s', cls, plain_status(res$status), trust))),
       p(class = "muted", res$messages %||% ""),
       if (!is.null(res$template_id)) p(class = "muted", paste("template:", res$template_id))
     )
@@ -1023,8 +1057,17 @@ server <- function(input, output, session) {
 
   output$cv_kpis <- renderDT({
     res <- cv_res(); req(res); req(!is.null(res$kpis))
-    datatable(res$kpis[, intersect(c("name","status","detail"), names(res$kpis)), drop = FALSE],
-              rownames = FALSE, options = list(dom = "t", pageLength = 20))
+    k <- res$kpis
+    # Show a plain-English check name + a plain result word, not snake_case codes.
+    res_word <- c(pass = "OK", fail = "Problem", na = "not on this statement")
+    disp <- data.frame(
+      Check  = plain_label(k$name, CHECK_PLAIN),
+      Result = plain_label(k$status, res_word),
+      Detail = if ("detail" %in% names(k)) k$detail else "",
+      stringsAsFactors = FALSE)
+    datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
+      formatStyle("Result", fontWeight = "bold",
+        color = styleEqual(c("OK", "Problem"), c("#137333", "#b00020")))
   })
 
   output$cv_diag <- renderDT({
@@ -1045,10 +1088,14 @@ server <- function(input, output, session) {
   output$cv_coverage <- renderDT({
     res <- cv_res(); req(res); req(!is.null(res$coverage))
     cov <- res$coverage[res$coverage$verdict != "unmapped" | res$coverage$field %in% c("balance","particulars","reference"), ]
-    datatable(cov[, c("field", "verdict", "populated", "empty", "note")],
-              rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
+    disp <- data.frame(
+      field   = cov$field,
+      verdict = plain_label(cov$verdict, COVERAGE_PLAIN),   # 'unmapped' -> 'not on this statement'
+      populated = cov$populated, empty = cov$empty, note = cov$note,
+      stringsAsFactors = FALSE)
+    datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
       formatStyle("verdict",
-        backgroundColor = styleEqual(c("populated","partial","empty","unmapped"),
+        backgroundColor = styleEqual(unname(COVERAGE_PLAIN),
                                      c("#e6f4ea","#fff8e6","#fde7e7","#f2f2f2")))
   })
 
@@ -1072,13 +1119,20 @@ server <- function(input, output, session) {
     }
     p
   }
+  # dl_buttons(outputs, ids) -- render a Download button ONLY for formats that were
+  # actually produced (e.g. no Excel on a host without openxlsx), so no button ever
+  # promises a file that can't be delivered.
+  dl_buttons <- function(outputs, ids) {
+    labs <- c(xlsx = "Excel", csv = "CSV", json = "JSON")
+    has <- function(ext) any(grepl(paste0("\\.", ext, "$"), outputs %||% character(0)))
+    btns <- Filter(Negate(is.null), lapply(names(ids), function(ext)
+      if (has(ext)) downloadButton(ids[[ext]], labs[[ext]])))
+    if (!length(btns)) return(NULL)
+    tagList(strong("Download:"), br(), btns)
+  }
   output$cv_downloads <- renderUI({
-    res <- cv_res(); if (is.null(res) || !length(res$outputs)) return(NULL)
-    tagList(
-      strong("Download:"), br(),
-      downloadButton("dl_xlsx", "Excel"),
-      downloadButton("dl_csv", "CSV"),
-      downloadButton("dl_json", "JSON"))
+    res <- cv_res(); if (is.null(res)) return(NULL)
+    dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv", json = "dl_json"))
   })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
@@ -1211,7 +1265,7 @@ server <- function(input, output, session) {
                                   selected = cur_dec)),
             column(6, conditionalPanel(
               "input.g_sign == 'unsigned'",
-              selectInput("g_unsigned_default", "For unsigned amounts, a plain number is a…",
+              selectInput("g_unsigned_default", "When an amount has no + / − and no CR, treat it as a…",
                           choices = c("Charge — money out" = "debit",
                                       "Payment — money in" = "credit"),
                           selected = cur_ud)))),
