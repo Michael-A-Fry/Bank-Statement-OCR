@@ -58,6 +58,56 @@ test_that("inspect kept mirrors the engine: no amount / summary rows are NOT kep
   expect_false(p$rows$kept[grepl("^30/04", p$rows$date)])   # summary line
 })
 
+test_that("inspect reason explains WHY each dropped row was skipped", {
+  page <- do.call(rbind, list(
+    .mkw("01/04/2025", 50, 60), .mkw("Salary", 120, 60), .mkw("2,500.00", 300, 60),  # kept txn
+    .mkw("02/04/2025", 50, 80), .mkw("Statement", 120, 80), .mkw("date", 160, 80),    # dated, NO amount
+    .mkw("30/04/2025", 50, 100), .mkw("Closing", 120, 100), .mkw("Balance", 165, 100),
+      .mkw("3,800.00", 300, 100)))                                                     # dated summary + amount
+  tmpl <- list(format = "pdf", table = list(
+    region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+    date_format = "%d/%m/%Y", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110),
+                   description = list(x_min = 111, x_max = 280),
+                   amount = list(x_min = 281, x_max = 360))))
+  p <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
+  expect_true("reason" %in% names(p$rows))
+  expect_equal(p$rows$reason[grepl("^01/04", p$rows$date)], "")          # kept -> no reason
+  expect_match(p$rows$reason[grepl("^02/04", p$rows$date)], "no amount")  # dated, no money
+  expect_match(p$rows$reason[grepl("^30/04", p$rows$date)], "summary")    # closing balance
+})
+
+test_that("inspect flags a row whose date didn't parse (the fixable case)", {
+  page <- do.call(rbind, list(
+    .mkw("13-14-9999", 50, 60), .mkw("Odd", 120, 60), .mkw("500.00", 300, 60)))
+  tmpl <- list(format = "pdf", table = list(
+    region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+    date_format = "%d/%m/%Y", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110),
+                   description = list(x_min = 111, x_max = 280),
+                   amount = list(x_min = 281, x_max = 360))))
+  p <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
+  expect_false(p$rows$kept[1])
+  expect_match(p$rows$reason[1], "date didn't parse")   # points at the template fix
+})
+
+test_that("inspect marks a wrapped line as a continuation, not a missed transaction", {
+  page <- do.call(rbind, list(
+    .mkw("01/04/2025", 50, 60), .mkw("Salary", 120, 60), .mkw("2,500.00", 300, 60),  # kept txn
+    .mkw("Employer", 120, 70), .mkw("Ltd", 165, 70)))                                # wrap right below it
+  tmpl <- list(format = "pdf", table = list(
+    region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+    date_format = "%d/%m/%Y", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110),
+                   description = list(x_min = 111, x_max = 280),
+                   amount = list(x_min = 281, x_max = 360))))
+  p <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
+  expect_equal(nrow(p$rows), 2L)
+  expect_true(p$rows$kept[1])
+  expect_false(p$rows$kept[2])
+  expect_match(p$rows$reason[2], "continuation")
+})
+
 test_that("locate_values_on_page boxes single- and multi-token values", {
   page <- .demo_input()$words[[1]]
   loc <- locate_values_on_page(page, list(closing_balance = "3,800.00",

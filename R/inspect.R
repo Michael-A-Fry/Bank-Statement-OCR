@@ -79,13 +79,20 @@ inspect_pdf_layout <- function(input, template) {
         rec <- list(amount = .pdf_cell(rg, cols$amount), debit = .pdf_cell(rg, cols$debit),
                     credit = .pdf_cell(rg, cols$credit), description = .pdf_cell(rg, cols$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
-        kept <- (isTRUE(d_ok) || isTRUE(redacted_date)) &&
-                .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
+        date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)
+        kept <- date_ok && .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
+        # reason: why the engine did NOT keep this row (empty when kept). Same
+        # helper the engine uses, so the X-ray can never explain it differently.
         data.frame(x0 = min(rg$x), y0 = min(rg$y),
                    x1 = max(rg$x + rg$width), y1 = max(rg$y + rg$height),
                    kept = isTRUE(kept),
-                   date = dcell %||% NA_character_, stringsAsFactors = FALSE)
+                   date = dcell %||% NA_character_,
+                   reason = .pdf_row_reason(rec, style, date_ok),
+                   raw = rec$raw,
+                   h = suppressWarnings(stats::median(rg$height, na.rm = TRUE)),
+                   stringsAsFactors = FALSE)
       }))
+      rows <- .mark_continuations(rows)
     }
     list(region = region, bands = cols, words = words, rows = rows)
   })
@@ -105,7 +112,27 @@ inspect_pdf_layout <- function(input, template) {
   height = numeric(0), text = character(0), redacted = logical(0),
   in_region = logical(0), column = character(0), stringsAsFactors = FALSE)
 .empty_rows <- function() data.frame(x0 = numeric(0), y0 = numeric(0), x1 = numeric(0),
-  y1 = numeric(0), kept = logical(0), date = character(0), stringsAsFactors = FALSE)
+  y1 = numeric(0), kept = logical(0), date = character(0), reason = character(0),
+  raw = character(0), h = numeric(0), stringsAsFactors = FALSE)
+
+# .mark_continuations(rows) -- upgrade the reason of a dropped "no date and no
+# amount" row to "continuation" when it sits directly under a KEPT transaction
+# (same proximity rule parse_pdf_table uses to fold wrapped descriptions in), so
+# the X-ray shows it as captured-not-lost rather than a missed transaction.
+.mark_continuations <- function(rows) {
+  if (!nrow(rows)) return(rows)
+  last_kept <- NA_integer_
+  for (i in seq_len(nrow(rows))) {
+    if (isTRUE(rows$kept[i])) { last_kept <- i; next }
+    if (!grepl("^no date and no amount", rows$reason[i])) next
+    if (is.na(last_kept)) next
+    lh <- if (is.finite(rows$h[i]) && rows$h[i] > 0) rows$h[i] else 10
+    gap <- rows$y0[i] - rows$y1[last_kept]
+    if (is.finite(gap) && gap <= 0.9 * lh && gap >= -lh && !.is_footer_noise(rows$raw[i]))
+      rows$reason[i] <- "continuation — its text is folded into the transaction above"
+  }
+  rows
+}
 
 # field_source_map(template) -> data.frame(field, source) for a delimited / excel
 # template: which named source column feeds each canonical field. There is no

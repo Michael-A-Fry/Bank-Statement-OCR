@@ -80,6 +80,34 @@
     lbl)
 }
 
+# .is_footer_noise(s) -- a page footer / running header ("Page 2 of 2", "continued
+# on next page") is NOT a transaction continuation, even though it is a date-less,
+# money-less text line. Module-level so parse_pdf_table (continuation merge) and
+# inspect_pdf_layout (skipped-row reasons) share ONE definition.
+.is_footer_noise <- function(s) {
+  s <- tolower(trimws(s %||% ""))
+  grepl(paste0("^page\\s+\\d+(\\s+of\\s+\\d+)?$",         # "Page 2 of 2"
+               "|^\\d+\\s+of\\s+\\d+$",
+               "|continued\\s+(on\\s+)?(next|over)",       # "continued on next page"
+               "|^statement\\s+(continued|continues)"), s)
+}
+
+# .pdf_row_reason(rec, style, date_ok) -- WHY a visual row is NOT kept as a
+# transaction, in plain words a non-engineer can act on. rec carries the same
+# cells .pdf_has_amount reads; date_ok is whether the date cell parsed (or was
+# redacted). "" means it IS a transaction (kept). Shared by the X-ray so the
+# reason it shows can never drift from the engine's actual keep rule. The
+# continuation case is decided by the caller (it needs the neighbouring row).
+.pdf_row_reason <- function(rec, style, date_ok) {
+  has_amt <- .pdf_has_amount(rec, style)
+  is_summ <- .pdf_is_summary(rec$description, rec$raw)
+  if (isTRUE(date_ok) && has_amt && !is_summ) return("")
+  if (is_summ)  return("summary line (opening / closing balance, carried forward, or a total) — not a transaction")
+  if (!isTRUE(date_ok) && !has_amt) return("no date and no amount — treated as a heading, note or wrapped line")
+  if (!isTRUE(date_ok)) return("the date didn't parse — usually the date format in the template is wrong")
+  "no amount in the money column(s) — check the amount / debit / credit bands"
+}
+
 # Per-cell OCR confidence floor: a word below this (0-100) in a date/amount/
 # balance cell earns an `ocr_low_conf` flag. Deliberately conservative -- only
 # clearly-doubtful reads are flagged, so the signal stays meaningful.
@@ -244,16 +272,8 @@ parse_pdf_table <- function(input, template) {
   # verbatim content), fold its text into the PRECEDING kept transaction. Only a
   # clear continuation merges (no parseable date, no money anywhere, not a summary)
   # so it can never invent a transaction or join two real ones. Template can turn
-  # it off with merge_continuation: false.
-  # a page footer / running header is NOT a transaction continuation, even though
-  # it is a dated-less, money-less text line.
-  .is_footer_noise <- function(s) {
-    s <- tolower(trimws(s))
-    grepl(paste0("^page\\s+\\d+(\\s+of\\s+\\d+)?$",         # "Page 2 of 2"
-                 "|^\\d+\\s+of\\s+\\d+$",
-                 "|continued\\s+(on\\s+)?(next|over)",       # "continued on next page"
-                 "|^statement\\s+(continued|continues)"), s)
-  }
+  # it off with merge_continuation: false. (.is_footer_noise lives at module level
+  # so the X-ray's skipped-row reasons apply the same footer test.)
   if (!identical(t$merge_continuation %||% TRUE, FALSE) && length(recs) > 1) {
     is_txn <- vapply(recs, .is_txn, logical(1))
     last_txn <- 0L; drop <- logical(length(recs))

@@ -163,13 +163,17 @@ ui <- fluidPage(
               tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
               tabPanel("X-ray — see it on the page", br(),
                 conditionalPanel("output.ix_is_pdf == true",
-                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · orange = a balance / date / account detail · red = a redaction (never read)."),
+                  p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · amber dashed = a row it skipped that looks like a transaction · orange = a balance / date / account detail · red = a redaction (never read)."),
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
-                    column(4, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
-                    column(5, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE))),
+                    column(3, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
+                    column(3, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE)),
+                    column(3, br(), checkboxInput("ix_show_skipped", "Show skipped rows", TRUE))),
                   plotOutput("ix_plot", height = "780px"),
-                  uiOutput("ix_legend")),
+                  uiOutput("ix_legend"),
+                  h4("Seeing a transaction that's missing? Here's every row skipped on this page — and why"),
+                  helpText(HTML("If a real transaction is here, the reason usually points at a one-line fix in the template toolkit (most often the <b>date format</b> or an <b>amount / debit / credit</b> band) that brings back <b>all</b> the rows like it — not just this one.")),
+                  DTOutput("ix_skipped")),
                 conditionalPanel("output.ix_is_pdf != true",
                   helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field."))))),
           uiOutput("cv_feedback")
@@ -971,12 +975,46 @@ server <- function(input, output, session) {
       } }
     kr <- P$rows[P$rows$kept, , drop = FALSE]
     if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
+    # Amber dashed: rows the engine skipped that LOOK like transactions (bad date
+    # or missing amount) -- the "why aren't you seeing it" rows. Continuations,
+    # summaries and headings are intentionally left unhighlighted (they're in the
+    # table below with their reason) so the page isn't noisy.
+    if (isTRUE(input$ix_show_skipped) && !is.null(P$rows$reason)) {
+      sk <- P$rows[!P$rows$kept &
+        grepl("didn't parse|no amount", P$rows$reason %||% ""), , drop = FALSE]
+      if (nrow(sk)) rect(sk$x0 - 1, sk$y0 - 1, sk$x1 + 1, sk$y1 + 1,
+                         border = "#c77700", lty = 2, lwd = 1.6)
+    }
     if (isTRUE(input$ix_show_meta) && !is.null(st$meta_loc)) {
       ml <- st$meta_loc[[r$pg]]
       if (!is.null(ml)) { f <- ml[ml$found %in% TRUE, , drop = FALSE]
         if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
           text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
+  })
+  # "Why aren't you seeing it": every row the engine skipped on this page, with the
+  # plain-English reason. Kept rows are excluded (they're the transactions). The
+  # actionable skips (bad date / missing amount) sort to the top.
+  output$ix_skipped <- renderDT({
+    st <- ix_state(); req(st, st$is_pdf); lay <- st$layout; req(!is.null(lay))
+    pg <- max(1L, as.integer(input$ix_page %||% 1))
+    P <- lay$pages[[as.character(pg)]]
+    if (is.null(P) || is.null(P$rows) || !nrow(P$rows) || is.null(P$rows$reason))
+      return(datatable(data.frame(message = "Nothing to show for this page yet."),
+                       rownames = FALSE, options = list(dom = "t")))
+    sk <- P$rows[!P$rows$kept & nzchar(P$rows$reason %||% ""), , drop = FALSE]
+    if (!nrow(sk)) return(datatable(
+      data.frame(message = "Every row on this page was either kept or is a heading / footer 🎉"),
+      rownames = FALSE, options = list(dom = "t")))
+    actionable <- grepl("didn't parse|no amount", sk$reason)
+    sk <- sk[order(!actionable), , drop = FALSE]     # likely-missed transactions first
+    trunc <- function(s, n = 90) ifelse(nchar(s) > n, paste0(substr(s, 1, n), "…"), s)
+    out <- data.frame(
+      `what's on the row` = trunc(sk$raw %||% ""),
+      `date cell` = sk$date %||% NA_character_,
+      `why it was skipped` = sk$reason,
+      check.names = FALSE, stringsAsFactors = FALSE)
+    datatable(out, rownames = FALSE, options = list(pageLength = 10, dom = "tp", scrollX = TRUE))
   })
   # Remediate a stuck upload right here: load the saved file into the SAME guided
   # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
