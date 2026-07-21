@@ -46,15 +46,28 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
       else "ok"
     sig <- lsig$signature %||% NA_character_
     if (!is.null(sig) && !is.na(sig) && is.null(rep_path[[sig]])) rep_path[[sig]] <- p
+    # Amount style / date format / bank: from the matched template when there IS
+    # one, otherwise DETECT them from the file itself (a draft) -- so a batch of
+    # mostly-unsupported statements still shows what styles/formats are present,
+    # which is the whole point of the audit (they were blank before).
+    if (!is.null(tmpl)) {
+      amt_style <- tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_
+      dt_fmt    <- tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_
+      bank_v    <- tmpl$bank %||% NA_character_
+    } else {
+      dr <- safe(draft_template(p), NULL)
+      amt_style <- if (is.null(dr)) NA_character_ else (dr$table$amount_sign %||% dr$amount_sign %||% NA_character_)
+      dt_fmt    <- if (is.null(dr)) NA_character_ else (dr$table$date_format %||% dr$columns$date$format %||% NA_character_)
+      bank_v    <- NA_character_    # bank can't be inferred reliably from an unmatched file
+    }
     rows[[i]] <- data.frame(idx = i, file_type = tolower(tools::file_ext(p)),
       kind = .kind_of(input), pages = input$meta$page_count %||% NA_integer_,
       detected = isTRUE(det$matched), template = det$template_id %||% NA_character_,
-      bank = tmpl$bank %||% NA_character_, status = status,
+      bank = bank_v, status = status,
       n_rows = if (!is.null(parsed)) nrow(parsed$transactions) else 0L,
       n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA,
       redacted = sum(input$meta$redactions$redacted_words %||% 0L),
-      amount_style = tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_,
-      date_format = tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
+      amount_style = amt_style, date_format = dt_fmt,
       trust = if (!is.null(recon)) recon$trust$level else NA_character_,
       signature = sig, layout_hint = lsig$hint %||% "", stringsAsFactors = FALSE)
   }

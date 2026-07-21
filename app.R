@@ -97,7 +97,12 @@ build_tpl_yaml <- function(cfg) {
     "preamble: null\n",
     "columns:\n",
     "  date:        ", col(cfg$date_source, cfg$date_format), "\n",
-    "  amount:      ", col(cfg$amount_source), "\n",
+    # A debit_credit_cols statement has NO single amount column -- it has separate
+    # money-in / money-out columns. Write those instead of (a required) amount.
+    if (identical(cfg$amount_sign, "debit_credit_cols"))
+      paste0("  debit:       ", col(cfg$debit_source), "\n",
+             "  credit:      ", col(cfg$credit_source), "\n")
+    else paste0("  amount:      ", col(cfg$amount_source), "\n"),
     "  description: ", col(cfg$description_source), "\n",
     "  particulars: ", col(cfg$particulars_source), "\n",
     "  code:        ", col(cfg$code_source), "\n",
@@ -1765,14 +1770,22 @@ server <- function(input, output, session) {
   output$wz_maps <- renderUI({
     h <- wz_headers(); if (!length(h)) return(helpText("Upload a sample to map columns."))
     opts <- c("(none)", h)
+    dc <- identical(input$wz_amount_sign, "debit_credit_cols")
     defaults <- list(
       date = guess_col(h, c("date")), amount = guess_col(h, c("amount")),
+      debit = guess_col(h, c("debit","withdrawal","money out","paid out")),
+      credit = guess_col(h, c("credit","deposit","money in","paid in")),
       description = guess_col(h, c("payee","description","details","memo","narrative")),
       particulars = guess_col(h, c("particulars")), code = guess_col(h, c("^code$","analysis")),
       reference = guess_col(h, c("reference","unique")), type = guess_col(h, c("type")),
       other_party = guess_col(h, c("other party","counterparty")), balance = guess_col(h, c("balance"))
     )
-    tagList(lapply(CANON_FIELDS, function(f)
+    # Show debit/credit instead of amount when the statement has separate
+    # money-in / money-out columns (amount is not needed then).
+    fields <- if (dc) c("date","debit","credit","description","particulars",
+                        "code","reference","type","other_party","balance")
+              else CANON_FIELDS
+    tagList(lapply(fields, function(f)
       selectInput(paste0("map_", f), f, opts, selected = defaults[[f]])))
   })
 
@@ -1788,6 +1801,7 @@ server <- function(input, output, session) {
       amount_sign = input$wz_amount_sign, date_format = input$wz_datefmt,
       min_score = max(1, length(input$wz_fp)), fingerprint = input$wz_fp,
       date_source = input$map_date, amount_source = input$map_amount,
+      debit_source = input$map_debit, credit_source = input$map_credit,
       description_source = input$map_description, particulars_source = input$map_particulars,
       code_source = input$map_code, reference_source = input$map_reference,
       type_source = input$map_type, other_party_source = input$map_other_party,
