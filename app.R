@@ -131,7 +131,7 @@ ui <- fluidPage(
     ".ok{color:#137333;font-weight:600}.bad{color:#b00020;font-weight:600}
      .muted{color:#666}.mono{font-family:monospace;white-space:pre-wrap}
      .modal-lg{width:95%;max-width:1240px}"))),
-  titlePanel("Bank statement conversion"),
+  titlePanel("Bank Statement OCR"),
   tabsetPanel(
     id = "main_tabs",
     # ---- About (landing) ----------------------------------------------
@@ -160,8 +160,12 @@ ui <- fluidPage(
           uiOutput("cv_candidates"),
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
-          # Transaction-statement result panels (hidden for a form result).
-          conditionalPanel("output.cv_is_form != true",
+          # Before any conversion, show a clear empty state (what this page does /
+          # what you'll get) instead of bare section headers over empty tables.
+          conditionalPanel("output.cv_has_result != true", uiOutput("cv_empty")),
+          # Transaction-statement result panels: only after a result, and hidden
+          # for a form result.
+          conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
             h4("Checks"), DTOutput("cv_kpis"),
             h4("Diagnostics — where / why / how to fix"), DTOutput("cv_diag"),
             h4("Field coverage — is it set up right? what's present / empty / not on this statement"),
@@ -231,15 +235,17 @@ ui <- fluidPage(
         ),
         mainPanel(
           width = 8,
+          conditionalPanel("output.wz_has_sample != true", uiOutput("wz_empty")),
           uiOutput("wz_detected"),
-          h4("Check each field points at the right column"),
-          uiOutput("wz_maps"),
-          h4("Which column headings prove it's this bank (must all be present to match)"),
-          uiOutput("wz_fingerprint"),
-          h4("Live preview"), verbatimTextOutput("wz_preview_status"),
-          DTOutput("wz_preview_tbl"),
-          h4("Generated template (templates/<id>.yaml)"),
-          div(class = "mono", verbatimTextOutput("wz_yaml"))
+          conditionalPanel("output.wz_has_sample == true",
+            h4("Check each field points at the right column"),
+            uiOutput("wz_maps"),
+            h4("Which column headings prove it's this bank (must all be present to match)"),
+            uiOutput("wz_fingerprint"),
+            h4("Live preview"), verbatimTextOutput("wz_preview_status"),
+            DTOutput("wz_preview_tbl"),
+            h4("Generated template (templates/<id>.yaml)"),
+            div(class = "mono", verbatimTextOutput("wz_yaml")))
         )
       )
     ),
@@ -1211,8 +1217,31 @@ server <- function(input, output, session) {
     cv_upload_id(uid)
   })
 
+  # A result exists once a conversion has run -- gates the whole result scaffold so
+  # a first-time visitor never sees bare "Checks / Diagnostics" headers over empty
+  # tables (which read as half-built).
+  output$cv_has_result <- reactive({ !is.null(cv_res()) })
+  outputOptions(output, "cv_has_result", suspendWhenHidden = FALSE)
+
+  # Empty state: shown before the first conversion. Tells a brand-new user what
+  # this page is for and exactly what they'll get back, so the screen is never a
+  # mystery or a wall of empty headers.
+  output$cv_empty <- renderUI({
+    div(style = "max-width:560px;color:#444;line-height:1.6",
+      h4("Convert a bank statement"),
+      p("Upload a statement on the left — a ", tags$b("PDF"), ", ", tags$b("CSV"),
+        " or ", tags$b("Excel"), " file — and click ", tags$b("Convert"), "."),
+      p(class = "muted", style = "margin-bottom:6px", "You'll get back, right here:"),
+      tags$ul(style = "color:#444",
+        tags$li(tags$b("Every transaction"), " — date, description, amount, balance, read verbatim."),
+        tags$li(tags$b("Checks that prove nothing's missing"), " — the balance reconciles and the row count adds up, with a plain confidence level."),
+        tags$li(tags$b("A download"), " — Excel, CSV or JSON.")),
+      p(class = "muted", "Your bank is detected automatically. If it's a statement layout the tool hasn't seen, it'll say so and point you to ",
+        actionLink("cv_empty_to_tmpl", "Add a template"), " — a 2-minute, no-code setup."))
+  })
+
   output$cv_status <- renderUI({
-    res <- cv_res(); if (is.null(res)) return(helpText("Upload a statement or any PDF and click Convert."))
+    res <- cv_res(); if (is.null(res)) return(NULL)
     cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
     # Plain English headline + a word (not a raw number) for confidence.
     trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
@@ -1610,6 +1639,8 @@ server <- function(input, output, session) {
     }
   })
   observeEvent(input$cv_goto_templates,
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
+  observeEvent(input$cv_empty_to_tmpl,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
 
   observeEvent(input$cv_teach_go, {
@@ -2025,6 +2056,21 @@ server <- function(input, output, session) {
     base <- tools::file_path_sans_ext(input$wz_file$name)
     updateTextInput(session, "wz_id",
                     value = paste0(gsub("[^A-Za-z0-9]+", "_", tolower(base)), "_csv"))
+  })
+
+  output$wz_has_sample <- reactive({ !is.null(input$wz_file) })
+  outputOptions(output, "wz_has_sample", suspendWhenHidden = FALSE)
+  output$wz_empty <- renderUI({
+    div(style = "max-width:560px;color:#444;line-height:1.6",
+      h4("Build a template by hand"),
+      p("Most people use ", tags$b("Open the toolkit"), " above — it does this visually. ",
+        "This manual path is here for anything unusual."),
+      tags$ol(style = "color:#444",
+        tags$li("Upload a ", tags$b("sample"), " of the statement on the left."),
+        tags$li("The tool auto-fills the separator, dates and amounts — you just ",
+                tags$b("check each field points at the right column"), "."),
+        tags$li("Click ", tags$b("Preview parse"), " to see the transactions it would read, then ",
+                tags$b("Save template"), ". That bank converts automatically from then on.")))
   })
 
   output$wz_detected <- renderUI({
