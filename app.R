@@ -1,16 +1,17 @@
 # app.R -- interactive GUI for the statement conversion engine.
 #
 # Two jobs, both point-and-click for a non-engineer analyst:
-#   1. Convert  -- upload a statement, convert it, review the checks, download.
-#   2. Template wizard -- upload a sample, map columns by dropdown, preview the
-#      parse live, and SAVE a new bank template (writes the YAML for you).
+#   1. Convert -- upload a statement, convert it, review the checks, download.
+#   2. Add a template -- upload a sample and open the template toolkit: the tool
+#      pre-fills what it can detect, you confirm against a live preview and SAVE
+#      a new bank template (it writes the YAML for you).
 #
 # Run locally:  R -e 'shiny::runApp(".", launch.browser = TRUE)'
 # (from the repo root, so R/ and templates/ resolve.)
 
 # Force a UTF-8 locale FIRST. On a host whose default locale is C/ASCII
-# (ANSI_X3.4-1968), R cannot represent the em-dashes and symbols used throughout
-# the UI and renders them as mojibake ("<80><94>"), which makes the whole app look
+# (ANSI_X3.4-1968), R cannot represent the unicode symbols used throughout the
+# UI and renders them as mojibake ("<80><94>"), which makes the whole app look
 # broken. Try the common UTF-8 locale names and stop at the first that takes.
 suppressWarnings(for (.loc in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"))
   if (nzchar(Sys.setlocale("LC_CTYPE", .loc))) break)
@@ -31,8 +32,9 @@ REQUESTS_DIR <- "requests"  # "none of these fits -- tell our team" raises (git-
 FIELDS_DIR <- "fields_templates"            # curated mode:fields (IRD/form) templates
 USER_FIELDS_DIR <- "fields_templates_user"  # form templates built in the app
 DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictionary
-CANON_FIELDS <- c("date", "amount", "description", "particulars",
-                  "code", "reference", "type", "other_party", "balance")
+# The bundled specimen statement (public sample, ships with the app) that "Try it
+# on a sample" converts, so a brand-new user sees a full result without a file.
+SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_statement.pdf")
 
 # Plain-English labels for the everyday screen. The engine's internal codes
 # (needs_review, balance_reconciliation, ...) stay in the logs; a non-technical
@@ -52,6 +54,27 @@ CHECK_PLAIN <- c(
   ocr_confidence             = "Scan / OCR read quality")
 COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
                     empty = "empty (check the mapping)", unmapped = "not on this statement")
+# Diagnostics 'category' codes -> plain words for the customer-facing table
+# (the codes themselves stay in the logs / workbook Diagnostics sheet).
+DIAG_PLAIN <- c(
+  unknown_format          = "layout not recognised",
+  unreadable              = "file could not be read",
+  multiple_statements     = "several statements in one file",
+  combined_statement      = "several accounts in one statement",
+  mixed_currency          = "more than one currency",
+  oversized               = "unusually large file",
+  oversized_page          = "unusually large page",
+  reconciliation_mismatch = "balance doesn't reconcile",
+  balance_break           = "running balance jumps",
+  row_count               = "row count doesn't match",
+  date_out_of_range       = "date outside the period",
+  row_parse               = "rows didn't parse",
+  date_parse              = "dates couldn't be read",
+  amount_parse            = "amounts couldn't be read",
+  completeness_unverified = "completeness not auto-verified",
+  low_ocr_confidence      = "scan read with low confidence",
+  ocr                     = "page(s) machine-read (OCR)",
+  ocr_confidence_unknown  = "scan quality unknown")
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
 # The friendly line shown when a file simply can't be read (technical detail -> log).
@@ -59,83 +82,105 @@ FRIENDLY_READ_ERROR <- paste(
   "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
   "or not a bank statement. Try re-saving it as a PDF or CSV, or open the template toolkit to set it up.")
 
-# Read the header row of a delimited sample -> character vector of column names.
-read_headers <- function(path, delim = ",") {
-  line <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) "")
-  if (!length(line) || !nzchar(line)) return(character(0))
-  parts <- strsplit(line, delim, fixed = TRUE)[[1]]
-  trimws(gsub('^"|"$', "", parts))
-}
-
-# Best-guess a default source column for a canonical field.
-guess_col <- function(headers, patterns) {
-  for (p in patterns) {
-    hit <- grep(p, headers, ignore.case = TRUE)
-    if (length(hit)) return(headers[hit[1]])
-  }
-  "(none)"
-}
-
-# YAML-quote a scalar only when it contains non-word characters.
-yq <- function(s) if (grepl("[^A-Za-z0-9_]", s)) sprintf('"%s"', s) else s
-
-# Build a template YAML string in the exact known-good layout.
-build_tpl_yaml <- function(cfg) {
-  col <- function(src, fmt = NULL) {
-    if (is.null(src) || !nzchar(src) || src == "(none)") return("null")
-    if (!is.null(fmt) && nzchar(fmt))
-      sprintf('{source: %s, format: "%s"}', yq(src), fmt)
-    else sprintf('{source: %s}', yq(src))
-  }
-  fp <- paste(vapply(cfg$fingerprint, yq, character(1)), collapse = ", ")
-  paste0(
-    "id: ", cfg$id, "\n",
-    "bank: ", cfg$bank, "\n",
-    "statement_type: ", cfg$statement_type, "\n",
-    "format: delimited\n",
-    "version: 1\n",
-    "effective_from: null\n",
-    "effective_to: null\n",
-    "min_score: ", cfg$min_score, "\n",
-    "fingerprint:\n",
-    "  header_contains_all: [", fp, "]\n",
-    "  filename_regex: null\n",
-    "delimiter: \"", cfg$delimiter, "\"\n",
-    "preamble: null\n",
-    "columns:\n",
-    "  date:        ", col(cfg$date_source, cfg$date_format), "\n",
-    # A debit_credit_cols statement has NO single amount column -- it has separate
-    # money-in / money-out columns. Write those instead of (a required) amount.
-    if (identical(cfg$amount_sign, "debit_credit_cols"))
-      paste0("  debit:       ", col(cfg$debit_source), "\n",
-             "  credit:      ", col(cfg$credit_source), "\n")
-    else paste0("  amount:      ", col(cfg$amount_source), "\n"),
-    "  description: ", col(cfg$description_source), "\n",
-    "  particulars: ", col(cfg$particulars_source), "\n",
-    "  code:        ", col(cfg$code_source), "\n",
-    "  reference:   ", col(cfg$reference_source), "\n",
-    "  type:        ", col(cfg$type_source), "\n",
-    "  other_party: ", col(cfg$other_party_source), "\n",
-    "  balance:     ", col(cfg$balance_source), "\n",
-    "amount_sign: ", cfg$amount_sign, "\n",
-    "currency: ", cfg$currency, "\n"
-  )
-}
-
 # About-page + tutorial HTML content lives in ui_content.R (readability).
 source("ui_content.R")
 
 # ---------------------------------------------------------------------------
 ui <- fluidPage(
-  tags$head(tags$style(HTML(
-    ".ok{color:#137333;font-weight:600}.bad{color:#b00020;font-weight:600}
-     .muted{color:#666}.mono{font-family:monospace;white-space:pre-wrap}
-     .modal-lg{width:95%;max-width:1240px}"))),
-  titlePanel("Bank Statement OCR"),
+  tags$head(
+    tags$title("Bank Statement OCR"),
+    # One design system, all inline (the app must work offline / air-gapped:
+    # no CDN fonts, scripts or icon packs). Green is the product colour - it
+    # already means "checked and OK" everywhere in the results.
+    tags$style(HTML("
+     :root{
+       --brand:#0b7a34; --brand-dark:#085c27; --brand-tint:#eef6f0; --brand-line:#bfe0c8;
+       --ink:#1f2a33; --muted:#66727d; --line:#e3e7e5; --panel:#f8faf9;
+       --ok:#137333; --bad:#b00020; --warn-ink:#8a5b00; --warn-bg:#fff8e6; --warn-line:#f0c36d;
+     }
+     body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,'Helvetica Neue',Arial,sans-serif;
+          color:var(--ink);font-size:14px}
+     h1,h2,h3,h4,h5{font-weight:600;color:var(--ink)}
+     h4{font-size:16.5px;margin-top:20px}
+     hr{border-top-color:var(--line)}
+     .ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+     .muted{color:var(--muted)}
+     .mono{font-family:Consolas,'Courier New',monospace;white-space:pre-wrap}
+     .modal-lg{width:95%;max-width:1240px}
+     .modal-content{border-radius:12px}
+     /* header */
+     .app-header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:14px 0 10px}
+     .app-mark{display:inline-block;width:13px;height:13px;border-radius:4px;background:var(--brand);align-self:center}
+     .app-title{font-size:21px;font-weight:700;letter-spacing:.2px}
+     .app-tagline{font-size:13px;color:var(--muted)}
+     /* tabs: quiet underline style, active = product green */
+     .nav-tabs{border-bottom:2px solid var(--line);margin-bottom:4px}
+     .nav-tabs>li>a{border:none;border-bottom:3px solid transparent;border-radius:0;
+       color:var(--muted);font-weight:600;padding:9px 14px;margin-right:2px}
+     .nav-tabs>li>a:hover{background:var(--brand-tint);border:none;
+       border-bottom:3px solid var(--brand-line);color:var(--brand)}
+     .nav-tabs>li.active>a,.nav-tabs>li.active>a:hover,.nav-tabs>li.active>a:focus{
+       border:none;border-bottom:3px solid var(--brand);color:var(--brand);background:transparent}
+     /* buttons. NB: Shiny action/download buttons always carry btn-default even
+        when another btn-* class is added, so the btn-default skin must exclude
+        those or it beats them on focus (a clicked Convert would turn pale). */
+     .btn{border-radius:7px;font-weight:600}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){
+       border-color:#cfd6d2;color:var(--ink)}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):focus{
+       background:var(--panel);border-color:#b9c2bd;color:var(--ink)}
+     .btn-primary{background:var(--brand);border-color:var(--brand-dark);color:#fff}
+     .btn-primary:hover,.btn-primary:focus,.btn-primary:active,.btn-primary:active:focus{
+       background:var(--brand-dark);border-color:var(--brand-dark);color:#fff}
+     .btn-warning{background:#f7c948;border-color:#dfa92e;color:#4a3200}
+     .btn-warning:hover,.btn-warning:focus{background:#eeb63c;border-color:#c99518;color:#402b00}
+     .btn-danger{background:#fff;border-color:#e3a4ae;color:var(--bad)}
+     .btn-danger:hover,.btn-danger:focus{background:#fdecec;border-color:var(--bad);color:var(--bad)}
+     /* panels + forms */
+     .well{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:none}
+     .form-control{border-radius:7px;border-color:#cfd6d2;box-shadow:none}
+     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(11,122,52,.12)}
+     .help-block{color:var(--muted);font-size:12.5px}
+     .progress-bar{background-color:var(--brand)}
+     /* tables (DT) */
+     table.dataTable{font-size:13px}
+     table.dataTable thead th,table.dataTable thead td{
+       background:var(--panel)!important;border-bottom:2px solid var(--line)!important;font-size:12.5px}
+     table.dataTable tbody tr:hover{background:#f3f8f4}
+     /* collapsed sections */
+     details>summary{cursor:pointer}
+     /* downloads box (appears in the sidebar once a conversion produced files) */
+     .dl-box{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:10px;
+       padding:10px 12px;margin:10px 0}
+     .dl-box .btn{margin:3px 6px 3px 0}
+     /* small status chips on the result headline */
+     .chip{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;
+       margin:2px 6px 0 0;background:#f2f4f3;border:1px solid var(--line);color:#4a555f}
+     .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
+     .shiny-notification{border-radius:10px;border:1px solid var(--line);
+       box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:13.5px}
+    ")),
+    # Enter in the Admin password box = click Enter (no mouse trip). The
+    # trigger('change') first flushes the debounced text value, so a fast
+    # type-then-Enter never submits a stale password.
+    tags$script(HTML(
+      "$(document).on('keyup', '#adm_pw', function(e){
+         if (e.key === 'Enter') { $(this).trigger('change'); $('#adm_login').click(); }
+       });"))
+  ),
+  div(class = "app-header",
+    span(class = "app-mark"),
+    span(class = "app-title", "Bank Statement OCR"),
+    span(class = "app-tagline",
+         "Turn bank statements into audit-grade data - every number checked, nothing guessed.")),
   tabsetPanel(
     id = "main_tabs",
     # ---- About (landing) ----------------------------------------------
-    tabPanel("About", br(), about_html()),
+    tabPanel("About", br(), about_html(),
+      div(style = "margin:6px 0 28px",
+        actionButton("ab_go_convert", "Convert your first statement →",
+                     class = "btn-primary btn-lg"))),
     # ---- Convert -------------------------------------------------------
     tabPanel(
       "Convert",
@@ -143,12 +188,13 @@ ui <- fluidPage(
       sidebarLayout(
         sidebarPanel(
           width = 4,
-          fileInput("cv_file", "Statement file (.csv / .tsv / .tdv / .pdf)"),
+          fileInput("cv_file", "Statement file (.pdf / .csv / .tsv / .xlsx)",
+                    accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_bank_ui"),
-          actionButton("cv_go", "Convert", class = "btn-primary"),
-          br(), br(),
+          actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           uiOutput("cv_downloads"),
+          br(),
           helpText("Detection is automatic; pick a bank only to force one."),
           tags$hr(),
           uiOutput("cv_templates")
@@ -225,14 +271,16 @@ ui <- fluidPage(
         )
       )
     ),
-    # ---- Add a template (spreadsheet + PDF wizards, consolidated) ------
+    # ---- Add a template (one toolkit for statements + a form builder) --
     tabPanel(
       "Add a template",
       br(),
       wellPanel(
         strong("🛠 Add a template"),
         p(class = "muted", "Upload the document and set it up with it on screen the whole time. There's one toolkit: it opens Simple for the common case, and Advanced (the full field-by-field / YAML editor) is one click away inside it - no separate path to learn."),
-        fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)"),
+        p(actionLink("ts_help", "ⓘ First time? The 2-minute guide - the ways statements differ and what each setting means")),
+        fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)",
+                  accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
           c("A bank or card statement - a table of transactions" = "statement",
             "Something else - labelled values (an IRD form, an account summary, a letter)" = "other"),
@@ -247,13 +295,10 @@ ui <- fluidPage(
               tags$li("The tool pulls the specific labelled values you name (e.g. 'Closing balance'), not a table of rows."),
               tags$li("There is nothing to reconcile against, so trust is lower by nature - eyeball each value.")),
             p(class = "muted", style = "margin:6px 0 0", "Set it up with the labelled-value builder below.")))),
-      # One flow: the toolkit above is THE way to add a template. The manual
-      # field-by-field wizards are still here for anything unusual, but tucked into
-      # an "Advanced" section so a normal user isn't faced with two competing paths.
-      # 'Other' documents (labelled values) are set up with this builder, shown
-      # right here when "Something else" is picked above. Statements use the one
-      # toolkit (its Advanced tab already covers field-by-field / YAML editing), so
-      # there is no separate "build by hand" path any more.
+      # One flow: the toolkit above is THE way to add a statement template (its
+      # Advanced tab covers field-by-field / YAML editing, so there is no separate
+      # "build by hand" path). 'Other' documents (labelled values) are set up with
+      # this builder, shown right here when "Something else" is picked above.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
       helpText("For a PDF that ISN'T a transaction table - an IRD / KiwiSaver / account summary, a letter, a form. Teach the tool which labelled values to pull; when a value sits far from its label, draw a box to say exactly where it is. (To just READ one, upload it on Convert - it's detected automatically.)"),
@@ -273,7 +318,7 @@ ui <- fluidPage(
           tags$hr(),
           strong("Value in a different place than its label?"),
           helpText("Upload a sample, draw a box on the page, name the field and pick its type, then Set - the value is read from that box, wherever the label is."),
-          fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)"),
+          fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)", accept = ".pdf"),
           fluidRow(
             column(6, textInput("fb_rf_field", "Field name", "")),
             column(6, selectInput("fb_rf_type", "Value type",
@@ -411,7 +456,8 @@ ui <- fluidPage(
           helpText(HTML("Drop in a whole pile of statements (any bank, any version, typed or scanned) and get one picture: what the tool can read, the layouts it can't - <b>grouped biggest-gap-first</b> - the amount styles, date formats and banks it saw, and <b>ready-to-edit draft templates</b> for the gaps. It's <b>safe to share</b> - only shapes and counts leave this machine, never the statement contents. Tick <b>convert &amp; save</b> to also produce the real converted files and log every run into the Insights tab.")),
           fluidRow(
             column(4,
-              fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE),
+              fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE,
+                        accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
               checkboxInput("adm_ba_convert",
                             "Also convert & save outputs (writes files, logs runs, feeds Insights)",
                             value = FALSE),
@@ -431,7 +477,8 @@ ui <- fluidPage(
           tags$hr(),
           h4("Single statement - safe summary"),
           helpText("Upload one statement to download its shapes-only summary (no personal data) for sharing."),
-          fileInput("adm_audit_one", "Statement", multiple = FALSE),
+          fileInput("adm_audit_one", "Statement", multiple = FALSE,
+                    accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
           downloadButton("adm_audit_dl", "Download safe audit (.md)")
         )
       )
@@ -443,12 +490,14 @@ ui <- fluidPage(
 # ---------------------------------------------------------------------------
 server <- function(input, output, session) {
 
-  # ---- Tutorial: step-by-step "how to build a template" (either wizard) ----
+  # ---- Tutorial: the step-by-step "how to build a template" guide, reachable
+  # from the Add-a-template tab and from inside the toolkit itself.
   show_tutorial <- function() showModal(modalDialog(
-    title = "Building a template from scratch", size = "l", easyClose = TRUE,
+    title = "Building a template - the 2-minute guide", size = "l", easyClose = TRUE,
     tutorial_html(), footer = modalButton("Close")))
-  observeEvent(input$wp_help, show_tutorial())
-  observeEvent(input$wz_help, show_tutorial())
+  # (Only from the tab, not from inside the toolkit modal: Shiny shows one modal
+  # at a time, so opening the guide there would close the toolkit mid-edit.)
+  observeEvent(input$ts_help, show_tutorial())
 
   tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
   # Active set: hidden user templates are excluded, so they take no part in
@@ -647,7 +696,11 @@ server <- function(input, output, session) {
   adm_ba <- reactiveVal(NULL)
   adm_ba_conv <- reactiveVal(NULL)   # converted-report rows, when "convert & save" was ticked
   observeEvent(input$adm_ba_run, {
-    req(input$adm_ba_files)
+    if (is.null(input$adm_ba_files)) {
+      showNotification("Upload some statements first, then click Run.",
+                       type = "warning", duration = 6)
+      return()
+    }
     fs <- input$adm_ba_files
     sess <- file.path(tempdir(), paste0("ba_", as.integer(runif(1, 1, 1e9)))); dir.create(sess, showWarnings = FALSE)
     paths <- vapply(seq_len(nrow(fs)), function(i) {
@@ -853,7 +906,7 @@ server <- function(input, output, session) {
   output$fb_regions_tbl <- renderTable({
     r <- fb_regions(); if (!length(r)) return(NULL)
     do.call(rbind, lapply(names(r), function(nm) data.frame(field = nm, page = r[[nm]]$page,
-      box = sprintf("x %d–%d, y %d–%d", r[[nm]]$x_min, r[[nm]]$x_max, r[[nm]]$y_min, r[[nm]]$y_max),
+      box = sprintf("x %d-%d, y %d-%d", r[[nm]]$x_min, r[[nm]]$x_max, r[[nm]]$y_min, r[[nm]]$y_max),
       value = r[[nm]]$value, stringsAsFactors = FALSE)))
   })
   fb_render <- reactive({
@@ -918,7 +971,7 @@ server <- function(input, output, session) {
       output$fb_msg <- renderUI(span(class = "bad", paste("Not valid:", paste(probs, collapse = "; ")))); return() }
     ok <- tryCatch({ save_fields_template(t, USER_FIELDS_DIR); TRUE }, error = function(e) FALSE)
     output$fb_msg <- renderUI(if (isTRUE(ok))
-      span(class = "ok", sprintf("Saved '%s'. Upload it on 'Extract from a form' to use it.", t$id))
+      span(class = "ok", sprintf("Saved '%s'. Now upload the document on the Convert tab - it's detected automatically.", t$id))
       else span(class = "bad", "Couldn't save - check the fields."))
   })
 
@@ -1102,7 +1155,7 @@ server <- function(input, output, session) {
                      type = "message", duration = 6)
   })
   # Remediate a stuck upload right here: load the saved file into the SAME guided
-  # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
+  # toolkit the Convert tab uses, so a failed/abandoned statement is a 2-second
   # pickup - identify it in the table (A), open it, teach the tool, save (B).
   observeEvent(input$adm_up_wizard, {
     id <- input$adm_up_pick
@@ -1158,25 +1211,50 @@ server <- function(input, output, session) {
     session$user %||% current_user()
   }
 
-  observeEvent(input$cv_go, {
-    req(input$cv_file)
+  # run_conversion -- the whole convert-a-file flow (session dir, convert, state,
+  # upload capture), shared by the Convert button and "Try it on a sample".
+  # record = FALSE skips the Admin uploads capture (the bundled sample is not a
+  # team statement to pick up).
+  run_conversion <- function(srcpath, name, record = TRUE) {
     sess <- file.path(tempdir(), paste0("cv_", as.integer(runif(1, 1, 1e9))))
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
-    src <- file.path(sess, input$cv_file$name)
-    file.copy(input$cv_file$datapath, src, overwrite = TRUE)
+    src <- file.path(sess, name)
+    file.copy(srcpath, src, overwrite = TRUE)
     cv_forced(list())   # a new file -> forget any force-included rows from the last one
     who <- who_now()
     res <- convert_now(src, sess, forced_rows = NULL)
-    cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
+    cv_res(res); cv_dir(sess); cv_src(list(path = src, name = name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
     # Capture the upload + its outcome so a failed/abandoned new format is a
     # 2-second pickup in Admin -> Uploads (the file is saved for a safe re-audit).
-    uid <- safe(record_upload(src, name = input$cv_file$name, requested_by = who,
+    uid <- if (record) safe(record_upload(src, name = name, requested_by = who,
       status = res$status %||% "failed", run_id = res$run_id %||% NA_character_,
       template = res$template_id %||% NA_character_,
       trust = res$trust$level %||% NA_character_,
       detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
+    else NA_character_
     cv_upload_id(uid)
+  }
+
+  observeEvent(input$cv_go, {
+    if (is.null(input$cv_file)) {
+      showNotification("Choose a statement file first - a PDF, CSV or Excel export from your bank.",
+                       type = "warning", duration = 6)
+      return()
+    }
+    run_conversion(input$cv_file$datapath, input$cv_file$name)
+  })
+
+  # "Try it on a sample": convert the bundled specimen statement, so the very
+  # first visit can show the whole payoff (verdict, analysis, downloads) without
+  # the user needing a statement at hand.
+  observeEvent(input$cv_try_sample, {
+    if (!file.exists(SAMPLE_STATEMENT)) {
+      showNotification("The bundled sample statement isn't on this install (samples/ folder missing).",
+                       type = "warning", duration = 6)
+      return()
+    }
+    run_conversion(SAMPLE_STATEMENT, basename(SAMPLE_STATEMENT), record = FALSE)
   })
 
   # A result exists once a conversion has run -- gates the whole result scaffold so
@@ -1190,7 +1268,7 @@ server <- function(input, output, session) {
   # mystery or a wall of empty headers.
   output$cv_empty <- renderUI({
     div(style = "max-width:560px;color:#444;line-height:1.6",
-      h4("Convert a bank statement"),
+      h4(style = "margin-top:4px", "Convert a bank statement"),
       p("Upload a statement on the left - a ", tags$b("PDF"), ", ", tags$b("CSV"),
         " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
       p(class = "muted", style = "margin-bottom:6px", "You'll get back, right here:"),
@@ -1199,22 +1277,42 @@ server <- function(input, output, session) {
         tags$li(tags$b("Checks that prove nothing's missing"), " - the balance reconciles and the row count adds up, with a plain confidence level."),
         tags$li(tags$b("A download"), " - Excel, CSV or JSON.")),
       p(class = "muted", "Your bank is detected automatically. If it's a statement layout the tool hasn't seen, it'll say so and point you to ",
-        actionLink("cv_empty_to_tmpl", "Add a template"), " - a 2-minute, no-code setup."))
+        actionLink("cv_empty_to_tmpl", "Add a template"), " - a 2-minute, no-code setup."),
+      # First visit, nothing to upload yet? One click shows the whole payoff on
+      # a bundled specimen statement (public sample - not anyone's real data).
+      if (file.exists(SAMPLE_STATEMENT))
+        div(style = "margin-top:14px;padding:12px 14px;background:#f8faf9;border:1px dashed #bfe0c8;border-radius:10px",
+          actionButton("cv_try_sample", "▶ Try it on a sample statement", class = "btn-default"),
+          div(class = "muted", style = "margin-top:6px",
+              "No file needed - converts a bundled specimen so you can see a full result in seconds.")))
   })
 
   output$cv_status <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
     # A successful transaction statement gets the plain hero headline (cv_headline
-    # below); this compact status line is kept for form results and for anything
-    # that did NOT convert cleanly (so failures still explain themselves up top).
+    # below); this status card is kept for form results and for anything that did
+    # NOT convert cleanly (so failures still explain themselves up top) - same
+    # card shape as the success headline, coloured by how it went.
     if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
-    cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
+    st <- res$status %||% "failed"
+    pal <- switch(st,
+      ok           = c(bg = "#eef8f0", bd = "#bfe0c8", ink = "#137333"),
+      needs_review = ,
+      unsupported  = c(bg = "#fff8e6", bd = "#f0c36d", ink = "#8a5b00"),
+      c(bg = "#fdecec", bd = "#f2b8b8", ink = "#b00020"))
     trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
-    tagList(
-      h4(HTML(sprintf('<span class="%s">%s</span>%s', cls, plain_status(res$status), trust))),
-      p(class = "muted", res$messages %||% ""),
-      if (!is.null(res$template_id)) p(class = "muted", paste("template:", res$template_id))
-    )
+    tid <- (res$template_id %||% NA_character_)[1]
+    div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px",
+                        pal[["bg"]], pal[["bd"]]),
+      h4(style = sprintf("margin:0 0 6px;color:%s", pal[["ink"]]),
+         paste0(plain_status(st), trust)),
+      # Engine messages carry a leading machine code ("needs_review: ...") for the
+      # logs; the card headline already says it in words, so drop the code here.
+      lapply(sub("^(ok|needs_review|unsupported|failed):\\s*", "",
+                 as.character(res$messages %||% character(0))),
+             function(m) p(style = "margin:0 0 4px;color:#333", m)),
+      if (!is.na(tid) && nzchar(tid))
+        p(class = "muted", style = "margin:0", paste("Template:", tid)))
   })
 
   # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
@@ -1237,12 +1335,33 @@ server <- function(input, output, session) {
     pt <- plain_trust(res$trust$level)
     bg <- c(ok = "#eef8f0", warn = "#fff8e6", bad = "#fdecec")[[pt$cls]]
     bd <- c(ok = "#bfe0c8", warn = "#f0c36d", bad = "#f2b8b8")[[pt$cls]]
+    # Small honest-flags row: which template read it, and anything a reviewer
+    # should know at a glance (OCR pages, honoured redactions, hand-added rows).
+    # All of this already exists in the result - it was just buried in the tables.
+    chip <- function(txt, warn = FALSE)
+      span(class = if (warn) "chip chip-warn" else "chip", txt)
+    chips <- list()
+    tid <- (res$template_id %||% NA_character_)[1]
+    if (!is.na(tid) && nzchar(tid)) chips <- c(chips, list(chip(paste("Template:", tid))))
+    op <- suppressWarnings(as.integer(res$trust$ocr_pages %||% 0L))
+    if (isTRUE(op > 0)) chips <- c(chips, list(chip(
+      sprintf("%d page(s) machine-read (OCR) - double-check the numbers", op), warn = TRUE)))
+    k <- res$kpis
+    if (!is.null(k) && "name" %in% names(k)) {
+      nred <- suppressWarnings(as.integer(k$actual[k$name == "redaction_summary"][1]))
+      if (isTRUE(nred > 0)) chips <- c(chips, list(chip(
+        sprintf("%d redacted row(s) honoured - hidden values stay hidden", nred))))
+    }
+    if (length(cv_forced())) chips <- c(chips, list(chip(
+      sprintf("%d row(s) added by hand - flagged 'forced' in the output", length(cv_forced())),
+      warn = TRUE)))
     div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px", bg, bd),
       h3(style = "margin:0 0 4px", sprintf("%s Converted%s", pt$icon,
         if (!is.na(n)) sprintf(" - %d transaction%s read", n, if (n == 1) "" else "s") else "")),
       p(style = "margin:0 0 6px;color:#333", pt$line),
-      p(class = "muted", style = "margin:0",
-        "Download it on the left (Excel, CSV or JSON). Full detail is under 'Checks & detail' below."))
+      p(class = "muted", style = "margin:0 0 6px",
+        "Download it on the left (Excel, CSV or JSON). Full detail is under 'Checks & detail' below."),
+      if (length(chips)) div(chips))
   })
 
   # --- Analysis: the useful numbers + graphs pulled from the conversion -------
@@ -1373,9 +1492,13 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$diagnostics))
     # Customer-facing: where / why / how-to-fix only. The fix-ownership triage
     # (template vs engine-gap vs escalate) is maintainer-only and lives on the
-    # Admin tab, never here.
+    # Admin tab, never here. Category codes render as plain words.
     d <- res$diagnostics[, intersect(c("where", "category", "severity", "detail", "how_to_fix"),
                                      names(res$diagnostics)), drop = FALSE]
+    if ("category" %in% names(d)) d$category <- plain_label(d$category, DIAG_PLAIN)
+    names(d) <- plain_label(names(d), c(where = "Where", category = "What",
+                                        severity = "Severity", detail = "Detail",
+                                        how_to_fix = "How to fix"))
     datatable(d, rownames = FALSE,
               options = list(dom = "t", pageLength = 20, scrollX = TRUE))
   })
@@ -1427,11 +1550,13 @@ server <- function(input, output, session) {
     btns <- Filter(Negate(is.null), lapply(names(ids), function(ext)
       if (has(ext)) downloadButton(ids[[ext]], labs[[ext]])))
     if (!length(btns)) return(NULL)
-    tagList(strong("Download:"), br(), btns)
+    tagList(strong("Your converted files"), br(), btns)
   }
   output$cv_downloads <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
-    dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv", json = "dl_json"))
+    btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv", json = "dl_json"))
+    if (is.null(btns)) return(NULL)
+    div(class = "dl-box", btns)
   })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
@@ -1453,9 +1578,12 @@ server <- function(input, output, session) {
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
         p(class = "muted", sprintf("run %s", res$run_id)),
+        # choiceNames/choiceValues (not named choices): a non-ASCII name in
+        # c(name = value) becomes a SYMBOL at parse time, which on a C-locale
+        # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8.
         radioButtons("cv_fb_verdict", NULL, inline = TRUE,
-          choices = c("Correct" = "correct", "Minor issues" = "minor_issues",
-                      "Wrong" = "wrong")),
+          choiceNames = list("✓ Correct", "△ Minor issues", "✗ Wrong"),
+          choiceValues = list("correct", "minor_issues", "wrong")),
         textAreaInput("cv_fb_comment", "Comment (optional - what was wrong?)",
                       width = "100%", rows = 2),
         actionButton("cv_fb_submit", "Submit feedback", class = "btn-primary"))
@@ -1479,7 +1607,9 @@ server <- function(input, output, session) {
 
   # "__report__" is the escape hatch: picking it means "none of these fit" and
   # reveals the "tell our team" box. guided_live treats it as no-override.
-  REPORT_OPT <- c("🚩 None of these - tell our team" = "__report__")
+  # setNames, NOT c(name = value): the emoji as an argument name would become a
+  # symbol at parse time and mangle to '<U+1F6A9>' on a C-locale host.
+  REPORT_OPT <- stats::setNames("__report__", "🚩 None of these - tell our team")
   guided_date_choices <- function(extra = NULL) {
     base <- setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
                      vapply(wd_date_table(), `[[`, "", "label"))
@@ -1661,14 +1791,24 @@ server <- function(input, output, session) {
     tmpl <- seed_tmpl
     if (is.null(tmpl)) {
       bankguess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ", tools::file_path_sans_ext(name))))
-      tmpl <- withProgress(message = "Opening in wizard…", value = 0.4,
+      tmpl <- withProgress(message = "Opening the toolkit…", value = 0.4,
         tryCatch(draft_template(path, bank = if (nzchar(bankguess)) bankguess else "New bank"),
                  error = function(e) NULL))
     }
     if (is.null(tmpl)) {
-      showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
-                             "or try a text PDF / CSV export. If it isn't a transaction table, pick 'Something else' above."),
-                       type = "error", duration = 10)
+      # Fail loud AND specific: Excel can't be drafted in the toolkit (the
+      # engine's auto-draft has no sheet-aware mapping), so say exactly that and
+      # give the 10-second workaround, instead of a generic "couldn't read it".
+      if (tolower(tools::file_ext(name %||% "")) %in% c("xlsx", "xls")) {
+        showNotification(paste("Excel files can't be set up in the toolkit yet. Most Excel exports",
+                               "convert as-is on the Convert tab (a generic Excel template ships with the tool).",
+                               "For a custom layout, save the sheet as CSV (File > Save As in Excel) and set that up here instead."),
+                         type = "warning", duration = 12)
+      } else {
+        showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
+                               "or try a text PDF / CSV export. If it isn't a transaction table, pick 'Something else' above."),
+                         type = "error", duration = 10)
+      }
       return(invisible(FALSE))
     }
     # Ids of the curated (tested) templates: saving a customised copy under one of
@@ -1688,7 +1828,11 @@ server <- function(input, output, session) {
   # Launch the same setup modal from the Add-a-template tab (not tied to a Convert
   # upload, so a successful Save just adds the template).
   observeEvent(input$ts_go, {
-    req(input$ts_file)
+    if (is.null(input$ts_file)) {
+      showNotification("Upload the document first (the file picker above), then open the toolkit.",
+                       type = "warning", duration = 6)
+      return()
+    }
     sess <- file.path(tempdir(), paste0("ts_", as.integer(runif(1, 1, 1e9))))
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, input$ts_file$name)
@@ -1701,7 +1845,7 @@ server <- function(input, output, session) {
     if (is.null(cv_src())) return(NULL)
     st <- res$status %||% "failed"
     if (identical(res$kind, "form")) {
-      # A form result is set up in the PDF form builder, not the table wizard.
+      # A form result is set up in the PDF form builder, not the statement toolkit.
       return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", "Want to change which values are pulled, or add more (including a value in a different place than its label)? "),
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
@@ -1729,6 +1873,8 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
   observeEvent(input$cv_empty_to_tmpl,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
+  observeEvent(input$ab_go_convert,
+    updateTabsetPanel(session, "main_tabs", selected = "Convert"))
 
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)
@@ -1745,7 +1891,7 @@ server <- function(input, output, session) {
   })
 
   # "Matched but maybe wrong": when a near-duplicate template nearly matched too,
-  # show the candidates + margin and let the analyst re-open the wizard with a
+  # show the candidates + margin and let the analyst re-open the toolkit with a
   # different one. Only appears when there's a genuine runner-up, so an
   # unambiguous match stays clutter-free.
   output$cv_candidates <- renderUI({
@@ -1769,9 +1915,9 @@ server <- function(input, output, session) {
                 paste(sprintf("%s (score %s)", others_df$id, others_df$score), collapse = ", "))
         else sprintf("Matched %s.", res$template_id)),
       if (length(others)) tagList(
-        selectInput("cv_cand_pick", "Wrong one? Open the wizard with a different template:",
+        selectInput("cv_cand_pick", "Wrong one? Open the toolkit with a different template:",
                     choices = others, width = "100%"),
-        actionButton("cv_cand_go", "🪄 Open in wizard with this template", class = "btn-default"))))
+        actionButton("cv_cand_go", "🪄 Open the toolkit with this template", class = "btn-default"))))
   })
   observeEvent(input$cv_cand_go, {
     src <- cv_src(); req(src); tid <- input$cv_cand_pick; req(tid, nzchar(tid))
@@ -1859,7 +2005,7 @@ server <- function(input, output, session) {
     output$g_adv_msg <- renderUI(span(class = "ok", "Applied - preview updated below."))
   })
 
-  # ---- Advanced tab: visual PDF column editor (folded in, same as the wp_ tab) --
+  # ---- Toolkit: visual PDF column editor --------------------------------------
   # Renders the chosen page and draws the working template's column bands on it;
   # a drawn box assigns/updates a column, keeping the YAML editor and preview in
   # sync so PDF setup is fully visual and in one place.
@@ -2018,243 +2164,6 @@ server <- function(input, output, session) {
         "<br>Open the <b>Advanced</b> tab to fix it, or adjust the fields above.")),
         type = "error", duration = 12)
     }
-  })
-
-  # ---- PDF wizard ---------------------------------------------------
-  wp_bands <- reactiveVal(list())
-
-  wp_render <- reactive({
-    req(input$wp_file)
-    pg <- max(1L, as.integer(input$wp_page %||% 1))
-    sz <- tryCatch(pdftools::pdf_pagesize(input$wp_file$datapath), error = function(e) NULL)
-    if (is.null(sz) || pg > nrow(sz)) return(NULL)
-    ras <- tryCatch(as.raster(magick::image_read(
-      pdftools::pdf_render_page(input$wp_file$datapath, page = pg, dpi = 100))),
-      error = function(e) NULL)
-    if (is.null(ras)) return(NULL)
-    list(ras = ras, w = sz$width[pg], h = sz$height[pg])
-  })
-
-  output$wp_plot <- renderPlot({
-    r <- wp_render(); req(r)
-    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
-    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
-         xlab = "", ylab = "", axes = FALSE)
-    rasterImage(r$ras, 0, r$h, r$w, 0)
-    b <- wp_bands()
-    if (length(b)) {
-      cols <- grDevices::hcl(seq(0, 300, length.out = length(b)), 70, 55)
-      for (i in seq_along(b)) {
-        rect(b[[i]][1], 0, b[[i]][2], r$h, border = cols[i], lwd = 2)
-        text(mean(b[[i]]), 16, names(b)[i], col = cols[i], font = 2)
-      }
-    }
-  })
-
-  observeEvent(input$wp_assign, {
-    br <- input$wp_brush; req(br)
-    b <- wp_bands(); b[[input$wp_field]] <- c(round(br$xmin), round(br$xmax)); wp_bands(b)
-  })
-  observeEvent(input$wp_remove, {
-    b <- wp_bands()
-    if (is.null(b[[input$wp_field]])) {
-      showNotification(sprintf("There's no '%s' box to remove.", input$wp_field), type = "warning"); return() }
-    b[[input$wp_field]] <- NULL; wp_bands(b)
-  })
-  observeEvent(input$wp_clear, wp_bands(list()))
-
-  output$wp_bands <- renderTable({
-    b <- wp_bands()
-    if (!length(b)) return(data.frame(field = character(0), x_min = numeric(0), x_max = numeric(0)))
-    data.frame(field = names(b), x_min = vapply(b, `[`, 0, 1),
-               x_max = vapply(b, `[`, 0, 2), row.names = NULL)
-  })
-
-  wp_template <- reactive({
-    b <- wp_bands()
-    cols <- list()
-    for (f in names(b)) cols[[f]] <- list(x_min = b[[f]][1], x_max = b[[f]][2])
-    xs <- unlist(b)
-    fp <- if (nzchar(input$wp_fingerprint %||% "")) list(input$wp_fingerprint) else list()
-    list(id = input$wp_id, bank = input$wp_bank, statement_type = "statement",
-         format = "pdf", version = 1, min_score = if (length(fp)) 1 else 0,
-         fingerprint = list(page_contains_all = fp),
-         table = list(
-           region = list(x_min = if (length(xs)) min(xs) - 5 else 0,
-                         x_max = if (length(xs)) max(xs) + 5 else 9999),
-           row_tol = 3, date_format = input$wp_datefmt, amount_sign = input$wp_sign,
-           columns = cols),
-         currency = "NZD")
-  })
-
-  wp_preview <- reactiveVal(NULL)
-  observeEvent(input$wp_preview, {
-    req(input$wp_file); b <- wp_bands()
-    if (is.null(b$date) || is.null(b$amount)) {
-      wp_preview(list(status = "Draw and assign at least the date and amount columns first.", tbl = NULL)); return()
-    }
-    out <- tryCatch({
-      parsed <- parse_pdf_table(read_input(input$wp_file$datapath), wp_template())
-      list(status = sprintf("%d transaction row(s) extracted", nrow(parsed$transactions)),
-           tbl = parsed$transactions)
-    }, error = function(e) list(status = paste("error:", conditionMessage(e)), tbl = NULL))
-    wp_preview(out)
-  })
-  output$wp_prev_status <- renderText({ p <- wp_preview(); if (is.null(p)) "Draw the columns, then Preview." else p$status })
-  output$wp_prev_tbl <- renderDT({ p <- wp_preview(); req(!is.null(p$tbl))
-    datatable(p$tbl, rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE)) })
-  output$wp_yaml <- renderText({ req(input$wp_file); yaml::as.yaml(wp_template()) })
-
-  observeEvent(input$wp_save, {
-    req(input$wp_file); b <- wp_bands()
-    if (is.null(b$date) || is.null(b$amount)) {
-      output$wp_msg <- renderUI(span(class = "bad", "Assign at least the date and amount columns first.")); return()
-    }
-    id <- gsub("[^A-Za-z0-9_]+", "_", input$wp_id)
-    path <- file.path(TEMPLATES_DIR, paste0(id, ".yaml"))
-    ok <- tryCatch({ yaml::write_yaml(wp_template(), path); load_templates(TEMPLATES_DIR)
-                     tpl_bump(isolate(tpl_bump()) + 1); TRUE }, error = function(e) FALSE)
-    output$wp_msg <- renderUI(
-      if (isTRUE(ok)) span(class = "ok", paste("Saved", path, "- add a golden test next (see Help)."))
-      else span(class = "bad", "Save failed - check the boxes and settings."))
-  })
-
-  # ---- Wizard -------------------------------------------------------
-  wz_headers <- reactive({
-    req(input$wz_file)
-    read_headers(input$wz_file$datapath, input$wz_delim %||% ",")
-  })
-
-  # Auto-detect everything from the sample so the analyst only has to confirm.
-  observeEvent(input$wz_file, {
-    delim <- detect_delimiter(input$wz_file$datapath)
-    updateTextInput(session, "wz_delim", value = delim)
-    df <- tryCatch(utils::read.csv(
-      input$wz_file$datapath, sep = if (identical(delim, "\t")) "\t" else delim,
-      stringsAsFactors = FALSE, colClasses = "character", nrows = 50L,
-      check.names = FALSE, header = TRUE), error = function(e) NULL)
-    h <- if (!is.null(df)) names(df) else read_headers(input$wz_file$datapath, delim)
-    dcol <- guess_mapping(h, "date")
-    if (!is.null(df) && dcol %in% names(df)) {
-      fmt <- detect_date_format(df[[dcol]])
-      if (nzchar(fmt)) updateSelectInput(session, "wz_datefmt", selected = fmt)
-    }
-    updateSelectInput(session, "wz_amount_sign", selected = detect_amount_style(h, df))
-    base <- tools::file_path_sans_ext(input$wz_file$name)
-    updateTextInput(session, "wz_id",
-                    value = paste0(gsub("[^A-Za-z0-9]+", "_", tolower(base)), "_csv"))
-  })
-
-  output$wz_has_sample <- reactive({ !is.null(input$wz_file) })
-  outputOptions(output, "wz_has_sample", suspendWhenHidden = FALSE)
-  output$wz_empty <- renderUI({
-    div(style = "max-width:560px;color:#444;line-height:1.6",
-      h4("Build a template by hand"),
-      p("Most people use ", tags$b("Open the toolkit"), " above - it does this visually. ",
-        "This manual path is here for anything unusual."),
-      tags$ol(style = "color:#444",
-        tags$li("Upload a ", tags$b("sample"), " of the statement on the left."),
-        tags$li("The tool auto-fills the separator, dates and amounts - you just ",
-                tags$b("check each field points at the right column"), "."),
-        tags$li("Click ", tags$b("Preview parse"), " to see the transactions it would read, then ",
-                tags$b("Save template"), ". That bank converts automatically from then on.")))
-  })
-
-  output$wz_detected <- renderUI({
-    req(input$wz_file)
-    dl <- if (identical(input$wz_delim, "\t")) "tab" else (input$wz_delim %||% ",")
-    div(style = "background:#eef7ee;border:1px solid #cfe8cf;padding:8px 12px;border-radius:6px;margin-bottom:8px",
-        strong("Auto-detected: "),
-        sprintf("columns split by '%s'  |  dates look like %s  |  %s",
-                dl, date_format_label(input$wz_datefmt %||% "%d/%m/%Y"),
-                wd_amount_labels()[[input$wz_amount_sign %||% "signed"]]))
-  })
-
-  output$wz_maps <- renderUI({
-    h <- wz_headers(); if (!length(h)) return(helpText("Upload a sample to map columns."))
-    opts <- c("(none)", h)
-    dc <- identical(input$wz_amount_sign, "debit_credit_cols")
-    defaults <- list(
-      date = guess_col(h, c("date")), amount = guess_col(h, c("amount")),
-      debit = guess_col(h, c("debit","withdrawal","money out","paid out")),
-      credit = guess_col(h, c("credit","deposit","money in","paid in")),
-      description = guess_col(h, c("payee","description","details","memo","narrative")),
-      particulars = guess_col(h, c("particulars")), code = guess_col(h, c("^code$","analysis")),
-      reference = guess_col(h, c("reference","unique")), type = guess_col(h, c("type")),
-      other_party = guess_col(h, c("other party","counterparty")), balance = guess_col(h, c("balance"))
-    )
-    # Show debit/credit instead of amount when the statement has separate
-    # money-in / money-out columns (amount is not needed then).
-    fields <- if (dc) c("date","debit","credit","description","particulars",
-                        "code","reference","type","other_party","balance")
-              else CANON_FIELDS
-    tagList(lapply(fields, function(f)
-      selectInput(paste0("map_", f), f, opts, selected = defaults[[f]])))
-  })
-
-  output$wz_fingerprint <- renderUI({
-    h <- wz_headers(); if (!length(h)) return(NULL)
-    checkboxGroupInput("wz_fp", NULL, choices = h, selected = h, inline = TRUE)
-  })
-
-  wz_cfg <- reactive({
-    list(
-      id = input$wz_id, bank = input$wz_bank, statement_type = input$wz_type,
-      delimiter = input$wz_delim %||% ",", currency = input$wz_currency,
-      amount_sign = input$wz_amount_sign, date_format = input$wz_datefmt,
-      min_score = max(1, length(input$wz_fp)), fingerprint = input$wz_fp,
-      date_source = input$map_date, amount_source = input$map_amount,
-      debit_source = input$map_debit, credit_source = input$map_credit,
-      description_source = input$map_description, particulars_source = input$map_particulars,
-      code_source = input$map_code, reference_source = input$map_reference,
-      type_source = input$map_type, other_party_source = input$map_other_party,
-      balance_source = input$map_balance
-    )
-  })
-
-  output$wz_yaml <- renderText({ req(input$wz_file); build_tpl_yaml(wz_cfg()) })
-
-  wz_preview <- reactiveVal(NULL)
-  observeEvent(input$wz_preview, {
-    req(input$wz_file)
-    tmp_tpls <- file.path(tempdir(), paste0("wz_", as.integer(runif(1, 1, 1e9))))
-    dir.create(tmp_tpls, showWarnings = FALSE, recursive = TRUE)
-    writeLines(build_tpl_yaml(wz_cfg()), file.path(tmp_tpls, paste0(input$wz_id, ".yaml")))
-    out <- tryCatch({
-      tpls  <- load_templates(tmp_tpls)
-      input_obj <- read_input(input$wz_file$datapath)
-      det   <- detect_statement(input_obj, tpls, hint_bank = input$wz_bank)
-      if (!isTRUE(det$matched))
-        list(status = paste("NO MATCH:", det$detail), tbl = NULL)
-      else {
-        parsed <- parse_statement(input_obj, tpls[[det$template_id]])
-        list(status = sprintf("matched %s (score %s) | %d row(s)",
-                              det$template_id, det$score, nrow(parsed$transactions)),
-             tbl = parsed$transactions)
-      }
-    }, error = function(e) list(status = paste("error:", conditionMessage(e)), tbl = NULL))
-    wz_preview(out)
-  })
-
-  output$wz_preview_status <- renderText({ p <- wz_preview(); if (is.null(p)) "Click 'Preview parse'." else p$status })
-  output$wz_preview_tbl <- renderDT({
-    p <- wz_preview(); req(!is.null(p$tbl))
-    datatable(p$tbl, rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE))
-  })
-
-  observeEvent(input$wz_save, {
-    req(input$wz_file)
-    id <- gsub("[^A-Za-z0-9_]+", "_", input$wz_id)
-    path <- file.path(TEMPLATES_DIR, paste0(id, ".yaml"))
-    ok <- tryCatch({
-      writeLines(build_tpl_yaml(wz_cfg()), path)
-      load_templates(TEMPLATES_DIR)  # validates the whole set still loads
-      tpl_bump(isolate(tpl_bump()) + 1)
-      TRUE
-    }, error = function(e) { attr(ok, "err") <<- conditionMessage(e); FALSE })
-    output$wz_msg <- renderUI(
-      if (isTRUE(ok)) span(class = "ok", paste("Saved", path, "- add a golden test next (see Help)."))
-      else span(class = "bad", "Save failed - check the mappings."))
   })
 
   # ---- Admin: insights from the logs -------------------------------

@@ -48,8 +48,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   if (identical(status, "unsupported")) {
     add("detection", "unknown_format", "high",
         det$detail %||% "no template matched this file",
-        paste("Add a template for this layout in the Template wizard (upload a sample,",
-              "map the columns). The closest match and the missing columns are in the detail."))
+        paste("Add a template for this layout in the template toolkit (Add a template tab:",
+              "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),
@@ -93,7 +93,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           running_balance_continuity = c("running balance", "balance_break", "high",
             "Running balance jumps: a row's amount or sign is likely wrong, or a transaction is missing. Check the rows around the break."),
           transaction_count = c("parse", "row_count", "high",
-            "Parsed count doesn't match: the template rows/columns may not fit this file. Re-map it in the wizard."),
+            "Parsed count doesn't match: the template rows/columns may not fit this file. Re-map it in the template toolkit."),
           dates_within_period = c("dates", "date_out_of_range", "medium",
             "Dates fall outside the statement period: the date-format mapping may be wrong (day/month vs month/day)."),
           no_unparsed_rows = c("rows", "row_parse", "high",
@@ -119,7 +119,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     dbad <- which(is.na(tx$date) & !is.na(tx$date_raw) & nzchar(tx$date_raw %||% ""))
     if (length(dbad)) add(sprintf("rows %s (date)", .rng(dbad)), "date_parse", "medium",
       sprintf("%d date(s) could not be read", length(dbad)),
-      "The date-format mapping is likely wrong for these rows. Set the correct format in the wizard (e.g. day/month/year).")
+      "The date-format mapping is likely wrong for these rows. Set the correct format in the template toolkit (e.g. day/month/year).")
 
     abad <- which(is.na(tx$amount) & !grepl("redacted", tx$flags %||% ""))
     if (length(abad)) add(sprintf("rows %s (amount)", .rng(abad)), "amount_parse", "high",
@@ -167,7 +167,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
 # diag_fix_owner_label(owner) -- plain-language "who fixes this" for display.
 diag_fix_owner_label <- function(owner) {
   unname(c(
-    template = "You - adjust the template (wizard)",
+    template = "You - adjust the template (toolkit)",
     input    = "You - fix the file (split / re-export / rescan)",
     review   = "You - review the data (expected, not an error)",
     none     = "No action",

@@ -33,7 +33,7 @@ test_that("failing KPIs map to actionable fixes, most severe first", {
 test_that("unsupported and failed produce actionable diagnostics", {
   du <- build_diagnostics("unsupported", det = list(detail = "closest bnz score 2/3"))
   expect_equal(du$category, "unknown_format")
-  expect_match(du$how_to_fix, "wizard", ignore.case = TRUE)
+  expect_match(du$how_to_fix, "toolkit", ignore.case = TRUE)
   df <- build_diagnostics("failed", messages = "cannot read file")
   expect_equal(df$category, "unreadable")
 })
@@ -83,6 +83,6 @@ test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly
     recon = list(kpis=NULL),
     metadata = list(multi = list(likely_multiple = TRUE, reasons = "2 periods")))
   expect_equal(d2$fix_owner[d2$category == "multiple_statements"], "input")
-  expect_match(diag_fix_owner_label("template"), "wizard")
+  expect_match(diag_fix_owner_label("template"), "toolkit")
   expect_match(diag_fix_owner_label("escalate"), "Developer")
 })
