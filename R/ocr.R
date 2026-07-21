@@ -98,8 +98,14 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
   # accuracy lift doesn't move any column. Runs in parallel to the text pass.
   box_img <- if (have_pp) preprocess_image(img[1], opts = preprocess_opts_geometry()) else img[1]
   words <- .ocr_tsv_to_words(ocr_image_tsv(box_img, lang = lang), scale = 72 / dpi)
+  # The word boxes live in the (possibly deskewed) box-image frame, so report THAT
+  # image's size in points as the page dimensions -- keeps the parser's page-size
+  # normalisation consistent with where the words actually are.
+  bw <- tryCatch({ ii <- magick::image_info(magick::image_read(box_img)); c(ii$width, ii$height) * 72 / dpi },
+                 error = function(e) c(NA_real_, NA_real_))
   list(text = txt, words = words, ok = length(txt) > 0L,
-       conf = ocr_word_confidence(use_img, lang = lang))
+       conf = ocr_word_confidence(use_img, lang = lang),
+       width = bw[1], height = bw[2])
 }
 
 # Decide whether a page needs OCR: TRUE when its extracted text layer is

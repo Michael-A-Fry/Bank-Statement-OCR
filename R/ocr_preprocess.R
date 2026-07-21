@@ -27,14 +27,15 @@ preprocess_opts_scan <- function() {
   o <- preprocess_opts(); o$adaptive <- TRUE; o$despeckle <- TRUE; o
 }
 
-# preprocess_opts_geometry() -- GEOMETRY-PRESERVING profile for the word-BOX OCR
-# pass. Pixel-VALUE cleanups only (greyscale + normalize + despeckle); NO deskew
-# and NO resize, so every word's bounding box stays in a known 1:1 scale with the
-# rendered page (pixel -> point = 72/dpi holds exactly). This lets the box pass
-# get the SAME accuracy lift as the text pass WITHOUT shifting column positions --
-# the parallel "location-safe" pre-processing the table parser needs.
+# preprocess_opts_geometry() -- profile for the word-BOX OCR pass. Pixel-VALUE
+# cleanups (greyscale + normalize + despeckle) PLUS deskew, but NO resize. Deskew
+# is a rigid rotation, not a rescale, so pixel -> point (72/dpi) still holds; what
+# it does is STRAIGHTEN a skewed scan so a transaction's cells land on one
+# horizontal line. Without it, even a 1-2 degree scan tilt spreads a row's cells
+# across a large vertical gradient and the row splits apart (whole blocks vanish).
+# Resize/upscale stays OFF so column x-positions are never shifted by scaling.
 preprocess_opts_geometry <- function() {
-  list(greyscale = TRUE, deskew = FALSE, normalize = TRUE,
+  list(greyscale = TRUE, deskew = TRUE, deskew_threshold = 40L, normalize = TRUE,
        upscale_min_width = NULL, adaptive = FALSE, despeckle = TRUE, threshold = FALSE)
 }
 

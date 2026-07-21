@@ -268,6 +268,10 @@ read_pdf <- function(path, redaction_rects = NULL,
                                         perl = TRUE, useBytes = TRUE)
         ocr_flags[p] <- TRUE
         ocr_conf[p] <- res$conf %||% NA_real_
+        # OCR word boxes live in the (deskewed) render frame -> report that frame's
+        # point size as this page's dimensions, so band normalisation stays aligned.
+        if (!is.null(res$width) && is.finite(res$width) && res$width > 0)   page_width[p]  <- res$width
+        if (!is.null(res$height) && is.finite(res$height) && res$height > 0) page_height[p] <- res$height
         if (!is.null(res$words) && nrow(res$words)) {
           guarded_ocr <- apply_redaction_guard(res$words, rects_p, markers)
           words[[p]] <- guarded_ocr
