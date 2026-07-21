@@ -1193,7 +1193,12 @@ server <- function(input, output, session) {
   # the common fields live here; everything else is edited as YAML on Advanced.
   apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
                               unsigned_default = NULL, desc_col = NULL,
-                              ref_col = NULL, bal_col = NULL) {
+                              ref_col = NULL, bal_col = NULL,
+                              id = NULL, type = NULL, currency = NULL) {
+    if (!is.null(id) && nzchar(trimws(id)))
+      tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
+    if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
+    if (!is.null(currency) && nzchar(trimws(currency))) tmpl$currency <- trimws(currency)
     if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
     if (identical(tmpl$format, "pdf")) {
       if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
@@ -1234,12 +1239,22 @@ server <- function(input, output, session) {
     cur_ud   <- tmpl$unsigned_default %||% "debit"
     showModal(modalDialog(
       title = "Guided setup — teach the tool to read this statement", size = "l", easyClose = FALSE,
+      div(style = "padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px;margin-bottom:8px",
+        HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s",
+             htmltools::htmlEscape(g$name %||% "your file"),
+             if (identical(tmpl$format, "pdf")) "PDF"
+             else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
       p(class = "muted", "We filled this in from your file. Change anything that looks wrong — the preview at the bottom updates as you go. Basic covers most statements; open Advanced for full control."),
       tabsetPanel(
         id = "g_tabs",
         tabPanel(
           "Basic", br(),
-          textInput("g_bank", "Which bank is this?", value = tmpl$bank),
+          fluidRow(
+            column(6, textInput("g_id", "Template name (this is what it saves as)", value = tmpl$id %||% "")),
+            column(6, textInput("g_bank", "Which bank is this?", value = tmpl$bank))),
+          fluidRow(
+            column(6, textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday")),
+            column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
           fluidRow(
             column(6, selectInput("g_date", "How are the dates written?",
                                   choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
@@ -1431,7 +1446,8 @@ server <- function(input, output, session) {
     no_sentinel <- function(v) if (identical(v, "__report__")) "" else v
     apply_overrides(g$tmpl, input$g_bank, no_sentinel(input$g_date), no_sentinel(input$g_sign),
                     input$g_decimal, input$g_unsigned_default,
-                    input$g_col_desc, input$g_col_ref, input$g_col_bal) })
+                    input$g_col_desc, input$g_col_ref, input$g_col_bal,
+                    input$g_id, input$g_type, input$g_currency) })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -1486,6 +1502,9 @@ server <- function(input, output, session) {
       return()
     }
     g$tmpl <- parsed; guided(g)
+    updateTextInput(session, "g_id", value = parsed$id %||% "")
+    updateTextInput(session, "g_type", value = parsed$statement_type %||% "")
+    updateTextInput(session, "g_currency", value = parsed$currency %||% "NZD")
     updateTextInput(session, "g_bank", value = parsed$bank %||% "")
     # Re-offer the date list WITH the applied format included, so an exotic
     # Advanced date_format is selectable and survives (not reverted by guided_live).
