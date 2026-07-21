@@ -218,7 +218,13 @@ ui <- fluidPage(
         fluidRow(
           column(7, fileInput("ts_file", "Statement file (.csv / .tsv / .tdv / .pdf)")),
           column(5, br(), actionButton("ts_go", "🛠 Open the toolkit", class = "btn-warning")))),
-      helpText(HTML("<b>Build by hand (advanced).</b> Most people use the toolkit above; these manual wizards build a template field by field. Click <b>ⓘ</b> for the full step-by-step.")),
+      # One flow: the toolkit above is THE way to add a template. The manual
+      # field-by-field wizards are still here for anything unusual, but tucked into
+      # an "Advanced" section so a normal user isn't faced with two competing paths.
+      tags$details(style = "margin-top:12px",
+      tags$summary(style = "cursor:pointer;font-weight:600;color:#555",
+                   "Advanced: build a template by hand"),
+      helpText(HTML("You almost never need this - the toolkit above does the same thing visually, with your statement on screen. These manual wizards build a template one field at a time. Click <b>ⓘ</b> for the full step-by-step.")),
       tabsetPanel(
     tabPanel(
       "Spreadsheet (CSV / Excel)",
@@ -346,7 +352,7 @@ ui <- fluidPage(
           h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
           h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml"))))
     )
-      )
+      ))
     ),
     # ---- Admin (insights + batch intake) ------------------------------
     tabPanel(
