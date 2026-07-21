@@ -161,11 +161,11 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
                              templates_dir = "templates", user_templates_dir = "templates_user",
                              fields_dir = "fields_templates", user_fields_dir = NULL,
                              requested_by = NULL, formats = c("xlsx", "csv", "json"),
-                             logdir = "logs", force_template = NULL) {
+                             logdir = "logs", force_template = NULL, force_rows = NULL) {
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
                            templates_dir = templates_dir, user_templates_dir = user_templates_dir,
                            requested_by = requested_by, formats = formats, logdir = logdir,
-                           force_template = force_template)
+                           force_template = force_template, force_rows = force_rows)
   res$kind <- "statement"
   # Fall back to form extraction only when nothing matched AND the user didn't
   # force a transaction template.

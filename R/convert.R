@@ -8,7 +8,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL,
-                              force_template = NULL) {
+                              force_template = NULL, force_rows = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
   # run_id: a stable, human-readable handle for this conversion. Content hash
   # (first 10 chars) + timestamp, so feedback and logs can point back to it.
@@ -68,7 +68,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       template_version <- template$version %||% NA
       template_origin <- template$origin %||% "default"
 
-      parsed <- parse_statement(input, template)
+      parsed <- parse_statement(input, template, force_rows = force_rows)
       recon <- reconcile(parsed, template)
       row_count <- nrow(parsed$transactions)
       kpi_fail_count <- sum(recon$kpis$status == "fail")

@@ -136,6 +136,63 @@ test_that("multi-line descriptions are folded into the transaction, footers are 
   expect_false(grepl("Page", paste(tx$description, collapse = " ")))  # footer excluded
 })
 
+test_that("force_rows adds a dropped row back as a transaction, flagged 'forced'", {
+  # y=70 is a dated line with NO amount -> normally dropped. The user boxes it in
+  # the X-ray ("this IS a transaction"), so force_rows keeps it -- flagged forced
+  # + malformed (its amount genuinely couldn't be read), never silently trusted.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",     # y=40 real txn
+              "06","Jan","NOTE-ONLY"),                 # y=70 dated, NO amount -> dropped
+    x     = c(45,60,110,415,490,   45,60,110),
+    y     = c(40,40,40,40,40,      70,70,70),
+    width = c(12,16,45,25,30,      12,16,60),
+    height = rep(10, 8))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  base <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(base), 1L)                                   # dropped by default
+
+  forced <- parse_pdf_table(input, .simple_tmpl(),
+    force_rows = list(list(page = 1, y_min = 65, y_max = 75)))$transactions
+  expect_equal(nrow(forced), 2L)                                 # the boxed row is back
+  fr <- forced[grepl("NOTE-ONLY", forced$description), ]
+  expect_equal(nrow(fr), 1L)
+  expect_equal(fr$date, "2026-01-06")                            # date still parsed + year-filled
+  expect_true(is.na(fr$amount))                                  # amount genuinely unknown
+  expect_match(fr$flags, "forced")
+  expect_match(fr$flags, "malformed")                            # and it says the amount is missing
+})
+
+test_that("force_rows on an unparseable date keeps the row but flags date_unresolved", {
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",   # y=40 real txn
+              "XX","Yy","THING","9.99","5.00"),      # y=70 bad date, but a real amount
+    x     = c(45,60,110,415,490,   45,60,110,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,70,70),
+    width = c(12,16,45,25,30,      12,16,40,25,20),
+    height = rep(10, 10))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  forced <- parse_pdf_table(input, .simple_tmpl(),
+    force_rows = list(list(page = 1, y_min = 68, y_max = 78)))$transactions
+  expect_equal(nrow(forced), 2L)
+  fr <- forced[grepl("THING", forced$description), ]
+  expect_true(is.na(fr$date))                        # date genuinely unresolved
+  expect_equal(fr$amount, 9.99)                      # amount was fine
+  expect_match(fr$flags, "forced")
+  expect_match(fr$flags, "date_unresolved")
+})
+
+test_that("force_rows that overlaps nothing is a safe no-op", {
+  input <- .mk_input()
+  base <- parse_pdf_table(input, .tmpl)$transactions
+  same <- parse_pdf_table(input, .tmpl,
+    force_rows = list(list(page = 1, y_min = 5000, y_max = 5010)))$transactions
+  expect_equal(nrow(same), nrow(base))
+})
+
 test_that("tightly-set lines are NOT merged into one giant row (row-height grouping)", {
   # line pitch 4pt: the OLD cumsum(diff(y)>tol) merged both lines into one row
   # (no word-gap exceeded 3); the anchored grouping keeps them as two transactions.

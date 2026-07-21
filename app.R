@@ -172,8 +172,10 @@ ui <- fluidPage(
                   plotOutput("ix_plot", height = "780px"),
                   uiOutput("ix_legend"),
                   h4("Seeing a transaction that's missing? Here's every row skipped on this page — and why"),
-                  helpText(HTML("If a real transaction is here, the reason usually points at a one-line fix in the template toolkit (most often the <b>date format</b> or an <b>amount / debit / credit</b> band) that brings back <b>all</b> the rows like it — not just this one.")),
-                  DTOutput("ix_skipped")),
+                  helpText(HTML("If a real transaction is here, the reason usually points at a one-line fix in the template toolkit (most often the <b>date format</b> or an <b>amount / debit / credit</b> band) that brings back <b>all</b> the rows like it — not just this one. For a genuine one-off, select the row and add it by hand — it's kept, flagged <b>forced</b> so it's never mistaken for a clean read.")),
+                  DTOutput("ix_skipped"),
+                  br(),
+                  actionButton("ix_add_row", "➕ This IS a transaction — add the selected row", class = "btn-warning")),
                 conditionalPanel("output.ix_is_pdf != true",
                   helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field."))))),
           uiOutput("cv_feedback")
@@ -903,7 +905,9 @@ server <- function(input, output, session) {
     tmpl <- tryCatch(templates()[[tid]], error = function(e) NULL); if (is.null(tmpl)) return(NULL)
     inp <- tryCatch(read_input(src$path), error = function(e) NULL); if (is.null(inp)) return(NULL)
     if (!identical(inp$kind, "pdf")) return(list(is_pdf = FALSE))
-    layout <- tryCatch(inspect_pdf_layout(inp, tmpl), error = function(e) NULL)
+    # force_rows: user-confirmed rows are painted kept, so the X-ray matches what
+    # the reader now emits after a force-include.
+    layout <- tryCatch(inspect_pdf_layout(inp, tmpl, force_rows = cv_forced()), error = function(e) NULL)
     meta <- tryCatch(extract_metadata(inp), error = function(e) NULL)
     meta_loc <- NULL
     if (!is.null(meta)) {
@@ -995,26 +999,57 @@ server <- function(input, output, session) {
   # "Why aren't you seeing it": every row the engine skipped on this page, with the
   # plain-English reason. Kept rows are excluded (they're the transactions). The
   # actionable skips (bad date / missing amount) sort to the top.
-  output$ix_skipped <- renderDT({
-    st <- ix_state(); req(st, st$is_pdf); lay <- st$layout; req(!is.null(lay))
+  # The skipped rows for the CURRENT page, ordered likely-missed-transactions
+  # first. ONE source of truth so the table's row numbers and the "add" action
+  # below refer to exactly the same rows.
+  ix_skipped_rows <- reactive({
+    st <- ix_state(); if (is.null(st) || !isTRUE(st$is_pdf)) return(NULL)
+    lay <- st$layout; if (is.null(lay)) return(NULL)
     pg <- max(1L, as.integer(input$ix_page %||% 1))
     P <- lay$pages[[as.character(pg)]]
-    if (is.null(P) || is.null(P$rows) || !nrow(P$rows) || is.null(P$rows$reason))
-      return(datatable(data.frame(message = "Nothing to show for this page yet."),
-                       rownames = FALSE, options = list(dom = "t")))
+    if (is.null(P) || is.null(P$rows) || !nrow(P$rows) || is.null(P$rows$reason)) return(NULL)
     sk <- P$rows[!P$rows$kept & nzchar(P$rows$reason %||% ""), , drop = FALSE]
+    if (!nrow(sk)) return(sk)
+    actionable <- grepl("didn't parse|no amount", sk$reason)
+    sk[order(!actionable), , drop = FALSE]           # likely-missed transactions first
+  })
+  output$ix_skipped <- renderDT({
+    sk <- ix_skipped_rows()
+    if (is.null(sk)) return(datatable(data.frame(message = "Nothing to show for this page yet."),
+                                      rownames = FALSE, options = list(dom = "t")))
     if (!nrow(sk)) return(datatable(
       data.frame(message = "Every row on this page was either kept or is a heading / footer 🎉"),
       rownames = FALSE, options = list(dom = "t")))
-    actionable <- grepl("didn't parse|no amount", sk$reason)
-    sk <- sk[order(!actionable), , drop = FALSE]     # likely-missed transactions first
     trunc <- function(s, n = 90) ifelse(nchar(s) > n, paste0(substr(s, 1, n), "…"), s)
     out <- data.frame(
       `what's on the row` = trunc(sk$raw %||% ""),
       `date cell` = sk$date %||% NA_character_,
       `why it was skipped` = sk$reason,
       check.names = FALSE, stringsAsFactors = FALSE)
-    datatable(out, rownames = FALSE, options = list(pageLength = 10, dom = "tp", scrollX = TRUE))
+    datatable(out, rownames = FALSE, selection = "single",
+              options = list(pageLength = 10, dom = "tp", scrollX = TRUE))
+  })
+  # "This IS a transaction": select a skipped row and add it. We record its page +
+  # y-band as a force_rows entry and re-run the conversion, so the row lands in the
+  # output flagged `forced` (and malformed / date_unresolved if its amount or date
+  # couldn't be read) -- captured, and honestly labelled as hand-added.
+  observeEvent(input$ix_add_row, {
+    sk <- ix_skipped_rows()
+    if (is.null(sk) || !nrow(sk)) {
+      showNotification("No skipped rows on this page to add.", type = "warning"); return() }
+    sel <- input$ix_skipped_rows_selected
+    if (is.null(sel) || !length(sel)) {
+      showNotification("Click a row in the table below first, then add it.", type = "warning"); return() }
+    row <- sk[sel[1], , drop = FALSE]
+    pg <- max(1L, as.integer(input$ix_page %||% 1))
+    band <- list(page = pg, y_min = row$y0 - 1, y_max = row$y1 + 1)
+    cur <- cv_forced(); cur[[length(cur) + 1L]] <- band; cv_forced(cur)
+    src <- cv_src(); sess <- cv_dir()
+    if (is.null(src) || is.null(sess)) {
+      showNotification("Convert a statement first.", type = "warning"); return() }
+    cv_res(convert_now(src$path, sess, forced_rows = cv_forced()))
+    showNotification("Added that row as a transaction (flagged 'forced') and re-checked the statement.",
+                     type = "message", duration = 6)
   })
   # Remediate a stuck upload right here: load the saved file into the SAME guided
   # wizard the Convert tab uses, so a failed/abandoned statement is a 2-second
@@ -1036,6 +1071,34 @@ server <- function(input, output, session) {
   cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
   cv_fb_done <- reactiveVal(FALSE)
   cv_upload_id <- reactiveVal(NA_character_)   # the tracked upload for this conversion
+  cv_forced <- reactiveVal(list())             # user-confirmed "this IS a transaction" bands
+
+  # convert_now(src, sess, forced_rows) -- run the one front-door conversion with a
+  # progress bar, reading bank / exact-template from the current inputs. Shared by
+  # the Convert button and the X-ray "add this row" action so both paths behave
+  # identically (the second just adds force_rows and reuses the same session dir).
+  convert_now <- function(src, sess, forced_rows = NULL) {
+    bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
+    forced_tpl <- if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL
+    who <- who_now()
+    withProgress(message = "Converting statement…", value = 0.2, {
+      incProgress(0.2, detail = "Reading the file and detecting its format…")
+      out <- tryCatch(
+        convert_document(src, bank = bank, outdir = sess,
+                         templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
+                         fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
+                         requested_by = who, logdir = LOGDIR,
+                         force_template = forced_tpl, force_rows = forced_rows),
+        error = function(e) {
+          safe(cat(sprintf("[%s] convert error (%s): %s\n", format(Sys.time()),
+                           basename(src), conditionMessage(e)),
+                   file = file.path(LOGDIR, "errors.log"), append = TRUE))
+          list(status = "failed", messages = FRIENDLY_READ_ERROR)
+        })
+      incProgress(0.5, detail = "Running checks and writing outputs…")
+      out
+    })
+  }
 
   # who_now() -- the single source of truth for WHO is doing this, so the audit
   # trail records a real person, never a placeholder. Preference: the name typed
@@ -1051,29 +1114,9 @@ server <- function(input, output, session) {
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, input$cv_file$name)
     file.copy(input$cv_file$datapath, src, overwrite = TRUE)
-    bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
+    cv_forced(list())   # a new file -> forget any force-included rows from the last one
     who <- who_now()
-    # Wrap the convert in a progress bar. Scanned PDFs go through OCR (poppler +
-    # tesseract) and can take many seconds, during which the button used to look
-    # frozen. A visible bar tells the user it IS working, not stuck.
-    res <- withProgress(message = "Converting statement…", value = 0.2, {
-      incProgress(0.2, detail = "Reading the file and detecting its format…")
-      forced_tpl <- if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL
-      out <- tryCatch(
-        convert_document(src, bank = bank, outdir = sess,
-                          templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
-                          fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
-                          requested_by = who, logdir = LOGDIR, force_template = forced_tpl),
-        error = function(e) {
-          # Log the technical detail for Admin; show the user a plain sentence.
-          safe(cat(sprintf("[%s] convert error (%s): %s\n", format(Sys.time()),
-                           input$cv_file$name, conditionMessage(e)),
-                   file = file.path(LOGDIR, "errors.log"), append = TRUE))
-          list(status = "failed", messages = FRIENDLY_READ_ERROR)
-        })
-      incProgress(0.5, detail = "Running checks and writing outputs…")
-      out
-    })
+    res <- convert_now(src, sess, forced_rows = NULL)
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = input$cv_file$name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
     # Capture the upload + its outcome so a failed/abandoned new format is a

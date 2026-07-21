@@ -108,6 +108,25 @@ test_that("inspect marks a wrapped line as a continuation, not a missed transact
   expect_match(p$rows$reason[2], "continuation")
 })
 
+test_that("inspect paints a force_rows band as kept (matches the reader)", {
+  page <- do.call(rbind, list(
+    .mkw("01/04/2025", 50, 60), .mkw("Salary", 120, 60), .mkw("2,500.00", 300, 60),  # kept txn
+    .mkw("02/04/2025", 50, 80), .mkw("Statement", 120, 80), .mkw("date", 160, 80)))   # dated, NO amount
+  tmpl <- list(format = "pdf", table = list(
+    region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+    date_format = "%d/%m/%Y", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110),
+                   description = list(x_min = 111, x_max = 280),
+                   amount = list(x_min = 281, x_max = 360))))
+  base <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
+  expect_false(base$rows$kept[grepl("^02/04", base$rows$date)])            # skipped by default
+  forced <- inspect_pdf_layout(list(words = list(page)), tmpl,
+    force_rows = list(list(page = 1, y_min = 78, y_max = 82)))$pages[["1"]]
+  i <- grepl("^02/04", forced$rows$date)
+  expect_true(forced$rows$kept[i])                                         # now painted kept
+  expect_equal(forced$rows$reason[i], "")                                  # ...and off the skipped list
+})
+
 test_that("locate_values_on_page boxes single- and multi-token values", {
   page <- .demo_input()$words[[1]]
   loc <- locate_values_on_page(page, list(closing_balance = "3,800.00",

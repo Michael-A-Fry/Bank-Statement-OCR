@@ -108,12 +108,27 @@
   "no amount in the money column(s) — check the amount / debit / credit bands"
 }
 
+# .forced_band_hit(page, y0, y1, force_rows) -- does a visual row [y0,y1] on `page`
+# overlap any user-confirmed force_rows band? Module-level so the reader (which
+# keeps the row) and the X-ray (which paints it kept) agree on which rows the user
+# forced in. Each band is list(page, y_min, y_max) in PDF points.
+.forced_band_hit <- function(page, y0, y1, force_rows) {
+  if (is.null(force_rows) || !length(force_rows)) return(FALSE)
+  for (fb in force_rows) {
+    if (!identical(as.integer(fb$page %||% NA_integer_), as.integer(page))) next
+    ymin <- suppressWarnings(as.numeric(fb$y_min %||% -Inf))
+    ymax <- suppressWarnings(as.numeric(fb$y_max %||% Inf))
+    if (is.finite(y0) && is.finite(y1) && y1 >= ymin && y0 <= ymax) return(TRUE)
+  }
+  FALSE
+}
+
 # Per-cell OCR confidence floor: a word below this (0-100) in a date/amount/
 # balance cell earns an `ocr_low_conf` flag. Deliberately conservative -- only
 # clearly-doubtful reads are flagged, so the signal stays meaningful.
 .OCR_CELL_MIN_CONF <- 60
 
-parse_pdf_table <- function(input, template) {
+parse_pdf_table <- function(input, template, force_rows = NULL) {
   t <- template$table %||% list()
   cols <- t$columns %||% list()
   extras_cols <- t$extras %||% list()
@@ -126,6 +141,14 @@ parse_pdf_table <- function(input, template) {
   dec <- template$decimal_mark %||% t$decimal_mark %||% "auto"
   udef <- template$unsigned_default %||% t$unsigned_default %||% "debit"
   words_by_page <- input$words %||% list()
+
+  # force_rows: user-confirmed "this IS a transaction" bands (from the X-ray's
+  # skipped-row list), each list(page, y_min, y_max) in PDF points. A visual row
+  # overlapping a band is KEPT even if its date/amount don't parse -- but it is
+  # FLAGGED (`forced`, plus date_unresolved / malformed as they apply) so a
+  # manually added row is never silently trusted. The bands come from rows already
+  # inside the table region, so no extra region handling is needed here.
+  .row_forced <- function(r) .forced_band_hit(r$page, r$.y0, r$.y1, force_rows)
 
   # .first_date(cell) -- keep only the FIRST date in a date cell. A PDF date band
   # can capture two dates on a row (a transaction date AND a processed/value
@@ -275,7 +298,8 @@ parse_pdf_table <- function(input, template) {
   # it off with merge_continuation: false. (.is_footer_noise lives at module level
   # so the X-ray's skipped-row reasons apply the same footer test.)
   if (!identical(t$merge_continuation %||% TRUE, FALSE) && length(recs) > 1) {
-    is_txn <- vapply(recs, .is_txn, logical(1))
+    # a forced row is a transaction anchor here too, so it is never folded away.
+    is_txn <- vapply(recs, .is_txn, logical(1)) | vapply(recs, .row_forced, logical(1))
     last_txn <- 0L; drop <- logical(length(recs))
     for (i in seq_along(recs)) {
       if (is_txn[i]) { last_txn <- i; next }
@@ -300,8 +324,10 @@ parse_pdf_table <- function(input, template) {
     recs <- recs[!drop]
   }
 
-  keep <- vapply(recs, .is_txn, logical(1))
+  forced_vec <- vapply(recs, .row_forced, logical(1))
+  keep <- vapply(recs, .is_txn, logical(1)) | forced_vec
   recs <- recs[keep]
+  forced_vec <- forced_vec[keep]
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
     vapply(recs, function(r) r[[f]] %||% NA_character_, character(1))
@@ -348,9 +374,12 @@ parse_pdf_table <- function(input, template) {
   # flag, so no_unparsed_rows was blind to a mis-read PDF amount).
   malformed <- if (n == 0) logical(0) else (is.na(amt$value) & !redacted)
   # date_unresolved: kept despite an unknown year (see .date_ok) -- date_iso is NA
-  # but the transaction is preserved. Marked so trust/review reflect the gap.
+  # but the transaction is preserved. Marked so trust/review reflect the gap. A
+  # user-forced row whose date simply didn't parse (date_iso NA) is flagged the
+  # same way, so a manually added row with no usable date is never silently trusted.
   date_unresolved <- if (n == 0) logical(0)
-    else (!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw)))
+    else ((!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw))) |
+          (forced_vec & is.na(date_iso)))
   # ocr_low_conf: an OCR'd date/amount/balance cell held a word below the
   # per-cell confidence floor -- a likely misread digit that the page-mean
   # confidence would mask. Only fires on OCR pages (text pages carry no conf).
@@ -362,6 +391,7 @@ parse_pdf_table <- function(input, template) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, forced_vec, "forced")   # a row the user added by hand from the X-ray
     f <- add(f, ocr_low, "ocr_low_conf")
     f
   }

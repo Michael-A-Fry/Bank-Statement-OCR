@@ -37,7 +37,7 @@
 # `column` is which template column a word is selected into (NA = none / outside
 # region). `rows$kept` marks a row the engine would keep as a transaction (its
 # date cell parses as a real date, or is redacted) -- i.e. a boxed transaction.
-inspect_pdf_layout <- function(input, template) {
+inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   t <- template$table %||% list()
   cols <- t$columns %||% list()
   region <- t$region %||% list()
@@ -80,14 +80,18 @@ inspect_pdf_layout <- function(input, template) {
                     credit = .pdf_cell(rg, cols$credit), description = .pdf_cell(rg, cols$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
         date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)
-        kept <- date_ok && .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
+        natural_keep <- date_ok && .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
+        # A row the user forced in (from the skipped list) is painted kept here too,
+        # so the X-ray reflects exactly what the reader now emits.
+        forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), force_rows)
+        kept <- natural_keep || forced
         # reason: why the engine did NOT keep this row (empty when kept). Same
         # helper the engine uses, so the X-ray can never explain it differently.
         data.frame(x0 = min(rg$x), y0 = min(rg$y),
                    x1 = max(rg$x + rg$width), y1 = max(rg$y + rg$height),
                    kept = isTRUE(kept),
                    date = dcell %||% NA_character_,
-                   reason = .pdf_row_reason(rec, style, date_ok),
+                   reason = if (kept) "" else .pdf_row_reason(rec, style, date_ok),
                    raw = rec$raw,
                    h = suppressWarnings(stats::median(rg$height, na.rm = TRUE)),
                    stringsAsFactors = FALSE)
