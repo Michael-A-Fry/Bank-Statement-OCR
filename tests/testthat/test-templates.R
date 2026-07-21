@@ -138,3 +138,19 @@ test_that("shipped templates cannot be hidden", {
   udir <- tempfile(); on.exit(unlink(udir, recursive = TRUE), add = TRUE)
   expect_error(set_user_template_hidden("anz_everyday_pdf", TRUE, udir), "user-created")
 })
+
+test_that("duplicate_template_groups clusters same-layout user templates", {
+  base <- .min_tmpl()
+  a <- base; a$id <- "acme_v1"; a$bank <- "Acme"
+  b <- base; b$id <- "acme_v2"; b$bank <- "Acme (branch)"    # same shape, different id/label
+  c <- base; c$id <- "other"; c$columns$amount <- list(source = "Value")   # different column mapping
+  tset <- list(acme_v1 = a, acme_v2 = b, other = c)
+  for (id in names(tset)) tset[[id]]$origin <- "user"
+  groups <- duplicate_template_groups(tset)
+  expect_length(groups, 1L)                          # only the two acme variants group
+  expect_setequal(groups[[1]], c("acme_v1", "acme_v2"))
+
+  # shipped templates are excluded (user_only), and a lone template never groups
+  none <- duplicate_template_groups(list(x = `$<-`(a, "origin", "default")))
+  expect_length(none, 0L)
+})

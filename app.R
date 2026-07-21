@@ -413,6 +413,10 @@ ui <- fluidPage(
               textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
           ),
           tags$hr(),
+          h4("Near-duplicate user templates — consolidate the pile"),
+          helpText("Templates that read a statement identically (same format, amounts, dates and columns) but were drafted more than once. Keep the best one and Hide or Delete the rest — pick any id above to act on it."),
+          uiOutput("adm_tpl_dupes"),
+          tags$hr(),
           h4("Label dictionary — the wordings the engine recognises"),
           helpText(HTML("This is usually why a check shows <b>NA</b> — the statement labels its opening/closing balance, period or totals with wording the engine hasn't seen. Add the exact phrases your statements use (case-insensitive) and Save. Applies to every statement immediately.")),
           fluidRow(
@@ -568,6 +572,24 @@ server <- function(input, output, session) {
     output$adm_tpl_msg <- .tpl_note(if (isTRUE(res))
       sprintf("Hid <b>%s</b> — it won't be used for detection until you un-hide it.", id)
       else sprintf("Un-hid <b>%s</b> — it's active again.", id))
+  })
+  # Near-duplicate user templates, grouped by identical layout, so a heap of
+  # variants can be consolidated (keep one, hide/delete the rest via the controls
+  # above). Uses the management set so hidden variants show up too.
+  output$adm_tpl_dupes <- renderUI({
+    groups <- duplicate_template_groups(all_templates())
+    if (!length(groups))
+      return(helpText("No duplicate user templates — nothing to consolidate. 🎉"))
+    ov <- template_overview(all_templates())
+    do.call(tagList, lapply(seq_along(groups), function(gi) {
+      ids <- groups[[gi]]
+      rows <- ov[ov$id %in% ids, , drop = FALSE]
+      lab <- sprintf("%s · %s", rows$bank[1] %||% "?", rows$format[1] %||% "?")
+      tags$div(style = "margin:6px 0;padding:6px 10px;border-left:3px solid #c77700;background:#fff8ef",
+        strong(sprintf("Same layout (%d): %s", length(ids), lab)),
+        tags$ul(lapply(seq_len(nrow(rows)), function(i) tags$li(
+          sprintf("%s%s", rows$id[i], if (nzchar(rows$hidden[i])) " (hidden)" else "")))))
+    }))
   })
   # Delete a USER template (never a shipped one), then refresh the picker.
   observeEvent(input$adm_tpl_delete, {

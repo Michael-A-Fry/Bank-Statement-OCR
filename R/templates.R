@@ -178,6 +178,36 @@ template_overview <- function(tset) {
 # load-time `origin` marker stripped so it round-trips cleanly.
 template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
 
+# .template_shape(t) -- a structural signature: format + amount_sign + date_format
+# + the (sorted) column mapping. Two templates with the same shape read a
+# statement identically, differing only in id / bank label / fingerprint -- i.e.
+# they are the same layout drafted more than once.
+.template_shape <- function(t) {
+  is_pdf <- identical(t$format %||% "delimited", "pdf")
+  cols   <- if (is_pdf) t$table$columns else t$columns
+  sign   <- if (is_pdf) t$table$amount_sign else t$amount_sign
+  dfmt   <- if (is_pdf) t$table$date_format else t$columns$date$format
+  colsig <- if (is.null(cols)) "" else paste(sort(vapply(names(cols), function(k) {
+    c <- cols[[k]]
+    if (is_pdf) sprintf("%s:%s-%s", k, c$x_min %||% "", c$x_max %||% "")
+    else sprintf("%s:%s", k, (if (is.list(c)) c$source else c) %||% "")
+  }, character(1))), collapse = "|")
+  paste(t$format %||% "delimited", sign %||% "", dfmt %||% "", colsig, sep = "~~")
+}
+
+# duplicate_template_groups(tset, user_only) -> list of id-vectors, one per group
+# of templates that share a layout (see .template_shape). Only groups with >1
+# member are returned -- these are the "heap of near-duplicates" to consolidate:
+# keep one, hide or delete the rest. user_only ignores shipped templates (you
+# can't delete those anyway). Deterministic; safe to show (ids + shapes only).
+duplicate_template_groups <- function(tset, user_only = TRUE) {
+  if (user_only) tset <- Filter(function(t) identical(t$origin %||% "default", "user"), tset)
+  if (length(tset) < 2) return(list())
+  sig <- vapply(tset, .template_shape, character(1))
+  groups <- split(names(tset), sig)
+  unname(groups[vapply(groups, length, integer(1)) > 1L])
+}
+
 # save_user_template(template, dir) -> path. Validates first (fail loud), writes
 # <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
 save_user_template <- function(template, dir = "templates_user") {
