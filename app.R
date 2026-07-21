@@ -156,23 +156,23 @@ ui <- fluidPage(
         mainPanel(
           width = 8,
           uiOutput("cv_status"),
-          uiOutput("cv_teach"),
-          uiOutput("cv_candidates"),
+          uiOutput("cv_headline"),   # plain verdict first (self-gates to an OK statement)
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
           # Before any conversion, show a clear empty state (what this page does /
           # what you'll get) instead of bare section headers over empty tables.
           conditionalPanel("output.cv_has_result != true", uiOutput("cv_empty")),
-          # Transaction-statement result panels: only after a result, and hidden
-          # for a form result.
+          # Transaction-statement result: EASY first. Lead with a plain-English
+          # verdict (did it work? how many transactions? can I trust it?), then the
+          # transactions themselves, then the DOWNLOAD. The technical checks,
+          # diagnostics and field-coverage tables live inside a collapsed "Checks &
+          # detail" section for whoever wants to dig in - depth as an option, not a
+          # wall in front of a first-time user.
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
-            h4("Checks"), DTOutput("cv_kpis"),
-            h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
-            h4("Field coverage - is it set up right? what's present / empty / not on this statement"),
-            uiOutput("cv_cov_summary"), DTOutput("cv_coverage"),
+            h4("Your transactions"),
             tabsetPanel(
-              tabPanel("Transactions (preview)", br(), DTOutput("cv_txns")),
-              tabPanel("X-ray - see it on the page", br(),
+              tabPanel("Preview", br(), DTOutput("cv_txns")),
+              tabPanel("See it on the page (X-ray)", br(),
                 conditionalPanel("output.ix_is_pdf == true",
                   p(class = "muted", "Coloured = a column (see legend) · green = a transaction row the tool kept · amber dashed = a row it skipped that looks like a transaction · orange = a balance / date / account detail · purple dotted = a value pinned by a drawn box · red = a redaction (never read)."),
                   fluidRow(
@@ -191,7 +191,19 @@ ui <- fluidPage(
                   helpText(HTML("Rows still going missing and you can't share the statement? Download the <b>shareable diagnostic</b> below - it explains what happened using only page sizes and counts (no dates, names or amounts leave your machine) so it can be sent to whoever maintains the tool.")),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the Field coverage table above shows which column feeds each field."))))),
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
+            # Detection / "wrong template?" and the tweak-in-toolkit prompt: useful,
+            # but AFTER the data, not before the verdict.
+            uiOutput("cv_teach"),
+            uiOutput("cv_candidates"),
+            tags$details(style = "margin-top:14px",
+              tags$summary(style = "cursor:pointer;font-weight:600;color:#0b7a34",
+                           "Checks & detail (for review)"),
+              div(style = "padding:8px 2px",
+                h4("Checks"), DTOutput("cv_kpis"),
+                h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
+                h4("Field coverage - what's present / empty / not on this statement"),
+                uiOutput("cv_cov_summary"), DTOutput("cv_coverage")))),
           uiOutput("cv_feedback")
         )
       )
@@ -1242,14 +1254,45 @@ server <- function(input, output, session) {
 
   output$cv_status <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
+    # A successful transaction statement gets the plain hero headline (cv_headline
+    # below); this compact status line is kept for form results and for anything
+    # that did NOT convert cleanly (so failures still explain themselves up top).
+    if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
     cls <- if (isTRUE(res$status == "ok")) "ok" else "bad"
-    # Plain English headline + a word (not a raw number) for confidence.
     trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
     tagList(
       h4(HTML(sprintf('<span class="%s">%s</span>%s', cls, plain_status(res$status), trust))),
       p(class = "muted", res$messages %||% ""),
       if (!is.null(res$template_id)) p(class = "muted", paste("template:", res$template_id))
     )
+  })
+
+  # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
+  # work, how many transactions, and can I trust it, said in words rather than KPI
+  # codes. This is what a non-technical reviewer reads first; the KPI tables stay
+  # available under "Checks & detail".
+  plain_trust <- function(level) switch(level %||% "",
+    high   = list(cls = "ok",   icon = "✓", line = "High confidence: the opening balance plus every transaction equals the closing balance the statement prints, so nothing is missing."),
+    medium = list(cls = "warn", icon = "✓", line = "Medium confidence: it read cleanly, but a full completeness check could not run (usually because this statement has no running balance to check against). Worth a quick eyeball of the count against the statement."),
+    low    = list(cls = "bad",  icon = "!",      line = "Low confidence: please check these transactions against the statement before relying on them."),
+    list(cls = "warn", icon = "✓", line = "Read cleanly, but completeness could not be auto-verified. Check the transaction count against the statement."))
+  output$cv_headline <- renderUI({
+    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    if (!isTRUE(res$status == "ok")) return(NULL)   # failures are shown by cv_status
+    n <- tryCatch({
+      csv <- res$outputs[grepl("\\.csv$", res$outputs)]
+      if (length(csv) == 1 && file.exists(csv))
+        nrow(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)) else NA_integer_
+    }, error = function(e) NA_integer_)
+    pt <- plain_trust(res$trust$level)
+    bg <- c(ok = "#eef8f0", warn = "#fff8e6", bad = "#fdecec")[[pt$cls]]
+    bd <- c(ok = "#bfe0c8", warn = "#f0c36d", bad = "#f2b8b8")[[pt$cls]]
+    div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px", bg, bd),
+      h3(style = "margin:0 0 4px", sprintf("%s Converted%s", pt$icon,
+        if (!is.na(n)) sprintf(" - %d transaction%s read", n, if (n == 1) "" else "s") else "")),
+      p(style = "margin:0 0 6px;color:#333", pt$line),
+      p(class = "muted", style = "margin:0",
+        "Download it on the left (Excel, CSV or JSON). Full detail is under 'Checks & detail' below."))
   })
   # Is this result a form (labelled values) rather than a transaction statement?
   output$cv_is_form <- reactive({ isTRUE((cv_res()$kind %||% "") == "form") })
