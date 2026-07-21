@@ -1,4 +1,4 @@
-# Bank Statement OCR - statement conversion engine
+# Statement Studio - statement & document conversion engine
 
 A pure-**R** engine that turns a bank/credit-card statement into clean,
 structured, downloadable data (Excel + CSV + JSON) with reconciliation checks
@@ -53,7 +53,7 @@ point-and-click wizard (or editing a YAML file), not by writing code.
   wrong) with an optional comment - appended to `logs/feedback.jsonl`, flagged
   when not clean, keyed by `run_id` back to the run log so maintenance can triage
   exactly what the engine got wrong.
-- **Test suite**: `45 files / 243 tests / 900 assertions, 0 failures`.
+- **Test suite**: `46 files / 248 tests / 939 assertions, 0 failures`.
 
 ## Not done yet (data-gated, not code)
 

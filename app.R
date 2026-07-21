@@ -88,7 +88,7 @@ source("ui_content.R")
 # ---------------------------------------------------------------------------
 ui <- fluidPage(
   tags$head(
-    tags$title("Bank Statement OCR"),
+    tags$title("Statement Studio"),
     # One design system, all inline (the app must work offline / air-gapped:
     # no CDN fonts, scripts or icon packs). Green is the product colour - it
     # already means "checked and OK" everywhere in the results.
@@ -188,8 +188,8 @@ ui <- fluidPage(
   ),
   div(class = "app-header",
     span(class = "app-mark"),
-    span(class = "app-title", "Bank Statement OCR"),
-    span(class = "app-tagline", "Statements in - audit-grade data out.")),
+    span(class = "app-title", "Statement Studio"),
+    span(class = "app-tagline", "Statements and documents in - audit-grade data out.")),
   tabsetPanel(
     id = "main_tabs",
     # ---- About (landing): the journey hub. Everything starts here - one
@@ -197,8 +197,8 @@ ui <- fluidPage(
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
-          "Turn any bank statement - PDF, CSV or Excel - into clean, checked,",
-          " audit-grade transaction data. Deterministic: nothing is guessed,",
+          "Turn any bank statement or financial document - PDF, CSV or Excel -",
+          " into clean, checked, audit-grade data. Deterministic: nothing is guessed,",
           " and anything uncertain is flagged with the reason."),
         div(class = "hub-cards",
           actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
@@ -208,10 +208,10 @@ ui <- fluidPage(
                 "Upload your bank's export, click Convert. You get the verdict, the analysis, every transaction, and the download."),
             div(class = "hub-card-go", "Open Convert →"))),
           actionLink("ab_go_template", class = "hub-card", label = div(
-            div(class = "hub-card-kicker", "New bank or layout"),
+            div(class = "hub-card-kicker", "New bank or document"),
             div(class = "hub-card-title", "Teach it a template"),
             div(class = "hub-card-body",
-                "The toolkit pre-fills everything it can detect from your sample; you confirm against a live preview and save. About 2 minutes, no code."),
+                "A new statement layout, or any other document - a form, a summary, a letter. The toolkit pre-fills what it can detect; you confirm against a live preview and save. About 2 minutes, no code."),
             div(class = "hub-card-go", "Open Add a template →"))),
           actionLink("ab_go_admin", class = "hub-card hub-card-quiet", label = div(
             div(class = "hub-card-kicker", "Looking after the tool"),

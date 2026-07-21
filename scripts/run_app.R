@@ -23,6 +23,6 @@ setwd(app_dir)
 
 port <- suppressWarnings(as.integer(Sys.getenv("BSO_PORT", "8100")))
 if (is.na(port)) port <- 8100L
-cat(sprintf("Bank Statement OCR — starting on port %d (from %s). Open http://<this-vm>:%d\n",
+cat(sprintf("Statement Studio — starting on port %d (from %s). Open http://<this-vm>:%d\n",
             port, app_dir, port))
 shiny::runApp(app_dir, host = "0.0.0.0", port = port, launch.browser = FALSE)

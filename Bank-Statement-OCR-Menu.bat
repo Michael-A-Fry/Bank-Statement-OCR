@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ================================================================
-rem Bank Statement OCR - Friendly Setup Menu
+rem Statement Studio - Friendly Setup Menu
 rem Double-click this file from the repository root OR from scripts\.
 rem ================================================================
 
@@ -23,7 +23,7 @@ if errorlevel 1 (
 
 if not exist "app.R" if not exist "server.R" (
   echo.
-  echo ERROR: This folder does not look like the Bank Statement OCR app folder.
+  echo ERROR: This folder does not look like the Statement Studio app folder.
   echo It must contain app.R or server.R.
   echo.
   echo Current folder:
@@ -42,7 +42,7 @@ if "%PORT%"=="" set "PORT=8100"
 :MENU
 cls
 echo ================================================================
-echo             Bank Statement OCR - Easy Launcher
+echo             Statement Studio  -  Easy Launcher
 echo ================================================================
 echo.
 echo App folder:
