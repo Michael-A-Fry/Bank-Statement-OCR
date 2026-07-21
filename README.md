@@ -53,7 +53,7 @@ point-and-click wizard (or editing a YAML file), not by writing code.
   wrong) with an optional comment - appended to `logs/feedback.jsonl`, flagged
   when not clean, keyed by `run_id` back to the run log so maintenance can triage
   exactly what the engine got wrong.
-- **Test suite**: `28 files / 125 tests / 444 assertions, 0 failures`.
+- **Test suite**: `45 files / 243 tests / 900 assertions, 0 failures`.
 
 ## Not done yet (data-gated, not code)
 
@@ -74,16 +74,20 @@ Rscript scripts/run_app.R
 R -e 'shiny::runApp(".", launch.browser = TRUE)'
 ```
 
-Three tabs, all point-and-click - no coding:
-- **Convert** - upload a statement, (optionally force a bank), click Convert.
-  See the detected template, trust score, the reconciliation checks, and a
-  transaction preview; download the Excel / CSV / JSON.
-- **Template wizard** - upload a *sample* export, map each field (date, amount,
-  description, …) to a source column with dropdowns, set the date format and
-  amount style, tick the fingerprint columns, **Preview** the parse live, then
-  **Save** - it writes `templates/<id>.yaml` for you. That is how a sole analyst
-  adds a new bank.
-- **Help** - the exact test commands and the add-a-bank steps.
+Four tabs, all point-and-click - no coding:
+- **About** - the landing page: what the tool does, how a conversion flows end
+  to end, and how to read the trust signals.
+- **Convert** - upload a statement (or try the bundled sample), click Convert.
+  A plain-English verdict, an analysis view (money in/out, balance over time),
+  the transactions, the X-ray page view for PDFs, and the checks; download the
+  Excel / CSV / JSON and rate the result.
+- **Add a template** - upload a sample and open the *template toolkit*: your
+  document stays on screen, the tool pre-fills everything it can detect, you
+  confirm against a live preview and **Save** - it writes the YAML for you.
+  That is how a sole analyst adds a new bank. A ⓘ guide covers the ways
+  statements differ.
+- **Admin** (password) - insights from the run/feedback logs, template
+  management + label dictionary, batch audit and folder intake.
 
 ## Quick start (no GUI)
 
@@ -135,8 +139,8 @@ no-ops safely when they are not.
 
 ## Adding a new bank (no code)
 
-1. **Easiest:** open the app's **Template wizard**, upload a sample, map the
-   columns, Preview, Save.
+1. **Easiest:** open the app's **Add a template** tab, upload a sample, open
+   the toolkit, confirm what it detected against the live preview, Save.
 2. Or copy an existing `templates/*.yaml` and edit the `columns:` map.
 3. Add a golden test - see [`tests/HOWTO-add-template-test.md`](tests/HOWTO-add-template-test.md).
 4. `Rscript tests/run_tests.R` - your bank must pass and no other bank may break.

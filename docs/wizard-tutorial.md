@@ -22,11 +22,14 @@ description that says, for one bank's statement layout:
 That's it. Add a bank = add one template. Nothing in the engine changes. This is
 why one analyst can look after the whole thing.
 
-There are two kinds of template, chosen by the file you're given:
-- **Delimited / Excel** (`.csv`, `.tsv`, `.xlsx`) → the **Template wizard** tab.
-  You map each field to a **column name**.
-- **PDF** → the **PDF wizard** tab. You **draw a box** over each column on the
-  page.
+Both kinds of template are built the same way: **Add a template** tab → upload
+the file → **Open the toolkit**. The toolkit pre-fills everything it can detect;
+what you do next depends on the file:
+- **Delimited / Excel** (`.csv`, `.tsv`, `.xlsx`) - each field maps to a
+  **column name**; you check the pickers against the sample rows shown on the
+  left.
+- **PDF** - each column is a **box on the page**; you check (or redraw) the
+  proposed boxes.
 
 ---
 
@@ -100,18 +103,22 @@ keeps it inside the period.
 
 ## 5. Step-by-step: a DELIMITED (CSV / Excel) template
 
-1. **Template wizard** tab → **upload** your sample `.csv`/`.tsv`/`.xlsx`.
-2. The wizard **auto-detects** the delimiter, date format and amount style, and
-   guesses the column mapping. The green banner shows what it detected.
-3. **Check each field** points at the right column (dropdowns): date, amount,
-   description, and the optional NZ fields (particulars, code, reference, type,
-   other party, balance). Set a field to `(none)` if the statement doesn't have
-   it.
-4. Fix the **date format** and **amount style** if the auto-guess is wrong (§3–4).
-5. **Fingerprint**: tick the column names that must all be present for this
-   template to match (see §7).
-6. **Preview parse** - the real parsed rows appear. Eyeball them.
-7. **Save template** - it writes `templates/<id>.yaml` for you.
+1. **Add a template** tab → **upload** your sample `.csv`/`.tsv` → **Open the
+   toolkit**. (**Excel?** Most `.xlsx` exports convert as-is via the generic
+   Excel template; a custom Excel layout can't be drafted in the toolkit yet -
+   save the sheet as CSV and set that up instead.)
+2. The toolkit **auto-detects** the delimiter, date format, amount style and
+   column mapping, and shows the first rows of your file on the left the whole
+   time.
+3. **Check the field pickers** point at the right columns (description,
+   reference, balance). Set a picker to `(none)` if the statement doesn't have
+   that column. The full field-by-field mapping (particulars, code, type,
+   other party, …) is editable on the **Advanced** tab.
+4. Fix the **date format** and **amount style** if the auto-guess is wrong (§3-4).
+5. The **fingerprint** (which header names must all be present, §7) is drafted
+   automatically from your sample; fine-tune it on the **Advanced** tab.
+6. Watch the **preview** at the bottom - the real parsed rows. Eyeball them.
+7. **Save template** - it writes `templates_user/<id>.yaml` for you.
 
 ---
 
@@ -119,23 +126,25 @@ keeps it inside the period.
 
 Follow along with the worked example PDF.
 
-1. **PDF wizard** tab → **upload** the PDF → pick the **page** with the
+1. **Add a template** tab → **upload** the PDF → **Open the toolkit**. Column
+   boxes are proposed from the page automatically; pick the **page** with the
    transaction table (often page 2; page 1 is usually a summary).
-2. For each column, in order:
-   a. In **"Field for the next box"**, choose the field (start with **date**).
+2. Check each proposed column, and fix any that are off:
+   a. Choose the field in **"Column the box is…"** (start with **date**).
    b. **Drag a box** left-to-right across that column on the page image.
-   c. Click **"Assign drawn box → field"**. It appears in the list below.
+   c. Click **"Assign box → column"**. A proposed column that isn't really
+      there? Pick it and click **"Remove this column"**.
    d. Repeat for **description**, then the amount column(s), then **balance**.
       - If amounts are **two columns**, set the style to Withdrawals/Deposits and
         draw a box for **debit** (withdrawals) *and* one for **credit**
         (deposits).
-3. Set **date format** (§4) and **amount style** (§3).
-4. **Fingerprint phrase**: type a short phrase that's on this statement and few
-   others - e.g. `Transaction details`. (See §7.)
-5. **Preview parse** - rows appear. The engine keeps only rows whose **date box
+3. Set **date format** (§4) and **amount style** (§3) on the **Simple** tab.
+4. The **fingerprint phrase(s)** - text that proves it's this bank (§7) - are
+   drafted from the page automatically; fine-tune them on the **Advanced** tab.
+5. Watch the **preview** - the engine keeps only rows whose **date box
    reads as a real date**, so headings, "balance brought forward", notes and the
    multi-line detail lines are dropped automatically. You don't box them out.
-6. **Save PDF template**.
+6. **Save template**.
 
 **Tips that come straight from real statements:**
 - Make each box **span the whole column width**, a little into the whitespace on

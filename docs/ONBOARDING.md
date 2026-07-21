@@ -50,13 +50,17 @@ Start the app:
 
 ---
 
-## 2. Add a new bank - the wizard (no code)
+## 2. Add a new bank - the template toolkit (no code)
 
 When a statement comes in that says `UNSUPPORTED`, you teach the engine its
 layout **once**:
 
-1. **Template wizard** tab → **Browse** a *sample* of that export.
-2. The wizard reads the header row and shows a dropdown per field. Map each one:
+1. **Add a template** tab → **Browse** a *sample* of that export → **Open the
+   toolkit**. It pre-fills everything it can detect, with the sample rows on
+   screen while you check.
+2. The toolkit guesses the column mapping - description / reference / balance
+   have pickers on the Simple tab; every other field is editable on the
+   Advanced tab. What each field means:
 
    | Field | What to pick | Notes |
    |---|---|---|
@@ -68,22 +72,22 @@ layout **once**:
    | **other_party** | counterparty account/name | optional |
    | **balance** | running balance column | pick it if present → unlocks the balance check |
 
-3. Set the small settings:
-   - **Delimiter** - `,` for CSV, `\t`-style for TSV.
-   - **Date format** - strptime codes: `%d/%m/%Y` (31/12/2025),
-     `%d/%m/%y` (31/12/25), `%Y-%m-%d` (2025-12-31), `%d %b %Y` (31 Dec 2025).
-   - **Amount style**:
-     - `signed` - one column, minus = debit *(most NZ CSV exports)*
-     - `type_dc` - a `D`/`C` column decides the sign *(credit cards)*
-     - `debit_credit_cols` - separate debit and credit columns
-     - `dr_cr_suffix` - `123.45 DR`
-   - **Fingerprint columns** - tick the header names that uniquely identify this
-     bank. The engine matches a file to this template only if **all** ticked
-     columns are present, so pick distinctive ones.
-4. **Preview parse** - the table on the right updates. Check: dates look ISO,
-   debits are negative, descriptions are intact, no rows missing.
-5. **Save template** - writes `templates/<id>.yaml`. Done - that bank is now
-   supported for everyone.
+3. Check the small settings (all pre-detected; fix only if the preview looks
+   wrong):
+   - **How are the dates written?** - plain-English choices, e.g. 31/12/2025
+     (day/month/year), 31/12/25 (2-digit year), 2025-12-31 (ISO).
+   - **How are amounts shown?**:
+     - one signed column, minus = money out *(most NZ CSV exports)*
+     - a `D`/`C` column decides the sign *(credit cards)*
+     - separate withdrawals and deposits columns
+     - a `DR`/`CR` suffix on the number (`123.45 DR`)
+   - The **fingerprint** (which header names must all be present for this
+     template to match) is drafted automatically; fine-tune it on the
+     **Advanced** tab if it's too loose or too strict.
+4. Watch the **preview** at the bottom. Check: dates look ISO, debits are
+   negative, descriptions are intact, no rows missing.
+5. **Save template** - writes `templates_user/<id>.yaml`. Done - that bank is
+   now supported for everyone on this install.
 
 ### Worked example (BNZ everyday)
 Header: `Date,Amount,Payee,Particulars,Code,Reference,Tran Type,This Party Account,…`
@@ -156,7 +160,7 @@ just-add-a-YAML forever after, exactly like the CSV path.
 
 | You see | It means | Do |
 |---|---|---|
-| `UNSUPPORTED` | no template matched | add one via the wizard (§2); the message shows the closest match and which columns were missing |
+| `UNSUPPORTED` | no template matched | add one via the toolkit (§2); the message shows the closest match and which columns were missing |
 | `NEEDS_REVIEW` | parsed but a check failed | open Checks; compare against the source; if the template is wrong, fix it and re-run |
 | `FAILED` | file unreadable | the message says why (empty, wrong type, password) |
 | a check says `na` | that data isn't in the file | expected for balance-less CSV exports; not an error |
