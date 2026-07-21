@@ -228,6 +228,34 @@ test_that("redacted cells keep the row, null the hidden value, and flag it (neve
   expect_true(is.na(tx$amount[5]) && is.na(tx$balance[5]) && is.na(tx$date[5]))
 })
 
+test_that("redacting the date of an EDGE transaction keeps it (never dropped)", {
+  # Safety invariant: a redaction that covers the date of the FIRST (or last) real
+  # transaction must NOT drop it -- redaction may only null values and add flags,
+  # never change which rows are kept (except to preserve a row whose date/amount
+  # was hidden). This is the exact case a position-based "promotion guard" would
+  # get wrong: with the first row's date blacked out, the remaining real dates all
+  # sit BELOW it, so a span heuristic would demote and silently lose a real
+  # transaction. We keep it instead -- silent loss of a real row is the worst
+  # forensic outcome, worse than a visible, flagged over-count elsewhere.
+  R <- "[REDACTED]"
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c(R,"COFFEE","-40.00","955.50",       # y=40 FIRST row, date redacted (edge)
+              "06","Jan","SHOP","-10.00","945.50", # y=70 real
+              "07","Jan","RENT","-5.00","940.50"), # y=100 real
+    x     = c(45,110,415,490,   45,60,110,415,490,   45,60,110,415,490),
+    y     = c(40,40,40,40,       70,70,70,70,70,       100,100,100,100,100),
+    width = c(55,45,34,30,       12,16,45,34,30,       12,16,45,34,30),
+    height= rep(10, 14))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 3L)                              # the edge row is NOT lost
+  expect_true(is.na(tx$date[1]))                          # its hidden date is NA
+  expect_equal(tx$amount[1], -40.00)                      # its visible amount survives
+  expect_true(grepl("redacted", tx$flags[1], ignore.case = TRUE))  # and it is flagged
+})
+
 test_that("a differently-sized page normalises to the reference (scan/scale fix)", {
   # Same statement, two physical sizes. A template has no explicit ref -> defaults
   # to A4; the A4 page is untouched and the 2x page is normalised back to it, so

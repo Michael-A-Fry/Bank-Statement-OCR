@@ -435,6 +435,19 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     recs <- recs[!drop]
   }
 
+  # Redaction is deliberately allowed to make a row LOOK like a transaction (a
+  # redacted date satisfies .is_txn via .redacted_cell; a redacted amount counts
+  # as money). That is what preserves a real transaction whose date or amount was
+  # blacked out -- the top priority, since silently DROPPING a real row is the
+  # worst forensic outcome. The symmetric cost is that a box drawn over an
+  # off-table summary/fee line can add a spurious row. We do NOT try to suppress
+  # that here: any position/heuristic guard cannot tell a redacted edge
+  # transaction from a redacted off-table line (both are a redacted date with no
+  # real date), so it would drop real rows -- trading a visible over-count for
+  # silent data loss. Instead the spurious row stays VISIBLE: it is flagged
+  # `redacted`, it shows in the X-ray, and it makes row_count differ from the
+  # statement's stated_count, which the reconciliation KPI reports. Over-count
+  # that is surfaced beats under-count that is silent.
   forced_vec <- vapply(recs, .row_forced, logical(1))
   keep <- vapply(recs, .is_txn, logical(1)) | forced_vec
   recs <- recs[keep]
