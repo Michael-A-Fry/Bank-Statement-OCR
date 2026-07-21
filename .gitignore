@@ -61,3 +61,6 @@ samples/_private_staging/*
 
 # X-ray screenshots may render real statements -- never commit
 screenshots/
+
+# stray R plotting-device output
+Rplots.pdf
