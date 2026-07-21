@@ -79,6 +79,21 @@ DIAG_PLAIN <- c(
   ocr_confidence_unknown  = "scan quality unknown")
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
+# Human-readable HEADERS for the transactions preview. The stored core schema uses
+# machine names (date_raw, amount_raw, balance_raw...) that are meaningful to the
+# engine but read as an internal tool to a forensic reviewer. Relabel for DISPLAY
+# only (the downloaded CSV/Excel keep the schema names). The verbatim "as shown"
+# columns keep an explicit label so their audit value stays obvious.
+CV_COL_LABELS <- c(
+  row_id = "#", date = "Date", date_raw = "Date (as shown)",
+  description = "Description", amount = "Amount", amount_raw = "Amount (as shown)",
+  direction = "In / out", balance = "Balance", balance_raw = "Balance (as shown)",
+  particulars = "Particulars", code = "Code", reference = "Reference",
+  type = "Type", other_party = "Other party", currency = "Currency", flags = "Flags")
+cv_friendly_cols <- function(cols) vapply(cols, function(cn) {
+  lab <- CV_COL_LABELS[[cn]]
+  if (is.null(lab)) tools::toTitleCase(gsub("_", " ", cn)) else lab
+}, character(1), USE.NAMES = FALSE)
 # The friendly line shown when a file simply can't be read (technical detail -> log).
 FRIENDLY_READ_ERROR <- paste(
   "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
@@ -1486,31 +1501,50 @@ server <- function(input, output, session) {
   output$cv_trend <- renderPlot({
     d <- cv_data(); req(d); d <- d[!is.na(d$.date), , drop = FALSE]; req(nrow(d) > 0)
     view <- input$an_view %||% "inout"; grp <- input$an_group %||% "week"; unit <- input$an_unit %||% "amount"
-    op <- par(mar = c(5, 4.5, 1, 1)); on.exit(par(op))
+    # On-brand, low-chrome base-R chart: no plot box, light gridlines behind,
+    # human date labels and a $k money axis, so it reads as product, not raw plot.
+    GREEN <- "#0b7a34"; RED <- "#b00020"; INK <- "#1f2a33"; GRID <- "#e8eaed"; AXIS <- "#6b7280"
+    fmt_k <- function(v) ifelse(abs(v) >= 1000,
+      paste0(formatC(v / 1000, format = "f", digits = 1), "k"),
+      formatC(v, format = "f", digits = 0, big.mark = ","))
+    money_lab <- function(at) if (unit == "count") formatC(at, format = "d", big.mark = ",") else paste0("$", fmt_k(at))
+    op <- par(mar = c(4.2, 4.8, 0.8, 1.2), mgp = c(3, 0.55, 0), tcl = -0.25,
+              col.axis = AXIS, col.lab = INK, cex.axis = 0.9, cex.lab = 1)
+    on.exit(par(op))
+    xdate <- function(dates) axis.Date(1, x = dates, format = if (grp == "month") "%b %Y" else "%d %b",
+                                       col = NA, col.ticks = NA, col.axis = AXIS)
     if (view == "balance") {
       b <- d[!is.na(d$.bal), , drop = FALSE]
-      if (!nrow(b)) { plot.new(); text(0.5, 0.5, "This statement has no running balance column.", col = "#888"); return(invisible()) }
-      b <- b[order(b$.date), , drop = FALSE]
-      plot(b$.date, b$.bal, type = "l", col = "#2563eb", lwd = 2, xlab = "", ylab = "Balance", las = 1)
-      points(b$.date, b$.bal, pch = 19, cex = 0.5, col = "#2563eb"); grid(nx = NA, ny = NULL)
+      if (!nrow(b)) { plot.new(); text(0.5, 0.5, "This statement has no running balance column.", col = AXIS); return(invisible()) }
+      b <- b[order(b$.date), , drop = FALSE]; aty <- pretty(range(b$.bal, na.rm = TRUE))
+      plot(b$.date, b$.bal, type = "n", axes = FALSE, xlab = "", ylab = "Balance", ylim = range(aty))
+      abline(h = aty, col = GRID)
+      lines(b$.date, b$.bal, col = GREEN, lwd = 2.5); points(b$.date, b$.bal, pch = 19, cex = 0.6, col = GREEN)
+      axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1); xdate(b$.date)
     } else if (view == "cumnet") {
       dd <- d[order(d$.date), , drop = FALSE]; cn <- cumsum(ifelse(is.na(dd$.amt), 0, dd$.amt))
-      plot(dd$.date, cn, type = "l", col = "#0b7a34", lwd = 2, xlab = "", ylab = "Cumulative net", las = 1)
-      abline(h = 0, col = "#ccc", lty = 2); grid(nx = NA, ny = NULL)
+      aty <- pretty(range(c(0, cn)))
+      plot(dd$.date, cn, type = "n", axes = FALSE, xlab = "", ylab = "Cumulative net", ylim = range(aty))
+      abline(h = aty, col = GRID); abline(h = 0, col = "#c9ced6")
+      lines(dd$.date, cn, col = GREEN, lwd = 2.5)
+      axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1); xdate(dd$.date)
     } else {
-      per <- switch(grp, day = as.character(d$.date),
-                    week = as.character(cut(d$.date, "week")),
-                    month = format(d$.date, "%Y-%m"))
-      pf <- factor(per, levels = sort(unique(per)))
+      key <- switch(grp, day = d$.date, week = as.Date(cut(d$.date, "week")), month = as.Date(cut(d$.date, "month")))
+      lv  <- sort(unique(key)); pf <- factor(as.character(key), levels = as.character(lv))
       val_in  <- ifelse(d$.amt > 0, if (unit == "count") 1 else d$.amt, 0)
       val_out <- ifelse(d$.amt < 0, if (unit == "count") 1 else -d$.amt, 0)
-      ins  <- tapply(val_in,  pf, sum); ins[is.na(ins)] <- 0
+      ins  <- tapply(val_in,  pf, sum); ins[is.na(ins)]  <- 0
       outs <- tapply(val_out, pf, sum); outs[is.na(outs)] <- 0
-      m <- rbind("Money in" = as.numeric(ins), "Money out" = as.numeric(outs))
-      colnames(m) <- levels(pf)
-      barplot(m, beside = TRUE, col = c("#137333", "#b00020"), las = 2, cex.names = 0.75,
-              ylab = if (unit == "count") "Transactions" else "Dollars",
-              legend.text = TRUE, args.legend = list(x = "topleft", bty = "n", cex = 0.9))
+      m <- rbind(as.numeric(ins), as.numeric(outs)); aty <- pretty(c(0, max(m, 1, na.rm = TRUE)))
+      bp <- barplot(m, beside = TRUE, col = c(GREEN, RED), border = NA, axes = FALSE,
+                    names.arg = rep("", ncol(m)), ylim = range(aty), space = c(0.12, 0.85),
+                    ylab = if (unit == "count") "Transactions" else "Dollars")
+      axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1)
+      lab <- switch(grp, month = format(lv, "%b %Y"), format(lv, "%d %b"))
+      axis(1, at = colMeans(bp), labels = lab, col = NA, col.ticks = NA,
+           las = if (length(lv) > 8) 2 else 1, cex.axis = if (length(lv) > 8) 0.75 else 0.9)
+      legend("topleft", legend = c(if (unit == "count") "In" else "Money in", if (unit == "count") "Out" else "Money out"),
+             fill = c(GREEN, RED), border = NA, bty = "n", cex = 0.9)
     }
   })
   # Is this result a form (labelled values) rather than a transaction statement?
@@ -1583,8 +1617,9 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$outputs))
     csv <- res$outputs[grepl("\\.csv$", res$outputs)]
     req(length(csv) == 1, file.exists(csv))
-    datatable(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE),
-              rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE))
+    df <- utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)
+    datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
+              options = list(pageLength = 10, scrollX = TRUE))
   })
 
   # need_file(p) -- a download with nothing to give tells the user (a toast) and
