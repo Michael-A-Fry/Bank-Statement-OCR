@@ -118,6 +118,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d row(s) had the wrong number of fields", length(mal)),
       "Wrong field count: check the delimiter/quoting, or a preamble/footer line was read as data.")
 
+    dalt <- which(grepl("date_alt_format", tx$flags %||% ""))
+    if (length(dalt)) add(sprintf("rows %s (date)", .rng(dalt)), "date_format_mismatch", "medium",
+      sprintf("%d date(s) were written in a different style than the template declares", length(dalt)),
+      "Rows like '17 Sep' were read with the year taken from the statement period. Update the template's date format in the toolkit to make this explicit.")
+
     dbad <- which(is.na(tx$date) & !is.na(tx$date_raw) & nzchar(tx$date_raw %||% ""))
     if (length(dbad)) add(sprintf("rows %s (date)", .rng(dbad)), "date_parse", "medium",
       sprintf("%d date(s) could not be read", length(dbad)),

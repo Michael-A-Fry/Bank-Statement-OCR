@@ -18,6 +18,8 @@
   s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bof\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
+  # ordinal day suffixes: "17th Sep" / "1st Aug" -> "17 Sep" / "1 Aug"
+  s <- gsub("\\b([0-9]{1,2})(st|nd|rd|th)\\b", "\\1", s, ignore.case = TRUE)
   trimws(gsub("\\s+", " ", s))
 }
 

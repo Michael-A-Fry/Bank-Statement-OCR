@@ -294,48 +294,81 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # completeness guard is satisfied, exactly like a delimited statement.
   md <- safe(extract_metadata(input), NULL)
   has_year <- grepl("%[Yy]", date_fmt)
+  # Year context is computed ALWAYS (not just for year-less templates): the
+  # year-less FALLBACK below needs it even when the template's own format
+  # carries a year. Parse the period bounds (2-digit years too, e.g. ASB
+  # "13 Jun 26") and take the year(s) from the parsed dates -- more robust than
+  # a 4-digit regex. Reject implausible years: as.Date("13 Aug 25", "%d %b %Y")
+  # yields 0025 (not NA), so without this the 4-digit format greedily eats a
+  # 2-digit year.
+  pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
+      "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+    dd <- suppressWarnings(as.Date(s, f))
+    if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
+  p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
+  yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
+  yrs <- unique(yrs[!is.na(yrs)])
+  # Some statements print day/month only in the table AND give no parseable
+  # period. Rather than silently drop EVERY row (year-less dates parse to NA
+  # and fail the date filter), scan the page text for a plausible 4-digit year.
+  # Only used when it is UNAMBIGUOUS (a single distinct year on the page): if
+  # the text shows zero or several years we do not guess, keeping to the
+  # "never silently wrong" contract. date_raw stays verbatim regardless.
+  if (!length(yrs)) {
+    alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
+    cy <- suppressWarnings(as.integer(regmatches(alltext,
+            gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
+    cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
+    if (length(cy) == 1L) yrs <- cy
+  }
+  # .with_year(raw, fmt) -- append the period's year to a year-less date string;
+  # with two candidate years (a period spanning New Year) pick the one that
+  # lands the date inside the period.
+  .with_year <- function(raw, fmt) {
+    if (!length(yrs)) return(raw)
+    bad <- is.na(raw) | !nzchar(trimws(raw))
+    if (length(yrs) == 1) { out <- paste(raw, yrs[1]); out[bad] <- raw[bad]; return(out) }
+    out <- vapply(raw, function(r) {
+      if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
+      cand <- suppressWarnings(as.Date(paste(r, yrs), fmt))
+      inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
+      pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
+      if (is.na(pick)) pick <- 1L
+      paste(r, yrs[pick])
+    }, character(1))
+    out
+  }
   full_date <- function(raw) raw
   eff_fmt <- date_fmt
   if (!has_year) {
     eff_fmt <- paste(date_fmt, "%Y")
-    # Parse the period bounds (2-digit years too, e.g. ASB "13 Jun 26") and take
-    # the year(s) from the parsed dates -- more robust than a 4-digit regex.
-    # Reject implausible years: as.Date("13 Aug 25", "%d %b %Y") yields 0025 (not
-    # NA), so without this the 4-digit format greedily eats a 2-digit year.
-    pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
-        "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
-      dd <- suppressWarnings(as.Date(s, f))
-      if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
-    p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
-    yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
-    yrs <- unique(yrs[!is.na(yrs)])
-    # Fallback: some statements print day/month only in the table AND give no
-    # parseable period. Rather than silently drop EVERY row (year-less dates parse
-    # to NA and fail the date filter), scan the page text for a plausible 4-digit
-    # year. Only used when it is UNAMBIGUOUS (a single distinct year on the page):
-    # if the text shows zero or several years we do not guess, keeping to the
-    # "never silently wrong" contract. date_raw stays verbatim regardless.
-    if (!length(yrs)) {
-      alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
-      cy <- suppressWarnings(as.integer(regmatches(alltext,
-              gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
-      cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
-      if (length(cy) == 1L) yrs <- cy
+    full_date <- function(raw) .with_year(raw, eff_fmt)
+  }
+  # Year-less FALLBACK for templates whose declared format carries a year: real
+  # statements print "17 Sep" in the table while the template (built from a
+  # different export of the same bank) says e.g. %d/%m/%Y. When the template
+  # format fails on a date cell, try the day+month family with the year taken
+  # from the statement period -- deterministic (the year comes from the
+  # statement itself, never guessed). Every row read this way is flagged
+  # date_alt_format so the mismatch is visible and fixable in the template.
+  # .fb_first: the fallback's own leading-date trim. .first_date() trims to the
+  # TEMPLATE format's piece count (1 for %d/%m/%Y), which would cut "02 May"
+  # down to "02" before the fallback could read it; day+month is always 2 pieces.
+  .fb_first <- function(cells) vapply(cells, function(cc) {
+    if (is.na(cc)) return(NA_character_)
+    toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
+    if (length(toks) >= 2) paste(toks[1:2], collapse = " ") else as.character(cc)
+  }, character(1), USE.NAMES = FALSE)
+  .fb_parse <- function(raw) {
+    out <- rep(NA_character_, length(raw))
+    if (!length(yrs) || !length(raw)) return(out)
+    raw <- .fb_first(raw)
+    for (f in c("%d %b %Y", "%d %B %Y")) {
+      need <- is.na(out)
+      if (!any(need)) break
+      out[need] <- suppressWarnings(parse_date(.with_year(raw[need], f), f)$iso)
     }
-    full_date <- function(raw) {
-      if (!length(yrs)) return(raw)
-      bad <- is.na(raw) | !nzchar(trimws(raw))
-      if (length(yrs) == 1) { out <- paste(raw, yrs[1]); out[bad] <- raw[bad]; return(out) }
-      out <- vapply(raw, function(r) {
-        if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
-        cand <- suppressWarnings(as.Date(paste(r, yrs), eff_fmt))
-        inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
-        pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
-        if (is.na(pick)) pick <- 1L
-        paste(r, yrs[pick])
-      }, character(1))
-      out
-    }
+    out
   }
 
   # Keep only genuine transaction rows: the date cell must parse AND the row must
@@ -363,11 +396,23 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # date_iso NA (the real year is genuinely unknown), and flag it date_unresolved
   # so the reviewer can assign the year -- data preserved, never silently wrong.
   year_resolved <- has_year || length(yrs) > 0
+  # Document-level gate for the fallback: it exists for statements whose WHOLE
+  # table is year-less under a full-date template (the reported real case). If
+  # the template's own format reads even ONE date in the document, the fallback
+  # stays off - on such documents a stray day+month fragment carrying a number
+  # (a distribution note, a wrapped line) must not sneak in as a transaction.
+  fb_active <- length(yrs) > 0 && length(recs) > 0 &&
+    !any(vapply(recs, function(r) {
+      rw <- .first_date(r$date %||% NA_character_)
+      !is.na(suppressWarnings(parse_date(full_date(rw), eff_fmt)$iso))
+    }, logical(1)))
   .date_ok <- function(raw) {
-    raw <- .first_date(raw)
-    if (year_resolved)
-      return(!is.na(suppressWarnings(parse_date(full_date(raw), eff_fmt)$iso)))
-    !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
+    raw1 <- .first_date(raw)
+    if (year_resolved) {
+      if (!is.na(suppressWarnings(parse_date(full_date(raw1), eff_fmt)$iso))) return(TRUE)
+      return(fb_active && !is.na(.fb_parse(raw)))   # "17 Sep" under a %d/%m/%Y template
+    }
+    !is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
                                        paste(date_fmt, "%Y"))$iso))
   }
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
@@ -483,12 +528,21 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   getc <- function(f) if (n == 0) character(0) else
     vapply(recs, function(r) r[[f]] %||% NA_character_, character(1))
 
+  fb_used <- if (n == 0) logical(0) else rep(FALSE, n)
   if (n == 0) {
     date_iso <- character(0); date_raw <- character(0); description <- character(0)
     amt <- list(value = numeric(0), direction = character(0), raw = character(0))
   } else {
     d <- parse_date(full_date(.first_date(getc("date"))), eff_fmt)
     date_iso <- d$iso; date_raw <- getc("date")   # date_raw stays verbatim (both dates, no year)
+    # Cells the template format couldn't read: try the year-less fallback the
+    # date gate already accepted them under, and mark each row it reads.
+    miss <- is.na(date_iso) & !is.na(date_raw) & nzchar(trimws(date_raw))
+    if (fb_active && any(miss)) {
+      fbi <- .fb_parse(date_raw[miss])
+      date_iso[miss] <- ifelse(is.na(fbi), date_iso[miss], fbi)
+      fb_used[miss] <- !is.na(fbi)
+    }
     if (identical(style, "debit_credit_cols")) {
       deb_raw <- getc("debit"); cr_raw <- getc("credit")
       amt <- parse_amount(NULL, "debit_credit_cols",
@@ -544,6 +598,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, fb_used, "date_alt_format")     # read via the year-less fallback
     f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray
     f <- add(f, stitched_vec, "row_stitched")   # two half-rows the reader re-joined
     f <- add(f, ocr_low, "ocr_low_conf")

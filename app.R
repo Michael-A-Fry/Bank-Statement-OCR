@@ -69,6 +69,7 @@ DIAG_PLAIN <- c(
   balance_break           = "running balance jumps",
   row_count               = "row count doesn't match",
   date_out_of_range       = "date outside the period",
+  date_format_mismatch    = "dates in a different style than expected",
   row_parse               = "rows didn't parse",
   date_parse              = "dates couldn't be read",
   amount_parse            = "amounts couldn't be read",

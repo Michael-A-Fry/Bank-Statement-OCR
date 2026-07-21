@@ -151,6 +151,46 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, sx, sy))
   })
   names(pages) <- as.character(seq_along(wbp))
+  # Year-less fallback, mirrored from parse_pdf_table so the X-ray never
+  # disagrees with the reader: when the template's own date format reads ZERO
+  # dates in the whole document but the statement period supplies the year,
+  # the engine keeps day+month rows ("17 Sep") via the fallback - so rows the
+  # overlay marked "date didn't parse" that the fallback reads must flip to
+  # kept here too.
+  all_dates <- unlist(lapply(pages, function(P)
+    if (!is.null(P$rows) && nrow(P$rows)) P$rows$date else character(0)))
+  all_dates <- all_dates[!is.na(all_dates)]
+  prim_any <- any(vapply(all_dates, function(cc) !is.na(suppressWarnings(
+    parse_date(.first_n_date(cc, date_fmt), date_fmt)$iso)), logical(1)))
+  if (!prim_any && length(all_dates)) {
+    md <- safe(extract_metadata(input), NULL)
+    yr <- NULL
+    for (s in c(md$period_start %||% NA, md$period_end %||% NA)) {
+      for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+        dd <- suppressWarnings(as.Date(s, f))
+        if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) { yr <- c(yr, as.integer(format(dd, "%Y"))); break }
+      }
+    }
+    yr <- unique(yr)
+    if (length(yr) >= 1) {
+      fb_ok <- function(cell) {
+        if (is.na(cell)) return(FALSE)
+        toks <- strsplit(trimws(cell), "[[:space:]]+")[[1]]
+        if (length(toks) >= 2) cell <- paste(toks[1:2], collapse = " ")
+        s <- paste(.normalise_date_str(cell), yr)
+        for (f in c("%d %b %Y", "%d %B %Y"))
+          if (any(!is.na(suppressWarnings(as.Date(s, f))))) return(TRUE)
+        FALSE
+      }
+      for (p in names(pages)) {
+        R <- pages[[p]]$rows
+        if (is.null(R) || !nrow(R)) next
+        flip <- !R$kept & grepl("didn't parse", R$reason %||% "") &
+          vapply(R$date, fb_ok, logical(1), USE.NAMES = FALSE)
+        if (any(flip)) { R$kept[flip] <- TRUE; R$reason[flip] <- "" ; pages[[p]]$rows <- R }
+      }
+    }
+  }
   list(pages = pages)
 }
 
