@@ -254,10 +254,10 @@ ui <- fluidPage(
           # detail" section for whoever wants to dig in - depth as an option, not a
           # wall in front of a first-time user.
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
-            # Analysis: the useful numbers pulled from the statement (money in/out,
-            # net, period, balances, account) as plain cards, then a graph the
-            # reviewer can switch (balance over time / money in vs out / cumulative;
-            # by dollars or by count; grouped by day, week or month).
+            # Analysis + transactions render only when the parse actually produced
+            # rows (ok / needs_review): an unsupported or failed result must never
+            # show zero-money cards and an empty graph under its honest verdict.
+            conditionalPanel("output.cv_has_txns == true",
             uiOutput("cv_summary"),
             div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
               fluidRow(
@@ -293,7 +293,7 @@ ui <- fluidPage(
                   helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field."))))),
             # Detection / "wrong template?" and the tweak-in-toolkit prompt: useful,
             # but AFTER the data, not before the verdict.
             uiOutput("cv_teach"),
@@ -1299,6 +1299,15 @@ server <- function(input, output, session) {
   # tables (which read as half-built).
   output$cv_has_result <- reactive({ !is.null(cv_res()) })
   outputOptions(output, "cv_has_result", suspendWhenHidden = FALSE)
+  # A parse that produced rows: gates the analysis cards / graph / transactions,
+  # so an unsupported or failed result shows its verdict + next step, not an
+  # empty dashboard of zeros.
+  output$cv_has_txns <- reactive({
+    res <- cv_res()
+    isTRUE((res$status %||% "") %in% c("ok", "needs_review")) &&
+      !identical(res$kind, "form") && length(res$outputs %||% character(0)) > 0
+  })
+  outputOptions(output, "cv_has_txns", suspendWhenHidden = FALSE)
 
   # Empty state: shown before the first conversion. Tells a brand-new user what
   # this page is for and exactly what they'll get back, so the screen is never a
@@ -1670,7 +1679,8 @@ server <- function(input, output, session) {
   apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
                               unsigned_default = NULL, desc_col = NULL,
                               ref_col = NULL, bal_col = NULL,
-                              id = NULL, type = NULL, currency = NULL) {
+                              id = NULL, type = NULL, currency = NULL,
+                              date_col = NULL, amount_col = NULL) {
     if (!is.null(id) && nzchar(trimws(id)))
       tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
     if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
@@ -1694,6 +1704,11 @@ server <- function(input, output, session) {
       tmpl$columns <- set_src(tmpl$columns, "description", desc_col)
       tmpl$columns <- set_src(tmpl$columns, "reference",   ref_col)
       tmpl$columns <- set_src(tmpl$columns, "balance",     bal_col)
+      # Date / Amount pickers: set_src preserves the date's format key, and ""
+      # (the "(pick a column)" placeholder) only ever drops an already-absent
+      # mapping, so an auto-detected column is never silently unmapped.
+      tmpl$columns <- set_src(tmpl$columns, "date",   date_col)
+      tmpl$columns <- set_src(tmpl$columns, "amount", amount_col)
     }
     # decimal_mark / unsigned_default are top-level keys the engine reads.
     if (!is.null(decimal) && nzchar(decimal))
@@ -1779,9 +1794,16 @@ server <- function(input, output, session) {
           tags$hr(),
           p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
           fluidRow(
+            column(4, selectInput("g_col_date", "Date (required)",
+                                  choices = c("(pick a column)" = "", g$cols),
+                                  selected = tmpl$columns$date$source %||% "")),
+            column(4, selectInput("g_col_amt", "Amount",
+                                  choices = c("(pick a column)" = "", g$cols),
+                                  selected = tmpl$columns$amount$source %||% "")),
             column(4, selectInput("g_col_desc", "Description (required)",
                                   choices = g$cols,
-                                  selected = tmpl$columns$description$source %||% g$cols[1])),
+                                  selected = tmpl$columns$description$source %||% g$cols[1]))),
+          fluidRow(
             column(4, selectInput("g_col_ref", "Reference (optional)",
                                   choices = c("(none)" = "", g$cols),
                                   selected = tmpl$columns$reference$source %||% "")),
@@ -1921,12 +1943,17 @@ server <- function(input, output, session) {
     src <- cv_src(); req(src)
     res <- cv_res()
     seed <- NULL
-    # If the conversion matched a template, open THAT template so the user refines
-    # the real one instead of starting from scratch; otherwise draft from the file.
-    tid <- (res$template_id %||% NA_character_)[1]
-    if (!is.na(tid) && nzchar(tid)) {
-      tset <- tryCatch(templates(), error = function(e) list())
-      if (!is.null(tset[[tid]])) seed <- tset[[tid]]
+    # If the conversion MATCHED a template (ok / needs_review), open that template
+    # so the user refines the real one. An unsupported result also carries a
+    # template id - the CLOSEST MISS, for the logs - and seeding from that would
+    # open the wrong bank's settings and save a fingerprint that can never match
+    # this file. Unsupported/failed always drafts fresh from the file itself.
+    if ((res$status %||% "") %in% c("ok", "needs_review")) {
+      tid <- (res$template_id %||% NA_character_)[1]
+      if (!is.na(tid) && nzchar(tid)) {
+        tset <- tryCatch(templates(), error = function(e) list())
+        if (!is.null(tset[[tid]])) seed <- tset[[tid]]
+      }
     }
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
@@ -1974,7 +2001,8 @@ server <- function(input, output, session) {
     apply_overrides(g$tmpl, input$g_bank, no_sentinel(input$g_date), no_sentinel(input$g_sign),
                     input$g_decimal, input$g_unsigned_default,
                     input$g_col_desc, input$g_col_ref, input$g_col_bal,
-                    input$g_id, input$g_type, input$g_currency) })
+                    input$g_id, input$g_type, input$g_currency,
+                    date_col = input$g_col_date, amount_col = input$g_col_amt) })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -2040,6 +2068,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_sign", selected = gv_sign(parsed))
     updateSelectInput(session, "g_decimal", selected = parsed$decimal_mark %||% "auto")
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
+    updateSelectInput(session, "g_col_date", selected = parsed$columns$date$source %||% "")
+    updateSelectInput(session, "g_col_amt",  selected = parsed$columns$amount$source %||% "")
     updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")
     updateSelectInput(session, "g_col_ref",  selected = parsed$columns$reference$source %||% "")
     updateSelectInput(session, "g_col_bal",  selected = parsed$columns$balance$source %||% "")
@@ -2183,7 +2213,7 @@ server <- function(input, output, session) {
   })
   output$g_status <- renderText({
     g <- guided(); req(g); tx <- draft_preview(g$path, guided_live())
-    if (is.null(tx) || !nrow(tx)) "No rows detected yet - try a different date or amount setting."
+    if (is.null(tx) || !nrow(tx)) "No rows detected yet - check the Date and Amount column pickers, or try a different date / amount setting."
     else sprintf("%d transaction row(s) detected. If these look right, click Save.", nrow(tx))
   })
   observeEvent(input$g_save, {
