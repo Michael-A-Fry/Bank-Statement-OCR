@@ -906,7 +906,7 @@ server <- function(input, output, session) {
     sel <- w[!is.na(w$column), , drop = FALSE]
     if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
                         border = pal[sel$column], lwd = 1.3)
-    red <- w[isTRUE(w$redacted) | w$redacted %in% TRUE, , drop = FALSE]
+    red <- w[w$redacted %in% TRUE, , drop = FALSE]
     if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
                         border = "#b00020", col = "#b0002022", lwd = 1)
     for (nm in names(P$bands)) { b <- P$bands[[nm]]
@@ -918,7 +918,7 @@ server <- function(input, output, session) {
     if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
     if (isTRUE(input$ix_show_meta) && !is.null(st$meta_loc)) {
       ml <- st$meta_loc[[r$pg]]
-      if (!is.null(ml)) { f <- ml[isTRUE(ml$found) | ml$found %in% TRUE, , drop = FALSE]
+      if (!is.null(ml)) { f <- ml[ml$found %in% TRUE, , drop = FALSE]
         if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
           text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
@@ -1127,9 +1127,16 @@ server <- function(input, output, session) {
   # "__report__" is the escape hatch: picking it means "none of these fit" and
   # reveals the "tell our team" box. guided_live treats it as no-override.
   REPORT_OPT <- c("🚩 None of these — tell our team" = "__report__")
-  guided_date_choices <- function()
-    c(setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
-               vapply(wd_date_table(), `[[`, "", "label")), REPORT_OPT)
+  guided_date_choices <- function(extra = NULL) {
+    base <- setNames(vapply(wd_date_table(), `[[`, "", "fmt"),
+                     vapply(wd_date_table(), `[[`, "", "label"))
+    # Always include the working template's OWN date format, even if it isn't one
+    # of the standard options — so an exotic format set on the Advanced tab stays
+    # selectable and is never silently reverted to a list value by guided_live().
+    if (!is.null(extra) && nzchar(extra) && !(extra %in% base))
+      base <- c(base, stats::setNames(extra, sprintf("%s  (from Advanced)", extra)))
+    c(base, REPORT_OPT)
+  }
   guided_sign_choices <- function()
     c(setNames(names(wd_amount_labels()), unname(wd_amount_labels())), REPORT_OPT)
 
@@ -1193,7 +1200,7 @@ server <- function(input, output, session) {
           textInput("g_bank", "Which bank is this?", value = tmpl$bank),
           fluidRow(
             column(6, selectInput("g_date", "How are the dates written?",
-                                  choices = guided_date_choices(), selected = cur_fmt)),
+                                  choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
             column(6, selectInput("g_sign", "How are amounts shown?",
                                   choices = guided_sign_choices(), selected = cur_sign))),
           fluidRow(
@@ -1344,15 +1351,20 @@ server <- function(input, output, session) {
     if (is.null(nrow(cand)) || nrow(cand) < 2) return(NULL)
     thin <- isTRUE(res$detect$thin)
     top <- utils::head(cand, 4L)
-    others <- setdiff(top$id, res$template_id)
+    # The candidate frame includes the matched winner; the "nearest others" line
+    # and the picker must both EXCLUDE it (else it reads "matched X. Nearest
+    # others: X ...").
+    others_df <- top[top$id != res$template_id, , drop = FALSE]
+    others <- others_df$id
     style <- if (thin) "border:1px solid #f0c36d;background:#fff8e6"
              else "border:1px solid #e3e3e3;background:#fafafa"
     tagList(div(style = sprintf("margin:12px 0;padding:10px 12px;border-radius:8px;%s", style),
       strong(if (thin) "⚠ Close call — please confirm this is the right template"
              else "Template match"),
-      p(class = "muted", sprintf("Matched %s. Nearest others: %s.",
-        res$template_id,
-        paste(sprintf("%s (score %s)", top$id, top$score), collapse = ", "))),
+      p(class = "muted", if (nrow(others_df))
+        sprintf("Matched %s. Nearest others: %s.", res$template_id,
+                paste(sprintf("%s (score %s)", others_df$id, others_df$score), collapse = ", "))
+        else sprintf("Matched %s.", res$template_id)),
       if (length(others)) tagList(
         selectInput("cv_cand_pick", "Wrong one? Open the wizard with a different template:",
                     choices = others, width = "100%"),
@@ -1427,7 +1439,10 @@ server <- function(input, output, session) {
     }
     g$tmpl <- parsed; guided(g)
     updateTextInput(session, "g_bank", value = parsed$bank %||% "")
-    updateSelectInput(session, "g_date", selected = gv_datefmt(parsed))
+    # Re-offer the date list WITH the applied format included, so an exotic
+    # Advanced date_format is selectable and survives (not reverted by guided_live).
+    updateSelectInput(session, "g_date", choices = guided_date_choices(gv_datefmt(parsed)),
+                      selected = gv_datefmt(parsed))
     updateSelectInput(session, "g_sign", selected = gv_sign(parsed))
     updateSelectInput(session, "g_decimal", selected = parsed$decimal_mark %||% "auto")
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")

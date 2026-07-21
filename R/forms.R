@@ -56,9 +56,12 @@ detect_form <- function(input, ftemplates) {
   need_len <- vapply(ftemplates, function(t) length(t$fingerprint$page_contains_all %||% character(0)), integer(1))
   cand <- which(full)
   best <- cand[which.max(need_len[cand])]
-  # unique best (strictly more identifying phrases than any other match)
+  # unique best (strictly more identifying phrases than any other match). On an
+  # equal-specificity TIE, matched is FALSE so convert_form asks the user to pick,
+  # rather than silently extracting with an arbitrarily-chosen form template
+  # (mirrors detect_statement's unique-best rule).
   matched <- sum(need_len[cand] == need_len[best]) == 1
-  list(template_id = names(ftemplates)[best], matched = TRUE,
+  list(template_id = names(ftemplates)[best], matched = matched,
        score = need_len[best],
        detail = if (matched) "matched by identifying phrases"
                 else "several form templates matched equally; pick a bank")

@@ -19,6 +19,26 @@ test_that("detect_form matches on identifying phrases, else unsupported", {
   expect_false(detect_form(hit, list())$matched)   # no templates installed
 })
 
+test_that("detect_form reports UNMATCHED on an equal-specificity tie (never guesses)", {
+  mk <- function(id) list(id = id, mode = "fields", format = "pdf",
+    fingerprint = list(page_contains_all = c("IR3", "Tax year")),
+    fields = list(a = "A"))
+  ft <- list(ird_a = mk("ird_a"), ird_b = mk("ird_b"))
+  page <- list(pages = "IR3 return for the 2025 Tax year")
+  d <- detect_form(page, ft)
+  expect_false(d$matched)                       # two equally-specific -> ask, don't guess
+  expect_true(grepl("equally", d$detail))
+  # ...and convert_form must therefore NOT silently extract with a guessed template
+  od <- tempfile(); on.exit(unlink(od, recursive = TRUE), add = TRUE)
+  # (no real file needed: detect happens on text; use the sample dir with a tie)
+  # a UNIQUE best still matches
+  ft2 <- list(ird_a = mk("ird_a"),
+              ird_b = list(id = "ird_b", mode = "fields", format = "pdf",
+                fingerprint = list(page_contains_all = "IR3"), fields = list(a = "A")))
+  expect_true(detect_form(page, ft2)$matched)
+  expect_equal(detect_form(page, ft2)$template_id, "ird_a")  # more specific wins
+})
+
 test_that("extract + write_form_outputs produce the labelled values", {
   ft <- load_fields_templates(file.path(engine_root(), "fields_templates"), NULL)
   input <- list(pages = paste(

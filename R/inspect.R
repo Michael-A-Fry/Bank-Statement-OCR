@@ -42,6 +42,7 @@ inspect_pdf_layout <- function(input, template) {
   cols <- t$columns %||% list()
   region <- t$region %||% list()
   date_fmt <- t$date_format %||% "%d/%m/%Y"
+  style <- t$amount_sign %||% "signed"
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
   wbp <- input$words %||% list()
 
@@ -72,9 +73,17 @@ inspect_pdf_layout <- function(input, template) {
         redacted_date <- any(rg$redacted[
           (rg$x + rg$width / 2) >= (cols$date$x_min %||% Inf) &
           (rg$x + rg$width / 2) <= (cols$date$x_max %||% -Inf)])
+        # Apply the ENGINE's full keep predicate, not just the date test: a dated
+        # line still has to carry a money amount AND not be a summary line, or the
+        # reader drops it. Sharing .pdf_has_amount/.pdf_is_summary keeps them in step.
+        rec <- list(amount = .pdf_cell(rg, cols$amount), debit = .pdf_cell(rg, cols$debit),
+                    credit = .pdf_cell(rg, cols$credit), description = .pdf_cell(rg, cols$description),
+                    raw = paste(rg$text[order(rg$x)], collapse = " "))
+        kept <- (isTRUE(d_ok) || isTRUE(redacted_date)) &&
+                .pdf_has_amount(rec, style) && !.pdf_is_summary(rec$description, rec$raw)
         data.frame(x0 = min(rg$x), y0 = min(rg$y),
                    x1 = max(rg$x + rg$width), y1 = max(rg$y + rg$height),
-                   kept = isTRUE(d_ok) || isTRUE(redacted_date),
+                   kept = isTRUE(kept),
                    date = dcell %||% NA_character_, stringsAsFactors = FALSE)
       }))
     }

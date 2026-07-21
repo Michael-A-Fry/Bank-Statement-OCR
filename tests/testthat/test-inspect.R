@@ -35,6 +35,29 @@ test_that("inspect_pdf_layout boxes the kept transaction rows only", {
   expect_true(all(p$rows$x1 > p$rows$x0 & p$rows$y1 > p$rows$y0))
 })
 
+test_that("inspect kept mirrors the engine: no amount / summary rows are NOT kept", {
+  # region now includes a date-only line and a 'Closing Balance' summary line
+  page <- do.call(rbind, list(
+    .mkw("01/04/2025", 50, 60), .mkw("Salary", 120, 60), .mkw("2,500.00", 300, 60),  # txn
+    .mkw("02/04/2025", 50, 80), .mkw("Statement", 120, 80), .mkw("date", 160, 80),    # dated, NO amount
+    .mkw("30/04/2025", 50, 100), .mkw("Closing", 120, 100), .mkw("Balance", 165, 100),
+      .mkw("3,800.00", 300, 100)))                                                     # dated summary + amount
+  tmpl <- list(format = "pdf", table = list(
+    region = list(x_min = 40, x_max = 360, y_min = 50, y_max = 110),
+    date_format = "%d/%m/%Y", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 110),
+                   description = list(x_min = 111, x_max = 280),
+                   amount = list(x_min = 281, x_max = 360))))
+  p <- inspect_pdf_layout(list(words = list(page)), tmpl)$pages[["1"]]
+  expect_equal(nrow(p$rows), 3L)
+  # only the real transaction is kept; the date-only line (no amount) and the
+  # 'Closing Balance' summary line are NOT — exactly as parse_pdf_table drops them.
+  expect_equal(sum(p$rows$kept), 1L)
+  expect_true(p$rows$kept[grepl("^01/04", p$rows$date)])
+  expect_false(p$rows$kept[grepl("^02/04", p$rows$date)])   # no amount
+  expect_false(p$rows$kept[grepl("^30/04", p$rows$date)])   # summary line
+})
+
 test_that("locate_values_on_page boxes single- and multi-token values", {
   page <- .demo_input()$words[[1]]
   loc <- locate_values_on_page(page, list(closing_balance = "3,800.00",

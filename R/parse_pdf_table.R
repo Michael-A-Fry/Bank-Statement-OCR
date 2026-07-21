@@ -38,6 +38,30 @@
 # OD/DR/CR and silently flip an overdrawn balance's sign.
 .has_money <- function(x) grepl("[0-9]", as.character(x))
 
+# .pdf_has_amount(r, style) / .pdf_is_summary(description, raw) -- the amount and
+# summary-line halves of the row KEEP predicate, lifted to module level so the
+# table reader (parse_pdf_table) and the Inspect overlay (inspect_pdf_layout)
+# share ONE definition and can never disagree about which rows are transactions.
+.pdf_has_amount <- function(r, style) {
+  .has_money(if (identical(style, "debit_credit_cols"))
+    paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
+}
+# A summary line (opening/closing balance, brought/carried forward, totals) is NOT
+# a transaction even though it carries a money value on a dated line. Match the
+# WHOLE label so a real "Total Payments to ACME Ltd" is KEPT; errs toward keeping.
+.pdf_is_summary <- function(description, raw = NULL) {
+  d <- tolower(trimws(description %||% ""))
+  if (!nzchar(d)) d <- tolower(trimws(raw %||% ""))
+  lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d))
+  grepl(paste0(
+    "^(statement\\s+)?(opening|closing)\\s+balance$",
+    "|^balance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)$",
+    "|^balance\\s+[bc]/f$",
+    "|^(brought|carried)\\s+forward$",
+    "|^total\\s+(withdrawals|deposits|credits|debits|payments|fees|transactions)$"),
+    lbl)
+}
+
 # Per-cell OCR confidence floor: a word below this (0-100) in a date/amount/
 # balance cell earns an `ocr_low_conf` flag. Deliberately conservative -- only
 # clearly-doubtful reads are flagged, so the signal stays meaningful.
@@ -165,35 +189,13 @@ parse_pdf_table <- function(input, template) {
   # issue date, a page header, a "balance brought forward" carry line -- which a
   # date-parse-only filter would wrongly keep. Balance is deliberately NOT enough
   # on its own (carry-forward rows aren't transactions).
-  .has_amount <- function(r) {
-    .has_money(if (identical(style, "debit_credit_cols"))
-      paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
-  }
-  # Summary lines (opening/closing balance, totals, carry-forward) are NOT
-  # transactions even though they carry a money value on a dated line. Drop them
-  # generically -- a real transaction is never *named* "closing balance". This
-  # stops a statement's own summary row from corrupting the reconciliation.
-  # A summary line's description IS the label ("Closing Balance", "Total Credits"),
-  # never a label buried in a longer narrative. So match the WHOLE label, not a
-  # substring: "Total Payments to ACME Ltd" or "Carried forward interest adj" are
-  # real transactions and must be KEPT. This deliberately errs toward keeping a
-  # row -- a stray summary row that slips through breaks balance_reconciliation
-  # LOUDLY (the reviewer investigates), whereas dropping a real transaction loses
-  # money SILENTLY, which the forensic contract forbids.
-  .is_summary <- function(r) {
-    d <- tolower(trimws(r$description %||% ""))
-    if (!nzchar(d)) d <- tolower(trimws(r$raw %||% ""))
-    # strip a trailing amount / colon / dashes so "Closing Balance: 1,234.56 DR"
-    # still reduces to the bare label.
-    lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d))
-    grepl(paste0(
-      "^(statement\\s+)?(opening|closing)\\s+balance$",
-      "|^balance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)$",
-      "|^balance\\s+[bc]/f$",
-      "|^(brought|carried)\\s+forward$",
-      "|^total\\s+(withdrawals|deposits|credits|debits|payments|fees|transactions)$"),
-      lbl)
-  }
+  # Balance alone is deliberately NOT enough (carry-forward rows aren't
+  # transactions); a real transaction is never *named* "closing balance". Both
+  # halves live in module-level helpers so the Inspect overlay applies the SAME
+  # rule -- errs toward keeping (a stray summary breaks reconciliation LOUDLY,
+  # dropping a real transaction loses money SILENTLY, which the contract forbids).
+  .has_amount <- function(r) .pdf_has_amount(r, style)
+  .is_summary <- function(r) .pdf_is_summary(r$description, r$raw)
   # Did we manage to resolve a year for a year-less date format? When we did NOT
   # (no period, no year anywhere in the text), dropping every row would silently
   # lose a whole statement's transactions -- the worst forensic outcome, and one

@@ -27,7 +27,9 @@ wd_date_table <- function() list(
   list(fmt = "%d/%m/%y", label = "31/12/25  (day/month/2-digit year)",       rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{2}$"),
   list(fmt = "%Y-%m-%d", label = "2025-12-31  (year-month-day, ISO)",        rx = "^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$"),
   list(fmt = "%d-%m-%Y", label = "31-12-2025  (day-month-year)",             rx = "^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$"),
+  list(fmt = "%d-%m-%y", label = "31-12-25  (day-month-2-digit year)",       rx = "^[0-9]{1,2}-[0-9]{1,2}-[0-9]{2}$"),
   list(fmt = "%d.%m.%Y", label = "31.12.2025  (day.month.year)",             rx = "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{4}$"),
+  list(fmt = "%d.%m.%y", label = "31.12.25  (day.month.2-digit year)",       rx = "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{2}$"),
   list(fmt = "%Y/%m/%d", label = "2025/12/31  (year/month/day)",             rx = "^[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}$"),
   list(fmt = "%m/%d/%Y", label = "12/31/2025  (US month/day/year)",          rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$"),
   # month-name, with a year
