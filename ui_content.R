@@ -27,7 +27,7 @@ example <code>samples/raw/tutorial/sample_everyday_statement.pdf</code>.</p>
 <tr><td>4</td><td>Which columns exist?</td><td>Map what&#39;s there; leave the rest blank (e.g. no balance column).</td></tr>
 <tr><td>5</td><td>A preamble before the table?</td><td>Header/junk lines above the real header row.</td></tr>
 <tr><td>6</td><td>Multi-line rows?</td><td>Nothing to do &mdash; the 2nd line has no date, so it&#39;s ignored.</td></tr>
-<tr><td>7</td><td>Redactions (black boxes)?</td><td>Nothing to do &mdash; never read under a redaction; marked <code>[REDACTED]</code>.</td></tr>
+<tr><td>7</td><td>Redactions (black boxes)?</td><td>Nothing to do &mdash; a redacted cell is left <code>[REDACTED]</code> and the row is kept; a fully-hidden row just doesn&#39;t appear. Nothing under a redaction is ever read or guessed.</td></tr>
 <tr><td>8</td><td>One account or several?</td><td>Combined statements parse but flag &mdash; balances aren&#39;t continuous across accounts.</td></tr>
 <tr><td>9</td><td>How many statements in the file?</td><td>Merged bundles are flagged up front &mdash; split into one statement per file.</td></tr></table>
 
@@ -122,7 +122,7 @@ about_html <- function() HTML('
 <tr><td><b>Field coverage</b></td><td>Which fields are populated, which are empty (maybe a wrong column), which aren&#39;t on this statement.</td></tr>
 <tr><td><b>Diagnostics</b></td><td>If anything&#39;s off: where, why, and how to fix it.</td></tr>
 </table>
-<p class="muted">Redactions (black boxes) are never read or guessed — kept as <code>[REDACTED]</code>. Merged multi-statement PDFs are detected and you&#39;re asked to split them.</p>
+<p class="muted">Statements often arrive already redacted. Nothing under a redaction is ever read or guessed: a redacted cell is left <code>[REDACTED]</code> and its row is kept, a fully-hidden row simply doesn&#39;t appear, and the tool never estimates how many rows a black block hid. Merged multi-statement PDFs are detected and you&#39;re asked to split them.</p>
 
 <h3>Get started in 3 steps</h3>
 <ol>
