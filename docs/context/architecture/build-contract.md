@@ -152,21 +152,23 @@ splitting with a `split:` block:
 split:
   on: page1_marker         # boundary signal: page1_marker | opening_label
   min_statements: 2         # only split when at least this many segments are found
-  require_agreement: true   # keep the independent-confirmation guard on (default; recommended)
 ```
 When present *and* the upload is detected as a bundle, the engine segments it at
 the declared deterministic marker (each `Page 1 of N` reset, or each repeated
 opening-balance header), parses and **reconciles every segment independently**,
 and rolls trust up to the **weakest** segment. It commits the split **only** when
-the segmentation is independently confirmed — either a different structural count
-agrees on the number of statements, **or** every segment's balance math ties out
-on its own (a mis-placed boundary makes a segment fail to reconcile, so bad
-boundaries fail loudly). Otherwise it falls back to the safe flag-and-refuse
-default. Output rows carry a `statement_index` column; per-statement periods /
-balances / trust are in `result$metadata$split$statements`. Hidden values are
-never guessed to force a segment to reconcile. `split:` is PDF-only (a delimited /
-Excel export is almost always a single account/period); it is rejected by
-`validate_template` on any other format or with an unknown `on` value.
+the number of statements is **independently confirmed** — a *different* structural
+count (distinct periods, page-1 resets, or repeated opening/closing blocks) agrees
+on the same count. Per-segment reconciliation is reported as added confidence but
+is **not** a substitute: a running-balance column is continuous across any cut, so
+a wrongly-placed boundary would still reconcile within each piece — only an
+independent count can confirm the boundaries. Otherwise it falls back to the safe
+flag-and-refuse default. Output rows carry a `statement_index` column; per-statement
+periods / balances / trust are in `result$metadata$split$statements`, and the
+combined header's per-statement identity fields (account, balances) are left blank
+so the feed never stamps one statement's account onto another's rows. `split:` is
+PDF-only (a delimited / Excel export is almost always a single account/period); it
+is rejected by `validate_template` on any other format or with an unknown `on` value.
 
 ## 6. Function interfaces (exact signatures)
 - `load_templates(dir) -> list<template>` (parsed + validated; invalid template = hard error at load, listed by id).

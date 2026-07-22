@@ -53,6 +53,16 @@ test_that("a confirmed bundle splits, tags rows, and rolls trust to the weakest"
   # per-statement summary present
   expect_equal(length(sb$statements), 2L)
   expect_equal(sb$statements[[2]]$period_end, "28 Feb 2026")
+  # trust rolls up to the WEAKEST segment (both medium here -> medium)
+  expect_true(sb$recon$trust$level %in% c("low", "medium", "high"))
+  seg_levels <- vapply(sb$statements, function(s) s$trust_level, character(1))
+  expect_identical(sb$recon$trust$level,
+                   c("low", "medium", "high")[min(match(seg_levels, c("low", "medium", "high")))])
+  # per-statement identity fields are nulled in the combined header (the feed
+  # stamps header onto every row, so one account/balance must not mislabel others)
+  expect_true(is.na(sb$parsed$header$account_number))
+  expect_true(is.na(sb$parsed$header$opening_balance))
+  expect_equal(sb$parsed$header$page_count, 2L)
 })
 
 test_that("split is refused unless the template opts in", {
@@ -67,18 +77,19 @@ test_that("a single statement is never split", {
   expect_null(split_bundle(one, .sp_template()))
 })
 
-test_that("unconfirmed boundaries are refused (no count agrees, no segment self-proves)", {
-  # Same period on both pages (n_periods = 1) AND broken running balances -> nothing
-  # corroborates the 2-way split, so it must refuse rather than emit a maybe-wrong split.
-  bad <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+test_that("unconfirmed boundaries are refused, even when every segment reconciles", {
+  # THE forensic guard: two pages with the SAME period (n_periods = 1) so no
+  # independent count corroborates a 2-way split -- but each segment's running
+  # balance ties out perfectly (a continuous statement stays continuous across any
+  # cut). Reconciliation alone must NOT be allowed to commit the split; only an
+  # independent count can. So this must refuse.
+  same_period <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
     pages = c("Statement period from 1 Jan 2026 to 31 Jan 2026 Page 1 of 1",
               "Statement period from 1 Jan 2026 to 31 Jan 2026 Page 1 of 1"),
-    words = list(.sp_words("Jan", "05", "-4.50", "95.50", "06", "1000.00", "9999.99"),
-                 .sp_words("Jan", "07", "-50.00", "1045.50", "10", "200.00", "8888.88")),
+    words = list(.sp_words("Jan", "05", "-4.50", "95.50", "06", "1000.00", "1095.50"),
+                 .sp_words("Jan", "07", "-50.00", "1045.50", "10", "200.00", "1245.50")),
     page_width = c(595.28, 595.28), page_height = c(595.28, 595.28), meta = list(page_count = 2L))
-  expect_null(split_bundle(bad, .sp_template()))
-  # explicit opt-out of the guard lets it through on the marker alone
-  expect_false(is.null(split_bundle(bad, .sp_template(list(on = "page1_marker", require_agreement = FALSE)))))
+  expect_null(split_bundle(same_period, .sp_template()))
 })
 
 test_that(".segment_starts finds page-1 markers and always includes page 1", {

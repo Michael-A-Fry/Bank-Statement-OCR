@@ -7,11 +7,13 @@
 #   1. a template OPTS IN (a `split:` block), and
 #   2. the boundaries are located by a DECLARED deterministic page marker (not a
 #      guess -- a "Page 1 of N" reset, or a repeated opening-balance label), and
-#   3. the segmentation is INDEPENDENTLY CONFIRMED -- either a different structural
-#      count agrees on the number of statements, OR every segment's balance math
-#      ties out on its own. Per-segment reconciliation is the real proof: split a
-#      statement in the wrong place and its opening + transactions won't equal its
-#      closing, so a bad boundary fails loudly instead of passing silently.
+#   3. the number of statements is INDEPENDENTLY CONFIRMED -- a DIFFERENT structural
+#      count (distinct periods, page-1 resets, or repeated opening/closing blocks)
+#      agrees on the same count. This is necessary and is checked before any work.
+# Per-segment reconciliation is reported as added confidence but is NOT a substitute
+# for the count check: a running-balance column is continuous across ANY cut, so a
+# wrongly-placed boundary would still reconcile within each piece -- reconciliation
+# alone cannot prove a boundary is right, only an independent count can.
 # When any of these is not satisfied the engine keeps its safe default: flag the
 # bundle and refuse the merged parse (needs_review). Hidden values are never
 # guessed; nothing is invented to make a segment reconcile.
@@ -25,7 +27,7 @@
 
 # .split_spec(template) -- normalise the opt-in `split:` block to a spec, or NULL
 # when the template does not opt in. Accepts `split: true` (defaults) or a block
-# with `on` / `min_statements` / `require_agreement`.
+# with `on` / `min_statements`.
 .split_spec <- function(template) {
   s <- template$split
   if (is.null(s) || isFALSE(s)) return(NULL)
@@ -34,9 +36,8 @@
   on <- on[on %in% .SPLIT_SIGNALS]
   if (!length(on)) on <- "page1_marker"
   list(
-    on               = on[1],
-    min_statements   = max(2L, suppressWarnings(as.integer(s$min_statements %||% 2L))),
-    require_agreement = !isFALSE(s$require_agreement))
+    on             = on[1],
+    min_statements = max(2L, suppressWarnings(as.integer(s$min_statements %||% 2L))))
 }
 
 # .page_texts(input) -- one text string per page, COMBINING the word boxes and the
@@ -102,20 +103,13 @@
 # .trust_rank(level) -- order trust so the weakest segment can be found.
 .trust_rank <- function(level) match(level %||% "low", c("low", "medium", "high"))
 
-# .seg_self_proven(recon) -- did this segment prove its OWN completeness? True when
-# a balance reconciliation or a running-balance check actually ran AND passed --
-# the deterministic evidence that its boundaries were right.
-.seg_self_proven <- function(recon) {
-  k <- recon$kpis
-  if (is.null(k) || !nrow(k)) return(FALSE)
-  ok <- function(nm) any(k$name == nm & k$status == "pass")
-  ok("balance_reconciliation") || ok("running_balance_continuity")
-}
-
 # .count_agrees(k, meta, on) -- does an INDEPENDENT structural count (one the split
 # signal did not itself produce) agree that there are k statements? This is the
 # corroboration that guards against a marker that legitimately repeats inside one
-# statement.
+# statement. It is a NECESSARY condition to commit a split: per-segment
+# reconciliation is NOT sufficient on its own, because a running-balance column is
+# continuous across any cut, so a wrongly-placed boundary would still "reconcile"
+# within each piece. Only an independent count can confirm the number of statements.
 .count_agrees <- function(k, meta, on) {
   counts <- integer(0)
   if (!identical(on, "page1_marker")) counts <- c(counts, meta$page1_markers %||% NA)
@@ -148,6 +142,12 @@ split_bundle <- function(input, template, meta = NULL) {
   k <- length(ranges)
   if (k < spec$min_statements) return(NULL)
 
+  # COMMIT GATE (checked BEFORE the work): the segment count must be confirmed by an
+  # INDEPENDENT structural signal. A running balance is continuous across any cut, so
+  # per-segment reconciliation cannot prove a boundary is right -- only an independent
+  # count can. Unconfirmed -> refuse, and the safe flag-and-refuse default takes over.
+  if (!.count_agrees(k, meta, spec$on)) return(NULL)
+
   # Parse + reconcile each segment INDEPENDENTLY.
   segs <- lapply(seq_len(k), function(i) {
     si <- .subinput_pages(input, ranges[[i]])
@@ -155,17 +155,9 @@ split_bundle <- function(input, template, meta = NULL) {
     if (is.null(p) || is.null(p$transactions) || !nrow(p$transactions)) return(NULL)
     r  <- safe(reconcile(p, template), NULL)
     if (is.null(r)) return(NULL)
-    m  <- safe(extract_metadata(si), list())
-    list(parsed = p, recon = r, pages = ranges[[i]], meta = m)
+    list(parsed = p, recon = r, pages = ranges[[i]])
   })
   if (any(vapply(segs, is.null, logical(1)))) return(NULL)   # a segment wouldn't parse -> refuse
-
-  # COMMIT GATE: an independent count agrees on k, OR every segment proved its own
-  # completeness (balance/running-balance passed). Otherwise the boundaries are
-  # unconfirmed -> refuse and let the safe flag-and-refuse default take over.
-  all_proven <- all(vapply(segs, function(s) .seg_self_proven(s$recon), logical(1)))
-  if (spec$require_agreement && !all_proven && !.count_agrees(k, meta, spec$on))
-    return(NULL)
 
   # ---- combine transactions (tagged with the statement they came from) ----
   txs <- lapply(seq_len(k), function(i) {
@@ -179,6 +171,10 @@ split_bundle <- function(input, template, meta = NULL) {
   extras <- lapply(segs, function(s) s$parsed$extras)
   combined_extras <- if (all(vapply(extras, function(e) !is.null(e) && ncol(e) > 0, logical(1))))
     safe(do.call(rbind, extras), NULL) else NULL
+  # renumber the extras join key to match the recombined transactions (each segment
+  # had its own 1..n row_id) so the JSON extras<->transactions join stays valid.
+  if (!is.null(combined_extras) && "row_id" %in% names(combined_extras) && nrow(combined_extras))
+    combined_extras$row_id <- seq_len(nrow(combined_extras))
 
   # ---- per-statement summary (period / balances / trust, per segment) ----
   statements <- lapply(seq_len(k), function(i) {
@@ -191,15 +187,21 @@ split_bundle <- function(input, template, meta = NULL) {
   })
 
   # ---- combined header (summary; per-statement anchors live in `statements`) ----
+  # Per-statement IDENTITY fields (account, balances, count) are nulled here: they
+  # differ per statement, and the feed stamps header fields onto EVERY row, so a
+  # single value would mislabel other statements' rows. The truth is in `statements`
+  # (and each row's statement_index). The period is kept as the bundle's honest span.
   h1 <- segs[[1]]$parsed$header
   header <- h1
-  header$row_count      <- nrow(combined_tx)
-  header$n_statements   <- k
-  header$period_start   <- segs[[1]]$parsed$header$period_start
-  header$period_end     <- segs[[k]]$parsed$header$period_end
-  header$opening_balance <- NA_real_   # not meaningful across statements; per-segment in `statements`
+  header$row_count       <- nrow(combined_tx)
+  header$n_statements    <- k
+  header$page_count      <- npages
+  header$period_start    <- segs[[1]]$parsed$header$period_start
+  header$period_end      <- segs[[k]]$parsed$header$period_end
+  header$account_number  <- NA_character_   # differs per statement -> not one value
+  header$opening_balance <- NA_real_        # per-segment in `statements`
   header$closing_balance <- NA_real_
-  header$stated_count   <- NA_integer_
+  header$stated_count    <- NA_integer_
 
   combined_parsed <- list(
     transactions = combined_tx, extras = combined_extras, header = header,
@@ -226,10 +228,7 @@ split_bundle <- function(input, template, meta = NULL) {
   reasons <- c(
     sprintf("upload auto-split into %d statements at %s boundaries (pages %s); each reconciled independently",
             k, spec$on, paste(vapply(statements, function(s) s$pages, character(1)), collapse = ", ")),
-    if (!all_proven && .count_agrees(k, meta, spec$on))
-      "statement count confirmed by an independent structural signal"
-    else if (all_proven)
-      "every segment proved its own completeness (balance or running-balance reconciled)",
+    "statement count confirmed by an independent structural signal (period / page-1 / balance-block count)",
     sprintf("overall trust is the weakest statement's (statement%s %s): %s",
             if (length(weakest) > 1) "s" else "",
             paste(weakest, collapse = ", "), level))

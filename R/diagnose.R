@@ -108,7 +108,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       k <- recon$kpis
       fails <- k[k$status == "fail", , drop = FALSE]
       for (i in seq_len(nrow(fails))) {
-        nm <- fails$name[i]
+        # An auto-split run tags each KPI name "<name> [statement N]"; match the
+        # BASE name so the correct severity + fix text (not the generic fallback)
+        # are used, while the failing statement stays visible in the detail below.
+        nm <- sub("[[:space:]]*\\[statement [0-9]+\\]$", "", fails$name[i])
+        stmt_tag <- regmatches(fails$name[i], regexpr("\\[statement [0-9]+\\]$", fails$name[i]))
         info <- switch(nm,
           balance_reconciliation = c("balance check", "reconciliation_mismatch", "high",
             "Statement doesn't reconcile: a transaction may be mis-signed, missing, or the opening/closing balance is wrong. Compare the total against the source."),
@@ -126,7 +130,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
             "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
           c("check", "reconciliation_mismatch", "medium",
             "Review this check against the source statement."))
-        add(info[1], info[2], info[3], fails$detail[i], info[4])
+        where <- if (length(stmt_tag)) paste(info[1], stmt_tag) else info[1]
+        add(where, info[2], info[3], fails$detail[i], info[4])
       }
     }
 
