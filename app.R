@@ -684,6 +684,53 @@ ui <- fluidPage(
               textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))
         ),
         tabPanel(
+          "Data capture",
+          br(),
+          h4("Local metadata capture - the raw material for on-box analysis"),
+          helpText(HTML(paste0(
+            "Every conversion can save a rich, structured record of <b>how it went</b> ",
+            "(the layout it matched, how cleanly it parsed, detection scores, ",
+            "reconciliation outcomes, OCR / redaction signals). It is stored on <b>this ",
+            "machine only</b> under <code>logs/metadata/</code>, kept forever, and ",
+            "<b>never enters the Qlik feed</b>. <b>No statement content is stored</b> - ",
+            "only structure, counts and quality signals; any account number is stored ",
+            "only as a one-way hash. Turn the detail up or down, or switch off ",
+            "categories you don't want captured."))),
+          fluidRow(
+            column(5,
+              radioButtons("adm_meta_level", "How much to capture",
+                choices = c("Full - everything (recommended)" = "full",
+                            "Standard - the essentials" = "standard",
+                            "Off - capture nothing" = "off"),
+                selected = CONFIG$metadata$level %||% "full"),
+              checkboxGroupInput("adm_meta_cats", "Categories to capture",
+                choices = c("Layout (shape / signature)" = "layout",
+                            "Parse quality (rows / flags / fill)" = "parse_quality",
+                            "Detection (scores / candidates)" = "detection",
+                            "Reconciliation (KPIs / balances)" = "reconciliation",
+                            "OCR (pages / confidence)" = "ocr",
+                            "Redaction (counts / coverage)" = "redaction"),
+                selected = names(Filter(isTRUE, CONFIG$metadata$capture %||% list()))),
+              actionButton("adm_meta_save", "Save capture settings", class = "btn-primary"),
+              br(), br(), uiOutput("adm_meta_msg")),
+            column(7,
+              tags$div(class = "muted", style = "font-size:12px",
+                HTML(paste0(
+                  "<b>What each level records (PII notes):</b><br>",
+                  "<b>Off</b> - nothing beyond the normal run log.<br>",
+                  "<b>Standard</b> - layout signature, format, detection score/match, ",
+                  "row count, trust level, KPI pass/fail counts. No per-row detail.<br>",
+                  "<b>Full</b> - adds flag histograms, per-field fill ratios, candidate ",
+                  "scores, per-KPI outcomes, balance anchors and net amount, OCR / ",
+                  "redaction detail, and timing.<br><br>",
+                  "Balances and the statement period are financial metadata (not ",
+                  "personal identifiers) and never leave this machine. Descriptions, ",
+                  "payees and references are <b>never</b> stored. Account numbers are ",
+                  "stored only as a hash, so the same account links across runs without ",
+                  "the number being readable."))))
+          )
+        ),
+        tabPanel(
           "Batch & audit",
           br(),
           helpText(HTML("Drop in a pile of statements and get one picture: what converts, the gap layouts <b>biggest-first</b>, and <b>ready-to-edit draft templates</b> for them. Safe to share - only shapes and counts, never contents. Tick <b>convert &amp; save</b> to also produce real outputs and feed Insights.")),
@@ -945,6 +992,20 @@ server <- function(input, output, session) {
     output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved (backup at labels.yaml.bak). New wordings apply to the next conversion."
       else "Could not write the file - check folder permissions."))
+  })
+
+  # ---- Admin: local metadata-capture settings (level + category switches) ----
+  observeEvent(input$adm_meta_save, {
+    req(admin_ok())
+    lvl <- input$adm_meta_level %||% "full"
+    cats <- input$adm_meta_cats %||% character(0)
+    all_cats <- c("layout", "parse_quality", "detection", "reconciliation", "ocr", "redaction")
+    capture <- stats::setNames(as.list(all_cats %in% cats), all_cats)
+    okw <- save_metadata_config(lvl, capture)
+    if (okw) { CONFIG$metadata$level <<- lvl; CONFIG$metadata$capture <<- capture }
+    output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+      if (okw) "Saved. Applies to the next conversion. Capture is local only and never enters the Qlik feed."
+      else "Could not write config/config.yaml - check folder permissions."))
   })
 
   # ---- Admin: bulk audit & gaps ----

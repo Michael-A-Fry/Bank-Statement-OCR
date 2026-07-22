@@ -43,6 +43,25 @@
     allowed_template_origins = list("default"),  # 'default' = curated/proven; add 'user' to include drafts
     template_allowlist       = list(),     # optional: restrict to specific template ids
     include_review_feed      = TRUE        # also write withheld runs to feed/review (separate table)
+  ),
+  metadata = list(
+    # LOCAL-ONLY structural + quality capture about every conversion -- the raw
+    # material for future on-box analysis / a local ML assist. Written to
+    # logs/metadata/<run_id>.json (one file per run, never a shared append), it
+    # NEVER leaves this machine and NEVER enters the governed Qlik feed. No raw
+    # statement CONTENT is stored -- only structure, counts and quality signals;
+    # any account number is stored ONLY as a hash. See docs/context/metadata-capture.md
+    # for the per-level PII notes.
+    level    = "full",          # off | standard | full  -- how much detail to capture
+    capture  = list(            # per-category switches (each applies within its level)
+      layout         = TRUE,    # layout signature, format, column/page shape
+      parse_quality  = TRUE,    # row/flag/coverage/fill stats, date-format, amount-style
+      detection      = TRUE,    # scores, margin, candidates, eligibility
+      reconciliation = TRUE,    # KPI outcomes, trust, balance anchors, discontinuities
+      ocr            = TRUE,     # OCR pages + confidence stats
+      redaction      = TRUE      # redaction counts + scan completeness
+    ),
+    retain_forever = TRUE       # exempt metadata from log rollup (never archived / deleted)
   )
 )
 
@@ -53,6 +72,23 @@
   if (!is.list(base) || !is.list(over)) return(over)
   for (k in names(over)) base[[k]] <- .deep_merge(base[[k]], over[[k]])
   base
+}
+
+# save_metadata_config(level, capture, path) -- persist ONLY the metadata block to
+# config.yaml (merging over whatever is already there), so the Admin toggle for the
+# local capture survives a restart without disturbing the rest of the file. Returns
+# TRUE on success. retain_forever stays TRUE -- metadata is never rolled up.
+save_metadata_config <- function(level, capture, path = .config_path()) {
+  existing <- if (!is.null(path) && file.exists(path))
+    tryCatch(yaml::read_yaml(path), error = function(e) list()) else list()
+  if (!is.list(existing)) existing <- list()
+  lvl <- if (tolower(level %||% "full") %in% metadata_levels()) tolower(level) else "full"
+  existing$metadata <- list(level = lvl, capture = as.list(capture), retain_forever = TRUE)
+  ok <- isTRUE(tryCatch({
+    if (!is.null(path)) dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    yaml::write_yaml(existing, path); TRUE
+  }, error = function(e) FALSE))
+  invisible(ok)
 }
 
 # .config_path() -- BSO_CONFIG env wins; else config/config.yaml next to the app.

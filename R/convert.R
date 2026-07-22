@@ -10,6 +10,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               logdir = "logs", redaction_rects = NULL,
                               force_template = NULL, force_rows = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
+  cfg <- safe(load_config(), .config_defaults())      # for the metadata-capture level
+  t0 <- Sys.time()                                    # elapsed timing (metadata only)
   # run_id: an intentional per-RUN handle for this conversion (feedback and logs
   # point back to it). Content hash (first 10 chars) + a UTC timestamp -- UTC and
   # an explicit zone so the id is reproducible across hosts/timezones, matching
@@ -56,6 +58,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     }
     closest_template <- det$template_id
     detect_detail <- det$detail
+    parsed <- recon <- template <- NULL   # set in the matched branch; NULL otherwise
 
     if (!isTRUE(det$matched)) {
       result$status <- "unsupported"
@@ -133,6 +136,14 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$detect <- list(margin = det$margin, runner_up = det$runner_up,
                             thin = thin_match)
     }
+    # LOCAL-ONLY metadata capture (the ML goldmine). Built here where every
+    # artifact is in scope; written after the run log below. NEVER enters the feed.
+    result$metadata_capture <- safe(capture_metadata(list(
+      run_id = run_id, ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+      requested_by = requested_by %||% current_user(), sha = sha,
+      input = input, parsed = parsed, recon = recon, det = det, meta = meta,
+      template = template, status = result$status,
+      elapsed_ms = as.numeric(difftime(Sys.time(), t0, units = "secs")) * 1000), cfg), NULL)
     result
   }, error = function(e) {
     r <- new_result(status = "failed")
@@ -173,6 +184,10 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     multiple_statements = isTRUE(result$metadata$multiple$likely_multiple),
     message = paste(result$messages, collapse = " | ")
   )))
+
+  # ---- metadata capture: LOCAL ONLY, kept forever (logs/metadata/), never fed ----
+  safe(write_metadata_record(logdir, run_id, result$metadata_capture))
+  result$metadata_capture <- NULL   # transient -- not part of the returned result
 
   result
 }
