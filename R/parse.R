@@ -22,6 +22,31 @@
   NULL
 }
 
+# .delimited_meta(input, reader) -- statement-level metadata (period, opening /
+# closing balance, account, stated count) for a delimited or excel file, mined
+# from ANY preamble ABOVE the transaction table -- the block a bank export prints
+# before the rows. Reads ONLY the preamble, never the transaction rows, so a
+# stray date pair or money value in the data can never be misread as a period or
+# balance. Reuses extract_metadata (the SAME generic extractor the PDF path uses)
+# so labelled balances / period wording are recognised identically everywhere.
+# Returns NULL when there is no preamble -- the header then stays all-NA, exactly
+# as before, so a bare transaction CSV is unaffected.
+.delimited_meta <- function(input, reader) {
+  pre <- switch(input$kind %||% "",
+    delimited = {
+      hl <- reader$header_line_no %||% NA_integer_
+      if (is.na(hl) || hl <= 1L) character(0) else (input$lines %||% character(0))[seq_len(hl - 1L)]
+    },
+    excel = input$meta$preamble %||% character(0),
+    character(0))
+  pre <- pre[!is.na(pre) & nzchar(trimws(pre))]
+  if (!length(pre)) return(NULL)
+  # A minimal PDF-free shim: extract_metadata treats `pages` as the text to mine
+  # and skips its pdf-only probes for a non-pdf kind.
+  shim <- list(kind = input$kind %||% "delimited", pages = pre, meta = list(), path = input$path)
+  safe(extract_metadata(shim), NULL)
+}
+
 REDACTION_TOKEN <- "[REDACTED]"
 
 .is_redacted <- function(x) {
@@ -175,17 +200,26 @@ parse_statement <- function(input, template, force_rows = NULL) {
   core <- coerce_core(core)
 
   page_count <- if (identical(input$kind, "pdf")) (input$meta$page_count %||% NA_integer_) else NA_integer_
+  # Statement-level metadata from the preamble (period / balances / account /
+  # stated count). NULL when there's no preamble, so a bare transaction table
+  # keeps the all-NA header it had before -- reconciliation then leans on the
+  # running-balance column (running_balance_continuity), exactly as today.
+  md <- .delimited_meta(input, reader)
   header <- list(
     bank = template$bank %||% NA_character_,
     statement_type = template$statement_type %||% NA_character_,
     template_id = template$id %||% NA_character_,
     template_version = template$version %||% NA,
-    account_number = NA_character_, account_name = NA_character_,
-    period_start = NA_character_, period_end = NA_character_,
-    opening_balance = NA_real_, closing_balance = NA_real_,
+    account_number = md$account_number %||% NA_character_,
+    account_name   = md$account_name %||% NA_character_,
+    period_start = md$period_start %||% NA_character_,
+    period_end   = md$period_end %||% NA_character_,
+    opening_balance = suppressWarnings(as.numeric(md$opening_balance %||% NA)),
+    closing_balance = suppressWarnings(as.numeric(md$closing_balance %||% NA)),
     currency = template$currency %||% "NZD",
     source_file = basename(input$path), source_sha256 = input$sha256,
-    page_count = page_count, row_count = n
+    page_count = page_count, row_count = n,
+    stated_count = md$stated_count %||% NA_integer_
   )
 
   # Provenance is per PARSED ROW: a multi-line quoted record maps to one row and

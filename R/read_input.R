@@ -47,6 +47,13 @@ read_excel_input <- function(path) {
     return(list(table = tbl))
   }
   raw <- best$raw
+  # Preamble = every row ABOVE the header (bank / account / period / balances a
+  # statement export prints before the table). Kept as text so parse_statement
+  # can mine statement-level metadata from it -- and ONLY from it, never the
+  # transaction rows -- exactly as the PDF path does.
+  preamble <- if (best$hdr > 1) vapply(seq_len(best$hdr - 1L), function(r)
+    paste(trimws(as.character(unlist(raw[r, ], use.names = FALSE))), collapse = " "),
+    character(1)) else character(0)
   h <- trimws(as.character(unlist(raw[best$hdr, ], use.names = FALSE)))
   blank <- which(is.na(h) | !nzchar(h))
   if (length(blank)) h[blank] <- paste0("col", blank)
@@ -71,7 +78,7 @@ read_excel_input <- function(path) {
       tbl[[cn]] <- v
     }
   }
-  list(table = tbl, sheet = best$sheet, header_row = best$hdr)
+  list(table = tbl, sheet = best$sheet, header_row = best$hdr, preamble = preamble)
 }
 
 # read_pdf_input(path) -- PDF reader delegating to read_pdf() (R/read_pdf.R):
@@ -121,6 +128,7 @@ read_input <- function(path, redaction_rects = NULL) {
     input$kind <- "excel"
     x <- read_excel_input(path)
     input$table <- x$table
+    input$meta$preamble <- x$preamble %||% character(0)
   } else if (ext == "pdf") {
     input$kind <- "pdf"
     x <- read_pdf_input(path, redaction_rects = redaction_rects)
