@@ -14,6 +14,20 @@
 # re-convert overwrites (idempotent) and two different files never collide.
 .feed_key <- function(sha) if (is.null(sha) || is.na(sha) || !nzchar(sha)) NA_character_ else substr(sha, 1, 16)
 
+# .atomic_write_csv(df, path) -- write a feed CSV so a Qlik load can NEVER read a
+# half-written file: write to a per-process temp in the SAME directory, then
+# rename over the target (atomic on a POSIX same-filesystem move). On any failure
+# the temp is removed and the existing file is left untouched. Returns TRUE on
+# success. Feed writes must never throw, so it is fully safe()-wrapped.
+.atomic_write_csv <- function(df, path) {
+  tmp <- paste0(path, ".", Sys.getpid(), ".part")
+  ok <- safe({ utils::write.csv(df, tmp, row.names = FALSE, na = ""); TRUE }, FALSE)
+  if (isTRUE(ok) && file.exists(tmp)) {
+    if (!isTRUE(safe(file.rename(tmp, path), FALSE))) { safe(unlink(tmp)); ok <- FALSE }
+  } else { safe(unlink(tmp)); ok <- FALSE }
+  invisible(isTRUE(ok))
+}
+
 # .trust_ok(level, min_trust) -- does the trust level meet the floor?
 .trust_ok <- function(level, min_trust) {
   level <- tolower(level %||% ""); min_trust <- tolower(min_trust %||% "high")
@@ -103,8 +117,7 @@ write_feed <- function(result, config = load_config(), ts = NULL,
       dest_dir <- if (gate$accept) tx_dir else if (isTRUE(config$feed$include_review_feed)) rev_dir else NULL
       if (!is.null(dest_dir)) {
         f <- file.path(dest_dir, paste0(key, ".csv"))
-        safe(utils::write.csv(stamped, f, row.names = FALSE, na = ""))
-        tx_written <- f
+        if (.atomic_write_csv(stamped, f)) tx_written <- f
       }
     }
   }
@@ -121,8 +134,7 @@ write_feed <- function(result, config = load_config(), ts = NULL,
     feed_file = if (gate$accept && !is.na(tx_written)) basename(tx_written) else NA_character_,
     stringsAsFactors = FALSE)
   if (!is.na(run_id))
-    safe(utils::write.csv(manifest, file.path(runs_dir, paste0(run_id, ".csv")),
-                          row.names = FALSE, na = ""))
+    .atomic_write_csv(manifest, file.path(runs_dir, paste0(run_id, ".csv")))
 
   invisible(gate)
 }

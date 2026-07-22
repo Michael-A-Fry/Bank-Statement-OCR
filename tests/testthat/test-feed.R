@@ -91,6 +91,17 @@ test_that("re-converting flips the feed folder, never leaving a stale row (P1-3)
   expect_false(file.exists(rev(cfg)))                # stale review row removed
 })
 
+test_that("feed CSVs are written atomically -- no partial/temp files linger (P2-12)", {
+  cfg <- .cfg()
+  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  all_files <- list.files(cfg$feed$feed_dir, recursive = TRUE)
+  expect_true(length(all_files) > 0)
+  expect_false(any(grepl("\\.part$", all_files)))     # temp renamed away, never left behind
+  # the delivered file is complete and readable (rename published it whole).
+  tx <- list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)
+  expect_equal(nrow(utils::read.csv(tx[1], stringsAsFactors = FALSE)), 2)
+})
+
 test_that("feed.enabled = false is a no-op", {
   cfg <- .cfg(); cfg$feed$enabled <- FALSE
   expect_null(write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv"))
