@@ -245,6 +245,17 @@ capture_metadata <- function(ctx, config = load_config()) {
     if (length(nov)) rec$novelty <- nov
   }
 
+  # ---- template hints: everything needed to DRAFT a template ----
+  # The richest single signal for a statement the engine could NOT match (but
+  # captured for every run at `full`): PII-safe per-source-column profiles
+  # (kind / format / fill / masked shape) plus the engine's own best-guess
+  # mapping, so a human or an AI assistant has ALL the structural detail to build
+  # a template without seeing statement content. See column_profile.R.
+  if (.meta_on(config, "template_hints") && .meta_at_least(level, "full")) {
+    th <- safe(template_hints(ctx$input, tmpl, matched = isTRUE(ctx$det$matched)), NULL)
+    if (!is.null(th) && length(th)) rec$template_hints <- th
+  }
+
   # ---- reconciliation ----
   if (.meta_on(config, "reconciliation") && !is.null(ctx$recon)) {
     r <- ctx$recon

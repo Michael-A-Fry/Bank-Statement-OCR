@@ -61,6 +61,19 @@ Alongside the fixes, this pass also shipped the **local metadata-capture subsyst
 (`c2b5fbd`) — the on-box "ML goldmine" (see [metadata-capture.md](metadata-capture.md))
 — and the **project charter** (`7f419c1`, [charter.md](charter.md)).
 
+### Customisation & maintainability platform (this pass, continued)
+
+Once the engine was stable, the follow-on work made every "little thing" the engine
+checks for **customisable data, not code**, and pulled scattered magic numbers into
+the open — directly serving "keep it simple and maintainable as it scales":
+
+| Item | Status | What |
+|---|---|---|
+| Recognition **lexicon** (three-tier: template > lexicon > built-in) | ✅ shipped | `R/lexicon.R` + `dictionaries/lexicon.yaml`; every marker/synonym/regex externalised, admin-editable, hot-applied, empty-file = shipped behaviour. See [customisation.md](customisation.md). |
+| Deterministic **learning loop** (ML *proposes*, human approves, engine acts) | ✅ scaffolded | `R/suggestions.R` + Admin panel; ranks unrecognised signals from the metadata corpus into lexicon suggestions. |
+| **Engine parameters** consolidated | ✅ shipped | `R/params.R` — year window, money tolerance, OCR/redaction thresholds, oversized advisories, each named once with one shared `.plausible_year` / `.tolerant_date`. See [engine-parameters.md](engine-parameters.md). |
+| **Template hints** in metadata (draft-a-template signal) | ✅ shipped | `R/column_profile.R` — PII-safe per-source-column profiles + the engine's suggested mapping, so an unmatched statement carries everything an AI/human needs to build a template. |
+
 ---
 
 ## Findings by priority

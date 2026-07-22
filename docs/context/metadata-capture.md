@@ -44,7 +44,7 @@ metadata:
 |---|---|---|
 | **Off** | Nothing beyond the normal run log. | — |
 | **Standard** | Layout signature + format; detection match/score/margin; row count; trust level; KPI pass/fail counts; the statement period and an account **hash**. | No per-row detail. Period + account-hash only. |
-| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, the "misses" (unparsed dates/amounts), value **shapes** (amount magnitude buckets, description length stats, direction split), detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, multi-statement counts (# periods / # accounts / boundary reasons), the **novelty** set (source header inventory, unmapped columns, unrecognised indicator tokens), OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Value shapes are aggregate counts, never values. Column names and short indicator tokens (e.g. an unrecognised "PAID"/"RECD" debit marker) are structural, not content. Still no descriptions/payees/references and no raw account number. |
+| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, the "misses" (unparsed dates/amounts), value **shapes** (amount magnitude buckets, description length stats, direction split), detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, multi-statement counts (# periods / # accounts / boundary reasons), the **novelty** set (source header inventory, unmapped columns, unrecognised indicator tokens), the **template hints** (per-column profiles + suggested mapping), OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Value shapes are aggregate counts, never values. Column names, short indicator tokens (e.g. an unrecognised "PAID"/"RECD" debit marker) and *masked* value shapes are structural, not content. Still no descriptions/payees/references and no raw account number. |
 
 ### Full coverage — what the "goldmine" answers
 
@@ -63,8 +63,47 @@ across the whole `logs/metadata/` corpus, without ever touching statement conten
   unrecognised_type_values}` — the columns a template never used and the indicator
   tokens it didn't know (the "a new bank writes Paid/Recd for debit/credit" signal),
   plus `layout.signature` for clustering never-before-seen layouts.
+- **Everything needed to DRAFT a template** (the richest signal when a statement
+  could NOT be matched): `template_hints` — see below.
 - **Did it reconcile, and how far off?** `reconciliation.{trust_level, kpis,
   opening_balance, closing_balance, net_amount, stated_count}`.
+
+### `template_hints` — hand an AI (or a human) everything to build a template
+
+When the engine can't match a statement, the most valuable thing to capture is a
+**structural description of its source columns** and the engine's own best guess
+at the mapping — enough for a person, or an AI assistant, to write a template
+*without ever seeing statement content*. Captured for every run at `full`, it is
+the exact payload to paste alongside the lexicon when asking a copilot to
+"recommend template and lexicon changes to support this new statement".
+
+For a **CSV / Excel** statement:
+- `columns[]` — one profile per source column: its `name`, inferred `kind`
+  (`date` / `money` / `integer` / `indicator` / `text`), `fill_rate`, `distinct`
+  count, and a **masked** `example_shape` (every digit → `9`, every letter → `A`,
+  punctuation kept, so `31/12/2025` → `99/99/9999` and `$1,234.56` → `$9,999.99`).
+  Kind-specific detail: a `date` carries its detected `date_format` (`%d/%m/%Y`);
+  a `money` column carries the style facts a template needs (`decimal_mark`,
+  `thousands_sep`, `currency_symbol`, `parens_negative`, `minus_negative`,
+  `dr_cr_suffix`); an `indicator` exposes its short distinct `tokens` (e.g.
+  `["D","C"]`); a `text` column carries `length` stats.
+- `suggested_mapping` — the engine's own first draft, from the same detectors the
+  wizard uses: `date` + `date_format`, the `amount_style`, the `fields`
+  (field → source header), and, for a D/C statement, the inferred
+  `type_debit_value` / `type_credit_value`. Header names + formats only.
+- `delimiter` (CSV).
+
+For a **PDF** statement: `pdf_bands` (the auto-suggested column x-ranges, offered
+only when no template matched), `shapes` (money/date style facts scanned from the
+page text) and `fingerprint_candidates` (distinctive header phrases a template
+could match on).
+
+**PII posture:** identical to the rest of capture — no raw values leave. Column
+names, kinds, formats, counts and *masked* shapes are structural; the only literal
+tokens emitted are a low-cardinality indicator column's short distinct values
+(the same posture as `novelty.unrecognised_type_values`). The masked shape reveals
+that a description column *can contain* an account-number pattern
+(`AA 99-9999-9999999-99`) without ever storing a real digit.
 
 These "unrecognised" fields are the exact feedback loop for supplementing the
 engine's vocabularies (see the customisation model): a model clusters what keeps
@@ -90,6 +129,11 @@ identifiers, and never leave the machine. Account numbers appear only as a hash.
   "parse_quality":  { "row_count", "malformed_rows", "redacted_rows", "amount_sign",
                       "date_format", "source_line_count", "multiline_extra",
                       "flag_histogram", "field_fill" },
+  "template_hints": { "kind", "delimiter", "row_sample",
+                      "columns": [ { "name", "kind", "fill_rate", "distinct", "example_shape",
+                                     "date_format" | "money{…}" | "tokens[]" | "length{…}" } ],
+                      "suggested_mapping": { "date", "date_format", "amount_style", "fields{…}",
+                                             "type_debit_value", "type_credit_value" } },
   "reconciliation": { "trust_level", "trust_score", "kpis",
                       "opening_balance", "closing_balance", "stated_count", "net_amount" },
   "ocr":            { "pages", "min_confidence", "low_conf_cells" },     // only when OCR ran

@@ -711,6 +711,7 @@ ui <- fluidPage(
                             "Reconciliation (KPIs / balances)" = "reconciliation",
                             "Multi-statement (# statements / periods / accounts)" = "multi_statement",
                             "Novelty (unmapped columns / unrecognised tokens)" = "novelty",
+                            "Template hints (column profiles / suggested mapping)" = "template_hints",
                             "OCR (pages / confidence)" = "ocr",
                             "Redaction (counts / coverage)" = "redaction"),
                 selected = names(Filter(isTRUE, CONFIG$metadata$capture %||% list()))),
@@ -1046,7 +1047,7 @@ server <- function(input, output, session) {
     lvl <- input$adm_meta_level %||% "full"
     cats <- input$adm_meta_cats %||% character(0)
     all_cats <- c("layout", "parse_quality", "detection", "reconciliation",
-                  "multi_statement", "novelty", "ocr", "redaction")
+                  "multi_statement", "novelty", "template_hints", "ocr", "redaction")
     capture <- stats::setNames(as.list(all_cats %in% cats), all_cats)
     okw <- save_metadata_config(lvl, capture)
     if (okw) { CONFIG$metadata$level <<- lvl; CONFIG$metadata$capture <<- capture }
