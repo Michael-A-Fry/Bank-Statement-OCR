@@ -100,19 +100,19 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       thin_match <- is.finite(det$margin) && det$margin <= 1 && !is.na(det$runner_up)
       # A CONFIRMED auto-split has handled the bundle (every statement parsed +
       # reconciled on its own), so being multiple is no longer a reason to force
-      # review -- the rolled-up trust / KPI outcomes decide, like any other run.
-      multi_forces_review <- isTRUE(multi$likely_multiple) && !did_split
+      # review, nor to raise the "split this into one file" diagnostic -- the
+      # rolled-up trust / KPI outcomes decide, like any other run. One fact, used by
+      # both the status gate and the diagnostics; raw `multi` still records that this
+      # upload WAS a bundle for the metadata + run log.
+      multi_resolved <- if (did_split) utils::modifyList(multi, list(likely_multiple = FALSE)) else multi
       status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                    multi_forces_review || thin_match) {
+                    isTRUE(multi_resolved$likely_multiple) || thin_match) {
         "needs_review"
       } else {
         "ok"
       }
-      # When we auto-split, the bundle is resolved -- suppress the "split this into
-      # one file per statement" diagnostic (it would now be wrong).
-      diag_multi <- if (did_split) utils::modifyList(multi, list(likely_multiple = FALSE)) else multi
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-        metadata = list(multi = diag_multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+        metadata = list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         template = template))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta)

@@ -6,6 +6,10 @@
 # visible and consistent in one file instead of a bare literal repeated across the
 # code. See docs/context/engine-parameters.md for the catalogue and rationale.
 #
+# It also hosts the two SHARED date helpers (.plausible_year, .tolerant_date) that
+# thread the year window through every consumer -- colocated with the bound they
+# apply so the parser and its threshold stay in one place.
+#
 # (Sourced before parse*.R so a top-level use resolves; function-default uses
 # resolve at call time regardless of source order.)
 

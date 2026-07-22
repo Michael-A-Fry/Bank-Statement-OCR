@@ -7,6 +7,9 @@
 # .MONEY_RX / .DATE_RX are defined in labels.R (single source of truth).
 .ACCT_RX  <- "[0-9]{2}-[0-9]{4}-[0-9]{6,7}-[0-9]{2,3}"          # NZ bank account
 .CARD_RX  <- "[0-9]{4}[- ]?[0-9X*]{4}[- ]?[0-9X*]{4}[- ]?[0-9]{4}" # masked card
+# A statement restarts page numbering, so a "Page 1 of N" is a statement START.
+# Shared with split.R so its boundaries and the count that gates them agree exactly.
+.PAGE1_MARKER_RX <- "[Pp]age\\s+1\\s+of\\s+[0-9]+"
 
 .all_matches <- function(text, rx, perl = FALSE)
   unique(regmatches(text, gregexpr(rx, text, perl = perl))[[1]])
@@ -32,7 +35,7 @@ extract_metadata <- function(input, dict = default_label_dict()) {
   pageofs <- .all_matches(text, "[Pp]age\\s+[0-9]+\\s+of\\s+[0-9]+")
   pages_stated <- if (length(pageofs))
     suppressWarnings(max(as.integer(sub(".*of\\s+([0-9]+).*", "\\1", pageofs)), na.rm = TRUE)) else NA_integer_
-  page1_markers <- length(regmatches(text, gregexpr("[Pp]age\\s+1\\s+of\\s+[0-9]+", text))[[1]])
+  page1_markers <- length(regmatches(text, gregexpr(.PAGE1_MARKER_RX, text))[[1]])
 
   # statement period(s): two dates joined by a connective (to / through / dash),
   # regardless of wording around them ("From X to Y", "Statement period X - Y",

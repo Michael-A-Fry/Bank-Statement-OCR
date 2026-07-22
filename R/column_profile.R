@@ -71,13 +71,14 @@
     grepl("^[(+-]?[0-9][0-9.,]*[0-9]?[)]?$", core)
 }
 
-# .col_kind(v) -- infer a column's KIND from a nonempty sample:
+# .col_kind(v, dfmt) -- infer a column's KIND from a nonempty sample:
 #   date | money | integer | indicator | text | empty
 # Order matters: a decisive date/money test wins before the low-cardinality
 # indicator test, so a two-value date column is still "date", not "indicator".
-.col_kind <- function(v) {
+# `dfmt` is the pre-computed detect_date_format(v) so the caller doesn't run it twice.
+.col_kind <- function(v, dfmt = detect_date_format(v)) {
   if (!length(v)) return("empty")
-  if (nzchar(detect_date_format(v))) return("date")
+  if (nzchar(dfmt)) return("date")
   m <- .looks_money(v)
   if (mean(m) >= 0.8) {
     if (all(grepl("^[0-9]+$", v))) return("integer")   # bare ints, no money markers
@@ -116,7 +117,8 @@
   n   <- length(raw)
   ne  <- trimws(raw[!is.na(raw) & nzchar(trimws(raw))])
   samp <- utils::head(ne, 300L)
-  kind <- .col_kind(samp)
+  dfmt <- detect_date_format(samp)         # computed ONCE, reused for kind + date_format
+  kind <- .col_kind(samp, dfmt)
   prof <- list(
     name          = as.character(name),
     kind          = kind,
@@ -124,7 +126,7 @@
     distinct      = length(unique(ne)),
     example_shape = .modal_shape(samp))
   if (identical(kind, "date")) {
-    f <- detect_date_format(samp); if (nzchar(f)) prof$date_format <- f
+    if (nzchar(dfmt)) prof$date_format <- dfmt
   } else if (identical(kind, "money")) {
     prof$money <- .money_shape(samp)
   } else if (identical(kind, "indicator")) {
@@ -134,8 +136,9 @@
     # indicator -- its values are a recognised D/C domain, OR the header names it an
     # indicator column -- and never for a content/reference/payee column (whose few
     # short values would be real content). Everything else: count only.
+    # type_dc_domain() already upper-cases, so no toupper() needed.
     is_content   <- grepl(.CONTENT_COL_RX, nm)
-    is_indicator <- all(toks %in% toupper(type_dc_domain())) || grepl(.INDICATOR_COL_RX, nm)
+    is_indicator <- all(toks %in% type_dc_domain()) || grepl(.INDICATOR_COL_RX, nm)
     if (!is_content && is_indicator && length(toks) <= 12L && all(nchar(toks) <= 8L))
       prof$tokens <- as.list(toks)
     else
@@ -156,49 +159,41 @@ column_profiles <- function(df) {
   Filter(Negate(is.null), profs)
 }
 
-# .suggest_mapping(df) -- the engine's OWN best guess at the template, using the
-# same detectors the drafter and wizard use (guess_mapping / detect_amount_style /
-# detect_date_format / detect_type_dc_values). Header names + formats only -- a
-# ready-to-refine skeleton for whoever builds the template. No filename, no values.
+# .suggest_mapping(df) -- the engine's OWN best guess at the template. This is
+# LITERALLY what the drafter would produce: it calls the shared .derive_mapping()
+# brain (draft.R) and flattens it to a header-names-only skeleton, so the hint can
+# never diverge from Draft-a-template. No filename, no values.
 .suggest_mapping <- function(df) {
   if (is.null(df) || !ncol(df)) return(NULL)
-  h  <- names(df)
-  mp <- function(field) { c <- guess_mapping(h, field); if (identical(c, "(none)")) NULL else c }
+  dm <- safe(.derive_mapping(names(df), df, "%d/%m/%Y"), NULL)
+  if (is.null(dm)) return(NULL)
+  src <- function(k) if (!is.null(dm$cols[[k]])) dm$cols[[k]]$source else NULL
   out <- list()
-  dcol <- mp("date")
-  if (!is.null(dcol)) {
-    out$date <- dcol
-    f <- detect_date_format(df[[dcol]]); if (nzchar(f)) out$date_format <- f
+  if (!is.null(dm$cols$date)) {
+    out$date <- dm$cols$date$source
+    if (!is.null(dm$date_format) && nzchar(dm$date_format)) out$date_format <- dm$date_format
   }
   fields <- list()
   for (f in c("amount", "description", "particulars", "code", "reference",
-              "type", "other_party", "balance")) {
-    cc <- mp(f); if (!is.null(cc)) fields[[f]] <- cc
+              "type", "other_party", "balance", "debit", "credit")) {
+    s <- src(f); if (!is.null(s)) fields[[f]] <- s     # incl. debit/credit sources
   }
   if (length(fields)) out$fields <- fields
-  style <- safe(detect_amount_style(h, df), "signed")
-  out$amount_style <- style
-  if (identical(style, "type_dc")) {
-    tv <- safe(detect_type_dc_values(h, df), NULL)
-    if (!is.null(tv$column)) out$type_column       <- tv$column
-    if (!is.null(tv$debit))  out$type_debit_value  <- tv$debit
-    if (!is.null(tv$credit)) out$type_credit_value <- tv$credit
+  out$amount_style <- dm$amount_sign
+  if (identical(dm$amount_sign, "type_dc")) {
+    if (!is.null(src("type")))            out$type_column       <- src("type")
+    if (!is.null(dm$keys$type_debit_value))  out$type_debit_value  <- dm$keys$type_debit_value
+    if (!is.null(dm$keys$type_credit_value)) out$type_credit_value <- dm$keys$type_credit_value
   }
   out
 }
 
 # .delim_of(input) -- sniff a delimited file's separator from its first non-empty
-# line (no file re-read; reuses the wizard's candidate set).
+# line (no file re-read; shares the choice logic with detect_delimiter).
 .delim_of <- function(input) {
   ln <- input$lines %||% character(0)
   ln <- ln[nzchar(trimws(ln))]
-  if (!length(ln)) return(",")
-  ln <- ln[1]
-  counts <- vapply(wd_delims(), function(d) {
-    m <- gregexpr(d, ln, fixed = TRUE)[[1]]; sum(m > 0)
-  }, integer(1))
-  if (max(counts) == 0) return(",")
-  wd_delims()[which.max(counts)]
+  .delim_of_line(if (length(ln)) ln[1] else "")
 }
 
 # .pdf_shapes(input) -- for a PDF, the money/date STYLE facts scannable from the
@@ -230,13 +225,14 @@ column_profiles <- function(df) {
 template_hints <- function(input, template = NULL, matched = FALSE) {
   kind <- input$kind %||% ""
   if (identical(kind, "excel") || identical(kind, "delimited")) {
+    # The delimiter for a delimited file: the MATCHED template's (so its
+    # preamble.header_regex + delimiter locate the real header, not a preamble line),
+    # else sniffed once from the source.
+    delim <- if (identical(kind, "delimited")) (template$delimiter %||% .delim_of(input)) else NULL
     df <- if (identical(kind, "excel")) input$table
           else {
-            # Use the MATCHED template's own delimiter + preamble.header_regex so the
-            # real header is located (a bank export's preamble lines don't get read as
-            # the header); fall back to sniffing only when nothing matched.
             tmpl_read <- if (!is.null(template) && identical(template$format %||% "", "delimited"))
-                           template else list(delimiter = .delim_of(input))
+                           template else list(delimiter = delim)
             safe(read_delimited(input, tmpl_read)$table, NULL)
           }
     if (is.null(df) || !ncol(df) || !nrow(df)) return(NULL)
@@ -244,7 +240,7 @@ template_hints <- function(input, template = NULL, matched = FALSE) {
                 row_sample = min(nrow(df), 300L),
                 columns = column_profiles(df),
                 suggested_mapping = .suggest_mapping(df))
-    if (identical(kind, "delimited")) out$delimiter <- template$delimiter %||% .delim_of(input)
+    if (identical(kind, "delimited")) out$delimiter <- delim
     return(out)
   }
   if (identical(kind, "pdf")) {

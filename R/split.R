@@ -65,7 +65,7 @@
   txt <- .page_texts(input)
   if (!length(txt)) return(NULL)
   hit <- if (identical(spec$on, "page1_marker")) {
-    grepl("page\\s+1\\s+of\\s+[0-9]+", txt, ignore.case = TRUE)
+    grepl(.PAGE1_MARKER_RX, txt)             # SAME pattern extract_metadata counts, so they agree
   } else {                                   # opening_label: an opening-balance header per statement
     pat <- paste(c("opening balance", "balance brought forward"), collapse = "|")
     grepl(pat, txt, ignore.case = TRUE)
@@ -122,7 +122,7 @@
 }
 
 # split_bundle(input, template, meta) -> a COMBINED result
-#   list(parsed, recon, statements, n_statements, boundaries, committed = TRUE)
+#   list(parsed, recon, statements, n_statements, on)
 # or NULL when it is not safe to split (caller then flag-and-refuses). `parsed` and
 # `recon` are shaped exactly like the single-statement path, so the rest of the
 # pipeline (outputs, diagnostics, coverage) is unchanged -- except transactions
@@ -191,13 +191,11 @@ split_bundle <- function(input, template, meta = NULL) {
   # differ per statement, and the feed stamps header fields onto EVERY row, so a
   # single value would mislabel other statements' rows. The truth is in `statements`
   # (and each row's statement_index). The period is kept as the bundle's honest span.
-  h1 <- segs[[1]]$parsed$header
-  header <- h1
+  header <- segs[[1]]$parsed$header          # period_start inherited from statement 1
   header$row_count       <- nrow(combined_tx)
   header$n_statements    <- k
   header$page_count      <- npages
-  header$period_start    <- segs[[1]]$parsed$header$period_start
-  header$period_end      <- segs[[k]]$parsed$header$period_end
+  header$period_end      <- segs[[k]]$parsed$header$period_end   # ...to statement k's end
   header$account_number  <- NA_character_   # differs per statement -> not one value
   header$opening_balance <- NA_real_        # per-segment in `statements`
   header$closing_balance <- NA_real_
@@ -242,7 +240,8 @@ split_bundle <- function(input, template, meta = NULL) {
                  ocr_min_confidence = min(vapply(segs,
                    function(s) s$recon$trust$ocr_min_confidence %||% NA_real_, numeric(1)))))
 
+  # A non-NULL return IS the "committed" signal; per-statement page ranges are in
+  # `statements`, so no separate committed/boundaries fields are needed.
   list(parsed = combined_parsed, recon = combined_recon,
-       statements = statements, n_statements = k,
-       boundaries = starts, on = spec$on, committed = TRUE)
+       statements = statements, n_statements = k, on = spec$on)
 }

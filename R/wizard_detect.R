@@ -5,15 +5,23 @@
 
 wd_delims <- function() c(",", "\t", ";", "|")
 
+# .delim_of_line(line) -- pick the most frequent candidate delimiter in ONE line
+# (the header), defaulting to comma. Shared by detect_delimiter (reads the line from
+# a path) and column_profile.R's .delim_of (sniffs an in-memory line), so the two
+# can never disagree about how a delimiter is chosen.
+.delim_of_line <- function(line) {
+  if (!length(line) || is.na(line) || !nzchar(line)) return(",")
+  counts <- vapply(wd_delims(), function(d) {
+    m <- gregexpr(d, line, fixed = TRUE)[[1]]; sum(m > 0)
+  }, integer(1))
+  if (max(counts) == 0) return(",")
+  wd_delims()[which.max(counts)]
+}
+
 # Sniff the delimiter from the header line.
 detect_delimiter <- function(path) {
   line <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) "")
-  if (!length(line) || !nzchar(line)) return(",")
-  counts <- vapply(wd_delims(), function(d)
-    length(gregexpr(d, line, fixed = TRUE)[[1]][gregexpr(d, line, fixed = TRUE)[[1]] > 0]),
-    integer(1))
-  if (max(counts) == 0) return(",")
-  wd_delims()[which.max(counts)]
+  .delim_of_line(if (length(line)) line[1] else "")
 }
 
 # Candidate date formats: strptime code, plain label, and a shape regex so a

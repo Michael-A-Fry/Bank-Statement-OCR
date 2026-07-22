@@ -90,18 +90,20 @@
 # collide, which the ambiguity check then catches anyway.
 .draft_min_score <- function(n) if (n <= 2L) max(1L, n) else as.integer(n - 1L)
 
-.draft_delimited <- function(path, id, bank) {
-  delim <- detect_delimiter(path)
-  df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
-    colClasses = "character", stringsAsFactors = FALSE, check.names = FALSE, nrows = 50L),
-    error = function(e) NULL)
-  h <- if (!is.null(df)) names(df) else character(0)
+# .derive_mapping(h, df, date_default) -- THE shared "guess the template" brain for
+# a tabular (delimited/excel) source: map each canonical field to a source column,
+# sniff the date format, detect the amount style, resolve the debit/credit column
+# sources and the type_dc indicator values. Returns list(cols, amount_sign, keys,
+# date_format). Used by .draft_delimited, .draft_excel AND column_profile.R's
+# suggested-mapping hint, so the drafter and the hint can never disagree.
+.derive_mapping <- function(h, df, date_default = "%d/%m/%Y") {
   mapcol <- function(field) { c <- guess_mapping(h, field); if (identical(c, "(none)")) NULL else c }
-  cols <- list()
+  cols <- list(); date_format <- NULL
   dcol <- mapcol("date")
   if (!is.null(dcol)) {
     fmt <- if (!is.null(df)) detect_date_format(df[[dcol]]) else ""
-    cols$date <- list(source = dcol, format = if (nzchar(fmt)) fmt else "%d/%m/%Y")
+    date_format <- if (nzchar(fmt)) fmt else date_default
+    cols$date <- list(source = dcol, format = date_format)
   }
   for (f in c("amount", "description", "particulars", "code", "reference", "type", "other_party", "balance")) {
     cc <- mapcol(f); if (!is.null(cc)) cols[[f]] <- list(source = cc)
@@ -114,12 +116,21 @@
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
   tdc <- .draft_type_dc(style, h, df, cols)
-  cols <- tdc$cols
+  list(cols = tdc$cols, amount_sign = style, keys = tdc$keys, date_format = date_format)
+}
+
+.draft_delimited <- function(path, id, bank) {
+  delim <- detect_delimiter(path)
+  df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
+    colClasses = "character", stringsAsFactors = FALSE, check.names = FALSE, nrows = 50L),
+    error = function(e) NULL)
+  h <- if (!is.null(df)) names(df) else character(0)
+  dm <- .derive_mapping(h, df, "%d/%m/%Y")
   out <- list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
     version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)), delimiter = delim,
-    columns = cols, amount_sign = style, currency = "NZD", origin = "user")
-  utils::modifyList(out, tdc$keys)
+    columns = dm$cols, amount_sign = dm$amount_sign, currency = "NZD", origin = "user")
+  utils::modifyList(out, dm$keys)
 }
 
 .draft_pdf <- function(input, id, bank) {
@@ -179,30 +190,14 @@
   df <- input$table
   if (is.null(df) || !nrow(df) || !ncol(df)) return(NULL)
   h <- names(df)
-  mapcol <- function(field) { c <- guess_mapping(h, field); if (identical(c, "(none)")) NULL else c }
-  cols <- list()
-  dcol <- mapcol("date")
-  if (is.null(dcol)) return(NULL)   # no date column -> not a transaction table
-  fmt <- detect_date_format(df[[dcol]])
-  cols$date <- list(source = dcol, format = if (nzchar(fmt)) fmt else "%Y-%m-%d")
-  for (f in c("amount", "description", "particulars", "code", "reference", "type", "other_party", "balance")) {
-    cc <- mapcol(f); if (!is.null(cc)) cols[[f]] <- list(source = cc)
-  }
-  style <- detect_amount_style(h, df)
-  if (identical(style, "debit_credit_cols")) {
-    dc <- h[grepl("debit|withdrawal|money out|paid out", tolower(h))][1]
-    cc <- h[grepl("credit|deposit|money in|paid in", tolower(h))][1]
-    if (!is.na(dc)) cols$debit <- list(source = dc)
-    if (!is.na(cc)) cols$credit <- list(source = cc)
-  }
-  tdc <- .draft_type_dc(style, h, df, cols)
-  cols <- tdc$cols
-  if (is.null(cols$amount) && is.null(cols$debit)) return(NULL)   # nothing to read money from
+  dm <- .derive_mapping(h, df, "%Y-%m-%d")
+  if (is.null(dm$cols$date)) return(NULL)   # no date column -> not a transaction table
+  if (is.null(dm$cols$amount) && is.null(dm$cols$debit)) return(NULL)   # nothing to read money from
   out <- list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
     version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)),
-    columns = cols, amount_sign = style, currency = "NZD", origin = "user")
-  utils::modifyList(out, tdc$keys)
+    columns = dm$cols, amount_sign = dm$amount_sign, currency = "NZD", origin = "user")
+  utils::modifyList(out, dm$keys)
 }
 
 # draft_template(path, bank) -> a template list (or NULL if unsupported kind).
