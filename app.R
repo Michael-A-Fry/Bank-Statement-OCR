@@ -36,6 +36,7 @@ REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell
 FIELDS_DIR         <- CONFIG$paths$fields          # curated mode:fields (IRD/form) templates
 USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the app
 DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
+LEXICON_PATH       <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexicon.yaml")  # recognition vocabularies
 # The bundled specimen statement (public sample, ships with the app) that "Try it
 # on a sample" converts, so a brand-new user sees a full result without a file.
 SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_statement.pdf")
@@ -730,7 +731,27 @@ ui <- fluidPage(
                   "payees and references are <b>never</b> stored. Account numbers are ",
                   "stored only as a hash, so the same account links across runs without ",
                   "the number being readable."))))
-          )
+          ),
+          tags$hr(),
+          h4("Recognition vocabulary - what the engine knows to look for"),
+          helpText(HTML(paste0(
+            "The words and shapes the engine tries when it auto-detects, drafts and ",
+            "parses <b>generically</b> - debit/credit indicator words, DR/CR/OD ",
+            "markers, redaction markers, header keywords, and the money/date/account ",
+            "shapes. Add a new one here and it plumbs through <b>everywhere</b> - no code ",
+            "change. Example: a bank that writes <code>cow</code>/<code>horse</code> for ",
+            "its debit/credit column - add <code>debit_markers: [cow]</code> and ",
+            "<code>credit_markers: [horse]</code>. Word lists ADD to the built-ins; a ",
+            "regex REPLACES (rejected if it won't compile). Leave a category out to keep ",
+            "its default."))),
+          fluidRow(
+            column(5,
+              actionButton("adm_lex_reload", "Reload from file"),
+              actionButton("adm_lex_defaults", "Show built-in defaults"),
+              actionButton("adm_lex_save", "Save vocabulary", class = "btn-primary"),
+              br(), br(), uiOutput("adm_lex_msg")),
+            column(7,
+              textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))
         ),
         tabPanel(
           "Batch & audit",
@@ -1009,6 +1030,37 @@ server <- function(input, output, session) {
     output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved. Applies to the next conversion. Capture is local only and never enters the Qlik feed."
       else "Could not write config/config.yaml - check folder permissions."))
+  })
+
+  # ---- Admin: recognition-vocabulary (lexicon) editor ----
+  .load_lex_text <- function()
+    if (file.exists(LEXICON_PATH)) paste(readLines(LEXICON_PATH, warn = FALSE), collapse = "\n") else ""
+  observeEvent(admin_ok(), if (isTRUE(admin_ok()))
+    updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text()))
+  observeEvent(input$adm_lex_reload, { req(admin_ok())
+    updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text()) })
+  observeEvent(input$adm_lex_defaults, { req(admin_ok())
+    updateTextAreaInput(session, "adm_lex_edit", value = safe(lexicon_defaults_yaml(), "")) })
+  observeEvent(input$adm_lex_save, {
+    req(admin_ok())
+    txt <- input$adm_lex_edit %||% ""
+    parsed <- tryCatch(yaml::yaml.load(txt), error = function(e) e)
+    if (inherits(parsed, "error")) {
+      output$adm_lex_msg <- renderUI(div(style = "color:#b00020", "Not valid YAML - not saved.")); return()
+    }
+    probs <- validate_lexicon(parsed)
+    if (length(probs)) {
+      output$adm_lex_msg <- renderUI(div(style = "color:#b00020",
+        HTML(paste("Not saved -", paste(probs, collapse = "; "))))); return()
+    }
+    safe(file.copy(LEXICON_PATH, paste0(LEXICON_PATH, ".bak"), overwrite = TRUE))
+    okw <- isTRUE(tryCatch({
+      dir.create(dirname(LEXICON_PATH), recursive = TRUE, showWarnings = FALSE)
+      writeLines(txt, LEXICON_PATH); TRUE }, error = function(e) FALSE))
+    if (okw) clear_lexicon_cache()   # the next conversion re-reads the vocabulary
+    output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+      if (okw) "Saved (backup at lexicon.yaml.bak). Applies to the next conversion, everywhere."
+      else "Could not write the file - check folder permissions."))
   })
 
   # ---- Admin: bulk audit & gaps ----
