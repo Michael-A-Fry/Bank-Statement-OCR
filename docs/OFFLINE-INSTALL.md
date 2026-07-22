@@ -65,6 +65,16 @@ To keep it always-up across reboots, register it as a service - see
 
 ---
 
+## Updating to a new version later
+Build a fresh `StatementStudio-offline` on the internet PC (Step 1) and copy it onto
+the server **over the existing folder, choosing "replace files in the destination".**
+That refreshes the app code and leaves your server-only files in place -
+`config\config.yaml`, the installed `R-runtime\` and `R-lib\`, and your `logs\` /
+`feed\` / `uploads\`. Your config is safe either way: the bundle never carries a
+`config.yaml`, and `RUN-ME.bat` also keeps a backup under
+`%LOCALAPPDATA%\StatementStudio\` and restores it automatically if the folder's copy
+is ever missing (e.g. if you delete-and-replace the whole folder instead).
+
 ## Notes
 - **The server already has R (an old version)?** Fine - it's ignored. `RUN-ME.bat`
   installs and uses its own private R in `R-runtime\`; the existing R and RStudio

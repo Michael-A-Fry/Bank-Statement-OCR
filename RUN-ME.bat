@@ -35,7 +35,11 @@ set "R_LIBS_SITE="
 set "R_PROFILE_USER=%APP%\.none"
 set "R_ENVIRON_USER=%APP%\.none"
 
-rem --- first run only : packages + OCR + config (guarded by a marker) --------
+rem --- config : restore-or-seed it, and keep a backup OUTSIDE the folder so an
+rem     update (even replacing the whole folder) never loses your settings --------
+call :configSync
+
+rem --- first run only : packages + OCR (guarded by a marker) -----------------
 if not exist "%BUNDLE%\.installed" call :firstRun
 
 rem --- start ----------------------------------------------------------------
@@ -66,11 +70,26 @@ echo First run: installing packages and OCR tools ^(a few minutes, offline^)...
 pushd "%BUNDLE%"
 "%RSCRIPT%" install-on-pc.R
 popd
-if not exist "%APP%\config\config.yaml" if exist "%APP%\config\config.example.yaml" copy /y "%APP%\config\config.example.yaml" "%APP%\config\config.yaml" >nul
 type nul > "%BUNDLE%\.installed"
 echo(
 echo Setup complete.
 echo(
+goto :eof
+
+:configSync
+rem  Config lives in config\config.yaml. We also keep a copy under %LOCALAPPDATA%
+rem  so it survives replacing the whole app folder on an update:
+rem   - no config here yet + a backup exists -> restore it (keeps your settings)
+rem   - no config + no backup               -> seed from config.example.yaml
+rem   - config present                      -> refresh the backup
+set "CFGBAK="
+if defined LOCALAPPDATA set "CFGBAK=%LOCALAPPDATA%\StatementStudio\config.yaml"
+if not exist "%APP%\config\config.yaml" if defined CFGBAK if exist "%CFGBAK%" copy /y "%CFGBAK%" "%APP%\config\config.yaml" >nul
+if not exist "%APP%\config\config.yaml" if exist "%APP%\config\config.example.yaml" copy /y "%APP%\config\config.example.yaml" "%APP%\config\config.yaml" >nul
+if not defined CFGBAK goto :eof
+if not exist "%APP%\config\config.yaml" goto :eof
+if not exist "%LOCALAPPDATA%\StatementStudio" mkdir "%LOCALAPPDATA%\StatementStudio" >nul 2>&1
+copy /y "%APP%\config\config.yaml" "%CFGBAK%" >nul 2>&1
 goto :eof
 
 :rfail

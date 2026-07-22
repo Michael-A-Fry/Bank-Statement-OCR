@@ -76,6 +76,11 @@ cat(sprintf("  copied %d items%s\n", copied,
 if (!file.exists(file.path(dist, "RUN-ME.bat")))
   stop("RUN-ME.bat is missing from the repo root -- cannot build a runnable bundle.")
 
+# Never ship a live config.yaml -- only config.example.yaml. This way copying a
+# fresh bundle over an existing server install can't overwrite server settings;
+# RUN-ME.bat seeds/restores config.yaml on the server.
+unlink(file.path(dist, "config", "config.yaml"))
+
 # Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
 # this repo was obtained (we ship no .gitattributes to normalise them for us).
 for (b in list.files(dist, pattern = "\\.bat$", recursive = TRUE, full.names = TRUE)) {
