@@ -30,6 +30,13 @@ qlik:
   proven_templates_dir:
   # On a no-template miss, also file the statement into the Shiny team pickup queue.
   queue_unsupported: true
+  # Async poller (Mode B) folders. Inphinity writes uploads to inbox; the poller
+  # writes outbox/<key>/statement.csv (+ status.json) and index/<key>.csv (the Qlik
+  # file-list table), and moves the original to processed. All git-ignored.
+  inbox: qlik/inbox
+  outbox: qlik/outbox
+  index: qlik/index
+  processed: qlik/processed
 
 feed:                                   # Mode A batch feed into Qlik dashboards
   feed_dir: feed

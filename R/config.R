@@ -28,7 +28,15 @@
     # paths$user_templates. On a bank it has no proven template for, it points the
     # user at the Shiny app (app$shiny_url) instead of building one.
     proven_templates_dir = NULL,          # NULL -> use paths$templates
-    queue_unsupported    = TRUE           # also file a miss into the Shiny pickup queue
+    queue_unsupported    = TRUE,          # also file a miss into the Shiny pickup queue
+    # Folders for the async poller (Mode B). Inphinity writes uploads into `inbox`;
+    # the poller converts each into `outbox/<key>/statement.csv` (+ status.json),
+    # writes a status row into `index/` (the Qlik file-list table), and moves the
+    # original into `processed`. All hold real statements, so all are git-ignored.
+    inbox     = "qlik/inbox",
+    outbox    = "qlik/outbox",
+    index     = "qlik/index",
+    processed = "qlik/processed"
   ),
   feed = list(                             # Mode A batch feed into Qlik dashboards
     feed_dir                 = "feed",
