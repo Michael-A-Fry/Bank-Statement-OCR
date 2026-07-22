@@ -15,6 +15,15 @@ test_that("dr_cr_suffix: DR negative, CR positive, invalid suffix -> NA", {
   expect_identical(r$direction, c("debit", "credit", NA, NA))
 })
 
+test_that("dr_cr_suffix: a doubly-marked debit is not sign-flipped back (P2-11)", {
+  # both markers say debit -> the answer is negative, never +500 from applying
+  # the sign twice (accounting-parens/minus AND the DR suffix).
+  expect_equal(parse_amount("(500.00) DR", "dr_cr_suffix")$value, -500)
+  expect_equal(parse_amount("-500.00 DR",  "dr_cr_suffix")$value, -500)
+  # a credit stays positive even if the magnitude was written in parentheses.
+  expect_equal(parse_amount("(500.00) CR", "dr_cr_suffix")$value, 500)
+})
+
 test_that("debit_credit_cols: credit +, debit -, both blank -> NA (not 0)", {
   r <- parse_amount(NULL, "debit_credit_cols",
                     list(debit = c("", "5.00", ""), credit = c("10.00", "", "")))

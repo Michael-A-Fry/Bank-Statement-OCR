@@ -174,7 +174,11 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   if (style == "dr_cr_suffix") {
     raw <- as.character(x)
     suf <- toupper(sub(".*?([A-Za-z]{2})\\s*$", "\\1", trimws(raw)))
-    mag <- .num(sub("(?i)\\s*(DR|CR)\\s*$", "", trimws(raw), perl = TRUE), dec)
+    # The SUFFIX is the sole source of sign in this style, so read the magnitude
+    # UNSIGNED: .num already makes "(500.00)" and "-500.00" negative, which would
+    # then be flipped a SECOND time by a DR suffix -> a wrong +500 for a figure
+    # marked debit twice over. abs() keeps the suffix authoritative.
+    mag <- abs(.num(sub("(?i)\\s*(DR|CR)\\s*$", "", trimws(raw), perl = TRUE), dec))
     sign <- ifelse(suf == "DR", -1, ifelse(suf == "CR", 1, NA_real_))
     value <- mag * sign
     return(list(value = value, direction = .direction(value), raw = raw))
