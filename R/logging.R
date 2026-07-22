@@ -6,7 +6,7 @@
 # -- so records can never interleave, corrupt, or need a lock. There is no
 # database, no server, no API, nothing to tune. To read the log you list a
 # folder; to open one record you double-click a .json in Notepad. That is the
-# entire concurrency story (see docs/architecture/deployment-integration-plan.md).
+# entire concurrency story (see docs/context/architecture/deployment-integration-plan.md).
 # No raw statement content is ever written -- only metadata about the run.
 
 # .safe_name(x) -- make a string safe to use as a filename.

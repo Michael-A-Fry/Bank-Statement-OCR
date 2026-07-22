@@ -191,7 +191,7 @@ No raw statement content in logs.
 5. **Never crashes** - all errors become a `failed` status with a reason.
 
 ## 12. Testing (golden-file + unit)
-Each committed fixture has an expected core-table snapshot under
+Each fixture has an expected core-table snapshot under
 `tests/testthat/expected/`. Tests assert: detection picks the right template;
 parsed table equals expected; reconciliation KPIs match; verbatim + redaction
 guarantees hold. A template is not "done" until its golden test passes and all

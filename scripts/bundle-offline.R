@@ -21,7 +21,7 @@
 # NO VERSION MATCHING NEEDED: the bundle ships the R installer for THIS PC's R and,
 # on the server, RUN-ME.bat installs and uses that exact R privately (inside the
 # folder), so the packages here always match. Whatever R the server already has is
-# ignored. So this just needs ANY recent R with internet. See docs/OFFLINE-INSTALL.md.
+# ignored. So this just needs ANY recent R with internet. See docs/operational/first-time-setup.md.
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)
@@ -51,8 +51,8 @@ options(timeout = 600)
 # Everything the app needs at runtime, plus samples/docs/tests for the demo and
 # smoke test. Runtime/PII dirs (logs, uploads, feed, out...) are deliberately NOT
 # copied -- they are created on first run and must never travel.
-# Deliberately NO git files (.git, .gitignore, .gitattributes): the shipped folder
-# is a plain product folder, not a repo checkout.
+# Deliberately no source-control or hidden dotfiles in the shipped folder: it is a
+# plain product folder, nothing more.
 app_items <- c("R", "templates", "templates_user", "templates_seed",
                "dictionaries", "fields_templates", "config", "scripts",
                "tests", "samples", "docs",
@@ -82,7 +82,7 @@ if (!file.exists(file.path(dist, "RUN-ME.bat")))
 unlink(file.path(dist, "config", "config.yaml"))
 
 # Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
-# this repo was obtained (we ship no .gitattributes to normalise them for us).
+# the folder was obtained (we ship no line-ending config to normalise them for us).
 for (b in list.files(dist, pattern = "\\.bat$", recursive = TRUE, full.names = TRUE)) {
   ln <- readLines(b, warn = FALSE)
   con <- file(b, open = "wb"); writeLines(ln, con, sep = "\r\n"); close(con)
@@ -115,7 +115,7 @@ r_dest <- file.path(prereq, sprintf("R-%s-win.exe", rfull))
 if (!grab(sprintf("https://cran.r-project.org/bin/windows/base/R-%s-win.exe", rfull), r_dest, "R"))
   grab(sprintf("https://cran.r-project.org/bin/windows/base/old/%s/R-%s-win.exe", rfull, rfull), r_dest, "R (old)")
 
-# Poppler for Windows -- newest release .zip (parse the GitHub API without needing
+# Poppler for Windows -- newest release .zip (parse the releases API without needing
 # jsonlite installed on this PC yet).
 tryCatch({
   txt <- paste(readLines("https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest",

@@ -1,6 +1,6 @@
 # Sheet-aware Excel drafting: read_excel_input picks the right sheet, skips
 # preamble rows, fixes serial dates; .draft_excel maps the columns. Fixtures are
-# generated deterministically at test time (openxlsx), never committed.
+# generated deterministically at test time (openxlsx), never stored.
 
 skip_if_not(requireNamespace("openxlsx", quietly = TRUE), "openxlsx not installed")
 skip_if_not(requireNamespace("readxl", quietly = TRUE), "readxl not installed")

@@ -125,8 +125,8 @@ guard, redaction handling) means the tool **won't silently give a wrong answer**
 That's what makes it launchable tomorrow: not that it parses everything, but that
 it's honest about what it couldn't.
 
-**Launch checklist:** deploy per `SETUP-AND-DEPLOYMENT.md` → run
-`Rscript tests/run_tests.R` (expect 0 failures) → convert 3–5 real statements you
+**Launch checklist:** deploy per [`../operational/first-time-setup.md`](../operational/first-time-setup.md) →
+convert 3–5 real statements you
 know the answers to → confirm the reconciliation matches → point the AD group at
 the folder → tell users "prefer CSV/Excel; on PDFs, check the coverage +
 completeness note."

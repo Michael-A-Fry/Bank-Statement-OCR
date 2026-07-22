@@ -9,7 +9,7 @@
 #   Rscript scripts/serve_inbox.R loop     # keep polling every 30s
 #
 # Concurrency is safe: each conversion writes its own out folder + its own log
-# file (see docs/architecture/deployment-integration-plan.md).
+# file (see docs/context/architecture/deployment-integration-plan.md).
 
 # Self-locate: a boot service / scheduled task may launch this with a different
 # working directory. Resolve the app folder from this script's own path and run

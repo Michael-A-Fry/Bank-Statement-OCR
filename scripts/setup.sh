@@ -48,7 +48,7 @@ echo "======================================================================"
 echo " Ready. Start it with:   bash scripts/start.sh"
 echo " Then share this URL:    http://${IP}:${PORT}"
 echo " Folder option instead:  schedule 'Rscript scripts/serve_inbox.R'"
-echo " Full guide:             docs/SETUP-AND-DEPLOYMENT.md"
+echo " Full guide:             docs/operational/README.md"
 echo "======================================================================"
 
 if [[ "${1:-}" == "--start" ]]; then

@@ -34,7 +34,7 @@ test_that("the BSO_ADMIN_PASSWORD env var overrides the file", {
   expect_equal(load_config(p)$app$admin_password, "fromenv")
 })
 
-test_that("the committed example config is valid YAML and parses", {
+test_that("the bundled example config is valid YAML and parses", {
   ex <- fixture("config/config.example.yaml")
   skip_if_not(file.exists(ex))
   cfg <- load_config(ex)

@@ -3,7 +3,7 @@
 # status (converted / needs-review / unsupported / failed / wizard-started /
 # wizard-saved) is recorded with the run_id and template, and a safe audit can be
 # regenerated on demand. The saved files hold real statements, so the uploads
-# folder is git-ignored; the Admin view never shows their content, only status.
+# folder is local-only; the Admin view never shows their content, only status.
 
 .uploads_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "uploads")
 

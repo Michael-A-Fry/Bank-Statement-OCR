@@ -6,7 +6,7 @@
 #   Rscript scripts/run_app.R            # from the repo root
 #   BSO_PORT=8100 Rscript scripts/run_app.R
 #
-# Keep it running as a service (see docs/SETUP-AND-DEPLOYMENT.md):
+# Keep it running as a service (see docs/operational/running-and-keeping-it-up.md):
 #   Windows: NSSM or Task Scheduler "at startup"
 #   Linux:   a small systemd unit
 # Self-locate: a boot service (systemd / Task Scheduler) may launch this with a

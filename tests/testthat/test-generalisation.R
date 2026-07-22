@@ -12,7 +12,7 @@
 # that disjunction.
 #
 # Variants are generated PROGRAMMATICALLY, in tempdir(), at test time -- never
-# committed -- from the same fixtures the golden tests already use (see
+# stored -- from the same fixtures the golden tests already use (see
 # helper.R and tests/testthat/expected/). Every variant is one fixed,
 # deterministic transformation; nothing here uses random numbers.
 #

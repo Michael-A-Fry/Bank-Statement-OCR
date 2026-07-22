@@ -1,8 +1,8 @@
 # Statement Studio configuration.
 #
 # Copy this file to  config/config.yaml  and edit it. config/config.yaml is
-# git-ignored, so your real settings (including the admin password) are never
-# committed. Any key you leave out falls back to a sensible built-in default,
+# kept out of any distributed copy, so your real settings (including the admin
+# password) stay on the server. Any key you leave out falls back to a sensible built-in default,
 # so a partial file is fine.
 
 app:

@@ -2,8 +2,10 @@
 
 **This is a reference/archive doc.** It records the Qlik-side options that were
 weighed and *why we chose the one we did*, so the reasoning isn't lost. The live
-architecture is in [`qlik-sense-integration.md`](qlik-sense-integration.md); the dev
-setup in [`qlik-dev-setup.md`](qlik-dev-setup.md). Nothing here is a build target.
+architecture is in [`qlik-sense-integration.md`](qlik-sense-integration.md); the
+step-by-step wiring in
+[`../../operational/connecting-qlik.md`](../../operational/connecting-qlik.md).
+Nothing here is a build target.
 
 ---
 

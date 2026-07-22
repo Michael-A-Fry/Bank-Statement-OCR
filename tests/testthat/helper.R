@@ -2,7 +2,7 @@
 #
 # expect_statement_ok(fixture_path, expected_csv_path, template_id, bank)
 # parses a fixture through the engine and compares the core Transactions table
-# to a golden CSV snapshot committed under tests/testthat/expected/.
+# to a golden CSV snapshot stored under tests/testthat/expected/.
 #
 # Pattern for adding a new template test (see tests/HOWTO-add-template-test.md):
 #   1. Add templates/<id>.yaml and a fixture under samples/raw/<bank>/.

@@ -1,7 +1,7 @@
 # Legacy "Statement Converter" (Qlik) - schema & enrichment reference
 
 This is a build reference distilled from the legacy Qlik app that this platform
-replaces (`Statement Converter 300925.qvf`, committed at the repo root). The Qlik
+replaces (`Statement Converter 300925.qvf`). The Qlik
 app's binary hides its logic, but the full load script is recoverable; the notes
 below capture **what the old tool produced and how**, so our templates and output
 can be measured against it. Internal infrastructure detail (server paths, staff

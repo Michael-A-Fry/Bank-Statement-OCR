@@ -172,7 +172,7 @@ cat("All required packages are available.\n")
   Write-Host " Start it with:          powershell -ExecutionPolicy Bypass -File scripts\start.ps1"
   Write-Host " Local URL:              http://localhost:$port"
   Write-Host " Team URL:               http://${ip}:$port"
-  Write-Host " Full guide:             docs\SETUP-AND-DEPLOYMENT.md"
+  Write-Host " Full guide:             docs\operational\README.md"
   Write-Host "======================================================================"
 
   if ($Start) {

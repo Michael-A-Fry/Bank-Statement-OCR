@@ -265,6 +265,6 @@ GPL source (ofxstatement, hledger, GnuCash, poppler) into `R/`.
 - Statement validation: [About bank statement extraction in Hubdoc - Xero Central](https://central.xero.com/s/article/About-bank-statement-extraction-in-Hubdoc)
 - R-native: [tabulapdf on CRAN](https://cran.r-project.org/package=tabulapdf) & [tabulapdf paper (arXiv 2409.14524)](https://arxiv.org/pdf/2409.14524) (Java/rJava), [pdftools](https://github.com/ropensci/pdftools), [R-bloggers tabulapdf intro](https://www.r-bloggers.com/2024/04/tabulapdf-extract-tables-from-pdf-documents/)
 
-*Licences verified via the GitHub API where shown; permissive projects (MIT/Apache-2.0/
+*Licences verified from each project's published licence where shown; permissive projects (MIT/Apache-2.0/
 MPL-2.0) may be learned from and lightly vendored with attribution, GPL/NOASSERTION
 projects for technique only.*

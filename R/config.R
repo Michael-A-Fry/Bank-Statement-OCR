@@ -1,5 +1,5 @@
 # config.R -- ONE place for all deployment settings. load_config() reads
-# config/config.yaml (git-ignored on a deployment; copy config/config.example.yaml
+# config/config.yaml (kept out of any distributed copy; copy config/config.example.yaml
 # to create it) and deep-merges it over the built-in defaults, so a partial or
 # absent file still yields a complete, valid config. The admin password also accepts
 # an environment-variable override (BSO_ADMIN_PASSWORD) for sites that would rather

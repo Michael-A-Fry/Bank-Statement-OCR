@@ -5,7 +5,7 @@ Follow the same four steps used for `bnz_everyday_csv`.
 
 ## 1. Add the template
 Create `templates/<id>.yaml` following the spec in
-`docs/architecture/build-contract.md` (section 5). Set a unique `id`, the
+`docs/context/architecture/build-contract.md` (section 5). Set a unique `id`, the
 `fingerprint.header_contains_all` tokens, the `delimiter`, the canonical
 `columns` map, and the `amount_sign` handler
 (`signed` | `debit_credit_cols` | `dr_cr_suffix` | `type_dc`).
@@ -29,7 +29,7 @@ write.csv(coerce_core(parsed$transactions),
           "tests/testthat/expected/<id>.csv", row.names = FALSE, na = "")
 ```
 
-Open `tests/testthat/expected/<id>.csv` and verify it by eye before committing.
+Open `tests/testthat/expected/<id>.csv` and verify it by eye before you rely on it.
 
 ## 4. Write the test
 Create `tests/testthat/test-<id>.R` using the shared helper:

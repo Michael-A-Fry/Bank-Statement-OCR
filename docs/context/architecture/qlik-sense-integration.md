@@ -7,8 +7,8 @@ door and the analytics layer; the R engine does the conversion. Qlik never parse
 statement (it can't) - it loads clean, reconciled, licence-free data.
 
 Why this shape (vs. converting inside Qlik) is in
-[`qlik-options-analysis.md`](qlik-options-analysis.md). Dev setup is in
-[`qlik-dev-setup.md`](qlik-dev-setup.md).
+[`qlik-options-analysis.md`](qlik-options-analysis.md). Step-by-step wiring is in
+[`../../operational/connecting-qlik.md`](../../operational/connecting-qlik.md).
 
 ---
 
@@ -150,8 +150,8 @@ equally just bookmark the app - the tile is convenience + the "start in Qlik" st
 
 ## 7. Configuration
 
-All settings live in `config/config.yaml` (copy from `config.example.yaml`; the real
-file is git-ignored). Keys that matter here:
+All settings live in `config/config.yaml` (created from `config.example.yaml` on
+first run, and kept out of any distributed copy). Keys that matter here:
 - `app.shiny_url` - the URL the Qlik tile opens.
 - `paths.templates` - the **proven** set (also the feed's "proven" definition);
   `paths.user_templates` - analyst drafts.

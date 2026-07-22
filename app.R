@@ -31,8 +31,8 @@ CONFIG <- load_config()
 TEMPLATES_DIR      <- CONFIG$paths$templates       # curated, team-maintained (proven) templates
 USER_TEMPLATES_DIR <- CONFIG$paths$user_templates  # templates accountants create via guided setup
 LOGDIR             <- CONFIG$paths$logs            # run log + feedback log live together, next to the app
-UPLOADS_DIR        <- CONFIG$paths$uploads         # every uploaded statement + its lifecycle status (git-ignored)
-REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell our team" raises (git-ignored)
+UPLOADS_DIR        <- CONFIG$paths$uploads         # every uploaded statement + its lifecycle status (local-only)
+REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell our team" raises (local-only)
 FIELDS_DIR         <- CONFIG$paths$fields          # curated mode:fields (IRD/form) templates
 USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the app
 DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
