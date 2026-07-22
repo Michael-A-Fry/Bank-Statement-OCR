@@ -11,18 +11,48 @@ implementation gap to close. Nothing here changes the engine or the forensic
 contract - it adds one deterministic *writer* alongside the outputs we already
 produce.
 
-> **Two Qlik modes, one engine.** There are two distinct ways Qlik meets this tool,
-> and they are independent:
-> - **Mode A - batch feed into dashboards** (§4-§9): converted results stream into
->   a `feed/` folder that a Qlik app loads for org-wide analysis. Analyst-initiated
->   or scheduled; many statements, one dataset.
+---
+
+## 0. Architect's recommendation (read first)
+
+After reviewing every Qlik-side option against **easy / reliable / maintainable**:
+
+**Do NOT make Qlik the interactive converter.** Rebuilding upload -> convert ->
+result *inside* Qlik (Inphinity + ODAG + EXECUTE/Rserve) is the most complex and
+fragile part of this whole design, and it re-creates the per-user convert-and-
+download experience the **Shiny app already provides** - purpose-built and better
+(X-ray, reconciliation, diagnostics, template pickup).
+
+Split the work by what each tool is genuinely best at:
+
+1. **Shiny is the converter** (it already is). Accountants upload -> audited-template
+   convert -> graphs + transactions + download, isolated per user. Reach it from
+   Qlik with a simple **link / tile** (same AD group), so users still "start in
+   Qlik" - but conversion happens in the tool built for it.
+2. **Qlik is the analytics layer.** Converted, high-trust results flow to the
+   `feed/` folder (**Mode A**, §4-§9); a Qlik **folder connection + scheduled
+   reload** turns them into org-wide dashboards / casework. This is the durable
+   value and the honest renewal story: Qlik does analytics over clean, licence-free
+   data instead of extracting PDFs itself.
+
+**Why:** a lone analyst can run "a folder + a reload schedule + a link." Nobody has
+to keep Inphinity, ODAG bindings, an EXECUTE override, or an Rserve service alive.
+**Governance is preserved by the feed gate** (§6) - only reconciled, proven-template
+conversions reach the dashboards - even though the Shiny converter still offers every
+template for building. Concurrency/no-bleed holds trivially (per-file feed writes +
+Shiny session isolation), with no ODAG timing to coordinate.
+
+**Rserve / EXECUTE: not needed** for this plan. They matter only for the OPTIONAL
+"convert inside Qlik" fallback (**Mode B**, §13), kept documented but not
+recommended. Rserve stays in the offline bundle as cheap insurance only.
+
+> **Two Qlik modes, one engine** (independent - the recommendation above uses A):
+> - **Mode A - batch feed into dashboards** (§4-§9): converted results stream into a
+>   `feed/` folder a Qlik app loads. **Recommended.**
 > - **Mode B - interactive convert from a Qlik front-end** (§13): a Qlik user
->   uploads one statement and gets the one-sheet result back *in Qlik* - the exact
->   legacy `Statement Converter` experience, with our R engine swapped in for the
->   old Mole + per-bank-script extraction. This is the drop-in replacement for the
->   statement-viewer.
->
-> Both share the same folder-handoff spine and the same engine; pick either or both.
+>   converts one statement and gets the result back *in Qlik* (the legacy
+>   `Statement Converter` shape, our engine underneath). **Optional / higher
+>   maintenance - use only if conversion MUST happen inside Qlik.**
 
 ---
 
@@ -329,6 +359,11 @@ The feed is a *projection* of the same parsed result, so every guarantee holds:
 ---
 
 ## 13. Mode B - interactive convert from a Qlik front-end (the statement-viewer replacement)
+
+> **OPTIONAL / NOT RECOMMENDED (see §0).** Use this only if conversion *must* happen
+> inside Qlik. It re-creates what the Shiny app already does and adds the most moving
+> parts (Inphinity + ODAG + EXECUTE/Rserve). The recommended plan is Shiny-converts +
+> a link from Qlik + the Mode A dashboard feed.
 
 **Goal:** keep the legacy Qlik experience *exactly* - user uploads a statement in
 Qlik, it appears in a table, they pick it and hit **generate**, and an ODAG app

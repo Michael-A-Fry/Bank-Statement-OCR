@@ -1,5 +1,12 @@
 # Qlik + Statement Studio - step-by-step dev setup
 
+> **Heads-up (see `qlik-sense-integration.md` §0):** this guide sets up the
+> **OPTIONAL** interactive "convert inside Qlik" path (Inphinity + ODAG + poller).
+> The **recommended** architecture is simpler - Shiny does the conversion (reached
+> via a link from Qlik) and Qlik loads the **Mode A feed** for dashboards - which
+> needs none of the poller/ODAG/Inphinity/Rserve wiring below. Follow this only if
+> conversion must happen inside Qlik.
+
 A hands-on guide to standing the integration up on a **dev** Qlik Sense (Windows)
 box, with the Qlik code. By the end: a user uploads a statement in Qlik and gets the
 converted transactions back in an ODAG app - same experience as the legacy
