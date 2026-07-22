@@ -13,55 +13,42 @@ debug two unknowns at once. The design is in
 ## Part 0 - Prerequisites
 
 - A **Windows box** for the Shiny app / engine (the Qlik node is fine for dev), where
-  you can install software and (optionally) create a Scheduled Task.
+  you can create a Scheduled Task. Nothing to pre-install - `RUN-ME.bat` installs R
+  and everything else for you.
 - Qlik Sense (dev).
-- **Air-gapped:** you also need **one internet-connected Windows machine** to build
-  the offline bundle, and an approved way to copy a folder across. **Nothing runs
-  against the internet at runtime** - only the one-time install does.
-- The Statement Studio repo copied onto both machines, e.g. `D:\StatementStudio\`.
+- **Air-gapped:** you also need **one internet-connected Windows PC** to build the
+  package once, and an approved way to copy a folder across. **Nothing runs against
+  the internet at runtime** - only the one-time build does.
 
 ---
 
-## Part 1 - Install R + the engine OFFLINE
+## Part 1 - Install the whole thing OFFLINE (two double-clicks)
 
 Detail: [`../OFFLINE-INSTALL.md`](../OFFLINE-INSTALL.md).
 
-> **The one rule:** run the bundler under the **same R x.y** the server will run
-> (Windows package binaries are per R minor version - the only thing that makes this
-> fail).
+> **The one rule:** the R on the build PC must be the **same x.y** the server will
+> run (Windows package binaries are per R minor version - the only thing that makes
+> this fail).
 
-**1a. On the INTERNET machine** (same R x.y as the server):
-```bat
-cd /d D:\StatementStudio
-Rscript scripts\bundle-offline.R      &:: -> a self-contained bso-offline\ folder
-```
-**1b.** Copy `bso-offline\` **and** the app repo to the air-gapped box, with
-`bso-offline\` next to (or inside) the app folder.
+**1a. On the INTERNET PC** (this repo, R same x.y as the server): **double-click
+`make-bundle.bat`.** It gathers the whole app plus every package and installer into
+one self-contained folder, **`StatementStudio-offline`**.
 
-**1c. On the air-gapped box: double-click `offline-setup.bat`** (in the app folder).
-One shot, no internet, works wherever the folder lives - it finds R (or installs it
-from the bundle), installs every R package, sets up Poppler **and Tesseract** for
-scanned-PDF OCR, creates `config\config.yaml`, and runs the test suite. When it
-prints `failed: 0`, **the engine works offline.**
+**1b.** Copy that whole **`StatementStudio-offline`** folder to the air-gapped box.
+That one folder is everything - there is nothing else to carry.
 
-<details><summary>Prefer to run the steps by hand?</summary>
-
-```bat
-:: install R from bso-offline\prereqs\R-x.y-win.exe, then:
-cd /d <path>\bso-offline
-"C:\Program Files\R\R-4.x.x\bin\Rscript.exe" install-on-pc.R
-cd /d D:\StatementStudio
-Rscript run.R samples\raw\bnz\bnz_transaction_export_01.csv BNZ out
-Rscript tests\run_tests.R
-```
-</details>
+**1c. On the air-gapped box: double-click `RUN-ME.bat`** inside the folder. First run,
+with no internet, it finds R (or installs it silently from the bundle), installs every
+R package, sets up Poppler **and** Tesseract for scanned-PDF OCR, creates
+`config\config.yaml`, and **starts the app** - printing the `http://...:8100` URL.
+Every run after that just starts the app. **That's the entire server setup.**
 
 ---
 
 ## Part 2 - Config
 
-`offline-setup.bat` already created **`config\config.yaml`** from the example. Open it
-and set:
+The first `RUN-ME.bat` run already created **`config\config.yaml`** from the example.
+Open it and set:
 ```yaml
 app:
   admin_password: <pick-a-dev-password>
@@ -72,16 +59,18 @@ feed:
   min_trust: high                          # only reconciled, proven-template results feed
 ```
 (Forward slashes or doubled backslashes in YAML. Any omitted key uses its default.)
+Re-run `RUN-ME.bat` to pick up the change.
 
 ---
 
-## Part 3 - Run the app, prove a conversion
+## Part 3 - Prove a conversion
 
-**Double-click `start.bat`** (serves on the port in `config.yaml`, default 8100).
-Open `http://<this-host>:8100`, go to **Convert**, drop in
-`samples\raw\bnz\bnz_transaction_export_01.csv`, click **Convert**. You get the
-verdict, the analysis, the transactions, and the downloads. **That's the accountant
-experience.** (Note the bank/template picker lists **audited** templates only.)
+With the app running (from `RUN-ME.bat`), open `http://<this-host>:8100`, go to
+**Convert**, drop in `samples\raw\bnz\bnz_transaction_export_01.csv`, click
+**Convert**. You get the verdict, the analysis, the transactions, and the downloads.
+**That's the accountant experience.** (By default the bank/template picker lists
+**proven** templates; a tick-box brings in user-created ones with a "not guaranteed
+tested" warning.)
 
 ---
 
@@ -163,5 +152,5 @@ AD-group login covers both, so a user in the group lands straight in the convert
 | `withheld:low_trust` / `withheld:needs_review` | It didn't reconcile. Lower `feed.min_trust`/`require_status_ok` only if you truly want unreconciled data in dashboards (not recommended). |
 | Qlik shows nothing | Check the `StatementFeed` connection points at `feed\`, files exist, and the reload ran. |
 | Special characters garbled | Keep `codepage is 65001` (UTF-8) on every `LOAD`. |
-| Offline install: packages `MISSING` | The bundler ran under a different **R x.y** than the box. Rebuild `bso-offline` under the matching R, re-copy. |
+| Offline install: packages `MISSING` | `make-bundle.bat` ran under a different **R x.y** than the server. Rebuild `StatementStudio-offline` under the matching R, re-copy. |
 | Admin password not taking | It's `app.admin_password` in `config\config.yaml`; `BSO_ADMIN_PASSWORD` env var overrides it. |

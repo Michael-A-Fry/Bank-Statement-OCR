@@ -1,16 +1,17 @@
 #!/usr/bin/env Rscript
-# install-offline.R -- RUN ON THE OFFLINE WINDOWS PC, from inside the bso-offline
-# folder you dragged over (it also travels as 'install-on-pc.R'). No internet is
-# used. It:
+# install-offline.R -- the offline install step. On the server it travels inside
+# the bundle as 'offline/install-on-pc.R' and RUN-ME.bat runs it for you on the
+# first launch; you normally never call it by hand. No internet is used. It:
 #   1) installs every R package from repo/            (safe, no admin)
 #   2) unzips Poppler and adds it to your USER PATH    (for scanned-PDF OCR)
-#   3) points you at the Tesseract installer to run once
-#   4) runs the test suite if the app folder is alongside
+#   3) silent-installs Tesseract and adds it to PATH   (for scanned-PDF OCR)
+#   4) prints the next step
 #
-#   Rscript install-on-pc.R
+#   Rscript install-on-pc.R      (run from inside the 'offline' folder)
 #
 # (R itself must already be installed -- you're running Rscript. If you still need
-# R on this machine, the matching installer is in prereqs/.)
+# R on this machine, the matching installer is in prereqs/ and RUN-ME.bat installs
+# it silently before this script runs.)
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)
@@ -18,7 +19,11 @@
 }
 here <- .self_dir()
 
-# Locate the bundle folders whether the script sits inside bso-offline/ or beside it.
+# Self-contained: this script sources nothing from the repo, so define the one
+# helper it needs (run an expression, swallow any error) locally.
+safe <- function(expr, default = NULL) tryCatch(expr, error = function(e) default)
+
+# Locate the bundle folders whether the script sits inside the offline/ folder or beside it.
 find_dir <- function(name) {
   for (c in c(file.path(here, name), file.path(here, "bso-offline", name),
               file.path(getwd(), name), Sys.getenv(toupper(paste0("BSO_", name)), "")))

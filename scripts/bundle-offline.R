@@ -1,48 +1,89 @@
 #!/usr/bin/env Rscript
-# bundle-offline.R -- RUN ON THE INTERNET-CONNECTED LAPTOP. One command collects
-# EVERYTHING the offline Windows PC needs into a single ./bso-offline folder you
-# then drag across:
-#     bso-offline/
-#       repo/          all R packages (+ every dependency) as Windows binaries
-#       prereqs/       the R, Tesseract and Poppler installers (best effort)
-#       install-on-pc.R  the script you run on the PC
-#       packages.txt   the list, for reference
+# bundle-offline.R -- RUN ON AN INTERNET-CONNECTED WINDOWS PC (usually via the
+# double-click make-bundle.bat). One command assembles a SINGLE self-contained
+# folder that is the whole product plus everything it needs to install itself on
+# an air-gapped server:
+#
+#     StatementStudio-offline/
+#       RUN-ME.bat          <- the only thing you run on the server (double-click)
+#       app.R  R/  templates/  ...   the app itself
+#       offline/
+#         repo/             all R packages (+ every dependency) as Windows binaries
+#         prereqs/          the R, Poppler and Tesseract installers
+#         install-on-pc.R   package/OCR install (RUN-ME.bat calls this for you)
+#         packages.txt      the list, for reference
 #
 #   Rscript scripts/bundle-offline.R
 #
-# THE ONE RULE: run this under the SAME R x.y the PC will run (both 4.6). Windows
-# package binaries are built per R minor version. See docs/OFFLINE-INSTALL.md.
+# Then: copy the whole 'StatementStudio-offline' folder to the server and
+# double-click RUN-ME.bat. No internet is used on the server.
+#
+# THE ONE RULE: run this under the SAME R x.y the server will run. Windows package
+# binaries are built per R minor version. See docs/OFFLINE-INSTALL.md.
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)
   if (length(m)) dirname(normalizePath(sub("^--file=", "", m[1]))) else getwd()
 }
+# The repo root is the parent of scripts/.
+app_root <- normalizePath(file.path(.self_dir(), ".."), winslash = "/", mustWork = FALSE)
 
-out       <- "bso-offline"
-repo_path <- file.path(out, "repo")
-prereq    <- file.path(out, "prereqs")
+dist      <- "StatementStudio-offline"
+bundle    <- file.path(dist, "offline")
+repo_path <- file.path(bundle, "repo")
+prereq    <- file.path(bundle, "prereqs")
 pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
           "pdftools", "magick", "testthat")
+
+unlink(dist, recursive = TRUE)
 dir.create(repo_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(prereq,    recursive = TRUE, showWarnings = FALSE)
 
 rxy   <- paste(R.version$major, sub("\\..*", "", R.version$minor), sep = ".")
 rfull <- paste(R.version$major, R.version$minor, sep = ".")
-cat(sprintf("Laptop R: %s\n", R.version.string))
-cat(sprintf("Bundling Windows binaries for R %s (the PC must run this same R x.y)\n\n", rxy))
+cat(sprintf("Building PC R: %s\n", R.version.string))
+cat(sprintf("Assembling '%s' for R %s (the server must run this same R x.y)\n\n", dist, rxy))
 options(timeout = 600)
 
-## 1. R packages (+ all dependencies) -- the reliable core ------------------
+## 1. Copy the app itself into the dist folder ------------------------------
+# Everything the app needs at runtime, plus samples/docs/tests for the demo and
+# smoke test. Runtime/PII dirs (logs, uploads, feed, out...) are deliberately NOT
+# copied -- they are created on first run and must never travel.
+app_items <- c("R", "templates", "templates_user", "templates_seed",
+               "dictionaries", "fields_templates", "config", "scripts",
+               "tests", "samples", "docs",
+               "app.R", "ui_content.R", "run.R", "README.md",
+               ".gitattributes", "RUN-ME.bat")
+cat("Copying the app into the dist folder ...\n")
+copied <- 0L; missing <- character(0)
+for (it in app_items) {
+  src <- file.path(app_root, it)
+  if (!file.exists(src)) { missing <- c(missing, it); next }
+  if (dir.exists(src)) {
+    file.copy(src, dist, recursive = TRUE, copy.date = TRUE)
+  } else {
+    file.copy(src, file.path(dist, it), overwrite = TRUE, copy.date = TRUE)
+  }
+  copied <- copied + 1L
+}
+cat(sprintf("  copied %d items%s\n", copied,
+            if (length(missing)) sprintf("; skipped (not present): %s",
+                                         paste(missing, collapse = ", ")) else ""))
+# RUN-ME.bat must be in the dist root -- if it wasn't in the repo, that's fatal.
+if (!file.exists(file.path(dist, "RUN-ME.bat")))
+  stop("RUN-ME.bat is missing from the repo root -- cannot build a runnable bundle.")
+
+## 2. R packages (+ all dependencies) -- the reliable core ------------------
 if (!requireNamespace("miniCRAN", quietly = TRUE)) {
-  cat("Installing miniCRAN (needs internet -- this laptop has it)...\n")
+  cat("\nInstalling miniCRAN (needs internet -- this PC has it)...\n")
   install.packages("miniCRAN", repos = "https://cloud.r-project.org")
 }
 all <- miniCRAN::pkgDep(pkgs, type = "win.binary", suggests = FALSE)
-cat(sprintf("Downloading %d R packages (with dependencies) into %s ...\n", length(all), repo_path))
+cat(sprintf("\nDownloading %d R packages (with dependencies) into %s ...\n", length(all), repo_path))
 miniCRAN::makeRepo(all, path = repo_path, type = "win.binary")
-writeLines(pkgs, file.path(out, "packages.txt"))
+writeLines(pkgs, file.path(bundle, "packages.txt"))
 
-## 2. System installers -- best effort; on any failure it logs the manual URL
+## 3. System installers -- best effort; on any failure it logs the manual URL
 grab <- function(url, dest, what) tryCatch({
   cat(sprintf("  %-10s downloading...\n", what))
   download.file(url, dest, mode = "wb", quiet = TRUE)
@@ -53,14 +94,14 @@ grab <- function(url, dest, what) tryCatch({
 
 cat(sprintf("\nSystem installers into %s :\n", prereq))
 
-# R installer for Windows, matching this laptop's exact version (try current
-# release location, then the archived 'old' location).
+# R installer for Windows, matching this PC's exact version (try current release
+# location, then the archived 'old' location).
 r_dest <- file.path(prereq, sprintf("R-%s-win.exe", rfull))
 if (!grab(sprintf("https://cran.r-project.org/bin/windows/base/R-%s-win.exe", rfull), r_dest, "R"))
   grab(sprintf("https://cran.r-project.org/bin/windows/base/old/%s/R-%s-win.exe", rfull, rfull), r_dest, "R (old)")
 
 # Poppler for Windows -- newest release .zip (parse the GitHub API without needing
-# jsonlite installed on the laptop yet).
+# jsonlite installed on this PC yet).
 tryCatch({
   txt <- paste(readLines("https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest",
                          warn = FALSE), collapse = "")
@@ -80,13 +121,13 @@ tryCatch({
 }, error = function(e)
   cat("  Tesseract  skipped -- get it from github.com/UB-Mannheim/tesseract/wiki\n"))
 
-## 3. Make the folder self-contained: copy the PC-side script in -------------
+## 4. The PC-side install script (RUN-ME.bat calls this) --------------------
 pc <- file.path(.self_dir(), "install-offline.R")
-if (file.exists(pc)) file.copy(pc, file.path(out, "install-on-pc.R"), overwrite = TRUE)
+if (file.exists(pc)) file.copy(pc, file.path(bundle, "install-on-pc.R"), overwrite = TRUE)
 
-sz <- tryCatch(sum(file.info(list.files(out, recursive = TRUE, full.names = TRUE))$size,
+sz <- tryCatch(sum(file.info(list.files(dist, recursive = TRUE, full.names = TRUE))$size,
                    na.rm = TRUE) / 1e6, error = function(e) NA_real_)
-cat(sprintf("\nDONE -> %s  (R %s, ~%.0f MB total)\n", normalizePath(out), rxy,
+cat(sprintf("\nDONE -> %s  (R %s, ~%.0f MB total)\n", normalizePath(dist), rxy,
             if (is.na(sz)) 0 else sz))
-cat("Drag the whole 'bso-offline' folder to the PC, then on the PC run:\n")
-cat("   Rscript install-on-pc.R\n")
+cat("Next: copy the whole 'StatementStudio-offline' folder to the server and\n")
+cat("      double-click RUN-ME.bat inside it. That's the entire server setup.\n")

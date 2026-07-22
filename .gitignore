@@ -39,8 +39,10 @@ scratch/
 tmp/
 *.tmp
 
-# Offline package bundle produced by scripts/bundle-offline.R (large binaries;
-# generated on the laptop, copied to the PC -- never committed).
+# Offline package produced by make-bundle.bat / scripts/bundle-offline.R (the whole
+# app + large package/installer binaries; built on an internet PC, copied to the
+# server -- never committed).
+/StatementStudio-offline/
 /bso-offline/
 /bso-offline-repo/
 
