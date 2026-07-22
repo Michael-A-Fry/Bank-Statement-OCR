@@ -44,7 +44,7 @@ metadata:
 |---|---|---|
 | **Off** | Nothing beyond the normal run log. | — |
 | **Standard** | Layout signature + format; detection match/score/margin; row count; trust level; KPI pass/fail counts; the statement period and an account **hash**. | No per-row detail. Period + account-hash only. |
-| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, the "misses" (unparsed dates/amounts), value **shapes** (amount magnitude buckets, description length stats, direction split), detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, multi-statement counts (# periods / # accounts / boundary reasons), the **novelty** set (source header inventory, unmapped columns, unrecognised indicator tokens), OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Value shapes are aggregate counts, never values. Column names and short indicator tokens (e.g. an unrecognised "COW"/"HORSE" debit marker) are structural, not content. Still no descriptions/payees/references and no raw account number. |
+| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, the "misses" (unparsed dates/amounts), value **shapes** (amount magnitude buckets, description length stats, direction split), detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, multi-statement counts (# periods / # accounts / boundary reasons), the **novelty** set (source header inventory, unmapped columns, unrecognised indicator tokens), OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Value shapes are aggregate counts, never values. Column names and short indicator tokens (e.g. an unrecognised "PAID"/"RECD" debit marker) are structural, not content. Still no descriptions/payees/references and no raw account number. |
 
 ### Full coverage — what the "goldmine" answers
 
@@ -61,7 +61,7 @@ across the whole `logs/metadata/` corpus, without ever touching statement conten
   date_alt_format, date_year_inferred, ocr_low_conf, row_stitched, forced, …).
 - **What was NEW or unrecognised?** `novelty.{source_headers, unmapped_columns,
   unrecognised_type_values}` — the columns a template never used and the indicator
-  tokens it didn't know (the "a new bank writes cow/horse for debit/credit" signal),
+  tokens it didn't know (the "a new bank writes Paid/Recd for debit/credit" signal),
   plus `layout.signature` for clustering never-before-seen layouts.
 - **Did it reconcile, and how far off?** `reconciliation.{trust_level, kpis,
   opening_balance, closing_balance, net_amount, stated_count}`.

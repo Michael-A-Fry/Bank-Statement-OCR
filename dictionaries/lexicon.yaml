@@ -9,12 +9,12 @@
 #   * date_formats -> your entries are APPENDED (tried after the built-ins).
 #   * field_name_patterns -> your entry OVERRIDES the built-in for that field.
 #
-# Example: a bank that writes "cow"/"horse" for its debit/credit indicator column.
-# Uncomment to teach the whole engine (detection + drafting + parsing) to recognise
-# them -- no code change:
+# Example: a bank that marks its debit/credit column "Paid" / "Recd" (not one of
+# the built-in D / DR / Debit / ... markers). Uncomment to teach the whole engine
+# (detection + drafting + parsing) to recognise them -- no code change:
 #
-#   debit_markers:  [cow]
-#   credit_markers: [horse]
+#   debit_markers:  [Paid]
+#   credit_markers: [Recd]
 #
 # Editable categories: header_keywords, layout_stopwords, debit_markers,
 # credit_markers, amount_style_debit_headers, amount_style_credit_headers,
