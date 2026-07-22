@@ -41,6 +41,27 @@ test_that("type_dc: absent type key defaults to credit (no `$` partial match)", 
   expect_identical(r$direction, c("credit", "credit"))
 })
 
+test_that("type_dc: indicator match is case- and whitespace-insensitive (P0-2)", {
+  # The bug: a case-sensitive "D" match silently flips the sign when the bank
+  # writes the indicator any other way ("d", " D ", "Debit").
+  expect_equal(parse_amount(c("4.50", "2000.00"), "type_dc",
+    list(type = c("d", "C"), type_debit_value = "D"))$value, c(-4.50, 2000.00))
+  expect_equal(parse_amount(c("10", "20", "30"), "type_dc",
+    list(type = c("Debit", "Credit", " DEBIT "), type_debit_value = "debit"))$value,
+    c(-10, 20, -30))
+})
+
+test_that("type_dc: a declared credit token makes an unknown indicator fail closed (P0-2)", {
+  # With BOTH tokens declared, a value matching neither is genuinely ambiguous
+  # and must be NA (flagged), never silently signed. Without a credit token the
+  # long-standing binary rule (non-debit -> credit) is preserved for back-compat.
+  expect_identical(parse_amount(c("10", "20", "30"), "type_dc",
+    list(type = c("D", "C", "X"), type_debit_value = "D", type_credit_value = "C"))$value,
+    c(-10, 20, NA))
+  expect_equal(parse_amount(c("10", "20"), "type_dc",
+    list(type = c("D", "C"), type_debit_value = "D"))$value, c(-10, 20))
+})
+
 test_that("unsigned (credit card): bare = charge (debit), CR = payment (credit)", {
   r <- parse_amount(c("45.00", "12.50", "500.00 CR", "9.99"), "unsigned")
   expect_equal(r$value, c(-45, -12.50, 500, -9.99))            # charges negative, payment positive

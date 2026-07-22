@@ -19,6 +19,7 @@ columns:
   balance:     null
 amount_sign: type_dc
 type_debit_value: "D"
+type_credit_value: "C"
 extras:
   card:        {source: Card}
   posted_date: {source: ProcessedDate}

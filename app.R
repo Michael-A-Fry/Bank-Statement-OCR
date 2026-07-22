@@ -2049,7 +2049,8 @@ server <- function(input, output, session) {
                               ref_col = NULL, bal_col = NULL,
                               id = NULL, type = NULL, currency = NULL,
                               date_col = NULL, amount_col = NULL,
-                              keep_dateless = NULL) {
+                              keep_dateless = NULL,
+                              type_debit_value = NULL, type_credit_value = NULL) {
     if (!is.null(id) && nzchar(trimws(id)))
       tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
     if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
@@ -2089,6 +2090,18 @@ server <- function(input, output, session) {
     if (!is.null(unsigned_default) && nzchar(unsigned_default) &&
         identical(sign, "unsigned"))
       tmpl$unsigned_default <- unsigned_default
+    # type_dc tokens: which indicator value means a debit (required for the sign),
+    # and optionally which means a credit (declaring it makes an unrecognised
+    # indicator fail closed instead of defaulting to credit). Only stamped for the
+    # type_dc style, so switching away clears them.
+    if (identical(sign, "type_dc")) {
+      if (!is.null(type_debit_value) && nzchar(trimws(type_debit_value)))
+        tmpl$type_debit_value <- trimws(type_debit_value)
+      tmpl$type_credit_value <- if (!is.null(type_credit_value) && nzchar(trimws(type_credit_value)))
+        trimws(type_credit_value) else NULL
+    } else {
+      tmpl$type_debit_value <- NULL; tmpl$type_credit_value <- NULL
+    }
     tmpl
   }
 
@@ -2170,6 +2183,16 @@ server <- function(input, output, session) {
                         choices = c("Charge - money out" = "debit",
                                     "Payment - money in" = "credit"),
                         selected = cur_ud)))),
+        # type_dc: the debit/credit indicator tokens. Which value in the type
+        # column means money OUT is what sets the sign, so we ask it plainly
+        # rather than defaulting to "D" (which mis-signs "d" / "DR" / "Debit").
+        conditionalPanel(
+          "input.g_sign == 'type_dc'",
+          fluidRow(
+            column(6, textInput("g_type_debit", "Which indicator value means money OUT (debit)?",
+                                value = tmpl$type_debit_value %||% "")),
+            column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
+                                value = tmpl$type_credit_value %||% "")))),
         if (!is.null(g$cols) && length(g$cols)) tagList(
           tags$hr(),
           p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
@@ -2402,7 +2425,9 @@ server <- function(input, output, session) {
                     input$g_col_desc, input$g_col_ref, input$g_col_bal,
                     input$g_id, input$g_type, input$g_currency,
                     date_col = input$g_col_date, amount_col = input$g_col_amt,
-                    keep_dateless = input$g_keep_dateless) })
+                    keep_dateless = input$g_keep_dateless,
+                    type_debit_value = input$g_type_debit,
+                    type_credit_value = input$g_type_credit) })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -2468,6 +2493,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_sign", selected = gv_sign(parsed))
     updateSelectInput(session, "g_decimal", selected = parsed$decimal_mark %||% "auto")
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
+    updateTextInput(session, "g_type_debit",  value = parsed$type_debit_value %||% "")
+    updateTextInput(session, "g_type_credit", value = parsed$type_credit_value %||% "")
     updateSelectInput(session, "g_col_date", selected = parsed$columns$date$source %||% "")
     updateSelectInput(session, "g_col_amt",  selected = parsed$columns$amount$source %||% "")
     updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")

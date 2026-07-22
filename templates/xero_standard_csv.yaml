@@ -20,6 +20,7 @@ columns:
   type:        {source: debit_credit}
 amount_sign: type_dc
 type_debit_value: debit
+type_credit_value: credit
 extras:
   memo:            {source: memo}
   source_currency: {source: currency}

@@ -63,6 +63,24 @@
   if (nzchar(f)) f else "%d/%m/%Y"
 }
 
+# .draft_type_dc(style, headers, df, cols) -- when the amount style is a D/C
+# indicator column, pin BOTH the indicator column and the token that means a
+# debit, so a drafted template never falls back to the blind "D" default (which
+# silently mis-signs a bank that writes "d" / "DR" / "Debit"). Returns the
+# (possibly-augmented) columns plus the type_debit_value / type_credit_value keys
+# to fold onto the template. A no-op for every other style.
+.draft_type_dc <- function(style, headers, df, cols) {
+  if (!identical(style, "type_dc")) return(list(cols = cols, keys = list()))
+  tv <- detect_type_dc_values(headers, df)
+  # Map the indicator column when the generic name-match missed it (a header like
+  # "debit_credit" doesn't contain "type").
+  if (!is.null(tv$column) && is.null(cols$type)) cols$type <- list(source = tv$column)
+  keys <- list()
+  if (!is.null(tv$debit))  keys$type_debit_value  <- tv$debit
+  if (!is.null(tv$credit)) keys$type_credit_value <- tv$credit
+  list(cols = cols, keys = keys)
+}
+
 .draft_delimited <- function(path, id, bank) {
   delim <- detect_delimiter(path)
   df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
@@ -86,10 +104,13 @@
     if (!is.na(dc)) cols$debit <- list(source = dc)
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
-  list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
+  tdc <- .draft_type_dc(style, h, df, cols)
+  cols <- tdc$cols
+  out <- list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
     version = 1, min_score = max(1L, length(h)),
     fingerprint = list(header_contains_all = as.list(h)), delimiter = delim,
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
+  utils::modifyList(out, tdc$keys)
 }
 
 .draft_pdf <- function(input, id, bank) {
@@ -159,11 +180,14 @@
     if (!is.na(dc)) cols$debit <- list(source = dc)
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
+  tdc <- .draft_type_dc(style, h, df, cols)
+  cols <- tdc$cols
   if (is.null(cols$amount) && is.null(cols$debit)) return(NULL)   # nothing to read money from
-  list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
+  out <- list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
     version = 1, min_score = max(1L, length(h)),
     fingerprint = list(header_contains_all = as.list(h)),
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
+  utils::modifyList(out, tdc$keys)
 }
 
 # draft_template(path, bank) -> a template list (or NULL if unsupported kind).

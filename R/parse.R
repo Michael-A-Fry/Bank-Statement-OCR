@@ -81,7 +81,10 @@ parse_statement <- function(input, template, force_rows = NULL) {
   } else if (style == "type_dc") {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
     amt_opts$type <- .pick(tbl, .col_source(template, "type"))
-    amt_opts$type_debit_value <- template$type_debit_value %||% "D"
+    amt_opts$type_debit_value  <- template$type_debit_value %||% "D"
+    # Optional credit token: when declared, parse_amount fails closed on any
+    # indicator that is neither debit nor credit. Absent -> binary back-compat.
+    amt_opts$type_credit_value <- template$type_credit_value
   } else {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
   }

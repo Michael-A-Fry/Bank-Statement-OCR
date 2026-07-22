@@ -203,12 +203,27 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   if (style == "type_dc") {
     raw <- as.character(x)
     mag <- abs(.num(raw, dec))
-    # Exact indexing (`[[`) -- `$` partial-matches `type` to `type_debit_value`
-    # when the type column is unmapped, which would flip every row to debit.
-    tv  <- as.character(opts[["type"]] %||% rep(NA_character_, length(raw)))
-    debit_val <- as.character(opts[["type_debit_value"]] %||% "D")
-    is_debit <- !is.na(tv) & tv == debit_val
-    value <- ifelse(is_debit, -mag, mag)
+    # Compare the indicator CASE- and whitespace-insensitively: a statement may
+    # print it as "D" / "d" / "Debit" / " DR ", and a case-sensitive "D" match
+    # silently flips every debit to a credit -- a wrong sign that looks right.
+    # Exact `[[` indexing (never `$`) avoids partial-matching `type` onto
+    # `type_debit_value` when the type column is unmapped.
+    tv   <- toupper(trimws(as.character(opts[["type"]] %||% rep(NA_character_, length(raw)))))
+    dval <- toupper(trimws(as.character(opts[["type_debit_value"]] %||% "D")))
+    cval <- opts[["type_credit_value"]]
+    cval <- if (is.null(cval)) NA_character_ else toupper(trimws(as.character(cval)))
+    is_debit <- !is.na(tv) & nzchar(tv) & tv == dval
+    if (!is.na(cval) && nzchar(cval)) {
+      # A credit token is declared: a value matching NEITHER token is genuinely
+      # ambiguous, so fail CLOSED (NA, flagged downstream) rather than silently
+      # signing it a credit. This is the fail-closed contract at work.
+      is_credit <- !is.na(tv) & nzchar(tv) & tv == cval
+      value <- ifelse(is_debit, -mag, ifelse(is_credit, mag, NA_real_))
+    } else {
+      # Back-compat (no credit token declared): the long-standing binary rule --
+      # anything that is not the debit token is treated as a credit.
+      value <- ifelse(is_debit, -mag, mag)
+    }
     return(list(value = value, direction = .direction(value), raw = raw))
   }
 

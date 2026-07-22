@@ -61,6 +61,31 @@ test_that("draft_template turns a delimited file into a parsing template", {
   expect_true(all(!is.na(tx$date)))          # dates parsed with the drafted format
 })
 
+test_that("draft_template pins the type_dc debit token, never a blind 'D' (P0-2)", {
+  fx <- fixture("samples/raw/anz/anz_creditcard_01.csv")
+  skip_if_not(file.exists(fx))
+  tmpl <- draft_template(fx, bank = "ANZ")
+  expect_identical(tmpl$amount_sign, "type_dc")
+  expect_false(is.null(tmpl$columns$type))            # indicator column mapped
+  expect_true(nzchar(tmpl$type_debit_value %||% ""))  # debit token pinned, not defaulted
+  expect_length(validate_template(tmpl), 0)           # a type_dc template MUST carry it
+  # signs come out right: a "D" row is money out (negative), a "C" row money in.
+  tx <- draft_preview(fx, tmpl)
+  expect_true(any(tx$amount < 0) && any(tx$amount > 0))
+})
+
+test_that("validate_template rejects a type_dc template with no debit token (P0-2)", {
+  bad <- list(id = "x", bank = "B", statement_type = "s", format = "delimited",
+              version = 1, min_score = 1, currency = "NZD",
+              fingerprint = list(header_contains_all = list("Type")),
+              columns = list(date = list(source = "d", format = "%d/%m/%Y"),
+                             amount = list(source = "a"),
+                             description = list(source = "x"),
+                             type = list(source = "Type")),
+              amount_sign = "type_dc")
+  expect_true(any(grepl("type_debit_value", validate_template(bad))))
+})
+
 test_that("draft_template auto-drafts the tutorial PDF (2 amount cols + year-less dates)", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   fx <- fixture("samples/raw/tutorial/sample_everyday_statement.pdf")

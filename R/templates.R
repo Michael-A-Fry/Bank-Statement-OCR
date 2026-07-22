@@ -88,8 +88,14 @@ validate_template <- function(t) {
     if (identical(t$amount_sign, "debit_credit_cols")) for (k in c("debit", "credit"))
       if (!.has_col(k)) problems <- c(problems,
         sprintf("amount_sign 'debit_credit_cols' requires columns.%s", k))
-    if (identical(t$amount_sign, "type_dc") && !.has_col("type"))
-      problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
+    if (identical(t$amount_sign, "type_dc")) {
+      if (!.has_col("type"))
+        problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
+      # The debit token is mandatory: without it the reader falls back to a blind
+      # "D", which silently flips the sign on any bank that writes it differently.
+      if (is.null(t$type_debit_value) || !nzchar(trimws(as.character(t$type_debit_value))))
+        problems <- c(problems, "amount_sign 'type_dc' requires type_debit_value (which indicator value means a debit)")
+    }
   }
 
   # extras: {source} for delimited/excel, {x_min,x_max} bands for pdf.

@@ -111,6 +111,42 @@ detect_amount_style <- function(headers, df = NULL) {
   "signed"
 }
 
+# detect_type_dc_values(headers, df) -- for a `type_dc` statement, deterministically
+# work out which indicator value means a DEBIT (money out) and which a CREDIT, from
+# the column's actual contents, so a drafted template pins type_debit_value instead
+# of relying on a blind "D" default (which silently flips the sign when the bank
+# writes "d" / "DR" / "Debit" / "credit"). Also returns the indicator COLUMN, since
+# a header like "debit_credit" is not caught by the generic `type` name match.
+# Deterministic: an explicit token table first, first-letter D/C only as a fallback.
+detect_type_dc_values <- function(headers, df) {
+  none <- list(debit = NULL, credit = NULL, column = NULL)
+  if (is.null(df) || !length(headers)) return(none)
+  h <- tolower(headers)
+  cand <- names(df)[grepl("type|debit.?credit|dr.?cr|d/c", h)]
+  pick <- NULL
+  for (cn in c(cand, names(df))) {
+    if (is.null(df[[cn]])) next
+    vals <- toupper(trimws(as.character(df[[cn]]))); vals <- unique(vals[nzchar(vals)])
+    if (length(vals) && length(vals) <= 4 && all(nchar(vals) <= 8) &&
+        any(vals %in% c("D", "C", "DR", "CR", "DEBIT", "CREDIT")))
+      { pick <- cn; break }
+  }
+  if (is.null(pick)) return(none)
+  vals <- trimws(as.character(df[[pick]])); vals <- unique(vals[nzchar(vals)])
+  classify <- function(v) {
+    u <- toupper(v)
+    if (u %in% c("D", "DR", "DEBIT", "W", "WD", "WITHDRAWAL", "OUT")) return("debit")
+    if (u %in% c("C", "CR", "CREDIT", "DEP", "DEPOSIT", "IN"))        return("credit")
+    if (startsWith(u, "D")) return("debit")     # deterministic first-letter fallback
+    if (startsWith(u, "C")) return("credit")
+    NA_character_
+  }
+  cls <- vapply(vals, classify, character(1))
+  dv <- vals[which(cls == "debit")]; cv <- vals[which(cls == "credit")]
+  list(debit  = if (length(dv)) dv[1] else NULL,
+       credit = if (length(cv)) cv[1] else NULL, column = pick)
+}
+
 # Best-guess a source column for a canonical field.
 wd_field_patterns <- function() list(
   # Kept deliberately conservative: word-bounded or exact where a loose match

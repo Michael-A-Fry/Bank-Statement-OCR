@@ -42,7 +42,7 @@ test_that("valid debit_credit_cols / type_dc templates pass", {
     columns = list(date = list(source = "Date"), description = list(source = "Details"),
       debit = list(source = "Dr"), credit = list(source = "Cr")))
   expect_length(validate_template(ok1), 0L)
-  ok2 <- .min_tmpl(amount_sign = "type_dc",
+  ok2 <- .min_tmpl(amount_sign = "type_dc", type_debit_value = "D",
     columns = list(date = list(source = "Date"), amount = list(source = "Amount"),
       description = list(source = "Amount"), type = list(source = "T")))
   expect_length(validate_template(ok2), 0L)
