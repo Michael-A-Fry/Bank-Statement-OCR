@@ -100,14 +100,18 @@ parse_date <- function(x, fmt) {
 #             "1.234,56"=1234.56, "1234,56"=1234.56).
 # The mixed case ("1.234,56" / "1,234.56", both separators present) is
 # unambiguous and read the same way under every mode.
-.num_one <- function(raw, decimal = "auto") {
+# debit_rx / credit_rx: the trailing balance-sign markers, defaulted to the
+# built-ins so a direct call is unchanged; .num builds them from the lexicon once
+# per column (so "cow"/"OD"-style markers plumb in without a code change).
+.num_one <- function(raw, decimal = "auto",
+                     debit_rx = "(DR|OD)\\s*$", credit_rx = "CR\\s*$") {
   if (is.na(raw)) return(NA_real_)
   raw <- trimws(as.character(raw))
   if (!nzchar(raw)) return(NA_real_)
   neg <- FALSE
   up <- toupper(raw)
-  if (grepl("(DR|OD)\\s*$", up)) neg <- TRUE        # debit / overdrawn balance
-  else if (grepl("CR\\s*$", up)) neg <- FALSE       # explicit credit -> positive
+  if (grepl(debit_rx, up)) neg <- TRUE              # debit / overdrawn balance
+  else if (grepl(credit_rx, up)) neg <- FALSE       # explicit credit -> positive
   s <- gsub("[^0-9.,()+-]", "", raw)                # drop currency/letters/space/apostrophe
   if (grepl("\\(", s) && grepl("\\)", s)) neg <- TRUE   # (123.45) accounting negative
   if (grepl("-", s)) neg <- TRUE                        # any minus -> negative
@@ -134,8 +138,13 @@ parse_date <- function(x, fmt) {
   if (is.na(v)) return(NA_real_)
   if (neg) -abs(v) else v
 }
-.num <- function(s, decimal = "auto")
-  vapply(as.character(s), .num_one, numeric(1), decimal = decimal, USE.NAMES = FALSE)
+.num <- function(s, decimal = "auto") {
+  debit_rx  <- sprintf("(%s)\\s*$", paste(toupper(c(lex("dr_cr_suffix_debit"),
+                       lex("overdrawn_markers"))), collapse = "|"))
+  credit_rx <- sprintf("(%s)\\s*$", paste(toupper(lex("dr_cr_suffix_credit")), collapse = "|"))
+  vapply(as.character(s), .num_one, numeric(1), decimal = decimal,
+         debit_rx = debit_rx, credit_rx = credit_rx, USE.NAMES = FALSE)
+}
 
 # .direction(v) -- sign -> "debit" (<0) / "credit" (>0) / NA (0 or NA).
 .direction <- function(v) {
@@ -173,13 +182,16 @@ parse_amount <- function(x, style = "signed", opts = list()) {
 
   if (style == "dr_cr_suffix") {
     raw <- as.character(x)
+    # debit / credit suffix markers come from the lexicon (default DR / CR).
+    dset <- toupper(lex("dr_cr_suffix_debit")); cset <- toupper(lex("dr_cr_suffix_credit"))
     suf <- toupper(sub(".*?([A-Za-z]{2})\\s*$", "\\1", trimws(raw)))
+    strip_rx <- sprintf("\\s*(%s)\\s*$", paste(c(dset, cset), collapse = "|"))
     # The SUFFIX is the sole source of sign in this style, so read the magnitude
     # UNSIGNED: .num already makes "(500.00)" and "-500.00" negative, which would
     # then be flipped a SECOND time by a DR suffix -> a wrong +500 for a figure
     # marked debit twice over. abs() keeps the suffix authoritative.
-    mag <- abs(.num(sub("(?i)\\s*(DR|CR)\\s*$", "", trimws(raw), perl = TRUE), dec))
-    sign <- ifelse(suf == "DR", -1, ifelse(suf == "CR", 1, NA_real_))
+    mag <- abs(.num(sub(strip_rx, "", trimws(raw), perl = TRUE, ignore.case = TRUE), dec))
+    sign <- ifelse(suf %in% dset, -1, ifelse(suf %in% cset, 1, NA_real_))
     value <- mag * sign
     return(list(value = value, direction = .direction(value), raw = raw))
   }

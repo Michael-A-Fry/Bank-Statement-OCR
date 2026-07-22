@@ -28,15 +28,11 @@ if (!exists("REDACTION_TOKEN")) REDACTION_TOKEN <- "[REDACTED]"
                        "▬", "▮", "▀", "▄", "█")
 
 pdf_redaction_markers <- function() {
-  block_run <- paste0(
-    "(?:", paste(unique(.PDF_BLOCK_GLYPHS), collapse = "|"), "){1,}")
-  c(
-    "\\[REDACTED\\]",   # explicit marker
-    "\\bREDACTED\\b",   # bare word
-    block_run,          # run of block/shade glyphs
-    "X{6,}",            # long XXXXXX mask
-    "#{6,}"             # long hash mask
-  )
+  # marker regexes + the block/shade glyphs come from the lexicon (admin/ML
+  # extendable), so a new redaction convention is one edit, not a code change.
+  glyphs <- unique(lex("redaction_block_glyphs"))
+  block_run <- paste0("(?:", paste(glyphs, collapse = "|"), "){1,}")
+  c(lex("redaction_markers"), block_run)
 }
 
 # .matches_marker(text, markers) -- logical vector: does each string contain a

@@ -31,20 +31,21 @@ header_phrases <- function(input, n = 3) {
   lines <- gsub("\\s+", " ", lines[nzchar(lines)])
   if (!length(lines)) return(character(0))
   out <- character(0)
+  hdr_keys <- lex("header_keywords")   # from the lexicon (admin/ML-extendable)
   # 1. a distinctive TITLE/brand line near the top: multi-word, no digits (not a
   # data row), not just column labels -- e.g. "Your transactions", a bank name.
   top <- utils::head(lines, 15L)
   titleish <- vapply(top, function(ln) {
     w <- unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln)))
     nchar(ln) >= 10 && nchar(ln) <= 60 && length(w) >= 2 && !grepl("[0-9]", ln) &&
-      (length(w) == 0 || mean(tolower(w) %in% .HDR_KEYS) < 0.5)
+      (length(w) == 0 || mean(tolower(w) %in% hdr_keys) < 0.5)
   }, logical(1))
   out <- c(out, utils::head(top[titleish], 2L))
   # 2. the transaction table's header LINE as a whole multi-word phrase (the column
   # labels together are far more specific than any one of them alone).
   score <- vapply(lines, function(ln) {
     w <- tolower(unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln))))
-    length(unique(w[w %in% .HDR_KEYS]))
+    length(unique(w[w %in% hdr_keys]))
   }, integer(1))
   best <- which.max(score)
   if (length(best) && score[best] >= 2 && nchar(lines[best]) <= 60)
@@ -53,7 +54,7 @@ header_phrases <- function(input, n = 3) {
   # after the distinctive phrases so a good fingerprint leads).
   if (length(best) && score[best] >= 1) {
     words <- unlist(regmatches(lines[best], gregexpr("[A-Za-z]+", lines[best])))
-    out <- c(out, words[tolower(words) %in% .HDR_KEYS])
+    out <- c(out, words[tolower(words) %in% hdr_keys])
   }
   utils::head(unique(out[nzchar(out)]), n)
 }

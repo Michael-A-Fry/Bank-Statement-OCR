@@ -40,9 +40,10 @@ layout_signature <- function(input) {
     lines <- tolower(unlist(strsplit(txt, "\n", fixed = TRUE)))
     # the line matching the most header keywords is the table header -> its keys
     # are a stable, customer-independent signature.
+    hdr_keys <- lex("header_keywords"); stop_words <- lex("layout_stopwords")
     key_hits <- lapply(lines, function(ln) {
       w <- unlist(regmatches(ln, gregexpr("[a-z]+", ln)))
-      sort(unique(w[w %in% .HDR_KEYS]))
+      sort(unique(w[w %in% hdr_keys]))
     })
     best <- which.max(vapply(key_hits, length, integer(1)))
     if (length(best) && length(key_hits[[best]]) >= 2) {
@@ -50,7 +51,7 @@ layout_signature <- function(input) {
     } else {
       # fallback: recurring structural words (multi-page headers repeat)
       words <- tolower(unlist(regmatches(txt, gregexpr("[A-Za-z]{4,}", txt))))
-      words <- words[!words %in% .LAYOUT_STOP]
+      words <- words[!words %in% stop_words]
       if (length(words)) {
         tab <- sort(table(words), decreasing = TRUE)
         toks <- names(utils::head(tab, 12))

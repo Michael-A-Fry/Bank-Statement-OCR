@@ -68,14 +68,14 @@ detect_date_format <- function(values) {
   parses <- function(fmt, yearless)
     if (isTRUE(yearless)) !any(is.na(parse_date(paste(v, "2000"), paste(fmt, "%Y"))$iso))
     else !any(is.na(parse_date(v, fmt)$iso))
-  for (e in wd_date_table()) {
+  for (e in lex("date_formats")) {
     if (all(grepl(e$rx, v)) && parses(e$fmt, isTRUE(e$yearless))) return(e$fmt)
   }
   ""
 }
 
 date_format_label <- function(fmt) {
-  for (e in wd_date_table()) if (identical(e$fmt, fmt)) return(e$label)
+  for (e in lex("date_formats")) if (identical(e$fmt, fmt)) return(e$label)
   fmt
 }
 
@@ -92,17 +92,20 @@ wd_amount_labels <- function() c(
 detect_amount_style <- function(headers, df = NULL) {
   h <- tolower(headers)
   hit <- function(pats) any(vapply(pats, function(p) any(grepl(p, h)), logical(1)))
-  if (hit(c("debit", "withdrawal", "money out", "paid out")) &&
-      hit(c("credit", "deposit", "money in", "paid in"))) return("debit_credit_cols")
+  # header words + indicator tokens come from the lexicon (admin/ML-extendable).
+  if (hit(lex("amount_style_debit_headers")) &&
+      hit(lex("amount_style_credit_headers"))) return("debit_credit_cols")
   if (!is.null(df)) {
     for (cn in names(df)) {
       vals <- toupper(trimws(as.character(df[[cn]]))); vals <- vals[nzchar(vals)]
-      if (length(vals) && all(vals %in% c("D", "C", "DR", "CR"))) return("type_dc")
+      if (length(vals) && all(vals %in% type_dc_domain())) return("type_dc")
     }
     amtcol <- headers[grepl("amount|value", h)][1]
     if (!is.na(amtcol) && amtcol %in% names(df)) {
       vals <- toupper(trimws(as.character(df[[amtcol]]))); vals <- vals[nzchar(vals)]
-      suf <- grepl("(DR|CR)[[:space:]]*$", vals)
+      suf_rx <- sprintf("(%s)[[:space:]]*$", paste(c(lex("dr_cr_suffix_debit"),
+                        lex("dr_cr_suffix_credit")), collapse = "|"))
+      suf <- grepl(suf_rx, vals, ignore.case = TRUE)
       # ALL amounts carry DR/CR -> dr_cr_suffix; only SOME (bare numbers plus a
       # stray CR payment) -> the unsigned credit-card style.
       if (length(vals) && any(suf)) return(if (all(suf)) "dr_cr_suffix" else "unsigned")
@@ -128,15 +131,18 @@ detect_type_dc_values <- function(headers, df) {
     if (is.null(df[[cn]])) next
     vals <- toupper(trimws(as.character(df[[cn]]))); vals <- unique(vals[nzchar(vals)])
     if (length(vals) && length(vals) <= 4 && all(nchar(vals) <= 8) &&
-        any(vals %in% c("D", "C", "DR", "CR", "DEBIT", "CREDIT")))
+        any(vals %in% type_dc_domain()))
       { pick <- cn; break }
   }
   if (is.null(pick)) return(none)
   vals <- trimws(as.character(df[[pick]])); vals <- unique(vals[nzchar(vals)])
+  # debit / credit indicator tokens come from the lexicon (add "cow"/"horse" there
+  # and this recognises them automatically); first-letter D/C is the last resort.
+  dset <- toupper(lex("debit_markers")); cset <- toupper(lex("credit_markers"))
   classify <- function(v) {
     u <- toupper(v)
-    if (u %in% c("D", "DR", "DEBIT", "W", "WD", "WITHDRAWAL", "OUT")) return("debit")
-    if (u %in% c("C", "CR", "CREDIT", "DEP", "DEPOSIT", "IN"))        return("credit")
+    if (u %in% dset) return("debit")
+    if (u %in% cset) return("credit")
     if (startsWith(u, "D")) return("debit")     # deterministic first-letter fallback
     if (startsWith(u, "C")) return("credit")
     NA_character_
@@ -159,7 +165,7 @@ wd_field_patterns <- function() list(
 )
 
 guess_mapping <- function(headers, field) {
-  p <- wd_field_patterns()[[field]]
+  p <- lex("field_name_patterns")[[field]]
   if (is.null(p)) return("(none)")
   hit <- grep(p, headers, ignore.case = TRUE)
   if (length(hit)) headers[hit[1]] else "(none)"

@@ -41,12 +41,13 @@ extract_metadata <- function(input, dict = default_label_dict()) {
   # from code points (ASCII hyphen, en-dash, em-dash) so the pattern is valid
   # UTF-8 regardless of the source file's locale -- no raw non-ASCII literal.
   dash <- paste0("-", intToUtf8(0x2013), intToUtf8(0x2014))
-  per_rx <- sprintf("(?:%s)\\s*(?:to|through|thru|until|[%s])\\s*(?:%s)",
-                    .DATE_RX, dash, .DATE_RX)
+  # date shape + the "to / through / ..." connectives come from the lexicon.
+  date_rx <- lex("date_regex"); conn <- paste(lex("period_connectives"), collapse = "|")
+  per_rx <- sprintf("(?:%s)\\s*(?:%s|[%s])\\s*(?:%s)", date_rx, conn, dash, date_rx)
   periods <- .all_matches(enc2utf8(text), per_rx, perl = TRUE)
   period_start <- NA_character_; period_end <- NA_character_
   if (length(periods)) {
-    ds <- regmatches(periods[1], gregexpr(.DATE_RX, periods[1]))[[1]]
+    ds <- regmatches(periods[1], gregexpr(date_rx, periods[1]))[[1]]
     if (length(ds) >= 2) { period_start <- ds[1]; period_end <- ds[2] }
   }
   # Fallback: period given as two LABELLED dates (Westpac/ASB "Opening date" /
@@ -61,7 +62,8 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     }
   }
 
-  accounts <- unique(c(.all_matches(text, .ACCT_RX), .all_matches(text, .CARD_RX)))
+  accounts <- unique(c(.all_matches(text, lex("account_regex")),
+                       .all_matches(text, lex("card_regex"))))
 
   # How many times the opening / closing-balance HEADER wording appears. A single
   # statement prints each once; a concatenated bundle repeats the whole block.

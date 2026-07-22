@@ -33,7 +33,7 @@
   header_keywords = "list", layout_stopwords = "list",
   debit_markers = "list", credit_markers = "list",
   amount_style_debit_headers = "list", amount_style_credit_headers = "list",
-  dr_cr_suffix_debit = "list", dr_cr_suffix_credit = "list",
+  dr_cr_suffix_debit = "list", dr_cr_suffix_credit = "list", overdrawn_markers = "list",
   period_connectives = "list", redaction_markers = "list", redaction_block_glyphs = "list",
   money_regex = "regex", date_regex = "regex", account_regex = "regex", card_regex = "regex",
   date_formats = "table", field_name_patterns = "map")
@@ -48,8 +48,9 @@
   credit_markers   = c("C", "CR", "CREDIT", "DEP", "DEPOSIT", "IN"),
   amount_style_debit_headers  = c("debit", "withdrawal", "money out", "paid out"),
   amount_style_credit_headers = c("credit", "deposit", "money in", "paid in"),
-  dr_cr_suffix_debit  = c("DR", "OD"),
-  dr_cr_suffix_credit = c("CR"),
+  dr_cr_suffix_debit  = c("DR"),   # debit suffix on an AMOUNT (dr_cr_suffix style)
+  dr_cr_suffix_credit = c("CR"),   # credit suffix on an amount
+  overdrawn_markers   = c("OD"),   # extra debit marker on a BALANCE (.num_one)
   period_connectives  = c("to", "through", "thru", "until"),
   redaction_markers   = c("\\[REDACTED\\]", "\\bREDACTED\\b", "X{6,}", "#{6,}"),
   redaction_block_glyphs = .PDF_BLOCK_GLYPHS,
@@ -60,8 +61,11 @@
   date_formats  = wd_date_table(),
   field_name_patterns = wd_field_patterns())
 
-# .lexicon_path() -- config paths$lexicon, else dictionaries/lexicon.yaml.
+# .lexicon_path() -- BSO_LEXICON env wins (deployment / tests); else config
+# paths$lexicon; else dictionaries/lexicon.yaml.
 .lexicon_path <- function() {
+  p <- Sys.getenv("BSO_LEXICON", "")
+  if (nzchar(p)) return(p)
   cfg <- tryCatch(load_config(), error = function(e) NULL)
   (cfg$paths$lexicon %||% NULL) %||% file.path("dictionaries", "lexicon.yaml")
 }

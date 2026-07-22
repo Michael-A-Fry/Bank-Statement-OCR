@@ -67,12 +67,13 @@
     m <- regmatches(line, regexpr(pat, line, perl = TRUE))
     return(if (length(m) && nzchar(m)) m[1] else NA_character_)
   }
+  money_rx <- lex("money_regex"); date_rx <- lex("date_regex")   # lexicon (admin-editable)
   switch(vtype,
-    money = { m <- regmatches(line, gregexpr(.MONEY_RX, line, perl = TRUE, ignore.case = TRUE))[[1]]
+    money = { m <- regmatches(line, gregexpr(money_rx, line, perl = TRUE, ignore.case = TRUE))[[1]]
               if (length(m)) m[length(m)] else NA_character_ },   # value sits to the right
-    date  = { m <- regmatches(line, regexpr(.DATE_RX, line))
+    date  = { m <- regmatches(line, regexpr(date_rx, line))
               if (length(m)) m[1] else NA_character_ },
-    date_range = { m <- regmatches(line, gregexpr(.DATE_RX, line))[[1]]
+    date_range = { m <- regmatches(line, gregexpr(date_rx, line))[[1]]
                    if (length(m) >= 2) paste(m[1], "|", m[2]) else NA_character_ },
     NA_character_)   # "text" handled by the caller (needs the label position)
 }
