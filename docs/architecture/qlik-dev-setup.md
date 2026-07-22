@@ -35,26 +35,33 @@ Detail: [`../OFFLINE-INSTALL.md`](../OFFLINE-INSTALL.md).
 cd /d D:\StatementStudio
 Rscript scripts\bundle-offline.R      &:: -> a self-contained bso-offline\ folder
 ```
-**1b.** Copy `bso-offline\` (and the repo) to the air-gapped box.
-**1c. On the air-gapped box:**
+**1b.** Copy `bso-offline\` **and** the app repo to the air-gapped box, with
+`bso-offline\` next to (or inside) the app folder.
+
+**1c. On the air-gapped box: double-click `offline-setup.bat`** (in the app folder).
+One shot, no internet, works wherever the folder lives - it finds R (or installs it
+from the bundle), installs every R package, sets up Poppler **and Tesseract** for
+scanned-PDF OCR, creates `config\config.yaml`, and runs the test suite. When it
+prints `failed: 0`, **the engine works offline.**
+
+<details><summary>Prefer to run the steps by hand?</summary>
+
 ```bat
 :: install R from bso-offline\prereqs\R-x.y-win.exe, then:
 cd /d <path>\bso-offline
-"C:\Program Files\R\R-4.x.x\bin\Rscript.exe" install-on-pc.R    &:: installs all packages, no internet
+"C:\Program Files\R\R-4.x.x\bin\Rscript.exe" install-on-pc.R
 cd /d D:\StatementStudio
-Rscript run.R samples\raw\bnz\bnz_transaction_export_01.csv BNZ out   &:: sanity check
-Rscript tests\run_tests.R                                             &:: expect: failed: 0
+Rscript run.R samples\raw\bnz\bnz_transaction_export_01.csv BNZ out
+Rscript tests\run_tests.R
 ```
-**The engine works offline. Stop here until it does.**
+</details>
 
 ---
 
 ## Part 2 - Config
 
-```bat
-copy config\config.example.yaml config\config.yaml
-```
-Edit `config\config.yaml`:
+`offline-setup.bat` already created **`config\config.yaml`** from the example. Open it
+and set:
 ```yaml
 app:
   admin_password: <pick-a-dev-password>
@@ -70,9 +77,7 @@ feed:
 
 ## Part 3 - Run the app, prove a conversion
 
-```bat
-Rscript scripts\run_app.R                  &:: serves on 0.0.0.0:8100
-```
+**Double-click `start.bat`** (serves on the port in `config.yaml`, default 8100).
 Open `http://<this-host>:8100`, go to **Convert**, drop in
 `samples\raw\bnz\bnz_transaction_export_01.csv`, click **Convert**. You get the
 verdict, the analysis, the transactions, and the downloads. **That's the accountant

@@ -67,11 +67,28 @@ if (nzchar(prereq) && length(Sys.glob(file.path(prereq, "poppler*.zip")))) {
                              "\n  Unzip", zip, "and add its bin\\ folder to PATH.\n"))
 } else cat("\nPoppler: not in the bundle -- only needed for scanned-PDF OCR.\n")
 
-## 3. Tesseract (run its installer once) ------------------------------------
+## 3. Tesseract -> silent install + PATH (for scanned-PDF OCR) --------------
 tess <- if (nzchar(prereq)) Sys.glob(file.path(prereq, "tesseract*setup*.exe")) else character(0)
-if (length(tess)) {
-  cat(sprintf("\nTesseract: run this once to install (tick 'Add to PATH'):\n   %s\n",
-              normalizePath(tess[1])))
+on_path <- nzchar(Sys.which("tesseract"))
+if (on_path) {
+  cat("\nTesseract: already on PATH.\n")
+} else if (length(tess)) {
+  cat("\nTesseract: installing silently...\n")
+  safe(system2(normalizePath(tess[1]), "/S", wait = TRUE))   # NSIS silent
+  tdir <- file.path(Sys.getenv("ProgramFiles", "C:/Program Files"), "Tesseract-OCR")
+  if (dir.exists(tdir)) {
+    # Careful HKCU PATH append (same approach as Poppler above), not a raw setx of
+    # the whole expanded PATH.
+    cur <- tryCatch({
+      q <- system2("reg", c("query", "HKCU\\\\Environment", "/v", "Path"), stdout = TRUE, stderr = FALSE)
+      sub(".*REG(_EXPAND)?_SZ\\s+", "", grep("Path", q, value = TRUE)[1])
+    }, error = function(e) "")
+    if (!grepl(tdir, cur, fixed = TRUE)) {
+      newp <- if (nzchar(cur)) paste0(cur, ";", tdir) else tdir
+      system2("setx", c("PATH", shQuote(newp)), stdout = FALSE, stderr = FALSE)
+      cat(sprintf("Tesseract: installed + added to PATH -> %s\n  (open a NEW terminal for it to take effect)\n", tdir))
+    } else cat("Tesseract: installed; already on PATH.\n")
+  } else cat("Tesseract: installer ran but", tdir, "not found -- add its bin folder to PATH manually.\n")
 } else {
   cat("\nTesseract: not in the bundle -- only needed for scanned-PDF OCR.\n")
 }
