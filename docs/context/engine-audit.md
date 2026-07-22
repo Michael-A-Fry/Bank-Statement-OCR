@@ -17,6 +17,52 @@ The risks that matter are a small number of **silently-wrong** paths where a pla
 
 ---
 
+## Resolution status (hardening pass, 2026-07-22)
+
+**Every prioritised finding below is RESOLVED** on the `engine-hardening` branch —
+each as one commit citing the finding id, each with a regression test (synthetic
+fixtures, no PII), the full suite green throughout (1163 → 1286 tests). The
+`split:` opt-in for auto-splitting bundles is the one **deferred** item (multi-statement
+detection was hardened; auto-split is scoped in the research section below).
+
+| Finding | Status | Commit |
+|---|---|---|
+| P0-1 date year truncation | ✅ resolved | `2170bf3` |
+| P0-2 type_dc sign inversion | ✅ resolved | `cbabdcf` |
+| P1-1 CSV/Excel metadata → header | ✅ resolved | `d184676` |
+| P1-2 admin server-side authorization | ✅ resolved | `39f3115` |
+| P1-3 feed stale rows on accept↔withhold | ✅ resolved | `9229c54` |
+| P1-4 digital vector-box un-redaction leak | ✅ resolved | `9b0031b` |
+| P2-1 OCR routing (word-box + text health) | ✅ resolved | `3db6f72` |
+| P2-2 completeness vs multi-line records | ✅ resolved | `41ff708` |
+| P2-3 continuity NA-gap bridge | ✅ resolved | `41ff708` |
+| P2-4 multi-statement detection signals | ✅ resolved | `139cced` |
+| P2-5 non-UTF-8 delimited transcode | ✅ resolved | `c66c7bd` |
+| P2-6 filename_regex out of eligibility | ✅ resolved | `e6727bf` |
+| P2-7 generic PDF fingerprints | ✅ resolved | `8a548cc` |
+| P2-8 tutorial template out of detection | ✅ resolved | `e6727bf` |
+| P2-9 effective_from/to soft signal | ✅ resolved | `e6727bf` |
+| P2-10 excel_generic unsigned mis-sign | ✅ resolved | `a5770c2` |
+| P2-11 dr_cr_suffix double-sign | ✅ resolved | `9c8d15f` |
+| P2-12 non-atomic feed writes | ✅ resolved | `ea5798c` |
+| P3-a PDF copyright-year inference | ✅ resolved | `2c1b0ef` |
+| P3-b money regex 2-decimals | ✅ resolved | `c8d47aa` |
+| P3-c Excel serial-date round() | ✅ resolved | `c8d47aa` |
+| P3-d feed manifest per-reconvert | ✅ resolved | `6da8a7f` |
+| P3-e `.trust_ok` NA not caught | ✅ resolved | `6da8a7f` |
+| P3-f feed local-time non-determinism | ✅ resolved | `6da8a7f` |
+| P3-g slug-collision overwrite | ✅ resolved | `590f4c7` |
+| P3-h drafted fingerprint pins all headers | ✅ resolved | `590f4c7` |
+| P3-i narrow redacted cell blank | ✅ resolved | `2c1b0ef` |
+| P3-j OCR confidence image mismatch | ✅ resolved | `2c1b0ef` |
+| multi-statement `split:` auto-split | ⏸ deferred | — (detection hardened; see research below) |
+
+Alongside the fixes, this pass also shipped the **local metadata-capture subsystem**
+(`c2b5fbd`) — the on-box "ML goldmine" (see [metadata-capture.md](metadata-capture.md))
+— and the **project charter** (`7f419c1`, [charter.md](charter.md)).
+
+---
+
 ## Findings by priority
 
 ### P0 — silently-wrong forensic numbers
@@ -228,3 +274,88 @@ The parser segments the row stream at boundaries, then runs the existing parse +
 11. **P2-4** harden multi-statement detection, then scope the `split:` opt-in.
 
 **Later / hygiene:** the remaining P2s (excel generic tightening, atomic feed writes, dr_cr double-sign) and the P3 list.
+
+---
+
+## Future directions (appended after the hardening pass, 2026-07-22)
+
+Now that every prioritised finding is resolved and the local metadata-capture
+subsystem is in place, these are the forward bets — ordered roughly by value ÷
+effort. None are committed work; they are the map.
+
+### Near-term, low-risk
+- **`split:` opt-in for statement bundles.** Detection now *flags* a bundle
+  reliably (period repeat, `Page 1 of N` repeat, balance-block repeat → needs_review;
+  P2-4). The next step is an opt-in `split:` template block that auto-segments a
+  proven bundle at those boundaries, reconciles each segment independently, and
+  rolls up a per-segment trust — never merging, never guessing a boundary. Default
+  stays flag-and-refuse for un-opted templates.
+- **Simple-tab fingerprint control (PDF).** The save-time gate now rejects a
+  generic PDF fingerprint (P2-7), but the Simple tab has no control to *fix* one —
+  a non-technical analyst hits the gate and must drop to Advanced YAML. Add a
+  plain-English "distinctive phrase(s) on this statement" picker.
+- **Deployment password hardening.** Server-side admin authorization is now
+  enforced (P1-2), but the *default* password is still `changeme`. A first-run
+  check that refuses to serve the Admin tab until the default is changed (or a
+  real password / `BSO_ADMIN_PASSWORD` is set) closes the deployment gap.
+- **Broaden preamble-wording recognition (CSV/Excel).** P1-1 wired preamble
+  metadata through, but the extractor is conservative: real ASB-style wording
+  ("Ledger Balance", "Avail Bal", "From date 20141220") and ISO-basic dates aren't
+  yet recognised. Extend the label dictionary + a `%Y%m%d` date shape so those
+  statements gain a working `balance_reconciliation` / `dates_within_period`.
+- **Template `encoding:` key.** `safe_readlines` already auto-detects (BOM + UTF-8
+  validity → Windows-1252) and accepts an `encoding` override; surfacing it as a
+  validated template key would make an exotic codepage fully deterministic.
+
+### The local-ML assist (using the metadata goldmine)
+The metadata-capture subsystem is the substrate. Kept **local, forever, PII-safe**,
+it accumulates a labelled corpus of *how every conversion went*. On top of it,
+entirely on-box (no cloud, no new runtime dependency beyond an optional local
+model):
+- **Template-drift detection.** Cluster `layout.signature` + `field_fill` +
+  KPI-outcome vectors over time; when a proven template's parse-quality
+  distribution shifts (a bank changed its export), surface "this template may need
+  updating" *before* an analyst hits a bad conversion.
+- **Unseen-layout clustering.** Group `unsupported` conversions by layout
+  signature so the biggest gaps bubble up ("14 files this month share a layout with
+  no template") — a prioritised template-building queue, already partly served by
+  the batch-audit gap report.
+- **Draft-quality scoring.** Learn from the corpus which drafted templates went on
+  to reconcile cleanly vs. which needed rework, and warn at save time when a draft
+  looks like the ones that historically failed.
+- **Reconciliation-anomaly hints.** With balance anchors + net amounts captured,
+  flag a statement whose totals sit far outside the account's own history — a
+  possible mis-parse or a genuine anomaly worth a second look.
+All of the above are *assistive and non-authoritative*: they recommend, they never
+silently change a figure. The deterministic engine remains the source of truth;
+the model only ever points a human at something.
+
+### Transaction categorisation (planned downstream — kept out of the extraction core)
+Categorisation is a **downstream** capability, never part of the never-guess
+extraction core, and always visibly derived (never presented as extracted truth):
+- **Step 1 — recreate the existing maintained-keyword logic.** Port the current
+  maintained keyword→category list as a deterministic, auditable rule pass over the
+  (already-extracted) descriptions. Same inputs ⇒ same categories; every assignment
+  traceable to the keyword that produced it; unmatched ⇒ uncategorised, never
+  guessed.
+- **Step 2 — something better.** Only once step 1 is trusted: a local, explainable
+  model that proposes categories with a confidence and the evidence, for a human to
+  accept — again downstream, again non-authoritative, again local-only.
+
+### Blue-sky (my own list)
+- **Diff two conversions of the same account.** Given last month's and this month's
+  statement, show the reconciled delta (new payees, changed standing amounts) —
+  forensic gold, and trivial once metadata anchors exist.
+- **A "confidence contract" export.** Alongside the workbook, emit a machine-readable
+  attestation: which KPIs proved what, which cells were OCR'd/redacted/inferred, and
+  the exact template + version — so a downstream system (or a court bundle) can
+  consume the *evidence*, not just the numbers.
+- **Template synthesis from two examples.** Let an analyst drop two statements of the
+  same bank and have the tool propose the stable column bands / date format / amount
+  style from their intersection — draft-by-example rather than draft-by-drawing.
+- **Redaction self-audit page.** A one-click report over `logs/metadata` showing
+  every conversion where a redaction was detected, un-verifiable (scan incomplete),
+  or a year/direction was inferred — the forensic reviewer's standing worklist.
+- **Deterministic OCR "second reader".** Run two OCR engines (or two preprocessings)
+  and only trust a cell where they agree; disagreement → flagged, never silently
+  picked. Extends the never-silently-wrong contract into the pixel domain.
