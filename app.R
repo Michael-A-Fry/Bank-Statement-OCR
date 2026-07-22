@@ -250,12 +250,116 @@ ui <- fluidPage(
           t=setTimeout(function(){pill().classList.add('on');},250);});
         $(document).on('shiny:idle',function(){clearTimeout(t);
           var p=document.getElementById('ss-busy');if(p)p.classList.remove('on');});
-      })();"))
+      })();")),
+    # ---- Elevated design system (layered last so it wins the cascade). One
+    # brand accent (NZ-Police navy); green/amber/red reserved for trust meaning.
+    # All self-contained: no CDN fonts, scripts or icons. ------------------------
+    tags$style(HTML("
+     :root{
+       --brand:#00205b; --brand-dark:#001233; --brand-600:#1b3f7a;
+       --brand-tint:#eef3fb; --brand-line:#c7d6ea;
+       --ink:#15202b; --slate:#43515f; --muted:#68727d;
+       --line:#e6eaee; --line-2:#d6dce2; --bg:#f5f7fa; --surface:#ffffff;
+       --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
+       --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
+       --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
+       --r:10px; --r-sm:8px; --r-lg:14px;
+       --sh-1:0 1px 2px rgba(16,32,50,.05);
+       --sh-2:0 1px 3px rgba(16,32,50,.06),0 6px 18px rgba(16,32,50,.07);
+     }
+     body{background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+     .container-fluid{max-width:1340px;margin:0 auto;padding:0 22px 40px}
+     a{color:var(--brand)} a:hover,a:focus{color:var(--brand-dark)}
+     h1,h2,h3,h4,h5{color:var(--ink);font-weight:700;letter-spacing:-.01em}
+     h3{font-size:19px} h4{font-size:16px;margin-top:22px}
+     p{line-height:1.55} .muted,.help-block{color:var(--muted)}
+     hr{border-top-color:var(--line)}
+     /* app bar: slim wordmark row, full-bleed with a hairline under it */
+     .app-header{display:flex;align-items:center;gap:12px;margin:0 -22px;
+       padding:13px 22px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--sh-1)}
+     .app-mark{width:22px;height:22px;border-radius:6px;align-self:center;
+       background:linear-gradient(135deg,var(--brand),var(--brand-600));
+       box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+     .app-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--brand)}
+     .app-tagline{font-size:13px;color:var(--muted);align-self:center}
+     /* main tab row = the app nav */
+     #main_tabs.nav-tabs{margin:0 -22px 20px;padding:0 22px;background:var(--surface);
+       border-bottom:1px solid var(--line);box-shadow:var(--sh-1);gap:2px}
+     #main_tabs.nav-tabs>li>a{font-size:14.5px;font-weight:700;padding:12px 16px;color:var(--muted)}
+     #main_tabs.nav-tabs>li.active>a{color:var(--brand)}
+     .nav-tabs>li>a{font-weight:600;color:var(--muted)}
+     /* surfaces */
+     .well{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:20px}
+     /* inputs */
+     .form-control{height:auto;padding:9px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+       font-size:14.5px;color:var(--ink);background:var(--surface);box-shadow:none}
+     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,32,91,.14)}
+     select.form-control{padding-right:30px}
+     .shiny-input-container>label,label.control-label{font-weight:700;font-size:13.5px;color:var(--slate);margin-bottom:6px}
+     .selectize-input{border:1px solid var(--line-2)!important;border-radius:var(--r-sm)!important;padding:8px 12px!important;box-shadow:none!important}
+     .selectize-input.focus{border-color:var(--brand)!important;box-shadow:0 0 0 3px rgba(0,32,91,.14)!important}
+     .selectize-dropdown{border-radius:var(--r-sm);border-color:var(--line-2)}
+     /* buttons: one navy accent; the old gold 'toolkit' buttons become navy-secondary */
+     .btn{border-radius:var(--r-sm);font-weight:700;padding:9px 16px;font-size:14.5px;box-shadow:none;transition:background .12s,border-color .12s}
+     .btn-primary{background:var(--brand);border:1px solid var(--brand);color:#fff;box-shadow:var(--sh-1)}
+     .btn-primary:hover,.btn-primary:focus,.btn-primary:active,.btn-primary:active:focus{background:var(--brand-600);border-color:var(--brand-600);color:#fff}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){background:var(--surface);border:1px solid var(--line-2);color:var(--ink)}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):focus{background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand)}
+     .btn-warning{background:var(--brand-tint);border:1px solid var(--brand-line);color:var(--brand)}
+     .btn-warning:hover,.btn-warning:focus{background:#e2ebf7;border-color:var(--brand);color:var(--brand-dark)}
+     .btn-danger{background:#fff;border:1px solid var(--bad-line);color:var(--bad)}
+     .btn-danger:hover,.btn-danger:focus{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+     /* tables (DT) */
+     table.dataTable{font-size:13.5px}
+     table.dataTable thead th,table.dataTable thead td{background:var(--bg)!important;color:var(--slate)!important;
+       text-transform:uppercase;font-size:11.5px;letter-spacing:.4px;font-weight:700;
+       border-bottom:1px solid var(--line-2)!important;padding:10px 12px!important}
+     table.dataTable tbody td{padding:9px 12px}
+     table.dataTable tbody tr:hover{background:var(--brand-tint)!important}
+     .dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{
+       border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 8px}
+     /* verdict banner: the result hero */
+     .verdict{display:flex;gap:14px;align-items:flex-start;border:1px solid;border-left-width:5px;
+       border-radius:var(--r-lg);padding:16px 20px;margin:2px 0 16px;box-shadow:var(--sh-1)}
+     .verdict-ico{flex:0 0 auto;width:34px;height:34px;border-radius:50%;color:#fff;font-size:19px;font-weight:800;
+       display:flex;align-items:center;justify-content:center;margin-top:1px}
+     .verdict-title{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:0 0 3px;line-height:1.2}
+     .verdict-body{margin:0 0 6px;color:var(--slate);line-height:1.5}
+     .verdict-high{background:var(--ok-bg);border-color:var(--ok-line);border-left-color:var(--ok)}
+     .verdict-high .verdict-ico{background:var(--ok)}
+     .verdict-medium{background:var(--warn-bg);border-color:var(--warn-line);border-left-color:var(--warn)}
+     .verdict-medium .verdict-ico{background:var(--warn)}
+     .verdict-low{background:var(--bad-bg);border-color:var(--bad-line);border-left-color:var(--bad)}
+     .verdict-low .verdict-ico{background:var(--bad)}
+     /* stat tiles */
+     .stat-grid{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 10px}
+     .stat{flex:1 1 130px;min-width:118px;background:var(--surface);border:1px solid var(--line);
+       border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh-1)}
+     .stat-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+     .stat-value{font-size:22px;font-weight:800;letter-spacing:-.01em;margin-top:3px;color:var(--ink)}
+     /* chips */
+     .chip{background:#eef1f4;border:1px solid var(--line);color:var(--slate);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
+     .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
+     /* download bars */
+     .dl-hero{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r-lg);padding:13px 18px}
+     .dl-hero .btn{font-size:15px;padding:9px 18px}
+     .dl-box{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r)}
+     /* About hub cards */
+     .hub-lead{font-size:17px;color:var(--slate);line-height:1.55;margin:6px 0 20px}
+     a.hub-card{border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);background:var(--surface);padding:18px 20px}
+     a.hub-card:hover,a.hub-card:focus{box-shadow:var(--sh-2);border-color:var(--brand-line)}
+     a.hub-card-primary{background:linear-gradient(180deg,#f3f7fd,#e9f0fa);border-color:var(--brand-line)}
+     a.hub-card-quiet{background:var(--bg)}
+     .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
+     .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
+     .hub-card-go{color:var(--brand)}
+    "))
   ),
   div(class = "app-header",
     span(class = "app-mark"),
     span(class = "app-title", "Statement Studio"),
-    span(class = "app-tagline", "Statements and documents in - clean, checked data out.")),
+    span(class = "app-tagline", "Statements and documents in — clean, checked data out.")),
   tabsetPanel(
     id = "main_tabs",
     # ---- About (landing): the journey hub. Everything starts here - one
@@ -263,7 +367,7 @@ ui <- fluidPage(
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
-          "Turn any bank statement or financial document - PDF, CSV or Excel -",
+          "Turn any bank statement or financial document — PDF, CSV or Excel —",
           " into clean, checked data. Deterministic: nothing is guessed,",
           " and anything uncertain is flagged with the reason."),
         div(class = "hub-cards",
@@ -1534,8 +1638,7 @@ server <- function(input, output, session) {
         nrow(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)) else NA_integer_
     }, error = function(e) NA_integer_)
     pt <- plain_trust(res$trust$level)
-    bg <- c(ok = "#eef8f0", warn = "#fff8e6", bad = "#fdecec")[[pt$cls]]
-    bd <- c(ok = "#bfe0c8", warn = "#f0c36d", bad = "#f2b8b8")[[pt$cls]]
+    lvl <- c(ok = "high", warn = "medium", bad = "low")[[pt$cls]]
     # Small honest-flags row: which template read it, and anything a reviewer
     # should know at a glance (OCR pages, honoured redactions, hand-added rows).
     # All of this already exists in the result - it was just buried in the tables.
@@ -1556,13 +1659,15 @@ server <- function(input, output, session) {
     if (length(cv_forced())) chips <- c(chips, list(chip(
       sprintf("%d row(s) added by hand - flagged 'forced' in the output", length(cv_forced())),
       warn = TRUE)))
-    div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px", bg, bd),
-      h3(style = "margin:0 0 4px", sprintf("%s Converted%s", pt$icon,
-        if (!is.na(n)) sprintf(" - %d transaction%s read", n, if (n == 1) "" else "s") else "")),
-      p(style = "margin:0 0 6px;color:#333", pt$line),
-      p(class = "muted", style = "margin:0 0 6px",
-        "Full detail is under 'Checks & detail' below."),
-      if (length(chips)) div(chips))
+    div(class = paste0("verdict verdict-", lvl),
+      div(class = "verdict-ico", pt$icon),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title", sprintf("Converted%s",
+          if (!is.na(n)) sprintf(" — %d transaction%s read", n, if (n == 1) "" else "s") else "")),
+        p(class = "verdict-body", pt$line),
+        p(class = "muted", style = "margin:0 0 6px",
+          "Full detail is under 'Checks & detail' below."),
+        if (length(chips)) div(chips)))
   })
 
   # --- Analysis: the useful numbers + graphs pulled from the conversion -------
@@ -1600,13 +1705,13 @@ server <- function(input, output, session) {
                 format(max(d$.date, na.rm = TRUE), "%d %b %Y"))
       else if (!is.na(h$period_start %||% NA_character_))
         sprintf("%s to %s", h$period_start, h$period_end %||% "?") else "-"
-    card <- function(label, value, col = "#333")
-      div(style = "flex:1 1 130px;min-width:120px;background:#fafafa;border:1px solid #e6e6e6;border-radius:8px;padding:8px 12px",
-          div(style = "font-size:12px;color:#888", label),
-          div(style = sprintf("font-size:19px;font-weight:600;color:%s", col), value))
+    card <- function(label, value, col = NULL)
+      div(class = "stat",
+          div(class = "stat-label", label),
+          div(class = "stat-value", style = if (!is.null(col)) sprintf("color:%s", col) else NULL, value))
     has_close <- !is.na(suppressWarnings(as.numeric(h$closing_balance %||% NA)))
     tagList(
-      div(style = "display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 10px",
+      div(class = "stat-grid",
         card("Transactions", if (is.na(n)) "-" else n),
         card("Money in",  fmt_money(money_in, cur),  "#137333"),
         card("Money out", fmt_money(money_out, cur), "#b00020"),
