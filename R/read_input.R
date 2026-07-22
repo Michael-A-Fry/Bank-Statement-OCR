@@ -112,6 +112,17 @@ read_pdf_input <- function(path, redaction_rects = NULL,
   )
 }
 
+# .INPUT_CACHE -- read_input can be EXPENSIVE (a scanned PDF is OCR'd and every
+# page is rendered for the redaction scan -- tens of seconds). The GUI reads the
+# SAME uploaded file several times across one flow (convert, then draft, preview,
+# x-ray, guided columns...), so without a cache a scanned statement is OCR'd 4-5x
+# and the front end appears to hang for minutes. read_input is deterministic in the
+# file's CONTENT, so we key the parsed result by its SHA-256: the first read does
+# the work, every later read of the same bytes is instant. Bounded to a handful of
+# recent files so a long session can't grow memory without limit.
+.INPUT_CACHE <- new.env(parent = emptyenv())
+.INPUT_CACHE_MAX <- 12L
+
 # read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table,
 # pages, meta). The tool never redacts; statements arrive already redacted.
 # `redaction_rects` is an optional way to tell the reader where a redaction
@@ -122,6 +133,16 @@ read_input <- function(path, redaction_rects = NULL) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))
   sha <- file_sha256(path)
+  # Cache hit: same content already parsed. Return it, but point $path at the
+  # caller's CURRENT file (identical bytes, but a fresh temp path in the GUI) so
+  # any downstream re-read of $path still resolves. Only when no redaction_rects
+  # were supplied (those change what text is emitted, so they bypass the cache).
+  cacheable <- is.null(redaction_rects) && !is.null(sha) && !is.na(sha)
+  if (cacheable && exists(sha, envir = .INPUT_CACHE, inherits = FALSE)) {
+    cached <- get(sha, envir = .INPUT_CACHE, inherits = FALSE)
+    cached$path <- path
+    return(cached)
+  }
   input <- list(kind = NA_character_, path = path, sha256 = sha,
                 lines = NULL, table = NULL, pages = NULL,
                 meta = list(ext = ext))
@@ -153,5 +174,16 @@ read_input <- function(path, redaction_rects = NULL) {
   } else {
     stop(sprintf("unsupported file extension: '%s'", ext))
   }
+  if (cacheable) {
+    # crude bound: reset if we're holding too many distinct files (a session works
+    # with a handful, so this rarely fires -- it just caps memory).
+    if (length(ls(.INPUT_CACHE)) >= .INPUT_CACHE_MAX)
+      rm(list = ls(.INPUT_CACHE), envir = .INPUT_CACHE)
+    assign(sha, input, envir = .INPUT_CACHE)
+  }
   input
 }
+
+# clear_input_cache() -- drop all cached inputs (e.g. after a redaction re-run or
+# to free memory). read_input rebuilds on the next call.
+clear_input_cache <- function() rm(list = ls(.INPUT_CACHE), envir = .INPUT_CACHE)
