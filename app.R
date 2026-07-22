@@ -752,6 +752,29 @@ ui <- fluidPage(
               br(), br(), uiOutput("adm_lex_msg")),
             column(7,
               textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))
+          ,
+          tags$hr(),
+          h4("Suggestions from your data - teach the engine what it keeps missing"),
+          helpText(HTML(paste0(
+            "Drawn from the local metadata: indicator tokens the engine did NOT ",
+            "recognise (e.g. a bank writing <code>cow</code>/<code>horse</code> for ",
+            "debit/credit) and source columns no template mapped, ranked by how often ",
+            "they turn up. Pick a token and the direction it means, and <b>Approve</b> ",
+            "adds it to the vocabulary - the engine picks it up on the next conversion. ",
+            "You decide; nothing is applied automatically."))),
+          fluidRow(
+            column(6,
+              strong("Unrecognised indicator tokens"), tableOutput("adm_sugg_tokens"),
+              fluidRow(
+                column(5, selectInput("adm_sugg_tok", "Token", choices = character(0))),
+                column(4, radioButtons("adm_sugg_dir", "Means", inline = TRUE,
+                                       choices = c("money out (debit)" = "debit_markers",
+                                                   "money in (credit)" = "credit_markers"))),
+                column(3, br(), actionButton("adm_sugg_approve", "Approve", class = "btn-primary"))),
+              uiOutput("adm_sugg_msg")),
+            column(6,
+              strong("Source columns no template used"), tableOutput("adm_sugg_cols"),
+              helpText("Recurring unmapped columns often mean a field worth mapping in a template.")))
         ),
         tabPanel(
           "Batch & audit",
@@ -1061,6 +1084,32 @@ server <- function(input, output, session) {
     output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved (backup at lexicon.yaml.bak). Applies to the next conversion, everywhere."
       else "Could not write the file - check folder permissions."))
+  })
+
+  # ---- Admin: suggestions from the local metadata (the human-approved loop) ----
+  sugg_bump <- reactiveVal(0)
+  adm_suggestions <- reactive({ sugg_bump()
+    safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
+  output$adm_sugg_tokens <- renderTable({ req(admin_ok()); adm_suggestions()$indicator_tokens })
+  output$adm_sugg_cols   <- renderTable({ req(admin_ok()); adm_suggestions()$unmapped_columns })
+  observe({
+    toks <- adm_suggestions()$indicator_tokens$token %||% character(0)
+    updateSelectInput(session, "adm_sugg_tok", choices = toks)
+  })
+  observeEvent(input$adm_sugg_approve, {
+    req(admin_ok())
+    tok <- input$adm_sugg_tok; cat_ <- input$adm_sugg_dir %||% "debit_markers"
+    if (is.null(tok) || !nzchar(tok)) {
+      output$adm_sugg_msg <- renderUI(div(class = "muted", "Pick a token first.")); return()
+    }
+    ok <- lexicon_append(cat_, tolower(tok), LEXICON_PATH)
+    updateTextAreaInput(session, "adm_lex_edit",
+      value = if (file.exists(LEXICON_PATH)) paste(readLines(LEXICON_PATH, warn = FALSE), collapse = "\n") else "")
+    sugg_bump(sugg_bump() + 1)
+    output$adm_sugg_msg <- renderUI(div(style = sprintf("color:%s", if (ok) "#137333" else "#b00020"),
+      if (ok) sprintf("Added '%s' to %s. The engine will use it on the next conversion.",
+                      tolower(tok), sub("_markers$", "", cat_))
+      else "Could not write the vocabulary file."))
   })
 
   # ---- Admin: bulk audit & gaps ----
