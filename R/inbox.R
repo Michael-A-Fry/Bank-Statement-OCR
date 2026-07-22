@@ -1,5 +1,5 @@
-# inbox.R -- a read-only view of the folder-drop pipeline for the Admin
-# "Folder intake" panel. The serve_inbox poller moves each dropped statement from
+# inbox.R -- a read-only view of the folder-drop intake folders for the Admin
+# "Folder intake" panel. The folder-drop pipeline moves each dropped statement from
 # inbox/ to processed/ (converted) or failed/ (couldn't), writing outputs to
 # outbox/<name>/, and parks unmovable files in stuck/. This surfaces those
 # folders in the app so the intake is visible and its failures are actionable --
