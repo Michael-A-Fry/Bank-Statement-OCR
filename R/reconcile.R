@@ -88,6 +88,26 @@ reconcile <- function(parsed, template = NULL) {
       detail = "no running balance column")
   }
 
+  # 2b. amount_direction (P2-10): a `signed` statement proves money-in vs money-out
+  # by its OWN +/- signs. If EVERY amount carries the same sign AND there is no
+  # running-balance column to cross-check, the file may in fact list UNSIGNED
+  # magnitudes -- read as all money-in (or all money-out), possibly inverted, with
+  # nothing to catch it (the loose excel_generic catch-all is the classic case).
+  # Fail closed so it routes to needs_review and is withheld from the governed
+  # feed, rather than feeding a silently sign-inverted statement to dashboards.
+  style <- (if (!is.null(template)) template$amount_sign %||% template$table$amount_sign else NULL)
+  amt_nz <- tx$amount[!is.na(tx$amount) & tx$amount != 0]
+  no_balance <- is.null(tx$balance) || all(is.na(tx$balance))
+  if (identical(style, "signed") && no_balance && length(amt_nz) >= 2 &&
+      (all(amt_nz > 0) || all(amt_nz < 0))) {
+    rows$amount_direction <- .kpi(
+      "amount_direction", "fail", expected = "mixed or balance-checkable",
+      actual = if (all(amt_nz > 0)) "all money-in" else "all money-out",
+      detail = paste0("every amount shares one sign and there is no running balance to confirm ",
+                      "direction -- if this export lists unsigned magnitudes, money-in/out may be ",
+                      "inverted; check a few rows against the source or set the correct amount style"))
+  }
+
   # 3. transaction_count: parsed > 0 and == stated count if present.
   stated <- suppressWarnings(as.integer(h$stated_count %||% NA))
   if (!is.na(stated)) {

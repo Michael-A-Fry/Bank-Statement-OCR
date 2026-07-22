@@ -75,6 +75,20 @@ test_that("running_balance_continuity fail branch via a real fixture", {
   expect_equal(r$trust$level, "low")
 })
 
+test_that("a signed statement with one-sign amounts and no balance fails direction (P2-10)", {
+  signed <- list(amount_sign = "signed")
+  # all money-in, no balance to cross-check -> unverifiable direction -> fail.
+  p_pos <- .parsed(.tx(c(10, 20, 30)), source_line_count = 3)
+  k <- reconcile(p_pos, signed)$kpis
+  expect_equal(k$status[k$name == "amount_direction"], "fail")
+  # mixed signs -> the +/- is genuinely present -> no such KPI.
+  p_mix <- .parsed(.tx(c(-10, 20)), source_line_count = 2)
+  expect_false("amount_direction" %in% reconcile(p_mix, signed)$kpis$name)
+  # one-sign but WITH a balance column -> continuity can verify -> no such KPI.
+  p_bal <- .parsed(.tx(c(10, 20), balance = c(110, 130)), source_line_count = 2)
+  expect_false("amount_direction" %in% reconcile(p_bal, signed)$kpis$name)
+})
+
 test_that("continuity bridges a blank middle balance, catching a hidden break (P2-3)", {
   # 100, NA, 130 with amounts 0/+20/+5: the 130 should be 125. The old loop
   # skipped both pairs around the NA and reported a clean pass; the bridge sees it.

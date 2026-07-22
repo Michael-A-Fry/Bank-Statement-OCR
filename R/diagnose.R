@@ -132,6 +132,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
             "No row dates could be read: the template's date column wasn't found in this file (renamed header?) or the date format is wrong. Fix the Date column / format in the template toolkit."),
           no_unparsed_rows = c("rows", "row_parse", "high",
             "Some source lines didn't parse (malformed or lost): usually a delimiter/quoting issue, or a preamble/footer line read as data. Check those rows."),
+          amount_direction = c("amount direction", "amount_parse", "high",
+            "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
           c("check", "reconciliation_mismatch", "medium",
             "Review this check against the source statement."))
         add(info[1], info[2], info[3], fails$detail[i], info[4])
