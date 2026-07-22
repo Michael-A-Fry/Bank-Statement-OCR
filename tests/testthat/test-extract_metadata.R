@@ -24,9 +24,20 @@ test_that("multi-statement detection keys on PERIODS, not account count", {
   d <- detect_multiple_statements(NULL, m)
   expect_false(d$likely_multiple)
   expect_true(d$combined_accounts)
-  # one account, repeated 'Page 1 of N' (e.g. a guide) -> NOT flagged
+  # repeated 'Page 1 of N' IS now a strong bundle signal (P2-4): each statement
+  # restarts its page numbering, so >1 first page = >1 statement -- catching
+  # bundles the period signal misses. Flagging routes to needs_review (the safe
+  # default); a non-statement that trips it wouldn't match a template anyway.
   m2 <- list(n_accounts = 1, n_periods = 1, page1_markers = 3)
-  expect_false(detect_multiple_statements(NULL, m2)$likely_multiple)
+  expect_true(detect_multiple_statements(NULL, m2)$likely_multiple)
+  # a repeated opening AND closing balance block also flags (P2-4).
+  m4 <- list(n_accounts = 1, n_periods = 1, page1_markers = 1,
+             n_opening_labels = 2, n_closing_labels = 2)
+  expect_true(detect_multiple_statements(NULL, m4)$likely_multiple)
+  # a single statement (one of everything) is NOT flagged.
+  m5 <- list(n_accounts = 1, n_periods = 1, page1_markers = 1,
+             n_opening_labels = 1, n_closing_labels = 1)
+  expect_false(detect_multiple_statements(NULL, m5)$likely_multiple)
 })
 
 test_that("period is found from LABELLED opening/closing dates (not just a range)", {

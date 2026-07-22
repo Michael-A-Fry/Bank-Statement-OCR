@@ -63,6 +63,21 @@ extract_metadata <- function(input, dict = default_label_dict()) {
 
   accounts <- unique(c(.all_matches(text, .ACCT_RX), .all_matches(text, .CARD_RX)))
 
+  # How many times the opening / closing-balance HEADER wording appears. A single
+  # statement prints each once; a concatenated bundle repeats the whole block.
+  # Counted from the SAME dictionary synonyms match_label uses, so the wording
+  # stays configurable and the reader/detector never disagree.
+  .count_occ <- function(phrases) {
+    ph <- unique(tolower(unlist(phrases))); ph <- ph[nzchar(ph)]
+    if (!length(ph)) return(0L)
+    lc <- tolower(text)
+    total <- 0L
+    for (p in ph) { m <- gregexpr(p, lc, fixed = TRUE)[[1]]; if (m[1] > 0) total <- total + length(m) }
+    total
+  }
+  n_opening_labels <- .count_occ(dict$opening_balance$any_of %||% "opening balance")
+  n_closing_labels <- .count_occ(dict$closing_balance$any_of %||% "closing balance")
+
   # opening/closing balance via the label dictionary (synonyms, not hardcoded).
   ob <- match_label(dict$opening_balance %||% list(any_of = "opening balance", value = "money"),
                     pages, dict)
@@ -94,6 +109,8 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     n_accounts     = length(accounts),
     opening_balance = ob$value,
     closing_balance = cb$value,
+    n_opening_labels = n_opening_labels,
+    n_closing_labels = n_closing_labels,
     stated_count    = stated_count
   )
 }
@@ -114,14 +131,35 @@ extract_metadata <- function(input, dict = default_label_dict()) {
 # flagged separately, not a bundle.
 detect_multiple_statements <- function(input, meta = NULL) {
   if (is.null(meta)) meta <- extract_metadata(input)
-  reasons <- character(0)
-  strong <- isTRUE(meta$n_periods > 1)
-  if (strong)
+  reasons <- character(0); strong <- FALSE
+
+  # STRONG 1: more than one distinct statement PERIOD (inline date ranges).
+  if (isTRUE(meta$n_periods > 1)) {
     reasons <- c(reasons, sprintf("%d distinct statement periods found", meta$n_periods))
+    strong <- TRUE
+  }
+  # STRONG 2: more than one "Page 1 of N" marker. Each concatenated statement
+  # restarts its own page numbering, so >1 first page means >1 statement -- and
+  # this catches bundles the period signal misses (labelled/year-less/non-inline
+  # periods that collapse to one range). Deterministic and independent.
+  if (isTRUE(meta$page1_markers > 1)) {
+    reasons <- c(reasons, sprintf("%d 'Page 1 of N' markers (each statement restarts page numbering)",
+                                  meta$page1_markers))
+    strong <- TRUE
+  }
+  # STRONG 3: the whole opening-AND-closing-balance header block repeats. A single
+  # statement prints each once; requiring BOTH to repeat avoids a stray mention in
+  # a summary line falsely flagging a normal statement.
+  if (isTRUE(meta$n_opening_labels > 1) && isTRUE(meta$n_closing_labels > 1)) {
+    reasons <- c(reasons, sprintf("the opening/closing-balance block appears %d times",
+      min(meta$n_opening_labels, meta$n_closing_labels)))
+    strong <- TRUE
+  }
+  # SUPPORTING only: multiple account numbers (transfers/products routinely inflate
+  # this on a normal single statement, so it never flags a bundle on its own).
   if (isTRUE(meta$n_accounts > 1))
     reasons <- c(reasons, sprintf("%d account numbers seen (transfers/products may inflate this)", meta$n_accounts))
-  if (strong && isTRUE(meta$page1_markers > 1))
-    reasons <- c(reasons, sprintf("%d 'Page 1 of N' markers", meta$page1_markers))
+
   list(likely_multiple = strong,
        combined_accounts = isTRUE(meta$n_accounts > 1) && !strong,
        n_accounts = meta$n_accounts %||% 0L,
