@@ -11,6 +11,19 @@ implementation gap to close. Nothing here changes the engine or the forensic
 contract - it adds one deterministic *writer* alongside the outputs we already
 produce.
 
+> **Two Qlik modes, one engine.** There are two distinct ways Qlik meets this tool,
+> and they are independent:
+> - **Mode A - batch feed into dashboards** (§4-§9): converted results stream into
+>   a `feed/` folder that a Qlik app loads for org-wide analysis. Analyst-initiated
+>   or scheduled; many statements, one dataset.
+> - **Mode B - interactive convert from a Qlik front-end** (§13): a Qlik user
+>   uploads one statement and gets the one-sheet result back *in Qlik* - the exact
+>   legacy `Statement Converter` experience, with our R engine swapped in for the
+>   old Mole + per-bank-script extraction. This is the drop-in replacement for the
+>   statement-viewer.
+>
+> Both share the same folder-handoff spine and the same engine; pick either or both.
+
 ---
 
 ## 1. The one-paragraph version
@@ -312,3 +325,114 @@ The feed is a *projection* of the same parsed result, so every guarantee holds:
 4. Turn the gate to `min_trust: high, allowed_template_origins: [default]` for
    production; widen only as specific templates earn trust.
 5. (Later, if wanted) enrichment via §10, once the taxonomy list is in hand.
+
+---
+
+## 13. Mode B - interactive convert from a Qlik front-end (the statement-viewer replacement)
+
+**Goal:** keep the legacy Qlik experience *exactly* - user uploads a statement in
+Qlik, it appears in a table, they pick it and hit **generate**, and an ODAG app
+opens with one sheet (graphs, transactions, download) - but replace the extraction
+engine (Mole + hand-written per-bank script) with this tool. **Same front-end,
+different engine.**
+
+### 13.1 The legacy flow (as it runs today)
+
+1. **Inphinity Forms** control (`type=upload`) uploads the statement; a
+   **save-and-reload** writes it and refreshes a **table** of uploaded files below.
+2. The user clicks a file row, then a **generate** button (an app-navigation point)
+   that fires **ODAG**, opening the *Statement Converter* app.
+3. That ODAG app's **load script** did the extraction (Mole word-boxes + per-bank
+   script) and drew the sheet.
+
+Only step 3's extraction changes. Steps 1-2 (Inphinity upload, the file table, the
+generate/ODAG navigation) stay as they are.
+
+### 13.2 The one thing that changes: where the transactions come from
+
+Instead of the ODAG app extracting the PDF itself, **our engine produces the clean
+`statement.csv` and the ODAG app simply `LOAD`s it.** Two wiring options; pick by
+what the Qlik server is allowed to do.
+
+**Option B1 - async via the shared folder (recommended; works with today's
+constraints).** *No R on the Qlik server, no `EXECUTE`, engine and Qlik can be on
+different machines.*
+- Point the **Inphinity upload target at the shared `inbox/`** folder (the same
+  share, already permissioned to `RES_QLIKSENSE_PROD`).
+- `serve_inbox.R` runs on **any box that has R** - reuse the **Shiny app host**,
+  which already has R, so nothing new is installed. It converts each uploaded file
+  to `outbox/<key>/statement.csv` + a run log.
+- The Qlik **file table** is backed by a tiny **status index** (the poller writes
+  `feed/index/<key>.csv`, or Qlik loads `logs/runs/*.json`) so each row shows
+  `converted / pending / failed`. The user only **generate**s a converted row.
+- **ODAG** then loads `outbox/<key>/statement.csv` - a plain `LOAD`, no extraction
+  in Qlik. This fits the existing **two-step** UX perfectly: the upload+reload step
+  kicks off conversion; by the time the user picks a file and hits generate, the
+  CSV is ready.
+
+```qvs
+// ODAG Statement Converter app - load script (Option B1)
+// $(odagKey) is bound from the selected file row (the statement's key/hash).
+Statement:
+LOAD *
+FROM [lib://StatementInbox/outbox/$(odagKey)/statement.csv]
+(txt, codepage is 65001, embedded labels, delimiter is ',', msq);
+// ... then the existing sheet: KPIs, in/out graph, balance line, table, download.
+```
+
+**Option B2 - synchronous via `EXECUTE` (one click, later optimisation).** *Only if
+R is installed on the Qlik node and `Allow Execute` (standard-mode override) is
+enabled in the QMC.*
+- The ODAG template app's load script runs the converter inline, then loads it, in
+  one reload - collapsing upload and convert into a single generate click:
+
+```qvs
+// ODAG app load script (Option B2) - requires R on the Qlik node + Allow Execute
+EXECUTE Rscript "D:\BankStatements\run.R" "$(uploadedFile)" "D:\BankStatements\outbox\$(odagKey)";
+Statement:
+LOAD * FROM [lib://.../outbox/$(odagKey)/statement.csv] (txt, ..., msq);
+```
+
+Start on **B1** (nothing to install on Qlik, works cross-machine); move to **B2**
+later *only if* one-click matters and IT confirms R + `Allow Execute` on the node.
+
+### 13.3 Where R runs
+
+R does **not** need to be on the Qlik server. Reuse the machine that already runs
+the Shiny app (it has R) as the converter host; Qlik and that host just share the
+`inbox/`/`outbox/` folder. One R install serves both the Shiny front-end and the
+Qlik front-end.
+
+### 13.4 Keying & idempotency
+
+Key each upload by the statement's **content hash** (or reuse Inphinity's own file
+id), and name `outbox/<key>/` by it. Re-generating the same file re-uses the same
+output (no duplicates), and the file-table row maps 1:1 to its ODAG output.
+
+### 13.5 What you can test now (all local, before any server work)
+
+The **engine half is fully testable today**, no Qlik needed:
+```sh
+# drop a statement in inbox/, run the poller once, check the output
+cp mystatement.pdf inbox/
+Rscript scripts/serve_inbox.R
+ls outbox/mystatement/            # -> statement.csv (+ xlsx, json)
+```
+When the server is stood up, the only Qlik-side wiring is: (a) Inphinity upload
+writes to `inbox/`, (b) the file table reads the status index, (c) the ODAG app
+`LOAD`s `outbox/<key>/statement.csv`. None of it needs R on the Qlik box.
+
+### 13.6 Privacy note (Mode B)
+
+Isolation is preserved: each user only ever sees the ODAG app generated for the
+file **they** selected; the shared `inbox/`/`outbox/` folders are reachable only via
+the permissioned share and the Admin tab, never by another Qlik user through the
+front-end. Retention of the uploaded statement follows the same policy chosen for
+the Shiny app.
+
+### 13.7 Open items to confirm with IT (not blocking B1)
+
+- Can Inphinity Forms write the upload to a **file-share folder** (vs only a DB
+  write-back)? If it writes to a DB, add a one-line export of that blob to `inbox/`.
+- For B2 only: is R installable on the Qlik node, and is **`Allow Execute`**
+  permitted there?
