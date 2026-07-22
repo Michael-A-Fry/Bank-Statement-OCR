@@ -10,11 +10,14 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               logdir = "logs", redaction_rects = NULL,
                               force_template = NULL, force_rows = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))
-  # run_id: a stable, human-readable handle for this conversion. Content hash
-  # (first 10 chars) + timestamp, so feedback and logs can point back to it.
+  # run_id: an intentional per-RUN handle for this conversion (feedback and logs
+  # point back to it). Content hash (first 10 chars) + a UTC timestamp -- UTC and
+  # an explicit zone so the id is reproducible across hosts/timezones, matching
+  # the deterministic workbook/CSV/JSON outputs (only the timestamp part varies
+  # per attempt, by design).
   sha <- safe(file_sha256(path), NA_character_)
   run_id <- paste0(substr(if (is.na(sha)) "na" else sha, 1, 10), "-",
-                   format(Sys.time(), "%Y%m%d%H%M%S"))
+                   format(Sys.time(), "%Y%m%d%H%M%S", tz = "UTC"))
   result <- new_result(status = "failed", template_id = NA_character_,
                        messages = character(0))
   detected_template <- NA_character_

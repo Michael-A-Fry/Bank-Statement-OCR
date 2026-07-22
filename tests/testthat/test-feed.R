@@ -102,6 +102,26 @@ test_that("feed CSVs are written atomically -- no partial/temp files linger (P2-
   expect_equal(nrow(utils::read.csv(tx[1], stringsAsFactors = FALSE)), 2)
 })
 
+test_that("an NA trust level fails closed to withheld, never errors in the gate (P3-e)", {
+  cfg <- .cfg()
+  g <- write_feed(.mk_result(trust = NA_character_), cfg, ts = "t",
+                  proven_ids = "bnz_everyday_csv")
+  expect_false(g$accept)                              # NA trust -> lowest -> withheld
+  # the manifest is still written (coverage never silent), not dropped by an error.
+  expect_length(list.files(file.path(cfg$feed$feed_dir, "runs")), 1)
+})
+
+test_that("the manifest is keyed by content hash -- a re-convert doesn't double-count (P3-d)", {
+  cfg <- .cfg()
+  r1 <- .mk_result(); r1$run_id <- "run-A-0001"
+  r2 <- .mk_result(); r2$run_id <- "run-B-0002"   # same statement (same sha), new run
+  write_feed(r1, cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(r2, cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  runs <- list.files(file.path(cfg$feed$feed_dir, "runs"), full.names = TRUE)
+  expect_length(runs, 1)                             # one manifest row per statement
+  expect_identical(utils::read.csv(runs[1], stringsAsFactors = FALSE)$run_id, "run-B-0002")  # latest wins
+})
+
 test_that("feed.enabled = false is a no-op", {
   cfg <- .cfg(); cfg$feed$enabled <- FALSE
   expect_null(write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv"))

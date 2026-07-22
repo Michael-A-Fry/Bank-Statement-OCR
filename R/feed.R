@@ -28,9 +28,14 @@
   invisible(isTRUE(ok))
 }
 
-# .trust_ok(level, min_trust) -- does the trust level meet the floor?
+# .trust_ok(level, min_trust) -- does the trust level meet the floor? An NA / blank
+# level coalesces to the LOWEST trust (fail-closed -> withheld), never letting an
+# `if (NA)` throw inside the gate (which safe() would swallow, silently dropping
+# both the feed row and the manifest).
 .trust_ok <- function(level, min_trust) {
-  level <- tolower(level %||% ""); min_trust <- tolower(min_trust %||% "high")
+  level <- tolower(level %||% "")
+  if (length(level) != 1 || is.na(level) || !nzchar(level)) level <- "low"
+  min_trust <- tolower(min_trust %||% "high")
   switch(min_trust,
     any    = TRUE,
     medium = level %in% c("high", "medium"),
@@ -66,7 +71,9 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   sha <- h$source_sha256 %||% NA_character_
   key <- .feed_key(sha)
   if (is.na(key)) return(invisible(NULL))                          # nothing to key on
-  if (is.null(ts)) ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S")
+  # UTC + explicit zone, so the feed's converted_ts is reproducible across hosts
+  # (the workbook/CSV/JSON outputs already are); the "Z" marks it unambiguously.
+  if (is.null(ts)) ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
 
   # "Proven" = the template is one of the curated/tested set (paths$templates).
   if (is.null(proven_ids))
@@ -133,8 +140,12 @@ write_feed <- function(result, config = load_config(), ts = NULL,
     gate_result = gate$reason,
     feed_file = if (gate$accept && !is.na(tx_written)) basename(tx_written) else NA_character_,
     stringsAsFactors = FALSE)
-  if (!is.na(run_id))
-    .atomic_write_csv(manifest, file.path(runs_dir, paste0(run_id, ".csv")))
+  # Key the manifest by the statement's CONTENT hash (like the transactions file),
+  # not the per-run id: a re-convert then OVERWRITES its own manifest row instead
+  # of adding another, so Qlik's coverage table counts each statement once (its
+  # latest attempt), never N times for N re-runs. The run_id stays a column so the
+  # latest attempt is still identifiable.
+  .atomic_write_csv(manifest, file.path(runs_dir, paste0(key, ".csv")))
 
   invisible(gate)
 }
