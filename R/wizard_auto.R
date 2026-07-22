@@ -19,6 +19,23 @@
   nzchar(ph) & ((lengths(strsplit(ph, "\\s+")) >= 2) | (nchar(ph) >= 10))
 }
 
+# A line names a LAYOUT (a good, safe fingerprint) when it carries bank / product /
+# statement BRANDING -- e.g. "Air New Zealand Airpoints Platinum Mastercard".
+.FP_BRAND_RX <- paste0("\\b(bank|card|mastercard|visa|amex|eftpos|account|statement|",
+  "everyday|savings|cheque|current|credit|debit|platinum|gold|classic|standard|",
+  "airpoints|rewards|business|personal|transaction|summary|loan|mortgage|",
+  "kiwibank|westpac|anz|asb|bnz|tsb|sbs|rabobank|heartland|co-?operative)\\b")
+# A line names a CUSTOMER (PII, and a per-person not per-layout fingerprint) when it
+# starts with a personal title, or is a bare 2-4 word name with NO branding. These
+# must never enter a saved template's fingerprint.
+.FP_NAME_TITLE_RX <- "^(mr|mrs|ms|miss|dr|mstr|master|sir|madam|mx|messrs)\\b"
+.fp_is_customer <- function(ln) {
+  lo <- tolower(trimws(ln))
+  w <- unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln)))
+  grepl(.FP_NAME_TITLE_RX, lo) ||
+    (length(w) <= 4 && length(w) >= 1 && all(grepl("^[A-Za-z'-]+$", w)) && !grepl(.FP_BRAND_RX, lo))
+}
+
 # header_phrases(input, n) -> up to n DISTINCTIVE phrases present on the page, for
 # use as a PDF template fingerprint (page_contains_all). Prefers MULTI-WORD
 # phrases -- a branded title / statement heading, then the transaction table's
@@ -32,15 +49,20 @@ header_phrases <- function(input, n = 3) {
   if (!length(lines)) return(character(0))
   out <- character(0)
   hdr_keys <- lex("header_keywords")   # from the lexicon (admin/ML-extendable)
-  # 1. a distinctive TITLE/brand line near the top: multi-word, no digits (not a
-  # data row), not just column labels -- e.g. "Your transactions", a bank name.
+  # 1. a distinctive BRAND/product line near the top: multi-word, no digits (not a
+  # data row), not just column labels, and NOT a customer name (PII). Brand lines
+  # (e.g. "Air New Zealand Airpoints Platinum Mastercard") lead, because they
+  # identify the layout and never carry PII.
   top <- utils::head(lines, 15L)
   titleish <- vapply(top, function(ln) {
     w <- unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln)))
     nchar(ln) >= 10 && nchar(ln) <= 60 && length(w) >= 2 && !grepl("[0-9]", ln) &&
-      (length(w) == 0 || mean(tolower(w) %in% hdr_keys) < 0.5)
+      (length(w) == 0 || mean(tolower(w) %in% hdr_keys) < 0.5) &&
+      !.fp_is_customer(ln)                       # never a customer / account-holder name
   }, logical(1))
-  out <- c(out, utils::head(top[titleish], 2L))
+  kept <- top[titleish]
+  brandy <- grepl(.FP_BRAND_RX, tolower(kept))   # branded lines first (most distinctive)
+  out <- c(out, utils::head(c(kept[brandy], kept[!brandy]), 2L))
   # 2. the transaction table's header LINE as a whole multi-word phrase (the column
   # labels together are far more specific than any one of them alone).
   score <- vapply(lines, function(ln) {

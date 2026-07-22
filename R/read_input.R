@@ -203,8 +203,11 @@ render_page_view <- function(path, page = 1L, dpi = 100L) {
     return(get(key, envir = .PAGE_RASTER_CACHE, inherits = FALSE))
   sz <- tryCatch(pdftools::pdf_pagesize(path), error = function(e) NULL)
   if (is.null(sz) || page > nrow(sz)) return(NULL)
-  ras <- tryCatch(as.raster(magick::image_read(
-    pdftools::pdf_render_page(path, page = page, dpi = dpi))), error = function(e) NULL)
+  # suppressWarnings: a PDF that embeds fonts the machine lacks (e.g. Symbol /
+  # ArialUnicode) makes the renderer warn -- harmless (a few glyphs may look off),
+  # so keep it out of the console.
+  ras <- tryCatch(suppressWarnings(as.raster(magick::image_read(
+    pdftools::pdf_render_page(path, page = page, dpi = dpi)))), error = function(e) NULL)
   if (is.null(ras)) return(NULL)
   out <- list(ras = ras, w = sz$width[page], h = sz$height[page], pg = page)
   if (length(ls(.PAGE_RASTER_CACHE)) >= 8L) rm(list = ls(.PAGE_RASTER_CACHE), envir = .PAGE_RASTER_CACHE)
