@@ -24,14 +24,18 @@ suppressMessages({
 # Load the engine (all pure-R modules) into the session.
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 
-TEMPLATES_DIR <- "templates"            # curated, team-maintained (default) templates
-USER_TEMPLATES_DIR <- "templates_user"  # templates accountants create via guided setup
-LOGDIR <- "logs"   # run log + feedback log live together, next to the app
-UPLOADS_DIR <- "uploads"  # every uploaded statement + its lifecycle status (git-ignored)
-REQUESTS_DIR <- "requests"  # "none of these fits -- tell our team" raises (git-ignored)
-FIELDS_DIR <- "fields_templates"            # curated mode:fields (IRD/form) templates
-USER_FIELDS_DIR <- "fields_templates_user"  # form templates built in the app
-DICT_PATH <- file.path("dictionaries", "labels.yaml")  # the shared label dictionary
+# All deployment settings live in ONE place: config/config.yaml (copy it from
+# config/config.example.yaml). Any absent key falls back to the built-in default,
+# so with no config file the app behaves exactly as before.
+CONFIG <- load_config()
+TEMPLATES_DIR      <- CONFIG$paths$templates       # curated, team-maintained (proven) templates
+USER_TEMPLATES_DIR <- CONFIG$paths$user_templates  # templates accountants create via guided setup
+LOGDIR             <- CONFIG$paths$logs            # run log + feedback log live together, next to the app
+UPLOADS_DIR        <- CONFIG$paths$uploads         # every uploaded statement + its lifecycle status (git-ignored)
+REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell our team" raises (git-ignored)
+FIELDS_DIR         <- CONFIG$paths$fields          # curated mode:fields (IRD/form) templates
+USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the app
+DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
 # The bundled specimen statement (public sample, ships with the app) that "Try it
 # on a sample" converts, so a brand-new user sees a full result without a file.
 SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_statement.pdf")
@@ -612,13 +616,14 @@ server <- function(input, output, session) {
   all_templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR, include_hidden = TRUE) })
 
   # ---- Admin password gate. Hidden outputs are suspended, so no admin data is
-  # computed or sent to the browser until the password is entered. Set it with
-  # the BSO_ADMIN_PASSWORD env var (a default is used only for local dev).
+  # computed or sent to the browser until the password is entered. Set it in
+  # config/config.yaml (app.admin_password); the BSO_ADMIN_PASSWORD env var
+  # overrides it if present.
   admin_ok <- reactiveVal(FALSE)
   output$admin_authed <- reactive(isTRUE(admin_ok()))
   outputOptions(output, "admin_authed", suspendWhenHidden = FALSE)
   observeEvent(input$adm_login, {
-    pw <- Sys.getenv("BSO_ADMIN_PASSWORD", "changeme")
+    pw <- CONFIG$app$admin_password %||% "changeme"
     if (identical(input$adm_pw %||% "", pw)) {
       admin_ok(TRUE); output$adm_login_msg <- renderUI(NULL)
     } else output$adm_login_msg <- renderUI(

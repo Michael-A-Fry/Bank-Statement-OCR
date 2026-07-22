@@ -1,0 +1,40 @@
+# Statement Studio configuration.
+#
+# Copy this file to  config/config.yaml  and edit it. config/config.yaml is
+# git-ignored, so your real settings (including the admin password) are never
+# committed. Any key you leave out falls back to a sensible built-in default,
+# so a partial file is fine.
+
+app:
+  title: Statement Studio
+  # The Admin-tab barrier - a simple gate to share with a few maintainers.
+  # (Can also be set via the BSO_ADMIN_PASSWORD environment variable, which wins.)
+  admin_password: changeme
+  # Where the Qlik front-end sends a user when NO proven template matches
+  # (the "set it up in the full app" link). Point this at your Shiny deployment.
+  shiny_url: http://localhost:8100
+  port: 8100
+
+paths:
+  templates: templates                 # PROVEN / curated templates (Qlik uses ONLY these)
+  user_templates: templates_user       # analyst-made drafts (Shiny only, NEVER Qlik)
+  fields: fields_templates
+  user_fields: fields_templates_user
+  dictionary: dictionaries/labels.yaml
+  uploads: uploads
+  requests: requests
+  logs: logs
+
+qlik:
+  # Qlik converts with proven templates only. Leave blank to use paths.templates.
+  proven_templates_dir:
+  # On a no-template miss, also file the statement into the Shiny team pickup queue.
+  queue_unsupported: true
+
+feed:                                   # Mode A batch feed into Qlik dashboards
+  feed_dir: feed
+  require_status_ok: true
+  min_trust: high                       # high | medium | any
+  allowed_template_origins: [default]   # curated/tested only; add 'user' to include drafts
+  template_allowlist: []                # optional: restrict to specific template ids
+  include_review_feed: true

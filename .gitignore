@@ -69,3 +69,6 @@ Rplots.pdf
 node_modules/
 package.json
 package-lock.json
+
+# Deployment config (holds the admin password) - keep the .example committed, not this.
+/config/config.yaml

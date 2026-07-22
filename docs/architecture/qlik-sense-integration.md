@@ -483,3 +483,68 @@ the Shiny app.
   one-line export of that blob to the shared `inbox/`.
 - **Rserve/SSE only:** confirm the **SSE-to-Rserve** connector is installed and an
   **Analytic Connection** is registered in the QMC (name, host, port 6311 default).
+
+---
+
+## 14. Proven-templates-only + the Shiny escape hatch (BUILT)
+
+**Rule:** the Qlik path converts with **proven (curated) templates only** - it never
+touches analyst-made drafts. If a statement matches no proven template, Qlik does
+**not** try to build one; it tells the user and points them at the full Shiny app,
+and files the statement into the team's pickup queue so it gets templated. **The
+Shiny app is unchanged** - it still offers every template and the full build flow;
+only the Qlik entrypoint is restricted.
+
+This is implemented, tested, and config-driven:
+
+- **Entrypoints** (all use proven templates only - `templates/`, never
+  `templates_user/`):
+  - `convert_for_qlik(path, outdir)` (`R/qlik_convert.R`) - converts and writes the
+    outputs **plus `outdir/status.json`**.
+  - `scripts/convert_for_qlik.R <file> <outdir>` - the CLI for Qlik `EXECUTE` / the
+    poller.
+  - `convert_statement_sse(path)` - the Rserve/SSE wrapper (returns the table).
+- **`status.json`** is what the Qlik sheet branches on:
+
+```json
+{ "status": "ok",           "needs_template": false, "csv": ".../bnz.csv",
+  "run_id": "…", "template_id": "bnz_everyday_csv", "trust_level": "high",
+  "row_count": 32, "message": "…", "shiny_url": "http://…:8100" }
+```
+```json
+{ "status": "unsupported",  "needs_template": true,  "csv": null,
+  "message": "No proven template for this bank yet. Set it up in the full app…",
+  "shiny_url": "http://…:8100" }
+```
+
+- **On a match:** ODAG `LOAD`s the `csv`. **On a miss:** the Qlik sheet shows
+  `message` and a button opening `shiny_url`; meanwhile the statement is already in
+  the Shiny **Admin -> Uploads** pickup queue (auto "reach out to us"), so the team
+  builds the template and, once it lands in `templates/`, Qlik converts that bank
+  from then on. No re-upload, no dead end.
+
+### 14.1 How a new bank becomes available to Qlik
+
+Building happens in Shiny (unchanged). A template is "proven" simply by living in
+the **`templates/` folder** (`paths.templates`) that Qlik reads - the curated,
+golden-file-backed set. Promoting a vetted draft = placing its YAML there (the
+existing curation step); nothing in Shiny changes and Qlik picks it up on next use.
+
+---
+
+## 15. Configuration - one file (`config/config.yaml`)
+
+All deployment settings live in **`config/config.yaml`** (copy it from the committed
+**`config/config.example.yaml`**; the real file is git-ignored so the admin password
+is never committed). Absent keys fall back to built-in defaults, so a partial file is
+fine. Loaded once by `load_config()` (`R/config.R`); the Shiny app, the poller and the
+Qlik entrypoints all read the same file.
+
+Keys that matter here:
+- `app.admin_password` - the Admin-tab gate (a simple shared barrier). `BSO_ADMIN_PASSWORD`
+  env var overrides it if a site prefers to keep it out of the file.
+- `app.shiny_url` - where the Qlik "no proven template yet" button sends the user.
+- `paths.templates` - the **proven** set Qlik reads; `paths.user_templates` - drafts,
+  **Shiny only**.
+- `qlik.queue_unsupported` - file a Qlik miss into the Shiny pickup queue (default on).
+- `feed.*` - the Mode A batch-feed gate (§6).
