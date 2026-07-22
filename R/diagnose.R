@@ -157,6 +157,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d date(s) were written in a different style than the template declares", length(dalt)),
       "Rows like '17 Sep' were read with the year taken from the statement period. Update the template's date format in the toolkit to make this explicit.")
 
+    dyi <- which(grepl("date_year_inferred", tx$flags %||% ""))
+    if (length(dyi)) add(sprintf("rows %s (date)", .rng(dyi)), "date_out_of_range", "medium",
+      sprintf("%d date(s) took their YEAR from a number in the page text, not a statement period", length(dyi)),
+      "The statement showed day+month only and no readable period, so the year was inferred from a single 4-digit number on the page (which could be a footer/copyright year). Confirm the year is right, or add the statement period to the template.")
+
     dbad <- which(is.na(tx$date) & !is.na(tx$date_raw) & nzchar(tx$date_raw %||% ""))
     if (length(dbad)) add(sprintf("rows %s (date)", .rng(dbad)), "date_parse", "medium",
       sprintf("%d date(s) could not be read", length(dbad)),

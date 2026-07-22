@@ -314,12 +314,13 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # Only used when it is UNAMBIGUOUS (a single distinct year on the page): if
   # the text shows zero or several years we do not guess, keeping to the
   # "never silently wrong" contract. date_raw stays verbatim regardless.
+  year_from_text <- FALSE
   if (!length(yrs)) {
     alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
     cy <- suppressWarnings(as.integer(regmatches(alltext,
             gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
     cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
-    if (length(cy) == 1L) yrs <- cy
+    if (length(cy) == 1L) { yrs <- cy; year_from_text <- TRUE }
   }
   # .with_year(raw, fmt) -- append the period's year to a year-less date string;
   # with two candidate years (a period spanning New Year) pick the one that
@@ -644,6 +645,13 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   date_unresolved <- if (n == 0) logical(0)
     else ((!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw))) |
           (forced_vec & is.na(date_iso)))
+  # date_year_inferred (P3-a): a year-less table with NO parseable period took its
+  # year from a single 4-digit number in free page text (e.g. a footer "(c) 2019").
+  # The date parses, so date_unresolved won't fire -- but the year is a GUESS from
+  # non-period text, so flag every dated row with a resolved date, so trust/review
+  # never treat that year as proven. date_raw stays verbatim regardless.
+  date_year_inferred <- if (n == 0) logical(0)
+    else (year_from_text & !is.na(date_iso))
   # no_date: a shared-date row kept without a date of its own (keep_dateless_rows).
   # The blank date is deliberate -- flagged so a reviewer sees it was never guessed.
   no_date_kept <- if (n == 0) logical(0)
@@ -660,6 +668,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, date_year_inferred, "date_year_inferred")  # year guessed from free page text
     f <- add(f, no_date_kept, "no_date")        # shared-date row kept with a blank date
     f <- add(f, fb_used, "date_alt_format")     # read via the year-less fallback
     f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray

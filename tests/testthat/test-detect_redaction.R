@@ -62,6 +62,27 @@ test_that("detect_occluded_words spares normal text, flags an occluded word (P1-
   expect_false(any(occ$occluded[grepl("01/06/2025|123.45", d$text)]))
 })
 
+test_that("inject_redaction_tokens strides finely enough for a narrow column (P3-i)", {
+  # a row of NARROW words (width ~10): a fixed 34-pt stride could step clean over a
+  # ~12-pt column, leaving its redacted cell blank. The adaptive stride must place
+  # tokens densely enough that a narrow band still catches one.
+  words <- data.frame(stringsAsFactors = FALSE,
+    width  = c(10, 10, 10, 10, 10),
+    height = rep(9, 5),
+    x      = c(45, 60, 75, 90, 470),          # tight 15-pt columns + a date anchor
+    y      = rep(40, 5),
+    text   = c("05", "Jan", "12.00", "AB", "955.50"),   # a date + amount => a real row
+    redacted = FALSE)
+  rect <- data.frame(x0 = 44, y0 = 36, x1 = 100, y1 = 52)   # covers the narrow cluster
+  out <- inject_redaction_tokens(words, rect, row_tol = 3)
+  added <- out[out$redacted %in% TRUE, , drop = FALSE]
+  # at least one token per ~15-pt column across the 56-pt rect (>= 3 tokens),
+  # where the old fixed 34-pt stride would have placed only ~2.
+  expect_gte(nrow(added), 3)
+  gaps <- diff(sort(added$x))
+  expect_true(all(gaps <= 16))                 # no >16-pt hole a narrow column falls in
+})
+
 test_that("inject_redaction_tokens reconstructs a blacked cell on its own row", {
   words <- .dr_words()
   # a rect over the AMOUNT column of row 1 only (y 36..52, x 350..410)

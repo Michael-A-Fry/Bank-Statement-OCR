@@ -99,6 +99,19 @@ test_that("two labels on one line each resolve to their OWN value", {
          date = list(x_min = 40, x_max = 74), description = list(x_min = 74, x_max = 360),
          amount = list(x_min = 360, x_max = 470), balance = list(x_min = 470, x_max = 545))))
 
+test_that("a year inferred from free page text is flagged, not silently trusted (P3-a)", {
+  # year-less "05 Jan" dates, NO parseable period, but a single 4-digit year sits
+  # in the page text (a footer/copyright). The row is kept with that year so it
+  # isn't dropped, but must carry date_year_inferred so the guess is visible.
+  w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),
+                      c("4.50", 415, 40, 25), c("95.50", 488, 40, 30)))
+  inp <- .rb_input(w, pages = "Kowhai Bank statement   (c) 2019 Kowhai Bank Ltd")
+  tx <- parse_pdf_table(inp, .rb_tmpl("signed"))$transactions
+  expect_equal(nrow(tx), 1L)
+  expect_true(startsWith(tx$date, "2019-01-05"))            # year taken from the text
+  expect_true(grepl("date_year_inferred", tx$flags))       # ...but flagged as a guess
+})
+
 test_that("an overdrawn PDF balance keeps its negative sign (OD marker)", {
   w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),
                       c("4.50", 415, 40, 25), c("95.50", 488, 40, 30), c("OD", 520, 40, 15)))

@@ -149,6 +149,7 @@ inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
   vis <- words[!(words$redacted %in% TRUE) & nzchar(trimws(words$text)), , drop = FALSE]
   if (!nrow(vis)) return(words)   # nothing visible to anchor to -> invent nothing
   o <- order(vis$y); vy <- vis$y[o]; vh <- vis$height[o]; vt <- vis$text[o]
+  vw <- suppressWarnings(as.numeric(vis$width[o]))
   grp <- .group_rows(vy, row_tol)
 
   add_x <- numeric(0); add_y <- numeric(0); add_w <- numeric(0); add_h <- numeric(0)
@@ -156,6 +157,14 @@ inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
     idx <- which(grp == g)
     ry0 <- min(vy[idx]); ry1 <- max(vy[idx] + vh[idx])
     rowy <- min(vy[idx]); rowh <- stats::median(vh[idx])
+    # Stride ADAPTS to this row's own text scale (the median visible word width),
+    # bounded to [8, x_step]. A fixed 34-pt stride could step clean over a mapped
+    # column narrower than 34 pt, leaving that redacted cell with no token (it
+    # would read blank instead of [REDACTED]); a finer stride on a narrow-column
+    # statement lands a token in every cell. Over-generation is harmless -- tokens
+    # in one column collapse to a single [REDACTED].
+    step <- suppressWarnings(stats::median(vw[idx], na.rm = TRUE))
+    step <- if (!is.finite(step) || step <= 0) x_step else max(8, min(x_step, step))
     # evidence gate: only a row that still shows a real DATE or AMOUNT is a
     # transaction whose blacked cells we should record. A header/address line has
     # neither, so a box over it never becomes a row.
@@ -164,10 +173,10 @@ inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
       x0 <- rects$x0[r]; y0 <- rects$y0[r]; x1 <- rects$x1[r]; y1 <- rects$y1[r]
       if (!all(is.finite(c(x0, y0, x1, y1))) || x1 <= x0 || y1 <= y0) next
       if (!(ry1 >= y0 && ry0 <= y1)) next          # rect must overlap THIS row's band
-      xs <- seq(x0, x1 - 1, by = x_step); if (!length(xs)) xs <- x0
+      xs <- seq(x0, x1 - 1, by = step); if (!length(xs)) xs <- x0
       for (xx in xs) {
         add_x <- c(add_x, xx); add_y <- c(add_y, rowy)
-        add_w <- c(add_w, min(x_step - 4, x1 - xx)); add_h <- c(add_h, rowh)
+        add_w <- c(add_w, min(step - 2, x1 - xx)); add_h <- c(add_h, rowh)
       }
     }
   }

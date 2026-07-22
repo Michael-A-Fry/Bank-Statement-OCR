@@ -115,8 +115,17 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
   dark_rects <- if (exists("detect_dark_regions", mode = "function"))
     tryCatch(detect_dark_regions(magick::image_read(box_img), scale = 72 / dpi),
              error = function(e) NULL) else NULL
+  # Page-mean confidence from the SAME box-image words the PER-WORD flags use, so
+  # the reported ocr_min_confidence can never diverge from the per-cell confidences
+  # (the text pass runs on a separately upscaled/deskewed image whose mean differs).
+  box_conf <- {
+    cf <- if (!is.null(words) && "conf" %in% names(words))
+      suppressWarnings(as.numeric(words$conf)) else numeric(0)
+    cf <- cf[!is.na(cf) & cf >= 0]
+    if (length(cf)) mean(cf) else NA_real_
+  }
   list(text = txt, words = words, ok = length(txt) > 0L,
-       conf = ocr_word_confidence(use_img, lang = lang),
+       conf = box_conf,
        width = bw[1], height = bw[2], dark_rects = dark_rects)
 }
 
