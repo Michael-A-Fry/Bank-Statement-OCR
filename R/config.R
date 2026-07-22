@@ -55,9 +55,11 @@
     level    = "full",          # off | standard | full  -- how much detail to capture
     capture  = list(            # per-category switches (each applies within its level)
       layout         = TRUE,    # layout signature, format, column/page shape
-      parse_quality  = TRUE,    # row/flag/coverage/fill stats, date-format, amount-style
+      parse_quality  = TRUE,    # row/flag/coverage/fill stats, misses, value shapes
       detection      = TRUE,    # scores, margin, candidates, eligibility
       reconciliation = TRUE,    # KPI outcomes, trust, balance anchors, discontinuities
+      multi_statement = TRUE,   # #statements / #periods / #accounts / boundary signals
+      novelty        = TRUE,    # unmapped columns + unrecognised tokens (ML-feedback signal)
       ocr            = TRUE,     # OCR pages + confidence stats
       redaction      = TRUE      # redaction counts + scan completeness
     ),

@@ -38,6 +38,27 @@ test_that("levels gate the depth; off captures nothing", {
   expect_null(r$reconciliation$kpis)
 })
 
+test_that("full capture records multi-statement counts and the novelty gaps", {
+  skip_if_not(file.exists(fixture("samples/raw/anz/anz_creditcard_01.csv")))
+  ctx <- .mc_ctx()
+  # a bank that writes cow/horse for its D/C indicator, template only knows D/C.
+  ctx$parsed$transactions$type[1:2] <- "cow"
+  ctx$parsed$transactions$type[3]   <- "horse"
+  rec <- capture_metadata(ctx, .config_defaults())
+  # multi-statement / periods / accounts are present.
+  expect_false(is.null(rec$multi_statement))
+  expect_true(!is.null(rec$multi_statement$n_periods))
+  expect_true(!is.null(rec$multi_statement$n_accounts))
+  # the "we missed it" signals: an unmapped source column and unrecognised tokens.
+  expect_true("ConversionCharge" %in% unlist(rec$novelty$source_headers))
+  expect_true("ConversionCharge" %in% unlist(rec$novelty$unmapped_columns))
+  expect_setequal(toupper(unlist(rec$novelty$unrecognised_type_values)), c("COW", "HORSE"))
+  # value SHAPES (not values) captured.
+  expect_true(!is.null(rec$parse_quality$amount_buckets))
+  expect_true(!is.null(rec$parse_quality$desc_len))
+  expect_true(!is.null(rec$parse_quality$unparsed_dates))
+})
+
 test_that("a switched-off category is dropped", {
   skip_if_not(file.exists(fixture("samples/raw/anz/anz_creditcard_01.csv")))
   cfg <- .config_defaults(); cfg$metadata$capture$detection <- FALSE

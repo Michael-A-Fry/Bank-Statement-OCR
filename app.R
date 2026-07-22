@@ -705,9 +705,11 @@ ui <- fluidPage(
                 selected = CONFIG$metadata$level %||% "full"),
               checkboxGroupInput("adm_meta_cats", "Categories to capture",
                 choices = c("Layout (shape / signature)" = "layout",
-                            "Parse quality (rows / flags / fill)" = "parse_quality",
+                            "Parse quality (rows / flags / misses / shapes)" = "parse_quality",
                             "Detection (scores / candidates)" = "detection",
                             "Reconciliation (KPIs / balances)" = "reconciliation",
+                            "Multi-statement (# statements / periods / accounts)" = "multi_statement",
+                            "Novelty (unmapped columns / unrecognised tokens)" = "novelty",
                             "OCR (pages / confidence)" = "ocr",
                             "Redaction (counts / coverage)" = "redaction"),
                 selected = names(Filter(isTRUE, CONFIG$metadata$capture %||% list()))),
@@ -999,7 +1001,8 @@ server <- function(input, output, session) {
     req(admin_ok())
     lvl <- input$adm_meta_level %||% "full"
     cats <- input$adm_meta_cats %||% character(0)
-    all_cats <- c("layout", "parse_quality", "detection", "reconciliation", "ocr", "redaction")
+    all_cats <- c("layout", "parse_quality", "detection", "reconciliation",
+                  "multi_statement", "novelty", "ocr", "redaction")
     capture <- stats::setNames(as.list(all_cats %in% cats), all_cats)
     okw <- save_metadata_config(lvl, capture)
     if (okw) { CONFIG$metadata$level <<- lvl; CONFIG$metadata$capture <<- capture }

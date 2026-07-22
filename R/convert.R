@@ -142,7 +142,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       run_id = run_id, ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
       requested_by = requested_by %||% current_user(), sha = sha,
       input = input, parsed = parsed, recon = recon, det = det, meta = meta,
-      template = template, status = result$status,
+      multi = multi, template = template, status = result$status,
       elapsed_ms = as.numeric(difftime(Sys.time(), t0, units = "secs")) * 1000), cfg), NULL)
     result
   }, error = function(e) {

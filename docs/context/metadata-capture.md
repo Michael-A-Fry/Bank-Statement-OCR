@@ -44,7 +44,33 @@ metadata:
 |---|---|---|
 | **Off** | Nothing beyond the normal run log. | — |
 | **Standard** | Layout signature + format; detection match/score/margin; row count; trust level; KPI pass/fail counts; the statement period and an account **hash**. | No per-row detail. Period + account-hash only. |
-| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Still no descriptions/payees/references and no raw account number. |
+| **Full** (default) | Everything in Standard **plus**: flag histogram, per-field fill ratios, the "misses" (unparsed dates/amounts), value **shapes** (amount magnitude buckets, description length stats, direction split), detection candidate scores, per-KPI outcomes, opening/closing **balance anchors** and net amount, multi-statement counts (# periods / # accounts / boundary reasons), the **novelty** set (source header inventory, unmapped columns, unrecognised indicator tokens), OCR page/confidence detail, redaction counts + scan completeness, and timing. | Adds balance anchors + the net amount — **financial** metadata, not personal identifiers, and local-only. Value shapes are aggregate counts, never values. Column names and short indicator tokens (e.g. an unrecognised "COW"/"HORSE" debit marker) are structural, not content. Still no descriptions/payees/references and no raw account number. |
+
+### Full coverage — what the "goldmine" answers
+
+The record is designed so a downstream model (or a human) can answer, per run and
+across the whole `logs/metadata/` corpus, without ever touching statement content:
+
+- **How many statements / periods / accounts?** `multi_statement.{likely_multiple,
+  n_periods, n_accounts, page1_markers, n_opening_labels, n_closing_labels,
+  boundary_reasons}`.
+- **How many transactions, and how did they shape up?** `parse_quality.{row_count,
+  direction_dist, amount_buckets, desc_len}`.
+- **What did we NOT read?** `parse_quality.{malformed_rows, unparsed_dates,
+  unparsed_amounts, flag_histogram}` — every flag counted (date_unresolved,
+  date_alt_format, date_year_inferred, ocr_low_conf, row_stitched, forced, …).
+- **What was NEW or unrecognised?** `novelty.{source_headers, unmapped_columns,
+  unrecognised_type_values}` — the columns a template never used and the indicator
+  tokens it didn't know (the "a new bank writes cow/horse for debit/credit" signal),
+  plus `layout.signature` for clustering never-before-seen layouts.
+- **Did it reconcile, and how far off?** `reconciliation.{trust_level, kpis,
+  opening_balance, closing_balance, net_amount, stated_count}`.
+
+These "unrecognised" fields are the exact feedback loop for supplementing the
+engine's vocabularies (see the customisation model): a model clusters what keeps
+turning up unrecognised, proposes a new lexicon/template entry, a human approves
+it, and the deterministic engine picks it up — the model never changes behaviour
+directly.
 
 Balances and the statement period are financial metadata, not personal
 identifiers, and never leave the machine. Account numbers appear only as a hash.
