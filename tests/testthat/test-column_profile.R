@@ -54,6 +54,60 @@ test_that("example shapes are masked -- no real digits or letters leak", {
   expect_identical(dp$example_shape, "99/99/9999")
 })
 
+test_that("masking removes NON-ASCII content too (macrons, accents, CJK, Greek)", {
+  # An NZ statement routinely carries te reo macrons in payees; nothing readable
+  # (ASCII or not) may survive into example_shape.
+  df <- data.frame(Detail = c("TĀMAKI PMT", "Café René", "中国银行", "ΠΛΗΡΩΜΗ"),
+                   check.names = FALSE, stringsAsFactors = FALSE)
+  sh <- column_profiles(df)[[1]]$example_shape
+  # only masked structure survives: 9, A, and the kept ASCII separators
+  expect_match(sh, "^[9A ./,:()$+-]+$")
+  expect_false(grepl("[ĀāéèÉ中国银行Α-Ω]", sh))   # no source glyphs
+})
+
+test_that("a content column NEVER leaks its literal values as tokens", {
+  df <- data.frame(
+    Reference   = c("VODAFONE", "SPARK", "MERIDIAN", "RENT", "IRD", "WAGES"),
+    Particulars = c("J SMITH", "A JONES", "B LEE", "RENT", "J SMITH", "A JONES"),
+    Type        = c("D", "C", "D", "C", "D", "C"),
+    Status      = c("Paid", "Recd", "Paid", "Recd", "Paid", "Recd"),
+    check.names = FALSE, stringsAsFactors = FALSE)
+  p <- stats::setNames(column_profiles(df), c("Reference", "Particulars", "Type", "Status"))
+  # payee/reference/particulars values must NOT appear -- count only
+  expect_null(p$Reference$tokens);   expect_false(is.null(p$Reference$distinct_tokens))
+  expect_null(p$Particulars$tokens); expect_false(is.null(p$Particulars$distinct_tokens))
+  # a NON-indicator header carrying free-ish values is also suppressed to a count
+  expect_null(p$Status$tokens)
+  # a genuine D/C indicator IS surfaced (its values are the known domain)
+  expect_setequal(unlist(p$Type$tokens), c("D", "C"))
+})
+
+test_that("a genuinely-named indicator column surfaces a NEW marker (Paid/Recd)", {
+  df <- data.frame(Type = c("Paid", "Recd", "Paid", "Recd"),
+                   check.names = FALSE, stringsAsFactors = FALSE)
+  expect_setequal(unlist(column_profiles(df)[[1]]$tokens), c("PAID", "RECD"))
+})
+
+test_that("PDF template_hints never persists raw fingerprint phrases (name leak)", {
+  inp <- list(kind = "pdf",
+    pages = "JOHN ANDREW SMITH\nTransaction History\n05/01/2026 COFFEE 4.50",
+    words = list(data.frame(text = c("JOHN", "SMITH", "05/01/2026", "4.50"),
+      x = c(10, 40, 10, 300), y = c(10, 10, 40, 40), width = c(30, 30, 60, 30),
+      height = rep(10, 4), stringsAsFactors = FALSE)),
+    page_width = 595, page_height = 841, meta = list(page_count = 1L))
+  th <- template_hints(inp, NULL, matched = FALSE)
+  expect_null(th$fingerprint_candidates)
+})
+
+test_that("profiling is deterministic and never throws on hostile input", {
+  df <- data.frame(A = c("VODAFONE", "SPARK", "TĀMAKI"), B = c("1", "2", "3"),
+                   check.names = FALSE, stringsAsFactors = FALSE)
+  expect_identical(column_profiles(df), column_profiles(df))
+  # empty / all-NA / single-column edge inputs degrade, never error
+  expect_silent(column_profiles(data.frame()))
+  expect_silent(column_profiles(data.frame(X = c(NA, NA), stringsAsFactors = FALSE)))
+})
+
 test_that("suggested mapping is the engine's own best guess", {
   sm <- .suggest_mapping(.cp_df())
   expect_identical(sm$date, "Date")

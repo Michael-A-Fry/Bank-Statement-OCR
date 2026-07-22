@@ -67,9 +67,11 @@ metadata_levels <- function() c("off", "standard", "full")
 }
 
 # .len_stats(x) -- min / median / max character length of a text column (a shape
-# signal for descriptions), never the text itself.
+# signal for descriptions), never the text itself. Input is sanitised to valid
+# UTF-8 first so nchar() can't throw on a hostile multibyte value in a non-UTF-8
+# locale.
 .len_stats <- function(x) {
-  n <- nchar(as.character(x %||% character(0)))
+  n <- nchar(.enc_safe(x %||% character(0)))
   n <- n[!is.na(n) & n > 0]
   if (!length(n)) return(NULL)
   list(min = as.integer(min(n)), median = as.integer(stats::median(n)),

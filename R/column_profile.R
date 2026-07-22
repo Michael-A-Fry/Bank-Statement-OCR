@@ -6,31 +6,50 @@
 #
 # PII posture (identical to the rest of metadata capture): no raw values leave
 # here. A column yields its NAME, inferred KIND, fill rate, cardinality, and a
-# MASKED example shape (each digit -> 9, each letter -> A, punctuation kept, so
-# "31/12/2025" -> "99/99/9999" and "$1,234.56" -> "$9,999.99"). The only literal
-# tokens emitted are the distinct values of a genuinely low-cardinality, short
-# INDICATOR column (e.g. {D, C} or {Paid, Recd}) -- structural markers, not
-# content, exactly the posture of novelty.unrecognised_type_values.
+# MASKED example shape (each digit -> 9, EVERY letter -- ASCII or not -> A, only the
+# ASCII separators a shape needs are kept, so "31/12/2025" -> "99/99/9999" and
+# "TAMAKI PMT" -> "AAAAAA AAA"). Literal tokens are emitted ONLY for a genuine
+# debit/credit-style INDICATOR column (values in the known D/C domain, or a header
+# that names itself an indicator) -- NEVER for a free-text / reference / payee
+# column, whose few short values would be real content.
 
-# .mask_value(s) -- collapse a value to a PII-safe shape. Digit -> 9, letter -> A,
-# everything else (/,.-() space $ £ €) kept, so the RESULT reveals structure
-# (widths, separators, currency) but never a readable character of content.
+# .enc_safe(x) -- coerce to valid UTF-8, dropping bytes invalid in the source
+# encoding, so nchar()/gsub()/substr() can never throw on a hostile multibyte value
+# in a non-UTF-8 locale (the air-gapped Windows box). Sanitise once, up front.
+.enc_safe <- function(x) iconv(as.character(x), from = "", to = "UTF-8", sub = "")
+
+# .mask_value(s) -- collapse a value to a PII-safe shape. Digit -> 9; ASCII letter
+# -> A; then ANY remaining non-structural character (a te reo macron, an accent,
+# CJK / Greek text, a non-$ currency glyph) is content too and is masked to A. Only
+# the ASCII separators a shape needs are kept, so no readable character survives.
 .mask_value <- function(s) {
   s <- as.character(s)
-  s <- gsub("[0-9]", "9", s)
-  gsub("[A-Za-z]", "A", s)
+  s <- gsub("[0-9]", "9", s)                    # digit -> 9
+  s <- gsub("[A-Za-z]", "A", s)                 # ASCII letter -> A
+  gsub("[^0-9A-Za-z ./,:()$+-]", "A", s)        # any other char (incl. non-ASCII) -> A
 }
 
 # .modal_shape(v) -- the most common masked shape across a sample (capped in
-# length so a long free-text field can't bloat the record).
+# length so a long free-text field can't bloat the record). Ties are broken by the
+# shape string so the choice is deterministic across machines/locales (the shapes
+# are pure ASCII after masking).
 .modal_shape <- function(v) {
   v <- v[nzchar(v)]
   if (!length(v)) return(NA_character_)
   shapes <- vapply(utils::head(v, 100L), .mask_value, character(1), USE.NAMES = FALSE)
-  ms <- names(sort(table(shapes), decreasing = TRUE))[1]
+  tb <- table(shapes)
+  ms <- names(tb)[order(-as.integer(tb), names(tb))][1]
   if (is.na(ms)) return(NA_character_)
   if (nchar(ms) > 48L) paste0(substr(ms, 1L, 45L), "...") else ms
 }
+
+# Column-name patterns that decide whether a low-cardinality column's LITERAL
+# values may be emitted. A CONTENT header (description / reference / payee / name /
+# particulars ...) never leaks its values, even when short and few. An INDICATOR
+# header (type / dr-cr / debit-credit / direction ...) is one whose few short codes
+# ARE the structural signal a template needs.
+.CONTENT_COL_RX   <- "desc|payee|paye|detail|memo|narrat|particular|referen|other.?part|counterpart|\\bname\\b|address|payer|remitter|merchant"
+.INDICATOR_COL_RX <- "type|dr.?cr|cr.?dr|d/?c|debit.?credit|credit.?debit|\\bsign\\b|indicat|in/?out|money.?in|money.?out|direction"
 
 # A character is "currency-ish" if it is NOT a digit, letter, standard number
 # punctuation or space. This ASCII-only negation matches $ / £ / € (and any other
@@ -93,7 +112,7 @@
 
 # .col_profile(name, values) -- one PII-safe column profile (see file header).
 .col_profile <- function(name, values) {
-  raw <- as.character(values)
+  raw <- .enc_safe(values)               # valid UTF-8 up front: nchar/gsub never throw
   n   <- length(raw)
   ne  <- trimws(raw[!is.na(raw) & nzchar(trimws(raw))])
   samp <- utils::head(ne, 300L)
@@ -109,9 +128,18 @@
   } else if (identical(kind, "money")) {
     prof$money <- .money_shape(samp)
   } else if (identical(kind, "indicator")) {
-    toks <- sort(unique(toupper(ne)))
-    if (length(toks) <= 12L && all(nchar(toks) <= 8L)) prof$tokens <- as.list(toks)
-    else prof$distinct_tokens <- length(toks)
+    toks <- sort(unique(toupper(ne)), method = "radix")     # deterministic ordering
+    nm <- tolower(as.character(name))
+    # Emit the LITERAL values ONLY when this is genuinely a debit/credit-style
+    # indicator -- its values are a recognised D/C domain, OR the header names it an
+    # indicator column -- and never for a content/reference/payee column (whose few
+    # short values would be real content). Everything else: count only.
+    is_content   <- grepl(.CONTENT_COL_RX, nm)
+    is_indicator <- all(toks %in% toupper(type_dc_domain())) || grepl(.INDICATOR_COL_RX, nm)
+    if (!is_content && is_indicator && length(toks) <= 12L && all(nchar(toks) <= 8L))
+      prof$tokens <- as.list(toks)
+    else
+      prof$distinct_tokens <- length(toks)
   } else if (identical(kind, "text")) {
     prof$length <- .len_stats(ne)
   }
@@ -119,10 +147,13 @@
 }
 
 # column_profiles(df) -- profile every column of a source table (capped so a
-# pathologically wide sheet can't blow up the record).
+# pathologically wide sheet can't blow up the record). Each column is profiled
+# defensively so one hostile column degrades to nothing, not the whole bundle.
 column_profiles <- function(df) {
   if (is.null(df) || !ncol(df)) return(list())
-  lapply(seq_len(min(ncol(df), 60L)), function(j) .col_profile(names(df)[j], df[[j]]))
+  profs <- lapply(seq_len(min(ncol(df), 60L)),
+                  function(j) safe(.col_profile(names(df)[j], df[[j]]), NULL))
+  Filter(Negate(is.null), profs)
 }
 
 # .suggest_mapping(df) -- the engine's OWN best guess at the template, using the
@@ -177,7 +208,7 @@ column_profiles <- function(df) {
     if (!is.null(w) && nrow(w)) as.character(w$text) else character(0)))
   if (!length(toks)) toks <- unlist(strsplit(paste(input$pages %||% character(0),
                                                     collapse = " "), "[[:space:]]+"))
-  toks <- trimws(toks); toks <- toks[nzchar(toks)]
+  toks <- trimws(.enc_safe(toks)); toks <- toks[nzchar(toks)]
   out <- list()
   moneyish <- toks[.looks_money(toks) &
                    (grepl("[.,][0-9]{2}$", toks) | grepl("[0-9],[0-9]{3}", toks) |
@@ -193,19 +224,27 @@ column_profiles <- function(df) {
 # template_hints(input, template, matched) -> the full "how to draft a template"
 # bundle for one input, or NULL. Delimited/Excel: per-column profiles + the
 # engine's suggested mapping. PDF: suggested column bands (only worth it when NO
-# template matched -- otherwise the bands are already known), text style shapes and
-# candidate fingerprint phrases. Never throws (caller wraps in safe() too).
+# template matched -- otherwise the bands are already known) and text style shapes.
+# Never throws (caller wraps in safe() too). Structural only -- see the PII note in
+# the file header.
 template_hints <- function(input, template = NULL, matched = FALSE) {
   kind <- input$kind %||% ""
   if (identical(kind, "excel") || identical(kind, "delimited")) {
     df <- if (identical(kind, "excel")) input$table
-          else safe(read_delimited(input, list(delimiter = .delim_of(input)))$table, NULL)
+          else {
+            # Use the MATCHED template's own delimiter + preamble.header_regex so the
+            # real header is located (a bank export's preamble lines don't get read as
+            # the header); fall back to sniffing only when nothing matched.
+            tmpl_read <- if (!is.null(template) && identical(template$format %||% "", "delimited"))
+                           template else list(delimiter = .delim_of(input))
+            safe(read_delimited(input, tmpl_read)$table, NULL)
+          }
     if (is.null(df) || !ncol(df) || !nrow(df)) return(NULL)
     out <- list(kind = kind,
                 row_sample = min(nrow(df), 300L),
                 columns = column_profiles(df),
                 suggested_mapping = .suggest_mapping(df))
-    if (identical(kind, "delimited")) out$delimiter <- .delim_of(input)
+    if (identical(kind, "delimited")) out$delimiter <- template$delimiter %||% .delim_of(input)
     return(out)
   }
   if (identical(kind, "pdf")) {
@@ -220,8 +259,10 @@ template_hints <- function(input, template = NULL, matched = FALSE) {
     }
     sh <- safe(.pdf_shapes(input), list())
     if (length(sh)) out$shapes <- sh
-    fp <- safe(header_phrases(input), character(0))
-    if (length(fp)) out$fingerprint_candidates <- as.list(utils::head(fp, 8L))
+    # NOTE: raw header/fingerprint PHRASES are deliberately NOT persisted -- a
+    # statement's title line can be an account-holder or company name (PII). The
+    # person drafting a PDF template reads the fingerprint phrases off the statement
+    # itself (and the visual band editor supplies the columns).
     if (length(out) <= 1L) return(NULL)   # nothing useful beyond `kind`
     return(out)
   }
