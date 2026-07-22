@@ -143,6 +143,31 @@ never silently guessed**. `extract_metadata()` reads opening/closing balance
 through this dictionary - no label words live in R. Adding a bank's odd wording
 is one line in `dictionaries/labels.yaml`, not a code change.
 
+### 5c. Opt-in auto-split of statement bundles (PDF)
+By default a file that holds **more than one statement** is *flagged and refused*
+(`detect_multiple_statements` → `needs_review`), because a wrongly-placed boundary
+is itself a silently-wrong outcome. A PDF template may **opt in** to automatic
+splitting with a `split:` block:
+```yaml
+split:
+  on: page1_marker         # boundary signal: page1_marker | opening_label
+  min_statements: 2         # only split when at least this many segments are found
+  require_agreement: true   # keep the independent-confirmation guard on (default; recommended)
+```
+When present *and* the upload is detected as a bundle, the engine segments it at
+the declared deterministic marker (each `Page 1 of N` reset, or each repeated
+opening-balance header), parses and **reconciles every segment independently**,
+and rolls trust up to the **weakest** segment. It commits the split **only** when
+the segmentation is independently confirmed — either a different structural count
+agrees on the number of statements, **or** every segment's balance math ties out
+on its own (a mis-placed boundary makes a segment fail to reconcile, so bad
+boundaries fail loudly). Otherwise it falls back to the safe flag-and-refuse
+default. Output rows carry a `statement_index` column; per-statement periods /
+balances / trust are in `result$metadata$split$statements`. Hidden values are
+never guessed to force a segment to reconcile. `split:` is PDF-only (a delimited /
+Excel export is almost always a single account/period); it is rejected by
+`validate_template` on any other format or with an unknown `on` value.
+
 ## 6. Function interfaces (exact signatures)
 - `load_templates(dir) -> list<template>` (parsed + validated; invalid template = hard error at load, listed by id).
 - `read_input(path) -> input` : `list(kind, path, sha256, lines=NULL, table=NULL, pages=NULL, meta)`. Dispatch by extension.

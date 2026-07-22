@@ -111,6 +111,24 @@ validate_template <- function(t) {
     }
   }
 
+  # split: opt-in auto-split of a bundled upload (see split.R). Validate loudly so
+  # a bad split config is rejected, never silently applied.
+  if (!is.null(t$split) && !isFALSE(t$split)) {
+    if (!identical(fmt, "pdf"))
+      problems <- c(problems, "split is only supported for pdf templates")
+    if (!isTRUE(t$split)) {
+      if (!is.list(t$split)) problems <- c(problems, "split must be true or a mapping")
+      else {
+        on <- t$split$on
+        if (!is.null(on) && !(tolower(as.character(on)[1]) %in% c("page1_marker", "opening_label")))
+          problems <- c(problems, sprintf("split.on '%s' is not one of page1_marker/opening_label", on))
+        ms <- suppressWarnings(as.integer(t$split$min_statements %||% 2L))
+        if (is.na(ms) || ms < 2L)
+          problems <- c(problems, "split.min_statements must be an integer >= 2")
+      }
+    }
+  }
+
   # extras: {source} for delimited/excel, {x_min,x_max} bands for pdf.
   extras <- if (identical(fmt, "pdf")) t$table$extras else t$extras
   if (!is.null(extras)) {

@@ -74,8 +74,21 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       template_version <- template$version %||% NA
       template_origin <- template$origin %||% "default"
 
-      parsed <- parse_statement(input, template, force_rows = force_rows)
-      recon <- reconcile(parsed, template)
+      # Opt-in auto-split (see split.R): if this template declares a `split:` block
+      # AND the upload looks like a bundle, try to segment it deterministically and
+      # reconcile each statement on its own. Returns NULL unless the boundaries are
+      # independently confirmed -- so a template that hasn't opted in, or a bundle
+      # whose boundaries can't be trusted, falls straight through to the normal
+      # single parse, which (because multi$likely_multiple) routes to needs_review:
+      # the safe flag-and-refuse default is unchanged.
+      sb <- if (isTRUE(multi$likely_multiple)) safe(split_bundle(input, template, meta), NULL) else NULL
+      did_split <- !is.null(sb)
+      if (did_split) {
+        parsed <- sb$parsed; recon <- sb$recon
+      } else {
+        parsed <- parse_statement(input, template, force_rows = force_rows)
+        recon <- reconcile(parsed, template)
+      }
       row_count <- nrow(parsed$transactions)
       kpi_fail_count <- sum(recon$kpis$status == "fail")
       trust_level <- recon$trust$level
@@ -85,14 +98,21 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # "matched but maybe the wrong variant" case. Treat it as needs_review so the
       # analyst confirms the template, even when every KPI passes.
       thin_match <- is.finite(det$margin) && det$margin <= 1 && !is.na(det$runner_up)
+      # A CONFIRMED auto-split has handled the bundle (every statement parsed +
+      # reconciled on its own), so being multiple is no longer a reason to force
+      # review -- the rolled-up trust / KPI outcomes decide, like any other run.
+      multi_forces_review <- isTRUE(multi$likely_multiple) && !did_split
       status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                    isTRUE(multi$likely_multiple) || thin_match) {
+                    multi_forces_review || thin_match) {
         "needs_review"
       } else {
         "ok"
       }
+      # When we auto-split, the bundle is resolved -- suppress the "split this into
+      # one file per statement" diagnostic (it would now be wrong).
+      diag_multi <- if (did_split) utils::modifyList(multi, list(likely_multiple = FALSE)) else multi
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+        metadata = list(multi = diag_multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         template = template))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta)
@@ -104,6 +124,13 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
         status_message("needs_review",
           sprintf("parsed %d row(s) but review needed", row_count),
           paste(recon$trust$reasons, collapse = "; "))
+      }
+      # Auto-split note: say plainly that the upload was segmented and each
+      # statement reconciled on its own (the `statement_index` column tags rows).
+      if (did_split) {
+        msg <- c(status_message(status, sprintf(
+          "auto-split into %d statements (each parsed and reconciled independently); rows are tagged with a statement_index column",
+          sb$n_statements)), msg)
       }
       # OCR caveat is in the trust reasons already (so it shows on needs_review);
       # add it to the ok message too, so a clean scanned statement still warns the
@@ -129,7 +156,9 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$outputs <- outputs
       result$diagnostics <- diag
       result$coverage <- field_coverage(parsed, template)
-      result$metadata <- c(meta, list(multiple = multi))
+      result$metadata <- c(meta, list(multiple = multi,
+        split = if (did_split) list(n_statements = sb$n_statements, on = sb$on,
+                                    statements = sb$statements) else NULL))
       result$messages <- msg
       # Candidate templates + margin, for the "matched but maybe wrong" panel.
       result$candidates <- det$candidates

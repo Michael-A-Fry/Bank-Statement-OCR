@@ -55,7 +55,7 @@ detection was hardened; auto-split is scoped in the research section below).
 | P3-h drafted fingerprint pins all headers | ✅ resolved | `590f4c7` |
 | P3-i narrow redacted cell blank | ✅ resolved | `2c1b0ef` |
 | P3-j OCR confidence image mismatch | ✅ resolved | `2c1b0ef` |
-| multi-statement `split:` auto-split | ⏸ deferred | — (detection hardened; see research below) |
+| multi-statement `split:` auto-split | ✅ shipped | opt-in, deterministic, per-segment reconcile + weakest-link roll-up (`R/split.R`); default stays flag-and-refuse |
 
 Alongside the fixes, this pass also shipped the **local metadata-capture subsystem**
 (`c2b5fbd`) — the on-box "ML goldmine" (see [metadata-capture.md](metadata-capture.md))
@@ -255,6 +255,19 @@ The parser segments the row stream at boundaries, then runs the existing parse +
 
 **Sequencing:** harden the *flag* first (fix P2-4 so bundles are reliably detected across labelled-pair/year-less/fingerprint-repeat cases) — this is immediately worth it and low-risk. Build auto-split next, only behind the `split:` opt-in with per-segment reconciliation and roll-up trust.
 
+> **Implemented (`R/split.R`).** The auto-split now ships behind the opt-in
+> `split:` block, close to the sketch above with two deliberate simplifications
+> for safety and simplicity: the shipped boundary signals are `page1_marker` and
+> `opening_label` (the two most reliable, deterministic, page-based resets), and it
+> emits **one combined result** with a `statement_index` column + a per-statement
+> summary in `result$metadata$split` (rather than N separate result sets), so the
+> rest of the pipeline — outputs, feed, diagnostics — is unchanged. The critical
+> addition beyond the sketch is the **commit gate**: a split is emitted only when
+> the segment count is independently confirmed *or* every segment reconciles on its
+> own, so a boundary the engine can't corroborate degrades to the flag-and-refuse
+> default instead of a maybe-wrong merge. Scope today is PDF; CSV/Excel bundles
+> (rarer) still flag-and-refuse.
+
 ---
 
 ## Bold refactors (optional)
@@ -297,12 +310,18 @@ subsystem is in place, these are the forward bets — ordered roughly by value �
 effort. None are committed work; they are the map.
 
 ### Near-term, low-risk
-- **`split:` opt-in for statement bundles.** Detection now *flags* a bundle
-  reliably (period repeat, `Page 1 of N` repeat, balance-block repeat → needs_review;
-  P2-4). The next step is an opt-in `split:` template block that auto-segments a
-  proven bundle at those boundaries, reconciles each segment independently, and
-  rolls up a per-segment trust — never merging, never guessing a boundary. Default
-  stays flag-and-refuse for un-opted templates.
+- **`split:` opt-in for statement bundles — SHIPPED (`R/split.R`).** A PDF template
+  can now opt into auto-splitting a proven bundle at deterministic boundaries
+  (`Page 1 of N` reset, or a repeated opening-balance header). Each segment is
+  parsed and **reconciled independently** and trust rolls up to the weakest
+  segment; the split commits only when the boundary count is independently
+  confirmed (a different structural count agrees, or every segment's balance ties
+  out on its own — a mis-placed boundary fails to reconcile and is rejected).
+  Default stays flag-and-refuse for un-opted templates; no hidden value is ever
+  guessed to force a segment to reconcile. Rows carry a `statement_index`; per-
+  statement anchors sit in `result$metadata$split`. Follow-on: extend the same
+  contract to CSV/Excel bundles (rarer — usually one account/period) and add a
+  Simple-tab toggle to opt a template in.
 - **Simple-tab fingerprint control (PDF).** The save-time gate now rejects a
   generic PDF fingerprint (P2-7), but the Simple tab has no control to *fix* one —
   a non-technical analyst hits the gate and must drop to Advanced YAML. Add a
