@@ -26,9 +26,11 @@ debug two unknowns at once. The design is in
 
 Detail: [`../OFFLINE-INSTALL.md`](../OFFLINE-INSTALL.md).
 
-> **The one rule:** the R on the build PC must be the **same x.y** the server will
-> run (Windows package binaries are per R minor version - the only thing that makes
-> this fail).
+> **Isolated, no version-matching:** the server gets its **own private R** inside
+> the folder (`R-runtime\`) and uses only that, so whatever R/RStudio is already on
+> the box (even an old one) is ignored and untouched. The build PC just needs **any
+> recent R** with internet - that exact R ships in the bundle, so the packages
+> always match.
 
 **1a. On the INTERNET PC** (this repo, R same x.y as the server): **double-click
 `make-bundle.bat`.** It gathers the whole app plus every package and installer into
@@ -152,5 +154,5 @@ AD-group login covers both, so a user in the group lands straight in the convert
 | `withheld:low_trust` / `withheld:needs_review` | It didn't reconcile. Lower `feed.min_trust`/`require_status_ok` only if you truly want unreconciled data in dashboards (not recommended). |
 | Qlik shows nothing | Check the `StatementFeed` connection points at `feed\`, files exist, and the reload ran. |
 | Special characters garbled | Keep `codepage is 65001` (UTF-8) on every `LOAD`. |
-| Offline install: packages `MISSING` | `make-bundle.bat` ran under a different **R x.y** than the server. Rebuild `StatementStudio-offline` under the matching R, re-copy. |
+| Offline install: packages `MISSING` | The build PC couldn't download them all (a proxy/partial build). Re-run `make-bundle.bat` on a PC with clean internet and re-copy the folder. |
 | Admin password not taking | It's `app.admin_password` in `config\config.yaml`; `BSO_ADMIN_PASSWORD` env var overrides it. |

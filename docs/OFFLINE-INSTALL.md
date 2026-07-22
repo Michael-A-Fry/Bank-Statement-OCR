@@ -4,18 +4,26 @@
 the air-gapped server, and double-click one file. No compiling, no Rtools, no
 typing - you're moving prebuilt Windows binaries.
 
-## The one rule that makes it work
-Windows R packages are built **per R minor version**, so the PC that *builds* the
-package and the server that *runs* it must use the **same R x.y** (e.g. both
-**4.6**), on **Windows x86_64**. Since R is installed fresh on the server from the
-package itself, just use **the same R x.y on the build PC** and it's foolproof.
-`RUN-ME.bat` reports plainly if they ever don't match.
+## Isolated by design - the server's existing R is left alone
+`RUN-ME.bat` installs its **own private copy of R inside the folder**
+(`R-runtime\`) and uses **only** that, with an app-local package library
+(`R-lib\`). It is installed non-invasively (it does **not** register as the
+machine's R and does **not** grab `.RData` file types), so **any R or RStudio
+already on the server - even an old version - is ignored and left exactly as it
+is.** Nothing is upgraded, replaced, or removed. To uninstall Statement Studio
+later, just delete the folder.
+
+Because the server uses the R that ships **in the bundle**, there is **no version
+matching to get right**: the package binaries here were built for that same R.
+(Windows R packages are built per R minor version - this is why we ship the R too,
+rather than trusting whatever is on the server.)
 
 ---
 
 ## Step 1 - Build the package (on a PC that HAS internet)
-Put this repo on a normal Windows PC with internet and R installed (same R x.y the
-server will run). **Double-click `make-bundle.bat`.**
+Put this repo on a normal Windows PC with internet and **any recent R** installed.
+(The server will use whatever R version this PC has - it ships inside the bundle -
+so there's nothing to match.) **Double-click `make-bundle.bat`.**
 
 It assembles a single self-contained folder, **`StatementStudio-offline`**, that
 holds the whole app plus everything it needs to install itself offline:
@@ -39,16 +47,17 @@ That one folder is everything - there is nothing else to carry.
 ## Step 3 - Run it (on the offline server)
 Open the folder and **double-click `RUN-ME.bat`.** On the **first** run it, with no
 internet:
-1. installs **R** silently from `offline\prereqs\` if the server has none,
-2. installs every **R package** from `offline\repo\`,
-3. sets up **Poppler** and silent-installs **Tesseract** for scanned-PDF OCR
-   (both added to PATH),
+1. installs a **private copy of R** into `R-runtime\` (silent, isolated - your
+   existing R/RStudio is untouched),
+2. installs every **R package** into the app-local `R-lib\` from `offline\repo\`,
+3. sets up **Poppler** and silent-installs **Tesseract** for scanned-PDF OCR,
 4. creates `config\config.yaml` from the example,
 5. **starts the app** and prints the `http://...:8100` URL to share.
 
 Every run after that just starts the app. Leave the window open; Ctrl-C stops it.
 (Text PDFs, CSV and Excel work even without Poppler/Tesseract - those two are only
-for scanned-image PDFs.)
+for scanned-image PDFs.) If a Windows permission prompt appears during the one-time
+R install, accept it.
 
 To keep it always-up across reboots, register it as a service - see
 `docs/SETUP-AND-DEPLOYMENT.md` (Task Scheduler "at startup" running
@@ -57,9 +66,9 @@ To keep it always-up across reboots, register it as a service - see
 ---
 
 ## Notes
-- **Different R version on the server?** Install that same version on the build PC,
-  double-click `make-bundle.bat` under it, and carry the folder over. The rule is
-  only ever: *build under the same R x.y the server runs.*
+- **The server already has R (an old version)?** Fine - it's ignored. `RUN-ME.bat`
+  installs and uses its own private R in `R-runtime\`; the existing R and RStudio
+  are not touched.
 - **Blocked downloads on the build PC?** The package `offline\repo\` is the
   essential part and is fully automated. Only the three system installers are
   best-effort; if any is skipped, the build prints exactly where to download it,

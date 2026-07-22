@@ -46,6 +46,10 @@ tmp/
 /bso-offline/
 /bso-offline-repo/
 
+# Private, app-local R runtime + library created by RUN-ME.bat (server-side only).
+/R-runtime/
+/R-lib/
+
 # NOTE: samples/ is intentionally tracked — it is the public specimen corpus
 # used for template design and golden-file tests.
 

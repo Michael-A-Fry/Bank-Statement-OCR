@@ -18,8 +18,10 @@
 # Then: copy the whole 'StatementStudio-offline' folder to the server and
 # double-click RUN-ME.bat. No internet is used on the server.
 #
-# THE ONE RULE: run this under the SAME R x.y the server will run. Windows package
-# binaries are built per R minor version. See docs/OFFLINE-INSTALL.md.
+# NO VERSION MATCHING NEEDED: the bundle ships the R installer for THIS PC's R and,
+# on the server, RUN-ME.bat installs and uses that exact R privately (inside the
+# folder), so the packages here always match. Whatever R the server already has is
+# ignored. So this just needs ANY recent R with internet. See docs/OFFLINE-INSTALL.md.
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)
@@ -49,11 +51,12 @@ options(timeout = 600)
 # Everything the app needs at runtime, plus samples/docs/tests for the demo and
 # smoke test. Runtime/PII dirs (logs, uploads, feed, out...) are deliberately NOT
 # copied -- they are created on first run and must never travel.
+# Deliberately NO git files (.git, .gitignore, .gitattributes): the shipped folder
+# is a plain product folder, not a repo checkout.
 app_items <- c("R", "templates", "templates_user", "templates_seed",
                "dictionaries", "fields_templates", "config", "scripts",
                "tests", "samples", "docs",
-               "app.R", "ui_content.R", "run.R", "README.md",
-               ".gitattributes", "RUN-ME.bat")
+               "app.R", "ui_content.R", "run.R", "README.md", "RUN-ME.bat")
 cat("Copying the app into the dist folder ...\n")
 copied <- 0L; missing <- character(0)
 for (it in app_items) {
@@ -72,6 +75,13 @@ cat(sprintf("  copied %d items%s\n", copied,
 # RUN-ME.bat must be in the dist root -- if it wasn't in the repo, that's fatal.
 if (!file.exists(file.path(dist, "RUN-ME.bat")))
   stop("RUN-ME.bat is missing from the repo root -- cannot build a runnable bundle.")
+
+# Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
+# this repo was obtained (we ship no .gitattributes to normalise them for us).
+for (b in list.files(dist, pattern = "\\.bat$", recursive = TRUE, full.names = TRUE)) {
+  ln <- readLines(b, warn = FALSE)
+  con <- file(b, open = "wb"); writeLines(ln, con, sep = "\r\n"); close(con)
+}
 
 ## 2. R packages (+ all dependencies) -- the reliable core ------------------
 if (!requireNamespace("miniCRAN", quietly = TRUE)) {

@@ -10,8 +10,9 @@ rem  Then: copy that whole folder to the server and double-click RUN-ME.bat
 rem  inside it. That's the entire setup - two double-clicks, no internet on the
 rem  server.
 rem
-rem  THE ONE RULE: the R on THIS PC must be the same x.y version as the server
-rem  will run (e.g. both 4.6.x). Windows packages are built per R version.
+rem  No version-matching to worry about: this PC's R ships inside the bundle and
+rem  the server installs and uses that exact R privately, so the packages always
+rem  match. This PC just needs ANY recent R with internet.
 rem ==========================================================================
 setlocal enableextensions enabledelayedexpansion
 title Statement Studio - build offline package

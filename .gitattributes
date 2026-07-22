@@ -1,3 +1,0 @@
-# Windows batch + PowerShell scripts must be CRLF so cmd.exe runs them reliably.
-*.bat text eol=crlf
-*.ps1 text eol=crlf
