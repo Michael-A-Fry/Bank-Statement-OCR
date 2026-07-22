@@ -45,7 +45,13 @@ PARAM_MAX_PAGE_PT <- 2880         # a page dimension over this (40 in) can break
 # hidden under a box?"; VECTOR_DPI is the render resolution for that scan.
 PARAM_REDACT_DARK_LEVEL <- 60L    # greyscale value below which a pixel counts as dark
 PARAM_REDACT_OCC_THRESH <- 0.70   # a word box at/above this dark-fill is occluded
-PARAM_REDACT_VECTOR_DPI <- 150L   # render dpi for the digital vector-box scan
+# Render dpi for the digital vector-box scan. 100 is ~2x faster than 150 on the
+# cold read and measured-equivalent for detection: a solid redaction box reads a
+# dark-fill of 1.0 at any dpi (huge margin over the 0.70 gate), and the highest
+# fill among VISIBLE words stays well under it (anti-aliasing lightens thin glyph
+# strokes slightly MORE at lower dpi, so the false-positive margin is preserved).
+# Don't drop below ~72 without re-checking the small-redaction (min_area_pt) margin.
+PARAM_REDACT_VECTOR_DPI <- 100L   # render dpi for the digital vector-box scan
 
 # .plausible_year(y) -- is a 4-digit year within the trusted window? Vectorised.
 .plausible_year <- function(y) {

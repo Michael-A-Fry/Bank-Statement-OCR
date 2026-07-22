@@ -172,6 +172,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       requested_by = requested_by %||% current_user(), sha = sha,
       input = input, parsed = parsed, recon = recon, det = det, meta = meta,
       multi = multi, template = template, status = result$status,
+      # already computed above -- reuse instead of recomputing inside capture.
+      layout_sig = lsig, coverage = result$coverage,
       elapsed_ms = as.numeric(difftime(Sys.time(), t0, units = "secs")) * 1000), cfg), NULL)
     result
   }, error = function(e) {

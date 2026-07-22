@@ -101,12 +101,31 @@ save_metadata_config <- function(level, capture, path = .config_path()) {
   if (nzchar(p)) p else file.path("config", "config.yaml")
 }
 
+# load_config is called MANY times per conversion (once per lex() via .lexicon_path,
+# plus convert/feed/metadata), and each call rebuilt the defaults + re-parsed
+# config.yaml. Cache the file-merged config keyed by path + mtime + size, so it
+# re-reads ONLY when the file actually changes (an admin save or a hand-edit) --
+# self-invalidating, no writer needs to remember to clear it. The env-secret
+# override is applied fresh on every call, never cached, so it can't go stale.
+.CONFIG_CACHE <- new.env(parent = emptyenv())
+clear_config_cache <- function() rm(list = ls(.CONFIG_CACHE), envir = .CONFIG_CACHE)
+
 # load_config(path) -> the complete, merged config list.
-load_config <- function(path = .config_path()) {
-  cfg <- .config_defaults()
-  if (!is.null(path) && file.exists(path)) {
-    fromfile <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
-    if (is.list(fromfile)) cfg <- .deep_merge(cfg, fromfile)
+load_config <- function(path = .config_path(), refresh = FALSE) {
+  fi  <- if (!is.null(path) && file.exists(path)) file.info(path) else NULL
+  key <- paste(path %||% "<none>",
+               if (is.null(fi)) "-" else paste0(as.numeric(fi$mtime), "|", fi$size))
+  cfg <- if (!refresh && exists(key, envir = .CONFIG_CACHE, inherits = FALSE)) {
+    get(key, envir = .CONFIG_CACHE, inherits = FALSE)
+  } else {
+    c0 <- .config_defaults()
+    if (!is.null(fi)) {
+      fromfile <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
+      if (is.list(fromfile)) c0 <- .deep_merge(c0, fromfile)
+    }
+    if (length(ls(.CONFIG_CACHE)) >= 8L) rm(list = ls(.CONFIG_CACHE), envir = .CONFIG_CACHE)
+    assign(key, c0, envir = .CONFIG_CACHE)
+    c0
   }
   # Env override for the one secret, so a site can keep it out of the file entirely.
   envpw <- Sys.getenv("BSO_ADMIN_PASSWORD", "")

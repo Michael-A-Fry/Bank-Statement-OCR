@@ -426,17 +426,40 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       !is.na(suppressWarnings(parse_date(paste(rw, "2000"), paste(date_fmt, "%Y"))$iso))
   }, logical(1)))
   fb_active <- prim_zero && length(yrs) > 0
+  # The keep-decision runs .date_ok on the SAME date cell 4-16 times across the
+  # split-row / continuation / final-keep passes, and each call re-runs the full
+  # date pipeline (parse_date + .normalise_date_str + the year-less fallback) -- the
+  # measured hot spot. It's a PURE function of the cell string given the
+  # document-level constants above (all fixed before the passes), so memoise it on
+  # the string: a fresh cache per parse_pdf_table call (no cross-document leak), and
+  # the date string is invariant under stitching/continuation (which only fold text
+  # into description/reference), so the same key stays correct across passes.
+  .dok_cache <- new.env(parent = emptyenv())
   .date_ok <- function(raw) {
-    raw1 <- .first_date(raw)
-    if (year_resolved) {
-      if (!is.na(suppressWarnings(parse_date(full_date(raw1), eff_fmt)$iso))) return(TRUE)
-      return(fb_active && !is.na(.fb_parse(raw)))
+    key <- if (length(raw) != 1L || is.na(raw)) "<<NA>>" else raw
+    # An environment key is a SYMBOL, so a non-ASCII cell name warns ("unable to
+    # translate to native encoding") in a non-UTF-8 locale (the air-gapped box).
+    # Real date cells are ASCII, so only memoise those; a rare non-ASCII mis-aligned
+    # cell simply recomputes (behaviour-identical). useBytes avoids a scan warning.
+    cacheable <- !grepl("[^ -~]", key, useBytes = TRUE)
+    if (cacheable) {
+      hit <- get0(key, envir = .dok_cache, inherits = FALSE, ifnotfound = NULL)
+      if (!is.null(hit)) return(hit)
     }
-    if (!is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
-                                           paste(date_fmt, "%Y"))$iso))) return(TRUE)
-    # No year known anywhere AND the declared format reads nothing: still keep
-    # clear name-month rows (either order) - flagged date_unresolved downstream.
-    prim_zero && .fb_sentinel_ok(raw)
+    raw1 <- .first_date(raw)
+    v <- if (year_resolved) {
+      if (!is.na(suppressWarnings(parse_date(full_date(raw1), eff_fmt)$iso))) TRUE
+      else fb_active && !is.na(.fb_parse(raw))
+    } else if (!is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
+                                                  paste(date_fmt, "%Y"))$iso))) {
+      TRUE
+    } else {
+      # No year known anywhere AND the declared format reads nothing: still keep
+      # clear name-month rows (either order) - flagged date_unresolved downstream.
+      prim_zero && .fb_sentinel_ok(raw)
+    }
+    if (cacheable) assign(key, v, envir = .dok_cache)
+    v
   }
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
   # KEEP RULE. A row is a transaction when it still shows REAL evidence -- a real

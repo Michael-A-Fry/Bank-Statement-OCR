@@ -139,7 +139,8 @@ capture_metadata <- function(ctx, config = load_config()) {
 
   # ---- layout ----
   if (.meta_on(config, "layout")) {
-    sig <- safe(layout_signature(ctx$input), list(signature = NA, hint = ""))
+    # reuse the signature the caller already computed (convert.R) when supplied.
+    sig <- ctx$layout_sig %||% safe(layout_signature(ctx$input), list(signature = NA, hint = ""))
     rec$layout <- list(
       signature = sig$signature %||% NA_character_,
       format    = tmpl$format %||% (ctx$input$kind %||% NA_character_),
@@ -190,7 +191,7 @@ capture_metadata <- function(ctx, config = load_config()) {
           levels = c("debit", "credit"), exclude = NULL)))
       rec$parse_quality$amount_buckets <- if (n > 0) .amount_buckets(tx$amount) else NULL
       rec$parse_quality$desc_len       <- if (n > 0) .len_stats(tx$description) else NULL
-      cov <- safe(field_coverage(ctx$parsed, tmpl), NULL)
+      cov <- ctx$coverage %||% safe(field_coverage(ctx$parsed, tmpl), NULL)   # reuse if supplied
       if (!is.null(cov) && nrow(cov))
         rec$parse_quality$field_fill <- stats::setNames(
           as.list(ifelse(cov$n > 0, round(cov$populated / cov$n, 3), NA_real_)), cov$field)

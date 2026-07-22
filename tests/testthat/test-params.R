@@ -15,7 +15,7 @@ test_that("tuning constants hold their shipped values", {
   expect_identical(PARAM_MAX_PAGE_PT, 2880)
   expect_identical(PARAM_REDACT_DARK_LEVEL, 60L)
   expect_identical(PARAM_REDACT_OCC_THRESH, 0.70)
-  expect_identical(PARAM_REDACT_VECTOR_DPI, 150L)
+  expect_identical(PARAM_REDACT_VECTOR_DPI, 100L)
 })
 
 test_that(".plausible_year accepts the trusted window and rejects outside it", {

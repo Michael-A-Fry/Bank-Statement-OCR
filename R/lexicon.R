@@ -97,26 +97,36 @@ clear_lexicon_cache <- function() rm(list = ls(.LEXICON_CACHE), envir = .LEXICON
 # lex(category, path) -- the resolved vocabulary for `category`: the built-in
 # default merged with the lexicon file per the category's semantics. Fail-safe:
 # an unknown category, or an invalid override, returns the built-in default.
+# The RESOLVED result is memoised in .LEXICON_CACHE (under a "lex::" key), because
+# lex() is called dozens of times per conversion and the merge (unions, regex
+# compiles) isn't free. It rides the lexicon's existing invalidation:
+# clear_lexicon_cache() wipes these entries too, so an admin vocabulary edit takes
+# effect on the next conversion exactly as before.
 lex <- function(category, path = .lexicon_path()) {
+  ckey <- paste0("lex::", category, "::", path %||% "<none>")
+  if (exists(ckey, envir = .LEXICON_CACHE, inherits = FALSE))
+    return(get(ckey, envir = .LEXICON_CACHE, inherits = FALSE))
   d <- .lexicon_defaults()[[category]]
   spec <- .lexicon_spec()[[category]]
-  if (is.null(spec)) return(d)
-  f <- load_lexicon(path)[[category]]
-  if (is.null(f)) return(d)
-  switch(spec,
-    list  = unique(c(as.character(d), trimws(as.character(unlist(f))))),
-    regex = { rx <- as.character(unlist(f))[1]; if (.regex_ok(rx)) rx else d },
-    table = {
-      extra <- Filter(function(e) is.list(e) && !is.null(e$fmt) && !is.null(e$rx) &&
-                        .regex_ok(e$rx), f)
-      c(d, extra)
-    },
-    map = {
-      out <- d
-      for (k in names(f)) { rx <- as.character(f[[k]])[1]; if (.regex_ok(rx)) out[[k]] <- rx }
-      out
-    },
-    d)
+  out <- if (is.null(spec)) d else {
+    f <- load_lexicon(path)[[category]]
+    if (is.null(f)) d else switch(spec,
+      list  = unique(c(as.character(d), trimws(as.character(unlist(f))))),
+      regex = { rx <- as.character(unlist(f))[1]; if (.regex_ok(rx)) rx else d },
+      table = {
+        extra <- Filter(function(e) is.list(e) && !is.null(e$fmt) && !is.null(e$rx) &&
+                          .regex_ok(e$rx), f)
+        c(d, extra)
+      },
+      map = {
+        o <- d
+        for (k in names(f)) { rx <- as.character(f[[k]])[1]; if (.regex_ok(rx)) o[[k]] <- rx }
+        o
+      },
+      d)
+  }
+  assign(ckey, out, envir = .LEXICON_CACHE)
+  out
 }
 
 # type_dc_domain() -- the set of values that mark a column as a debit/credit

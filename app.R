@@ -1408,7 +1408,9 @@ server <- function(input, output, session) {
     # force_rows: user-confirmed rows are painted kept, so the X-ray matches what
     # the reader now emits after a force-include.
     layout <- tryCatch(inspect_pdf_layout(inp, tmpl, force_rows = cv_forced()), error = function(e) NULL)
-    meta <- tryCatch(extract_metadata(inp), error = function(e) NULL)
+    # the balance/period/account values are ALREADY in the conversion result -- reuse
+    # them instead of re-scanning the whole document with extract_metadata.
+    meta <- cv_res()$metadata %||% tryCatch(extract_metadata(inp), error = function(e) NULL)
     meta_loc <- NULL
     if (!is.null(meta)) {
       targets <- list(opening_balance = meta$opening_balance, closing_balance = meta$closing_balance,
@@ -1420,7 +1422,13 @@ server <- function(input, output, session) {
     }
     list(is_pdf = TRUE, path = src$path, layout = layout, meta_loc = meta_loc)
   })
-  output$ix_is_pdf <- reactive({ st <- ix_state(); isTRUE(st$is_pdf) })
+  # Answer "is this a PDF?" CHEAPLY (read_input is content-cached, ~1ms) instead of
+  # pulling ix_state -- which would run the whole ~1.6s X-ray layout on EVERY PDF
+  # convert just to drive the conditionalPanel, even with the X-ray tab closed.
+  output$ix_is_pdf <- reactive({
+    res <- cv_res(); src <- cv_src(); if (is.null(res) || is.null(src)) return(FALSE)
+    isTRUE(identical(tryCatch(read_input(src$path)$kind, error = function(e) NULL), "pdf"))
+  })
   outputOptions(output, "ix_is_pdf", suspendWhenHidden = FALSE)
 
   ix_pal <- function(bands) {
@@ -1831,11 +1839,7 @@ server <- function(input, output, session) {
   output$cv_headline <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     if (!isTRUE(res$status == "ok")) return(NULL)   # failures are shown by cv_status
-    n <- tryCatch({
-      csv <- res$outputs[grepl("\\.csv$", res$outputs)]
-      if (length(csv) == 1 && file.exists(csv))
-        nrow(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)) else NA_integer_
-    }, error = function(e) NA_integer_)
+    d <- cv_data(); n <- if (is.null(d)) NA_integer_ else nrow(d)   # reuse the shared read
     pt <- plain_trust(res$trust$level)
     lvl <- c(ok = "high", warn = "medium", bad = "low")[[pt$cls]]
     # Small honest-flags row: which template read it, and anything a reviewer
