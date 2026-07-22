@@ -256,10 +256,14 @@ ui <- fluidPage(
     # All self-contained: no CDN fonts, scripts or icons. ------------------------
     tags$style(HTML("
      :root{
-       --brand:#00205b; --brand-dark:#001233; --brand-600:#1b3f7a;
-       --brand-tint:#eef3fb; --brand-line:#c7d6ea;
+       /* Brand accent = a Qlik-family green, so arriving from Qlik Sense feels
+          continuous. Deep enough that white button text stays legible. Green also
+          reads as go/positive/money-in here, which coheres. The wordmark stays
+          NZ-Police navy (below) so this is our tool in the Qlik world, not a clone. */
+       --brand:#00793d; --brand-dark:#004a24; --brand-600:#00612f;
+       --brand-tint:#e6f3ec; --brand-line:#bcdcc8;
        --ink:#15202b; --slate:#43515f; --muted:#68727d;
-       --line:#e6eaee; --line-2:#d6dce2; --bg:#f5f7fa; --surface:#ffffff;
+       --line:#e6eaee; --line-2:#d6dce2; --bg:#f3f5f4; --surface:#ffffff;
        --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
        --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
        --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
@@ -280,7 +284,7 @@ ui <- fluidPage(
      .app-mark{width:22px;height:22px;border-radius:6px;align-self:center;
        background:linear-gradient(135deg,var(--brand),var(--brand-600));
        box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
-     .app-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--brand)}
+     .app-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:#00205b}
      .app-tagline{font-size:13px;color:var(--muted);align-self:center}
      /* main tab row = the app nav */
      #main_tabs.nav-tabs{margin:0 -22px 20px;padding:0 22px;background:var(--surface);
@@ -293,11 +297,11 @@ ui <- fluidPage(
      /* inputs */
      .form-control{height:auto;padding:9px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
        font-size:14.5px;color:var(--ink);background:var(--surface);box-shadow:none}
-     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,32,91,.14)}
+     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,121,61,.16)}
      select.form-control{padding-right:30px}
      .shiny-input-container>label,label.control-label{font-weight:700;font-size:13.5px;color:var(--slate);margin-bottom:6px}
      .selectize-input{border:1px solid var(--line-2)!important;border-radius:var(--r-sm)!important;padding:8px 12px!important;box-shadow:none!important}
-     .selectize-input.focus{border-color:var(--brand)!important;box-shadow:0 0 0 3px rgba(0,32,91,.14)!important}
+     .selectize-input.focus{border-color:var(--brand)!important;box-shadow:0 0 0 3px rgba(0,121,61,.16)!important}
      .selectize-dropdown{border-radius:var(--r-sm);border-color:var(--line-2)}
      /* buttons: one navy accent; the old gold 'toolkit' buttons become navy-secondary */
      .btn{border-radius:var(--r-sm);font-weight:700;padding:9px 16px;font-size:14.5px;box-shadow:none;transition:background .12s,border-color .12s}
@@ -349,7 +353,7 @@ ui <- fluidPage(
      .hub-lead{font-size:17px;color:var(--slate);line-height:1.55;margin:6px 0 20px}
      a.hub-card{border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);background:var(--surface);padding:18px 20px}
      a.hub-card:hover,a.hub-card:focus{box-shadow:var(--sh-2);border-color:var(--brand-line)}
-     a.hub-card-primary{background:linear-gradient(180deg,#f3f7fd,#e9f0fa);border-color:var(--brand-line)}
+     a.hub-card-primary{background:linear-gradient(180deg,#eef7f1,#e3f2e9);border-color:var(--brand-line)}
      a.hub-card-quiet{background:var(--bg)}
      .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
      .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
