@@ -250,22 +250,136 @@ ui <- fluidPage(
           t=setTimeout(function(){pill().classList.add('on');},250);});
         $(document).on('shiny:idle',function(){clearTimeout(t);
           var p=document.getElementById('ss-busy');if(p)p.classList.remove('on');});
-      })();"))
+      })();")),
+    # ---- Elevated design system (layered last so it wins the cascade). One
+    # brand accent (NZ-Police navy); green/amber/red reserved for trust meaning.
+    # All self-contained: no CDN fonts, scripts or icons. ------------------------
+    tags$style(HTML("
+     :root{
+       /* Brand accent = a Qlik-family green, so arriving from Qlik Sense feels
+          continuous. Deep enough that white button text stays legible. Green also
+          reads as go/positive/money-in here, which coheres. The wordmark stays
+          NZ-Police navy (below) so this is our tool in the Qlik world, not a clone. */
+       --brand:#00793d; --brand-dark:#004a24; --brand-600:#00612f;
+       --brand-tint:#e6f3ec; --brand-line:#bcdcc8;
+       --ink:#15202b; --slate:#43515f; --muted:#68727d;
+       --line:#e6eaee; --line-2:#d6dce2; --bg:#f3f5f4; --surface:#ffffff;
+       --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
+       --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
+       --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
+       --r:10px; --r-sm:8px; --r-lg:14px;
+       --sh-1:0 1px 2px rgba(16,32,50,.05);
+       --sh-2:0 1px 3px rgba(16,32,50,.06),0 6px 18px rgba(16,32,50,.07);
+     }
+     body{background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+     .container-fluid{max-width:1340px;margin:0 auto;padding:0 22px 40px}
+     a{color:var(--brand)} a:hover,a:focus{color:var(--brand-dark)}
+     h1,h2,h3,h4,h5{color:var(--ink);font-weight:700;letter-spacing:-.01em}
+     h3{font-size:19px} h4{font-size:16px;margin-top:22px}
+     p{line-height:1.55} .muted,.help-block{color:var(--muted)}
+     hr{border-top-color:var(--line)}
+     /* app bar: slim wordmark row, full-bleed with a hairline under it */
+     .app-header{display:flex;align-items:center;gap:12px;margin:0 -22px;
+       padding:13px 22px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--sh-1)}
+     .app-mark{width:22px;height:22px;border-radius:6px;align-self:center;
+       background:linear-gradient(135deg,var(--brand),var(--brand-600));
+       box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+     .app-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:#00205b}
+     .app-tagline{font-size:13px;color:var(--muted);align-self:center}
+     /* main tab row = the app nav */
+     #main_tabs.nav-tabs{margin:0 -22px 20px;padding:0 22px;background:var(--surface);
+       border-bottom:1px solid var(--line);box-shadow:var(--sh-1);gap:2px}
+     #main_tabs.nav-tabs>li>a{font-size:14.5px;font-weight:700;padding:12px 16px;color:var(--muted)}
+     #main_tabs.nav-tabs>li.active>a{color:var(--brand)}
+     .nav-tabs>li>a{font-weight:600;color:var(--muted)}
+     /* surfaces */
+     .well{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:20px}
+     /* inputs */
+     .form-control{height:auto;padding:9px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+       font-size:14.5px;color:var(--ink);background:var(--surface);box-shadow:none}
+     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,121,61,.16)}
+     select.form-control{padding-right:30px}
+     .shiny-input-container>label,label.control-label{font-weight:700;font-size:13.5px;color:var(--slate);margin-bottom:6px}
+     .selectize-input{border:1px solid var(--line-2)!important;border-radius:var(--r-sm)!important;padding:8px 12px!important;box-shadow:none!important}
+     .selectize-input.focus{border-color:var(--brand)!important;box-shadow:0 0 0 3px rgba(0,121,61,.16)!important}
+     .selectize-dropdown{border-radius:var(--r-sm);border-color:var(--line-2)}
+     /* buttons: one navy accent; the old gold 'toolkit' buttons become navy-secondary */
+     .btn{border-radius:var(--r-sm);font-weight:700;padding:9px 16px;font-size:14.5px;box-shadow:none;transition:background .12s,border-color .12s}
+     .btn-primary{background:var(--brand);border:1px solid var(--brand);color:#fff;box-shadow:var(--sh-1)}
+     .btn-primary:hover,.btn-primary:focus,.btn-primary:active,.btn-primary:active:focus{background:var(--brand-600);border-color:var(--brand-600);color:#fff}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){background:var(--surface);border:1px solid var(--line-2);color:var(--ink)}
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,
+     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):focus{background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand)}
+     .btn-warning{background:var(--brand-tint);border:1px solid var(--brand-line);color:var(--brand)}
+     .btn-warning:hover,.btn-warning:focus{background:#e2ebf7;border-color:var(--brand);color:var(--brand-dark)}
+     .btn-danger{background:#fff;border:1px solid var(--bad-line);color:var(--bad)}
+     .btn-danger:hover,.btn-danger:focus{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+     /* advanced disclosure (Convert: 'It picked the wrong bank?') — obvious, one click */
+     details.adv-bank{margin:4px 0 2px}
+     details.adv-bank>summary{cursor:pointer;color:var(--brand);font-weight:700;font-size:13.5px;list-style:none;padding:4px 0}
+     details.adv-bank>summary::-webkit-details-marker{display:none}
+     details.adv-bank>summary::before{content:'\\25B8  '}
+     details.adv-bank[open]>summary::before{content:'\\25BE  '}
+     /* tables (DT) */
+     table.dataTable{font-size:13.5px}
+     table.dataTable thead th,table.dataTable thead td{background:var(--bg)!important;color:var(--slate)!important;
+       text-transform:uppercase;font-size:11.5px;letter-spacing:.4px;font-weight:700;
+       border-bottom:1px solid var(--line-2)!important;padding:10px 12px!important}
+     table.dataTable tbody td{padding:9px 12px}
+     table.dataTable tbody tr:hover{background:var(--brand-tint)!important}
+     .dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{
+       border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 8px}
+     /* verdict banner: the result hero */
+     .verdict{display:flex;gap:14px;align-items:flex-start;border:1px solid;border-left-width:5px;
+       border-radius:var(--r-lg);padding:16px 20px;margin:2px 0 16px;box-shadow:var(--sh-1)}
+     .verdict-ico{flex:0 0 auto;width:34px;height:34px;border-radius:50%;color:#fff;font-size:19px;font-weight:800;
+       display:flex;align-items:center;justify-content:center;margin-top:1px}
+     .verdict-title{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:0 0 3px;line-height:1.2}
+     .verdict-body{margin:0 0 6px;color:var(--slate);line-height:1.5}
+     .verdict-high{background:var(--ok-bg);border-color:var(--ok-line);border-left-color:var(--ok)}
+     .verdict-high .verdict-ico{background:var(--ok)}
+     .verdict-medium{background:var(--warn-bg);border-color:var(--warn-line);border-left-color:var(--warn)}
+     .verdict-medium .verdict-ico{background:var(--warn)}
+     .verdict-low{background:var(--bad-bg);border-color:var(--bad-line);border-left-color:var(--bad)}
+     .verdict-low .verdict-ico{background:var(--bad)}
+     /* stat tiles */
+     .stat-grid{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 10px}
+     .stat{flex:1 1 130px;min-width:118px;background:var(--surface);border:1px solid var(--line);
+       border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh-1)}
+     .stat-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+     .stat-value{font-size:22px;font-weight:800;letter-spacing:-.01em;margin-top:3px;color:var(--ink)}
+     /* chips */
+     .chip{background:#eef1f4;border:1px solid var(--line);color:var(--slate);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
+     .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
+     /* download bars */
+     .dl-hero{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r-lg);padding:13px 18px}
+     .dl-hero .btn{font-size:15px;padding:9px 18px}
+     .dl-box{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r)}
+     /* About hub cards */
+     .hub-lead{font-size:17px;color:var(--slate);line-height:1.55;margin:6px 0 20px}
+     a.hub-card{border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);background:var(--surface);padding:18px 20px}
+     a.hub-card:hover,a.hub-card:focus{box-shadow:var(--sh-2);border-color:var(--brand-line)}
+     a.hub-card-primary{background:linear-gradient(180deg,#eef7f1,#e3f2e9);border-color:var(--brand-line)}
+     a.hub-card-quiet{background:var(--bg)}
+     .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
+     .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
+     .hub-card-go{color:var(--brand)}
+    "))
   ),
   div(class = "app-header",
     span(class = "app-mark"),
     span(class = "app-title", "Statement Studio"),
-    span(class = "app-tagline", "Statements and documents in - clean, checked data out.")),
+    span(class = "app-tagline", "Statements and documents in — clean, checked data out.")),
   tabsetPanel(
-    id = "main_tabs",
+    id = "main_tabs", selected = "Convert",
     # ---- About (landing): the journey hub. Everything starts here - one
     # promise, then the two doors (convert / teach), then the proof story.
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
-          "Turn any bank statement or financial document - PDF, CSV or Excel -",
-          " into clean, checked data. Deterministic: nothing is guessed,",
-          " and anything uncertain is flagged with the reason."),
+          "Turn any bank statement or financial document — PDF, CSV or Excel —",
+          " into clean, checked data. It never guesses: every figure comes straight",
+          " off your statement, and anything it can't verify is flagged with the reason."),
         div(class = "hub-cards",
           actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
             div(class = "hub-card-kicker", "Most days"),
@@ -297,17 +411,19 @@ ui <- fluidPage(
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_who_hint"),
-          uiOutput("cv_bank_ui"),
-          checkboxInput("cv_user_templates", "Include user-created templates",
-                        value = isTRUE(CONFIG$app$user_templates_default)),
-          conditionalPanel("input.cv_user_templates == true",
-            helpText(style = "margin-top:-6px;color:#8a5b00",
-              "These were created by users - not guaranteed tested.")),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
-          br(),
-          helpText("Detection is automatic; pick a bank only to force one."),
-          tags$hr(),
-          uiOutput("cv_templates")
+          helpText("Your bank is detected automatically — just upload and convert."),
+          # Everything most people never need is one obvious click away, so the
+          # default view is simply: file, name, Convert.
+          tags$details(class = "adv-bank",
+            tags$summary("It picked the wrong bank?"),
+            div(style = "padding-top:10px",
+              uiOutput("cv_bank_ui"),
+              checkboxInput("cv_user_templates", "Include user-created templates",
+                            value = isTRUE(CONFIG$app$user_templates_default)),
+              conditionalPanel("input.cv_user_templates == true",
+                helpText(style = "margin-top:-6px;color:#8a5b00",
+                  "These were created by users - not guaranteed tested."))))
         ),
         mainPanel(
           width = 8,
@@ -332,18 +448,6 @@ ui <- fluidPage(
             # show zero-money cards and an empty graph under its honest verdict.
             conditionalPanel("output.cv_has_txns == true",
             uiOutput("cv_summary"),
-            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
-              fluidRow(
-                column(4, selectInput("an_view", "Show",
-                  c("Money in vs out" = "inout", "Balance over time" = "balance",
-                    "Cumulative net" = "cumnet"), width = "100%")),
-                column(4, selectInput("an_group", "Group by",
-                  c("Day" = "day", "Week" = "week", "Month" = "month"),
-                  selected = "week", width = "100%")),
-                column(4, radioButtons("an_unit", "Measure",
-                  c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
-              plotOutput("cv_trend", height = "270px"),
-              uiOutput("cv_trend_note")),
             h4("Your transactions"),
             tabsetPanel(
               tabPanel("Preview", br(), DTOutput("cv_txns")),
@@ -371,7 +475,22 @@ ui <- fluidPage(
                   helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field."))))),
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
+            # Analysis comes AFTER the transactions Beth came for - the trend chart
+            # and its controls are the secondary view, not the payoff.
+            h4("Analysis"),
+            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
+              fluidRow(
+                column(4, selectInput("an_view", "Show",
+                  c("Money in vs out" = "inout", "Balance over time" = "balance",
+                    "Cumulative net" = "cumnet"), width = "100%")),
+                column(4, selectInput("an_group", "Group by",
+                  c("Day" = "day", "Week" = "week", "Month" = "month"),
+                  selected = "week", width = "100%")),
+                column(4, radioButtons("an_unit", "Measure",
+                  c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
+              plotOutput("cv_trend", height = "270px"),
+              uiOutput("cv_trend_note"))),
             # Detection / "wrong template?" and the tweak-in-toolkit prompt: useful,
             # but AFTER the data, not before the verdict.
             uiOutput("cv_teach"),
@@ -394,7 +513,7 @@ ui <- fluidPage(
       br(),
       wellPanel(
         strong("Add a template"),
-        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (full field-by-field / YAML) is one click away inside."),
+        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (every field, editable) is one click away inside."),
         p(actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means")),
         fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
@@ -1516,6 +1635,18 @@ server <- function(input, output, session) {
         p(class = "muted", style = "margin:0", paste("Template:", tid)))
   })
 
+  # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
+  # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
+  friendly_tpl <- function(tid) {
+    if (length(tid) != 1 || is.na(tid) || !nzchar(tid)) return(NA_character_)
+    ov <- tryCatch(template_overview(all_templates()), error = function(e) NULL)
+    if (is.null(ov) || !nrow(ov)) return(tid)
+    r <- ov[ov$id == tid, , drop = FALSE]
+    if (!nrow(r)) return(tid)
+    lab <- trimws(paste(trimws(r$bank[1] %||% ""), trimws(r$type[1] %||% "")))
+    if (nzchar(lab)) paste(lab, "statement") else tid
+  }
+
   # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
   # work, how many transactions, and can I trust it, said in words rather than KPI
   # codes. This is what a non-technical reviewer reads first; the KPI tables stay
@@ -1534,8 +1665,7 @@ server <- function(input, output, session) {
         nrow(utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)) else NA_integer_
     }, error = function(e) NA_integer_)
     pt <- plain_trust(res$trust$level)
-    bg <- c(ok = "#eef8f0", warn = "#fff8e6", bad = "#fdecec")[[pt$cls]]
-    bd <- c(ok = "#bfe0c8", warn = "#f0c36d", bad = "#f2b8b8")[[pt$cls]]
+    lvl <- c(ok = "high", warn = "medium", bad = "low")[[pt$cls]]
     # Small honest-flags row: which template read it, and anything a reviewer
     # should know at a glance (OCR pages, honoured redactions, hand-added rows).
     # All of this already exists in the result - it was just buried in the tables.
@@ -1543,7 +1673,7 @@ server <- function(input, output, session) {
       span(class = if (warn) "chip chip-warn" else "chip", txt)
     chips <- list()
     tid <- (res$template_id %||% NA_character_)[1]
-    if (!is.na(tid) && nzchar(tid)) chips <- c(chips, list(chip(paste("Template:", tid))))
+    if (!is.na(tid) && nzchar(tid)) chips <- c(chips, list(chip(paste("Read as:", friendly_tpl(tid)))))
     op <- suppressWarnings(as.integer(res$trust$ocr_pages %||% 0L))
     if (isTRUE(op > 0)) chips <- c(chips, list(chip(
       sprintf("%d page(s) machine-read (OCR) - double-check the numbers", op), warn = TRUE)))
@@ -1556,13 +1686,15 @@ server <- function(input, output, session) {
     if (length(cv_forced())) chips <- c(chips, list(chip(
       sprintf("%d row(s) added by hand - flagged 'forced' in the output", length(cv_forced())),
       warn = TRUE)))
-    div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px", bg, bd),
-      h3(style = "margin:0 0 4px", sprintf("%s Converted%s", pt$icon,
-        if (!is.na(n)) sprintf(" - %d transaction%s read", n, if (n == 1) "" else "s") else "")),
-      p(style = "margin:0 0 6px;color:#333", pt$line),
-      p(class = "muted", style = "margin:0 0 6px",
-        "Full detail is under 'Checks & detail' below."),
-      if (length(chips)) div(chips))
+    div(class = paste0("verdict verdict-", lvl),
+      div(class = "verdict-ico", pt$icon),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title", sprintf("Converted%s",
+          if (!is.na(n)) sprintf(" — %d transaction%s read", n, if (n == 1) "" else "s") else "")),
+        p(class = "verdict-body", pt$line),
+        p(class = "muted", style = "margin:0 0 6px",
+          "Full detail is under 'Checks & detail' below."),
+        if (length(chips)) div(chips)))
   })
 
   # --- Analysis: the useful numbers + graphs pulled from the conversion -------
@@ -1600,13 +1732,13 @@ server <- function(input, output, session) {
                 format(max(d$.date, na.rm = TRUE), "%d %b %Y"))
       else if (!is.na(h$period_start %||% NA_character_))
         sprintf("%s to %s", h$period_start, h$period_end %||% "?") else "-"
-    card <- function(label, value, col = "#333")
-      div(style = "flex:1 1 130px;min-width:120px;background:#fafafa;border:1px solid #e6e6e6;border-radius:8px;padding:8px 12px",
-          div(style = "font-size:12px;color:#888", label),
-          div(style = sprintf("font-size:19px;font-weight:600;color:%s", col), value))
+    card <- function(label, value, col = NULL)
+      div(class = "stat",
+          div(class = "stat-label", label),
+          div(class = "stat-value", style = if (!is.null(col)) sprintf("color:%s", col) else NULL, value))
     has_close <- !is.na(suppressWarnings(as.numeric(h$closing_balance %||% NA)))
     tagList(
-      div(style = "display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 10px",
+      div(class = "stat-grid",
         card("Transactions", if (is.na(n)) "-" else n),
         card("Money in",  fmt_money(money_in, cur),  "#137333"),
         card("Money out", fmt_money(money_out, cur), "#b00020"),
@@ -1770,6 +1902,15 @@ server <- function(input, output, session) {
     # statement splits them). Trim columns this statement never fills so the table
     # shows only fields that were actually read.
     df <- df[, .cols_with_data(df), drop = FALSE]
+    # Beth reads Date, Description, Amount, Balance first; the bank-technical
+    # columns (in/out, particulars / code / reference / type / ...) follow. The
+    # internal row id ("#") is dropped from the preview - the "Showing N" line
+    # already counts, and the downloaded file keeps it.
+    df <- df[, setdiff(names(df), "row_id"), drop = FALSE]
+    lead <- intersect(c("date", "description", "amount", "debit", "credit", "balance",
+                        "direction", "type", "reference", "particulars", "code", "other_party"),
+                      names(df))
+    df <- df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
     datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
               options = list(pageLength = 10, scrollX = TRUE))
   })
@@ -1813,12 +1954,19 @@ server <- function(input, output, session) {
     st <- res$status %||% "failed"
     if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
     tid <- (res$template_id %||% NA_character_)[1]
-    div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:#555;font-size:13px",
-      span(if (!is.na(tid) && nzchar(tid))
-             sprintf("Matched “%s”. Not the right one?", tid)
-           else "Matched the wrong template?"),
-      actionButton("cv_rematch_go", "No - set up the right template for this",
-                   class = "btn-warning btn-sm"))
+    nice <- if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else NA_character_
+    if (identical(st, "ok")) {
+      # Happy path: one quiet line. No "did I pick the right template?" doubt.
+      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
+        span(if (!is.na(nice)) sprintf("Read as %s.", nice) else "Read automatically."),
+        actionLink("cv_rematch_go", "Wrong bank? Set up the right one"))
+    } else {
+      # needs_review: make the "fix the match" option clearly available.
+      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
+        span(if (!is.na(nice)) sprintf("Read as %s — worth checking it's the right match.", nice)
+             else "Please check this is the right match."),
+        actionButton("cv_rematch_go", "Set up the right template", class = "btn-warning btn-sm"))
+    }
   })
   observeEvent(input$cv_rematch_go, {
     src <- cv_src(); req(src)
@@ -1844,7 +1992,6 @@ server <- function(input, output, session) {
         "Thanks - your feedback was recorded.")))
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
-        p(class = "muted", sprintf("run %s", res$run_id)),
         # choiceNames/choiceValues (not named choices): a non-ASCII name in
         # c(name = value) becomes a SYMBOL at parse time, which on a C-locale
         # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8.
@@ -2143,22 +2290,19 @@ server <- function(input, output, session) {
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
+      # A new layout is a FORK, not a cliff: the reassuring default is to hand it
+      # to the team; building one yourself is the quieter option.
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
-        strong("This statement doesn't match any template yet."),
-        p(class = "muted", "Teach the tool to read it - we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-        actionButton("cv_teach_go", "Set up a template for this", class = "btn-warning"), " ",
-        actionLink("cv_goto_templates", "or build one from scratch →"))
+        strong("This layout is new — the tool hasn't seen it yet."),
+        p(class = "muted", "No problem. Send it to the team and they'll set it up — you don't have to build anything."),
+        actionButton("cv_unsup_raise", "Send it to the team to set up", class = "btn-primary"), " ",
+        actionLink("cv_teach_go", "or set one up myself →"))
     } else {
-      # ANY result - ok, needs_review, or failed - links into template setup so a
-      # clean conversion can be refined and saved as a better version of THIS
-      # template. (Making a fresh/right template for a wrong match is the prominent
-      # action up top, so it isn't repeated here.)
-      label <- if (identical(st, "ok"))
-        "Looks good. Want to tweak how it's read and save a refined version of this template?"
-      else
-        "Open this statement in setup to fix how it's read and save an improved template."
+      # Happy path stays quiet: the "Wrong bank?" line up top already offers a fix,
+      # so we don't repeat a toolkit prompt here. needs_review/failed keep the offer.
+      if (identical(st, "ok")) return(NULL)
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", label), " ",
+        span(class = "muted", "Open this statement in setup to fix how it's read and save an improved template."), " ",
         actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"))
     }
   })
@@ -2192,15 +2336,36 @@ server <- function(input, output, session) {
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
 
+  # Send an unsupported layout to the team (PII-safe: generic context only - a
+  # file extension, the detected bank guess and the closest template - never file
+  # contents or the file name).
+  observeEvent(input$cv_unsup_raise, {
+    res <- cv_res(); req(res)
+    ctx <- list(
+      file_ext = tolower(tools::file_ext(cv_src()$name %||% "")),
+      format   = res$format %||% (res$header$format %||% "delimited"),
+      bank     = res$header$bank %||% "",
+      closest  = (res$template_id %||% "")[1])
+    id <- tryCatch(record_template_request(
+      "Unsupported statement layout - raised from Convert. Please set up a template.",
+      ctx, requested_by = who_now(), dir = REQUESTS_DIR), error = function(e) NULL)
+    if (is.null(id))
+      showNotification("Couldn't send just now - please try again.", type = "error")
+    else
+      showNotification("Sent to the team. They'll set up a template for this layout - you'll be able to convert it once it's ready.",
+                       type = "message", duration = 7)
+  })
+
   # "Matched but maybe wrong": when a near-duplicate template nearly matched too,
   # show the candidates + margin and let the analyst re-open the toolkit with a
-  # different one. Only appears when there's a genuine runner-up, so an
-  # unambiguous match stays clutter-free.
+  # different one. Only surfaces on a genuine CLOSE CALL - a confident match stays
+  # clutter-free (Beth is never asked "is this the right template?" without cause).
   output$cv_candidates <- renderUI({
     res <- cv_res(); req(res); req(!is.null(res$candidates))
     cand <- res$candidates
     if (is.null(nrow(cand)) || nrow(cand) < 2) return(NULL)
     thin <- isTRUE(res$detect$thin)
+    if (!thin) return(NULL)   # only on a close call; the happy path shows nothing here
     top <- utils::head(cand, 4L)
     # The candidate frame includes the matched winner; the "nearest others" line
     # and the picker must both EXCLUDE it (else it reads "matched X. Nearest
