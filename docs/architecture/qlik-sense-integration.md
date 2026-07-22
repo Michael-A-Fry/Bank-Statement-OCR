@@ -393,15 +393,57 @@ Statement:
 LOAD * FROM [lib://.../outbox/$(odagKey)/statement.csv] (txt, ..., msq);
 ```
 
-Start on **B1** (nothing to install on Qlik, works cross-machine); move to **B2**
-later *only if* one-click matters and IT confirms R + `Allow Execute` on the node.
+**Option B3 - Rserve / SSE analytic connection (Qlik's sanctioned R channel).**
+*R on the Qlik node; **no** `Allow Execute` needed.*
+- Qlik's documented R integration is a **Server-Side Extension (SSE)**: an
+  **Analytic Connection** (configured in the QMC) points at an **Rserve** instance
+  through the open-source **SSE-to-Rserve** connector. Load script / chart
+  expressions then call `<Conn>.ScriptEval(...)`, `<Conn>.ScriptEvalStr(...)`, etc.
+- Because it's a bounded, supported channel, it typically clears enterprise
+  security review where `EXECUTE` (arbitrary program execution) does not - so if
+  your Qlik admins lock down standard mode, **this is the in-reload path**.
+- **Fit caveat:** SSE is built to exchange *data columns*, not to hand R a file and
+  get a fresh table back. It's workable - pass the uploaded file's **path** as a
+  string, have the R function convert it, **write the audit artifacts to disk**
+  (csv/xlsx/json, same as always) and return the transactions table (or just the
+  `run_id`, and let ODAG `LOAD` the CSV) - but it is more moving parts (Rserve
+  service + SSE connector + connection config) than B1/B2 for a file->file job.
+
+```qvs
+// ODAG app load script (Option B3) - Analytic Connection "R" -> Rserve
+// R side: a thin wrapper converts the path, writes out/<run_id>/, returns the table.
+Statement:
+LOAD *
+EXTENSION R.ScriptEval('convert_statement_sse(path)', (FileList){[path]});
+// (illustrative; exact call shape depends on the SSE-R connector's table mode)
+```
+
+### 13.2a Which invocation to pick
+
+All three land in the same place - Qlik shows a clean transactions table and the
+artifacts are on disk for audit - so choose by **what the Qlik server permits**, not
+by preference:
+
+| If the Qlik admin... | Use | Why |
+|---|---|---|
+| allows the standard-mode `Allow Execute` override | **B2 `EXECUTE`** | simplest, one click, matches our CLI (`run.R`) directly |
+| forbids `EXECUTE` but allows an Analytic Connection | **B3 Rserve/SSE** | the sanctioned in-reload R channel; no execute override |
+| wants no R invoked from Qlik at all | **B1 poller** | R as a scheduled task writing to the shared folder; fully decoupled |
+
+**Forensic key point:** we persist the outputs to disk **regardless** (they *are* the
+audit record) and Qlik `LOAD`s them, so Rserve's in-memory return buys little here -
+its only real advantage over `EXECUTE` is not needing the execute override. Start
+with whichever your admin already allows.
 
 ### 13.3 Where R runs
 
-R does **not** need to be on the Qlik server. Reuse the machine that already runs
-the Shiny app (it has R) as the converter host; Qlik and that host just share the
-`inbox/`/`outbox/` folder. One R install serves both the Shiny front-end and the
-Qlik front-end.
+R is installed on the **Qlik server** for production (the laptop-local setup today is
+just development). That is what enables the synchronous options (B2/B3) - one click,
+convert-and-load in a single ODAG reload. The folder handoff still works
+**cross-machine** if you ever prefer the converter on a separate box (e.g. the Shiny
+host): the engine only needs to see the shared `inbox/`/`outbox/` folder, so R can
+live on the Qlik node, the Shiny host, or its own small VM without changing anything
+else.
 
 ### 13.4 Keying & idempotency
 
@@ -430,9 +472,14 @@ the permissioned share and the Admin tab, never by another Qlik user through the
 front-end. Retention of the uploaded statement follows the same policy chosen for
 the Shiny app.
 
-### 13.7 Open items to confirm with IT (not blocking B1)
+### 13.7 Open items to confirm with IT
 
-- Can Inphinity Forms write the upload to a **file-share folder** (vs only a DB
-  write-back)? If it writes to a DB, add a one-line export of that blob to `inbox/`.
-- For B2 only: is R installable on the Qlik node, and is **`Allow Execute`**
-  permitted there?
+- **Which R-invocation channel is permitted on the Qlik server** (picks B2 vs B3,
+  see §13.2a): is the standard-mode **`Allow Execute`** override allowed, or must R
+  go through an **Analytic Connection** (Rserve + SSE)? Both work - it's a
+  security-policy question for the Qlik admins, and the answer decides the shape.
+- **How Inphinity Forms delivers the upload:** can it write to a **file-share
+  folder** (what the poller / load script read)? If it only writes to a DB, add a
+  one-line export of that blob to the shared `inbox/`.
+- **Rserve/SSE only:** confirm the **SSE-to-Rserve** connector is installed and an
+  **Analytic Connection** is registered in the QMC (name, host, port 6311 default).
