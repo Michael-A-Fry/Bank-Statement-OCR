@@ -74,7 +74,11 @@ read_excel_input <- function(path) {
     ok <- !is.na(num) & num > 20000 & num < 80000
     filled <- !is.na(v) & nzchar(v)
     if (sum(filled) > 0 && sum(ok) >= 0.6 * sum(filled)) {
-      v[ok] <- format(as.Date(round(num[ok]), origin = "1899-12-30"), "%Y-%m-%d")
+      # The DATE is the integer part of an Excel serial; the fraction is the time.
+      # floor() (never round()) so a noon (.5) serial can't tip to the next day --
+      # round() uses banker's rounding, which would shift 45000.5 -> 45000 but
+      # 45001.5 -> 45002.
+      v[ok] <- format(as.Date(floor(num[ok]), origin = "1899-12-30"), "%Y-%m-%d")
       tbl[[cn]] <- v
     }
   }

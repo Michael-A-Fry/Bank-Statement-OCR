@@ -64,6 +64,10 @@ test_that(".value_from_line captures the sign marker with the money token", {
   expect_identical(.value_from_line("Balance 1.234,56", "money"), "1.234,56")
   # a whole-dollar "1,234" with no cents must NOT be mis-read as "1,23"
   expect_true(is.na(.value_from_line("Total 1,234", "money")))
+  # ...but a whole-dollar balance WITH a $ sign is now recognised (P3-b), so a
+  # printed "$1,234" balance no longer degrades reconciliation to na silently.
+  expect_identical(.value_from_line("Opening Balance $1,234", "money"), "$1,234")
+  expect_identical(.value_from_line("Closing $1,234 CR", "money"), "$1,234 CR")
 })
 
 test_that("two labels on one line each resolve to their OWN value", {

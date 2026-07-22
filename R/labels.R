@@ -27,7 +27,16 @@
 # read (the old pattern stopped at the digits and silently dropped the sign).
 # `(?![0-9])` after the cents stops "1,234" being mis-read as "1,23". Consumed
 # with perl = TRUE + ignore.case in .value_from_line (lookahead needs perl).
-.MONEY_RX <- "\\(?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?(?:\\s?(?:DR|CR|OD))?"
+# Two shapes: (a) an amount WITH cents (dot- or comma-decimal), the original; and
+# (b) a WHOLE-dollar amount with NO cents but a $ SIGN, so a printed whole-dollar
+# balance ("Opening Balance $1,234") is recognised. The no-cents branch requires
+# the $ deliberately: a bare "1,234" is genuinely ambiguous (thousands 1234 vs a
+# European "1,23" with a stray digit), so it stays unmatched rather than risk a
+# silently-wrong value. Both keep the optional trailing DR/CR/OD balance marker.
+.MONEY_RX <- paste0(
+  "\\(?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?(?:\\s?(?:DR|CR|OD))?",
+  "|",
+  "\\(?[$]-?[0-9][0-9,]*(?![0-9.,])\\)?(?:\\s?(?:DR|CR|OD))?")
 .DATE_RX  <- "[0-9]{1,2}[/ .-][A-Za-z0-9]{2,9}[/ .-][0-9]{2,4}"
 
 # .spec_terms(spec) -- the list of label phrases a spec matches on.
