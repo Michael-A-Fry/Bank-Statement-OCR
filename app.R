@@ -314,6 +314,12 @@ ui <- fluidPage(
      .btn-warning:hover,.btn-warning:focus{background:#e2ebf7;border-color:var(--brand);color:var(--brand-dark)}
      .btn-danger{background:#fff;border:1px solid var(--bad-line);color:var(--bad)}
      .btn-danger:hover,.btn-danger:focus{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+     /* advanced disclosure (Convert: 'It picked the wrong bank?') — obvious, one click */
+     details.adv-bank{margin:4px 0 2px}
+     details.adv-bank>summary{cursor:pointer;color:var(--brand);font-weight:700;font-size:13.5px;list-style:none;padding:4px 0}
+     details.adv-bank>summary::-webkit-details-marker{display:none}
+     details.adv-bank>summary::before{content:'\\25B8  '}
+     details.adv-bank[open]>summary::before{content:'\\25BE  '}
      /* tables (DT) */
      table.dataTable{font-size:13.5px}
      table.dataTable thead th,table.dataTable thead td{background:var(--bg)!important;color:var(--slate)!important;
@@ -365,15 +371,15 @@ ui <- fluidPage(
     span(class = "app-title", "Statement Studio"),
     span(class = "app-tagline", "Statements and documents in — clean, checked data out.")),
   tabsetPanel(
-    id = "main_tabs",
+    id = "main_tabs", selected = "Convert",
     # ---- About (landing): the journey hub. Everything starts here - one
     # promise, then the two doors (convert / teach), then the proof story.
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
           "Turn any bank statement or financial document — PDF, CSV or Excel —",
-          " into clean, checked data. Deterministic: nothing is guessed,",
-          " and anything uncertain is flagged with the reason."),
+          " into clean, checked data. It never guesses: every figure comes straight",
+          " off your statement, and anything it can't verify is flagged with the reason."),
         div(class = "hub-cards",
           actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
             div(class = "hub-card-kicker", "Most days"),
@@ -405,17 +411,19 @@ ui <- fluidPage(
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_who_hint"),
-          uiOutput("cv_bank_ui"),
-          checkboxInput("cv_user_templates", "Include user-created templates",
-                        value = isTRUE(CONFIG$app$user_templates_default)),
-          conditionalPanel("input.cv_user_templates == true",
-            helpText(style = "margin-top:-6px;color:#8a5b00",
-              "These were created by users - not guaranteed tested.")),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
-          br(),
-          helpText("Detection is automatic; pick a bank only to force one."),
-          tags$hr(),
-          uiOutput("cv_templates")
+          helpText("Your bank is detected automatically — just upload and convert."),
+          # Everything most people never need is one obvious click away, so the
+          # default view is simply: file, name, Convert.
+          tags$details(class = "adv-bank",
+            tags$summary("It picked the wrong bank?"),
+            div(style = "padding-top:10px",
+              uiOutput("cv_bank_ui"),
+              checkboxInput("cv_user_templates", "Include user-created templates",
+                            value = isTRUE(CONFIG$app$user_templates_default)),
+              conditionalPanel("input.cv_user_templates == true",
+                helpText(style = "margin-top:-6px;color:#8a5b00",
+                  "These were created by users - not guaranteed tested."))))
         ),
         mainPanel(
           width = 8,
@@ -502,7 +510,7 @@ ui <- fluidPage(
       br(),
       wellPanel(
         strong("Add a template"),
-        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (full field-by-field / YAML) is one click away inside."),
+        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (every field, editable) is one click away inside."),
         p(actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means")),
         fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
@@ -1624,6 +1632,18 @@ server <- function(input, output, session) {
         p(class = "muted", style = "margin:0", paste("Template:", tid)))
   })
 
+  # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
+  # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
+  friendly_tpl <- function(tid) {
+    if (length(tid) != 1 || is.na(tid) || !nzchar(tid)) return(NA_character_)
+    ov <- tryCatch(template_overview(all_templates()), error = function(e) NULL)
+    if (is.null(ov) || !nrow(ov)) return(tid)
+    r <- ov[ov$id == tid, , drop = FALSE]
+    if (!nrow(r)) return(tid)
+    lab <- trimws(paste(trimws(r$bank[1] %||% ""), trimws(r$type[1] %||% "")))
+    if (nzchar(lab)) paste(lab, "statement") else tid
+  }
+
   # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
   # work, how many transactions, and can I trust it, said in words rather than KPI
   # codes. This is what a non-technical reviewer reads first; the KPI tables stay
@@ -1650,7 +1670,7 @@ server <- function(input, output, session) {
       span(class = if (warn) "chip chip-warn" else "chip", txt)
     chips <- list()
     tid <- (res$template_id %||% NA_character_)[1]
-    if (!is.na(tid) && nzchar(tid)) chips <- c(chips, list(chip(paste("Template:", tid))))
+    if (!is.na(tid) && nzchar(tid)) chips <- c(chips, list(chip(paste("Read as:", friendly_tpl(tid)))))
     op <- suppressWarnings(as.integer(res$trust$ocr_pages %||% 0L))
     if (isTRUE(op > 0)) chips <- c(chips, list(chip(
       sprintf("%d page(s) machine-read (OCR) - double-check the numbers", op), warn = TRUE)))
@@ -1922,12 +1942,19 @@ server <- function(input, output, session) {
     st <- res$status %||% "failed"
     if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
     tid <- (res$template_id %||% NA_character_)[1]
-    div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:#555;font-size:13px",
-      span(if (!is.na(tid) && nzchar(tid))
-             sprintf("Matched “%s”. Not the right one?", tid)
-           else "Matched the wrong template?"),
-      actionButton("cv_rematch_go", "No - set up the right template for this",
-                   class = "btn-warning btn-sm"))
+    nice <- if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else NA_character_
+    if (identical(st, "ok")) {
+      # Happy path: one quiet line. No "did I pick the right template?" doubt.
+      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
+        span(if (!is.na(nice)) sprintf("Read as %s.", nice) else "Read automatically."),
+        actionLink("cv_rematch_go", "Wrong bank? Set up the right one"))
+    } else {
+      # needs_review: make the "fix the match" option clearly available.
+      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
+        span(if (!is.na(nice)) sprintf("Read as %s — worth checking it's the right match.", nice)
+             else "Please check this is the right match."),
+        actionButton("cv_rematch_go", "Set up the right template", class = "btn-warning btn-sm"))
+    }
   })
   observeEvent(input$cv_rematch_go, {
     src <- cv_src(); req(src)
@@ -1953,7 +1980,6 @@ server <- function(input, output, session) {
         "Thanks - your feedback was recorded.")))
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
-        p(class = "muted", sprintf("run %s", res$run_id)),
         # choiceNames/choiceValues (not named choices): a non-ASCII name in
         # c(name = value) becomes a SYMBOL at parse time, which on a C-locale
         # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8.
@@ -2252,22 +2278,19 @@ server <- function(input, output, session) {
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
+      # A new layout is a FORK, not a cliff: the reassuring default is to hand it
+      # to the team; building one yourself is the quieter option.
       div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
-        strong("This statement doesn't match any template yet."),
-        p(class = "muted", "Teach the tool to read it - we've already worked out most of it. You just check it looks right and Save. Takes about a minute."),
-        actionButton("cv_teach_go", "Set up a template for this", class = "btn-warning"), " ",
-        actionLink("cv_goto_templates", "or build one from scratch →"))
+        strong("This layout is new — the tool hasn't seen it yet."),
+        p(class = "muted", "No problem. Send it to the team and they'll set it up — you don't have to build anything."),
+        actionButton("cv_unsup_raise", "Send it to the team to set up", class = "btn-primary"), " ",
+        actionLink("cv_teach_go", "or set one up myself →"))
     } else {
-      # ANY result - ok, needs_review, or failed - links into template setup so a
-      # clean conversion can be refined and saved as a better version of THIS
-      # template. (Making a fresh/right template for a wrong match is the prominent
-      # action up top, so it isn't repeated here.)
-      label <- if (identical(st, "ok"))
-        "Looks good. Want to tweak how it's read and save a refined version of this template?"
-      else
-        "Open this statement in setup to fix how it's read and save an improved template."
+      # Happy path stays quiet: the "Wrong bank?" line up top already offers a fix,
+      # so we don't repeat a toolkit prompt here. needs_review/failed keep the offer.
+      if (identical(st, "ok")) return(NULL)
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", label), " ",
+        span(class = "muted", "Open this statement in setup to fix how it's read and save an improved template."), " ",
         actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"))
     }
   })
@@ -2301,15 +2324,36 @@ server <- function(input, output, session) {
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
 
+  # Send an unsupported layout to the team (PII-safe: generic context only - a
+  # file extension, the detected bank guess and the closest template - never file
+  # contents or the file name).
+  observeEvent(input$cv_unsup_raise, {
+    res <- cv_res(); req(res)
+    ctx <- list(
+      file_ext = tolower(tools::file_ext(cv_src()$name %||% "")),
+      format   = res$format %||% (res$header$format %||% "delimited"),
+      bank     = res$header$bank %||% "",
+      closest  = (res$template_id %||% "")[1])
+    id <- tryCatch(record_template_request(
+      "Unsupported statement layout - raised from Convert. Please set up a template.",
+      ctx, requested_by = who_now(), dir = REQUESTS_DIR), error = function(e) NULL)
+    if (is.null(id))
+      showNotification("Couldn't send just now - please try again.", type = "error")
+    else
+      showNotification("Sent to the team. They'll set up a template for this layout - you'll be able to convert it once it's ready.",
+                       type = "message", duration = 7)
+  })
+
   # "Matched but maybe wrong": when a near-duplicate template nearly matched too,
   # show the candidates + margin and let the analyst re-open the toolkit with a
-  # different one. Only appears when there's a genuine runner-up, so an
-  # unambiguous match stays clutter-free.
+  # different one. Only surfaces on a genuine CLOSE CALL - a confident match stays
+  # clutter-free (Beth is never asked "is this the right template?" without cause).
   output$cv_candidates <- renderUI({
     res <- cv_res(); req(res); req(!is.null(res$candidates))
     cand <- res$candidates
     if (is.null(nrow(cand)) || nrow(cand) < 2) return(NULL)
     thin <- isTRUE(res$detect$thin)
+    if (!thin) return(NULL)   # only on a close call; the happy path shows nothing here
     top <- utils::head(cand, 4L)
     # The candidate frame includes the matched winner; the "nearest others" line
     # and the picker must both EXCLUDE it (else it reads "matched X. Nearest
