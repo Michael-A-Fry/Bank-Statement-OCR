@@ -11,12 +11,17 @@
 
 # .pdf_cell(rw, cspec) -- text of the words whose centre falls in a column band,
 # left-to-right, space-joined; NA when the band is empty or unmapped.
+# Index the atomic columns (x / text) rather than subsetting the data.frame:
+# rw[mask, , drop=FALSE] goes through R's slow `[.data.frame` method, and this
+# runs 12-17x per visual row across every page (the measured parse hot spot).
+# which() also drops any NA in the band mask (finite word boxes never produce one,
+# so this is byte-identical on real data), which the old df-subset would have kept.
 .pdf_cell <- function(rw, cspec) {
   if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max)) return(NA_character_)
-  cx <- rw$x + rw$width / 2
-  sel <- rw[cx >= cspec$x_min & cx <= cspec$x_max, , drop = FALSE]
-  if (!nrow(sel)) return(NA_character_)
-  paste(sel$text[order(sel$x)], collapse = " ")
+  x <- rw$x; cx <- x + rw$width / 2
+  sel <- which(cx >= cspec$x_min & cx <= cspec$x_max)
+  if (!length(sel)) return(NA_character_)
+  paste(rw$text[sel][order(x[sel])], collapse = " ")
 }
 
 # .cell_minconf(rw, cspec) -- lowest OCR word confidence (0-100) among the words
@@ -27,8 +32,8 @@
   if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max)) return(NA_real_)
   if (!("conf" %in% names(rw))) return(NA_real_)
   cx <- rw$x + rw$width / 2
-  sel <- rw[cx >= cspec$x_min & cx <= cspec$x_max, , drop = FALSE]
-  cf <- suppressWarnings(as.numeric(sel$conf)); cf <- cf[!is.na(cf) & cf >= 0]
+  sel <- which(cx >= cspec$x_min & cx <= cspec$x_max)   # atomic index, not df subset
+  cf <- suppressWarnings(as.numeric(rw$conf[sel])); cf <- cf[!is.na(cf) & cf >= 0]
   if (!length(cf)) NA_real_ else min(cf)
 }
 

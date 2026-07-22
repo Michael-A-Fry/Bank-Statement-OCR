@@ -120,8 +120,12 @@ preprocess_opts_geometry <- function() {
 # word out of its template band), because the printed content is never
 # perfectly centred on the canvas. Anchoring to the ink undoes the tilt without
 # moving the words. A straight page is returned as-is, never resampled.
-.deskew_image <- function(img, min_angle = 0.3, max_angle = 5) {
-  ang <- .detect_skew_angle(img, max_angle = max_angle)
+# `angle`, when supplied, is a skew already measured for THIS render (both OCR
+# passes deskew the same page, so the caller can measure once and hand it in);
+# NULL measures it here as before. min_angle still gates: a page below it is
+# returned untouched regardless of who measured the angle.
+.deskew_image <- function(img, min_angle = 0.3, max_angle = 5, angle = NULL) {
+  ang <- if (is.null(angle)) .detect_skew_angle(img, max_angle = max_angle) else angle
   if (!is.finite(ang) || abs(ang) <= min_angle) return(img)
   tryCatch({
     info <- magick::image_info(img)
@@ -155,7 +159,8 @@ preprocess_image <- function(in_path, out_path = NULL, opts = preprocess_opts())
     info <- magick::image_info(img)
     if (isTRUE(opts$greyscale)) img <- magick::image_convert(img, colorspace = "gray")
     if (isTRUE(opts$deskew))    img <- .deskew_image(img, min_angle = opts$deskew_min %||% 0.3,
-                                                     max_angle = opts$deskew_max %||% 5)
+                                                     max_angle = opts$deskew_max %||% 5,
+                                                     angle = opts$deskew_angle)
     if (isTRUE(opts$normalize)) img <- magick::image_normalize(img)
     if (!is.null(opts$upscale_min_width) && isTRUE(info$width < opts$upscale_min_width))
       img <- magick::image_resize(img, paste0(opts$upscale_min_width, "x"))

@@ -95,12 +95,23 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
   img <- Sys.glob(paste0(prefix, "*.png"))
   if (!length(img)) return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   have_pp <- isTRUE(preprocess) && exists("preprocess_image", mode = "function")
+  # Measure the page skew ONCE and share it across both OCR passes. The text pass
+  # and the geometry (word-box) pass deskew the SAME source render with the SAME
+  # deterministic estimator (max_angle 5), so re-running the ~1.6s/page projection
+  # search in each pass pays for an identical answer twice. Measure here and hand
+  # the angle to both preprocess calls; NULL (magick absent / measure failed) makes
+  # each pass measure itself, so the fallback is behaviour-identical.
+  skew_angle <- if (have_pp && exists(".detect_skew_angle", mode = "function"))
+    tryCatch(.detect_skew_angle(magick::image_read(img[1]), max_angle = 5),
+             error = function(e) NULL) else NULL
   # Text pass: full preprocessing (deskew/upscale allowed) for best accuracy.
-  use_img <- if (have_pp) preprocess_image(img[1]) else img[1]
+  use_img <- if (have_pp)
+    preprocess_image(img[1], opts = c(preprocess_opts(), list(deskew_angle = skew_angle))) else img[1]
   txt <- ocr_image(use_img, lang = lang)
   # Word-box pass: GEOMETRY-PRESERVING preprocessing (no deskew/resize), so the
-  # accuracy lift doesn't move any column. Runs in parallel to the text pass.
-  box_img <- if (have_pp) preprocess_image(img[1], opts = preprocess_opts_geometry()) else img[1]
+  # accuracy lift doesn't move any column. Reuses the shared skew angle.
+  box_img <- if (have_pp)
+    preprocess_image(img[1], opts = c(preprocess_opts_geometry(), list(deskew_angle = skew_angle))) else img[1]
   words <- .ocr_tsv_to_words(ocr_image_tsv(box_img, lang = lang), scale = 72 / dpi)
   # The word boxes live in the (possibly deskewed) box-image frame, so report THAT
   # image's size in points as the page dimensions -- keeps the parser's page-size
