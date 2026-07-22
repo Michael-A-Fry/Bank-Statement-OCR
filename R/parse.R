@@ -239,11 +239,19 @@ parse_statement <- function(input, template, force_rows = NULL) {
     stringsAsFactors = FALSE
   )
 
+  # Physical data lines legitimately consumed by MULTI-LINE records (a quoted field
+  # with an embedded newline spans several physical lines but is one record). The
+  # completeness KPI subtracts these so a valid multi-line statement doesn't look
+  # like it "lost" lines; a physical line captured by NO record still shows up.
+  multiline_extra <- if (length(spans) == n && n > 0)
+    as.integer(sum(lengths(spans)) - length(spans)) else 0L
+
   list(transactions = core, extras = extras, header = header,
        provenance = provenance,
        # completeness accounting for reconcile: how many non-empty physical data
        # lines the source held (vs how many rows we parsed).
-       source_line_count = reader$n_data_lines %||% NA_integer_)
+       source_line_count = reader$n_data_lines %||% NA_integer_,
+       multiline_extra = multiline_extra)
 }
 
 # .format_line_span(v) -- "csv:line=5" for a single physical line, "csv:line=5-6"

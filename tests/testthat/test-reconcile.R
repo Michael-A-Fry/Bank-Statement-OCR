@@ -5,7 +5,8 @@
 
 # .parsed(...) -- assemble a minimal parsed object from a core-shaped list plus
 # header overrides, so KPI branches can be driven directly.
-.parsed <- function(tx, header = list(), source_line_count = NA_integer_) {
+.parsed <- function(tx, header = list(), source_line_count = NA_integer_,
+                    multiline_extra = 0L) {
   base_h <- list(
     bank = "X", statement_type = "e", template_id = "t", template_version = 1,
     account_number = NA, account_name = NA, period_start = NA, period_end = NA,
@@ -16,7 +17,8 @@
        extras = data.frame(row_id = integer(0)),
        header = base_h,
        provenance = data.frame(row_id = seq_len(nrow(tx))),
-       source_line_count = source_line_count)
+       source_line_count = source_line_count,
+       multiline_extra = multiline_extra)
 }
 
 .tx <- function(amount, balance = NA, date = NA, flags = "") {
@@ -71,6 +73,35 @@ test_that("running_balance_continuity fail branch via a real fixture", {
   r <- reconcile(p, templates[["kiwibank_everyday_csv"]])
   expect_equal(r$kpis$status[r$kpis$name == "running_balance_continuity"], "fail")
   expect_equal(r$trust$level, "low")
+})
+
+test_that("continuity bridges a blank middle balance, catching a hidden break (P2-3)", {
+  # 100, NA, 130 with amounts 0/+20/+5: the 130 should be 125. The old loop
+  # skipped both pairs around the NA and reported a clean pass; the bridge sees it.
+  p <- .parsed(.tx(c(0, 20, 5), balance = c(100, NA, 130)), source_line_count = 3)
+  k <- reconcile(p)$kpis
+  expect_equal(k$status[k$name == "running_balance_continuity"], "fail")
+  # a bridge that DOES reconcile (100 + 20 + 5 == 125) passes.
+  p2 <- .parsed(.tx(c(0, 20, 5), balance = c(100, NA, 125)), source_line_count = 3)
+  expect_equal(reconcile(p2)$kpis$status[
+    reconcile(p2)$kpis$name == "running_balance_continuity"], "pass")
+  # a blank amount INSIDE the gap makes the bridge unverifiable -> surfaced, not
+  # silently passed as verified.
+  p3 <- .parsed(.tx(c(0, NA, 5), balance = c(100, NA, 130)), source_line_count = 3)
+  det <- reconcile(p3)$kpis$detail[reconcile(p3)$kpis$name == "running_balance_continuity"]
+  expect_match(det, "unverifiable")
+})
+
+test_that("no_unparsed_rows does NOT fail on a legitimate multi-line record (P2-2)", {
+  # 3 physical data lines, 2 parsed rows, 1 extra line accounted for by a quoted
+  # embedded newline -> complete, must PASS (was crying wolf on every such file).
+  p <- .parsed(.tx(c(-10, 40)), source_line_count = 3, multiline_extra = 1)
+  k <- reconcile(p)$kpis
+  expect_equal(k$status[k$name == "no_unparsed_rows"], "pass")
+  # but an UNaccounted extra line (no multi-line record) still fails loudly.
+  p2 <- .parsed(.tx(c(-10, 40)), source_line_count = 3, multiline_extra = 0)
+  expect_equal(reconcile(p2)$kpis$status[
+    reconcile(p2)$kpis$name == "no_unparsed_rows"], "fail")
 })
 
 test_that("transaction_count matches / mismatches a stated count", {

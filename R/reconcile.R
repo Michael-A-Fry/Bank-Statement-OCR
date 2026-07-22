@@ -52,18 +52,36 @@ reconcile <- function(parsed, template = NULL) {
   }
 
   # 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
+  # A blank/redacted MIDDLE balance must not open a blind window: skipping both
+  # pairs around an NA balance lets a real break hide inside the gap (100, NA, 130
+  # with amounts 0/+20/+5 would wrongly "pass" -- 130 should be 125). Instead
+  # BRIDGE the gap: carry the last known-good balance plus the running sum of the
+  # intervening amounts, and check the next known balance against that. If any
+  # intervening amount is itself NA the bridge is genuinely unverifiable, so it is
+  # counted and surfaced, never silently passed.
   if (n >= 2 && !all(is.na(tx$balance))) {
-    ok <- TRUE; bad <- 0L
-    for (i in 2:n) {
-      if (is.na(tx$balance[i]) || is.na(tx$balance[i - 1]) || is.na(tx$amount[i])) next
-      if (abs(tx$balance[i] - (tx$balance[i - 1] + tx$amount[i])) >= 0.005) {
-        ok <- FALSE; bad <- bad + 1L
+    ok <- TRUE; bad <- 0L; unverifiable <- 0L
+    last_bal <- NA_real_; carry <- 0; gap_unknown <- FALSE
+    for (i in seq_len(n)) {
+      bi <- tx$balance[i]; ai <- tx$amount[i]
+      if (is.na(bi)) {                      # no balance printed here
+        if (is.na(ai)) gap_unknown <- TRUE  # ...and the amount is unknown too
+        else carry <- carry + ai            # ...else it is an intervening amount
+        next
       }
+      if (!is.na(last_bal)) {               # we can test this known balance
+        if (is.na(ai) || gap_unknown) unverifiable <- unverifiable + 1L
+        else if (abs(bi - (last_bal + carry + ai)) >= 0.005) { ok <- FALSE; bad <- bad + 1L }
+      }
+      last_bal <- bi; carry <- 0; gap_unknown <- FALSE   # reset the bridge
     }
+    detail <- sprintf("%d discontinuity(ies)", bad)
+    if (unverifiable > 0)
+      detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank/redacted)",
+                        detail, unverifiable)
     rows$running_balance_continuity <- .kpi(
       "running_balance_continuity", if (ok) "pass" else "fail",
-      expected = 0, actual = bad, discrepancy = bad,
-      detail = sprintf("%d discontinuity(ies)", bad))
+      expected = 0, actual = bad, discrepancy = bad, detail = detail)
   } else {
     rows$running_balance_continuity <- .kpi(
       "running_balance_continuity", "na",
@@ -131,7 +149,12 @@ reconcile <- function(parsed, template = NULL) {
   # the reader; NA (excel/pdf) falls back to the malformed-only check.
   malformed <- sum(grepl("malformed", tx$flags))
   src_lines <- suppressWarnings(as.integer(parsed$source_line_count %||% NA))
-  lost <- if (!is.na(src_lines)) src_lines - n else 0L
+  # A legitimate multi-line quoted record spans several physical lines but is ONE
+  # parsed row; those continuation lines are accounted for here so they are not
+  # miscounted as lost. A physical line captured by no record still fails loudly.
+  extra_ml <- suppressWarnings(as.integer(parsed$multiline_extra %||% 0L))
+  if (is.na(extra_ml)) extra_ml <- 0L
+  lost <- if (!is.na(src_lines)) max(0L, src_lines - n - extra_ml) else 0L
   good <- n - malformed
   ok_rows <- (malformed == 0) && (lost == 0)
   expected_rows <- if (!is.na(src_lines)) src_lines else n
