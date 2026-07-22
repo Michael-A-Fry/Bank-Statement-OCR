@@ -154,6 +154,7 @@ Template format and the full data contract: [`docs/architecture/build-contract.m
 **Setting it up for a team? [`docs/SETUP-AND-DEPLOYMENT.md`](docs/SETUP-AND-DEPLOYMENT.md)** - install once on a VM, users reach it by browser or shared folder (no R for users).
 **Launching? [`docs/LAUNCH-AUDIT.md`](docs/LAUNCH-AUDIT.md)** - readiness, honest boundaries, drift & missing-data behaviour, go/no-go.
 Server deployment, concurrency, AD-group auth & Qlik integration (design): [`docs/architecture/deployment-integration-plan.md`](docs/architecture/deployment-integration-plan.md).
+Qlik Sense feed - the high-trust, extraction-only statement feed (schema, gate, load script): [`docs/architecture/qlik-sense-integration.md`](docs/architecture/qlik-sense-integration.md).
 Requirements & decisions history: [`docs/discovery/discovery-log.md`](docs/discovery/discovery-log.md).
 
 ---
