@@ -10,22 +10,52 @@
 .WA_MONEY <- "^-?\\$?[0-9][0-9,]*\\.[0-9]{2}$"
 .WA_DATE  <- "^[0-9]{1,2}([/. -][A-Za-z0-9]{2,9}([/. -][0-9]{2,4})?)?$"
 
-# header_phrases(input, n) -> up to n original-case column-header words present on
-# the page (e.g. "Withdrawals","Deposits","Balance"), for use as a PDF template
-# fingerprint (page_contains_all). Picks them from the line richest in header
-# keywords, so they're distinctive and guaranteed present.
+# .fp_specific(ph) -- is a fingerprint phrase DISTINCTIVE enough to identify a
+# bank layout (>=2 words, or a single long/branded token like "Debit/Withdrawal"),
+# rather than a generic single word ("Balance") that sits on nearly every
+# statement? Shared by the drafter and validate_template so they agree.
+.fp_specific <- function(ph) {
+  ph <- trimws(as.character(ph))
+  nzchar(ph) & ((lengths(strsplit(ph, "\\s+")) >= 2) | (nchar(ph) >= 10))
+}
+
+# header_phrases(input, n) -> up to n DISTINCTIVE phrases present on the page, for
+# use as a PDF template fingerprint (page_contains_all). Prefers MULTI-WORD
+# phrases -- a branded title / statement heading, then the transaction table's
+# header line -- because single generic words ("Balance","Amount") match almost
+# any statement and turn a correct "unsupported" verdict into a wrong match. Falls
+# back to the column-label keywords only as secondary anchors.
 header_phrases <- function(input, n = 3) {
   txt <- paste(input$pages %||% character(0), collapse = "\n")
-  lines <- unlist(strsplit(txt, "\n", fixed = TRUE))
+  lines <- trimws(unlist(strsplit(txt, "\n", fixed = TRUE)))
+  lines <- gsub("\\s+", " ", lines[nzchar(lines)])
+  if (!length(lines)) return(character(0))
+  out <- character(0)
+  # 1. a distinctive TITLE/brand line near the top: multi-word, no digits (not a
+  # data row), not just column labels -- e.g. "Your transactions", a bank name.
+  top <- utils::head(lines, 15L)
+  titleish <- vapply(top, function(ln) {
+    w <- unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln)))
+    nchar(ln) >= 10 && nchar(ln) <= 60 && length(w) >= 2 && !grepl("[0-9]", ln) &&
+      (length(w) == 0 || mean(tolower(w) %in% .HDR_KEYS) < 0.5)
+  }, logical(1))
+  out <- c(out, utils::head(top[titleish], 2L))
+  # 2. the transaction table's header LINE as a whole multi-word phrase (the column
+  # labels together are far more specific than any one of them alone).
   score <- vapply(lines, function(ln) {
     w <- tolower(unlist(regmatches(ln, gregexpr("[A-Za-z]+", ln))))
     length(unique(w[w %in% .HDR_KEYS]))
   }, integer(1))
   best <- which.max(score)
-  if (!length(best) || score[best] < 1) return(character(0))
-  words <- unlist(regmatches(lines[best], gregexpr("[A-Za-z]+", lines[best])))
-  hits <- words[tolower(words) %in% .HDR_KEYS]
-  utils::head(unique(hits), n)
+  if (length(best) && score[best] >= 2 && nchar(lines[best]) <= 60)
+    out <- c(out, lines[best])
+  # 3. secondary anchors: individual column-label words (kept for continuity, but
+  # after the distinctive phrases so a good fingerprint leads).
+  if (length(best) && score[best] >= 1) {
+    words <- unlist(regmatches(lines[best], gregexpr("[A-Za-z]+", lines[best])))
+    out <- c(out, words[tolower(words) %in% .HDR_KEYS])
+  }
+  utils::head(unique(out[nzchar(out)]), n)
 }
 
 # .cluster_1d(x, gap) -- group sorted values where consecutive gaps exceed `gap`.

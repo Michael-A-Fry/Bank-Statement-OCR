@@ -33,6 +33,19 @@ validate_template <- function(t) {
   if (identical(fmt, "pdf")) {
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$page_contains_all))
       problems <- c(problems, "fingerprint.page_contains_all is required for pdf templates")
+    # A PDF fingerprint of only generic single words ("Balance", "Amount") sits on
+    # nearly every statement, so the template would match unseen PDFs and turn a
+    # correct "unsupported" verdict into a silently-wrong parse. Require at least
+    # one DISTINCTIVE phrase (>=2 words, or a long/branded token). The shipped set
+    # already satisfies this; this gate stops the auto-drafter's generic output
+    # from being saved as-is.
+    if (!is.null(t$fingerprint) && !is.null(t$fingerprint$page_contains_all)) {
+      ph <- unlist(t$fingerprint$page_contains_all)
+      if (length(ph) == 0 || !any(.fp_specific(ph)))
+        problems <- c(problems, paste0("fingerprint.page_contains_all is too generic for a pdf ",
+          "template -- add a distinctive phrase (a statement heading or a multi-word column ",
+          "label), not just single words like 'Balance'"))
+    }
     tab <- t$table
     if (is.null(tab)) {
       problems <- c(problems, "pdf templates require a 'table' block")

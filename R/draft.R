@@ -139,7 +139,13 @@
       is.null(cols$debit) && is.null(cols$credit))
     cols$amount <- list(x_min = round(page_w * 0.72), x_max = round(page_w * 0.95))
   date_band <- cols$date
-  fp <- safe(header_phrases(input), character(0)); if (!length(fp)) fp <- "Balance"
+  # Fingerprint: prefer the distinctive multi-word phrases header_phrases now
+  # returns. NEVER fall back to a bare generic word like "Balance" (it sits on
+  # essentially every statement, so the template would match unseen PDFs and turn
+  # a correct "unsupported" verdict into a silently-wrong parse). When nothing
+  # distinctive is found, leave whatever was found (even empty) -- validate_template
+  # then makes the analyst add a specific phrase before the template can save.
+  fp <- safe(header_phrases(input), character(0))
   # Record the page size the bands were drawn in, so a differently-sized copy of
   # the statement (a rescan, another export) is normalised to this space at parse
   # time instead of dropping rows. Falls back to A4 when the size is unknown.

@@ -279,8 +279,9 @@ test_that("a Visa PDF parses unsigned charges/CR payments and drops the balance 
   expect_equal(nrow(tx), 2L)                          # closing-balance row excluded
   expect_equal(tx$amount, c(-4.50, 500))              # charge negative, CR payment positive
   expect_identical(tx$direction, c("debit", "credit"))
+  # distinctive multi-word fingerprint (a bare "Visa" is now rejected as generic)
   expect_length(validate_template(c(tmpl, list(min_score = 1,
-    fingerprint = list(page_contains_all = list("Visa"))))), 0)   # 'unsigned' validates
+    fingerprint = list(page_contains_all = list("Visa Card Statement"))))), 0)  # 'unsigned' validates
 })
 
 # ---- reconcile: 2-digit-year period bounds --------------------------------
