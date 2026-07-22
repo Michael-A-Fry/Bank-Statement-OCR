@@ -23,6 +23,7 @@
     fields         = "fields_templates",
     user_fields    = "fields_templates_user",
     dictionary     = "dictionaries/labels.yaml",
+    lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",
     requests       = "requests",
     logs           = "logs"
