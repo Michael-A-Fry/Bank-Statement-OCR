@@ -23,16 +23,62 @@
   trimws(gsub("\\s+", " ", s))
 }
 
+# .date_canon(z) -- fold a date string onto a single comparable form so the
+# round-trip check in .date_strict never FALSE-rejects on a cosmetic difference
+# the declared format legitimately allows. It normalises away, on BOTH sides of
+# the comparison:
+#   * case               ("Oct" vs "oct")
+#   * month-name width    (%b "Oct" round-trip vs a source that wrote "October")
+#   * zero-padding        (%d "01" round-trip vs a source that wrote "1")
+#   * run-together spaces
+# COMPARISON aid only -- the raw cell is always kept verbatim elsewhere. English
+# month names, matching the reader's existing %b/%B parse assumption.
+.date_canon <- function(z) {
+  z <- tolower(trimws(as.character(z)))
+  # any month word -> its 3-letter key (unique per English month) so a %b vs %B
+  # width difference between the round-trip and the source never mismatches.
+  z <- gsub("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*", "\\1",
+            z, perl = TRUE)
+  z <- gsub("(?<![0-9])0+([0-9])", "\\1", z, perl = TRUE)  # strip leading zeros in numbers
+  trimws(gsub("[[:space:]]+", " ", z))
+}
+
+# .date_strict(s, fmt) -- parse already-normalised date strings under `fmt`,
+# returning ISO ONLY when the parse is TRUSTWORTHY, else NA. Base as.Date() is
+# dangerously lenient: it reads "13/08/2025" under "%d/%m/%y" as 2020 (year<-"20",
+# the trailing "25" silently ignored) -- a wrong figure that looks right, the
+# cardinal failure. Two deterministic guards close that hole:
+#   1. ROUND-TRIP -- reformat the parsed Date back through the SAME `fmt` and
+#      require it to canonically match the input. If the format didn't consume
+#      the whole string (or read the wrong field widths) the two disagree.
+#   2. YEAR BOUND [1990, 2100] -- a 2-digit source read under a 4-digit "%Y"
+#      (year 0025) round-trips clean but is obvious nonsense. Mirrors the
+#      reconcile.R period guard (year >= 1990) with a symmetric upper bound.
+# Both are needed: the round-trip catches (1)'s wrong-width case (year stays in
+# range), the bound catches (2)'s out-of-range case (round-trip matches).
+.date_strict <- function(s, fmt) {
+  d <- suppressWarnings(as.Date(s, format = fmt))
+  parsed <- which(!is.na(d))
+  if (length(parsed)) {
+    yr <- as.integer(format(d[parsed], "%Y"))
+    rt <- format(d[parsed], fmt)                       # round-trip through same fmt
+    bad <- is.na(yr) | yr < 1990 | yr > 2100 |
+           .date_canon(rt) != .date_canon(s[parsed])
+    d[parsed[bad]] <- as.Date(NA)
+  }
+  format(d, "%Y-%m-%d")                                # format(NA) -> NA
+}
+
 # parse_date(x, fmt) -> list(iso, raw)
-# `iso` is YYYY-MM-DD (NA when unparseable); `raw` is the input verbatim.
+# `iso` is YYYY-MM-DD (NA when unparseable OR untrustworthy -- see .date_strict);
+# `raw` is the input verbatim. Never emits a silently-wrong date.
 parse_date <- function(x, fmt) {
   raw <- as.character(x)
   iso <- rep(NA_character_, length(raw))
   ok <- !is.na(raw) & nzchar(trimws(raw))
   if (any(ok)) {
     s <- .normalise_date_str(raw[ok])
-    d <- suppressWarnings(as.Date(s, format = fmt))
-    iso[ok] <- format(d, "%Y-%m-%d")  # format(NA) -> NA
+    iso[ok] <- .date_strict(s, fmt)
   }
   list(iso = iso, raw = raw)
 }

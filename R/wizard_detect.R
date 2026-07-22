@@ -60,9 +60,14 @@ detect_date_format <- function(values) {
   if (!length(v)) return("")
   v <- utils::head(v, 50L)
   v <- .normalise_date_str(v)   # same folding the reader uses -> they agree
+  # Validate with the SAME strict parser the reader uses (parse_date), not a bare
+  # as.Date(): the detector must never pick a format the reader would then reject
+  # -- e.g. a 4-digit year under "%y", or an out-of-range year. Year-less forms
+  # get a sentinel year exactly as the reader's fallback does. (parse_date
+  # re-normalises internally; on already-normalised input that is a no-op.)
   parses <- function(fmt, yearless)
-    if (isTRUE(yearless)) !any(is.na(as.Date(paste(v, "2000"), paste(fmt, "%Y"))))
-    else !any(is.na(as.Date(v, format = fmt)))
+    if (isTRUE(yearless)) !any(is.na(parse_date(paste(v, "2000"), paste(fmt, "%Y"))$iso))
+    else !any(is.na(parse_date(v, fmt)$iso))
   for (e in wd_date_table()) {
     if (all(grepl(e$rx, v)) && parses(e$fmt, isTRUE(e$yearless))) return(e$fmt)
   }

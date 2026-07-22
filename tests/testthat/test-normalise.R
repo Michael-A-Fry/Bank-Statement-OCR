@@ -77,6 +77,41 @@ test_that("parse_date folds ordinals, weekday prefix and 'of'; raw kept verbatim
   expect_true(is.na(parse_date("not a date", "%d %b %Y")$iso))
 })
 
+test_that("parse_date NEVER silently invents a year (P0-1)", {
+  # THE bug: a 4-digit-year value read under a 2-digit "%y" format. Base as.Date
+  # takes "20" as the year and silently drops the trailing "25" -> 2020, a wrong
+  # figure that looks right. Must fail closed to NA, not guess.
+  expect_true(is.na(parse_date("13/08/2025", "%d/%m/%y")$iso))
+  # the mirror image: a 2-digit value under a 4-digit "%Y" yields year 0025 --
+  # round-trips clean, so the [1990,2100] year bound is what rejects it.
+  expect_true(is.na(parse_date("13/08/25", "%d/%m/%Y")$iso))
+  # trailing junk the format never consumed
+  expect_true(is.na(parse_date("13/08/2025 extra", "%d/%m/%Y")$iso))
+  # an impossible calendar day stays NA (Feb 31), never rolls over
+  expect_true(is.na(parse_date("31/02/2025", "%d/%m/%Y")$iso))
+  # ...while every LEGITIMATE date under a matching format still parses, incl.
+  # non-zero-padded fields and full-vs-abbreviated month names (round-trip must
+  # not false-reject on cosmetic width/case differences).
+  expect_equal(parse_date("13/08/2025", "%d/%m/%Y")$iso, "2025-08-13")
+  expect_equal(parse_date("13/08/25",   "%d/%m/%y")$iso, "2025-08-13")
+  expect_equal(parse_date("1/8/2025",   "%d/%m/%Y")$iso, "2025-08-01")
+  expect_equal(parse_date("12th October 2025", "%d %b %Y")$iso, "2025-10-12")
+  # vectorised: unparseable rows go NA, valid neighbours unaffected (no row is
+  # dropped -- the caller keeps the row and flags the NA date).
+  expect_identical(
+    parse_date(c("13/08/2025", "01/09/2025", "bad", ""), "%d/%m/%Y")$iso,
+    c("2025-08-13", "2025-09-01", NA, NA))
+})
+
+test_that("detect_date_format agrees with the strict reader (no format it'd reject)", {
+  # A column of 4-digit-year dates must resolve to the 4-digit format, never the
+  # 2-digit "%y" the reader would now reject -- detector and reader share one
+  # strict validation, so they can never disagree.
+  expect_equal(detect_date_format(c("13/08/2025", "01/09/2025")), "%d/%m/%Y")
+  expect_equal(detect_date_format(c("13/08/25", "01/09/25")),     "%d/%m/%y")
+  expect_equal(detect_date_format(c("12th October 2025")),        "%d %b %Y")
+})
+
 test_that(".normalise_date_str is the shared fold used by reader and detector", {
   expect_equal(.normalise_date_str("12th October"),       "12 October")
   expect_equal(.normalise_date_str("12th of October"),    "12 October")
