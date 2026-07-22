@@ -8,6 +8,34 @@
   load_templates(templates_dir())[["bnz_everyday_csv"]]
 }
 
+test_that("safe_readlines transcodes non-UTF-8 input, keeping descriptions verbatim (P2-5)", {
+  # Windows-1252 export: 0xE9 = é, 0xA3 = £. readLines(encoding="UTF-8") would tag
+  # these as UTF-8 without transcoding -> invalid/mojibake. Must come back as the
+  # real characters, valid UTF-8.
+  tf <- tempfile(fileext = ".csv")
+  writeBin(as.raw(c(0x44,0x61,0x74,0x65,0x2C,0x50,0x61,0x79,0x65,0x65,0x0A,          # Date,Payee
+                    0x30,0x31,0x2C,0x43,0x61,0x66,0xE9,0x20,0xA3,0x35,0x0A)), tf)     # 01,Café £5
+  ln <- safe_readlines(tf)
+  expect_length(ln, 2)
+  expect_true(validUTF8(ln[2]))
+  expect_true(all(c(233L, 163L) %in% utf8ToInt(ln[2])))   # é (233) and £ (163) intact
+
+  # a UTF-8 BOM is still stripped from the first header (unchanged behaviour).
+  tf2 <- tempfile(fileext = ".csv")
+  writeBin(as.raw(c(0xEF,0xBB,0xBF,0x44,0x61,0x74,0x65,0x0A,0x31,0x0A)), tf2)
+  expect_identical(safe_readlines(tf2)[1], "Date")
+
+  # plain ASCII / valid UTF-8 is unchanged.
+  tf3 <- tempfile(fileext = ".csv"); writeLines(c("Date,Amount", "01/01/2025,5.00"), tf3)
+  expect_identical(safe_readlines(tf3), c("Date,Amount", "01/01/2025,5.00"))
+
+  # a UTF-16LE BOM file is decoded, not garbled.
+  tf4 <- tempfile(fileext = ".csv")
+  writeBin(c(as.raw(c(0xFF,0xFE)),
+             as.raw(as.vector(rbind(utf8ToInt("Date\n1\n"), 0L)))), tf4)
+  expect_identical(safe_readlines(tf4), c("Date", "1"))
+})
+
 test_that("a too-LONG row is flagged malformed and neighbours stay intact", {
   input <- read_input(fixture("tests/testthat/fixtures/bnz_ragged_long.csv"))
   p <- parse_statement(input, .bnz_tmpl())

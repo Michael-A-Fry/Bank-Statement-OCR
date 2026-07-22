@@ -77,13 +77,49 @@ current_user <- function() {
   "unknown"
 }
 
-# safe_readlines(path) -- read text lines without warnings/crashes. A UTF-8
-# byte-order mark (Excel writes one on every CSV export) is stripped from the
-# first line - left in place it corrupts the first header name ("﻿Date"
-# is not "Date") and silently breaks that column's mapping.
-safe_readlines <- function(path) {
-  lines <- safe(readLines(path, warn = FALSE, encoding = "UTF-8"), character(0))
-  # Byte-level match (useBytes): works on any host locale, C/ASCII included.
-  if (length(lines)) lines[1] <- sub("^\xef\xbb\xbf", "", lines[1], useBytes = TRUE)
-  lines
+# .transcode_lines(raw_bytes, from) -- convert raw file bytes of a known encoding
+# to UTF-8 and split into lines. sub="byte" keeps any stray undefined byte VISIBLE
+# (as \xNN) rather than silently dropping content.
+.transcode_lines <- function(raw_bytes, from) {
+  s <- safe(iconv(list(raw_bytes), from = from, to = "UTF-8", sub = "byte"), NA_character_)
+  if (length(s) != 1L || is.na(s)) return(character(0))
+  s <- gsub("\r\n", "\n", s, fixed = TRUE); s <- gsub("\r", "\n", s, fixed = TRUE)
+  strsplit(s, "\n", fixed = TRUE)[[1]]
+}
+
+# safe_readlines(path, encoding) -- read text lines without warnings/crashes, and
+# WITHOUT corrupting non-UTF-8 input. readLines(encoding="UTF-8") only TAGS bytes
+# as UTF-8, it does not transcode; a Windows-1252 / Latin-1 bank export (a payee
+# with a £, é, or non-breaking space) then flows in as mojibake / invalid UTF-8,
+# breaking the verbatim-description guarantee, and a UTF-16 file garbles entirely.
+# So: sniff the byte-order mark, else validate UTF-8 and fall back to the dominant
+# 8-bit codepage -- all deterministic (`encoding` overrides the sniff when known).
+#   * UTF-8 BOM (Excel writes one on every CSV export) is stripped -- left in it
+#     corrupts the first header name ("﻿Date" is not "Date").
+#   * UTF-16 LE/BE BOM -> transcoded (readLines would garble it).
+#   * no BOM + valid UTF-8 -> read as UTF-8 (the common path, unchanged).
+#   * no BOM + invalid UTF-8 -> Windows-1252 (superset of Latin-1; every byte maps,
+#     nothing is silently dropped), which covers the real NZ/UK bank exports.
+safe_readlines <- function(path, encoding = NULL) {
+  size <- safe(file.info(path)$size, NA_real_)
+  raw <- safe(readBin(path, "raw", n = if (is.na(size)) 0L else as.integer(size)), raw(0))
+  if (!length(raw)) return(character(0))
+  b <- as.integer(raw[seq_len(min(3L, length(raw)))])
+  # UTF-16 byte-order marks: must be transcoded, never read as UTF-8/8-bit.
+  if (length(b) >= 2 && b[1] == 0xFF && b[2] == 0xFE) return(.transcode_lines(raw[-(1:2)], "UTF-16LE"))
+  if (length(b) >= 2 && b[1] == 0xFE && b[2] == 0xFF) return(.transcode_lines(raw[-(1:2)], "UTF-16BE"))
+  had_utf8_bom <- length(b) >= 3 && b[1] == 0xEF && b[2] == 0xBB && b[3] == 0xBF
+  body <- if (had_utf8_bom) raw[-(1:3)] else raw
+  # An explicitly declared non-UTF-8 encoding wins over the sniff.
+  if (!is.null(encoding) && nzchar(encoding) && !toupper(encoding) %in% c("UTF-8", "UTF8"))
+    return(.transcode_lines(body, encoding))
+  s <- safe(rawToChar(body), NA_character_)
+  if (!is.na(s) && validUTF8(s)) {
+    # COMMON PATH -- valid UTF-8: read exactly as before (readLines + BOM strip).
+    lines <- safe(readLines(path, warn = FALSE, encoding = "UTF-8"), character(0))
+    if (length(lines)) lines[1] <- sub("^\xef\xbb\xbf", "", lines[1], useBytes = TRUE)
+    return(lines)
+  }
+  # No BOM, not valid UTF-8, no declared encoding -> Windows-1252 fallback.
+  .transcode_lines(body, "WINDOWS-1252")
 }
