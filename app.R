@@ -803,13 +803,18 @@ server <- function(input, output, session) {
   observe(updateSelectInput(session, "adm_tpl_pick", choices = sort(names(all_templates()))))
 
   # clicking a row selects it in the picker
+  # Server-side admin gate. The Admin tab's controls are hidden until login, but
+  # a crafted client message can still fire any input, so EVERY privileged handler
+  # re-verifies the admin session here and fail-closes (silent no-op) without one.
   observeEvent(input$adm_tpl_overview_rows_selected, {
+    req(admin_ok())
     ov <- template_overview(all_templates())
     i <- input$adm_tpl_overview_rows_selected
     if (length(i) && i <= nrow(ov)) updateSelectInput(session, "adm_tpl_pick", selected = ov$id[i])
   })
 
   observeEvent(input$adm_tpl_pick, {
+    req(admin_ok())
     t <- all_templates()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
@@ -830,6 +835,7 @@ server <- function(input, output, session) {
   })
   # Hide / un-hide a USER template: parks it out of detection without deleting.
   observeEvent(input$adm_tpl_hide, {
+    req(admin_ok())
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
     if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
@@ -864,6 +870,7 @@ server <- function(input, output, session) {
   })
   # Delete a USER template (never a shipped one), then refresh the picker.
   observeEvent(input$adm_tpl_delete, {
+    req(admin_ok())
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
     if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
@@ -879,6 +886,7 @@ server <- function(input, output, session) {
 
   # Duplicate the selected template with a fresh id, into the editor to tweak+save.
   observeEvent(input$adm_tpl_dup, {
+    req(admin_ok())
     t <- tryCatch(yaml::yaml.load(input$adm_tpl_edit %||% ""), error = function(e) NULL)
     if (is.null(t) || is.null(t$id)) t <- templates()[[input$adm_tpl_pick]]
     req(t)
@@ -895,6 +903,7 @@ server <- function(input, output, session) {
     renderUI(div(style = sprintf("color:%s;font-size:12px", if (ok) "#137333" else "#b00020"), HTML(html)))
 
   observeEvent(input$adm_tpl_validate, {
+    req(admin_ok())
     t <- .tpl_from_editor()
     if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
     probs <- validate_template(t)
@@ -903,6 +912,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$adm_tpl_save, {
+    req(admin_ok())
     t <- .tpl_from_editor()
     if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
     path <- tryCatch(save_user_template(t, USER_TEMPLATES_DIR), error = function(e) conditionMessage(e))
@@ -921,9 +931,10 @@ server <- function(input, output, session) {
     if (file.exists(DICT_PATH)) paste(readLines(DICT_PATH, warn = FALSE), collapse = "\n") else ""
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
-  observeEvent(input$adm_dict_reload,
-    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
+  observeEvent(input$adm_dict_reload, { req(admin_ok())
+    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()) })
   observeEvent(input$adm_dict_save, {
+    req(admin_ok())
     txt <- input$adm_dict_edit %||% ""
     if (!isTRUE(tryCatch({ yaml::yaml.load(txt); TRUE }, error = function(e) FALSE))) {
       output$adm_dict_msg <- renderUI(div(style = "color:#b00020", "Not valid YAML - not saved."))
@@ -940,6 +951,7 @@ server <- function(input, output, session) {
   adm_ba <- reactiveVal(NULL)
   adm_ba_conv <- reactiveVal(NULL)   # converted-report rows, when "convert & save" was ticked
   observeEvent(input$adm_ba_run, {
+    req(admin_ok())
     if (is.null(input$adm_ba_files)) {
       showNotification("Upload some statements first, then click Run.",
                        type = "warning", duration = 6)
@@ -1063,10 +1075,12 @@ server <- function(input, output, session) {
     updateSelectInput(session, "adm_req_pick", choices = open)
   })
   observeEvent(input$adm_req_actioned, {
+    req(admin_ok())
     id <- input$adm_req_pick; req(id, nzchar(id))
     if (isTRUE(set_request_status(id, "actioned", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
   })
   observeEvent(input$adm_req_dismiss, {
+    req(admin_ok())
     id <- input$adm_req_pick; req(id, nzchar(id))
     if (isTRUE(set_request_status(id, "dismissed", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
   })
@@ -1094,6 +1108,7 @@ server <- function(input, output, session) {
       choices = if (nrow(s$folders$failed)) s$folders$failed$file else character(0))
   })
   observeEvent(input$adm_inbox_wizard, {
+    req(admin_ok())
     nm <- input$adm_inbox_pick
     if (is.null(nm) || !nzchar(nm)) { showNotification("Pick a failed file first.", type = "warning"); return() }
     p <- failed_file_path(nm, ".")
@@ -1424,6 +1439,7 @@ server <- function(input, output, session) {
   # toolkit the Convert tab uses, so a failed/abandoned statement is a 2-second
   # pickup - identify it in the table (A), open it, teach the tool, save (B).
   observeEvent(input$adm_up_wizard, {
+    req(admin_ok())
     id <- input$adm_up_pick
     if (is.null(id) || !nzchar(id)) {
       showNotification("Pick a saved upload first.", type = "warning"); return() }
@@ -2719,8 +2735,12 @@ server <- function(input, output, session) {
   load_admin <- function() adm_data(list(
     runs = tryCatch(read_runs_all(LOGDIR), error = function(e) data.frame()),  # live + archived
     fb   = tryCatch(read_feedback(LOGDIR), error = function(e) data.frame())))
-  observeEvent(input$adm_refresh, load_admin())
-  observe({ if (is.null(adm_data())) load_admin() })
+  # Admin dashboard data (run logs, feedback) is loaded ONLY for an authenticated
+  # admin session, so a non-admin client can never pull it by marking a hidden
+  # output visible -- every admin output does req(adm_data()), which stays NULL
+  # (and therefore blank) without a load.
+  observeEvent(input$adm_refresh, { req(admin_ok()); load_admin() })
+  observe({ req(admin_ok()); if (is.null(adm_data())) load_admin() })
 
   output$adm_overview <- renderDT({
     d <- adm_data(); req(d)
@@ -2759,6 +2779,7 @@ server <- function(input, output, session) {
       formatStyle("drop", fontWeight = "bold", color = "#b00020")
   })
   observeEvent(input$adm_rollup, {
+    req(admin_ok())
     r <- tryCatch(rollup_logs(LOGDIR, "runs", keep_days = 90), error = function(e) NULL)
     r2 <- tryCatch(rollup_logs(LOGDIR, "feedback", keep_days = 90), error = function(e) NULL)
     load_admin()
