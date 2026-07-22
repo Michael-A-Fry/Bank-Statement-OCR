@@ -6,6 +6,10 @@ id: tutorial_everyday_pdf
 bank: Kowhai Bank NZ (sample)
 statement_type: everyday
 format: pdf
+# Worked example only -- excluded from production detection (load_template_set)
+# so its generic wording never matches a real statement. Still loadable for the
+# wizard walkthrough and its own self-tests.
+sample: true
 version: 1
 effective_from: null
 effective_to: null

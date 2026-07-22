@@ -32,6 +32,20 @@
     "escalate"), character(1))
 }
 
+# .diag_date(s) -- tolerantly parse a verbatim period bound / ISO effective date to
+# a Date (or NA). Only the shapes that actually appear on statements; NA on
+# anything else so the effective-range check simply skips rather than guessing.
+.diag_date <- function(s) {
+  s <- as.character(s %||% NA)
+  if (is.na(s) || !nzchar(trimws(s))) return(as.Date(NA))
+  for (f in c("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y",
+              "%d/%m/%y", "%d %b %y", "%d %B %y")) {
+    d <- suppressWarnings(as.Date(trimws(s), f))
+    if (!is.na(d) && as.integer(format(d, "%Y")) >= 1990) return(d)
+  }
+  as.Date(NA)
+}
+
 # Compact a set of row indices for display.
 .rng <- function(idx) {
   if (!length(idx)) return("")
@@ -80,6 +94,24 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
 
   if (!is.null(parsed) && !is.null(parsed$transactions)) {
     tx <- parsed$transactions
+
+    # 0. effective_from / effective_to (SOFT signal, P2-9): if the matched template
+    # declares a validity window and this statement's period falls outside it, the
+    # bank may have changed the format. Never a hard filter -- the statement still
+    # parses; this is only a caution so an outdated-format template that matches
+    # newer statements is visible, not silently trusted.
+    tmpl <- metadata$template
+    if (!is.null(tmpl)) {
+      eff_from <- .diag_date(tmpl$effective_from); eff_to <- .diag_date(tmpl$effective_to)
+      pd <- c(.diag_date(parsed$header$period_start), .diag_date(parsed$header$period_end))
+      pd <- pd[!is.na(pd)]
+      if (length(pd) && (!is.na(eff_from) || !is.na(eff_to)) &&
+          ((!is.na(eff_from) && any(pd < eff_from)) || (!is.na(eff_to) && any(pd > eff_to))))
+        add("template period", "date_out_of_range", "medium",
+          sprintf("the statement's dates fall outside this template's declared valid range (%s to %s)",
+                  tmpl$effective_from %||% "any", tmpl$effective_to %||% "any"),
+          "The bank may have changed this statement's format since this template was made. Check the columns still line up; if the layout differs, build an updated template.")
+    }
 
     # 1. Failing reconciliation KPIs -> a fix per check.
     if (!is.null(recon) && !is.null(recon$kpis)) {

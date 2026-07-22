@@ -49,6 +49,39 @@ test_that("genuinely ambiguous eligible candidates report unmatched", {
   expect_true(grepl("ambiguous", det$detail))
 })
 
+test_that("filename_regex cannot create eligibility, only break a tie (P2-6)", {
+  mk <- function(id, need, min_score, fr = NULL) list(
+    id = id, bank = "X", statement_type = "e", format = "delimited", version = 1,
+    min_score = min_score,
+    fingerprint = list(header_contains_all = need, filename_regex = fr),
+    delimiter = ",", columns = list(date = list(source = "Date"),
+      amount = list(source = "Amount"), description = list(source = "Amount")),
+    amount_sign = "signed", currency = "NZD")
+  input <- list(kind = "delimited", path = "anz_statement.csv", sha256 = "s",
+                lines = c("Date,Amount", "01/01/2020,1.00"))
+  # A template that matches NOTHING in the header (min_score 1) but whose
+  # filename_regex matches must NOT become eligible on the name alone.
+  det <- detect_statement(input, list(
+    fn = mk("fn", c("Payee", "Reference"), 1, "anz")))   # 0 header hits, name matches
+  expect_false(det$matched)
+
+  # Among two EQUAL content scores, the filename match breaks the tie.
+  det2 <- detect_statement(input, list(
+    aaa = mk("aaa", c("Date", "Amount"), 1, NULL),
+    bbb = mk("bbb", c("Date", "Amount"), 1, "anz")))      # both score 2 on content
+  expect_true(det2$matched)
+  expect_identical(det2$template_id, "bbb")               # won on the filename tie-break
+})
+
+test_that("sample templates are excluded from the production detection set (P2-8)", {
+  set <- load_template_set(templates_dir(), tempfile())   # no user dir
+  expect_false("tutorial_everyday_pdf" %in% names(set))   # not a detection candidate
+  # ...but it is still loadable directly (wizard walkthrough / self-tests).
+  raw <- load_templates(templates_dir())
+  expect_true("tutorial_everyday_pdf" %in% names(raw))
+  expect_true(isTRUE(raw[["tutorial_everyday_pdf"]]$sample))
+})
+
 test_that("a match reports its margin + runner-up over near-duplicate templates", {
   # aaa fingerprints on 2 phrases (both present -> score 2); bbb on 1 (score 1).
   # aaa wins by a THIN margin of 1, and bbb is the runner-up.

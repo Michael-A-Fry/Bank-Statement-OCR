@@ -14,6 +14,18 @@
   base
 }
 
+test_that("a statement dated outside the template's effective range is noted (P2-9)", {
+  parsed <- list(transactions = .mk_tx(1),
+                 header = list(period_start = "01/06/2025", period_end = "30/06/2025"))
+  tmpl <- list(id = "t", effective_from = "2018-01-01", effective_to = "2020-12-31")
+  d <- build_diagnostics("ok", parsed = parsed, metadata = list(template = tmpl))
+  expect_true(any(d$category == "date_out_of_range"))     # soft caution raised
+  # in-range -> no such note (a normal statement is unaffected).
+  tmpl2 <- list(id = "t", effective_from = "2018-01-01", effective_to = NULL)
+  d2 <- build_diagnostics("ok", parsed = parsed, metadata = list(template = tmpl2))
+  expect_false(any(d2$category == "date_out_of_range"))
+})
+
 test_that("failing KPIs map to actionable fixes, most severe first", {
   parsed <- list(transactions = .mk_tx(2, date = c("2025-01-01", "2025-01-02"),
                                        amount = c(-5, -5), flags = c("", "")))

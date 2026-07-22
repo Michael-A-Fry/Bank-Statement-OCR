@@ -171,7 +171,12 @@ load_template_set <- function(default_dir = "templates", user_dir = "templates_u
       u <- u[!vapply(u, function(t) isTRUE(t$hidden), logical(1))]
     for (id in names(u)) if (is.null(d[[id]])) d[[id]] <- u[[id]]
   }
-  d
+  # Sample / tutorial templates (`sample: true`) are worked examples, not real
+  # bank formats -- they must never take part in production detection, or their
+  # generic wording could match (or tie with) a real statement and mis-parse it
+  # with a demo's hardcoded bands. They stay loadable via load_templates() for the
+  # wizard walkthrough and their own self-tests, just not in this detection set.
+  d[!vapply(d, function(t) isTRUE(t$sample), logical(1))]
 }
 
 # template_overview(tset) -- a flat data.frame summarising every loaded template,

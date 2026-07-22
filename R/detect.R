@@ -36,11 +36,15 @@
   header <- .header_fields(input$lines %||% character(0), template)
   hit <- tolower(need) %in% tolower(header)     # case-insensitive, like .pick()
   score <- sum(hit)
+  # filename_regex is a TIE-BREAKER, never part of the score that decides
+  # eligibility: a template must earn its min_score on CONTENT (header evidence)
+  # alone, so it can never win on the file NAME with zero header match, and the
+  # same bytes under a different name always detect the same way. Reported
+  # separately (`fn`) and only used to separate otherwise-tied eligible candidates.
   fr <- fp$filename_regex
-  if (!is.null(fr) && nzchar(fr)) {
-    if (grepl(fr, basename(input$path), perl = TRUE)) score <- score + 1
-  }
-  list(score = score, need = length(need), missing = need[!hit])
+  fn <- if (!is.null(fr) && nzchar(fr) && !is.null(input$path) &&
+            grepl(fr, basename(input$path), perl = TRUE)) 1L else 0L
+  list(score = score, need = length(need), missing = need[!hit], fn = fn)
 }
 
 # detect_statement(input, templates, hint_bank, hint_type)
@@ -69,9 +73,11 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
 
   sc <- lapply(ids, function(i) .score_template(input, templates[[i]]))
   scores <- vapply(sc, function(s) s$score, numeric(1))
+  fns    <- vapply(sc, function(s) as.numeric(s$fn %||% 0L), numeric(1))
   mins   <- vapply(ids, function(i) templates[[i]]$min_score %||% 1, numeric(1))
-  ord <- order(scores, ids, decreasing = c(TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; sc <- sc[ord]; mins <- mins[ord]
+  # order by CONTENT score, then the filename tie-breaker, then id (deterministic).
+  ord <- order(scores, fns, ids, decreasing = c(TRUE, TRUE, FALSE), method = "radix")
+  ids <- ids[ord]; scores <- scores[ord]; fns <- fns[ord]; sc <- sc[ord]; mins <- mins[ord]
 
   # Eligibility is per-candidate: a template is a genuine contender only when it
   # meets its OWN min_score. Ambiguity (best strictly > 2nd) is then judged among
@@ -84,9 +90,14 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
 
   if (any(eligible)) {
     e_ids <- ids[eligible]; e_scores <- scores[eligible]; e_mins <- mins[eligible]
+    e_fns <- fns[eligible]
     win_id <- e_ids[1]; win_score <- e_scores[1]; win_min <- e_mins[1]
     second <- if (length(e_scores) >= 2) e_scores[2] else -Inf
-    unambiguous <- win_score > second
+    second_fn <- if (length(e_fns) >= 2) e_fns[2] else -Inf
+    # Unambiguous when the winner's CONTENT score strictly beats the runner-up,
+    # OR they tie on content but the filename tie-breaker separates them.
+    unambiguous <- (win_score > second) ||
+                   (win_score == second && e_fns[1] > second_fn)
     matched <- unambiguous
     if (matched) {
       detail <- sprintf("matched %s (score %s/%s)", win_id, win_score, win_min)

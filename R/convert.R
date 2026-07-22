@@ -86,7 +86,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
         "ok"
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt))
+        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+                        template = template))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta)
 
