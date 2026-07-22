@@ -812,7 +812,7 @@ server <- function(input, output, session) {
       return()
     }
     fs <- input$adm_ba_files
-    sess <- file.path(tempdir(), paste0("ba_", as.integer(runif(1, 1, 1e9)))); dir.create(sess, showWarnings = FALSE)
+    sess <- tempfile("ba_"); dir.create(sess, showWarnings = FALSE)  # guaranteed-unique per session/process (no bleed)
     paths <- vapply(seq_len(nrow(fs)), function(i) {
       d <- file.path(sess, fs$name[i]); file.copy(fs$datapath[i], d, overwrite = TRUE); d }, character(1))
     adm_ba_conv(NULL)
@@ -1385,7 +1385,7 @@ server <- function(input, output, session) {
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
   run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL) {
-    sess <- file.path(tempdir(), paste0("cv_", as.integer(runif(1, 1, 1e9))))
+    sess <- tempfile("cv_")   # guaranteed-unique per session/process (no cross-user bleed)
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, name)
     file.copy(srcpath, src, overwrite = TRUE)
@@ -2102,7 +2102,7 @@ server <- function(input, output, session) {
                        type = "warning", duration = 6)
       return()
     }
-    sess <- file.path(tempdir(), paste0("ts_", as.integer(runif(1, 1, 1e9))))
+    sess <- tempfile("ts_")   # guaranteed-unique per session/process (no cross-user bleed)
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, input$ts_file$name)
     file.copy(input$ts_file$datapath, src, overwrite = TRUE)

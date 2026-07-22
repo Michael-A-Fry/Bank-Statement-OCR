@@ -548,3 +548,47 @@ Keys that matter here:
   **Shiny only**.
 - `qlik.queue_unsupported` - file a Qlik miss into the Shiny pickup queue (default on).
 - `feed.*` - the Mode A batch-feed gate (§6).
+
+---
+
+## 16. Concurrency & isolation guarantee
+
+**Requirement:** with many accountants hitting Shiny and/or Qlik at once, conversions
+must never interleave or bleed one user's statement into another's. This holds at
+three layers, and the code is written to keep it true.
+
+**1. In-app (Shiny) session isolation.** Every piece of user state is a
+**session-scoped reactive** (defined inside `server()`); there is **no global mutable
+user data**, so one browser session can never observe another's upload, result, or
+download. Downloads serve only paths held in the requesting session's own reactives -
+a user cannot request an arbitrary server path. Each conversion works in a
+**`tempfile()`-unique** directory (guaranteed unique within a process, and across
+processes via the PID), so even co-resident sessions never share a folder.
+
+**2. Process / container isolation (the hard guarantee - a deployment choice).**
+In-memory session scope already prevents UI bleed, but for a *guaranteed* wall
+between users (separate memory, temp space and crash domain) each user should get
+their own process/container:
+- **ShinyProxy** - one Docker container per session (strongest; fully sandboxed).
+- **Posit Connect / Shiny Server Pro** - process per session.
+- Open-source Shiny Server co-locates sessions in one process; it is safe by session
+  scope + unique dirs, but is **not** process-isolated - use it only where that is
+  acceptable, or front it with ShinyProxy.
+This is the deployment required for the absolute guarantee; the app is correct under
+either model.
+
+**3. Engine / Qlik batch concurrency.** The engine is a **pure function of a file**
+that shares no state and **never appends to a shared file**:
+- outputs -> a unique per-run/per-statement folder,
+- run log -> `logs/runs/<run_id>.json` (one file), feedback -> one file,
+  uploads -> `uploads/<id>/`, requests -> `requests/<id>.json`.
+Nothing is ever appended to a common file, so **N simultaneous conversions = N
+independent file sets** - the SMB shared-append corruption class is designed out. The
+Qlik entrypoints key their output folder by the statement's **content hash**
+(`.qlik_key`), so two users converting different files that share a name never
+collide; identical bytes map to the same folder (a harmless idempotent re-convert).
+
+**The one shared resource, by design:** the template library (`templates/`,
+`templates_user/`) is a *shared team asset*, not user data - concurrent saves resolve
+last-writer-wins on a given id and involve no statement/PII, so it is not a bleed.
+Real statements only ever live in per-session / per-run / per-content-hash locations.

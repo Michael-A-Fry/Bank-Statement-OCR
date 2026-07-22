@@ -44,6 +44,16 @@ test_that("no proven template -> needs_template + Shiny link, never a draft", {
   expect_identical(j$shiny_url, "http://statements.internal:8100")
 })
 
+test_that("Qlik output key is content-based: same-named different files never collide", {
+  # Two users uploading files that happen to share a name must never share an
+  # output folder. The key is the content hash, so different bytes -> different dir.
+  a <- tempfile("k", fileext = ".csv"); writeLines(c("Date,Amount", "01/01/2026,1.00"), a)
+  b <- tempfile("k", fileext = ".csv"); writeLines(c("Date,Amount", "02/02/2026,2.00"), b)
+  expect_false(identical(.qlik_key(a), .qlik_key(b)))   # different content -> different dir
+  a2 <- tempfile("k", fileext = ".csv"); file.copy(a, a2)
+  expect_identical(.qlik_key(a), .qlik_key(a2))         # identical content -> same (idempotent) dir
+})
+
 test_that("the SSE wrapper returns the transactions frame for a proven bank", {
   cfg <- .qlik_cfg(templates_dir()); cfg$qlik$queue_unsupported <- FALSE
   out <- file.path(tempdir(), paste0("qk_sse_", as.integer(runif(1, 1, 1e8))))

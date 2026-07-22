@@ -7,6 +7,17 @@
 # happens automatically. The Shiny app itself is unchanged; ONLY this path is
 # restricted. Everything is config-driven (see R/config.R).
 
+# .qlik_key(path) -- a per-STATEMENT output key derived from the file's CONTENT
+# hash, so two users converting different files that happen to share a name (both
+# "statement.pdf") NEVER land in the same output folder -- the guarantee against
+# cross-user data bleed. Identical bytes deliberately map to the same key
+# (idempotent re-convert). Falls back to a unique temp name if the file can't be
+# hashed (it couldn't be converted anyway).
+.qlik_key <- function(path) {
+  sha <- safe(file_sha256(path), NA_character_)
+  if (is.na(sha)) basename(tempfile("na_")) else substr(sha, 1, 16)
+}
+
 # convert_for_qlik(path, outdir, config) -> a small status list, ALSO written to
 # outdir/status.json, that the Qlik app reads to decide what to show:
 #   status == "ok"/"needs_review"  -> ODAG LOADs outdir/<base>.csv (the `csv` field)
@@ -69,9 +80,10 @@ convert_for_qlik <- function(path, outdir, config = load_config(),
 # transactions table directly. On a no-proven-template miss it returns a one-row
 # frame carrying the status + app link, so the Qlik sheet can branch on it.
 convert_statement_sse <- function(path, outdir = NULL, config = load_config()) {
+  # Content-hash key (NOT the filename), so concurrent conversions of same-named
+  # but different files never share an output folder.
   if (is.null(outdir))
-    outdir <- file.path(config$feed$feed_dir %||% "feed", "qlik",
-                        tools::file_path_sans_ext(basename(path)))
+    outdir <- file.path(config$feed$feed_dir %||% "feed", "qlik", .qlik_key(path))
   st <- convert_for_qlik(path, outdir, config)
   if (!is.na(st$csv) && file.exists(st$csv))
     return(utils::read.csv(st$csv, stringsAsFactors = FALSE, check.names = FALSE))
