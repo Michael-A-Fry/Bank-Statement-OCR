@@ -2495,13 +2495,17 @@ server <- function(input, output, session) {
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
-      # A new layout is a FORK, not a cliff: the reassuring default is to hand it
-      # to the team; building one yourself is the quieter option.
-      div(style = "margin:12px 0;padding:12px;border:1px solid #f0c36d;background:#fff8e6;border-radius:8px",
-        strong("This layout is new — the tool hasn't seen it yet."),
-        p(class = "muted", "No problem. Send it to the team and they'll set it up — you don't have to build anything."),
-        actionButton("cv_unsup_raise", "Send it to the team to set up", class = "btn-primary"), " ",
-        actionLink("cv_teach_go", "or set one up myself →"))
+      # A new layout is a FORK, not a cliff. We WANT analysts setting up their own
+      # templates, so the prominent GREEN action is "set it up yourself" (the tool
+      # pre-fills what it can); handing it to the team is the small fallback.
+      div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
+        strong("This layout is new — set it up once and it converts every time."),
+        p(class = "muted", style = "margin:6px 0 10px",
+          "The tool pre-fills what it can detect from your statement — you confirm against a live preview and save. Takes a couple of minutes, no data background needed."),
+        actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-success btn-lg"),
+        div(style = "margin-top:8px",
+          span(class = "muted", "Would rather not? "),
+          actionLink("cv_unsup_raise", "Send it to the team instead")))
     } else {
       # Happy path stays quiet: the "Wrong bank?" line up top already offers a fix,
       # so we don't repeat a toolkit prompt here. needs_review/failed keep the offer.
