@@ -258,8 +258,21 @@ save_user_template <- function(template, dir = "templates_user") {
   probs <- validate_template(template)
   if (length(probs)) stop("template is not valid: ", paste(probs, collapse = "; "))
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  id <- gsub("[^A-Za-z0-9_]+", "_", template$id %||% "user_template")
-  path <- file.path(dir, paste0(id, ".yaml"))
+  base_slug <- gsub("[^A-Za-z0-9_]+", "_", template$id %||% "user_template")
+  # Two DISTINCT ids can sanitise to the same file slug ("ANZ Go!" and "ANZ-Go"
+  # both -> "ANZ_Go"). Only overwrite when the existing file holds the SAME
+  # original id (a genuine edit); otherwise pick the next free slug so a different
+  # template is never silently clobbered. (Templates are keyed by their id field
+  # at load, so the distinct ids stay distinct -- only the filename is uniquified.)
+  slug <- base_slug; k <- 2L
+  repeat {
+    path <- file.path(dir, paste0(slug, ".yaml"))
+    if (!file.exists(path)) break
+    existing_id <- tryCatch(yaml::read_yaml(path)$id, error = function(e) NULL)
+    if (identical(existing_id, template$id)) break
+    slug <- paste0(base_slug, "_", k); k <- k + 1L
+  }
+  path <- file.path(dir, paste0(slug, ".yaml"))
   yaml::write_yaml(template, path)
   invisible(path)
 }

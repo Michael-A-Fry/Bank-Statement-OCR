@@ -49,6 +49,35 @@ test_that("save_user_template validates then round-trips", {
   expect_error(save_user_template(bad, udir), "not valid")
 })
 
+test_that("save_user_template never clobbers a different id that shares a slug (P3-g)", {
+  dir <- tempfile("utpl_"); dir.create(dir)
+  base <- list(bank = "B", statement_type = "e", format = "delimited", version = 1,
+    min_score = 1, currency = "NZD", delimiter = ",",
+    fingerprint = list(header_contains_all = list("Date", "Amount")),
+    columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
+                   amount = list(source = "Amount"), description = list(source = "Amount")),
+    amount_sign = "signed")
+  p1 <- save_user_template(c(base, list(id = "ANZ Go!")), dir)
+  p2 <- save_user_template(c(base, list(id = "ANZ-Go")), dir)   # sanitises to the same slug
+  expect_false(identical(p1, p2))                                # distinct files, no clobber
+  expect_length(list.files(dir, pattern = "\\.ya?ml$"), 2)
+  # both ids survive (templates are keyed by their id field, not the filename).
+  ids <- vapply(list.files(dir, full.names = TRUE), function(f) yaml::read_yaml(f)$id, character(1))
+  expect_setequal(unname(ids), c("ANZ Go!", "ANZ-Go"))
+  # re-saving the SAME id overwrites its own file (a genuine edit), no new file.
+  save_user_template(c(base, list(id = "ANZ Go!", currency = "AUD")), dir)
+  expect_length(list.files(dir, pattern = "\\.ya?ml$"), 2)
+})
+
+test_that("an auto-drafted delimited fingerprint tolerates a one-column change (P3-h)", {
+  fx <- fixture("samples/raw/bnz/bnz_transaction_export_01.csv")
+  skip_if_not(file.exists(fx))
+  tmpl <- draft_template(fx, bank = "BNZ")
+  n_headers <- length(tmpl$fingerprint$header_contains_all)
+  expect_true(n_headers >= 4)
+  expect_equal(tmpl$min_score, n_headers - 1L)   # all-but-one, not all
+})
+
 test_that("draft_template turns a delimited file into a parsing template", {
   fx <- fixture("samples/raw/bnz/bnz_transaction_export_01.csv")
   skip_if_not(file.exists(fx))

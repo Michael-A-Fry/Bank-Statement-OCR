@@ -81,6 +81,15 @@
   list(cols = cols, keys = keys)
 }
 
+# .draft_min_score(n) -- fingerprint threshold for an auto-drafted delimited/excel
+# template. Pinning ALL n headers (min_score == n) made a single added/renamed
+# column in a later export drop the match to "unsupported", pushing analysts to
+# re-draft near-duplicates. Requiring all-but-one (never below 2, and never below
+# n when n <= 2) tolerates a minor header change while staying distinctive -- a
+# different bank would have to share all-but-one of the exact column names to
+# collide, which the ambiguity check then catches anyway.
+.draft_min_score <- function(n) if (n <= 2L) max(1L, n) else as.integer(n - 1L)
+
 .draft_delimited <- function(path, id, bank) {
   delim <- detect_delimiter(path)
   df <- tryCatch(utils::read.csv(path, sep = if (identical(delim, "\t")) "\t" else delim,
@@ -107,7 +116,7 @@
   tdc <- .draft_type_dc(style, h, df, cols)
   cols <- tdc$cols
   out <- list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
-    version = 1, min_score = max(1L, length(h)),
+    version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)), delimiter = delim,
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
   utils::modifyList(out, tdc$keys)
@@ -190,7 +199,7 @@
   cols <- tdc$cols
   if (is.null(cols$amount) && is.null(cols$debit)) return(NULL)   # nothing to read money from
   out <- list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
-    version = 1, min_score = max(1L, length(h)),
+    version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)),
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
   utils::modifyList(out, tdc$keys)
