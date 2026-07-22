@@ -187,3 +187,27 @@ read_input <- function(path, redaction_rects = NULL) {
 # clear_input_cache() -- drop all cached inputs (e.g. after a redaction re-run or
 # to free memory). read_input rebuilds on the next call.
 clear_input_cache <- function() rm(list = ls(.INPUT_CACHE), envir = .INPUT_CACHE)
+
+# render_page_view(path, page, dpi) -> list(ras, w, h, pg) or NULL. Render ONE PDF
+# page to a raster (+ its point size) for the visual editors, CACHED by file/page/dpi.
+# pdf_render_page + magick decode is ~0.3-0.8s/page; the band editor re-runs its
+# render reactive on EVERY box assignment (the template changed), so without this the
+# page bitmap is re-rendered on every click though only the overlaid bands moved --
+# the main cause of the editor feeling frozen. Bounded to a few recent pages.
+.PAGE_RASTER_CACHE <- new.env(parent = emptyenv())
+render_page_view <- function(path, page = 1L, dpi = 100L) {
+  page <- max(1L, suppressWarnings(as.integer(page))); if (is.na(page)) page <- 1L
+  info <- file.info(path)
+  key <- paste(path, info$size, as.numeric(info$mtime), page, dpi, sep = "|")
+  if (exists(key, envir = .PAGE_RASTER_CACHE, inherits = FALSE))
+    return(get(key, envir = .PAGE_RASTER_CACHE, inherits = FALSE))
+  sz <- tryCatch(pdftools::pdf_pagesize(path), error = function(e) NULL)
+  if (is.null(sz) || page > nrow(sz)) return(NULL)
+  ras <- tryCatch(as.raster(magick::image_read(
+    pdftools::pdf_render_page(path, page = page, dpi = dpi))), error = function(e) NULL)
+  if (is.null(ras)) return(NULL)
+  out <- list(ras = ras, w = sz$width[page], h = sz$height[page], pg = page)
+  if (length(ls(.PAGE_RASTER_CACHE)) >= 8L) rm(list = ls(.PAGE_RASTER_CACHE), envir = .PAGE_RASTER_CACHE)
+  assign(key, out, envir = .PAGE_RASTER_CACHE)
+  out
+}

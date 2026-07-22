@@ -1336,12 +1336,7 @@ server <- function(input, output, session) {
   })
   fb_render <- reactive({
     req(input$fb_sample); pg <- max(1L, as.integer(input$fb_rf_page %||% 1))
-    sz <- tryCatch(pdftools::pdf_pagesize(input$fb_sample$datapath), error = function(e) NULL)
-    if (is.null(sz) || pg > nrow(sz)) return(NULL)
-    ras <- tryCatch(as.raster(magick::image_read(
-      pdftools::pdf_render_page(input$fb_sample$datapath, page = pg, dpi = 100))), error = function(e) NULL)
-    if (is.null(ras)) return(NULL)
-    list(ras = ras, w = sz$width[pg], h = sz$height[pg], pg = pg)
+    render_page_view(input$fb_sample$datapath, pg, 100)
   })
   output$fb_plot <- renderPlot({
     r <- fb_render(); req(r)
@@ -1454,12 +1449,7 @@ server <- function(input, output, session) {
   ix_render <- reactive({
     st <- ix_state(); req(st, st$is_pdf)
     pg <- max(1L, as.integer(input$ix_page %||% 1))
-    sz <- tryCatch(pdftools::pdf_pagesize(st$path), error = function(e) NULL)
-    if (is.null(sz) || pg > nrow(sz)) return(NULL)
-    ras <- tryCatch(as.raster(magick::image_read(
-      pdftools::pdf_render_page(st$path, page = pg, dpi = 100))), error = function(e) NULL)
-    if (is.null(ras)) return(NULL)
-    list(ras = ras, w = sz$width[pg], h = sz$height[pg], pg = pg)
+    render_page_view(st$path, pg, 100)
   })
   output$ix_plot <- renderPlot({
     st <- ix_state(); req(st, st$is_pdf); r <- ix_render(); req(r)
@@ -2711,13 +2701,9 @@ server <- function(input, output, session) {
 
   g_pdf_render <- reactive({
     g <- guided(); req(g); req(identical(g$tmpl$format, "pdf"))
-    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
-    sz <- tryCatch(pdftools::pdf_pagesize(g$path), error = function(e) NULL)
-    if (is.null(sz) || pg > nrow(sz)) return(NULL)
-    ras <- tryCatch(as.raster(magick::image_read(
-      pdftools::pdf_render_page(g$path, page = pg, dpi = 100))), error = function(e) NULL)
-    if (is.null(ras)) return(NULL)
-    list(ras = ras, w = sz$width[pg], h = sz$height[pg])
+    # Only the file + page matter for the bitmap (bands are overlays drawn in the
+    # plot), and the render is cached, so assigning a box no longer re-renders it.
+    render_page_view(g$path, input$g_pdf_page %||% 1, 100)
   })
   output$g_pdf_plot <- renderPlot({
     r <- g_pdf_render(); req(r)
@@ -2840,8 +2826,11 @@ server <- function(input, output, session) {
     output$g_adv_msg <- renderUI(span(class = "ok", sprintf("Removed the pinned box for '%s'.", f)))
   })
 
+  # ONE parse per change, shared by the preview table + the status line (each used
+  # to call draft_preview independently, doubling the parse on every box assignment).
+  g_preview_tx <- reactive({ g <- guided(); req(g); draft_preview(g$path, guided_live()) })
   output$g_preview <- renderDT({
-    g <- guided(); req(g); tx <- draft_preview(g$path, guided_live()); req(!is.null(tx))
+    tx <- g_preview_tx(); req(!is.null(tx))
     tx <- utils::head(tx, 12)
     # Show every field that was actually read -- including reference, and the
     # separate debit / credit columns when the statement splits them -- so the
@@ -2855,7 +2844,7 @@ server <- function(input, output, session) {
               options = list(dom = "t", pageLength = 12, scrollX = TRUE))
   })
   output$g_status <- renderText({
-    g <- guided(); req(g); tx <- draft_preview(g$path, guided_live())
+    tx <- g_preview_tx()
     if (is.null(tx) || !nrow(tx)) "No rows detected yet - check the Date and Amount column pickers, or try a different date / amount setting."
     else sprintf("%d transaction row(s) detected. If these look right, click Save.", nrow(tx))
   })
