@@ -80,13 +80,13 @@ DIAG_PLAIN <- c(
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
 # Human-readable HEADERS for the transactions preview. The stored core schema uses
-# machine names (date_raw, amount_raw, balance_raw...) that are meaningful to the
-# engine but read as an internal tool to a forensic reviewer. Relabel for DISPLAY
-# only (the downloaded CSV/Excel keep the schema names). The verbatim "as shown"
-# columns keep an explicit label so their audit value stays obvious.
+# machine names that read as an internal tool to a forensic reviewer, so relabel
+# for DISPLAY. The verbatim *_raw cells no longer surface here (they live in the
+# JSON + Provenance); debit/credit appear when a statement splits money in / out.
 CV_COL_LABELS <- c(
   row_id = "#", date = "Date", date_raw = "Date (as shown)",
   description = "Description", amount = "Amount", amount_raw = "Amount (as shown)",
+  debit = "Debit (money out)", credit = "Credit (money in)",
   direction = "In / out", balance = "Balance", balance_raw = "Balance (as shown)",
   particulars = "Particulars", code = "Code", reference = "Reference",
   type = "Type", other_party = "Other party", currency = "Currency", flags = "Flags")
@@ -94,6 +94,13 @@ cv_friendly_cols <- function(cols) vapply(cols, function(cn) {
   lab <- CV_COL_LABELS[[cn]]
   if (is.null(lab)) tools::toTitleCase(gsub("_", " ", cn)) else lab
 }, character(1), USE.NAMES = FALSE)
+# .cols_with_data(df) -- names of columns carrying at least one non-blank value.
+# Used to trim always-empty columns (a field this statement doesn't have) from the
+# previews so the reviewer sees only what was actually read. row_id is always kept.
+.cols_with_data <- function(df, always = "row_id") {
+  keep <- vapply(df, function(c) any(!is.na(c) & nzchar(trimws(as.character(c)))), logical(1))
+  union(intersect(always, names(df)), names(df)[keep])
+}
 # The friendly line shown when a file simply can't be read (technical detail -> log).
 FRIENDLY_READ_ERROR <- paste(
   "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
@@ -107,11 +114,11 @@ ui <- fluidPage(
   tags$head(
     tags$title("Statement Studio"),
     # One design system, all inline (the app must work offline / air-gapped:
-    # no CDN fonts, scripts or icon packs). Green is the product colour - it
-    # already means "checked and OK" everywhere in the results.
+    # no CDN fonts, scripts or icon packs). The brand accent is NZ-Police blue;
+    # green stays reserved for its meaning -- \"checked / money in / OK\".
     tags$style(HTML("
      :root{
-       --brand:#0b7a34; --brand-dark:#085c27; --brand-tint:#eef6f0; --brand-line:#bfe0c8;
+       --brand:#00205b; --brand-dark:#001640; --brand-tint:#eaf0f8; --brand-line:#b6c8e0;
        --ink:#1f2a33; --muted:#66727d; --line:#e3e7e5; --panel:#f8faf9;
        --ok:#137333; --bad:#b00020; --warn-ink:#8a5b00; --warn-bg:#fff8e6; --warn-line:#f0c36d;
      }
@@ -158,7 +165,7 @@ ui <- fluidPage(
      /* panels + forms */
      .well{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:none}
      .form-control{border-radius:7px;border-color:#cfd6d2;box-shadow:none}
-     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(11,122,52,.12)}
+     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,32,91,.15)}
      .help-block{color:var(--muted);font-size:12.5px}
      .progress-bar{background-color:var(--brand)}
      /* tables (DT) */
@@ -186,7 +193,7 @@ ui <- fluidPage(
        border:1px solid var(--line);border-radius:12px;background:#fff;display:block;
        color:var(--ink);text-decoration:none}
      a.hub-card:hover,a.hub-card:focus{border-color:var(--brand-line);
-       box-shadow:0 4px 14px rgba(11,122,52,.10);text-decoration:none;color:var(--ink)}
+       box-shadow:0 4px 14px rgba(0,32,91,.12);text-decoration:none;color:var(--ink)}
      a.hub-card-primary{background:var(--brand-tint);border-color:var(--brand-line)}
      a.hub-card-quiet{background:var(--panel)}
      .hub-card-kicker{font-size:11.5px;font-weight:700;letter-spacing:.6px;
@@ -201,12 +208,50 @@ ui <- fluidPage(
     tags$script(HTML(
       "$(document).on('keyup', '#adm_pw', function(e){
          if (e.key === 'Enter') { $(this).trigger('change'); $('#adm_login').click(); }
-       });"))
+       });")),
+    # Loading feedback: a real animation, not just the grey-out. A busy pill shows
+    # whenever Shiny is working (convert, X-ray render, any recompute); recalculating
+    # outputs dim and float a spinner so a slow plot/table clearly says "loading".
+    tags$style(HTML("
+     @keyframes ss-spin{to{transform:rotate(360deg)}}
+     @keyframes ss-fade{from{opacity:0}to{opacity:1}}
+     #ss-busy{position:fixed;right:18px;bottom:18px;z-index:2000;display:none;
+       align-items:center;gap:9px;background:#fff;border:1px solid var(--line);
+       border-left:4px solid var(--brand);border-radius:10px;padding:9px 14px;
+       box-shadow:0 6px 22px rgba(0,0,0,.14);font-size:13px;font-weight:600;color:var(--ink)}
+     #ss-busy.on{display:flex;animation:ss-fade .15s ease}
+     .ss-ring{width:16px;height:16px;border-radius:50%;border:2.5px solid var(--brand-line);
+       border-top-color:var(--brand);animation:ss-spin .7s linear infinite}
+     /* dim + spinner over any output that is recalculating */
+     .shiny-bound-output.recalculating{opacity:.45;transition:opacity .1s}
+     .shiny-plot-output.recalculating{position:relative}
+     .shiny-plot-output.recalculating::after{content:'';position:absolute;top:50%;left:50%;
+       width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
+       border:3px solid var(--brand-line);border-top-color:var(--brand);
+       animation:ss-spin .7s linear infinite}
+     /* prominent download bar at the top of a result */
+     .dl-hero{display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+       background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:10px;
+       padding:12px 16px;margin:2px 0 14px}
+     .dl-hero .dl-hero-label{font-weight:700;color:var(--brand);margin-right:4px}
+     .dl-hero .btn{font-size:15px;padding:8px 18px}
+    ")),
+    tags$script(HTML(
+      "(function(){var t=null;
+        function pill(){var p=document.getElementById('ss-busy');
+          if(!p){p=document.createElement('div');p.id='ss-busy';
+            p.innerHTML='<span class=\"ss-ring\"></span><span>Working…</span>';
+            document.body.appendChild(p);}return p;}
+        $(document).on('shiny:busy',function(){clearTimeout(t);
+          t=setTimeout(function(){pill().classList.add('on');},250);});
+        $(document).on('shiny:idle',function(){clearTimeout(t);
+          var p=document.getElementById('ss-busy');if(p)p.classList.remove('on');});
+      })();"))
   ),
   div(class = "app-header",
     span(class = "app-mark"),
     span(class = "app-title", "Statement Studio"),
-    span(class = "app-tagline", "Statements and documents in - audit-grade data out.")),
+    span(class = "app-tagline", "Statements and documents in - clean, checked data out.")),
   tabsetPanel(
     id = "main_tabs",
     # ---- About (landing): the journey hub. Everything starts here - one
@@ -215,7 +260,7 @@ ui <- fluidPage(
       div(class = "hub",
         div(class = "hub-lead",
           "Turn any bank statement or financial document - PDF, CSV or Excel -",
-          " into clean, checked, audit-grade data. Deterministic: nothing is guessed,",
+          " into clean, checked data. Deterministic: nothing is guessed,",
           " and anything uncertain is flagged with the reason."),
         div(class = "hub-cards",
           actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
@@ -247,9 +292,9 @@ ui <- fluidPage(
           fileInput("cv_file", "Statement file (.pdf / .csv / .tsv / .xlsx)",
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
+          uiOutput("cv_who_hint"),
           uiOutput("cv_bank_ui"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
-          uiOutput("cv_downloads"),
           br(),
           helpText("Detection is automatic; pick a bank only to force one."),
           tags$hr(),
@@ -259,6 +304,8 @@ ui <- fluidPage(
           width = 8,
           uiOutput("cv_status"),
           uiOutput("cv_headline"),   # plain verdict first (self-gates to an OK statement)
+          uiOutput("cv_downloads"),  # prominent download bar, right under the verdict
+          uiOutput("cv_rematch"),    # "wrong bank / template? make the right one" - up top, obvious
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
           # Before any conversion, show a clear empty state (what this page does /
@@ -286,7 +333,7 @@ ui <- fluidPage(
                   selected = "week", width = "100%")),
                 column(4, radioButtons("an_unit", "Measure",
                   c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
-              plotOutput("cv_trend", height = "300px"),
+              plotOutput("cv_trend", height = "270px"),
               uiOutput("cv_trend_note")),
             h4("Your transactions"),
             tabsetPanel(
@@ -296,10 +343,15 @@ ui <- fluidPage(
                   p(class = "muted", "Your statement page, with everything the tool read drawn on it. Green = kept transaction rows; amber dashed = skipped rows that look like transactions; the legend below names the rest."),
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
-                    column(3, br(), checkboxInput("ix_show_words", "Faint box on every word", TRUE)),
-                    column(3, br(), checkboxInput("ix_show_meta", "Box balances, dates & account info", TRUE)),
-                    column(3, br(), checkboxInput("ix_show_skipped", "Show skipped rows", TRUE))),
-                  plotOutput("ix_plot", height = "780px"),
+                    column(9, br(),
+                      checkboxGroupInput("ix_layers", "Show on the page (untick to hide a layer):",
+                        choices = c("Column bands" = "cols", "Kept transaction rows" = "kept",
+                                    "Skipped rows" = "skipped", "Redactions" = "redact",
+                                    "Balances / dates / account" = "meta",
+                                    "Faint box on every word" = "words"),
+                        selected = c("cols", "kept", "skipped", "redact", "meta", "words"),
+                        inline = TRUE))),
+                  plotOutput("ix_plot", height = "640px"),
                   uiOutput("ix_legend"),
                   h4("Rows skipped on this page - and why"),
                   helpText(HTML("A real transaction in here usually means a one-line template fix (most often the <b>date format</b> or an amount band) - that brings back every row like it. A genuine one-off? Select it and add it by hand; it's kept, flagged <b>forced</b>.")),
@@ -316,7 +368,7 @@ ui <- fluidPage(
             uiOutput("cv_teach"),
             uiOutput("cv_candidates"),
             tags$details(style = "margin-top:14px",
-              tags$summary(style = "cursor:pointer;font-weight:600;color:#0b7a34",
+              tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
                            "Checks & detail (for review)"),
               div(style = "padding:8px 2px",
                 h4("Checks"), DTOutput("cv_kpis"),
@@ -405,8 +457,7 @@ ui <- fluidPage(
           h4("Admin - password required"),
           passwordInput("adm_pw", "Password"),
           actionButton("adm_login", "Enter", class = "btn-primary"),
-          uiOutput("adm_login_msg"),
-          helpText("Set the password with the BSO_ADMIN_PASSWORD environment variable before deploying."))),
+          uiOutput("adm_login_msg"))),
       conditionalPanel("output.admin_authed",
       tabsetPanel(
         tabPanel(
@@ -1066,15 +1117,18 @@ server <- function(input, output, session) {
     pg <- as.character(max(1L, as.integer(input$ix_page %||% 1)))
     P <- st$layout$pages[[pg]]; req(P)
     pal <- ix_pal(P$bands)
+    layers <- input$ix_layers %||% c("cols", "kept", "skipped", "redact", "meta", "words")
     sw <- function(col, lab) tags$div(style = "margin:2px 0",
       tags$span(style = sprintf("display:inline-block;width:12px;height:12px;border:2px solid %s;margin-right:6px;vertical-align:middle", col)),
       tags$span(lab))
     has_ocr <- !is.null(P$words$ocr_conf) && any(!is.na(P$words$ocr_conf))
+    # Only name the layers currently shown, so the legend tracks the tick-boxes.
     tagList(strong("Legend"),
-      lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
-      sw("#137333", "transaction row (kept)"),
-      sw("#a15c00", "balance / account details"),
-      sw("#b00020", "redaction (not read)"),
+      if ("cols" %in% layers) lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
+      if ("kept" %in% layers) sw("#137333", "transaction row (kept)"),
+      if ("skipped" %in% layers) sw("#c77700", "skipped row that looks like a transaction"),
+      if ("meta" %in% layers) sw("#a15c00", "balance / account details"),
+      if ("redact" %in% layers) sw("#b00020", "redaction (not read)"),
       if (has_ocr) sw("#c77700", "shaded amber = machine-read word the tool is unsure about - double-check it"))
   })
   ix_render <- reactive({
@@ -1095,12 +1149,13 @@ server <- function(input, output, session) {
     rasterImage(r$ras, 0, r$h, r$w, 0)
     lay <- st$layout; if (is.null(lay)) return(invisible())
     P <- lay$pages[[as.character(r$pg)]]; if (is.null(P)) return(invisible())
+    layers <- input$ix_layers %||% c("cols", "kept", "skipped", "redact", "meta", "words")
     reg <- P$region; ytop <- reg$y_min %||% 0; ybot <- reg$y_max %||% r$h
     pal <- ix_pal(P$bands)
     if (!is.null(reg$x_min)) rect(reg$x_min, ybot, reg$x_max %||% r$w, ytop,
                                   border = "#666", lty = 2, lwd = 1.4)
     w <- P$words
-    if (isTRUE(input$ix_show_words) && nrow(w))
+    if ("words" %in% layers && nrow(w))
       rect(w$x, w$y, w$x + w$width, w$y + w$height, border = "#cfcfcf", lwd = 0.4)
     # Machine-read (OCR) words the engine itself is unsure about: shaded amber so
     # "double-check the numbers" points at exactly the doubtful words. Same floor
@@ -1110,42 +1165,50 @@ server <- function(input, output, session) {
       if (nrow(lc)) rect(lc$x, lc$y, lc$x + lc$width, lc$y + lc$height,
                          border = "#c77700", col = "#c7770040", lwd = 1.2)
     }
-    sel <- w[!is.na(w$column), , drop = FALSE]
-    if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
-                        border = pal[sel$column], lwd = 1.3)
-    red <- w[w$redacted %in% TRUE, , drop = FALSE]
-    if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
-                        border = "#b00020", col = "#b0002022", lwd = 1)
-    for (nm in names(P$bands)) { b <- P$bands[[nm]]
+    if ("cols" %in% layers) {
+      sel <- w[!is.na(w$column), , drop = FALSE]
+      if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
+                          border = pal[sel$column], lwd = 1.3)
+    }
+    if ("redact" %in% layers) {
+      red <- w[w$redacted %in% TRUE, , drop = FALSE]
+      if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
+                          border = "#b00020", col = "#b0002022", lwd = 1)
+    }
+    if ("cols" %in% layers) for (nm in names(P$bands)) { b <- P$bands[[nm]]
       if (!is.null(b$x_min) && !is.null(b$x_max)) {
         rect(b$x_min, ybot, b$x_max, ytop, border = pal[[nm]], lwd = 2)
         text((b$x_min + b$x_max) / 2, ytop, nm, col = pal[[nm]], font = 2, cex = 0.9, pos = 3, offset = 0.2)
       } }
-    kr <- P$rows[P$rows$kept, , drop = FALSE]
-    if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
+    if ("kept" %in% layers) {
+      kr <- P$rows[P$rows$kept, , drop = FALSE]
+      if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
+    }
     # Amber dashed: rows the engine skipped that LOOK like transactions (bad date
     # or missing amount) -- the "why aren't you seeing it" rows. Continuations,
     # summaries and headings are intentionally left unhighlighted (they're in the
     # table below with their reason) so the page isn't noisy.
-    if (isTRUE(input$ix_show_skipped) && !is.null(P$rows$reason)) {
+    if ("skipped" %in% layers && !is.null(P$rows$reason)) {
       sk <- P$rows[!P$rows$kept &
         grepl("didn't parse|no amount", P$rows$reason %||% ""), , drop = FALSE]
       if (nrow(sk)) rect(sk$x0 - 1, sk$y0 - 1, sk$x1 + 1, sk$y1 + 1,
                          border = "#c77700", lty = 2, lwd = 1.6)
     }
-    if (isTRUE(input$ix_show_meta) && !is.null(st$meta_loc)) {
+    if ("meta" %in% layers && !is.null(st$meta_loc)) {
       ml <- st$meta_loc[[r$pg]]
       if (!is.null(ml)) { f <- ml[ml$found %in% TRUE, , drop = FALSE]
         if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
           text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
     # pinned header-value boxes (metadata_regions) the template defines for this page
-    mr <- P$meta_regions %||% list()
-    for (nm in names(mr)) { b <- mr[[nm]]
-      if (is.null(b$x_min) || is.null(b$x_max)) next
-      y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
-      rect(b$x_min, y0, b$x_max, y1, border = "#7b1fa2", lwd = 2, lty = 3)
-      text(b$x_min, y0, nm, col = "#7b1fa2", font = 2, cex = 0.8, pos = 3, offset = 0.2)
+    if ("meta" %in% layers) {
+      mr <- P$meta_regions %||% list()
+      for (nm in names(mr)) { b <- mr[[nm]]
+        if (is.null(b$x_min) || is.null(b$x_max)) next
+        y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
+        rect(b$x_min, y0, b$x_max, y1, border = "#7b1fa2", lwd = 2, lty = 3)
+        text(b$x_min, y0, nm, col = "#7b1fa2", font = 2, cex = 0.8, pos = 3, offset = 0.2)
+      }
     }
   })
   # "Why aren't you seeing it": every row the engine skipped on this page, with the
@@ -1244,9 +1307,10 @@ server <- function(input, output, session) {
   # progress bar, reading bank / exact-template from the current inputs. Shared by
   # the Convert button and the X-ray "add this row" action so both paths behave
   # identically (the second just adds force_rows and reuses the same session dir).
-  convert_now <- function(src, sess, forced_rows = NULL) {
+  convert_now <- function(src, sess, forced_rows = NULL, force_tpl = NULL) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
-    forced_tpl <- if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL
+    forced_tpl <- force_tpl %||%
+      (if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL)
     who <- who_now()
     withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
@@ -1267,26 +1331,62 @@ server <- function(input, output, session) {
     })
   }
 
+  # detected_identity() -- who the environment says is accessing, without anyone
+  # typing anything. Order of trust: the Shiny host's authenticated user
+  # (session$user -- set by Shiny Server Pro / Posit Connect / RStudio auth), then
+  # the identity a reverse proxy / SSO gateway forwards in a request header
+  # (oauth2-proxy, nginx auth_request, IIS/Windows-auth, Cloudflare Access all use
+  # one of these), then the OS login of the host process. Header values are only
+  # ever stored as a string in the audit log -- never evaluated -- so there is no
+  # injection surface. Returns NA when nothing identifies the user.
+  .SSO_HEADERS <- c("HTTP_X_FORWARDED_USER", "HTTP_X_AUTH_REQUEST_USER",
+    "HTTP_X_AUTH_REQUEST_EMAIL", "HTTP_X_FORWARDED_EMAIL", "HTTP_REMOTE_USER",
+    "HTTP_X_REMOTE_USER", "HTTP_X_FORWARDED_PREFERRED_USERNAME", "HTTP_CF_ACCESS_AUTHENTICATED_USER_EMAIL")
+  detected_identity <- function() {
+    su <- session$user
+    if (!is.null(su) && nzchar(trimws(su))) return(trimws(su))
+    req <- session$request
+    if (!is.null(req)) for (h in .SSO_HEADERS) {
+      v <- tryCatch(req[[h]], error = function(e) NULL)
+      if (!is.null(v) && nzchar(trimws(v))) return(trimws(v))
+    }
+    cu <- current_user()
+    if (!is.null(cu) && nzchar(cu) && !identical(cu, "unknown")) return(cu)
+    NA_character_
+  }
   # who_now() -- the single source of truth for WHO is doing this, so the audit
   # trail records a real person, never a placeholder. Preference: the name typed
-  # on Convert, then the Shiny session user, then the OS login.
+  # on Convert, then whoever the environment already identifies (SSO / host / OS).
   who_now <- function() {
     if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) return(trimws(input$cv_by))
-    session$user %||% current_user()
+    detected_identity() %||% (session$user %||% current_user())
   }
+  # On connect, pre-fill the audit-trail name with whoever the environment already
+  # identifies, so it's right by default; the analyst can still override it.
+  observe({
+    who <- isolate(detected_identity())
+    cur <- isolate(input$cv_by)
+    if (!is.na(who) && nzchar(who) && (is.null(cur) || !nzchar(trimws(cur))))
+      updateTextInput(session, "cv_by", value = who)
+  })
+  output$cv_who_hint <- renderUI({
+    who <- detected_identity()
+    if (is.na(who) || !nzchar(who)) return(NULL)
+    helpText(sprintf("Detected as %s from your sign-in - change it above if you're recording this for someone else.", who))
+  })
 
   # run_conversion -- the whole convert-a-file flow (session dir, convert, state,
   # upload capture), shared by the Convert button and "Try it on a sample".
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
-  run_conversion <- function(srcpath, name, record = TRUE) {
+  run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL) {
     sess <- file.path(tempdir(), paste0("cv_", as.integer(runif(1, 1, 1e9))))
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, name)
     file.copy(srcpath, src, overwrite = TRUE)
     cv_forced(list())   # a new file -> forget any force-included rows from the last one
     who <- who_now()
-    res <- convert_now(src, sess, forced_rows = NULL)
+    res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl)
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
     # Capture the upload + its outcome so a failed/abandoned new format is a
@@ -1433,7 +1533,7 @@ server <- function(input, output, session) {
         if (!is.na(n)) sprintf(" - %d transaction%s read", n, if (n == 1) "" else "s") else "")),
       p(style = "margin:0 0 6px;color:#333", pt$line),
       p(class = "muted", style = "margin:0 0 6px",
-        "Download it on the left (Excel, CSV or JSON). Full detail is under 'Checks & detail' below."),
+        "Full detail is under 'Checks & detail' below."),
       if (length(chips)) div(chips))
   })
 
@@ -1503,30 +1603,38 @@ server <- function(input, output, session) {
     view <- input$an_view %||% "inout"; grp <- input$an_group %||% "week"; unit <- input$an_unit %||% "amount"
     # On-brand, low-chrome base-R chart: no plot box, light gridlines behind,
     # human date labels and a $k money axis, so it reads as product, not raw plot.
-    GREEN <- "#0b7a34"; RED <- "#b00020"; INK <- "#1f2a33"; GRID <- "#e8eaed"; AXIS <- "#6b7280"
+    # Green = money in, red = out (their meaning everywhere); brand blue for the
+    # neutral balance / cumulative lines, softly area-filled so they read as product.
+    GREEN <- "#0b7a34"; RED <- "#b00020"; BLUE <- "#00205b"; BLUE_FILL <- "#00205b1f"
+    INK <- "#1f2a33"; GRID <- "#eceef1"; AXIS <- "#6b7280"
     fmt_k <- function(v) ifelse(abs(v) >= 1000,
       paste0(formatC(v / 1000, format = "f", digits = 1), "k"),
       formatC(v, format = "f", digits = 0, big.mark = ","))
     money_lab <- function(at) if (unit == "count") formatC(at, format = "d", big.mark = ",") else paste0("$", fmt_k(at))
-    op <- par(mar = c(4.2, 4.8, 0.8, 1.2), mgp = c(3, 0.55, 0), tcl = -0.25,
-              col.axis = AXIS, col.lab = INK, cex.axis = 0.9, cex.lab = 1)
+    op <- par(mar = c(4, 4.8, 0.6, 1), mgp = c(3, 0.5, 0), tcl = -0.2, family = "sans",
+              col.axis = AXIS, col.lab = INK, cex.axis = 0.9, cex.lab = 1, xpd = FALSE)
     on.exit(par(op))
     xdate <- function(dates) axis.Date(1, x = dates, format = if (grp == "month") "%b %Y" else "%d %b",
                                        col = NA, col.ticks = NA, col.axis = AXIS)
+    area_line <- function(x, y, col, fill) {
+      polygon(c(x[1], x, x[length(x)]), c(min(y, 0), y, min(y, 0)), col = fill, border = NA)
+      lines(x, y, col = col, lwd = 2.6)
+      points(x, y, pch = 21, cex = 0.65, col = "#fff", bg = col, lwd = 1)
+    }
     if (view == "balance") {
       b <- d[!is.na(d$.bal), , drop = FALSE]
       if (!nrow(b)) { plot.new(); text(0.5, 0.5, "This statement has no running balance column.", col = AXIS); return(invisible()) }
       b <- b[order(b$.date), , drop = FALSE]; aty <- pretty(range(b$.bal, na.rm = TRUE))
       plot(b$.date, b$.bal, type = "n", axes = FALSE, xlab = "", ylab = "Balance", ylim = range(aty))
       abline(h = aty, col = GRID)
-      lines(b$.date, b$.bal, col = GREEN, lwd = 2.5); points(b$.date, b$.bal, pch = 19, cex = 0.6, col = GREEN)
+      area_line(b$.date, b$.bal, BLUE, BLUE_FILL)
       axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1); xdate(b$.date)
     } else if (view == "cumnet") {
       dd <- d[order(d$.date), , drop = FALSE]; cn <- cumsum(ifelse(is.na(dd$.amt), 0, dd$.amt))
       aty <- pretty(range(c(0, cn)))
       plot(dd$.date, cn, type = "n", axes = FALSE, xlab = "", ylab = "Cumulative net", ylim = range(aty))
-      abline(h = aty, col = GRID); abline(h = 0, col = "#c9ced6")
-      lines(dd$.date, cn, col = GREEN, lwd = 2.5)
+      abline(h = aty, col = GRID); abline(h = 0, col = "#c3c9d2", lwd = 1.2)
+      area_line(dd$.date, cn, BLUE, BLUE_FILL)
       axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1); xdate(dd$.date)
     } else {
       key <- switch(grp, day = d$.date, week = as.Date(cut(d$.date, "week")), month = as.Date(cut(d$.date, "month")))
@@ -1535,16 +1643,28 @@ server <- function(input, output, session) {
       val_out <- ifelse(d$.amt < 0, if (unit == "count") 1 else -d$.amt, 0)
       ins  <- tapply(val_in,  pf, sum); ins[is.na(ins)]  <- 0
       outs <- tapply(val_out, pf, sum); outs[is.na(outs)] <- 0
-      m <- rbind(as.numeric(ins), as.numeric(outs)); aty <- pretty(c(0, max(m, 1, na.rm = TRUE)))
+      m <- rbind(as.numeric(ins), as.numeric(outs))
+      # ~18% headroom above the tallest bar so the top value label and the legend
+      # both clear the bars instead of colliding with them.
+      aty <- pretty(c(0, max(m, 1, na.rm = TRUE) * 1.18))
       bp <- barplot(m, beside = TRUE, col = c(GREEN, RED), border = NA, axes = FALSE,
-                    names.arg = rep("", ncol(m)), ylim = range(aty), space = c(0.12, 0.85),
+                    names.arg = rep("", ncol(m)), ylim = range(aty), space = c(0.1, 0.8),
                     ylab = if (unit == "count") "Transactions" else "Dollars")
+      abline(h = aty, col = GRID)   # gridlines behind, then re-draw bars on top
+      barplot(m, beside = TRUE, col = c(GREEN, RED), border = NA, axes = FALSE, add = TRUE,
+              names.arg = rep("", ncol(m)), space = c(0.1, 0.8))
       axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1)
+      # Value labels above each bar when the period count is small enough to stay legible.
+      if (ncol(m) <= 8) {
+        lab_v <- function(v) ifelse(v <= 0, "", if (unit == "count") formatC(v, format = "d") else paste0("$", fmt_k(v)))
+        text(as.numeric(bp), as.numeric(m), labels = lab_v(as.numeric(m)),
+             pos = 3, offset = 0.25, cex = 0.68, col = AXIS, xpd = NA)
+      }
       lab <- switch(grp, month = format(lv, "%b %Y"), format(lv, "%d %b"))
       axis(1, at = colMeans(bp), labels = lab, col = NA, col.ticks = NA,
            las = if (length(lv) > 8) 2 else 1, cex.axis = if (length(lv) > 8) 0.75 else 0.9)
       legend("topleft", legend = c(if (unit == "count") "In" else "Money in", if (unit == "count") "Out" else "Money out"),
-             fill = c(GREEN, RED), border = NA, bty = "n", cex = 0.9)
+             fill = c(GREEN, RED), border = NA, bty = "n", cex = 0.9, horiz = TRUE)
     }
   })
   # Is this result a form (labelled values) rather than a transaction statement?
@@ -1554,7 +1674,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(identical(res$kind, "form"))
     tagList(
       div(style = "margin:8px 0;padding:8px 12px;background:#eef4ff;border-radius:6px",
-        HTML(sprintf("Read as a <b>form / labelled-value PDF</b> (not a transaction statement). Template: <b>%s</b>. Download it from the sidebar on the left.",
+        HTML(sprintf("Read as a <b>form / labelled-value PDF</b> (not a transaction statement). Template: <b>%s</b>. Download it above.",
                      htmltools::htmlEscape(res$template_id %||% "?")))),
       h4("Values found"), DTOutput("cv_fields"))
   })
@@ -1618,6 +1738,10 @@ server <- function(input, output, session) {
     csv <- res$outputs[grepl("\\.csv$", res$outputs)]
     req(length(csv) == 1, file.exists(csv))
     df <- utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)
+    # The CSV is already the display shape (no verbatim *_raw; debit/credit when the
+    # statement splits them). Trim columns this statement never fills so the table
+    # shows only fields that were actually read.
+    df <- df[, .cols_with_data(df), drop = FALSE]
     datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
               options = list(pageLength = 10, scrollX = TRUE))
   })
@@ -1634,22 +1758,44 @@ server <- function(input, output, session) {
     }
     p
   }
-  # dl_buttons(outputs, ids) -- render a Download button ONLY for formats that were
-  # actually produced (e.g. no Excel on a host without openxlsx), so no button ever
-  # promises a file that can't be delivered.
+  # dl_buttons(outputs, ids) -- a Download button ONLY for formats actually produced
+  # (e.g. no Excel on a host without openxlsx), so no button promises a missing file.
+  # Excel is the primary (btn-primary) since it's what most reviewers want.
   dl_buttons <- function(outputs, ids) {
-    labs <- c(xlsx = "Excel", csv = "CSV", json = "JSON")
+    labs <- c(xlsx = "⭳ Excel", csv = "⭳ CSV", json = "⭳ JSON")
     has <- function(ext) any(grepl(paste0("\\.", ext, "$"), outputs %||% character(0)))
-    btns <- Filter(Negate(is.null), lapply(names(ids), function(ext)
-      if (has(ext)) downloadButton(ids[[ext]], labs[[ext]])))
-    if (!length(btns)) return(NULL)
-    tagList(strong("Your converted files"), br(), btns)
+    Filter(Negate(is.null), lapply(names(ids), function(ext)
+      if (has(ext)) downloadButton(ids[[ext]], labs[[ext]],
+        class = if (ext == "xlsx") "btn-primary" else NULL)))
   }
   output$cv_downloads <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
     btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv", json = "dl_json"))
-    if (is.null(btns)) return(NULL)
-    div(class = "dl-box", btns)
+    if (!length(btns)) return(NULL)
+    # Prominent bar right under the verdict: the download is the point of the page,
+    # so it's the most visible thing, not a quiet box tucked into the sidebar.
+    div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns)
+  })
+  # cv_rematch -- an obvious, always-there escape hatch for a WRONG match: a bank
+  # that matched the wrong template (or the wrong bank) needs a one-click "no, set
+  # up the right template for this" without hunting. Drafts a fresh template from
+  # THIS file (never seeded from the wrong match).
+  output$cv_rematch <- renderUI({
+    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    st <- res$status %||% "failed"
+    if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
+    tid <- (res$template_id %||% NA_character_)[1]
+    div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:#555;font-size:13px",
+      span(if (!is.na(tid) && nzchar(tid))
+             sprintf("Matched “%s”. Not the right one?", tid)
+           else "Matched the wrong template?"),
+      actionButton("cv_rematch_go", "No - set up the right template for this",
+                   class = "btn-warning btn-sm"))
+  })
+  observeEvent(input$cv_rematch_go, {
+    src <- cv_src(); req(src)
+    # Fresh draft from the file itself, never seeded from the wrong match.
+    open_guided(src$path, src$name, seed_tmpl = NULL, upload_id = cv_upload_id())
   })
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
@@ -1727,7 +1873,8 @@ server <- function(input, output, session) {
                               unsigned_default = NULL, desc_col = NULL,
                               ref_col = NULL, bal_col = NULL,
                               id = NULL, type = NULL, currency = NULL,
-                              date_col = NULL, amount_col = NULL) {
+                              date_col = NULL, amount_col = NULL,
+                              keep_dateless = NULL) {
     if (!is.null(id) && nzchar(trimws(id)))
       tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
     if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
@@ -1736,6 +1883,10 @@ server <- function(input, output, session) {
     if (identical(tmpl$format, "pdf")) {
       if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$table$amount_sign <- sign
+      # Shared-date (HSBC-style) opt-in: only stamp the key when ON, so normal
+      # templates stay clean and unaffected.
+      if (!is.null(keep_dateless))
+        tmpl$table$keep_dateless_rows <- if (isTRUE(keep_dateless)) TRUE else NULL
     } else {
       if (!is.null(datefmt) && nzchar(datefmt) && !is.null(tmpl$columns$date))
         tmpl$columns$date$format <- datefmt
@@ -1780,14 +1931,18 @@ server <- function(input, output, session) {
     # LEFT: the statement itself, always visible.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
-      p(class = "muted", "Draw a box on the page, then assign it as a column or pin it as a header value. The preview below updates as you go."),
+      p(class = "muted", HTML(paste0(
+        "A <b>column</b> runs the <b>full height of the page</b> - only the <b>left-right</b> ",
+        "position of your box matters, its height is ignored. Drag across a column ",
+        "(top-to-bottom doesn't matter), pick what it is, and click <b>Assign</b>. ",
+        "Rows are found by the date, not by your box."))),
       fluidRow(
         column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
-        column(5, selectInput("g_pdf_field", "Column the box is…",
+        column(5, selectInput("g_pdf_field", "The box marks this column…",
                               c("date", "description", "amount", "balance", "particulars",
                                 "reference", "type", "debit", "credit", "other_party", "code"))),
         column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
-      div(actionButton("g_pdf_assign", "Assign box → column", class = "btn-primary"),
+      div(actionButton("g_pdf_assign", "Assign box → column (full height)", class = "btn-primary"),
           actionButton("g_pdf_remove", "Remove this column")),
       tags$hr(style = "margin:8px 0"),
       p(class = "muted", "A one-off value (opening / closing balance, period, account)? Draw a box around it and pin it here."),
@@ -1802,6 +1957,9 @@ server <- function(input, output, session) {
                                 "account name" = "account_name"))),
         column(4, br(), actionButton("g_meta_assign", "Pin box → value"),
                actionButton("g_meta_remove", "Remove"))),
+      checkboxInput("g_keep_dateless",
+        "Several rows share one date (e.g. HSBC) - keep the undated rows too (blank date, flagged)",
+        value = isTRUE(tmpl$table$keep_dateless_rows)),
       plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush"), height = "560px"))
     else tagList(
       strong("Your statement - sample rows"),
@@ -1963,16 +2121,17 @@ server <- function(input, output, session) {
         actionButton("cv_teach_go", "Set up a template for this", class = "btn-warning"), " ",
         actionLink("cv_goto_templates", "or build one from scratch →"))
     } else {
-      # ANY result - ok, needs_review, or failed - links into template setup, so
-      # even a clean conversion can be refined or saved as a reusable template.
+      # ANY result - ok, needs_review, or failed - links into template setup so a
+      # clean conversion can be refined and saved as a better version of THIS
+      # template. (Making a fresh/right template for a wrong match is the prominent
+      # action up top, so it isn't repeated here.)
       label <- if (identical(st, "ok"))
-        "Looks good. Want to tweak how it's read, or save a refined version of this template?"
+        "Looks good. Want to tweak how it's read and save a refined version of this template?"
       else
         "Open this statement in setup to fix how it's read and save an improved template."
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", label), " ",
-        actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"), " ",
-        actionLink("cv_goto_templates", "or build one from scratch →"))
+        actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"))
     }
   })
   observeEvent(input$cv_goto_templates,
@@ -2049,7 +2208,8 @@ server <- function(input, output, session) {
                     input$g_decimal, input$g_unsigned_default,
                     input$g_col_desc, input$g_col_ref, input$g_col_bal,
                     input$g_id, input$g_type, input$g_currency,
-                    date_col = input$g_col_date, amount_col = input$g_col_amt) })
+                    date_col = input$g_col_date, amount_col = input$g_col_amt,
+                    keep_dateless = input$g_keep_dateless) })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -2178,6 +2338,15 @@ server <- function(input, output, session) {
       rect(b$x_min, y0, b$x_max, y1, border = "#a15c00", lwd = 2)
       text(b$x_min, y0, nm, col = "#a15c00", font = 2, cex = 0.85, pos = 3, offset = 0.2)
     }
+    # Live feedback: the box being drawn is shown as the FULL-HEIGHT column it will
+    # become (a translucent band over the whole page height), so it is obvious the
+    # box's top/bottom are ignored and only its left-right span defines the column.
+    br <- input$g_pdf_brush
+    if (!is.null(br) && is.finite(br$xmin) && is.finite(br$xmax)) {
+      rect(br$xmin, 0, br$xmax, r$h, col = "#1a73e820", border = "#1a73e8", lty = 2, lwd = 2)
+      text(mean(c(br$xmin, br$xmax)), r$h * 0.5, "this whole column",
+           col = "#1a73e8", font = 2, cex = 0.95, srt = 90)
+    }
   })
   .CANON_PDF_COLS <- c("date", "description", "amount", "balance", "debit", "credit",
                        "particulars", "code", "reference", "other_party", "type")
@@ -2202,11 +2371,23 @@ server <- function(input, output, session) {
     if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
     f <- .pdf_chosen_field(); slot <- .pdf_field_ref(f)
     g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
+    # Mapping a money-in / money-out band means this is a separate debit/credit
+    # statement: switch the amount style to match, so saving never demands a single
+    # 'amount' column (the reported "amount is still required even when debit and
+    # credit are present"). The dropdown is the source of truth guided_live() reads,
+    # so update it too.
+    switched <- FALSE
+    if (f %in% c("debit", "credit") && !identical(g$tmpl$table$amount_sign, "debit_credit_cols")) {
+      g$tmpl$table$amount_sign <- "debit_credit_cols"
+      updateSelectInput(session, "g_sign", selected = "debit_credit_cols")
+      switched <- TRUE
+    }
     g <- .pdf_resize_region(g); guided(g)
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
     output$g_adv_msg <- renderUI(span(class = "ok",
-      sprintf("Set the '%s' column%s. Page and preview updated.", f,
-              if (identical(slot, "extras")) " (custom / extra)" else "")))
+      sprintf("Set the '%s' column%s.%s Page and preview updated.", f,
+              if (identical(slot, "extras")) " (custom / extra)" else "",
+              if (switched) " Amount style set to separate money-in / money-out." else "")))
   })
   # Delete a column band the auto-setup got wrong (a column that isn't on this
   # statement). Recomputes the table region from whatever bands remain.
@@ -2255,8 +2436,17 @@ server <- function(input, output, session) {
 
   output$g_preview <- renderDT({
     g <- guided(); req(g); tx <- draft_preview(g$path, guided_live()); req(!is.null(tx))
-    datatable(utils::head(tx, 12)[, intersect(c("date", "description", "amount", "direction", "balance"), names(tx))],
-              rownames = FALSE, options = list(dom = "t", pageLength = 12, scrollX = TRUE))
+    tx <- utils::head(tx, 12)
+    # Show every field that was actually read -- including reference, and the
+    # separate debit / credit columns when the statement splits them -- so the
+    # user can confirm each mapped column, not just date/description/amount.
+    show <- setdiff(.cols_with_data(tx), "row_id")
+    lead <- intersect(c("date", "description", "amount", "debit", "credit", "direction",
+                        "balance", "reference", "particulars", "code", "other_party", "type"), show)
+    show <- c(lead, setdiff(show, lead))
+    if (!length(show)) show <- names(tx)
+    datatable(tx[, show, drop = FALSE], rownames = FALSE, colnames = cv_friendly_cols(show),
+              options = list(dom = "t", pageLength = 12, scrollX = TRUE))
   })
   output$g_status <- renderText({
     g <- guided(); req(g); tx <- draft_preview(g$path, guided_live())
@@ -2281,9 +2471,21 @@ server <- function(input, output, session) {
       if (!is.na(cv_upload_id()))
         safe(set_upload_status(cv_upload_id(), "wizard_saved",
           template = tmpl$id %||% NA_character_, dir = UPLOADS_DIR))
-      showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
-                               tmpl$id %||% "template"),
-                       type = "message", duration = 8)
+      # This template was built FOR the statement on screen, so re-run it now with
+      # the just-saved template (forced by id) and show the result on Convert -- the
+      # user shouldn't have to re-upload and re-convert by hand.
+      saved_id <- tmpl$id %||% NA_character_
+      gp <- g$path; gn <- g$name %||% (if (!is.null(gp)) basename(gp) else NA_character_)
+      if (!is.null(gp) && file.exists(gp) && !is.na(saved_id) && nzchar(saved_id)) {
+        updateTabsetPanel(session, "main_tabs", selected = "Convert")
+        run_conversion(gp, gn, record = FALSE, force_tpl = saved_id)
+        showNotification(sprintf("Saved \"%s\" and re-converted this statement with it.", saved_id),
+                         type = "message", duration = 8)
+      } else {
+        showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
+                                 saved_id %||% "template"),
+                         type = "message", duration = 8)
+      }
     } else {
       # Show the specific problem + point at the Advanced tab where it's fixable.
       showNotification(HTML(paste0("<b>Couldn't save.</b> ", htmltools::htmlEscape(err),

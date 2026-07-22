@@ -6,6 +6,41 @@
 
 .draft_id <- function(path) gsub("[^a-z0-9]+", "_", tolower(tools::file_path_sans_ext(basename(path))))
 
+# .slug(s) -- a safe lower-snake token for building template ids.
+.slug <- function(s) gsub("^_+|_+$", "", gsub("[^a-z0-9]+", "_", tolower(trimws(s %||% ""))))
+
+# .compose_id(bank, type, suffix, fallback) -- an id that SAYS what the template is
+# ("anz_everyday_pdf") instead of a raw filename. Falls back to the filename slug
+# when the bank is still the generic placeholder, so an id is always produced.
+.compose_id <- function(bank, type, suffix, fallback) {
+  parts <- Filter(nzchar, c(.slug(bank), .slug(type)))
+  if (!length(parts) || identical(.slug(bank), "new_bank"))
+    parts <- Filter(nzchar, .slug(fallback))
+  out <- paste(c(parts, suffix), collapse = "_")
+  if (!nzchar(.slug(out %||% ""))) out <- paste0("statement_", suffix)
+  out
+}
+
+# .sniff_bank(input, fallback) -- a friendlier default NAME for a new template,
+# recognised from the document's own text when it names a common NZ bank. This is
+# a DISPLAY + naming hint only (pre-fills the "Which bank?" box, which the user
+# confirms/edits); detection still matches on the template's fingerprint phrases,
+# never on this. Falls back to the caller's filename-derived guess.
+.KNOWN_BANKS <- c(anz = "ANZ", asb = "ASB", bnz = "BNZ", kiwibank = "Kiwibank",
+  westpac = "Westpac", tsb = "TSB", sbs = "SBS", cooperative = "Co-operative Bank",
+  "co-operative" = "Co-operative Bank", heartland = "Heartland", rabobank = "Rabobank",
+  "the co-operative" = "Co-operative Bank")
+.sniff_bank <- function(input, fallback = "New bank") {
+  txt <- tolower(paste(unlist(c(input$text, input$pages,
+    if (!is.null(input$table)) names(input$table))), collapse = " "))
+  # Keywords are plain words (the hyphen in "co-operative" is literal outside a
+  # character class), so a word-boundary match needs no metacharacter escaping.
+  if (nzchar(txt)) for (kw in names(.KNOWN_BANKS)) {
+    if (grepl(paste0("\\b", kw, "\\b"), txt)) return(.KNOWN_BANKS[[kw]])
+  }
+  fallback
+}
+
 # .guess_pdf_date_format(input, band) -- sniff the date column's style. Handles
 # the common year-less "02 May" case (year comes from the period) plus the usual
 # full-date shapes.
@@ -51,36 +86,50 @@
     if (!is.na(dc)) cols$debit <- list(source = dc)
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
-  list(id = paste0(id, "_csv"), bank = bank, statement_type = "everyday", format = "delimited",
+  list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
     version = 1, min_score = max(1L, length(h)),
     fingerprint = list(header_contains_all = as.list(h)), delimiter = delim,
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
 }
 
 .draft_pdf <- function(input, id, bank) {
-  sug <- suggest_pdf_columns(input)
-  if (!nrow(sug)) return(NULL)
-  # two money columns (besides balance) => Withdrawals/Deposits, not one signed amount
-  amt_rows <- which(sug$field == "amount")
+  sug <- safe(suggest_pdf_columns(input), data.frame())
   style <- "signed"
-  if (length(amt_rows) == 2) {
-    sug$field[amt_rows[1]] <- "debit"; sug$field[amt_rows[2]] <- "credit"
-    style <- "debit_credit_cols"
-  }
   cols <- list()
-  for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
-  date_band <- if (!is.null(cols$date)) cols$date else list(x_min = 0, x_max = 90)
-  fp <- header_phrases(input); if (!length(fp)) fp <- "Balance"
+  if (!is.null(sug) && nrow(sug)) {
+    # two money columns (besides balance) => Withdrawals/Deposits, not one signed amount
+    amt_rows <- which(sug$field == "amount")
+    if (length(amt_rows) == 2) {
+      sug$field[amt_rows[1]] <- "debit"; sug$field[amt_rows[2]] <- "credit"
+      style <- "debit_credit_cols"
+    }
+    for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
+  }
+  # Skeleton fallback: even when the auto-sniffer recognises nothing (an unusual
+  # layout, or a page whose money/date shapes it didn't match), STILL open the
+  # toolkit with sensible starter bands the user can drag into place -- a readable
+  # PDF must never dead-end with "couldn't read this file". Only missing essentials
+  # are filled, so a good auto-detection is left untouched.
+  page_w <- suppressWarnings(as.numeric((input$page_width %||% NA)[1]))
+  if (is.na(page_w) || page_w <= 0) page_w <- 595.28
+  if (is.null(cols$date))        cols$date        <- list(x_min = 0, x_max = round(page_w * 0.16))
+  if (is.null(cols$description)) cols$description <- list(x_min = round(page_w * 0.17), x_max = round(page_w * 0.55))
+  if (style != "debit_credit_cols" && is.null(cols$amount) &&
+      is.null(cols$debit) && is.null(cols$credit))
+    cols$amount <- list(x_min = round(page_w * 0.72), x_max = round(page_w * 0.95))
+  date_band <- cols$date
+  fp <- safe(header_phrases(input), character(0)); if (!length(fp)) fp <- "Balance"
   # Record the page size the bands were drawn in, so a differently-sized copy of
   # the statement (a rescan, another export) is normalised to this space at parse
   # time instead of dropping rows. Falls back to A4 when the size is unknown.
   ref_w <- suppressWarnings(as.numeric((input$page_width  %||% NA)[1]))
   ref_h <- suppressWarnings(as.numeric((input$page_height %||% NA)[1]))
-  tbl <- list(row_tol = 3, date_format = .guess_pdf_date_format(input, date_band),
+  tbl <- list(row_tol = 3,
+      date_format = safe(.guess_pdf_date_format(input, date_band), "%d/%m/%Y") %||% "%d/%m/%Y",
       amount_sign = style, columns = cols)
   if (!is.na(ref_w) && ref_w > 0) tbl$ref_width  <- round(ref_w, 2)
   if (!is.na(ref_h) && ref_h > 0) tbl$ref_height <- round(ref_h, 2)
-  list(id = paste0(id, "_pdf"), bank = bank, statement_type = "statement", format = "pdf",
+  list(id = .compose_id(bank, "statement", "pdf", id), bank = bank, statement_type = "statement", format = "pdf",
     version = 1, min_score = max(1L, length(fp)),
     fingerprint = list(page_contains_all = as.list(fp)),
     table = tbl, currency = "NZD", origin = "user")
@@ -111,7 +160,7 @@
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
   if (is.null(cols$amount) && is.null(cols$debit)) return(NULL)   # nothing to read money from
-  list(id = paste0(id, "_xlsx"), bank = bank, statement_type = "everyday", format = "excel",
+  list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
     version = 1, min_score = max(1L, length(h)),
     fingerprint = list(header_contains_all = as.list(h)),
     columns = cols, amount_sign = style, currency = "NZD", origin = "user")
@@ -122,17 +171,23 @@ draft_template <- function(path, bank = "New bank") {
   input <- tryCatch(read_input(path), error = function(e) NULL)
   if (is.null(input)) return(NULL)
   id <- .draft_id(path)
+  # Recognise the bank from the document itself for a friendlier default name/id
+  # (naming hint only -- see .sniff_bank). Keeps the caller's guess otherwise.
+  bank <- .sniff_bank(input, fallback = bank)
   if (identical(input$kind, "delimited")) return(.draft_delimited(path, id, bank))
   if (identical(input$kind, "pdf"))       return(.draft_pdf(input, id, bank))
   if (identical(input$kind, "excel"))     return(.draft_excel(input, id, bank))
   NULL
 }
 
-# draft_preview(path, template) -> the parsed transactions from a draft, or NULL.
-# Lets the guided UI show "here's what we'll pull out -- does this look right?"
+# draft_preview(path, template) -> the human-facing transactions from a draft, or
+# NULL. Lets the guided UI show "here's what we'll pull out -- does this look
+# right?". Uses the same display shaping as the outputs (no verbatim *_raw noise,
+# debit/credit surfaced when the statement splits them) so the toolkit preview
+# matches exactly what the workbook / CSV will contain.
 draft_preview <- function(path, template) {
   tryCatch({
     parsed <- parse_statement(read_input(path), template)
-    parsed$transactions
+    display_transactions(parsed$transactions, parsed$extras)
   }, error = function(e) NULL)
 }

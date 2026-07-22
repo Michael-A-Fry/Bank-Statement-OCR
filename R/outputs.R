@@ -100,7 +100,7 @@
 # statement, so a hostile PDF could put "=cmd" in an amount/date/balance cell and
 # it would execute when the xlsx/csv is opened in Excel unless neutralised here.
 .SS_TEXT_COLS <- c("description", "particulars", "code", "reference",
-                   "other_party", "type", "raw",
+                   "other_party", "type", "raw", "debit", "credit",
                    "date_raw", "amount_raw", "balance_raw")
 .neutralize_formula <- function(v) {
   v <- as.character(v)
@@ -111,6 +111,37 @@
 .spreadsheet_safe <- function(df) {
   for (col in intersect(.SS_TEXT_COLS, names(df)))
     df[[col]] <- .neutralize_formula(df[[col]])
+  df
+}
+
+# display_transactions(transactions, extras) -- the HUMAN-facing transaction table
+# for the previews, the workbook's Transactions sheet and the CSV. Differences from
+# the stable 16-column core: (1) the verbatim *_raw cells (date_raw, amount_raw,
+# balance_raw) are dropped -- they stay in the JSON + Provenance (the full record),
+# but clutter the tabular surfaces people read; (2) every EXTRA column that was
+# pulled is shown too -- the separate debit/credit of a money-in/out statement (next
+# to `amount`), a per-bank column (card, units...), or a column the user mapped
+# under a custom name in the toolkit -- so what the toolkit captured is what the
+# output shows. The JSON keeps the full core + extras, so nothing is lost. Empty
+# columns are left in place here (the app trims them per view).
+.DISPLAY_DROP_COLS <- c("date_raw", "amount_raw", "balance_raw")
+display_transactions <- function(transactions, extras = NULL) {
+  df <- as.data.frame(transactions, stringsAsFactors = FALSE, check.names = FALSE)
+  df <- df[, setdiff(names(df), .DISPLAY_DROP_COLS), drop = FALSE]
+  if (!is.null(extras) && nrow(extras) == nrow(df) && ncol(extras) > 0) {
+    ex <- extras[, setdiff(names(extras), c("row_id", names(df))), drop = FALSE]
+    if (ncol(ex)) {
+      dc <- intersect(c("debit", "credit"), names(ex))   # slot next to `amount`
+      rest <- setdiff(names(ex), dc)
+      if (length(dc)) {
+        pos <- match("amount", names(df)); if (is.na(pos)) pos <- ncol(df)
+        left <- df[, seq_len(pos), drop = FALSE]
+        right <- if (pos < ncol(df)) df[, (pos + 1L):ncol(df), drop = FALSE] else df[, integer(0), drop = FALSE]
+        df <- cbind(left, ex[, dc, drop = FALSE], right)
+      }
+      if (length(rest)) df <- cbind(df, ex[, rest, drop = FALSE])
+    }
+  }
   df
 }
 
@@ -125,7 +156,8 @@ write_outputs <- function(parsed, recon, outdir, basename,
     xlsx_path <- file.path(outdir, paste0(basename, ".xlsx"))
     wb <- openxlsx::createWorkbook()
     openxlsx::addWorksheet(wb, "Transactions")
-    openxlsx::writeData(wb, "Transactions", .spreadsheet_safe(parsed$transactions))
+    openxlsx::writeData(wb, "Transactions",
+      .spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras)))
     openxlsx::addWorksheet(wb, "Summary")
     openxlsx::writeData(wb, "Summary", .header_df(parsed$header))
     openxlsx::addWorksheet(wb, "Checks")
@@ -152,7 +184,8 @@ write_outputs <- function(parsed, recon, outdir, basename,
 
   if ("csv" %in% formats) {
     csv_path <- file.path(outdir, paste0(basename, ".csv"))
-    utils::write.csv(.spreadsheet_safe(parsed$transactions), csv_path, row.names = FALSE, na = "")
+    utils::write.csv(.spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras)),
+                     csv_path, row.names = FALSE, na = "")
     paths["csv"] <- csv_path
   }
 

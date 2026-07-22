@@ -2,7 +2,7 @@
 
 A pure-**R** engine that turns a bank/credit-card statement into clean,
 structured, downloadable data (Excel + CSV + JSON) with reconciliation checks
-and a trust score. Built for forensic-accounting use: audit-grade fidelity,
+and a trust score. Built for forensic-accounting use: high-fidelity extraction,
 verbatim descriptions, honoured redactions, and no silent data loss.
 
 **No Python, no reticulate, no machine learning.** Deterministic behaviour and

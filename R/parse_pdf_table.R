@@ -455,10 +455,19 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # a redaction: the row is dropped and flagged "date didn't parse" so the template
   # gets fixed. Only an explicitly REDACTED date (hidden) is carried on a real
   # amount.
+  # Opt-in for shared-date statements (e.g. HSBC): several transaction rows sit
+  # under ONE date printed once, so most rows have no date of their own. Off by
+  # default (keeping every dateless money line would add spurious rows on normal
+  # statements). When a template sets keep_dateless_rows: true, an amount-bearing,
+  # non-summary row is kept even with no date -- its date stays BLANK (never guessed
+  # or propagated from a neighbour) and it is flagged `no_date`, so the row is
+  # preserved without inventing which date it belongs to.
+  keep_dateless <- isTRUE(t$keep_dateless_rows %||% FALSE)
   .is_txn <- function(r) {
     if (.is_summary(r)) return(FALSE)
     if (.date_ok(r$date)) return(.has_amount(r))              # real date + an amount slot
-    .redacted_cell(r$date) && .real_amount(r) && .has_amount(r)
+    if (.redacted_cell(r$date) && .real_amount(r) && .has_amount(r)) return(TRUE)
+    keep_dateless && .real_amount(r) && .has_amount(r)        # shared-date row, blank date
   }
 
   # Split-row recovery: some statements render one transaction's cells on slightly
@@ -505,25 +514,50 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   if (!identical(t$merge_continuation %||% TRUE, FALSE) && length(recs) > 1) {
     # a forced row is a transaction anchor here too, so it is never folded away.
     is_txn <- vapply(recs, .is_txn, logical(1)) | vapply(recs, .row_forced, logical(1))
-    last_txn <- 0L; drop <- logical(length(recs))
+    # Descriptive columns a wrapped line can spill into. Each keeps its OWN text:
+    # a reference (or particulars, etc.) that wraps onto 2-3 lines stays in its own
+    # column instead of being smeared into `description`. This is the fix for the
+    # reported "the reference column is mapped, its words show (purple) in the
+    # X-ray, but the output cell is empty" case -- the reference lived on the
+    # transaction's continuation lines and was being folded into description.
+    descr_cols <- c("description", "reference", "particulars", "code", "other_party", "type")
+    # last_y1: the baseline of the last line attached to the current transaction
+    # (the txn itself, or its most recent continuation). Measuring the gap from
+    # HERE -- not from the transaction's own baseline -- lets a value wrap across
+    # SEVERAL lines (a reference printed over three lines), each close to the line
+    # above it, instead of only the first continuation folding in.
+    last_txn <- 0L; last_y1 <- -Inf; drop <- logical(length(recs))
     for (i in seq_along(recs)) {
-      if (is_txn[i]) { last_txn <- i; next }
+      if (is_txn[i]) { last_txn <- i; last_y1 <- recs[[i]]$.y1; next }
       if (last_txn == 0L) next
       r <- recs[[i]]; prev <- recs[[last_txn]]
-      cont <- r$description %||% NA_character_
-      if (is.na(cont) || !nzchar(trimws(cont))) cont <- r$raw %||% NA_character_
-      cont <- if (is.na(cont)) "" else trimws(cont)   # nzchar(NA) is TRUE -> guard it
+      line_txt <- r$raw %||% ""
+      line_txt <- if (is.na(line_txt)) "" else trimws(line_txt)   # nzchar(NA) is TRUE -> guard it
       money_here <- .has_amount(r) || .has_money(r$balance %||% "")
-      # Proximity: a continuation is the line right below its transaction (same
-      # page, gap under ~one line height). A footer far down the page is excluded.
+      # Proximity: a continuation is the line right below the previous attached line
+      # (same page, gap under ~one line height). A footer far down the page is excluded.
       lh <- if (is.finite(r$.h) && r$.h > 0) r$.h else 10
       close <- identical(r$page, prev$page) &&
-               is.finite(r$.y0) && is.finite(prev$.y1) &&
-               (r$.y0 - prev$.y1) <= 0.9 * lh && (r$.y0 - prev$.y1) >= -lh
-      if (nzchar(cont) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
-          !.is_summary(r) && !.is_footer_noise(cont) && close) {
-        recs[[last_txn]]$description <- trimws(paste(prev$description %||% "", cont))
+               is.finite(r$.y0) && is.finite(last_y1) &&
+               (r$.y0 - last_y1) <= 0.9 * lh && (r$.y0 - last_y1) >= -lh
+      if (nzchar(line_txt) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
+          !.is_summary(r) && !.is_footer_noise(line_txt) && close) {
+        # Route each mapped band's wrapped text into ITS own column. Only text that
+        # fell in no mapped descriptive band lands on the description (verbatim, so a
+        # free-floating wrapped line is still never lost) -- behaviour identical to
+        # before for templates that map only date/description/amount.
+        any_band <- FALSE
+        for (fld in descr_cols) {
+          add <- r[[fld]] %||% NA_character_
+          if (!is.na(add) && nzchar(trimws(add))) {
+            recs[[last_txn]][[fld]] <- trimws(paste(recs[[last_txn]][[fld]] %||% "", add))
+            any_band <- TRUE
+          }
+        }
+        if (!any_band)
+          recs[[last_txn]]$description <- trimws(paste(recs[[last_txn]]$description %||% "", line_txt))
         drop[i] <- TRUE
+        if (is.finite(r$.y1)) last_y1 <- max(last_y1, r$.y1)   # chain the next line from here
       }
     }
     recs <- recs[!drop]
@@ -610,6 +644,11 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   date_unresolved <- if (n == 0) logical(0)
     else ((!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw))) |
           (forced_vec & is.na(date_iso)))
+  # no_date: a shared-date row kept without a date of its own (keep_dateless_rows).
+  # The blank date is deliberate -- flagged so a reviewer sees it was never guessed.
+  no_date_kept <- if (n == 0) logical(0)
+    else (keep_dateless & is.na(date_iso) &
+          (is.na(date_raw) | !nzchar(trimws(date_raw))) & !forced_vec)
   # ocr_low_conf: an OCR'd date/amount/balance cell held a word below the
   # per-cell confidence floor -- a likely misread digit that the page-mean
   # confidence would mask. Only fires on OCR pages (text pages carry no conf).
@@ -621,6 +660,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, no_date_kept, "no_date")        # shared-date row kept with a blank date
     f <- add(f, fb_used, "date_alt_format")     # read via the year-less fallback
     f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray
     f <- add(f, stitched_vec, "row_stitched")   # two half-rows the reader re-joined
@@ -640,9 +680,17 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     currency = rep(template$currency %||% "NZD", n), flags = flags,
     stringsAsFactors = FALSE))
 
-  if (length(extras_cols) && n > 0) {
+  if (n > 0) {
     ex <- list(row_id = seq_len(n))
     for (ef in names(extras_cols)) ex[[ef]] <- blank_to_na(getc(paste0("x.", ef)))
+    # Separate money-in / money-out statements: keep the verbatim debit and credit
+    # cells. They collapse into the signed `amount` + `direction` for the stable
+    # core table, but forensic users want to see the ORIGINAL split, so they are
+    # surfaced next to `amount` in the previews + workbook and preserved in JSON.
+    if (identical(style, "debit_credit_cols")) {
+      if (is.null(ex$debit))  ex$debit  <- blank_to_na(getc("debit"))
+      if (is.null(ex$credit)) ex$credit <- blank_to_na(getc("credit"))
+    }
     extras <- data.frame(ex, stringsAsFactors = FALSE, check.names = FALSE)
   } else extras <- data.frame(row_id = integer(0))
 

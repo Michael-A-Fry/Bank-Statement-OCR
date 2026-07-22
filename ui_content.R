@@ -4,21 +4,20 @@
 # referenced at call time, so this file sources fine without shiny loaded.
 
 # tutorial_html() -- the step-by-step "how to build a template" walkthrough,
-# opened from the Add-a-template tab. Mirrors docs/wizard-tutorial.md (the
-# canonical, fuller version). Teaches the WAYS statements differ so nothing in
-# the toolkit is a surprise.
+# opened from the Add-a-template tab. Teaches the WAYS statements differ so
+# nothing in the toolkit is a surprise. This in-app guide is self-contained
+# (users have no access to the repo docs).
 tutorial_html <- function() HTML('
 <style>
- .tut h4{margin:16px 0 6px;color:#137333} .tut table{border-collapse:collapse;width:100%;margin:6px 0}
+ .tut h4{margin:16px 0 6px;color:#00205b} .tut table{border-collapse:collapse;width:100%;margin:6px 0}
  .tut th,.tut td{border:1px solid #ddd;padding:5px 8px;text-align:left;vertical-align:top;font-size:13px}
- .tut th{background:#f2f6f2} .tut code{background:#eef;padding:0 3px;border-radius:3px}
+ .tut th{background:#eaf0f8} .tut code{background:#eef;padding:0 3px;border-radius:3px}
  .tut ol,.tut ul{margin:4px 0 4px 18px} .tut .lead{color:#555}
 </style>
 <div class="tut">
 <p class="lead">The engine has <b>zero</b> banks built in. A template just says: the date is in
 <i>this</i> column, the amount in <i>that</i> one, amounts are shown <i>this</i> way, and here is a
-phrase that proves it is this bank. Add a bank = add one template. Follow along with the worked
-example <code>samples/raw/tutorial/sample_everyday_statement.pdf</code>.</p>
+phrase that proves it is this bank. Add a bank = add one template.</p>
 
 <h4>Step 0 - read the statement&#39;s shape (9 questions)</h4>
 <table><tr><th>#</th><th>Question</th><th>What it sets</th></tr>
@@ -88,7 +87,6 @@ usually a wrong amount style or date format.</p>
 <tr><td>Dates blank/wrong</td><td>Wrong date format; for year-less dates confirm the period is detected</td></tr>
 <tr><td>Column empty / description cut off</td><td>Redraw / widen the box (stop before the amount column)</td></tr>
 <tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date - widen/move it. After converting, the X-ray view lists every skipped row and why.</td></tr></table>
-<p class="lead" style="margin-top:12px">Full version with more detail: <code>docs/wizard-tutorial.md</code>.</p>
 </div>')
 
 # about_html() -- the proof story under the About hub cards: how a conversion
@@ -96,12 +94,12 @@ usually a wrong amount style or date format.</p>
 # (built in app.R) are the doors; this is the "why you can rely on it".
 about_html <- function() HTML('
 <style>
- .ab{max-width:1020px} .ab h3{color:#0b7a34;margin:26px 0 10px;font-size:16px}
+ .ab{max-width:1020px} .ab h3{color:#00205b;margin:26px 0 10px;font-size:16px}
  .ab .steps{display:flex;flex-wrap:wrap;counter-reset:step}
  .ab .step{flex:1 1 170px;max-width:196px;margin:0 12px 10px 0;font-size:12.5px;color:#555;
-   padding-top:8px;border-top:3px solid #bfe0c8}
+   padding-top:8px;border-top:3px solid #b6c8e0}
  .ab .step b{display:block;color:#1f2a33;font-size:13px;margin-bottom:2px}
- .ab .step b::before{counter-increment:step;content:counter(step) ".  ";color:#0b7a34}
+ .ab .step b::before{counter-increment:step;content:counter(step) ".  ";color:#00205b}
  .ab .trust{display:grid;grid-template-columns:190px 1fr;max-width:860px;font-size:13px}
  .ab .trust dt{font-weight:600;color:#1f2a33;padding:7px 10px 7px 0;border-top:1px solid #eceeed}
  .ab .trust dd{margin:0;color:#555;padding:7px 0;border-top:1px solid #eceeed}
@@ -128,6 +126,6 @@ against a live preview and save. Next time that bank just works.</p>
 <dt>Redactions</dt><dd>Nothing under a redaction is ever read or guessed. A redacted cell stays <code>[REDACTED]</code>, its row is kept, and the tool never estimates what a black block hid.</dd>
 </dl>
 <p class="muted" style="margin-top:14px">Deeper how-to - drawing PDF columns, every way statements
-differ - lives in the 2-minute guide on the Add-a-template tab, or <code>docs/wizard-tutorial.md</code>.
+differ - lives in the 2-minute guide on the Add-a-template tab.
 Best results come from CSV/Excel exports where your bank offers them.</p>
 </div>')
