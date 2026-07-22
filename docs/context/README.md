@@ -30,6 +30,7 @@ and the honest limits.** None of this tells you how to *do* a task — for that,
 | [architecture/qlik-options-analysis.md](architecture/qlik-options-analysis.md) | The Qlik-side options that were weighed, and why the chosen shape won. |
 | [architecture/legacy-qlik-mapping.md](architecture/legacy-qlik-mapping.md) | What the legacy Qlik app produced, as a reference to measure against. |
 | [metadata-capture.md](metadata-capture.md) | The local-only "ML goldmine" metadata capture — levels, the record shape, and the per-level PII notes. |
+| [customisation.md](customisation.md) | How to teach the engine new things — templates vs lexicon vs config, and the human-approved learning loop. |
 
 ## Research
 | Doc | What it is |
