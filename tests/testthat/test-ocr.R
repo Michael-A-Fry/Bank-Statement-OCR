@@ -18,6 +18,21 @@ test_that("page_needs_ocr triggers only on empty / near-empty text layers", {
           collapse = "\n")))
 })
 
+test_that("page_needs_ocr routes on word boxes + text health, not a char count (P2-1)", {
+  wb <- function(n) data.frame(text = rep("x", n), stringsAsFactors = FALSE)
+  # (c) a digital page whose pdf_text came back empty but has word boxes is NEVER
+  # OCR'd (OCR would overwrite good boxes); with no boxes it still is.
+  expect_false(page_needs_ocr("", wb(50)))
+  expect_true(page_needs_ocr("", wb(0)))
+  # (a) a scanned page carrying only a thin text stamp/footer (few boxes) -> OCR,
+  # even though the char count clears the old 20-char bar.
+  expect_true(page_needs_ocr("Confidential exhibit A page 1 of 5 Bates stamp", wb(2)))
+  # (b) a broken-CID / no-ToUnicode font extracts garbage of the right length -> OCR
+  expect_true(page_needs_ocr(intToUtf8(rep(0xE010, 40)), wb(40)))
+  # a healthy digital page with many boxes is left alone.
+  expect_false(page_needs_ocr(paste(rep("Payment 100.00", 20), collapse = " "), wb(60)))
+})
+
 test_that("tesseract reads a real PDF page end-to-end", {
   skip_if_not(ocr_available(), "tesseract/poppler not installed")
   pdf <- fixture(SAMPLE_PDF_OCR)

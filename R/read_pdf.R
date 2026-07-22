@@ -264,7 +264,11 @@ read_pdf <- function(path, redaction_rects = NULL,
     # on the page is inherently unreadable, and the OCR word boxes go through the
     # SAME redaction guard. Each OCR'd page is flagged so downstream knows the
     # text was machine-read, not extracted.
-    if (ocr_ready && page_needs_ocr(pages[p])) {
+    # Pass the DIGITAL word boxes so the decision routes on their presence, not a
+    # flat char count: a genuine digital page (word boxes present) is never OCR'd
+    # even if pdf_text came back empty, while a scanned page carrying only a thin
+    # text stamp (few/no word boxes) still gets OCR'd.
+    if (ocr_ready && page_needs_ocr(pages[p], words[[p]])) {
       res <- ocr_pdf_page(path, p)
       if (isTRUE(res$ok)) {
         otxt <- paste(res$text, collapse = "\n")

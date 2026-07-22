@@ -120,10 +120,44 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
        width = bw[1], height = bw[2], dark_rects = dark_rects)
 }
 
-# Decide whether a page needs OCR: TRUE when its extracted text layer is
-# effectively empty (image-only / scanned page).
-page_needs_ocr <- function(page_text, min_chars = 20L) {
-  joined <- paste(page_text, collapse = "")
-  is.null(page_text) || !nzchar(trimws(joined)) ||
-    nchar(gsub("[[:space:]]", "", joined)) < min_chars
+# .text_bad_ratio(s) -- fraction of characters that are UNTRUSTWORTHY: the Unicode
+# replacement char, C0/C1 control codes (bar tab/newline/CR), and the private-use
+# area. A broken-CID / no-ToUnicode font extracts the right LENGTH of such garbage,
+# so a high ratio means the "text layer" can't be believed and the page should be
+# read by OCR instead.
+.text_bad_ratio <- function(s) {
+  cp <- suppressWarnings(utf8ToInt(enc2utf8(paste(s, collapse = ""))))
+  cp <- cp[!is.na(cp)]
+  if (!length(cp)) return(0)
+  bad <- cp == 0xFFFD |                         # replacement character
+         (cp < 32 & !(cp %in% c(9L, 10L, 13L))) |   # C0 controls (keep tab/LF/CR)
+         (cp >= 0x7F & cp <= 0x9F) |            # DEL + C1 controls
+         (cp >= 0xE000 & cp <= 0xF8FF)          # private-use area (bad CID fonts)
+  sum(bad) / length(cp)
+}
+
+# page_needs_ocr(page_text, word_boxes, ...) -- decide whether a page must be read
+# by OCR. Routes on more than a flat character count so it no longer (a) skips a
+# scanned transaction page that carries a thin incidental text layer (a Bates
+# stamp / footer), (b) trusts corrupt broken-font text of the right length, or
+# (c) OCRs a genuine digital page whose pdf_text came back empty but whose word
+# boxes are present -- a digital PDF must never be OCR'd.
+page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = 20L,
+                           min_words = 3L, max_bad_ratio = 0.30) {
+  joined <- paste(page_text %||% "", collapse = "")
+  nchar_ns <- nchar(gsub("[[:space:]]", "", joined))
+  nwords <- if (is.null(word_boxes)) NA_integer_
+            else if (is.data.frame(word_boxes)) nrow(word_boxes) else length(word_boxes)
+  have_words <- !is.na(nwords) && nwords >= min_words
+
+  # (c) effectively empty text: OCR only if there are NO real word boxes. Word
+  # boxes present => the page HAS a digital text layer; never OCR it.
+  if (is.null(page_text) || !nzchar(trimws(joined)) || nchar_ns < min_chars)
+    return(!have_words)
+  # (b) text present but mostly garbage (broken CID font) -> OCR.
+  if (.text_bad_ratio(joined) > max_bad_ratio) return(TRUE)
+  # (a) real text but almost no word boxes: a scanned page whose only digital text
+  # is an incidental stamp/footer, the transaction rows being image-only -> OCR.
+  if (!is.na(nwords) && nwords < min_words) return(TRUE)
+  FALSE
 }
