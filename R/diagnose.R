@@ -32,19 +32,9 @@
     "escalate"), character(1))
 }
 
-# .diag_date(s) -- tolerantly parse a verbatim period bound / ISO effective date to
-# a Date (or NA). Only the shapes that actually appear on statements; NA on
-# anything else so the effective-range check simply skips rather than guessing.
-.diag_date <- function(s) {
-  s <- as.character(s %||% NA)
-  if (is.na(s) || !nzchar(trimws(s))) return(as.Date(NA))
-  for (f in c("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y",
-              "%d/%m/%y", "%d %b %y", "%d %B %y")) {
-    d <- suppressWarnings(as.Date(trimws(s), f))
-    if (!is.na(d) && as.integer(format(d, "%Y")) >= 1990) return(d)
-  }
-  as.Date(NA)
-}
+# Verbatim period bounds / effective dates are parsed with the shared
+# .tolerant_date (see R/params.R) -- NA on anything unrecognised so the
+# effective-range check simply skips rather than guessing.
 
 # Compact a set of row indices for display.
 .rng <- function(idx) {
@@ -81,12 +71,12 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           sprintf("%d account numbers appear in one statement period", metadata$multi$n_accounts %||% 0L),
           "Looks like a combined statement (several accounts/products, or transfer counterparties named in transactions). If transactions from more than one account are mixed, running balances won't be continuous across them - review per account.")
     p <- suppressWarnings(as.integer(metadata$pages %||% NA))
-    if (!is.na(p) && p > 100)
+    if (!is.na(p) && p > PARAM_MAX_PAGES)
       add("upload", "oversized", "medium",
           sprintf("%d pages in one file", p),
           "Very long PDFs (>100 pages) may hit tool limits; split into smaller files if extraction stalls.")
     mp <- suppressWarnings(as.numeric(metadata$max_page_pt %||% NA))
-    if (!is.na(mp) && mp > 2880)
+    if (!is.na(mp) && mp > PARAM_MAX_PAGE_PT)
       add("upload", "oversized_page", "medium",
           sprintf("largest page is %.0f pt (> 2880 pt / 40 in)", mp),
           "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
@@ -102,8 +92,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # newer statements is visible, not silently trusted.
     tmpl <- metadata$template
     if (!is.null(tmpl)) {
-      eff_from <- .diag_date(tmpl$effective_from); eff_to <- .diag_date(tmpl$effective_to)
-      pd <- c(.diag_date(parsed$header$period_start), .diag_date(parsed$header$period_end))
+      eff_from <- .tolerant_date(tmpl$effective_from); eff_to <- .tolerant_date(tmpl$effective_to)
+      pd <- c(.tolerant_date(parsed$header$period_start), .tolerant_date(parsed$header$period_end))
       pd <- pd[!is.na(pd)]
       if (length(pd) && (!is.na(eff_from) || !is.na(eff_to)) &&
           ((!is.na(eff_from) && any(pd < eff_from)) || (!is.na(eff_to) && any(pd > eff_to))))
@@ -193,7 +183,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d page(s) were machine-read via OCR", ocrp),
       "OCR pages can contain recognition errors. Spot-check machine-read values against the image.")
     ocrc <- suppressWarnings(as.numeric(parsed$header$ocr_min_confidence %||% NA))
-    if (!is.na(ocrc) && ocrc < 70) add("OCR text", "low_ocr_confidence", "high",
+    if (!is.na(ocrc) && ocrc < PARAM_OCR_PAGE_MIN_CONF) add("OCR text", "low_ocr_confidence", "high",
       sprintf("lowest page-mean OCR confidence was %.0f%%", ocrc),
       "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals. Rows with a doubtful cell carry an 'ocr_low_conf' flag.")
     # OCR ran but confidence could not be measured (the TSV pass failed): a

@@ -184,7 +184,7 @@ detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
 read_pdf <- function(path, redaction_rects = NULL,
                      markers = pdf_redaction_markers(),
                      anchors = pdf_section_anchors(),
-                     scan_vector = TRUE, vector_dpi = 150) {
+                     scan_vector = TRUE, vector_dpi = PARAM_REDACT_VECTOR_DPI) {
   empty <- list(pages = character(0), words = list(), page_count = NA_integer_,
                 sections = detect_pdf_sections(character(0)),
                 redactions = data.frame(page = integer(0), redacted_words = integer(0),

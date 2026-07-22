@@ -168,7 +168,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     for (s in c(md$period_start %||% NA, md$period_end %||% NA)) {
       for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
         dd <- suppressWarnings(as.Date(s, f))
-        if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) { yr <- c(yr, as.integer(format(dd, "%Y"))); break }
+        if (!is.na(dd) && .plausible_year(format(dd, "%Y"))) { yr <- c(yr, as.integer(format(dd, "%Y"))); break }
       }
     }
     yr <- unique(yr)

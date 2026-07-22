@@ -182,10 +182,9 @@
   FALSE
 }
 
-# Per-cell OCR confidence floor: a word below this (0-100) in a date/amount/
-# balance cell earns an `ocr_low_conf` flag. Deliberately conservative -- only
-# clearly-doubtful reads are flagged, so the signal stays meaningful.
-.OCR_CELL_MIN_CONF <- 60
+# Per-cell OCR confidence floor: a word below PARAM_OCR_CELL_MIN_CONF (0-100) in a
+# date/amount/balance cell earns an `ocr_low_conf` flag. Deliberately conservative
+# -- only clearly-doubtful reads are flagged. Tunable in R/params.R.
 
 parse_pdf_table <- function(input, template, force_rows = NULL) {
   t <- template$table %||% list()
@@ -304,7 +303,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
       "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
     dd <- suppressWarnings(as.Date(s, f))
-    if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
+    if (!is.na(dd) && .plausible_year(format(dd, "%Y"))) return(dd) }; as.Date(NA) }
   p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
   yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
   yrs <- unique(yrs[!is.na(yrs)])
@@ -319,7 +318,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
     cy <- suppressWarnings(as.integer(regmatches(alltext,
             gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
-    cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
+    cy <- unique(cy[.plausible_year(cy)])
     if (length(cy) == 1L) { yrs <- cy; year_from_text <- TRUE }
   }
   # .with_year(raw, fmt) -- append the period's year to a year-less date string;
@@ -662,7 +661,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # confidence would mask. Only fires on OCR pages (text pages carry no conf).
   ocr_minconf <- if (n == 0) numeric(0) else vapply(recs, function(r)
     if (is.null(r$ocr_minconf)) NA_real_ else as.numeric(r$ocr_minconf), numeric(1))
-  ocr_low <- if (n == 0) logical(0) else (!is.na(ocr_minconf) & ocr_minconf < .OCR_CELL_MIN_CONF)
+  ocr_low <- if (n == 0) logical(0) else (!is.na(ocr_minconf) & ocr_minconf < PARAM_OCR_CELL_MIN_CONF)
   flags <- if (n == 0) character(0) else {
     add <- function(base, cond, tok)
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)

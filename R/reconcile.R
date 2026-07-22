@@ -40,7 +40,7 @@ reconcile <- function(parsed, template = NULL) {
     note <- if (length(derived))
       sprintf(" [%s derived from the running-balance column]", paste(derived, collapse = " & ")) else ""
     rows$balance_reconciliation <- .kpi(
-      "balance_reconciliation", if (abs(disc) < 0.005) "pass" else "fail",
+      "balance_reconciliation", if (abs(disc) < PARAM_MONEY_TOL) "pass" else "fail",
       expected = round(expected_close, 2), actual = round(closing, 2),
       discrepancy = disc,
       detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f%s",
@@ -71,7 +71,7 @@ reconcile <- function(parsed, template = NULL) {
       }
       if (!is.na(last_bal)) {               # we can test this known balance
         if (is.na(ai) || gap_unknown) unverifiable <- unverifiable + 1L
-        else if (abs(bi - (last_bal + carry + ai)) >= 0.005) { ok <- FALSE; bad <- bad + 1L }
+        else if (abs(bi - (last_bal + carry + ai)) >= PARAM_MONEY_TOL) { ok <- FALSE; bad <- bad + 1L }
       }
       last_bal <- bi; carry <- 0; gap_unknown <- FALSE   # reset the bridge
     }
@@ -124,16 +124,9 @@ reconcile <- function(parsed, template = NULL) {
 
   # 4. dates_within_period: all dates within period_start..period_end.
   # Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
-  # tolerantly so an unparseable bound skips the check rather than crashing.
-  .rec_date <- function(s) {
-    for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y",
-                "%d %b %y", "%d %B %y", "%d/%m/%y", "%d-%m-%y")) {
-      d <- suppressWarnings(as.Date(as.character(s), f))
-      if (!is.na(d) && as.integer(format(d, "%Y")) >= 1990) return(d)
-    }
-    as.Date(NA)
-  }
-  ps <- .rec_date(h$period_start %||% NA); pe <- .rec_date(h$period_end %||% NA)
+  # tolerantly (the shared .tolerant_date, see R/params.R) so an unparseable bound
+  # skips the check rather than crashing.
+  ps <- .tolerant_date(h$period_start %||% NA); pe <- .tolerant_date(h$period_end %||% NA)
   if (!is.na(ps) && !is.na(pe) && n > 0) {
     d <- suppressWarnings(as.Date(tx$date))
     within <- !is.na(d) & d >= ps & d <= pe

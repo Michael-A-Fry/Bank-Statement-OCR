@@ -51,9 +51,10 @@
 #   1. ROUND-TRIP -- reformat the parsed Date back through the SAME `fmt` and
 #      require it to canonically match the input. If the format didn't consume
 #      the whole string (or read the wrong field widths) the two disagree.
-#   2. YEAR BOUND [1990, 2100] -- a 2-digit source read under a 4-digit "%Y"
-#      (year 0025) round-trips clean but is obvious nonsense. Mirrors the
-#      reconcile.R period guard (year >= 1990) with a symmetric upper bound.
+#   2. YEAR BOUND [PARAM_YEAR_MIN, PARAM_YEAR_MAX] -- a 2-digit source read under a
+#      4-digit "%Y" (year 0025) round-trips clean but is obvious nonsense. The
+#      trusted-year window is one shared decision (see R/params.R); reconcile and
+#      diagnose apply the same bound.
 # Both are needed: the round-trip catches (1)'s wrong-width case (year stays in
 # range), the bound catches (2)'s out-of-range case (round-trip matches).
 .date_strict <- function(s, fmt) {
@@ -62,7 +63,7 @@
   if (length(parsed)) {
     yr <- as.integer(format(d[parsed], "%Y"))
     rt <- format(d[parsed], fmt)                       # round-trip through same fmt
-    bad <- is.na(yr) | yr < 1990 | yr > 2100 |
+    bad <- !.plausible_year(yr) |
            .date_canon(rt) != .date_canon(s[parsed])
     d[parsed[bad]] <- as.Date(NA)
   }

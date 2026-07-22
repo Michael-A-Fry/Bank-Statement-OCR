@@ -151,8 +151,8 @@ ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE)
 # stamp / footer), (b) trusts corrupt broken-font text of the right length, or
 # (c) OCRs a genuine digital page whose pdf_text came back empty but whose word
 # boxes are present -- a digital PDF must never be OCR'd.
-page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = 20L,
-                           min_words = 3L, max_bad_ratio = 0.30) {
+page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = PARAM_OCR_MIN_CHARS,
+                           min_words = PARAM_OCR_MIN_WORDS, max_bad_ratio = PARAM_OCR_MAX_BAD_RATIO) {
   joined <- paste(page_text %||% "", collapse = "")
   nchar_ns <- nchar(gsub("[[:space:]]", "", joined))
   nwords <- if (is.null(word_boxes)) NA_integer_

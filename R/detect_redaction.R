@@ -99,7 +99,8 @@ detect_dark_regions <- function(img, scale, min_frac_w = 0.10, min_band_pts = 10
 #   ok = FALSE when the page cannot be rendered (tools missing / render error), so
 #   the caller can warn LOUDLY instead of passing the page as silently clean.
 detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
-                                  dpi = 150, occ_thresh = 0.70, min_area_pt = 12) {
+                                  dpi = PARAM_REDACT_VECTOR_DPI, occ_thresh = PARAM_REDACT_OCC_THRESH,
+                                  min_area_pt = 12) {
   n <- if (is.null(words)) 0L else nrow(words)
   if (n == 0) return(list(ok = TRUE, occluded = logical(0)))
   if (!requireNamespace("pdftools", quietly = TRUE) ||
@@ -115,7 +116,7 @@ detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
     return(list(ok = FALSE, occluded = rep(FALSE, n)))
   W <- info$width; H <- info$height
   m <- matrix(as.integer(g[1, , ]), nrow = W, ncol = H)   # [x, y]; 0 black .. 255 white
-  dark <- m < 60L
+  dark <- m < PARAM_REDACT_DARK_LEVEL
   # points -> render pixels. pdf_data word coords are points from the TOP-LEFT and
   # the render shares that frame, so the scale is just pixels/point per axis.
   sx <- if (!is.na(page_w) && page_w > 0) W / page_w else dpi / 72

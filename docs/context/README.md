@@ -31,6 +31,7 @@ and the honest limits.** None of this tells you how to *do* a task — for that,
 | [architecture/legacy-qlik-mapping.md](architecture/legacy-qlik-mapping.md) | What the legacy Qlik app produced, as a reference to measure against. |
 | [metadata-capture.md](metadata-capture.md) | The local-only "ML goldmine" metadata capture — levels, the record shape, and the per-level PII notes. |
 | [customisation.md](customisation.md) | How to teach the engine new things — templates vs lexicon vs config, and the human-approved learning loop. |
+| [engine-parameters.md](engine-parameters.md) | The engine's numeric tuning decisions (year window, money tolerance, OCR/redaction thresholds) — all named in one file, with the effect of moving each. |
 
 ## Research
 | Doc | What it is |
