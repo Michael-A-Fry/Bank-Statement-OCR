@@ -69,6 +69,28 @@ test_that("the manifest is always written, even when withheld (coverage never si
   expect_length(list.files(file.path(cfg$feed$feed_dir, "runs")), 1)
 })
 
+test_that("re-converting flips the feed folder, never leaving a stale row (P1-3)", {
+  key <- "deadbeef01234567"
+  tx  <- function(cfg) file.path(cfg$feed$feed_dir, "transactions", paste0(key, ".csv"))
+  rev <- function(cfg) file.path(cfg$feed$feed_dir, "review", paste0(key, ".csv"))
+
+  # accepted first -> lands in transactions/.
+  cfg <- .cfg()
+  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  expect_true(file.exists(tx(cfg))); expect_false(file.exists(rev(cfg)))
+
+  # same statement re-converted but now withheld (template no longer proven):
+  # the accepted row MUST be gone, not left feeding the dashboard.
+  write_feed(.mk_result(), cfg, ts = "t2", proven_ids = character(0))
+  expect_false(file.exists(tx(cfg)))                 # stale accepted row removed
+  expect_true(file.exists(rev(cfg)))                 # now in review instead
+
+  # and back again: withheld -> accepted must clear the review row.
+  write_feed(.mk_result(), cfg, ts = "t3", proven_ids = "bnz_everyday_csv")
+  expect_true(file.exists(tx(cfg)))
+  expect_false(file.exists(rev(cfg)))                # stale review row removed
+})
+
 test_that("feed.enabled = false is a no-op", {
   cfg <- .cfg(); cfg$feed$enabled <- FALSE
   expect_null(write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv"))

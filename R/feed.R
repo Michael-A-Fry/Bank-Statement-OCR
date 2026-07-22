@@ -71,6 +71,18 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   run_id <- result$run_id %||% NA_character_
   row_count <- suppressWarnings(as.integer(h$row_count %||% NA_integer_))
 
+  # A statement's key maps to exactly ONE feed file. A re-convert can FLIP the
+  # gate decision (accepted <-> withheld) or now yield no rows, so remove any
+  # prior feed row for this key from BOTH data folders FIRST. Without this a
+  # stale "accepted" row keeps feeding Qlik after the statement was withheld
+  # (and a stale "review" row lingers after it was accepted) -- the feed would
+  # show data the current conversion no longer stands behind. The fresh row (if
+  # any) is written below, leaving exactly one file for this statement.
+  for (d in c(tx_dir, rev_dir)) {
+    old <- file.path(d, paste0(key, ".csv"))
+    if (file.exists(old)) safe(unlink(old))
+  }
+
   # --- the flat, stamped transactions (accepted -> dashboard; withheld -> review) --
   csv <- result$outputs[grepl("\\.csv$", result$outputs %||% character(0))]
   tx_written <- NA_character_
