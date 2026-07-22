@@ -219,9 +219,19 @@ draft_template <- function(path, bank = "New bank") {
 # right?". Uses the same display shaping as the outputs (no verbatim *_raw noise,
 # debit/credit surfaced when the statement splits them) so the toolkit preview
 # matches exactly what the workbook / CSV will contain.
-draft_preview <- function(path, template) {
+# `preview_pages`: for the LIVE toolkit preview, parse only the first few PDF pages
+# instead of the whole statement -- the user is confirming that date / amount / etc.
+# are read correctly, which the first pages already show, and a big statement parses
+# in a fraction of the time (the real convert, run on Save, still does every page).
+# NULL = parse everything (the default, e.g. for the final preview).
+draft_preview <- function(path, template, preview_pages = NULL) {
   tryCatch({
-    parsed <- parse_statement(read_input(path), template)
+    input <- read_input(path)
+    if (!is.null(preview_pages) && identical(input$kind %||% "", "pdf")) {
+      np <- length(input$pages %||% input$words %||% list())
+      if (np > preview_pages) input <- .subinput_pages(input, seq_len(preview_pages))
+    }
+    parsed <- parse_statement(input, template)
     display_transactions(parsed$transactions, parsed$extras)
   }, error = function(e) NULL)
 }

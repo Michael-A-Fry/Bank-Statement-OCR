@@ -2828,7 +2828,11 @@ server <- function(input, output, session) {
 
   # ONE parse per change, shared by the preview table + the status line (each used
   # to call draft_preview independently, doubling the parse on every box assignment).
-  g_preview_tx <- reactive({ g <- guided(); req(g); draft_preview(g$path, guided_live()) })
+  # The live preview parses only the FIRST FEW PDF pages -- enough to confirm the
+  # columns read correctly -- so a big statement previews in a fraction of the time
+  # (the full convert on Save still parses every page).
+  g_preview_tx <- reactive({ g <- guided(); req(g)
+    draft_preview(g$path, guided_live(), preview_pages = 3L) })
   output$g_preview <- renderDT({
     tx <- g_preview_tx(); req(!is.null(tx))
     tx <- utils::head(tx, 12)
