@@ -298,6 +298,11 @@ ui <- fluidPage(
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_who_hint"),
           uiOutput("cv_bank_ui"),
+          checkboxInput("cv_user_templates", "Include user-created templates",
+                        value = isTRUE(CONFIG$app$user_templates_default)),
+          conditionalPanel("input.cv_user_templates == true",
+            helpText(style = "margin-top:-6px;color:#8a5b00",
+              "These were created by users - not guaranteed tested.")),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           br(),
           helpText("Detection is automatic; pick a bank only to force one."),
@@ -630,14 +635,17 @@ server <- function(input, output, session) {
       div(style = "color:#b00020;margin-top:6px", "Wrong password."))
   })
 
-  # Accountants pick from the AUDITED list only: the Convert picker offers proven
-  # (curated / team-maintained) templates, not analyst drafts. Auto-detect still
-  # resolves normally, so a bank someone has set up keeps working; the picker just
-  # never presents an unvetted draft as a thing to choose.
+  # The Convert picker offers PROVEN (curated) templates by default. Ticking
+  # "Include user-created templates" adds the ones users built (with a not-tested
+  # warning) -- so you can always reach your own templates, but the vetted set is
+  # what's shown unless you ask for more.
   proven_templates <- reactive({ tpl_bump()
     tryCatch(load_templates(TEMPLATES_DIR, strict = FALSE), error = function(e) list()) })
+  cv_pick_templates <- reactive({
+    if (isTRUE(input$cv_user_templates)) templates() else proven_templates()
+  })
   output$cv_bank_ui <- renderUI({
-    ts <- proven_templates()
+    ts <- cv_pick_templates()
     banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
     banks <- banks[nzchar(banks)]
     # Template picker: labelled "Bank · type - id" so you can force an EXACT
@@ -1323,12 +1331,16 @@ server <- function(input, output, session) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
     forced_tpl <- force_tpl %||%
       (if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL)
+    # Proven templates by default; the tick-box (or an explicit force, e.g. the
+    # save-then-reconvert of a just-built template) brings in the user-created set.
+    use_user <- isTRUE(input$cv_user_templates) || !is.null(force_tpl)
     who <- who_now()
     withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
       out <- tryCatch(
         convert_document(src, bank = bank, outdir = sess,
-                         templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
+                         templates_dir = TEMPLATES_DIR,
+                         user_templates_dir = if (use_user) USER_TEMPLATES_DIR else NULL,
                          fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
                          requested_by = who, logdir = LOGDIR,
                          force_template = forced_tpl, force_rows = forced_rows),

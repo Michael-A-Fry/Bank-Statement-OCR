@@ -13,6 +13,9 @@ app:
   # The URL Qlik's "Convert a statement" tile opens. Point it at your Shiny deployment.
   shiny_url: http://localhost:8100
   port: 8100
+  # Convert shows proven templates by default; a tick-box brings in user-created
+  # ones. Set true to start with that box ticked (team mostly uses its own templates).
+  user_templates_default: false
 
 paths:
   templates: templates                 # PROVEN / curated templates (Qlik uses ONLY these)

@@ -73,8 +73,10 @@ any number of simultaneous conversions produce independent files (§6).
 4. `template_allowlist` empty, or the template is in it.
 
 Otherwise it's **withheld** (still logged in `runs/`, optionally copied to
-`review/`). So the dashboards only ever contain provably-complete extractions from
-vetted templates - even though the Shiny converter itself offers all templates.
+`review/`). So the dashboards only ever contain clean extractions from vetted
+templates - even though the Shiny converter offers proven templates by default and
+user-created ones via an opt-in tick-box (`app.user_templates_default` sets the
+box's default).
 
 ## 3a. Feed schema
 
