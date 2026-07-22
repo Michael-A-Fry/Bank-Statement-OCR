@@ -23,28 +23,65 @@ you never debug two unknowns at once. The design behind it is in
   statement-viewer flow.
 - A **Windows account** that can install software and create a Scheduled Task on
   the box where R will run (the Qlik node is fine for dev).
-- The Statement Studio folder (this repo) copied somewhere on that box, e.g.
+- **The server is air-gapped (no internet).** So you also need **one
+  internet-connected Windows machine** to collect the installers/packages, and an
+  approved way to move a folder across (USB, transfer share). **Nothing here needs
+  internet at *runtime*** - only this one-time package install does; the engine, the
+  Shiny app and the poller all run fully offline.
+- The Statement Studio folder (this repo) copied onto both machines, e.g.
   `D:\StatementStudio\`.
 
 ---
 
-## Part 1 - Install R + the engine (once, on the server)
+## Part 1 - Install R + the engine OFFLINE (air-gapped)
 
-1. Install **R for Windows** from CRAN (`R-4.x-win.exe`), default options.
-2. Open a terminal and install the packages the engine uses:
+Because the server has no internet, you build a bundle on an online machine and
+carry it over. Two scripts already do the whole thing; full detail in
+[`docs/OFFLINE-INSTALL.md`](../OFFLINE-INSTALL.md).
+
+> **The one rule:** run the bundler under the **same R x.y** the server will run
+> (e.g. both `4.4`). Windows package binaries are built per R minor version - a
+> mismatch is the only thing that makes this fail.
+
+**1a. On the INTERNET-connected machine** (same R x.y as the server):
+```bat
+cd /d D:\StatementStudio
+Rscript scripts\bundle-offline.R
+```
+This creates a self-contained **`bso-offline\`** folder (~a few hundred MB):
+```
+bso-offline\
+  repo\            every R package + all dependencies, as Windows binaries
+  prereqs\         the R installer (R-x.y-win.exe) + Tesseract + Poppler (best effort)
+  install-on-pc.R  the one script you run on the server
+  packages.txt     the list, for reference
+```
+(If `prereqs\` couldn't fetch Tesseract/Poppler behind a proxy, the console prints
+the exact URLs to grab by hand - only needed for *scanned*-PDF OCR.)
+
+**1b. Move it across.** Copy the whole **`bso-offline\`** folder (and the
+`StatementStudio` repo, if not already there) to the server.
+
+**1c. On the AIR-GAPPED server:**
+1. Install **R** from `bso-offline\prereqs\R-x.y-win.exe` (default options).
+2. Install every R package from the bundle - no internet used:
    ```bat
-   "C:\Program Files\R\R-4.x.x\bin\Rscript.exe" -e "install.packages(c('yaml','jsonlite','openxlsx','readxl','pdftools'), repos='https://cloud.r-project.org')"
+   cd /d <path>\bso-offline
+   "C:\Program Files\R\R-4.x.x\bin\Rscript.exe" install-on-pc.R
    ```
-   (OCR of *scanned* PDFs also wants `magick` + Tesseract/Poppler on PATH - optional
-   for dev; text PDFs and CSV/Excel work without it.)
-3. Sanity-check the engine converts a bundled sample:
+   It installs the packages from `repo\`, wires Poppler onto your PATH, and points at
+   the Tesseract installer (run it once if you need scanned-PDF OCR). It prints
+   `R packages: N/N installed.` - if any are MISSING, the R x.y didn't match; rebuild
+   1a under the right R.
+3. Sanity-check the engine converts a bundled sample (offline):
    ```bat
    cd /d D:\StatementStudio
    Rscript run.R samples\raw\bnz\bnz_transaction_export_01.csv BNZ out
    dir out
+   Rscript tests\run_tests.R          &:: expect: failed: 0
    ```
-   You should see `bnz.xlsx / .csv / .json`. **The engine works. Stop here until it
-   does.**
+   You should see `bnz.xlsx / .csv / .json`. **The engine works offline. Stop here
+   until it does.**
 
 ---
 
@@ -245,7 +282,8 @@ LOAD * FROM [lib://StatementQlik/outbox/$(vKey)/statement.csv]
 
 ### 6b. Rserve / SSE (no `Allow Execute`; the sanctioned channel)
 
-1. On the R box: `install.packages('Rserve')` then run it:
+1. On the R box: install **Rserve** - it's already in your offline bundle
+   (`install-on-pc.R` installs it), so no internet needed. Then run it:
    `Rscript -e "library(Rserve); Rserve(args='--no-save')"` (port 6311).
 2. Install the **SSE-to-Rserve** connector (Qlik's open-source R plugin) and register
    an **Analytic Connection** in the QMC (e.g. name `R`, host, port 6311).
@@ -275,4 +313,5 @@ LOAD * FROM [lib://StatementQlik/outbox/$(vKey)/statement.csv]
 | Every bank says `needs_template` | Qlik reads **proven** templates only (`paths.templates`). Confirm that folder holds the bank's YAML; drafts in `templates_user\` are Shiny-only by design. |
 | ODAG app loads nothing | Check `$(vKey)` resolves to the selected row's `key`, and that `outbox\<key>\statement.csv` exists. |
 | Special characters garbled | Keep `codepage is 65001` (UTF-8) on every `LOAD`. |
+| Offline install: packages `MISSING` | The bundler (1a) ran under a different **R x.y** than the server. Rebuild `bso-offline` on the online machine using the same R minor version, re-copy. |
 | Admin password not taking | It's `app.admin_password` in `config\config.yaml`; the `BSO_ADMIN_PASSWORD` env var overrides it if set. |

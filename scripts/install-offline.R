@@ -42,6 +42,13 @@ if (length(miss)) cat("  MISSING:", paste(miss, collapse = ", "),
   "\n  Likely an R-version mismatch -- rebuild the bundle on the laptop under R",
   sprintf("%s.%s.\n", R.version$major, sub("\\..*", "", R.version$minor)))
 
+## 1b. Rserve (OPTIONAL -- only for the Qlik Rserve/SSE convert path) --------
+# Present in the bundle; a no-op if you didn't bundle it. Never blocks the core.
+try(suppressWarnings(install.packages("Rserve", repos = paste0("file:///", repo),
+                                      type = "win.binary")), silent = TRUE)
+if (requireNamespace("Rserve", quietly = TRUE))
+  cat("Rserve: installed (the optional Qlik Rserve/SSE path is available).\n")
+
 ## 2. Poppler -> USER PATH (for scanned-PDF OCR) ----------------------------
 if (nzchar(prereq) && length(Sys.glob(file.path(prereq, "poppler*.zip")))) {
   zip <- Sys.glob(file.path(prereq, "poppler*.zip"))[1]
