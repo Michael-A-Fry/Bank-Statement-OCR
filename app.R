@@ -448,18 +448,6 @@ ui <- fluidPage(
             # show zero-money cards and an empty graph under its honest verdict.
             conditionalPanel("output.cv_has_txns == true",
             uiOutput("cv_summary"),
-            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
-              fluidRow(
-                column(4, selectInput("an_view", "Show",
-                  c("Money in vs out" = "inout", "Balance over time" = "balance",
-                    "Cumulative net" = "cumnet"), width = "100%")),
-                column(4, selectInput("an_group", "Group by",
-                  c("Day" = "day", "Week" = "week", "Month" = "month"),
-                  selected = "week", width = "100%")),
-                column(4, radioButtons("an_unit", "Measure",
-                  c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
-              plotOutput("cv_trend", height = "270px"),
-              uiOutput("cv_trend_note")),
             h4("Your transactions"),
             tabsetPanel(
               tabPanel("Preview", br(), DTOutput("cv_txns")),
@@ -487,7 +475,22 @@ ui <- fluidPage(
                   helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field."))))),
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
+            # Analysis comes AFTER the transactions Beth came for - the trend chart
+            # and its controls are the secondary view, not the payoff.
+            h4("Analysis"),
+            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
+              fluidRow(
+                column(4, selectInput("an_view", "Show",
+                  c("Money in vs out" = "inout", "Balance over time" = "balance",
+                    "Cumulative net" = "cumnet"), width = "100%")),
+                column(4, selectInput("an_group", "Group by",
+                  c("Day" = "day", "Week" = "week", "Month" = "month"),
+                  selected = "week", width = "100%")),
+                column(4, radioButtons("an_unit", "Measure",
+                  c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
+              plotOutput("cv_trend", height = "270px"),
+              uiOutput("cv_trend_note"))),
             # Detection / "wrong template?" and the tweak-in-toolkit prompt: useful,
             # but AFTER the data, not before the verdict.
             uiOutput("cv_teach"),
@@ -1899,6 +1902,15 @@ server <- function(input, output, session) {
     # statement splits them). Trim columns this statement never fills so the table
     # shows only fields that were actually read.
     df <- df[, .cols_with_data(df), drop = FALSE]
+    # Beth reads Date, Description, Amount, Balance first; the bank-technical
+    # columns (in/out, particulars / code / reference / type / ...) follow. The
+    # internal row id ("#") is dropped from the preview - the "Showing N" line
+    # already counts, and the downloaded file keeps it.
+    df <- df[, setdiff(names(df), "row_id"), drop = FALSE]
+    lead <- intersect(c("date", "description", "amount", "debit", "credit", "balance",
+                        "direction", "type", "reference", "particulars", "code", "other_party"),
+                      names(df))
+    df <- df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
     datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
               options = list(pageLength = 10, scrollX = TRUE))
   })
