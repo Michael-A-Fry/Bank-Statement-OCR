@@ -8,6 +8,7 @@ and the honest limits.** None of this tells you how to *do* a task — for that,
 | Doc | What it is |
 |---|---|
 | [launch-audit.md](launch-audit.md) | Readiness: what's ready, the honest boundaries, and the go/no-go. |
+| [ux-audit.md](ux-audit.md) | Enterprise UX/UI audit — every screen reviewed by four specialist personas, with findings. |
 | [edge-cases.md](edge-cases.md) | Real-world edge cases and known limits — what the tool handles and what it doesn't. |
 | [roadmap.md](roadmap.md) | The prioritised backlog, ranked by value ÷ effort. |
 
