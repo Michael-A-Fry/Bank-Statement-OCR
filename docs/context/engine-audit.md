@@ -74,6 +74,26 @@ the open — directly serving "keep it simple and maintainable as it scales":
 | **Engine parameters** consolidated | ✅ shipped | `R/params.R` — year window, money tolerance, OCR/redaction thresholds, oversized advisories, each named once with one shared `.plausible_year` / `.tolerant_date`. See [engine-parameters.md](engine-parameters.md). |
 | **Template hints** in metadata (draft-a-template signal) | ✅ shipped | `R/column_profile.R` — PII-safe per-source-column profiles + the engine's suggested mapping, so an unmatched statement carries everything an AI/human needs to build a template. |
 
+### Adversarial review of the new subsystems (pre-launch hardening pass)
+
+The three new subsystems above were put through an adversarial review (independent
+reviewers per area). The params refactor came back behaviour-preserving; the other
+two had real defects, now fixed and regression-tested:
+
+| Area | Finding | Severity | Resolution |
+|---|---|---|---|
+| `column_profile.R` | Masking was ASCII-only, so non-ASCII letters (te reo macrons, accents, CJK, Greek) survived in the example shape — a PII leak | HIGH | Mask **every** letter and any non-structural char to `A`; regression-tested with macron/accent/CJK/Greek input |
+| `column_profile.R` | A low-cardinality column was classed `indicator` on cardinality alone and its literal values emitted — leaked short reference/payee columns | HIGH | Emit literal tokens only for a genuine D/C indicator (known domain or an indicator-named header); never for content/reference/payee headers |
+| `column_profile.R` | PDF fingerprint phrases could persist an account-holder name | MEDIUM | Raw phrases no longer persisted |
+| `column_profile.R` | Delimited hints ignored the matched template → mislocated the header on a preamble; `nchar` could throw on invalid multibyte | MEDIUM | Use the template's delimiter/preamble; sanitise to valid UTF-8 up front; per-column `safe()` |
+| `split.R` | A running-balance check "self-proved" a boundary it can't (a continuous column is continuous across any cut) → a single statement with per-page brought-forward headers could over-split | HIGH | Commit gate now **requires** an independent structural count; removed the self-proof path and the escape hatch |
+| `split.R` | Combined header stamped statement-1's account / a bundle-spanning period onto every feed row | MEDIUM | Per-statement identity fields nulled in the combined header |
+| `split.R` / `diagnose.R` | `[statement N]`-suffixed KPI names fell through to the generic (medium) diagnostic | MEDIUM | Strip the suffix before severity lookup; statement stays in the location |
+
+The full suite stayed green throughout (1430 tests) and gained targeted regression
+tests for every fix above (PII masking, content-column suppression, the split
+count-agreement guard, header nulling, the shared date-parser shapes).
+
 ---
 
 ## Findings by priority
