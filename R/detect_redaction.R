@@ -84,6 +84,57 @@ detect_dark_regions <- function(img, scale, min_frac_w = 0.10, min_band_pts = 10
   if (!length(out)) .empty_rects() else do.call(rbind, out)
 }
 
+# detect_occluded_words(path, page, words, page_w, page_h, ...) ->
+#   list(ok, occluded). The DIGITAL-redaction guard. A digital PDF can hide a value
+# by DRAWING a solid (usually black) rectangle over text that is STILL PRESENT in
+# the text layer -- pdf_text / pdf_data read the layer, not the picture, so the
+# hidden text leaks and no OCR is triggered (the page isn't scanned). This catches
+# it: rasterise the page and measure the dark-pixel fill INSIDE each word's own
+# box. Normal typeset text fills only a small fraction of its tight box (thin glyph
+# strokes on white, ~0.1-0.4); a word painted over by a solid fill is ~1.0. A word
+# whose box is >= occ_thresh dark is therefore hidden and must be treated as
+# redacted. Word-granular, so there is NO minimum box size -- even a small
+# redaction over a single field is caught. Over-detection (a genuinely very dark
+# word) merely over-redacts, the contract's declared safe failure.
+#   ok = FALSE when the page cannot be rendered (tools missing / render error), so
+#   the caller can warn LOUDLY instead of passing the page as silently clean.
+detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
+                                  dpi = 150, occ_thresh = 0.70, min_area_pt = 12) {
+  n <- if (is.null(words)) 0L else nrow(words)
+  if (n == 0) return(list(ok = TRUE, occluded = logical(0)))
+  if (!requireNamespace("pdftools", quietly = TRUE) ||
+      !requireNamespace("magick", quietly = TRUE))
+    return(list(ok = FALSE, occluded = rep(FALSE, n)))
+  img <- tryCatch(magick::image_read(pdftools::pdf_render_page(
+    path, page = page, dpi = dpi, numeric = FALSE)), error = function(e) NULL)
+  if (is.null(img)) return(list(ok = FALSE, occluded = rep(FALSE, n)))
+  info <- tryCatch(magick::image_info(img), error = function(e) NULL)
+  g <- tryCatch(magick::image_data(magick::image_convert(img, colorspace = "gray"),
+                                   channels = "gray"), error = function(e) NULL)
+  if (is.null(info) || is.null(g) || is.na(info$width) || info$width == 0)
+    return(list(ok = FALSE, occluded = rep(FALSE, n)))
+  W <- info$width; H <- info$height
+  m <- matrix(as.integer(g[1, , ]), nrow = W, ncol = H)   # [x, y]; 0 black .. 255 white
+  dark <- m < 60L
+  # points -> render pixels. pdf_data word coords are points from the TOP-LEFT and
+  # the render shares that frame, so the scale is just pixels/point per axis.
+  sx <- if (!is.na(page_w) && page_w > 0) W / page_w else dpi / 72
+  sy <- if (!is.na(page_h) && page_h > 0) H / page_h else dpi / 72
+  wx <- suppressWarnings(as.numeric(words$x)); wy <- suppressWarnings(as.numeric(words$y))
+  ww <- suppressWarnings(as.numeric(words$width)); wh <- suppressWarnings(as.numeric(words$height))
+  occ <- logical(n)
+  for (i in seq_len(n)) {
+    if (any(is.na(c(wx[i], wy[i], ww[i], wh[i]))) || ww[i] * wh[i] < min_area_pt) next
+    x0 <- max(1L, as.integer(floor(wx[i] * sx)) + 1L)
+    x1 <- min(W,  as.integer(ceiling((wx[i] + ww[i]) * sx)))
+    y0 <- max(1L, as.integer(floor(wy[i] * sy)) + 1L)
+    y1 <- min(H,  as.integer(ceiling((wy[i] + wh[i]) * sy)))
+    if (x1 <= x0 || y1 <= y0) next
+    occ[i] <- mean(dark[x0:x1, y0:y1]) >= occ_thresh
+  }
+  list(ok = TRUE, occluded = occ)
+}
+
 # inject_redaction_tokens(words, rects, row_tol) -> words with synthetic
 # [REDACTED] boxes added ONLY onto the visible OCR rows a rect overlaps, so a
 # PARTIALLY-blacked transaction keeps its visible cells and gains a [REDACTED]

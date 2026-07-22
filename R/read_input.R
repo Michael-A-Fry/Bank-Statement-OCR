@@ -102,6 +102,7 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     page_height = pdf$page_height,
     sections = pdf$sections,
     redactions = pdf$redactions,
+    redaction_scan_incomplete = pdf$redaction_scan_incomplete %||% 0L,
     ocr = pdf$ocr,
     ocr_conf = pdf$ocr_conf
   )
@@ -144,6 +145,7 @@ read_input <- function(path, redaction_rects = NULL) {
     input$meta$ocr_pages <- sum(ocr)
     on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
     input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
+    input$meta$redaction_scan_incomplete <- x$redaction_scan_incomplete %||% 0L
   } else {
     stop(sprintf("unsupported file extension: '%s'", ext))
   }

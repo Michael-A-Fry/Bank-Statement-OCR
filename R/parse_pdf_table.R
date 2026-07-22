@@ -724,7 +724,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     page_count = input$meta$page_count %||% NA_integer_, row_count = n,
     stated_count = md$stated_count %||% NA_integer_,
     ocr_pages = input$meta$ocr_pages %||% 0L,
-    ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_)
+    ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_,
+    redaction_scan_incomplete = input$meta$redaction_scan_incomplete %||% 0L)
 
   pages_v <- if (n == 0) integer(0) else vapply(recs, function(r) as.integer(r$page), integer(1))
   provenance <- data.frame(row_id = seq_len(n),

@@ -15,6 +15,53 @@
     redacted = FALSE)
 }
 
+# P1-4: a DIGITAL PDF that hides a value under a DRAWN (vector) black rectangle,
+# while the text stays in the layer, must not leak that text. detect_occluded_words
+# rasterises the page and flags any word whose box renders ~solid dark.
+.make_vector_redacted_pdf <- function() {
+  tf <- tempfile(fileext = ".pdf")
+  grDevices::pdf(tf, width = 8.27, height = 11.69)
+  op <- graphics::par(mar = c(0, 0, 0, 0)); on.exit(graphics::par(op), add = TRUE)
+  graphics::plot.new(); graphics::plot.window(xlim = c(0, 100), ylim = c(0, 100))
+  graphics::text(5,  50, "01/06/2025", pos = 4, cex = 1.5)
+  graphics::text(30, 50, "123.45",     pos = 4, cex = 1.5)
+  graphics::text(55, 50, "SECRETNAME", pos = 4, cex = 1.5)
+  graphics::rect(54, 47, 82, 53, col = "black", border = NA)   # painted OVER the text
+  grDevices::dev.off()
+  tf
+}
+
+test_that("a vector-drawn redaction over live text does not leak (P1-4)", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(requireNamespace("magick", quietly = TRUE))
+  tf <- .make_vector_redacted_pdf()
+  # sanity: the raw text layer DOES still carry the hidden word (that's the leak).
+  skip_if_not(grepl("SECRETNAME", paste(pdftools::pdf_text(tf), collapse = " ")))
+
+  r <- read_pdf(tf)
+  txt <- paste(r$pages, collapse = " ")
+  expect_false(grepl("SECRETNAME", txt))          # the hidden word must NOT be emitted
+  expect_true(grepl("01/06/2025", txt))           # visible words survive
+  expect_true(grepl("123.45", txt))
+  w <- r$words[[1]]
+  expect_true(any(w$redacted %in% TRUE))          # the covered word is flagged
+  expect_false(any(grepl("SECRETNAME", w$text)))  # its text is discarded everywhere
+  expect_equal(r$redaction_scan_incomplete, 0)    # the scan ran (no loud fallback)
+})
+
+test_that("detect_occluded_words spares normal text, flags an occluded word (P1-4)", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(requireNamespace("magick", quietly = TRUE))
+  tf <- .make_vector_redacted_pdf()
+  d <- as.data.frame(pdftools::pdf_data(tf)[[1]])
+  ps <- pdftools::pdf_pagesize(tf)
+  occ <- detect_occluded_words(tf, 1, d, ps$width[1], ps$height[1])
+  expect_true(isTRUE(occ$ok))
+  # exactly the SECRETNAME box is occluded; the date/amount are not.
+  expect_true(occ$occluded[grepl("SECRETNAME", d$text)][1])
+  expect_false(any(occ$occluded[grepl("01/06/2025|123.45", d$text)]))
+})
+
 test_that("inject_redaction_tokens reconstructs a blacked cell on its own row", {
   words <- .dr_words()
   # a rect over the AMOUNT column of row 1 only (y 36..52, x 350..410)

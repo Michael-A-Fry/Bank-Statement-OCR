@@ -187,7 +187,8 @@ detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
 # ---------------------------------------------------------------------------
 read_pdf <- function(path, redaction_rects = NULL,
                      markers = pdf_redaction_markers(),
-                     anchors = pdf_section_anchors()) {
+                     anchors = pdf_section_anchors(),
+                     scan_vector = TRUE, vector_dpi = 150) {
   empty <- list(pages = character(0), words = list(), page_count = NA_integer_,
                 sections = detect_pdf_sections(character(0)),
                 redactions = data.frame(page = integer(0), redacted_words = integer(0),
@@ -220,6 +221,9 @@ read_pdf <- function(path, redaction_rects = NULL,
   red_counts <- integer(np)
   ocr_flags <- rep(FALSE, np)
   ocr_conf <- rep(NA_real_, np)
+  # Pages whose vector-redaction scan could NOT run (no rasteriser) -> surfaced as
+  # a loud "redactions not verified" warning downstream, never a silent clean pass.
+  red_scan_incomplete <- rep(FALSE, np)
 
   # OCR is attempted whenever the page's TEXT is effectively empty/sparse -- not
   # only when there are zero word boxes. That covers a scanned transaction page
@@ -300,7 +304,40 @@ read_pdf <- function(path, redaction_rects = NULL,
         }
       }
     }
+
+    # Digital vector-redaction guard. A page with a full text layer never triggers
+    # OCR, so a solid rectangle DRAWN over still-present text (a vector redaction)
+    # would leak the text under it -- pdf_text/pdf_data read the layer, not the
+    # picture. Rasterise the page and mark any word whose rendered box is ~solid
+    # dark as redacted, the same visibility test the scanned path uses, here at
+    # word granularity. Skipped when the page was OCR'd (already covered) or off.
+    if (scan_vector && !ocr_flags[p]) {
+      gp <- words[[p]]
+      if (!is.null(gp) && nrow(gp) > 0) {
+        occ <- detect_occluded_words(path, p, gp, page_width[p], page_height[p],
+                                     dpi = vector_dpi)
+        if (isTRUE(occ$ok)) {
+          new_hits <- occ$occluded & !(gp$redacted %in% TRUE)
+          if (any(new_hits)) {
+            gp$text[new_hits] <- REDACTION_TOKEN
+            gp$redacted <- gp$redacted | occ$occluded
+            words[[p]] <- gp
+            red_counts[p] <- sum(gp$redacted %in% TRUE)
+            pages[p] <- words_to_text(gp)      # rebuild text WITHOUT the hidden words
+          }
+        } else {
+          red_scan_incomplete[p] <- TRUE       # loud fallback: couldn't verify
+        }
+      }
+    }
   }
+  # LOUD fallback: if any page could not be rasterised to check for vector
+  # redactions, say so once -- the visible text on those pages is NOT
+  # redaction-verified and must be treated with caution, never assumed clean.
+  if (any(red_scan_incomplete))
+    warning(sprintf(paste0("read_pdf: could not rasterise %d page(s) to verify ",
+      "vector redactions; visible text on those pages is not redaction-checked"),
+      sum(red_scan_incomplete)), call. = FALSE)
 
   # Words-frame contract: every page's words carry a per-word `ocr_conf` column
   # -- Tesseract's 0-100 word confidence on an OCR page, NA on a text-layer page
@@ -320,7 +357,9 @@ read_pdf <- function(path, redaction_rects = NULL,
     page_height = page_height,
     sections = detect_pdf_sections(pages, anchors),
     redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
+                            scan_incomplete = red_scan_incomplete,
                             stringsAsFactors = FALSE),
+    redaction_scan_incomplete = sum(red_scan_incomplete),
     ocr = ocr_flags,
     ocr_conf = ocr_conf,
     ok = TRUE

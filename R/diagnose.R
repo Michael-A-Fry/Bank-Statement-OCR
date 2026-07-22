@@ -144,6 +144,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d redacted value(s), kept as shown", length(red)),
       "Redactions are intentional; values are left as [REDACTED]. No action needed.")
 
+    rsi <- suppressWarnings(as.integer(parsed$header$redaction_scan_incomplete %||% NA))
+    if (!is.na(rsi) && rsi > 0) add("redactions", "redaction_unverified", "high",
+      sprintf("%d page(s) could not be checked for hidden (drawn-over) text", rsi),
+      "The tool could not rasterise these pages to confirm nothing is hidden under a drawn box. Treat their visible text with caution and check the pages against the original; a working image rasteriser removes this warning.")
+
     ocrp <- suppressWarnings(as.integer(parsed$header$ocr_pages %||% NA))
     if (!is.na(ocrp) && ocrp > 0) add("pages (OCR)", "ocr", "info",
       sprintf("%d page(s) were machine-read via OCR", ocrp),
