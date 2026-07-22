@@ -14,4 +14,5 @@ How they differ from the curated templates in `../templates/`:
   conversions. (Curated templates must be valid — that's a hard error.)
 
 Promoting a good user template to a curated default = move its `.yaml` into
-`../templates/`, tidy it, and add a golden test (see `../docs/wizard-tutorial.md`).
+`../templates/`, tidy it, and add a golden test (see
+`../docs/context/wizard-tutorial.md`).

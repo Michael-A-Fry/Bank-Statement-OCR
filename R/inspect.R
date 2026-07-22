@@ -31,7 +31,7 @@
 #   list(pages = list(<page> = list(
 #     region = list(x_min,x_max,y_min,y_max) | NULL,
 #     bands  = named list(field -> list(x_min,x_max)),
-#     words  = data.frame(x,y,width,height,text,redacted,in_region,column),
+#     words  = data.frame(x,y,width,height,text,redacted,in_region,column,ocr_conf),
 #     rows   = data.frame(x0,y0,x1,y1,kept,date)   # one per visual row in-region
 #   )))
 # `column` is which template column a word is selected into (NA = none / outside
@@ -95,9 +95,13 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     inreg <- .in_region(w, region_p)
     colassign <- vapply(seq_len(nrow(w)), function(i)
       if (inreg[i]) .word_column(cx[i], cols_p) else NA_character_, character(1))
+    # ocr_conf: per-word OCR confidence (0-100) on a machine-read page, NA on a
+    # text-layer page -- always present so the app can shade doubtful words.
     words <- data.frame(x = w$x, y = w$y, width = w$width, height = w$height,
       text = as.character(w$text), redacted = as.logical(w$redacted),
-      in_region = inreg, column = colassign, stringsAsFactors = FALSE)
+      in_region = inreg, column = colassign,
+      ocr_conf = suppressWarnings(as.numeric(w$ocr_conf %||% rep(NA_real_, nrow(w)))),
+      stringsAsFactors = FALSE)
 
     # Row boxes: group the in-region words by y exactly like parse_pdf_table.
     rw <- w[inreg, , drop = FALSE]
@@ -147,6 +151,47 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, sx, sy))
   })
   names(pages) <- as.character(seq_along(wbp))
+  # Year-less fallback, mirrored from parse_pdf_table so the X-ray never
+  # disagrees with the reader: when the template's own date format reads ZERO
+  # dates in the whole document but the statement period supplies the year,
+  # the engine keeps day+month rows ("17 Sep") via the fallback - so rows the
+  # overlay marked "date didn't parse" that the fallback reads must flip to
+  # kept here too.
+  all_dates <- unlist(lapply(pages, function(P)
+    if (!is.null(P$rows) && nrow(P$rows)) P$rows$date else character(0)))
+  all_dates <- all_dates[!is.na(all_dates)]
+  prim_any <- any(vapply(all_dates, function(cc) !is.na(suppressWarnings(
+    parse_date(.first_n_date(cc, date_fmt), date_fmt)$iso)), logical(1)))
+  if (!prim_any && length(all_dates)) {
+    md <- safe(extract_metadata(input), NULL)
+    yr <- NULL
+    for (s in c(md$period_start %||% NA, md$period_end %||% NA)) {
+      for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+        dd <- suppressWarnings(as.Date(s, f))
+        if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) { yr <- c(yr, as.integer(format(dd, "%Y"))); break }
+      }
+    }
+    yr <- unique(yr)
+    # With no year found anywhere, mirror the reader's sentinel keep: a clear
+    # name-month cell (either order) still keeps its row, flagged upstream.
+    yr_eff <- if (length(yr)) yr else 2000L
+    fb_ok <- function(cell) {
+      if (is.na(cell)) return(FALSE)
+      toks <- strsplit(trimws(cell), "[[:space:]]+")[[1]]
+      if (length(toks) >= 2) cell <- paste(toks[1:2], collapse = " ")
+      s <- paste(.normalise_date_str(cell), yr_eff)
+      for (f in c("%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y"))
+        if (any(!is.na(suppressWarnings(as.Date(s, f))))) return(TRUE)
+      FALSE
+    }
+    for (p in names(pages)) {
+      R <- pages[[p]]$rows
+      if (is.null(R) || !nrow(R)) next
+      flip <- !R$kept & grepl("didn't parse", R$reason %||% "") &
+        vapply(R$date, fb_ok, logical(1), USE.NAMES = FALSE)
+      if (any(flip)) { R$kept[flip] <- TRUE; R$reason[flip] <- "" ; pages[[p]]$rows <- R }
+    }
+  }
   list(pages = pages)
 }
 
@@ -160,7 +205,8 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
 
 .empty_words <- function() data.frame(x = numeric(0), y = numeric(0), width = numeric(0),
   height = numeric(0), text = character(0), redacted = logical(0),
-  in_region = logical(0), column = character(0), stringsAsFactors = FALSE)
+  in_region = logical(0), column = character(0), ocr_conf = numeric(0),
+  stringsAsFactors = FALSE)
 .empty_rows <- function() data.frame(x0 = numeric(0), y0 = numeric(0), x1 = numeric(0),
   y1 = numeric(0), kept = logical(0), date = character(0), reason = character(0),
   raw = character(0), h = numeric(0), stringsAsFactors = FALSE)

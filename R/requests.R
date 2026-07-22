@@ -7,7 +7,7 @@
 # generic, non-identifying context (file extension, the bank label, and which
 # date / amount options were on screen). It NEVER stores statement content, and
 # the UI warns the user to describe the format, not paste statement details. The
-# requests folder is git-ignored so nothing typed here is ever committed.
+# requests folder is local-only so nothing typed here is ever shared.
 
 .requests_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "requests")
 

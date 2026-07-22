@@ -1,7 +1,7 @@
 # Golden-file test for the wizard TUTORIAL sample: a synthetic PDF statement
 # (Kowhai Bank NZ) that exercises the tricky real-world features -- Withdrawals/
 # Deposits as two columns and day+month-only dates with the year taken from the
-# statement period. Proves the whole PDF-template path end-to-end on committed,
+# statement period. Proves the whole PDF-template path end-to-end on stored,
 # PII-free data. Regenerate the PDF with samples/raw/tutorial/make_sample_statement.R
 # (or the .html via Chromium print-to-pdf).
 

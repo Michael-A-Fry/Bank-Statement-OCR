@@ -23,11 +23,9 @@ front-end agnostic.
 
 ### Hard constraints
 - **Language:** R only. No `reticulate`, no Python, ever.
-- **Attribution:** every commit authored as *Michael Fry
-  `<95201544+Michael-A-Fry@users.noreply.github.com>`*. No mention of AI,
-  automated assistants, or any such tooling anywhere in commits, code,
-  comments, docs, branch names, or artifacts - everything is authored as
-  Michael.
+- **Attribution:** everything is authored as *Michael Fry*. No mention of AI,
+  automated assistants, or any such tooling anywhere in the code, comments,
+  docs, or any other artifact.
 - **Environment:** cannot self-host a Shiny app for users outside the immediate
   team. Core capability must therefore be usable when plugged into whatever
   analytics tool is adopted.
@@ -194,8 +192,7 @@ The dominant, repeated requirement. Every design choice is judged against it:
   methods and build the golden-file test set. **Fully tested before go-live.**
 
 ### 4.5 Build vs deployment reality
-- **Development:** here, on GitHub - real version control, structured project,
-  automated tests.
+- **Development:** version-controlled, structured project with automated tests.
 - **Deployment:** a **plain folder structure on an internal server** with **no
   version control** on that side, inside their environment.
 - Therefore the **core is plain callable R functions in a folder**
@@ -262,7 +259,7 @@ _All recommended defaults accepted._
   as-shown date string).
 
 ### 6.3 Quality gate ("foolproof")
-- **Golden-file regression tests** on GitHub: each specimen has an expected
+- **Golden-file regression tests:** each specimen has an expected
   output; no change is accepted unless **all banks still pass and
   reconciliation passes**. A template is not "live" until it matches its
   golden file.
@@ -344,7 +341,7 @@ Engine built, adversarially audited and tested in pure R.
 - **Deferred (need real data, not code):** per-bank PDF transaction-table
   templates; `.xlsx` templates. Categorisation intentionally out of v1 scope.
 
-See `README.md` and `docs/architecture/build-contract.md`.
+See `README.md` and `docs/context/architecture/build-contract.md`.
 - [ ] Bank 4 - Categorisation, reconciliation & review
 - [ ] Bank 5 - Consistency, maintainability & governance
 
@@ -365,7 +362,7 @@ Final requirements captured after the V1 engine milestone.
   Verdicts are the forensic user's ground truth - kept, never discarded.
 
 **Concurrency, authorisation, Qlik - PLAN ONLY (design on record, no code).**
-Written up in `docs/architecture/deployment-integration-plan.md`:
+Written up in `docs/context/architecture/deployment-integration-plan.md`:
 - **Concurrency:** the engine is already a stateless, re-entrant pure function
   of a file. Plan = a bounded pool of stateless workers (plumber REST) or a
   folder-inbox cron watcher; per-run output dirs (`out/<run_id>/`) so filenames

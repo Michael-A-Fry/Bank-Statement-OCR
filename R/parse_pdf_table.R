@@ -294,48 +294,96 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # completeness guard is satisfied, exactly like a delimited statement.
   md <- safe(extract_metadata(input), NULL)
   has_year <- grepl("%[Yy]", date_fmt)
+  # Year context is computed ALWAYS (not just for year-less templates): the
+  # year-less FALLBACK below needs it even when the template's own format
+  # carries a year. Parse the period bounds (2-digit years too, e.g. ASB
+  # "13 Jun 26") and take the year(s) from the parsed dates -- more robust than
+  # a 4-digit regex. Reject implausible years: as.Date("13 Aug 25", "%d %b %Y")
+  # yields 0025 (not NA), so without this the 4-digit format greedily eats a
+  # 2-digit year.
+  pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
+      "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+    dd <- suppressWarnings(as.Date(s, f))
+    if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
+  p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
+  yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
+  yrs <- unique(yrs[!is.na(yrs)])
+  # Some statements print day/month only in the table AND give no parseable
+  # period. Rather than silently drop EVERY row (year-less dates parse to NA
+  # and fail the date filter), scan the page text for a plausible 4-digit year.
+  # Only used when it is UNAMBIGUOUS (a single distinct year on the page): if
+  # the text shows zero or several years we do not guess, keeping to the
+  # "never silently wrong" contract. date_raw stays verbatim regardless.
+  if (!length(yrs)) {
+    alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
+    cy <- suppressWarnings(as.integer(regmatches(alltext,
+            gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
+    cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
+    if (length(cy) == 1L) yrs <- cy
+  }
+  # .with_year(raw, fmt) -- append the period's year to a year-less date string;
+  # with two candidate years (a period spanning New Year) pick the one that
+  # lands the date inside the period.
+  .with_year <- function(raw, fmt) {
+    if (!length(yrs)) return(raw)
+    bad <- is.na(raw) | !nzchar(trimws(raw))
+    if (length(yrs) == 1) { out <- paste(raw, yrs[1]); out[bad] <- raw[bad]; return(out) }
+    out <- vapply(raw, function(r) {
+      if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
+      cand <- suppressWarnings(as.Date(paste(r, yrs), fmt))
+      inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
+      pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
+      if (is.na(pick)) pick <- 1L
+      paste(r, yrs[pick])
+    }, character(1))
+    out
+  }
   full_date <- function(raw) raw
   eff_fmt <- date_fmt
   if (!has_year) {
     eff_fmt <- paste(date_fmt, "%Y")
-    # Parse the period bounds (2-digit years too, e.g. ASB "13 Jun 26") and take
-    # the year(s) from the parsed dates -- more robust than a 4-digit regex.
-    # Reject implausible years: as.Date("13 Aug 25", "%d %b %Y") yields 0025 (not
-    # NA), so without this the 4-digit format greedily eats a 2-digit year.
-    pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
-        "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
-      dd <- suppressWarnings(as.Date(s, f))
-      if (!is.na(dd) && as.integer(format(dd, "%Y")) >= 1990) return(dd) }; as.Date(NA) }
-    p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
-    yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
-    yrs <- unique(yrs[!is.na(yrs)])
-    # Fallback: some statements print day/month only in the table AND give no
-    # parseable period. Rather than silently drop EVERY row (year-less dates parse
-    # to NA and fail the date filter), scan the page text for a plausible 4-digit
-    # year. Only used when it is UNAMBIGUOUS (a single distinct year on the page):
-    # if the text shows zero or several years we do not guess, keeping to the
-    # "never silently wrong" contract. date_raw stays verbatim regardless.
-    if (!length(yrs)) {
-      alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
-      cy <- suppressWarnings(as.integer(regmatches(alltext,
-              gregexpr("\\b(?:19|20)[0-9]{2}\\b", alltext, perl = TRUE))[[1]]))
-      cy <- unique(cy[!is.na(cy) & cy >= 1990 & cy <= 2099])
-      if (length(cy) == 1L) yrs <- cy
+    full_date <- function(raw) .with_year(raw, eff_fmt)
+  }
+  # Year-less FALLBACK for templates whose declared format carries a year: real
+  # statements print "17 Sep" in the table while the template (built from a
+  # different export of the same bank) says e.g. %d/%m/%Y. When the template
+  # format fails on a date cell, try the day+month family with the year taken
+  # from the statement period -- deterministic (the year comes from the
+  # statement itself, never guessed). Every row read this way is flagged
+  # date_alt_format so the mismatch is visible and fixable in the template.
+  # .fb_first: the fallback's own leading-date trim. .first_date() trims to the
+  # TEMPLATE format's piece count (1 for %d/%m/%Y), which would cut "02 May"
+  # down to "02" before the fallback could read it; day+month is always 2 pieces.
+  .fb_first <- function(cells) vapply(cells, function(cc) {
+    if (is.na(cc)) return(NA_character_)
+    toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
+    if (length(toks) >= 2) paste(toks[1:2], collapse = " ") else as.character(cc)
+  }, character(1), USE.NAMES = FALSE)
+  # The name-month family, BOTH orders: "17 Sep" can only be day-month and
+  # "Sep 17" only month-day (a month name is never a day), so trying both is
+  # deterministic - a user who picked the wrong year-less variant in the
+  # toolkit still gets every row.
+  .FB_FMTS <- c("%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y")
+  .fb_parse <- function(raw) {
+    out <- rep(NA_character_, length(raw))
+    if (!length(yrs) || !length(raw)) return(out)
+    raw <- .fb_first(raw)
+    for (f in .FB_FMTS) {
+      need <- is.na(out)
+      if (!any(need)) break
+      out[need] <- suppressWarnings(parse_date(.with_year(raw[need], f), f)$iso)
     }
-    full_date <- function(raw) {
-      if (!length(yrs)) return(raw)
-      bad <- is.na(raw) | !nzchar(trimws(raw))
-      if (length(yrs) == 1) { out <- paste(raw, yrs[1]); out[bad] <- raw[bad]; return(out) }
-      out <- vapply(raw, function(r) {
-        if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
-        cand <- suppressWarnings(as.Date(paste(r, yrs), eff_fmt))
-        inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
-        pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
-        if (is.na(pick)) pick <- 1L
-        paste(r, yrs[pick])
-      }, character(1))
-      out
-    }
+    out
+  }
+  # Sentinel variant for when NO year is known anywhere: does the cell read as
+  # a name-month date at all (either order)? Used to KEEP the row - date_iso
+  # stays NA and the row is flagged date_unresolved, same as the existing
+  # unknown-year path: data preserved, never silently wrong.
+  .fb_sentinel_ok <- function(raw) {
+    raw <- .fb_first(raw)
+    for (f in .FB_FMTS)
+      if (!is.na(suppressWarnings(parse_date(paste(raw, "2000"), f)$iso))) return(TRUE)
+    FALSE
   }
 
   # Keep only genuine transaction rows: the date cell must parse AND the row must
@@ -363,12 +411,32 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # date_iso NA (the real year is genuinely unknown), and flag it date_unresolved
   # so the reviewer can assign the year -- data preserved, never silently wrong.
   year_resolved <- has_year || length(yrs) > 0
-  .date_ok <- function(raw) {
-    raw <- .first_date(raw)
+  # Document-level gate for the fallback: it exists for statements whose WHOLE
+  # table is unreadable under the template's declared format (the reported real
+  # cases: "17 Sep" rows under a %d/%m/%Y template, or under the WRONG year-less
+  # variant, month-day picked for a day-month statement). If the template's own
+  # format reads even ONE date in the document, the fallback stays off - on such
+  # documents a stray day+month fragment carrying a number (a distribution note,
+  # a wrapped line) must not sneak in as a transaction.
+  prim_zero <- length(recs) > 0 && !any(vapply(recs, function(r) {
+    rw <- .first_date(r$date %||% NA_character_)
     if (year_resolved)
-      return(!is.na(suppressWarnings(parse_date(full_date(raw), eff_fmt)$iso)))
-    !is.na(suppressWarnings(parse_date(paste(raw, "2000"),
-                                       paste(date_fmt, "%Y"))$iso))
+      !is.na(suppressWarnings(parse_date(full_date(rw), eff_fmt)$iso))
+    else
+      !is.na(suppressWarnings(parse_date(paste(rw, "2000"), paste(date_fmt, "%Y"))$iso))
+  }, logical(1)))
+  fb_active <- prim_zero && length(yrs) > 0
+  .date_ok <- function(raw) {
+    raw1 <- .first_date(raw)
+    if (year_resolved) {
+      if (!is.na(suppressWarnings(parse_date(full_date(raw1), eff_fmt)$iso))) return(TRUE)
+      return(fb_active && !is.na(.fb_parse(raw)))
+    }
+    if (!is.na(suppressWarnings(parse_date(paste(raw1, "2000"),
+                                           paste(date_fmt, "%Y"))$iso))) return(TRUE)
+    # No year known anywhere AND the declared format reads nothing: still keep
+    # clear name-month rows (either order) - flagged date_unresolved downstream.
+    prim_zero && .fb_sentinel_ok(raw)
   }
   .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
   # KEEP RULE. A row is a transaction when it still shows REAL evidence -- a real
@@ -387,10 +455,19 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # a redaction: the row is dropped and flagged "date didn't parse" so the template
   # gets fixed. Only an explicitly REDACTED date (hidden) is carried on a real
   # amount.
+  # Opt-in for shared-date statements (e.g. HSBC): several transaction rows sit
+  # under ONE date printed once, so most rows have no date of their own. Off by
+  # default (keeping every dateless money line would add spurious rows on normal
+  # statements). When a template sets keep_dateless_rows: true, an amount-bearing,
+  # non-summary row is kept even with no date -- its date stays BLANK (never guessed
+  # or propagated from a neighbour) and it is flagged `no_date`, so the row is
+  # preserved without inventing which date it belongs to.
+  keep_dateless <- isTRUE(t$keep_dateless_rows %||% FALSE)
   .is_txn <- function(r) {
     if (.is_summary(r)) return(FALSE)
     if (.date_ok(r$date)) return(.has_amount(r))              # real date + an amount slot
-    .redacted_cell(r$date) && .real_amount(r) && .has_amount(r)
+    if (.redacted_cell(r$date) && .real_amount(r) && .has_amount(r)) return(TRUE)
+    keep_dateless && .real_amount(r) && .has_amount(r)        # shared-date row, blank date
   }
 
   # Split-row recovery: some statements render one transaction's cells on slightly
@@ -437,25 +514,50 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   if (!identical(t$merge_continuation %||% TRUE, FALSE) && length(recs) > 1) {
     # a forced row is a transaction anchor here too, so it is never folded away.
     is_txn <- vapply(recs, .is_txn, logical(1)) | vapply(recs, .row_forced, logical(1))
-    last_txn <- 0L; drop <- logical(length(recs))
+    # Descriptive columns a wrapped line can spill into. Each keeps its OWN text:
+    # a reference (or particulars, etc.) that wraps onto 2-3 lines stays in its own
+    # column instead of being smeared into `description`. This is the fix for the
+    # reported "the reference column is mapped, its words show (purple) in the
+    # X-ray, but the output cell is empty" case -- the reference lived on the
+    # transaction's continuation lines and was being folded into description.
+    descr_cols <- c("description", "reference", "particulars", "code", "other_party", "type")
+    # last_y1: the baseline of the last line attached to the current transaction
+    # (the txn itself, or its most recent continuation). Measuring the gap from
+    # HERE -- not from the transaction's own baseline -- lets a value wrap across
+    # SEVERAL lines (a reference printed over three lines), each close to the line
+    # above it, instead of only the first continuation folding in.
+    last_txn <- 0L; last_y1 <- -Inf; drop <- logical(length(recs))
     for (i in seq_along(recs)) {
-      if (is_txn[i]) { last_txn <- i; next }
+      if (is_txn[i]) { last_txn <- i; last_y1 <- recs[[i]]$.y1; next }
       if (last_txn == 0L) next
       r <- recs[[i]]; prev <- recs[[last_txn]]
-      cont <- r$description %||% NA_character_
-      if (is.na(cont) || !nzchar(trimws(cont))) cont <- r$raw %||% NA_character_
-      cont <- if (is.na(cont)) "" else trimws(cont)   # nzchar(NA) is TRUE -> guard it
+      line_txt <- r$raw %||% ""
+      line_txt <- if (is.na(line_txt)) "" else trimws(line_txt)   # nzchar(NA) is TRUE -> guard it
       money_here <- .has_amount(r) || .has_money(r$balance %||% "")
-      # Proximity: a continuation is the line right below its transaction (same
-      # page, gap under ~one line height). A footer far down the page is excluded.
+      # Proximity: a continuation is the line right below the previous attached line
+      # (same page, gap under ~one line height). A footer far down the page is excluded.
       lh <- if (is.finite(r$.h) && r$.h > 0) r$.h else 10
       close <- identical(r$page, prev$page) &&
-               is.finite(r$.y0) && is.finite(prev$.y1) &&
-               (r$.y0 - prev$.y1) <= 0.9 * lh && (r$.y0 - prev$.y1) >= -lh
-      if (nzchar(cont) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
-          !.is_summary(r) && !.is_footer_noise(cont) && close) {
-        recs[[last_txn]]$description <- trimws(paste(prev$description %||% "", cont))
+               is.finite(r$.y0) && is.finite(last_y1) &&
+               (r$.y0 - last_y1) <= 0.9 * lh && (r$.y0 - last_y1) >= -lh
+      if (nzchar(line_txt) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
+          !.is_summary(r) && !.is_footer_noise(line_txt) && close) {
+        # Route each mapped band's wrapped text into ITS own column. Only text that
+        # fell in no mapped descriptive band lands on the description (verbatim, so a
+        # free-floating wrapped line is still never lost) -- behaviour identical to
+        # before for templates that map only date/description/amount.
+        any_band <- FALSE
+        for (fld in descr_cols) {
+          add <- r[[fld]] %||% NA_character_
+          if (!is.na(add) && nzchar(trimws(add))) {
+            recs[[last_txn]][[fld]] <- trimws(paste(recs[[last_txn]][[fld]] %||% "", add))
+            any_band <- TRUE
+          }
+        }
+        if (!any_band)
+          recs[[last_txn]]$description <- trimws(paste(recs[[last_txn]]$description %||% "", line_txt))
         drop[i] <- TRUE
+        if (is.finite(r$.y1)) last_y1 <- max(last_y1, r$.y1)   # chain the next line from here
       }
     }
     recs <- recs[!drop]
@@ -483,12 +585,21 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   getc <- function(f) if (n == 0) character(0) else
     vapply(recs, function(r) r[[f]] %||% NA_character_, character(1))
 
+  fb_used <- if (n == 0) logical(0) else rep(FALSE, n)
   if (n == 0) {
     date_iso <- character(0); date_raw <- character(0); description <- character(0)
     amt <- list(value = numeric(0), direction = character(0), raw = character(0))
   } else {
     d <- parse_date(full_date(.first_date(getc("date"))), eff_fmt)
     date_iso <- d$iso; date_raw <- getc("date")   # date_raw stays verbatim (both dates, no year)
+    # Cells the template format couldn't read: try the year-less fallback the
+    # date gate already accepted them under, and mark each row it reads.
+    miss <- is.na(date_iso) & !is.na(date_raw) & nzchar(trimws(date_raw))
+    if (fb_active && any(miss)) {
+      fbi <- .fb_parse(date_raw[miss])
+      date_iso[miss] <- ifelse(is.na(fbi), date_iso[miss], fbi)
+      fb_used[miss] <- !is.na(fbi)
+    }
     if (identical(style, "debit_credit_cols")) {
       deb_raw <- getc("debit"); cr_raw <- getc("credit")
       amt <- parse_amount(NULL, "debit_credit_cols",
@@ -533,6 +644,11 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   date_unresolved <- if (n == 0) logical(0)
     else ((!year_resolved & !is.na(date_raw) & nzchar(trimws(date_raw))) |
           (forced_vec & is.na(date_iso)))
+  # no_date: a shared-date row kept without a date of its own (keep_dateless_rows).
+  # The blank date is deliberate -- flagged so a reviewer sees it was never guessed.
+  no_date_kept <- if (n == 0) logical(0)
+    else (keep_dateless & is.na(date_iso) &
+          (is.na(date_raw) | !nzchar(trimws(date_raw))) & !forced_vec)
   # ocr_low_conf: an OCR'd date/amount/balance cell held a word below the
   # per-cell confidence floor -- a likely misread digit that the page-mean
   # confidence would mask. Only fires on OCR pages (text pages carry no conf).
@@ -544,6 +660,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
     f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
     f <- add(f, date_unresolved, "date_unresolved")
+    f <- add(f, no_date_kept, "no_date")        # shared-date row kept with a blank date
+    f <- add(f, fb_used, "date_alt_format")     # read via the year-less fallback
     f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray
     f <- add(f, stitched_vec, "row_stitched")   # two half-rows the reader re-joined
     f <- add(f, ocr_low, "ocr_low_conf")
@@ -562,9 +680,17 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
     currency = rep(template$currency %||% "NZD", n), flags = flags,
     stringsAsFactors = FALSE))
 
-  if (length(extras_cols) && n > 0) {
+  if (n > 0) {
     ex <- list(row_id = seq_len(n))
     for (ef in names(extras_cols)) ex[[ef]] <- blank_to_na(getc(paste0("x.", ef)))
+    # Separate money-in / money-out statements: keep the verbatim debit and credit
+    # cells. They collapse into the signed `amount` + `direction` for the stable
+    # core table, but forensic users want to see the ORIGINAL split, so they are
+    # surfaced next to `amount` in the previews + workbook and preserved in JSON.
+    if (identical(style, "debit_credit_cols")) {
+      if (is.null(ex$debit))  ex$debit  <- blank_to_na(getc("debit"))
+      if (is.null(ex$credit)) ex$credit <- blank_to_na(getc("credit"))
+    }
     extras <- data.frame(ex, stringsAsFactors = FALSE, check.names = FALSE)
   } else extras <- data.frame(row_id = integer(0))
 

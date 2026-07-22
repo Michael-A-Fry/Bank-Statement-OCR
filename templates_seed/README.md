@@ -13,7 +13,7 @@ conversion until you finish it and move it across.
 ## How to finish one
 
 1. Get one real statement of that type. Keep it in `samples/_private_staging/`
-   (git-ignored — real statements never get committed).
+   (a private, local-only folder — real statements never leave the environment).
 2. Open it in Convert. When it doesn't match, the template toolkit opens.
 3. Copy this skeleton's known settings in (or load it), then **draw the column
    bands** on the page. For a credit card, **pin the opening/closing balance** with

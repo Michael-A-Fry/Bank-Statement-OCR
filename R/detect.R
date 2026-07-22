@@ -29,19 +29,18 @@
   if (identical(template$format %||% "delimited", "excel")) {
     need <- as.character(fp$header_contains_all %||% character(0))
     header <- names(input$table %||% list())
-    return(list(score = sum(need %in% header), need = length(need),
-                missing = need[!(need %in% header)]))
+    hit <- tolower(need) %in% tolower(header)   # case-insensitive, like .pick()
+    return(list(score = sum(hit), need = length(need), missing = need[!hit]))
   }
   need <- as.character(fp$header_contains_all %||% character(0))
   header <- .header_fields(input$lines %||% character(0), template)
-  present <- sum(need %in% header)
-  score <- present
+  hit <- tolower(need) %in% tolower(header)     # case-insensitive, like .pick()
+  score <- sum(hit)
   fr <- fp$filename_regex
   if (!is.null(fr) && nzchar(fr)) {
     if (grepl(fr, basename(input$path), perl = TRUE)) score <- score + 1
   }
-  missing <- need[!(need %in% header)]
-  list(score = score, need = length(need), missing = missing)
+  list(score = score, need = length(need), missing = need[!hit])
 }
 
 # detect_statement(input, templates, hint_bank, hint_type)

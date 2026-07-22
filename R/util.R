@@ -77,7 +77,13 @@ current_user <- function() {
   "unknown"
 }
 
-# safe_readlines(path) -- read text lines without warnings/crashes.
+# safe_readlines(path) -- read text lines without warnings/crashes. A UTF-8
+# byte-order mark (Excel writes one on every CSV export) is stripped from the
+# first line - left in place it corrupts the first header name ("﻿Date"
+# is not "Date") and silently breaks that column's mapping.
 safe_readlines <- function(path) {
-  safe(readLines(path, warn = FALSE, encoding = "UTF-8"), character(0))
+  lines <- safe(readLines(path, warn = FALSE, encoding = "UTF-8"), character(0))
+  # Byte-level match (useBytes): works on any host locale, C/ASCII included.
+  if (length(lines)) lines[1] <- sub("^\xef\xbb\xbf", "", lines[1], useBytes = TRUE)
+  lines
 }

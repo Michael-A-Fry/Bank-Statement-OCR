@@ -109,6 +109,20 @@ reconcile <- function(parsed, template = NULL) {
       "dates_within_period", "na", detail = "statement period not available")
   }
 
+  # 4b. dates_readable: the never-silently-wrong safety net for the date column.
+  # A template can fingerprint-match while its date mapping misses (renamed or
+  # re-cased header, wrong sheet, wrong format) - every date comes back NA and,
+  # with no period to check against, nothing above would fail. Rows with no
+  # readable date at ALL must never leave as a clean "ok".
+  if (n > 0) {
+    d_ok <- sum(!is.na(suppressWarnings(as.Date(tx$date))))
+    rows$dates_readable <- .kpi(
+      "dates_readable", if (d_ok > 0) "pass" else "fail",
+      expected = n, actual = d_ok, discrepancy = n - d_ok,
+      detail = if (d_ok > 0) sprintf("%d of %d row date(s) read", d_ok, n)
+               else "no row dates could be read - the date column mapping or format is wrong")
+  }
+
   # 5. no_unparsed_rows: every non-empty source data line became a transaction.
   # Completeness is proven by comparing the count of non-empty PHYSICAL source
   # data lines against parsed rows -- computing it from the parsed table alone

@@ -174,7 +174,7 @@ detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
 # read_pdf(path, redaction_rects, markers, anchors) -> list(
 #   pages        character[]  per-page text (redaction-safe),
 #   words        list<df>     per-page guarded word boxes (x,y,width,height,
-#                             space,text,redacted),
+#                             space,text,redacted,ocr_conf),
 #   page_count   integer,
 #   sections     data.frame   detected section anchors,
 #   redactions   data.frame   per-page redacted-word counts,
@@ -300,6 +300,16 @@ read_pdf <- function(path, redaction_rects = NULL,
         }
       }
     }
+  }
+
+  # Words-frame contract: every page's words carry a per-word `ocr_conf` column
+  # -- Tesseract's 0-100 word confidence on an OCR page, NA on a text-layer page
+  # (typeset text has no recognition step, so there is nothing to be unsure of).
+  # Uniform presence lets the X-ray shade doubtful words without caring how the
+  # page was read.
+  for (p in seq_len(np)) {
+    if (!is.null(words[[p]]) && is.null(words[[p]]$ocr_conf))
+      words[[p]]$ocr_conf <- rep(NA_real_, nrow(words[[p]]))
   }
 
   list(

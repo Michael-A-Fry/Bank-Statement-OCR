@@ -108,11 +108,13 @@ detect_amount_style <- function(headers, df = NULL) {
 
 # Best-guess a source column for a canonical field.
 wd_field_patterns <- function() list(
-  date = "date", amount = "amount|value",
-  description = "payee|description|details|memo|narrative",
+  # Kept deliberately conservative: word-bounded or exact where a loose match
+  # could hit the wrong column ("Money In" must not become the amount).
+  date = "date|\\bday\\b", amount = "amount|value|^money$|^sum$",
+  description = "payee|description|details|memo|narrative|narration",
   particulars = "particulars", code = "^code$|analysis",
   reference = "reference|unique", type = "type",
-  other_party = "other party|counterparty", balance = "balance"
+  other_party = "other party|counterparty", balance = "balance|^running$"
 )
 
 guess_mapping <- function(headers, field) {

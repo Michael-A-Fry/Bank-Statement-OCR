@@ -7,7 +7,7 @@
 #   Rscript scripts/audit-statement.R <statement.pdf> [out.md]
 #
 # Output defaults to <name>.audit.md next to where you run it. Read it, confirm it
-# is safe, then share it. See docs/COPILOT-STATEMENT-REVIEW.md for the Copilot flow.
+# is safe, then share it. See docs/operational/when-something-goes-wrong.md.
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)

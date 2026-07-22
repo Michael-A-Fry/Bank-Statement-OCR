@@ -91,9 +91,15 @@ deskew together is widely cited at **+15–30%** on messy scans, deskew alone up
   **+10%** on affected pages ([SparkCo](https://sparkco.ai/blog/advanced-optimization-techniques-for-tesseract-ocr-in-enterprises)).
 - **When:** any scanned/photographed page (digital renders are never skewed -
   skip it there, don't burn the cycles).
-- **How:** `image_deskew(img, threshold = 40)`; inspect first with
-  `image_deskew_angle(img)` and only apply if `abs(angle) > 0.3°` so you never
-  rotate a perfectly straight page.
+- **How:** ~~`image_deskew(img, threshold = 40)`~~ **Correction (measured on real
+  statement scans):** ImageMagick's deskew estimator misreports statement pages -
+  it returned 4.3° / 4.4° / 5.3° for true tilts of 1° / 2° / 3°, and 0° for a
+  tilted 150 dpi page - leaving residual tilt that smears rows across template
+  bands. The engine now uses its own projection-profile estimator
+  (`.detect_skew_angle()` in `R/ocr_preprocess.R`): shear dark pixels across a
+  ±5° grid in 0.05° steps, score row-stacking, rotate by the winner and crop
+  back to the original canvas anchored on the ink's centre so geometry (and the
+  template's bands) are preserved. Pages under 0.3° are returned untouched.
 
 ### Priority 5 - Denoise / despeckle
 - **What:** remove isolated speckles, scanner dust, JPEG mosquito noise.

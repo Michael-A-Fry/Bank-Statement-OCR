@@ -1,7 +1,7 @@
 # Tests for the PDF table parser's generic features that real statements need:
 #  - debit/credit as two separate columns (Withdrawals | Deposits)
 #  - year-less dates ("05 Jan") with the year taken from the statement period
-# Uses a SYNTHETIC word-box table (no real statement committed).
+# Uses a SYNTHETIC word-box table (no real statement stored).
 
 # .word(text, x, y, w) -- one word box; centre x = x + w/2 drives column choice.
 .mk_words <- function() {

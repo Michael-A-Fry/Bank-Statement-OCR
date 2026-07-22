@@ -12,10 +12,14 @@
 }
 
 # .pick(tbl, name) -- fetch a column by name as character, or NULL if absent.
+# Exact match first; then a UNIQUE case-insensitive match ("DATE" for "Date"),
+# so a bank flipping its header casing doesn't silently blank the column.
 .pick <- function(tbl, name) {
   if (is.null(name)) return(NULL)
-  if (!(name %in% names(tbl))) return(NULL)
-  as.character(tbl[[name]])
+  if (name %in% names(tbl)) return(as.character(tbl[[name]]))
+  hit <- which(tolower(names(tbl)) == tolower(name))
+  if (length(hit) == 1) return(as.character(tbl[[hit]]))
+  NULL
 }
 
 REDACTION_TOKEN <- "[REDACTED]"
@@ -125,6 +129,17 @@ parse_statement <- function(input, template, force_rows = NULL) {
 
   # ---- extras (template-declared per-bank columns, keyed by row_id) ----
   extras <- .build_extras(template, tbl, n)
+  # Separate money-in / money-out statements: preserve the verbatim debit and
+  # credit cells alongside the collapsed signed amount, so the original split
+  # stays visible (previews + workbook) and in the JSON. Mirrors the PDF path.
+  if (identical(style, "debit_credit_cols") && n > 0) {
+    db <- blank_to_na(as.character(amt_opts$debit  %||% rep(NA_character_, n)))
+    cr <- blank_to_na(as.character(amt_opts$credit %||% rep(NA_character_, n)))
+    if (is.null(extras) || nrow(extras) != n)
+      extras <- data.frame(row_id = seq_len(n), stringsAsFactors = FALSE)
+    if (is.null(extras[["debit"]]))  extras[["debit"]]  <- db
+    if (is.null(extras[["credit"]])) extras[["credit"]] <- cr
+  }
   # foreign-currency amount (if mapped) drives the `fx` flag.
   fx_present <- if (!is.null(extras[["fx_amount"]]))
     !is.na(extras[["fx_amount"]]) & nzchar(trimws(as.character(extras[["fx_amount"]])))

@@ -2,7 +2,7 @@
 
 One canonical, prioritised backlog. **Simplicity is a first-class filter here:**
 value is discounted by how much ongoing maintenance an item adds, because a
-repo that's hard to maintain is a failed one. The design rule that keeps this
+codebase that's hard to maintain is a failed one. The design rule that keeps this
 whole thing simple - **a new bank is a YAML template, never new code** - is
 protected in every ranking decision below.
 
@@ -38,7 +38,7 @@ the full output. Categorisation stays a downstream concern.
 | # | Item | Value | Effort | Maint. | Why here |
 |---|------|-------|--------|--------|----------|
 | 1 | **C - PDF text-layer table parser** (digital PDFs, no OCR) | ★★★★★ | ●●● | low* | PDFs are the *dominant real input*; unlocks the whole category. *Stays declarative (`format: pdf` template), so per-bank scaling adds no code. Build once, then it's YAML forever. We have 3 real tables to build against. |
-| 2 | **More bank templates (YAML)** | ★★★★ | ● | ~zero | SBS, TSB, Co-op, Heartland… pure config + one golden test each. This *is* the simple-scaling win - the reason the repo stays small as coverage grows. |
+| 2 | **More bank templates (YAML)** | ★★★★ | ● | ~zero | SBS, TSB, Co-op, Heartland… pure config + one golden test each. This *is* the simple-scaling win - the reason the codebase stays small as coverage grows. |
 | 3 | **OCR `tsv` output + field-confidence gating** | ★★★★ | ●● | low | One tesseract flag unlocks per-word confidence + boxes → feeds diagnostics and the "99.9% correct-or-flagged" goal. Small change, big safety payoff. |
 | 4 | **B - visual box/drag wizard for PDFs** | ★★★★ | ●●●● | **high** | Point-and-click PDF templates for a non-technical analyst. High value **but the biggest maintenance risk** (interactive canvas). Do *after* C; keep it as thin as possible - it should only *write* the same `format: pdf` YAML C consumes. |
 | 5 | **Scan tuning: adaptive threshold + PSM** | ★★★ | ●● | low | `image_lat` (Sauvola) + PSM 4 for tables. Only helps *scanned* inputs; opportunistic, contained. |

@@ -54,8 +54,8 @@ everyday carry a running balance column instead.
 
 ## Build process (per template)
 
-1. One real statement of that type → `samples/_private_staging/` (git-ignored;
-   real statements are never committed).
+1. One real statement of that type → `samples/_private_staging/` (a private,
+   never-shared folder; real statements never leave the environment).
 2. Convert it → the toolkit opens on a no-match. Load the seed's settings, **draw
    the column bands**, **pin the balances** (credit cards), and use **"this IS a
    transaction"** in the X-ray for any skipped row.

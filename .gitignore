@@ -39,10 +39,16 @@ scratch/
 tmp/
 *.tmp
 
-# Offline package bundle produced by scripts/bundle-offline.R (large binaries;
-# generated on the laptop, copied to the PC -- never committed).
+# Offline package produced by make-bundle.bat / scripts/bundle-offline.R (the whole
+# app + large package/installer binaries; built on an internet PC, copied to the
+# server -- never committed).
+/StatementStudio-offline/
 /bso-offline/
 /bso-offline-repo/
+
+# Private, app-local R runtime + library created by RUN-ME.bat (server-side only).
+/R-runtime/
+/R-lib/
 
 # NOTE: samples/ is intentionally tracked — it is the public specimen corpus
 # used for template design and golden-file tests.
@@ -69,3 +75,9 @@ Rplots.pdf
 node_modules/
 package.json
 package-lock.json
+
+# Deployment config (holds the admin password) - keep the .example committed, not this.
+/config/config.yaml
+
+# Qlik feed folder (holds REAL statements) - never commit.
+/feed/
