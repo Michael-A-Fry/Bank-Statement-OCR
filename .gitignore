@@ -73,6 +73,5 @@ package-lock.json
 # Deployment config (holds the admin password) - keep the .example committed, not this.
 /config/config.yaml
 
-# Qlik feed + interactive folders (hold REAL statements) - never commit.
-/qlik/
+# Qlik feed folder (holds REAL statements) - never commit.
 /feed/

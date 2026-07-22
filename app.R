@@ -630,11 +630,18 @@ server <- function(input, output, session) {
       div(style = "color:#b00020;margin-top:6px", "Wrong password."))
   })
 
+  # Accountants pick from the AUDITED list only: the Convert picker offers proven
+  # (curated / team-maintained) templates, not analyst drafts. Auto-detect still
+  # resolves normally, so a bank someone has set up keeps working; the picker just
+  # never presents an unvetted draft as a thing to choose.
+  proven_templates <- reactive({ tpl_bump()
+    tryCatch(load_templates(TEMPLATES_DIR, strict = FALSE), error = function(e) list()) })
   output$cv_bank_ui <- renderUI({
-    ts <- templates()
+    ts <- proven_templates()
     banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
+    banks <- banks[nzchar(banks)]
     # Template picker: labelled "Bank · type - id" so you can force an EXACT
-    # template, not just a bank, when you need to be specific.
+    # audited template, not just a bank, when you need to be specific.
     ov <- template_overview(ts)
     tpl_choices <- c("(auto-detect)" = "")
     if (nrow(ov)) tpl_choices <- c(tpl_choices,
@@ -1403,6 +1410,10 @@ server <- function(input, output, session) {
       detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
     else NA_character_
     cv_upload_id(uid)
+    # Auto-feed Qlik: a real Convert-button upload writes to the analytics feed as a
+    # silent side-effect (gated to reconciled + proven templates inside write_feed).
+    # The bundled sample and the build-time auto-reconvert (record = FALSE) don't feed.
+    if (record) safe(write_feed(res, CONFIG))
   }
 
   observeEvent(input$cv_go, {

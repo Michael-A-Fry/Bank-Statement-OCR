@@ -7,8 +7,7 @@ test_that("load_config returns complete defaults when no file is present", {
   expect_equal(cfg$paths$templates, "templates")
   expect_equal(cfg$paths$user_templates, "templates_user")
   expect_equal(cfg$app$admin_password, "changeme")
-  # qlik proven dir resolves from paths$templates when blank
-  expect_equal(cfg$qlik$proven_templates_dir, "templates")
+  expect_true(isTRUE(cfg$feed$enabled))          # feed on by default
 })
 
 test_that("a partial config file deep-merges over the defaults", {
@@ -22,9 +21,9 @@ test_that("a partial config file deep-merges over the defaults", {
   cfg <- load_config(p)
   expect_equal(cfg$app$admin_password, "s3cret")            # overridden
   expect_equal(cfg$paths$templates, "proven_only")          # overridden
-  expect_equal(cfg$qlik$proven_templates_dir, "proven_only")# resolved from the override
   expect_equal(cfg$paths$logs, "logs")                      # default preserved
   expect_equal(cfg$app$title, "Statement Studio")           # default preserved
+  expect_equal(cfg$feed$min_trust, "medium")                # default feed gate preserved
 })
 
 test_that("the BSO_ADMIN_PASSWORD env var overrides the file", {

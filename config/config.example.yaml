@@ -10,8 +10,7 @@ app:
   # The Admin-tab barrier - a simple gate to share with a few maintainers.
   # (Can also be set via the BSO_ADMIN_PASSWORD environment variable, which wins.)
   admin_password: changeme
-  # Where the Qlik front-end sends a user when NO proven template matches
-  # (the "set it up in the full app" link). Point this at your Shiny deployment.
+  # The URL Qlik's "Convert a statement" tile opens. Point it at your Shiny deployment.
   shiny_url: http://localhost:8100
   port: 8100
 
@@ -25,23 +24,18 @@ paths:
   requests: requests
   logs: logs
 
-qlik:
-  # Qlik converts with proven templates only. Leave blank to use paths.templates.
-  proven_templates_dir:
-  # On a no-template miss, also file the statement into the Shiny team pickup queue.
-  queue_unsupported: true
-  # Async poller (Mode B) folders. Inphinity writes uploads to inbox; the poller
-  # writes outbox/<key>/statement.csv (+ status.json) and index/<key>.csv (the Qlik
-  # file-list table), and moves the original to processed. All git-ignored.
-  inbox: qlik/inbox
-  outbox: qlik/outbox
-  index: qlik/index
-  processed: qlik/processed
-
-feed:                                   # Mode A batch feed into Qlik dashboards
+feed:
+  # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny
+  # app; each result is written here (gated) and a Qlik folder connection + reload
+  # turns it into dashboards. Only reconciled conversions from PROVEN templates
+  # reach the dashboard table.
+  enabled: true                         # write the feed on each conversion
   feed_dir: feed
-  require_status_ok: true
-  min_trust: high                       # high | medium | any
-  allowed_template_origins: [default]   # curated/tested only; add 'user' to include drafts
+  require_status_ok: true               # only clean conversions (status == ok)
+  # medium (default) = every clean conversion; high = only balance-proven ones
+  # (opening + txns = printed closing) - stricter, but a clean statement with no
+  # running balance is 'medium' and would be withheld. any = no trust floor.
+  min_trust: medium
+  allowed_template_origins: [default]   # curated/proven only; add 'user' to include drafts
   template_allowlist: []                # optional: restrict to specific template ids
-  include_review_feed: true
+  include_review_feed: true             # also write withheld runs to feed/review (separate table)

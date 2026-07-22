@@ -23,9 +23,6 @@ repo_path <- file.path(out, "repo")
 prereq    <- file.path(out, "prereqs")
 pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
           "pdftools", "magick", "testthat")
-# Rserve: only for the OPTIONAL Qlik "Rserve / SSE" convert path. Bundled too so
-# it's on hand if you use it (the recommended poller path needs none of this).
-opt_pkgs <- "Rserve"
 dir.create(repo_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(prereq,    recursive = TRUE, showWarnings = FALSE)
 
@@ -40,7 +37,7 @@ if (!requireNamespace("miniCRAN", quietly = TRUE)) {
   cat("Installing miniCRAN (needs internet -- this laptop has it)...\n")
   install.packages("miniCRAN", repos = "https://cloud.r-project.org")
 }
-all <- miniCRAN::pkgDep(c(pkgs, opt_pkgs), type = "win.binary", suggests = FALSE)
+all <- miniCRAN::pkgDep(pkgs, type = "win.binary", suggests = FALSE)
 cat(sprintf("Downloading %d R packages (with dependencies) into %s ...\n", length(all), repo_path))
 miniCRAN::makeRepo(all, path = repo_path, type = "win.binary")
 writeLines(pkgs, file.path(out, "packages.txt"))

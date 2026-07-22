@@ -10,7 +10,7 @@
   app = list(
     title          = "Statement Studio",
     admin_password = "changeme",          # the Admin-tab barrier (a simple gate)
-    shiny_url      = "http://localhost:8100", # where Qlik's "no template yet" link points
+    shiny_url      = "http://localhost:8100", # the URL Qlik's "Convert a statement" tile opens
     port           = 8100L
   ),
   paths = list(
@@ -23,28 +23,22 @@
     requests       = "requests",
     logs           = "logs"
   ),
-  qlik = list(
-    # Qlik converts with PROVEN templates only: it reads paths$templates and NEVER
-    # paths$user_templates. On a bank it has no proven template for, it points the
-    # user at the Shiny app (app$shiny_url) instead of building one.
-    proven_templates_dir = NULL,          # NULL -> use paths$templates
-    queue_unsupported    = TRUE,          # also file a miss into the Shiny pickup queue
-    # Folders for the async poller (Mode B). Inphinity writes uploads into `inbox`;
-    # the poller converts each into `outbox/<key>/statement.csv` (+ status.json),
-    # writes a status row into `index/` (the Qlik file-list table), and moves the
-    # original into `processed`. All hold real statements, so all are git-ignored.
-    inbox     = "qlik/inbox",
-    outbox    = "qlik/outbox",
-    index     = "qlik/index",
-    processed = "qlik/processed"
-  ),
-  feed = list(                             # Mode A batch feed into Qlik dashboards
+  feed = list(
+    # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny
+    # app; each result is written here (gated) as a side-effect, and a Qlik folder
+    # connection + scheduled reload turns it into org-wide dashboards. Only
+    # reconciled conversions from PROVEN (curated) templates reach the dashboard
+    # table -- the governance gate -- so unvetted output never becomes org data.
+    enabled                  = TRUE,       # write the feed on each conversion
     feed_dir                 = "feed",
-    require_status_ok        = TRUE,
-    min_trust                = "high",     # high | medium | any
-    allowed_template_origins = list("default"),
-    template_allowlist       = list(),
-    include_review_feed      = TRUE
+    require_status_ok        = TRUE,       # only clean conversions (status == ok)
+    # high | medium | any. 'medium' (default) accepts every CLEAN conversion; 'high'
+    # accepts ONLY balance-proven ones (opening + txns = printed closing) -- stricter,
+    # but a clean statement with no running balance is 'medium' and would be withheld.
+    min_trust                = "medium",
+    allowed_template_origins = list("default"),  # 'default' = curated/proven; add 'user' to include drafts
+    template_allowlist       = list(),     # optional: restrict to specific template ids
+    include_review_feed      = TRUE        # also write withheld runs to feed/review (separate table)
   )
 )
 
@@ -73,8 +67,5 @@ load_config <- function(path = .config_path()) {
   # Env override for the one secret, so a site can keep it out of the file entirely.
   envpw <- Sys.getenv("BSO_ADMIN_PASSWORD", "")
   if (nzchar(envpw)) cfg$app$admin_password <- envpw
-  # Resolve the Qlik proven-templates default (blank in the file -> the curated dir).
-  if (is.null(cfg$qlik$proven_templates_dir) || !nzchar(cfg$qlik$proven_templates_dir %||% ""))
-    cfg$qlik$proven_templates_dir <- cfg$paths$templates
   cfg
 }
