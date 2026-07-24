@@ -33,6 +33,9 @@ metadata:
     parse_quality: true
     detection: true
     reconciliation: true
+    multi_statement: true
+    novelty: true
+    template_hints: true
     ocr: true
     redaction: true
   retain_forever: true   # metadata is never rolled up / archived / deleted
@@ -129,6 +132,11 @@ identifiers, and never leave the machine. Account numbers appear only as a hash.
   "parse_quality":  { "row_count", "malformed_rows", "redacted_rows", "amount_sign",
                       "date_format", "source_line_count", "multiline_extra",
                       "flag_histogram", "field_fill" },
+  "multi_statement":{ "likely_multiple", "n_periods", "n_accounts", "page1_markers",
+                      "pages_stated", "combined_accounts", "n_opening_labels",
+                      "n_closing_labels", "boundary_reasons" },
+  "novelty":        { "source_header_count", "source_headers", "unmapped_columns",
+                      "unrecognised_type_values" },                    // what we did NOT recognise
   "template_hints": { "kind", "delimiter", "row_sample",
                       "columns": [ { "name", "kind", "fill_rate", "distinct", "example_shape",
                                      "date_format" | "money{…}" | "tokens[]" | "length{…}" } ],

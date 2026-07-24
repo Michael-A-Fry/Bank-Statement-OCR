@@ -23,7 +23,7 @@ app:
 feed:
   enabled: true
   feed_dir: D:/StatementStudio/feed     # or a UNC share, e.g. //fileserver/share/feed
-  min_trust: high                       # high = only balance-proven results reach dashboards
+  min_trust: medium                     # medium (default) = every clean conversion; 'high' = only balance-proven results (stricter than default)
 ```
 Restart the app (`RUN-ME.bat`) after changing it, then convert one statement so the
 feed has something in it.
@@ -31,9 +31,9 @@ feed has something in it.
 The feed folder fills itself:
 | File | Contents |
 |---|---|
-| `feed\transactions\<hash>.csv` | the clean transaction rows the dashboards show (accepted conversions) |
-| `feed\runs\<run_id>.csv` | one row per conversion — accepted **and** withheld — for coverage/QA |
-| `feed\review\<hash>.csv` | rows from withheld conversions (optional, a separate review table) |
+| `feed\transactions\<hash>.csv` | the clean transaction rows the dashboards show (accepted conversions), keyed by statement content hash |
+| `feed\runs\<hash>.csv` | one manifest row per **statement** — keyed by the same content hash — covering accepted **and** withheld runs; re-converting a statement overwrites its row (idempotent, latest attempt wins) |
+| `feed\review\<hash>.csv` | rows from withheld conversions (optional, a separate review table), keyed the same way |
 
 ---
 

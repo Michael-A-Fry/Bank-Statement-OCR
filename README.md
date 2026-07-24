@@ -30,10 +30,15 @@ whole setup is two double-clicks — [first-time-setup](docs/operational/first-t
 
 - **Reads CSV, TSV, Excel (`.xlsx`) and PDF** statements. Digital PDFs are read from
   their text layer; scanned/image PDFs are read with OCR (each OCR'd page is flagged).
-- **Six banks end-to-end** on the delimited path — ANZ everyday, ANZ credit card,
-  ASB, BNZ, Kiwibank, Westpac — plus a cross-bank Xero-standard import, each with a
-  passing golden-file test. PDF and key-value (form/IRD) paths are built and grow by
-  adding templates.
+- **Six banks end-to-end** on the delimited (CSV/TSV) path — ANZ everyday, ANZ credit
+  card, ASB, BNZ, Kiwibank, Westpac — plus a cross-bank Xero-standard import, each with
+  a passing golden-file test.
+- **PDF and Excel are shipped and tested, not merely built.** `templates/` ships proven
+  PDF templates — `anz_everyday_pdf`, `anz_investmentfunds_pdf`, `asb_everyday_pdf`,
+  `tutorial_everyday_pdf`, `westpac_everyday_pdf` — and a generic Excel template
+  (`excel_generic_xlsx`); the PDF and Excel extraction paths are covered by golden
+  round-trip tests, and a key-value (form/IRD) mode is built too. Adding another bank on
+  any path is a YAML template, not new code.
 - **Point-and-click wizard** to teach it a new bank — including a visual PDF editor
   where you draw boxes over the columns. It writes the template for you; no YAML by
   hand.
@@ -44,7 +49,7 @@ whole setup is two double-clicks — [first-time-setup](docs/operational/first-t
   visible and never estimates hidden values.
 - **Never silently wrong** — any non-clean run reports *where / why / how bad /
   who fixes it*; every run is logged; the engine never returns a silent wrong answer.
-- **A full automated test suite** guards every guarantee (272 tests, 0 failures).
+- **A full automated test suite** guards every guarantee (343 tests, 0 failures).
 
 ---
 

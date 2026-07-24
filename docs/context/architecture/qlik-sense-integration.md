@@ -27,7 +27,7 @@ Why this shape (vs. converting inside Qlik) is in
        │                                                          ▼
   ┌────┴───────────────────────────────────────────────  feed/  (on the share)
   │  Qlik analytics app                                    transactions/<hash>.csv   accepted rows
-  │  (dashboards, cross-statement casework)                runs/<run_id>.csv         one row per run
+  │  (dashboards, cross-statement casework)                runs/<hash>.csv           one row per statement
   └───────────────────────────────────────────────────    review/<hash>.csv         withheld (optional)
 ```
 
@@ -49,12 +49,16 @@ Under the share, inheriting the same AD-group permission.
 | Path | Contents | Keyed by | Qlik reads |
 |---|---|---|---|
 | `feed/transactions/<hash>.csv` | Flat, stamped transaction rows for **accepted** conversions | statement **content hash** | the dataset |
-| `feed/runs/<run_id>.csv` | **One row per conversion** (accepted *and* withheld) | run id | a QA/coverage table |
-| `feed/review/<hash>.csv` | Transactions for **withheld** conversions (optional) | content hash | a *separate* review table |
+| `feed/runs/<hash>.csv` | **One manifest row per statement** (accepted *and* withheld) | statement **content hash** | a QA/coverage table |
+| `feed/review/<hash>.csv` | Transactions for **withheld** conversions (optional) | statement **content hash** | a *separate* review table |
 
-Keyed by **content hash**, so a re-convert overwrites (idempotent) and two different
-statements never collide. One file per statement/run - **never a shared append** - so
-any number of simultaneous conversions produce independent files (§6).
+All three are keyed by the statement's **content hash** (`substr(sha256, 1, 16)`),
+so a re-convert **overwrites** that statement's file in each folder (idempotent,
+latest attempt wins) and two different statements never collide - the `runs`
+manifest therefore counts each statement once, not once per re-run (the `run_id`
+stays a column so the latest attempt is still identifiable). One file per statement
+- **never a shared append** - so any number of simultaneous conversions produce
+independent files (§6).
 
 ---
 
@@ -92,7 +96,8 @@ balance, particulars, code, reference, other_party, type, currency, flags`.
 is the clean analyst dataset. `debit`/`credit` are populated only for split
 money-in/out statements.)
 
-**`runs/<run_id>.csv`** - one row: `run_id, converted_ts, source_file, source_sha256,
+**`runs/<hash>.csv`** - one manifest row per statement (keyed by content hash, so a
+re-convert overwrites it): `run_id, converted_ts, source_file, source_sha256,
 bank, template_id, template_origin, status, trust_level, row_count, period_start,
 period_end, gate_result, feed_file`. `gate_result` is `accepted` or `withheld:<reason>`.
 
@@ -112,7 +117,7 @@ LOAD
 FROM [lib://StatementFeed/transactions/*.csv]
 (txt, codepage is 65001, embedded labels, delimiter is ',', msq);
 
-// Coverage / QA - one row per conversion (accepted AND withheld)
+// Coverage / QA - one manifest row per statement (accepted AND withheld)
 Runs:
 LOAD *
 FROM [lib://StatementFeed/runs/*.csv]
@@ -141,8 +146,8 @@ equally just bookmark the app - the tile is convenience + the "start in Qlik" st
   dir. For a hard wall (memory + temp + crash domain) run process/container per
   session (ShinyProxy / Posit Connect / Shiny Server Pro).
 - **The feed is per-file:** `write_feed()` writes one content-hash-keyed transactions
-  file + one per-run manifest, **never a shared append** - N simultaneous conversions
-  = N independent files, safe over SMB.
+  file + one content-hash-keyed manifest row, **never a shared append** - N
+  simultaneous conversions = N independent files, safe over SMB.
 - **The one shared resource** (by design) is the template library - a shared team
   asset, not user data.
 

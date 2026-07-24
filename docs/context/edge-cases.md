@@ -111,7 +111,7 @@ estimate what is hidden. Expected outcomes:
 | Mixed selectable + scanned pages | ✅ (reader) | per‑page: text layer where present, **OCR fallback** where empty, `ocr` flag |
 | Scanned / image‑only page | ✅ (reader) | Tesseract via `pdftoppm`, flagged `ocr`, lower trust |
 | Section detection by anchor phrases | ✅ | `detect_pdf_sections` |
-| **Transaction table → rows** | ⛔ | **not built** - the core missing piece; needs a real statement |
+| **Transaction table → rows** | ✅ | **built** - declarative `format: pdf` parser, golden round-trip tested (`tutorial_everyday_pdf`, `anz_investmentfunds_pdf`); five shipped PDF templates in `templates/` |
 | Table split across a page break | ⛔ | design: stitch by column‑band continuity; needs real multi‑page sample |
 | Repeated page headers/footers, page numbers | ⛔ | design: drop by y‑band + repetition; needs real sample |
 | Rotated / multi‑column pages | ⛔ | needs real sample |

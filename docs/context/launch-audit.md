@@ -20,7 +20,7 @@ and a **go/no-go** at the end. No spin.
   next"), template usage, **drift**, flagged feedback, batch intake, log rollup.
 - **Outputs:** multi-sheet Excel + CSV + JSON. **Logs:** one JSON file per run +
   per-feedback, concurrency-safe.
-- **Test suite:** 34 files / 152 tests / 544 assertions, 0 failures.
+- **Test suite:** 58 files / 343 tests / 1,430 assertions, 0 failures.
 
 ## 2. Usability - B+
 - **Great:** the live PREVIEW everywhere (Convert, guided, wizard, batch) - you
