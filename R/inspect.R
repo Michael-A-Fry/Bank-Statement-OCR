@@ -44,7 +44,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   region <- t$region %||% list()
   date_fmt <- t$date_format %||% "%d/%m/%Y"
   style <- t$amount_sign %||% "signed"
-  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
+  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   wbp <- input$words %||% list()
 
   # Bands live in the template's reference space. The X-ray draws overlays ON each
@@ -166,10 +166,8 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     md <- safe(extract_metadata(input), NULL)
     yr <- NULL
     for (s in c(md$period_start %||% NA, md$period_end %||% NA)) {
-      for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y", "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
-        dd <- suppressWarnings(as.Date(s, f))
-        if (!is.na(dd) && .plausible_year(format(dd, "%Y"))) { yr <- c(yr, as.integer(format(dd, "%Y"))); break }
-      }
+      dd <- .plausible_period_date(s)   # shared with the reader (R/params.R) so the year can't drift
+      if (!is.na(dd)) yr <- c(yr, as.integer(format(dd, "%Y")))
     }
     yr <- unique(yr)
     # With no year found anywhere, mirror the reader's sentinel keep: a clear
@@ -237,19 +235,6 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   rows
 }
 
-# field_source_map(template) -> data.frame(field, source) for a delimited / excel
-# template: which named source column feeds each canonical field. There is no
-# page to draw on, so the inspector shows this mapping as a table instead.
-field_source_map <- function(template) {
-  cols <- template$columns %||% list()
-  empty <- data.frame(field = character(0), source = character(0), stringsAsFactors = FALSE)
-  if (!length(cols)) return(empty)
-  do.call(rbind, lapply(names(cols), function(f) {
-    s <- cols[[f]]; src <- if (is.list(s)) s$source else s
-    data.frame(field = f, source = as.character(src %||% NA_character_), stringsAsFactors = FALSE)
-  }))
-}
-
 # locate_values_on_page(words_page, targets) -> data.frame(field, value, found,
 # x0,y0,x1,y1). For each labelled value (opening/closing balance, period dates,
 # account, any metadata), find the contiguous run of page words whose text
@@ -257,7 +242,7 @@ field_source_map <- function(template) {
 # a box around WHERE that value was pulled from. Pragmatic and read-only: it
 # needs no change to the label engine. Returns found=FALSE (NA box) when the
 # value's word run can't be located (e.g. a text-layer page with no word boxes).
-locate_values_on_page <- function(words_page, targets, row_tol = 3) {
+locate_values_on_page <- function(words_page, targets, row_tol = PARAM_PDF_ROW_TOL) {
   na_row <- function(field, value) data.frame(field = field, value = value, found = FALSE,
     x0 = NA_real_, y0 = NA_real_, x1 = NA_real_, y1 = NA_real_, stringsAsFactors = FALSE)
   targets <- targets[!vapply(targets, function(v) is.null(v) || is.na(v) || !nzchar(trimws(v)), logical(1))]

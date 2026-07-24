@@ -99,7 +99,7 @@ extract_metadata <- function(input, dict = default_label_dict()) {
                      "transaction count"),
           value = "regex:[0-9]{1,6}"), pages, dict)
   stated_count <- suppressWarnings(as.integer(sc$value))
-  if (!is.na(stated_count) && (stated_count < 1L || stated_count > 100000L))
+  if (!is.na(stated_count) && (stated_count < 1L || stated_count > PARAM_STATED_COUNT_MAX))
     stated_count <- NA_integer_
 
   list(

@@ -23,8 +23,10 @@ row_coverage <- function(input, template) {
   if (!identical(template$format %||% "delimited", "pdf"))
     return(list(applicable = FALSE, reason = "row coverage is for PDF templates"))
   t <- template$table %||% list()
-  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% 595.28)); if (is.na(ref_w) || ref_w <= 0) ref_w <- 595.28
-  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% 841.89)); if (is.na(ref_h) || ref_h <= 0) ref_h <- 841.89
+  # Share the parser's page-geometry constants (R/parse_pdf_table.R) so this
+  # diagnostic can never report a different page-scale verdict than the reader used.
+  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% .A4_W)); if (is.na(ref_w) || ref_w <= 0) ref_w <- .A4_W
+  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% .A4_H)); if (is.na(ref_h) || ref_h <= 0) ref_h <- .A4_H
   wbp <- input$words %||% list()
   pw  <- input$page_width  %||% rep(NA_real_, length(wbp))
   ph  <- input$page_height %||% rep(NA_real_, length(wbp))
@@ -45,7 +47,7 @@ row_coverage <- function(input, template) {
     list(page = i,
          width = if (is.finite(pw[i])) round(pw[i]) else NA_integer_,
          height = if (is.finite(ph[i])) round(ph[i]) else NA_integer_,
-         scaled = isTRUE(abs(sx - 1) >= 0.02 || abs(sy - 1) >= 0.02),
+         scaled = isTRUE(abs(sx - 1) >= .PAGE_SCALE_SNAP || abs(sy - 1) >= .PAGE_SCALE_SNAP),
          scale_x = round(sx, 3), scale_y = round(sy, 3),
          ocr = isTRUE(ocr[i]), n_words = nrow(P$words),
          kept = kept, actionable_skips = actionable,

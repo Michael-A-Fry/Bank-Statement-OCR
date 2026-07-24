@@ -36,7 +36,7 @@
 #   dark_thresh  0-255 grey below which a pixel counts as "black"
 #   fill_ratio   the band's bounding box must be at least this dark-solid
 detect_dark_regions <- function(img, scale, min_frac_w = 0.10, min_band_pts = 10,
-                                dark_thresh = 60L, fill_ratio = 0.55,
+                                dark_thresh = PARAM_REDACT_DARK_LEVEL, fill_ratio = 0.55,
                                 small_w = 340L, gap_rows = 2L) {
   if (!requireNamespace("magick", quietly = TRUE) || is.null(img)) return(.empty_rects())
   info <- tryCatch(magick::image_info(img), error = function(e) NULL)
@@ -145,7 +145,7 @@ detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
 # (their neighbours above/below are untouched). We never estimate how many rows a
 # black block hid, and a box over a header / non-transaction line -- which has no
 # real date or amount -- is never turned into a transaction (the evidence gate).
-inject_redaction_tokens <- function(words, rects, row_tol = 3, x_step = 34) {
+inject_redaction_tokens <- function(words, rects, row_tol = PARAM_PDF_ROW_TOL, x_step = 34) {
   if (is.null(rects) || !nrow(rects) || is.null(words)) return(words)
   vis <- words[!(words$redacted %in% TRUE) & nzchar(trimws(words$text)), , drop = FALSE]
   if (!nrow(vis)) return(words)   # nothing visible to anchor to -> invent nothing

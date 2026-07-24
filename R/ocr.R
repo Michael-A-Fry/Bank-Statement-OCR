@@ -79,7 +79,7 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
 # Returns list(text = character lines, words = positioned boxes in PDF points,
 # conf = mean confidence, ok = logical). The text uses the preprocessed image
 # (accuracy); the word boxes use the RAW render (clean, known-scale geometry).
-ocr_pdf_page <- function(pdf, page, dpi = 300L, lang = "eng", preprocess = TRUE) {
+ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", preprocess = TRUE) {
   if (!ocr_available() || !file.exists(pdf))
     return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   prefix <- tempfile("ocrpg_")

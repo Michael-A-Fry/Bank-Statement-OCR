@@ -31,6 +31,22 @@ PARAM_OCR_MIN_WORDS     <- 3L     # fewer real word boxes than this -> scanned p
 PARAM_OCR_MAX_BAD_RATIO <- 0.30   # more than this fraction of garbage chars -> OCR
 PARAM_OCR_CELL_MIN_CONF <- 60     # per-cell OCR confidence floor (flag a cell below)
 PARAM_OCR_PAGE_MIN_CONF <- 70     # page-mean OCR confidence below this -> loud caveat
+PARAM_OCR_RENDER_DPI    <- 300L   # dpi a scanned page is rasterised at before OCR
+                                  # (higher = sharper glyphs but slower; raise for poor scans)
+
+# ---- PDF table geometry ----------------------------------------------------
+# Words whose top edges sit within this many points of each other are treated as
+# ONE visual row. The single most behaviour-affecting geometric knob in PDF
+# parsing (too small splits a row, too large merges transactions). A template can
+# override per-bank with table$row_tol; this is the engine default everywhere.
+PARAM_PDF_ROW_TOL <- 3L
+
+# ---- plausibility bounds ---------------------------------------------------
+# A statement's stated transaction count above this is almost certainly a mis-read
+# (a figure grabbed from the wrong line), so it's dropped rather than trusted -- the
+# same "reject the implausible" idea as the year window. Raise for genuinely huge
+# statements.
+PARAM_STATED_COUNT_MAX <- 100000L
 
 # ---- oversized-input advisories (diagnostics) ------------------------------
 # Not hard limits -- the engine still tries. Above these it warns that a very
@@ -68,6 +84,22 @@ PARAM_REDACT_VECTOR_DPI <- 100L   # render dpi for the digital vector-box scan
   for (f in c("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y",
               "%d/%m/%y", "%d-%m-%y", "%d %b %y", "%d %B %y")) {
     d <- suppressWarnings(as.Date(trimws(s), f))
+    if (!is.na(d) && .plausible_year(format(d, "%Y"))) return(d)
+  }
+  as.Date(NA)
+}
+
+# .plausible_period_date(s) -- parse a statement PERIOD bound (e.g. md$period_start)
+# to a Date under the shapes a period line uses, accepting only a plausible year;
+# NA otherwise. The reader (parse_pdf_table, for year context) and the X-ray
+# (inspect) BOTH derive the statement year from the period this way and MUST agree,
+# so the format list lives here once -- add a new period date shape in ONE place and
+# both stay in step. (Order matters: earlier formats win on an ambiguous 2-digit
+# year, so keep the sequence as-is.)
+.plausible_period_date <- function(s) {
+  for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
+              "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
+    d <- suppressWarnings(as.Date(s, f))
     if (!is.na(d) && .plausible_year(format(d, "%Y"))) return(d)
   }
   as.Date(NA)

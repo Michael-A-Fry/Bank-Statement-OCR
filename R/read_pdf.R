@@ -117,7 +117,7 @@ apply_redaction_guard <- function(words, rects = NULL,
 # would leak text sitting under an overlay. Deterministic: words grouped into
 # lines by rounded y, ordered by x.
 # ---------------------------------------------------------------------------
-words_to_text <- function(words, line_tol = 3) {
+words_to_text <- function(words, line_tol = PARAM_PDF_ROW_TOL) {
   if (nrow(words) == 0) return("")
   o <- order(words$y, words$x)
   w <- words[o, , drop = FALSE]
@@ -291,7 +291,7 @@ read_pdf <- function(path, redaction_rects = NULL,
           if (!is.null(auto_rects) && nrow(auto_rects) &&
               exists("inject_redaction_tokens", mode = "function"))
             guarded_ocr <- inject_redaction_tokens(guarded_ocr, auto_rects,
-                                                   row_tol = 3)
+                                                   row_tol = PARAM_PDF_ROW_TOL)
           words[[p]] <- guarded_ocr
           nred_ocr <- sum(guarded_ocr$redacted)
           red_counts[p] <- nred_ocr

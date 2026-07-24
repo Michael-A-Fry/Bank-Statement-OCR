@@ -204,7 +204,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   cols <- t$columns %||% list()
   extras_cols <- t$extras %||% list()
   region <- t$region %||% list()
-  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
+  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   date_fmt <- t$date_format %||% "%d/%m/%Y"
   style <- t$amount_sign %||% "signed"
   # decimal_mark: dot | comma | auto. Accepted top-level or inside the table block
@@ -316,10 +316,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # a 4-digit regex. Reject implausible years: as.Date("13 Aug 25", "%d %b %Y")
   # yields 0025 (not NA), so without this the 4-digit format greedily eats a
   # 2-digit year.
-  pdate <- function(s) { for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
-      "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
-    dd <- suppressWarnings(as.Date(s, f))
-    if (!is.na(dd) && .plausible_year(format(dd, "%Y"))) return(dd) }; as.Date(NA) }
+  pdate <- .plausible_period_date   # shared with the X-ray (R/params.R) so year context can't drift
   p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
   yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
   yrs <- unique(yrs[!is.na(yrs)])

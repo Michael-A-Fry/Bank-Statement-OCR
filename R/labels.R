@@ -181,9 +181,18 @@ load_label_dict <- function(path) {
 # default_label_dict() -- the shipped base dictionary, resolved robustly whether
 # called from the repo root (app/CLI) or under ENGINE_ROOT (tests).
 default_label_dict <- function() {
+  # Resolve the dictionary the SAME way the lexicon does (.lexicon_path), so the
+  # engine reads exactly the file the Admin editor writes to (config$paths$dictionary).
+  # Order: an explicit BSO_DICTIONARY override, then the tests' ENGINE_ROOT copy
+  # (kept ahead of config so tests are unaffected), then the configured path, then
+  # the shipped default. The configured path only changes behaviour when a site
+  # actually relocates the file -- which today the engine silently ignores.
+  cfgpath <- tryCatch(load_config()$paths$dictionary, error = function(e) NULL)
   cands <- c(
+    if (nzchar(Sys.getenv("BSO_DICTIONARY"))) Sys.getenv("BSO_DICTIONARY"),
     if (nzchar(Sys.getenv("ENGINE_ROOT")))
       file.path(Sys.getenv("ENGINE_ROOT"), "dictionaries", "labels.yaml"),
+    cfgpath %||% NULL,
     file.path("dictionaries", "labels.yaml"))
   hit <- cands[file.exists(cands)]
   if (length(hit)) load_label_dict(hit[1]) else list()

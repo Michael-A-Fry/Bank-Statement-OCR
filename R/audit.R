@@ -26,7 +26,7 @@ mask_text <- function(x) {
 # purpose -- a cross-check view.
 .audit_rows <- function(input, tmpl, max_rows = 40L) {
   t <- tmpl$table %||% list(); cols <- t$columns %||% list()
-  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% 3)); if (is.na(row_tol)) row_tol <- 3
+  row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   cell <- function(rw, cspec) {
     if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max)) return(NA_character_)
     cx <- rw$x + rw$width / 2; sel <- rw[cx >= cspec$x_min & cx <= cspec$x_max, , drop = FALSE]
