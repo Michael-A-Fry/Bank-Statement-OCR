@@ -22,10 +22,15 @@ paths:
   user_templates: templates_user       # analyst-made drafts (Shiny only, NEVER Qlik)
   fields: fields_templates
   user_fields: fields_templates_user
-  dictionary: dictionaries/labels.yaml
+  dictionary: dictionaries/labels.yaml  # label wordings (Admin -> Templates -> Label dictionary)
+  lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Data capture -> Recognition vocabulary)
   uploads: uploads
   requests: requests
   logs: logs
+
+# A `metadata:` block also exists (local-only capture detail). It is normally
+# managed from Admin -> Data capture rather than hand-edited, so it is omitted
+# here; see docs/context/metadata-capture.md for its keys and defaults.
 
 feed:
   # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny

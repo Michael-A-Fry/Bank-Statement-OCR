@@ -22,6 +22,22 @@ Background — what it is, how it was built, the audit and research — lives in
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
 
+## Where do I change…?
+The tool is designed so the things that change live in **data and config, not code**.
+One place for each:
+
+| I want to change… | Where it lives | Who / how |
+|---|---|---|
+| A bank's layout (its columns, date & amount style) | `templates/<bank>.yaml` | analyst — **Add a template** in the app (no code) |
+| A wording the tool recognises (another phrase for "closing balance", etc.) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Label dictionary** |
+| A recognition marker or pattern (a debit/credit marker word, a money/date regex) | `dictionaries/lexicon.yaml` | admin — **Admin → Data capture → Recognition vocabulary** |
+| A deployment setting (port, admin password, the Qlik feed gate, file paths) | `config/config.yaml` | admin — copy from `config.example.yaml`, edit text |
+| A numeric engine threshold (year window, OCR DPI, row tolerance, redaction darkness) | `R/params.R` | maintainer — one file, every tuning knob → [engine-parameters.md](../context/engine-parameters.md) |
+| A shipped built-in default (rare) | the relevant `R/*.R` | maintainer → [customisation.md](../context/customisation.md) |
+
+The first three need **no code** and are done in the running app; the rest are one
+clearly-named file each. Full detail: [customisation.md](../context/customisation.md).
+
 ## The short version
 1. **Set up once** — build the offline package on an internet PC, copy one folder
    to the server, double-click `RUN-ME.bat`. It installs everything and starts the

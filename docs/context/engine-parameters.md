@@ -62,11 +62,22 @@ Half a cent is the sweet spot for statements quoted to the cent.
 | `PARAM_OCR_MAX_BAD_RATIO` | `0.30` | More than this fraction of garbage characters (broken CID font) → OCR it. |
 | `PARAM_OCR_CELL_MIN_CONF` | `60` | A per-cell OCR confidence (0–100) below this in a date/amount/balance cell earns an `ocr_low_conf` flag on that row. |
 | `PARAM_OCR_PAGE_MIN_CONF` | `70` | A page-mean OCR confidence below this raises a high-severity "OCR is unsure" diagnostic. |
+| `PARAM_OCR_RENDER_DPI` | `300` | The resolution a scanned page is rasterised at before OCR. Higher = sharper glyphs but slower; raise it for poor scans. |
 
 The two confidence floors are conservative on purpose: only clearly-doubtful
 reads are flagged, so the signal stays meaningful. The routing three decide
 *whether a page is read by OCR at all* — a digital PDF (word boxes present) is
 never OCR'd regardless.
+
+### PDF table geometry
+| Parameter | Default | Decides |
+|---|---|---|
+| `PARAM_PDF_ROW_TOL` | `3` | Words whose top edges sit within this many points are treated as one visual row. The single most behaviour-affecting geometric knob in PDF parsing; a template can override per-bank with `table.row_tol`. |
+
+### Plausibility bounds
+| Parameter | Default | Decides |
+|---|---|---|
+| `PARAM_STATED_COUNT_MAX` | `100000` | A statement's printed "N transactions" above this is treated as a mis-read and dropped rather than trusted (the same "reject the implausible" idea as the year window). |
 
 ### Oversized-input advisories (not hard limits)
 | Parameter | Default | Decides |
@@ -82,8 +93,10 @@ visible explanation rather than looking like a silent hang.
 |---|---|---|
 | `PARAM_REDACT_DARK_LEVEL` | `60` | A rendered greyscale pixel (0 black … 255 white) below this counts as "dark". |
 | `PARAM_REDACT_OCC_THRESH` | `0.70` | A word whose box is this fraction-or-more dark pixels is treated as drawn-over (redacted). |
-| `PARAM_REDACT_VECTOR_DPI` | `150` | The render resolution for the occlusion scan. |
+| `PARAM_REDACT_VECTOR_DPI` | `100` | The render resolution for the digital vector-box scan. ~2× faster than 150 and measured-equivalent for detection; don't drop below ~72. |
 
+`PARAM_REDACT_DARK_LEVEL` is shared by both redaction detectors (the vector-occlusion
+scan and the rasterised black-box scan) so "what counts as dark" stays consistent.
 `DARK_LEVEL` and `OCC_THRESH` together answer "is this word hidden under a box?".
 Over-detection (a genuinely very dark word) merely over-redacts — the contract's
 declared safe failure — so the defaults lean toward catching redactions.
