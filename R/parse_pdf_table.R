@@ -46,14 +46,14 @@
 # see no digit and DROP the whole transaction -- silently losing a row that was
 # really there. Kept this way, the row survives, its amount is nulled, and it is
 # flagged redacted -- hidden, never lost.
-.has_money <- function(x) { x <- as.character(x); grepl("[0-9]", x) | grepl("REDACT", x, ignore.case = TRUE) }
+.has_money <- function(x) { x <- as.character(x); grepl("[0-9]", x, perl = TRUE, useBytes = TRUE) | grepl("REDACT", x, ignore.case = TRUE, perl = TRUE, useBytes = TRUE) }
 # .has_real_money -- a VISIBLE money value: a digit that is NOT a redaction token.
 # Used for the keep decision's evidence test: a row is only a transaction when it
 # still shows a real date or a real amount. A cell that is only [REDACTED] does
 # NOT count -- we never invent a transaction out of a redaction (the statement
 # arrives already redacted; our job is to read what is there, not guess what is
 # hidden). A row with a redacted amount is still kept when its DATE is real.
-.has_real_money <- function(x) { x <- as.character(x); grepl("[0-9]", x) & !grepl("REDACT", x, ignore.case = TRUE) }
+.has_real_money <- function(x) { x <- as.character(x); grepl("[0-9]", x, perl = TRUE, useBytes = TRUE) & !grepl("REDACT", x, ignore.case = TRUE, perl = TRUE, useBytes = TRUE) }
 
 # .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
 # A new row starts when a word's top is more than `tol` below the CURRENT row's
@@ -134,14 +134,22 @@
 .pdf_is_summary <- function(description, raw = NULL) {
   d <- tolower(trimws(description %||% ""))
   if (!nzchar(d)) d <- tolower(trimws(raw %||% ""))
-  lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d))
+  # perl + useBytes: these two regexes run 5-8x per visual row across the split /
+  # continuation / keep passes (~1300-5000 calls per parse) and the cost is almost
+  # entirely R's default TRE engine compiling the big alternation. PCRE is 3-4x
+  # faster on the IDENTICAL patterns -- they use only constructs with the same
+  # POSIX-ERE / PCRE meaning (^ $ \s [bc] () | ? f/?wd?), no backrefs / \b / locale
+  # POSIX classes -- and useBytes both removes the C-locale warning and makes the
+  # sub() robust on invalid-UTF-8 bytes (no new failure mode). Byte-identical.
+  lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d,
+                    perl = TRUE, useBytes = TRUE))
   grepl(paste0(
     "^(statement\\s+)?(opening|closing)\\s+balance$",
     "|^balance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)$",
     "|^balance\\s+[bc]/f$",
     "|^(brought|carried)\\s+forward$",
     "|^total\\s+(withdrawals|deposits|credits|debits|payments|fees|transactions)$"),
-    lbl)
+    lbl, perl = TRUE, useBytes = TRUE)
 }
 
 # .is_footer_noise(s) -- a page footer / running header ("Page 2 of 2", "continued
@@ -191,7 +199,7 @@
 # date/amount/balance cell earns an `ocr_low_conf` flag. Deliberately conservative
 # -- only clearly-doubtful reads are flagged. Tunable in R/params.R.
 
-parse_pdf_table <- function(input, template, force_rows = NULL) {
+parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   t <- template$table %||% list()
   cols <- t$columns %||% list()
   extras_cols <- t$extras %||% list()
@@ -296,7 +304,10 @@ parse_pdf_table <- function(input, template, force_rows = NULL) {
   # dictionary. Wiring the balances into the header lets balance_reconciliation
   # actually run for PDFs -- so a PDF that reconciles earns "high" trust and the
   # completeness guard is satisfied, exactly like a delimited statement.
-  md <- safe(extract_metadata(input), NULL)
+  # Reuse the caller's metadata when it handed one in (convert_statement already
+  # computed the identical extract_metadata(input) for detection); recompute only
+  # when parsed standalone. Same input + same dictionary -> byte-identical md.
+  md <- meta %||% safe(extract_metadata(input), NULL)
   has_year <- grepl("%[Yy]", date_fmt)
   # Year context is computed ALWAYS (not just for year-less templates): the
   # year-less FALLBACK below needs it even when the template's own format

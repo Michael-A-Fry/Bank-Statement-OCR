@@ -61,7 +61,7 @@
 }
 
 # write_feed(result, config, ts) -> the gate result (invisibly). `result` is the
-# convert_document() return. `ts` is the ISO timestamp to stamp (pass it in so the
+# convert_statement() return. `ts` is the ISO timestamp to stamp (pass it in so the
 # call stays deterministic in tests; defaults to now).
 write_feed <- function(result, config = load_config(), ts = NULL,
                        proven_ids = NULL) {

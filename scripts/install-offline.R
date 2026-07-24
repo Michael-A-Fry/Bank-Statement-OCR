@@ -25,7 +25,7 @@ safe <- function(expr, default = NULL) tryCatch(expr, error = function(e) defaul
 
 # Locate the bundle folders whether the script sits inside the offline/ folder or beside it.
 find_dir <- function(name) {
-  for (c in c(file.path(here, name), file.path(here, "bso-offline", name),
+  for (c in c(file.path(here, name), file.path(here, "offline", name),
               file.path(getwd(), name), Sys.getenv(toupper(paste0("BSO_", name)), "")))
     if (nzchar(c) && dir.exists(c)) return(normalizePath(c, winslash = "/"))
   ""
@@ -36,7 +36,7 @@ pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
           "pdftools", "magick", "testthat")
 
 ## 1. R packages ------------------------------------------------------------
-if (!nzchar(repo)) stop("Could not find the 'repo' folder. Run this from inside the 'bso-offline' folder.")
+if (!nzchar(repo)) stop("Could not find the 'repo' folder. Run this from inside the 'offline' folder.")
 cat(sprintf("Installing R packages from %s\n(R %s.%s)\n\n", repo,
             R.version$major, sub("\\..*", "", R.version$minor)))
 install.packages(pkgs, repos = paste0("file:///", repo), type = "win.binary", dependencies = TRUE)

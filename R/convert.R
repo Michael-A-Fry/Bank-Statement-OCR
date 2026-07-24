@@ -86,7 +86,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       if (did_split) {
         parsed <- sb$parsed; recon <- sb$recon
       } else {
-        parsed <- parse_statement(input, template, force_rows = force_rows)
+        parsed <- parse_statement(input, template, force_rows = force_rows, meta = meta)
         recon <- reconcile(parsed, template)
       }
       row_count <- nrow(parsed$transactions)

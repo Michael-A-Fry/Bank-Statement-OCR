@@ -1819,7 +1819,11 @@ server <- function(input, output, session) {
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
   friendly_tpl <- function(tid) {
     if (length(tid) != 1 || is.na(tid) || !nzchar(tid)) return(NA_character_)
-    ov <- tryCatch(template_overview(all_templates()), error = function(e) NULL)
+    # Build the overview for JUST this template, not the whole set: friendly_tpl
+    # runs on every successful convert and only needs this id's bank + type, and
+    # the full-set build grows with every template the team adds. Same function,
+    # one-element input -> identical row (missing id still falls back to `tid`).
+    ov <- tryCatch(template_overview(all_templates()[tid]), error = function(e) NULL)
     if (is.null(ov) || !nrow(ov)) return(tid)
     r <- ov[ov$id == tid, , drop = FALSE]
     if (!nrow(r)) return(tid)
@@ -2070,10 +2074,12 @@ server <- function(input, output, session) {
   })
 
   output$cv_txns <- renderDT({
-    res <- cv_res(); req(res); req(!is.null(res$outputs))
-    csv <- res$outputs[grepl("\\.csv$", res$outputs)]
-    req(length(csv) == 1, file.exists(csv))
-    df <- utils::read.csv(csv, stringsAsFactors = FALSE, check.names = FALSE)
+    # Reuse the already-read output CSV (cv_data) rather than reading it from disk a
+    # second time -- by the time this Preview tab renders, cv_headline / cv_summary /
+    # cv_trend have all consumed cv_data(). Drop its three derived helper columns
+    # (.date/.amt/.bal) so the display shape is exactly what read.csv gave before.
+    d <- cv_data(); req(!is.null(d))
+    df <- d[, setdiff(names(d), c(".date", ".amt", ".bal")), drop = FALSE]
     # The CSV is already the display shape (no verbatim *_raw; debit/credit when the
     # statement splits them). Trim columns this statement never fills so the table
     # shows only fields that were actually read.
@@ -2611,17 +2617,32 @@ server <- function(input, output, session) {
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
 
-  guided_live <- reactive({ g <- guided(); req(g)
+  # gl_build -- the guided template with the Simple-tab overrides applied.
+  # meta_live = FALSE ISOLATES the three pure-metadata fields (template name / bank
+  # / statement-type) so editing them doesn't invalidate the caller. The live
+  # preview uses this: those three never appear in and never affect the parsed
+  # transaction rows, yet each keystroke on them was forcing a full 3-page PDF
+  # re-parse (~378 ms measured) -- a spinner-stall while typing a bank name.
+  # `currency` STAYS live because it stamps the previewed currency column. Save
+  # and the YAML editor use guided_live() (meta_live = TRUE), so every field is
+  # still written exactly as typed.
+  gl_build <- function(meta_live = TRUE) {
+    g <- guided(); req(g)
     # "__report__" (the "none of these fit" option) is a no-override sentinel.
     no_sentinel <- function(v) if (identical(v, "__report__")) "" else v
-    apply_overrides(g$tmpl, input$g_bank, no_sentinel(input$g_date), no_sentinel(input$g_sign),
+    idv   <- if (meta_live) input$g_id   else isolate(input$g_id)
+    bankv <- if (meta_live) input$g_bank else isolate(input$g_bank)
+    typev <- if (meta_live) input$g_type else isolate(input$g_type)
+    apply_overrides(g$tmpl, bankv, no_sentinel(input$g_date), no_sentinel(input$g_sign),
                     input$g_decimal, input$g_unsigned_default,
                     input$g_col_desc, input$g_col_ref, input$g_col_bal,
-                    input$g_id, input$g_type, input$g_currency,
+                    idv, typev, input$g_currency,
                     date_col = input$g_col_date, amount_col = input$g_col_amt,
                     keep_dateless = input$g_keep_dateless,
                     type_debit_value = input$g_type_debit,
-                    type_credit_value = input$g_type_credit) })
+                    type_credit_value = input$g_type_credit)
+  }
+  guided_live <- reactive(gl_build(meta_live = TRUE))
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -2855,7 +2876,10 @@ server <- function(input, output, session) {
   # columns read correctly -- so a big statement previews in a fraction of the time
   # (the full convert on Save still parses every page).
   g_preview_tx <- reactive({ g <- guided(); req(g)
-    draft_preview(g$path, guided_live(), preview_pages = 3L) })
+    # Isolated build: editing template name / bank / statement-type won't re-parse
+    # the statement (they don't affect the rows); currency and every column /
+    # date / amount setting stay live, so the preview still updates on those.
+    draft_preview(g$path, gl_build(meta_live = FALSE), preview_pages = 3L) })
   output$g_preview <- renderDT({
     tx <- g_preview_tx(); req(!is.null(tx))
     tx <- utils::head(tx, 12)
