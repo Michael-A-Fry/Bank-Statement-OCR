@@ -70,7 +70,7 @@ DIAG_PLAIN <- c(
   mixed_currency          = "more than one currency",
   oversized               = "unusually large file",
   oversized_page          = "unusually large page",
-  reconciliation_mismatch = "balance doesn't reconcile",
+  reconciliation_mismatch = "the balance doesn't add up",
   balance_break           = "running balance jumps",
   row_count               = "row count doesn't match",
   date_out_of_range       = "date outside the period",
@@ -459,7 +459,7 @@ ui <- fluidPage(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
                     column(9, br(),
                       checkboxGroupInput("ix_layers", "Show on the page (untick to hide a layer):",
-                        choices = c("Column bands" = "cols", "Kept transaction rows" = "kept",
+                        choices = c("Columns" = "cols", "Kept transaction rows" = "kept",
                                     "Skipped rows" = "skipped", "Redactions" = "redact",
                                     "Balances / dates / account" = "meta",
                                     "Faint box on every word" = "words"),
@@ -468,7 +468,7 @@ ui <- fluidPage(
                   plotOutput("ix_plot", height = "640px"),
                   uiOutput("ix_legend"),
                   h4("Rows skipped on this page - and why"),
-                  helpText(HTML("A real transaction in here usually means a one-line template fix (most often the <b>date format</b> or an amount band) - that brings back every row like it. A genuine one-off? Select it and add it by hand; it's kept, flagged <b>forced</b>.")),
+                  helpText(HTML("A real transaction in here usually means a one-line template fix (most often the <b>date format</b> or an amount column) - that brings back every row like it. A genuine one-off? Select it and add it by hand; it's kept, flagged <b>forced</b>.")),
                   DTOutput("ix_skipped"),
                   br(),
                   actionButton("ix_add_row", "This IS a transaction - add the selected row", class = "btn-warning"),
@@ -2303,7 +2303,8 @@ server <- function(input, output, session) {
       fluidRow(
         column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
         column(5, selectInput("g_pdf_field", "The box marks this column…",
-                              c("date", "description", "amount", "balance", "particulars",
+                              c("(what is this column?)" = "",
+                                "date", "description", "amount", "balance", "particulars",
                                 "reference", "type", "debit", "credit", "other_party", "code"))),
         column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
       div(actionButton("g_pdf_assign", "Assign box → column (full height)", class = "btn-primary"),
@@ -2348,7 +2349,7 @@ server <- function(input, output, session) {
           column(6, selectInput("g_sign", "How are amounts shown?",
                                 choices = guided_sign_choices(), selected = cur_sign))),
         fluidRow(
-          column(6, selectInput("g_decimal", "Number format (thousands / decimal)",
+          column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
                                 choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
                                             "1,234.56 - dot is the decimal point" = "dot",
                                             "1.234,56 - comma is the decimal (European)" = "comma"),
@@ -2411,6 +2412,19 @@ server <- function(input, output, session) {
         HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s",
              htmltools::htmlEscape(g$name %||% "your file"),
              if (is_pdf) "PDF" else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
+      # An always-visible mini-guide: the 2-minute guide is a separate modal and
+      # Shiny shows one modal at a time, so once the toolkit is open it can't be
+      # reopened. This strip keeps the whole flow on screen the entire time.
+      div(style = "padding:8px 12px;background:#f6faf7;border:1px solid #cfe6d8;border-radius:6px;margin-bottom:10px;font-size:13px",
+        HTML(if (is_pdf)
+          paste0("<b>How this works:</b> &nbsp;1&nbsp;Drag a box over a column on your statement &nbsp;·&nbsp; ",
+                 "2&nbsp;Pick what it is &nbsp;·&nbsp; 3&nbsp;click <b>Assign</b> &nbsp;·&nbsp; ",
+                 "4&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 5&nbsp;<b>Save</b>. ",
+                 "The tool has pre-filled what it could detect - you're just confirming it.")
+        else
+          paste0("<b>How this works:</b> &nbsp;1&nbsp;in <b>Simple</b>, match each column to your file &nbsp;·&nbsp; ",
+                 "2&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 3&nbsp;<b>Save</b>. ",
+                 "The tool has pre-filled what it could detect - you're just confirming it."))),
       fluidRow(column(6, left_panel), column(6, right_panel)),
       tags$hr(),
       h4("Preview - what we'll pull out"),
@@ -2496,7 +2510,7 @@ server <- function(input, output, session) {
         strong("This layout is new — set it up once and it converts every time."),
         p(class = "muted", style = "margin:6px 0 10px",
           "The tool pre-fills what it can detect from your statement — you confirm against a live preview and save. Takes a couple of minutes, no data background needed."),
-        actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-success btn-lg"),
+        actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-primary btn-lg"),
         div(style = "margin-top:8px",
           span(class = "muted", "Would rather not? "),
           actionLink("cv_unsup_raise", "Send it to the team instead")))
@@ -2765,7 +2779,10 @@ server <- function(input, output, session) {
   observeEvent(input$g_pdf_assign, {
     g <- guided(); req(g); br <- input$g_pdf_brush
     if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
-    f <- .pdf_chosen_field(); slot <- .pdf_field_ref(f)
+    f <- .pdf_chosen_field()
+    if (!nzchar(trimws(f %||% ""))) {
+      showNotification("First pick what this column is (date, description, amount...), then Assign.", type = "warning"); return() }
+    slot <- .pdf_field_ref(f)
     g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
     # Mapping a money-in / money-out band means this is a separate debit/credit
     # statement: switch the amount style to match, so saving never demands a single
@@ -2789,6 +2806,8 @@ server <- function(input, output, session) {
   # statement). Recomputes the table region from whatever bands remain.
   observeEvent(input$g_pdf_remove, {
     g <- guided(); req(g); f <- .pdf_chosen_field()
+    if (!nzchar(trimws(f %||% ""))) {
+      showNotification("Pick the column to remove first.", type = "warning"); return() }
     slot <- if (!is.null(g$tmpl$table$columns[[f]])) "columns"
             else if (!is.null(g$tmpl$table$extras[[f]])) "extras" else NA
     if (is.na(slot)) {
