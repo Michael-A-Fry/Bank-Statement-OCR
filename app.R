@@ -41,75 +41,17 @@ LEXICON_PATH       <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexic
 # on a sample" converts, so a brand-new user sees a full result without a file.
 SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_statement.pdf")
 
-# Plain-English labels for the everyday screen. The engine's internal codes
-# (needs_review, balance_reconciliation, ...) stay in the logs; a non-technical
-# user only ever sees these sentences.
-STATUS_PLAIN <- c(
-  ok           = "Converted successfully",
-  needs_review = "Converted - please double-check it",
-  unsupported  = "No template for this statement yet",
-  failed       = "Could not read this file")
-CHECK_PLAIN <- c(
-  balance_reconciliation     = "Opening + transactions = closing balance",
-  running_balance_continuity = "Each running balance follows from the last",
-  transaction_count          = "Row count matches the statement",
-  dates_within_period        = "All dates fall in the statement period",
-  dates_readable             = "Row dates could be read",
-  no_unparsed_rows           = "Every row was read",
-  redaction_summary          = "Redactions found and honoured",
-  ocr_confidence             = "Scan / OCR read quality")
-COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
-                    empty = "empty (check the mapping)", unmapped = "not on this statement")
-# Diagnostics 'category' codes -> plain words for the customer-facing table
-# (the codes themselves stay in the logs / workbook Diagnostics sheet).
-DIAG_PLAIN <- c(
-  unknown_format          = "layout not recognised",
-  unreadable              = "file could not be read",
-  multiple_statements     = "several statements in one file",
-  combined_statement      = "several accounts in one statement",
-  mixed_currency          = "more than one currency",
-  oversized               = "unusually large file",
-  oversized_page          = "unusually large page",
-  reconciliation_mismatch = "the balance doesn't add up",
-  balance_break           = "running balance jumps",
-  row_count               = "row count doesn't match",
-  date_out_of_range       = "date outside the period",
-  date_format_mismatch    = "dates in a different style than expected",
-  row_parse               = "rows didn't parse",
-  date_parse              = "dates couldn't be read",
-  amount_parse            = "amounts couldn't be read",
-  completeness_unverified = "completeness not auto-verified",
-  low_ocr_confidence      = "scan read with low confidence",
-  ocr                     = "page(s) machine-read (OCR)",
-  ocr_confidence_unknown  = "scan quality unknown")
-plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
-plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
-# Human-readable HEADERS for the transactions preview. The stored core schema uses
-# machine names that read as an internal tool to a forensic reviewer, so relabel
-# for DISPLAY. The verbatim *_raw cells no longer surface here (they live in the
-# JSON + Provenance); debit/credit appear when a statement splits money in / out.
-CV_COL_LABELS <- c(
-  row_id = "#", date = "Date", date_raw = "Date (as shown)",
-  description = "Description", amount = "Amount", amount_raw = "Amount (as shown)",
-  debit = "Debit (money out)", credit = "Credit (money in)",
-  direction = "In / out", balance = "Balance", balance_raw = "Balance (as shown)",
-  particulars = "Particulars", code = "Code", reference = "Reference",
-  type = "Type", other_party = "Other party", currency = "Currency", flags = "Flags")
-cv_friendly_cols <- function(cols) vapply(cols, function(cn) {
-  lab <- CV_COL_LABELS[[cn]]
-  if (is.null(lab)) tools::toTitleCase(gsub("_", " ", cn)) else lab
-}, character(1), USE.NAMES = FALSE)
-# .cols_with_data(df) -- names of columns carrying at least one non-blank value.
-# Used to trim always-empty columns (a field this statement doesn't have) from the
-# previews so the reviewer sees only what was actually read. row_id is always kept.
-.cols_with_data <- function(df, always = "row_id") {
-  keep <- vapply(df, function(c) any(!is.na(c) & nzchar(trimws(as.character(c)))), logical(1))
-  union(intersect(always, names(df)), names(df)[keep])
-}
-# The friendly line shown when a file simply can't be read (technical detail -> log).
-FRIENDLY_READ_ERROR <- paste(
-  "We couldn't read this file. It may be password-protected, an image-only scan we can't open,",
-  "or not a bank statement. Try re-saving it as a PDF or CSV, or open the template toolkit to set it up.")
+# How many days of run/feedback logs to keep before "Tidy up logs" archives them.
+# One place, so the button label and both rollup calls can never disagree.
+LOG_KEEP_DAYS <- 90L
+# read_file_text(p) -- a file's contents as one string ("" if absent). Used by the
+# Admin YAML editors to load the dictionary / lexicon into their text boxes.
+read_file_text <- function(p) if (file.exists(p)) paste(readLines(p, warn = FALSE), collapse = "\n") else ""
+
+# Plain-English label maps + the preview-column helpers live in ui_labels.R (the
+# wording a non-technical user sees). Sourced here -- after the engine, before the
+# UI -- so rewording copy is one small, obvious file, never buried in app.R.
+source("ui_labels.R")
 
 # About-page + tutorial HTML content lives in ui_content.R (readability).
 source("ui_content.R")
@@ -643,7 +585,7 @@ ui <- fluidPage(
           h4("Template usage"),
           DTOutput("adm_usage"),
           br(),
-          actionButton("adm_rollup", "Tidy up logs (archive runs older than 90 days)"),
+          actionButton("adm_rollup", sprintf("Tidy up logs (archive runs older than %d days)", LOG_KEEP_DAYS)),
           uiOutput("adm_rollup_msg")
         ),
         tabPanel(
@@ -872,20 +814,6 @@ server <- function(input, output, session) {
       selectInput("cv_template", "…or force an exact template (optional)", choices = tpl_choices))
   })
 
-  # ---- Which templates are available (Convert visibility) ----
-  output$cv_templates <- renderUI({
-    ov <- template_overview(templates())
-    nt <- sum(ov$origin == "tested"); nu <- sum(ov$origin == "user")
-    lines <- sprintf("%s &middot; %s &middot; <i>%s</i> (%s)", ov$bank, ov$type, ov$format, ov$origin)
-    tags$details(
-      tags$summary(sprintf("Templates available: %d  (%d tested, %d user)", nrow(ov), nt, nu)),
-      tags$div(style = "font-size:11px;color:#888;margin-top:4px",
-               HTML("<b>tested</b> = shipped with the tool; <b>user</b> = set up on this machine.")),
-      tags$div(style = "font-size:12px;color:#555;margin-top:6px;max-height:220px;overflow:auto",
-               HTML(paste(lines, collapse = "<br>"))),
-      tags$div(style = "font-size:11px;color:#888;margin-top:6px",
-               "Full detail and editing in Admin → Templates."))
-  })
 
   # ---- Admin: template overview / preview / edit ----
   # The management view shows ALL templates, hidden ones included, so a parked
@@ -1021,8 +949,7 @@ server <- function(input, output, session) {
   })
 
   # ---- Admin: label dictionary edit (the fix for "check shows NA") ----
-  .load_dict_text <- function()
-    if (file.exists(DICT_PATH)) paste(readLines(DICT_PATH, warn = FALSE), collapse = "\n") else ""
+  .load_dict_text <- function() read_file_text(DICT_PATH)
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
   observeEvent(input$adm_dict_reload, { req(admin_ok())
@@ -1057,8 +984,7 @@ server <- function(input, output, session) {
   })
 
   # ---- Admin: recognition-vocabulary (lexicon) editor ----
-  .load_lex_text <- function()
-    if (file.exists(LEXICON_PATH)) paste(readLines(LEXICON_PATH, warn = FALSE), collapse = "\n") else ""
+  .load_lex_text <- function() read_file_text(LEXICON_PATH)
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text()))
   observeEvent(input$adm_lex_reload, { req(admin_ok())
@@ -1105,7 +1031,7 @@ server <- function(input, output, session) {
     }
     ok <- lexicon_append(cat_, tolower(tok), LEXICON_PATH)
     updateTextAreaInput(session, "adm_lex_edit",
-      value = if (file.exists(LEXICON_PATH)) paste(readLines(LEXICON_PATH, warn = FALSE), collapse = "\n") else "")
+      value = read_file_text(LEXICON_PATH))
     sugg_bump(sugg_bump() + 1)
     output$adm_sugg_msg <- renderUI(div(style = sprintf("color:%s", if (ok) "#137333" else "#b00020"),
       if (ok) sprintf("Added '%s' to %s. The engine will use it on the next conversion.",
@@ -1476,10 +1402,10 @@ server <- function(input, output, session) {
     if ("words" %in% layers && nrow(w))
       rect(w$x, w$y, w$x + w$width, w$y + w$height, border = "#cfcfcf", lwd = 0.4)
     # Machine-read (OCR) words the engine itself is unsure about: shaded amber so
-    # "double-check the numbers" points at exactly the doubtful words. Same floor
-    # (60) as the engine's ocr_low_conf row flag.
+    # "double-check the numbers" points at exactly the doubtful words. Uses the SAME
+    # floor as the engine's ocr_low_conf row flag (PARAM_OCR_CELL_MIN_CONF, params.R).
     if (!is.null(w$ocr_conf)) {
-      lc <- w[!is.na(w$ocr_conf) & w$ocr_conf < 60, , drop = FALSE]
+      lc <- w[!is.na(w$ocr_conf) & w$ocr_conf < PARAM_OCR_CELL_MIN_CONF, , drop = FALSE]
       if (nrow(lc)) rect(lc$x, lc$y, lc$x + lc$width, lc$y + lc$height,
                          border = "#c77700", col = "#c7770040", lwd = 1.2)
     }
@@ -2990,8 +2916,8 @@ server <- function(input, output, session) {
   })
   observeEvent(input$adm_rollup, {
     req(admin_ok())
-    r <- tryCatch(rollup_logs(LOGDIR, "runs", keep_days = 90), error = function(e) NULL)
-    r2 <- tryCatch(rollup_logs(LOGDIR, "feedback", keep_days = 90), error = function(e) NULL)
+    r <- tryCatch(rollup_logs(LOGDIR, "runs", keep_days = LOG_KEEP_DAYS), error = function(e) NULL)
+    r2 <- tryCatch(rollup_logs(LOGDIR, "feedback", keep_days = LOG_KEEP_DAYS), error = function(e) NULL)
     load_admin()
     output$adm_rollup_msg <- renderUI(span(class = "ok",
       sprintf("Archived %d old run file(s); %d kept. History is preserved in logs/archive/.",

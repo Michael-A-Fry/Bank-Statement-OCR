@@ -56,7 +56,7 @@ options(timeout = 600)
 app_items <- c("R", "templates", "templates_user", "templates_seed",
                "dictionaries", "fields_templates", "config", "scripts",
                "tests", "samples", "docs",
-               "app.R", "ui_content.R", "run.R", "README.md", "RUN-ME.bat")
+               "app.R", "ui_content.R", "ui_labels.R", "run.R", "README.md", "RUN-ME.bat")
 cat("Copying the app into the dist folder ...\n")
 copied <- 0L; missing <- character(0)
 for (it in app_items) {
