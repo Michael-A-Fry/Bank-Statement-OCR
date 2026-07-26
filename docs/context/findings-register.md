@@ -11,10 +11,10 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 81 findings, 78 fixed, 3 open.** All three open ones are
-described under [What is holding the last three open](#what-is-holding-the-last-three-open)
-at the bottom — each is waiting on evidence (more real forms, a hand-keyed golden
-scan), not on effort, and none of them can produce a wrong figure quietly.
+**Where it stands: 83 findings, 78 fixed, 5 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+only open finding that CAN produce a wrong figure quietly, so it is the next thing
+to fix. The other three are waiting on evidence (more real forms, a hand-keyed
+golden scan) rather than on effort.
 
 _Last updated: 2026-07-26._
 
@@ -158,6 +158,54 @@ _Anything discovered after the review lands here, newest at the bottom._
 | N17 | low | **fixed** | ImageMagick can spill a disk-backed pixel cache (~83 MB) of a statement page under memory pressure, and only clears it when the PROCESS exits — never, on a server up for months. `with_image_scratch()` now gives each piece of image work a private folder and deletes it. | R/util.R + R/ocr.R, R/detect_redaction.R, R/read_input.R |
 | N18 | low | **fixed** | The local `feed/transactions/136c69b731ca8698.csv` is a stale pre-fix artifact in the old 26-column schema. | gone; `feed/` is local-only and git-ignored |
 | N19 | low | open | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in — a correction to the original #61 measurement. | samples/_private_staging/anz_multiple.pdf |
+
+| N20 | high | open | The zero-row re-read is a CLIFF, not a measure. A template that reads 5 rows of a 500-row statement is exactly as wrong as one that reads 0, and passes every check: `transaction_count` only requires `n > 0` when the statement prints no stated count. | R/convert.R `empty_first`, R/reconcile.R:179 |
+| N21 | medium | open | When a conversion is obviously wrong, the route to "this isn't right, build the right one" is not offered on the result that shows it. | the Convert result page |
+
+### N20 - reading 5 of 500 is the same defect as reading 0
+
+Raised by the owner: *"What about when one reads 5 and other 500?"*
+
+The re-read added in this session triggers on `nrow(transactions) == 0`. That was
+the reported symptom, not the defect. The defect is **a template that reads a
+small fraction of what is on the page**, and 5-of-500 is the dangerous version,
+because 0 rows is obviously broken while 5 rows looks like a statement.
+
+It currently passes everything: `.kpi_transaction_count` (R/reconcile.R:179)
+requires only `n > 0` when the statement prints no stated count, and balance
+reconciliation is skipped for the same reason a thin parse happens. So the run
+can come back **ok**, feed the dashboards, and be missing 99% of the money.
+
+**The tool already knows.** `row_coverage()` (R/row_coverage.R) counts, for a PDF,
+how many visual rows were seen and how many were kept, with a reason per rejected
+row. Delimited files carry `source_line_count`. Nothing new has to be computed -
+the number is measured and then not used to judge anything.
+
+**The fix is a deletion, not an addition.** Replace the `== 0` cliff with the
+measure that already exists, and drop the hidden re-read entirely:
+
+  * A parse that keeps a small share of the rows it saw is `needs_review`, and the
+    verdict says so in her words: *"read 5 rows, but there are about 500 on this
+    statement"*. That is a question an accountant CAN answer - she is holding the
+    statement - so it is the right question to put to her.
+  * `PARAM_DETECT_MAX_REREADS`, the re-read loop, `rescued_from`, its message and
+    its diagnostic all go. One honest number replaces a hidden mechanism, which
+    is also the more defensible design: nothing is quietly swapped behind her.
+
+Net: **fewer concepts, and it covers the case the loop never did.**
+
+### N21 - the fix path belongs on the result that shows the problem
+
+Raised by the owner: *"if it reads 5, is there a super quick not right, create new,
+pathway?"*
+
+The pathway exists (`cv_teach_go` opens the toolkit seeded from this statement),
+but it is offered when a layout is UNRECOGNISED - not when a recognised template
+produced an obviously wrong answer, which is the case N20 exposes. On a thin
+parse the prominent action should be *"That's not right - set up the right one"*,
+seeded from this statement and this template, so the analyst is one click from
+the band editor with the wrong bands already on screen. Depends on N20 landing
+first: without the measure there is nothing to hang the offer on.
 
 ### What is holding the last three open
 
