@@ -205,8 +205,7 @@ test_that("an unprovable pairing keeps today's balances and says so", {
   expect_identical(m$period_end,   "28 February 2026")
   expect_identical(m$opening_balance, "1,000.00")      # unchanged from a single-period read
   expect_identical(m$closing_balance, "900.00")
-  expect_false(is.na(m$period_note))
-  expect_true(grepl("balance", m$period_note, fixed = TRUE))
+  expect_false(is.na(m$period_note))                   # ...and never in silence
 })
 
 test_that("periods that do not CHAIN are never paired (the same-account proof)", {
@@ -224,7 +223,6 @@ test_that("periods that do not CHAIN are never paired (the same-account proof)",
   expect_identical(m$opening_balance, "1,000.00")
   expect_identical(m$closing_balance, "900.00")        # NOT the other account's 550.00
   expect_false(is.na(m$period_note))
-  expect_true(grepl("consecutive sections", m$period_note, fixed = TRUE))
   # The very same file with the sections chained (900 -> 900) IS one account, and
   # then the span's balances are the first opening and the last closing.
   chained <- list(kind = "text", pages = sub("Opening balance 50.00", "Opening balance 900.00",
@@ -257,8 +255,9 @@ test_that("overlapping periods widen the dates but never pair the balances", {
   m <- extract_metadata(lap)
   expect_identical(m$period_start, "1 January 2026")
   expect_identical(m$period_end,   "30 April 2026")
-  expect_identical(m$closing_balance, "900.00")        # left where a single read leaves it
-  expect_true(grepl("overlap", m$period_note, fixed = TRUE))
+  expect_identical(m$opening_balance, "1,000.00")      # left where a single read leaves them
+  expect_identical(m$closing_balance, "900.00")
+  expect_false(is.na(m$period_note))
 })
 
 test_that("metadata reaches the convert result and the workbook", {

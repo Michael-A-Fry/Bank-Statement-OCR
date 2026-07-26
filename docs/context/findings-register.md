@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 89 findings, 81 fixed, 8 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 90 findings, 81 fixed, 9 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -215,6 +215,8 @@ first: without the measure there is nothing to hang the offer on.
 | N26 | medium | open | The band editor commits the box WHILE you drag, so it re-detects the column on every mouse move and small positional corrections are almost impossible. It should draw on mouse RELEASE. Reported from real use; given that a mis-drawn band is the commonest cause of a wrong amount column, this is a correctness problem wearing a usability costume. | app.R, the PDF band editor brush |
 
 | N27 | medium | open | The save name is generated from the BANK alone, so every layout from one bank drafts the same name and the second one collides or gets a "_2" suffix. It should be built from bank AND the kind of statement (`g_bank` + `g_type`), which the toolkit already asks for and already stores as `statement_type`. Directly worsens the near-duplicate problem: templates that cannot be told apart by name are exactly the ones that tie in detection. | app.R `g_id` / `g_bank` / `g_type` |
+
+| N28 | high | open | "None of these fit? Tell our team" (`g_req_detail` / `g_req_send`, app.R:3286-3290) sits INSIDE the settings disclosure on the Simple tab, so to a user it appears only on Advanced. It is the escape hatch for somebody already stuck, and the tool then makes them hunt for it. Worse, picking "None of these" in the date or amount dropdown pops a notification saying "use the Tell our team box below" - and the box it names is not visible. It belongs in front, on Simple, always. | app.R:3286 |
 
 ### What is holding the last three open
 
