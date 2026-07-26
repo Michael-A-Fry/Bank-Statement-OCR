@@ -167,9 +167,11 @@ test_that("a failed redaction scan is reported once, whether or not recon is pas
   recon <- reconcile(parsed, NULL)
   with_recon <- build_diagnostics("needs_review", parsed = parsed, recon = recon)
   expect_equal(sum(with_recon$category == "redaction_unverified"), 1L)
-  # the surviving row is the KPI one -- it carries the "Do NOT release" instruction
-  expect_match(with_recon$how_to_fix[with_recon$category == "redaction_unverified"][1],
-               "Do NOT release")
+  # Assert on the DETAIL, not the cure. Both raise sites now share one cure
+  # constant, so "Do NOT release" no longer distinguishes them and an assertion on
+  # it would pass whichever row survived -- a green test checking nothing.
+  expect_match(with_recon$detail[with_recon$category == "redaction_unverified"][1],
+               "the redaction scan could not complete")
   # a caller that passes no recon still gets told (build_diagnostics has such callers)
   no_recon <- build_diagnostics("needs_review", parsed = parsed)
   expect_equal(sum(no_recon$category == "redaction_unverified"), 1L)

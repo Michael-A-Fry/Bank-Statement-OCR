@@ -36,6 +36,25 @@
   "columns sit - the usual cause is a column band drawn in the wrong place, or over",
   "the wrong part of the page. The X-ray view shows what the tool saw.")
 
+# Same rule, two more defects that were each written out twice in slightly
+# different words. Both are raised from two places -- a failing reconciliation KPI
+# and a direct check -- and in both the SITUATION differs (and stays in the detail)
+# while the cure does not. So the cure is written once here and used from both.
+.FIX_ROW_PARSE <- paste(
+  "Source lines that didn't parse are usually a delimiter/quoting problem, or a",
+  "preamble/footer line read as data. Check those rows, and this template's",
+  "delimiter and header/footer settings in the toolkit.")
+
+# The two copies of this one had already drifted apart, which is the whole reason
+# to write a cure once: the KPI copy said "Do NOT release this output", the header
+# copy only "treat their visible text with caution". Same defect, same pages, same
+# risk -- so which warning you got depended on nothing but whether the caller
+# happened to pass `recon`. The stronger wording is the correct one for both.
+.FIX_REDACTION_UNVERIFIED <- paste(
+  "The tool could not confirm that text hidden under a redaction box stayed hidden on",
+  "every page. Do NOT release this output: check those pages against the source PDF",
+  "first. A working image rasteriser (see the offline prereqs) removes this warning.")
+
 .DIAG_FIX_OWNER <- c(
   # the analyst fixes it in the template toolkit
   unknown_format          = "template",
@@ -146,7 +165,7 @@
     how_to_fix = "No row dates could be read: the template's date column wasn't found in this file (renamed header?) or the date format is wrong. Fix the Date column / format in the template toolkit."),
   no_unparsed_rows = list(
     where = "rows", category = "row_parse", severity = "high",
-    how_to_fix = "Some source lines didn't parse (malformed or lost): usually a delimiter/quoting issue, or a preamble/footer line read as data. Check those rows."),
+    how_to_fix = .FIX_ROW_PARSE),
   amount_direction = list(
     where = "amount direction", category = "amount_parse", severity = "high",
     how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
@@ -157,7 +176,7 @@
   # analyst to adjust their column mapping about a possible PII leak.
   redaction_scan = list(
     where = "redactions", category = "redaction_unverified", severity = "high",
-    how_to_fix = "The tool could not confirm that text hidden under a redaction box stayed hidden on every page. Do NOT release this output: check those pages against the source PDF first. A working image rasteriser (see the offline prereqs) removes this warning."))
+    how_to_fix = .FIX_REDACTION_UNVERIFIED))
 
 .KPI_DIAGNOSIS_FALLBACK <- list(
   where = "check", category = "reconciliation_mismatch", severity = "medium",
@@ -222,11 +241,6 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   }
 
   if (!is.null(metadata)) {
-    if (!is.null(metadata$rescued_from) && !is.na(metadata$rescued_from))
-      add("template", "matched_but_empty", "medium",
-          sprintf("%s matches the wording on this statement but read no transactions from it, so %s was used instead",
-                  metadata$rescued_from, metadata$template$id %||% "another template"),
-          .FIX_EMPTY_TEMPLATE)
     # A tie no longer stops the conversion -- the tested template is used and the
     # run held for review. The duplicate templates are still a real problem, and
     # only a maintainer can fix them, so it is raised here rather than put to the
@@ -334,10 +348,14 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         "The engine can't confirm every transaction was captured (nothing to reconcile the total against). Count the rows against the statement, or prefer a CSV/Excel export or a statement that shows a running balance.")
 
     # 2. Row-level parse problems (independent of KPI wiring).
+    # Guarded like the redaction pair below: the KPI and the row-level scan both
+    # find the same malformed rows and now share one cure, so without this the
+    # reader gets the same instruction twice and reads it as two findings.
     mal <- which(grepl("malformed", tx$flags %||% ""))
-    if (length(mal)) add(sprintf("rows %s", .rng(mal)), "row_parse", "high",
+    if (length(mal) && !("row_parse" %in% raised))
+      add(sprintf("rows %s", .rng(mal)), "row_parse", "high",
       sprintf("%d row(s) had the wrong number of fields", length(mal)),
-      "Wrong field count: check the delimiter/quoting, or a preamble/footer line was read as data.")
+      .FIX_ROW_PARSE)
 
     dalt <- which(grepl("date_alt_format", tx$flags %||% ""))
     if (length(dalt)) add(sprintf("rows %s (date)", .rng(dalt)), "date_format_mismatch", "medium",
@@ -379,7 +397,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     if (!is.na(rsi) && rsi > 0 && !("redaction_unverified" %in% raised))
       add("redactions", "redaction_unverified", "high",
           sprintf("%d page(s) could not be checked for hidden (drawn-over) text", rsi),
-          "The tool could not rasterise these pages to confirm nothing is hidden under a drawn box. Treat their visible text with caution and check the pages against the original; a working image rasteriser removes this warning.")
+          .FIX_REDACTION_UNVERIFIED)
 
     ocrp <- suppressWarnings(as.integer(parsed$header$ocr_pages %||% NA))
     if (!is.na(ocrp) && ocrp > 0) add("pages (OCR)", "ocr", "info",

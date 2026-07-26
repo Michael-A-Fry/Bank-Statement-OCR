@@ -14,14 +14,15 @@
 # cases first, from the front of the string, before the loose substring tests.
 .rowcov_bucket <- function(reason) {
   if (is.null(reason) || !nzchar(reason)) return("kept")
-  if (grepl("^no date and no amount", reason)) return("heading_or_note")
-  # a split row re-joined above is captured, not lost -- same family as a wrapped line
-  if (grepl("^split row", reason))   return("continuation")
-  if (grepl("didn't parse", reason)) return("date_unreadable")
-  if (grepl("no amount", reason))    return("amount_missing")
-  if (grepl("summary", reason))      return("summary_line")
+  # A split row re-joined above is captured, not lost -- decided by the caller
+  # (it needs the neighbouring row), so it is still matched on text here.
+  if (grepl("^split row", reason)) return("continuation")
   if (grepl("continuation", reason)) return("continuation")
-  "heading_or_note"
+  # Everything else is one of the engine's own codes, mapped back from the
+  # sentence it produced. .PDF_ROW_REASON_TEXT is the single source of both.
+  code <- names(.PDF_ROW_REASON_TEXT)[match(reason, .PDF_ROW_REASON_TEXT)]
+  if (is.na(code)) return("heading_or_note")
+  if (identical(code, "date_unparsed")) "date_unreadable" else code
 }
 
 .ROWCOV_LEVELS <- c("kept", "date_unreadable", "amount_missing", "summary_line",

@@ -72,7 +72,12 @@ DIAG_PLAIN <- c(
   reconciliation_mismatch = "the balance doesn't add up",
   balance_break           = "running balance jumps",
   row_count               = "row count doesn't match",
-  date_out_of_range       = "date outside the period",
+  # Three different situations share this one code: dates outside the statement
+  # period, dates outside the matched template's declared valid range, and a year
+  # inferred from a stray number on the page. "outside the period" described only
+  # the first, so the other two read as a headline about something that hadn't
+  # happened. The detail always says which; the headline now covers all three.
+  date_out_of_range       = "date range doesn't look right",
   date_format_mismatch    = "dates in a different style than expected",
   row_parse               = "rows didn't parse",
   date_parse              = "dates couldn't be read",

@@ -2905,9 +2905,20 @@ server <- function(input, output, session) {
         # ("any 2 of these 4"); touching min_score on every keystroke would rewrite
         # that rule behind her back. An edit does set min_score to the phrase count,
         # which is what the box says out loud: all of them must appear.
-        if (!identical(ph, cur)) {
-          tmpl$fingerprint <- utils::modifyList(tmpl$fingerprint %||% list(),
-                                                list(page_contains_all = as.list(ph)))
+        # A BLANK box means "leave whatever is there", as it always has: emptying
+        # it used to wipe the list and then refuse the save with an accusation of
+        # genericness about an empty box. Only a non-empty edit changes anything.
+        if (length(ph) && !identical(ph, cur)) {
+          # Assign the list outright; do NOT modifyList it. page_contains_all is
+          # UNNAMED and modifyList merges only by name, so it silently kept the
+          # drafter's phrases while min_score still dropped to the count of what she
+          # typed -- the box appeared to work and instead LOOSENED the fingerprint
+          # (3-of-3 became 1-of-3), which is exactly the "matched another bank's
+          # statement" failure the gate in R/templates.R exists to stop. Updating
+          # the list in place keeps any other fingerprint keys.
+          fp <- tmpl$fingerprint %||% list()
+          fp$page_contains_all <- as.list(ph)
+          tmpl$fingerprint <- fp
           tmpl$min_score <- max(1L, length(ph))
         }
       }
@@ -2961,6 +2972,32 @@ server <- function(input, output, session) {
     tmpl
   }
 
+  # "Show the settings for this statement" -- the one control that separates the
+  # accountant's four steps from everything the tool worked out for itself
+  # (charter: the interface rule). Same pattern, and the same reasoning, as
+  # cv_detail_open on the Convert result page.
+  #
+  # STICKY BY DESIGN. Once someone opens it, it stays open for every template they
+  # set up for the rest of their session, so a maintainer refining templates all
+  # afternoon opens it once. Closing it again is equally sticky.
+  g_more_open <- reactiveVal(FALSE)
+  observeEvent(input$g_more, g_more_open(!isTRUE(g_more_open())))
+  output$g_more_open <- reactive({ isTRUE(g_more_open()) })
+  outputOptions(output, "g_more_open", suspendWhenHidden = FALSE)
+
+  output$g_more_toggle <- renderUI({
+    open <- isTRUE(g_more_open())
+    # Named for what is behind it, not for the mechanism. "Advanced" would tell an
+    # accountant it is not for her; these really are the settings for this one
+    # statement, and the honest thing to say is that they are already filled in.
+    div(style = "margin:16px 0 6px",
+      actionLink("g_more", style = "font-weight:700;font-size:14.5px",
+        label = if (open) "Hide the settings for this statement"
+                else "Show the settings for this statement"),
+      div(class = "muted", style = "font-size:13px;margin-top:2px",
+          "How the dates are written, how amounts are shown, the phrase that identifies this bank, and the name it saves under. All filled in from your own file already - change one only if the preview below looks wrong."))
+  })
+
   # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
   # or sample rows for a CSV) so you can see what you're answering; the controls
   # are on the right (Simple for the common case, Advanced for the full YAML). A
@@ -2972,41 +3009,49 @@ server <- function(input, output, session) {
     cur_dec  <- tmpl$decimal_mark %||% "auto"
     cur_ud   <- tmpl$unsigned_default %||% "debit"
 
-    # LEFT: the statement itself, always visible.
+    # LEFT: the statement itself, always visible. ONE gesture, asked once: draw a
+    # box, say what it is, Assign. It used to be two gestures with two dropdowns
+    # and four buttons -- a column band and a pinned header value -- which read as
+    # two separate features when it is the same box either way. The dropdown now
+    # carries the difference (see .meta_field), so the page has one thing to do.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
       p(class = "muted", HTML(paste0(
+        "Drag a box across a column, say what it is, and click <b>Assign it</b>. ",
         "A <b>column</b> runs the <b>full height of the page</b> - only the <b>left-right</b> ",
-        "position of your box matters, its height is ignored. Drag across a column ",
-        "(top-to-bottom doesn't matter), pick what it is, and click <b>Assign</b>. ",
+        "position of your box matters, its height is ignored. ",
         "Rows are found by the date, not by your box."))),
       fluidRow(
         column(3, numericInput("g_pdf_page",
           if (isTRUE(g$n_pages > 1L)) sprintf("Page (1 to %d)", g$n_pages) else "Page",
           1, min = 1, max = g$n_pages %||% NA, step = 1)),
-        column(5, selectInput("g_pdf_field", "The box marks this column…",
-                              c("(what is this column?)" = "",
-                                "date", "description", "amount", "balance", "particulars",
-                                "reference", "type", "debit", "credit", "other_party", "code"))),
-        column(4, textInput("g_pdf_custom", "…or a custom name", ""))),
-      div(actionButton("g_pdf_assign", "Assign box → column (full height)", class = "btn-primary"),
-          actionButton("g_pdf_remove", "Remove this column")),
-      tags$hr(style = "margin:8px 0"),
-      p(class = "muted", "A one-off value (opening / closing balance, period, account)? Draw a box around it and pin it here."),
-      fluidRow(
-        column(8, selectInput("g_meta_field", "Pin the box as this header value",
-                              c("(choose)" = "",
-                                "opening balance" = "opening_balance",
-                                "closing balance" = "closing_balance",
-                                "statement period - start" = "period_start",
-                                "statement period - end" = "period_end",
-                                "account number" = "account_number",
-                                "account name" = "account_name"))),
-        column(4, br(), actionButton("g_meta_assign", "Pin box → value"),
-               actionButton("g_meta_remove", "Remove"))),
-      checkboxInput("g_keep_dateless",
-        "Several rows share one date (e.g. HSBC) - keep the undated rows too (blank date, flagged)",
-        value = isTRUE(tmpl$table$keep_dateless_rows)),
+        column(9, selectInput("g_pdf_field", "What did you draw a box around?",
+                              list("(what is this?)" = "",
+                                   "A column - read on every row" =
+                                     c("date", "description", "amount", "balance", "particulars",
+                                       "reference", "type", "debit", "credit", "other_party", "code"),
+                                   "A one-off value - read from just that spot" =
+                                     c("opening balance"          = "meta:opening_balance",
+                                       "closing balance"          = "meta:closing_balance",
+                                       "statement period - start" = "meta:period_start",
+                                       "statement period - end"   = "meta:period_end",
+                                       "account number"           = "meta:account_number",
+                                       "account name"             = "meta:account_name")),
+                              width = "100%"))),
+      div(actionButton("g_pdf_assign", "Assign it", class = "btn-primary"),
+          actionButton("g_pdf_remove", "Remove it")),
+      # Behind the one disclosure: a column of your own naming, and the shared-date
+      # opt-in. Neither belongs in setting up an ordinary statement. The toggle has
+      # to be HERE as well as on the delimited panel -- these controls are on the
+      # PDF side, and without it they could never be opened.
+      uiOutput("g_more_toggle"),
+      conditionalPanel("output.g_more_open == true",
+        tags$hr(style = "margin:8px 0"),
+        textInput("g_pdf_custom", "…or a column name of your own (used instead of the list above)",
+                  "", width = "100%"),
+        checkboxInput("g_keep_dateless",
+          "Several rows share one date (e.g. HSBC) - keep the undated rows too (blank date, flagged)",
+          value = isTRUE(tmpl$table$keep_dateless_rows))),
       plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush"), height = "560px"))
     else tagList(
       strong("Your statement - sample rows"),
@@ -3015,66 +3060,33 @@ server <- function(input, output, session) {
           verbatimTextOutput("g_raw_sample")))
 
     # RIGHT: the controls.
+    #
+    # THE INTERFACE RULE (charter), applied to template setup.
+    #
+    # DEFAULT: the only things an accountant genuinely has to do -- point at the
+    # columns (on the page for a PDF, in the pickers below for a CSV), say which
+    # bank it is, check the preview underneath, Save. She confirms the tool's
+    # reading by LOOKING AT HER OWN TRANSACTIONS, which she can do, rather than by
+    # reading a date-format string or judging a recognition phrase, which she
+    # cannot. Everything she is asked here, she can answer.
+    #
+    # BEHIND ONE CONTROL: everything the tool already worked out for itself from
+    # her file, and only needs touching when the preview looks wrong -- the date
+    # format, the amount style, the number punctuation, the phrase that
+    # identifies the bank, the name it saves under, the "tell our team" hatch.
+    # Nothing is deleted; the whole template as text is still on Advanced.
+    #
+    # The click is REMEMBERED for the session (g_more_open), exactly as on the
+    # Convert result page: a maintainer opens it once and never sees it closed
+    # again, and nobody is ever asked whether they are an advanced user.
     right_panel <- tabsetPanel(
       id = "g_tabs",
       tabPanel(
         "Simple", br(),
-        fluidRow(
-          column(6, textInput("g_id", "Template name (saves as this)", value = tmpl$id %||% "")),
-          column(6, textInput("g_bank", "Which bank?", value = tmpl$bank))),
-        fluidRow(
-          column(6, textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday")),
-          column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
-        fluidRow(
-          column(6, selectInput("g_date", "How are the dates written?",
-                                choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
-          column(6, selectInput("g_sign", "How are amounts shown?",
-                                choices = guided_sign_choices(), selected = cur_sign))),
-        fluidRow(
-          column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
-                                choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
-                                            "1,234.56 - dot is the decimal point" = "dot",
-                                            "1.234,56 - comma is the decimal (European)" = "comma"),
-                                selected = cur_dec)),
-          column(6, conditionalPanel(
-            "input.g_sign == 'unsigned'",
-            selectInput("g_unsigned_default", "A plain number (no + / − / CR) is a…",
-                        choices = c("Charge - money out" = "debit",
-                                    "Payment - money in" = "credit"),
-                        selected = cur_ud)))),
-        # type_dc: the debit/credit indicator tokens. Which value in the type
-        # column means money OUT is what sets the sign, so we ask it plainly
-        # rather than defaulting to "D" (which mis-signs "d" / "DR" / "Debit").
-        conditionalPanel(
-          "input.g_sign == 'type_dc'",
-          fluidRow(
-            column(6, textInput("g_type_debit", "Which indicator value means money OUT (debit)?",
-                                value = tmpl$type_debit_value %||% "")),
-            column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
-                                value = tmpl$type_credit_value %||% "")))),
-        # THE PHRASE THAT RECOGNISES THIS BANK. For PDFs this is the one setting
-        # that can refuse a save, and it used to be editable only in the raw YAML
-        # box on Advanced -- a hard stop at the last step of the flow for the exact
-        # person the toolkit exists for. So it lives here, in plain words, offering
-        # phrases actually found on her statement.
-        if (is_pdf) tagList(
-          tags$hr(),
-          strong("A distinctive phrase printed on this statement"),
-          p(class = "muted", style = "margin:4px 0 6px",
-            HTML(paste0("This is how the tool recognises this bank next time. Use something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name. ",
-                        "Avoid single common words like &quot;Balance&quot; (they appear on every statement), and never a customer's name. One phrase per line; all of them must appear."))),
-          if (length(g$fp_candidates)) fluidRow(
-            column(9, selectInput("g_fp_pick", "Phrases found on your statement",
-                                  choices = c("(choose one to add)" = "", g$fp_candidates),
-                                  width = "100%")),
-            column(3, br(), actionButton("g_fp_add", "Add it"))),
-          textAreaInput("g_fp", NULL, width = "100%", rows = 3,
-                        value = paste(unlist(tmpl$fingerprint$page_contains_all %||% list()),
-                                      collapse = "\n")),
-          uiOutput("g_fp_msg")),
+        textInput("g_bank", "Which bank is this statement from?", value = tmpl$bank, width = "100%"),
         if (!is.null(g$cols) && length(g$cols)) tagList(
-          tags$hr(),
-          p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
+          p(class = "muted", style = "margin:2px 0 8px",
+            "Which column holds each field? Leave them as detected unless the preview below looks wrong."),
           fluidRow(
             column(4, selectInput("g_col_date", "Date (required)",
                                   choices = c("(pick a column)" = "", g$cols),
@@ -3084,22 +3096,82 @@ server <- function(input, output, session) {
                                   selected = tmpl$columns$amount$source %||% "")),
             column(4, selectInput("g_col_desc", "Description (required)",
                                   choices = g$cols,
-                                  selected = tmpl$columns$description$source %||% g$cols[1]))),
+                                  selected = tmpl$columns$description$source %||% g$cols[1])))),
+        uiOutput("g_more_toggle"),   # ONE control; everything else sits behind it
+        conditionalPanel("output.g_more_open == true",
           fluidRow(
-            column(4, selectInput("g_col_ref", "Reference (optional)",
-                                  choices = c("(none)" = "", g$cols),
-                                  selected = tmpl$columns$reference$source %||% "")),
-            column(4, selectInput("g_col_bal", "Balance (optional)",
-                                  choices = c("(none)" = "", g$cols),
-                                  selected = tmpl$columns$balance$source %||% "")))),
-        tags$hr(),
-        div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
-          strong("None of these fit? Tell our team"),
-          p(class = "muted", "Describe the FORMAT in plain words (no names / account numbers / statement details) and we'll build a template."),
-          textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
-            placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for Haben (credit)."),
-          actionButton("g_req_send", "Send to our team", class = "btn-warning"),
-          uiOutput("g_req_msg"))),
+            column(6, selectInput("g_date", "How are the dates written?",
+                                  choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
+            column(6, selectInput("g_sign", "How are amounts shown?",
+                                  choices = guided_sign_choices(), selected = cur_sign))),
+          fluidRow(
+            column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
+                                  choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
+                                              "1,234.56 - dot is the decimal point" = "dot",
+                                              "1.234,56 - comma is the decimal (European)" = "comma"),
+                                  selected = cur_dec)),
+            column(6, conditionalPanel(
+              "input.g_sign == 'unsigned'",
+              selectInput("g_unsigned_default", "A plain number (no + / − / CR) is a…",
+                          choices = c("Charge - money out" = "debit",
+                                      "Payment - money in" = "credit"),
+                          selected = cur_ud)))),
+          # type_dc: the debit/credit indicator tokens. Which value in the type
+          # column means money OUT is what sets the sign, so we ask it plainly
+          # rather than defaulting to "D" (which mis-signs "d" / "DR" / "Debit").
+          conditionalPanel(
+            "input.g_sign == 'type_dc'",
+            fluidRow(
+              column(6, textInput("g_type_debit", "Which indicator value means money OUT (debit)?",
+                                  value = tmpl$type_debit_value %||% "")),
+              column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
+                                  value = tmpl$type_credit_value %||% "")))),
+          # THE PHRASE THAT RECOGNISES THIS BANK. For PDFs this is the one setting
+          # that can refuse a save, and it used to be editable only in the raw YAML
+          # box on Advanced -- a hard stop at the last step of the flow for the exact
+          # person the toolkit exists for. So it stays here, in plain words, offering
+          # phrases actually found on her statement; a refused save opens this panel
+          # for her (see g_save) rather than naming a place she has to go and find.
+          if (is_pdf) tagList(
+            tags$hr(),
+            strong("A distinctive phrase printed on this statement"),
+            p(class = "muted", style = "margin:4px 0 6px",
+              HTML(paste0("This is how the tool recognises this bank next time. Use something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name. ",
+                          "Avoid single common words like &quot;Balance&quot; (they appear on every statement), and never a customer's name. One phrase per line; all of them must appear."))),
+            if (length(g$fp_candidates)) fluidRow(
+              column(9, selectInput("g_fp_pick", "Phrases found on your statement",
+                                    choices = c("(choose one to add)" = "", g$fp_candidates),
+                                    width = "100%")),
+              column(3, br(), actionButton("g_fp_add", "Add it"))),
+            textAreaInput("g_fp", NULL, width = "100%", rows = 3,
+                          value = paste(unlist(tmpl$fingerprint$page_contains_all %||% list()),
+                                        collapse = "\n")),
+            uiOutput("g_fp_msg")),
+          # The optional columns: real fields, but nothing is missing from the
+          # result if they are left alone, so they wait here with the rest.
+          if (!is.null(g$cols) && length(g$cols)) tagList(
+            tags$hr(),
+            fluidRow(
+              column(6, selectInput("g_col_ref", "Reference (optional)",
+                                    choices = c("(none)" = "", g$cols),
+                                    selected = tmpl$columns$reference$source %||% "")),
+              column(6, selectInput("g_col_bal", "Balance (optional)",
+                                    choices = c("(none)" = "", g$cols),
+                                    selected = tmpl$columns$balance$source %||% "")))),
+          tags$hr(),
+          fluidRow(
+            column(6, textInput("g_id", "Saves under this name", value = tmpl$id %||% "")),
+            column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
+          textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday",
+                    width = "100%"),
+          tags$hr(),
+          div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
+            strong("None of these fit? Tell our team"),
+            p(class = "muted", "Describe the FORMAT in plain words (no names / account numbers / statement details) and we'll build a template."),
+            textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
+              placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for Haben (credit)."),
+            actionButton("g_req_send", "Send to our team", class = "btn-warning"),
+            uiOutput("g_req_msg")))),
       tabPanel(
         "Advanced", br(),
         helpText(HTML("The <b>complete</b> template as text - edit anything (identifiers, column mapping, label synonyms, region bounds, row tolerance, metadata labels). Load your Simple choices in, edit, then Check &amp; apply.")),
@@ -3119,14 +3191,15 @@ server <- function(input, output, session) {
       # reopened. This strip keeps the whole flow on screen the entire time.
       div(style = "padding:8px 12px;background:#f6faf7;border:1px solid #cfe6d8;border-radius:6px;margin-bottom:10px;font-size:13px",
         HTML(if (is_pdf)
-          paste0("<b>How this works:</b> &nbsp;1&nbsp;Drag a box over a column on your statement &nbsp;·&nbsp; ",
-                 "2&nbsp;Pick what it is &nbsp;·&nbsp; 3&nbsp;click <b>Assign</b> &nbsp;·&nbsp; ",
+          paste0("<b>How this works:</b> &nbsp;1&nbsp;Drag a box over a column and say what it is &nbsp;·&nbsp; ",
+                 "2&nbsp;click <b>Assign it</b> &nbsp;·&nbsp; 3&nbsp;name the bank on the right &nbsp;·&nbsp; ",
                  "4&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 5&nbsp;<b>Save</b>. ",
-                 "The tool has pre-filled what it could detect - you're just confirming it.")
+                 "Everything else is already filled in from your own file - you're just confirming it.")
         else
-          paste0("<b>How this works:</b> &nbsp;1&nbsp;in <b>Simple</b>, match each column to your file &nbsp;·&nbsp; ",
-                 "2&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 3&nbsp;<b>Save</b>. ",
-                 "The tool has pre-filled what it could detect - you're just confirming it."))),
+          paste0("<b>How this works:</b> &nbsp;1&nbsp;check each column picker matches your file &nbsp;·&nbsp; ",
+                 "2&nbsp;name the bank &nbsp;·&nbsp; 3&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; ",
+                 "4&nbsp;<b>Save</b>. ",
+                 "Everything else is already filled in from your own file - you're just confirming it."))),
       fluidRow(column(6, left_panel), column(6, right_panel)),
       tags$hr(),
       h4("Preview - what will be pulled out of your statement"),
@@ -3598,16 +3671,41 @@ server <- function(input, output, session) {
     g$tmpl$table$region <- if (length(reg)) reg else NULL
     g
   }
-  .pdf_chosen_field <- function()
-    if (nzchar(trimws(input$g_pdf_custom %||% "")))
-      gsub("[^A-Za-z0-9_]+", "_", trimws(input$g_pdf_custom)) else input$g_pdf_field
+  .pdf_chosen_field <- function() {
+    # A hidden control must never override a visible one. The custom name lives
+    # behind the disclosure; while that is closed the analyst cannot see it, so it
+    # cannot be what she meant - the dropdown in front of her is.
+    custom <- trimws(input$g_pdf_custom %||% "")
+    if (isTRUE(g_more_open()) && nzchar(custom))
+      gsub("[^A-Za-z0-9_]+", "_", custom) else input$g_pdf_field
+  }
+  # One dropdown answers both kinds of box, so the choice carries which kind it is:
+  # "meta:" marks a one-off header value, anything else is a column. A typed custom
+  # name can never collide -- .pdf_chosen_field strips the colon to an underscore.
+  .meta_field <- function(f) if (grepl("^meta:", f %||% "")) sub("^meta:", "", f) else NA_character_
 
   observeEvent(input$g_pdf_assign, {
     g <- guided(); req(g); br <- input$g_pdf_brush
-    if (is.null(br)) { showNotification("Draw a box across the column first.", type = "warning"); return() }
+    if (is.null(br)) { showNotification("Draw a box on the page first.", type = "warning"); return() }
     f <- .pdf_chosen_field()
     if (!nzchar(trimws(f %||% ""))) {
-      showNotification("First pick what this column is (date, description, amount...), then Assign.", type = "warning"); return() }
+      showNotification("First say what you boxed (date, description, amount, opening balance...), then Assign it.", type = "warning"); return() }
+    # A one-off header value: a specific box (x AND y) around ONE value that isn't
+    # on every row -- a balance, the statement period, an account detail -- read
+    # straight from that spot when the automatic reader can't label it. It never
+    # touches the transaction region, which is why it is not a column band.
+    mf <- .meta_field(f)
+    if (!is.na(mf)) {
+      pg <- .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_)
+      g$tmpl$table$metadata_regions[[mf]] <- list(page = pg,
+        x_min = round(br$xmin), x_max = round(br$xmax),
+        y_min = round(br$ymin), y_max = round(br$ymax))
+      guided(g)
+      updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+      output$g_adv_msg <- renderUI(span(class = "ok",
+        sprintf("Pinned '%s' to the box you drew on page %d.", mf, pg)))
+      return()
+    }
     slot <- .pdf_field_ref(f)
     g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
     # Mapping a money-in / money-out band means this is a separate debit/credit
@@ -3627,13 +3725,29 @@ server <- function(input, output, session) {
       sprintf("Set the '%s' column%s.%s Page and preview updated.", f,
               if (identical(slot, "extras")) " (custom / extra)" else "",
               if (switched) " Amount style set to separate money-in / money-out." else "")))
+    if (isTRUE(switched))
+      showNotification(paste("Amount style set to separate money-in / money-out, because you drew",
+                             "both a money-out and a money-in column."),
+                       type = "message", duration = 7)
   })
   # Delete a column band the auto-setup got wrong (a column that isn't on this
-  # statement). Recomputes the table region from whatever bands remain.
+  # statement), or unpin a header value. Recomputes the table region from whatever
+  # bands remain.
   observeEvent(input$g_pdf_remove, {
     g <- guided(); req(g); f <- .pdf_chosen_field()
     if (!nzchar(trimws(f %||% ""))) {
-      showNotification("Pick the column to remove first.", type = "warning"); return() }
+      showNotification("Pick what to remove first.", type = "warning"); return() }
+    mf <- .meta_field(f)
+    if (!is.na(mf)) {
+      if (is.null(g$tmpl$table$metadata_regions[[mf]])) {
+        showNotification(sprintf("There's no pinned box for '%s' to remove.", mf), type = "warning"); return() }
+      g$tmpl$table$metadata_regions[[mf]] <- NULL
+      if (!length(g$tmpl$table$metadata_regions)) g$tmpl$table$metadata_regions <- NULL
+      guided(g)
+      updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+      output$g_adv_msg <- renderUI(span(class = "ok", sprintf("Removed the pinned box for '%s'.", mf)))
+      return()
+    }
     slot <- if (!is.null(g$tmpl$table$columns[[f]])) "columns"
             else if (!is.null(g$tmpl$table$extras[[f]])) "extras" else NA
     if (is.na(slot)) {
@@ -3643,36 +3757,6 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
     output$g_adv_msg <- renderUI(span(class = "ok",
       sprintf("Removed the '%s' column. Page and preview updated.", f)))
-  })
-
-  # Pin a drawn box to a header value (metadata_regions). Unlike a column, this is a
-  # specific box (x AND y) around ONE value that isn't on every row -- a balance,
-  # the statement period, an account detail -- read straight from that spot when the
-  # automatic reader can't label it. It never touches the transaction region.
-  observeEvent(input$g_meta_assign, {
-    g <- guided(); req(g); br <- input$g_pdf_brush; f <- input$g_meta_field
-    if (is.null(f) || !nzchar(f)) {
-      showNotification("Choose which header value first.", type = "warning"); return() }
-    if (is.null(br)) {
-      showNotification("Draw a box around just that value on the page first.", type = "warning"); return() }
-    pg <- .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_)
-    g$tmpl$table$metadata_regions[[f]] <- list(page = pg,
-      x_min = round(br$xmin), x_max = round(br$xmax),
-      y_min = round(br$ymin), y_max = round(br$ymax))
-    guided(g)
-    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-    output$g_adv_msg <- renderUI(span(class = "ok",
-      sprintf("Pinned '%s' to the box you drew on page %d.", f, pg)))
-  })
-  observeEvent(input$g_meta_remove, {
-    g <- guided(); req(g); f <- input$g_meta_field
-    if (is.null(f) || !nzchar(f) || is.null(g$tmpl$table$metadata_regions[[f]])) {
-      showNotification("No pinned box for that value to remove.", type = "warning"); return() }
-    g$tmpl$table$metadata_regions[[f]] <- NULL
-    if (!length(g$tmpl$table$metadata_regions)) g$tmpl$table$metadata_regions <- NULL
-    guided(g)
-    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-    output$g_adv_msg <- renderUI(span(class = "ok", sprintf("Removed the pinned box for '%s'.", f)))
   })
 
   # ONE parse per change, shared by the preview table + the status line (each used
@@ -3720,8 +3804,8 @@ server <- function(input, output, session) {
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title", "No transaction rows read yet"),
         p(class = "verdict-body", style = "margin:0 0 4px", if (is_pdf)
-            "Rows are found by their date, so start with the date column: does your box cover the dates on the page? Then check the date format and the amount style on Simple."
-          else "Start with the Date and Amount column pickers on Simple - are they pointing at the right columns? Then check the date format and the amount style."),
+            "Rows are found by their date, so start with the date column: does your box cover the dates on the page? If it does, open \"Show the settings for this statement\" and check the date format and the amount style."
+          else "Start with the Date and Amount column pickers above - are they pointing at the right columns? If they are, open \"Show the settings for this statement\" and check the date format and the amount style."),
         if (is_pdf) p(class = "muted", style = "margin:0",
           "This preview reads only the first few pages. If the transactions start further into the document that is why nothing shows here - saving and converting reads every page.")))
   })
@@ -3775,9 +3859,12 @@ server <- function(input, output, session) {
                          type = "message", duration = 8)
       }
     } else {
-      # Show the specific problem + point at the Advanced tab where it's fixable.
+      # A refused save is nearly always the identifying phrase, and its box now sits
+      # behind the disclosure. OPEN it rather than naming a place she then has to go
+      # and find -- the tool knows where the fix is, so it should not make her look.
+      g_more_open(TRUE)
       showNotification(HTML(paste0("<b>Couldn't save.</b> ", htmltools::htmlEscape(err),
-        "<br>Open the <b>Advanced</b> tab to fix it, or adjust the fields above.")),
+        "<br>The settings for this statement are now open on the right - fix it there, or use <b>Advanced</b> for the whole template as text.")),
         type = "error", duration = 12)
     }
   })

@@ -51,28 +51,34 @@ phrase that proves it is this bank. Add a bank = add one template.</p>
 <tr><td>21/04/26</td><td>day/month/2-digit-year</td></tr></table>
 
 <h4>PDF statements - draw the boxes in the toolkit</h4>
+<p class="lead">Four steps. The tool has already read your file and filled everything else in;
+you are confirming its reading against your own transactions, not typing settings.</p>
 <ol>
 <li>On <b>Add a template</b>, upload the PDF and click <b>Open the toolkit</b>. The tool proposes
 column boxes from the page; your statement stays on the left the whole time.</li>
-<li>Check each column: pick the <b>field</b> (date, description, amount, balance&hellip;), drag a box
-across that column on the page, click <b>Assign box &rarr; column</b>. For two-column amounts, draw
-<b>debit</b> and <b>credit</b> boxes. Remove any proposed column that isn&#39;t really there.</li>
-<li>Set the <b>date format</b> and <b>amount style</b> on the <b>Simple</b> tab.</li>
-<li>Check <b>the distinctive phrase printed on this statement</b> on the <b>Simple</b> tab - that is
-how the tool recognises this bank next time. One is drafted for you, and the phrases found on your
-page are offered in a dropdown; the box tells you straight away if it is too generic to save.</li>
-<li>Watch the <b>preview</b> under the page - only rows whose date box reads as a real date are
-kept, so headings/notes/gaps drop out by themselves.</li>
+<li>Check each column: drag a box across it on the page, say what you boxed (date, description,
+amount, balance&hellip;), click <b>Assign it</b>. For two-column amounts, draw <b>debit</b> and
+<b>credit</b> boxes. Remove any proposed column that isn&#39;t really there. The same box pins a
+<b>one-off value</b> (opening / closing balance, statement period, account) - just pick it from the
+lower half of the same list.</li>
+<li>Name the bank, and watch the <b>preview</b> under the page - only rows whose date box reads as
+a real date are kept, so headings/notes/gaps drop out by themselves.</li>
 <li><b>Save</b>. Column boxes are x-position only (full height) - you&#39;re defining columns; rows
 are found by the date.</li>
 </ol>
+<p class="lead">Preview wrong? Everything else the tool worked out - the <b>date format</b>, the
+<b>amount style</b>, how numbers are punctuated, and <b>the distinctive phrase printed on this
+statement</b> that identifies this bank - is under <b>Show the settings for this statement</b> on
+the <b>Simple</b> tab. Open it once and it stays open. The phrase is drafted for you, the phrases
+found on your page are offered in a dropdown, and the box tells you straight away if it is too
+generic to save. The complete template as text is on <b>Advanced</b>, one more click.</p>
 
 <h4>CSV / Excel statements - confirm what was detected</h4>
 <ol><li>On <b>Add a template</b>, upload the export and click <b>Open the toolkit</b> - the
 date format, amount style and column mapping are detected for you. For Excel the right sheet is
 picked automatically, junk rows above the header are skipped, and dates stored as Excel serial
 numbers are read correctly.</li>
-<li>Check the field pickers point at the right columns.</li>
+<li>Check the Date, Amount and Description pickers point at the right columns, and name the bank.</li>
 <li>If the preview looks right, <b>Save</b>. The toolkit then re-checks your statement
 against every template and tells you, in words, whether it will be recognised on its own next
 time - and what to change if it won&#39;t. From then on that bank converts automatically.</li></ol>
@@ -85,9 +91,9 @@ usually a wrong amount style or date format.</p>
 
 <h4>Troubleshooting</h4>
 <table><tr><th>Symptom</th><th>Fix</th></tr>
-<tr><td>No template matched</td><td>Check the distinctive phrase (<b>Simple</b> tab) really is printed on the statement, word for word; check you&#39;re on the table page</td></tr>
-<tr><td>Deposits look like withdrawals</td><td>Wrong amount style - switch it</td></tr>
-<tr><td>Dates blank/wrong</td><td>Wrong date format; for year-less dates confirm the period is detected</td></tr>
+<tr><td>No template matched</td><td>Check the distinctive phrase (<b>Simple</b> tab) really is printed on the statement, word for word - it is under <b>Show the settings for this statement</b>; check you&#39;re on the table page</td></tr>
+<tr><td>Deposits look like withdrawals</td><td>Wrong amount style - switch it under <b>Show the settings for this statement</b></td></tr>
+<tr><td>Dates blank/wrong</td><td>Wrong date format (same place); for year-less dates confirm the period is detected</td></tr>
 <tr><td>The preview shows no rows at all</td><td>Rows are found by their date: check the date box covers the dates, then the date format. On a long PDF the preview only reads the <b>first few pages</b> - if the transactions start later, save and convert to see them all</td></tr>
 <tr><td>Column empty / description cut off</td><td>Redraw / widen the box (stop before the amount column)</td></tr>
 <tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date - widen/move it. After converting, the X-ray view lists every skipped row and why.</td></tr></table>

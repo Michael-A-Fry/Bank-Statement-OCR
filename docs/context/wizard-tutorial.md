@@ -130,17 +130,18 @@ Follow along with the worked example PDF.
    boxes are proposed from the page automatically; pick the **page** with the
    transaction table (often page 2; page 1 is usually a summary).
 2. Check each proposed column, and fix any that are off:
-   a. Choose the field in **"Column the box is…"** (start with **date**).
-   b. **Drag a box** left-to-right across that column on the page image.
-   c. Click **"Assign box → column"**. A proposed column that isn't really
-      there? Pick it and click **"Remove this column"**.
-   d. Repeat for **description**, then the amount column(s), then **balance**.
-      - If amounts are **two columns**, set the style to Withdrawals/Deposits and
-        draw a box for **debit** (withdrawals) *and* one for **credit**
-        (deposits).
-3. Set **date format** (§4) and **amount style** (§3) on the **Simple** tab.
-4. The **fingerprint phrase(s)** - text that proves it's this bank (§7) - are
-   drafted from the page automatically; fine-tune them on the **Advanced** tab.
+   a. **Drag a box** left-to-right across that column on the page image.
+   b. Say what it is in the dropdown, then click **"Assign it"**. A proposed
+      column that isn't really there? Pick it and click **"Remove it"**.
+   c. Repeat for **description**, then the amount column(s), then **balance**.
+      - If amounts are **two columns**, draw a box for **money out**
+        (withdrawals) *and* one for **money in** (deposits). The amount style
+        follows automatically and the tool says so when it changes it.
+      - The same dropdown pins a **one-off header value** (opening balance,
+        account number, statement period) when the wording isn't recognised.
+3. **Date format**, **amount style**, the **identifying phrase** and the **name
+   it saves under** all live behind **"Show the settings for this statement"**.
+   Most statements need none of them - the tool fills them in from the page.
 5. Watch the **preview** - the engine keeps only rows whose **date box
    reads as a real date**, so headings, "balance brought forward", notes and the
    multi-line detail lines are dropped automatically. You don't box them out.

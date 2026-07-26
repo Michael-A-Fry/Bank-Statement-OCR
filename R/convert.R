@@ -194,37 +194,6 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
 
       att <- .read_with(det$template_id)
-
-      # MATCHED THE WORDING, READ NOTHING.
-      # Detection only reads TEXT -- it never parses -- so a template can fingerprint
-      # perfectly and still take zero transactions off the page, because its columns
-      # are in the wrong place (a mis-drawn band is the usual cause). The analyst
-      # gets "it matched!" and an empty spreadsheet.
-      #
-      # Parsing every candidate to find the one that works would fix it and destroy
-      # the speed budget: a full parse per template on EVERY conversion, including
-      # the overwhelmingly common case where the first template is right.
-      #
-      # So the work is done ONLY where it is already lost: if the chosen template
-      # reads no transactions, try the other templates that fit the wording, best
-      # first, and stop at the first one that actually reads rows. On the happy path
-      # (rows found first time) this costs nothing at all -- the loop never runs.
-      # Bounded by PARAM_DETECT_MAX_REREADS so a file that no template can read
-      # cannot turn into an unbounded parse of every template installed.
-      empty_first <- nrow(att$parsed$transactions) == 0L
-      rescued_from <- NA_character_
-      if (empty_first) {
-        others <- setdiff(det$eligible_ids, det$template_id)
-        for (tid in utils::head(others, PARAM_DETECT_MAX_REREADS)) {
-          alt <- safe(.read_with(tid), NULL)
-          if (!is.null(alt) && nrow(alt$parsed$transactions) > 0L) {
-            rescued_from <- det$template_id
-            att <- alt
-            break
-          }
-        }
-      }
-
       template <- att$template
       parsed <- att$parsed; recon <- att$recon; sb <- att$sb; did_split <- att$did_split
       detected_template <- template$id
@@ -256,8 +225,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       status <- if (row_count == 0L) {
         "unsupported"
       } else if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                 isTRUE(multi_resolved$likely_multiple) || thin_match ||
-                 !is.na(rescued_from) || ambiguous) {
+                 isTRUE(multi_resolved$likely_multiple) || thin_match || ambiguous) {
         "needs_review"
       } else {
         "ok"
@@ -269,7 +237,6 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         # problem from an unknown layout, and has a different fix:
                         # the template exists, its columns are in the wrong place.
                         matched_empty = if (row_count == 0L) template$id else NULL,
-                        rescued_from = rescued_from,
                         tied = if (ambiguous) det$tied else NULL))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
@@ -290,10 +257,6 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
           sprintf("parsed %d row(s) but review needed", row_count),
           paste(recon$trust$reasons, collapse = "; "))
       }
-      # Say plainly that the FIRST template read nothing and a different one did.
-      # Without this the analyst sees a template id they never expected and no
-      # explanation, and the one that reads nothing stays broken forever because
-      # nobody knows it is broken.
       # Named, not hidden -- but stated as a fact about the TOOL, not as a task for
       # the person reading it. She has her data; somebody else retires the duplicate.
       if (ambiguous) {
@@ -301,34 +264,6 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
           sprintf("%s templates fit this statement equally well, so the tested one was used",
                   length(det$tied)),
           sprintf("worth a check: %s", paste(det$tied, collapse = ", "))), msg)
-      }
-      if (!is.na(rescued_from)) {
-        msg <- c(status_message("needs_review",
-          sprintf("%s matched first but read no transactions, so %s was used instead",
-                  rescued_from, template$id),
-          "check this is the right template - and that the one that read nothing gets fixed or removed"), msg)
-      }
-      # Auto-split note: say plainly that the upload was segmented and each
-      # statement reconciled on its own (the `statement_index` column tags rows).
-      if (did_split) {
-        msg <- c(status_message(status, sprintf(
-          "auto-split into %d statements (each parsed and reconciled independently); rows are tagged with a statement_index column",
-          sb$n_statements)), msg)
-      }
-      # OCR caveat is in the trust reasons already (so it shows on needs_review);
-      # add it to the ok message too, so a clean scanned statement still warns the
-      # reviewer that machine-read text is not guaranteed accurate.
-      if (isTRUE(recon$trust$ocr_pages > 0) && status == "ok") {
-        msg <- c(msg, status_message("ok", sprintf(
-          "%d page(s) were read by OCR%s - verify amounts and descriptions against the source PDF",
-          recon$trust$ocr_pages,
-          if (is.na(recon$trust$ocr_min_confidence)) ""
-          else sprintf(" (min page confidence %.0f%%)", recon$trust$ocr_min_confidence))))
-      }
-      if (thin_match) {
-        msg <- c(msg, status_message("needs_review",
-          sprintf("this matched %s by only %s over %s", template$id, det$margin, det$runner_up),
-          "confirm it's the right template - see the candidate templates below"))
       }
 
       result$status <- status

@@ -246,14 +246,40 @@ pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
 # redacted). "" means it IS a transaction (kept). Shared by the X-ray so the
 # reason it shows can never drift from the engine's actual keep rule. The
 # continuation case is decided by the caller (it needs the neighbouring row).
-.pdf_row_reason <- function(rec, style, date_ok) {
+# .pdf_row_code(rec, style, date_ok) -- WHY a visual row is not kept, as a stable
+# CODE. "" means it IS a transaction. The code is what the engine decides on; the
+# sentence a person reads is a lookup below. They used to be the same string, and
+# two decisions were made by pattern-matching English prose against it - so
+# rewording one sentence (which this codebase does constantly) would have silently
+# switched off the thin-parse defence. A code cannot be reworded by accident.
+.pdf_row_code <- function(rec, style, date_ok) {
   has_amt <- .pdf_has_amount(rec, style)
   is_summ <- .pdf_is_summary(rec$description, rec$raw)
   if (isTRUE(date_ok) && has_amt && !is_summ) return("")
-  if (is_summ)  return("summary line (opening / closing balance, carried forward, or a total) - not a transaction")
-  if (!isTRUE(date_ok) && !has_amt) return("no date and no amount - treated as a heading, note or wrapped line")
-  if (!isTRUE(date_ok)) return("the date didn't parse - usually the date format in the template is wrong")
-  "no amount in the money column(s) - check the amount / debit / credit bands"
+  if (is_summ) return("summary_line")
+  if (!isTRUE(date_ok) && !has_amt) return("heading_or_note")
+  if (!isTRUE(date_ok)) return("date_unparsed")
+  "amount_missing"
+}
+
+# ACTIONABLE codes: the row looked like a transaction and could not be read. These
+# are the only skips that mean something is WRONG - a heading or a summary line is
+# skipped on every healthy statement. One list, used by the completeness check and
+# by row_coverage, so the two can never disagree about what counts as a problem.
+.PDF_ACTIONABLE_CODES <- c("date_unparsed", "amount_missing")
+
+# The sentence for each code, in words a non-engineer can act on. Reword freely:
+# nothing decides anything on this text.
+.PDF_ROW_REASON_TEXT <- c(
+  summary_line    = "summary line (opening / closing balance, carried forward, or a total) - not a transaction",
+  heading_or_note = "no date and no amount - treated as a heading, note or wrapped line",
+  date_unparsed   = "the date didn't parse - usually the date format in the template is wrong",
+  amount_missing  = "no amount in the money column(s) - check the amount / debit / credit bands")
+
+.pdf_row_reason <- function(rec, style, date_ok) {
+  code <- .pdf_row_code(rec, style, date_ok)
+  if (!nzchar(code)) return("")
+  unname(.PDF_ROW_REASON_TEXT[code])
 }
 
 # .append_cell(cur, add) -- append wrapped text to a cell that may be EMPTY. An
@@ -773,8 +799,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     sum(vapply(seq_along(recs), function(i) {
       if (keep[i]) return(FALSE)
       r <- recs[[i]]
-      grepl("didn't parse|no amount in the money",
-            .pdf_row_reason(r, style, .date_ok(r$date)), useBytes = TRUE)
+      .pdf_row_code(r, style, .date_ok(r$date)) %in% .PDF_ACTIONABLE_CODES
     }, logical(1)))
   recs <- recs[keep]
   forced_vec <- forced_vec[keep]

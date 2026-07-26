@@ -361,34 +361,25 @@ test_that("matched the wording but read no transactions is NOT 'needs review'", 
   expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
 })
 
-test_that("when the matched template reads nothing, another that fits is tried", {
+# The re-read that used to try another template here has been deleted. Swapping
+# templates behind the analyst's back bought nothing the honest answer does not:
+# a template that reads nothing (or reads less than it misses) now fails loudly
+# and names itself, and she is one click from fixing it. One mechanism, visible.
+test_that("a template that reads nothing says so instead of being swapped out", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   good <- tempfile("tpl_good_"); dir.create(good)
   base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
   base <- base[!grepl("^sample: true", base)]
   writeLines(sub("^id: .*", "id: zzz_working_pdf", base), file.path(good, "z.yaml"))
-  out <- tempfile("rescueout_"); dir.create(out)
-  # the broken one is "default" and wins the match; the working one is next
+  out <- tempfile("noswap_"); dir.create(out)
   res <- convert_statement(fixture("samples/raw/tutorial/sample_everyday_statement.pdf"),
                            outdir = out, templates_dir = .empty_tpl_dir(),
                            user_templates_dir = good, logdir = out)
-  expect_gt(nrow(res$feed_rows), 0L)
-  expect_identical(res$template_id, "zzz_working_pdf")
-  # never silently: the swap is stated, and the run is held for review
-  expect_identical(res$status, "needs_review")
-  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
+  # the broken template won the match and is NOT quietly replaced
+  expect_identical(res$template_id, "badbands_pdf")
+  expect_identical(res$status, "unsupported")
   expect_true("matched_but_empty" %in%
                 as.character(res$diagnostics$category %||% character(0)))
+  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
 })
 
-test_that("the re-read costs nothing when the first template works", {
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  # PARAM_DETECT_MAX_REREADS only ever spends parses on a file that already came
-  # back empty. Guard the contract that makes that true: the fallback is entered
-  # solely on a zero-row result.
-  src <- readLines(file.path(engine_root(), "R", "convert.R"))
-  i <- grep("empty_first <- ", src)
-  expect_length(i, 1L)
-  expect_match(src[i], "nrow\\(att\\$parsed\\$transactions\\) == 0L")
-  expect_match(paste(src[i:(i + 4)], collapse = " "), "if \\(empty_first\\)")
-})

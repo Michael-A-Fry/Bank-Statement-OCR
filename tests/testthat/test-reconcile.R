@@ -333,3 +333,35 @@ test_that("a format that cannot count actionable skips is unaffected", {
                  source_line_count = NA_integer_, actionable_skip_count = NA_integer_)
   expect_identical(.kpi_no_unparsed_rows(parsed, parsed$transactions, 1L)$status, "na")
 })
+
+test_that("a real PDF with a wrong date band really does produce actionable skips", {
+  # The unit tests above inject actionable_skip_count directly. This one proves the
+  # PARSER produces it on a real file, so the defence cannot die while the suite
+  # stays green -- which is exactly how a prose-matching version of it would have.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  b <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  b <- b[!grepl("^sample: true", b)]
+  # Move ONLY the date band off its column. Every row then has a real amount and
+  # an unreadable date -> date_unparsed, the actionable case. (Moving every band
+  # instead gives "no date and no amount", which is a heading, not actionable --
+  # that case yields zero rows and is caught by the unsupported path instead.)
+  b <- sub("date:.*x_min: 28.*", "date:        {x_min: 2,   x_max: 9}", b)
+  d <- tempfile("tpl_datewrong_"); dir.create(d)
+  writeLines(b, file.path(d, "t.yaml"))
+  tpl <- load_templates(d, strict = FALSE)[[1]]
+  inp <- read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf"))
+  ps <- parse_statement(inp, tpl, meta = extract_metadata(inp))
+  expect_gt(ps$actionable_skip_count, 0L)
+  expect_gte(ps$actionable_skip_count, nrow(ps$transactions))
+  expect_identical(reconcile(ps, tpl)$kpis$status[
+    reconcile(ps, tpl)$kpis[[1]] == "no_unparsed_rows"], "fail")
+})
+
+test_that("the actionable codes are codes, not sentences a reword can break", {
+  # The defence decides on .PDF_ACTIONABLE_CODES. If someone turns those back into
+  # prose, or reworders the display text expecting the engine to follow, this fails.
+  expect_true(all(.PDF_ACTIONABLE_CODES %in% names(.PDF_ROW_REASON_TEXT)))
+  expect_false(any(grepl(" ", .PDF_ACTIONABLE_CODES)))    # codes, not sentences
+  src <- readLines(file.path(engine_root(), "R", "parse_pdf_table.R"), warn = FALSE)
+  expect_false(any(grepl("grepl\\(\"didn't parse", src, useBytes = TRUE)))
+})
