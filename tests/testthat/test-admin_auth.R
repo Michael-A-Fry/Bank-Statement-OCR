@@ -42,9 +42,23 @@ test_that("bare observe() blocks that touch admin data are gated too (#26/#51)",
   expect_true(length(starts) > 2)                       # sanity: found the blocks
   # An admin-data observe is one whose body reads an admin surface.
   admin_touch <- "adm_|UPLOADS_DIR|inbox_state|read_uploads|LOGDIR"
+  # Read the ACTUAL body by balancing braces, not a fixed window. A fixed window
+  # cuts both ways: it bled into whatever followed a short observer (flagging a
+  # block that touches nothing) and it stopped reading a long one after nine
+  # lines (missing admin access below that). Neither is a check worth having.
+  .obs_body <- function(i) {
+    depth <- 0L; out <- character(0)
+    for (k in i:length(src)) {
+      out <- c(out, src[k])
+      depth <- depth + lengths(regmatches(src[k], gregexpr("\\{", src[k])))[1] -
+                       lengths(regmatches(src[k], gregexpr("\\}", src[k])))[1]
+      if (k > i && depth <= 0L) break
+    }
+    paste(out, collapse = " ")
+  }
   unguarded <- character(0)
   for (i in starts) {
-    body <- paste(src[i:min(i + 8L, length(src))], collapse = " ")
+    body <- .obs_body(i)
     if (!grepl(admin_touch, body)) next
     if (!grepl("req\\(admin_ok\\(\\)\\)", body))
       unguarded <- c(unguarded, sprintf("line %d", i))
@@ -112,4 +126,43 @@ test_that("admin download handlers re-check the session server-side (#37)", {
       unguarded <- c(unguarded, trimws(src[i]))
   }
   expect_identical(unguarded, character(0))
+})
+
+# ---------------------------------------------------------------------------
+# The Admin tab is hidden unless the URL carries ?admin. Nobody converting a
+# statement has the password, so an unopenable tab is a reference to Admin on
+# every screen and an invitation to try one.
+#
+# It is NOT the security boundary and must never be allowed to become one. These
+# assertions exist to make that impossible to forget: the tab is hidden, AND
+# every admin action is still checked server-side, so a hand-typed ?admin reaches
+# a login form exactly as before.
+test_that("the Admin tab is hidden unless the URL asks for it", {
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'hideTab\\("main_tabs", "Admin"\\)')
+  expect_match(joined, "parseQueryString\\(session\\$clientData\\$url_search")
+  # hiding must be the DEFAULT: shown only when ?admin is present
+  i <- grep('hideTab\\("main_tabs", "Admin"\\)', src)
+  expect_length(i, 1L)
+  expect_match(paste(src[(i - 1):i], collapse = " "), '!\\("admin" %in% names\\(q\\)\\)')
+})
+
+test_that("hiding the tab did not become the lock", {
+  # The password is the boundary. If someone ever deletes the server-side checks
+  # because "the tab is hidden anyway", this fails.
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  expect_gt(length(grep("req\\(admin_ok\\(\\)\\)", src)), 5L)
+  expect_gt(length(grep("admin_ok <- reactive|admin_ok\\(\\)", src)), 5L)
+})
+
+test_that("a QID must be six letters or numbers", {
+  src <- paste(readLines(file.path(engine_root(), "app.R"), warn = FALSE), collapse = "\n")
+  expect_match(src, 'QID_PATTERN <- "\\^\\[A-Za-z0-9\\]\\{6\\}\\$"')
+  # free text was the old behaviour: a typo or a name recorded against a
+  # conversion is a record nobody can follow back to a person
+  expect_match(src, "if \\(!grepl\\(QID_PATTERN, v\\)\\)")
+  expect_match(src, "cv_qid\\(toupper\\(v\\)\\)", info = "one identity per person in the log")
+  for (v in c("AB1234", "abc123", "123456")) expect_true(grepl("^[A-Za-z0-9]{6}$", v))
+  for (v in c("AB123", "AB12345", "AB-123", "", "Michael")) expect_false(grepl("^[A-Za-z0-9]{6}$", v))
 })

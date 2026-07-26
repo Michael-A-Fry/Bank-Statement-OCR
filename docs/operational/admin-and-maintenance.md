@@ -1,5 +1,19 @@
 # Admin and maintenance
 
+## Where Admin is
+Add **`?admin`** to the address and the Admin tab appears:
+
+```
+http://your-server:8100/?admin
+```
+
+Bookmark that link. Without it the tab is not shown at all - nobody converting a
+statement has the password, and a tab they cannot open only invites them to try.
+
+This is not the lock; the password is. Every admin action is checked on the
+server, so typing `?admin` gets you the login form and nothing else.
+
+
 The **Admin** tab (password-protected) is where you keep an eye on the tool and tidy
 up. Open it with the password from `config\config.yaml` (`app.admin_password` — set
 it before sharing the app; see [running-and-keeping-it-up.md](running-and-keeping-it-up.md)).

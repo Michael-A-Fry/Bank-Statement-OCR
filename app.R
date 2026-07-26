@@ -975,6 +975,20 @@ server <- function(input, output, session) {
   admin_ok <- reactiveVal(FALSE)
   output$admin_authed <- reactive(isTRUE(admin_ok()))
   outputOptions(output, "admin_authed", suspendWhenHidden = FALSE)
+
+  # THE ADMIN TAB IS NOT FOR ANYONE USING THIS APP. Nobody converting a statement
+  # has the password, so a tab they cannot open is a reference to Admin on every
+  # screen and an invitation to try. It is hidden unless the URL carries ?admin -
+  # the maintainer bookmarks that link (see docs/operational/admin-and-maintenance.md).
+  #
+  # This is NOT the security boundary and must never be mistaken for one: the
+  # password is. Hiding the tab only stops it being advertised; every admin action
+  # is still checked server-side with req(admin_ok()), so a hand-typed ?admin gets
+  # a login form, exactly as before.
+  observe({
+    q <- parseQueryString(session$clientData$url_search %||% "")
+    if (!("admin" %in% names(q))) hideTab("main_tabs", "Admin")
+  })
   adm_fails <- reactiveVal(0L)          # consecutive wrong passwords this session
   adm_locked_until <- reactiveVal(0)    # epoch seconds; 0 = not locked
   # Backoff: free for the first 3 tries, then 5s, 10s, 20s, 40s ... capped at 5
@@ -1516,6 +1530,11 @@ server <- function(input, output, session) {
     q[, c("ts", "requested_by", "status", "detail", "context")]
   }, options = list(pageLength = 6, dom = "tip"), rownames = FALSE)
   observe({
+    # A bare observe() is NOT suspended when its tab is hidden, so without this
+    # guard the template-request queue was read off disk and its ids pushed into
+    # every session's select input, admin or not. Found by the invariant test once
+    # it started reading whole observer bodies instead of a fixed nine lines.
+    req(admin_ok())
     req_bump(); input$adm_refresh
     q <- read_template_requests(REQUESTS_DIR)
     open <- if (nrow(q)) q$id[q$status == "open"] else character(0)
@@ -2062,12 +2081,19 @@ server <- function(input, output, session) {
   # WHO RAN THIS, asked at most once a session and only when it cannot be
   # established. NA until given; conversion is blocked until then (see cv_go), so
   # no run is ever recorded against nobody.
+  # A QID is six letters or digits. Checked here rather than accepted as free
+  # text, because the audit trail is the point of asking: a typo, a name, or an
+  # empty string recorded against a conversion is a record nobody can follow back
+  # to a person, which is the same as having no record. Stored uppercase so the
+  # same person is one identity in the log however they typed it.
+  QID_PATTERN <- "^[A-Za-z0-9]{6}$"
   cv_qid <- reactiveVal(NA_character_)
   observeEvent(input$cv_qid_set, {
     v <- trimws(input$cv_qid %||% "")
-    if (!nzchar(v)) {
-      showNotification("Enter your QID first.", type = "warning", duration = 5)
-    } else cv_qid(v)
+    if (!grepl(QID_PATTERN, v)) {
+      showNotification("A QID is six letters or numbers, e.g. AB1234.",
+                       type = "warning", duration = 6)
+    } else cv_qid(toupper(v))
   })
   observeEvent(input$cv_qid_change, cv_qid(NA_character_))
   output$cv_whoami <- renderUI({

@@ -68,6 +68,20 @@ screen would have questioned.
   where the door is unlocked, shown to everyone who opens the page. A test now
   blocks that class of wording across the app, the label maps and every engine
   message.
+- **The Admin tab is hidden unless the URL carries `?admin`.** Nobody converting a
+  statement has the password, so a tab they cannot open was a reference to Admin on
+  every screen and an invitation to try one. The maintainer bookmarks
+  `http://your-server:8100/?admin`. This is not the lock — the password is, and
+  every admin action is still checked server-side, so a hand-typed `?admin` reaches
+  a login form and nothing else.
+- **A QID is validated: six letters or numbers, stored uppercase.** Free text meant
+  a typo or a name could be recorded against a conversion — a record nobody can
+  follow back to a person, which is the same as having none.
+- **An unguarded observer was found and closed.** Tightening the invariant test to
+  read whole observer bodies (instead of a fixed nine lines) immediately caught one:
+  the template-request queue was read off disk and its ids pushed into every
+  session, admin or not, because a bare `observe()` is not suspended when its tab
+  is hidden.
 - **Admin is not named anywhere a user can read.** Nobody using the app has the
   password, so the About card advertising it, an error that said "tidy them up in
   Admin → Templates", and "ask your administrator" were all directions to a door
