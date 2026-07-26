@@ -2,14 +2,24 @@
 # Columns: Date | type + details | Debit/Withdrawal $ | Deposit $ | Balance $
 # Dates day+month only; year from the labelled Opening/Closing date.
 # Two money columns -> debit_credit_cols. Built from real statement coordinates.
+#
+# FINGERPRINT: the column labels INCLUDING their "$" suffix, exactly as ASB prints
+# them. It used to be ["Debit/Withdrawal", "Deposit", "Balance"] with min_score 2 --
+# and "Deposit" + "Balance" alone sit on almost every statement ever printed, so any
+# foreign bank's PDF scored 2 and was parsed with ASB's column bands (charges came
+# out as credits, status ok, feed accepted). The same two words also scored 2 on
+# real ANZ statements, making this template a permanent runner-up that dragged every
+# genuine ANZ PDF into needs_review. "Debit/Withdrawal $" and "Deposit $" are ASB's
+# own wording: verified present on real ASB statements and absent from every ANZ /
+# Westpac / foreign specimen we hold.
 id: asb_everyday_pdf
 bank: ASB
 statement_type: everyday
 format: pdf
-version: 1
+version: 2
 min_score: 2
 fingerprint:
-  page_contains_all: ["Debit/Withdrawal", "Deposit", "Balance"]
+  page_contains_all: ["Debit/Withdrawal $", "Deposit $"]
 table:
   row_tol: 3
   date_format: "%d %b"

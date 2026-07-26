@@ -12,7 +12,7 @@ test_that("load_templates stamps origin and load_template_set gives default prec
   # a genuinely new user template
   newt <- list(id = "user_only_csv", bank = "UserBank", statement_type = "everyday",
     format = "delimited", version = 1, min_score = 2, currency = "NZD",
-    fingerprint = list(header_contains_all = list("Date", "Amount")),
+    fingerprint = list(header_contains_all = list("Date", "Amount", "Particulars")),
     delimiter = ",", columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
       amount = list(source = "Amount"), description = list(source = "Payee")),
     amount_sign = "signed")
@@ -36,7 +36,7 @@ test_that("save_user_template validates then round-trips", {
   udir <- tempfile("ut_")
   good <- list(id = "roundtrip_csv", bank = "B", statement_type = "everyday",
     format = "delimited", version = 1, min_score = 2, currency = "NZD",
-    fingerprint = list(header_contains_all = list("Date", "Amount")),
+    fingerprint = list(header_contains_all = list("Date", "Amount", "Particulars")),
     delimiter = ",", columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
       amount = list(source = "Amount"), description = list(source = "Payee")),
     amount_sign = "signed", origin = "user")
@@ -53,7 +53,7 @@ test_that("save_user_template never clobbers a different id that shares a slug (
   dir <- tempfile("utpl_"); dir.create(dir)
   base <- list(bank = "B", statement_type = "e", format = "delimited", version = 1,
     min_score = 1, currency = "NZD", delimiter = ",",
-    fingerprint = list(header_contains_all = list("Date", "Amount")),
+    fingerprint = list(header_contains_all = list("Date", "Amount", "Particulars")),
     columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
                    amount = list(source = "Amount"), description = list(source = "Amount")),
     amount_sign = "signed")

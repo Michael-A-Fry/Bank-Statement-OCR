@@ -1,0 +1,7 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2026-02-03","03 Feb","EFTPOS RIVERSIDE DAIRY",-12.4,"12.40","debit",2398.15,"2,398.15",,,,,,"NZD",""
+2,"2026-02-05","05 Feb","SALARY MATAI HOLDINGS",3120,"3,120.00","credit",5518.15,"5,518.15",,,,,,"NZD",""
+3,"2026-02-09","09 Feb","DD CITY COUNCIL RATES",-268.15,"268.15","debit",5250,"5,250.00",,,,,,"NZD",""
+4,"2026-02-14","14 Feb","TRANSFER TO SAVINGS",-400,"400.00","debit",4850,"4,850.00",,,,,,"NZD",""
+5,"2026-02-21","21 Feb","VISA HARBOUR FUEL",-96.72,"96.72","debit",4753.28,"4,753.28",,,,,,"NZD",""
+6,"2026-02-26","26 Feb","CREDIT INTEREST",2.18,"2.18","credit",4755.46,"4,755.46",,,,,,"NZD",""

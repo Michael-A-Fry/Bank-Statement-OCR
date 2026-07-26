@@ -45,3 +45,44 @@ test_that("row_coverage is not applicable to a delimited template", {
   t <- list(format = "delimited", columns = list(date = list(source = "Date")))
   expect_false(row_coverage(list(kind = "pdf"), t)$applicable)
 })
+
+test_that("a heading / note is NOT counted as an actionable missing-amount skip", {
+  # The heading reason reads "no date and no amount - treated as a heading, note or
+  # wrapped line". It CONTAINS "no amount", so the loose substring test swallowed it
+  # into amount_missing: every heading inflated actionable_skips and the diagnosis
+  # told the analyst rows had been skipped for a missing amount when nothing was lost.
+  expect_equal(.rowcov_bucket("no date and no amount - treated as a heading, note or wrapped line"),
+               "heading_or_note")
+  # the genuinely actionable reasons are unchanged
+  expect_equal(.rowcov_bucket("no amount in the money column(s) - check the amount / debit / credit bands"),
+               "amount_missing")
+  expect_equal(.rowcov_bucket("the date didn't parse - usually the date format in the template is wrong"),
+               "date_unreadable")
+  expect_equal(.rowcov_bucket("continuation - its text is folded into the transaction above"),
+               "continuation")
+  expect_equal(.rowcov_bucket("split row - re-joined with the line above into one transaction"),
+               "continuation")
+  expect_equal(.rowcov_bucket(""), "kept")
+})
+
+test_that("a page of headings and notes reports zero actionable skips", {
+  # End to end: a title line and a note above the table are not transactions and
+  # were never lost, so the report must not send Beth chasing a band that is fine.
+  w <- data.frame(stringsAsFactors = FALSE,
+    text  = c("Transaction","History",                 # heading: no date, no amount
+              "05","Jan","COFFEE","4.50","95.50",      # a real transaction
+              "Interest","is","calculated","daily"),   # a note, far below the table
+    x     = c(110,180,   45,60,110,415,490,   110,160,200,270),
+    y     = c(10,10,     40,40,40,40,40,      200,200,200,200),
+    width = c(60,50,     12,16,45,25,30,      40,20,60,30),
+    height= rep(10, 11))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = "Statement period 1 Jan 2026 to 31 Jan 2026",
+    words = list(w), page_width = 595.28, page_height = 841.89,
+    meta = list(page_count = 1L))
+  cov <- row_coverage(input, .simple_tmpl())
+  expect_equal(cov$kept_total, 1L)
+  expect_equal(cov$actionable_skips_total, 0L)        # was 2 (both swallowed as amount_missing)
+  expect_match(cov$diagnosis, "Every candidate row was kept")
+  expect_equal(unname(cov$pages[[1]]$by_reason[["heading_or_note"]]), 2L)
+})

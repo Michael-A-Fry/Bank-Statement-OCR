@@ -427,6 +427,207 @@ test_that("metadata_regions validates: good passes, malformed / unknown rejected
   expect_true(any(grepl("metadata_regions.total_spend", validate_template(bad2))))
 })
 
+# ---- amount_sign: type_dc on a PDF template --------------------------------
+# A PDF template declaring `amount_sign: type_dc` used to reach parse_amount with
+# NO type column and NO tokens, so every row fell into the back-compat "not the
+# debit token -> credit" branch and was signed +magnitude. Every debit silently
+# became a credit while the "D" still printed beside a +500 credit, so the row
+# looked internally consistent and nothing could catch it.
+.tdc_words <- function(t1 = "D", t2 = "C") data.frame(stringsAsFactors = FALSE,
+  text  = c("05","Jan",t1,"RENT","500.00",   "06","Jan",t2,"SALARY","1000.00"),
+  x     = c(45,60,90,140,415,                45,60,90,140,415),
+  y     = c(40,40,40,40,40,                  70,70,70,70,70),
+  width = c(12,16,10,40,34,                  12,16,10,45,34),
+  height= rep(10, 10))
+.tdc_input <- function(...) list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+  pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"),
+  words = list(.tdc_words(...)), meta = list(page_count = 1L))
+.tdc_tmpl <- function() list(id = "tdc", bank = "S", statement_type = "e", format = "pdf",
+  version = 1, currency = "NZD", type_debit_value = "D",
+  table = list(row_tol = 3, date_format = "%d %b", amount_sign = "type_dc",
+    columns = list(date = list(x_min = 40, x_max = 74), type = list(x_min = 85, x_max = 105),
+      description = list(x_min = 105, x_max = 360), amount = list(x_min = 360, x_max = 470))))
+
+test_that("a type_dc PDF template signs from its indicator column", {
+  tx <- parse_pdf_table(.tdc_input(), .tdc_tmpl())$transactions
+  expect_equal(nrow(tx), 2L)
+  expect_equal(tx$amount, c(-500, 1000))                 # "D RENT 500.00" -> -500
+  expect_identical(tx$direction, c("debit", "credit"))
+  expect_identical(tx$type, c("D", "C"))                 # the indicator is kept verbatim
+})
+
+test_that("a type_dc PDF honours the declared tokens, and fails closed on an unknown one", {
+  # Case-insensitively matched, exactly as the delimited path does.
+  low <- parse_pdf_table(.tdc_input(t1 = "d"), .tdc_tmpl())$transactions
+  expect_equal(low$amount[1], -500)
+  # With BOTH tokens declared, an indicator matching neither is genuinely ambiguous
+  # -> NA + malformed, never silently signed a credit.
+  tmpl <- .tdc_tmpl(); tmpl$type_credit_value <- "C"
+  amb <- parse_pdf_table(.tdc_input(t2 = "X"), tmpl)$transactions
+  expect_equal(amb$amount[1], -500)
+  expect_true(is.na(amb$amount[2]))
+  expect_match(amb$flags[2], "malformed")
+  # tokens declared inside the table block work too (same as decimal_mark)
+  t2 <- .tdc_tmpl(); t2$type_debit_value <- NULL; t2$table$type_debit_value <- "D"
+  expect_equal(parse_pdf_table(.tdc_input(), t2)$transactions$amount, c(-500, 1000))
+})
+
+# ---- continuation merge: no word on a folded line may be lost ---------------
+.cont_tmpl <- function() { tm <- .simple_tmpl(); tm$table$columns$reference <-
+  list(x_min = 250, x_max = 340); tm$table$columns$description$x_max <- 250; tm }
+
+test_that("a continuation line loses NO word, even outside the descriptive bands", {
+  # THE bug: the wrapped payee "SMITH HOLDINGS LTD" wraps under "PAYMENT TO JOHN",
+  # and "SMITH" prints far enough left to land in the DATE band. The old merge
+  # folded only the words a descriptive band claimed, so "SMITH" vanished and
+  # "PAYMENT TO JOHN HOLDINGS LTD" -- a DIFFERENT legal entity -- was presented as
+  # verbatim, with amounts untouched so reconciliation could never see it.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","PAYMENT","TO","JOHN","-40.00","955.50",   # y=40 transaction
+              "SMITH","HOLDINGS","LTD"),                            # y=49 wrapped payee
+    x     = c(45,60,110,160,190,415,490,    45,110,170),            # "SMITH" at x=45 -> date band
+    y     = c(40,40,40,40,40,40,40,         49,49,49),
+    width = c(12,16,45,25,30,34,30,         40,50,25),
+    height= rep(9, 10))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(nrow(tx), 1L)
+  expect_equal(tx$description, "PAYMENT TO JOHN SMITH HOLDINGS LTD")  # verbatim, in print order
+  expect_match(tx$flags, "row_text_merged")     # the assembly is visible, not silent
+  expect_equal(tx$amount, -40)                  # amounts untouched by the fold
+})
+
+test_that("a continuation still routes its own-column text, and keeps the strays", {
+  # The second reported shape: the wrap spans a MAPPED reference band and a stray
+  # word in the balance band. The reference keeps its own column (the existing
+  # behaviour), and the stray still reaches the description rather than vanishing.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","VISA","SHOP","-40.00","955.50",   # y=40 transaction
+              "CARD","REF-9","TAIL"),                       # y=49 wrap: desc | reference | balance band
+    x     = c(45,60,110,150,415,490,   110,255,490),
+    y     = c(40,40,40,40,40,40,       49,49,49),
+    width = c(12,16,30,40,34,30,       30,40,25),
+    height= rep(9, 9))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .cont_tmpl())$transactions
+  expect_equal(nrow(tx), 1L)
+  # The transaction line itself printed NO reference, so the wrapped one lands in an
+  # EMPTY cell. An empty band reads as NA, and pasting onto NA rendered the literal
+  # string "NA" into the cell ("NA REF-9") -- a fabricated value in a field promised
+  # verbatim. It must be exactly what was printed.
+  expect_identical(tx$reference, "REF-9")
+  expect_false(grepl("NA", tx$reference, fixed = TRUE))
+  expect_equal(tx$description, "VISA SHOP CARD TAIL")       # stray "TAIL" preserved
+  expect_match(tx$flags, "row_text_merged")
+})
+
+test_that("an ordinary description wrap is unchanged and carries no merge flag", {
+  # Regression guard: when every wrapped word is inside the descriptive bands
+  # nothing was ever dropped, so the output AND the flags must be exactly as before.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","VISA","SHOP","-40.00","955.50",
+              "CARD","1234","Orig","06/01"),
+    x     = c(45,60,110,150,415,490,   110,150,190,230),
+    y     = c(40,40,40,40,40,40,       49,49,49,49),
+    width = c(12,16,30,40,34,30,       30,30,30,30),
+    height= rep(9, 10))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
+  expect_equal(tx$description, "VISA SHOP CARD 1234 Orig 06/01")
+  expect_false(grepl("row_text_merged", tx$flags))
+})
+
+# ---- keep_dateless_rows (shared-date statements) ---------------------------
+.kd_input <- function() {
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",   # dated transaction
+              "SHOP","10.00","85.50",                # shares the date above
+              "BOOKS","5.00","80.50"),               # shares the date above
+    x     = c(45,60,110,415,490,   110,415,490,   110,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,      100,100,100),
+    width = c(12,16,45,25,30,      45,25,30,      45,25,30),
+    height= rep(9, 11))
+  list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+       pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+       page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+}
+.kd_tmpl <- function() { tm <- .simple_tmpl()
+  tm$table$keep_dateless_rows <- TRUE; tm$table$merge_continuation <- FALSE; tm }
+
+test_that("keep_dateless_rows keeps a shared-date row with a BLANK date, flagged", {
+  off <- parse_pdf_table(.kd_input(), local({ tm <- .kd_tmpl()
+    tm$table$keep_dateless_rows <- FALSE; tm }))$transactions
+  expect_equal(nrow(off), 1L)                       # default: dateless money lines dropped
+
+  on <- parse_pdf_table(.kd_input(), .kd_tmpl())$transactions
+  expect_equal(nrow(on), 3L)                        # the shared-date rows survive
+  expect_identical(on$date, c("2026-01-05", NA, NA))  # never guessed from a neighbour
+  expect_equal(on$amount, c(4.50, 10.00, 5.00))
+  expect_true(all(grepl("no_date", on$flags[2:3])))   # and say so
+})
+
+# ---- completeness counts threaded out for the no_unparsed_rows KPI ---------
+test_that("parse_pdf_table reports how many visual rows it examined and skipped", {
+  # no_unparsed_rows had no PDF number to report, so it printed "pass" for every
+  # PDF by construction -- a green tick for a check that never ran.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("Date","Details","Amount","Balance",                  # header -> skipped
+              "05","Jan","COFFEE","4.50","95.50",                   # kept
+              "31","Jan","Closing","Balance","1234.00","1234.00"),  # summary -> skipped
+    x     = c(45,110,415,490,   45,60,110,415,490,   45,60,110,180,415,490),
+    y     = c(10,10,10,10,      40,40,40,40,40,      70,70,70,70,70,70),
+    width = c(20,40,30,30,      12,16,45,25,30,      12,16,50,50,34,30),
+    height= rep(10, 15))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  p <- parse_pdf_table(input, .simple_tmpl())
+  expect_equal(nrow(p$transactions), 1L)
+  expect_equal(p$visual_row_count, 3L)              # header + txn + summary
+  expect_equal(p$skipped_row_count, 2L)             # header and summary line
+  expect_true(is.na(p$source_line_count))           # a PDF has no source-line count
+})
+
+# ---- summary-line vocabulary lives in the lexicon --------------------------
+test_that("the summary-line vocabulary is lexicon-driven (defaults unchanged)", {
+  # "Balance b/fwd" is not a built-in wording, so by DEFAULT it is still treated as
+  # a transaction -- behaviour identical to the hardcoded list. Adding it to the
+  # lexicon must stop it being read as a fabricated transaction, with no code change.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",
+              "01","Jan","Balance","b/fwd","1000.00","1000.00"),
+    x     = c(45,60,110,415,490,   45,60,110,170,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,70,70,70),
+    width = c(12,16,45,25,30,      12,16,50,40,34,30),
+    height= rep(10, 11))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  clear_lexicon_cache()
+  expect_equal(nrow(parse_pdf_table(input, .simple_tmpl())$transactions), 2L)
+  # built-in wordings keep working with no lexicon file present
+  expect_true(.pdf_is_summary("Closing Balance 1,234.00"))
+  expect_true(.pdf_is_summary("Balance carried forward 12.00"))
+  expect_false(.pdf_is_summary("Total Payments to ACME Ltd 12.00"))  # a real transaction
+
+  lx <- tempfile(fileext = ".yaml")
+  writeLines("summary_line_labels: ['balance b/fwd', 'sub total']", lx)
+  old <- Sys.getenv("BSO_LEXICON", NA_character_)
+  Sys.setenv(BSO_LEXICON = lx); clear_lexicon_cache()
+  on.exit({ if (is.na(old)) Sys.unsetenv("BSO_LEXICON") else Sys.setenv(BSO_LEXICON = old)
+            clear_lexicon_cache() }, add = TRUE)
+  expect_true(.pdf_is_summary("Balance b/fwd 1,000.00"))
+  expect_true(.pdf_is_summary("Sub total 99.00"))
+  expect_true(.pdf_is_summary("Closing Balance 1,234.00"))          # built-ins still union in
+  expect_equal(nrow(parse_pdf_table(input, .simple_tmpl())$transactions), 1L)
+})
+
 test_that("tightly-set lines are NOT merged into one giant row (row-height grouping)", {
   # line pitch 4pt: the OLD cumsum(diff(y)>tol) merged both lines into one row
   # (no word-gap exceeded 3); the anchored grouping keeps them as two transactions.

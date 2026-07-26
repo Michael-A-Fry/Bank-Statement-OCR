@@ -44,6 +44,10 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   region <- t$region %||% list()
   date_fmt <- t$date_format %||% "%d/%m/%Y"
   style <- t$amount_sign %||% "signed"
+  # keep_dateless_rows: the reader's fourth keep branch (shared-date statements).
+  # Read it HERE too, or the overlay paints rows the reader keeps as SKIPPED and
+  # row_coverage then tells the analyst to fix a date format that is not the problem.
+  keep_dateless <- isTRUE(t$keep_dateless_rows %||% FALSE)
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   wbp <- input$words %||% list()
 
@@ -109,7 +113,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     if (nrow(rw)) {
       rw <- rw[order(rw$y, rw$x), , drop = FALSE]
       grp <- .group_rows(rw$y, row_tol)   # SAME grouping as parse_pdf_table -> counts match
-      rows <- do.call(rbind, lapply(unique(grp), function(g) {
+      info <- lapply(unique(grp), function(g) {
         rg <- rw[grp == g, , drop = FALSE]
         dcell <- .pdf_cell(rg, cols_p$date)
         d_ok <- !is.na(dcell) && !is.na(parse_date(.first_n_date(dcell, date_fmt), date_fmt)$iso)
@@ -118,34 +122,34 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
           (rg$x + rg$width / 2) <= (cols_p$date$x_max %||% -Inf)])
         # Apply the ENGINE's full keep predicate, not just the date test: a dated
         # line still has to carry a money amount AND not be a summary line, or the
-        # reader drops it. Sharing .pdf_has_amount/.pdf_is_summary keeps them in step.
+        # reader drops it. pdf_keep_row IS that predicate -- the one the reader
+        # calls -- so no branch of it can exist here in a different form.
         rec <- list(amount = .pdf_cell(rg, cols_p$amount), debit = .pdf_cell(rg, cols_p$debit),
                     credit = .pdf_cell(rg, cols_p$credit), description = .pdf_cell(rg, cols_p$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
         date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)   # for the skipped-reason text
-        # KEEP RULE (mirrors parse_pdf_table.is_txn): a real date keeps a row with
-        # any amount slot; a REDACTED date keeps it only on a real amount; a merely
-        # unparseable date is dropped; a whole-row / header box (no real value) is
-        # never a transaction.
-        real_amount <- .has_real_money(if (identical(style, "debit_credit_cols"))
-          paste(rec$debit %||% "", rec$credit %||% "") else (rec$amount %||% ""))
-        natural_keep <- !.pdf_is_summary(rec$description, rec$raw) && .pdf_has_amount(rec, style) &&
-          (isTRUE(d_ok) || (isTRUE(redacted_date) && real_amount))
+        natural_keep <- pdf_keep_row(rec, style, d_ok, redacted_date, keep_dateless)
         # A row the user forced in (from the skipped list) is painted kept here too,
         # so the X-ray reflects exactly what the reader now emits.
         forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), fr_p)
         kept <- natural_keep || forced
         # reason: why the engine did NOT keep this row (empty when kept). Same
         # helper the engine uses, so the X-ray can never explain it differently.
-        data.frame(x0 = min(rg$x), y0 = min(rg$y),
+        list(row = data.frame(x0 = min(rg$x), y0 = min(rg$y),
                    x1 = max(rg$x + rg$width), y1 = max(rg$y + rg$height),
                    kept = isTRUE(kept),
                    date = dcell %||% NA_character_,
                    reason = if (kept) "" else .pdf_row_reason(rec, style, date_ok),
                    raw = rec$raw,
                    h = suppressWarnings(stats::median(rg$height, na.rm = TRUE)),
-                   stringsAsFactors = FALSE)
-      }))
+                   stringsAsFactors = FALSE),
+             # the four facts the reader's split-row recovery decides on
+             d_ok = isTRUE(date_ok), has_amt = .pdf_has_amount(rec, style),
+             is_summ = .pdf_is_summary(rec$description, rec$raw),
+             d_txt = !is.na(dcell) && nzchar(trimws(dcell)))
+      })
+      rows <- do.call(rbind, lapply(info, `[[`, "row"))
+      rows <- .mark_stitched(rows, info)
       rows <- .mark_continuations(rows)
     }
     list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, sx, sy))
@@ -208,6 +212,45 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
 .empty_rows <- function() data.frame(x0 = numeric(0), y0 = numeric(0), x1 = numeric(0),
   y1 = numeric(0), kept = logical(0), date = character(0), reason = character(0),
   raw = character(0), h = numeric(0), stringsAsFactors = FALSE)
+
+# .mark_stitched(rows, info) -- mirror the reader's SPLIT-ROW recovery
+# (parse_pdf_table): where a statement staggers one transaction's cells onto two
+# baselines, the reader re-joins a date-only row with the amount-only row right
+# below it and emits ONE transaction. Without this the X-ray showed BOTH halves as
+# skipped ("no amount" / "the date didn't parse") while the reader had already
+# recovered them -- an actionable-looking count for rows that were never lost, and
+# a kept-count that could not match nrow(transactions). Same adjacency and same
+# date-only / amount-only tests as the reader, so the two agree row for row.
+.mark_stitched <- function(rows, info) {
+  n <- length(info)
+  if (is.null(rows) || !nrow(rows) || n < 2) return(rows)
+  d_ok  <- vapply(info, function(z) isTRUE(z$d_ok), logical(1))
+  has_a <- vapply(info, function(z) isTRUE(z$has_amt), logical(1))
+  summ  <- vapply(info, function(z) isTRUE(z$is_summ), logical(1))
+  d_txt <- vapply(info, function(z) isTRUE(z$d_txt), logical(1))
+  gone <- logical(n)
+  date_only <- function(k) d_ok[k] && !has_a[k] && !summ[k]
+  amt_only  <- function(k) has_a[k] && !d_ok[k] && !d_txt[k] && !summ[k]
+  i <- 1L
+  while (i < n) {
+    if (gone[i]) { i <- i + 1L; next }
+    j <- i + 1L; while (j <= n && gone[j]) j <- j + 1L
+    if (j > n) break
+    lh <- if (is.finite(rows$h[i]) && rows$h[i] > 0) rows$h[i] else 10
+    gap <- rows$y0[j] - rows$y1[i]     # one page per call, so no page test needed
+    close <- is.finite(gap) && gap <= 1.2 * lh && gap >= -1.2 * lh
+    if (close && ((date_only(i) && amt_only(j)) || (amt_only(i) && date_only(j)))) {
+      rows$kept[i] <- TRUE; rows$reason[i] <- ""
+      rows$x0[i] <- min(rows$x0[i], rows$x0[j]); rows$x1[i] <- max(rows$x1[i], rows$x1[j])
+      rows$y1[i] <- max(rows$y1[i], rows$y1[j])
+      rows$kept[j] <- FALSE
+      rows$reason[j] <- "split row - re-joined with the line above into one transaction"
+      gone[j] <- TRUE; d_ok[i] <- TRUE; has_a[i] <- TRUE; d_txt[i] <- TRUE
+      i <- j + 1L
+    } else i <- i + 1L
+  }
+  rows
+}
 
 # .mark_continuations(rows) -- upgrade the reason of a dropped "no date and no
 # amount" row to "continuation" when it sits directly under a KEPT transaction

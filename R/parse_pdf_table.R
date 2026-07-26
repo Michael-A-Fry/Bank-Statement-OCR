@@ -104,6 +104,10 @@
               "reference", "other_party", "type")) m[[f]] <- fld(a[[f]], b[[f]])
   m$description <- cat_txt(a$description, b$description)
   m$raw <- cat_txt(a$raw, b$raw)
+  # Carry BOTH halves' words: the merged row's word list must stay complete, or a
+  # later continuation fold would measure "which words did no band claim?" against
+  # half the row. `a` is the upper half, so a-then-b is reading order.
+  m$.cx <- c(a$.cx, b$.cx); m$.txt <- c(a$.txt, b$.txt)
   m$.y0 <- min(a$.y0, b$.y0, na.rm = TRUE); m$.y1 <- max(a$.y1, b$.y1, na.rm = TRUE)
   for (nm in union(names(a), names(b))) if (startsWith(nm, "x.")) m[[nm]] <- fld(a[[nm]], b[[nm]])
   m$.stitched <- TRUE
@@ -128,6 +132,51 @@
   .has_money(if (identical(style, "debit_credit_cols"))
     paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
 }
+# The summary-line VOCABULARY. These labels used to be hardcoded in the matcher
+# below, so a bank that writes "Balance b/fwd" or "Sub total" turned a summary
+# line into a FABRICATED transaction -- and the only cure was a code change. They
+# now live in the lexicon (category `summary_line_labels`, list semantics) with
+# these built-ins as the default, so an analyst adds a wording in YAML.
+#
+# Each entry is matched as a WHOLE label, case-insensitively; a literal space is
+# read as "one or more spaces". They are written WITHOUT ^...$ because the matcher
+# anchors them -- matching the whole label is what keeps a real
+# "Total Payments to ACME Ltd" a transaction.
+.PDF_SUMMARY_LABELS <- c(
+  "(statement )?(opening|closing) balance",
+  "balance (brought|carried) (forward|fwd|f/?wd?)",
+  "balance [bc]/f",
+  "(brought|carried) forward",
+  "total (withdrawals|deposits|credits|debits|payments|fees|transactions)")
+
+# .pdf_summary_rx() -- the compiled whole-label alternation, built ONCE and cached.
+# The cache lives in the LEXICON's own environment so an admin vocabulary edit
+# (which calls clear_lexicon_cache()) invalidates this pattern too -- otherwise a
+# saved edit would appear to take effect everywhere except here. The key carries NO
+# path: this runs 5-8x per visual row, and resolving the lexicon path stats the
+# config file, so the hot path must be a single environment lookup and nothing else.
+.PDF_SUMMARY_RX_KEY <- "pdf::summary_rx"
+.pdf_summary_rx <- function() {
+  hit <- get0(.PDF_SUMMARY_RX_KEY, envir = .LEXICON_CACHE, inherits = FALSE, ifnotfound = NULL)
+  if (!is.null(hit)) return(hit)
+  path <- safe(.lexicon_path(), NULL)
+  # `lex()` resolves the category once R/lexicon.R registers it; until then do the
+  # same "list" union off the raw file, so the vocabulary is editable today and an
+  # absent key is an exact no-op (behaviour identical to the hardcoded list).
+  extra <- safe(lex("summary_line_labels", path), NULL)
+  if (!length(extra)) extra <- safe(unlist(load_lexicon(path)[["summary_line_labels"]]), NULL)
+  labels <- unique(c(.PDF_SUMMARY_LABELS, trimws(as.character(extra))))
+  labels <- labels[!is.na(labels) & nzchar(labels)]
+  # A single un-compilable admin entry must never break parsing: drop it, keep the rest.
+  ok <- vapply(labels, function(p) isTRUE(tryCatch({
+    grepl(p, "probe", perl = TRUE); TRUE }, error = function(e) FALSE, warning = function(w) FALSE)),
+    logical(1), USE.NAMES = FALSE)
+  labels <- labels[ok]
+  rx <- paste0("^(?:", paste(gsub(" ", "\\\\s+", labels), collapse = "|"), ")$")
+  assign(.PDF_SUMMARY_RX_KEY, rx, envir = .LEXICON_CACHE)
+  rx
+}
+
 # A summary line (opening/closing balance, brought/carried forward, totals) is NOT
 # a transaction even though it carries a money value on a dated line. Match the
 # WHOLE label so a real "Total Payments to ACME Ltd" is KEPT; errs toward keeping.
@@ -143,13 +192,7 @@
   # sub() robust on invalid-UTF-8 bytes (no new failure mode). Byte-identical.
   lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d,
                     perl = TRUE, useBytes = TRUE))
-  grepl(paste0(
-    "^(statement\\s+)?(opening|closing)\\s+balance$",
-    "|^balance\\s+(brought|carried)\\s+(forward|fwd|f/?wd?)$",
-    "|^balance\\s+[bc]/f$",
-    "|^(brought|carried)\\s+forward$",
-    "|^total\\s+(withdrawals|deposits|credits|debits|payments|fees|transactions)$"),
-    lbl, perl = TRUE, useBytes = TRUE)
+  grepl(.pdf_summary_rx(), lbl, perl = TRUE, useBytes = TRUE)
 }
 
 # .is_footer_noise(s) -- a page footer / running header ("Page 2 of 2", "continued
@@ -162,6 +205,38 @@
                "|^\\d+\\s+of\\s+\\d+$",
                "|continued\\s+(on\\s+)?(next|over)",       # "continued on next page"
                "|^statement\\s+(continued|continues)"), s)
+}
+
+# .pdf_real_amount(rec, style) -- the money cell holds a VISIBLE number, not just a
+# redaction token. The "evidence" half of the keep rule, alongside a real date.
+.pdf_real_amount <- function(rec, style) {
+  .has_real_money(if (identical(style, "debit_credit_cols"))
+    paste(rec$debit %||% "", rec$credit %||% "") else (rec$amount %||% ""))
+}
+
+# pdf_keep_row(rec, style, date_ok, date_redacted, keep_dateless) -- THE decision
+# "is this visual row a transaction?", in ONE place.
+#
+# WHY it lives here and not in the reader's closure: the X-ray (inspect_pdf_layout)
+# has to paint EXACTLY the rows the reader keeps, and row_coverage counts what the
+# X-ray paints. When the two carried separate copies of the rule they drifted -- the
+# reader grew a fourth keep branch (keep_dateless_rows) that the X-ray never got, so
+# the reader kept rows the X-ray reported as SKIPPED and row_coverage told the
+# analyst "N row(s) skipped for an unreadable date", prescribing the exact wrong
+# remedy for rows that were never lost. One function, two callers, no drift.
+#
+#   date_ok       -- the date cell parsed to a real date
+#   date_redacted -- the date cell was HIDDEN (present but blacked out)
+#   keep_dateless -- template opt-in for shared-date statements (see keep_dateless_rows)
+pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
+                         keep_dateless = FALSE) {
+  if (.pdf_is_summary(rec$description, rec$raw)) return(FALSE)
+  if (!.pdf_has_amount(rec, style)) return(FALSE)   # must carry an amount slot
+  if (isTRUE(date_ok)) return(TRUE)                 # real date + an amount slot
+  # No real date: only REAL evidence in the money column can make it a transaction.
+  # We never fabricate a row out of a redaction alone.
+  real_amt <- .pdf_real_amount(rec, style)
+  (isTRUE(date_redacted) && real_amt) || (isTRUE(keep_dateless) && real_amt)
 }
 
 # .pdf_row_reason(rec, style, date_ok) -- WHY a visual row is NOT kept as a
@@ -178,6 +253,28 @@
   if (!isTRUE(date_ok) && !has_amt) return("no date and no amount - treated as a heading, note or wrapped line")
   if (!isTRUE(date_ok)) return("the date didn't parse - usually the date format in the template is wrong")
   "no amount in the money column(s) - check the amount / debit / credit bands"
+}
+
+# .append_cell(cur, add) -- append wrapped text to a cell that may be EMPTY. An
+# empty band reads as NA (not NULL), and `NA %||% ""` yields NA because NA is not
+# NULL -- so paste() rendered the literal string "NA" into the cell and the first
+# continuation line of an otherwise-blank reference / particulars column came out
+# as "NA REF-9". That is a fabricated value in a field promised verbatim, so treat
+# NA and whitespace as "nothing here" on BOTH sides.
+.append_cell <- function(cur, add) {
+  txt <- function(v) { v <- as.character(v %||% "")
+    if (!length(v) || is.na(v[1])) "" else trimws(v[1]) }
+  trimws(paste(txt(cur), txt(add)))
+}
+
+# .pdf_in_band(cx, cspec) -- which word centres fall inside a column band (all
+# FALSE for an unmapped band). The per-WORD form of .pdf_cell's membership test,
+# so the continuation merge can tell which words a band actually claimed and
+# therefore which words no band claimed -- the ones that used to be dropped.
+.pdf_in_band <- function(cx, cspec) {
+  if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max))
+    return(rep(FALSE, length(cx)))
+  !is.na(cx) & cx >= cspec$x_min & cx <= cspec$x_max
 }
 
 # .forced_band_hit(page, y0, y1, force_rows) -- does a visual row [y0,y1] on `page`
@@ -211,6 +308,14 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # so a European PDF template can declare its locale.
   dec <- template$decimal_mark %||% t$decimal_mark %||% "auto"
   udef <- template$unsigned_default %||% t$unsigned_default %||% "debit"
+  # type_dc tokens: the value in the indicator column that means DEBIT, and
+  # (optionally) the one that means CREDIT. Accepted top-level or inside the table
+  # block, like decimal_mark / unsigned_default, so a PDF template declares them
+  # the same way a delimited one does. tcv NULL = the binary back-compat rule
+  # (anything that is not the debit token is a credit); declaring it makes an
+  # unrecognised indicator fail CLOSED to NA instead of being signed a credit.
+  tdv <- template$type_debit_value  %||% t$type_debit_value  %||% "D"
+  tcv <- template$type_credit_value %||% t$type_credit_value
   words_by_page <- input$words %||% list()
   # Reference page size the bands were drawn in (recorded when the template was
   # built; A4 otherwise). Each page's words are scaled into this space below.
@@ -274,7 +379,12 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     grp <- .group_rows(w$y, row_tol)
     for (g in unique(grp)) {
       rw <- w[grp == g, , drop = FALSE]
+      ord <- order(rw$x)
       rec <- list(page = p,
+        # The row's words in reading order, with their centre-x. Kept so the
+        # continuation merge can account for EVERY word on a folded line instead
+        # of only the words a mapped descriptive band happened to claim.
+        .cx = (rw$x + rw$width / 2)[ord], .txt = as.character(rw$text)[ord],
         .y0 = min(rw$y), .y1 = max(rw$y + rw$height),
         .h = suppressWarnings(stats::median(rw$height, na.rm = TRUE)),
         date = .pdf_cell(rw, cols$date), description = .pdf_cell(rw, cols$description),
@@ -413,8 +523,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   .has_amount <- function(r) .pdf_has_amount(r, style)
   # .real_amount -- the amount is a VISIBLE number, not a redaction token. This is
   # the evidence half of the keep test alongside a real date.
-  .real_amount <- function(r) .has_real_money(if (identical(style, "debit_credit_cols"))
-    paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
+  .real_amount <- function(r) .pdf_real_amount(r, style)
   .is_summary <- function(r) .pdf_is_summary(r$description, r$raw)
   # Did we manage to resolve a year for a year-less date format? When we did NOT
   # (no period, no year anywhere in the text), dropping every row would silently
@@ -499,12 +608,11 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # or propagated from a neighbour) and it is flagged `no_date`, so the row is
   # preserved without inventing which date it belongs to.
   keep_dateless <- isTRUE(t$keep_dateless_rows %||% FALSE)
-  .is_txn <- function(r) {
-    if (.is_summary(r)) return(FALSE)
-    if (.date_ok(r$date)) return(.has_amount(r))              # real date + an amount slot
-    if (.redacted_cell(r$date) && .real_amount(r) && .has_amount(r)) return(TRUE)
-    keep_dateless && .real_amount(r) && .has_amount(r)        # shared-date row, blank date
-  }
+  # ONE keep rule, shared with the X-ray (pdf_keep_row, module level). Adding a
+  # branch here now automatically changes what the X-ray paints and what
+  # row_coverage counts, so the reader and the diagnostic can never disagree again.
+  .is_txn <- function(r)
+    pdf_keep_row(r, style, .date_ok(r$date), .redacted_cell(r$date), keep_dateless)
 
   # Split-row recovery: some statements render one transaction's cells on slightly
   # different baselines, so the DATE and the AMOUNT land in DIFFERENT visual rows (a
@@ -557,6 +665,11 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # X-ray, but the output cell is empty" case -- the reference lived on the
     # transaction's continuation lines and was being folded into description.
     descr_cols <- c("description", "reference", "particulars", "code", "other_party", "type")
+    # own_cols: the descriptive columns that keep their OWN wrapped text. NOT
+    # `description` -- description is the catch-all home for everything else on the
+    # line, and folding it separately would put a stray word AFTER the description
+    # band's words instead of in its printed left-to-right place.
+    own_cols <- setdiff(descr_cols, "description")
     # last_y1: the baseline of the last line attached to the current transaction
     # (the txn itself, or its most recent continuation). Measuring the gap from
     # HERE -- not from the transaction's own baseline -- lets a value wrap across
@@ -578,20 +691,41 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
                (r$.y0 - last_y1) <= 0.9 * lh && (r$.y0 - last_y1) >= -lh
       if (nzchar(line_txt) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
           !.is_summary(r) && !.is_footer_noise(line_txt) && close) {
-        # Route each mapped band's wrapped text into ITS own column. Only text that
-        # fell in no mapped descriptive band lands on the description (verbatim, so a
-        # free-floating wrapped line is still never lost) -- behaviour identical to
-        # before for templates that map only date/description/amount.
-        any_band <- FALSE
-        for (fld in descr_cols) {
+        # NOTHING on a merged line may be dropped. Descriptions are VERBATIM, and a
+        # continuation line's words are part of the description that was printed --
+        # losing one silently rewrites the payee ("PAYMENT TO JOHN" + "SMITH" +
+        # "HOLDINGS LTD" became "PAYMENT TO JOHN HOLDINGS LTD": a different legal
+        # entity, presented as verbatim, with the amounts untouched so no check could
+        # ever see it). The old loop folded only the words a mapped DESCRIPTIVE band
+        # claimed, so a wrapped word that drifted into the date / amount / balance
+        # band, or into no band at all, simply vanished.
+        #
+        # So: each own-column band still keeps its own wrapped text (a reference that
+        # wraps stays in `reference`), and EVERY remaining word on the line -- the
+        # description band's, the non-descriptive bands', and any unbanded word --
+        # folds into the description in printed left-to-right order.
+        own_hit <- rep(FALSE, length(r$.cx %||% numeric(0)))
+        for (fld in own_cols) {
           add <- r[[fld]] %||% NA_character_
           if (!is.na(add) && nzchar(trimws(add))) {
-            recs[[last_txn]][[fld]] <- trimws(paste(recs[[last_txn]][[fld]] %||% "", add))
-            any_band <- TRUE
+            recs[[last_txn]][[fld]] <- .append_cell(recs[[last_txn]][[fld]], add)
+            own_hit <- own_hit | .pdf_in_band(r$.cx, cols[[fld]])
           }
         }
-        if (!any_band)
-          recs[[last_txn]]$description <- trimws(paste(recs[[last_txn]]$description %||% "", line_txt))
+        # Words no own-column band claimed, still in reading order (.txt is x-sorted).
+        rest <- if (length(own_hit)) trimws(paste(r$.txt[!own_hit], collapse = " ")) else line_txt
+        if (nzchar(rest))
+          recs[[last_txn]]$description <- .append_cell(recs[[last_txn]]$description, rest)
+        # Visible when it MATTERS: a fold that pulled in text from outside the
+        # descriptive bands is the case that used to lose words, so mark the row.
+        # An ordinary description wrap (all words inside the descriptive bands, which
+        # the old code already folded whole) stays unflagged -- nothing changed there.
+        stray <- if (length(own_hit)) {
+          claimed <- own_hit
+          for (fld in descr_cols) claimed <- claimed | .pdf_in_band(r$.cx, cols[[fld]])
+          any(!claimed) && any(claimed)
+        } else FALSE
+        if (isTRUE(stray)) recs[[last_txn]]$.merged_stray <- TRUE
         drop[i] <- TRUE
         if (is.finite(r$.y1)) last_y1 <- max(last_y1, r$.y1)   # chain the next line from here
       }
@@ -614,9 +748,20 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # that is surfaced beats under-count that is silent.
   forced_vec <- vapply(recs, .row_forced, logical(1))
   keep <- vapply(recs, .is_txn, logical(1)) | forced_vec
+  # Completeness accounting for the no_unparsed_rows KPI. `candidate_rows` is every
+  # visual row still standing at the keep decision (after stitching and after
+  # continuation lines were folded into their transaction, so neither is miscounted
+  # as lost); `skipped_rows` is how many of those the keep rule rejected -- headers,
+  # summary lines, notes, and any row whose date or amount could not be read. It is
+  # NOT a count of losses, so it must never be subtracted like a source line count;
+  # it is reported so a PDF's completeness check states a real number instead of a
+  # green tick for a check that never ran.
+  candidate_rows <- length(recs)
+  skipped_rows <- sum(!keep)
   recs <- recs[keep]
   forced_vec <- forced_vec[keep]
   stitched_vec <- vapply(recs, function(r) isTRUE(r$.stitched), logical(1))
+  merged_vec <- vapply(recs, function(r) isTRUE(r$.merged_stray), logical(1))
   n <- length(recs)
   getc <- function(f) if (n == 0) character(0) else
     vapply(recs, function(r) r[[f]] %||% NA_character_, character(1))
@@ -644,7 +789,20 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
       amt$raw <- ifelse(cr_has, cr_raw, deb_raw)
     } else {
       amt_raw <- getc("amount")
-      amt <- parse_amount(amt_raw, style, list(decimal = dec, unsigned_default = udef)); amt$raw <- amt_raw
+      amt_opts <- list(decimal = dec, unsigned_default = udef)
+      if (identical(style, "type_dc")) {
+        # The debit/credit INDICATOR column and its declared tokens must reach
+        # parse_amount, exactly as the delimited path builds them (R/parse.R).
+        # Omitting them handed parse_amount no `type` at all, so every row fell into
+        # its back-compat "anything that isn't the debit token is a credit" branch
+        # and was signed +magnitude: every debit silently became a credit, with the
+        # "D" still printing beside a +500 credit so the row looked self-consistent,
+        # and the fail-closed unknown-token path was unreachable.
+        amt_opts$type <- getc("type")
+        amt_opts$type_debit_value  <- tdv
+        amt_opts$type_credit_value <- tcv   # NULL keeps the binary back-compat rule
+      }
+      amt <- parse_amount(amt_raw, style, amt_opts); amt$raw <- amt_raw
     }
     description <- clean_description(getc("description"))
   }
@@ -708,6 +866,9 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     f <- add(f, fb_used, "date_alt_format")     # read via the year-less fallback
     f <- add(f, forced_vec, "forced")           # a row the user added by hand from the X-ray
     f <- add(f, stitched_vec, "row_stitched")   # two half-rows the reader re-joined
+    # a wrapped line whose words strayed outside the descriptive bands was folded
+    # in: the description is complete but was ASSEMBLED, so say so.
+    f <- add(f, merged_vec, "row_text_merged")
     f <- add(f, ocr_low, "ocr_low_conf")
     f
   }
@@ -776,6 +937,13 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     source_ref = if (n == 0) character(0) else sprintf("pdf:p%d", pages_v),
     raw = getc("raw"), stringsAsFactors = FALSE)
 
+  # source_line_count stays NA on purpose: a PDF has no "physical data line" count
+  # that could be differenced against the parsed rows (headers, summary lines and
+  # wrapped text are legitimately not transactions), so reconcile must NOT compute
+  # a loss figure here. What it CAN state honestly is how many visual rows were
+  # examined and how many the keep rule rejected -- see no_unparsed_rows.
   list(transactions = core, extras = extras, header = header,
-       provenance = provenance, source_line_count = NA_integer_)
+       provenance = provenance, source_line_count = NA_integer_,
+       visual_row_count = as.integer(candidate_rows),
+       skipped_row_count = as.integer(skipped_rows))
 }

@@ -8,6 +8,18 @@
              informational = informational, stringsAsFactors = FALSE)
 }
 
+# .row_list(ids, max_show) -- "row 4", "rows 4, 9 and 12", "rows 4, 9, 12 ... (+3 more)".
+# A KPI detail has to POINT AT the offending rows or the reviewer cannot act on it,
+# but it must stay readable when a whole column failed to parse, hence the cap.
+.row_list <- function(ids, max_show = 10L) {
+  ids <- suppressWarnings(as.integer(ids)); ids <- ids[!is.na(ids)]
+  if (!length(ids)) return("no row identified")
+  extra <- length(ids) - max_show
+  shown <- paste(utils::head(ids, max_show), collapse = ", ")
+  lbl <- if (length(ids) == 1L) "row " else "rows "
+  if (extra > 0) sprintf("%s%s and %d more", lbl, shown, extra) else paste0(lbl, shown)
+}
+
 # reconcile(parsed, template) -> list(kpis, trust)
 reconcile <- function(parsed, template = NULL) {
   tx <- parsed$transactions
@@ -34,7 +46,12 @@ reconcile <- function(parsed, template = NULL) {
   if (is.na(opening) && !is.na(closing) && n > 0 && !is.na(bal[1]) && !is.na(tx$amount[1])) {
     opening <- bal[1] - tx$amount[1]; derived <- c(derived, "opening")
   }
-  if (!is.na(opening) && !is.na(closing) && n > 0 && !any(is.na(tx$amount))) {
+  # Which rows have no readable amount? One blank / unreadable / redacted amount is
+  # enough to make the total unprovable, so name them: "it didn't reconcile" is
+  # useless to a reviewer who cannot see WHICH figure is missing.
+  na_amt <- if (n > 0) which(is.na(tx$amount)) else integer(0)
+  na_ids <- if (length(na_amt)) (tx$row_id %||% seq_len(n))[na_amt] else integer(0)
+  if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt)) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
     note <- if (length(derived))
@@ -45,10 +62,34 @@ reconcile <- function(parsed, template = NULL) {
       discrepancy = disc,
       detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f%s",
                        opening, sum(tx$amount), closing, note))
-  } else {
+  } else if (!is.na(opening) && !is.na(closing) && n > 0) {
+    # BOTH anchors are printed on the statement -- the strongest completeness proof
+    # there is was available -- and a single unreadable amount is all that stopped
+    # it. Reporting "na" here shrugged off the one check that could have caught a
+    # wrong figure, and the run still came out trust medium / status ok / fed to
+    # Qlik. Unproven is not the same as not applicable: FAIL, so it routes to
+    # needs_review and the feed withholds it until a human resolves the amount.
     rows$balance_reconciliation <- .kpi(
-      "balance_reconciliation", "na",
-      detail = "no opening/closing balance and no running-balance column to derive one")
+      "balance_reconciliation", "fail",
+      expected = round(opening + sum(tx$amount, na.rm = TRUE), 2),
+      actual = round(closing, 2), discrepancy = NA,
+      detail = sprintf(paste0("cannot be proved: %d amount(s) could not be read (%s), ",
+                              "so opening %.2f + every transaction cannot be totalled ",
+                              "against the printed closing %.2f - resolve those amounts, ",
+                              "then re-run"),
+                       length(na_amt), .row_list(na_ids), opening, closing))
+  } else {
+    # Honest about WHICH anchor is missing. The old single message claimed there was
+    # "no opening/closing balance and no running-balance column" even when the
+    # statement printed both -- factually untrue, and it sent reviewers looking for
+    # a balance that was on the page all along.
+    why <- if (n == 0) "no transactions to reconcile"
+      else if (is.na(opening) && is.na(closing))
+        "no opening or closing balance was found, and no running-balance column to derive one from"
+      else if (is.na(opening))
+        "no opening balance was found, and none could be derived from the running-balance column"
+      else "no closing balance was found, and none could be derived from the running-balance column"
+    rows$balance_reconciliation <- .kpi("balance_reconciliation", "na", detail = why)
   }
 
   # 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
@@ -169,20 +210,47 @@ reconcile <- function(parsed, template = NULL) {
   if (is.na(extra_ml)) extra_ml <- 0L
   lost <- if (!is.na(src_lines)) max(0L, src_lines - n - extra_ml) else 0L
   good <- n - malformed
-  ok_rows <- (malformed == 0) && (lost == 0)
   expected_rows <- if (!is.na(src_lines)) src_lines else n
-  rows$no_unparsed_rows <- .kpi(
-    "no_unparsed_rows", if (ok_rows) "pass" else "fail",
-    expected = expected_rows, actual = good,
-    discrepancy = expected_rows - good,
-    detail = if (lost > 0)
-      sprintf("%d source line(s) unaccounted for; %d malformed row(s)", lost, malformed)
-    else if (is.na(src_lines))
-      sprintf(paste0("%d malformed row(s). Note: for this format the total source ",
-                     "line count is not independently known, so rows dropped by ",
-                     "column/date filtering are NOT counted here -- rely on ",
-                     "balance_reconciliation for completeness."), malformed)
-    else sprintf("%d malformed row(s)", malformed))
+  # Rows the PDF reader examined but did not keep (headers, summary lines, notes,
+  # and any row whose date or amount it could not read). Threaded out of
+  # parse_pdf_table so this KPI can state a real number instead of nothing.
+  skipped_rows <- suppressWarnings(as.integer(parsed$skipped_row_count %||% NA))
+  visual_rows  <- suppressWarnings(as.integer(parsed$visual_row_count %||% NA))
+  if (!is.na(src_lines)) {
+    # Delimited: the physical data-line count is known, so completeness is provable.
+    rows$no_unparsed_rows <- .kpi(
+      "no_unparsed_rows", if (malformed == 0 && lost == 0) "pass" else "fail",
+      expected = expected_rows, actual = good, discrepancy = expected_rows - good,
+      detail = if (lost > 0)
+        sprintf("%d source line(s) unaccounted for; %d malformed row(s)", lost, malformed)
+      else sprintf("%d malformed row(s)", malformed))
+  } else if (malformed > 0) {
+    rows$no_unparsed_rows <- .kpi(
+      "no_unparsed_rows", "fail", expected = expected_rows, actual = good,
+      discrepancy = malformed, detail = sprintf("%d malformed row(s)", malformed))
+  } else {
+    # PDF / Excel: there is NO independent source-line count, so `lost` was always
+    # 0 by construction and this KPI reported "pass" for every such statement -- a
+    # green tick for a check that never ran, which is exactly the failure the
+    # charter forbids. Say "not applicable" instead, and show the skipped-row count
+    # so the number is a fact the reviewer can check in the X-ray rather than a
+    # reassurance nobody computed.
+    rows$no_unparsed_rows <- .kpi(
+      "no_unparsed_rows", "na", expected = expected_rows, actual = good,
+      discrepancy = NA,
+      detail = if (!is.na(skipped_rows) && !is.na(visual_rows))
+        sprintf(paste0("cannot be proved for this format: there is no independent ",
+                       "source line count. %d of %d visual row(s) were read as ",
+                       "transactions and %d were skipped (headings, summary lines, ",
+                       "wrapped text, or a date/amount that could not be read) - ",
+                       "check those in the Inspect view; completeness otherwise ",
+                       "rests on balance_reconciliation."),
+                n, visual_rows, skipped_rows)
+      else paste0("cannot be proved for this format: the total source line count is ",
+                  "not independently known, so rows dropped by column/date filtering ",
+                  "are NOT counted here -- rely on balance_reconciliation for ",
+                  "completeness."))
+  }
 
   # 6. redaction_summary: informational count of redacted rows.
   redacted <- sum(grepl("redacted", tx$flags))
@@ -207,6 +275,27 @@ reconcile <- function(parsed, template = NULL) {
       discrepancy = NA,
       detail = "machine-read (OCR) text is not guaranteed 100% accurate -- verify amounts and descriptions against the source PDF",
       informational = TRUE)
+  }
+
+  # 8. redaction_scan: did the occlusion scan actually finish on every page?
+  # The scan is the ONLY thing that proves text under a redaction box stayed
+  # hidden. When it could not complete, the reader falls back to the raw text
+  # layer -- so words the sender blacked out may have been emitted verbatim. The
+  # header carried that fact all the way here and NOTHING read it: the run said
+  # "Converted successfully", trust was uncapped, and the feed accepted a file
+  # that may contain hidden text. Honouring redactions is absolute, so this FAILS
+  # (routing to needs_review and withholding the feed) rather than warning quietly.
+  # Only raised when there IS a problem, so a clean scan changes nothing.
+  scan_incomplete <- suppressWarnings(as.integer(h$redaction_scan_incomplete %||% 0L))
+  if (is.na(scan_incomplete)) scan_incomplete <- 0L
+  if (scan_incomplete > 0) {
+    rows$redaction_scan <- .kpi(
+      "redaction_scan", "fail", expected = 0, actual = scan_incomplete,
+      discrepancy = scan_incomplete,
+      detail = sprintf(paste0("the redaction scan could not complete on %d page(s), so text ",
+                              "hidden under a redaction box may have been read and emitted - ",
+                              "do NOT release this output; check those pages against the ",
+                              "source PDF before use"), scan_incomplete))
   }
 
   kpis <- do.call(rbind, rows)
@@ -272,6 +361,20 @@ reconcile <- function(parsed, template = NULL) {
     reasons <- c(reasons, sprintf(
       "%d row(s) have an UNRESOLVED year (no statement period found); day and month are captured verbatim but the year could not be determined - assign it before relying on the dates",
       n_dateunres))
+  }
+
+  # Inferred-year caveat: the mirror image of the case above. The table printed
+  # day+month only, NO statement period could be read, and the reader took the year
+  # from the one 4-digit number it found in free page text (a footer, a copyright
+  # line). Those dates come out fully formed and LOOK proven, so nothing above would
+  # ever question them -- but the year came from outside the period wording and is
+  # an inference, not a fact. Cap trust and say where the year came from.
+  n_yearinf <- sum(grepl("date_year_inferred", tx$flags))
+  if (n_yearinf > 0) {
+    if (identical(level, "high")) level <- "medium"
+    reasons <- c(reasons, sprintf(
+      "%d row(s) have an INFERRED year: no statement period was found, so the year was taken from the only 4-digit year printed anywhere on the page (e.g. a footer). Day and month are verbatim - confirm the year against the statement before relying on the dates",
+      n_yearinf))
   }
 
   # OCR caveat (forensic): a statement where ANY page was machine-read by OCR is

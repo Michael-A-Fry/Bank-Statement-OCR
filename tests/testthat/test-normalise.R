@@ -83,6 +83,23 @@ test_that("unsigned (credit card): bare = charge (debit), CR = payment (credit)"
   expect_true(is.na(parse_amount("", "unsigned")$value))
 })
 
+test_that("unsigned: the payment marker comes from the lexicon, like dr_cr_suffix", {
+  # The marker used to be a hardcoded "CR" in this style only, so the SAME
+  # admin-approved vocabulary was honoured by dr_cr_suffix and silently ignored
+  # here: a bank whose payment marker is written any other way had every payment
+  # read with the CHARGE sign -- wrong, and invisible (the marker still prints).
+  lx <- tempfile(fileext = ".yaml")
+  writeLines("dr_cr_suffix_credit: [PMT]", lx)
+  old <- Sys.getenv("BSO_LEXICON", NA_character_)
+  Sys.setenv(BSO_LEXICON = lx); clear_lexicon_cache()
+  on.exit({ if (is.na(old)) Sys.unsetenv("BSO_LEXICON") else Sys.setenv(BSO_LEXICON = old)
+            clear_lexicon_cache() }, add = TRUE)
+  # the added marker now flips the sign (before: -45, read as another charge)...
+  expect_equal(parse_amount(c("45.00", "500.00 PMT"), "unsigned")$value, c(-45, 500))
+  # ...and the built-in "CR" still works (list semantics UNION, never replace).
+  expect_equal(parse_amount("500.00 CR", "unsigned")$value, 500)
+})
+
 test_that("clean_description is verbatim: only outer whitespace trimmed", {
   expect_identical(
     clean_description(c("  O'Connor & Sons  ", "A  B", "café")),

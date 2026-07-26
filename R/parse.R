@@ -119,18 +119,6 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   if (is.null(amt_col)) amt_col <- rep(NA_character_, n)
   a <- parse_amount(amt_col, style, amt_opts)
 
-  # Did this row actually carry an amount input? For debit_credit_cols the money
-  # lives in the debit/credit columns (amt_col is all-NA), so testing amt_col
-  # alone would never flag a debit_credit row whose amount failed to parse. Look
-  # at the right source per style so the malformed check below is style-correct.
-  had_amt_input <- if (style == "debit_credit_cols") {
-    db <- amt_opts$debit  %||% rep(NA_character_, n)
-    cr <- amt_opts$credit %||% rep(NA_character_, n)
-    !(vapply(db, is.blank_amount, logical(1)) & vapply(cr, is.blank_amount, logical(1)))
-  } else {
-    !vapply(amt_col, is.blank_amount, logical(1))
-  }
-
   # ---- description (verbatim) ----
   desc_col <- .pick(tbl, .col_source(template, "description"))
   description <- if (is.null(desc_col)) rep(NA_character_, n) else clean_description(desc_col)
@@ -183,8 +171,15 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     if (amt_red) f <- c(f, "redacted")
     fc <- if (i <= length(reader$field_counts)) reader$field_counts[i] else NA_integer_
     exp <- reader$expected_fields
+    # An amount that did not come out as a number is malformed WHETHER the cell held
+    # unreadable text or nothing at all. A "did this row carry an amount input?"
+    # guard used to exempt a genuinely BLANK amount cell, so such a row carried no
+    # flag whatsoever while the PDF path flags the same row -- and a row with no
+    # amount is exactly a row whose money cannot be totalled, i.e. the completeness
+    # proof is broken and nothing said so. A REDACTED amount is still not malformed:
+    # it was read correctly and is deliberately withheld (amt_red above).
     malformed <- (!is.na(fc) && !is.na(exp) && fc != exp) ||
-                 (is.na(a$value[i]) && !amt_red && had_amt_input[i])
+                 (is.na(a$value[i]) && !amt_red)
     if (malformed) f <- c(f, "malformed")
     if (isTRUE(fx_present[i])) f <- c(f, "fx")
     paste(f, collapse = ",")

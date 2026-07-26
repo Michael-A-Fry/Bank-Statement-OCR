@@ -143,3 +143,80 @@ test_that("inspect_pdf_layout is well-formed on an empty / word-less page", {
   expect_equal(nrow(p$words), 0L)
   expect_equal(nrow(p$rows), 0L)
 })
+
+# ---- the X-ray and the reader must agree, row for row ----------------------
+# The two used to carry SEPARATE copies of the keep rule and drifted: the reader
+# grew a keep_dateless_rows branch the overlay never got, so it kept rows the X-ray
+# reported as SKIPPED and row_coverage told the analyst "N row(s) skipped for an
+# unreadable date" -- prescribing the exact wrong remedy for rows that were never
+# lost. They now share pdf_keep_row(); this asserts the counts can't diverge again.
+.xr_tmpl <- function() list(id = "s", bank = "S", statement_type = "e", format = "pdf",
+  version = 1, currency = "NZD",
+  table = list(row_tol = 3, date_format = "%d %b", amount_sign = "signed",
+    columns = list(date = list(x_min = 40, x_max = 74),
+                   description = list(x_min = 74, x_max = 360),
+                   amount = list(x_min = 360, x_max = 470),
+                   balance = list(x_min = 470, x_max = 545))))
+.xr_input <- function(words) list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+  pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+  page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
+.xr_kept <- function(input, tmpl) sum(vapply(inspect_pdf_layout(input, tmpl)$pages,
+  function(P) if (is.null(P$rows) || !nrow(P$rows)) 0L else sum(P$rows$kept), integer(1)))
+
+test_that("inspect's kept count equals the reader's row count (keep_dateless)", {
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","4.50","95.50",
+              "SHOP","10.00","85.50",                 # shares the date above
+              "BOOKS","5.00","80.50"),                 # shares the date above
+    x     = c(45,60,110,415,490,   110,415,490,   110,415,490),
+    y     = c(40,40,40,40,40,      70,70,70,      100,100,100),
+    width = c(12,16,45,25,30,      45,25,30,      45,25,30),
+    height= rep(9, 11))
+  input <- .xr_input(words)
+  tmpl <- .xr_tmpl(); tmpl$table$merge_continuation <- FALSE
+
+  off <- tmpl
+  expect_equal(.xr_kept(input, off), nrow(parse_pdf_table(input, off)$transactions))
+
+  on <- tmpl; on$table$keep_dateless_rows <- TRUE
+  expect_equal(nrow(parse_pdf_table(input, on)$transactions), 3L)   # sanity: reader keeps 3
+  expect_equal(.xr_kept(input, on), 3L)                             # X-ray now paints 3
+})
+
+test_that("inspect's kept count equals the reader's row count (redacted date)", {
+  R <- "[REDACTED]"
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c(R,"COFFEE","-40.00","955.50",           # date hidden, real amount -> kept
+              "06","Jan","SHOP","-10.00","945.50",
+              R,R,R,R),                                # wholly redacted -> never a transaction
+    x     = c(45,110,415,490,   45,60,110,415,490,   45,110,415,490),
+    y     = c(40,40,40,40,      70,70,70,70,70,      100,100,100,100),
+    width = c(55,45,34,30,      12,16,45,34,30,      55,45,34,30),
+    height= rep(10, 13))
+  # the X-ray reads redaction off the word-level `redacted` column
+  words$redacted <- grepl("REDACT", words$text)
+  input <- .xr_input(words)
+  expect_equal(nrow(parse_pdf_table(input, .xr_tmpl())$transactions), 2L)
+  expect_equal(.xr_kept(input, .xr_tmpl()), 2L)
+})
+
+test_that("inspect's kept count equals the reader's row count (stitched split rows)", {
+  # One transaction per pair, staggered so the date and the amount land in
+  # DIFFERENT visual rows. The reader stitches them; the overlay used to show both
+  # halves as skipped, so its count could never match.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("COFFEE","4.50","95.50",   "05","Jan",
+              "RENT","10.00","85.50",     "06","Jan"),
+    x     = c(110,415,490,   45,60,        110,415,490,     45,60),
+    y     = c(40,40,40,       45,45,        70,70,70,        75,75),
+    width = c(45,25,30,       12,16,        30,30,30,        12,16),
+    height= rep(9, 10))
+  input <- .xr_input(words)
+  tx <- parse_pdf_table(input, .xr_tmpl())$transactions
+  expect_equal(nrow(tx), 2L)
+  expect_true(all(grepl("row_stitched", tx$flags)))
+  expect_equal(.xr_kept(input, .xr_tmpl()), 2L)
+  # the absorbed half is explained, not reported as a missed transaction
+  rows <- inspect_pdf_layout(input, .xr_tmpl())$pages[["1"]]$rows
+  expect_match(paste(rows$reason, collapse = " "), "split row")
+})

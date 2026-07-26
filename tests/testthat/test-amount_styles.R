@@ -15,7 +15,12 @@ test_that("debit_credit_cols: separate columns set the sign", {
   expect_equal(tx$amount[tx$description == "Salary"], 2500.00)   # credit -> +
   expect_equal(tx$amount[tx$description == "Rent"], -1200.00)    # debit  -> -
   expect_true(is.na(tx$amount[tx$description == "Opening"]))     # blank both -> NA
-  expect_true(all(tx$flags == ""))                              # blank != malformed
+  # A row with NO readable amount is FLAGGED, blank cell or not: its money can't be
+  # totalled, so the completeness proof is broken and that must be visible. (This
+  # used to be silent on the delimited path while the PDF path flagged the same
+  # row.) The rows that DID parse stay clean.
+  expect_match(tx$flags[tx$description == "Opening"], "malformed")
+  expect_true(all(tx$flags[tx$description %in% c("Salary", "Rent")] == ""))
 })
 
 test_that("dr_cr_suffix: trailing DR/CR sets the sign", {

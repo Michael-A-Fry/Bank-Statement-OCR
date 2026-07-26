@@ -6,8 +6,17 @@
 # continuation, heading). No dates, descriptions or amounts leave the machine.
 
 # .rowcov_bucket(reason) -- collapse a per-row skip reason into a safe category.
+# ORDER MATTERS. The heading reason ("no date and no amount - treated as a heading,
+# note or wrapped line") CONTAINS the substring "no amount", so testing "no amount"
+# first swallowed it into amount_missing -- every heading and note on the page then
+# counted as an ACTIONABLE skip, and the diagnosis told the analyst rows had been
+# lost to a missing amount when nothing was lost at all. Match the whole-reason
+# cases first, from the front of the string, before the loose substring tests.
 .rowcov_bucket <- function(reason) {
   if (is.null(reason) || !nzchar(reason)) return("kept")
+  if (grepl("^no date and no amount", reason)) return("heading_or_note")
+  # a split row re-joined above is captured, not lost -- same family as a wrapped line
+  if (grepl("^split row", reason))   return("continuation")
   if (grepl("didn't parse", reason)) return("date_unreadable")
   if (grepl("no amount", reason))    return("amount_missing")
   if (grepl("summary", reason))      return("summary_line")

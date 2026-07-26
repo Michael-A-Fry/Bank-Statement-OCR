@@ -1,0 +1,6 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2026-03-06","06 Mar","EFTPOS TOTARA GROCER",-48.65,"48.65","debit",826.55,"826.55",,,,,,"NZD",""
+2,"2026-03-11","11 Mar","PAY MATAI HOLDINGS",1890.45,"1,890.45","credit",2717,"2,717.00",,,,,,"NZD",""
+3,"2026-03-17","17 Mar","BILL PAYMENT POWER CO",-152.3,"152.30","debit",2564.7,"2,564.70",,,,,,"NZD",""
+4,"2026-03-23","23 Mar","ATM CASH WITHDRAWAL",-120,"120.00","debit",2444.7,"2,444.70",,,,,,"NZD",""
+5,"2026-03-30","30 Mar","REFUND ONLINE STORE",33.1,"33.10","credit",2477.8,"2,477.80",,,,,,"NZD",""

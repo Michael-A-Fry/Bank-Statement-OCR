@@ -82,6 +82,99 @@ test_that("sample templates are excluded from the production detection set (P2-8
   expect_true(isTRUE(raw[["tutorial_everyday_pdf"]]$sample))
 })
 
+test_that("an off-band foreign PDF is unsupported, not parsed as ASB (P1-3/56)", {
+  # THE defect this package exists for. asb_everyday_pdf used to fingerprint on
+  # ["Debit/Withdrawal", "Deposit", "Balance"] with min_score 2, so ANY pdf
+  # carrying the words "Deposit" and "Balance" -- i.e. essentially every bank
+  # statement on earth -- scored 2, matched ASB, and was parsed with ASB's column
+  # bands (a foreign bank's charges came out as credits, status ok, feed ACCEPTED).
+  templates <- load_template_set(templates_dir(), tempfile())
+  foreign <- list(kind = "pdf", path = "foreign_bank.pdf", sha256 = "s", pages = paste(
+    "Banco Ejemplo - Cuenta Corriente",
+    "Statement of Account   Page 1 of 2",
+    "Date      Concept                   Deposit     Withdrawal    Balance",
+    "01/03/2026 Comision de mantenimiento              12.00      1,988.00",
+    "04/03/2026 Transferencia recibida     500.00                 2,488.00", sep = "\n"))
+  det <- detect_statement(foreign, templates)
+  expect_false(det$matched)
+  expect_false(identical(det$template_id, "asb_everyday_pdf"))
+})
+
+test_that("the ASB pdf fingerprint no longer shadows a genuine ANZ statement (P1-3/56)", {
+  # The same two generic words scored 2 on real ANZ statements too, so
+  # asb_everyday_pdf was a permanent runner-up: anz_everyday_pdf won 3-vs-2, a
+  # margin of 1, which R/convert.R forces to needs_review -- every genuine ANZ PDF
+  # was withheld from the Qlik feed forever. The margin must now be Inf (no other
+  # eligible candidate at all).
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  fx <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
+  skip_if_not(file.exists(fx))
+  det <- detect_statement(read_input(fx), load_template_set(templates_dir(), tempfile()))
+  expect_true(det$matched)
+  expect_identical(det$template_id, "anz_everyday_pdf")
+  expect_true(is.infinite(det$margin))          # no near-miss runner-up
+  expect_true(is.na(det$runner_up))
+})
+
+test_that("every shipped PDF template detects its own fixture unambiguously", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  cases <- list(
+    c("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf",     "anz_everyday_pdf"),
+    c("tests/testthat/fixtures/asb_everyday_pdf_sample.pdf",     "asb_everyday_pdf"),
+    c("tests/testthat/fixtures/westpac_everyday_pdf_sample.pdf", "westpac_everyday_pdf"))
+  templates <- load_template_set(templates_dir(), tempfile())
+  for (cs in cases) {
+    skip_if_not(file.exists(fixture(cs[1])))
+    det <- detect_statement(read_input(fixture(cs[1])), templates)   # NO hint
+    expect_true(det$matched, info = sprintf("%s: %s", cs[2], det$detail))
+    expect_identical(det$template_id, cs[2])
+    expect_true(is.infinite(det$margin))       # nothing else is even eligible
+  }
+})
+
+test_that("fingerprint matching tolerates a PDF's column padding (P1-48)", {
+  # The drafter stores a phrase whitespace-COLLAPSED, but a pdftools page keeps the
+  # wide column padding, and matching is a fixed substring -- so a template could
+  # not detect the file it was drafted from. Both sides are normalised now.
+  tmpl <- list(id = "pad", format = "pdf",
+               fingerprint = list(page_contains_all = c("Withdrawals Deposits Balance")))
+  padded <- list(pages = "Date   Details            Withdrawals    Deposits    Balance")
+  expect_equal(.score_template(padded, tmpl)$score, 1)
+  # ...but a phrase must still not match ACROSS a line break: folding newlines too
+  # would make detection looser, the wrong direction for a fail-closed engine.
+  split_lines <- list(pages = "Date   Details   Withdrawals\nDeposits   Balance")
+  expect_equal(.score_template(split_lines, tmpl)$score, 0)
+  # a non-breaking space in the page text folds like an ordinary one
+  expect_equal(.score_template(list(pages = "x Withdrawals Deposits Balance y"), tmpl)$score, 1)
+  # a page whose text layer is not valid UTF-8 must not crash detection
+  bad <- rawToChar(as.raw(c(0x57, 0x92, 0x20, 0x44)))
+  Encoding(bad) <- "UTF-8"
+  expect_silent(sc <- .score_template(list(pages = bad), tmpl))
+  expect_equal(sc$score, 0)
+})
+
+test_that("a drafted PDF template detects its own source file (P1-48 round trip)", {
+  # Regression for the whole loop an accountant actually walks: draft a template
+  # from an unsupported PDF, save it, re-upload the same file. Before the fix 3 of
+  # these 5 scored below their own min_score and came back "unsupported".
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  pdfs <- c("samples/raw/tutorial/sample_everyday_statement.pdf",
+            "samples/raw/anz/anz_investmentfunds_statement_guide_sample.pdf",
+            "tests/testthat/fixtures/anz_everyday_pdf_sample.pdf",
+            "tests/testthat/fixtures/asb_everyday_pdf_sample.pdf",
+            "tests/testthat/fixtures/westpac_everyday_pdf_sample.pdf")
+  for (rel in pdfs) {
+    f <- fixture(rel)
+    skip_if_not(file.exists(f))
+    tmpl <- draft_template(f, bank = "Draft Test")
+    expect_identical(tmpl$format, "pdf", info = rel)
+    expect_length(validate_template(tmpl), 0)             # savable as drafted
+    det <- detect_statement(read_input(f), setNames(list(tmpl), tmpl$id))
+    expect_true(det$matched,
+      info = sprintf("%s could not detect its own source: %s", basename(rel), det$detail))
+  }
+})
+
 test_that("a match reports its margin + runner-up over near-duplicate templates", {
   # aaa fingerprints on 2 phrases (both present -> score 2); bbb on 1 (score 1).
   # aaa wins by a THIN margin of 1, and bbb is the runner-up.

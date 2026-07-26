@@ -15,14 +15,40 @@
   trimws(as.character(unlist(fields)))
 }
 
+# .fp_norm_ws(x) -- collapse every run of HORIZONTAL whitespace to a single space
+# (and strip padding either side of a line break), leaving line breaks intact.
+#
+# WHY: a PDF page's text keeps the wide column padding pdftools renders
+# ("Withdrawals      Deposits"), but the auto-drafter stores a fingerprint phrase
+# already whitespace-collapsed ("Withdrawals Deposits"), and matching is a FIXED
+# substring -- so a drafted template could not detect the very file it was drafted
+# from. Folding BOTH sides here (rather than at draft time) also repairs templates
+# already saved out in the field. Line breaks are deliberately kept: collapsing
+# them too would let a phrase match across a line boundary, which would make
+# detection LOOSER -- the wrong direction for a fail-closed engine. Curated
+# single-spaced fingerprints are unaffected (nothing to collapse).
+.fp_norm_ws <- function(x) {
+  # useBytes throughout: a PDF's text layer is not always valid UTF-8, and a plain
+  # gsub/trimws ERRORS on such a string -- detection must never crash on a file it
+  # simply cannot read well. Byte-wise folding of ASCII whitespace is identical for
+  # every well-formed page and merely survives the malformed ones.
+  # \u00a0 is the non-breaking space some PDF producers emit where a plain space is
+  # meant -- it must fold too, or the phrase and the page still disagree.
+  x <- gsub("\u00a0", " ", x, fixed = TRUE, useBytes = TRUE)
+  x <- gsub("[ \t\r\f\v]+", " ", x, useBytes = TRUE)
+  x <- gsub(" *\n *", "\n", x, useBytes = TRUE)
+  gsub("^[ \n]+|[ \n]+$", "", x, useBytes = TRUE)
+}
+
 # .score_template(input, template) -- fingerprint score for one template.
 .score_template <- function(input, template) {
   fp <- template$fingerprint
   # PDF templates fingerprint on page text, not delimited headers.
   if (identical(template$format %||% "delimited", "pdf")) {
     need <- as.character(fp$page_contains_all %||% character(0))
-    hay <- paste(input$pages %||% character(0), collapse = "\n")
-    hits <- vapply(need, function(ph) grepl(ph, hay, fixed = TRUE), logical(1))
+    hay <- .fp_norm_ws(paste(input$pages %||% character(0), collapse = "\n"))
+    hits <- vapply(need, function(ph)
+      grepl(.fp_norm_ws(ph), hay, fixed = TRUE, useBytes = TRUE), logical(1))
     return(list(score = sum(hits), need = length(need), missing = need[!hits]))
   }
   # Excel templates fingerprint on the sheet's column names.

@@ -6,7 +6,11 @@
   t <- list(
     id = "x", bank = "B", statement_type = "e", format = "delimited",
     version = 1, min_score = 1,
-    fingerprint = list(header_contains_all = c("Date", "Amount")),
+    # A DISTINCTIVE header set: "Date"/"Amount" alone appear on every statement
+    # ever exported, so validate_template now rejects them as a fingerprint (that
+    # looseness is what let one template swallow other banks' files). These tests
+    # are about saving / hiding / origin, so they carry a realistic fingerprint.
+    fingerprint = list(header_contains_all = c("Date", "Amount", "Particulars")),
     delimiter = ",",
     columns = list(date = list(source = "Date"), amount = list(source = "Amount"),
                    description = list(source = "Amount")),

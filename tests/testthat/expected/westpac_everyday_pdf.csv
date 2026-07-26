@@ -1,0 +1,6 @@
+"row_id","date","date_raw","description","amount","amount_raw","direction","balance","balance_raw","particulars","code","reference","other_party","type","currency","flags"
+1,"2026-04-02","02 Apr","DD RIMU INSURANCE",-88.9,"88.90","debit",5151.1,"5,151.10",,,,,,"NZD",""
+2,"2026-04-08","08 Apr","SALARY MATAI HOLDINGS",2760.15,"2,760.15","credit",7911.25,"7,911.25",,,,,,"NZD",""
+3,"2026-04-15","15 Apr","EFTPOS KOWHAI CAFE",-6.5,"6.50","debit",7904.75,"7,904.75",,,,,,"NZD",""
+4,"2026-04-19","19 Apr","TRANSFER TO LOAN",-950,"950.00","debit",6954.75,"6,954.75",,,,,,"NZD",""
+5,"2026-04-27","27 Apr","VISA AIRLINE BOOKING",-412.3,"412.30","debit",6542.45,"6,542.45",,,,,,"NZD",""

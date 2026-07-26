@@ -212,7 +212,14 @@ parse_amount <- function(x, style = "signed", opts = list()) {
     base <- if (identical(opts[["unsigned_default"]] %||% "debit", "credit")) 1 else -1
     up <- toupper(trimws(raw))
     sgn <- rep(base, length(mag))
-    sgn[grepl("CR\\s*$", up)] <- -base             # a CR payment is the opposite of a charge
+    # The payment marker comes from the LEXICON (default "CR"), exactly as the
+    # dr_cr_suffix style above reads it. Hardcoding "CR" here meant the SAME
+    # admin-approved vocabulary was honoured in one amount style and silently
+    # ignored in the other: a bank whose payment marker is written any other way
+    # had every payment read with the CHARGE sign -- a wrong sign that looks right,
+    # and invisible because the marker still prints beside it.
+    credit_rx <- sprintf("(%s)\\s*$", paste(toupper(lex("dr_cr_suffix_credit")), collapse = "|"))
+    sgn[grepl(credit_rx, up)] <- -base             # a CR payment is the opposite of a charge
     value <- ifelse(is.na(mag), NA_real_, sgn * mag)
     return(list(value = value, direction = .direction(value), raw = raw))
   }

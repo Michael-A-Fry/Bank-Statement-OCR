@@ -143,3 +143,115 @@ test_that("no_unparsed_rows FAILS on a malformed row even if counts align", {
   k <- reconcile(p)$kpis
   expect_equal(k$status[k$name == "no_unparsed_rows"], "fail")
 })
+
+# ---- balance_reconciliation: an unreadable amount must not be shrugged off ----
+test_that("an unreadable amount with BOTH balances printed FAILS, and names the rows", {
+  # One blank/redacted/unreadable amount used to disable the strongest completeness
+  # proof for the WHOLE statement, and the KPI then reported "na" with the detail
+  # "no opening/closing balance and no running-balance column to derive one" --
+  # factually untrue when the statement printed both. The run came out trust
+  # medium, status ok, and was fed to the dashboards.
+  p <- .parsed(.tx(c(10, NA, 5)),
+               header = list(opening_balance = 1000, closing_balance = 1015),
+               source_line_count = 3)
+  k <- reconcile(p)$kpis
+  row <- k[k$name == "balance_reconciliation", ]
+  expect_equal(row$status, "fail")                    # unproven is not "not applicable"
+  expect_match(row$detail, "cannot be proved")
+  expect_match(row$detail, "row 2")                   # points at the offending row
+  expect_false(grepl("no opening/closing balance", row$detail))  # the false claim is gone
+  expect_equal(reconcile(p)$trust$level, "low")       # ...and trust reflects it
+
+  # the same statement with every amount readable still reconciles cleanly
+  ok <- .parsed(.tx(c(10, 0, 5)),
+                header = list(opening_balance = 1000, closing_balance = 1015),
+                source_line_count = 3)
+  expect_equal(reconcile(ok)$kpis$status[
+    reconcile(ok)$kpis$name == "balance_reconciliation"], "pass")
+})
+
+test_that("the balance_reconciliation 'na' detail says WHICH balance is missing", {
+  neither <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
+  d <- reconcile(neither)$kpis$detail[
+    reconcile(neither)$kpis$name == "balance_reconciliation"]
+  expect_match(d, "no opening or closing balance")
+
+  # opening printed, closing absent and underivable (no balance column)
+  no_close <- .parsed(.tx(c(-10, 40)), header = list(opening_balance = 100),
+                      source_line_count = 2)
+  d2 <- reconcile(no_close)$kpis$detail[
+    reconcile(no_close)$kpis$name == "balance_reconciliation"]
+  expect_match(d2, "no closing balance")
+  expect_false(grepl("no opening", d2))
+
+  no_open <- .parsed(.tx(c(-10, 40)), header = list(closing_balance = 100),
+                     source_line_count = 2)
+  d3 <- reconcile(no_open)$kpis$detail[
+    reconcile(no_open)$kpis$name == "balance_reconciliation"]
+  expect_match(d3, "no opening balance")
+})
+
+# ---- no_unparsed_rows on formats with no source-line count ------------------
+test_that("no_unparsed_rows is 'na', not a false 'pass', when it cannot be computed", {
+  # `lost` is 0 by construction without a source line count, so this KPI reported
+  # "pass" for EVERY pdf/excel statement -- a green tick for a check that never ran.
+  p <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  p$visual_row_count <- 5L; p$skipped_row_count <- 3L
+  row <- reconcile(p)$kpis
+  row <- row[row$name == "no_unparsed_rows", ]
+  expect_equal(row$status, "na")
+  expect_match(row$detail, "cannot be proved for this format")
+  expect_match(row$detail, "3 were skipped")          # the threaded count is stated
+  expect_match(row$detail, "2 of 5 visual row")
+
+  # a malformed row is a REAL defect and still fails loudly on such a format
+  pm <- .parsed(.tx(c(-10, 40), flags = c("malformed", "")), source_line_count = NA_integer_)
+  expect_equal(reconcile(pm)$kpis$status[
+    reconcile(pm)$kpis$name == "no_unparsed_rows"], "fail")
+
+  # a delimited statement (source line count known) still PASSES exactly as before
+  pd <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
+  expect_equal(reconcile(pd)$kpis$status[
+    reconcile(pd)$kpis$name == "no_unparsed_rows"], "pass")
+})
+
+# ---- redaction_scan: an incomplete scan may have leaked hidden text ---------
+test_that("an incomplete redaction scan FAILS a KPI (it never reached reconcile before)", {
+  clean <- .parsed(.tx(c(-10, 40)), header = list(redaction_scan_incomplete = 0L),
+                   source_line_count = 2)
+  expect_false("redaction_scan" %in% reconcile(clean)$kpis$name)   # nothing to report
+
+  leak <- .parsed(.tx(c(-10, 40)), header = list(redaction_scan_incomplete = 2L),
+                  source_line_count = 2)
+  r <- reconcile(leak)
+  row <- r$kpis[r$kpis$name == "redaction_scan", ]
+  expect_equal(row$status, "fail")             # drives needs_review + feed withholding
+  expect_equal(as.integer(row$actual), 2L)
+  expect_match(row$detail, "hidden under a redaction box")
+  expect_equal(r$trust$level, "low")
+})
+
+# ---- inferred year: a guessed year must never read as proven ----------------
+test_that("date_year_inferred caps trust and states where the year came from", {
+  # The reader can take a year from a stray 4-digit number in free page text when
+  # no statement period parses. The dates then look fully formed, so nothing else
+  # questions them -- reconcile had no branch for the flag at all.
+  p <- .parsed(.tx(c(-10, 40), balance = c(90, 130), date = c("2019-01-05", "2019-01-06"),
+                   flags = c("date_year_inferred", "date_year_inferred")),
+               header = list(opening_balance = 100, closing_balance = 130,
+                             stated_count = 2, period_start = "2019-01-01",
+                             period_end = "2019-01-31"),
+               source_line_count = 2)
+  r <- reconcile(p)
+  expect_false(any(r$kpis$status == "fail"))              # nothing is actually wrong
+  expect_equal(r$trust$level, "medium")                   # ...but it is not "high"
+  expect_true(any(grepl("INFERRED year", r$trust$reasons)))
+
+  # the identical statement without the flag is rated high
+  q <- .parsed(.tx(c(-10, 40), balance = c(90, 130), date = c("2019-01-05", "2019-01-06")),
+               header = list(opening_balance = 100, closing_balance = 130,
+                             stated_count = 2, period_start = "2019-01-01",
+                             period_end = "2019-01-31"),
+               source_line_count = 2)
+  expect_equal(reconcile(q)$trust$level, "high")
+})
