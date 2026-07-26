@@ -79,6 +79,15 @@ One rule now governs it, recorded in [`docs/context/charter.md`](docs/context/ch
   behind **"Show me how it read this"**. Nothing was deleted. **The click is
   remembered for the session**, so someone technical opens it once and never sees
   the button again; nobody is asked whether they are an advanced user.
+- **The date format and the amount style stay in front.** They were briefly moved
+  behind the toolkit's disclosure with everything else, on the theory that the
+  drafter fills them in. It does - and it is wrong often enough that these are the
+  two settings an analyst reports changing on almost every template she builds.
+  Frequency beats how technical a control looks: hiding what is needed nearly every
+  time puts a click on the *most* common path, not the rarest. The controls that
+  exist only because of the amount style (what a bare number means, what the D/C
+  indicator values are) sit beside it, so choosing "a D/C column" no longer shows
+  nowhere to say what D means.
 - **Setting up a bank is four steps stated at the top of the toolkit**: drag a box,
   say what it is, name the bank, save. One dropdown answers both "which column is
   this" and "pin this header value". Date format, amount style, the identifying

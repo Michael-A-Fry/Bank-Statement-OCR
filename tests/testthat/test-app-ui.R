@@ -224,3 +224,42 @@ test_that("no screen text advertises the absence of a sign-in", {
                    info = paste("screen text describes a security weakness:",
                                 paste(offenders, collapse = " | ")))
 })
+
+# ---------------------------------------------------------------------------
+# WHAT IS NEEDED EVERY TIME MUST NOT BE HIDDEN. The date format and the amount
+# style are the two settings an analyst reports changing on almost every template
+# she builds - the drafter guesses them and is wrong often enough to matter. They
+# were briefly moved behind the "show the settings" disclosure with everything
+# else, which put a click on the MOST common path rather than the rarest.
+# Frequency beats how technical a control looks.
+test_that("date format and amount style are in front, not behind the disclosure", {
+  src <- .ui_src()
+  i_date <- grep('selectInput\\("g_date"', src)
+  i_sign <- grep('selectInput\\("g_sign"', src)
+  i_more <- grep('uiOutput\\("g_more_toggle"\\)', src)
+  expect_length(i_date, 1L); expect_length(i_sign, 1L)
+  expect_gt(length(i_more), 0L)
+  # both appear BEFORE every disclosure toggle on the toolkit panel
+  expect_true(all(i_date < max(i_more)), info = "date format fell behind the disclosure")
+  expect_true(all(i_sign < max(i_more)), info = "amount style fell behind the disclosure")
+})
+
+test_that("controls that only exist because of the amount style follow it out", {
+  # Picking "a D/C column" or "unsigned" must not send the user hunting for where
+  # to say what D means, or what a bare number is.
+  src <- .ui_src()
+  i_sign <- grep('selectInput\\("g_sign"', src)[1]
+  i_more <- max(grep('uiOutput\\("g_more_toggle"\\)', src))
+  for (id in c("g_unsigned_default", "g_type_debit", "g_type_credit")) {
+    i <- grep(sprintf('"%s"', id), src, fixed = FALSE)
+    expect_gt(length(i), 0L)
+    expect_true(i[1] > i_sign && i[1] < i_more,
+                info = paste(id, "is not beside the amount style it depends on"))
+  }
+})
+
+test_that("the disclosure describes what it actually still holds", {
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_false(grepl("How the dates are written, how amounts are shown", joined, fixed = TRUE))
+  expect_match(joined, "The phrase that identifies this bank next time", fixed = TRUE)
+})

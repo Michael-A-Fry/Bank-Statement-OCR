@@ -2995,7 +2995,7 @@ server <- function(input, output, session) {
         label = if (open) "Hide the settings for this statement"
                 else "Show the settings for this statement"),
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          "How the dates are written, how amounts are shown, the phrase that identifies this bank, and the name it saves under. All filled in from your own file already - change one only if the preview below looks wrong."))
+          "The phrase that identifies this bank next time, the name it saves under, and number punctuation. All filled in from your own file already - most statements need none of them."))
   })
 
   # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
@@ -3097,35 +3097,45 @@ server <- function(input, output, session) {
             column(4, selectInput("g_col_desc", "Description (required)",
                                   choices = g$cols,
                                   selected = tmpl$columns$description$source %||% g$cols[1])))),
-        uiOutput("g_more_toggle"),   # ONE control; everything else sits behind it
-        conditionalPanel("output.g_more_open == true",
-          fluidRow(
-            column(6, selectInput("g_date", "How are the dates written?",
-                                  choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
-            column(6, selectInput("g_sign", "How are amounts shown?",
-                                  choices = guided_sign_choices(), selected = cur_sign))),
-          fluidRow(
-            column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
-                                  choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
-                                              "1,234.56 - dot is the decimal point" = "dot",
-                                              "1.234,56 - comma is the decimal (European)" = "comma"),
-                                  selected = cur_dec)),
-            column(6, conditionalPanel(
+        # THE DATE FORMAT AND THE AMOUNT STYLE STAY IN FRONT. They were briefly moved
+        # behind the disclosure with everything else, on the theory that the drafter
+        # fills them in. It does - and it is wrong often enough that these are the two
+        # settings an analyst reports changing on almost every template she builds.
+        # Frequency beats how technical a thing looks: hiding what is needed nearly
+        # every time puts a click on the MOST common path, not the rarest. The rule is
+        # "don't ask a question the tool can answer" - the tool cannot reliably answer
+        # these two, so it asks, with its best guess already selected.
+        tags$hr(style = "margin:14px 0 10px"),
+        p(class = "muted", style = "margin:0 0 8px",
+          "Detected from your statement - these two are the ones worth checking against the preview."),
+        fluidRow(
+          column(6, selectInput("g_date", "How are the dates written?",
+                                choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
+          column(6, selectInput("g_sign", "How are amounts shown?",
+                                choices = guided_sign_choices(), selected = cur_sign))),
+        # These follow the amount style OUT: they appear only when that style is
+        # chosen, and when they appear they are required. Left behind the disclosure,
+        # picking "a D/C column" showed nowhere to say what D means.
+        fluidRow(column(6, conditionalPanel(
               "input.g_sign == 'unsigned'",
               selectInput("g_unsigned_default", "A plain number (no + / − / CR) is a…",
                           choices = c("Charge - money out" = "debit",
                                       "Payment - money in" = "credit"),
                           selected = cur_ud)))),
-          # type_dc: the debit/credit indicator tokens. Which value in the type
-          # column means money OUT is what sets the sign, so we ask it plainly
-          # rather than defaulting to "D" (which mis-signs "d" / "DR" / "Debit").
-          conditionalPanel(
+        conditionalPanel(
             "input.g_sign == 'type_dc'",
             fluidRow(
               column(6, textInput("g_type_debit", "Which indicator value means money OUT (debit)?",
                                   value = tmpl$type_debit_value %||% "")),
               column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
                                   value = tmpl$type_credit_value %||% "")))),
+        uiOutput("g_more_toggle"),   # what is left is genuinely rare
+        conditionalPanel("output.g_more_open == true",
+          fluidRow(column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
+                                  choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
+                                              "1,234.56 - dot is the decimal point" = "dot",
+                                              "1.234,56 - comma is the decimal (European)" = "comma"),
+                                  selected = cur_dec))),
           # THE PHRASE THAT RECOGNISES THIS BANK. For PDFs this is the one setting
           # that can refuse a save, and it used to be editable only in the raw YAML
           # box on Advanced -- a hard stop at the last step of the flow for the exact
