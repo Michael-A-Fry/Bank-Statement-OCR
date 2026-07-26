@@ -2355,7 +2355,11 @@ server <- function(input, output, session) {
         template = res$template_id %||% NA_character_,
         trust = res$trust$level %||% NA_character_,
         detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
-      b$feed_gate[[i]] <- publish_result(res, TRUE)
+      # `[i] <- list(...)`, never `[[i]] <-`: the gate is NULL when the feed is
+      # switched off, and assigning NULL with [[ DELETES the element instead of
+      # storing it - the column would come up one short of the files and the whole
+      # batch would fail at the last statement.
+      b$feed_gate[i] <- list(publish_result(res, TRUE))
       # The rows are on disk in this file's workbook / CSV / JSON; holding fifty
       # more copies in one object buys nothing. Marked with the engine's own
       # name for it, so a reader can tell "dropped" from "there were none".
@@ -2364,7 +2368,11 @@ server <- function(input, output, session) {
       }
     }
     cv_dir(sess)
+    # No file is open yet -- the table is. Every per-file piece of state is
+    # cleared rather than left pointing at whatever was converted last, so
+    # nothing on the page can belong to a statement that is no longer on it.
     cv_res(NULL); cv_src(NULL); cv_batch_row(NA_integer_)
+    cv_upload_id(NA_character_)
     cv_fb_done(FALSE); cv_fb_rec(NULL)
     cv_batch(b)
   }

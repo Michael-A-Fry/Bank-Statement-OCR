@@ -152,10 +152,19 @@ CV_COL_LABELS <- c(
   debit = "Debit (money out)", credit = "Credit (money in)",
   direction = "In / out", balance = "Balance", balance_raw = "Balance (as shown)",
   particulars = "Particulars", code = "Code", reference = "Reference",
-  type = "Type", other_party = "Other party", currency = "Currency", flags = "Flags")
+  type = "Type", other_party = "Other party", currency = "Currency", flags = "Flags",
+  # An auto-split bundle stamps every row with the statement it came from.
+  statement_index = "Statement #")
+# The fallback here is load-bearing, and `[[` was quietly the wrong bracket for
+# it: on a NAMED CHARACTER VECTOR, x[["not_a_name"]] does not return NULL, it
+# THROWS. So any column the map had not met -- a template's `extras` (fx_amount,
+# conversion_charge), or the statement_index an auto-split bundle adds -- took
+# the whole transactions table down with a subscript error, and the payoff of the
+# page rendered as nothing at all. Single brackets give NA for a name that is not
+# there, which is what the fallback was always written to expect.
 cv_friendly_cols <- function(cols) vapply(cols, function(cn) {
-  lab <- CV_COL_LABELS[[cn]]
-  if (is.null(lab)) tools::toTitleCase(gsub("_", " ", cn)) else lab
+  lab <- unname(CV_COL_LABELS[cn])
+  if (is.na(lab)) tools::toTitleCase(gsub("_", " ", cn)) else lab
 }, character(1), USE.NAMES = FALSE)
 # .cols_with_data(df) -- names of columns carrying at least one non-blank value.
 # Used to trim always-empty columns (a field this statement doesn't have) from the

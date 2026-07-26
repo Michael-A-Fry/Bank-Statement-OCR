@@ -122,12 +122,24 @@ test_that("every conversion stamps the detected identity and its source (#47)", 
 # #6/#32/#7 -- every converted statement is copied into uploads/ and was kept
 # forever, the user was never told, and the per-session scratch folders were never
 # reclaimed on a server that runs for months.
-test_that("the Convert page discloses that a copy of the upload is kept (#6)", {
+# REWRITTEN, deliberately. This used to require the retention line to sit under
+# the Convert file picker. It has been taken OFF that page (owner's decision): it
+# is a fact about how the server is configured, not a question the person
+# converting a statement answers or a thing she can act on, and it was the first
+# line on the page with nothing to do with converting a statement. Nothing about
+# retention itself changed - the note is still generated from the ONE setting the
+# purge uses, so what is said and what happens still cannot disagree; it is now
+# said where retention is actually managed and acted on.
+test_that("the retention note comes from the setting, and sits where it is acted on", {
   src <- .app_src()
   joined <- paste(src, collapse = "\n")
   expect_match(joined, "UPLOADS_NOTE <- uploads_retention_note\\(UPLOADS_KEEP_DAYS\\)")
-  # the line sits with the file picker, not hidden in Admin
-  expect_match(.app_block(src, 'fileInput\\("cv_file"', 8L), "UPLOADS_NOTE", fixed = TRUE)
+  # no longer under the Convert file picker
+  expect_false(grepl("UPLOADS_NOTE", .app_block(src, 'fileInput\\("cv_file"', 8L), fixed = TRUE))
+  # ...but still directly above the button that does the deleting, so the sentence
+  # and the button can only ever quote the same number
+  expect_match(.app_block(src, 'h4\\("Saved statements - retention"\\)', 3L),
+               "UPLOADS_NOTE", fixed = TRUE)
 })
 
 test_that("uploads and scratch folders are actually reclaimed (#6/#7)", {

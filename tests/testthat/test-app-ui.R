@@ -12,6 +12,32 @@
   skip_if_not(file.exists(app))
   readLines(app, warn = FALSE)
 }
+# .ui_fun(name, also) -- one of app.R's PURE helpers, lifted out and made callable.
+#
+# Most of this file has to assert on source text, because app.R needs a live
+# Shiny session to run. The small pure functions inside it do not: they are
+# ordinary closures over nothing but each other. So the definition is found by
+# name, read forward until it parses (which is exactly where the function ends),
+# and evaluated. That turns "the source mentions a date check" into "the date
+# check actually rejects 01/02/2014" -- a fact about behaviour, which survives
+# any rewording of the code around it. `also` names the helpers it calls, which
+# are put in the same environment so it can find them.
+.ui_fun <- function(name, also = character(0)) {
+  src <- .ui_src()
+  env <- new.env(parent = globalenv())      # globalenv carries the engine (%||%, safe)
+  for (nm in unique(c(also, name))) {
+    i <- grep(sprintf("^\\s*\\Q%s\\E <- function", nm), src, perl = TRUE)
+    testthat::expect_length(i, 1L)
+    got <- FALSE
+    for (j in seq(i[1], min(i[1] + 250L, length(src)))) {
+      f <- tryCatch(eval(parse(text = paste(src[i[1]:j], collapse = "\n"))[[1]], envir = env),
+                    error = function(e) NULL)
+      if (is.function(f)) { assign(nm, f, envir = env); got <- TRUE; break }
+    }
+    testthat::expect_true(got, info = paste("could not lift", nm, "out of app.R"))
+  }
+  get(name, envir = env)
+}
 .ui_block <- function(src, pat, n = 40L) {
   i <- grep(pat, src)
   testthat::expect_true(length(i) >= 1)
@@ -348,4 +374,333 @@ test_that("the proof strip carries the check that catches the commonest error", 
   e <- new.env(parent = globalenv())
   sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
   expect_true("amount_direction" %in% names(e$CHECK_PLAIN))
+})
+
+# ---------------------------------------------------------------------------
+# A CASE FOLDER IS THE SAME SCREEN, NOT A SECOND ONE.
+#
+# Ten to fifty statements arrive as one case. The temptation is a Batch tab with
+# its own picker, its own Convert button, its own "who ran this" and its own,
+# thinner result view - four copies of things that already exist and four places
+# for the two answers to drift apart. It is the same question asked of more
+# files, so it is the same control: one picker that takes several, and a row per
+# file that OPENS the ordinary result page.
+test_that("a batch is more files in the same picker, not a second screen", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  # ONE picker, and it takes several files
+  i_file <- grep('fileInput\\("cv_file"', src)
+  expect_length(i_file, 1L)
+  expect_match(paste(src[i_file:(i_file + 3)], collapse = " "), "multiple = TRUE", fixed = TRUE)
+  # ONE Convert button, on the Convert tab -- no separate batch tab or trigger
+  expect_length(grep('actionButton\\("cv_go"', src), 1L)
+  expect_false(grepl('tabPanel\\("Batch"', joined))
+  # the batch panel is rendered on Convert, above the result it opens
+  i_batch <- grep('DTOutput\\("cv_batch"\\)', src)
+  i_status <- grep('uiOutput\\("cv_status"\\)', src)
+  expect_length(i_batch, 1L)
+  expect_true(i_batch < min(i_status))
+})
+
+test_that("every file in a batch goes through the engine's own batch loop", {
+  # There must be no second conversion pipeline in the UI: a batch answer and a
+  # single-file answer for the same statement have to be the same code.
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_match(joined, "convert_batch\\(paths,")
+  expect_true(exists("convert_batch"))
+  expect_true(exists("batch_summary"))
+  expect_true(exists("BATCH_STATUSES"))
+  # ...and app.R never calls the single-file front door in a loop of its own
+  expect_false(grepl("for \\([a-z]+ in seq_along\\(paths\\)\\)[^\n]*convert_document", joined))
+})
+
+test_that("the QID is asked once for the whole batch, before it starts", {
+  src <- .ui_src()
+  i_go   <- grep("observeEvent\\(input\\$cv_go, \\{", src)
+  expect_length(i_go, 1L)
+  blk <- src[i_go:(i_go + 25)]
+  i_qid   <- grep("is.na\\(cv_qid\\(\\)\\)", blk)[1]
+  i_batch <- grep("run_batch\\(f\\)", blk)[1]
+  expect_false(is.na(i_qid) || is.na(i_batch))
+  expect_true(i_qid < i_batch, info = "the batch starts before who-ran-this is settled")
+  # asked once, not once per file: nothing inside run_batch asks again
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_equal(length(gregexpr("Enter your QID first", joined)[[1]]), 1L)
+})
+
+test_that("a batch row opens the ordinary result page, not a lesser one", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  blk <- .ui_block(src, "open_batch_row <- function", 16L)
+  # the same session state a single conversion sets -- so the page below IS the
+  # result page: verdict, proof strip, transactions, downloads, feedback
+  for (setter in c("cv_res\\(res\\)", "cv_src\\(", "cv_upload_id\\(", "cv_feed_gate\\("))
+    expect_match(blk, setter)
+  # and there is exactly ONE transactions table / downloads bar in the whole app
+  expect_length(grep('DTOutput\\("cv_txns"\\)', src), 1L)
+  expect_length(grep('uiOutput\\("cv_downloads"\\)', src), 1L)
+  expect_false(grepl('DTOutput("cv_batch_txns")', joined, fixed = TRUE))
+})
+
+test_that("the batch table sorts by what went wrong, by meaning not by spelling", {
+  # Sorting IS the feature: every file that failed the same way must gather
+  # together so they can be fixed together. Alphabetical order on the verdict
+  # would scatter them ("Could not read" before "No template"), so the verdict
+  # column sorts off the engine's own worst-last status order instead.
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 30L)
+  expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
+  expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
+  expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
+  expect_match(blk, 'order = list\\(list\\(5, "asc"\\), list\\(4, "asc"\\)\\)')
+  # the table is sortable and clickable at all
+  expect_match(blk, 'selection = "single"', fixed = TRUE)
+  # the engine's order really is worst-last, which is what the "- match()" flips
+  expect_identical(BATCH_STATUSES, c("ok", "needs_review", "unsupported", "failed"))
+})
+
+test_that("a long batch shows progress per file", {
+  # A 50-file case that looks frozen is a case the analyst kills half way.
+  blk <- .ui_block(.ui_src(), "convert_batch\\(paths,", 16L)
+  expect_match(blk, "progress = function\\(i, nn, f\\)")
+  expect_match(blk, "setProgress", fixed = TRUE)
+  expect_match(blk, "basename\\(f\\)")                 # says WHICH file, not just a bar
+})
+
+test_that("a batch file is audited, captured and published exactly like a single one", {
+  # The one thing a batch must never do is mean something different from
+  # "convert one, thirty times".
+  blk <- .ui_block(.ui_src(), "run_batch <- function", 70L)
+  for (step in c("stamp_identity\\(", "record_upload\\(", "publish_result\\(res, TRUE\\)"))
+    expect_match(blk, step)
+  # ...and it is still the ONE feed writer (test-seams pins that too)
+  expect_length(grep("safe\\(write_feed\\(", .ui_src()), 1L)
+})
+
+test_that("the first-visit empty state does not sit under a finished batch", {
+  src <- .ui_src()
+  i <- grep('uiOutput\\("cv_empty"\\)', src)
+  expect_gt(length(i), 0L)
+  blk <- paste(src[(min(i) - 2):min(i)], collapse = " ")
+  expect_match(blk, "output.cv_has_batch != true", fixed = TRUE)
+})
+
+test_that("converting a single file clears a stale batch table", {
+  # run_conversion reclaims the previous scratch folder, which is where every
+  # batch file's workbook lives. A table whose downloads no longer resolve is
+  # worse than no table.
+  blk <- .ui_block(.ui_src(), "run_conversion <- function", 34L)
+  expect_match(blk, "cv_batch\\(NULL\\)")
+})
+
+test_that("two uploads with the same name cannot overwrite each other's outputs", {
+  # Outputs are named after the file they came from, so "statement.pdf" twice
+  # would leave both rows pointing at one workbook - the second silently on top
+  # of the first. The suffix is visible, so the clash is stated, not quiet.
+  uniq <- .ui_fun(".unique_names")
+  expect_identical(uniq(c("a.pdf", "b.pdf")), c("a.pdf", "b.pdf"))
+  expect_identical(uniq(c("a.pdf", "a.pdf", "a.pdf")), c("a.pdf", "a (2).pdf", "a (3).pdf"))
+  expect_identical(uniq(c("a.pdf", "a (2).pdf", "a.pdf")), c("a.pdf", "a (2).pdf", "a (3).pdf"))
+  expect_identical(uniq("noext"), "noext")
+})
+
+# ---------------------------------------------------------------------------
+# THE TOOL MUST USE WHAT IT ALREADY KNOWS. Choosing a bank and then scrolling a
+# hundred other banks' templates is the interface rule broken in the small: the
+# answer is already on the screen, so the list should not ask again.
+test_that("the exact-template list is narrowed by the bank already chosen", {
+  src <- .ui_src()
+  # the filter, the bank it filters on and the update all sit in ONE observer
+  i <- grep("ov <- template_overview\\(ts\\)", src)
+  expect_length(i, 1L)
+  blk <- paste(src[max(1L, i - 3L):(i + 10L)], collapse = " ")
+  expect_match(blk, "bank <- bank_choice\\(\\)")                      # the same choice
+  expect_match(blk, "ov\\[ov\\$bank %in% bank, , drop = FALSE\\]")    # narrowed by it
+  expect_match(blk, 'updateSelectInput\\(session, "cv_template"')
+  # a selection that no longer belongs to the chosen bank is dropped, never left
+  # hidden and still in force
+  expect_match(blk, 'selected = if \\(keep %in% ch\\) keep else ""')
+})
+
+test_that("the exact-template picker is called exactly 'Template (optional)'", {
+  src <- .ui_src()
+  i <- grep('selectInput\\("cv_template"', src)
+  expect_length(i, 1L)
+  expect_match(src[i], '"cv_template", "Template \\(optional\\)"')
+})
+
+test_that("both bank pickers and the forced template are read in one place", {
+  # Two readings of the same control is how a filter comes to offer a template
+  # the conversion would not have used.
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  expect_length(grep("bank_choice <- reactive", src), 1L)
+  expect_length(grep("tpl_choice <- reactive", src), 1L)
+  expect_match(joined, "bank <- bank_choice\\(\\)")
+  expect_match(joined, "forced_tpl <- force_tpl %\\|\\|% tpl_choice\\(\\)")
+  # nothing reads the raw inputs a second time
+  expect_length(grep("input\\$cv_bank_quick", src), 2L)   # the update + bank_choice
+})
+
+# ---------------------------------------------------------------------------
+test_that("the Convert sidebar no longer carries the uploads-retention line", {
+  src <- .ui_src()
+  i_side <- grep('fileInput\\("cv_file"', src)[1]
+  i_main <- grep("mainPanel\\(", src)[1]
+  sidebar <- paste(src[i_side:i_main], collapse = " ")
+  expect_false(grepl("UPLOADS_NOTE", sidebar, fixed = TRUE))
+  # ...and it is still shown where retention is actually managed
+  expect_gt(length(grep("UPLOADS_NOTE", src, fixed = TRUE)), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# The About page is read by everyone who opens the tool. It must not describe a
+# system none of them can see, use or act on.
+test_that("the About page says nothing about the dashboards or the feed", {
+  p <- file.path(engine_root(), "ui_content.R")
+  skip_if_not(file.exists(p))
+  txt <- tolower(paste(readLines(p, warn = FALSE), collapse = "\n"))
+  for (w in c("dashboard", "qlik", "the feed", "feeds the"))
+    expect_false(grepl(w, txt, fixed = TRUE), info = paste("About still mentions:", w))
+  # the hub cards and lead on the About tab likewise
+  src <- .ui_src()
+  i0 <- grep('tabPanel\\("About", br\\(\\),', src)[1]
+  i1 <- grep('"Convert",\\s*$', src)[1]
+  expect_false(is.na(i0))
+  about <- tolower(paste(src[i0:min(i1, length(src))], collapse = " "))
+  for (w in c("dashboard", "qlik"))
+    expect_false(grepl(w, about, fixed = TRUE), info = paste("About tab still mentions:", w))
+})
+
+# ---------------------------------------------------------------------------
+# JSON is produced and nobody downloads it; a third equal button made two real
+# choices look like three. Demoted, not removed - the person who wants it has no
+# other route to the file.
+test_that("JSON is a link, not a third download button, and still works", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  blk <- .ui_block(src, "dl_buttons <- function", 12L)
+  expect_match(blk, 'labs <- c\\(xlsx = .*csv = ')
+  expect_false(grepl("json =", blk))                       # not among the buttons
+  expect_match(joined, 'downloadLink\\("dl_json"')         # still reachable
+  expect_match(joined, 'output\\$dl_json <- mk_dl\\("json"\\)')   # still produced
+  # the buttons bar is only asked for the two formats it now offers
+  expect_match(joined, 'dl_buttons\\(res\\$outputs, c\\(xlsx = "dl_xlsx", csv = "dl_csv"\\)\\)')
+})
+
+# ---------------------------------------------------------------------------
+# WHEN A LAYOUT APPLIES. The same bank and product printed differently in 2020
+# and 2024 is a real variant; the schema has always had effective_from /
+# effective_to and nothing on screen ever showed them, so the only way to have
+# both was two rival templates that tie on every statement forever.
+test_that("the validity window is on the toolkit, behind the settings disclosure", {
+  src <- .ui_src()
+  i_from <- grep('textInput\\("g_eff_from"', src)
+  i_to   <- grep('textInput\\("g_eff_to"', src)
+  i_more <- max(grep('uiOutput\\("g_more_toggle"\\)', src))
+  expect_length(i_from, 1L); expect_length(i_to, 1L)
+  # rare -> behind the one disclosure, with the rest of the rarely-touched settings
+  expect_true(i_from > i_more && i_to > i_more)
+  # said in plain words, not as a schema key
+  expect_match(src[i_from], "This layout applies from", fixed = TRUE)
+})
+
+test_that("the validity window reaches the saved template, and blank means always", {
+  apply_eff <- .ui_fun("apply_overrides", also = c(".eff_date", ".eff_bad"))
+  base <- list(id = "t", bank = "B", format = "delimited",
+               columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
+                              description = list(source = "Desc"),
+                              amount = list(source = "Amt")))
+  # a typed range is written as the schema stores it
+  t1 <- apply_eff(base, bank = NULL, datefmt = NULL, sign = NULL,
+                  effective_from = "2020-01-01", effective_to = "2024-12-31")
+  expect_identical(t1$effective_from, "2020-01-01")
+  expect_identical(t1$effective_to, "2024-12-31")
+  # blank CLEARS it: a template that says "always" has no key at all, exactly
+  # like one that never had one
+  t2 <- apply_eff(t1, bank = NULL, datefmt = NULL, sign = NULL,
+                  effective_from = "", effective_to = "  ")
+  expect_false("effective_from" %in% names(t2))
+  expect_false("effective_to" %in% names(t2))
+  # the control not being on screen leaves whatever is there untouched
+  t3 <- apply_eff(t1, bank = NULL, datefmt = NULL, sign = NULL)
+  expect_identical(t3$effective_from, "2020-01-01")
+  # and the engine really does consume these keys, so this is not a dead setting
+  expect_true(any(grepl("effective_from",
+    readLines(file.path(engine_root(), "R", "diagnose.R"), warn = FALSE), fixed = TRUE)))
+})
+
+test_that("a validity window that is not a date is refused, never quietly dropped", {
+  probs <- .ui_fun(".eff_problems", also = c(".eff_date", ".eff_bad"))
+  eff   <- .ui_fun(".eff_date")
+  expect_length(probs("", ""), 0L)                       # both blank is fine
+  expect_length(probs("2020-01-01", ""), 0L)
+  expect_gt(length(probs("01/02/2014", "")), 0L)         # not yyyy-mm-dd
+  expect_gt(length(probs("", "last year")), 0L)
+  expect_gt(length(probs("2024-01-01", "2020-01-01")), 0L)  # runs backwards
+  expect_null(eff(""))                                   # blank = always
+  expect_true(is.na(eff("nonsense")))
+  expect_identical(eff(" 2020-01-01 "), "2020-01-01")
+  # ...and the save is blocked on it, rather than writing a template whose window
+  # silently went missing
+  src <- .ui_src()
+  blk <- .ui_block(src, "observeEvent\\(input\\$g_save", 18L)
+  expect_match(blk, "\\.eff_problems\\(input\\$g_eff_from, input\\$g_eff_to\\)")
+  expect_match(blk, "g_more_open\\(TRUE\\)")             # opens where the fix is
+})
+
+test_that("the validity window is read back to the person typing it", {
+  say <- .ui_fun(".eff_sentence", also = c(".eff_date", ".eff_show"))
+  expect_match(say("", ""), "any date")
+  expect_match(say("2020-01-01", ""), "^This layout applies from 01 Jan 2020")
+  expect_match(say("", "2024-12-31"), "up to 31 Dec 2024")
+  expect_match(say("2020-01-01", "2024-12-31"), "from 01 Jan 2020 to 31 Dec 2024")
+})
+
+# ---------------------------------------------------------------------------
+# SEVERAL PERIODS IN ONE FILE. The engine reads them as ONE span, which is what
+# lets the date and balance checks pass - but a span standing in for three
+# quarters reads as one quarter unless the count is said beside it.
+test_that("the number of statement periods is shown where the period is shown", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_summary <- renderUI", 40L)
+  expect_match(blk, "n_periods", fixed = TRUE)
+  expect_match(blk, "%d periods", fixed = TRUE)
+  # on the same line as the range it belongs to
+  expect_match(blk, 'sprintf\\("Period: %s%s%s", drange')
+  # and only when there really is more than one
+  expect_match(blk, "isTRUE\\(np > 1L\\)")
+})
+
+test_that("anything the engine had to say about a merged span is said on screen", {
+  # A span with a hole in it looks exactly like a whole one.
+  blk <- .ui_block(.ui_src(), "output\\$cv_summary <- renderUI", 45L)
+  expect_match(blk, "period_note", fixed = TRUE)
+  # the engine really does produce it, so this is wired to a fact
+  expect_true(any(grepl("period_note",
+    readLines(file.path(engine_root(), "R", "extract_metadata.R"), warn = FALSE),
+    fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# THE TRANSACTIONS TABLE MUST SURVIVE A COLUMN THE LABEL MAP HAS NEVER MET.
+# The preview relabels the stored column names for a human reader and falls back
+# to a title-cased version of the raw name for anything unmapped. That fallback
+# was written with `[[`, which on a NAMED CHARACTER VECTOR throws rather than
+# returning NULL - so a template's `extras` column, or the statement_index an
+# auto-split bundle stamps on every row, took the whole table down and the page's
+# whole payoff rendered as nothing. Found by converting a bundle in the browser.
+test_that("an unmapped column is titled, not fatal, in the transactions preview", {
+  e <- new.env(parent = globalenv())
+  sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
+  expect_identical(e$cv_friendly_cols(c("date", "amount")), c("Date", "Amount"))
+  # the ones that actually blew up
+  expect_identical(e$cv_friendly_cols("fx_amount"), "Fx Amount")
+  expect_identical(e$cv_friendly_cols("conversion_charge"), "Conversion Charge")
+  # a mixture, in order, is what the table really passes
+  expect_identical(e$cv_friendly_cols(c("date", "made_up_column", "amount")),
+                   c("Date", "Made Up Column", "Amount"))
+  expect_identical(e$cv_friendly_cols(character(0)), character(0))
+  # ...and the split marker now has a name of its own rather than a fallback
+  expect_identical(e$cv_friendly_cols("statement_index"), "Statement #")
 })
