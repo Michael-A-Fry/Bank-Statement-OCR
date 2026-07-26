@@ -2273,7 +2273,11 @@ server <- function(input, output, session) {
     # confidence to quote -- nothing was converted to be confident about.
     ambig <- isTRUE(res$detect$ambiguous)
     headline <- if (ambig) STATUS_PLAIN_AMBIGUOUS else plain_status(st)
-    trust <- if (!is.null(res$trust) && !ambig) sprintf(" · confidence: %s", res$trust$level) else ""
+    # No confidence grade on a run that produced nothing: there is no work to be
+    # confident about, and "confidence: low" beside "no template yet" reads as a
+    # warning about the file rather than a plain statement of where we are.
+    graded <- !ambig && st %in% c("ok", "needs_review")
+    trust <- if (!is.null(res$trust) && graded) sprintf(" · confidence: %s", res$trust$level) else ""
     # Name the template ONLY when one was actually used to read the statement. On
     # an unsupported result the engine still carries a template id -- the CLOSEST
     # MISS, kept for the logs -- and printing it under "No template for this

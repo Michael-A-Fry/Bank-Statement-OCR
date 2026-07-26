@@ -154,7 +154,14 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     if (!isTRUE(det$matched) && !ambiguous) {
       result$status <- "unsupported"
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
-      result$messages <- status_message("unsupported", "no template matched", det$detail)
+      # det$detail names the closest template, its score and the phrases it wanted
+      # ("closest anz_everyday_pdf score 2/3 (missing ...)"). That is real evidence
+      # and it is kept -- build_diagnostics puts it in the unknown_format diagnostic,
+      # behind "Show me how it read this". It is not put on the verdict card,
+      # because a template id and a fraction are not something the person holding
+      # the statement can act on. Charter: the interface rule.
+      result$messages <- status_message("unsupported",
+        "we don't have a template for this layout yet")
       result$candidates <- det$candidates
       result$detect <- list(margin = NA_real_, runner_up = det$runner_up,
                             thin = FALSE, ambiguous = FALSE, tied = character(0))
