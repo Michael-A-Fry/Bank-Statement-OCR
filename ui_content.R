@@ -122,8 +122,7 @@ about_html <- function() HTML('
   <div class="step"><b>Detect</b>The statement is matched to a saved template automatically.</div>
   <div class="step"><b>Extract</b>Date, description, amount, balance - read verbatim, never edited.</div>
   <div class="step"><b>Check</b>Opening + transactions vs closing balance; anything off is flagged with the reason.</div>
-  <div class="step"><b>Download</b>Excel, CSV or JSON - and rate the result so the team sees what works.</div>
-  <div class="step"><b>Publish</b>A clean conversion from a tested template also feeds the org dashboards. The screen tells you either way.</div>
+  <div class="step"><b>Download</b>Excel or CSV - and rate the result so the team sees what works.</div>
 </div>
 <p class="muted">No template for it yet? The toolkit pre-fills one from your file; you confirm
 against a live preview and save. It is then re-checked against every template and tells you
@@ -138,7 +137,6 @@ is something you are shown, not something you are promised.</p>
 <dt>Field coverage</dt><dd>Which fields are populated, which came back empty (maybe a wrong column), which aren&#39;t on this statement at all.</dd>
 <dt>Diagnostics</dt><dd>When anything is off: where, why, and how to fix it - in plain words.</dd>
 <dt>Redactions</dt><dd>Nothing under a redaction is ever read or guessed. A redacted cell stays <code>[REDACTED]</code>, its row is kept, and the tool never estimates what a black block hid.</dd>
-<dt>The dashboards</dt><dd>Every conversion says whether its figures reached the org dashboards - and, when they were held back, why. Only clean conversions read by the team&#39;s tested templates are published, and marking a result <b>wrong</b> withdraws it again.</dd>
 </dl>
 <p class="muted" style="margin-top:14px">Deeper how-to - drawing PDF columns, every way statements
 differ - lives in the 2-minute guide on the Add-a-template tab.

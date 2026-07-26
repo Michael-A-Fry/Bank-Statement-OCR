@@ -412,13 +412,17 @@ ui <- fluidPage(
       sidebarLayout(
         sidebarPanel(
           width = 4,
-          fileInput("cv_file", "Statement file (.pdf / .csv / .tsv / .xlsx)",
+          # ONE PICKER, ONE FILE OR A WHOLE CASE. A folder of statements is not a
+          # different MODE with its own tab, its own Convert button and its own
+          # second answer to "who ran this" -- it is the same question asked of
+          # more files. So it is the same control: pick one statement and you get
+          # the result page; pick twelve and you get a row per file, each of which
+          # OPENS that same result page. Nothing new to learn, nothing asked twice.
+          fileInput("cv_file", "Statement file(s) (.pdf / .csv / .tsv / .xlsx)",
+                    multiple = TRUE,
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
-          # Say what happens to the file BEFORE it is handed over. A copy is kept
-          # on the server; the person uploading a client's bank statement is owed
-          # that fact, the period, and the reason -- generated from the same
-          # setting the purge uses, so it can never overstate or understate it.
-          helpText(class = "muted", UPLOADS_NOTE),
+          helpText(class = "muted",
+                   "One statement, or select several to convert a whole case folder in one go."),
           # WHO RAN THIS. Asked only when the tool genuinely cannot work it out.
           # Where the server sits behind a real sign-in (host or SSO) this renders
           # nothing at all -- asking for what the environment already established
@@ -448,7 +452,12 @@ ui <- fluidPage(
             # is untouched by this). The tick-box only ever produced the puzzle "I
             # built this template and it does not work". It is now a deployment
             # setting: app.user_templates_default in config/config.yaml.
-            div(style = "padding-top:10px", uiOutput("cv_bank_ui")))
+            div(style = "padding-top:10px", uiOutput("cv_bank_ui"),
+              # STATIC, not part of cv_bank_ui: its choices are rewritten every
+              # time a bank is chosen, and a control that re-renders under the
+              # hand choosing it loses the choice being made.
+              selectInput("cv_template", "Template (optional)",
+                          choices = c("(auto-detect)" = ""), width = "100%")))
         ),
         mainPanel(
           width = 8,
@@ -470,13 +479,26 @@ ui <- fluidPage(
           # ever asked "are you an advanced user?" -- a question the tool can
           # answer for itself by watching what they do.
           # ---------------------------------------------------------------
+          # A CASE FOLDER: one row per file, above the result page it opens.
+          #
+          # The whole job here is triage - which of these thirty files is fine,
+          # and which broke the SAME WAY so they can be fixed together. So the
+          # table sorts, it starts worst-first grouped by what went wrong, and a
+          # row opens THAT file's ordinary result page below: the same verdict,
+          # the same proof strip, the same transactions, the same downloads. There
+          # is deliberately no second, thinner result view to keep in step.
+          conditionalPanel("output.cv_has_batch == true",
+            uiOutput("cv_batch_summary"),
+            DTOutput("cv_batch"),
+            uiOutput("cv_batch_open")),
           uiOutput("cv_status"),
           uiOutput("cv_headline"),   # the verdict, in her words
           uiOutput("cv_downloads"),  # the payoff, right under it
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
           # Before any conversion, a clear empty state rather than bare headers.
-          conditionalPanel("output.cv_has_result != true", uiOutput("cv_empty")),
+          conditionalPanel("output.cv_has_result != true && output.cv_has_batch != true",
+                           uiOutput("cv_empty")),
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
             # Figures + transactions render only when the parse produced rows: an
             # unsupported or failed result must never show zero-money cards and an
@@ -1103,15 +1125,31 @@ server <- function(input, output, session) {
     ts <- cv_pick_templates()
     banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
     banks <- banks[nzchar(banks)]
-    # Template picker: labelled "Bank · type - id" so you can force an EXACT
-    # audited template, not just a bank, when you need to be specific.
+    # The exact-template picker is declared in the UI and FILLED IN by the
+    # observer below, not here: it has to follow whichever bank picker was used.
+    selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks), width = "100%")
+  })
+
+  # THE EXACT-TEMPLATE LIST FOLLOWS THE BANK. Choosing a bank and then scrolling a
+  # hundred other banks' templates is the tool refusing to use what it already
+  # knows -- the same rule as "never ask a question the tool can answer", applied
+  # to a list. Either bank picker narrows it (bank_choice() reads them in the same
+  # order the conversion does), and "Detect automatically" shows everything.
+  # A template already picked survives a bank change when it still belongs to that
+  # bank; otherwise it clears, because leaving a hidden, out-of-scope template
+  # selected is how a statement gets read by a template nobody chose on purpose.
+  observe({
+    ts <- cv_pick_templates()
+    bank <- bank_choice()
     ov <- template_overview(ts)
-    tpl_choices <- c("(auto-detect)" = "")
-    if (nrow(ov)) tpl_choices <- c(tpl_choices,
-      stats::setNames(ov$id, sprintf("%s · %s - %s", ov$bank, ov$type, ov$id)))
-    tagList(
-      selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks)),
-      selectInput("cv_template", "…or force an exact template (optional)", choices = tpl_choices))
+    if (!is.null(bank) && nrow(ov)) ov <- ov[ov$bank %in% bank, , drop = FALSE]
+    # Labelled "Bank · type - id" so you can force an EXACT audited template, not
+    # just a bank, when you need to be specific.
+    ch <- c("(auto-detect)" = "")
+    if (nrow(ov)) ch <- c(ch, stats::setNames(ov$id, sprintf("%s · %s - %s", ov$bank, ov$type, ov$id)))
+    keep <- isolate(input$cv_template) %||% ""
+    updateSelectInput(session, "cv_template", choices = ch,
+                      selected = if (keep %in% ch) keep else "")
   })
 
 
@@ -2001,6 +2039,17 @@ server <- function(input, output, session) {
     open_guided(p, basename(p), upload_id = id)
   })
 
+  # bank_choice() -- WHICH BANK the user asked for, read in ONE place. The picker
+  # in front wins; the one inside "It picked the wrong bank?" is the same choice
+  # for anyone who opens that panel. Blank in both means auto-detect. The
+  # conversion and the exact-template list both read it here, so the list can
+  # never offer templates the conversion would not have used.
+  pick <- function(v) if (is.null(v) || !nzchar(v) || identical(v, "(auto-detect)")) NULL else v
+  bank_choice <- reactive(pick(input$cv_bank_quick) %||% pick(input$cv_bank))
+  # ...and the exact template, if one was forced. Same one-place reading, so the
+  # single conversion and a whole case folder cannot honour different overrides.
+  tpl_choice <- reactive(pick(input$cv_template))
+
   cv_res <- reactiveVal(NULL)
   cv_dir <- reactiveVal(NULL)
   cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
@@ -2024,12 +2073,8 @@ server <- function(input, output, session) {
   # identically (the second just adds force_rows and reuses the same session dir).
   convert_now <- function(src, sess, forced_rows = NULL, force_tpl = NULL,
                           include_user = FALSE) {
-    # The picker in front wins; the one inside "It picked the wrong bank?" is the
-    # same choice for anyone who opens that panel. Blank in both means auto-detect.
-    pick <- function(v) if (is.null(v) || !nzchar(v) || identical(v, "(auto-detect)")) NULL else v
-    bank <- pick(input$cv_bank_quick) %||% pick(input$cv_bank)
-    forced_tpl <- force_tpl %||%
-      (if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL)
+    bank <- bank_choice()
+    forced_tpl <- force_tpl %||% tpl_choice()
     # The tick-box, an explicit force, or an explicit include_user brings in the
     # user-created set. include_user exists because updateCheckboxInput only
     # reaches the browser AFTER this observer finishes: right after a save we know
@@ -2187,6 +2232,11 @@ server <- function(input, output, session) {
     safe(sweep_temp_dirs(keep_hours = 24,
                          exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
     cv_forced(list())   # a new file -> forget any force-included rows from the last one
+    # A single conversion ends any case folder on screen. It has to: the sweep
+    # above has just reclaimed the batch's scratch folder, so every other file's
+    # workbook is gone, and a table whose downloads no longer resolve is worse
+    # than no table.
+    cv_batch(NULL); cv_batch_row(NA_integer_)
     who <- who_now()
     res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl,
                        include_user = include_user)
@@ -2216,13 +2266,191 @@ server <- function(input, output, session) {
   # she had every reason to believe her figures were on the dashboard.
   # `record = FALSE` (the bundled sample, and the preview re-convert after saving a
   # template) neither feeds nor claims anything about the feed.
+  # Returns the gate so a caller converting MANY files can keep one verdict per
+  # file; the reactives it sets are the single-result screen's copy of the last
+  # one, and a batch overwrites them when a row is opened.
   publish_result <- function(res, record) {
     cv_recorded(isTRUE(record))
-    cv_feed_gate(if (isTRUE(record)) safe(write_feed(res, CONFIG), NULL) else NULL)
+    gate <- if (isTRUE(record)) safe(write_feed(res, CONFIG), NULL) else NULL
+    cv_feed_gate(gate)
+    invisible(gate)
   }
 
+  # ---- A WHOLE CASE FOLDER, through the same front door ----------------------
+  #
+  # convert_batch() (R/batch.R) runs each file through convert_document(), so a
+  # batch answer and a single-file answer for the same statement are the same
+  # code and can never disagree. Everything below is screen: copy the uploads in,
+  # show progress, publish each result exactly as a single conversion does, and
+  # keep one row per file for the table.
+  cv_batch     <- reactiveVal(NULL)          # the frame convert_batch() returned
+  cv_batch_row <- reactiveVal(NA_integer_)   # which file's result is open below it
+  output$cv_has_batch <- reactive({ !is.null(cv_batch()) })
+  outputOptions(output, "cv_has_batch", suspendWhenHidden = FALSE)
+
+  # .unique_names(x) -- the uploaded names, made unique inside one scratch folder.
+  # Outputs are named after the file they came from, so two files both called
+  # "statement.pdf" would have the second silently overwrite the first's workbook
+  # and both rows would offer the same download. A "(2)" suffix is visible in the
+  # table and in the downloaded file name, so the clash is stated, never quiet.
+  .unique_names <- function(x) {
+    seen <- character(0)
+    vapply(as.character(x), function(nm) {
+      if (nm %in% seen) {
+        base <- tools::file_path_sans_ext(nm); ext <- tools::file_ext(nm)
+        k <- 2L
+        repeat {
+          cand <- sprintf("%s (%d)%s", base, k, if (nzchar(ext)) paste0(".", ext) else "")
+          if (!(cand %in% seen)) break
+          k <- k + 1L
+        }
+        nm <- cand
+      }
+      seen <<- c(seen, nm)
+      nm
+    }, character(1), USE.NAMES = FALSE)
+  }
+
+  run_batch <- function(files) {
+    old <- isolate(cv_dir())
+    sess <- tempfile("cvb_")
+    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+    nms <- .unique_names(files$name)
+    paths <- file.path(sess, nms)
+    file.copy(as.character(files$datapath), paths, overwrite = TRUE)
+    if (!is.null(old) && nzchar(old) && !identical(old, sess) && dir.exists(old))
+      safe(unlink(old, recursive = TRUE))
+    safe(sweep_temp_dirs(keep_hours = 24,
+                         exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
+    cv_forced(list())
+    who <- who_now(); n <- length(paths)
+    # A 50-file case must not look frozen, and "converting…" for four minutes is
+    # the same as frozen. The callback names the file being read RIGHT NOW, so the
+    # bar answers "is it stuck?" and "how much longer?" at the same time.
+    # keep_rows = TRUE because the governed feed is written from the parsed rows;
+    # they are dropped again below, per file, the moment that write is done.
+    b <- withProgress(message = sprintf("Converting %d files…", n), value = 0,
+      convert_batch(paths,
+        outdir = sess, templates_dir = TEMPLATES_DIR,
+        user_templates_dir = if (USE_USER_TEMPLATES) USER_TEMPLATES_DIR else NULL,
+        fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
+        requested_by = who, logdir = LOGDIR,
+        bank = bank_choice(), force_template = tpl_choice(),
+        keep_rows = TRUE,
+        progress = function(i, nn, f)
+          setProgress(value = (i - 1) / nn,
+                      detail = sprintf("%d of %d - %s", i, nn, basename(f)))))
+    # Each file finishes exactly as a single conversion does: its audit record is
+    # completed with who ran it, its upload is captured for pickup, and it goes
+    # through the governed feed. A batch that quietly skipped any of the three
+    # would make "convert thirty" mean something different from "convert one,
+    # thirty times", which is the one thing a batch must never do.
+    b$upload_id <- rep(NA_character_, n)
+    b$feed_gate <- vector("list", n)
+    for (i in seq_len(n)) {
+      res <- b$result[[i]]
+      stamp_identity(res$run_id %||% NA_character_)
+      b$upload_id[i] <- safe(record_upload(paths[i], name = nms[i], requested_by = who,
+        status = res$status %||% "failed", run_id = res$run_id %||% NA_character_,
+        template = res$template_id %||% NA_character_,
+        trust = res$trust$level %||% NA_character_,
+        detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
+      b$feed_gate[[i]] <- publish_result(res, TRUE)
+      # The rows are on disk in this file's workbook / CSV / JSON; holding fifty
+      # more copies in one object buys nothing. Marked with the engine's own
+      # name for it, so a reader can tell "dropped" from "there were none".
+      if (!is.null(res$feed_rows)) {
+        res$feed_rows <- NULL; res$dropped_feed_rows <- TRUE; b$result[[i]] <- res
+      }
+    }
+    cv_dir(sess)
+    cv_res(NULL); cv_src(NULL); cv_batch_row(NA_integer_)
+    cv_fb_done(FALSE); cv_fb_rec(NULL)
+    cv_batch(b)
+  }
+
+  # open_batch_row(i) -- put THAT file's result on the ordinary result page. Every
+  # piece of session state a single conversion sets is set here too, so the page
+  # below is not a copy of the result view, it IS the result view.
+  open_batch_row <- function(i) {
+    b <- cv_batch()
+    if (is.null(b) || length(i) != 1L || is.na(i) || i < 1L || i > nrow(b)) return(invisible(FALSE))
+    res <- b$result[[i]]
+    cv_forced(list())
+    cv_res(res)
+    cv_src(list(path = b$file[i], name = basename(b$file[i])))
+    cv_fb_done(FALSE); cv_fb_rec(NULL)
+    cv_upload_id(b$upload_id[i])
+    cv_recorded(TRUE); cv_feed_gate(b$feed_gate[[i]])
+    cv_batch_row(as.integer(i))
+    invisible(TRUE)
+  }
+  observeEvent(input$cv_batch_rows_selected, {
+    sel <- input$cv_batch_rows_selected
+    if (length(sel)) open_batch_row(as.integer(sel[1]))
+  })
+
+  # The one line above the table: what came out of the whole case. Counted from
+  # batch_summary(), which lists every status even at zero, so "0 could not be
+  # read" is a fact the tally states rather than one a reader has to infer.
+  output$cv_batch_summary <- renderUI({
+    b <- cv_batch(); req(b)
+    s <- batch_summary(b); n <- stats::setNames(s$n, s$status)
+    say <- function(k, word) if (isTRUE(n[[k]] > 0L)) sprintf("%d %s", n[[k]], word) else NULL
+    bits <- Filter(Negate(is.null), list(
+      say("ok", "converted"),
+      say("needs_review", "need a check"),
+      say("unsupported", "with no template yet"),
+      say("failed", "could not be read")))
+    if (!length(bits)) bits <- list("nothing to convert")
+    div(style = "margin:2px 0 10px",
+      h4(style = "margin:0 0 2px", sprintf("%d files", nrow(b))),
+      p(class = "muted", style = "margin:0",
+        paste(unlist(bits), collapse = "  -  "),
+        ". Sort by any column - files that failed the same way sit together, so they can be fixed together."))
+  })
+
+  # THE TABLE. Sorting is the whole point of it, so the two columns worth sorting
+  # by sort by MEANING, not by spelling: "Result" orders worst-first off the
+  # engine's own status order (BATCH_STATUSES), not alphabetically, and the table
+  # opens on that order with the failure kind as the tie-break -- so the pile that
+  # needs work is already at the top and already grouped.
+  output$cv_batch <- renderDT({
+    b <- cv_batch(); req(b)
+    dash <- function(v) { v <- as.character(v); v[is.na(v) | !nzchar(v)] <- "-"; v }
+    worst_first <- length(BATCH_STATUSES) + 1L -
+      match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+    disp <- data.frame(
+      File = basename(b$file),
+      Result = vapply(b$status, plain_status, character(1), USE.NAMES = FALSE),
+      Bank = dash(b$bank),
+      Rows = suppressWarnings(as.integer(b$rows)),
+      `What to check` = dash(b$failing_check),
+      order = worst_first,
+      check.names = FALSE, stringsAsFactors = FALSE)
+    datatable(disp, rownames = FALSE, selection = "single",
+      options = list(
+        pageLength = 15, scrollX = TRUE,
+        order = list(list(5, "asc"), list(4, "asc")),
+        columnDefs = list(list(visible = FALSE, targets = 5),
+                          list(orderData = 5, targets = 1))))
+  })
+
+  output$cv_batch_open <- renderUI({
+    b <- cv_batch(); req(b)
+    i <- cv_batch_row()
+    if (is.na(i))
+      return(p(class = "muted", style = "margin:8px 0 0",
+               "Click a row to open that file's full result - the same verdict, checks, transactions and downloads as converting it on its own."))
+    div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
+      h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))),
+      div(class = "muted", style = "font-size:13px",
+          sprintf("File %d of %d. Click another row above for its result.", i, nrow(b))))
+  })
+
   observeEvent(input$cv_go, {
-    if (is.null(input$cv_file)) {
+    f <- input$cv_file
+    if (is.null(f) || !nrow(f)) {
       showNotification("Choose a statement file first - a PDF, CSV or Excel export from your bank.",
                        type = "warning", duration = 6)
       return()
@@ -2230,13 +2458,23 @@ server <- function(input, output, session) {
     # No sign-in and no QID means the run would be recorded against the account the
     # SERVER process runs as -- identical for the whole department, identifying
     # nobody. For a tool whose output is meant to be defensible, that is worse than
-    # stopping, so it stops. Once per session, not once per statement.
+    # stopping, so it stops. Once per session, not once per statement -- and once
+    # per BATCH, not once per file in it.
     if (!.identity_is_personal(detected_identity_info()) && is.na(cv_qid())) {
       showNotification("Enter your QID first - it is what the audit trail records as who ran this conversion.",
                        type = "warning", duration = 8)
       return()
     }
-    run_conversion(input$cv_file$datapath, input$cv_file$name)
+    if (nrow(f) > 1L) run_batch(f) else run_conversion(f$datapath[1], f$name[1])
+  })
+
+  # The button says what it is about to do. Twelve files selected and a button
+  # marked "Convert" leaves the user to wonder whether it means all of them.
+  observe({
+    f <- input$cv_file
+    n <- if (is.null(f)) 0L else nrow(f)
+    updateActionButton(session, "cv_go",
+                       label = if (n > 1L) sprintf("Convert %d files", n) else "Convert")
   })
 
   # "Try it on a sample": convert the bundled specimen statement, so the very
@@ -2327,7 +2565,7 @@ server <- function(input, output, session) {
       tags$ul(style = "color:#444",
         tags$li(tags$b("Every transaction"), ", read verbatim - date, description, amount, balance."),
         tags$li(tags$b("Proof nothing's missing"), " - the balance reconciles, with a plain confidence level."),
-        tags$li(tags$b("Your download"), " - Excel, CSV or JSON.")),
+        tags$li(tags$b("Your download"), " - Excel or CSV.")),
       p(class = "muted", "Your bank is detected automatically. A layout the tool hasn't seen points you to ",
         actionLink("cv_empty_to_tmpl", "Add a template"), " - a 2-minute, no-code setup."),
       # First visit, nothing to upload yet? One click shows the whole payoff on
@@ -2566,6 +2804,13 @@ server <- function(input, output, session) {
                 format(max(d$.date, na.rm = TRUE), "%d %b %Y"))
       else if (!is.na(h$period_start %||% NA_character_))
         sprintf("%s to %s", h$period_start, h$period_end %||% "?") else "-"
+    # SEVERAL PRINTED PERIODS, SAID WHERE THE PERIOD IS SAID. The engine reads a
+    # multi-period file as ONE span (R/extract_metadata.R), which is what makes
+    # "all dates fall in the statement period" and the balance reconciliation pass
+    # on such a file - but a span silently standing in for three quarters reads as
+    # one quarter. So the count goes on the same line as the range it came from.
+    np <- suppressWarnings(as.integer(res$metadata$n_periods %||% NA_integer_))
+    if (isTRUE(np > 1L)) drange <- sprintf("%s - %d periods", drange, np)
     card <- function(label, value, col = NULL)
       div(class = "stat",
           div(class = "stat-label", label),
@@ -2580,7 +2825,14 @@ server <- function(input, output, session) {
         if (has_close) card("Closing balance", fmt_money(as.numeric(h$closing_balance), cur))),
       p(class = "muted", style = "margin:0 0 4px", sprintf("Period: %s%s%s", drange,
         if (!is.na(h$account_number %||% NA_character_)) sprintf("  ·  Account: %s", h$account_number) else "",
-        if (!is.na(h$bank %||% NA_character_)) sprintf("  ·  %s", h$bank) else "")))
+        if (!is.na(h$bank %||% NA_character_)) sprintf("  ·  %s", h$bank) else "")),
+      # ...and anything the engine had to say about that merge - a window no
+      # printed period covers, or balances it could not pair - said here rather
+      # than only in the diagnostics table. A span with a hole in it looks exactly
+      # like a whole one, which is the one thing this line exists to prevent.
+      if (!is.na(res$metadata$period_note %||% NA_character_))
+        p(class = "bad", style = "margin:0 0 6px;font-size:13px",
+          res$metadata$period_note))
   })
 
   # cv_split -- an auto-split bundle, statement by statement.
@@ -2817,20 +3069,30 @@ server <- function(input, output, session) {
   # dl_buttons(outputs, ids) -- a Download button ONLY for formats actually produced
   # (e.g. no Excel on a host without openxlsx), so no button promises a missing file.
   # Excel is the primary (btn-primary) since it's what most reviewers want.
+  #
+  # JSON is NOT one of these. Nobody downloads it -- the work is done in Excel or
+  # CSV -- and a third equal button made the two real choices look like three, so
+  # every reviewer paid a moment's thought to an option that was never theirs. It
+  # is still produced and still one click away (dl_json_link below): demoted, not
+  # removed, because the person who does want it has no other route to it.
   dl_buttons <- function(outputs, ids) {
-    labs <- c(xlsx = "⭳ Excel", csv = "⭳ CSV", json = "⭳ JSON")
+    labs <- c(xlsx = "⭳ Excel", csv = "⭳ CSV")
     has <- function(ext) any(grepl(paste0("\\.", ext, "$"), outputs %||% character(0)))
     Filter(Negate(is.null), lapply(names(ids), function(ext)
-      if (has(ext)) downloadButton(ids[[ext]], labs[[ext]],
+      if (has(ext) && !is.na(labs[ext])) downloadButton(ids[[ext]], labs[[ext]],
         class = if (ext == "xlsx") "btn-primary" else NULL)))
   }
   output$cv_downloads <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
-    btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv", json = "dl_json"))
-    if (!length(btns)) return(NULL)
+    btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv"))
+    has_json <- any(grepl("\\.json$", res$outputs %||% character(0)))
+    if (!length(btns) && !has_json) return(NULL)
     # Prominent bar right under the verdict: the download is the point of the page,
     # so it's the most visible thing, not a quiet box tucked into the sidebar.
-    div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns)
+    div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns,
+      if (has_json)
+        span(class = "muted", style = "font-size:12.5px;margin-left:2px",
+             downloadLink("dl_json", "JSON", class = "muted")))
   })
 
   # cv_feed -- did this conversion reach the org dashboards, and if not, why not?
@@ -2988,6 +3250,50 @@ server <- function(input, output, session) {
     length(cur) > 1L && identical(datefmt, cur[1])
   }
 
+  # WHEN A LAYOUT APPLIES (schema keys effective_from / effective_to). The same
+  # bank and product in 2020 and in 2024 is a genuinely different layout, and the
+  # schema has always had a date range for saying so -- but nothing on screen ever
+  # showed it, so the only way to have both was two rival templates that tie on
+  # every statement forever. R/diagnose.R already reads the range and cautions
+  # when a statement falls outside it.
+  #
+  # .eff_date(x): the typed value as the schema stores it ("yyyy-mm-dd"); NULL for
+  # blank (= always, the normal answer); NA when it is neither, so every caller
+  # can refuse rather than quietly narrow a template's window to nothing.
+  .eff_date <- function(x) {
+    s <- trimws(as.character(x %||% "")[1])
+    if (!nzchar(s) || identical(s, "NA")) return(NULL)
+    d <- suppressWarnings(as.Date(s, format = "%Y-%m-%d"))
+    if (is.na(d)) NA_character_ else format(d, "%Y-%m-%d")
+  }
+  .eff_bad <- function(v) { d <- .eff_date(v); length(d) == 1L && is.na(d) }
+  # What goes in the box when the toolkit opens: the template's own value, or an
+  # empty box. Never the four letters "NA" -- a template that says "always" must
+  # not open showing a word the user then has to know to delete.
+  .eff_txt <- function(v) { s <- as.character(v %||% "")[1]; if (is.na(s) || identical(s, "NA")) "" else s }
+  .eff_show <- function(d) format(as.Date(d), "%d %b %Y")
+  # .eff_problems -- what is wrong with the pair, in words the person typing them
+  # can act on. Empty when they are fine (including both blank).
+  .eff_problems <- function(from, to) {
+    probs <- character(0)
+    if (.eff_bad(from)) probs <- c(probs,
+      "'This layout applies from' is not a date - write it as yyyy-mm-dd (e.g. 2020-01-01), or leave it blank for always.")
+    if (.eff_bad(to)) probs <- c(probs,
+      "'...to' is not a date - write it as yyyy-mm-dd (e.g. 2024-12-31), or leave it blank for no end.")
+    f <- .eff_date(from); t <- .eff_date(to)
+    if (!length(probs) && !is.null(f) && !is.null(t) && as.Date(t) < as.Date(f))
+      probs <- c(probs, "The end date is before the start date, so this layout would apply to nothing at all.")
+    probs
+  }
+  # .eff_sentence -- the range said out loud, blank meaning always.
+  .eff_sentence <- function(from, to) {
+    f <- .eff_date(from); t <- .eff_date(to)
+    if (is.null(f) && is.null(t)) "This layout applies to statements of any date."
+    else if (is.null(t)) sprintf("This layout applies from %s onwards.", .eff_show(f))
+    else if (is.null(f)) sprintf("This layout applies to statements up to %s.", .eff_show(t))
+    else sprintf("This layout applies from %s to %s.", .eff_show(f), .eff_show(t))
+  }
+
   apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
                               unsigned_default = NULL, desc_col = NULL,
                               ref_col = NULL, bal_col = NULL,
@@ -2995,7 +3301,19 @@ server <- function(input, output, session) {
                               date_col = NULL, amount_col = NULL,
                               keep_dateless = NULL,
                               type_debit_value = NULL, type_credit_value = NULL,
-                              fingerprint_text = NULL) {
+                              fingerprint_text = NULL,
+                              effective_from = NULL, effective_to = NULL) {
+    # The validity window. Blank clears the key outright, so a template with no
+    # window looks exactly like one that never had one. A value that is not a date
+    # is LEFT ALONE here and refused at Save (g_save), rather than written as
+    # nonsense or silently thrown away.
+    set_eff <- function(t, key, v) {
+      if (is.null(v) || .eff_bad(v)) return(t)
+      t[[key]] <- .eff_date(v)
+      t
+    }
+    tmpl <- set_eff(tmpl, "effective_from", effective_from)
+    tmpl <- set_eff(tmpl, "effective_to",   effective_to)
     if (!is.null(id) && nzchar(trimws(id)))
       tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
     if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
@@ -3105,7 +3423,7 @@ server <- function(input, output, session) {
         label = if (open) "Hide the settings for this statement"
                 else "Show the settings for this statement"),
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          "Identifying phrase, save name, number punctuation. Rarely needed."))
+          "Identifying phrase, save name, number punctuation, when this layout applies. Rarely needed."))
   })
 
   # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
@@ -3281,6 +3599,26 @@ server <- function(input, output, session) {
             column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
           textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday",
                     width = "100%"),
+          # WHEN THIS LAYOUT APPLIES. Rare, so it is behind the disclosure with the
+          # rest of the rarely-touched settings - but it is the only answer to a
+          # real problem: the same bank and the same product printed differently in
+          # 2020 and in 2024. Without it the two layouts have to be two templates
+          # that fit equally well and tie on every statement forever. Blank means
+          # always, which is the normal answer and what every shipped template says.
+          tags$hr(),
+          strong("When this layout applies"),
+          p(class = "muted", style = "margin:4px 0 6px",
+            paste("Banks change their layouts. If this template is for a particular run of years, say so,",
+                  "and a statement dated outside them is flagged for a check instead of quietly trusted.",
+                  "Leave both blank for always - that is the usual answer.")),
+          fluidRow(
+            column(6, textInput("g_eff_from", "This layout applies from",
+                                value = .eff_txt(tmpl$effective_from),
+                                placeholder = "yyyy-mm-dd (blank = always)")),
+            column(6, textInput("g_eff_to", "…to",
+                                value = .eff_txt(tmpl$effective_to),
+                                placeholder = "yyyy-mm-dd (blank = no end)"))),
+          uiOutput("g_eff_msg"),
           tags$hr(),
           div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
             strong("None of these fit? Tell our team"),
@@ -3600,7 +3938,8 @@ server <- function(input, output, session) {
                     keep_dateless = input$g_keep_dateless,
                     type_debit_value = input$g_type_debit,
                     type_credit_value = input$g_type_credit,
-                    fingerprint_text = input$g_fp)
+                    fingerprint_text = input$g_fp,
+                    effective_from = input$g_eff_from, effective_to = input$g_eff_to)
   }
   guided_live <- reactive(gl_build(meta_live = TRUE))
 
@@ -3632,6 +3971,19 @@ server <- function(input, output, session) {
       return(span(class = "ok", style = "font-size:12.5px",
                   "This phrase will do - it is specific enough to identify this layout."))
     span(class = "bad", style = "font-size:12.5px", paste(fpp, collapse = " "))
+  })
+
+  # The validity window, said back in plain words as it is typed - "This layout
+  # applies from 1 Jan 2020 to 31 Dec 2024", or "to statements of any date" when
+  # both boxes are empty. A date range is exactly the kind of setting where a
+  # yyyy-mm-dd typo looks fine, so it is read back rather than merely accepted,
+  # and a nonsense one is named here as well as refused at Save.
+  output$g_eff_msg <- renderUI({
+    probs <- .eff_problems(input$g_eff_from, input$g_eff_to)
+    if (length(probs))
+      return(span(class = "bad", style = "font-size:12.5px", paste(probs, collapse = " ")))
+    span(class = "muted", style = "font-size:12.5px",
+         .eff_sentence(input$g_eff_from, input$g_eff_to))
   })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
@@ -3700,6 +4052,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
     updateTextInput(session, "g_type_debit",  value = parsed$type_debit_value %||% "")
     updateTextInput(session, "g_type_credit", value = parsed$type_credit_value %||% "")
+    updateTextInput(session, "g_eff_from", value = .eff_txt(parsed$effective_from))
+    updateTextInput(session, "g_eff_to",   value = .eff_txt(parsed$effective_to))
     updateSelectInput(session, "g_col_date", selected = parsed$columns$date$source %||% "")
     updateSelectInput(session, "g_col_amt",  selected = parsed$columns$amount$source %||% "")
     updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")
@@ -3928,6 +4282,20 @@ server <- function(input, output, session) {
   })
   observeEvent(input$g_save, {
     g <- guided(); req(g)
+    # A validity window that is not a date, or that runs backwards, is refused
+    # BEFORE anything is written. apply_overrides() deliberately leaves an
+    # unreadable one alone, so without this the save would go through with the
+    # window silently missing - a template that says "always" when its author
+    # meant "2020 onwards".
+    eff_probs <- .eff_problems(input$g_eff_from, input$g_eff_to)
+    if (length(eff_probs)) {
+      g_more_open(TRUE)
+      showNotification(HTML(paste0("<b>Couldn't save.</b> ",
+        htmltools::htmlEscape(paste(eff_probs, collapse = " ")),
+        "<br>The settings for this statement are now open on the right - it is under <b>When this layout applies</b>.")),
+        type = "error", duration = 12)
+      return()
+    }
     tmpl <- guided_live()
     # If we opened a tested (default) template to refine it, saving under the same
     # id would be shadowed - curated defaults win on an id clash. Give the
