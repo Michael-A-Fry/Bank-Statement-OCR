@@ -295,3 +295,27 @@ test_that("the golden-test HOWTO covers the PDF path it claims to cover", {
   expect_true(file.exists(file.path(.dep_root(), "tests/testthat/fixtures/make_pdf_fixtures.R")))
   expect_true(file.exists(file.path(.dep_root(), "tests/testthat/test-pdf_template_goldens.R")))
 })
+
+# ---------------------------------------------------------------------------
+# The changelog is the first thing whoever inherits this reads, and a version
+# stamp that disagrees with it is worse than none: engine_version() writes VERSION
+# into every run log, every JSON output and the feed manifest, so a stale stamp
+# makes "which build produced this figure?" unanswerable after the fact.
+test_that("VERSION matches the newest release in the changelog", {
+  v <- trimws(.dep_lines("VERSION")[1])
+  expect_match(v, "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  heads <- grep("^## ", .dep_lines("CHANGELOG.md"), value = TRUE)
+  expect_gt(length(heads), 0)
+  expect_identical(trimws(sub("^## ", "", heads[1])), v)
+})
+
+test_that("the changelog points at documents that exist", {
+  txt <- .dep_read("CHANGELOG.md")
+  links <- unlist(regmatches(txt, gregexpr("\\]\\([^)]+\\)", txt)))
+  links <- gsub("^\\]\\(|\\)$", "", links)
+  links <- links[!grepl("^https?://|^#", links)]
+  missing <- links[!file.exists(file.path(.dep_root(), sub("#.*$", "", links)))]
+  expect_identical(missing, character(0),
+                   info = paste("changelog links to a missing file:",
+                                paste(missing, collapse = ", ")))
+})
