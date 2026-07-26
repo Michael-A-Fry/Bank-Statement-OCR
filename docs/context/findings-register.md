@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 83 findings, 78 fixed, 5 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 84 findings, 81 fixed, 3 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -160,6 +160,7 @@ _Anything discovered after the review lands here, newest at the bottom._
 | N19 | low | open | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in — a correction to the original #61 measurement. | samples/_private_staging/anz_multiple.pdf |
 
 | N20 | high | open | The zero-row re-read is a CLIFF, not a measure. A template that reads 5 rows of a 500-row statement is exactly as wrong as one that reads 0, and passes every check: `transaction_count` only requires `n > 0` when the statement prints no stated count. | R/convert.R `empty_first`, R/reconcile.R:179 |
+| N22 | high | **fixed** | The toolkit could not repair a shipped template: the fix saved as `<id>_custom` with the same fingerprint, tied on every statement, and lost the tie-break to the very template it was correcting. It now saves `refines: <id>` and detection ranks a correction one step above the single template it names. | app.R `g_save` / R/detect.R |
 | N21 | medium | open | When a conversion is obviously wrong, the route to "this isn't right, build the right one" is not offered on the result that shows it. | the Convert result page |
 
 ### N20 - reading 5 of 500 is the same defect as reading 0

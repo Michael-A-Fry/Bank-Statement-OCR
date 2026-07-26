@@ -270,8 +270,22 @@
   # check -- transaction_count only requires n > 0 when the statement prints no
   # stated count, and this KPI returned "na". A green run, on the dashboards,
   # missing 99% of the money. That is the exact failure the charter forbids.
+  # THE SMALL-STATEMENT ASYMMETRY. The comparison is fair at 300 rows and fragile
+  # at 5: a 5-transaction statement needs only 5 unreadable rows to trip, and one
+  # unusual "brought forward" line that the summary matcher misses, plus a wrapped
+  # note, can get most of the way there. A 300-row statement would need 300.
+  #
+  # So the comparison must carry enough evidence to mean something. Three is the
+  # smallest count that cannot be one stray row plus its neighbour -- below that,
+  # "more missed than read" is noise rather than a finding, and crying wolf on a
+  # small honest statement teaches people to ignore the one warning that matters.
+  #
+  # Note this is NOT the same as "more rows didn't look like transactions than
+  # did", which is true of most statements and is fine: headings, notes, summary
+  # lines and wrapped text are excluded from `actionable` entirely. The worked
+  # example measures 12 kept, 17 skipped, 0 actionable.
   actionable <- suppressWarnings(as.integer(parsed$actionable_skip_count %||% NA))
-  if (!is.na(actionable) && actionable > 0 && actionable >= n) {
+  if (!is.na(actionable) && actionable >= 3L && actionable >= n) {
     return(.kpi(
       "no_unparsed_rows", "fail", expected = n + actionable, actual = n,
       discrepancy = actionable,

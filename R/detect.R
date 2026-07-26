@@ -114,6 +114,22 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   # but its name -- a template's FILENAME deciding which figures reach a dashboard.
   defaults <- vapply(ids, function(i)
     as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
+  # ...UNLESS THE HAND-BUILT ONE IS A CORRECTION OF THIS ONE. A template saved from
+  # the toolkit after opening a shipped template to fix it carries `refines: <id>`.
+  # It is not a rival that happens to score the same -- it exists BECAUSE the
+  # shipped one was wrong on this bank, and it will tie with it on every statement
+  # (same fingerprint, copied from it). Preferring the tested one there means the
+  # analyst's fix can never take effect, and nothing on screen explains why. So a
+  # refinement outranks exactly the template it names, and nothing else. Governance
+  # is untouched: it is still origin "user", so it still cannot reach the dashboards
+  # until somebody promotes it.
+  # A refinement ranks one step ABOVE the single template it names -- not above
+  # every shipped template, and not merely level with it (level is a tie, and a tie
+  # is what stopped her fix taking effect in the first place).
+  for (i in seq_along(ids)) {
+    r <- templates[[ids[i]]]$refines %||% NULL
+    if (!is.null(r) && r %in% ids) defaults[i] <- defaults[ids == r][1] + 1
+  }
   # order by CONTENT score, then shipped-over-hand-built, then the filename
   # tie-breaker, then id (so the outcome is still fully deterministic).
   ord <- order(scores, defaults, fns, ids,

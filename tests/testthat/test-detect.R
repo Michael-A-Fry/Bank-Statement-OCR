@@ -383,3 +383,50 @@ test_that("a template that reads nothing says so instead of being swapped out", 
   expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
 })
 
+
+# --- A correction of a shipped template must be able to take effect -----------
+# Every template in production is shipped. When an accountant opened one to fix a
+# moved column band, it saved as "<id>_custom" -- carrying the SAME fingerprint,
+# so it tied on every statement of that bank, and the tie-break preferred the
+# tested one. Her fix could never win, and the only advice on screen was to make
+# her identifying phrase more specific, which was not why she lost. Four
+# mechanisms producing an outcome none of them intended.
+.refine_dirs <- function(refines = TRUE) {
+  d <- tempfile("shipped_"); dir.create(d); u <- tempfile("hand_"); dir.create(u)
+  b <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  b <- b[!grepl("^sample: true", b)]
+  writeLines(b, file.path(d, "t.yaml"))
+  w <- sub("^id: tutorial_everyday_pdf", "id: tutorial_everyday_pdf_custom", b)
+  if (refines) w <- c(w, "refines: tutorial_everyday_pdf")
+  writeLines(w, file.path(u, "w.yaml"))
+  list(shipped = d, hand = u)
+}
+
+test_that("a template saved as a correction of a shipped one wins over it", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  p <- .refine_dirs()
+  det <- detect_statement(read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf")),
+                          load_template_set(p$shipped, p$hand))
+  expect_true(det$matched)
+  expect_identical(det$template_id, "tutorial_everyday_pdf_custom")
+  expect_identical(det$tied, character(0))   # a real answer, not a question
+})
+
+test_that("a hand-built RIVAL still loses to the tested template", {
+  # The refinement rule must not become a general "user templates win" rule: only
+  # a template that NAMES the one it corrects outranks it, and only that one.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  p <- .refine_dirs(refines = FALSE)
+  det <- detect_statement(read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf")),
+                          load_template_set(p$shipped, p$hand))
+  expect_identical(det$template_id, "tutorial_everyday_pdf")
+})
+
+test_that("the toolkit stamps what it was correcting", {
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  i <- grep("tmpl\\$refines <- tmpl\\$id", src)
+  expect_length(i, 1L)
+  # ...and only when refining a SHIPPED template, never on a new one
+  expect_match(paste(src[(i - 2):(i + 2)], collapse = " "),
+               "g\\$default_ids")
+})

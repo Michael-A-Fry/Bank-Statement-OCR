@@ -70,6 +70,16 @@ If a statement is genuinely a new kind the wizard can't handle, that's rare — 
 [when-something-goes-wrong.md](when-something-goes-wrong.md) for how to report it
 safely.
 
+## Fixing a bank the tool already knows
+Open the statement in the toolkit, correct what is wrong, and save. It saves as a
+separate template (the shipped one is left alone so it can still be updated), and
+records that it is a **correction of** that bank's template - which is what makes
+your fix win from then on. Before this, a correction quietly lost to the template
+it was correcting, because both recognise the same bank equally well.
+
+It is still a template built here, so it converts for everyone but does not reach
+the Qlik dashboards until whoever maintains the engine reviews it and promotes it.
+
 ## Stuck on the layout itself?
 If you can't work out what the columns are, where the year comes from, or which
 lines are totals rather than transactions, don't guess. Attach the statement to

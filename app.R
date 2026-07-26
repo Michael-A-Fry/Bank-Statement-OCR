@@ -3815,8 +3815,16 @@ server <- function(input, output, session) {
     # If we opened a tested (default) template to refine it, saving under the same
     # id would be shadowed - curated defaults win on an id clash. Give the
     # customised copy a distinct id so the accountant's fix actually takes effect.
-    if (!is.null(g$default_ids) && (tmpl$id %||% "") %in% g$default_ids)
+    # Record WHAT she was fixing, not just that the copy is different. Without this
+    # her correction was outvoted by the very template she opened to correct: both
+    # carry the same fingerprint, so they tie on every statement, and the tie-break
+    # prefers the tested one. She then had no way to win except by making her
+    # fingerprint MORE specific, which is not why she lost, and the tool told her
+    # so. `refines` says "this exists to replace that one", and detection honours it.
+    if (!is.null(g$default_ids) && (tmpl$id %||% "") %in% g$default_ids) {
+      tmpl$refines <- tmpl$id
       tmpl$id <- paste0(tmpl$id, "_custom")
+    }
     # Surface the ACTUAL reason a save fails (validation problems name the field,
     # never any statement content) instead of a dead-end generic toast.
     err <- tryCatch({ save_user_template(tmpl, USER_TEMPLATES_DIR); NULL },

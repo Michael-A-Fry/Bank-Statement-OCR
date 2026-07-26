@@ -326,6 +326,27 @@ test_that("the boundary is 'more missed than captured', with no tuning knob", {
   expect_identical(.thin(n = 10, actionable = 11)$status, "fail")  # more
 })
 
+test_that("a genuinely small statement is not cried wolf over", {
+  # The comparison is fair at 300 rows and fragile at 5. One unusual "brought
+  # forward" line the summary matcher misses, plus a wrapped note, is most of the
+  # way to tripping a 2-row statement. Three is the smallest count that cannot be
+  # one stray row and its neighbour.
+  expect_identical(.thin(n = 1, actionable = 1)$status, "na")
+  expect_identical(.thin(n = 2, actionable = 2)$status, "na")
+  expect_identical(.thin(n = 1, actionable = 3)$status, "fail")   # 3x the statement
+  expect_identical(.thin(n = 5, actionable = 5)$status, "fail")   # half unread: real
+})
+
+test_that("skipped rows that are not transactions never count against a statement", {
+  # This is the case that worried the owner: most statements skip MORE rows than
+  # they keep -- addresses, headings, totals, wrapped description lines. None of
+  # them are actionable, so none of them can trip the check. Measured on the worked
+  # example: 12 kept, 17 skipped, 0 actionable.
+  expect_identical(.thin(n = 12, actionable = 0)$status, "na")
+  expect_true(all(c("summary_line", "heading_or_note") %in% names(.PDF_ROW_REASON_TEXT)))
+  expect_false(any(c("summary_line", "heading_or_note") %in% .PDF_ACTIONABLE_CODES))
+})
+
 test_that("a format that cannot count actionable skips is unaffected", {
   # Delimited files are already covered by the source-line-count difference, and
   # they carry no actionable count -- the new branch must not fire on NA.
