@@ -322,3 +322,30 @@ test_that("the visible bank picker actually reaches the conversion", {
   joined <- paste(.ui_src(), collapse = "\n")
   expect_match(joined, "pick\\(input\\$cv_bank_quick\\) %\\|\\|% pick\\(input\\$cv_bank\\)")
 })
+
+# ---------------------------------------------------------------------------
+# THE EVIDENCE VIEW OPENS ITSELF WHEN SOMETHING IS FLAGGED. Reported as the most
+# useful view the moment something has gone wrong - which is exactly when nobody
+# should have to know a link exists. A clean run still opens lean.
+test_that("a flagged result opens the evidence view without being asked", {
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_match(joined, "cv_detail_touched <- reactiveVal\\(FALSE\\)")
+  expect_match(joined, "observeEvent\\(cv_res\\(\\), \\{")
+  # ...but never against someone who closed it deliberately
+  expect_match(joined, "if \\(isTRUE\\(cv_detail_touched\\(\\)\\)\\) return\\(\\)")
+  # opens on a non-ok status OR any failing check
+  expect_match(joined, 'any\\(k\\$status %in% "fail"\\)')
+})
+
+test_that("the proof strip carries the check that catches the commonest error", {
+  # Amounts and the debit/credit mapping are what actually go wrong; that check
+  # used to surface only on failure, which is the wrong way round for the error
+  # a reviewer most wants to see confirmed.
+  src <- .ui_src()
+  i <- grep("\\.PROOF_CHECKS <- c\\(", src)
+  blk <- paste(src[i:(i + 2)], collapse = " ")
+  expect_match(blk, "amount_direction", fixed = TRUE)
+  e <- new.env(parent = globalenv())
+  sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
+  expect_true("amount_direction" %in% names(e$CHECK_PLAIN))
+})

@@ -2277,7 +2277,26 @@ server <- function(input, output, session) {
   # tool remembers. Closing it again is equally sticky, so nobody is stuck with a
   # view they did not want.
   cv_detail_open <- reactiveVal(FALSE)
-  observeEvent(input$cv_more, cv_detail_open(!isTRUE(cv_detail_open())))
+  # Has the person expressed a preference this session? Once they have, it is
+  # theirs: auto-open must never fight someone who deliberately closed it.
+  cv_detail_touched <- reactiveVal(FALSE)
+  observeEvent(input$cv_more, {
+    cv_detail_touched(TRUE)
+    cv_detail_open(!isTRUE(cv_detail_open()))
+  })
+  # OPEN ITSELF WHEN SOMETHING IS FLAGGED. On a clean run the page stays lean; the
+  # moment a check fails or the run needs review, the page that diagnoses it - the
+  # statement with the bands drawn on it - is already open rather than behind a
+  # link somebody has to know about. Reported as the single most useful view when
+  # something has gone wrong, so it should not need finding at exactly that moment.
+  observeEvent(cv_res(), {
+    if (isTRUE(cv_detail_touched())) return()
+    res <- cv_res(); if (is.null(res)) return()
+    k <- res$kpis
+    flagged <- !identical(res$status %||% "", "ok") ||
+      (!is.null(k) && "status" %in% names(k) && any(k$status %in% "fail"))
+    if (isTRUE(flagged)) cv_detail_open(TRUE)
+  })
   output$cv_detail_open <- reactive({ isTRUE(cv_detail_open()) })
   outputOptions(output, "cv_detail_open", suspendWhenHidden = FALSE)
 
@@ -2399,7 +2418,11 @@ server <- function(input, output, session) {
   #   - could every date be read
   # A dash means the check could not run on this statement (no printed closing
   # balance, no running balance column) - which is a fact worth seeing, not a pass.
-  .PROOF_CHECKS <- c("balance_reconciliation", "no_unparsed_rows",
+  # amount_direction is here because it is the check that catches what actually
+  # goes wrong most: the amount column or the debit/credit mapping. It used to
+  # surface only when it failed, which is the wrong way round for the most common
+  # error - a reviewer wants to see that one confirmed, not merely not-complained-about.
+  .PROOF_CHECKS <- c("balance_reconciliation", "no_unparsed_rows", "amount_direction",
                      "running_balance_continuity", "dates_readable")
   output$cv_proof <- renderUI({
     res <- cv_res(); req(res)
