@@ -419,12 +419,14 @@ ui <- fluidPage(
           # that fact, the period, and the reason -- generated from the same
           # setting the purge uses, so it can never overstate or understate it.
           helpText(class = "muted", UPLOADS_NOTE),
-          # NO "your name" box. The environment identifies the person (a host
-          # sign-in or an SSO header), so asking her to type what the tool already
-          # knows is asking a question the tool can answer -- and a typed name is a
-          # weaker record than a sign-in anyway, because anyone can type anything.
-          # If the environment CANNOT identify a person, that is said out loud on
-          # every conversion (see cv_go) rather than papered over with a text box.
+          # WHO RAN THIS. Asked only when the tool genuinely cannot work it out.
+          # Where the server sits behind a real sign-in (host or SSO) this renders
+          # nothing at all -- asking for what the environment already established
+          # is the question a tool should answer for itself. Where there is no
+          # sign-in, it is asked ONCE per session and then collapses to one line,
+          # because the alternative is an audit trail that names the server's own
+          # account for the whole department.
+          uiOutput("cv_whoami"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           helpText(sprintf("Your bank is detected automatically — just upload and convert. Files up to %g MB (a long scan is fine).", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
@@ -2056,7 +2058,35 @@ server <- function(input, output, session) {
   # ATTESTED-or-fallback value; it never stands alone in the log any more -- the
   # typed claim and the machine-detected identity are ALSO written as separate
   # fields (see stamp_identity below), so a reader can tell one from the other.
+  # WHO RAN THIS, asked at most once a session and only when it cannot be
+  # established. NA until given; conversion is blocked until then (see cv_go), so
+  # no run is ever recorded against nobody.
+  cv_qid <- reactiveVal(NA_character_)
+  observeEvent(input$cv_qid_set, {
+    v <- trimws(input$cv_qid %||% "")
+    if (!nzchar(v)) {
+      showNotification("Enter your QID first.", type = "warning", duration = 5)
+    } else cv_qid(v)
+  })
+  observeEvent(input$cv_qid_change, cv_qid(NA_character_))
+  output$cv_whoami <- renderUI({
+    # A real per-person sign-in answers this already: ask nothing.
+    if (.identity_is_personal(detected_identity_info())) return(NULL)
+    q <- cv_qid()
+    if (!is.na(q))
+      return(div(class = "muted", style = "margin:-2px 0 12px",
+                 sprintf("Recording as %s", q), " \u00b7 ",
+                 actionLink("cv_qid_change", "change")))
+    tagList(
+      textInput("cv_qid", "Your QID", value = ""),
+      helpText(style = "margin-top:-6px",
+        "There is no sign-in on this server, so this is what the audit trail records as who ran the conversion. Asked once - remembered until you close the browser."),
+      actionButton("cv_qid_set", "Use this QID", class = "btn-default"),
+      tags$hr(style = "margin:14px 0"))
+  })
   who_now <- function() {
+    q <- cv_qid()
+    if (!is.na(q) && nzchar(q)) return(q)
     detected_identity() %||% (session$user %||% current_user())
   }
   # stamp_identity(run_id) -- write BOTH facts onto the run record: what was typed
@@ -2073,7 +2103,7 @@ server <- function(input, output, session) {
     if (is.na(rid) || !nzchar(rid)) return(invisible(FALSE))
     info <- detected_identity_info()
     ok <- safe(amend_log_record(LOGDIR, "runs", rid,
-      identity_fields(attested = NA_character_, detected = info$who, source = info$source)), FALSE)
+      identity_fields(attested = cv_qid(), detected = info$who, source = info$source)), FALSE)
     if (!isTRUE(ok))
       showNotification(paste("This conversion ran, but its audit record could not be completed with who ran it.",
                              "Tell whoever looks after the tool before relying on this run."),
@@ -2145,16 +2175,15 @@ server <- function(input, output, session) {
                        type = "warning", duration = 6)
       return()
     }
-    # With no name box, the audit trail rests entirely on what the environment can
-    # establish. Where that is a real per-person sign-in, nothing needs saying. Where
-    # it is only the server's own account, the run identifies NOBODY -- and that has
-    # to be said out loud on every conversion, because a forensic tool whose "who"
-    # quietly means "the server" is worse than one that admits it has no idea.
-    if (!.identity_is_personal(detected_identity_info()))
-      showNotification(paste("This tool cannot tell who you are: there is no sign-in on this server, so the",
-                             "audit record names the machine's account, not a person. Tell whoever looks",
-                             "after the tool if these conversions need to be traceable to an individual."),
-                       type = "warning", duration = 10)
+    # No sign-in and no QID means the run would be recorded against the account the
+    # SERVER process runs as -- identical for the whole department, identifying
+    # nobody. For a tool whose output is meant to be defensible, that is worse than
+    # stopping, so it stops. Once per session, not once per statement.
+    if (!.identity_is_personal(detected_identity_info()) && is.na(cv_qid())) {
+      showNotification("Enter your QID first - it is what the audit trail records as who ran this conversion.",
+                       type = "warning", duration = 8)
+      return()
+    }
     run_conversion(input$cv_file$datapath, input$cv_file$name)
   })
 

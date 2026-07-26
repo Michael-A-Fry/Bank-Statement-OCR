@@ -93,22 +93,25 @@ test_that("the app no longer claims a sign-in it does not have (#47)", {
   # Only a host sign-in or an SSO header is a PERSON; the OS account is the
   # server's and identifies nobody. That distinction is the whole finding.
   expect_match(joined, "\\.identity_is_personal <- function\\(info\\) info\\$source %in% c\\(\"host\", \"sso\"\\)")
-  # The name box is gone -- the environment identifies the person -- so the
-  # "we cannot tell who you are" case must be said OUT LOUD on every conversion.
-  # Without the box, silence here would mean the audit trail quietly names the
-  # machine's account and nobody ever finds out.
-  expect_false(grepl("cv_by", joined, fixed = TRUE))
-  expect_match(joined, "cannot tell who you are", fixed = TRUE)
-  expect_match(joined, "if \\(!\\.identity_is_personal\\(detected_identity_info\\(\\)\\)\\)")
+  # Who ran it is asked ONLY when the tool cannot work it out: a real per-person
+  # sign-in renders nothing at all.
+  expect_match(joined, "if \\(\\.identity_is_personal\\(detected_identity_info\\(\\)\\)\\) return\\(NULL\\)")
+  # ...and where it cannot, a conversion is BLOCKED rather than recorded against
+  # the server's own account. Warning-and-continue is not enough: the run would
+  # still be written, naming nobody, and a defensible output cannot rest on that.
+  expect_match(joined, "!\\.identity_is_personal\\(detected_identity_info\\(\\)\\) && is.na\\(cv_qid\\(\\)\\)")
+  expect_match(.app_block(src_go <- .app_src(), "observeEvent\\(input\\$cv_go", 25L), "return\\(\\)")
+  # asked once a session, not once a statement
+  expect_match(joined, "cv_qid <- reactiveVal", fixed = TRUE)
+  expect_match(joined, "Recording as %s", fixed = TRUE)
 })
 
 test_that("every conversion stamps the detected identity and its source (#47)", {
   src <- .app_src()
   joined <- paste(src, collapse = "\n")
   expect_match(joined, "stamp_identity <- function", fixed = TRUE)
-  # attested is explicitly NOTHING now: nobody types a name, so the record must
-  # not imply anyone claimed the run. detected + source carry the truth.
-  expect_match(joined, "identity_fields\\(attested = NA_character_, detected = info\\$who")
+  # both facts: the QID a person gave, and what the machine could establish.
+  expect_match(joined, "identity_fields\\(attested = cv_qid\\(\\), detected = info\\$who")
   # ...and it happens on the ONE shared conversion path, so no route can skip it
   expect_match(.app_block(src, "run_conversion <- function", 40L), "stamp_identity\\(")
   # a failure to complete the audit record is never silent
