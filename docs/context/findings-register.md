@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 93 findings, 81 fixed, 12 open — N30 is CRITICAL and is the next thing fixed.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 94 findings, 81 fixed, 13 open — N30 is CRITICAL and is being fixed now.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -338,6 +338,29 @@ what happens when the box you drew is not beside its label, and the tool can say
 
 Filed high. The form path is the one an accountant meets with no template to fall
 back on and no reconciliation to catch a mistake, so the flow has to carry her.
+
+| N32 | medium | open | The converting/loading status is a small panel in a screen corner (Shiny's default `withProgress` placement), so people do not notice a conversion is running and click around while it works. It should be large and centred - unmissable - because a scanned statement can take tens of seconds and the page otherwise looks idle. | app.R:2086 (and 1472, 1478), CSS at app.R:187 |
+
+### N32 - the user cannot tell it is working
+
+`withProgress(message = "Converting statement...")` at app.R:2086 renders in
+Shiny's default position: a small panel in a corner. On a scanned statement the
+conversion can run for tens of seconds while the page looks completely idle, so
+people click Convert again, switch tabs, or assume it has hung.
+
+This is the tool failing to answer a question it definitely knows the answer to:
+it knows exactly whether it is working and how far through it is.
+
+The pieces already exist and are not being used for this: there is a dim+spinner
+treatment for recalculating outputs (CSS at app.R:215-230), and withProgress
+already reports real stages ("Reading the file and detecting its format...",
+"Running checks and writing outputs..."). What is missing is placement and size.
+
+WHAT IT SHOULD BE: a large, centred, unmissable overlay for the duration of a
+conversion, carrying the stage text that is already being produced. It must cover
+all three withProgress sites (single convert at :2086, and the two batch/audit ones
+at :1472 and :1478) - a batch of 30 files is the case where "is it doing anything?"
+bites hardest. Style it once in the design tokens rather than three times.
 
 ### What is holding the last three open
 
