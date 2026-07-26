@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 91 findings, 81 fixed, 10 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 92 findings, 81 fixed, 11 open — N30 is CRITICAL and is the next thing fixed.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -254,6 +254,53 @@ past the drawn band's right edge, since a word is assigned by its x position.
 
 Filed HIGH: a mis-drawn band is the reported commonest cause of a wrong amount
 column, and a *silently* mis-placed one is worse than a visibly wrong one.
+
+| N30 | **critical** | open | Opening/closing balances are kept as TRANSACTIONS, with the balance figure landing in the debit column ("Balance -9000 debit"). Invents large wrong transactions rather than losing data. Same root cause as N29, plus a second failure that turns a displaced band into a phantom row. | R/parse_pdf_table.R:184-186 |
+
+### N30 - a balance read as a nine-thousand-dollar debit
+
+The owner's diagnosis is right, and it is worse than one bug: N29's displacement
+also DISABLES the guard that exists to stop exactly this.
+
+`.pdf_is_summary` (R/parse_pdf_table.R:184-186) decides whether a row is a summary
+line - an opening/closing balance, a carried-forward, a total - and it reads the
+DESCRIPTION band, falling back to the whole raw line only when that band is EMPTY:
+
+    d <- tolower(trimws(description %||% ""))
+    if (!nzchar(d)) d <- tolower(trimws(raw %||% ""))
+
+With bands displaced, the description band does not come back empty - it comes
+back with the WRONG words (a date fragment, part of a number, a neighbouring
+column). Non-empty and wrong. So the raw fallback never runs, "Opening balance" is
+never seen even though it is sitting right there in `raw`, and the row is kept.
+
+The chain, end to end:
+  1. bands displaced on a page whose width differs from ref_width  (N29)
+  2. -> description band captures the wrong words, but is not empty
+  3. -> .pdf_is_summary never falls back to raw, so the label is missed
+  4. -> the row passes .is_txn and is kept as a transaction
+  5. -> the balance figure sits in the displaced debit band: "-9000 debit"
+  6. -> balance_reconciliation would normally catch a phantom of that size...
+  7. -> ...except on a multi-period statement reconciliation is already failing
+        or "na", so the last net is down too
+
+Every layer of defence fails from one displacement, and the output gains
+transactions that never happened, at material amounts.
+
+**TWO SEPARATE FIXES, and the second is worth doing whatever N29 turns out to be:**
+
+  A. Fix the displacement (N29) - one coordinate frame for editor and parser.
+
+  B. HARDEN THE GUARD INDEPENDENTLY. Check `raw` ALWAYS, not only when the
+     description band is empty. A line that says "Closing balance" IS a summary
+     line whatever the description band happened to catch; there is no case where
+     reading a wrongly-captured fragment INSTEAD of the full line is better. That
+     is a one-line change and it would have contained this bug even with the bands
+     displaced. Defence in depth: A stops it happening, B stops it mattering.
+
+Also worth a test that no kept transaction's description or raw matches
+.PDF_SUMMARY_LABELS - an invariant that would have failed loudly the first time
+this happened.
 
 ### What is holding the last three open
 
