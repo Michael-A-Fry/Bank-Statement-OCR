@@ -76,6 +76,13 @@ read_uploads <- function(dir = NULL) {
 
 # upload_file_path(id, dir) -> the saved statement path (for re-audit), or NA.
 upload_file_path <- function(id, dir = NULL) {
+  # `id` arrives from the browser. A "/", "\\" or ".." in it would walk straight out
+  # of uploads/ and hand back any file the server process can read, so an id that is
+  # not a plain single path segment is refused outright rather than sanitised into
+  # something that merely looks safe.
+  if (length(id) != 1L || is.na(id) || !nzchar(id) ||
+      grepl("[/\\\\]", id) || id %in% c(".", "..") || grepl("(^|[/\\\\])\\.\\.($|[/\\\\])", id))
+    return(NA_character_)
   ud <- file.path(.uploads_dir(dir), id)
   fs <- setdiff(list.files(ud, full.names = TRUE), file.path(ud, "record.json"))
   if (length(fs)) fs[1] else NA_character_

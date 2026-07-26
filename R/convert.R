@@ -67,7 +67,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
       result$metadata <- c(meta, list(multiple = multi))
       result$diagnostics <- build_diagnostics("unsupported", det = det,
-        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt))
+        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+                        # A scan we could not machine-read looks identical to an
+                        # unknown layout unless we say so -- carry the reason through.
+                        scanned_no_ocr = input$meta$scanned_no_ocr %||% 0L,
+                        ocr_tools = input$meta$ocr_tools_available %||% TRUE))
     } else {
       template <- templates[[det$template_id]]
       detected_template <- template$id

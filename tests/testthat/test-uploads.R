@@ -30,3 +30,14 @@ test_that("read_uploads on an empty/missing folder is a well-formed empty frame"
   expect_equal(nrow(u), 0L)
   expect_true(all(c("id", "status", "needs_pickup") %in% names(u)))
 })
+
+# The id comes from the browser: a path separator or .. would read any file the
+# server process can see, from a handler that (until #37) was not even gated.
+test_that("upload_file_path refuses an id that is not a plain path segment (#37)", {
+  d <- file.path(tempfile("up_")); dir.create(d, recursive = TRUE)
+  expect_true(is.na(upload_file_path("../../etc/passwd", d)))
+  expect_true(is.na(upload_file_path("a/b", d)))
+  expect_true(is.na(upload_file_path("..", d)))
+  expect_true(is.na(upload_file_path("", d)))
+  expect_true(is.na(upload_file_path(NA_character_, d)))
+})

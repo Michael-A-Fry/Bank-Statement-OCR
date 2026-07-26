@@ -13,6 +13,9 @@ app:
   # The URL Qlik's "Convert a statement" tile opens. Point it at your Shiny deployment.
   shiny_url: http://localhost:8100
   port: 8100
+  # Biggest statement a user may upload, in MB. Shiny's own default is only 5 MB,
+  # which rejects scanned statements; 200 comfortably fits a year-long 300-dpi scan.
+  max_upload_mb: 200
   # Convert shows proven templates by default; a tick-box brings in user-created
   # ones. Set true to start with that box ticked (team mostly uses its own templates).
   user_templates_default: false

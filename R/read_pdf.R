@@ -227,8 +227,15 @@ read_pdf <- function(path, redaction_rects = NULL,
   # watermark): box-count alone would treat it as a text page and silently yield
   # no rows. Safely no-ops where the OCR tools (R/ocr.R + tesseract/poppler) are
   # absent.
-  ocr_ready <- exists("ocr_available", mode = "function") && ocr_available() &&
-               exists("page_needs_ocr", mode = "function")
+  # Split the two halves of "can we OCR?": whether the ROUTER exists, and whether the
+  # TOOLS are installed. Keeping them apart lets us still ASK "did this page need
+  # OCR?" on a machine with no tesseract/poppler -- so a scan on a box where the
+  # bundle's best-effort OCR install failed is reported as exactly that, instead of
+  # silently reading as a blank page and being blamed on the layout. See scanned_no_ocr.
+  ocr_router <- exists("page_needs_ocr", mode = "function")
+  ocr_tools  <- exists("ocr_available", mode = "function") && ocr_available()
+  ocr_ready  <- ocr_tools && ocr_router
+  scanned_no_ocr <- logical(np)
 
   for (p in seq_len(np)) {
     wp <- word_list[[p]]
@@ -264,7 +271,11 @@ read_pdf <- function(path, redaction_rects = NULL,
     # flat char count: a genuine digital page (word boxes present) is never OCR'd
     # even if pdf_text came back empty, while a scanned page carrying only a thin
     # text stamp (few/no word boxes) still gets OCR'd.
-    if (ocr_ready && page_needs_ocr(pages[p], words[[p]])) {
+    # Ask the router regardless of tooling, so an un-OCR-able scan is RECORDED
+    # rather than passing as an empty page.
+    needs_ocr_p <- ocr_router && isTRUE(page_needs_ocr(pages[p], words[[p]]))
+    if (needs_ocr_p && !ocr_tools) scanned_no_ocr[p] <- TRUE
+    if (ocr_ready && needs_ocr_p) {
       res <- ocr_pdf_page(path, p)
       if (isTRUE(res$ok)) {
         otxt <- paste(res$text, collapse = "\n")
@@ -362,6 +373,12 @@ read_pdf <- function(path, redaction_rects = NULL,
     redaction_scan_incomplete = sum(red_scan_incomplete),
     ocr = ocr_flags,
     ocr_conf = ocr_conf,
+    # Pages that ARE scans but could not be machine-read because the OCR tools are
+    # not installed on this machine. Non-zero means the statement was read blind:
+    # diagnose turns it into a loud, specific message so the cause is never mistaken
+    # for "this layout isn't supported".
+    scanned_no_ocr = sum(scanned_no_ocr),
+    ocr_tools_available = ocr_tools,
     ok = TRUE
   )
 }

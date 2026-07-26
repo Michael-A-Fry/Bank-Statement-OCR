@@ -33,4 +33,10 @@ port <- suppressWarnings(as.integer(Sys.getenv("BSO_PORT", as.character(cfg_port
 if (is.na(port)) port <- cfg_port
 cat(sprintf("Statement Studio — starting on port %d (from %s). Open http://<this-vm>:%d\n",
             port, app_dir, port))
+# Match app.R's upload ceiling here too: this script is how the server actually
+# starts, and Shiny's 5 MB default would reject the scanned statements the OCR path
+# exists for before they ever reach the engine.
+.max_mb <- suppressWarnings(as.numeric(tryCatch(load_config()$app$max_upload_mb, error = function(e) NA)))
+if (!is.finite(.max_mb) || .max_mb <= 0) .max_mb <- 200
+options(shiny.maxRequestSize = .max_mb * 1024^2)
 shiny::runApp(app_dir, host = "0.0.0.0", port = port, launch.browser = FALSE)

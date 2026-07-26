@@ -29,3 +29,40 @@ test_that("admin dashboard data is only loaded for an authenticated session (P1-
   # run logs / feedback by marking a hidden output visible.
   expect_true(grepl("req\\(admin_ok\\(\\)\\);\\s*if \\(is.null\\(adm_data\\(\\)\\)\\) load_admin\\(\\)", src))
 })
+
+# The observeEvent guard above was blind to BARE observe() blocks. Those are never
+# suspended by visibility, so an ungated one runs for every browser that connects,
+# before any password -- which is how the failed-statement filenames were being
+# pushed to anyone who could reach the port. Widen the invariant to cover them.
+test_that("bare observe() blocks that touch admin data are gated too (#26/#51)", {
+  app <- file.path(engine_root(), "app.R")
+  skip_if_not(file.exists(app))
+  src <- readLines(app, warn = FALSE)
+  starts <- grep("^\\s*observe\\(\\{\\s*$", src)
+  expect_true(length(starts) > 2)                       # sanity: found the blocks
+  # An admin-data observe is one whose body reads an admin surface.
+  admin_touch <- "adm_|UPLOADS_DIR|inbox_state|read_uploads|LOGDIR"
+  unguarded <- character(0)
+  for (i in starts) {
+    body <- paste(src[i:min(i + 8L, length(src))], collapse = " ")
+    if (!grepl(admin_touch, body)) next
+    if (!grepl("req\\(admin_ok\\(\\)\\)", body))
+      unguarded <- c(unguarded, sprintf("line %d", i))
+  }
+  expect_identical(unguarded, character(0))
+})
+
+test_that("admin download handlers re-check the session server-side (#37)", {
+  app <- file.path(engine_root(), "app.R")
+  skip_if_not(file.exists(app))
+  src <- readLines(app, warn = FALSE)
+  starts <- grep("output\\$adm_[A-Za-z_]*\\s*<-\\s*downloadHandler", src)
+  expect_true(length(starts) >= 2)
+  unguarded <- character(0)
+  for (i in starts) {
+    window <- paste(src[i:min(i + 8L, length(src))], collapse = " ")
+    if (!grepl("req\\(admin_ok\\(\\)\\)", window))
+      unguarded <- c(unguarded, trimws(src[i]))
+  }
+  expect_identical(unguarded, character(0))
+})

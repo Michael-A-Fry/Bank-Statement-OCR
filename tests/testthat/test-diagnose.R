@@ -98,3 +98,36 @@ test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly
   expect_match(diag_fix_owner_label("template"), "toolkit")
   expect_match(diag_fix_owner_label("escalate"), "Developer")
 })
+
+# A scan we could not machine-read must never be reported as an unknown layout.
+# With no text and no word boxes every template scores 0, so the generic
+# "no template matched -- closest X, missing 'TransactionDate'" message used to
+# fire and send the analyst to build a template for a page with no readable text.
+test_that("a scan with no OCR tooling says so, and names the admin fix (#54)", {
+  det <- list(matched = FALSE, template_id = NA_character_,
+              detail = "closest anz_creditcard_csv score 0/4 (missing 'TransactionDate')")
+  d <- build_diagnostics("unsupported", det = det,
+         metadata = list(scanned_no_ocr = 3L, ocr_tools = FALSE))
+  expect_true("scanned_no_ocr" %in% d$category)
+  expect_false("unknown_format" %in% d$category)          # the misleading line is suppressed
+  row <- d[d$category == "scanned_no_ocr", , drop = FALSE]
+  expect_match(row$detail[1], "scan")
+  expect_match(row$how_to_fix[1], "Tesseract")            # names the actual cause
+  expect_match(row$how_to_fix[1], "NOT help")             # and stops the wild goose chase
+})
+
+test_that("a scan WITH OCR tooling blames quality, not the install (#54)", {
+  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "x"),
+         metadata = list(scanned_no_ocr = 1L, ocr_tools = TRUE))
+  row <- d[d$category == "scanned_no_ocr", , drop = FALSE]
+  expect_equal(nrow(row), 1L)
+  expect_match(row$how_to_fix[1], "300 dpi")
+  expect_false(grepl("Tesseract", row$how_to_fix[1]))
+})
+
+test_that("an ordinary unsupported layout still gets the template advice (#54 guard)", {
+  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
+         metadata = list(scanned_no_ocr = 0L, ocr_tools = TRUE))
+  expect_true("unknown_format" %in% d$category)
+  expect_false("scanned_no_ocr" %in% d$category)
+})

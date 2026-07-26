@@ -33,6 +33,11 @@ inbox_status <- function(root = ".") {
 
 # failed_file_path(name, root) -> path of a failed original, for re-audit/wizard.
 failed_file_path <- function(name, root = ".") {
+  # `name` arrives from the browser; refuse anything that is not a plain filename,
+  # so it cannot walk out of failed/ and read arbitrary files off the server.
+  if (length(name) != 1L || is.na(name) || !nzchar(name) ||
+      grepl("[/\\\\]", name) || name %in% c(".", ".."))
+    return(NA_character_)
   p <- file.path(root, "failed", name)
   if (file.exists(p)) p else NA_character_
 }

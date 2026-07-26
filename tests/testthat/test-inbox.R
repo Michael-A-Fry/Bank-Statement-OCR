@@ -30,3 +30,10 @@ test_that("failed_file_path resolves a failed original or NA", {
   expect_true(file.exists(failed_file_path("bad.pdf", root)))
   expect_true(is.na(failed_file_path("nope.pdf", root)))
 })
+
+test_that("failed_file_path refuses a name that is not a plain filename (#37)", {
+  expect_true(is.na(failed_file_path("../../etc/passwd")))
+  expect_true(is.na(failed_file_path("sub/dir.pdf")))
+  expect_true(is.na(failed_file_path("..")))
+  expect_true(is.na(failed_file_path("")))
+})

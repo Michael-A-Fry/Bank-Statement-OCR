@@ -12,6 +12,9 @@
     admin_password = "changeme",          # the Admin-tab barrier (a simple gate)
     shiny_url      = "http://localhost:8100", # the URL Qlik's "Convert a statement" tile opens
     port           = 8100L,
+    # Biggest statement a user may upload, in MB. Shiny's own default is 5 MB, which
+    # rejects the scanned PDFs this tool exists to read, so we set our own.
+    max_upload_mb  = 200,
     # Convert offers proven (curated) templates by default; a tick-box brings in
     # user-created ones (with a "not guaranteed tested" warning). Flip this to start
     # with that box ticked if your team mostly uses templates they built themselves.

@@ -49,7 +49,25 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   add <- function(where, category, severity, detail, how_to_fix)
     rows[[length(rows) + 1L]] <<- .diag_row(where, category, severity, detail, how_to_fix)
 
-  if (identical(status, "unsupported")) {
+  # A SCAN WE COULD NOT MACHINE-READ is not an unknown layout, and must never be
+  # reported as one. With no text and no word boxes every template scores 0, so the
+  # generic "no template matched -- closest X, missing 'TransactionDate'" message is
+  # actively misleading: it sends the analyst to build a template for a page that has
+  # no readable text, which can never work. Say what actually happened, and name the
+  # cause -- missing OCR tooling is an ADMIN fix, poor scan quality is not.
+  no_ocr <- suppressWarnings(as.integer(metadata$scanned_no_ocr %||% 0L))
+  if (identical(status, "unsupported") && !is.na(no_ocr) && no_ocr > 0) {
+    tools_missing <- !isTRUE(metadata$ocr_tools %||% TRUE)
+    add("file", "scanned_no_ocr", "high",
+        sprintf("%d page(s) are a scan (an image, with no text layer), so there was nothing to read.", no_ocr),
+        if (tools_missing)
+          paste("This machine has no OCR software installed, so scanned statements cannot be read at all.",
+                "Ask whoever set the tool up to install Tesseract and Poppler (they ship in the offline",
+                "bundle under offline/prereqs). Building a template will NOT help until that is done.")
+        else
+          paste("The scan quality was too low to read. Try a cleaner copy - scan at 300 dpi or higher,",
+                "straight, in good contrast - or ask the bank for a digital (text) PDF."))
+  } else if (identical(status, "unsupported")) {
     add("detection", "unknown_format", "high",
         det$detail %||% "no template matched this file",
         paste("Add a template for this layout in the template toolkit (Add a template tab:",

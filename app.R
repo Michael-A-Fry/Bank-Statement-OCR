@@ -28,6 +28,15 @@ for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 # config/config.example.yaml). Any absent key falls back to the built-in default,
 # so with no config file the app behaves exactly as before.
 CONFIG <- load_config()
+# Shiny's built-in upload ceiling is 5 MB, which REJECTS the input this tool exists
+# for: a 300-dpi scan of a year's statement is routinely 10-40 MB, and even the
+# sample scan shipped with the repo is 4.4 MB. The file picker refuses it with a bare
+# red strip and nothing reaches the engine, so there is no log line either. Raise it
+# here (and in scripts/run_app.R, which is how the server actually starts) from one
+# config key so a site can tune it without touching code.
+MAX_UPLOAD_MB <- suppressWarnings(as.numeric(CONFIG$app$max_upload_mb %||% 200))
+if (!is.finite(MAX_UPLOAD_MB) || MAX_UPLOAD_MB <= 0) MAX_UPLOAD_MB <- 200
+options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2)
 TEMPLATES_DIR      <- CONFIG$paths$templates       # curated, team-maintained (proven) templates
 USER_TEMPLATES_DIR <- CONFIG$paths$user_templates  # templates accountants create via guided setup
 LOGDIR             <- CONFIG$paths$logs            # run log + feedback log live together, next to the app
@@ -355,7 +364,7 @@ ui <- fluidPage(
           textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
           uiOutput("cv_who_hint"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
-          helpText("Your bank is detected automatically — just upload and convert."),
+          helpText(sprintf("Your bank is detected automatically — just upload and convert. Files up to %g MB (a long scan is fine).", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
           tags$details(class = "adv-bank",
@@ -1019,7 +1028,12 @@ server <- function(input, output, session) {
     safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
   output$adm_sugg_tokens <- renderTable({ req(admin_ok()); adm_suggestions()$indicator_tokens })
   output$adm_sugg_cols   <- renderTable({ req(admin_ok()); adm_suggestions()$unmapped_columns })
+  # ADMIN-ONLY, and it must be gated HERE. A bare observe() is never suspended by
+  # visibility (unlike a render output), so without this it runs for every browser
+  # that connects -- before any password -- and forces a full scan of the metadata
+  # corpus on connect. conditionalPanel hides; it does not authorise.
   observe({
+    req(admin_ok())
     toks <- adm_suggestions()$indicator_tokens$token %||% character(0)
     updateSelectInput(session, "adm_sugg_tok", choices = toks)
   })
@@ -1113,6 +1127,7 @@ server <- function(input, output, session) {
   output$adm_ba_report <- downloadHandler(
     filename = function() "bulk-audit.md",
     content = function(file) {
+      req(admin_ok())        # admin-only export
       b <- adm_ba()
       if (is.null(b)) { showNotification("Run a bulk audit first - nothing to download yet.",
                                          type = "warning", duration = 6); req(FALSE) }
@@ -1120,6 +1135,7 @@ server <- function(input, output, session) {
   output$adm_ba_csv <- downloadHandler(
     filename = function() "batch_converted.csv",
     content = function(file) {
+      req(admin_ok())        # admin-only export
       conv <- adm_ba_conv()
       if (is.null(conv)) { showNotification("Tick 'Also convert & save' and run first - no converted report yet.",
                                             type = "warning", duration = 6); req(FALSE) }
@@ -1127,6 +1143,7 @@ server <- function(input, output, session) {
   output$adm_audit_dl <- downloadHandler(
     filename = function() "statement.audit.md",
     content = function(file) {
+      req(admin_ok())        # admin-only export
       if (is.null(input$adm_audit_one)) { showNotification("Upload a statement to audit first.",
                                           type = "warning", duration = 6); req(FALSE) }
       writeLines(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())), file) })
@@ -1139,6 +1156,7 @@ server <- function(input, output, session) {
     u[, c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "run_id")]
   }, options = list(pageLength = 8, dom = "tip"), rownames = FALSE)
   observe({
+    req(admin_ok())          # upload ids identify real client statements
     cv_upload_id(); input$adm_refresh
     u <- read_uploads(UPLOADS_DIR)
     updateSelectInput(session, "adm_up_pick",
@@ -1147,6 +1165,7 @@ server <- function(input, output, session) {
   output$adm_up_audit <- downloadHandler(
     filename = function() "upload.audit.md",
     content = function(file) {
+      req(admin_ok())        # reads another analyst's saved statement off disk
       id <- input$adm_up_pick
       p <- if (!is.null(id) && nzchar(id)) upload_file_path(id, UPLOADS_DIR) else NA_character_
       writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
@@ -1195,6 +1214,10 @@ server <- function(input, output, session) {
   output$adm_inbox_processed <- inbox_tbl("processed")
   output$adm_inbox_outbox    <- inbox_tbl("outbox")
   observe({
+    # These are REAL filenames of failed client statements -- routinely a surname
+    # and a case reference. They were being pushed to every connected browser on
+    # connect, with no login and no user action.
+    req(admin_ok())
     s <- inbox_state()
     updateSelectInput(session, "adm_inbox_pick",
       choices = if (nrow(s$folders$failed)) s$folders$failed$file else character(0))
@@ -1210,6 +1233,7 @@ server <- function(input, output, session) {
   output$adm_inbox_audit <- downloadHandler(
     filename = function() paste0(input$adm_inbox_pick %||% "file", ".audit.md"),
     content = function(file) {
+      req(admin_ok())        # reads a failed client statement off disk
       nm <- input$adm_inbox_pick
       p <- if (!is.null(nm) && nzchar(nm)) failed_file_path(nm, ".") else NA_character_
       writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
