@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 92 findings, 81 fixed, 11 open — N30 is CRITICAL and is the next thing fixed.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 93 findings, 81 fixed, 12 open — N30 is CRITICAL and is the next thing fixed.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -301,6 +301,43 @@ transactions that never happened, at material amounts.
 Also worth a test that no kept transaction's description or raw matches
 .PDF_SUMMARY_LABELS - an invariant that would have failed loudly the first time
 this happened.
+
+| N31 | **high** | open | The form builder ("Something else") opens with the ABSTRACT step and buries the concrete one. First thing on screen is a blank box: "The values to pull out - one per line" (app.R:608) - it asks you to already know the answer. The obvious, teachable step, drawing a box on the page, is at the bottom under "optional" (app.R:635). Needs reordering, not rewording. | app.R:596-640 |
+
+### N31 - the form builder asks the hard question first
+
+Its order today, top to bottom:
+
+    598  "Name each value you want pulled out and the wording printed next to it"
+    605  a distinctive phrase, one per line          (abstract)
+    608  THE VALUES TO PULL OUT - ONE PER LINE       (abstract, and blank)
+    616  "Value printed away from its wording?"      (an edge case, before the norm)
+    635  "Draw a box to place a value (OPTIONAL)"    (the concrete step, last, and
+                                                     labelled optional)
+
+An accountant opening this has a document in front of her and no idea what a
+"value to pull out" is called. The first thing asked is the one thing she cannot
+answer without already having done the task; the one thing she CAN do - point at a
+number on the page - is at the bottom, marked optional, after an edge case about
+values printed away from their label.
+
+This is the same mistake as the date format and the escape hatch, in its strongest
+form: what a person does FIRST is placed LAST, and the abstract step that only
+makes sense afterwards is placed first.
+
+WHAT IT SHOULD BE. The page leads, exactly as the statement toolkit now does:
+  1. Here is your document. Draw a box round a value you want.
+  2. What is this? (a name, in her words - the tool offers what it read nearby)
+  3. Repeat for the two or three that matter.
+  4. Preview: here is what will come out.
+  5. Name it and save.
+The typed list becomes what it should always have been - a shortcut for somebody
+who already knows the field names, behind the settings disclosure, not the front
+door. "Value printed away from its wording" stops being a section: it is simply
+what happens when the box you drew is not beside its label, and the tool can say so.
+
+Filed high. The form path is the one an accountant meets with no template to fall
+back on and no reconciliation to catch a mistake, so the flow has to carry her.
 
 ### What is holding the last three open
 
