@@ -254,6 +254,34 @@
   # charter forbids. Say "not applicable" instead, and show the skipped-row count
   # so the number is a fact the reviewer can check in the X-ray rather than a
   # reassurance nobody computed.
+  # THE THIN PARSE. A PDF has no source-line count, so completeness "cannot be
+  # proved" -- but there is one thing it CAN prove, and it used to throw away:
+  # rows that looked like transactions and could not be read (the date didn't
+  # parse, or there was no amount in the money bands). Headings and summary lines
+  # are skipped on every healthy statement and mean nothing; these do not.
+  #
+  # When MORE rows failed to read than were read, the template is reading the
+  # wrong part of the page. That is not a percentage anybody had to tune - it is
+  # two like quantities compared, and it is indefensible on a real statement.
+  # Measured across every sample in the repo, healthy conversions sit at 4-36%
+  # actionable skips against kept rows; the broken ones are at 100-1300%.
+  #
+  # WHY THIS MATTERS: reading 5 rows of a 500-row statement used to pass every
+  # check -- transaction_count only requires n > 0 when the statement prints no
+  # stated count, and this KPI returned "na". A green run, on the dashboards,
+  # missing 99% of the money. That is the exact failure the charter forbids.
+  actionable <- suppressWarnings(as.integer(parsed$actionable_skip_count %||% NA))
+  if (!is.na(actionable) && actionable > 0 && actionable >= n) {
+    return(.kpi(
+      "no_unparsed_rows", "fail", expected = n + actionable, actual = n,
+      discrepancy = actionable,
+      detail = sprintf(paste0("%d row(s) on this statement look like transactions but could not be ",
+                              "read, against %d that were - so more of it was missed than captured. ",
+                              "The template is almost certainly reading the wrong part of the page ",
+                              "(most often the date format, or a column band in the wrong place). ",
+                              "See the Inspect view for which rows and why."),
+                       actionable, n)))
+  }
   .kpi("no_unparsed_rows", "na", expected = expected_rows, actual = good,
        discrepancy = NA,
        detail = if (!is.na(skipped_rows) && !is.na(visual_rows))

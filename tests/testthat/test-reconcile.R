@@ -284,3 +284,52 @@ test_that("date_year_inferred caps trust and states where the year came from", {
                source_line_count = 2)
   expect_equal(reconcile(q)$trust$level, "high")
 })
+
+# --- N20: a THIN parse is the same defect as an empty one --------------------
+# Reading 5 rows of a 500-row statement used to pass everything: transaction_count
+# only requires n > 0 when the statement prints no stated count, and
+# no_unparsed_rows returned "na" for every PDF. A green run, on the dashboards,
+# missing 99% of the money.
+#
+# The signal is not a tuned percentage. It is two like quantities: rows that
+# LOOKED like transactions and could not be read (date wouldn't parse, or no
+# amount in the money bands) against rows that were read. Headings, summary lines
+# and wrapped text are skipped on every healthy statement and are excluded.
+# Measured across every sample in this repo: healthy 4-36%, broken 100-1300%.
+
+.thin <- function(n, actionable) {
+  parsed <- list(transactions = data.frame(flags = rep("", n), stringsAsFactors = FALSE),
+                 source_line_count = NA_integer_, visual_row_count = n + actionable,
+                 skipped_row_count = actionable, actionable_skip_count = actionable)
+  .kpi_no_unparsed_rows(parsed, parsed$transactions, n)
+}
+
+test_that("more rows missed than captured is a FAILURE, not 'cannot be proved'", {
+  k <- .thin(n = 1, actionable = 13)          # asb.pdf, measured
+  expect_identical(k$status, "fail")
+  expect_match(k$detail, "look like transactions but could not be read")
+  # the numbers are stated, so a reviewer can check them in the Inspect view
+  expect_match(k$detail, "13 row", fixed = TRUE)
+})
+
+test_that("a healthy statement's ordinary skips are left alone", {
+  # 311 kept / 14 actionable -- anz_single.pdf, measured. Headings and summary
+  # lines are normal; flagging these would cry wolf on every real conversion.
+  expect_identical(.thin(n = 311, actionable = 14)$status, "na")
+  expect_identical(.thin(n = 79,  actionable = 22)$status, "na")   # asb_B.pdf
+  expect_identical(.thin(n = 12,  actionable = 0)$status,  "na")
+})
+
+test_that("the boundary is 'more missed than captured', with no tuning knob", {
+  expect_identical(.thin(n = 10, actionable = 9)$status,  "na")    # fewer missed
+  expect_identical(.thin(n = 10, actionable = 10)$status, "fail")  # equal
+  expect_identical(.thin(n = 10, actionable = 11)$status, "fail")  # more
+})
+
+test_that("a format that cannot count actionable skips is unaffected", {
+  # Delimited files are already covered by the source-line-count difference, and
+  # they carry no actionable count -- the new branch must not fire on NA.
+  parsed <- list(transactions = data.frame(flags = "", stringsAsFactors = FALSE),
+                 source_line_count = NA_integer_, actionable_skip_count = NA_integer_)
+  expect_identical(.kpi_no_unparsed_rows(parsed, parsed$transactions, 1L)$status, "na")
+})

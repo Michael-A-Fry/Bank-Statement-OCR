@@ -759,6 +759,23 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # green tick for a check that never ran.
   candidate_rows <- length(recs)
   skipped_rows <- sum(!keep)
+  # ACTIONABLE skips: rows that looked like transactions and could NOT be read --
+  # the date didn't parse, or there was no amount in the money bands. These are the
+  # only skips that mean something is WRONG. A heading, a summary line or a wrapped
+  # continuation is skipped on every healthy statement, so counting those tells a
+  # reviewer nothing.
+  #
+  # WHY it is counted here rather than left to row_coverage(): row_coverage re-parses
+  # the whole PDF, so a completeness check could not use it without doubling the work
+  # on every conversion. The keep decision is being made right here and the reason is
+  # already computed -- counting is free.
+  actionable_skips <- if (!length(recs)) 0L else
+    sum(vapply(seq_along(recs), function(i) {
+      if (keep[i]) return(FALSE)
+      r <- recs[[i]]
+      grepl("didn't parse|no amount in the money",
+            .pdf_row_reason(r, style, .date_ok(r$date)), useBytes = TRUE)
+    }, logical(1)))
   recs <- recs[keep]
   forced_vec <- forced_vec[keep]
   stitched_vec <- vapply(recs, function(r) isTRUE(r$.stitched), logical(1))
@@ -951,5 +968,6 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   list(transactions = core, extras = extras, header = header,
        provenance = provenance, source_line_count = NA_integer_,
        visual_row_count = as.integer(candidate_rows),
-       skipped_row_count = as.integer(skipped_rows))
+       skipped_row_count = as.integer(skipped_rows),
+       actionable_skip_count = as.integer(actionable_skips))
 }
