@@ -53,3 +53,53 @@ test_that("positional (region) fields read the value by location, not by label",
   expect_false(f3$matched)
   expect_true(is.na(f3$value))
 })
+
+# --- A NEGATIVE MUST SURVIVE EXTRACTION --------------------------------------
+# The money pattern allowed a minus only INSIDE the currency symbol ("$-577.80"),
+# so the two forms banks actually print - a minus BEFORE the symbol, and a
+# trailing minus - matched without their sign. A deduction came out positive.
+# The ANZ KiwiSaver sample shipped in this repo prints "-$577.80" for tax, so the
+# one shipped form template was reading it as a POSITIVE $577.80: a silently wrong
+# figure in the exact path a reviewer would trust.
+
+test_that("every way a bank prints a negative keeps its sign", {
+  grab <- function(v) {
+    m <- regmatches(v, gregexpr(.MONEY_RX, v, perl = TRUE, ignore.case = TRUE))[[1]]
+    if (length(m)) m[length(m)] else NA_character_
+  }
+  expect_identical(grab("Tax -$577.80"),      "-$577.80")   # minus before the symbol
+  expect_identical(grab("Tax $-577.80"),      "$-577.80")   # minus inside
+  expect_identical(grab("Tax 577.80-"),       "577.80-")    # trailing (accounting)
+  expect_identical(grab("Tax ($577.80)"),     "($577.80)")  # brackets
+  expect_identical(grab("Tax -$1,234.56"),    "-$1,234.56") # with thousands
+  expect_identical(grab("Fees $489.22"),      "$489.22")    # positives unchanged
+})
+
+test_that("the money pattern still does not swallow dates or ranges", {
+  # The trailing minus must not turn "2025-04-01" into money. Both alternatives
+  # require cents or a leading "$", which no date carries.
+  none <- function(v) length(regmatches(v, gregexpr(.MONEY_RX, v, perl = TRUE))[[1]]) == 0
+  expect_true(none("1 April 2025"))
+  expect_true(none("2025-04-01"))
+  expect_true(none("period 1-2"))
+})
+
+test_that("the shipped form template reads its own sample with the right signs", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  p <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
+  skip_if_not(file.exists(p))
+  out <- tempfile("formout_"); dir.create(out)
+  r <- convert_document(p, outdir = out, templates_dir = fixture("templates"),
+                        user_templates_dir = NULL,
+                        fields_dir = fixture("fields_templates"), user_fields_dir = NULL,
+                        logdir = out)
+  expect_identical(r$kind, "form")
+  expect_identical(r$status, "ok")
+  v <- setNames(r$fields$value, r$fields$field)
+  # deductions are NEGATIVE, as the document prints them
+  expect_match(v[["tax"]],  "^-", info = paste("tax came out as", v[["tax"]]))
+  expect_match(v[["fees"]], "^-", info = paste("fees came out as", v[["fees"]]))
+  # ...and the balances are not
+  expect_false(grepl("^-", v[["opening_balance"]]))
+  expect_false(grepl("^-", v[["closing_balance"]]))
+})

@@ -33,10 +33,23 @@
 # the $ deliberately: a bare "1,234" is genuinely ambiguous (thousands 1234 vs a
 # European "1,23" with a stray digit), so it stays unmatched rather than risk a
 # silently-wrong value. Both keep the optional trailing DR/CR/OD balance marker.
+# A NEGATIVE MUST SURVIVE. The minus used to sit only INSIDE the currency symbol
+# ("$-577.80"), so the two forms banks actually print - a minus BEFORE the symbol
+# and a trailing minus - matched without their sign and a deduction was extracted
+# as a positive. The ANZ KiwiSaver sample shipped in this repo prints "-$577.80"
+# for tax and "-$489.22" for fees, so the one shipped form template was reading
+# both with the wrong sign: a silently wrong figure, which is the one thing this
+# tool exists not to do.
+#   -$577.80   minus before the symbol   (NZ banks, most common)
+#   $-577.80   minus inside              (already worked)
+#   577.80-    trailing minus            (accounting exports)
+#   ($577.80)  brackets                  (already worked)
+# The trailing minus cannot swallow a hyphen from a date or a range: both
+# alternatives require cents (".80" / ",80") or a leading "$", which no date has.
 .MONEY_RX <- paste0(
-  "\\(?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?(?:\\s?(?:DR|CR|OD))?",
+  "\\(?-?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?-?(?:\\s?(?:DR|CR|OD))?",
   "|",
-  "\\(?[$]-?[0-9][0-9,]*(?![0-9.,])\\)?(?:\\s?(?:DR|CR|OD))?")
+  "\\(?-?[$]-?[0-9][0-9,]*(?![0-9.,])\\)?-?(?:\\s?(?:DR|CR|OD))?")
 .DATE_RX  <- "[0-9]{1,2}[/ .-][A-Za-z0-9]{2,9}[/ .-][0-9]{2,4}"
 
 # .spec_terms(spec) -- the list of label phrases a spec matches on.

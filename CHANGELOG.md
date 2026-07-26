@@ -49,6 +49,15 @@ screen would have questioned.
 
 ### Privacy
 
+- **A negative kept its sign.** The money pattern allowed a minus only *inside* the
+  currency symbol (`$-577.80`), so the two forms banks actually print — a minus
+  before the symbol (`-$577.80`) and a trailing minus (`577.80-`) — matched without
+  it, and a deduction was extracted as a positive. The ANZ KiwiSaver sample shipped
+  in this repo prints `-$577.80` for tax and `-$489.22` for fees, so the one shipped
+  form template was reading both with the wrong sign.
+
+### Privacy
+
 - **Client statement imagery no longer accumulates on disk.** Under memory pressure
   ImageMagick writes a page's raw pixels to a temporary file (~83 MB for one 300 dpi
   A4 page) and clears them only when the process exits — on a server running for
