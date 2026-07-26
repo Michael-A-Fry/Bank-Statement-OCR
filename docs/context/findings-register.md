@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 87 findings, 81 fixed, 6 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 88 findings, 81 fixed, 7 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -211,6 +211,8 @@ first: without the measure there is nothing to hang the offer on.
 | N23 | high | open | **Batch conversion.** Confirmed as a real working pattern: a case arrives as a folder of 10-50 statements, banks anywhere from all-same to all-different. Agreed shape: a second upload mode on Convert; one row per file (status, bank, rows, the failing check), sortable so every failure of the same kind can be fixed together; click a row to open that file's normal result; a file that cannot be read never blocks the rest - push through and report at the end. Today batch intake exists only in Admin, which nobody using the app can open. | Convert |
 | N24 | medium | open | Surface `effective_from` / `effective_to` in the toolkit. The same bank and product in 2020 vs 2024 is a real variant; the schema already supports a date range but nothing shows it, so the only route is two rival templates that tie forever. Owner: "same would be good but plan for both." | app.R toolkit |
 | N25 | low | open | JSON download is unused (CSV and Excel only). Demote it to a small link rather than a third equal button. | Convert |
+
+| N26 | medium | open | The band editor commits the box WHILE you drag, so it re-detects the column on every mouse move and small positional corrections are almost impossible. It should draw on mouse RELEASE. Reported from real use; given that a mis-drawn band is the commonest cause of a wrong amount column, this is a correctness problem wearing a usability costume. | app.R, the PDF band editor brush |
 
 ### What is holding the last three open
 
