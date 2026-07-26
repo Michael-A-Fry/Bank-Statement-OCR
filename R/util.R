@@ -49,6 +49,118 @@ file_sha256 <- function(path) {
   unname(tools::md5sum(path))
 }
 
+# ---------------------------------------------------------------------------
+# yaml_append_phrase(path, key, value, under) -- teach a hand-maintained YAML
+# dictionary ONE new wording, WITHOUT rewriting the file.
+#
+# WHY it edits text instead of dumping the parsed object back:
+# dictionaries/lexicon.yaml and dictionaries/labels.yaml are the maintainer's
+# documentation as much as they are data -- a header explaining how each category
+# merges, a worked cow/horse example, and per-line notes ("# credit-card
+# wording"). `yaml::write_yaml` over the top deletes every one of them the first
+# time anybody approves a word, and the analyst who inherits the file never knows
+# what it used to say. So: find the list, insert one item, and only write if the
+# result still parses AND really contains the new value. Everything else in the
+# file stays byte-identical.
+#
+# Handles the two shapes these dictionaries actually use, block and flow:
+#   key:                     |  key: ["a", "b"]        (the flow form may run
+#     - "a"                  |                          over several lines)
+# `under` adds the one nesting level labels.yaml uses (field -> any_of -> list).
+#
+# Returns TRUE/FALSE with attr "reason" -- one plain sentence the UI can show as
+# is, so the screen and the engine cannot disagree about why an add failed.
+yaml_append_phrase <- function(path, key, value, under = NULL) {
+  fail <- function(why) structure(FALSE, reason = why)
+  key   <- trimws(as.character(key %||% "")[1])
+  value <- trimws(as.character(value %||% "")[1])
+  under <- if (is.null(under)) NULL else trimws(as.character(under)[1])
+  if (is.na(key) || !grepl("^[A-Za-z][A-Za-z0-9_]*$", key))
+    return(fail("that is not a usable name for a dictionary entry"))
+  # Quotes and backslashes are the two characters that could change the SHAPE of
+  # the file rather than add to it, so they are refused rather than escaped.
+  if (is.na(value) || !nzchar(value) || grepl("[\r\n\"\\\\]", value))
+    return(fail("type the wording first - one line, without quote marks"))
+  path <- as.character(path %||% "")[1]
+  if (is.na(path) || !nzchar(path)) return(fail("no dictionary file is set"))
+
+  existed <- file.exists(path)
+  lines <- if (existed) safe_readlines(path) else character(0)
+  before <- if (existed) safe(yaml::read_yaml(path), NA) else list()
+  # Fail closed on a file we cannot read: appending to a broken dictionary would
+  # either lose it or hide the breakage.
+  if (identical(before, NA))
+    return(fail("the dictionary file does not parse as YAML - fix that before adding to it"))
+  if (!is.list(before)) before <- list()
+  if (any(tolower(.yaml_phrase_list(before, key, under)) == tolower(value)))
+    return(structure(TRUE, reason = "it already knew that wording", added = FALSE))
+
+  out <- .yaml_insert_item(lines, key, value, under)
+  if (is.null(out)) return(fail("could not find where to add it - edit the file directly"))
+  after <- safe(yaml::yaml.load(paste(out, collapse = "\n")), NA)
+  if (identical(after, NA) || !is.list(after) ||
+      !any(tolower(.yaml_phrase_list(after, key, under)) == tolower(value)))
+    return(fail("that edit would not have come out as valid YAML, so nothing was changed"))
+  if (existed) safe(file.copy(path, paste0(path, ".bak"), overwrite = TRUE))
+  ok <- isTRUE(tryCatch({
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+    writeLines(out, path); TRUE }, error = function(e) FALSE))
+  if (!ok) return(fail("could not write the file - check the folder permissions"))
+  structure(TRUE, reason = "added", added = TRUE)
+}
+
+# .yaml_phrase_list(obj, key, under) -- the wordings already recorded under a key.
+.yaml_phrase_list <- function(obj, key, under = NULL) {
+  v <- if (is.list(obj)) obj[[key]] else NULL
+  if (!is.null(under)) v <- if (is.list(v)) v[[under]] else NULL
+  as.character(unlist(v %||% character(0)))
+}
+
+# .yaml_block_end(lines, k) -- the last line that belongs to the top-level block
+# opened at line k (i.e. up to the next line that starts in column 0).
+.yaml_block_end <- function(lines, k) {
+  if (k >= length(lines)) return(length(lines))
+  nxt <- which(grepl("^[^#[:space:]]", lines[(k + 1L):length(lines)]))
+  if (length(nxt)) k + nxt[1] - 1L else length(lines)
+}
+
+# .yaml_insert_item(lines, key, value, under) -- the text edit itself, or NULL if
+# there is no safe place to put it.
+.yaml_insert_item <- function(lines, key, value, under = NULL) {
+  item <- sprintf("\"%s\"", value)
+  at <- grep(sprintf("^%s[[:space:]]*:", key), lines)
+  if (!length(at)) {                     # a wording for something not listed yet
+    block <- if (is.null(under)) c(sprintf("%s:", key), sprintf("  - %s", item))
+             else c(sprintf("%s:", key), sprintf("  %s:", under), sprintf("    - %s", item))
+    pad <- if (length(lines) && nzchar(utils::tail(lines, 1))) "" else NULL
+    return(c(lines, pad, block))
+  }
+  k <- at[1]; end <- .yaml_block_end(lines, k)
+  if (!is.null(under)) {
+    u <- grep(sprintf("^[[:space:]]+%s[[:space:]]*:", under), lines[k:end])
+    if (!length(u))                      # the key exists but has no such list yet
+      return(append(lines, c(sprintf("  %s:", under), sprintf("    - %s", item)), after = k))
+    k <- k + u[1] - 1L
+  }
+  hdr <- lines[k]
+  if (grepl(":[[:space:]]*\\[", hdr)) {                       # flow: ["a", "b"]
+    close <- NA_integer_
+    for (i in k:end) if (grepl("]", lines[i], fixed = TRUE)) { close <- i; break }
+    if (is.na(close)) return(NULL)
+    p <- regexpr("]", lines[close], fixed = TRUE)
+    lines[close] <- paste0(substr(lines[close], 1L, p - 1L), ", ", item,
+                           substr(lines[close], p, nchar(lines[close])))
+    return(lines)
+  }
+  items <- grep("^[[:space:]]*-[[:space:]]", lines[k:end])     # block: - "a"
+  if (length(items)) {
+    last <- k + utils::tail(items, 1) - 1L
+    return(append(lines, paste0(sub("^([[:space:]]*)-.*$", "\\1", lines[last]), "- ", item),
+                  after = last))
+  }
+  append(lines, paste0(sub("^([[:space:]]*).*$", "\\1", hdr), "  - ", item), after = k)
+}
+
 # status_message(status, why, needs) -- build an actionable status message
 # ("why" + "what it needs"), per build-contract section 7.
 status_message <- function(status, why, needs = NULL) {

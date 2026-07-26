@@ -26,6 +26,35 @@
              date = date, flags = flags, stringsAsFactors = FALSE)
 }
 
+# ---- the shape of reconcile(): one builder per check -------------------------
+# reconcile() is a list of `.kpi_*()` builders. Adding a KPI is adding a builder
+# and one line to that list, so this pins the contract every builder must keep:
+# ONE row, or NULL when the check does not apply to this statement.
+test_that("each check is one builder returning a single KPI row (or NULL)", {
+  p <- .parsed(.tx(c(-10, 40, -5)),
+               header = list(opening_balance = 100, closing_balance = 125),
+               source_line_count = 3)
+  tx <- p$transactions; h <- p$header; n <- nrow(tx)
+  one_row <- function(k) is.data.frame(k) && nrow(k) == 1L
+  expect_true(one_row(.kpi_balance_reconciliation(tx, h, n)))
+  expect_true(one_row(.kpi_running_balance_continuity(tx, n)))
+  expect_true(one_row(.kpi_transaction_count(h, n)))
+  expect_true(one_row(.kpi_dates_within_period(tx, h, n)))
+  expect_true(one_row(.kpi_dates_readable(tx, n)))
+  expect_true(one_row(.kpi_no_unparsed_rows(p, tx, n)))
+  expect_true(one_row(.kpi_redaction_summary(tx)))
+  # the three that are raised only when there IS something to say
+  expect_null(.kpi_amount_direction(tx, list(amount_sign = "signed")))
+  expect_null(.kpi_ocr_confidence(h))
+  expect_null(.kpi_redaction_scan(h))
+  # ...and every builder's row carries the .kpi() column set reconcile() rbinds
+  expect_named(.kpi_redaction_summary(tx),
+               c("name", "status", "expected", "actual", "discrepancy", "detail",
+                 "informational"))
+  # the internal `informational` flag never leaves reconcile()
+  expect_false("informational" %in% names(reconcile(p)$kpis))
+})
+
 test_that("balance_reconciliation PASSES on consistent opening/sum/closing", {
   p <- .parsed(.tx(c(-10, 40, -5)),
                header = list(opening_balance = 100, closing_balance = 125),

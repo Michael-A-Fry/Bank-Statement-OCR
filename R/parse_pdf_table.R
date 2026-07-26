@@ -135,8 +135,9 @@
 # The summary-line VOCABULARY. These labels used to be hardcoded in the matcher
 # below, so a bank that writes "Balance b/fwd" or "Sub total" turned a summary
 # line into a FABRICATED transaction -- and the only cure was a code change. They
-# now live in the lexicon (category `summary_line_labels`, list semantics) with
-# these built-ins as the default, so an analyst adds a wording in YAML.
+# now live in the lexicon (category `summary_line_labels`, list semantics -- see
+# R/lexicon.R) with these built-ins as the default, so an analyst adds a wording in
+# YAML, in the Admin vocabulary editor, with no code change.
 #
 # Each entry is matched as a WHOLE label, case-insensitively; a literal space is
 # read as "one or more spaces". They are written WITHOUT ^...$ because the matcher
@@ -159,14 +160,14 @@
 .pdf_summary_rx <- function() {
   hit <- get0(.PDF_SUMMARY_RX_KEY, envir = .LEXICON_CACHE, inherits = FALSE, ifnotfound = NULL)
   if (!is.null(hit)) return(hit)
-  path <- safe(.lexicon_path(), NULL)
-  # `lex()` resolves the category once R/lexicon.R registers it; until then do the
-  # same "list" union off the raw file, so the vocabulary is editable today and an
-  # absent key is an exact no-op (behaviour identical to the hardcoded list).
-  extra <- safe(lex("summary_line_labels", path), NULL)
-  if (!length(extra)) extra <- safe(unlist(load_lexicon(path)[["summary_line_labels"]]), NULL)
-  labels <- unique(c(.PDF_SUMMARY_LABELS, trimws(as.character(extra))))
+  # lex() already merges the admin's entries with .PDF_SUMMARY_LABELS (list
+  # semantics: union with the built-in), so an absent category is an exact no-op.
+  # safe(): a lexicon read must never be able to stop a statement parsing.
+  labels <- safe(as.character(lex("summary_line_labels", safe(.lexicon_path(), NULL))),
+                 .PDF_SUMMARY_LABELS)
+  labels <- unique(trimws(labels))
   labels <- labels[!is.na(labels) & nzchar(labels)]
+  if (!length(labels)) labels <- .PDF_SUMMARY_LABELS   # never end up with no rule at all
   # A single un-compilable admin entry must never break parsing: drop it, keep the rest.
   ok <- vapply(labels, function(p) isTRUE(tryCatch({
     grepl(p, "probe", perl = TRUE); TRUE }, error = function(e) FALSE, warning = function(w) FALSE)),

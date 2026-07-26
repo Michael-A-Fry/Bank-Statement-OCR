@@ -32,7 +32,8 @@ template tweak or something to escalate — see
 ---
 
 ## The dictionaries are yours, and they are kept
-The **Label dictionary** and **Recognition vocabulary** editors write
+The **Label dictionary** and the vocabulary editor (**Data capture → Words the
+tool knows to look for**) write
 `dictionaries\labels.yaml` and `dictionaries\lexicon.yaml` in the app folder. Those
 files are **your** state, not shipped files:
 

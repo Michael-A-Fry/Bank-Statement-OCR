@@ -30,6 +30,9 @@ read_core_csv <- function(path) {
 }
 
 # parse_fixture -- detect + parse a fixture, returning the parsed object.
+# The fixture is parsed ONCE and the same parsed object is reconciled: parsing is
+# deterministic, so a second parse only cost time -- and it meant `recon` was
+# computed from a different object than the one the test then asserts on.
 parse_fixture <- function(fixture_rel, bank = NULL, statement_type = NULL) {
   templates <- load_templates(templates_dir())
   input <- read_input(fixture(fixture_rel))
@@ -38,9 +41,10 @@ parse_fixture <- function(fixture_rel, bank = NULL, statement_type = NULL) {
   testthat::expect_true(det$matched,
     info = sprintf("detection failed for %s: %s", fixture_rel, det$detail))
   template <- templates[[det$template_id]]
+  parsed <- parse_statement(input, template)
   list(detection = det, template = template,
-       parsed = parse_statement(input, template),
-       recon = reconcile(parse_statement(input, template), template))
+       parsed = parsed,
+       recon = reconcile(parsed, template))
 }
 
 # expect_statement_ok -- core comparison against a golden CSV snapshot.

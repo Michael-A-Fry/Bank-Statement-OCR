@@ -74,6 +74,43 @@ test_that("fingerprint_brand_words is a real, admin-extendable category", {
   expect_true("bank" %in% tolower(d))
 })
 
+# The PDF summary-line vocabulary (R/parse_pdf_table.R) is documented as
+# dictionary-driven: "a bank that writes 'Balance b/fwd' turns a summary line into a
+# fabricated transaction, and the cure is a YAML edit, never code". It was reading
+# the raw file directly while the category was NOT registered, so the promise held
+# only for someone hand-editing the file: the Admin editor never listed it, the
+# defaults button never showed it, and validate_lexicon REJECTED it -- so saving it
+# from Admin failed with "unknown category". Registering it is what makes the
+# documented route actually work.
+test_that("summary_line_labels is a real, admin-extendable category", {
+  expect_true("summary_line_labels" %in% names(lexicon_categories()))
+  expect_length(validate_lexicon(list(summary_line_labels = c("sub total"))), 0)
+  d <- lex("summary_line_labels", path = NULL)
+  expect_true(is.character(d) && length(d) > 0)
+  expect_true(all(.PDF_SUMMARY_LABELS %in% d))            # built-ins are the default
+  expect_true(grepl("summary_line_labels", lexicon_defaults_yaml(), fixed = TRUE))
+  # a wording added in YAML is UNIONED with the built-ins and reaches the matcher
+  .with_lexicon("summary_line_labels: ['sub total']", {
+    expect_true("sub total" %in% lex("summary_line_labels"))
+    expect_true(.pdf_is_summary("Sub Total"))            # the added wording
+    expect_true(.pdf_is_summary("Closing Balance"))      # ...and the built-ins survive
+    expect_false(.pdf_is_summary("Total Payments to ACME Ltd"))  # whole-label only
+  })
+})
+
+# The two halves of a category declaration (merge semantics + built-in default)
+# live in separate functions, and a category is only wired up when it is in BOTH.
+# Register it in one and it silently misbehaves: in .lexicon_spec only, lex()
+# returns NULL; in .lexicon_defaults only, validate_lexicon rejects it.
+test_that("every lexicon category declares BOTH its merge type and its default", {
+  expect_setequal(names(.lexicon_spec()), names(.lexicon_defaults()))
+  for (cat in names(.lexicon_spec())) {
+    d <- lex(cat, path = NULL)
+    expect_true(!is.null(d) && length(d) > 0,
+                info = sprintf("category '%s' resolves to nothing", cat))
+  }
+})
+
 # An admin typo in the vocabulary file must produce a readable problem, not an
 # R error -- validate_lexicon exists precisely to hand that message back.
 test_that("validate_lexicon reports an unknown category instead of erroring", {

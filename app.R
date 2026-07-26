@@ -107,15 +107,15 @@ source("ui_content.R")
 ui <- fluidPage(
   tags$head(
     tags$title("Statement Studio"),
-    # One design system, all inline (the app must work offline / air-gapped:
-    # no CDN fonts, scripts or icon packs). The brand accent is NZ-Police blue;
-    # green stays reserved for its meaning -- \"checked / money in / OK\".
+    # One design system, all inline (the app must work offline / air-gapped: no CDN
+    # fonts, scripts or icon packs). Two style tags: this one is layout and shape,
+    # the one below carries the colour/size tokens and the elevated surfaces.
     tags$style(HTML("
-     :root{
-       --brand:#00205b; --brand-dark:#001640; --brand-tint:#eaf0f8; --brand-line:#b6c8e0;
-       --ink:#1f2a33; --muted:#66727d; --line:#e3e7e5; --panel:#f8faf9;
-       --ok:#137333; --bad:#b00020; --warn-ink:#8a5b00; --warn-bg:#fff8e6; --warn-line:#f0c36d;
-     }
+     /* Layout and shape rules. THE COLOURS AND SIZES LIVE IN ONE PLACE ONLY --
+        the single :root block in the second style tag below. There used to be a
+        :root here too; being first, every value in it was overridden by that one,
+        so editing a colour here changed nothing on screen. If you are changing a
+        colour, a radius or a shadow, do it there. */
      body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,'Helvetica Neue',Arial,sans-serif;
           color:var(--ink);font-size:14px}
      h1,h2,h3,h4,h5{font-weight:600;color:var(--ink)}
@@ -245,6 +245,8 @@ ui <- fluidPage(
     # brand accent (NZ-Police navy); green/amber/red reserved for trust meaning.
     # All self-contained: no CDN fonts, scripts or icons. ------------------------
     tags$style(HTML("
+     /* THE design tokens. One block, one place: every colour, radius and shadow
+        the app uses is declared here. (Nothing above re-declares them.) */
      :root{
        /* Brand accent = a Qlik-family green, so arriving from Qlik Sense feels
           continuous. Deep enough that white button text stays legible. Green also
@@ -253,7 +255,7 @@ ui <- fluidPage(
        --brand:#00793d; --brand-dark:#004a24; --brand-600:#00612f;
        --brand-tint:#e6f3ec; --brand-line:#bcdcc8;
        --ink:#15202b; --slate:#43515f; --muted:#68727d;
-       --line:#e6eaee; --line-2:#d6dce2; --bg:#f3f5f4; --surface:#ffffff;
+       --line:#e6eaee; --line-2:#d6dce2; --bg:#f3f5f4; --surface:#ffffff; --panel:#f8faf9;
        --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
        --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
        --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
@@ -338,6 +340,10 @@ ui <- fluidPage(
        border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh-1)}
      .stat-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
      .stat-value{font-size:22px;font-weight:800;letter-spacing:-.01em;margin-top:3px;color:var(--ink)}
+     /* per-statement table for an auto-split bundle */
+     .split-table{border-collapse:collapse;font-size:13px;margin:0 0 14px;max-width:900px}
+     .split-table th,.split-table td{border:1px solid var(--line);padding:5px 10px;text-align:left}
+     .split-table th{background:var(--brand-tint);color:var(--slate);font-weight:700}
      /* chips */
      .chip{background:#eef1f4;border:1px solid var(--line);color:var(--slate);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
      .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
@@ -362,8 +368,10 @@ ui <- fluidPage(
     span(class = "app-tagline", "Statements and documents in — clean, checked data out.")),
   tabsetPanel(
     id = "main_tabs", selected = "Convert",
-    # ---- About (landing): the journey hub. Everything starts here - one
-    # promise, then the two doors (convert / teach), then the proof story.
+    # ---- About: the "what is this and why can I rely on it" page - one promise,
+    # then the two doors (convert / teach) and a quiet third, then the proof story.
+    # NB the app OPENS on Convert (selected, below); this is the page you come back
+    # to, not the one you land on.
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
@@ -379,7 +387,7 @@ ui <- fluidPage(
             div(class = "hub-card-go", "Open Convert →"))),
           actionLink("ab_go_template", class = "hub-card", label = div(
             div(class = "hub-card-kicker", "New bank or document"),
-            div(class = "hub-card-title", "Teach it a template"),
+            div(class = "hub-card-title", "Teach it a new layout"),
             div(class = "hub-card-body",
                 "A new statement layout, or any other document - a form, a summary, a letter. The toolkit pre-fills what it can detect; you confirm against a live preview and save. About 2 minutes, no code."),
             div(class = "hub-card-go", "Open Add a template →"))),
@@ -428,6 +436,7 @@ ui <- fluidPage(
           uiOutput("cv_status"),
           uiOutput("cv_headline"),   # plain verdict first (self-gates to an OK statement)
           uiOutput("cv_downloads"),  # prominent download bar, right under the verdict
+          uiOutput("cv_feed"),       # ...and whether it reached the dashboards, or why not
           uiOutput("cv_rematch"),    # "wrong bank / template? make the right one" - up top, obvious
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
@@ -437,15 +446,16 @@ ui <- fluidPage(
           # Transaction-statement result: EASY first. Lead with a plain-English
           # verdict (did it work? how many transactions? can I trust it?), then the
           # transactions themselves, then the DOWNLOAD. The technical checks,
-          # diagnostics and field-coverage tables live inside a collapsed "Checks &
-          # detail" section for whoever wants to dig in - depth as an option, not a
-          # wall in front of a first-time user.
+          # diagnostics and field-coverage tables live inside "Checks & detail"
+          # (cv_detail) - depth as an option on a clean result, and opened for you
+          # the moment anything was flagged.
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
             # Analysis + transactions render only when the parse actually produced
             # rows (ok / needs_review): an unsupported or failed result must never
             # show zero-money cards and an empty graph under its honest verdict.
             conditionalPanel("output.cv_has_txns == true",
             uiOutput("cv_summary"),
+            uiOutput("cv_split"),      # a bundle: what each statement in it says
             h4("Your transactions"),
             tabsetPanel(
               tabPanel("Preview", br(), DTOutput("cv_txns")),
@@ -477,11 +487,13 @@ ui <- fluidPage(
             # Analysis comes AFTER the transactions Beth came for - the trend chart
             # and its controls are the secondary view, not the payoff.
             h4("Analysis"),
-            div(style = "border:1px solid #e3e3e3;border-radius:8px;padding:10px 14px;margin:6px 0 14px",
+            # Design-system tokens, not one-off greys: this panel is the last
+            # surface on Convert that drew its own border.
+            div(style = "border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:6px 0 14px",
               fluidRow(
                 column(4, selectInput("an_view", "Show",
                   c("Money in vs out" = "inout", "Balance over time" = "balance",
-                    "Cumulative net" = "cumnet"), width = "100%")),
+                    "Running total of every transaction" = "cumnet"), width = "100%")),
                 column(4, selectInput("an_group", "Group by",
                   c("Day" = "day", "Week" = "week", "Month" = "month"),
                   selected = "week", width = "100%")),
@@ -493,14 +505,7 @@ ui <- fluidPage(
             # but AFTER the data, not before the verdict.
             uiOutput("cv_teach"),
             uiOutput("cv_candidates"),
-            tags$details(style = "margin-top:14px",
-              tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
-                           "Checks & detail (for review)"),
-              div(style = "padding:8px 2px",
-                h4("Checks"), DTOutput("cv_kpis"),
-                h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
-                h4("Field coverage - what's present / empty / not on this statement"),
-                uiOutput("cv_cov_summary"), DTOutput("cv_coverage")))),
+            uiOutput("cv_detail")),
           uiOutput("cv_feedback")
         )
       )
@@ -510,17 +515,21 @@ ui <- fluidPage(
       "Add a template",
       br(),
       wellPanel(
-        strong("Add a template"),
-        p(class = "muted", "Upload the document and set it up with it on screen the whole time. Simple covers the common case; Advanced (every field, editable) is one click away inside."),
-        p(actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means")),
-        fileInput("ts_file", "Document file (.csv / .tsv / .tdv / .pdf / .xlsx)",
+        h4(style = "margin-top:0", "Teach the tool a new layout"),
+        p(class = "muted", style = "max-width:820px",
+          "Upload one example of the document. The tool reads what it can from your own file - the columns, the way dates are written, the way amounts are shown - and you confirm it against a live preview of that file, then save. From then on this layout converts on its own. Around two minutes, and nothing to write."),
+        fileInput("ts_file", "One example of the document (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
           c("A bank or card statement - a table of transactions" = "statement",
             "Something else - labelled values (an IRD form, an account summary, a letter)" = "other"),
           selected = "statement"),
         conditionalPanel("input.ts_doctype == 'statement'",
-          actionButton("ts_go", "Open the toolkit", class = "btn-primary")),
+          actionButton("ts_go", "Open the toolkit", class = "btn-primary btn-lg"),
+          # The guide sits AFTER the action it explains, so the thing to click is
+          # the most prominent thing on the page.
+          p(class = "muted", style = "margin:12px 0 0",
+            actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means"))),
         conditionalPanel("input.ts_doctype == 'other'",
           div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
             strong("Heads up - an 'Other' document is read differently"),
@@ -532,27 +541,30 @@ ui <- fluidPage(
       # this builder, shown right here when "Something else" is picked above.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
-      helpText("Teach the tool which labelled values to pull from a non-statement PDF (an IRD form, a summary, a letter). When a value sits far from its label, draw a box to say exactly where."),
+      helpText("Name each value you want pulled out and the wording printed next to it on the page. Preview it against your document, then save."),
       sidebarLayout(
         sidebarPanel(
           width = 4,
-          textInput("fb_id", "Template id", "newpdf_fields"),
-          textInput("fb_bank", "Bank / issuer", "NewIssuer"),
-          textInput("fb_type", "Document type", "summary"),
-          textAreaInput("fb_fp", "Identifying phrases (one per line - text that appears on this PDF)",
+          textInput("fb_id", "Template name (saves as this)", "newpdf_fields"),
+          textInput("fb_bank", "Which bank or issuer?", "NewIssuer"),
+          textInput("fb_type", "Kind of document", "summary"),
+          textAreaInput("fb_fp", "A distinctive phrase printed on this document (one per line)",
                         rows = 3, value = "KiwiSaver\nOpening balance"),
-          textAreaInput("fb_fields",
-                        "Values found NEAR their label - one per line:  field_name = Label; Other label | money",
-                        rows = 6,
+          helpText(class = "muted", "This is how the tool recognises this document next time. All of the phrases must appear on it."),
+          textAreaInput("fb_fields", "The values to pull out - one per line", rows = 6,
                         value = paste("opening_balance = Opening balance; Balance brought forward | money",
                                       "closing_balance = Closing balance | money", sep = "\n")),
+          helpText(class = "muted", HTML(paste0(
+            "One line per value: <b>a name for it</b> = <b>the wording printed on the page</b> | <b>what kind of value</b>.<br>",
+            "Extra wordings for the same value go after a semicolon. Kinds: money, date, date_range, text.<br>",
+            "So <code>closing_balance = Closing balance; Balance at end | money</code> reads either wording as money."))),
           tags$hr(),
-          strong("Value in a different place than its label?"),
-          helpText("Upload a sample, draw a box, name the field, click Set - the value reads from that box."),
-          fileInput("fb_sample", "Sample PDF to test / draw on (.pdf)", accept = ".pdf"),
+          strong("Value printed away from its wording?"),
+          helpText("Draw a box around the value on the page, name it, and click Set - it is read from that spot instead."),
+          fileInput("fb_sample", "A different PDF to draw on (optional)", accept = ".pdf"),
           fluidRow(
-            column(6, textInput("fb_rf_field", "Field name", "")),
-            column(6, selectInput("fb_rf_type", "Value type",
+            column(6, textInput("fb_rf_field", "Name for this value", "")),
+            column(6, selectInput("fb_rf_type", "What kind of value",
                                   c("money", "date", "date_range", "text")))),
           fluidRow(
             column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
@@ -560,18 +572,22 @@ ui <- fluidPage(
                    actionButton("fb_rf_set", "Set value box", class = "btn-primary"),
                    actionButton("fb_rf_clear", "Clear boxes"))),
           tags$hr(),
-          actionButton("fb_preview", "Preview on the sample"),
+          actionButton("fb_preview", "Preview on the document"),
           actionButton("fb_save", "Save template", class = "btn-primary"),
           br(), br(), uiOutput("fb_msg")),
         mainPanel(
           width = 8,
-          helpText("Label value types: money, date, date_range, text (default). A field whose name matches the shared dictionary inherits its synonyms automatically."),
           conditionalPanel("output.fb_has_sample == true",
             h4("Draw a box to place a value (optional)"),
             plotOutput("fb_plot", brush = brushOpts("fb_brush", direction = "xy"), height = "540px"),
             tableOutput("fb_regions_tbl")),
-          h4("Live preview (needs a sample)"), verbatimTextOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
-          h4("Generated template (YAML)"), div(class = "mono", verbatimTextOutput("fb_yaml"))))
+          h4("Preview - what will be pulled out"), uiOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
+          # The template file itself is the data analyst's view, not Beth's: it is
+          # kept, one click away, instead of ending her flow with a wall of YAML.
+          tags$details(style = "margin-top:14px",
+            tags$summary(class = "muted", style = "cursor:pointer",
+                         "The template file this will save (for your data analyst)"),
+            div(class = "mono", verbatimTextOutput("fb_yaml")))))
     )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -688,16 +704,54 @@ ui <- fluidPage(
           uiOutput("adm_tpl_dupes"),
           tags$hr(),
           h4("Label dictionary - the wordings the tool looks for"),
-          helpText(HTML("The usual reason a value comes up <b>blank</b>: the statement uses a wording the tool hasn't seen. Add the exact phrases your statements use and Save - it applies straight away.")),
+          helpText(HTML(paste0(
+            "The usual reason a value comes up <b>blank</b> is that the statement prints a wording ",
+            "the tool has not met - it says <i>\"Balance at start\"</i> where the tool knows ",
+            "<i>\"Opening balance\"</i>. Add the exact wording and Save; it applies from the next ",
+            "conversion."))),
+          # The common case first, in plain English: pick the value, type the exact
+          # wording, add it. It writes through dictionary_append() (R/labels.R),
+          # which INSERTS one line and leaves the rest of the file -- comments and
+          # all -- untouched. The whole-file editor is kept one click below for the
+          # rare edit a wording cannot express (a pattern, a page rule, a new value).
           fluidRow(
             column(5,
-              actionButton("adm_dict_reload", "Reload from file"),
-              actionButton("adm_dict_save", "Save dictionary", class = "btn-primary"),
-              br(), br(), uiOutput("adm_dict_msg")),
+              uiOutput("adm_dict_field_ui"),
+              textInput("adm_dict_phrase", "The wording this statement prints",
+                        placeholder = "balance at start"),
+              actionButton("adm_dict_add", "Teach it this wording", class = "btn-primary"),
+              br(), br(), uiOutput("adm_dict_add_msg")),
             column(7,
-              textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))
+              helpText(HTML(paste0(
+                "Type it as the statement prints it - case doesn't matter, and part of the ",
+                "wording is enough (<i>\"balance at start\"</i> matches <i>\"Balance at start ",
+                "of period\"</i>). It applies from the next conversion, everywhere the tool ",
+                "looks for that value. A backup of the file is kept each time."))))),
+          tags$details(style = "margin-top:6px",
+            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
+              "Edit the whole dictionary file - for a pattern, a page rule, or a value that isn't listed yet"),
+            div(style = "padding-top:10px",
+              helpText(HTML(paste0(
+                "Each value has an <code>any_of:</code> list of wordings; add a line under it, ",
+                "indented the same as the lines already there, wording in quotes:<br>",
+                "<span class='mono' style='font-size:12px'>opening_balance:<br>",
+                "&nbsp;&nbsp;any_of:<br>",
+                "&nbsp;&nbsp;&nbsp;&nbsp;- \"opening balance\"<br>",
+                "&nbsp;&nbsp;&nbsp;&nbsp;- \"balance at start\"&nbsp;&nbsp; &lt;- your new line</span><br>",
+                "Save refuses anything that isn't laid out properly, and keeps a backup, so it ",
+                "is safe to try."))),
+              fluidRow(
+                column(5,
+                  actionButton("adm_dict_reload", "Reload from file"),
+                  actionButton("adm_dict_save", "Save dictionary", class = "btn-primary"),
+                  br(), br(), uiOutput("adm_dict_msg")),
+                column(7,
+                  textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))))
         ),
         tabPanel(
+          # NB the tab NAME is a navigation anchor: docs/, config.example.yaml and
+          # dictionaries/lexicon.yaml all send the reader to "Admin -> Data capture".
+          # Rename it only together with those.
           "Data capture",
           br(),
           h4("Local metadata capture - the raw material for on-box analysis"),
@@ -747,49 +801,66 @@ ui <- fluidPage(
                   "the number being readable."))))
           ),
           tags$hr(),
-          h4("Recognition vocabulary - what the engine knows to look for"),
+          # The recognition vocabulary, fronted by the thing an admin actually comes
+          # here to do: teach it one word. The whole-file editor is kept, one click
+          # away, for the rare edit a word list cannot express (a pattern, a list of
+          # date formats). Everything below writes through the SAME engine function,
+          # so there is one way a word gets in.
+          h4("Words the tool knows to look for"),
           helpText(HTML(paste0(
-            "The words and shapes the engine tries when it auto-detects, drafts and ",
-            "parses <b>generically</b> - debit/credit indicator words, DR/CR/OD ",
-            "markers, redaction markers, header keywords, and the money/date/account ",
-            "shapes. Add a new one here and it plumbs through <b>everywhere</b> - no code ",
-            "change. Example: a bank that writes <code>cow</code>/<code>horse</code> for ",
-            "its debit/credit column - add <code>debit_markers: [cow]</code> and ",
-            "<code>credit_markers: [horse]</code>. Word lists ADD to the built-ins; a ",
-            "regex REPLACES (rejected if it won't compile). Leave a category out to keep ",
-            "its default."))),
+            "When a statement writes something the tool has never met - <code>cow</code> for money ",
+            "out, say - it cannot tell which way that money went. Teach it the word here and every ",
+            "conversion from then on knows it, everywhere. Nothing is ever added automatically: ",
+            "you decide."))),
           fluidRow(
-            column(5,
-              actionButton("adm_lex_reload", "Reload from file"),
-              actionButton("adm_lex_defaults", "Show built-in defaults"),
-              actionButton("adm_lex_save", "Save vocabulary", class = "btn-primary"),
-              br(), br(), uiOutput("adm_lex_msg")),
-            column(7,
-              textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))
-          ,
-          tags$hr(),
-          h4("Suggestions from your data - teach the engine what it keeps missing"),
-          helpText(HTML(paste0(
-            "Drawn from the local metadata: indicator tokens the engine did NOT ",
-            "recognise (e.g. a bank writing <code>cow</code>/<code>horse</code> for ",
-            "debit/credit) and source columns no template mapped, ranked by how often ",
-            "they turn up. Pick a token and the direction it means, and <b>Approve</b> ",
-            "adds it to the vocabulary - the engine picks it up on the next conversion. ",
-            "You decide; nothing is applied automatically."))),
+            column(5, selectInput("adm_word_kind", "This word means…",
+              c("money OUT - a debit marker (D, DR, Paid...)"    = "debit_markers",
+                "money IN - a credit marker (C, CR, Recd...)"    = "credit_markers",
+                "the heading of a money-OUT column"            = "amount_style_debit_headers",
+                "the heading of a money-IN column"             = "amount_style_credit_headers",
+                "the balance is overdrawn"                     = "overdrawn_markers",
+                "a value has been redacted / blacked out"      = "redaction_markers",
+                "a word that appears in a table's heading row" = "header_keywords",
+                "a bank or brand name, not a customer's name"  = "fingerprint_brand_words"))),
+            column(4, textInput("adm_word_text", "The word, exactly as the statement prints it", "")),
+            column(3, br(), actionButton("adm_word_add", "Teach it this word", class = "btn-primary"))),
+          uiOutput("adm_word_msg"),
+          br(),
+          h4("Words your statements used that the tool didn't recognise"),
+          helpText("Taken from the conversions run here, most frequent first - so the word worth teaching it is at the top. Pick one, say which way the money goes, and Approve."),
           uiOutput("adm_sugg_scope"),
           fluidRow(
             column(6,
-              strong("Unrecognised indicator tokens"), tableOutput("adm_sugg_tokens"),
+              tableOutput("adm_sugg_tokens"),
               fluidRow(
-                column(5, selectInput("adm_sugg_tok", "Token", choices = character(0))),
+                column(5, selectInput("adm_sugg_tok", "Word", choices = character(0))),
                 column(4, radioButtons("adm_sugg_dir", "Means", inline = TRUE,
                                        choices = c("money out (debit)" = "debit_markers",
                                                    "money in (credit)" = "credit_markers"))),
                 column(3, br(), actionButton("adm_sugg_approve", "Approve", class = "btn-primary"))),
               uiOutput("adm_sugg_msg")),
             column(6,
-              strong("Source columns no template used"), tableOutput("adm_sugg_cols"),
-              helpText("Recurring unmapped columns often mean a field worth mapping in a template.")))
+              strong("Columns in your statements that no template uses"),
+              tableOutput("adm_sugg_cols"),
+              helpText("A column that keeps turning up unused is usually a field worth mapping in that bank's template."))),
+          br(),
+          tags$details(
+            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
+                         "Edit the whole vocabulary file - for a pattern or a list of date formats"),
+            div(style = "padding:8px 2px",
+              helpText(HTML(paste0(
+                "Beyond single words this file also holds the money / date / account <b>patterns</b> ",
+                "and the date formats to try. Word lists ADD to the built-ins; a pattern REPLACES ",
+                "one (and is refused if it won't work). Leave a category out to keep its default. ",
+                "<b>Show built-in defaults</b> prints a complete, valid starting point to copy from."))),
+              fluidRow(
+                column(5,
+                  actionButton("adm_lex_reload", "Reload from file"),
+                  actionButton("adm_lex_defaults", "Show built-in defaults"),
+                  actionButton("adm_lex_save", "Save vocabulary", class = "btn-primary"),
+                  br(), br(), uiOutput("adm_lex_msg")),
+                column(7,
+                  textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))))
         ),
         tabPanel(
           "Batch & audit",
@@ -839,6 +910,16 @@ server <- function(input, output, session) {
   # (Only from the tab, not from inside the toolkit modal: Shiny shows one modal
   # at a time, so opening the guide there would close the toolkit mid-edit.)
   observeEvent(input$ts_help, show_tutorial())
+
+  # .clamp_page(v, n) -- keep a typed page number inside the document. All three
+  # screens with a page box (the X-ray, the template toolkit, the form builder)
+  # share it: typing a page the document doesn't have used to leave a blank panel
+  # with nothing to explain it. n = NA means "we couldn't count the pages", in
+  # which case the number is left exactly as typed.
+  .clamp_page <- function(v, n) {
+    p <- suppressWarnings(as.integer(v %||% 1L)); if (!isTRUE(is.finite(p))) p <- 1L
+    max(1L, if (is.na(n)) p else min(p, as.integer(n)))
+  }
 
   tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
   # Active set: hidden user templates are excluded, so they take no part in
@@ -1107,7 +1188,37 @@ server <- function(input, output, session) {
   })
 
   # ---- Admin: label dictionary edit (the fix for "check shows NA") ----
+  # Two controls, ONE write path each way round: the plain-English "teach it this
+  # wording" goes through dictionary_append() (R/labels.R), the whole-file editor
+  # writes the text the admin typed. Both back the file up first.
   .load_dict_text <- function() read_file_text(DICT_PATH)
+  dict_bump <- reactiveVal(0)
+  # The values the dictionary already knows, offered by name so an admin never has
+  # to invent a key. Read from the FILE, so the list can never drift from it.
+  output$adm_dict_field_ui <- renderUI({
+    req(admin_ok()); dict_bump()
+    keys <- sort(names(safe(load_label_dict(DICT_PATH), list())))
+    if (!length(keys)) return(helpText("No label dictionary file was found on this install."))
+    selectInput("adm_dict_field", "This wording means…",
+                stats::setNames(keys, tools::toTitleCase(gsub("_", " ", keys))))
+  })
+  observeEvent(input$adm_dict_add, {
+    req(admin_ok())
+    fld <- input$adm_dict_field %||% ""
+    out <- dictionary_append(fld, input$adm_dict_phrase %||% "", path = DICT_PATH)
+    if (isTRUE(out)) {
+      updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text())
+      dict_bump(isolate(dict_bump()) + 1)
+      if (isTRUE(attr(out, "added"))) updateTextInput(session, "adm_dict_phrase", value = "")
+    }
+    output$adm_dict_add_msg <- renderUI(span(class = if (isTRUE(out)) "ok" else "bad",
+      # The engine's own sentence, shown as it comes back -- so the screen can
+      # never describe a refusal differently from the reason it was refused for.
+      if (isTRUE(out) && isTRUE(attr(out, "added")))
+        sprintf("Added. From the next conversion, \"%s\" is read as %s.",
+                trimws(input$adm_dict_phrase %||% ""), gsub("_", " ", fld))
+      else attr(out, "reason") %||% "Could not add that wording."))
+  })
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
   observeEvent(input$adm_dict_reload, { req(admin_ok())
@@ -1176,8 +1287,31 @@ server <- function(input, output, session) {
       else "Could not write the file - check folder permissions."))
   })
 
-  # ---- Admin: suggestions from the local metadata (the human-approved loop) ----
+  # ---- Admin: teaching the engine a word -- typed in, or approved from what the
+  # conversions actually met. Both write through the SAME engine function
+  # (lexicon_append: union into the file, back it up, clear the cache), so there is
+  # exactly one way a word gets into the vocabulary whichever control put it there.
   sugg_bump <- reactiveVal(0)
+  # Teach it ONE word, in plain English. The common case ("this bank writes a word
+  # we've never met") should not need YAML, and now it doesn't.
+  observeEvent(input$adm_word_add, {
+    req(admin_ok())
+    w <- trimws(input$adm_word_text %||% "")
+    if (!nzchar(w)) {
+      output$adm_word_msg <- renderUI(span(class = "bad",
+        "Type the word first - exactly as the statement prints it.")); return() }
+    kind <- input$adm_word_kind %||% "debit_markers"
+    out <- lexicon_append(kind, tolower(w), LEXICON_PATH)
+    updateTextAreaInput(session, "adm_lex_edit", value = read_file_text(LEXICON_PATH))
+    sugg_bump(isolate(sugg_bump()) + 1)
+    ok <- isTRUE(out)
+    if (ok) updateTextInput(session, "adm_word_text", value = "")
+    output$adm_word_msg <- renderUI(span(class = if (ok) "ok" else "bad",
+      # A refusal is reported in the engine's own words, so the screen and the
+      # reason it was refused for can never say different things.
+      if (ok) sprintf("Added \"%s\". Every conversion from now on knows it.", w)
+      else attr(out, "reason") %||% "Could not write the vocabulary file - check folder permissions on the dictionaries folder."))
+  })
   adm_suggestions <- reactive({ sugg_bump()
     safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
   output$adm_sugg_tokens <- renderTable({ req(admin_ok()); adm_suggestions()$indicator_tokens })
@@ -1210,14 +1344,15 @@ server <- function(input, output, session) {
     if (is.null(tok) || !nzchar(tok)) {
       output$adm_sugg_msg <- renderUI(div(class = "muted", "Pick a token first.")); return()
     }
-    ok <- lexicon_append(cat_, tolower(tok), LEXICON_PATH)
+    out <- lexicon_append(cat_, tolower(tok), LEXICON_PATH)
     updateTextAreaInput(session, "adm_lex_edit",
       value = read_file_text(LEXICON_PATH))
     sugg_bump(sugg_bump() + 1)
+    ok <- isTRUE(out)
     output$adm_sugg_msg <- renderUI(div(style = sprintf("color:%s", if (ok) "#137333" else "#b00020"),
       if (ok) sprintf("Added '%s' to %s. The engine will use it on the next conversion.",
                       tolower(tok), sub("_markers$", "", cat_))
-      else "Could not write the vocabulary file."))
+      else attr(out, "reason") %||% "Could not write the vocabulary file."))
   })
 
   # ---- Admin: bulk audit & gaps ----
@@ -1433,7 +1568,30 @@ server <- function(input, output, session) {
   }
   # Positional value boxes drawn on the sample: field -> list(page,x_min..y_max,value).
   fb_regions <- reactiveVal(list())
-  output$fb_has_sample <- reactive({ !is.null(input$fb_sample) })
+  # ONE upload for this whole flow. The page asks for the document at the top;
+  # asking again inside the builder ("sample PDF to draw on") meant the first
+  # picker did nothing at all on this path, and nothing said so. The document
+  # uploaded at the top is used by default; the builder's own picker stays for the
+  # case where a different PDF is handier to draw on.
+  fb_doc <- reactive({
+    if (!is.null(input$fb_sample)) return(input$fb_sample$datapath)
+    f <- input$ts_file
+    if (!is.null(f) && identical(tolower(tools::file_ext(f$name %||% "")), "pdf"))
+      return(f$datapath)
+    NULL
+  })
+  fb_n_pages <- reactive({
+    p <- fb_doc(); if (is.null(p)) return(NA_integer_)
+    i <- tryCatch(read_input(p), error = function(e) NULL); if (is.null(i)) return(NA_integer_)
+    n <- length(i$pages %||% i$words %||% list())
+    if (n >= 1L) as.integer(n) else NA_integer_
+  })
+  observe({
+    n <- fb_n_pages(); if (is.na(n)) return()
+    updateNumericInput(session, "fb_rf_page", max = n,
+      label = if (n == 1L) "Page (this document is 1 page)" else sprintf("Page (1 to %d)", n))
+  })
+  output$fb_has_sample <- reactive({ !is.null(fb_doc()) })
   outputOptions(output, "fb_has_sample", suspendWhenHidden = FALSE)
   observeEvent(input$fb_rf_set, {
     nm <- gsub("[^A-Za-z0-9_]+", "_", trimws(input$fb_rf_field %||% ""))
@@ -1441,7 +1599,7 @@ server <- function(input, output, session) {
     if (!nzchar(nm)) { showNotification("Name the field first.", type = "warning"); return() }
     if (is.null(br)) { showNotification("Draw a box on the page around the value first.", type = "warning"); return() }
     r <- fb_regions()
-    r[[nm]] <- list(page = max(1L, as.integer(input$fb_rf_page %||% 1)),
+    r[[nm]] <- list(page = .clamp_page(input$fb_rf_page, fb_n_pages()),
                     x_min = round(br$xmin), x_max = round(br$xmax),
                     y_min = round(br$ymin), y_max = round(br$ymax),
                     value = input$fb_rf_type %||% "text")
@@ -1456,8 +1614,8 @@ server <- function(input, output, session) {
       value = r[[nm]]$value, stringsAsFactors = FALSE)))
   })
   fb_render <- reactive({
-    req(input$fb_sample); pg <- max(1L, as.integer(input$fb_rf_page %||% 1))
-    render_page_view(input$fb_sample$datapath, pg, 100)
+    p <- fb_doc(); req(p)
+    render_page_view(p, .clamp_page(input$fb_rf_page, fb_n_pages()), 100)
   })
   output$fb_plot <- renderPlot({
     r <- fb_render(); req(r)
@@ -1489,16 +1647,31 @@ server <- function(input, output, session) {
 
   fb_preview <- reactiveVal(NULL)
   observeEvent(input$fb_preview, {
-    if (is.null(input$fb_sample)) { showNotification("Upload a sample PDF to preview on.", type = "warning"); return() }
-    inp <- tryCatch(read_input(input$fb_sample$datapath), error = function(e) NULL)
+    p <- fb_doc()
+    if (is.null(p)) { showNotification("Upload the document at the top of this page first (or a PDF to draw on, above).",
+                                       type = "warning", duration = 6); return() }
+    inp <- tryCatch(read_input(p), error = function(e) NULL)
     if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return() }
     f <- tryCatch(extract_fields(inp, fb_template()), error = function(e) NULL)
     fb_preview(f)
   })
-  output$fb_prev_status <- renderText({
+  # Same verdict card as everywhere else, and it names the ones that came back
+  # empty: a value that did not match is the whole reason to look at this preview.
+  output$fb_prev_status <- renderUI({
     f <- fb_preview()
-    if (is.null(f)) return("Upload a sample and click Preview to see what the labels pull out.")
-    sprintf("%d field(s); %d matched.", nrow(f), sum(f$matched))
+    if (is.null(f)) return(p(class = "muted",
+      "Click \"Preview on the document\" to see what each wording pulls out."))
+    got <- sum(f$matched %in% TRUE); miss <- nrow(f) - got
+    missing <- if (miss > 0) paste(f$field[!(f$matched %in% TRUE)], collapse = ", ") else ""
+    div(class = if (miss > 0) "verdict verdict-medium" else "verdict verdict-high",
+        style = "margin:2px 0 12px",
+      div(class = "verdict-ico", if (miss > 0) "!" else "✓"),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title", sprintf("%d of %d value%s found", got, nrow(f),
+                                             if (nrow(f) == 1L) "" else "s")),
+        p(class = "verdict-body", style = "margin:0", if (miss > 0)
+            sprintf("Not found: %s. The wording on the page has to match what you typed - copy it exactly, or draw a box around the value instead.", missing)
+          else "Check each value below against the document, then Save template.")))
   })
   output$fb_prev_tbl <- renderDT({
     f <- fb_preview(); req(!is.null(f))
@@ -1552,13 +1725,33 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "ix_is_pdf", suspendWhenHidden = FALSE)
 
+  # How many pages the converted statement has. read_input is content-cached (~1ms),
+  # so this is cheap enough to drive a label.
+  ix_n_pages <- reactive({
+    src <- cv_src(); if (is.null(src)) return(NA_integer_)
+    inp <- tryCatch(read_input(src$path), error = function(e) NULL)
+    if (is.null(inp) || !identical(inp$kind, "pdf")) return(NA_integer_)
+    n <- length(inp$pages %||% inp$words %||% list())
+    if (n >= 1L) as.integer(n) else NA_integer_
+  })
+  # ONE page number, clamped, shared by the picture, the legend, the skipped-row
+  # table and "add this row" -- they each used to re-derive it, so they could
+  # disagree about which page you were looking at.
+  ix_page_now <- reactive(.clamp_page(input$ix_page, ix_n_pages()))
+  # Say how many pages there are, on the control itself.
+  observe({
+    n <- ix_n_pages(); if (is.na(n)) return()
+    updateNumericInput(session, "ix_page", max = n,
+      label = if (n == 1L) "Page (this statement is 1 page)" else sprintf("Page (1 to %d)", n))
+  })
+
   ix_pal <- function(bands) {
     if (!length(bands)) return(character(0))
     stats::setNames(grDevices::hcl(seq(5, 320, length.out = length(bands)), 75, 50), names(bands))
   }
   output$ix_legend <- renderUI({
     st <- ix_state(); req(st, st$is_pdf, !is.null(st$layout))
-    pg <- as.character(max(1L, as.integer(input$ix_page %||% 1)))
+    pg <- as.character(ix_page_now())
     P <- st$layout$pages[[pg]]; req(P)
     pal <- ix_pal(P$bands)
     layers <- input$ix_layers %||% c("cols", "kept", "skipped", "redact", "meta", "words")
@@ -1577,8 +1770,7 @@ server <- function(input, output, session) {
   })
   ix_render <- reactive({
     st <- ix_state(); req(st, st$is_pdf)
-    pg <- max(1L, as.integer(input$ix_page %||% 1))
-    render_page_view(st$path, pg, 100)
+    render_page_view(st$path, ix_page_now(), 100)
   })
   output$ix_plot <- renderPlot({
     st <- ix_state(); req(st, st$is_pdf); r <- ix_render(); req(r)
@@ -1659,7 +1851,7 @@ server <- function(input, output, session) {
   ix_skipped_rows <- reactive({
     st <- ix_state(); if (is.null(st) || !isTRUE(st$is_pdf)) return(NULL)
     lay <- st$layout; if (is.null(lay)) return(NULL)
-    pg <- max(1L, as.integer(input$ix_page %||% 1))
+    pg <- ix_page_now()
     P <- lay$pages[[as.character(pg)]]
     if (is.null(P) || is.null(P$rows) || !nrow(P$rows) || is.null(P$rows$reason)) return(NULL)
     sk <- P$rows[!P$rows$kept & nzchar(P$rows$reason %||% ""), , drop = FALSE]
@@ -1710,13 +1902,20 @@ server <- function(input, output, session) {
     if (is.null(sel) || !length(sel)) {
       showNotification("Click a row in the table below first, then add it.", type = "warning"); return() }
     row <- sk[sel[1], , drop = FALSE]
-    pg <- max(1L, as.integer(input$ix_page %||% 1))
-    band <- list(page = pg, y_min = row$y0 - 1, y_max = row$y1 + 1)
+    band <- list(page = ix_page_now(), y_min = row$y0 - 1, y_max = row$y1 + 1)
     cur <- cv_forced(); cur[[length(cur) + 1L]] <- band; cv_forced(cur)
     src <- cv_src(); sess <- cv_dir()
     if (is.null(src) || is.null(sess)) {
       showNotification("Convert a statement first.", type = "warning"); return() }
-    cv_res(convert_now(src$path, sess, forced_rows = cv_forced()))
+    res <- convert_now(src$path, sess, forced_rows = cv_forced())
+    cv_res(res)
+    # Re-publish. Adding a row changes the figures the workbook and CSV hold, and
+    # the feed is keyed by the statement's content hash, so this OVERWRITES that
+    # statement's published rows rather than adding a second copy. Without it the
+    # dashboards kept the pre-correction rows while the screen and the download
+    # showed the corrected ones -- and the feed line above would have gone on
+    # reporting a verdict from the previous run.
+    publish_result(res, cv_recorded())
     showNotification("Added that row as a transaction (flagged 'forced') and re-checked the statement.",
                      type = "message", duration = 6)
   })
@@ -1740,8 +1939,11 @@ server <- function(input, output, session) {
   cv_dir <- reactiveVal(NULL)
   cv_src <- reactiveVal(NULL)      # the uploaded file (path + name), for guided setup
   cv_fb_done <- reactiveVal(FALSE)
+  cv_fb_rec  <- reactiveVal(NULL)              # the feedback record, incl. any feed retraction
   cv_upload_id <- reactiveVal(NA_character_)   # the tracked upload for this conversion
   cv_forced <- reactiveVal(list())             # user-confirmed "this IS a transaction" bands
+  cv_feed_gate <- reactiveVal(NULL)            # what the governed feed did with it
+  cv_recorded  <- reactiveVal(FALSE)           # ...and whether this run feeds at all
   # When the browser tab closes, take this session's scratch folder with it. The
   # folder holds a copy of the client's statement plus every output; the process
   # temp dir is only cleared when R exits, and this app is a long-running service.
@@ -1908,7 +2110,7 @@ server <- function(input, output, session) {
     res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl,
                        include_user = include_user)
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = name))
-    cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
+    cv_fb_done(FALSE); cv_fb_rec(NULL)   # reset the feedback panel for the new conversion
     # Complete the audit record with the attested vs detected identity split.
     stamp_identity(res$run_id %||% NA_character_)
     # Capture the upload + its outcome so a failed/abandoned new format is a
@@ -1920,10 +2122,22 @@ server <- function(input, output, session) {
       detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
     else NA_character_
     cv_upload_id(uid)
-    # Auto-feed Qlik: a real Convert-button upload writes to the analytics feed as a
-    # silent side-effect (gated to reconciled + proven templates inside write_feed).
-    # The bundled sample and the build-time auto-reconvert (record = FALSE) don't feed.
-    if (record) safe(write_feed(res, CONFIG))
+    publish_result(res, record)
+  }
+
+  # publish_result(res, record) -- write the governed feed for this conversion and
+  # keep the gate's verdict for the screen. ONE place, so what reaches Qlik and
+  # what the screen claims about Qlik always come from the same run.
+  #
+  # Feeding used to be a silent side-effect: the verdict went to the feed manifest
+  # and the feed log, and the person who ran the conversion was never told. A clean
+  # statement read by a template she built here is withheld ("not_proven") -- and
+  # she had every reason to believe her figures were on the dashboard.
+  # `record = FALSE` (the bundled sample, and the preview re-convert after saving a
+  # template) neither feeds nor claims anything about the feed.
+  publish_result <- function(res, record) {
+    cv_recorded(isTRUE(record))
+    cv_feed_gate(if (isTRUE(record)) safe(write_feed(res, CONFIG), NULL) else NULL)
   }
 
   observeEvent(input$cv_go, {
@@ -1995,30 +2209,57 @@ server <- function(input, output, session) {
   output$cv_status <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
     # A successful transaction statement gets the plain hero headline (cv_headline
-    # below); this status card is kept for form results and for anything that did
-    # NOT convert cleanly (so failures still explain themselves up top) - same
-    # card shape as the success headline, coloured by how it went.
+    # below); this card is kept for form results and for anything that did NOT
+    # convert cleanly, so failures still explain themselves up top. It is the SAME
+    # verdict card as the success headline -- one visual language for "how did it
+    # go", rather than a second, hand-coloured one for bad news.
     if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
     st <- res$status %||% "failed"
-    pal <- switch(st,
-      ok           = c(bg = "#eef8f0", bd = "#bfe0c8", ink = "#137333"),
-      needs_review = ,
-      unsupported  = c(bg = "#fff8e6", bd = "#f0c36d", ink = "#8a5b00"),
-      c(bg = "#fdecec", bd = "#f2b8b8", ink = "#b00020"))
+    lvl <- switch(st, ok = "high", needs_review = , unsupported = "medium", "low")
     trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
-    tid <- (res$template_id %||% NA_character_)[1]
-    div(style = sprintf("background:%s;border:1px solid %s;border-radius:8px;padding:12px 16px;margin:4px 0 12px",
-                        pal[["bg"]], pal[["bd"]]),
-      h4(style = sprintf("margin:0 0 6px;color:%s", pal[["ink"]]),
-         paste0(plain_status(st), trust)),
-      # Engine messages carry a leading machine code ("needs_review: ...") for the
-      # logs; the card headline already says it in words, so drop the code here.
-      lapply(sub("^(ok|needs_review|unsupported|failed):\\s*", "",
-                 as.character(res$messages %||% character(0))),
-             function(m) p(style = "margin:0 0 4px;color:#333", m)),
-      if (!is.na(tid) && nzchar(tid))
-        p(class = "muted", style = "margin:0", paste("Template:", tid)))
+    # Name the template ONLY when one was actually used to read the statement. On
+    # an unsupported result the engine still carries a template id -- the CLOSEST
+    # MISS, kept for the logs -- and printing it under "No template for this
+    # statement yet" read as though that template had read the file. It had not.
+    tid <- if (st %in% c("ok", "needs_review")) (res$template_id %||% NA_character_)[1]
+           else NA_character_
+    div(class = paste0("verdict verdict-", lvl),
+      div(class = "verdict-ico", if (identical(lvl, "high")) "✓" else "!"),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title", paste0(plain_status(st), trust)),
+        # Engine messages carry a leading machine code ("needs_review: ...") for the
+        # logs; the card headline already says it in words, so drop the code here.
+        lapply(sub("^(ok|needs_review|unsupported|failed):\\s*", "",
+                   as.character(res$messages %||% character(0))),
+               function(m) p(class = "verdict-body", m)),
+        failed_checks_ui(res),
+        if (!is.na(tid) && nzchar(tid))
+          div(span(class = "chip", paste("Read as:", friendly_tpl(tid))))))
   })
+
+  # failed_checks_ui(res) -- WHICH check failed, in the words the Checks table
+  # uses, with the engine's own figures beside it.
+  #
+  # The engine knows exactly which of the ten checks failed and by how much; the
+  # card only ever showed its message, whose reason fragment names the check by
+  # its internal code ("1 KPI(s) failed: balance_reconciliation") and gives no
+  # figures. So the one thing a reviewer needs on a needs-review result -- what to
+  # go and look at -- was a click away at the bottom of the page under "Checks &
+  # detail". Same source of truth as that table (res$kpis) and the same wording
+  # (CHECK_PLAIN), so the two can never say different things. NULL when nothing
+  # failed, so a clean result is unchanged.
+  failed_checks_ui <- function(res) {
+    k <- res$kpis
+    if (is.null(k) || !all(c("name", "status") %in% names(k))) return(NULL)
+    f <- k[k$status %in% "fail", , drop = FALSE]
+    if (!nrow(f)) return(NULL)
+    div(class = "verdict-body", style = "margin-top:2px",
+      tags$b("What to check:"),
+      tags$ul(style = "margin:4px 0 0 18px;padding:0",
+        lapply(seq_len(nrow(f)), function(i) tags$li(
+          tags$b(plain_check(f$name[i])),
+          if (nzchar(f$detail[i] %||% "")) sprintf(" - %s", f$detail[i]) else NULL))))
+  }
 
   # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
@@ -2040,16 +2281,36 @@ server <- function(input, output, session) {
   # work, how many transactions, and can I trust it, said in words rather than KPI
   # codes. This is what a non-technical reviewer reads first; the KPI tables stay
   # available under "Checks & detail".
-  plain_trust <- function(level) switch(level %||% "",
-    high   = list(cls = "ok",   icon = "✓", line = "High confidence: the opening balance plus every transaction equals the closing balance the statement prints, so nothing is missing."),
-    medium = list(cls = "warn", icon = "✓", line = "Medium confidence: it read cleanly, but a full completeness check could not run (usually because this statement has no running balance to check against). Worth a quick eyeball of the count against the statement."),
-    low    = list(cls = "bad",  icon = "!",      line = "Low confidence: please check these transactions against the statement before relying on them."),
-    list(cls = "warn", icon = "✓", line = "Read cleanly, but completeness could not be auto-verified. Check the transaction count against the statement."))
+  # The medium line used to assert its own cause ("usually because this statement
+  # has no running balance"). The engine KNOWS the cause -- and it is just as often
+  # OCR, or a year it had to infer -- so the sentence sat directly under a chip
+  # contradicting it. It now says which of the two it is, and trust_caveats()
+  # below prints the engine's remaining reasons verbatim rather than guessing.
+  plain_trust <- function(trust) {
+    proven <- !isFALSE(trust$completeness_verified)
+    switch(trust$level %||% "",
+      high   = list(cls = "ok",   icon = "✓", line = "High confidence: the opening balance plus every transaction equals the closing balance the statement prints, so nothing is missing."),
+      medium = list(cls = "warn", icon = "✓", line = if (proven)
+          "Medium confidence: it read cleanly and every check that could run passed, but one thing about this statement could not be fully proven - it is named below. Worth a quick eyeball against the statement."
+        else
+          "Medium confidence: it read cleanly, but this statement carries no closing balance or stated count to reconcile against, so a missing transaction could not be detected automatically. Check the row count against the statement."),
+      low    = list(cls = "bad",  icon = "!",      line = "Low confidence: please check these transactions against the statement before relying on them."),
+      list(cls = "warn", icon = "✓", line = "Read cleanly, but completeness could not be auto-verified. Check the transaction count against the statement."))
+  }
+  # Row FLAGS worth a chip: things the engine recorded per row that a clean-looking
+  # result would otherwise never mention on screen. Each caps the trust level in
+  # R/reconcile.R, and each was reaching only the workbook -- most importantly the
+  # inferred year, which makes dates that LOOK proven merely likely. Counted off
+  # the flags column of the produced table, so the chip and the file agree.
+  ROW_FLAG_CHIPS <- c(
+    date_year_inferred = "%d row(s) took their YEAR from a number on the page, not a statement period - confirm it",
+    date_unresolved    = "%d row(s) have no year at all (none was printed) - day and month only",
+    ocr_low_conf       = "%d row(s) have a machine-read date/amount the scan was unsure of - check those cells")
   output$cv_headline <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     if (!isTRUE(res$status == "ok")) return(NULL)   # failures are shown by cv_status
     d <- cv_data(); n <- if (is.null(d)) NA_integer_ else nrow(d)   # reuse the shared read
-    pt <- plain_trust(res$trust$level)
+    pt <- plain_trust(res$trust %||% list())
     lvl <- c(ok = "high", warn = "medium", bad = "low")[[pt$cls]]
     # Small honest-flags row: which template read it, and anything a reviewer
     # should know at a glance (OCR pages, honoured redactions, hand-added rows).
@@ -2071,6 +2332,11 @@ server <- function(input, output, session) {
     if (length(cv_forced())) chips <- c(chips, list(chip(
       sprintf("%d row(s) added by hand - flagged 'forced' in the output", length(cv_forced())),
       warn = TRUE)))
+    fl <- if (!is.null(d) && "flags" %in% names(d)) as.character(d$flags) else character(0)
+    for (f in names(ROW_FLAG_CHIPS)) {
+      nf <- sum(grepl(f, fl, fixed = TRUE))
+      if (nf > 0) chips <- c(chips, list(chip(sprintf(ROW_FLAG_CHIPS[[f]], nf), warn = TRUE)))
+    }
     div(class = paste0("verdict verdict-", lvl),
       div(class = "verdict-ico", pt$icon),
       div(style = "flex:1;min-width:0",
@@ -2134,6 +2400,36 @@ server <- function(input, output, session) {
         if (!is.na(h$bank %||% NA_character_)) sprintf("  ·  %s", h$bank) else "")))
   })
 
+  # cv_split -- an auto-split bundle, statement by statement.
+  #
+  # When a template opts into auto-split, the engine parses and reconciles each
+  # statement in the file SEPARATELY and keeps every one's period, balances, row
+  # count and confidence in result$metadata$split$statements. The screen said only
+  # "auto-split into 5 statements" and then showed one set of summary cards for the
+  # whole bundle -- so the combined period, and a single confidence level that is
+  # really the WEAKEST statement's, read as if they described one statement. This
+  # is the same table the feed stamps onto each row, shown to the person reviewing.
+  output$cv_split <- renderUI({
+    res <- cv_res(); req(res)
+    sts <- res$metadata$split$statements
+    if (is.null(sts) || !length(sts)) return(NULL)
+    cell <- function(v) { v <- as.character(v %||% NA)[1]; if (is.na(v) || !nzchar(v)) "-" else v }
+    hdr <- c("Statement", "Pages", "Period", "Opening", "Closing", "Rows", "Confidence")
+    tagList(
+      h4(sprintf("The %d statements in this file", length(sts))),
+      p(class = "muted", style = "margin:0 0 6px",
+        paste("Each one was read and reconciled on its own. The cards above cover the whole file,",
+              "and its confidence level is the weakest statement's; every output row carries a",
+              "statement_index column saying which statement it came from.")),
+      tags$table(class = "split-table",
+        tags$thead(tags$tr(lapply(hdr, tags$th))),
+        tags$tbody(lapply(sts, function(s) tags$tr(
+          tags$td(cell(s$index)), tags$td(cell(s$pages)),
+          tags$td(sprintf("%s to %s", cell(s$period_start), cell(s$period_end))),
+          tags$td(cell(s$opening_balance)), tags$td(cell(s$closing_balance)),
+          tags$td(cell(s$rows)), tags$td(cell(s$trust_level)))))))
+  })
+
   output$cv_trend_note <- renderUI({
     req(cv_data())
     msg <- switch(input$an_view %||% "inout",
@@ -2177,7 +2473,7 @@ server <- function(input, output, session) {
     } else if (view == "cumnet") {
       dd <- d[order(d$.date), , drop = FALSE]; cn <- cumsum(ifelse(is.na(dd$.amt), 0, dd$.amt))
       aty <- pretty(range(c(0, cn)))
-      plot(dd$.date, cn, type = "n", axes = FALSE, xlab = "", ylab = "Cumulative net", ylim = range(aty))
+      plot(dd$.date, cn, type = "n", axes = FALSE, xlab = "", ylab = "Running total", ylim = range(aty))
       abline(h = aty, col = GRID); abline(h = 0, col = "#c3c9d2", lwd = 1.2)
       area_line(dd$.date, cn, BLUE, BLUE_FILL)
       axis(2, at = aty, labels = money_lab(aty), col = NA, col.ticks = NA, las = 1); xdate(dd$.date)
@@ -2218,9 +2514,11 @@ server <- function(input, output, session) {
   output$cv_form <- renderUI({
     res <- cv_res(); req(res); req(identical(res$kind, "form"))
     tagList(
-      div(style = "margin:8px 0;padding:8px 12px;background:#eef4ff;border-radius:6px",
-        HTML(sprintf("Read as a <b>form / labelled-value PDF</b> (not a transaction statement). Template: <b>%s</b>. Download it above.",
-                     htmltools::htmlEscape(res$template_id %||% "?")))),
+      # The card above already says how it went and which template read it, so this
+      # says the one thing that card cannot: WHY there are no completeness checks on
+      # a form, and therefore what the reviewer has to do instead.
+      p(class = "muted", style = "margin:8px 0 12px; max-width:760px",
+        "This is a form / labelled-value document, not a transaction statement: there is no transaction table and no running balance, so the completeness checks don't apply. Check each value below against the document. Your download is at the top of this page."),
       h4("Values found"), DTOutput("cv_fields"))
   })
   output$cv_fields <- renderDT({
@@ -2234,15 +2532,14 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$kpis))
     k <- res$kpis
     # Show a plain-English check name + a plain result word, not snake_case codes.
-    res_word <- c(pass = "OK", fail = "Problem", na = "not on this statement")
     disp <- data.frame(
-      Check  = plain_label(k$name, CHECK_PLAIN),
-      Result = plain_label(k$status, res_word),
+      Check  = plain_check(k$name),      # split-aware: "... (statement 2)"
+      Result = plain_label(k$status, RESULT_PLAIN),
       Detail = if ("detail" %in% names(k)) k$detail else "",
       stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
-      formatStyle("Result", fontWeight = "bold",
-        color = styleEqual(c("OK", "Problem"), c("#137333", "#b00020")))
+      formatStyle("Result", fontWeight = "bold",     # coloured off the same map
+        color = styleEqual(unname(RESULT_PLAIN[c("pass", "fail")]), c("#137333", "#b00020")))
   })
 
   output$cv_diag <- renderDT({
@@ -2258,6 +2555,26 @@ server <- function(input, output, session) {
                                         how_to_fix = "How to fix"))
     datatable(d, rownames = FALSE,
               options = list(dom = "t", pageLength = 20, scrollX = TRUE))
+  })
+
+  # "Checks & detail" is depth-as-an-option on a clean result -- and NOT optional
+  # when the tool has just asked for a second pair of eyes. Anything other than a
+  # clean pass (a non-ok status, or any check that FAILED) opens the section, so the
+  # reasons sit in front of the reviewer instead of one collapsed click behind the
+  # chart. A clean, fully-passing conversion still starts tidy.
+  output$cv_detail <- renderUI({
+    res <- cv_res(); req(res)
+    k <- res$kpis
+    any_failed <- !is.null(k) && "status" %in% names(k) && any(k$status %in% "fail")
+    open_it <- !isTRUE((res$status %||% "") == "ok") || isTRUE(any_failed)
+    tags$details(style = "margin-top:14px", open = if (open_it) NA else NULL,
+      tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
+                   "Checks & detail (for review)"),
+      div(style = "padding:8px 2px",
+        h4("Checks"), DTOutput("cv_kpis"),
+        h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
+        h4("Field coverage - what's present / empty / not on this statement"),
+        uiOutput("cv_cov_summary"), DTOutput("cv_coverage")))
   })
 
   output$cv_cov_summary <- renderUI({
@@ -2332,6 +2649,28 @@ server <- function(input, output, session) {
     # so it's the most visible thing, not a quiet box tucked into the sidebar.
     div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns)
   })
+
+  # cv_feed -- did this conversion reach the org dashboards, and if not, why not?
+  #
+  # write_feed() already decides that, records it in the feed manifest and logs it;
+  # this is the ONE place the person who ran the conversion is told. It matters
+  # most on the quiet case: a perfectly good conversion read by a template built
+  # here is withheld as "not proven", which is correct governance and was
+  # completely invisible. Wording lives in FEED_PLAIN (ui_labels.R), keyed by the
+  # engine's own gate reason, so the screen and the manifest cannot drift apart.
+  output$cv_feed <- renderUI({
+    res <- cv_res(); req(res)
+    # Only where there were figures to publish. On an unsupported / failed result
+    # the card above already says nothing was converted, and repeating it here
+    # would push the "set this layout up" action down the page for no new fact.
+    if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(NULL)
+    fb <- plain_feed(cv_feed_gate())
+    if (is.null(fb)) return(NULL)          # feed switched off, or a form result
+    div(style = paste("display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;",
+                      "margin:0 0 12px;font-size:13px"),
+      span(class = if (isTRUE(fb$ok)) "ok" else "bad", style = "font-weight:600", fb$line),
+      span(class = "muted", fb$why))
+  })
   # cv_rematch -- an obvious, always-there escape hatch for a WRONG match: a bank
   # that matched the wrong template (or the wrong bank) needs a one-click "no, set
   # up the right template for this" without hunting. Drafts a fresh template from
@@ -2376,7 +2715,7 @@ server <- function(input, output, session) {
     res <- cv_res(); if (is.null(res) || is.null(res$run_id)) return(NULL)
     if (isTRUE(cv_fb_done()))
       return(div(style = "margin-top:16px", span(class = "ok",
-        "Thanks - your feedback was recorded.")))
+        "Thanks - your feedback was recorded."), cv_fb_note()))
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
         # choiceNames/choiceValues (not named choices): a non-ASCII name in
@@ -2390,16 +2729,36 @@ server <- function(input, output, session) {
         actionButton("cv_fb_submit", "Submit feedback", class = "btn-primary"))
   })
 
+  # Marking a conversion WRONG does more than log an opinion: submit_feedback()
+  # withdraws that run's rows from the accepted feed (retract_feed, R/feed.R), so
+  # figures a forensic accountant has called wrong stop reaching the dashboards.
+  # The screen said only "Thanks - your feedback was recorded", which is the one
+  # consequence she most needs confirmed. It now says what was withdrawn.
+  cv_fb_note <- function() {
+    rec <- cv_fb_rec(); if (is.null(rec)) return(NULL)
+    n <- suppressWarnings(as.integer(rec$retracted_rows %||% NA))
+    if (!identical(rec$verdict, "wrong")) return(NULL)
+    div(class = "muted", style = "margin-top:4px",
+      if (is.na(n))
+        "Because you marked it wrong, the tool tried to withdraw its rows from the dashboards but could not reach the feed folder - tell whoever looks after the server."
+      else if (n > 0)
+        sprintf("Because you marked it wrong, %d row(s) have been withdrawn from the dashboards and moved to the held-back feed. Fixing the template and converting again puts the corrected figures back.", n)
+      else
+        "Nothing to withdraw from the dashboards - this conversion had not been published to them.")
+  }
   observeEvent(input$cv_fb_submit, {
     res <- cv_res(); req(res, res$run_id)
-    ok <- tryCatch({
+    rec <- tryCatch(
       submit_feedback(run_id = res$run_id, verdict = input$cv_fb_verdict,
                       comment = input$cv_fb_comment, requested_by = who_now(),
-                      template_id = res$template_id, logdir = LOGDIR)
-      TRUE
-    }, error = function(e) FALSE)
-    cv_fb_done(isTRUE(ok))
-    if (!isTRUE(ok))
+                      template_id = res$template_id, logdir = LOGDIR,
+                      # The app's own settings, not a second read of the file: the
+                      # retraction must target the SAME feed folder write_feed used.
+                      config = CONFIG),
+      error = function(e) NULL)
+    cv_fb_rec(rec)
+    cv_fb_done(!is.null(rec))
+    if (is.null(rec))
       showNotification("Could not save feedback.", type = "error")
   })
 
@@ -2549,7 +2908,9 @@ server <- function(input, output, session) {
         "(top-to-bottom doesn't matter), pick what it is, and click <b>Assign</b>. ",
         "Rows are found by the date, not by your box."))),
       fluidRow(
-        column(3, numericInput("g_pdf_page", "Page", 1, min = 1, step = 1)),
+        column(3, numericInput("g_pdf_page",
+          if (isTRUE(g$n_pages > 1L)) sprintf("Page (1 to %d)", g$n_pages) else "Page",
+          1, min = 1, max = g$n_pages %||% NA, step = 1)),
         column(5, selectInput("g_pdf_field", "The box marks this column…",
                               c("(what is this column?)" = "",
                                 "date", "description", "amount", "balance", "particulars",
@@ -2695,8 +3056,8 @@ server <- function(input, output, session) {
                  "The tool has pre-filled what it could detect - you're just confirming it."))),
       fluidRow(column(6, left_panel), column(6, right_panel)),
       tags$hr(),
-      h4("Preview - what we'll pull out"),
-      verbatimTextOutput("g_status"),
+      h4("Preview - what will be pulled out of your statement"),
+      uiOutput("g_status"),
       DTOutput("g_preview"),
       footer = tagList(modalButton("Cancel"),
         actionButton("g_save", "Save template", class = "btn-primary"))))
@@ -2744,9 +3105,16 @@ server <- function(input, output, session) {
     # statement") instead of sending a non-technical user to the raw YAML box.
     fp_cands <- if (identical(tmpl$format, "pdf"))
       safe(header_phrases(read_input(path), n = 8), character(0)) else character(0)
+    # How many pages the sample has, counted once here: the toolkit's page box says
+    # so out loud and can't be walked past the end of the document.
+    npages <- if (identical(tmpl$format, "pdf"))
+      safe({ i <- read_input(path); as.integer(length(i$pages %||% i$words %||% list())) },
+           NA_integer_) else NA_integer_
+    if (!isTRUE(npages >= 1L)) npages <- NA_integer_
     cv_upload_id(upload_id)
     guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids,
-                cols = cols, fp_candidates = unique(trimws(as.character(fp_cands %||% character(0))))))
+                cols = cols, n_pages = npages,
+                fp_candidates = unique(trimws(as.character(fp_cands %||% character(0))))))
     show_guided_modal()
     invisible(TRUE)
   }
@@ -3086,7 +3454,7 @@ server <- function(input, output, session) {
     g <- guided(); req(g); req(identical(g$tmpl$format, "pdf"))
     # Only the file + page matter for the bitmap (bands are overlays drawn in the
     # plot), and the render is cached, so assigning a box no longer re-renders it.
-    render_page_view(g$path, input$g_pdf_page %||% 1, 100)
+    render_page_view(g$path, .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_), 100)
   })
   output$g_pdf_plot <- renderPlot({
     r <- g_pdf_render(); req(r)
@@ -3105,7 +3473,7 @@ server <- function(input, output, session) {
     }
     # pinned header-value boxes (metadata_regions) for the CURRENT page, in orange
     mr <- guided()$tmpl$table$metadata_regions %||% list()
-    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
+    pg <- r$pg   # the page actually drawn, so the overlay can never sit on another
     for (nm in names(mr)) { b <- mr[[nm]]
       if (is.null(b$x_min) || is.null(b$x_max)) next
       if (!identical(as.integer(b$page %||% 1), pg)) next
@@ -3194,7 +3562,7 @@ server <- function(input, output, session) {
       showNotification("Choose which header value first.", type = "warning"); return() }
     if (is.null(br)) {
       showNotification("Draw a box around just that value on the page first.", type = "warning"); return() }
-    pg <- max(1L, as.integer(input$g_pdf_page %||% 1))
+    pg <- .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_)
     g$tmpl$table$metadata_regions[[f]] <- list(page = pg,
       x_min = round(br$xmin), x_max = round(br$xmax),
       y_min = round(br$ymin), y_max = round(br$ymax))
@@ -3238,10 +3606,31 @@ server <- function(input, output, session) {
     datatable(tx[, show, drop = FALSE], rownames = FALSE, colnames = cv_friendly_cols(show),
               options = list(dom = "t", pageLength = 12, scrollX = TRUE))
   })
-  output$g_status <- renderText({
+  # The preview verdict. This is where a template gets abandoned: a grey line of
+  # monospace saying "no rows detected" reads as a dead end, so it now says which
+  # setting to reach for -- and, for a PDF, that the preview only reads the first
+  # few pages, which is why a statement whose table starts later looks empty here.
+  output$g_status <- renderUI({
+    g <- guided(); req(g)
     tx <- g_preview_tx()
-    if (is.null(tx) || !nrow(tx)) "No rows detected yet - check the Date and Amount column pickers, or try a different date / amount setting."
-    else sprintf("%d transaction row(s) detected. If these look right, click Save.", nrow(tx))
+    n <- if (is.null(tx)) 0L else nrow(tx)
+    is_pdf <- identical(g$tmpl$format, "pdf")
+    if (n > 0L) return(div(class = "verdict verdict-high", style = "margin:2px 0 12px",
+      div(class = "verdict-ico", "✓"),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title",
+            sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s")),
+        p(class = "verdict-body", style = "margin:0",
+          "Check the dates, descriptions and amounts below against your statement. If they are right, click Save template."))))
+    div(class = "verdict verdict-medium", style = "margin:2px 0 12px",
+      div(class = "verdict-ico", "!"),
+      div(style = "flex:1;min-width:0",
+        div(class = "verdict-title", "No transaction rows read yet"),
+        p(class = "verdict-body", style = "margin:0 0 4px", if (is_pdf)
+            "Rows are found by their date, so start with the date column: does your box cover the dates on the page? Then check the date format and the amount style on Simple."
+          else "Start with the Date and Amount column pickers on Simple - are they pointing at the right columns? Then check the date format and the amount style."),
+        if (is_pdf) p(class = "muted", style = "margin:0",
+          "This preview reads only the first few pages. If the transactions start further into the document that is why nothing shows here - saving and converting reads every page.")))
   })
   observeEvent(input$g_save, {
     g <- guided(); req(g)

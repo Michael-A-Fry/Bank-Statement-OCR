@@ -155,12 +155,16 @@ write_outputs <- function(parsed, recon, outdir, basename,
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   paths <- character(0)
 
+  # The human-facing transaction table, built ONCE and shared by the workbook and
+  # the CSV, so the two files can never disagree about what was captured.
+  sheet_tx <- if (any(c("xlsx", "csv") %in% formats))
+    .spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras))
+
   if ("xlsx" %in% formats) {
     xlsx_path <- file.path(outdir, paste0(basename, ".xlsx"))
     wb <- openxlsx::createWorkbook()
     openxlsx::addWorksheet(wb, "Transactions")
-    openxlsx::writeData(wb, "Transactions",
-      .spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras)))
+    openxlsx::writeData(wb, "Transactions", sheet_tx)
     openxlsx::addWorksheet(wb, "Summary")
     openxlsx::writeData(wb, "Summary", .header_df(parsed$header))
     openxlsx::addWorksheet(wb, "Checks")
@@ -187,8 +191,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
 
   if ("csv" %in% formats) {
     csv_path <- file.path(outdir, paste0(basename, ".csv"))
-    utils::write.csv(.spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras)),
-                     csv_path, row.names = FALSE, na = "")
+    utils::write.csv(sheet_tx, csv_path, row.names = FALSE, na = "")
     paths["csv"] <- csv_path
   }
 

@@ -10,6 +10,7 @@ read [charter.md](charter.md), then
 | Doc | What it is |
 |---|---|
 | [charter.md](charter.md) | **Read this first.** Purpose, users, scope and the non-negotiables — if a change conflicts with the charter, the change is wrong. |
+| [how-it-fits-together.md](how-it-fits-together.md) | **Read this second.** One page: how a statement flows from upload to dashboard, which module owns each step, where the on-screen wording lives, and where you change each kind of thing. |
 | [launch-audit.md](launch-audit.md) | Readiness: what's ready, the honest boundaries, and the go/no-go. |
 | [ux-audit.md](ux-audit.md) | Enterprise UX/UI audit — every screen reviewed by four specialist personas, with findings. |
 | [engine-audit.md](engine-audit.md) | Engine & platform audit — correctness/bugs/refactors across engine, preprocessing, templates, flow, feed; prioritised with a fix sequence. |

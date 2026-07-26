@@ -22,29 +22,33 @@ mask_text <- function(x) {
 # .audit_rows(input, tmpl, max_rows) -- every visual row group in a PDF table,
 # with its date/amount/description cells MASKED, so a reviewer can see the shape
 # of each row (e.g. a "[REDACTED]" date, a two-date cell "99 Xxx 99 Xxx", a blank
-# amount) and why rows near the top might drop. Independent of the parser on
-# purpose -- a cross-check view.
+# amount) and why rows near the top might drop.
+#
+# It reads the page the way the READER does -- the shared .group_rows() and
+# .pdf_cell() from R/parse_pdf_table.R -- and stops there: it shows every visual
+# row, applying none of the reader's keep/stitch/continuation decisions. That is
+# the cross-check (what was on the page vs what came out), and it only works if
+# both agree on where the lines ARE. This used to carry its own copies of both:
+# the grouper was the pairwise-gap version (cumsum(diff(y) > tol)) that
+# .group_rows replaced precisely because it merges a block of tightly-set lines
+# into one giant row -- so on the dense statements a reviewer opens this report to
+# understand, it showed three rows for two hundred and quietly blamed the reader.
 .audit_rows <- function(input, tmpl, max_rows = 40L) {
   t <- tmpl$table %||% list(); cols <- t$columns %||% list()
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
-  cell <- function(rw, cspec) {
-    if (is.null(cspec) || is.null(cspec$x_min) || is.null(cspec$x_max)) return(NA_character_)
-    cx <- rw$x + rw$width / 2; sel <- rw[cx >= cspec$x_min & cx <= cspec$x_max, , drop = FALSE]
-    if (!nrow(sel)) NA_character_ else paste(sel$text[order(sel$x)], collapse = " ")
-  }
   rows <- list()
   for (p in seq_along(input$words %||% list())) {
     w <- input$words[[p]]; if (is.null(w) || !nrow(w)) next
     w <- as.data.frame(w, stringsAsFactors = FALSE); w <- w[order(w$y, w$x), , drop = FALSE]
-    grp <- cumsum(c(TRUE, diff(w$y) > row_tol))
+    grp <- .group_rows(w$y, row_tol)
     for (g in unique(grp)) {
       rw <- w[grp == g, , drop = FALSE]
       rows[[length(rows) + 1L]] <- data.frame(page = p, y = round(min(rw$y)),
-        date = mask_text(cell(rw, cols$date)),
-        amount = mask_text(cell(rw, cols$amount %||% cols$debit)),
-        credit = mask_text(cell(rw, cols$credit)),
-        balance = mask_text(cell(rw, cols$balance)),
-        description = substr(mask_text(cell(rw, cols$description)), 1, 40),
+        date = mask_text(.pdf_cell(rw, cols$date)),
+        amount = mask_text(.pdf_cell(rw, cols$amount %||% cols$debit)),
+        credit = mask_text(.pdf_cell(rw, cols$credit)),
+        balance = mask_text(.pdf_cell(rw, cols$balance)),
+        description = substr(mask_text(.pdf_cell(rw, cols$description)), 1, 40),
         stringsAsFactors = FALSE)
       if (length(rows) >= max_rows) break
     }

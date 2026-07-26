@@ -73,22 +73,26 @@ lexicon_suggestions <- function(logdir = "logs", min_count = 1L, max_records = 2
        scanned = as.integer(scanned), total = as.integer(total))
 }
 
-# lexicon_append(category, values, path) -- APPROVE a suggestion: union `values`
-# into a LIST category of the lexicon file (backup first, then clear the cache so
-# the next conversion sees it). Only list categories are appendable this way; a
-# regex/table/map is edited in the Admin vocabulary editor. Returns TRUE on success.
+# lexicon_append(category, values, path) -- APPROVE a suggestion: add `values` to
+# a LIST category of the lexicon file (backup first, then clear the cache so the
+# next conversion sees it). Only list categories are appendable this way; a
+# regex/table/map is edited in the Admin vocabulary editor. Returns TRUE on
+# success, with attr "reason" -- one plain sentence the screen can show as is.
+#
+# The write goes through yaml_append_phrase() (R/util.R), which INSERTS the line
+# rather than dumping the parsed object back over the file. That matters here:
+# dictionaries/lexicon.yaml opens with the explanation of how each category merges
+# and a worked cow/horse example, and a whole-file rewrite deleted all of it the
+# first time anyone approved a word -- taking the file's own documentation with it.
 lexicon_append <- function(category, values, path = .lexicon_path()) {
-  if (!identical(.lexicon_spec()[[category]], "list")) return(invisible(FALSE))
+  if (!identical(.lexicon_spec()[[category]], "list"))
+    return(invisible(structure(FALSE,
+      reason = "that kind of vocabulary is edited in the whole-file editor, not one word at a time")))
   values <- trimws(as.character(values)); values <- values[nzchar(values)]
-  if (!length(values)) return(invisible(FALSE))
-  raw <- if (!is.null(path) && file.exists(path)) safe(yaml::read_yaml(path), list()) else list()
-  if (!is.list(raw)) raw <- list()
-  cur <- as.character(unlist(raw[[category]] %||% character(0)))
-  raw[[category]] <- as.list(unique(c(cur, values)))
-  if (!is.null(path)) safe(file.copy(path, paste0(path, ".bak"), overwrite = TRUE))
-  ok <- isTRUE(tryCatch({
-    if (!is.null(path)) dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-    yaml::write_yaml(raw, path); TRUE }, error = function(e) FALSE))
+  if (!length(values))
+    return(invisible(structure(FALSE, reason = "type the word first")))
+  res <- lapply(values, function(v) yaml_append_phrase(path, category, v))
+  ok <- all(vapply(res, isTRUE, logical(1)))
   if (ok) clear_lexicon_cache()
-  invisible(ok)
+  invisible(structure(ok, reason = attr(res[[length(res)]], "reason")))
 }

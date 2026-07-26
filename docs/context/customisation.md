@@ -9,7 +9,7 @@ loop that lets the tool *learn* new vocabulary without ever giving up determinis
 | Tier | Holds | Where | Who edits it |
 |---|---|---|---|
 | **1. Templates** | per-bank FACTS — this bank's columns, date format, fingerprint, and its debit token (`type_debit_value: Paid`) | `templates/*.yaml` | analyst, via the builder / Advanced YAML |
-| **2. Lexicon** | the engine's generic RECOGNITION vocabularies — the synonyms/markers/shapes it *tries* when it auto-detects, drafts and parses | `dictionaries/lexicon.yaml` | admin, via **Admin → Data capture → Recognition vocabulary** |
+| **2. Lexicon** | the engine's generic RECOGNITION vocabularies — the synonyms/markers/shapes it *tries* when it auto-detects, drafts and parses | `dictionaries/lexicon.yaml` | admin, via **Admin → Data capture → Words the tool knows to look for** |
 | **2b. Label dictionary** | label WORDINGS ("Opening Balance" synonyms) | `dictionaries/labels.yaml` | admin, via the dictionary editor |
 | **3. Built-in defaults** | the values shipped in code; the lexicon falls back to these | `R/lexicon.R` | maintainer (bug fixes only) |
 
@@ -36,9 +36,17 @@ switches (feed gate, metadata level, paths, admin password), never vocabulary.
 Everything the engine "checks for" reads from the lexicon: `debit_markers`,
 `credit_markers`, `amount_style_debit_headers`, `amount_style_credit_headers`,
 `dr_cr_suffix_debit`, `dr_cr_suffix_credit`, `overdrawn_markers`,
-`period_connectives`, `header_keywords`, `layout_stopwords`, `redaction_markers`,
+`summary_line_labels`, `period_connectives`, `header_keywords`,
+`layout_stopwords`, `fingerprint_brand_words`, `redaction_markers`,
 `redaction_block_glyphs`, `money_regex`, `date_regex`, `account_regex`,
 `card_regex`, `date_formats`, `field_name_patterns`.
+
+That list is a convenience copy. The **authoritative** one is `.lexicon_spec()` in
+`R/lexicon.R`, and what **Admin → Data capture → Words the tool knows to look for** offers is
+generated straight from it — so if a category is on that screen it is editable, and
+if it is not, it is not (whatever a comment somewhere says). Registering a new
+category means one line in `.lexicon_spec()` and one built-in default in
+`.lexicon_defaults()`; the suite fails if you add one without the other.
 
 ## The learning loop (deterministic, human-approved)
 
@@ -51,7 +59,8 @@ figure:
 2. **Aggregate.** `lexicon_suggestions()` ranks those across the whole
    `logs/metadata` corpus by frequency ("`PAID` seen 40× as an unrecognised
    indicator").
-3. **Propose.** Admin → Data capture → **Suggestions from your data** shows the
+3. **Propose.** Admin → Data capture → **Words your statements used that the tool
+   didn't recognise** shows the
    ranked list. *(Today the ranking is plain frequency; a local model can later
    slot in here to rank/classify better — the rest of the loop is unchanged.)*
 4. **Approve.** A human picks a token and the direction it means and clicks

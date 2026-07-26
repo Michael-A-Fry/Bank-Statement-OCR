@@ -1,4 +1,19 @@
 # reconcile.R -- reconciliation KPIs + deterministic trust mapping.
+#
+# SHAPE OF THIS FILE, and where to add things:
+#   * one `.kpi_*()` builder per check. Each takes only what it needs, and returns
+#     ONE .kpi() row -- or NULL when the check does not apply to this statement
+#     (`amount_direction`, `ocr_confidence` and `redaction_scan` are only raised
+#     when there is something to say).
+#   * `.reconcile_trust()` turns the finished KPI table into the trust level,
+#     score and reasons.
+#   * `reconcile()` is the list of checks, in report order, and nothing else.
+#
+# TO ADD A KPI: write a `.kpi_<name>()` builder below, then add one line to the
+# list in reconcile(). Then give it a plain-English label in `CHECK_PLAIN`
+# (ui_labels.R) and, if it can FAIL, a how-to-fix entry in build_diagnostics()
+# (R/diagnose.R, section 1) -- a failing check with no fix text falls back to a
+# generic "review this against the source statement".
 
 .kpi <- function(name, status, expected = NA, actual = NA,
                  discrepancy = NA, detail = "", informational = FALSE) {
@@ -20,14 +35,19 @@
   if (extra > 0) sprintf("%s%s and %d more", lbl, shown, extra) else paste0(lbl, shown)
 }
 
-# reconcile(parsed, template) -> list(kpis, trust)
-reconcile <- function(parsed, template = NULL) {
-  tx <- parsed$transactions
-  h  <- parsed$header
-  n  <- nrow(tx)
-  rows <- list()
+# .header_ocr(h) -- the two OCR figures off the header, read ONCE the same way by
+# the ocr_confidence KPI and by the trust cap below, so they cannot disagree about
+# whether this statement was machine-read. -> list(pages, conf).
+.header_ocr <- function(h) {
+  pages <- suppressWarnings(as.integer(h$ocr_pages %||% 0L))
+  if (is.na(pages)) pages <- 0L
+  list(pages = pages, conf = suppressWarnings(as.numeric(h$ocr_min_confidence %||% NA)))
+}
 
-  # 1. balance_reconciliation: opening + sum(amount) == closing.
+# ---- the checks -------------------------------------------------------------
+
+# 1. balance_reconciliation: opening + sum(amount) == closing.
+.kpi_balance_reconciliation <- function(tx, h, n) {
   opening <- suppressWarnings(as.numeric(h$opening_balance %||% NA))
   closing <- suppressWarnings(as.numeric(h$closing_balance %||% NA))
   # Many statements don't PRINT a labelled opening/closing balance -- the figure
@@ -51,25 +71,27 @@ reconcile <- function(parsed, template = NULL) {
   # useless to a reviewer who cannot see WHICH figure is missing.
   na_amt <- if (n > 0) which(is.na(tx$amount)) else integer(0)
   na_ids <- if (length(na_amt)) (tx$row_id %||% seq_len(n))[na_amt] else integer(0)
+
   if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt)) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
     note <- if (length(derived))
       sprintf(" [%s derived from the running-balance column]", paste(derived, collapse = " & ")) else ""
-    rows$balance_reconciliation <- .kpi(
+    return(.kpi(
       "balance_reconciliation", if (abs(disc) < PARAM_MONEY_TOL) "pass" else "fail",
       expected = round(expected_close, 2), actual = round(closing, 2),
       discrepancy = disc,
       detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f%s",
-                       opening, sum(tx$amount), closing, note))
-  } else if (!is.na(opening) && !is.na(closing) && n > 0) {
+                       opening, sum(tx$amount), closing, note)))
+  }
+  if (!is.na(opening) && !is.na(closing) && n > 0) {
     # BOTH anchors are printed on the statement -- the strongest completeness proof
     # there is was available -- and a single unreadable amount is all that stopped
     # it. Reporting "na" here shrugged off the one check that could have caught a
     # wrong figure, and the run still came out trust medium / status ok / fed to
     # Qlik. Unproven is not the same as not applicable: FAIL, so it routes to
     # needs_review and the feed withholds it until a human resolves the amount.
-    rows$balance_reconciliation <- .kpi(
+    return(.kpi(
       "balance_reconciliation", "fail",
       expected = round(opening + sum(tx$amount, na.rm = TRUE), 2),
       actual = round(closing, 2), discrepancy = NA,
@@ -77,130 +99,125 @@ reconcile <- function(parsed, template = NULL) {
                               "so opening %.2f + every transaction cannot be totalled ",
                               "against the printed closing %.2f - resolve those amounts, ",
                               "then re-run"),
-                       length(na_amt), .row_list(na_ids), opening, closing))
-  } else {
-    # Honest about WHICH anchor is missing. The old single message claimed there was
-    # "no opening/closing balance and no running-balance column" even when the
-    # statement printed both -- factually untrue, and it sent reviewers looking for
-    # a balance that was on the page all along.
-    why <- if (n == 0) "no transactions to reconcile"
-      else if (is.na(opening) && is.na(closing))
-        "no opening or closing balance was found, and no running-balance column to derive one from"
-      else if (is.na(opening))
-        "no opening balance was found, and none could be derived from the running-balance column"
-      else "no closing balance was found, and none could be derived from the running-balance column"
-    rows$balance_reconciliation <- .kpi("balance_reconciliation", "na", detail = why)
+                       length(na_amt), .row_list(na_ids), opening, closing)))
   }
+  # Honest about WHICH anchor is missing. The old single message claimed there was
+  # "no opening/closing balance and no running-balance column" even when the
+  # statement printed both -- factually untrue, and it sent reviewers looking for
+  # a balance that was on the page all along.
+  why <- if (n == 0) "no transactions to reconcile"
+    else if (is.na(opening) && is.na(closing))
+      "no opening or closing balance was found, and no running-balance column to derive one from"
+    else if (is.na(opening))
+      "no opening balance was found, and none could be derived from the running-balance column"
+    else "no closing balance was found, and none could be derived from the running-balance column"
+  .kpi("balance_reconciliation", "na", detail = why)
+}
 
-  # 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
-  # A blank/redacted MIDDLE balance must not open a blind window: skipping both
-  # pairs around an NA balance lets a real break hide inside the gap (100, NA, 130
-  # with amounts 0/+20/+5 would wrongly "pass" -- 130 should be 125). Instead
-  # BRIDGE the gap: carry the last known-good balance plus the running sum of the
-  # intervening amounts, and check the next known balance against that. If any
-  # intervening amount is itself NA the bridge is genuinely unverifiable, so it is
-  # counted and surfaced, never silently passed.
-  if (n >= 2 && !all(is.na(tx$balance))) {
-    ok <- TRUE; bad <- 0L; unverifiable <- 0L
-    last_bal <- NA_real_; carry <- 0; gap_unknown <- FALSE
-    for (i in seq_len(n)) {
-      bi <- tx$balance[i]; ai <- tx$amount[i]
-      if (is.na(bi)) {                      # no balance printed here
-        if (is.na(ai)) gap_unknown <- TRUE  # ...and the amount is unknown too
-        else carry <- carry + ai            # ...else it is an intervening amount
-        next
-      }
-      if (!is.na(last_bal)) {               # we can test this known balance
-        if (is.na(ai) || gap_unknown) unverifiable <- unverifiable + 1L
-        else if (abs(bi - (last_bal + carry + ai)) >= PARAM_MONEY_TOL) { ok <- FALSE; bad <- bad + 1L }
-      }
-      last_bal <- bi; carry <- 0; gap_unknown <- FALSE   # reset the bridge
+# 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
+# A blank/redacted MIDDLE balance must not open a blind window: skipping both
+# pairs around an NA balance lets a real break hide inside the gap (100, NA, 130
+# with amounts 0/+20/+5 would wrongly "pass" -- 130 should be 125). Instead
+# BRIDGE the gap: carry the last known-good balance plus the running sum of the
+# intervening amounts, and check the next known balance against that. If any
+# intervening amount is itself NA the bridge is genuinely unverifiable, so it is
+# counted and surfaced, never silently passed.
+.kpi_running_balance_continuity <- function(tx, n) {
+  if (!(n >= 2 && !all(is.na(tx$balance))))
+    return(.kpi("running_balance_continuity", "na", detail = "no running balance column"))
+  ok <- TRUE; bad <- 0L; unverifiable <- 0L
+  last_bal <- NA_real_; carry <- 0; gap_unknown <- FALSE
+  for (i in seq_len(n)) {
+    bi <- tx$balance[i]; ai <- tx$amount[i]
+    if (is.na(bi)) {                      # no balance printed here
+      if (is.na(ai)) gap_unknown <- TRUE  # ...and the amount is unknown too
+      else carry <- carry + ai            # ...else it is an intervening amount
+      next
     }
-    detail <- sprintf("%d discontinuity(ies)", bad)
-    if (unverifiable > 0)
-      detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank/redacted)",
-                        detail, unverifiable)
-    rows$running_balance_continuity <- .kpi(
-      "running_balance_continuity", if (ok) "pass" else "fail",
-      expected = 0, actual = bad, discrepancy = bad, detail = detail)
-  } else {
-    rows$running_balance_continuity <- .kpi(
-      "running_balance_continuity", "na",
-      detail = "no running balance column")
+    if (!is.na(last_bal)) {               # we can test this known balance
+      if (is.na(ai) || gap_unknown) unverifiable <- unverifiable + 1L
+      else if (abs(bi - (last_bal + carry + ai)) >= PARAM_MONEY_TOL) { ok <- FALSE; bad <- bad + 1L }
+    }
+    last_bal <- bi; carry <- 0; gap_unknown <- FALSE   # reset the bridge
   }
+  detail <- sprintf("%d discontinuity(ies)", bad)
+  if (unverifiable > 0)
+    detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank/redacted)",
+                      detail, unverifiable)
+  .kpi("running_balance_continuity", if (ok) "pass" else "fail",
+       expected = 0, actual = bad, discrepancy = bad, detail = detail)
+}
 
-  # 2b. amount_direction (P2-10): a `signed` statement proves money-in vs money-out
-  # by its OWN +/- signs. If EVERY amount carries the same sign AND there is no
-  # running-balance column to cross-check, the file may in fact list UNSIGNED
-  # magnitudes -- read as all money-in (or all money-out), possibly inverted, with
-  # nothing to catch it (the loose excel_generic catch-all is the classic case).
-  # Fail closed so it routes to needs_review and is withheld from the governed
-  # feed, rather than feeding a silently sign-inverted statement to dashboards.
+# 2b. amount_direction (P2-10): a `signed` statement proves money-in vs money-out
+# by its OWN +/- signs. If EVERY amount carries the same sign AND there is no
+# running-balance column to cross-check, the file may in fact list UNSIGNED
+# magnitudes -- read as all money-in (or all money-out), possibly inverted, with
+# nothing to catch it (the loose excel_generic catch-all is the classic case).
+# Fail closed so it routes to needs_review and is withheld from the governed
+# feed, rather than feeding a silently sign-inverted statement to dashboards.
+# NULL (no KPI at all) when the direction is genuinely provable.
+.kpi_amount_direction <- function(tx, template) {
   style <- (if (!is.null(template)) template$amount_sign %||% template$table$amount_sign else NULL)
   amt_nz <- tx$amount[!is.na(tx$amount) & tx$amount != 0]
   no_balance <- is.null(tx$balance) || all(is.na(tx$balance))
-  if (identical(style, "signed") && no_balance && length(amt_nz) >= 2 &&
-      (all(amt_nz > 0) || all(amt_nz < 0))) {
-    rows$amount_direction <- .kpi(
-      "amount_direction", "fail", expected = "mixed or balance-checkable",
-      actual = if (all(amt_nz > 0)) "all money-in" else "all money-out",
-      detail = paste0("every amount shares one sign and there is no running balance to confirm ",
-                      "direction -- if this export lists unsigned magnitudes, money-in/out may be ",
-                      "inverted; check a few rows against the source or set the correct amount style"))
-  }
+  if (!(identical(style, "signed") && no_balance && length(amt_nz) >= 2 &&
+        (all(amt_nz > 0) || all(amt_nz < 0)))) return(NULL)
+  .kpi("amount_direction", "fail", expected = "mixed or balance-checkable",
+       actual = if (all(amt_nz > 0)) "all money-in" else "all money-out",
+       detail = paste0("every amount shares one sign and there is no running balance to confirm ",
+                       "direction -- if this export lists unsigned magnitudes, money-in/out may be ",
+                       "inverted; check a few rows against the source or set the correct amount style"))
+}
 
-  # 3. transaction_count: parsed > 0 and == stated count if present.
+# 3. transaction_count: parsed > 0 and == stated count if present.
+.kpi_transaction_count <- function(h, n) {
   stated <- suppressWarnings(as.integer(h$stated_count %||% NA))
-  if (!is.na(stated)) {
-    rows$transaction_count <- .kpi(
-      "transaction_count", if (n == stated && n > 0) "pass" else "fail",
-      expected = stated, actual = n, discrepancy = n - stated,
-      detail = "parsed vs stated transaction count")
-  } else {
-    rows$transaction_count <- .kpi(
-      "transaction_count", if (n > 0) "pass" else "fail",
-      expected = ">0", actual = n, discrepancy = NA,
-      detail = "no stated count; require at least one parsed row")
-  }
+  if (!is.na(stated))
+    return(.kpi("transaction_count", if (n == stated && n > 0) "pass" else "fail",
+                expected = stated, actual = n, discrepancy = n - stated,
+                detail = "parsed vs stated transaction count"))
+  .kpi("transaction_count", if (n > 0) "pass" else "fail",
+       expected = ">0", actual = n, discrepancy = NA,
+       detail = "no stated count; require at least one parsed row")
+}
 
-  # 4. dates_within_period: all dates within period_start..period_end.
-  # Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
-  # tolerantly (the shared .tolerant_date, see R/params.R) so an unparseable bound
-  # skips the check rather than crashing.
+# 4. dates_within_period: all dates within period_start..period_end.
+# Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
+# tolerantly (the shared .tolerant_date, see R/params.R) so an unparseable bound
+# skips the check rather than crashing.
+.kpi_dates_within_period <- function(tx, h, n) {
   ps <- .tolerant_date(h$period_start %||% NA); pe <- .tolerant_date(h$period_end %||% NA)
-  if (!is.na(ps) && !is.na(pe) && n > 0) {
-    d <- suppressWarnings(as.Date(tx$date))
-    within <- !is.na(d) & d >= ps & d <= pe
-    outside <- sum(!within, na.rm = TRUE)
-    rows$dates_within_period <- .kpi(
-      "dates_within_period", if (outside == 0) "pass" else "fail",
-      expected = sprintf("%s..%s", ps, pe), actual = outside,
-      discrepancy = outside, detail = sprintf("%d date(s) outside period", outside))
-  } else {
-    rows$dates_within_period <- .kpi(
-      "dates_within_period", "na", detail = "statement period not available")
-  }
+  if (!(!is.na(ps) && !is.na(pe) && n > 0))
+    return(.kpi("dates_within_period", "na", detail = "statement period not available"))
+  d <- suppressWarnings(as.Date(tx$date))
+  within <- !is.na(d) & d >= ps & d <= pe
+  outside <- sum(!within, na.rm = TRUE)
+  .kpi("dates_within_period", if (outside == 0) "pass" else "fail",
+       expected = sprintf("%s..%s", ps, pe), actual = outside,
+       discrepancy = outside, detail = sprintf("%d date(s) outside period", outside))
+}
 
-  # 4b. dates_readable: the never-silently-wrong safety net for the date column.
-  # A template can fingerprint-match while its date mapping misses (renamed or
-  # re-cased header, wrong sheet, wrong format) - every date comes back NA and,
-  # with no period to check against, nothing above would fail. Rows with no
-  # readable date at ALL must never leave as a clean "ok".
-  if (n > 0) {
-    d_ok <- sum(!is.na(suppressWarnings(as.Date(tx$date))))
-    rows$dates_readable <- .kpi(
-      "dates_readable", if (d_ok > 0) "pass" else "fail",
-      expected = n, actual = d_ok, discrepancy = n - d_ok,
-      detail = if (d_ok > 0) sprintf("%d of %d row date(s) read", d_ok, n)
-               else "no row dates could be read - the date column mapping or format is wrong")
-  }
+# 4b. dates_readable: the never-silently-wrong safety net for the date column.
+# A template can fingerprint-match while its date mapping misses (renamed or
+# re-cased header, wrong sheet, wrong format) - every date comes back NA and,
+# with no period to check against, nothing above would fail. Rows with no
+# readable date at ALL must never leave as a clean "ok".
+.kpi_dates_readable <- function(tx, n) {
+  if (n == 0) return(NULL)
+  d_ok <- sum(!is.na(suppressWarnings(as.Date(tx$date))))
+  .kpi("dates_readable", if (d_ok > 0) "pass" else "fail",
+       expected = n, actual = d_ok, discrepancy = n - d_ok,
+       detail = if (d_ok > 0) sprintf("%d of %d row date(s) read", d_ok, n)
+                else "no row dates could be read - the date column mapping or format is wrong")
+}
 
-  # 5. no_unparsed_rows: every non-empty source data line became a transaction.
-  # Completeness is proven by comparing the count of non-empty PHYSICAL source
-  # data lines against parsed rows -- computing it from the parsed table alone
-  # (n vs n-malformed) can never see a record that was merged/lost, so a stray
-  # cross-line quote would silently pass. `source_line_count` is threaded from
-  # the reader; NA (excel/pdf) falls back to the malformed-only check.
+# 5. no_unparsed_rows: every non-empty source data line became a transaction.
+# Completeness is proven by comparing the count of non-empty PHYSICAL source
+# data lines against parsed rows -- computing it from the parsed table alone
+# (n vs n-malformed) can never see a record that was merged/lost, so a stray
+# cross-line quote would silently pass. `source_line_count` is threaded from
+# the reader; NA (excel/pdf) falls back to the malformed-only check.
+.kpi_no_unparsed_rows <- function(parsed, tx, n) {
   malformed <- sum(grepl("malformed", tx$flags))
   src_lines <- suppressWarnings(as.integer(parsed$source_line_count %||% NA))
   # A legitimate multi-line quoted record spans several physical lines but is ONE
@@ -216,92 +233,94 @@ reconcile <- function(parsed, template = NULL) {
   # parse_pdf_table so this KPI can state a real number instead of nothing.
   skipped_rows <- suppressWarnings(as.integer(parsed$skipped_row_count %||% NA))
   visual_rows  <- suppressWarnings(as.integer(parsed$visual_row_count %||% NA))
+
   if (!is.na(src_lines)) {
     # Delimited: the physical data-line count is known, so completeness is provable.
-    rows$no_unparsed_rows <- .kpi(
+    return(.kpi(
       "no_unparsed_rows", if (malformed == 0 && lost == 0) "pass" else "fail",
       expected = expected_rows, actual = good, discrepancy = expected_rows - good,
       detail = if (lost > 0)
         sprintf("%d source line(s) unaccounted for; %d malformed row(s)", lost, malformed)
-      else sprintf("%d malformed row(s)", malformed))
-  } else if (malformed > 0) {
-    rows$no_unparsed_rows <- .kpi(
+      else sprintf("%d malformed row(s)", malformed)))
+  }
+  if (malformed > 0) {
+    return(.kpi(
       "no_unparsed_rows", "fail", expected = expected_rows, actual = good,
-      discrepancy = malformed, detail = sprintf("%d malformed row(s)", malformed))
-  } else {
-    # PDF / Excel: there is NO independent source-line count, so `lost` was always
-    # 0 by construction and this KPI reported "pass" for every such statement -- a
-    # green tick for a check that never ran, which is exactly the failure the
-    # charter forbids. Say "not applicable" instead, and show the skipped-row count
-    # so the number is a fact the reviewer can check in the X-ray rather than a
-    # reassurance nobody computed.
-    rows$no_unparsed_rows <- .kpi(
-      "no_unparsed_rows", "na", expected = expected_rows, actual = good,
-      discrepancy = NA,
-      detail = if (!is.na(skipped_rows) && !is.na(visual_rows))
-        sprintf(paste0("cannot be proved for this format: there is no independent ",
-                       "source line count. %d of %d visual row(s) were read as ",
-                       "transactions and %d were skipped (headings, summary lines, ",
-                       "wrapped text, or a date/amount that could not be read) - ",
-                       "check those in the Inspect view; completeness otherwise ",
-                       "rests on balance_reconciliation."),
-                n, visual_rows, skipped_rows)
-      else paste0("cannot be proved for this format: the total source line count is ",
-                  "not independently known, so rows dropped by column/date filtering ",
-                  "are NOT counted here -- rely on balance_reconciliation for ",
-                  "completeness."))
+      discrepancy = malformed, detail = sprintf("%d malformed row(s)", malformed)))
   }
+  # PDF / Excel: there is NO independent source-line count, so `lost` was always
+  # 0 by construction and this KPI reported "pass" for every such statement -- a
+  # green tick for a check that never ran, which is exactly the failure the
+  # charter forbids. Say "not applicable" instead, and show the skipped-row count
+  # so the number is a fact the reviewer can check in the X-ray rather than a
+  # reassurance nobody computed.
+  .kpi("no_unparsed_rows", "na", expected = expected_rows, actual = good,
+       discrepancy = NA,
+       detail = if (!is.na(skipped_rows) && !is.na(visual_rows))
+         sprintf(paste0("cannot be proved for this format: there is no independent ",
+                        "source line count. %d of %d visual row(s) were read as ",
+                        "transactions and %d were skipped (headings, summary lines, ",
+                        "wrapped text, or a date/amount that could not be read) - ",
+                        "check those in the Inspect view; completeness otherwise ",
+                        "rests on balance_reconciliation."),
+                 n, visual_rows, skipped_rows)
+       else paste0("cannot be proved for this format: the total source line count is ",
+                   "not independently known, so rows dropped by column/date filtering ",
+                   "are NOT counted here -- rely on balance_reconciliation for ",
+                   "completeness."))
+}
 
-  # 6. redaction_summary: informational count of redacted rows.
+# 6. redaction_summary: informational count of redacted rows.
+.kpi_redaction_summary <- function(tx) {
   redacted <- sum(grepl("redacted", tx$flags))
-  rows$redaction_summary <- .kpi(
-    "redaction_summary", "na", expected = NA, actual = redacted,
-    discrepancy = NA, detail = sprintf("%d redacted row(s)", redacted),
-    informational = TRUE)
+  .kpi("redaction_summary", "na", expected = NA, actual = redacted,
+       discrepancy = NA, detail = sprintf("%d redacted row(s)", redacted),
+       informational = TRUE)
+}
 
-  # 7. ocr_confidence: informational -- was any page machine-read (OCR), and how
-  # confident was the worst page? OCR is never 100% accurate, so this must be
-  # visible to a forensic reviewer alongside the confidence figure. It does not
-  # move the score (it is informational) but it DOES cap the trust level below --
-  # an OCR'd statement is never rated "high".
-  ocr_pages <- suppressWarnings(as.integer(h$ocr_pages %||% 0L))
-  if (is.na(ocr_pages)) ocr_pages <- 0L
-  ocr_conf <- suppressWarnings(as.numeric(h$ocr_min_confidence %||% NA))
-  if (ocr_pages > 0) {
-    rows$ocr_confidence <- .kpi(
-      "ocr_confidence", "na", expected = NA,
-      actual = if (is.na(ocr_conf)) sprintf("%d page(s) OCR-read", ocr_pages)
-               else sprintf("%d page(s) OCR-read, min page confidence %.0f%%", ocr_pages, ocr_conf),
-      discrepancy = NA,
-      detail = "machine-read (OCR) text is not guaranteed 100% accurate -- verify amounts and descriptions against the source PDF",
-      informational = TRUE)
-  }
+# 7. ocr_confidence: informational -- was any page machine-read (OCR), and how
+# confident was the worst page? OCR is never 100% accurate, so this must be
+# visible to a forensic reviewer alongside the confidence figure. It does not
+# move the score (it is informational) but it DOES cap the trust level below --
+# an OCR'd statement is never rated "high". NULL when no page was OCR'd.
+.kpi_ocr_confidence <- function(h) {
+  o <- .header_ocr(h)
+  if (o$pages <= 0) return(NULL)
+  .kpi("ocr_confidence", "na", expected = NA,
+       actual = if (is.na(o$conf)) sprintf("%d page(s) OCR-read", o$pages)
+                else sprintf("%d page(s) OCR-read, min page confidence %.0f%%", o$pages, o$conf),
+       discrepancy = NA,
+       detail = "machine-read (OCR) text is not guaranteed 100% accurate -- verify amounts and descriptions against the source PDF",
+       informational = TRUE)
+}
 
-  # 8. redaction_scan: did the occlusion scan actually finish on every page?
-  # The scan is the ONLY thing that proves text under a redaction box stayed
-  # hidden. When it could not complete, the reader falls back to the raw text
-  # layer -- so words the sender blacked out may have been emitted verbatim. The
-  # header carried that fact all the way here and NOTHING read it: the run said
-  # "Converted successfully", trust was uncapped, and the feed accepted a file
-  # that may contain hidden text. Honouring redactions is absolute, so this FAILS
-  # (routing to needs_review and withholding the feed) rather than warning quietly.
-  # Only raised when there IS a problem, so a clean scan changes nothing.
+# 8. redaction_scan: did the occlusion scan actually finish on every page?
+# The scan is the ONLY thing that proves text under a redaction box stayed
+# hidden. When it could not complete, the reader falls back to the raw text
+# layer -- so words the sender blacked out may have been emitted verbatim. The
+# header carried that fact all the way here and NOTHING read it: the run said
+# "Converted successfully", trust was uncapped, and the feed accepted a file
+# that may contain hidden text. Honouring redactions is absolute, so this FAILS
+# (routing to needs_review and withholding the feed) rather than warning quietly.
+# NULL (nothing raised) when the scan was clean, so a good run changes nothing.
+.kpi_redaction_scan <- function(h) {
   scan_incomplete <- suppressWarnings(as.integer(h$redaction_scan_incomplete %||% 0L))
   if (is.na(scan_incomplete)) scan_incomplete <- 0L
-  if (scan_incomplete > 0) {
-    rows$redaction_scan <- .kpi(
-      "redaction_scan", "fail", expected = 0, actual = scan_incomplete,
-      discrepancy = scan_incomplete,
-      detail = sprintf(paste0("the redaction scan could not complete on %d page(s), so text ",
-                              "hidden under a redaction box may have been read and emitted - ",
-                              "do NOT release this output; check those pages against the ",
-                              "source PDF before use"), scan_incomplete))
-  }
+  if (scan_incomplete <= 0) return(NULL)
+  .kpi("redaction_scan", "fail", expected = 0, actual = scan_incomplete,
+       discrepancy = scan_incomplete,
+       detail = sprintf(paste0("the redaction scan could not complete on %d page(s), so text ",
+                               "hidden under a redaction box may have been read and emitted - ",
+                               "do NOT release this output; check those pages against the ",
+                               "source PDF before use"), scan_incomplete))
+}
 
-  kpis <- do.call(rbind, rows)
-  rownames(kpis) <- NULL
-
-  # ---- deterministic trust ----
+# ---- deterministic trust -----------------------------------------------------
+# .reconcile_trust(kpis, tx, h, n) -> list(level, score, reasons, ...).
+# The KPI table decides the base level; the caveats below can only LOWER a "high"
+# (never raise anything), because each describes something the checks could not
+# prove. `kpis` still carries the internal `informational` column here.
+.reconcile_trust <- function(kpis, tx, h, n) {
   applicable <- kpis[!kpis$informational, ]
   n_fail <- sum(applicable$status == "fail")
   n_na   <- sum(applicable$status == "na")
@@ -381,13 +400,14 @@ reconcile <- function(parsed, template = NULL) {
   # never rated "high" -- OCR is not guaranteed accurate, and reconciliation math
   # only cross-checks amounts, not the verbatim descriptions. Always surface that
   # OCR was used and the confidence figure so the reviewer verifies the source.
-  if (ocr_pages > 0) {
+  ocr <- .header_ocr(h)
+  if (ocr$pages > 0) {
     if (identical(level, "high")) level <- "medium"
     reasons <- c(reasons, sprintf(
       "%d page(s) were read by OCR%s; machine-read text is not guaranteed 100%% accurate - verify amounts and descriptions against the source PDF",
-      ocr_pages,
-      if (is.na(ocr_conf)) " (page confidence could not be measured)"
-      else sprintf(" (min page confidence %.0f%%)", ocr_conf)))
+      ocr$pages,
+      if (is.na(ocr$conf)) " (page confidence could not be measured)"
+      else sprintf(" (min page confidence %.0f%%)", ocr$conf)))
     # A per-cell flag is stronger than the page mean: it points at the exact rows
     # whose date/amount/balance may have been misread.
     n_ocrlow <- sum(grepl("ocr_low_conf", tx$flags))
@@ -396,11 +416,38 @@ reconcile <- function(parsed, template = NULL) {
         "%d row(s) have a LOW-CONFIDENCE OCR value in a date/amount/balance cell - check those cells against the source", n_ocrlow))
   }
 
-  # Return KPIs without the internal informational flag column exposed downstream.
-  kpis_out <- kpis[, c("name", "status", "expected", "actual", "discrepancy", "detail")]
+  list(level = level, score = score, reasons = reasons,
+       completeness_verified = completeness_verified,
+       ocr_pages = ocr$pages, ocr_min_confidence = ocr$conf)
+}
 
-  list(kpis = kpis_out,
-       trust = list(level = level, score = score, reasons = reasons,
-                    completeness_verified = completeness_verified,
-                    ocr_pages = ocr_pages, ocr_min_confidence = ocr_conf))
+# reconcile(parsed, template) -> list(kpis, trust)
+# The checks, in the order they are reported. A builder returning NULL means "this
+# check does not apply to this statement" and simply does not appear.
+reconcile <- function(parsed, template = NULL) {
+  tx <- parsed$transactions
+  h  <- parsed$header
+  n  <- nrow(tx)
+
+  rows <- list(
+    balance_reconciliation     = .kpi_balance_reconciliation(tx, h, n),
+    running_balance_continuity = .kpi_running_balance_continuity(tx, n),
+    amount_direction           = .kpi_amount_direction(tx, template),
+    transaction_count          = .kpi_transaction_count(h, n),
+    dates_within_period        = .kpi_dates_within_period(tx, h, n),
+    dates_readable             = .kpi_dates_readable(tx, n),
+    no_unparsed_rows           = .kpi_no_unparsed_rows(parsed, tx, n),
+    redaction_summary          = .kpi_redaction_summary(tx),
+    ocr_confidence             = .kpi_ocr_confidence(h),
+    redaction_scan             = .kpi_redaction_scan(h))
+  rows <- Filter(Negate(is.null), rows)
+
+  kpis <- do.call(rbind, rows)
+  rownames(kpis) <- NULL
+
+  trust <- .reconcile_trust(kpis, tx, h, n)
+
+  # Return KPIs without the internal informational flag column exposed downstream.
+  list(kpis = kpis[, c("name", "status", "expected", "actual", "discrepancy", "detail")],
+       trust = trust)
 }

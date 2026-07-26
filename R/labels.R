@@ -172,6 +172,37 @@ match_label <- function(spec, pages, dict = NULL) {
        n = length(got$vals), conflict = conflict, term = got$tms[idx])
 }
 
+# dictionary_append(field, phrase, path) -- teach the dictionary one more WORDING
+# for a labelled value ("this statement writes the opening balance as 'b/fwd'").
+#
+# The mirror of lexicon_append() for the OTHER dictionary, and for the same
+# reason: a label the tool has never met is this tool's single most common cause
+# of a blank value, and fixing it should not need YAML. Both write through
+# yaml_append_phrase() (R/util.R), so the file keeps its comments -- including the
+# per-line notes that are the only explanation of why a phrase is in the list.
+#
+# Returns TRUE/FALSE with attr "reason", a plain sentence for the screen.
+dictionary_append <- function(field, phrase, path = NULL) {
+  if (is.null(path)) path <- .dictionary_path()
+  out <- yaml_append_phrase(path, field, phrase, under = "any_of")
+  invisible(out)
+}
+
+# .dictionary_path() -- the label dictionary the ENGINE reads, resolved exactly as
+# default_label_dict() resolves it, so a write lands in the file the next
+# conversion loads. One resolution order, named once (below), used by both.
+.DICTIONARY_CANDIDATES <- function() c(
+  if (nzchar(Sys.getenv("BSO_DICTIONARY"))) Sys.getenv("BSO_DICTIONARY"),
+  if (nzchar(Sys.getenv("ENGINE_ROOT")))
+    file.path(Sys.getenv("ENGINE_ROOT"), "dictionaries", "labels.yaml"),
+  tryCatch(load_config()$paths$dictionary, error = function(e) NULL) %||% NULL,
+  file.path("dictionaries", "labels.yaml"))
+.dictionary_path <- function() {
+  cands <- .DICTIONARY_CANDIDATES()
+  hit <- cands[file.exists(cands)]
+  if (length(hit)) hit[1] else utils::tail(cands, 1)
+}
+
 # load_label_dict(path) -> named list of specs (empty list on any error).
 load_label_dict <- function(path) {
   d <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
@@ -185,15 +216,9 @@ default_label_dict <- function() {
   # engine reads exactly the file the Admin editor writes to (config$paths$dictionary).
   # Order: an explicit BSO_DICTIONARY override, then the tests' ENGINE_ROOT copy
   # (kept ahead of config so tests are unaffected), then the configured path, then
-  # the shipped default. The configured path only changes behaviour when a site
-  # actually relocates the file -- which today the engine silently ignores.
-  cfgpath <- tryCatch(load_config()$paths$dictionary, error = function(e) NULL)
-  cands <- c(
-    if (nzchar(Sys.getenv("BSO_DICTIONARY"))) Sys.getenv("BSO_DICTIONARY"),
-    if (nzchar(Sys.getenv("ENGINE_ROOT")))
-      file.path(Sys.getenv("ENGINE_ROOT"), "dictionaries", "labels.yaml"),
-    cfgpath %||% NULL,
-    file.path("dictionaries", "labels.yaml"))
+  # the shipped default. See .DICTIONARY_CANDIDATES() above -- the same list the
+  # WRITE side uses, so an added wording always lands in the file that is read.
+  cands <- .DICTIONARY_CANDIDATES()
   hit <- cands[file.exists(cands)]
   if (length(hit)) load_label_dict(hit[1]) else list()
 }

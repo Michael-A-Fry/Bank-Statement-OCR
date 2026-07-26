@@ -54,9 +54,9 @@ higher as tests are added):
 
 ```
 ==== Test summary ====
-files:   59
-tests:   378
-passed:  1585
+files:   64
+tests:   545
+passed:  2418
 failed:  0
 errors:  0
 warnings:0

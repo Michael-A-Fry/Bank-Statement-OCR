@@ -53,13 +53,18 @@ else — dates, amount style, saving — is identical.
 ---
 
 ## Proven vs. user-created templates
-- Templates you save here are **user-created**. On the **Convert** tab they're hidden
-  by default behind a tick-box ("Include user-created templates — not guaranteed
-  tested"), so day-to-day conversions use the **proven** built-in set unless someone
-  opts in.
+- Templates you save here are **user-created**. They are **used by default** on the
+  **Convert** tab — a bank you set up works for everyone from the next conversion,
+  with no tick-box to find. (The switch is still there, under "It picked the wrong
+  bank?" → *Include templates built here*; untick it to convert against only the
+  shipped, tested set. `app.user_templates_default` in `config\config.yaml` sets
+  which way it starts.)
 - Only **proven** templates feed the Qlik dashboards (see
-  [connecting-qlik.md](connecting-qlik.md)). To promote a user template to proven,
-  ask whoever maintains the engine to move it into the built-in `templates\` set.
+  [connecting-qlik.md](connecting-qlik.md)) — this is the one thing being
+  user-created still changes, and the Convert screen says so on every conversion
+  ("Held back from the dashboards — it was read by a template built here").
+  To promote a user template to proven, ask whoever maintains the engine to move it
+  into the built-in `templates\` set.
 
 If a statement is genuinely a new kind the wizard can't handle, that's rare — see
 [when-something-goes-wrong.md](when-something-goes-wrong.md) for how to report it

@@ -85,9 +85,10 @@ usually a wrong amount style or date format.</p>
 
 <h4>Troubleshooting</h4>
 <table><tr><th>Symptom</th><th>Fix</th></tr>
-<tr><td>No template matched</td><td>Check the identifying phrases (Advanced tab) really appear on the statement; check you&#39;re on the table page</td></tr>
+<tr><td>No template matched</td><td>Check the distinctive phrase (<b>Simple</b> tab) really is printed on the statement, word for word; check you&#39;re on the table page</td></tr>
 <tr><td>Deposits look like withdrawals</td><td>Wrong amount style - switch it</td></tr>
 <tr><td>Dates blank/wrong</td><td>Wrong date format; for year-less dates confirm the period is detected</td></tr>
+<tr><td>The preview shows no rows at all</td><td>Rows are found by their date: check the date box covers the dates, then the date format. On a long PDF the preview only reads the <b>first few pages</b> - if the transactions start later, save and convert to see them all</td></tr>
 <tr><td>Column empty / description cut off</td><td>Redraw / widen the box (stop before the amount column)</td></tr>
 <tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date - widen/move it. After converting, the X-ray view lists every skipped row and why.</td></tr></table>
 </div>')
@@ -116,6 +117,7 @@ about_html <- function() HTML('
   <div class="step"><b>Extract</b>Date, description, amount, balance - read verbatim, never edited.</div>
   <div class="step"><b>Check</b>Opening + transactions vs closing balance; anything off is flagged with the reason.</div>
   <div class="step"><b>Download</b>Excel, CSV or JSON - and rate the result so the team sees what works.</div>
+  <div class="step"><b>Publish</b>A clean conversion from a tested template also feeds the org dashboards. The screen tells you either way.</div>
 </div>
 <p class="muted">No template for it yet? The toolkit pre-fills one from your file; you confirm
 against a live preview and save. It is then re-checked against every template and tells you
@@ -125,10 +127,12 @@ is something you are shown, not something you are promised.</p>
 <h3>How you know it&#39;s right</h3>
 <dl class="trust">
 <dt>High confidence</dt><dd>Opening balance + every transaction = the closing balance the statement prints. Provably complete.</dd>
-<dt>Medium confidence</dt><dd>Read cleanly, but a completeness check couldn&#39;t run (e.g. no running balance on the statement). Worth an eyeball.</dd>
+<dt>Medium confidence</dt><dd>Read cleanly and every check that could run passed, but something couldn&#39;t be fully proven - no balance to reconcile against, pages read by OCR, or a year the tool had to work out. The result says which.</dd>
+<dt>Low confidence</dt><dd>A check <b>failed</b>. The result names which one and by how much, and the tool asks you to check those transactions against the statement before relying on them.</dd>
 <dt>Field coverage</dt><dd>Which fields are populated, which came back empty (maybe a wrong column), which aren&#39;t on this statement at all.</dd>
 <dt>Diagnostics</dt><dd>When anything is off: where, why, and how to fix it - in plain words.</dd>
 <dt>Redactions</dt><dd>Nothing under a redaction is ever read or guessed. A redacted cell stays <code>[REDACTED]</code>, its row is kept, and the tool never estimates what a black block hid.</dd>
+<dt>The dashboards</dt><dd>Every conversion says whether its figures reached the org dashboards - and, when they were held back, why. Only clean conversions read by the team&#39;s tested templates are published, and marking a result <b>wrong</b> withdraws it again.</dd>
 </dl>
 <p class="muted" style="margin-top:14px">Deeper how-to - drawing PDF columns, every way statements
 differ - lives in the 2-minute guide on the Add-a-template tab.

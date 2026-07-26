@@ -89,8 +89,9 @@
   m$page_count <- length(pages)
   ocr <- input$page_ocr %||% logical(0)
   if (length(ocr)) m$ocr_pages <- sum(as.logical(ocr[pages]), na.rm = TRUE)
-  # per-page OCR confidence isn't retained on the input; carry the whole-document
-  # minimum (conservative -- the OCR caveat can only over-warn, never under-warn).
+  # ocr_min_conf is deliberately NOT narrowed to this segment: the input keeps only
+  # a whole-document minimum, so every segment inherits it. Conservative on purpose
+  # -- the OCR caveat can then only over-warn, never under-warn.
   if (!is.null(m$redactions) && is.data.frame(m$redactions) && "page" %in% names(m$redactions)) {
     rd <- m$redactions[m$redactions$page %in% pages, , drop = FALSE]
     if (nrow(rd)) rd$page <- match(rd$page, pages)   # renumber to the segment's frame

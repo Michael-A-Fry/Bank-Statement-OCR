@@ -78,9 +78,14 @@ independent files (§6).
 
 Otherwise it's **withheld** (still logged in `runs/`, optionally copied to
 `review/`). So the dashboards only ever contain clean extractions from vetted
-templates - even though the Shiny converter offers proven templates by default and
-user-created ones via an opt-in tick-box (`app.user_templates_default` sets the
-box's default).
+templates - even though the Shiny converter CONVERTS with user-created templates by
+default (`app.user_templates_default`, ships `true`). The gate is on template
+ORIGIN, not on that switch, so the two are independent by design: an analyst gets
+her bank working immediately, and the dashboards still only take the proven set.
+Since it is a governance decision the person converting cannot see in the output,
+the Convert screen states the gate's own verdict on every conversion ("Sent to the
+dashboards" / "Held back from the dashboards - it was read by a template built
+here"), worded from `FEED_PLAIN` in `ui_labels.R`, keyed by `gate_result`.
 
 ## 3a. Feed schema
 

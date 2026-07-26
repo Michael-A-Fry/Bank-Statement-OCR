@@ -40,6 +40,14 @@
   debit_markers = "list", credit_markers = "list",
   amount_style_debit_headers = "list", amount_style_credit_headers = "list",
   dr_cr_suffix_debit = "list", dr_cr_suffix_credit = "list", overdrawn_markers = "list",
+  # Whole-label wordings that mark a PDF line as a SUMMARY (opening/closing balance,
+  # brought/carried forward, a total) rather than a transaction. Registered here for
+  # the same reason as fingerprint_brand_words above: R/parse_pdf_table.R documents
+  # it as dictionary-driven, but an unregistered category is rejected by
+  # validate_lexicon() and missing from the Admin editor's category list -- so the
+  # "teach it in YAML, never in code" promise would fail at the moment an analyst
+  # tried to use it.
+  summary_line_labels = "list",
   period_connectives = "list", redaction_markers = "list", redaction_block_glyphs = "list",
   money_regex = "regex", date_regex = "regex", account_regex = "regex", card_regex = "regex",
   date_formats = "table", field_name_patterns = "map")
@@ -58,6 +66,7 @@
   dr_cr_suffix_debit  = c("DR"),   # debit suffix on an AMOUNT (dr_cr_suffix style)
   dr_cr_suffix_credit = c("CR"),   # credit suffix on an amount
   overdrawn_markers   = c("OD"),   # extra debit marker on a BALANCE (.num_one)
+  summary_line_labels = .PDF_SUMMARY_LABELS,     # R/parse_pdf_table.R
   period_connectives  = c("to", "through", "thru", "until"),
   redaction_markers   = c("\\[REDACTED\\]", "\\bREDACTED\\b", "X{6,}", "#{6,}"),
   redaction_block_glyphs = .PDF_BLOCK_GLYPHS,

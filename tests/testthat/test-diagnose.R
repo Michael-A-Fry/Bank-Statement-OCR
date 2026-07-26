@@ -99,6 +99,71 @@ test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly
   expect_match(diag_fix_owner_label("escalate"), "Developer")
 })
 
+# .diag_fix_owner used to be a switch() with a default of "escalate". Four live
+# categories had quietly fallen off the end of it and were being triaged as
+# "Developer - engine gap", the most expensive possible answer -- including
+# date_format_mismatch, whose own how-to-fix text tells the analyst to change the
+# template's date format in the toolkit. These pin the owners so the routing
+# cannot drift back.
+test_that("categories that a person can fix are NOT triaged as an engine gap", {
+  expect_equal(.diag_fix_owner("date_format_mismatch"), "template")  # fix it in the toolkit
+  expect_equal(.diag_fix_owner("scanned_no_ocr"), "input")           # rescan / install OCR
+  expect_equal(.diag_fix_owner("ocr_confidence_unknown"), "input")   # rescan / check the image
+  # ...and the one that genuinely IS a maintainer's problem still says so: the
+  # page could not be rasterised, so redactions cannot be proved to have held.
+  expect_equal(.diag_fix_owner("redaction_unverified"), "escalate")
+  # an unrecognised category still fails safe (surface it, never hide it)
+  expect_equal(.diag_fix_owner("something_new"), "escalate")
+  expect_equal(.diag_fix_owner(character(0)), character(0))          # type-stable
+})
+
+# A failing KPI with no entry in .KPI_DIAGNOSIS gets the deliberately vague
+# fallback -- which was what the redaction-scan failure, the gravest verdict the
+# engine can reach, was being rendered with.
+test_that("a failed redaction scan is diagnosed as a redaction problem, not a template one", {
+  tx <- data.frame(row_id = 1L, date = "2025-01-01", date_raw = "x", description = "a",
+    amount = -1, amount_raw = "-1", direction = "debit", balance = NA_real_,
+    balance_raw = NA_character_, particulars = NA_character_, code = NA_character_,
+    reference = NA_character_, other_party = NA_character_, type = NA_character_,
+    currency = "NZD", flags = "", stringsAsFactors = FALSE)
+  kpis <- data.frame(name = "redaction_scan", status = "fail", expected = "0",
+    actual = "2", discrepancy = "2",
+    detail = "the redaction scan could not complete on 2 page(s)",
+    stringsAsFactors = FALSE)
+  d <- build_diagnostics("needs_review",
+    parsed = list(transactions = tx, header = list(redaction_scan_incomplete = 0L)),
+    recon = list(kpis = kpis, trust = list(completeness_verified = TRUE)))
+  row <- d[d$where == "redactions", ]
+  expect_equal(nrow(row), 1L)
+  expect_equal(row$category, "redaction_unverified")
+  expect_equal(row$severity, "high")
+  expect_equal(row$fix_owner, "escalate")          # not "template"
+  expect_match(row$how_to_fix, "Do NOT release")
+  expect_false(grepl("Review this check against the source", row$how_to_fix))
+})
+
+# The guard that makes the drift above impossible to repeat: every category the
+# file can actually raise must have a declared owner, and the table must not carry
+# entries for categories nothing raises (a dead row reads as coverage it isn't).
+test_that("every diagnostic category has a declared owner, and none is dead", {
+  src <- paste(readLines(file.path(engine_root(), "R", "diagnose.R"), warn = FALSE),
+               collapse = "\n")
+  # Two shapes raise a diagnostic: add(where, category, severity, ...) puts the
+  # category immediately before the severity, and the failing-KPI table names it.
+  pos <- regmatches(src, gregexpr("\"[a-z0-9_]+\",[ \n]*\"(high|medium|info)\"", src))[[1]]
+  pos <- sub("^\"([a-z0-9_]+)\".*$", "\\1", pos)
+  named <- regmatches(src, gregexpr("category = \"[a-z0-9_]+\"", src))[[1]]
+  named <- sub("^category = \"([a-z0-9_]+)\"$", "\\1", named)
+  raised <- setdiff(unique(c(pos, named)), c("high", "medium", "info"))
+  expect_gt(length(raised), 20)          # the scan itself must not go quiet
+  expect_equal(sort(setdiff(raised, names(.DIAG_FIX_OWNER))), character(0))
+  expect_equal(sort(setdiff(names(.DIAG_FIX_OWNER), raised)), character(0))
+  # every owner is one of the five the label map can render
+  expect_true(all(.DIAG_FIX_OWNER %in%
+    c("template", "input", "review", "none", "escalate")))
+  expect_false(any(is.na(diag_fix_owner_label(unname(.DIAG_FIX_OWNER)))))
+})
+
 # A scan we could not machine-read must never be reported as an unknown layout.
 # With no text and no word boxes every template scores 0, so the generic
 # "no template matched -- closest X, missing 'TransactionDate'" message used to

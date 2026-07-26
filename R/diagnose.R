@@ -12,24 +12,60 @@
              detail = detail, how_to_fix = how_to_fix, stringsAsFactors = FALSE)
 }
 
-# .diag_fix_owner(category) -- WHO fixes this, so a lone analyst never wonders
-# whether to draw a box or phone a developer:
+# WHO fixes this, so a lone analyst never wonders whether to draw a box or phone a
+# developer:
 #   template = the analyst, in the wizard (a column/box/date/amount setting)
 #   input    = the person who supplied the file (split a bundle, re-export, rescan)
 #   review   = just eyeball the data (expected situation, not an error)
 #   none     = informational, no action
 #   escalate = a genuine engine gap -> send it to a developer (rare)
-# Unknown categories default to escalate (fail safe: surface it, don't hide it).
+#
+# ONE entry per category the engine can raise. A plain lookup table rather than a
+# switch(): adding a diagnostic means adding its line HERE too, and it is obvious at
+# a glance which categories are covered. That matters -- when this was a switch,
+# four live categories had quietly fallen off the end and were being reported as
+# "Developer - engine gap" (see below), including date_format_mismatch, whose own
+# how-to-fix text tells the analyst to change the template. The test
+# "every diagnostic category has a declared owner" (test-diagnose.R) scans this
+# file for the categories actually raised and fails if one is missing here.
+.DIAG_FIX_OWNER <- c(
+  # the analyst fixes it in the template toolkit
+  unknown_format          = "template",
+  reconciliation_mismatch = "template",
+  balance_break           = "template",
+  row_count               = "template",
+  row_parse               = "template",
+  date_parse              = "template",
+  date_format_mismatch    = "template",
+  amount_parse            = "template",
+  date_out_of_range       = "template",
+  # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
+  unreadable              = "input",
+  scanned_no_ocr          = "input",
+  multiple_statements     = "input",
+  oversized               = "input",
+  oversized_page          = "input",
+  low_ocr_confidence      = "input",
+  ocr_confidence_unknown  = "input",
+  completeness_unverified = "input",
+  # nothing is wrong; just look at the data
+  combined_statement      = "review",
+  mixed_currency          = "review",
+  # stated for the record; nobody has to do anything
+  redaction               = "none",
+  ocr                     = "none",
+  document_provenance     = "none",
+  none                    = "none",
+  # a genuine engine/install gap: the page could not be rasterised, so the tool
+  # cannot prove nothing is hidden under a box. Only a maintainer can fix that.
+  redaction_unverified    = "escalate")
+
+# .diag_fix_owner(category) -- look the owner up. An unknown category defaults to
+# escalate (fail safe: surface it, don't hide it).
 .diag_fix_owner <- function(category) {
-  vapply(category, function(c) switch(c,
-    unknown_format = , reconciliation_mismatch = , balance_break = ,
-    row_count = , row_parse = , date_parse = , amount_parse = ,
-    date_out_of_range = "template",
-    unreadable = , multiple_statements = , oversized = , oversized_page = ,
-    low_ocr_confidence = , completeness_unverified = "input",
-    combined_statement = , mixed_currency = "review",
-    redaction = , ocr = , document_provenance = , none = "none",
-    "escalate"), character(1))
+  owner <- unname(.DIAG_FIX_OWNER[as.character(category)])
+  owner[is.na(owner)] <- "escalate"
+  owner
 }
 
 # ---------------------------------------------------------------------------
@@ -73,6 +109,50 @@
 # .tolerant_date (see R/params.R) -- NA on anything unrecognised so the
 # effective-range check simply skips rather than guessing.
 
+# ---------------------------------------------------------------------------
+# What a FAILING reconciliation check means, and what to do about it: one entry
+# per KPI that can fail (R/reconcile.R). Named fields rather than the positional
+# c(where, category, severity, fix) vector this used to be -- the positions were
+# read back as info[1]..info[4] two screens away, which is exactly how a wrong
+# severity or a fix text in the category slot would slip through unnoticed.
+#
+# ADDING A KPI: add its entry here. Without one it still gets a diagnostic, but a
+# deliberately vague one (.KPI_DIAGNOSIS_FALLBACK) that names no cause and no cure.
+.KPI_DIAGNOSIS <- list(
+  balance_reconciliation = list(
+    where = "balance check", category = "reconciliation_mismatch", severity = "high",
+    how_to_fix = "Statement doesn't reconcile: a transaction may be mis-signed, missing, or the opening/closing balance is wrong. Compare the total against the source."),
+  running_balance_continuity = list(
+    where = "running balance", category = "balance_break", severity = "high",
+    how_to_fix = "Running balance jumps: a row's amount or sign is likely wrong, or a transaction is missing. Check the rows around the break."),
+  transaction_count = list(
+    where = "parse", category = "row_count", severity = "high",
+    how_to_fix = "Parsed count doesn't match: the template rows/columns may not fit this file. Re-map it in the template toolkit."),
+  dates_within_period = list(
+    where = "dates", category = "date_out_of_range", severity = "medium",
+    how_to_fix = "Dates fall outside the statement period: the date-format mapping may be wrong (day/month vs month/day)."),
+  dates_readable = list(
+    where = "dates", category = "date_parse", severity = "high",
+    how_to_fix = "No row dates could be read: the template's date column wasn't found in this file (renamed header?) or the date format is wrong. Fix the Date column / format in the template toolkit."),
+  no_unparsed_rows = list(
+    where = "rows", category = "row_parse", severity = "high",
+    how_to_fix = "Some source lines didn't parse (malformed or lost): usually a delimiter/quoting issue, or a preamble/footer line read as data. Check those rows."),
+  amount_direction = list(
+    where = "amount direction", category = "amount_parse", severity = "high",
+    how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
+  # Had no entry, so the gravest verdict the engine can reach -- the redaction scan
+  # did not finish, so blacked-out text may have been read and emitted -- was
+  # rendered with the fallback below: category reconciliation_mismatch, owner
+  # "template", advice "review this check against the source statement". It told the
+  # analyst to adjust their column mapping about a possible PII leak.
+  redaction_scan = list(
+    where = "redactions", category = "redaction_unverified", severity = "high",
+    how_to_fix = "The tool could not confirm that text hidden under a redaction box stayed hidden on every page. Do NOT release this output: check those pages against the source PDF first. A working image rasteriser (see the offline prereqs) removes this warning."))
+
+.KPI_DIAGNOSIS_FALLBACK <- list(
+  where = "check", category = "reconciliation_mismatch", severity = "medium",
+  how_to_fix = "Review this check against the source statement.")
+
 # Compact a set of row indices for display.
 .rng <- function(idx) {
   if (!length(idx)) return("")
@@ -83,8 +163,11 @@
 build_diagnostics <- function(status, messages = character(0), det = NULL,
                               parsed = NULL, recon = NULL, metadata = NULL) {
   rows <- list()
-  add <- function(where, category, severity, detail, how_to_fix)
+  raised <- character(0)          # categories already reported, so nothing is said twice
+  add <- function(where, category, severity, detail, how_to_fix) {
+    raised <<- c(raised, category)
     rows[[length(rows) + 1L]] <<- .diag_row(where, category, severity, detail, how_to_fix)
+  }
 
   # A SCAN WE COULD NOT MACHINE-READ is not an unknown layout, and must never be
   # reported as one. With no text and no word boxes every template scores 0, so the
@@ -200,25 +283,9 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         # are used, while the failing statement stays visible in the detail below.
         nm <- sub("[[:space:]]*\\[statement [0-9]+\\]$", "", fails$name[i])
         stmt_tag <- regmatches(fails$name[i], regexpr("\\[statement [0-9]+\\]$", fails$name[i]))
-        info <- switch(nm,
-          balance_reconciliation = c("balance check", "reconciliation_mismatch", "high",
-            "Statement doesn't reconcile: a transaction may be mis-signed, missing, or the opening/closing balance is wrong. Compare the total against the source."),
-          running_balance_continuity = c("running balance", "balance_break", "high",
-            "Running balance jumps: a row's amount or sign is likely wrong, or a transaction is missing. Check the rows around the break."),
-          transaction_count = c("parse", "row_count", "high",
-            "Parsed count doesn't match: the template rows/columns may not fit this file. Re-map it in the template toolkit."),
-          dates_within_period = c("dates", "date_out_of_range", "medium",
-            "Dates fall outside the statement period: the date-format mapping may be wrong (day/month vs month/day)."),
-          dates_readable = c("dates", "date_parse", "high",
-            "No row dates could be read: the template's date column wasn't found in this file (renamed header?) or the date format is wrong. Fix the Date column / format in the template toolkit."),
-          no_unparsed_rows = c("rows", "row_parse", "high",
-            "Some source lines didn't parse (malformed or lost): usually a delimiter/quoting issue, or a preamble/footer line read as data. Check those rows."),
-          amount_direction = c("amount direction", "amount_parse", "high",
-            "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
-          c("check", "reconciliation_mismatch", "medium",
-            "Review this check against the source statement."))
-        where <- if (length(stmt_tag)) paste(info[1], stmt_tag) else info[1]
-        add(where, info[2], info[3], fails$detail[i], info[4])
+        info <- .KPI_DIAGNOSIS[[nm]] %||% .KPI_DIAGNOSIS_FALLBACK
+        where <- if (length(stmt_tag)) paste(info$where, stmt_tag) else info$where
+        add(where, info$category, info$severity, fails$detail[i], info$how_to_fix)
       }
     }
 
@@ -265,10 +332,16 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d redacted value(s), kept as shown", length(red)),
       "Redactions are intentional; values are left as [REDACTED]. No action needed.")
 
+    # The header signal, for callers that pass no `recon` (build_diagnostics is
+    # called without one in places). When the redaction_scan KPI ran it has
+    # ALREADY said this, in more detail, from the same header field -- and two
+    # rows both headed "do NOT release this output" read as two separate leaks.
+    # One fact, reported once, by whichever source got here first.
     rsi <- suppressWarnings(as.integer(parsed$header$redaction_scan_incomplete %||% NA))
-    if (!is.na(rsi) && rsi > 0) add("redactions", "redaction_unverified", "high",
-      sprintf("%d page(s) could not be checked for hidden (drawn-over) text", rsi),
-      "The tool could not rasterise these pages to confirm nothing is hidden under a drawn box. Treat their visible text with caution and check the pages against the original; a working image rasteriser removes this warning.")
+    if (!is.na(rsi) && rsi > 0 && !("redaction_unverified" %in% raised))
+      add("redactions", "redaction_unverified", "high",
+          sprintf("%d page(s) could not be checked for hidden (drawn-over) text", rsi),
+          "The tool could not rasterise these pages to confirm nothing is hidden under a drawn box. Treat their visible text with caution and check the pages against the original; a working image rasteriser removes this warning.")
 
     ocrp <- suppressWarnings(as.integer(parsed$header$ocr_pages %||% NA))
     if (!is.na(ocrp) && ocrp > 0) add("pages (OCR)", "ocr", "info",

@@ -28,6 +28,7 @@ Background — what it is, how it was built, the audit and research — lives in
 |---|---|
 | Run the test suite on the server, re-apply an `R\params.R` change, promote a user template to proven | [maintaining-the-engine.md](maintaining-the-engine.md) |
 | Know what this tool must always do, and must never do | [../context/charter.md](../context/charter.md) — one page, the fixed points |
+| See the whole thing on one page — the journey, which module owns each step, and where each kind of change goes | [../context/how-it-fits-together.md](../context/how-it-fits-together.md) |
 
 ## Where do I change…?
 The tool is designed so the things that change live in **data and config, not code**.
@@ -36,8 +37,8 @@ One place for each:
 | I want to change… | Where it lives | Who / how |
 |---|---|---|
 | A bank's layout (its columns, date & amount style) | `templates/<bank>.yaml` | analyst — **Add a template** in the app (no code) |
-| A wording the tool recognises (another phrase for "closing balance", etc.) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Label dictionary** |
-| A recognition marker or pattern (a debit/credit marker word, a money/date regex) | `dictionaries/lexicon.yaml` | admin — **Admin → Data capture → Recognition vocabulary** |
+| A wording the tool recognises (another phrase for "closing balance", etc.) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Label dictionary** ("Teach it this wording") |
+| A recognition marker or pattern (a debit/credit marker word, a money/date regex) | `dictionaries/lexicon.yaml` | admin — **Admin → Data capture → Words the tool knows to look for** |
 | A deployment setting (port, admin password, the Qlik feed gate, file paths) | `config/config.yaml` | admin — copy from `config.example.yaml`, edit text |
 | A numeric engine threshold (year window, OCR DPI, row tolerance, redaction darkness) | `R/params.R` | maintainer — one file, every tuning knob → [engine-parameters.md](../context/engine-parameters.md) |
 | A shipped built-in default (rare) | the relevant `R/*.R` | maintainer → [customisation.md](../context/customisation.md) |

@@ -1,6 +1,8 @@
-# lexicon.yaml -- the engine's recognition VOCABULARIES (Admin -> Data capture ->
-# Vocabulary, or edit here). Every category you DON'T list falls back to the
-# built-in default, so an empty file behaves exactly like the shipped engine.
+# lexicon.yaml -- the engine's recognition VOCABULARIES. Edit it here, or in the
+# app under Admin -> Data capture -> "Words the tool knows to look for" (one word
+# at a time in plain English, or this whole file under "Edit the whole vocabulary
+# file"). Every category you DON'T list falls back to the built-in default, so an
+# empty file behaves exactly like the shipped engine.
 #
 # How each category merges with the built-in (see R/lexicon.R):
 #   * word lists   -> your entries are ADDED to the built-in (adding "cow" keeps
@@ -16,10 +18,10 @@
 #   debit_markers:  [Paid]
 #   credit_markers: [Recd]
 #
-# Editable categories: header_keywords, layout_stopwords, debit_markers,
-# credit_markers, amount_style_debit_headers, amount_style_credit_headers,
-# dr_cr_suffix_debit, dr_cr_suffix_credit, period_connectives, redaction_markers,
-# redaction_block_glyphs, money_regex, date_regex, account_regex, card_regex,
-# date_formats, field_name_patterns.
-#
-# Use the Admin "Show built-in defaults" button to see a full, valid starting point.
+# The editable categories are NOT listed here on purpose: a hand-copied list goes
+# stale (this one was missing three of them), and a wrong list of "what you can
+# edit" is worse than none. The live list is generated from .lexicon_spec()
+# (R/lexicon.R) in two places you can read instead:
+#   * the Admin "Show built-in defaults" button -- every category with a complete,
+#     valid starting value;
+#   * validate_lexicon(), which refuses to save a category that isn't one.

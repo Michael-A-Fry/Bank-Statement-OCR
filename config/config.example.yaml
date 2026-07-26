@@ -33,7 +33,7 @@ paths:
   fields: fields_templates
   user_fields: fields_templates_user
   dictionary: dictionaries/labels.yaml  # label wordings (Admin -> Templates -> Label dictionary)
-  lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Data capture -> Recognition vocabulary)
+  lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Data capture -> "Words the tool knows to look for")
   uploads: uploads
   requests: requests
   logs: logs

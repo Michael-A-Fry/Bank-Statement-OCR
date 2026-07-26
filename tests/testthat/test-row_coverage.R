@@ -65,6 +65,30 @@ test_that("a heading / note is NOT counted as an actionable missing-amount skip"
   expect_equal(.rowcov_bucket(""), "kept")
 })
 
+# .rowcov_bucket classifies by matching SUBSTRINGS of sentences written in
+# R/parse_pdf_table.R and R/inspect.R -- an implicit contract between three files
+# that nothing enforced. The test above pins the strings as typed here, so
+# re-wording a reason (it is user-facing copy, and copy gets reworded) would leave
+# it passing while the live pipeline quietly mis-bucketed. This drives the REAL
+# .pdf_row_reason() to generate them, so the contract is checked, not assumed.
+test_that("every reason the engine actually emits lands in the right bucket", {
+  txn     <- list(description = "COFFEE SHOP", raw = "01 Jun COFFEE SHOP 4.50", amount = "4.50")
+  summary <- list(description = "Closing Balance", raw = "Closing Balance 1,234.56",
+                  amount = "1,234.56")
+  note    <- list(description = "Transactions continued", raw = "Transactions continued",
+                  amount = "")
+  expect_equal(.rowcov_bucket(.pdf_row_reason(txn, "signed", TRUE)), "kept")
+  expect_equal(.rowcov_bucket(.pdf_row_reason(summary, "signed", TRUE)), "summary_line")
+  expect_equal(.rowcov_bucket(.pdf_row_reason(note, "signed", FALSE)), "heading_or_note")
+  expect_equal(.rowcov_bucket(.pdf_row_reason(txn, "signed", FALSE)), "date_unreadable")
+  expect_equal(.rowcov_bucket(.pdf_row_reason(note, "signed", TRUE)), "amount_missing")
+  # ...and the two reasons inspect_pdf_layout writes itself (R/inspect.R)
+  expect_equal(.rowcov_bucket("split row - re-joined with the line above into one transaction"),
+               "continuation")
+  expect_equal(.rowcov_bucket("continuation - its text is folded into the transaction above"),
+               "continuation")
+})
+
 test_that("a page of headings and notes reports zero actionable skips", {
   # End to end: a title line and a note above the table are not transactions and
   # were never lost, so the report must not send Beth chasing a band that is fine.

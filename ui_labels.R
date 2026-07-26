@@ -13,22 +13,49 @@ STATUS_PLAIN <- c(
   needs_review = "Converted - please double-check it",
   unsupported  = "No template for this statement yet",
   failed       = "Could not read this file")
+# ONE entry per check reconcile() can emit (R/reconcile.R -- the list at the
+# bottom of that file is the authoritative set). A check with no entry here shows
+# its raw code on screen, which is the moment a forensic reviewer stops trusting
+# the screen; test-seams.R fails the suite if one is missing.
 CHECK_PLAIN <- c(
   balance_reconciliation     = "Opening + transactions = closing balance",
   running_balance_continuity = "Each running balance follows from the last",
+  amount_direction           = "Money in / money out is the right way round",
   transaction_count          = "Row count matches the statement",
   dates_within_period        = "All dates fall in the statement period",
   dates_readable             = "Row dates could be read",
   no_unparsed_rows           = "Every row was read",
   redaction_summary          = "Redactions found and honoured",
-  ocr_confidence             = "Scan / OCR read quality")
+  ocr_confidence             = "Scan / OCR read quality",
+  redaction_scan             = "Nothing hidden under a redaction was read")
+# plain_check(names) -- CHECK_PLAIN, but aware of auto-split. An auto-split run
+# tags every KPI "<name> [statement 2]", which matches nothing in the map, so a
+# split bundle showed RAW CODES for every check on the page. Strip the tag, look
+# the check up, put the statement back in words.
+plain_check <- function(x) {
+  x <- as.character(x)
+  base <- sub("[[:space:]]*\\[statement ([0-9]+)\\]$", "", x)
+  n <- sub("^.*\\[statement ([0-9]+)\\]$", "\\1", x)
+  lab <- plain_label(base, CHECK_PLAIN)
+  tagged <- n != x
+  lab[tagged] <- sprintf("%s (statement %s)", lab[tagged], n[tagged])
+  lab
+}
 COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
                     empty = "empty (check the mapping)", unmapped = "not on this statement")
+# How a single check came out (the `status` column of the KPI table). Lived inline
+# in app.R, which meant one of the five wording maps was somewhere else; all five
+# are here now, and test-seams.R holds each to the values the engine really emits.
+RESULT_PLAIN <- c(pass = "OK", fail = "Problem", na = "not on this statement")
 # Diagnostics 'category' codes -> plain words for the customer-facing table
-# (the codes themselves stay in the logs / workbook Diagnostics sheet).
+# (the codes themselves stay in the logs / workbook Diagnostics sheet). ONE entry
+# per category the engine can raise -- the authoritative set is .DIAG_FIX_OWNER
+# in R/diagnose.R, and test-seams.R fails the suite if this map falls behind it.
 DIAG_PLAIN <- c(
   unknown_format          = "layout not recognised",
   unreadable              = "file could not be read",
+  scanned_no_ocr          = "a scan with no readable text",
+  document_provenance     = "what the PDF says about itself",
   multiple_statements     = "several statements in one file",
   combined_statement      = "several accounts in one statement",
   mixed_currency          = "more than one currency",
@@ -43,11 +70,65 @@ DIAG_PLAIN <- c(
   date_parse              = "dates couldn't be read",
   amount_parse            = "amounts couldn't be read",
   completeness_unverified = "completeness not auto-verified",
+  redaction               = "redactions found and kept",
+  redaction_unverified    = "hidden text could not be checked",
   low_ocr_confidence      = "scan read with low confidence",
   ocr                     = "page(s) machine-read (OCR)",
-  ocr_confidence_unknown  = "scan quality unknown")
+  ocr_confidence_unknown  = "scan quality unknown",
+  none                    = "no issues found")
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
+
+# ---------------------------------------------------------------------------
+# The governed feed, said out loud. write_feed() (R/feed.R) decides whether a
+# conversion's rows reach the Qlik dashboards, records the verdict in the feed
+# manifest and its own log -- and, until now, the person who ran the conversion
+# was never told. So a clean statement read by a template SHE built was withheld
+# ("not_proven") with nothing on screen saying so, and she had every reason to
+# believe her figures were on the dashboard. One entry per reason .feed_gate()
+# can return; test-seams.R fails the suite if the engine grows one this map
+# doesn't have.
+FEED_PLAIN <- list(
+  accepted = list(
+    ok = TRUE, line = "Sent to the dashboards.",
+    why = "This conversion cleared the governed-feed rules, so its transactions are now available to the Qlik dashboards."),
+  `withheld:needs_review` = list(
+    ok = FALSE, line = "Held back from the dashboards - it needs checking first.",
+    why = "Only conversions that pass every check are published. Fix what is flagged above and convert again, and it goes through."),
+  `withheld:unsupported` = list(
+    ok = FALSE, line = "Nothing was sent to the dashboards.",
+    why = "No template read this statement, so there are no transactions to publish."),
+  `withheld:failed` = list(
+    ok = FALSE, line = "Nothing was sent to the dashboards.",
+    why = "The file could not be read, so there is nothing to publish."),
+  `withheld:low_trust` = list(
+    ok = FALSE, line = "Held back from the dashboards - the confidence level is below what they accept.",
+    why = "The dashboards only take conversions at or above a set confidence level. This one is below it."),
+  `withheld:not_proven` = list(
+    ok = FALSE, line = "Held back from the dashboards - it was read by a template built here.",
+    why = "Only the team's shipped, tested templates feed the dashboards. The conversion itself is fine and your download is complete; ask your data analyst to promote the template if this bank should reach the dashboards."),
+  `withheld:not_in_allowlist` = list(
+    ok = FALSE, line = "Held back from the dashboards - this template isn't on their list.",
+    why = "This install publishes only a named list of templates. Ask your data analyst to add this one."))
+FEED_PLAIN_UNKNOWN <- list(
+  ok = FALSE, line = "Held back from the dashboards.",
+  why = "The feed recorded a reason this screen doesn't have wording for; it is in the feed log.")
+# The two things that can go wrong AFTER the verdict: the feed folder refused the
+# write, or there were no rows to send. Both are appended to the reason by
+# write_feed(), and both mean the dashboards did not get this run.
+FEED_PLAIN_SUFFIX <- c(
+  write_failed = "The feed folder could not be written to, so the dashboards did NOT receive this run even though it was accepted. Tell whoever looks after the server.",
+  no_rows      = "No transaction rows were produced, so nothing was sent.")
+# plain_feed(gate) -- write_feed()'s return value -> list(ok, line, why), or NULL
+# when there is nothing to say (feed switched off, or a form result).
+plain_feed <- function(gate) {
+  if (is.null(gate) || is.null(gate$reason)) return(NULL)
+  out <- FEED_PLAIN[[as.character(gate$reason)[1]]] %||% FEED_PLAIN_UNKNOWN
+  suffix <- sub("^.*:", "", as.character(gate$gate_result %||% "")[1])
+  extra <- unname(FEED_PLAIN_SUFFIX[suffix])
+  if (!is.na(extra)) { out$ok <- FALSE; out$why <- paste(out$why, extra) }
+  out
+}
 # Human-readable HEADERS for the transactions preview. The stored core schema uses
 # machine names that read as an internal tool to a forensic reviewer, so relabel
 # for DISPLAY. The verbatim *_raw cells no longer surface here (they live in the

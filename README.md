@@ -25,7 +25,10 @@ The docs are split in two:
 whole setup is two double-clicks — [first-time-setup](docs/operational/first-time-setup.md).
 
 **Inheriting it?** Read the [charter](docs/context/charter.md) (one page: what this
-tool must always do, and must never do), then the maintainer's runbook —
+tool must always do, and must never do), then
+[how-it-fits-together](docs/context/how-it-fits-together.md) (one page: the journey
+from upload to dashboard, which module owns each step, and where each kind of change
+goes), then the maintainer's runbook —
 [maintaining-the-engine](docs/operational/maintaining-the-engine.md) — for how to run
 the test suite on the server, what an update overwrites, and how to promote a
 template to proven. Back up the irreplaceable folders:
@@ -49,17 +52,23 @@ template to proven. Back up the irreplaceable folders:
 - **Point-and-click wizard** to teach it a new bank — including a visual PDF editor
   where you draw boxes over the columns. It writes the template for you; no YAML by
   hand.
-- **Reconciliation + trust score** — balance reconciliation, running-balance
-  continuity, transaction count, dates-in-period, completeness and a redaction
-  summary, surfaced as plain checks with a high/medium/low trust level.
+- **Reconciliation + trust score** — ten checks: balance reconciliation, running-balance
+  continuity, money-in/out direction, transaction count, dates-in-period, dates readable,
+  completeness, redaction summary, OCR read quality and the redaction scan — each shown
+  as a plain sentence, not a code, with a high/medium/low trust level.
 - **Honours incoming redactions** — the tool never un-redacts; it reads only what is
   visible and never estimates hidden values.
 - **Never silently wrong** — any non-clean run reports *where / why / how bad /
   who fixes it*; every run is logged; the engine never returns a silent wrong answer.
-- **A full automated test suite** guards every guarantee — 1,585 assertions across
-  378 tests in 59 files at the last full run (2026-07-26), **0 failures and 0 skips**.
-  A skipped test proves nothing, so the runner fails on one; the totals grow as tests
-  are added, and `Rscript tests/run_tests.R` always prints the current ones.
+- **Governed analytics** — a clean conversion from a proven template also feeds the
+  Qlik dashboards automatically, and every conversion is told on screen whether it was
+  published or held back, and why. Marking a result *wrong* withdraws it again.
+- **A full automated test suite** guards every guarantee — over 2,200 assertions across
+  500+ tests when last measured, **0 failures and 0 skips**. A skipped test proves
+  nothing, so the runner fails on one. `Rscript tests/run_tests.R` prints the current
+  totals, and the exact last-measured baseline is kept in ONE place —
+  [maintaining-the-engine](docs/operational/maintaining-the-engine.md) — so a
+  noticeably lower total is a real signal rather than a stale number here.
 
 ---
 
@@ -75,9 +84,11 @@ Four tabs, all point-and-click:
   ([admin-and-maintenance](docs/operational/admin-and-maintenance.md))
 
 Outputs per statement:
-- **`.xlsx`** — `Transactions`, `Summary`, `Checks`, `Provenance` sheets.
-- **`.csv`** — the core `Transactions` table.
-- **`.json`** — the full object (header, transactions, checks, trust, provenance).
+- **`.xlsx`** — `Transactions`, `Summary`, `Checks`, `Provenance`, `Diagnostics` and
+  `Metadata` sheets.
+- **`.csv`** — the same `Transactions` table the workbook holds.
+- **`.json`** — the full object (build stamp, header, transactions, extras, checks,
+  trust, diagnostics, provenance, metadata).
 
 ---
 
