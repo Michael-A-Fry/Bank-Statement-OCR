@@ -181,7 +181,9 @@ capture_metadata <- function(ctx, config = load_config()) {
       unparsed_dates  = unparsed_dates,     # date cell present but unreadable
       unparsed_amounts = unparsed_amounts,  # amount cell present but unreadable
       amount_sign     = tmpl$amount_sign %||% tmpl$table$amount_sign %||% NA_character_,
-      date_format     = tmpl$columns$date$format %||% tmpl$table$date_format %||% NA_character_)
+      # joined: a template may declare several candidate formats (scalar field)
+      date_format     = paste(tmpl$columns$date$format %||% tmpl$table$date_format %||% NA_character_,
+                              collapse = " | "))
     if (.meta_at_least(level, "full")) {
       rec$parse_quality$flag_histogram    <- .flag_histogram(flags)   # EVERY flag, counted
       rec$parse_quality$source_line_count <- suppressWarnings(as.integer(ctx$parsed$source_line_count %||% NA))

@@ -88,8 +88,13 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   # the deterministic workbook/CSV/JSON outputs (only the timestamp part varies
   # per attempt, by design).
   sha <- safe(file_sha256(path), NA_character_)
+  # (content hash + UTC second + a short random suffix). The suffix matters: without
+  # it, converting the SAME statement twice inside one second produced ONE run_id, and
+  # the second run overwrote the first's audit record -- a forensic tool must not lose
+  # a record of work it did.
   run_id <- paste0(substr(if (is.na(sha)) "na" else sha, 1, 10), "-",
-                   format(Sys.time(), "%Y%m%d%H%M%S", tz = "UTC"))
+                   format(Sys.time(), "%Y%m%d%H%M%S", tz = "UTC"), "-",
+                   paste0(sample(c(0:9, letters[1:6]), 4, replace = TRUE), collapse = ""))
   result <- new_result(status = "failed", template_id = NA_character_,
                        messages = character(0))
   detected_template <- NA_character_
@@ -189,7 +194,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
         metadata = list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
-                        template = template))
+                        template = template, pdf_doc = input$meta$pdf_doc))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,

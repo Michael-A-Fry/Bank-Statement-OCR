@@ -928,6 +928,11 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     source_file = basename(input$path), source_sha256 = input$sha256,
     page_count = input$meta$page_count %||% NA_integer_, row_count = n,
     stated_count = md$stated_count %||% NA_integer_,
+    # Document provenance (producer / created / modified / encrypted) travels with the
+    # header so the audit trail and the diagnostics can both see it. Without this the
+    # provenance note could never fire: read_pdf produced it, diagnose read it, and
+    # nothing in between carried it.
+    pdf_doc = input$meta$pdf_doc,
     ocr_pages = input$meta$ocr_pages %||% 0L,
     ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_,
     redaction_scan_incomplete = input$meta$redaction_scan_incomplete %||% 0L)

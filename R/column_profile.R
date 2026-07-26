@@ -228,7 +228,12 @@ template_hints <- function(input, template = NULL, matched = FALSE) {
     # The delimiter for a delimited file: the MATCHED template's (so its
     # preamble.header_regex + delimiter locate the real header, not a preamble line),
     # else sniffed once from the source.
-    delim <- if (identical(kind, "delimited")) (template$delimiter %||% .delim_of(input)) else NULL
+    # A template may declare several candidate delimiters; the profile records one
+    # value, so take the one actually in force for this file.
+    delim <- if (identical(kind, "delimited")) {
+      d <- template$delimiter %||% .delim_of(input)
+      if (length(d) > 1L) (.delim_of(input) %||% d[1]) else d
+    } else NULL
     df <- if (identical(kind, "excel")) input$table
           else {
             tmpl_read <- if (!is.null(template) && identical(template$format %||% "", "delimited"))

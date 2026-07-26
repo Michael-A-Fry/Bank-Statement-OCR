@@ -97,7 +97,10 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
                        score = det$score %||% NA, detail = det$detail %||% NA_character_,
                        n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA),
     period_shape = list(start = mask_text(meta$period_start), end = mask_text(meta$period_end)),
-    date_format  = tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
+    # A template may declare SEVERAL candidate date formats; this is a one-line
+    # description, so show them all rather than emitting a vector into a scalar field.
+    date_format  = paste(tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
+                         collapse = " | "),
     amount_sign  = tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_,
     redactions   = list(total_words = red_total,
                         per_page = if (!is.null(red)) red$redacted_words else integer(0)),
