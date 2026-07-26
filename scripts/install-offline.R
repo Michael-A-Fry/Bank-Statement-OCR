@@ -99,5 +99,24 @@ if (on_path) {
 }
 
 ## 4. Next step --------------------------------------------------------------
-cat("\nNext: from the app folder run  Rscript tests\\run_tests.R  (expect: failed: 0)\n")
-if (!length(miss)) cat("All R packages present -- the tool will run.\n")
+# The exact command on the SERVER, where R is the app's own unregistered private
+# copy: plain "Rscript" is either not on PATH or is some other R with none of these
+# packages. See docs/operational/maintaining-the-engine.md.
+cat("\nNext (from the app folder, one line at a time):\n")
+cat("  set \"R_LIBS_USER=%CD%\\R-lib\"\n")
+cat("  \"R-runtime\\bin\\x64\\Rscript.exe\" tests\\run_tests.R      (expect: failed: 0)\n")
+
+## 5. Exit status -- RUN-ME.bat gates its .installed marker on this ----------
+# A missing package is a FAILED setup, not a footnote: the app either will not
+# start (shiny/yaml/jsonlite/openxlsx) or will silently lose a whole input path
+# (pdftools/readxl/magick) or the ability to prove itself (testthat). Reporting
+# success here would let RUN-ME.bat write its "never install again" marker over a
+# broken install and freeze it in place.
+if (length(miss)) {
+  cat("\n[X] SETUP INCOMPLETE --", length(miss), "package(s) missing:",
+      paste(miss, collapse = ", "), "\n")
+  cat("    Nothing was marked as installed; running RUN-ME.bat again retries.\n")
+  quit(status = 1)
+}
+cat("All R packages present -- the tool will run.\n")
+quit(status = 0)

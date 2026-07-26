@@ -62,6 +62,67 @@ safe <- function(expr, default = NULL) {
   tryCatch(expr, error = function(e) default)
 }
 
+# fingerprint_phrases(text) -> the identifying phrases typed in the toolkit's
+# "a distinctive phrase printed on this statement" box, one per line.
+#
+# Trimmed, blanks dropped, order kept, duplicates dropped. A fingerprint phrase is
+# matched against the page text CHARACTER FOR CHARACTER, so a stray trailing space
+# or a blank line is the difference between a template that recognises the bank and
+# one that never matches anything -- which is precisely the failure the analyst
+# cannot debug. Pure, and in R/ rather than app.R, so the suite can hold it to that.
+fingerprint_phrases <- function(text) {
+  s <- as.character(text %||% "")[1]
+  if (is.na(s)) return(character(0))
+  ph <- trimws(strsplit(s, "\n", fixed = TRUE)[[1]])
+  unique(ph[!is.na(ph) & nzchar(ph)])
+}
+
+# recognition_summary(det, saved_id) -> list(ok, headline, detail).
+#
+# Turns a REAL detection result into the one sentence the analyst needs after
+# saving a template: "will this statement be recognised on its own next time?".
+#
+# WHY it matters: after a save the app re-converts with the new template FORCED by
+# id, which short-circuits detection entirely -- so the one moment the app could
+# prove the fingerprint works was the one moment it never tested it, and templates
+# whose fingerprint could never match shipped looking fine. The caller now runs a
+# genuine detect_statement() over the whole template set and passes the result
+# here. `ok`: TRUE = recognised as this template, FALSE = it will not be, NA =
+# the check itself could not run (say so, never imply a pass).
+#
+# It lives here, not in app.R, because app.R is not sourced by the test suite --
+# a pure helper in R/ is a helper the suite can actually hold to its word.
+recognition_summary <- function(det, saved_id) {
+  sid <- trimws(as.character(saved_id %||% NA_character_)[1])
+  if (is.null(det) || !is.list(det))
+    return(list(ok = NA,
+      headline = "Saved - but we could not check whether this statement will be recognised next time.",
+      detail = paste("Upload it again on Convert to find out. If it comes back as",
+                     "\"no template for this statement yet\", open the toolkit and set an",
+                     "identifying phrase that is really printed on the page.")))
+  got <- trimws(as.character(det$template_id %||% NA_character_)[1])
+  if (isTRUE(det$matched) && !is.na(got) && identical(got, sid))
+    return(list(ok = TRUE,
+      headline = "Next time, a statement like this one is recognised automatically.",
+      detail = sprintf("We re-checked it against every template and it matched yours (\"%s\") on its own, with nothing forced.", sid)))
+  if (isTRUE(det$matched))
+    return(list(ok = FALSE,
+      headline = sprintf("Careful: this statement is still recognised as \"%s\", not your new template.", got),
+      detail = paste("Your template was saved, but another one wins on this file, so next",
+                     "time it would be read with that other template. Open the toolkit again",
+                     "and make the identifying phrase more specific to this bank - or use the",
+                     "existing template if it is the right one.")))
+  why <- trimws(as.character(det$detail %||% "")[1])
+  list(ok = FALSE,
+    headline = "Saved - but this statement is NOT recognised by it yet.",
+    detail = paste0(
+      "Next time you upload a statement like this one it would still come back as ",
+      "\"no template for this statement yet\". Almost always the identifying phrase ",
+      "is not printed on the page exactly as typed. Open the toolkit again and set a ",
+      "phrase you can see on the statement.",
+      if (nzchar(why) && !is.na(why)) sprintf(" (The detector said: %s)", why) else ""))
+}
+
 # current_user() -- the OS-authenticated logged-in user (Windows %USERNAME%,
 # else $USER/$LOGNAME). This is how the tool records WHO ran a conversion
 # without any password, prompt, or login screen: the person is already

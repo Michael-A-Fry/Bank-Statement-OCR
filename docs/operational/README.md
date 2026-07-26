@@ -11,7 +11,8 @@ Background — what it is, how it was built, the audit and research — lives in
 |---|---|
 | Set it up for the first time (air-gapped) | [first-time-setup.md](first-time-setup.md) |
 | Update to a new version | [updating.md](updating.md) |
-| Start it / keep it running after reboots / change settings | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
+| Start it / keep it running after reboots / open the firewall port / change settings | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
+| Back up the irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
 
 ## Using it day to day
 | I want to… | Page |
@@ -21,6 +22,12 @@ Background — what it is, how it was built, the audit and research — lives in
 | Do admin: password, review queue, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
+
+## Owning it (the maintainer)
+| I want to… | Page |
+|---|---|
+| Run the test suite on the server, re-apply an `R\params.R` change, promote a user template to proven | [maintaining-the-engine.md](maintaining-the-engine.md) |
+| Know what this tool must always do, and must never do | [../context/charter.md](../context/charter.md) — one page, the fixed points |
 
 ## Where do I change…?
 The tool is designed so the things that change live in **data and config, not code**.

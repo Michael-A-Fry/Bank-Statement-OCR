@@ -28,6 +28,26 @@ for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 # config/config.example.yaml). Any absent key falls back to the built-in default,
 # so with no config file the app behaves exactly as before.
 CONFIG <- load_config()
+# A config.yaml that does not parse used to revert to built-in defaults SILENTLY --
+# including the admin password (back to the shipped placeholder) and the Qlik
+# feed_dir. The docs tell a non-technical analyst to edit that file in Notepad, so
+# one stray tab could quietly weaken the deployment. Say it loudly at startup, and
+# again on a banner in Admin (output$adm_cfg_banner) for whoever is looking at the
+# screen rather than the console.
+CONFIG_ERROR <- config_error(CONFIG)
+if (!is.null(CONFIG_ERROR)) {
+  warning(sprintf(paste("SETTINGS FILE NOT LOADED: %s\n",
+                        "Statement Studio has started on its BUILT-IN DEFAULTS, which include the",
+                        "placeholder admin password and the default Qlik feed folder. Fix the file",
+                        "and restart."), CONFIG_ERROR), call. = FALSE, immediate. = TRUE)
+}
+# Admin stays CLOSED while the password is still the shipped placeholder (or blank).
+# Read once at startup: the gate must not depend on a per-session value.
+ADMIN_PW_UNSET <- isTRUE(admin_password_is_default(CONFIG))
+if (ADMIN_PW_UNSET)
+  message("Statement Studio: Admin is CLOSED - no admin password is set. ",
+          "Set app.admin_password in config/config.yaml or the BSO_ADMIN_PASSWORD ",
+          "environment variable, then restart.")
 # Shiny's built-in upload ceiling is 5 MB, which REJECTS the input this tool exists
 # for: a 300-dpi scan of a year's statement is routinely 10-40 MB, and even the
 # sample scan shipped with the repo is 4.4 MB. The file picker refuses it with a bare
@@ -53,6 +73,24 @@ SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_sta
 # How many days of run/feedback logs to keep before "Tidy up logs" archives them.
 # One place, so the button label and both rollup calls can never disagree.
 LOG_KEEP_DAYS <- 90L
+# How long a COPY of an uploaded statement is kept under uploads/<id>/. Config-driven
+# because it is a data-retention decision, not a code decision; the same number
+# drives the purge, the Admin button label and the line shown under the file picker,
+# so what the user is told and what happens can never disagree.
+UPLOADS_KEEP_DAYS <- suppressWarnings(as.numeric(CONFIG$retention$uploads_keep_days %||% 90))
+if (!is.finite(UPLOADS_KEEP_DAYS)) UPLOADS_KEEP_DAYS <- 90
+UPLOADS_NOTE <- uploads_retention_note(UPLOADS_KEEP_DAYS)
+# Startup tidy-up, once per process. Two things nothing else reclaimed:
+#   * old copies of client statements under uploads/ (kept forever until now);
+#   * per-session scratch folders under the temp dir. R only clears the temp dir
+#     when the process exits, and this app is a service that runs for months, so
+#     every conversion's outputs AND its copy of the source piled up for the life
+#     of the server. Each session now unlinks its own (see run_conversion and
+#     onSessionEnded); this sweep is the backstop for a browser that closed
+#     abruptly, and it is re-run on each conversion (a fresh process's temp dir is
+#     empty, so at startup it usually finds nothing -- that is fine, it is cheap).
+safe(purge_uploads(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS))
+safe(sweep_temp_dirs(keep_hours = 24))
 # read_file_text(p) -- a file's contents as one string ("" if absent). Used by the
 # Admin YAML editors to load the dictionary / lexicon into their text boxes.
 read_file_text <- function(p) if (file.exists(p)) paste(readLines(p, warn = FALSE), collapse = "\n") else ""
@@ -361,7 +399,12 @@ ui <- fluidPage(
           width = 4,
           fileInput("cv_file", "Statement file (.pdf / .csv / .tsv / .xlsx)",
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
-          textInput("cv_by", "Your name / initials (for the audit trail)", value = ""),
+          # Say what happens to the file BEFORE it is handed over. A copy is kept
+          # on the server; the person uploading a client's bank statement is owed
+          # that fact, the period, and the reason -- generated from the same
+          # setting the purge uses, so it can never overstate or understate it.
+          helpText(class = "muted", UPLOADS_NOTE),
+          textInput("cv_by", "Your name / initials (recorded as who ran this conversion)", value = ""),
           uiOutput("cv_who_hint"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           helpText(sprintf("Your bank is detected automatically — just upload and convert. Files up to %g MB (a long scan is fine).", MAX_UPLOAD_MB)),
@@ -371,11 +414,14 @@ ui <- fluidPage(
             tags$summary("It picked the wrong bank?"),
             div(style = "padding-top:10px",
               uiOutput("cv_bank_ui"),
-              checkboxInput("cv_user_templates", "Include user-created templates",
+              checkboxInput("cv_user_templates", "Include templates built here (yours and your team's)",
                             value = isTRUE(CONFIG$app$user_templates_default)),
               conditionalPanel("input.cv_user_templates == true",
                 helpText(style = "margin-top:-6px;color:#8a5b00",
-                  "These were created by users - not guaranteed tested."))))
+                  "These were built here rather than shipped and checked - so read the verdict. Untick to use only the shipped, tested templates.")),
+              conditionalPanel("input.cv_user_templates != true",
+                helpText(style = "margin-top:-6px;color:#8a5b00",
+                  "OFF: templates you or your team built here are NOT used, so a bank you set up will come back as 'no template yet'."))))
         ),
         mainPanel(
           width = 8,
@@ -532,13 +578,17 @@ ui <- fluidPage(
     tabPanel(
       "Admin",
       br(),
-      conditionalPanel("!output.admin_authed",
-        wellPanel(style = "max-width:440px",
-          h4("Admin - password required"),
-          passwordInput("adm_pw", "Password"),
-          actionButton("adm_login", "Enter", class = "btn-primary"),
-          uiOutput("adm_login_msg"))),
+      # A broken settings file is announced to everyone who opens Admin, signed in
+      # or not (without the parse detail, which only an admin sees) -- a silent
+      # revert to built-in defaults is how the password and the feed folder change
+      # behind the team's back.
+      uiOutput("adm_cfg_banner"),
+      # The sign-in box is rendered SERVER-side, because when no admin password has
+      # been set there must be no box at all -- just the instructions for setting one.
+      conditionalPanel("!output.admin_authed", uiOutput("adm_login_panel")),
       conditionalPanel("output.admin_authed",
+      div(style = "text-align:right;margin-bottom:6px",
+          actionButton("adm_signout", "Sign out of Admin", class = "btn-default btn-sm")),
       tabsetPanel(
         tabPanel(
           "Insights",
@@ -595,7 +645,19 @@ ui <- fluidPage(
           DTOutput("adm_usage"),
           br(),
           actionButton("adm_rollup", sprintf("Tidy up logs (archive runs older than %d days)", LOG_KEEP_DAYS)),
-          uiOutput("adm_rollup_msg")
+          uiOutput("adm_rollup_msg"),
+          br(),
+          # Retention of the SAVED STATEMENTS themselves -- real client data, and
+          # until now nothing ever deleted it. Runs at startup too; this is the
+          # "do it now" button, and it says what it will do before you press it.
+          h4("Saved statements - retention"),
+          helpText(UPLOADS_NOTE),
+          actionButton("adm_purge_uploads",
+                       if (UPLOADS_KEEP_DAYS > 0)
+                         sprintf("Delete saved statements older than %d days now", as.integer(UPLOADS_KEEP_DAYS))
+                       else "Delete old saved statements now (retention is set to 'keep indefinitely')",
+                       class = "btn-danger"),
+          uiOutput("adm_purge_msg")
         ),
         tabPanel(
           "Templates",
@@ -714,6 +776,7 @@ ui <- fluidPage(
             "they turn up. Pick a token and the direction it means, and <b>Approve</b> ",
             "adds it to the vocabulary - the engine picks it up on the next conversion. ",
             "You decide; nothing is applied automatically."))),
+          uiOutput("adm_sugg_scope"),
           fluidRow(
             column(6,
               strong("Unrecognised indicator tokens"), tableOutput("adm_sugg_tokens"),
@@ -788,16 +851,95 @@ server <- function(input, output, session) {
   # computed or sent to the browser until the password is entered. Set it in
   # config/config.yaml (app.admin_password); the BSO_ADMIN_PASSWORD env var
   # overrides it if present.
+  #
+  # Three rules, all fail-closed:
+  #  1. NO PASSWORD SET -> Admin is refused outright. The shipped placeholder is
+  #     printed in the example config and the docs, so serving template deletion,
+  #     the shared dictionary and the analytics-feed settings behind it is the same
+  #     as serving them behind nothing. The screen says how to set one.
+  #  2. WRONG PASSWORD -> counted, and after a few tries the box goes quiet for a
+  #     spell, so the one short secret can't just be walked through from a script.
+  #  3. There is a way OUT. Without a sign-out, the first person to log in on a
+  #     shared machine leaves Admin open for whoever sits down next.
   admin_ok <- reactiveVal(FALSE)
   output$admin_authed <- reactive(isTRUE(admin_ok()))
   outputOptions(output, "admin_authed", suspendWhenHidden = FALSE)
+  adm_fails <- reactiveVal(0L)          # consecutive wrong passwords this session
+  adm_locked_until <- reactiveVal(0)    # epoch seconds; 0 = not locked
+  # Backoff: free for the first 3 tries, then 5s, 10s, 20s, 40s ... capped at 5
+  # minutes. Deliberately simple and per-session -- enough to make guessing a short
+  # password by hand or by script pointless, with no timer, store or dependency.
+  .adm_lock_seconds <- function(fails) if (fails < 3L) 0 else min(300, 5 * 2^(fails - 3L))
+  .adm_lock_left <- function() max(0, ceiling(adm_locked_until() - as.numeric(Sys.time())))
+  .adm_login_error <- function(msg) output$adm_login_msg <- renderUI(
+    div(style = "color:#b00020;margin-top:6px", msg))
   observeEvent(input$adm_login, {
-    pw <- CONFIG$app$admin_password %||% "changeme"
-    if (identical(input$adm_pw %||% "", pw)) {
+    if (ADMIN_PW_UNSET) {            # rule 1 -- no password set, no Admin, ever
+      admin_ok(FALSE)
+      .adm_login_error("Admin is closed on this install: no admin password has been set.")
+      return()
+    }
+    wait <- .adm_lock_left()
+    if (wait > 0) {                  # rule 2 -- still in the backoff window
+      .adm_login_error(sprintf("Too many wrong passwords. Try again in %d second%s.",
+                               wait, if (wait == 1) "" else "s"))
+      return()
+    }
+    if (identical(input$adm_pw %||% "", CONFIG$app$admin_password %||% "")) {
+      adm_fails(0L); adm_locked_until(0)
       admin_ok(TRUE); output$adm_login_msg <- renderUI(NULL)
-    } else output$adm_login_msg <- renderUI(
-      div(style = "color:#b00020;margin-top:6px", "Wrong password."))
+    } else {
+      n <- isolate(adm_fails()) + 1L
+      adm_fails(n)
+      secs <- .adm_lock_seconds(n)
+      if (secs > 0) adm_locked_until(as.numeric(Sys.time()) + secs)
+      .adm_login_error(if (secs > 0)
+        sprintf("Wrong password (%d wrong tries). Try again in %d seconds.", n, as.integer(secs))
+        else "Wrong password.")
+    }
   })
+  # Sign out: drop the session's admin flag AND the admin data it pulled, so
+  # nothing privileged is left computed behind a hidden panel.
+  observeEvent(input$adm_signout, {
+    req(admin_ok())
+    admin_ok(FALSE); adm_data(NULL)
+    updateTextInput(session, "adm_pw", value = "")
+    output$adm_login_msg <- renderUI(div(class = "muted", style = "margin-top:6px",
+                                         "Signed out of Admin."))
+  })
+  # The sign-in panel -- or, when no password is set, the plain instructions for
+  # setting one instead of a box that can never open.
+  output$adm_login_panel <- renderUI({
+    if (ADMIN_PW_UNSET) return(wellPanel(style = "max-width:640px",
+      h4("Admin is closed - no admin password has been set"),
+      p("Admin manages templates, the shared label dictionary and the analytics feed, so it stays shut until this install has its own password. The one in the example settings file is printed in the documentation, so it is not a password."),
+      p(HTML(paste0("To open it, do <b>either</b> of these on the server and restart the app:",
+        "<ul><li>put <code>admin_password: your-password</code> under <code>app:</code> in ",
+        "<code>config/config.yaml</code> (copy <code>config/config.example.yaml</code> if it isn't there yet), or</li>",
+        "<li>set the <code>BSO_ADMIN_PASSWORD</code> environment variable.</li></ul>"))),
+      p(class = "muted", "Everything on the Convert and Add-a-template tabs works normally without this.")))
+    wellPanel(style = "max-width:440px",
+      h4("Admin - password required"),
+      passwordInput("adm_pw", "Password"),
+      actionButton("adm_login", "Enter", class = "btn-primary"),
+      uiOutput("adm_login_msg"))
+  })
+  # Not suspended: it is a small static panel, and it must already be on screen the
+  # moment the Admin tab is opened (it is the only thing that tells an operator the
+  # tab is closed because no password has been set).
+  outputOptions(output, "adm_login_panel", suspendWhenHidden = FALSE)
+  # The settings-file banner. The parse detail can name a line of the file, so only
+  # a signed-in admin sees it; everyone else is told plainly that something is wrong
+  # and who to tell.
+  output$adm_cfg_banner <- renderUI({
+    if (is.null(CONFIG_ERROR)) return(NULL)
+    div(style = "margin:0 0 10px;padding:10px 12px;border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);border-radius:8px",
+      strong("This install's settings file could not be read."),
+      p(style = "margin:6px 0 0",
+        "Statement Studio is running on built-in defaults, which include the placeholder admin password and the default analytics-feed folder. Anything set in config/config.yaml - the feed folder, the paths, the upload limit - is NOT in force. Tell whoever looks after the server."),
+      if (isTRUE(admin_ok())) div(class = "mono", style = "margin-top:6px;font-size:12px", CONFIG_ERROR))
+  })
+  outputOptions(output, "adm_cfg_banner", suspendWhenHidden = FALSE)
 
   # The Convert picker offers PROVEN (curated) templates by default. Ticking
   # "Include user-created templates" adds the ones users built (with a not-tested
@@ -805,6 +947,13 @@ server <- function(input, output, session) {
   # what's shown unless you ask for more.
   proven_templates <- reactive({ tpl_bump()
     tryCatch(load_templates(TEMPLATES_DIR, strict = FALSE), error = function(e) list()) })
+  # The templates built HERE (visible ones only). Used to tell a user whose
+  # statement came back "unsupported" that her own templates were switched off --
+  # rather than leaving her to find a tick-box inside a collapsed panel.
+  user_template_ids <- reactive({ tpl_bump()
+    u <- tryCatch(load_templates(USER_TEMPLATES_DIR, origin = "user", strict = FALSE),
+                  error = function(e) list())
+    names(u)[!vapply(u, function(t) isTRUE(t$hidden), logical(1))] })
   cv_pick_templates <- reactive({
     if (isTRUE(input$cv_user_templates)) templates() else proven_templates()
   })
@@ -987,8 +1136,13 @@ server <- function(input, output, session) {
     capture <- stats::setNames(as.list(all_cats %in% cats), all_cats)
     okw <- save_metadata_config(lvl, capture)
     if (okw) { CONFIG$metadata$level <<- lvl; CONFIG$metadata$capture <<- capture }
+    # A refusal carries its REASON (e.g. "the file is there but doesn't parse, so
+    # writing this toggle would wipe every other setting in it"). Show it -- a bare
+    # "check folder permissions" would send the admin hunting the wrong problem.
+    why <- attr(okw, "reason")
     output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved. Applies to the next conversion. Capture is local only and never enters the Qlik feed."
+      else if (!is.null(why)) paste("Not saved:", why)
       else "Could not write config/config.yaml - check folder permissions."))
   })
 
@@ -1028,6 +1182,19 @@ server <- function(input, output, session) {
     safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
   output$adm_sugg_tokens <- renderTable({ req(admin_ok()); adm_suggestions()$indicator_tokens })
   output$adm_sugg_cols   <- renderTable({ req(admin_ok()); adm_suggestions()$unmapped_columns })
+  # The metadata corpus is kept forever and this read is BOUNDED (see
+  # R/suggestions.R), so say which slice the ranking came from. A partial answer
+  # that doesn't admit it is partial is the thing the charter forbids.
+  output$adm_sugg_scope <- renderUI({
+    req(admin_ok())
+    s <- adm_suggestions()
+    n <- s$scanned %||% NA_integer_; tot <- s$total %||% NA_integer_
+    if (is.na(n) || is.na(tot)) return(NULL)
+    p(class = "muted", style = "font-size:12px", if (n < tot)
+      sprintf("Ranked from the %s newest conversion records of %s kept (the newest are what matter for 'what is it still missing?').",
+              format(n, big.mark = ","), format(tot, big.mark = ","))
+      else sprintf("Ranked from all %s conversion records kept.", format(tot, big.mark = ",")))
+  })
   # ADMIN-ONLY, and it must be gated HERE. A bare observe() is never suspended by
   # visibility (unlike a render output), so without this it runs for every browser
   # that connects -- before any password -- and forces a full scan of the metadata
@@ -1153,14 +1320,18 @@ server <- function(input, output, session) {
     cv_upload_id(); input$adm_refresh          # refresh after a convert or on demand
     u <- read_uploads(UPLOADS_DIR)
     if (!nrow(u)) return(data.frame(note = "no uploads yet"))
-    u[, c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "run_id")]
+    # `purged` = the saved copy has passed its retention period and been deleted.
+    # Shown, because a pickup row whose file is gone must not look actionable.
+    u[, c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "purged", "run_id")]
   }, options = list(pageLength = 8, dom = "tip"), rownames = FALSE)
   observe({
     req(admin_ok())          # upload ids identify real client statements
     cv_upload_id(); input$adm_refresh
     u <- read_uploads(UPLOADS_DIR)
-    updateSelectInput(session, "adm_up_pick",
-      choices = if (nrow(u)) u$id[u$needs_pickup] else character(0))
+    # Only offer uploads whose file is still on disk -- a purged one cannot be
+    # audited or opened in the toolkit, so offering it would be a dead end.
+    pick <- if (nrow(u)) u$id[u$needs_pickup & !u$purged] else character(0)
+    updateSelectInput(session, "adm_up_pick", choices = pick)
   })
   output$adm_up_audit <- downloadHandler(
     filename = function() "upload.audit.md",
@@ -1571,18 +1742,30 @@ server <- function(input, output, session) {
   cv_fb_done <- reactiveVal(FALSE)
   cv_upload_id <- reactiveVal(NA_character_)   # the tracked upload for this conversion
   cv_forced <- reactiveVal(list())             # user-confirmed "this IS a transaction" bands
+  # When the browser tab closes, take this session's scratch folder with it. The
+  # folder holds a copy of the client's statement plus every output; the process
+  # temp dir is only cleared when R exits, and this app is a long-running service.
+  session$onSessionEnded(function() {
+    d <- isolate(cv_dir())
+    if (!is.null(d) && nzchar(d) && dir.exists(d)) try(unlink(d, recursive = TRUE), silent = TRUE)
+  })
 
   # convert_now(src, sess, forced_rows) -- run the one front-door conversion with a
   # progress bar, reading bank / exact-template from the current inputs. Shared by
   # the Convert button and the X-ray "add this row" action so both paths behave
   # identically (the second just adds force_rows and reuses the same session dir).
-  convert_now <- function(src, sess, forced_rows = NULL, force_tpl = NULL) {
+  convert_now <- function(src, sess, forced_rows = NULL, force_tpl = NULL,
+                          include_user = FALSE) {
     bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
     forced_tpl <- force_tpl %||%
       (if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL)
-    # Proven templates by default; the tick-box (or an explicit force, e.g. the
-    # save-then-reconvert of a just-built template) brings in the user-created set.
-    use_user <- isTRUE(input$cv_user_templates) || !is.null(force_tpl)
+    # The tick-box, an explicit force, or an explicit include_user brings in the
+    # user-created set. include_user exists because updateCheckboxInput only
+    # reaches the browser AFTER this observer finishes: right after a save we know
+    # the box is being ticked, but input$cv_user_templates still reads its old
+    # value, and without this the just-saved template would be excluded from the
+    # very conversion that is meant to demonstrate it.
+    use_user <- isTRUE(input$cv_user_templates) || !is.null(force_tpl) || isTRUE(include_user)
     who <- who_now()
     withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
@@ -1604,64 +1787,130 @@ server <- function(input, output, session) {
     })
   }
 
-  # detected_identity() -- who the environment says is accessing, without anyone
-  # typing anything. Order of trust: the Shiny host's authenticated user
-  # (session$user -- set by Shiny Server Pro / Posit Connect / RStudio auth), then
-  # the identity a reverse proxy / SSO gateway forwards in a request header
-  # (oauth2-proxy, nginx auth_request, IIS/Windows-auth, Cloudflare Access all use
-  # one of these), then the OS login of the host process. Header values are only
-  # ever stored as a string in the audit log -- never evaluated -- so there is no
-  # injection surface. Returns NA when nothing identifies the user.
+  # detected_identity_info() -- who the environment can actually ESTABLISH, without
+  # anyone typing anything, AND how it established it. Order of trust:
+  #   "host" -- the Shiny host's authenticated user (session$user: Shiny Server Pro,
+  #             Posit Connect, RStudio auth). A real, per-person sign-in.
+  #   "sso"  -- an identity a reverse proxy / SSO gateway forwards in a request
+  #             header (oauth2-proxy, nginx auth_request, IIS/Windows-auth,
+  #             Cloudflare Access). Also per-person.
+  #   "os"   -- the OS account the SERVER PROCESS runs as. In the shipped
+  #             one-server-for-the-team model this is the SAME for everybody and
+  #             identifies NOBODY. It is kept (it is still a fact worth logging)
+  #             but it must never be presented as the user's sign-in.
+  #   "none" -- nothing at all.
+  # Header values are only ever stored as a string in the audit log -- never
+  # evaluated -- so there is no injection surface.
   .SSO_HEADERS <- c("HTTP_X_FORWARDED_USER", "HTTP_X_AUTH_REQUEST_USER",
     "HTTP_X_AUTH_REQUEST_EMAIL", "HTTP_X_FORWARDED_EMAIL", "HTTP_REMOTE_USER",
     "HTTP_X_REMOTE_USER", "HTTP_X_FORWARDED_PREFERRED_USERNAME", "HTTP_CF_ACCESS_AUTHENTICATED_USER_EMAIL")
-  detected_identity <- function() {
+  detected_identity_info <- function() {
     su <- session$user
-    if (!is.null(su) && nzchar(trimws(su))) return(trimws(su))
+    if (!is.null(su) && nzchar(trimws(su))) return(list(who = trimws(su), source = "host"))
     req <- session$request
     if (!is.null(req)) for (h in .SSO_HEADERS) {
       v <- tryCatch(req[[h]], error = function(e) NULL)
-      if (!is.null(v) && nzchar(trimws(v))) return(trimws(v))
+      if (!is.null(v) && nzchar(trimws(v))) return(list(who = trimws(v), source = "sso"))
     }
     cu <- current_user()
-    if (!is.null(cu) && nzchar(cu) && !identical(cu, "unknown")) return(cu)
-    NA_character_
+    if (!is.null(cu) && nzchar(cu) && !identical(cu, "unknown"))
+      return(list(who = cu, source = "os"))
+    list(who = NA_character_, source = "none")
   }
-  # who_now() -- the single source of truth for WHO is doing this, so the audit
-  # trail records a real person, never a placeholder. Preference: the name typed
-  # on Convert, then whoever the environment already identifies (SSO / host / OS).
+  detected_identity <- function() detected_identity_info()$who
+  # Is the detected identity actually THIS PERSON (rather than the server's own
+  # account)? Only a host/SSO sign-in is; that is the only case where pre-filling
+  # the name box or saying "signed in as" is true.
+  .identity_is_personal <- function(info) info$source %in% c("host", "sso")
+  # who_now() -- what goes in the run log's requested_by: the name typed on
+  # Convert, else whatever the environment could establish. NOTE this is the
+  # ATTESTED-or-fallback value; it never stands alone in the log any more -- the
+  # typed claim and the machine-detected identity are ALSO written as separate
+  # fields (see stamp_identity below), so a reader can tell one from the other.
   who_now <- function() {
     if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) return(trimws(input$cv_by))
     detected_identity() %||% (session$user %||% current_user())
   }
-  # On connect, pre-fill the audit-trail name with whoever the environment already
-  # identifies, so it's right by default; the analyst can still override it.
+  attested_now <- function() {
+    v <- trimws(input$cv_by %||% "")
+    if (!nzchar(v)) NA_character_ else v
+  }
+  # stamp_identity(run_id) -- write BOTH facts onto the run record: what was typed
+  # (a claim) and what the machine could establish (with its source). The engine
+  # only knows one string; the UI knows both, so it completes the record here.
+  # Never silent: if the record can't be completed (missing, or an ambiguous
+  # same-second id) the user is TOLD, because an audit trail that quietly loses the
+  # "who" is worse than one that says it did.
+  stamp_identity <- function(run_id) {
+    rid <- as.character(run_id %||% NA_character_)[1]
+    # No run_id means the engine never got far enough to write a record at all
+    # (the file could not be read). That failure is already on screen -- there is
+    # nothing to amend and nothing extra to warn about.
+    if (is.na(rid) || !nzchar(rid)) return(invisible(FALSE))
+    info <- detected_identity_info()
+    ok <- safe(amend_log_record(LOGDIR, "runs", rid,
+      identity_fields(attested = attested_now(), detected = info$who, source = info$source)), FALSE)
+    if (!isTRUE(ok))
+      showNotification(paste("This conversion ran, but its audit record could not be completed with who ran it.",
+                             "Tell whoever looks after the tool before relying on this run."),
+                       type = "warning", duration = 12)
+    invisible(ok)
+  }
+  # On connect, pre-fill the audit-trail name ONLY from a real per-person sign-in.
+  # Pre-filling the SERVER's OS account made every conversion in the department
+  # arrive stamped with the same name, looking like an attestation nobody made.
   observe({
-    who <- isolate(detected_identity())
+    info <- isolate(detected_identity_info())
     cur <- isolate(input$cv_by)
-    if (!is.na(who) && nzchar(who) && (is.null(cur) || !nzchar(trimws(cur))))
-      updateTextInput(session, "cv_by", value = who)
+    if (.identity_is_personal(info) && !is.na(info$who) && nzchar(info$who) &&
+        (is.null(cur) || !nzchar(trimws(cur))))
+      updateTextInput(session, "cv_by", value = info$who)
   })
   output$cv_who_hint <- renderUI({
-    who <- detected_identity()
-    if (is.na(who) || !nzchar(who)) return(NULL)
-    helpText(sprintf("Detected as %s from your sign-in - change it above if you're recording this for someone else.", who))
+    info <- detected_identity_info()
+    if (.identity_is_personal(info))
+      return(helpText(sprintf("Signed in as %s - change it above if you're recording this for someone else.", info$who)))
+    # The honest version of what used to claim a sign-in: on the one-server
+    # deployment there is no per-person sign-in at all, so say so and ask.
+    if (identical(info$source, "os"))
+      return(helpText(style = "color:#8a5b00", sprintf(
+        "There is no sign-in on this tool: the server runs as \"%s\", which is the machine's account, not yours. Type your name above - that is what the audit trail records as who ran the conversion.", info$who)))
+    helpText(style = "color:#8a5b00",
+      "There is no sign-in on this tool. Type your name above - that is what the audit trail records as who ran the conversion.")
   })
 
   # run_conversion -- the whole convert-a-file flow (session dir, convert, state,
   # upload capture), shared by the Convert button and "Try it on a sample".
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
-  run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL) {
+  run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL,
+                             include_user = FALSE) {
+    old <- isolate(cv_dir())
     sess <- tempfile("cv_")   # guaranteed-unique per session/process (no cross-user bleed)
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
     src <- file.path(sess, name)
     file.copy(srcpath, src, overwrite = TRUE)
+    # Reclaim the PREVIOUS conversion's scratch folder, AFTER the copy above (a
+    # re-convert is often handed the file that lives in it). It holds the outputs
+    # AND a copy of the client's statement, and nothing was ever removing it: on a
+    # server that runs for months, every conversion by every user stayed on disk for
+    # the life of the process. Once a new conversion starts the old outputs are
+    # unreachable from the UI anyway.
+    if (!is.null(old) && nzchar(old) && !identical(old, sess) && dir.exists(old))
+      safe(unlink(old, recursive = TRUE))
+    # ...and anything this process left behind more than a day ago, which is what a
+    # browser closed abruptly (no onSessionEnded) leaves lying about. The folder
+    # this conversion is using, and any file open in the toolkit, are excluded.
+    safe(sweep_temp_dirs(keep_hours = 24,
+                         exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
     cv_forced(list())   # a new file -> forget any force-included rows from the last one
     who <- who_now()
-    res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl)
+    res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl,
+                       include_user = include_user)
     cv_res(res); cv_dir(sess); cv_src(list(path = src, name = name))
     cv_fb_done(FALSE)   # reset the feedback panel for the new conversion
+    # Complete the audit record with the attested vs detected identity split.
+    stamp_identity(res$run_id %||% NA_character_)
     # Capture the upload + its outcome so a failed/abandoned new format is a
     # 2-second pickup in Admin -> Uploads (the file is saved for a safe re-audit).
     uid <- if (record) safe(record_upload(src, name = name, requested_by = who,
@@ -1683,6 +1932,12 @@ server <- function(input, output, session) {
                        type = "warning", duration = 6)
       return()
     }
+    # The conversion still runs (blocking Beth over a name field would be worse),
+    # but she is told once, plainly, that the audit trail will have no attested
+    # name against this run rather than finding out later that it doesn't.
+    if (is.na(attested_now()) && !.identity_is_personal(detected_identity_info()))
+      showNotification("No name entered - this conversion is recorded with nobody attesting to it. Add your name or initials above if it needs to be traceable to you.",
+                       type = "warning", duration = 8)
     run_conversion(input$cv_file$datapath, input$cv_file$name)
   })
 
@@ -2182,13 +2437,33 @@ server <- function(input, output, session) {
                               id = NULL, type = NULL, currency = NULL,
                               date_col = NULL, amount_col = NULL,
                               keep_dateless = NULL,
-                              type_debit_value = NULL, type_credit_value = NULL) {
+                              type_debit_value = NULL, type_credit_value = NULL,
+                              fingerprint_text = NULL) {
     if (!is.null(id) && nzchar(trimws(id)))
       tmpl$id <- gsub("[^A-Za-z0-9_]+", "_", trimws(id))   # the name it saves under
     if (!is.null(type) && nzchar(trimws(type))) tmpl$statement_type <- trimws(type)
     if (!is.null(currency) && nzchar(trimws(currency))) tmpl$currency <- trimws(currency)
     if (!is.null(bank) && nzchar(bank)) tmpl$bank <- bank
     if (identical(tmpl$format, "pdf")) {
+      # The Simple-tab identifying phrases (one per line). PDF only -- the box is
+      # not rendered for delimited/excel, and a Shiny input keeps its last value, so
+      # applying it outside this branch would stamp the previous PDF's phrases onto
+      # a CSV template. Blank means "leave whatever is there" (never silently wipe
+      # a fingerprint); min_score follows the count so every phrase must be present.
+      if (!is.null(fingerprint_text)) {
+        ph <- fingerprint_phrases(fingerprint_text)
+        cur <- as.character(unlist(tmpl$fingerprint$page_contains_all %||% list()))
+        # ONLY when she actually changed them. A curated template opened for
+        # refinement may deliberately carry min_score BELOW its phrase count
+        # ("any 2 of these 4"); touching min_score on every keystroke would rewrite
+        # that rule behind her back. An edit does set min_score to the phrase count,
+        # which is what the box says out loud: all of them must appear.
+        if (!identical(ph, cur)) {
+          tmpl$fingerprint <- utils::modifyList(tmpl$fingerprint %||% list(),
+                                                list(page_contains_all = as.list(ph)))
+          tmpl$min_score <- max(1L, length(ph))
+        }
+      }
       if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$table$amount_sign <- sign
       # Shared-date (HSBC-style) opt-in: only stamp the key when ON, so normal
@@ -2326,6 +2601,26 @@ server <- function(input, output, session) {
                                 value = tmpl$type_debit_value %||% "")),
             column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
                                 value = tmpl$type_credit_value %||% "")))),
+        # THE PHRASE THAT RECOGNISES THIS BANK. For PDFs this is the one setting
+        # that can refuse a save, and it used to be editable only in the raw YAML
+        # box on Advanced -- a hard stop at the last step of the flow for the exact
+        # person the toolkit exists for. So it lives here, in plain words, offering
+        # phrases actually found on her statement.
+        if (is_pdf) tagList(
+          tags$hr(),
+          strong("A distinctive phrase printed on this statement"),
+          p(class = "muted", style = "margin:4px 0 6px",
+            HTML(paste0("This is how the tool recognises this bank next time. Use something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name. ",
+                        "Avoid single common words like &quot;Balance&quot; (they appear on every statement), and never a customer's name. One phrase per line; all of them must appear."))),
+          if (length(g$fp_candidates)) fluidRow(
+            column(9, selectInput("g_fp_pick", "Phrases found on your statement",
+                                  choices = c("(choose one to add)" = "", g$fp_candidates),
+                                  width = "100%")),
+            column(3, br(), actionButton("g_fp_add", "Add it"))),
+          textAreaInput("g_fp", NULL, width = "100%", rows = 3,
+                        value = paste(unlist(tmpl$fingerprint$page_contains_all %||% list()),
+                                      collapse = "\n")),
+          uiOutput("g_fp_msg")),
         if (!is.null(g$cols) && length(g$cols)) tagList(
           tags$hr(),
           p(class = "muted", "Which column holds each field? Leave as detected unless the preview looks wrong."),
@@ -2427,8 +2722,14 @@ server <- function(input, output, session) {
     else if (identical(tmpl$format, "excel"))
       tryCatch(names(read_input(path)$table), error = function(e) NULL)
     else NULL
+    # Candidate identifying phrases the drafter actually FOUND on this page, so the
+    # Simple tab can offer real choices ("pick a phrase that's printed on your
+    # statement") instead of sending a non-technical user to the raw YAML box.
+    fp_cands <- if (identical(tmpl$format, "pdf"))
+      safe(header_phrases(read_input(path), n = 8), character(0)) else character(0)
     cv_upload_id(upload_id)
-    guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids, cols = cols))
+    guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids,
+                cols = cols, fp_candidates = unique(trimws(as.character(fp_cands %||% character(0))))))
     show_guided_modal()
     invisible(TRUE)
   }
@@ -2459,6 +2760,26 @@ server <- function(input, output, session) {
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
+      # BEFORE offering to build a template: if templates built here are switched
+      # OFF, the statement may already have one and we simply refused to look. The
+      # old app said nothing at all, so the answer to "I built this template and it
+      # doesn't work" was buried in a tick-box inside a collapsed "wrong bank?"
+      # panel. One sentence, one button.
+      nuser <- length(user_template_ids())
+      if (!isTRUE(input$cv_user_templates) && nuser > 0) {
+        return(tagList(
+          div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
+            strong(sprintf("Before you build one: %d template%s built here %s currently switched OFF.",
+                           nuser, if (nuser == 1) "" else "s", if (nuser == 1) "is" else "are")),
+            p(class = "muted", style = "margin:6px 0 10px",
+              "This statement was only checked against the shipped, tested templates. If you or a colleague already set this bank up, turning them on will find it."),
+            actionButton("cv_use_user_tpl", "Include them and convert again", class = "btn-warning")),
+          div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
+            strong("Nothing there either? Set it up once and it converts every time."),
+            p(class = "muted", style = "margin:6px 0 10px",
+              "The tool pre-fills what it can detect from your statement — you confirm against a live preview and save."),
+            actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-primary btn-lg"))))
+      }
       # A new layout is a FORK, not a cliff. We WANT analysts setting up their own
       # templates, so the prominent GREEN action is "set it up yourself" (the tool
       # pre-fills what it can); handing it to the team is the small fallback.
@@ -2478,6 +2799,26 @@ server <- function(input, output, session) {
         span(class = "muted", "Open this statement in setup to fix how it's read and save an improved template."), " ",
         actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"))
     }
+  })
+  # Tick the box AND re-run in one click. include_user = TRUE because the tick has
+  # not reached the browser yet when this conversion starts.
+  observeEvent(input$cv_use_user_tpl, {
+    src <- cv_src(); req(src)
+    uid <- cv_upload_id()      # this is the SAME statement, not a new upload
+    updateCheckboxInput(session, "cv_user_templates", value = TRUE)
+    run_conversion(src$path, src$name, record = FALSE, include_user = TRUE)
+    cv_upload_id(uid)          # keep it tied to the pickup it came from
+    res <- cv_res()
+    # If it converts now, the pickup record must say so -- otherwise Admin keeps
+    # asking someone to build a template for a statement that already has one.
+    if (!is.na(uid) && (res$status %||% "") %in% c("ok", "needs_review"))
+      safe(set_upload_status(uid, res$status,
+        run_id = res$run_id %||% NA_character_,
+        template = res$template_id %||% NA_character_,
+        trust = res$trust$level %||% NA_character_,
+        detail = "converted once templates built here were included", dir = UPLOADS_DIR))
+    showNotification("Templates built here are now included - and stay on for the rest of this session.",
+                     type = "message", duration = 6)
   })
   observeEvent(input$cv_goto_templates,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
@@ -2590,9 +2931,40 @@ server <- function(input, output, session) {
                     date_col = input$g_col_date, amount_col = input$g_col_amt,
                     keep_dateless = input$g_keep_dateless,
                     type_debit_value = input$g_type_debit,
-                    type_credit_value = input$g_type_credit)
+                    type_credit_value = input$g_type_credit,
+                    fingerprint_text = input$g_fp)
   }
   guided_live <- reactive(gl_build(meta_live = TRUE))
+
+  # "Add it" -- append a phrase the drafter found on the page to the box, rather
+  # than making the user retype it exactly (a fingerprint must match the page text
+  # character for character, so retyping is where this goes wrong).
+  observeEvent(input$g_fp_add, {
+    pick <- trimws(input$g_fp_pick %||% "")
+    if (!nzchar(pick)) {
+      showNotification("Choose one of the phrases found on your statement first.", type = "warning"); return() }
+    cur <- fingerprint_phrases(input$g_fp)
+    if (pick %in% cur) {
+      showNotification("That phrase is already in the box.", type = "message"); return() }
+    updateTextAreaInput(session, "g_fp", value = paste(c(cur, pick), collapse = "\n"))
+  })
+  # Live verdict on the phrase(s), in the same place they are typed: the SAME rule
+  # the save uses (validate_template), so "Save" can no longer be the first time a
+  # too-generic fingerprint is mentioned.
+  output$g_fp_msg <- renderUI({
+    g <- guided(); req(g); req(identical(g$tmpl$format, "pdf"))
+    # NA (not "no problems") when the check itself could not run -- an "all clear"
+    # we did not actually earn is the one answer we must never give.
+    probs <- safe(validate_template(guided_live()), NA_character_)
+    if (length(probs) == 1L && is.na(probs))
+      return(span(class = "muted", style = "font-size:12.5px",
+                  "Couldn't check the phrase just now - Save will tell you for certain."))
+    fpp <- probs[grepl("fingerprint", probs, fixed = TRUE)]
+    if (!length(fpp))
+      return(span(class = "ok", style = "font-size:12.5px",
+                  "This phrase will do - it is specific enough to identify this layout."))
+    span(class = "bad", style = "font-size:12.5px", paste(fpp, collapse = " "))
+  })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
@@ -2665,6 +3037,11 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")
     updateSelectInput(session, "g_col_ref",  selected = parsed$columns$reference$source %||% "")
     updateSelectInput(session, "g_col_bal",  selected = parsed$columns$balance$source %||% "")
+    # Keep the Simple-tab phrase box in step with a fingerprint edited in the YAML,
+    # or the next Simple-tab keystroke would silently put the old phrases back.
+    if (identical(parsed$format, "pdf"))
+      updateTextAreaInput(session, "g_fp",
+        value = paste(unlist(parsed$fingerprint$page_contains_all %||% list()), collapse = "\n"))
     output$g_adv_msg <- renderUI(span(class = "ok", "Applied - preview updated below."))
   })
 
@@ -2867,16 +3244,36 @@ server <- function(input, output, session) {
       if (!is.na(cv_upload_id()))
         safe(set_upload_status(cv_upload_id(), "wizard_saved",
           template = tmpl$id %||% NA_character_, dir = UPLOADS_DIR))
-      # This template was built FOR the statement on screen, so re-run it now with
-      # the just-saved template (forced by id) and show the result on Convert -- the
-      # user shouldn't have to re-upload and re-convert by hand.
+      # A saved template is only useful if it takes part in detection, so switch
+      # user-built templates ON. (The saved conversion below passes include_user
+      # explicitly -- this tick only reaches the browser after the observer ends.)
+      updateCheckboxInput(session, "cv_user_templates", value = TRUE)
       saved_id <- tmpl$id %||% NA_character_
       gp <- g$path; gn <- g$name %||% (if (!is.null(gp)) basename(gp) else NA_character_)
       if (!is.null(gp) && file.exists(gp) && !is.na(saved_id) && nzchar(saved_id)) {
         updateTabsetPanel(session, "main_tabs", selected = "Convert")
-        run_conversion(gp, gn, record = FALSE, force_tpl = saved_id)
-        showNotification(sprintf("Saved \"%s\" and re-converted this statement with it.", saved_id),
-                         type = "message", duration = 8)
+        # PROVE IT. The old flow re-converted with the new template FORCED by id,
+        # which convert.R short-circuits to "template chosen by the user" -- so the one
+        # moment the app could have shown that the new template auto-detects was the
+        # one moment it skipped detection entirely. That is how templates with
+        # fingerprints that could never match shipped under a green suite. Run a
+        # REAL detection pass over the whole template set first, say in plain words
+        # what it means, and only fall back to forcing when detection did NOT pick
+        # this template (so she still sees her template's output, correctly labelled).
+        recog <- safe({
+          tset <- load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR)
+          recognition_summary(detect_statement(read_input(gp), tset), saved_id)
+        }, NULL)
+        recog <- recog %||% recognition_summary(NULL, saved_id)
+        run_conversion(gp, gn, record = FALSE,
+                       force_tpl = if (isTRUE(recog$ok)) NULL else saved_id,
+                       include_user = TRUE)
+        showNotification(
+          HTML(paste0("<b>Saved \"", htmltools::htmlEscape(saved_id), "\".</b><br>",
+                      "<b>", htmltools::htmlEscape(recog$headline), "</b><br>",
+                      htmltools::htmlEscape(recog$detail))),
+          type = if (isTRUE(recog$ok)) "message" else "warning",
+          duration = if (isTRUE(recog$ok)) 10 else NULL)
       } else {
         showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
                                  saved_id %||% "template"),
@@ -2946,6 +3343,23 @@ server <- function(input, output, session) {
     output$adm_rollup_msg <- renderUI(span(class = "ok",
       sprintf("Archived %d old run file(s); %d kept. History is preserved in logs/archive/.",
               (r$archived %||% 0) + (r2$archived %||% 0), (r$kept %||% 0))))
+  })
+  observeEvent(input$adm_purge_uploads, {
+    req(admin_ok())
+    if (UPLOADS_KEEP_DAYS <= 0) {
+      output$adm_purge_msg <- renderUI(span(class = "bad",
+        "Nothing deleted: retention is set to keep saved statements indefinitely. Set retention.uploads_keep_days in config/config.yaml and restart."))
+      return()
+    }
+    p <- tryCatch(purge_uploads(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS), error = function(e) NULL)
+    if (is.null(p)) {
+      output$adm_purge_msg <- renderUI(span(class = "bad",
+        "Could not tidy up the saved statements - check folder permissions on uploads/."))
+      return()
+    }
+    output$adm_purge_msg <- renderUI(span(class = "ok", sprintf(
+      "Deleted %d saved statement file(s); %d still within the %d-day period. The record of each upload is kept - only the statement itself is gone.",
+      p$purged, p$kept, as.integer(UPLOADS_KEEP_DAYS))))
   })
   output$adm_feedback <- renderDT({
     d <- adm_data(); req(d); fb <- d$fb

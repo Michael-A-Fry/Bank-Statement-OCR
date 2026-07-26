@@ -108,7 +108,17 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     redactions = pdf$redactions,
     redaction_scan_incomplete = pdf$redaction_scan_incomplete %||% 0L,
     ocr = pdf$ocr,
-    ocr_conf = pdf$ocr_conf
+    ocr_conf = pdf$ocr_conf,
+    # Pages that ARE scans but could not be machine-read, and whether the OCR tools
+    # exist on this machine. read_pdf works both out; they have to be CARRIED, or
+    # the "this is a scan we couldn't read" diagnostic can never fire on a real
+    # conversion and a scan on an OCR-less box is reported as an unknown layout --
+    # sending the analyst to build a template for a page with no readable text.
+    scanned_no_ocr = pdf$scanned_no_ocr %||% 0L,
+    ocr_tools_available = pdf$ocr_tools_available %||% TRUE,
+    # Self-declared document provenance (producer / creator / created / modified /
+    # encrypted). Facts about the FILE, never about the figures -- see read_pdf.R.
+    doc_info = pdf$doc_info
   )
 }
 
@@ -171,6 +181,16 @@ read_input <- function(path, redaction_rects = NULL) {
     on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
     input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
     input$meta$redaction_scan_incomplete <- x$redaction_scan_incomplete %||% 0L
+    # Scan-but-unreadable accounting (see read_pdf_input). convert_statement reads
+    # these two straight off input$meta to raise the scanned_no_ocr diagnostic, so
+    # a gap here silently turns that loud message back into a misleading
+    # "unknown format".
+    input$meta$scanned_no_ocr <- x$scanned_no_ocr %||% 0L
+    input$meta$ocr_tools_available <- x$ocr_tools_available %||% TRUE
+    # Who wrote this PDF, and when. Forensic provenance the reader gets for free
+    # from pdf_info; carried on the input so diagnostics can STATE it. Reported
+    # factually and never interpreted -- it changes no figure, status or trust.
+    input$meta$pdf_doc <- x$doc_info
   } else {
     stop(sprintf("unsupported file extension: '%s'", ext))
   }

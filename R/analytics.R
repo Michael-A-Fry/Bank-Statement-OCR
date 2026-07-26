@@ -19,6 +19,52 @@
 # read_runs(logdir) / read_feedback already in feedback.R.
 read_runs <- function(logdir = "logs") read_log_records(logdir, "runs")
 
+# read_feed_log(logdir) -- the per-conversion FEED outcome records written by
+# write_feed(): did the governed feed actually receive this conversion?
+read_feed_log <- function(logdir = "logs") read_log_records(logdir, "feed")
+
+# feed_health(feed_log) -- the answer to "is the feed still working?".
+#
+# WHY this exists: the documented deployment writes the feed to a UNC share. If
+# that share goes read-only, every conversion still succeeds, the analyst sees
+# nothing wrong, and the dashboards simply stop gaining data -- for ever. The feed
+# log records each write outcome; this rolls it up by verdict so a single Admin
+# card can show "N accepted, N withheld, N FAILED TO WRITE" and name the last one.
+# Rows whose gate_result carries ':write_failed' are the alarm.
+feed_health <- function(feed_log) {
+  empty <- data.frame(gate_result = character(0), n = integer(0),
+                      written = integer(0), last_seen = character(0),
+                      stringsAsFactors = FALSE)
+  if (is.null(feed_log) || !nrow(feed_log)) return(empty)
+  gr <- as.character(.col(feed_log, "gate_result", "unknown")); gr[is.na(gr)] <- "unknown"
+  wr <- as.logical(.col(feed_log, "feed_written", FALSE)); wr[is.na(wr)] <- FALSE
+  ts <- as.character(.col(feed_log, "ts", "")); ts[is.na(ts)] <- ""
+  parts <- lapply(split(seq_along(gr), gr), function(idx)
+    data.frame(gate_result = gr[idx[1]], n = length(idx),
+               written = sum(wr[idx]), last_seen = max(ts[idx]),
+               stringsAsFactors = FALSE))
+  res <- do.call(rbind, parts)
+  res[order(-res$n, res$gate_result), , drop = FALSE]
+}
+
+# feed_write_failures(feed_log) -- just the conversions the gate ACCEPTED and the
+# feed did not receive. Empty is the healthy answer; anything here needs a human.
+feed_write_failures <- function(feed_log) {
+  empty <- data.frame(ts = character(0), run_id = character(0),
+                      source_file = character(0), gate_result = character(0),
+                      feed_dir = character(0), stringsAsFactors = FALSE)
+  if (is.null(feed_log) || !nrow(feed_log)) return(empty)
+  gr <- as.character(.col(feed_log, "gate_result", "")); gr[is.na(gr)] <- ""
+  hit <- grepl(":write_failed$", gr)
+  if (!any(hit)) return(empty)
+  data.frame(ts = as.character(.col(feed_log, "ts", ""))[hit],
+             run_id = as.character(.col(feed_log, "run_id", NA))[hit],
+             source_file = as.character(.col(feed_log, "source_file", NA))[hit],
+             gate_result = gr[hit],
+             feed_dir = as.character(.col(feed_log, "feed_dir", NA))[hit],
+             stringsAsFactors = FALSE)
+}
+
 # runs_overview(runs) -- count + share by status.
 runs_overview <- function(runs) {
   empty <- data.frame(status = character(0), n = integer(0), pct = numeric(0))

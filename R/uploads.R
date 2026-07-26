@@ -4,6 +4,9 @@
 # wizard-saved) is recorded with the run_id and template, and a safe audit can be
 # regenerated on demand. The saved files hold real statements, so the uploads
 # folder is local-only; the Admin view never shows their content, only status.
+# They are NOT kept forever: purge_uploads() (R/retention.R) deletes the copied
+# statement after retention.uploads_keep_days and marks the record `purged`, and
+# the Convert page says so under the file picker before anyone uploads.
 
 .uploads_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "uploads")
 
@@ -15,8 +18,14 @@ record_upload <- function(path, name = basename(path), requested_by = NULL,
                           detail = "", dir = NULL) {
   dir <- .uploads_dir(dir)
   sha <- safe(file_sha256(path), NA_character_)
-  id  <- paste0(substr(if (is.na(sha)) "na" else sha, 1, 10), "-",
-                format(Sys.time(), "%Y%m%d%H%M%S"))
+  # The id is (content hash + whole second), so uploading the SAME statement twice
+  # inside one second produced the same id -- and both uploads then shared one
+  # folder and one record.json, silently losing the first one's lifecycle history.
+  # A clash gets a "~2", "~3" ... suffix: two uploads, two records.
+  base <- paste0(substr(if (is.na(sha)) "na" else sha, 1, 10), "-",
+                 format(Sys.time(), "%Y%m%d%H%M%S"))
+  id <- base; n <- 1L
+  while (dir.exists(file.path(dir, id)) && n < 1000L) { n <- n + 1L; id <- sprintf("%s~%d", base, n) }
   ud <- file.path(dir, id); dir.create(ud, recursive = TRUE, showWarnings = FALSE)
   safe(file.copy(path, file.path(ud, name), overwrite = TRUE))
   ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
@@ -56,7 +65,7 @@ read_uploads <- function(dir = NULL) {
   if (!length(recs)) return(data.frame(
     id = character(0), ts = character(0), file_ext = character(0), status = character(0),
     template = character(0), trust = character(0), run_id = character(0),
-    needs_pickup = logical(0), stringsAsFactors = FALSE))
+    needs_pickup = logical(0), purged = logical(0), stringsAsFactors = FALSE))
   rows <- lapply(recs, function(f) {
     r <- safe(jsonlite::fromJSON(f, simplifyVector = FALSE), NULL); if (is.null(r)) return(NULL)
     hist_status <- vapply(r$history %||% list(), function(h) h$status %||% "", character(1))
@@ -67,6 +76,10 @@ read_uploads <- function(dir = NULL) {
       trust = as.character(r$trust %||% NA_character_),
       run_id = as.character(r$run_id %||% NA_character_),
       needs_pickup = (r$status %in% c("unsupported", "failed")) && !taught,
+      # The saved statement was deleted by the retention purge. Shown in Admin so
+      # "open it in the toolkit" never looks available for a file that is gone --
+      # the record survives, the client's statement does not.
+      purged = isTRUE(r$purged),
       stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))

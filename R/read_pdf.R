@@ -191,6 +191,7 @@ read_pdf <- function(path, redaction_rects = NULL,
                                         stringsAsFactors = FALSE),
                 ocr = logical(0),
                 ocr_conf = numeric(0),
+                doc_info = .pdf_doc_info(NULL),
                 ok = FALSE)
   if (!requireNamespace("pdftools", quietly = TRUE)) return(empty)
   if (!file.exists(path)) return(empty)
@@ -204,6 +205,10 @@ read_pdf <- function(path, redaction_rects = NULL,
   # space; the parser normalises each page's words into that space (see
   # parse_pdf_table), which needs the page size. Same for OCR pages -- pdf_pagesize
   # reports the page's own point size, which is what the OCR word coordinates use.
+  # Document provenance: who wrote this file and when (see .pdf_doc_info). Cheap
+  # (one header read), recorded for EVERY PDF, and never allowed to break a
+  # conversion -- an unreadable info dictionary just leaves the fields NA.
+  doc_info <- .pdf_doc_info(safe(suppressMessages(pdftools::pdf_info(path)), NULL))
   psize <- safe(suppressMessages(pdftools::pdf_pagesize(path)), NULL)
   page_width  <- if (!is.null(psize) && "width"  %in% names(psize)) as.numeric(psize$width)  else rep(NA_real_, np)
   page_height <- if (!is.null(psize) && "height" %in% names(psize)) as.numeric(psize$height) else rep(NA_real_, np)
@@ -379,8 +384,53 @@ read_pdf <- function(path, redaction_rects = NULL,
     # for "this layout isn't supported".
     scanned_no_ocr = sum(scanned_no_ocr),
     ocr_tools_available = ocr_tools,
+    # Self-declared document provenance (producer / creator / timestamps /
+    # encryption). Reported, never interpreted -- see .pdf_doc_info.
+    doc_info = doc_info,
     ok = TRUE
   )
+}
+
+# ---------------------------------------------------------------------------
+# Document-level PDF metadata (forensic provenance).
+#
+# "Was this statement produced by the bank, or re-saved by someone with a PDF
+# editor?" is a first-order forensic question, and pdftools -- already a
+# dependency -- answers it for free: pdf_info() returns the Producer / Creator
+# strings the writing tool stamped in, the creation and modification timestamps,
+# and whether the file is encrypted.
+#
+# FACTS ONLY. Every one of these fields is SELF-DECLARED by whatever wrote the
+# file: they can be edited, stripped, or simply reflect an ordinary re-save. So we
+# record them verbatim and never interpret them -- they change no figure, no
+# status and no trust score. The Title key is deliberately NOT captured: it
+# routinely carries the customer's name, and this structure travels into the
+# diagnostics table.
+# .pdf_doc_info(info) -> a fixed-shape list, all-NA when pdf_info was unavailable,
+# so downstream code never has to test whether the call worked.
+.pdf_doc_info <- function(info) {
+  s1 <- function(v) {
+    v <- as.character(v)
+    if (!length(v) || is.na(v[1]) || !nzchar(trimws(v[1]))) NA_character_ else trimws(v[1])
+  }
+  # Timestamps as ISO strings, not POSIXct: this list is written to CSV/JSON and
+  # shown in a table, and a bare POSIXct would render in whatever timezone the
+  # reader happens to be in.
+  ts <- function(v) if (is.null(v) || !length(v) || is.na(v[1])) NA_character_
+                    else format(v[1], "%Y-%m-%d %H:%M:%S")
+  out <- list(producer = NA_character_, creator = NA_character_,
+              created = NA_character_, modified = NA_character_,
+              encrypted = NA, pdf_version = NA_character_)
+  if (is.null(info) || !is.list(info)) return(out)
+  k <- info$keys
+  if (!is.list(k)) k <- list()
+  out$producer  <- s1(k$Producer)
+  out$creator   <- s1(k$Creator)
+  out$created   <- ts(info$created)
+  out$modified  <- ts(info$modified)
+  out$encrypted <- if (is.null(info$encrypted) || !length(info$encrypted)) NA else isTRUE(info$encrypted)
+  out$pdf_version <- s1(info$version)
+  out
 }
 
 # .rects_for_page(redaction_rects, p) -- fetch the rectangle data.frame for page

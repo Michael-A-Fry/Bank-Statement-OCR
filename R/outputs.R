@@ -146,9 +146,12 @@ display_transactions <- function(transactions, extras = NULL) {
 }
 
 # write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
+# `build` is the provenance stamp (engine version + template content hash) the
+# orchestrator passes in; it goes into the JSON -- the full-record output -- so a
+# figure can always be traced back to the build and template that produced it.
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
-                          diagnostics = NULL, metadata = NULL) {
+                          diagnostics = NULL, metadata = NULL, build = NULL) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   paths <- character(0)
 
@@ -191,7 +194,12 @@ write_outputs <- function(parsed, recon, outdir, basename,
 
   if ("json" %in% formats) {
     json_path <- file.path(outdir, paste0(basename, ".json"))
+    # engine_version is stamped even when no `build` is supplied, so EVERY JSON
+    # names the build that wrote it (a constant per install -- the file stays
+    # byte-reproducible). template_sha256 only appears when a template ran.
     full <- list(
+      build = utils::modifyList(list(engine_version = engine_version()),
+                                as.list(build %||% list())),
       header = parsed$header,
       transactions = parsed$transactions,
       extras = parsed$extras,

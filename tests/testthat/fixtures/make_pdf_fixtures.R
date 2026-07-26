@@ -92,6 +92,83 @@ make_anz <- function() {
   invisible(dev.off())
 }
 
+# ------------------------------------------------------- ANZ multi-statement
+# A BUNDLE: two consecutive statements for one account in one PDF -- the commonest
+# real shape a forensic accountant is handed (a year of statements downloaded in
+# one go). Drawn at exactly the same coordinates as make_anz(), so it exercises
+# the SHIPPED anz_everyday_pdf bands, and shaped so the split engine's safety
+# conditions are genuinely met, not bypassed:
+#   * each statement starts a fresh "Page 1 of N" footer -> the declared boundary;
+#   * statement 1 runs over TWO pages ("Page 2 of 2") so the segmenter has to work
+#     out page RANGES, not just "one statement per page";
+#   * the two statements carry DISTINCT periods -> the independent count that
+#     split.R requires before it will commit;
+#   * each statement's opening + its own transactions = its own printed closing,
+#     so every segment reconciles on its own terms.
+# Together those let the test prove the split is right, not merely that it happened.
+make_anz_bundle <- function() {
+  # page(): one statement page -- header block only on its first page, column
+  # labels repeated on every page (as real statements do).
+  page <- function(period, acct, opening, closing, tx, first, pno, ptot) {
+    plot.new(); plot.window(xlim = c(0, 595), ylim = c(842, 0))
+    L(40, 60, "Kauri Bank New Zealand", cex = 1.4, font = 2)
+    L(40, 84, "Statement of Accounts", cex = 1.0)
+    if (first) {
+      L(40, 120, "ALEX RIVERA")
+      L(40, 138, "22 Sample Road, Hamilton 3204")
+      L(40, 176, "Account number", font = 2); L(200, 176, acct)
+      L(40, 194, "Statement period", font = 2); L(200, 194, period)
+      L(40, 212, "Opening balance", font = 2); L(200, 212, paste0("$", fmt(opening)))
+      L(40, 230, "Closing balance", font = 2); L(200, 230, paste0("$", fmt(closing)))
+    }
+    hy <- 280
+    L(40, hy, "Date", font = 2)
+    L(80, hy, "Transaction type and details", font = 2)
+    R(392, hy, "Withdrawals", font = 2)
+    R(469, hy, "Deposits", font = 2)
+    R(542, hy, "Balance", font = 2)
+    y <- hy + 26
+    for (i in seq_len(nrow(tx))) {
+      L(42, y, tx$date[i]); L(82, y, tx$detail[i])
+      if (!is.na(tx$wdl[i])) R(392, y, fmt(tx$wdl[i]))
+      if (!is.na(tx$dep[i])) R(469, y, fmt(tx$dep[i]))
+      R(542, y, fmt(tx$bal[i]))
+      y <- y + 22
+    }
+    L(40, y + 24, sprintf("Page %d of %d", pno, ptot), cex = 0.8)
+  }
+
+  # ---- statement 1: February 2026, two pages ----
+  op1 <- 2410.55
+  tx1 <- data.frame(stringsAsFactors = FALSE,
+    date = c("03 Feb", "05 Feb", "09 Feb", "14 Feb", "21 Feb", "26 Feb"),
+    detail = c("EFTPOS RIVERSIDE DAIRY", "SALARY MATAI HOLDINGS", "DD CITY COUNCIL RATES",
+               "TRANSFER TO SAVINGS", "VISA HARBOUR FUEL", "CREDIT INTEREST"),
+    wdl = c(12.40, NA, 268.15, 400.00, 96.72, NA),
+    dep = c(NA, 3120.00, NA, NA, NA, 2.18))
+  tx1$bal <- running_balance(op1, tx1$wdl, tx1$dep)
+  cl1 <- tx1$bal[nrow(tx1)]
+
+  # ---- statement 2: March 2026, one page; opens where February closed ----
+  op2 <- cl1
+  tx2 <- data.frame(stringsAsFactors = FALSE,
+    date = c("04 Mar", "12 Mar", "25 Mar"),
+    detail = c("EFTPOS TOTARA GROCER", "SALARY MATAI HOLDINGS", "DD RIMU INSURANCE"),
+    wdl = c(58.20, NA, 143.65),
+    dep = c(NA, 3120.00, NA))
+  tx2$bal <- running_balance(op2, tx2$wdl, tx2$dep)
+  cl2 <- tx2$bal[nrow(tx2)]
+
+  path <- file.path(out_dir, "anz_everyday_pdf_bundle_sample.pdf")
+  if (capabilities("cairo")) cairo_pdf(path, width = 8.27, height = 11.69, onefile = TRUE)
+  else pdf(path, width = 8.27, height = 11.69, onefile = TRUE)
+  par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
+  page("from 1 Feb 2026 to 28 Feb 2026", "01-2345-0678901-00", op1, cl1, tx1[1:4, ], TRUE,  1, 2)
+  page("from 1 Feb 2026 to 28 Feb 2026", "01-2345-0678901-00", op1, cl1, tx1[5:6, ], FALSE, 2, 2)
+  page("from 1 Mar 2026 to 31 Mar 2026", "01-2345-0678901-00", op2, cl2, tx2,        TRUE,  1, 1)
+  invisible(dev.off())
+}
+
 # ---------------------------------------------------------------- ASB everyday
 # Bands: date 33-72 | description 82-328 | debit 328-415 | credit 415-478
 #        | balance 478-545.  The column labels carry ASB's "$" suffix, which is
@@ -180,5 +257,5 @@ make_westpac <- function() {
   invisible(dev.off())
 }
 
-make_anz(); make_asb(); make_westpac()
+make_anz(); make_anz_bundle(); make_asb(); make_westpac()
 cat("wrote fixtures to", out_dir, "\n")

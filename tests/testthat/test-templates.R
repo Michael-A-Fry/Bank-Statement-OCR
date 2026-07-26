@@ -158,3 +158,117 @@ test_that("duplicate_template_groups clusters same-layout user templates", {
   none <- duplicate_template_groups(list(x = `$<-`(a, "origin", "default")))
   expect_length(none, 0L)
 })
+
+# ---------------------------------------------------------------------------
+# columns.date.format may be a LIST of candidate formats (#42).
+#
+# THE BUG THIS CLOSES. templates/asb_everyday_csv.yaml pinned "%Y/%m/%d". ASB's
+# own committed sample samples/raw/asb/asb_transaction_export_03.csv writes
+# 13/10/2025, so it matched ASB confidently (7/6) and then returned EVERY date as
+# NA with dates_readable = fail -- the "a bank tweaked its export" brittleness,
+# with a green suite.
+#
+# THE RULE. All-or-nothing: a candidate wins only if it reads EVERY non-empty
+# value in the column. A per-row fallback would be silently wrong -- "03/04" reads
+# as 3 April under one candidate and 4 March under another, on the same statement.
+# ---------------------------------------------------------------------------
+
+test_that("resolve_date_format picks the ONE format that reads the whole column", {
+  fmts <- c("%Y/%m/%d", "%d/%m/%Y")
+  expect_identical(resolve_date_format(c("2014/12/20", "2014/12/21"), fmts), "%Y/%m/%d")
+  expect_identical(resolve_date_format(c("13/10/2025", "17/10/2025"), fmts), "%d/%m/%Y")
+  # blanks are not evidence either way and must not veto a candidate
+  expect_identical(resolve_date_format(c("13/10/2025", "", NA, "  "), fmts), "%d/%m/%Y")
+  # a single declared format resolves to itself, whatever the data says: the
+  # ordinary case must behave exactly as it did before lists were allowed.
+  expect_identical(resolve_date_format(c("nonsense"), "%d/%m/%Y"), "%d/%m/%Y")
+  # nothing to judge on -> the first declared candidate (deterministic)
+  expect_identical(resolve_date_format(character(0), fmts), "%Y/%m/%d")
+  expect_identical(resolve_date_format(c("", NA), fmts), "%Y/%m/%d")
+})
+
+test_that("resolve_date_format refuses a MIXED column rather than guessing", {
+  # The forensic case: one format reads rows 1-2, the other reads row 3, neither
+  # reads all three. Reading them under different formats would put two dates in
+  # the file under a day/month reading and one under month/day -- plausible and
+  # wrong. Fail closed instead: NA -> every date NA -> dates_readable fails.
+  mixed <- c("2014/12/20", "2014/12/21", "13/10/2025")
+  expect_true(is.na(resolve_date_format(mixed, c("%Y/%m/%d", "%d/%m/%Y"))))
+  # ...and no declared candidate at all is also NA, never a silent default
+  expect_true(is.na(resolve_date_format(c("13/10/2025"), character(0))))
+})
+
+test_that("a format LIST is allowed for delimited but REJECTED for pdf", {
+  ok <- .min_tmpl()
+  ok$columns$date <- list(source = "Date", format = c("%Y/%m/%d", "%d/%m/%Y"))
+  expect_length(validate_template(ok), 0L)
+
+  # A pdf template's table.date_format goes straight to as.Date(), which RECYCLES
+  # a format vector element-wise -- row 1 read one way, row 2 the other. That is a
+  # whole column of plausible wrong dates, so it must be refused at load.
+  pdf_t <- list(id = "p", bank = "B", statement_type = "e", format = "pdf",
+    version = 1, min_score = 1, currency = "NZD",
+    fingerprint = list(page_contains_all = list("Transaction type and details")),
+    table = list(date_format = c("%d %b", "%d/%m/%Y"), amount_sign = "signed",
+      columns = list(date = list(x_min = 0, x_max = 80),
+                     description = list(x_min = 80, x_max = 300),
+                     amount = list(x_min = 300, x_max = 400))))
+  expect_true(any(grepl("must be a single date format", validate_template(pdf_t))))
+
+  # a garbage entry anywhere in the list is still rejected (not just position 1)
+  bad <- .min_tmpl()
+  bad$columns$date <- list(source = "Date", format = c("%Y/%m/%d", "not a format"))
+  expect_true(any(grepl("is not a date format", validate_template(bad))))
+})
+
+test_that("a multi-format template still shows ONE date_format per overview row", {
+  # the overview and the duplicate-layout signature need a scalar per template
+  expect_identical(.one_date_format(c("%Y/%m/%d", "%d/%m/%Y")), "%Y/%m/%d | %d/%m/%Y")
+  ov <- template_overview(load_template_set(templates_dir(), "does_not_exist"))
+  asb <- ov[ov$id == "asb_everyday_csv", ]
+  expect_equal(nrow(asb), 1L)
+  expect_identical(asb$date_format, "%Y/%m/%d | %d/%m/%Y")
+})
+
+# ---------------------------------------------------------------------------
+# The fingerprint distinctiveness helpers are SHARED, not private (#9).
+# R/forms.R reuses .fp_fingerprint_problems so a form template passes the SAME
+# generic-fingerprint gate as a statement template. If either helper is ever moved
+# into a local scope or renamed, forms.R silently falls back to a weaker inline
+# rule -- so pin their visibility and signature here.
+# ---------------------------------------------------------------------------
+test_that("the fingerprint distinctiveness helpers are visible at top level", {
+  expect_true(exists(".fp_fingerprint_problems", mode = "function"))
+  expect_true(exists(".fp_specific", mode = "function"))
+  expect_identical(names(formals(.fp_fingerprint_problems)), c("ph", "min_score", "fmt"))
+  # and they still judge: a bare generic word cannot carry a pdf fingerprint
+  expect_true(length(.fp_fingerprint_problems(c("Balance"), 1, "pdf")) > 0)
+  expect_length(.fp_fingerprint_problems(c("Transaction type and details"), 1, "pdf"), 0L)
+  expect_identical(.fp_specific(c("Balance", "Transaction type and details")), c(FALSE, TRUE))
+})
+
+test_that("resolve_delimiter is all-or-nothing and leaves single-delimiter templates alone", {
+  one <- .min_tmpl()                                    # delimiter: ","
+  # the ordinary case short-circuits: the header is never even consulted
+  expect_identical(resolve_delimiter("anything at all", one), ",")
+  expect_identical(resolve_delimiter(NA_character_, one), ",")
+
+  multi <- .min_tmpl(delimiter = c(",", "\t"))
+  expect_identical(resolve_delimiter("Date\tAmount\tParticulars", multi), "\t")
+  expect_identical(resolve_delimiter("Date,Amount,Particulars", multi), ",")
+  # a header carrying only SOME of the fingerprinted columns is not a fit under
+  # either candidate -> first declared, never a partial split
+  expect_identical(resolve_delimiter("Date\tAmount", multi), ",")
+  # no header to judge on -> first declared (deterministic)
+  expect_identical(resolve_delimiter("", multi), ",")
+
+  # a missing delimiter key still means comma, as it always has
+  expect_identical(resolve_delimiter("Date,Amount", .min_tmpl(delimiter = NULL)), ",")
+})
+
+test_that("an empty delimiter entry is rejected at load", {
+  # an empty separator would split every line into single characters
+  expect_true(any(grepl("non-empty separator",
+                        validate_template(.min_tmpl(delimiter = c(",", ""))))))
+  expect_length(validate_template(.min_tmpl(delimiter = c(",", "\t"))), 0L)
+})

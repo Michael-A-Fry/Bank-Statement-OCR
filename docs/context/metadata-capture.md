@@ -158,7 +158,18 @@ documents that intent.
 
 ## Reading it
 
-To analyse, list `logs/metadata/` and read the JSON (one object per run). Because
-each record is self-contained and content-free, the whole folder is safe to copy
-to an analysis box or feed to a local model — no statement content travels with
-it, and any account linkage is only ever a hash.
+To analyse, list `logs/metadata/` and read the JSON (one object per run). Each
+record is self-contained and carries **no statement content**: no transaction rows,
+descriptions, amounts or balances, no filename (only the file *extension* and the
+content hash), and any account linkage is only ever a hash.
+
+Two fields are worth naming before you copy the folder anywhere, because "content-free"
+is not the same as "anonymous": a record does carry **`requested_by`** (who ran the
+conversion) and the **statement period dates**. That is intentional — they are what
+make drift and coverage analysis meaningful — but it means the folder is *low-risk*,
+not *no-risk*. Treat it as internal operational data: fine to copy to an analysis box
+inside the organisation, not something to hand outside it without a look first.
+
+The **run** log (`logs/runs/`) is a different matter: it does record the uploaded
+**filename**, which is frequently identifying. See
+`architecture/build-contract.md` §10.

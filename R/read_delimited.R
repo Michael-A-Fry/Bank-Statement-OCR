@@ -23,6 +23,26 @@
   if (length(m) == 1 && m[1] == -1) 0L else length(m)
 }
 
+# .is_padding_line(ln, delim) -- TRUE when a physical data line holds NOTHING but
+# separators and whitespace (",,,,,,"). Spreadsheets routinely pad an export out to
+# a fixed block, so a two-transaction statement arrives with two dozen such lines
+# (samples/raw/asb/asb_transaction_export_03.csv has 24).
+#
+# WHY these are ignored exactly like an EMPTY line, and why that is not a silent
+# drop: the reader already ignores "" lines, and a line of bare separators carries
+# the same amount of information -- no date, no amount, no description, no
+# reference. It cannot be a transaction and cannot move a total. Keeping them
+# produced 24 phantom rows in the accountant's workbook, all flagged `malformed`,
+# which BURIES a genuinely malformed row in noise -- the flag stops meaning
+# anything. The test is applied to the raw physical line BEFORE any field mapping,
+# so a row whose content merely landed in unexpected columns still has characters
+# in it and is kept + flagged as before. The count is returned as
+# `n_padding_lines` so it is reported, never invisible.
+.is_padding_line <- function(ln, delim) {
+  stripped <- gsub(delim, "", as.character(ln), fixed = TRUE)
+  !nzchar(gsub("[[:space:]]", "", stripped))
+}
+
 # .split_records(lines) -- coalesce physical data lines into logical CSV records
 # respecting quoted fields. Returns a list of records, each
 # list(text = combined text with embedded newlines, lines = physical indices).
@@ -65,26 +85,39 @@
 }
 
 # read_delimited(input, template) -> list(table, source_lines, source_spans,
-#   header_line_no, raw, field_counts, expected_fields, n_data_lines)
+#   header_line_no, raw, field_counts, expected_fields, n_data_lines,
+#   n_padding_lines)
 read_delimited <- function(input, template) {
   lines <- input$lines %||% character(0)
-  delim <- template$delimiter %||% ","
 
   empty <- list(
     table = data.frame(), source_lines = integer(0), source_spans = list(),
     header_line_no = NA_integer_, raw = character(0),
-    field_counts = integer(0), expected_fields = NA_integer_, n_data_lines = 0L)
+    field_counts = integer(0), expected_fields = NA_integer_, n_data_lines = 0L,
+    n_padding_lines = 0L)
 
   hidx <- locate_header(lines, template)
   if (is.na(hidx)) return(empty)
 
   header_line <- lines[hidx]
+  # The delimiter is resolved from the HEADER LINE, exactly as detection resolves
+  # it (R/detect.R .header_fields), so the reader and the detector can never
+  # disagree about how this file splits. A template declaring one delimiter --
+  # every shipped template but ASB -- resolves straight back to it.
+  delim <- resolve_delimiter(header_line, template)
   header_names <- .record_fields(header_line, delim)
   expected_fields <- length(header_names)
 
   data_idx_all <- if (hidx < length(lines)) seq.int(hidx + 1L, length(lines)) else integer(0)
-  # Keep every non-empty physical data line (no silent drops); blanks ignored.
+  # Keep every physical data line that carries CONTENT (no silent drops). Ignored:
+  # blank lines, and lines of bare separators + whitespace (spreadsheet padding --
+  # see .is_padding_line). Both are excluded from n_data_lines too, so reconcile's
+  # completeness proof compares like with like; the padding count is reported
+  # separately so the omission is stated, not hidden.
   data_idx <- data_idx_all[nzchar(trimws(lines[data_idx_all]))]
+  padding <- if (length(data_idx)) .is_padding_line(lines[data_idx], delim) else logical(0)
+  n_padding_lines <- sum(padding)
+  data_idx <- data_idx[!padding]
   n_data_lines <- length(data_idx)
 
   records <- .split_records(lines[data_idx], data_idx)
@@ -122,6 +155,7 @@ read_delimited <- function(input, template) {
     raw = raw,
     field_counts = field_counts,
     expected_fields = as.integer(expected_fields),
-    n_data_lines = n_data_lines
+    n_data_lines = n_data_lines,
+    n_padding_lines = as.integer(n_padding_lines)
   )
 }

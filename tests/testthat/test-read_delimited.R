@@ -97,3 +97,69 @@ test_that("an unbalanced quote never fails the whole statement", {
   # convert_statement must never throw; it degrades to needs_review, not failed.
   expect_error(parse_statement(input, .bnz_tmpl()), NA)
 })
+
+# ---------------------------------------------------------------------------
+# Spreadsheet PADDING lines (bare separators, no content).
+# A CSV saved out of a spreadsheet is routinely padded to a fixed block, so a
+# two-transaction statement arrives with two dozen ",,,,,," lines. Those used to
+# become empty transactions, each flagged 'malformed' -- which is worse than
+# useless: it buries a genuinely malformed row and puts invented rows in the
+# workbook. They are now ignored exactly like an empty line, COUNTED, and excluded
+# from the completeness proof so it still compares like with like.
+# ---------------------------------------------------------------------------
+
+test_that("bare-separator lines are counted as padding, not parsed as rows", {
+  tf <- tempfile(fileext = ".csv")
+  writeLines(c("Date,Payee,Particulars,Code,Reference,Amount",
+               "01/01/2026,Shop,P,C,R,-25.00",
+               ",,,,,",
+               "  ,, , ,,  ",
+               "02/01/2026,Bank,P,C,R,11.50",
+               ",,,,,"), tf)
+  r <- read_delimited(read_input(tf), .bnz_tmpl())
+  expect_equal(nrow(r$table), 2L)
+  expect_equal(r$n_data_lines, 2L)          # the proof counts only real records
+  expect_equal(r$n_padding_lines, 3L)       # ...and the omission is reported
+  expect_identical(r$table$Amount, c("-25.00", "11.50"))
+
+  p <- parse_statement(read_input(tf), .bnz_tmpl())
+  expect_equal(nrow(p$transactions), 2L)
+  expect_true(all(p$transactions$flags == ""))
+  expect_equal(p$padding_line_count, 3L)
+  k <- reconcile(p, .bnz_tmpl())$kpis
+  expect_equal(k$status[k$name == "no_unparsed_rows"], "pass")
+})
+
+test_that("a line with ANY content is still kept and flagged, never called padding", {
+  # The guard against over-reach. Only a line with nothing but separators and
+  # whitespace is padding; a line carrying so much as one character is a record,
+  # is kept, and is flagged if it does not parse -- the fail-closed path is intact.
+  tf <- tempfile(fileext = ".csv")
+  writeLines(c("Date,Payee,Particulars,Code,Reference,Amount",
+               "01/01/2026,Shop,P,C,R,-25.00",
+               ",,,,,x",                      # one stray character
+               ",,,,,\"\""), tf)              # an explicitly EMPTY quoted field
+  r <- read_delimited(read_input(tf), .bnz_tmpl())
+  expect_equal(nrow(r$table), 3L)
+  expect_equal(r$n_padding_lines, 0L)
+  p <- parse_statement(read_input(tf), .bnz_tmpl())
+  expect_equal(nrow(p$transactions), 3L)
+  expect_true(all(grepl("malformed", p$transactions$flags[2:3])))
+})
+
+test_that("padding never masks a genuinely LOST record (completeness still fails)", {
+  # A stray cross-line quote merges two records into one. Even with padding lines
+  # in the same file, the completeness KPI must still catch the loss.
+  tf <- tempfile(fileext = ".csv")
+  writeLines(c("Date,Payee,Particulars,Code,Reference,Amount",
+               "01/01/2026,\"Shop,P,C,R,-25.00",
+               "02/01/2026,Bank,P,C,R,11.50\"",
+               "03/01/2026,Cafe,P,C,R,-3.00",
+               ",,,,,"), tf)
+  p <- parse_statement(read_input(tf), .bnz_tmpl())
+  expect_equal(p$padding_line_count, 1L)
+  k <- reconcile(p, .bnz_tmpl())$kpis
+  row <- k[k$name == "no_unparsed_rows", ]
+  expect_equal(row$status, "fail")
+  expect_equal(as.integer(row$expected), 3L)   # padding excluded from the count
+})

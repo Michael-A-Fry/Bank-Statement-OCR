@@ -127,3 +127,54 @@ test_that("draft_template auto-drafts the tutorial PDF (2 amount cols + year-les
   expect_true(is.data.frame(tx) && nrow(tx) >= 10)
   expect_true(all(startsWith(tx$date, "2026-05-")))              # year from the period
 })
+
+# ---------------------------------------------------------------------------
+# A skipped template must stay VISIBLE through the MERGE (#28 follow-through).
+#
+# load_templates() carries its skip reasons back on attr(x, "load_errors") so a
+# dropped template is no longer invisible. But the app calls load_template_set(),
+# which subsets the list twice (the `hidden` filter and the `sample` filter) --
+# and subsetting an R list DROPS its attributes. Without an explicit re-attach the
+# reasons were thrown away at the last line and an analyst whose saved template
+# vanished after an update had no way to find out why: exactly the defect
+# load_errors exists to close, silently re-opened one function later.
+# ---------------------------------------------------------------------------
+
+test_that("load_template_set carries the skip reasons through the merge", {
+  udir <- tempfile("ut_"); dir.create(udir)
+  on.exit(unlink(udir, recursive = TRUE), add = TRUE)
+  # a fingerprint of nothing but universal column names -> rejected at load
+  writeLines(c("id: generic_user_tmpl", "bank: X", "statement_type: everyday",
+               "format: delimited", "version: 1", "min_score: 1", "currency: NZD",
+               "fingerprint:", "  header_contains_all: [Date, Amount]",
+               "delimiter: ','", "columns:",
+               "  date: {source: Date, format: '%d/%m/%Y'}",
+               "  amount: {source: Amount}", "  description: {source: Memo}",
+               "amount_sign: signed"), file.path(udir, "generic.yaml"))
+  # ...and a second one that is simply unparseable YAML
+  writeLines("id: [unclosed", file.path(udir, "broken.yaml"))
+
+  tset <- suppressWarnings(load_template_set(templates_dir(), udir))
+  errs <- attr(tset, "load_errors")
+  expect_false(is.null(errs))                       # the attribute SURVIVED
+  expect_length(errs, 2L)
+  expect_true(any(grepl("generic_user_tmpl", errs)))
+  expect_true(any(grepl("too generic", errs)))
+  expect_true(any(grepl("broken.yaml", errs)))
+  # the templates themselves are still (correctly) refused
+  expect_false("generic_user_tmpl" %in% names(tset))
+
+  # ...and it survives the include_hidden path too (a different subset)
+  errs2 <- attr(suppressWarnings(
+    load_template_set(templates_dir(), udir, include_hidden = TRUE)), "load_errors")
+  expect_length(errs2, 2L)
+})
+
+test_that("a clean set reports an EMPTY reason list, never NULL", {
+  # "no attribute" and "no problems" must not look the same to the caller: the app
+  # decides whether to show "N template(s) could not be loaded" from this.
+  errs <- attr(load_template_set(templates_dir(), "does_not_exist"), "load_errors")
+  expect_false(is.null(errs))
+  expect_length(errs, 0L)
+  expect_type(errs, "character")
+})

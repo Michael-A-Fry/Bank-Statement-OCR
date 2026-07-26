@@ -63,7 +63,7 @@ Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 | Verbatim special characters | ✅ | never stripped (tested) |
 | Interior double spaces preserved | ✅ | `Auckland      Nz` kept byte‑for‑byte (ANZ Visa test) |
 | Very long / embedded delimiters (quoted) | ✅ | quoted‑field parsing |
-| Wrapped multi‑line description (one txn, several lines) - **PDF** | ⛔ | needs the PDF row parser + a real sample |
+| Wrapped multi‑line description (one txn, several lines) - **PDF** | ✅ | the continuation merge in `R/parse_pdf_table.R` folds a date‑less, money‑less line into the transaction above it (proximity‑gated, and footer/"continued on next page" noise is excluded). Every word is accounted for — none is dropped — and the row is flagged `row_text_merged` so a reviewer can see the description was **assembled**, not printed on one line. Opt out per template with `merge_continuation: false` |
 
 ## E. Transaction structure
 

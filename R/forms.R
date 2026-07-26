@@ -10,20 +10,59 @@
 is_fields_template <- function(t) identical(t$mode %||% "", "fields") && !is.null(t$fields)
 
 # load_fields_templates(dir, user_dir) -> named list<template>, keyed by id. Only
-# mode:fields templates are returned. Lenient (a bad one is skipped, not fatal) so
-# one malformed form template can never break the others.
+# VALID mode:fields templates are returned. Lenient (a bad one is skipped, not
+# fatal) so one malformed form template can never break the others -- but never
+# SILENT: the skip reasons come back on attr(x, "load_errors"), exactly as
+# load_templates() does for statement templates, so the app can say which form
+# template vanished and why.
 load_fields_templates <- function(dir = "fields_templates", user_dir = NULL) {
   out <- list()
+  errors <- character(0)
   dirs <- c(dir, user_dir)
   for (d in dirs) {
     if (is.null(d) || !dir.exists(d)) next
     for (f in list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)) {
       t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
       if (is.null(t) || !is_fields_template(t) || is.null(t$id)) next
+      probs <- validate_fields_template(t)
+      if (length(probs)) {
+        errors <- c(errors, sprintf("%s: %s", t$id, paste(probs, collapse = "; ")))
+        next
+      }
       if (is.null(out[[t$id]])) out[[t$id]] <- t
     }
   }
+  attr(out, "load_errors") <- errors
   out
+}
+
+# .fields_fingerprint_problems(ph) -- the SAME generic-fingerprint gate the
+# statement templates pass, applied to a form template.
+#
+# WHY a form template needs it MORE, not less. detect_form() matches when every
+# phrase is found anywhere in the page text, and it is reached for every statement
+# no transaction template recognised. There is no reconciliation behind it and no
+# balance check to catch a wrong match -- just an extraction and a download button.
+# So a form template whose fingerprint is made of words that sit on every bank
+# statement would turn a correct "unsupported" verdict into a confident, unchecked
+# "form" result. detect_form requires ALL phrases, so the effective min_score is
+# the phrase count; that is what is handed to the shared gate.
+.fields_fingerprint_problems <- function(ph) {
+  ph <- trimws(as.character(unlist(ph %||% character(0))))
+  ph <- ph[!is.na(ph) & nzchar(ph)]
+  if (!length(ph)) return(paste0(
+    "fingerprint.page_contains_all is required: without identifying phrases a form ",
+    "template can never be matched, and a template that matches nothing is a trap"))
+  # The shared implementation lives in R/templates.R and is the single source of
+  # truth for "is this fingerprint distinctive / free of PII". Fall back to its
+  # distinctiveness rule only if that file is not loaded (never weaker).
+  if (exists(".fp_fingerprint_problems", mode = "function"))
+    return(.fp_fingerprint_problems(ph, min_score = length(ph), fmt = "pdf"))
+  specific <- (lengths(strsplit(ph, "\\s+")) >= 2) | (nchar(ph) >= 10)
+  if (!any(specific)) return(paste0(
+    "fingerprint.page_contains_all is too generic: add a distinctive phrase (a ",
+    "document heading or a multi-word label, not single words like 'Balance')"))
+  character(0)
 }
 
 # validate_fields_template(t) -> character() of problems (empty = valid).
@@ -33,6 +72,7 @@ validate_fields_template <- function(t) {
   if (is.null(t$id) || !nzchar(as.character(t$id))) p <- c(p, "missing 'id'")
   if (!identical(t$mode %||% "", "fields")) p <- c(p, "mode must be 'fields'")
   if (is.null(t$fields) || !length(t$fields)) p <- c(p, "at least one field is required")
+  p <- c(p, .fields_fingerprint_problems(t$fingerprint$page_contains_all))
   p
 }
 
@@ -126,6 +166,7 @@ convert_form <- function(path, fields_dir = "fields_templates",
 
     fields <- extract_fields(input, tmpl, dict)
     res$template_id <- tmpl$id %||% NA_character_
+    res$template_version <- tmpl$version %||% NA
     res$fields <- fields
     res$n_fields <- nrow(fields)
     res$required_missing <- sum(isTRUE(fields$flagged) | fields$flagged, na.rm = TRUE)
@@ -157,6 +198,13 @@ save_fields_template <- function(tmpl, dir = "fields_templates_user") {
 # extraction, so ONE upload handles bank statements AND labelled-value PDFs (IRD
 # summaries, KiwiSaver, letters). The result carries `kind` = "statement" or
 # "form" so the UI knows which way to render it. Never throws.
+#
+# THE RUN LOG IS WRITTEN HERE, ONCE. convert_statement() used to write it before
+# returning, so a form that converted perfectly was already on record as an
+# `unsupported` statement under the same run_id -- reported as a failure in Admin
+# and counted in the "build these next" queue, which reads exactly that field. The
+# statement pass now only BUILDS the record (res$run_log); this function writes it
+# after the final outcome is known. Nothing is ever rewritten.
 convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
                              templates_dir = "templates", user_templates_dir = "templates_user",
                              fields_dir = "fields_templates", user_fields_dir = NULL,
@@ -165,7 +213,8 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
                            templates_dir = templates_dir, user_templates_dir = user_templates_dir,
                            requested_by = requested_by, formats = formats, logdir = logdir,
-                           force_template = force_template, force_rows = force_rows)
+                           force_template = force_template, force_rows = force_rows,
+                           log = FALSE)
   res$kind <- "statement"
   # Fall back to form extraction only when nothing matched AND the user didn't
   # force a transaction template.
@@ -175,8 +224,26 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
     if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
       fr$kind <- "form"
       fr$run_id <- res$run_id      # keep the run id so logging/feedback still line up
-      return(fr)
+      # Reuse the statement pass's record (who/when/source/layout signature all
+      # still true) and overwrite what the FORM decided, so the one record on
+      # disk describes what actually happened. The detection fields
+      # (closest_template / detect_detail / layout_signature) are kept on purpose:
+      # they still say which transaction templates nearly fitted.
+      fr$run_log <- utils::modifyList(res$run_log %||% list(), list(
+        kind              = "form",
+        status            = fr$status,
+        detected_template = fr$template_id %||% NA_character_,
+        template_origin   = "fields",
+        template_version  = fr$template_version %||% NA,
+        template_sha256   = NA_character_,
+        trust_level       = NA_character_,
+        row_count         = 0L,                 # a form has fields, not rows
+        n_fields          = as.integer(fr$n_fields %||% NA_integer_),
+        kpi_fail_count    = 0L,
+        message           = paste(fr$messages, collapse = " | ")))
+      res <- fr
     }
   }
+  safe(log_run(logdir, res))
   res
 }

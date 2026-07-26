@@ -27,7 +27,23 @@ suppressWarnings(tryCatch({
   source(file.path(app_dir, "R", "util.R"))
   source(file.path(app_dir, "R", "config.R"))
 }, error = function(e) NULL))
-cfg_port <- tryCatch(as.integer(load_config()$app$port), error = function(e) NA_integer_)
+.cfg <- tryCatch(load_config(), error = function(e) NULL)
+# A config.yaml that does not parse reverts to built-in defaults -- including the
+# placeholder admin password and the default Qlik feed folder. This script is how
+# the server is actually started, so the operator must see it here, on the console,
+# not discover it weeks later from a dashboard pointing at the wrong folder.
+.cfg_err <- tryCatch(config_error(.cfg), error = function(e) NULL)
+if (!is.null(.cfg_err)) {
+  cat("\n*** SETTINGS FILE NOT LOADED ***\n", .cfg_err, "\n",
+      "Statement Studio is starting on BUILT-IN DEFAULTS: the placeholder admin\n",
+      "password and the default analytics-feed folder. Fix the file and restart.\n\n",
+      sep = "", file = stderr())
+}
+if (isTRUE(tryCatch(admin_password_is_default(.cfg), error = function(e) FALSE)))
+  cat("Statement Studio: Admin is CLOSED - no admin password is set. Set app.admin_password\n",
+      "in config/config.yaml or the BSO_ADMIN_PASSWORD environment variable, then restart.\n",
+      sep = "", file = stderr())
+cfg_port <- tryCatch(as.integer(.cfg$app$port), error = function(e) NA_integer_)
 if (length(cfg_port) != 1 || is.na(cfg_port)) cfg_port <- 8100L
 port <- suppressWarnings(as.integer(Sys.getenv("BSO_PORT", as.character(cfg_port))))
 if (is.na(port)) port <- cfg_port
@@ -36,7 +52,7 @@ cat(sprintf("Statement Studio — starting on port %d (from %s). Open http://<th
 # Match app.R's upload ceiling here too: this script is how the server actually
 # starts, and Shiny's 5 MB default would reject the scanned statements the OCR path
 # exists for before they ever reach the engine.
-.max_mb <- suppressWarnings(as.numeric(tryCatch(load_config()$app$max_upload_mb, error = function(e) NA)))
+.max_mb <- suppressWarnings(as.numeric(tryCatch(.cfg$app$max_upload_mb, error = function(e) NA)))
 if (!is.finite(.max_mb) || .max_mb <= 0) .max_mb <- 200
 options(shiny.maxRequestSize = .max_mb * 1024^2)
 shiny::runApp(app_dir, host = "0.0.0.0", port = port, launch.browser = FALSE)

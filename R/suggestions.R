@@ -11,21 +11,46 @@
 # involved yet -- the ranking is plain frequency. A local model can later slot in
 # to rank / classify better, but the approval gate (and the determinism) stays.
 
-# .read_metadata_raw(logdir) -- every metadata record as a parsed list (nested
-# structure preserved, unlike the flattened run-log reader). A half-written file
-# is skipped.
-.read_metadata_raw <- function(logdir = "logs") {
+# .read_metadata_raw(logdir, max_records) -- the NEWEST metadata records as parsed
+# lists (nested structure preserved, unlike the flattened run-log reader). A
+# half-written file is skipped.
+#
+# BOUNDED ON PURPOSE. logs/metadata keeps one JSON per conversion FOREVER (it is
+# exempt from log rollup), and this is called from a Shiny observer: reading the
+# whole corpus took ~6 s at 15k records, about a year of normal volume, and grows
+# without limit. Suggestions are a frequency ranking of what the engine keeps
+# missing -- the newest few thousand records answer that as well as all of them --
+# so we read the newest `max_records` by file time and TELL the caller how many of
+# how many were read, rather than quietly ranking a subset.
+.read_metadata_raw <- function(logdir = "logs", max_records = 2000L) {
   dir <- file.path(logdir, "metadata")
   files <- if (dir.exists(dir)) list.files(dir, pattern = "\\.json$", full.names = TRUE) else character(0)
+  total <- length(files)
+  n <- suppressWarnings(as.integer(max_records %||% NA)[1])
+  if (!is.na(n) && n > 0L && total > n) {
+    mt <- suppressWarnings(as.numeric(file.mtime(files)))
+    mt[is.na(mt)] <- -Inf
+    # Newest first; the filename breaks ties so the choice is deterministic (two
+    # records written in the same second must not depend on directory order).
+    files <- files[order(mt, files, decreasing = TRUE)][seq_len(n)]
+  }
   recs <- lapply(files, function(f)
     safe(jsonlite::fromJSON(paste(safe_readlines(f), collapse = "\n"), simplifyVector = FALSE), NULL))
-  Filter(Negate(is.null), recs)
+  recs <- Filter(Negate(is.null), recs)
+  attr(recs, "total") <- total
+  attr(recs, "scanned") <- length(files)
+  recs
 }
 
-# lexicon_suggestions(logdir, min_count) -> list(indicator_tokens, unmapped_columns),
-# each a frequency-ranked data.frame. `min_count` hides one-offs.
-lexicon_suggestions <- function(logdir = "logs", min_count = 1L) {
-  recs <- .read_metadata_raw(logdir)
+# lexicon_suggestions(logdir, min_count, max_records) ->
+#   list(indicator_tokens, unmapped_columns, scanned, total)
+# The two frames are frequency-ranked; `min_count` hides one-offs. `scanned` /
+# `total` let the UI say plainly which slice of the corpus the ranking came from
+# (a bounded read that does not admit it is a silent half-answer).
+lexicon_suggestions <- function(logdir = "logs", min_count = 1L, max_records = 2000L) {
+  recs <- .read_metadata_raw(logdir, max_records = max_records)
+  scanned <- attr(recs, "scanned") %||% length(recs)
+  total   <- attr(recs, "total") %||% length(recs)
   toks <- character(0); cols <- character(0)
   for (r in recs) {
     nv <- r$novelty
@@ -44,7 +69,8 @@ lexicon_suggestions <- function(logdir = "logs", min_count = 1L) {
                stringsAsFactors = FALSE, row.names = NULL)
   }
   list(indicator_tokens = .rank(toks, "token"),
-       unmapped_columns = .rank(cols, "column"))
+       unmapped_columns = .rank(cols, "column"),
+       scanned = as.integer(scanned), total = as.integer(total))
 }
 
 # lexicon_append(category, values, path) -- APPROVE a suggestion: union `values`

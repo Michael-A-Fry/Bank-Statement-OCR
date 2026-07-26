@@ -9,11 +9,26 @@ min_score: 6
 fingerprint:
   header_contains_all: [Date, "Unique Id", "Tran Type", "Cheque Number", Payee, Memo, Amount]
   filename_regex: null
-delimiter: ","
+# ASB publishes the SAME FastNet export as a comma CSV and as a tab-delimited
+# .tdv file (asb_transaction_export_01.csv / _02.tdv are byte-identical apart from
+# the separator). Listing both lets one template read both: the engine keeps the
+# delimiter under which the header row carries EVERY column named below, and only
+# that one -- splitting a tab-delimited line on commas yields a single field, so a
+# wrong separator can never "sort of" work.
+delimiter: [",", "\t"]
 preamble:
-  header_regex: "^Date,Unique Id,Tran Type"
+  # Matches the header under either separator (this regex only LOCATES the row;
+  # the delimiter above decides how it is split).
+  header_regex: '^Date[,\t]Unique Id[,\t]Tran Type'
 columns:
-  date:        {source: Date, format: "%Y/%m/%d"}
+  # ASB's FastNet export writes the SAME column two ways depending on when it was
+  # produced: "2014/12/20" (export_01) and "13/10/2025" (export_03). Listing both
+  # candidates lets one template read both eras. The engine picks the ONE format
+  # that reads EVERY non-empty date in the file (resolve_date_format); it never
+  # mixes formats row by row, and if neither fits the whole column every date comes
+  # back NA with dates_readable = fail rather than a plausible guess.
+  # Order matters only for determinism, not for correctness.
+  date:        {source: Date, format: ["%Y/%m/%d", "%d/%m/%Y"]}
   amount:      {source: Amount}
   description: {source: Memo}
   reference:   {source: "Unique Id"}

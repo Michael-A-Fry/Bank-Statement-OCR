@@ -5,9 +5,13 @@
 # into trimmed field names.
 .header_fields <- function(lines, template) {
   if (length(lines) == 0) return(character(0))
-  delim <- template$delimiter %||% ","
   hidx <- locate_header(lines, template)
   if (is.na(hidx)) return(character(0))
+  # resolve_delimiter: a template may declare SEVERAL separators for one layout
+  # (ASB publishes the same export as CSV and as tab-delimited). Resolved from the
+  # header line here and from the SAME header line in read_delimited, so detection
+  # and the reader can never disagree about how the file splits.
+  delim <- resolve_delimiter(lines[hidx], template)
   fields <- utils::read.table(text = lines[hidx], sep = delim, quote = "\"",
                               stringsAsFactors = FALSE, colClasses = "character",
                               header = FALSE, check.names = FALSE,

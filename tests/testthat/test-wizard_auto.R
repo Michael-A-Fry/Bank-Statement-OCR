@@ -46,3 +46,62 @@ test_that("suggest_pdf_columns is safe on input with no words", {
   expect_equal(nrow(suggest_pdf_columns(list(words = list()))), 0L)
   expect_equal(nrow(suggest_pdf_columns(list())), 0L)
 })
+
+# ---------------------------------------------------------------------------
+# The drafted-fingerprint BRAND vocabulary (#10 follow-through).
+#
+# .fp_brand_words() resolves through lex("fingerprint_brand_words") so a bank the
+# built-in list has never heard of ("Tangata Finance") can be taught by a
+# DICTIONARY edit rather than a code change -- otherwise the drafter mistakes that
+# bank's own masthead for a customer NAME and throws away its best fingerprint,
+# producing its weakest templates for exactly the banks nobody has taught it yet.
+#
+# lex() returns NULL for a category R/lexicon.R has not registered, so the union
+# must degrade to the built-in list rather than erroring. THAT is what is pinned
+# here; the second block strengthens automatically the moment the category is
+# registered in .lexicon_spec() / .lexicon_defaults() (see the handoff note).
+# ---------------------------------------------------------------------------
+
+test_that("the brand vocabulary always keeps its built-in list, registered or not", {
+  clear_lexicon_cache()
+  w <- .fp_brand_words()
+  expect_true(all(.FP_BRAND_DEFAULT %in% w))
+  expect_true(all(c("mastercard", "kiwibank", "co-operative") %in% w))
+  # and it compiles to a usable, correctly-ESCAPED alternation (an admin must be
+  # able to type "M&S Bank" without knowing regex, and a stray metacharacter in
+  # the dictionary must never widen or break the match)
+  rx <- .fp_brand_rx()
+  expect_true(grepl(rx, "westpac everyday account statement"))
+  expect_false(grepl(rx, "jordan te awa"))
+  expect_error(grepl(rx, "probe"), NA)
+})
+
+test_that("a lexicon-taught brand word reaches the drafter once the category exists", {
+  lx <- tempfile(fileext = ".yaml")
+  writeLines("fingerprint_brand_words: [tangata]", lx)
+  clear_lexicon_cache()
+  old <- Sys.getenv("BSO_LEXICON", NA_character_)
+  Sys.setenv(BSO_LEXICON = lx)
+  on.exit({ if (is.na(old)) Sys.unsetenv("BSO_LEXICON") else Sys.setenv(BSO_LEXICON = old)
+            clear_lexicon_cache() }, add = TRUE)
+  w <- .fp_brand_words()
+  expect_true(all(.FP_BRAND_DEFAULT %in% w))   # NEVER weaker than the built-in
+  if ("fingerprint_brand_words" %in% names(lexicon_categories())) {
+    # registered: the dictionary edit plumbs through, which is the whole point
+    expect_true("tangata" %in% w)
+    expect_length(validate_lexicon(list(fingerprint_brand_words = list("tangata"))), 0L)
+  } else {
+    # NOT registered yet: the built-in still works (fail-safe), but the category is
+    # inert -- an admin's dictionary edit is ignored, and the lexicon validator
+    # will not accept it either (today it raises rather than reporting, which is a
+    # separate R/lexicon.R defect; both outcomes are "not accepted", which is what
+    # matters here). See the handoff: R/lexicon.R must add it to .lexicon_spec()
+    # (type "list") and .lexicon_defaults() (= .FP_BRAND_DEFAULT). Delete this
+    # branch when it does.
+    expect_false("tangata" %in% w)
+    accepted <- tryCatch(
+      length(validate_lexicon(list(fingerprint_brand_words = list("tangata")))) == 0L,
+      error = function(e) FALSE)
+    expect_false(accepted)
+  }
+})

@@ -9,6 +9,10 @@ app:
   title: Statement Studio
   # The Admin-tab barrier - a simple gate to share with a few maintainers.
   # (Can also be set via the BSO_ADMIN_PASSWORD environment variable, which wins.)
+  # CHANGE THIS. While it is still the placeholder "changeme" (or blank) the app
+  # REFUSES to open the Admin tab for anybody - Admin manages templates, the shared
+  # label dictionary and the analytics feed, so a password printed in the docs is
+  # no password at all. Set it here, or set BSO_ADMIN_PASSWORD, then restart.
   admin_password: changeme
   # The URL Qlik's "Convert a statement" tile opens. Point it at your Shiny deployment.
   shiny_url: http://localhost:8100
@@ -16,9 +20,12 @@ app:
   # Biggest statement a user may upload, in MB. Shiny's own default is only 5 MB,
   # which rejects scanned statements; 200 comfortably fits a year-long 300-dpi scan.
   max_upload_mb: 200
-  # Convert shows proven templates by default; a tick-box brings in user-created
-  # ones. Set true to start with that box ticked (team mostly uses its own templates).
-  user_templates_default: false
+  # Whether Convert's "Include user-created templates" box starts TICKED. true, so
+  # a template someone builds here really does convert that bank automatically from
+  # then on. This does NOT loosen governance: what reaches Qlik is gated separately
+  # on template origin (feed.allowed_template_origins below). Set false only if
+  # your team wants to opt in to its own templates on every conversion.
+  user_templates_default: true
 
 paths:
   templates: templates                 # PROVEN / curated templates (Qlik uses ONLY these)
@@ -30,6 +37,15 @@ paths:
   uploads: uploads
   requests: requests
   logs: logs
+
+retention:
+  # A copy of every converted statement is kept under uploads/<id>/ so a format
+  # that failed can be picked up and fixed. These are REAL client statements.
+  # After this many days the tidy-up deletes the copied file and keeps only the
+  # small record of what happened to it. The Convert page tells users this number
+  # before they upload. Set 0 to keep the copies indefinitely (then the page says
+  # that instead).
+  uploads_keep_days: 90
 
 # A `metadata:` block also exists (local-only capture detail). It is normally
 # managed from Admin -> Data capture rather than hand-edited, so it is omitted

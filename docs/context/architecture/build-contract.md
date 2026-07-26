@@ -6,33 +6,74 @@ The single source of truth every module and agent codes against. Pure **R only**
 Deterministic - **no machine learning**. Never crash - return structured status.
 
 ## 1. Directory layout
+`R/` holds **45 single-concern modules**. The core conversion path is the first
+group; the rest support it. (Every module's own header comment is the authority on
+what it does — this table is the map, not a duplicate spec.)
+
 ```
-R/                      engine functions (one concern per file)
-  schema.R              canonical schema + constructors
-  util.R                small shared helpers (safe IO, status objects)
-  read_input.R          dispatch by extension -> reader
-  read_delimited.R      CSV/TSV/TDV reader (base R, quoting + preamble)
-  read_excel.R          .xlsx reader (openxlsx)
+R/   -- the conversion path (input -> parsed -> checked -> written)
+  schema.R              canonical core schema, constructors, coercion
+  util.R                small shared helpers (safe IO, hashing, status objects)
+  params.R              every numeric tuning threshold, in one visible place
+  config.R              deployment settings (config.yaml) + defaults
+  read_input.R          dispatch by extension -> reader; also the .xlsx reader (readxl)
+  read_delimited.R      CSV/TSV/TDV/TXT reader (base R, quoting + preamble)
   read_pdf.R            PDF text + word-box reader (pdftools) + redaction guard
-  templates.R           load + validate YAML templates
-  detect.R              deterministic bank/statement detection + trust
+  parse_pdf_table.R     PDF word boxes -> transaction table (x-bands / anchors)
+  templates.R           load + validate declarative per-bank YAML templates
+  detect.R              deterministic fingerprint scoring -> template match
   normalise.R           parse_date / parse_amount / clean_description (verbatim)
   labels.R              label dictionary + matcher (single labelled values)
+  lexicon.R             externalised recognition vocabularies (admin-editable)
   parse.R               parse_statement(input, template) -> parsed object
-  reconcile.R           reconciliation KPIs + trust score
   extract_metadata.R    generic statement metadata + multi-statement detection
   extract_fields.R      key-value ("mode: fields") extraction (IRD/forms)
-  outputs.R             write xlsx (multi-sheet) / csv / json
-  logging.R             append-only run + feedback logs
-  feedback.R            per-conversion feedback capture (feedback.jsonl)
-  convert.R             convert_statement(...) orchestrator (never throws)
-templates/              declarative per-bank YAML templates (runtime-loadable)
-dictionaries/labels.yaml  shared synonym dictionary for labelled values
+  forms.R               orchestrator for the fields paradigm
+  split.R               opt-in deterministic auto-split of a bundled upload
+  reconcile.R           reconciliation KPIs + deterministic trust mapping
+  diagnose.R            fail-loud diagnostics (where / why / how bad / who fixes)
+  outputs.R             write xlsx (multi-sheet) / csv (core) / json (full)
+  feed.R                the governed analytics feed Qlik loads
+  convert.R             convert_statement(...) orchestrator -- NEVER throws
+R/   -- OCR and image handling
+  ocr.R                 system Tesseract, driven from R
+  ocr_preprocess.R      pre-OCR image conditioning (magick)
+  detect_redaction.R    rasterised (solid black box) redaction detection
+  inspect.R             "Statement X-ray" page geometry
+R/   -- templates without code (the wizard + drafting)
+  draft.R               draft a template from a single file
+  column_profile.R      everything needed to draft, captured from a sample
+  wizard_auto.R         wizard pre-fill helpers
+  wizard_detect.R       delimiter / date / amount auto-detection
+  layout.R              stable, PII-light layout fingerprint
+  suggestions.R         the deterministic half of the learning loop
+R/   -- operations, evidence and governance
+  logging.R             run + feedback records, ONE FILE PER EVENT
+  feedback.R            per-conversion human verdict capture
+  metadata_capture.R    local-only per-run metadata corpus (retain-forever)
+  analytics.R           run/feedback logs -> Insights, drift, layout clusters
+  audit.R               safe-to-share single-statement structural audit
+  batch_audit.R         the same over a whole folder, clustered by gap
+  coverage.R            "have I set this up right?" self-check
+  row_coverage.R        PII-safe explanation of PDF rows that did not survive
+  uploads.R             upload capture + lifecycle
+  inbox.R               read-only view of the folder-drop intake
+  requests.R            the "none of these fits -- tell our team" escape hatch
+  retention.R           what is left on disk, and when it goes away
+
+templates/              proven per-bank YAML templates (feed the Qlik gate)
+templates_user/         analyst-made templates (Shiny only, never Qlik)
+templates_seed/         starting points offered by the wizard
+dictionaries/labels.yaml   synonym dictionary for labelled values (Admin-edited)
+dictionaries/lexicon.yaml  recognition vocabularies (Admin-edited)
 fields_templates/       key-value templates (fields mode)
+config/                 config.example.yaml (config.yaml is per-deployment state)
 samples/                specimen corpus (already present)
 tests/testthat/         golden-file + unit tests
+app.R  ui_content.R  ui_labels.R   the Shiny app
 run.R                   thin CLI entrypoint
-docs/                   architecture + maintainer guide
+scripts/                bundle / install / audit command-line entry points
+docs/                   operational guide + context (charter, audits, research)
 ```
 
 ## 2. Canonical core schema (per transaction) - STABLE, identical across banks
@@ -55,7 +96,31 @@ docs/                   architecture + maintainer guide
 | `other_party` | character | verbatim, `NA` |
 | `type`        | character | bank's transaction-type text, verbatim, `NA` |
 | `currency`    | character | ISO 4217, default `"NZD"` |
-| `flags`       | character | comma-separated subset of `redacted,ocr,fx,reversal,malformed`; `""` if none |
+| `flags`       | character | comma-separated, from the vocabulary in §2a; `""` if none |
+
+### 2a. `flags` vocabulary (the complete emitted set)
+A flag is how a row says "this is true of me, and it was never guessed". Only these
+tokens are ever written; anything else is a bug. Every path can emit the first
+three; the rest are PDF-only, because they describe things only a page can do.
+
+| flag | meaning | emitted by |
+|---|---|---|
+| `redacted` | the value arrived hidden; `amount` is `NA` and `amount_raw` keeps `[REDACTED]` — never derived | all paths |
+| `malformed` | the amount did not come out as a number (unreadable, or absent), so this row's money cannot be totalled | all paths |
+| `fx` | the row carries a foreign-currency amount (a mapped `fx_amount` extra) | all paths |
+| `date_unresolved` | a date was present but could not be resolved to a real date | PDF |
+| `date_year_inferred` | the row printed no year; it was taken from the statement's own period text. Caps trust — an inferred year is not a proven one | PDF |
+| `no_date` | a shared-date row deliberately kept with a blank date rather than inheriting one | PDF |
+| `date_alt_format` | read through the year-less fallback format | PDF |
+| `forced` | a row a human added by hand from the X-ray view | PDF |
+| `row_stitched` | two half-rows the reader re-joined | PDF |
+| `row_text_merged` | a wrapped line whose words strayed outside the descriptive bands was folded in: the description is complete, but it was **assembled** | PDF |
+| `ocr_low_conf` | an OCR'd date/amount/balance cell held a word below the per-cell confidence floor (`PARAM_OCR_CELL_MIN_CONF`) — a likely misread digit the page-mean confidence would mask | PDF (OCR pages) |
+
+There is **no** `reversal` flag and no `ocr` row flag. A reversal is an accounting
+judgement, not something the page states, so the engine does not assert it (see
+`edge-cases.md` → "Reversals / duplicates"). Whether OCR was used is a **page**
+property, reported as a diagnostic and in provenance, not stamped on every row.
 
 Statement-type **extras** (card `fx_amount`/`posted_date`, KiwiSaver
 `units`/`unit_price`, …) go in a SEPARATE `extras` data.frame keyed by
@@ -97,12 +162,18 @@ columns:                       # canonical field -> source column name
   type:        {source: "Tran Type"}
   other_party: {source: "Other Party Account"}
   balance:     null            # null when the export has no balance column
-amount_sign: signed            # signed | debit_credit_cols | dr_cr_suffix | type_dc
+amount_sign: signed            # signed | debit_credit_cols | dr_cr_suffix | type_dc | unsigned
 currency: NZD
 ```
-`amount_sign` handlers: `signed` (one signed column); `debit_credit_cols`
-(separate debit/credit columns → `columns.debit`/`columns.credit`); `dr_cr_suffix`
-(`123.45 DR`); `type_dc` (a type column where `type_debit_value: "D"` means debit).
+`amount_sign` handlers — the complete set (`R/templates.R` rejects any other value):
+`signed` (one signed column); `debit_credit_cols` (separate debit/credit columns →
+`columns.debit`/`columns.credit`); `dr_cr_suffix` (`123.45 DR`); `type_dc` (a type
+column where `type_debit_value: "D"` means debit — the indicator is passed to
+`parse_amount`, so the sign comes from the statement, not from a guess); `unsigned`
+(credit-card style: one column of unsigned magnitudes where the sign is a printing
+convention, not printed. The template **declares** the convention with
+`unsigned_default: debit|credit`, and the payment marker — `CR` by default, taken
+from the lexicon — flips it. Nothing is inferred from the numbers themselves).
 
 ### 5a. Two ways variability is absorbed - read this before "add a synonym"
 The engine faces two *different* variability problems and solves them two ways:
@@ -204,10 +275,27 @@ bnz_everyday_csv score 2/3 (missing 'Tran Type' header)"`).
 - **csv**: the core `Transactions` table only (tool-agnostic).
 - **json**: full object (`header`, `transactions`, `extras`, `kpis`, `trust`).
 
-## 10. Logging (`logs/runs.jsonl`, one line per run)
+## 10. Logging (`logs/runs/<run_id>.json`, one FILE per run)
 `ts, requested_by, source_file, source_sha256, bank_hint, detected_template,
-template_version, status, trust_level, row_count, kpi_fail_count, message`.
-No raw statement content in logs.
+template_version, status, trust_level, row_count, kpi_fail_count, message`
+(plus the layout/detection fields Insights reads). One file per event, never a
+shared append, so concurrent conversions can never interleave or need a lock, and a
+record is never overwritten — a clashing `run_id` gets a `~2` suffix rather than
+erasing the earlier audit record.
+
+**What is and isn't in a log record — stated precisely.** No transaction rows, no
+descriptions, no amounts, no balances and no account numbers are logged: *statement
+CONTENT* never appears. But a run record is not content-free — it deliberately
+carries **`source_file` (the uploaded file's name)** and, where the engine read them,
+the **statement period dates**, because "which file was this, and what period did it
+cover" is exactly what makes the run history an audit trail. A filename can itself be
+identifying (`Smith J - ANZ - Mar 2026.pdf`), so treat `logs/` as case-related
+material: it stays on the box, is covered by the retention rules in `R/retention.R`,
+and is backed up with the same care as evidence
+(`docs/operational/backup-and-restore.md`).
+
+The separate local metadata corpus (`logs/metadata/`) is documented in
+`metadata-capture.md`, including which fields are hashed rather than stored.
 
 ## 11. Forensic guarantees (non-negotiable, must be tested)
 1. **Descriptions verbatim** - special characters preserved byte-for-byte.

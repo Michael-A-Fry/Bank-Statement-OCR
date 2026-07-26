@@ -82,11 +82,21 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   n <- nrow(tbl)
 
   # ---- date ----
+  # A template MAY declare SEVERAL candidate formats for columns.date.format,
+  # because one bank's one export can change date style between eras (ASB FastNet
+  # writes 2014/12/20 in one export and 13/10/2025 in another). resolve_date_format
+  # picks the ONE candidate that reads EVERY non-empty cell in this column --
+  # all-or-nothing, never a per-row mixture, because "03/04" is readable as both
+  # 3 April and 4 March and a per-row fallback would silently swap them. When no
+  # candidate reads the whole column it returns NA, so every date comes back NA
+  # and the dates_readable KPI fails loudly rather than guessing.
+  # A single declared format resolves to itself: unchanged behaviour.
   date_src <- .col_source(template, "date")
   date_col <- .pick(tbl, date_src)
-  date_fmt <- template$columns$date$format %||% "%Y-%m-%d"
-  if (is.null(date_col)) {
-    date_iso <- rep(NA_character_, n); date_raw <- rep(NA_character_, n)
+  date_fmt <- resolve_date_format(date_col, template$columns$date$format %||% "%Y-%m-%d")
+  if (is.null(date_col) || is.na(date_fmt)) {
+    date_iso <- rep(NA_character_, n)
+    date_raw <- if (is.null(date_col)) rep(NA_character_, n) else as.character(date_col)
   } else {
     d <- parse_date(date_col, date_fmt)
     date_iso <- d$iso; date_raw <- d$raw
@@ -249,6 +259,11 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
        # completeness accounting for reconcile: how many non-empty physical data
        # lines the source held (vs how many rows we parsed).
        source_line_count = reader$n_data_lines %||% NA_integer_,
+       # spreadsheet padding lines (bare separators, no content) that were not
+       # turned into transactions. Carried so the omission can be STATED rather
+       # than merely happening -- it is deliberately excluded from
+       # source_line_count so the completeness proof compares like with like.
+       padding_line_count = reader$n_padding_lines %||% 0L,
        multiline_extra = multiline_extra)
 }
 

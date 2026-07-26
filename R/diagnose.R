@@ -28,8 +28,45 @@
     unreadable = , multiple_statements = , oversized = , oversized_page = ,
     low_ocr_confidence = , completeness_unverified = "input",
     combined_statement = , mixed_currency = "review",
-    redaction = , ocr = , none = "none",
+    redaction = , ocr = , document_provenance = , none = "none",
     "escalate"), character(1))
+}
+
+# ---------------------------------------------------------------------------
+# PDF document provenance (informational).
+#
+# .PDF_GENERAL_TOOLS -- Producer / Creator strings that name a GENERAL-PURPOSE
+# document tool (an editor, a converter, an office suite, a raster re-writer)
+# rather than a bank's own statement-composition system. Matched case-insensitively
+# as a substring of the self-declared Producer or Creator.
+#
+# WHY name them at all: the single most common question asked of a statement PDF is
+# "did this come from the bank, or has it been through someone's PDF editor?" --
+# and the answer is sitting in the file's own header. Naming the tool is a FACT
+# about the file, not an accusation: plenty of innocent workflows (printing to PDF,
+# combining pages, re-saving an email attachment) leave exactly these strings, and
+# the strings themselves can be edited or removed by anyone. The diagnostic
+# therefore says what the file claims and stops there -- it is severity "info",
+# fix_owner "none", and it changes no figure, no status and no trust score.
+#
+# Plain vector on purpose: extending it is a one-line edit an analyst can make.
+.PDF_GENERAL_TOOLS <- c(
+  "Adobe Acrobat", "Acrobat Distiller", "Adobe Photoshop", "Adobe Illustrator",
+  "Foxit", "Nitro", "PDF-XChange", "PDFsam", "Sejda", "Smallpdf", "iLovePDF",
+  "PDFtk", "Ghostscript", "qpdf", "PyPDF", "pypdf", "iText", "ImageMagick",
+  "LibreOffice", "OpenOffice", "Microsoft Word", "Microsoft Excel",
+  "Microsoft PowerPoint", "Word for", "Excel for", "Google Docs Renderer",
+  "Skia/PDF", "Quartz PDFContext", "Preview", "Scribus", "Canva", "Chromium")
+
+# .pdf_tool_hit(x) -- the first general-purpose tool named in `x`, or NA. Matched
+# as a LITERAL substring (fixed = TRUE): the entries are product names, so a stray
+# regex metacharacter in one must never change what the others match.
+.pdf_tool_hit <- function(x) {
+  if (is.null(x) || !length(x) || is.na(x[1]) || !nzchar(x[1])) return(NA_character_)
+  s <- tolower(x[1])
+  hit <- .PDF_GENERAL_TOOLS[vapply(tolower(.PDF_GENERAL_TOOLS),
+                                   function(t) grepl(t, s, fixed = TRUE), logical(1))]
+  if (length(hit)) hit[1] else NA_character_
 }
 
 # Verbatim period bounds / effective dates are parsed with the shared
@@ -98,6 +135,38 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("upload", "oversized_page", "medium",
           sprintf("largest page is %.0f pt (> 2880 pt / 40 in)", mp),
           "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
+  }
+
+  # PDF document provenance. Raised for EVERY status (a file that didn't even match
+  # a template is exactly when "what wrote this?" is worth knowing), and only when
+  # there is something to say: the modified time differs from the creation time, or
+  # the Producer/Creator names a general-purpose PDF tool. Facts only -- severity
+  # info, fix_owner none, no effect on figures, status or trust. Read from either
+  # place the reader's metadata can arrive so it works whichever caller supplies it.
+  doc <- metadata$pdf_doc %||% parsed$header$pdf_doc
+  if (is.list(doc)) {
+    fv <- function(v) if (is.null(v) || !length(v) || is.na(v[1]) || !nzchar(as.character(v[1])))
+      "not stated" else as.character(v[1])
+    created <- fv(doc$created); modified <- fv(doc$modified)
+    tool <- .pdf_tool_hit(doc$producer)
+    if (is.na(tool)) tool <- .pdf_tool_hit(doc$creator)
+    edited_time <- !identical(created, "not stated") && !identical(modified, "not stated") &&
+                   !identical(created, modified)
+    if (edited_time || !is.na(tool)) {
+      why <- character(0)
+      if (edited_time) why <- c(why, "the file's last-modified time is not the same as its creation time")
+      if (!is.na(tool)) why <- c(why, sprintf("the tool it names (%s) is general-purpose software, not a bank statement system", tool))
+      add("document", "document_provenance", "info",
+        sprintf("the PDF says it was written by %s (creator %s), created %s, last modified %s%s - noted because %s",
+                fv(doc$producer), fv(doc$creator), created, modified,
+                if (isTRUE(doc$encrypted)) ", and the file is encrypted" else "",
+                paste(why, collapse = ", and ")),
+        paste("No action - this is recorded, not a problem. These details are what the file says",
+              "about ITSELF: any tool can write, change or remove them, and ordinary handling",
+              "(printing to PDF, combining pages, re-saving an attachment) produces exactly the",
+              "same marks. Nothing about the transactions is affected. If the origin of the",
+              "document matters to this case, compare these details against the copy the bank issued."))
+    }
   }
 
   if (!is.null(parsed) && !is.null(parsed$transactions)) {

@@ -21,6 +21,22 @@ test_that("preprocess_image no-ops safely on a missing file", {
   expect_identical(preprocess_image("/no/such/file.png"), "/no/such/file.png")
 })
 
+# The mechanism ocr_pdf_page's cleanup relies on (#29): when the caller NAMES the
+# output, the processed image goes exactly there -- so it can be put under the
+# render prefix and swept away with it, instead of surviving in the temp dir as a
+# readable copy of the client's statement. Needs magick only, not the OCR binaries.
+test_that("preprocess_image writes to the out_path it is given (#29)", {
+  skip_if_not(ocr_preprocess_available(), "magick not available")
+  src <- tempfile("ppsrc_", fileext = ".png")
+  magick::image_write(magick::image_blank(120, 60, "white"), src, format = "png")
+  out <- tempfile("ppout_", fileext = ".png")
+  got <- preprocess_image(src, out_path = out,
+                          opts = list(greyscale = TRUE, normalize = TRUE))
+  expect_identical(got, out)
+  expect_true(file.exists(out))
+  unlink(c(src, out), force = TRUE)
+})
+
 test_that("OCR still reads real text after pre-processing", {
   skip_if_not(ocr_available(), "tesseract/poppler not available")
   pdf <- fixture("samples/raw/anz/anz_card_summary_sample.pdf")

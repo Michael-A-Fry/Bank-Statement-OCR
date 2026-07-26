@@ -6,7 +6,7 @@ codebase that's hard to maintain is a failed one. The design rule that keeps thi
 whole thing simple - **a new bank is a YAML template, never new code** - is
 protected in every ranking decision below.
 
-_Last updated: 2026-07-24._
+_Last updated: 2026-07-26._
 
 ## ✅ Done (progress so far)
 - Pure-R engine: **delimited path end-to-end for 6 banks**, golden-file tested.
@@ -21,6 +21,10 @@ _Last updated: 2026-07-24._
   including an **adaptive (Sauvola) scan profile** and **per-word OCR confidence**
   gating (`low_ocr_confidence`).
 - **Zero-background wizard** (auto-detect delimiter/date/amount, plain English).
+- **Deterministic Admin analytics** over the run/feedback logs (`R/analytics.R`):
+  **template-drift detection** (`template_drift()`) and **unseen-layout clustering**
+  (`unsupported_clusters()`), plus feed health and template usage - the two things a
+  learning loop was once proposed for, answered with plain, testable functions.
 - Shiny GUI (convert · wizard · help); onboarding, edge-case register, research.
 - **13 proven, golden-tested templates** shipping in `templates/`: 7 delimited
   (ANZ everyday/credit card, ASB, BNZ, Kiwibank, Westpac, plus a cross-bank
@@ -28,7 +32,8 @@ _Last updated: 2026-07-24._
   `asb_everyday_pdf`, `tutorial_everyday_pdf`, `westpac_everyday_pdf`) and **1 Excel**
   (`excel_generic_xlsx`). The PDF and Excel extraction paths are covered by golden
   round-trip tests.
-- Test suite: **1,430 assertions across 343 tests (58 files), 0 failures.**
+- Test suite: **1,585 assertions across 378 tests (59 files), 0 failures, 0 skips** —
+  measured 2026-07-26; the runner prints the current figures.
 
 **The C→B→A engine pass is complete and shipped** - the PDF text-layer parser (C),
 the visual band editor (B) and the `mode: fields` IRD/form foundation (A), plus the
@@ -43,10 +48,28 @@ deployment proof, and data-gated template growth - not new engine code.
 | 1 | **Validation & adoption** - watch a real non-technical analyst build a template end-to-end on a real file | ★★★★★ | ● | ~zero | The engine is built; the open question is *adoption*. Proving the "a data analyst adds a bank by pointing and clicking, not by writing code" claim on a **real person with a real statement** is now the single highest-value move. Surfaces the last UX rough edge (drawing/nudging PDF column boxes) before wider rollout. Observation + small fixes, not new subsystems. |
 | 2 | **Air-gapped Windows dry-run** | ★★★★ | ●● | low | Prove the real deployment: unzip + `RUN-ME.bat` on a locked-down, offline Windows box with bundled R + packages, no internet. De-risks install before it's in front of users. Deployment proof, not code. |
 | 3 | **More bank templates as real files arrive** (pure YAML) | ★★★★ | ● | ~zero | SBS, TSB, Co-op, Heartland… and more per-bank **PDF** statements - each a template + one golden test, *no engine change*. This **is** the simple-scaling win - the reason the codebase stays small as coverage grows. Gated only on receiving a real sample file. |
-| 4 | **Local-ML learning loop** (upgrade the scaffold) | ★★★ | ●●● | med | Today the loop is a **deterministic scaffold**: `lexicon_suggestions()` frequency-ranks the "unrecognised" signal from the local metadata corpus for a human to approve. A local model could later rank/classify that signal better. Real value, but only once the corpus is large enough to justify it - and it stays **proposal-only behind human approval**, never changing engine behaviour directly. |
 
 `★` = value to the forensic-accounting job · `●` = build effort · Maint. = ongoing
 cost to keep alive.
+
+## ❌ Killed - do not re-propose without new evidence
+
+**Local-ML learning loop** *(was item 4; removed 2026-07-26).* Its two headline
+uses **already ship, deterministically, and are already on screen in Admin**:
+
+- *template-drift detection* → `template_drift()` in `R/analytics.R` (a sustained
+  drop in a template's clean-run rate, surfaced in Admin → Insights);
+- *unseen-layout clustering* → `unsupported_clusters()` in `R/analytics.R` (every
+  unsupported/failed run grouped by layout signature, biggest gap first, with the
+  closest template and an example file).
+
+A model would replace two auditable, testable functions with a probabilistic one
+that answers the same questions less defensibly - against the charter's explicit
+**"not machine learning / not a guesser"** clause and against guardrail 5 below
+(*docs and config are cheap; code is expensive*). The remaining unbuilt ideas from
+that item (draft-quality scoring, reconciliation-anomaly hints) are parked with
+their reasons in `engine-audit.md` → *Future directions*; the deterministic
+suggestion scaffold (`lexicon_suggestions()`, human-approved) stays as it is.
 
 ## 🧱 Simplicity guardrails (protect these, always)
 1. **A new bank = a YAML template, never new code.** If a change would force
@@ -62,7 +85,7 @@ cost to keep alive.
 
 ## Recommended sequence
 **Validation & adoption → air-gapped Windows dry-run → templates as real files
-arrive → local-ML loop (only once the metadata corpus justifies it).**
+arrive.** That is the whole list, and it is deliberately short.
 The engine is done; the value now is proving it lands with a non-technical user,
 proving the offline deploy, and letting coverage grow the cheap way - one YAML
-template per bank, never new code.
+template per bank, never new code. Nothing on this roadmap adds an R module.

@@ -132,3 +132,92 @@ test_that("validate_template rejects a bad split block, accepts a good one", {
   expect_true(any(grepl("split.on", probs)))
   expect_true(any(grepl("min_statements", probs)))
 })
+
+# ---------------------------------------------------------------------------
+# THE OPT-IN (#61). Everything above proves R/split.R works on a synthetic input.
+# None of it proved any SHIPPED template ever asks for it -- and until
+# anz_everyday_pdf carried a `split:` block, none did, so the whole subsystem was
+# shipped, tested and dark while the commonest real shape a forensic accountant is
+# handed (a year of one account's statements in one PDF) still dead-ended.
+#
+# The fixture is a synthetic 2-statement ANZ bundle drawn at the SHIPPED template's
+# own column bands (tests/testthat/fixtures/make_pdf_fixtures.R). It reproduces the
+# real failure in miniature: parsed as ONE statement it fails balance_reconciliation
+# and puts 3 dates outside the period; split, every per-statement KPI passes.
+# ---------------------------------------------------------------------------
+
+.anz_bundle_fixture <- function() fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf")
+
+test_that("anz_everyday_pdf opts in to auto-split", {
+  t <- load_templates(templates_dir())[["anz_everyday_pdf"]]
+  spec <- .split_spec(t)
+  expect_false(is.null(spec))
+  expect_identical(spec$on, "page1_marker")
+  expect_equal(spec$min_statements, 2L)
+  expect_length(validate_template(t), 0L)
+})
+
+test_that("the ANZ bundle splits into its statements with every KPI passing", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(file.exists(.anz_bundle_fixture()))
+  tp <- load_templates(templates_dir())
+  input <- read_input(.anz_bundle_fixture())
+
+  # it really is detected as the shipped ANZ template, and really does look like a
+  # bundle to the independent multi-statement check that gates the split.
+  det <- detect_statement(input, tp)
+  expect_identical(det$template_id, "anz_everyday_pdf")
+  meta <- extract_metadata(input)
+  expect_true(isTRUE(detect_multiple_statements(input, meta)$likely_multiple))
+
+  sb <- split_bundle(input, tp[["anz_everyday_pdf"]], meta)
+  expect_false(is.null(sb))
+  expect_equal(sb$n_statements, 2L)
+  # statement 1 spans TWO pages, statement 2 one -> page RANGES, not one-per-page
+  expect_identical(vapply(sb$statements, function(s) s$pages, character(1)), c("1-2", "3-3"))
+
+  # every row is tagged with the statement it came from (this is what the feed and
+  # the workbook use to keep the statements apart)
+  tx <- sb$parsed$transactions
+  expect_equal(nrow(tx), 9L)
+  expect_equal(tx$statement_index, c(rep(1, 6), rep(2, 3)))
+  expect_false(any(is.na(tx$statement_index)))
+  # ...and each statement's dates took ITS OWN period year/month
+  expect_identical(tx$date[c(1, 6, 7, 9)],
+                   c("2026-02-03", "2026-02-26", "2026-03-04", "2026-03-25"))
+
+  # NO per-statement KPI fails; each statement reconciles on its own terms.
+  expect_false(any(sb$recon$kpis$status == "fail"))
+  for (i in 1:2) {
+    ki <- sb$recon$kpis[grepl(sprintf("\\[statement %d\\]$", i), sb$recon$kpis$name), ]
+    expect_equal(ki$status[grepl("^balance_reconciliation", ki$name)], "pass")
+    expect_equal(ki$status[grepl("^dates_within_period", ki$name)], "pass")
+    expect_equal(ki$status[grepl("^running_balance_continuity", ki$name)], "pass")
+  }
+  expect_equal(vapply(sb$statements, function(s) s$rows, numeric(1)), c(6, 3))
+})
+
+test_that("WITHOUT the opt-in the same bundle fails - this is what #61 fixes", {
+  # The before-picture, kept as a test so the opt-in can never be quietly dropped:
+  # one statement's opening balance is reconciled against two statements of
+  # transactions, and statement 2's dates fall outside statement 1's period.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(file.exists(.anz_bundle_fixture()))
+  t <- load_templates(templates_dir())[["anz_everyday_pdf"]]
+  t$split <- NULL
+  expect_null(split_bundle(read_input(.anz_bundle_fixture()), t))
+  p <- parse_statement(read_input(.anz_bundle_fixture()), t)
+  k <- reconcile(p, t)$kpis
+  expect_equal(k$status[k$name == "balance_reconciliation"], "fail")
+  expect_equal(k$status[k$name == "dates_within_period"], "fail")
+})
+
+test_that("a genuine SINGLE ANZ statement is never split by the opt-in", {
+  # The opt-in must cost nothing for the ordinary case: one statement has one
+  # "Page 1 of N" marker, so it never reaches min_statements.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  f <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
+  skip_if_not(file.exists(f))
+  tp <- load_templates(templates_dir())
+  expect_null(split_bundle(read_input(f), tp[["anz_everyday_pdf"]]))
+})

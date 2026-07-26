@@ -41,3 +41,70 @@ test_that("the combined report leaks no PII", {
   expect_false(grepl("ANOTHERSECRET99", rep))
   expect_true(grepl("safe to share", rep))
 })
+
+# ---------------------------------------------------------------------------
+# FORM documents are covered work, not a coverage gap (#31).
+#
+# The app's real front door is convert_document(): transaction pipeline first,
+# then FORM (mode: fields) extraction. The bulk audit only ever asked the
+# transaction half, so a working IRD / KiwiSaver document came back
+# "unsupported" -- it inflated the gap count, was clustered as a layout to build,
+# and consumed one of the N draft-template recommendations that should have gone
+# to a real gap. A coverage report that under-reports coverage sends an analyst
+# off to build a template that already exists.
+# ---------------------------------------------------------------------------
+
+test_that("a form-template match is reported as its own kind, not as a gap", {
+  ftpls <- load_fields_templates(fixture("fields_templates"))
+  skip_if_not(length(ftpls) > 0)
+  form_src <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
+  skip_if_not(file.exists(form_src))
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  # the fixture must actually be a form match, or this test proves nothing
+  skip_if_not(isTRUE(detect_form(read_input(form_src), ftpls)$matched))
+
+  dir <- tempfile(); dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  weird <- c("colA;colB;colC", "1;2;3", "4;5;6")
+  .mk_csv(dir, "x_unknown.csv", weird)
+  file.copy(form_src, file.path(dir, "a_form.pdf"))
+
+  tmpls <- load_template_set(templates_dir(), "does_not_exist")
+  b <- batch_audit(list.files(dir, full.names = TRUE), templates = tmpls,
+                   fields_templates = ftpls)
+
+  row <- b$per_file[b$per_file$file_type == "pdf", ]
+  expect_equal(nrow(row), 1L)
+  expect_identical(row$status, "form")
+  expect_identical(row$template, names(ftpls)[1])
+  expect_true(row$detected)                 # covered -> counted as detected
+  expect_gt(row$n_fields, 0L)               # a form is measured in FIELDS...
+  expect_equal(row$n_rows, 0L)              # ...not transaction rows
+
+  # it is NOT a gap: not counted as unsupported, not clustered, no draft spent
+  expect_equal(b$feature_gaps$forms, 1L)
+  expect_equal(b$feature_gaps$unsupported, 1L)          # only the unknown CSV
+  expect_false(any(b$clusters$example_idx == row$idx))
+  expect_equal(nrow(b$clusters), 1L)
+
+  # the report says so out loud, and still leaks nothing
+  rep <- format_batch_audit(b)
+  expect_true(grepl("form \\(labelled-value\\) documents covered by a fields template: 1", rep))
+  expect_true(grepl("forms excluded", rep))
+})
+
+test_that("form detection never changes a statement's verdict", {
+  # The form pass runs only when NO transaction template matched, exactly as
+  # convert_document() orders it -- so installing form templates can never
+  # reclassify a statement the engine already handles.
+  dir <- tempfile(); dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  .mk_csv(dir, "s.csv", c("*Date,*Amount,Payee", "05/01/2024,-12.50,Shop"))
+  tmpls <- load_template_set(templates_dir(), "does_not_exist")
+  paths <- list.files(dir, full.names = TRUE)
+  none <- batch_audit(paths, templates = tmpls, fields_templates = list())
+  some <- batch_audit(paths, templates = tmpls,
+                      fields_templates = load_fields_templates(fixture("fields_templates")))
+  expect_identical(none$per_file$status, some$per_file$status)
+  expect_equal(some$feature_gaps$forms, 0L)
+})

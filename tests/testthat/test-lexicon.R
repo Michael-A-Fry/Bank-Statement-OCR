@@ -64,3 +64,20 @@ test_that("one lexicon edit teaches the WHOLE engine a new debit/credit vocabula
     expect_equal(tx$amount, c(-4.50, 2000.00, -12.00))
   })
 })
+
+# The drafter's brand vocabulary is documented as dictionary-driven ("teach it a
+# new bank in YAML, never in code"). It only works if the category is registered.
+test_that("fingerprint_brand_words is a real, admin-extendable category", {
+  expect_true("fingerprint_brand_words" %in% names(lexicon_categories()))
+  d <- lex("fingerprint_brand_words")
+  expect_true(is.character(d) && length(d) > 0)
+  expect_true("bank" %in% tolower(d))
+})
+
+# An admin typo in the vocabulary file must produce a readable problem, not an
+# R error -- validate_lexicon exists precisely to hand that message back.
+test_that("validate_lexicon reports an unknown category instead of erroring", {
+  p <- validate_lexicon(list(not_a_real_category = list("x")))
+  expect_true(any(grepl("unknown category", p)))
+  expect_true(any(grepl("not_a_real_category", p)))
+})

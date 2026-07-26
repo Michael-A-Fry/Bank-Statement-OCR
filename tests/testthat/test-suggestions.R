@@ -40,3 +40,36 @@ test_that("no metadata -> empty suggestions (no crash)", {
   expect_equal(nrow(s$indicator_tokens), 0)
   expect_equal(nrow(s$unmapped_columns), 0)
 })
+
+# #59 -- logs/metadata keeps one JSON per conversion FOREVER (it is exempt from log
+# rollup) and this is called from a Shiny observer, so an unbounded read grows
+# without limit (~6 s at 15k records). The read is bounded to the NEWEST N, and it
+# has to say so rather than quietly ranking a slice.
+test_that("lexicon_suggestions reads only the newest N records, and reports the slice (#59)", {
+  ld <- tempfile("logs_")
+  for (i in 1:5) {
+    .mk_meta(ld, sprintf("r%d", i), if (i <= 3) "OLDTOK" else "NEWTOK", character(0))
+    Sys.setFileTime(file.path(ld, "metadata", sprintf("r%d.json", i)),
+                    Sys.time() - (10 - i) * 3600)          # r1 oldest ... r5 newest
+  }
+  all <- lexicon_suggestions(ld)
+  expect_identical(all$scanned, 5L); expect_identical(all$total, 5L)
+  expect_true(all(c("OLDTOK", "NEWTOK") %in% all$indicator_tokens$token))
+
+  bounded <- lexicon_suggestions(ld, max_records = 2L)
+  expect_identical(bounded$scanned, 2L)                     # only the newest two read
+  expect_identical(bounded$total, 5L)                       # ...out of five kept
+  expect_identical(bounded$indicator_tokens$token, "NEWTOK")
+  expect_false("OLDTOK" %in% bounded$indicator_tokens$token)
+})
+
+test_that("the bounded read is deterministic when file times tie (#59)", {
+  ld <- tempfile("logs_tie_")
+  for (i in 1:4) .mk_meta(ld, sprintf("t%d", i), sprintf("TOK%d", i), character(0))
+  t0 <- Sys.time()
+  for (f in list.files(file.path(ld, "metadata"), full.names = TRUE)) Sys.setFileTime(f, t0)
+  a <- lexicon_suggestions(ld, max_records = 2L)$indicator_tokens$token
+  b <- lexicon_suggestions(ld, max_records = 2L)$indicator_tokens$token
+  expect_identical(a, b)                                    # same answer every time
+  expect_equal(length(a), 2L)
+})

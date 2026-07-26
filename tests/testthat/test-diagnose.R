@@ -125,6 +125,96 @@ test_that("a scan WITH OCR tooling blames quality, not the install (#54)", {
   expect_false(grepl("Tesseract", row$how_to_fix[1]))
 })
 
+# ---- PDF document provenance (#46) ----------------------------------------
+# "Was this produced by the bank, or by someone with a PDF editor?" is answered by
+# the file's own header. We STATE what it says and stop there: info severity, no
+# action owner, and no effect on figures, status or trust.
+
+.mk_doc <- function(...) utils::modifyList(
+  list(producer = "xPression 20.3 Patch 1 /  / JPDF", creator = NA_character_,
+       created = "2025-09-14 00:00:53", modified = "2025-09-14 00:00:53",
+       encrypted = FALSE, pdf_version = "1.4"), list(...))
+
+test_that("a PDF modified after it was created is reported as a fact (#46)", {
+  d <- build_diagnostics("ok", parsed = list(transactions = .mk_tx(), header = list()),
+         recon = list(kpis = NULL),
+         metadata = list(pdf_doc = .mk_doc(modified = "2026-02-01 09:00:00")))
+  row <- d[d$category == "document_provenance", , drop = FALSE]
+  expect_equal(nrow(row), 1L)
+  expect_equal(row$severity, "info")            # never escalates a run
+  expect_equal(row$fix_owner, "none")           # nobody has to do anything
+  expect_match(row$detail, "2026-02-01 09:00:00", fixed = TRUE)
+  expect_match(row$detail, "last-modified time is not the same")
+  # states the facts, draws no conclusion
+  expect_false(grepl("tamper|forg|falsif|suspic", row$detail, ignore.case = TRUE))
+  expect_match(row$how_to_fix, "No action", fixed = TRUE)
+})
+
+test_that("a general-purpose PDF tool is named even when the timestamps match (#46)", {
+  d <- build_diagnostics("ok", parsed = list(transactions = .mk_tx(), header = list()),
+         recon = list(kpis = NULL),
+         metadata = list(pdf_doc = .mk_doc(producer = "Adobe Acrobat 19.10 Image Conversion Plug-in",
+                                           creator = "Adobe Acrobat 19.10")))
+  row <- d[d$category == "document_provenance", , drop = FALSE]
+  expect_equal(nrow(row), 1L)
+  expect_match(row$detail, "Adobe Acrobat", fixed = TRUE)
+  expect_match(row$detail, "general-purpose software")
+})
+
+test_that("a bank's own statement engine raises nothing (#46 noise guard)", {
+  # xPression is a statement-composition system and the timestamps agree: there is
+  # nothing to say, so nothing is said. A note on every PDF would be noise Beth
+  # learns to ignore -- which is how a real signal gets missed.
+  d <- build_diagnostics("ok", parsed = list(transactions = .mk_tx(), header = list()),
+         recon = list(kpis = NULL), metadata = list(pdf_doc = .mk_doc()))
+  expect_false("document_provenance" %in% d$category)
+  # and a run with no PDF metadata at all (CSV / Excel) is untouched
+  d2 <- build_diagnostics("ok", parsed = list(transactions = .mk_tx()),
+                          recon = list(kpis = NULL))
+  expect_equal(nrow(d2), 1L)
+  expect_equal(d2$category, "none")
+})
+
+test_that("provenance is reported even when no template matched (#46)", {
+  # An unrecognised file is exactly when "what wrote this?" is worth knowing.
+  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
+         metadata = list(pdf_doc = .mk_doc(producer = "Ghostscript 9.55",
+                                           created = "2020-01-01 00:00:00",
+                                           modified = "2020-01-01 00:00:00")))
+  expect_true("document_provenance" %in% d$category)
+  expect_true("unknown_format" %in% d$category)   # the real problem still leads
+  expect_equal(d$severity[1], "high")             # info never outranks it
+})
+
+test_that("an encrypted file and unstated fields are described honestly (#46)", {
+  d <- build_diagnostics("ok", parsed = list(transactions = .mk_tx(), header = list()),
+         recon = list(kpis = NULL),
+         metadata = list(pdf_doc = .mk_doc(producer = "iTextSharp 4.1.6 by 1T3XT",
+                                           creator = NA_character_, encrypted = TRUE)))
+  row <- d[d$category == "document_provenance", , drop = FALSE]
+  expect_match(row$detail, "creator not stated", fixed = TRUE)
+  expect_match(row$detail, "the file is encrypted", fixed = TRUE)
+})
+
+test_that(".pdf_tool_hit matches product names literally and case-insensitively", {
+  expect_identical(.pdf_tool_hit("Adobe Acrobat 19.10"), "Adobe Acrobat")
+  expect_identical(.pdf_tool_hit("https://legacy.imagemagick.org"), "ImageMagick")
+  expect_true(is.na(.pdf_tool_hit("xPression 23.4 Patch 13 /  / JPDF")))
+  expect_true(is.na(.pdf_tool_hit(NA_character_)))
+  expect_true(is.na(.pdf_tool_hit("")))
+  expect_true(is.na(.pdf_tool_hit(NULL)))
+})
+
+test_that("provenance also reaches diagnostics from the parsed header (#46)", {
+  # convert_statement builds the metadata list; the parse builds the header. The
+  # diagnostic reads either, so whichever route carries it, the fact is reported.
+  d <- build_diagnostics("ok",
+         parsed = list(transactions = .mk_tx(),
+                       header = list(pdf_doc = .mk_doc(producer = "Foxit PhantomPDF"))),
+         recon = list(kpis = NULL))
+  expect_true("document_provenance" %in% d$category)
+})
+
 test_that("an ordinary unsupported layout still gets the template advice (#54 guard)", {
   d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
          metadata = list(scanned_no_ocr = 0L, ocr_tools = TRUE))

@@ -2,11 +2,14 @@
 
 The "good to know" material: **what was built, how we got here, what was researched,
 and the honest limits.** None of this tells you how to *do* a task — for that, see
-[`../operational/`](../operational/README.md).
+[`../operational/`](../operational/README.md). If you have just inherited the tool,
+read [charter.md](charter.md), then
+[`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md).
 
 ## Start here
 | Doc | What it is |
 |---|---|
+| [charter.md](charter.md) | **Read this first.** Purpose, users, scope and the non-negotiables — if a change conflicts with the charter, the change is wrong. |
 | [launch-audit.md](launch-audit.md) | Readiness: what's ready, the honest boundaries, and the go/no-go. |
 | [ux-audit.md](ux-audit.md) | Enterprise UX/UI audit — every screen reviewed by four specialist personas, with findings. |
 | [engine-audit.md](engine-audit.md) | Engine & platform audit — correctness/bugs/refactors across engine, preprocessing, templates, flow, feed; prioritised with a fix sequence. |

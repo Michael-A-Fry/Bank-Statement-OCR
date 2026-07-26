@@ -107,6 +107,50 @@ resolve_date_format <- function(values, formats) {
   NA_character_
 }
 
+# resolve_delimiter(header_line, template) -> the ONE declared delimiter to read
+# this file with. Like the date format above, a template MAY declare a LIST -- the
+# same bank publishing the same export as CSV and as tab-delimited (ASB FastNet
+# ships both: asb_transaction_export_01.csv and asb_transaction_export_02.tdv,
+# byte-identical layout, different separator). Pinning one meant the other's header
+# never split into columns at all, so it scored 0 and came back "unsupported".
+#
+# THE ALL-OR-NOTHING RULE, and why it is this one: a candidate wins only if the
+# header row, split by it, contains EVERY column name the template's fingerprint
+# names. Splitting a tab-delimited line on commas yields ONE field, so it can never
+# satisfy that -- the wrong separator is rejected outright rather than "sort of"
+# working. The test deliberately looks at the HEADER ONLY: making it depend on the
+# data rows would let a single ragged row (which the reader is built to isolate and
+# flag) reject the correct delimiter and pick a catastrophic one. When no candidate
+# satisfies it, the FIRST declared delimiter is used -- identical to the old
+# behaviour, so the file simply fails to score and stays honestly unsupported.
+# A single declared delimiter short-circuits: every existing template is untouched.
+resolve_delimiter <- function(header_line, template) {
+  d <- as.character(unlist(template$delimiter %||% ","))
+  d <- d[!is.na(d) & nzchar(d)]
+  if (!length(d)) return(",")
+  if (length(d) == 1L) return(d[1])            # the ordinary case, behaviour unchanged
+  need <- trimws(as.character(unlist(template$fingerprint$header_contains_all %||% character(0))))
+  need <- need[!is.na(need) & nzchar(need)]
+  hl <- as.character(header_line)[1]
+  if (!length(need) || is.na(hl) || !nzchar(hl)) return(d[1])
+  for (delim in d) {
+    fields <- trimws(as.character(.record_fields(hl, delim)))
+    if (all(tolower(need) %in% tolower(fields))) return(delim)
+  }
+  d[1]
+}
+
+# .delimiter_problems(spec) -- validate a declared delimiter. A list is allowed
+# (resolve_delimiter picks one), but every entry must be a real separator string:
+# an empty entry would split every line into single characters.
+.delimiter_problems <- function(spec) {
+  if (is.null(spec)) return(character(0))
+  d <- as.character(unlist(spec))
+  bad <- is.na(d) | !nzchar(d)
+  if (any(bad)) return("delimiter entries must each be a non-empty separator string")
+  character(0)
+}
+
 # .date_format_problems(spec, where, allow_list) -- validate a declared date
 # format. A LIST of candidates is allowed only where the reader resolves it
 # (resolve_date_format); everywhere else a list must be REJECTED loudly, because
@@ -213,6 +257,9 @@ validate_template <- function(t) {
     # the one that reads the whole column, or none -- never a per-row mixture).
     problems <- c(problems, .date_format_problems(t$columns$date$format,
                                                   "columns.date.format", allow_list = TRUE))
+    # delimiter MAY likewise be a list (resolve_delimiter picks the one under which
+    # the header carries every fingerprinted column, or the first as before).
+    problems <- c(problems, .delimiter_problems(t$delimiter))
     # date + description are always required; the money column depends on the
     # sign style, exactly like the pdf branch above. A debit_credit_cols template
     # (separate money-in / money-out columns) has NO single 'amount' column -- it
@@ -331,8 +378,18 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
 load_template_set <- function(default_dir = "templates", user_dir = "templates_user",
                               include_hidden = FALSE) {
   d <- load_templates(default_dir, origin = "default", strict = TRUE)
+  # Carry the skip reasons across the merge. Subsetting a list (`u[...]`, the
+  # `sample` filter below) DROPS its attributes, so without this the attribute
+  # load_templates() attaches is silently thrown away here -- and a user template
+  # dropped for, say, a generic fingerprint would vanish with no explanation
+  # anywhere in the app, which is the exact defect attr(x, "load_errors") exists to
+  # close. Both sets contribute (the curated set is strict, so in practice it
+  # stops rather than returning errors, but carrying it costs nothing and is right
+  # if that ever changes).
+  errors <- as.character(attr(d, "load_errors") %||% character(0))
   if (!is.null(user_dir) && dir.exists(user_dir)) {
     u <- load_templates(user_dir, origin = "user", strict = FALSE)
+    errors <- c(errors, as.character(attr(u, "load_errors") %||% character(0)))
     if (!include_hidden)
       u <- u[!vapply(u, function(t) isTRUE(t$hidden), logical(1))]
     for (id in names(u)) if (is.null(d[[id]])) d[[id]] <- u[[id]]
@@ -342,7 +399,9 @@ load_template_set <- function(default_dir = "templates", user_dir = "templates_u
   # generic wording could match (or tie with) a real statement and mis-parse it
   # with a demo's hardcoded bands. They stay loadable via load_templates() for the
   # wizard walkthrough and their own self-tests, just not in this detection set.
-  d[!vapply(d, function(t) isTRUE(t$sample), logical(1))]
+  out <- d[!vapply(d, function(t) isTRUE(t$sample), logical(1))]
+  attr(out, "load_errors") <- errors   # re-attached AFTER the subset (which drops attrs)
+  out
 }
 
 # template_overview(tset) -- a flat data.frame summarising every loaded template,

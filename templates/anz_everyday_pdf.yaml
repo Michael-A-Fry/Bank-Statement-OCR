@@ -24,4 +24,23 @@ table:
     debit:       {x_min: 330, x_max: 395}
     credit:      {x_min: 395, x_max: 472}
     balance:     {x_min: 472, x_max: 545}
+# Twelve months of one account downloaded as ONE PDF is the commonest shape a
+# forensic accountant is handed, and ANZ prints a fresh "Page 1 of N" footer at
+# the start of every statement in the bundle -- a deterministic boundary, not a
+# guess. Opting in lets R/split.R parse and reconcile each statement on its own
+# (rows are tagged with statement_index) instead of reconciling twelve periods
+# against one period's opening balance, which fails balance_reconciliation,
+# running_balance_continuity and dates_within_period on a bundle that is perfectly
+# fine. Measured on a real 46-page, 6-statement ANZ bundle: without this, trust
+# LOW with 3 failed KPIs and 942 dates "outside period"; with it, 6 statements,
+# 1253 rows, every per-statement KPI passing.
+#
+# This is opt-in ONLY and cannot silently mis-split: split.R refuses unless an
+# INDEPENDENT structural count (distinct periods / balance blocks) agrees on the
+# same number of statements, and refuses if any segment will not parse. A genuine
+# single statement has one page-1 marker, so it never reaches min_statements and
+# is parsed exactly as before.
+split:
+  on: page1_marker
+  min_statements: 2
 currency: NZD

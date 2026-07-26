@@ -44,6 +44,35 @@ test_that("tesseract reads a real PDF page end-to-end", {
                "CARD SUMMARY", fixed = TRUE)
 })
 
+# A client's statement must not be left lying on the server's disk. ocr_pdf_page
+# renders the page and then writes TWO preprocessed copies of it; those copies used
+# to be plain tempfile() names, outside the render-prefix glob the cleanup sweeps,
+# so every OCR'd page left two full-page pictures of the statement in the R temp
+# dir for the life of the process (measured 1.38 MB per page on a real 300 dpi A4
+# scan -- ~15 MB for one 11-page statement, on a server meant to run for months).
+test_that("ocr_pdf_page leaves no page images behind (#29)", {
+  skip_if_not(ocr_available(), "tesseract/poppler not installed")
+  pdf <- fixture(SAMPLE_PDF_OCR)
+  skip_if_not(file.exists(pdf))
+  snapshot <- function() list.files(tempdir(), recursive = TRUE, all.files = TRUE,
+                                    no.. = TRUE)
+  before <- snapshot()
+  res <- ocr_pdf_page(pdf, 1L)
+  expect_true(res$ok)
+  # gc() first: when ImageMagick's in-memory pixel pool is full it spills a page to
+  # a disk-backed cache file, which IT deletes when the image object is finalised.
+  # That one is magick's to clean and it does; the files this test is about are
+  # OURS and were never cleaned at all, so gc() cannot hide them.
+  invisible(gc())
+  leaked <- setdiff(snapshot(), before)
+  # Named so a failure says WHAT was left behind and how big it was.
+  info <- if (length(leaked))
+    paste(sprintf("%s (%.2f MB)", leaked,
+                  file.info(file.path(tempdir(), leaked))$size / 1024^2), collapse = ", ")
+  else ""
+  expect_identical(leaked, character(0), info = info)
+})
+
 test_that("read_pdf exposes ocr flags and does not OCR a text-layer page", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   r <- read_pdf(fixture(SAMPLE_PDF_OCR))

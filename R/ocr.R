@@ -83,6 +83,10 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   if (!ocr_available() || !file.exists(pdf))
     return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   prefix <- tempfile("ocrpg_")
+  # EVERY intermediate image this function makes must be named under `prefix`, so
+  # this single sweep removes all of them -- the poppler render AND the two
+  # preprocessed copies below. They are pictures of a client's statement; leaving
+  # any of them behind leaks readable client data onto the host's disk.
   on.exit(unlink(Sys.glob(paste0(prefix, "*")), force = TRUE), add = TRUE)
   rc <- tryCatch(
     system2("pdftoppm",
@@ -104,14 +108,24 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   skew_angle <- if (have_pp && exists(".detect_skew_angle", mode = "function"))
     tryCatch(.detect_skew_angle(magick::image_read(img[1]), max_angle = 5),
              error = function(e) NULL) else NULL
+  # Both preprocessed images are written UNDER the render prefix, so the ONE
+  # on.exit() glob above deletes them along with the render. This is not tidiness:
+  # each is a full-page picture of the CLIENT'S BANK STATEMENT, and on the default
+  # tempfile() name they fell outside that glob and survived for the life of the R
+  # process: measured 1.4 MB per page on a real 300 dpi A4 scan, so one 11-page
+  # statement left ~15 MB of readable statement imagery sitting on the server's
+  # system drive -- on a box that is meant to run for months without a restart.
+  # Naming them here IS the fix; nothing else about either pass changes.
   # Text pass: full preprocessing (deskew/upscale allowed) for best accuracy.
   use_img <- if (have_pp)
-    preprocess_image(img[1], opts = c(preprocess_opts(), list(deskew_angle = skew_angle))) else img[1]
+    preprocess_image(img[1], out_path = paste0(prefix, "_text.png"),
+                     opts = c(preprocess_opts(), list(deskew_angle = skew_angle))) else img[1]
   txt <- ocr_image(use_img, lang = lang)
   # Word-box pass: GEOMETRY-PRESERVING preprocessing (no deskew/resize), so the
   # accuracy lift doesn't move any column. Reuses the shared skew angle.
   box_img <- if (have_pp)
-    preprocess_image(img[1], opts = c(preprocess_opts_geometry(), list(deskew_angle = skew_angle))) else img[1]
+    preprocess_image(img[1], out_path = paste0(prefix, "_box.png"),
+                     opts = c(preprocess_opts_geometry(), list(deskew_angle = skew_angle))) else img[1]
   words <- .ocr_tsv_to_words(ocr_image_tsv(box_img, lang = lang), scale = 72 / dpi)
   # The word boxes live in the (possibly deskewed) box-image frame, so report THAT
   # image's size in points as the page dimensions -- keeps the parser's page-size

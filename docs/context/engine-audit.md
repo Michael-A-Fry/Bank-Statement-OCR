@@ -90,7 +90,8 @@ two had real defects, now fixed and regression-tested:
 | `split.R` | Combined header stamped statement-1's account / a bundle-spanning period onto every feed row | MEDIUM | Per-statement identity fields nulled in the combined header |
 | `split.R` / `diagnose.R` | `[statement N]`-suffixed KPI names fell through to the generic (medium) diagnostic | MEDIUM | Strip the suffix before severity lookup; statement stays in the location |
 
-The full suite stayed green throughout (1430 tests) and gained targeted regression
+The full suite stayed green throughout (now 1,585 assertions across 378 tests in 59
+files) and gained targeted regression
 tests for every fix above (PII masking, content-column suppression, the split
 count-agreement guard, header nulling, the shared date-parser shapes).
 
@@ -359,28 +360,46 @@ effort. None are committed work; they are the map.
   validity → Windows-1252) and accepts an `encoding` override; surfacing it as a
   validated template key would make an exotic codepage fully deterministic.
 
-### The local-ML assist (using the metadata goldmine)
-The metadata-capture subsystem is the substrate. Kept **local, forever, PII-safe**,
-it accumulates a labelled corpus of *how every conversion went*. On top of it,
-entirely on-box (no cloud, no new runtime dependency beyond an optional local
-model):
-- **Template-drift detection.** Cluster `layout.signature` + `field_fill` +
-  KPI-outcome vectors over time; when a proven template's parse-quality
-  distribution shifts (a bank changed its export), surface "this template may need
-  updating" *before* an analyst hits a bad conversion.
-- **Unseen-layout clustering.** Group `unsupported` conversions by layout
-  signature so the biggest gaps bubble up ("14 files this month share a layout with
-  no template") — a prioritised template-building queue, already partly served by
-  the batch-audit gap report.
-- **Draft-quality scoring.** Learn from the corpus which drafted templates went on
-  to reconcile cleanly vs. which needed rework, and warn at save time when a draft
-  looks like the ones that historically failed.
-- **Reconciliation-anomaly hints.** With balance anchors + net amounts captured,
-  flag a statement whose totals sit far outside the account's own history — a
-  possible mis-parse or a genuine anomaly worth a second look.
-All of the above are *assistive and non-authoritative*: they recommend, they never
-silently change a figure. The deterministic engine remains the source of truth;
-the model only ever points a human at something.
+### Using the metadata goldmine — DONE deterministically (2026-07-26)
+This section used to propose a **local-ML assist** over the metadata corpus. Its two
+headline uses are **built, tested and on screen — with no model at all**, so the
+proposal is closed rather than deferred. Both are plain functions in `R/analytics.R`
+over the run/feedback logs, surfaced in **Admin → Insights**:
+
+- **Template-drift detection — SHIPPED (`template_drift()` in `R/analytics.R`).**
+  For every template with enough history it splits the runs into "earlier" and
+  "recent" by timestamp and compares the share of *healthy* runs (status `ok`, zero
+  KPI failures, trust not `low`). A sustained drop of 25 points or more is reported
+  with the template, the run count, both percentages and the last-seen date — "this
+  template may need updating", *before* an analyst hits a bad conversion. It is
+  deterministic, explainable in one sentence to a non-technical maintainer, and
+  covered by `tests/testthat/test-coverage-drift-retention.R`.
+- **Unseen-layout clustering — SHIPPED (`unsupported_clusters()` in
+  `R/analytics.R`).** Every `unsupported` / `failed` run is grouped by its
+  PII-light `layout_signature` and ranked biggest-gap-first, each cluster carrying
+  the closest template, the detection reason, an example filename and the last-seen
+  date — the prioritised template-building queue, exactly as specified (covered by
+  `tests/testthat/test-analytics.R`). The batch-audit gap report
+  (`R/batch_audit.R`) does the same for a folder on demand.
+
+Why this is the right answer and not a lesser one: a template's health and a layout
+gap are both **countable facts** in the logs. Counting them is auditable, testable
+and cheap to keep alive; ranking them with a model would replace two readable
+functions with a probabilistic one that answers the same questions less defensibly —
+against the charter's explicit *not machine learning / not a guesser* clause. The
+deterministic suggestion scaffold (`lexicon_suggestions()`, frequency-ranked,
+human-approved) stays exactly as it is.
+
+### Parked — considered, deliberately not built (with the reason)
+Recorded so nobody re-derives the question. Each needs a *new* fact to change the
+answer, named below.
+
+| Idea | Why it is parked | What would un-park it |
+|---|---|---|
+| **Draft-quality scoring** (learn which drafted templates went on to reconcile, warn at save time) | It is the local-ML proposal in a smaller costume: a probabilistic warning about a *future* outcome, on a corpus that is currently far too small to say anything honest. The save-time gates that matter are already deterministic (fingerprint validation, the generic-fingerprint rule, the preview that must reconcile before Save). | A corpus of hundreds of drafts with known outcomes **and** a rule expressible deterministically ("drafts with no fingerprint token unique to the bank fail 80% of the time") — at which point it is a rule, not a model. |
+| **Reconciliation-anomaly hints** (flag totals far outside an account's own history) | Cross-statement history is not this tool's job: it is not the system of record (charter), and an account's "own history" here is only the statements that happen to have been converted on this box. A hint drawn from a partial history is a plausible guess about someone's money — the one thing the engine must never emit. | The analytics live downstream in Qlik, which *does* hold the full history — this belongs there, not in the extraction core. |
+| **Template synthesis from two examples** (propose bands/date format/amount style from the intersection of two statements) | Genuinely attractive, and genuinely a second drafting paradigm to maintain (guardrail 2 in `roadmap.md`) on top of the visual band editor and single-file `draft.R`. Today an analyst draws bands once and the template is done in minutes; the synthesis would have to beat that *and* be explainable when it proposes a wrong band. | Evidence from real adoption (roadmap item 1) that drawing bands is the actual bottleneck for a non-technical analyst — not a guess that it is. |
+| **Deterministic OCR "second reader"** (two OCR engines / preprocessings; trust only where they agree, flag disagreement) | Contract-wise it is exactly right and tempting. Cost-wise it doubles OCR time on the dominant input and adds a second OCR tool to an **air-gapped Windows** bundle that one analyst has to install and keep alive — for a failure mode that is already caught, not silent: per-cell confidence gating (`ocr_low_conf`), page-mean confidence caveats, and reconciliation over the totals. | Evidence that misreads are slipping past the confidence floor *and* reconciliation on real scanned statements — i.e. a demonstrated silent error, not a theoretical one. Cheaper first move: a second **preprocessing** profile through the *same* engine, which needs no new dependency. |
 
 ### Transaction categorisation (planned downstream — kept out of the extraction core)
 Categorisation is a **downstream** capability, never part of the never-guess
@@ -402,12 +421,11 @@ extraction core, and always visibly derived (never presented as extracted truth)
   attestation: which KPIs proved what, which cells were OCR'd/redacted/inferred, and
   the exact template + version — so a downstream system (or a court bundle) can
   consume the *evidence*, not just the numbers.
-- **Template synthesis from two examples.** Let an analyst drop two statements of the
-  same bank and have the tool propose the stable column bands / date format / amount
-  style from their intersection — draft-by-example rather than draft-by-drawing.
 - **Redaction self-audit page.** A one-click report over `logs/metadata` showing
   every conversion where a redaction was detected, un-verifiable (scan incomplete),
   or a year/direction was inferred — the forensic reviewer's standing worklist.
-- **Deterministic OCR "second reader".** Run two OCR engines (or two preprocessings)
-  and only trust a cell where they agree; disagreement → flagged, never silently
-  picked. Extends the never-silently-wrong contract into the pixel domain.
+
+*(**Template synthesis from two examples** and the **deterministic OCR "second
+reader"** were on this list. Both have been moved to* Parked *above, with the reason
+and the evidence that would un-park them — they are attractive enough to be
+re-proposed otherwise, and the answer should not have to be re-derived.)*

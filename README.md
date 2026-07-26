@@ -24,6 +24,13 @@ The docs are split in two:
 **New here?** Start with the [operational guide](docs/operational/README.md). The
 whole setup is two double-clicks — [first-time-setup](docs/operational/first-time-setup.md).
 
+**Inheriting it?** Read the [charter](docs/context/charter.md) (one page: what this
+tool must always do, and must never do), then the maintainer's runbook —
+[maintaining-the-engine](docs/operational/maintaining-the-engine.md) — for how to run
+the test suite on the server, what an update overwrites, and how to promote a
+template to proven. Back up the irreplaceable folders:
+[backup-and-restore](docs/operational/backup-and-restore.md).
+
 ---
 
 ## What it does today
@@ -49,7 +56,10 @@ whole setup is two double-clicks — [first-time-setup](docs/operational/first-t
   visible and never estimates hidden values.
 - **Never silently wrong** — any non-clean run reports *where / why / how bad /
   who fixes it*; every run is logged; the engine never returns a silent wrong answer.
-- **A full automated test suite** guards every guarantee (343 tests, 0 failures).
+- **A full automated test suite** guards every guarantee — 1,585 assertions across
+  378 tests in 59 files at the last full run (2026-07-26), **0 failures and 0 skips**.
+  A skipped test proves nothing, so the runner fails on one; the totals grow as tests
+  are added, and `Rscript tests/run_tests.R` always prints the current ones.
 
 ---
 

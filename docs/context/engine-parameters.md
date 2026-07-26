@@ -105,6 +105,12 @@ declared safe failure — so the defaults lean toward catching redactions.
 
 1. Edit the value in `R/params.R`.
 2. Run `Rscript tests/run_tests.R` — the suite is the guard; several tests pin
-   exact reconciliation and date-parse outcomes that these numbers drive.
+   exact reconciliation and date-parse outcomes that these numbers drive. **On the
+   server** the app's private R is deliberately unregistered, so plain `Rscript` is
+   the wrong R (or none): use the exact command in
+   [`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md).
 3. If a test now fails, that's the parameter's blast radius made visible — decide
    whether the new behaviour is intended before updating the expectation.
+4. **Write the change down.** `R/params.R` is inside `R\`, so a folder-replace
+   update overwrites it and the value must be re-applied by hand —
+   [`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md).

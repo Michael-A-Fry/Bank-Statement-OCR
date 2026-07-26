@@ -31,13 +31,35 @@ template tweak or something to escalate — see
 
 ---
 
+## The dictionaries are yours, and they are kept
+The **Label dictionary** and **Recognition vocabulary** editors write
+`dictionaries\labels.yaml` and `dictionaries\lexicon.yaml` in the app folder. Those
+files are **your** state, not shipped files:
+
+- an **update never overwrites them** — the package carries only
+  `*.example.yaml`, used to seed a brand-new install
+  ([updating.md](updating.md));
+- each save first writes the previous contents beside it as `…​.yaml.bak`, so you can
+  step back one save;
+- they are on the short list of things to copy off the box —
+  [backup-and-restore.md](backup-and-restore.md).
+
+---
+
 ## Routine upkeep
 - **Watch for drift:** if Insights starts showing more failures or low-trust runs for
   a bank, its export format probably changed — open the wizard and adjust the
-  template ([adding-a-bank-template.md](adding-a-bank-template.md)).
+  template ([adding-a-bank-template.md](adding-a-bank-template.md)). Insights
+  computes this for you: the **drift** card compares each template's recent clean-run
+  rate against its earlier one, and the **unsupported layouts** card ranks the gaps
+  worth building a template for.
 - **Keep logs tidy:** click **Tidy up logs** in Admin every so often.
 - **Clear the review queue:** work through raised statements — most are a template
   tweak you can do yourself.
+- **Back up what can't be rebuilt:** templates, dictionaries and `logs\metadata\` —
+  [backup-and-restore.md](backup-and-restore.md).
+- **Run the test suite after any engine change** (and after an update) —
+  [maintaining-the-engine.md](maintaining-the-engine.md).
 
 That's the whole maintenance story: mostly templates and a glance at Insights, done
 by one analyst, no engineer.

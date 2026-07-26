@@ -28,7 +28,40 @@ test_that("record_upload saves the file + record, set_upload_status transitions"
 test_that("read_uploads on an empty/missing folder is a well-formed empty frame", {
   u <- read_uploads(tempfile())
   expect_equal(nrow(u), 0L)
-  expect_true(all(c("id", "status", "needs_pickup") %in% names(u)))
+  expect_true(all(c("id", "status", "needs_pickup", "purged") %in% names(u)))
+})
+
+# The upload id is (content hash + WHOLE SECOND). Re-converting the same statement
+# twice inside one second therefore produced the same id -- and both uploads shared
+# one folder and one record.json, so the first upload's lifecycle history was
+# silently erased. In a forensic tool a destroyed record is the cardinal failure.
+test_that("two uploads of the same file in the same second stay two records", {
+  dir <- tempfile(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  f <- tempfile(fileext = ".csv"); writeLines(c("Date,Amount", "2024-01-01,1.00"), f)
+  a <- record_upload(f, name = "a.csv", status = "unsupported", dir = dir)
+  b <- record_upload(f, name = "b.csv", status = "ok", dir = dir)
+  expect_false(identical(a, b))
+  u <- read_uploads(dir)
+  expect_equal(nrow(u), 2L)
+  expect_setequal(u$status, c("unsupported", "ok"))
+  # the disambiguated id is still a plain path segment, so the traversal guard on
+  # upload_file_path keeps accepting it
+  expect_false(is.na(upload_file_path(a, dir)))
+  expect_false(is.na(upload_file_path(b, dir)))
+})
+
+# #6/#32: after the retention purge the RECORD survives and the statement does not.
+# Admin must be able to see that, or "open it in the toolkit" is a dead end.
+test_that("read_uploads shows when the saved statement has been purged", {
+  dir <- tempfile(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  f <- tempfile(fileext = ".csv"); writeLines(c("Date,Amount", "2024-01-01,1.00"), f)
+  id <- record_upload(f, name = "old.csv", status = "unsupported", dir = dir)
+  Sys.setFileTime(file.path(dir, id, "old.csv"), Sys.time() - 200 * 86400)
+  purge_uploads(dir, keep_days = 90)
+  u <- read_uploads(dir)
+  expect_true(u$purged[u$id == id])
+  expect_equal(u$status[u$id == id], "unsupported")     # the lifecycle is intact
+  expect_true(is.na(upload_file_path(id, dir)))         # the statement itself is gone
 })
 
 # The id comes from the browser: a path separator or .. would read any file the

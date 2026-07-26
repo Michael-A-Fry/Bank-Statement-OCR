@@ -58,8 +58,9 @@ column boxes from the page; your statement stays on the left the whole time.</li
 across that column on the page, click <b>Assign box &rarr; column</b>. For two-column amounts, draw
 <b>debit</b> and <b>credit</b> boxes. Remove any proposed column that isn&#39;t really there.</li>
 <li>Set the <b>date format</b> and <b>amount style</b> on the <b>Simple</b> tab.</li>
-<li>The identifying phrases that recognise this bank next time are drafted automatically;
-fine-tune them (and anything else) on the <b>Advanced</b> tab if needed.</li>
+<li>Check <b>the distinctive phrase printed on this statement</b> on the <b>Simple</b> tab - that is
+how the tool recognises this bank next time. One is drafted for you, and the phrases found on your
+page are offered in a dropdown; the box tells you straight away if it is too generic to save.</li>
 <li>Watch the <b>preview</b> under the page - only rows whose date box reads as a real date are
 kept, so headings/notes/gaps drop out by themselves.</li>
 <li><b>Save</b>. Column boxes are x-position only (full height) - you&#39;re defining columns; rows
@@ -72,7 +73,9 @@ date format, amount style and column mapping are detected for you. For Excel the
 picked automatically, junk rows above the header are skipped, and dates stored as Excel serial
 numbers are read correctly.</li>
 <li>Check the field pickers point at the right columns.</li>
-<li>If the preview looks right, <b>Save</b>. That bank converts automatically from then on.</li></ol>
+<li>If the preview looks right, <b>Save</b>. The toolkit then re-checks your statement
+against every template and tells you, in words, whether it will be recognised on its own next
+time - and what to change if it won&#39;t. From then on that bank converts automatically.</li></ol>
 
 <h4>Trust it when it reconciles</h4>
 <p class="lead">In <b>Checks &amp; detail</b>: &quot;Each running balance follows from the last&quot; passing means
@@ -115,7 +118,9 @@ about_html <- function() HTML('
   <div class="step"><b>Download</b>Excel, CSV or JSON - and rate the result so the team sees what works.</div>
 </div>
 <p class="muted">No template for it yet? The toolkit pre-fills one from your file; you confirm
-against a live preview and save. Next time that bank just works.</p>
+against a live preview and save. It is then re-checked against every template and tells you
+whether that bank will be recognised on its own next time - so &quot;it just works from now on&quot;
+is something you are shown, not something you are promised.</p>
 
 <h3>How you know it&#39;s right</h3>
 <dl class="trust">

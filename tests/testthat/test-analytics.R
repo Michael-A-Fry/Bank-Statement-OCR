@@ -68,6 +68,43 @@ test_that("analytics functions are safe on empty logs", {
   expect_equal(nrow(runs_overview(e)), 0L)
   expect_equal(nrow(unsupported_clusters(e)), 0L)
   expect_equal(nrow(template_usage(e)), 0L)
+  expect_equal(nrow(feed_health(e)), 0L)
+  expect_equal(nrow(feed_write_failures(e)), 0L)
+  expect_equal(nrow(read_feed_log(tempfile("nofeed_"))), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# F1-38 / F1-44: feed health. A UNC share going read-only used to mean every
+# conversion still reported success while the feed silently stopped for ever.
+# ---------------------------------------------------------------------------
+
+test_that("feed_health rolls the feed log up by verdict, and names the failures", {
+  fl <- data.frame(
+    ts = c("2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"),
+    run_id = c("r1", "r2", "r3", "r4"),
+    source_file = c("a.csv", "b.csv", "c.pdf", "d.pdf"),
+    gate_result = c("accepted", "accepted", "accepted:write_failed",
+                    "withheld:needs_review"),
+    feed_written = c(TRUE, TRUE, FALSE, TRUE),
+    feed_dir = rep("//fileserver/share/feed", 4),
+    stringsAsFactors = FALSE)
+  hh <- feed_health(fl)
+  expect_equal(hh$n[hh$gate_result == "accepted"], 2L)
+  expect_equal(hh$written[hh$gate_result == "accepted"], 2L)
+  expect_equal(hh$written[hh$gate_result == "accepted:write_failed"], 0L)
+
+  wf <- feed_write_failures(fl)
+  expect_equal(nrow(wf), 1L)
+  expect_identical(wf$run_id, "r3")
+  expect_identical(wf$source_file, "c.pdf")
+  expect_identical(wf$feed_dir, "//fileserver/share/feed")   # where to go and look
+})
+
+test_that("feed_health treats a healthy log as having no failures", {
+  fl <- data.frame(ts = "2026-01-01", run_id = "r1", gate_result = "accepted",
+                   feed_written = TRUE, stringsAsFactors = FALSE)
+  expect_equal(nrow(feed_write_failures(fl)), 0L)
+  expect_equal(feed_health(fl)$written, 1L)
 })
 
 test_that("end-to-end: a converted unsupported file is reportable from the log", {

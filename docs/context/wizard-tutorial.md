@@ -195,6 +195,8 @@ Once a template is right, lock it in so a future change can't silently break it:
 3. Save it to `tests/testthat/expected/<id>.csv`.
 4. Add `tests/testthat/test-<id>.R` (copy an existing one).
 5. Run `Rscript tests/run_tests.R` - your bank must pass and no other may break.
+   (**On the server** the app's private R is not on `PATH`; use the exact command in
+   [`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md).)
 
 See `tests/HOWTO-add-template-test.md`. The tutorial sample itself
 (`test-tutorial_everyday_pdf.R`) is a worked example of exactly this.

@@ -31,6 +31,12 @@
 # (validated); "table" = append format specs; "map" = per-key regex override.
 .lexicon_spec <- function() c(
   header_keywords = "list", layout_stopwords = "list",
+  # Bank / brand words the fingerprint drafter treats as a masthead rather than a
+  # customer's name. Registered here so an unlisted bank can be taught in the
+  # dictionary instead of in code -- without this entry lex() rejects the category
+  # and R/wizard_auto.R silently falls back to its built-in list, which is exactly
+  # the "teach it in YAML, never in code" promise failing quietly.
+  fingerprint_brand_words = "list",
   debit_markers = "list", credit_markers = "list",
   amount_style_debit_headers = "list", amount_style_credit_headers = "list",
   dr_cr_suffix_debit = "list", dr_cr_suffix_credit = "list", overdrawn_markers = "list",
@@ -43,6 +49,7 @@
 # live in their own modules and resolve at call time.
 .lexicon_defaults <- function() list(
   header_keywords  = .HDR_KEYS,
+  fingerprint_brand_words = .FP_BRAND_DEFAULT,   # R/wizard_auto.R
   layout_stopwords = .LAYOUT_STOP,
   debit_markers    = c("D", "DR", "DEBIT", "W", "WD", "WITHDRAWAL", "OUT"),
   credit_markers   = c("C", "CR", "CREDIT", "DEP", "DEPOSIT", "IN"),
@@ -151,7 +158,12 @@ validate_lexicon <- function(raw) {
   if (!is.list(raw)) return("lexicon must be a mapping of categories")
   spec <- .lexicon_spec()
   for (cat in names(raw)) {
-    if (is.null(spec[[cat]])) { problems <- c(problems, sprintf("unknown category '%s'", cat)); next }
+    # `spec` is a named CHARACTER VECTOR, so spec[[cat]] for a name that is not
+    # present ERRORS ("subscript out of bounds") before the is.null() test could
+    # catch it -- an admin typo in the vocabulary file crashed the validator whose
+    # whole job is to hand back a readable "unknown category" message. Test
+    # membership by name instead.
+    if (!(cat %in% names(spec))) { problems <- c(problems, sprintf("unknown category '%s'", cat)); next }
     v <- raw[[cat]]
     if (identical(spec[[cat]], "regex") && !.regex_ok(as.character(unlist(v))[1]))
       problems <- c(problems, sprintf("%s is not a valid regex", cat))

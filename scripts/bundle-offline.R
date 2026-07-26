@@ -7,11 +7,15 @@
 #     StatementStudio-offline/
 #       RUN-ME.bat          <- the only thing you run on the server (double-click)
 #       app.R  R/  templates/  ...   the app itself
+#       config/config.example.yaml       seeds only if the server has no config yet
+#       dictionaries/*.example.yaml      ditto -- the server's taught words are LIVE
+#                                        state and are never overwritten by an update
 #       offline/
 #         repo/             all R packages (+ every dependency) as Windows binaries
 #         prereqs/          the R, Poppler and Tesseract installers
 #         install-on-pc.R   package/OCR install (RUN-ME.bat calls this for you)
 #         packages.txt      the list, for reference
+#         manifest.txt      what this bundle IS: app + R + package versions
 #
 #   Rscript scripts/bundle-offline.R
 #
@@ -53,8 +57,16 @@ options(timeout = 600)
 # copied -- they are created on first run and must never travel.
 # Deliberately no source-control or hidden dotfiles in the shipped folder: it is a
 # plain product folder, nothing more.
+#
+# NOT in this list, deliberately: `dictionaries`. Those two files (labels.yaml,
+# lexicon.yaml) are LIVE state on the server -- Admin writes them every time the
+# team teaches the tool a new wording or recognition marker. Shipping them would
+# mean a routine "replace the files in the destination" update silently reverts
+# every word the team taught it, and statements that reconciled last week quietly
+# stop reconciling. Same reason config.yaml is deleted from the dist below; the
+# dist carries *.example.yaml instead and RUN-ME.bat seeds them only if absent.
 app_items <- c("R", "templates", "templates_user", "templates_seed",
-               "dictionaries", "fields_templates", "config", "scripts",
+               "fields_templates", "config", "scripts",
                "tests", "samples", "docs",
                "app.R", "ui_content.R", "ui_labels.R", "run.R", "README.md", "RUN-ME.bat")
 cat("Copying the app into the dist folder ...\n")
@@ -81,6 +93,24 @@ if (!file.exists(file.path(dist, "RUN-ME.bat")))
 # RUN-ME.bat seeds/restores config.yaml on the server.
 unlink(file.path(dist, "config", "config.yaml"))
 
+# Dictionaries: ship EXAMPLES ONLY, for exactly the same reason as config.yaml.
+# The repo's dictionaries/*.yaml are the shipped starting vocabularies; on the
+# server the same filenames are Admin-edited live state. Copy each one to
+# <name>.example.yaml so RUN-ME.bat can seed a first install, while an update
+# leaves the server's taught words untouched.
+dict_src <- file.path(app_root, "dictionaries")
+if (dir.exists(dict_src)) {
+  dir.create(file.path(dist, "dictionaries"), recursive = TRUE, showWarnings = FALSE)
+  dfiles <- list.files(dict_src, pattern = "\\.ya?ml$", full.names = TRUE)
+  dfiles <- dfiles[!grepl("\\.example\\.ya?ml$", dfiles)]   # don't double-suffix
+  for (d in dfiles)
+    file.copy(d, file.path(dist, "dictionaries",
+                           sub("\\.(ya?ml)$", ".example.\\1", basename(d))),
+              overwrite = TRUE, copy.date = TRUE)
+  cat(sprintf("  dictionaries shipped as %d example file(s) (server keeps its own)\n",
+              length(dfiles)))
+}
+
 # Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
 # the folder was obtained (we ship no line-ending config to normalise them for us).
 for (b in list.files(dist, pattern = "\\.bat$", recursive = TRUE, full.names = TRUE)) {
@@ -89,9 +119,19 @@ for (b in list.files(dist, pattern = "\\.bat$", recursive = TRUE, full.names = T
 }
 
 ## 2. R packages (+ all dependencies) -- the reliable core ------------------
+# Set the CRAN mirror EXPLICITLY. Under a stock `Rscript` (no profile, which is
+# exactly how make-bundle.bat calls this) getOption("repos") is the unresolved
+# "@CRAN@" placeholder, and miniCRAN then either prompts for a mirror -- with
+# nothing to answer it -- or resolves to nothing at all. Setting it here means the
+# build behaves the same on every PC.
+cran <- unname(getOption("repos")["CRAN"])
+if (length(cran) != 1 || is.na(cran) || !nzchar(cran) || identical(cran, "@CRAN@"))
+  cran <- "https://cloud.r-project.org"
+options(repos = c(CRAN = cran))
+cat(sprintf("CRAN mirror: %s\n", cran))
 if (!requireNamespace("miniCRAN", quietly = TRUE)) {
   cat("\nInstalling miniCRAN (needs internet -- this PC has it)...\n")
-  install.packages("miniCRAN", repos = "https://cloud.r-project.org")
+  install.packages("miniCRAN", repos = cran)
 }
 all <- miniCRAN::pkgDep(pkgs, type = "win.binary", suggests = FALSE)
 cat(sprintf("\nDownloading %d R packages (with dependencies) into %s ...\n", length(all), repo_path))
@@ -115,34 +155,86 @@ r_dest <- file.path(prereq, sprintf("R-%s-win.exe", rfull))
 if (!grab(sprintf("https://cran.r-project.org/bin/windows/base/R-%s-win.exe", rfull), r_dest, "R"))
   grab(sprintf("https://cran.r-project.org/bin/windows/base/old/%s/R-%s-win.exe", rfull, rfull), r_dest, "R (old)")
 
+# A bundle with no R installer is not a bundle: RUN-ME.bat cannot install the
+# private R, so NOTHING works on the server. This used to print "skipped", carry on
+# to "DONE" and exit 0 -- make-bundle.bat reported success and the failure surfaced
+# days later, on the air-gapped box, as "Could not set up the private R". Fail here,
+# where the internet is, and say exactly what to do.
+if (!file.exists(r_dest)) stop(sprintf(paste0(
+  "no R installer was downloaded, so this bundle cannot install R on the server.\n",
+  "  Expected: %s\n",
+  "  Fix: check this PC's internet/proxy and run make-bundle.bat again, or download\n",
+  "       R-%s-win.exe from https://cran.r-project.org/bin/windows/base/ (or .../base/old/%s/)\n",
+  "       into that folder by hand and re-run."), r_dest, rfull, rfull))
+
 # Poppler for Windows -- newest release .zip (parse the releases API without needing
 # jsonlite installed on this PC yet).
-tryCatch({
+got_poppler <- tryCatch({
   txt <- paste(readLines("https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest",
                          warn = FALSE), collapse = "")
   z <- regmatches(txt, gregexpr("https://[^\"']*/Release-[^\"']*\\.zip", txt))[[1]]
   if (!length(z)) stop("no zip asset found")
   grab(z[1], file.path(prereq, "poppler-windows.zip"), "Poppler")
-}, error = function(e)
-  cat("  Poppler    skipped -- get it from github.com/oschwartz10612/poppler-windows/releases\n"))
+}, error = function(e) {
+  cat("  Poppler    skipped -- get it from github.com/oschwartz10612/poppler-windows/releases\n")
+  FALSE })
 
 # Tesseract for Windows -- newest UB Mannheim w64 installer (from its index page).
-tryCatch({
+got_tesseract <- tryCatch({
   idx <- paste(readLines("https://digi.bib.uni-mannheim.de/tesseract/", warn = FALSE), collapse = "\n")
   m <- unique(regmatches(idx, gregexpr("tesseract-ocr-w64-setup-[0-9][^\"'> ]*\\.exe", idx))[[1]])
   if (!length(m)) stop("no installer on index")
   latest <- tail(sort(m), 1)
   grab(paste0("https://digi.bib.uni-mannheim.de/tesseract/", latest), file.path(prereq, latest), "Tesseract")
-}, error = function(e)
-  cat("  Tesseract  skipped -- get it from github.com/UB-Mannheim/tesseract/wiki\n"))
+}, error = function(e) {
+  cat("  Tesseract  skipped -- get it from github.com/UB-Mannheim/tesseract/wiki\n")
+  FALSE })
 
 ## 4. The PC-side install script (RUN-ME.bat calls this) --------------------
 pc <- file.path(.self_dir(), "install-offline.R")
 if (file.exists(pc)) file.copy(pc, file.path(bundle, "install-on-pc.R"), overwrite = TRUE)
 
+## 5. Manifest -- WHAT is actually in this bundle ---------------------------
+# An air-gapped box has no way to ask "which version am I running, and which
+# package versions did it ship with?" -- and that is the first question anyone asks
+# when a conversion behaves differently on the server than on the build PC. The
+# manifest travels with the bundle and answers it without internet.
+man <- c(
+  "Statement Studio -- offline bundle manifest",
+  sprintf("built_utc:   %s", format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")),
+  sprintf("app_version: %s", tryCatch(
+    paste(readLines(file.path(app_root, "VERSION"), warn = FALSE), collapse = " "),
+    error = function(e) "(no VERSION file)")),
+  sprintf("r_version:   %s   <- the server installs and runs THIS R", R.version.string),
+  sprintf("built_on:    %s", Sys.info()[["sysname"]]),
+  sprintf("poppler:     %s", if (isTRUE(got_poppler)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  sprintf("tesseract:   %s", if (isTRUE(got_tesseract)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  "", "packages (name version) -- every file in offline/repo:")
+zips <- list.files(repo_path, pattern = "\\.zip$", recursive = TRUE)
+man <- c(man, if (length(zips)) sort(sub("^(.+)_([^_]+)\\.zip$", "\\1 \\2", basename(zips)))
+              else "  (none -- the package download failed)")
+writeLines(man, file.path(bundle, "manifest.txt"))
+
 sz <- tryCatch(sum(file.info(list.files(dist, recursive = TRUE, full.names = TRUE))$size,
                    na.rm = TRUE) / 1e6, error = function(e) NA_real_)
 cat(sprintf("\nDONE -> %s  (R %s, ~%.0f MB total)\n", normalizePath(dist), rxy,
             if (is.na(sz)) 0 else sz))
-cat("Next: copy the whole 'StatementStudio-offline' folder to the server and\n")
+cat(sprintf("      manifest: %s\n", file.path(bundle, "manifest.txt")))
+
+# A missing OCR tool is NOT a detail: the server will read text PDFs, CSV and Excel
+# fine and then hit a scanned statement it cannot read at all. Say so here, loudly,
+# while the internet is still available to fix it -- not days later on the server.
+if (!isTRUE(got_poppler) || !isTRUE(got_tesseract)) {
+  missing_ocr <- c(if (!isTRUE(got_poppler)) "Poppler", if (!isTRUE(got_tesseract)) "Tesseract")
+  cat("\n***********************************************************************\n")
+  cat(sprintf("*** WARNING -- this bundle has NO %s.\n", paste(missing_ocr, collapse = " and ")))
+  cat("*** SCANNED PDFs WILL NOT BE READABLE ON THE SERVER. Text PDFs, CSV and\n")
+  cat("*** Excel still work; a scanned page will be refused with a clear reason.\n")
+  cat(sprintf("*** Fix: download the installer(s) into %s\n", prereq))
+  cat("***      Poppler   github.com/oschwartz10612/poppler-windows/releases\n")
+  cat("***      Tesseract github.com/UB-Mannheim/tesseract/wiki\n")
+  cat("***      then re-run make-bundle.bat, or copy them in and rebuild.\n")
+  cat("***********************************************************************\n")
+}
+cat("\nNext: copy the whole 'StatementStudio-offline' folder to the server and\n")
 cat("      double-click RUN-ME.bat inside it. That's the entire server setup.\n")

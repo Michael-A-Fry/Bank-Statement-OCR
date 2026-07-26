@@ -5,20 +5,31 @@
 # an environment-variable override (BSO_ADMIN_PASSWORD) for sites that would rather
 # not keep it in a file; the file is the default home otherwise.
 
+# .DEFAULT_ADMIN_PASSWORD -- the PLACEHOLDER shipped in the example config. It is
+# not a password, it is a "you have not set one yet" marker: while it is still in
+# force the app REFUSES to serve the Admin tab at all (see admin_password_is_default
+# below and the gate in app.R). Kept as a named constant so the default, the
+# example file and the refusal can never drift apart.
+.DEFAULT_ADMIN_PASSWORD <- "changeme"
+
 # .config_defaults() -- every setting the app/engine reads, with safe defaults.
 .config_defaults <- function() list(
   app = list(
     title          = "Statement Studio",
-    admin_password = "changeme",          # the Admin-tab barrier (a simple gate)
+    admin_password = .DEFAULT_ADMIN_PASSWORD,  # placeholder -> Admin stays CLOSED
     shiny_url      = "http://localhost:8100", # the URL Qlik's "Convert a statement" tile opens
     port           = 8100L,
     # Biggest statement a user may upload, in MB. Shiny's own default is 5 MB, which
     # rejects the scanned PDFs this tool exists to read, so we set our own.
     max_upload_mb  = 200,
-    # Convert offers proven (curated) templates by default; a tick-box brings in
-    # user-created ones (with a "not guaranteed tested" warning). Flip this to start
-    # with that box ticked if your team mostly uses templates they built themselves.
-    user_templates_default = FALSE
+    # Whether Convert's "Include user-created templates" box starts TICKED.
+    # TRUE, because the product's promise is "build a template once and that bank
+    # converts automatically from then on" -- with this off, a template Beth builds
+    # is excluded from auto-detection and the promise is false. Governance is NOT
+    # served by this switch: what reaches Qlik is gated on template ORIGIN in
+    # R/feed.R (feed.allowed_template_origins), which is unaffected by it. Set it
+    # false only if your team wants to opt in to its own templates each time.
+    user_templates_default = TRUE
   ),
   paths = list(
     templates      = "templates",         # PROVEN / curated templates
@@ -69,8 +80,34 @@
       redaction      = TRUE      # redaction counts + scan completeness
     ),
     retain_forever = TRUE       # exempt metadata from log rollup (never archived / deleted)
+  ),
+  retention = list(
+    # Every converted statement is copied byte-for-byte into uploads/<id>/ so a
+    # format that failed can be picked up and fixed. Those copies are REAL client
+    # statements, so they must not sit there forever by accident. After this many
+    # days the tidy-up (purge_uploads, R/retention.R) deletes the copied FILE and
+    # keeps the small record.json, so the audit of "this was uploaded, this is what
+    # happened" survives while the client data does not. 0 (or a negative number)
+    # means keep the copies indefinitely -- a deliberate choice, and the Convert
+    # page then says so out loud.
+    uploads_keep_days = 90
   )
 )
+
+# admin_password_is_default(cfg) -- TRUE while the shipped placeholder (or a blank)
+# is still the admin password. The app uses this to REFUSE the Admin tab rather
+# than serve template deletion, the shared dictionary and the analytics-feed
+# settings behind a password that is printed in the example file and the docs.
+admin_password_is_default <- function(cfg = load_config()) {
+  pw <- trimws(as.character(cfg$app$admin_password %||% .DEFAULT_ADMIN_PASSWORD)[1])
+  is.na(pw) || !nzchar(pw) || identical(pw, .DEFAULT_ADMIN_PASSWORD)
+}
+
+# config_error(cfg) -- the YAML parse failure recorded by load_config(), or NULL.
+# A broken config.yaml silently reverting to built-ins used to be invisible; one
+# stray tab restored the placeholder admin password and redirected the Qlik feed
+# with nothing said. Callers surface this (startup warning + Admin banner).
+config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 
 # .deep_merge(base, over) -- override wins; sub-lists merge key-by-key, scalars
 # replace. A NULL override leaves the base untouched (so a blank YAML key = default).
@@ -86,8 +123,18 @@
 # local capture survives a restart without disturbing the rest of the file. Returns
 # TRUE on success. retain_forever stays TRUE -- metadata is never rolled up.
 save_metadata_config <- function(level, capture, path = .config_path()) {
-  existing <- if (!is.null(path) && file.exists(path))
-    tryCatch(yaml::read_yaml(path), error = function(e) list()) else list()
+  # An UNREADABLE existing file must never be treated as an empty one: merging
+  # onto list() and writing would silently delete every other setting in it (the
+  # admin password, the Qlik feed_dir, the paths) to save one toggle. Refuse and
+  # let the caller say so -- the file is still there to be fixed by hand.
+  if (!is.null(path) && file.exists(path)) {
+    parsed <- tryCatch(yaml::read_yaml(path), error = function(e) e)
+    if (inherits(parsed, "error"))
+      return(invisible(structure(FALSE, reason = sprintf(
+        "%s could not be read (%s), so it was left untouched -- fix the file first, or saving this setting would wipe every other setting in it",
+        path, conditionMessage(parsed)))))
+    existing <- parsed
+  } else existing <- list()
   if (!is.list(existing)) existing <- list()
   lvl <- if (tolower(level %||% "full") %in% metadata_levels()) tolower(level) else "full"
   existing$metadata <- list(level = lvl, capture = as.list(capture), retain_forever = TRUE)
@@ -123,8 +170,24 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
   } else {
     c0 <- .config_defaults()
     if (!is.null(fi)) {
-      fromfile <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
-      if (is.list(fromfile)) c0 <- .deep_merge(c0, fromfile)
+      # A config.yaml that does not parse is NOT the same as no config.yaml. It
+      # silently reverted the admin password to the shipped placeholder and the
+      # Qlik feed_dir to "feed" -- a weaker posture, chosen by a stray tab, with
+      # nothing said. Defaults are still used (the app must start), but the failure
+      # is RECORDED on the result so every caller can shout about it.
+      fromfile <- tryCatch(yaml::read_yaml(path), error = function(e) e)
+      if (inherits(fromfile, "error")) {
+        attr(c0, "config_error") <- sprintf("%s could not be read: %s", path,
+                                            conditionMessage(fromfile))
+      } else if (is.list(fromfile)) {
+        c0 <- .deep_merge(c0, fromfile)
+      } else if (!is.null(fromfile)) {
+        # An empty file (or comments only) parses to NULL and legitimately means
+        # "all defaults" -- silent. Anything else that is not a settings map (a
+        # bare string, a list of values) is a mistake worth saying out loud.
+        attr(c0, "config_error") <- sprintf(
+          "%s is not a settings file (it holds no name: value settings)", path)
+      }
     }
     if (length(ls(.CONFIG_CACHE)) >= 8L) rm(list = ls(.CONFIG_CACHE), envir = .CONFIG_CACHE)
     assign(key, c0, envir = .CONFIG_CACHE)
