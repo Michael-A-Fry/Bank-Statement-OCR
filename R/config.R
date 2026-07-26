@@ -158,7 +158,6 @@ save_metadata_config <- function(level, capture, path = .config_path()) {
 # self-invalidating, no writer needs to remember to clear it. The env-secret
 # override is applied fresh on every call, never cached, so it can't go stale.
 .CONFIG_CACHE <- new.env(parent = emptyenv())
-clear_config_cache <- function() rm(list = ls(.CONFIG_CACHE), envir = .CONFIG_CACHE)
 
 # load_config(path) -> the complete, merged config list.
 load_config <- function(path = .config_path(), refresh = FALSE) {

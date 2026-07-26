@@ -230,20 +230,18 @@ test_that("a match reports its margin + runner-up over near-duplicate templates"
   f
 }
 
-test_that("candidates report which templates were genuine contenders", {
+test_that("detection reports which templates were genuine contenders", {
   det <- detect_statement(read_input(.twin_csv()),
                           load_templates(.twin_dir(), strict = FALSE))
-  expect_true("eligible" %in% names(det$candidates))
-  expect_type(det$candidates$eligible, "logical")
+  expect_type(det$eligible_ids, "character")
+  expect_setequal(det$eligible_ids, c("twinbank_everyday_a", "twinbank_everyday_b"))
 })
 
 test_that("two templates that fit equally well are reported as a TIE, not a new layout", {
   det <- detect_statement(read_input(.twin_csv()),
                           load_templates(.twin_dir(), strict = FALSE))
   expect_false(det$matched)                       # still fails closed
-  expect_true(detect_ambiguous(det))              # ...but for the tie reason
-  expect_setequal(detect_tied_ids(det),
-                  c("twinbank_everyday_a", "twinbank_everyday_b"))
+  expect_setequal(det$tied, c("twinbank_everyday_a", "twinbank_everyday_b"))
 })
 
 test_that("a genuinely unknown layout is NOT reported as a tie", {
@@ -252,15 +250,14 @@ test_that("a genuinely unknown layout is NOT reported as a tie", {
                           load_templates(.twin_dir(header = c("Booking Ref", "Nights", "Room Rate")),
                                          strict = FALSE))
   expect_false(det$matched)
-  expect_false(detect_ambiguous(det))             # build a template IS right here
-  expect_identical(detect_tied_ids(det), character(0))
+  expect_identical(det$tied, character(0))       # build a template IS right here
 })
 
 test_that("an unambiguous match is never called ambiguous", {
   det <- detect_statement(read_input(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv")),
                           load_templates(fixture("templates"), strict = FALSE))
   expect_true(det$matched)
-  expect_false(detect_ambiguous(det))
+  expect_identical(det$tied, character(0))
 })
 
 # A tie is a question only a maintainer can answer -- an accountant cannot know
@@ -325,9 +322,9 @@ test_that("a shipped template beats a hand-built one on an equal score", {
                           load_template_set(dflt, usr))
   expect_true(det$matched)
   expect_identical(det$template_id, "zzz_shipped_pdf")
-  # and it is NOT reported as an ambiguous tie -- shipped-over-hand-built is a
-  # real answer, not a question for the analyst
-  expect_false(detect_ambiguous(det))
+  # and it is NOT reported as a tie -- shipped-over-hand-built is a real answer,
+  # not a question for the analyst
+  expect_identical(det$tied, character(0))
 })
 
 # A template can fingerprint perfectly and read NOTHING: detection matches text,
@@ -380,7 +377,7 @@ test_that("when the matched template reads nothing, another that fits is tried",
   # never silently: the swap is stated, and the run is held for review
   expect_identical(res$status, "needs_review")
   expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
-  expect_true("read_by_another_template" %in%
+  expect_true("matched_but_empty" %in%
                 as.character(res$diagnostics$category %||% character(0)))
 })
 

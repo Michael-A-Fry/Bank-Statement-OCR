@@ -126,8 +126,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       det <- list(template_id = force_template, matched = TRUE, score = NA_real_,
                   margin = Inf, runner_up = NA_character_,
                   candidates = data.frame(id = force_template, score = NA_real_,
-                                          eligible = TRUE,
                                           stringsAsFactors = FALSE),
+                  eligible_ids = force_template, tied = character(0),
                   detail = "template chosen by the user")
     } else {
       det <- detect_statement(input, templates, hint_bank = bank,
@@ -150,7 +150,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     # nothing slips into the dashboards, because needs_review never reaches them.
     # This is not a guess -- every figure still goes through full reconciliation,
     # so the wrong variant shows up as a failing check rather than a clean answer.
-    ambiguous <- detect_ambiguous(det)
+    ambiguous <- !isTRUE(det$matched) && length(det$tied) >= 2
     if (!isTRUE(det$matched) && !ambiguous) {
       result$status <- "unsupported"
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
@@ -214,7 +214,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       empty_first <- nrow(att$parsed$transactions) == 0L
       rescued_from <- NA_character_
       if (empty_first) {
-        others <- setdiff(detect_eligible_ids(det), det$template_id)
+        others <- setdiff(det$eligible_ids, det$template_id)
         for (tid in utils::head(others, PARAM_DETECT_MAX_REREADS)) {
           alt <- safe(.read_with(tid), NULL)
           if (!is.null(alt) && nrow(alt$parsed$transactions) > 0L) {
@@ -270,7 +270,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         # the template exists, its columns are in the wrong place.
                         matched_empty = if (row_count == 0L) template$id else NULL,
                         rescued_from = rescued_from,
-                        tied = if (ambiguous) detect_tied_ids(det) else NULL))
+                        tied = if (ambiguous) det$tied else NULL))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,
@@ -299,8 +299,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       if (ambiguous) {
         msg <- c(status_message("needs_review",
           sprintf("%s templates fit this statement equally well, so the tested one was used",
-                  length(detect_tied_ids(det))),
-          sprintf("worth a check: %s", paste(detect_tied_ids(det), collapse = ", "))), msg)
+                  length(det$tied)),
+          sprintf("worth a check: %s", paste(det$tied, collapse = ", "))), msg)
       }
       if (!is.na(rescued_from)) {
         msg <- c(status_message("needs_review",
@@ -356,7 +356,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$candidates <- det$candidates
       result$detect <- list(margin = det$margin, runner_up = det$runner_up,
                             thin = thin_match, ambiguous = ambiguous,
-                            tied = if (ambiguous) detect_tied_ids(det) else character(0))
+                            tied = if (ambiguous) det$tied else character(0))
     }
     # LOCAL-ONLY metadata capture (the ML goldmine). Built here where every
     # artifact is in scope; written after the run log below. NEVER enters the feed.

@@ -28,12 +28,19 @@
 # how-to-fix text tells the analyst to change the template. The test
 # "every diagnostic category has a declared owner" (test-diagnose.R) scans this
 # file for the categories actually raised and fails if one is missing here.
+# One fix for one defect: a template whose wording matches but whose columns read
+# nothing. Whether a fallback template rescued the run changes the detail, never
+# the cure -- so the cure is written once.
+.FIX_EMPTY_TEMPLATE <- paste(
+  "Open this statement in the template toolkit with that template and check where the",
+  "columns sit - the usual cause is a column band drawn in the wrong place, or over",
+  "the wrong part of the page. The X-ray view shows what the tool saw.")
+
 .DIAG_FIX_OWNER <- c(
   # the analyst fixes it in the template toolkit
   unknown_format          = "template",
   ambiguous_template      = "template",
   matched_but_empty       = "template",
-  read_by_another_template = "template",
   reconciliation_mismatch = "template",
   balance_break           = "template",
   row_count               = "template",
@@ -197,9 +204,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     add("template", "matched_but_empty", "high",
         sprintf("%s matches the wording on this statement but read no transactions from it",
                 metadata$matched_empty),
-        paste("Open this statement in the template toolkit with that template and check where the",
-              "columns sit - the usual cause is a column band drawn in the wrong place, or over",
-              "the wrong part of the page. The X-ray view shows what the tool saw."))
+        .FIX_EMPTY_TEMPLATE)
   } else if (identical(status, "unsupported")) {
     # A TIE is not an unknown layout, and "go and add a template" is the wrong
     # instruction for it: templates that already fit scored the same, so a new one
@@ -217,27 +222,22 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   }
 
   if (!is.null(metadata)) {
-    # A different template had to step in because the first one read nothing. Say
-    # so, or the broken template stays broken: nobody knows it failed, because the
-    # conversion appeared to work.
+    if (!is.null(metadata$rescued_from) && !is.na(metadata$rescued_from))
+      add("template", "matched_but_empty", "medium",
+          sprintf("%s matches the wording on this statement but read no transactions from it, so %s was used instead",
+                  metadata$rescued_from, metadata$template$id %||% "another template"),
+          .FIX_EMPTY_TEMPLATE)
     # A tie no longer stops the conversion -- the tested template is used and the
-    # run held for review. But the duplicate templates are still a real problem,
-    # and only a maintainer can fix them, so it is raised here rather than put to
-    # the person who just wanted her spreadsheet.
-    if (!is.null(metadata$tied) && length(metadata$tied) >= 2)
+    # run held for review. The duplicate templates are still a real problem, and
+    # only a maintainer can fix them, so it is raised here rather than put to the
+    # person who just wanted her spreadsheet.
+    if (length(metadata$tied %||% character(0)) >= 2)
       add("detection", "ambiguous_template", "medium",
           sprintf("%s templates fit this statement equally well: %s",
                   length(metadata$tied), paste(metadata$tied, collapse = ", ")),
           paste("The tested one was used and the run held for review. These look like",
                 "near-duplicates of each other: merging or retiring one stops every",
                 "statement of this kind needing a second look."))
-    if (!is.null(metadata$rescued_from) && !is.na(metadata$rescued_from))
-      add("template", "read_by_another_template", "medium",
-          sprintf("%s matched the wording first but read no transactions, so %s was used instead",
-                  metadata$rescued_from, metadata$template$id %||% "another template"),
-          paste("Check the figures are right. Then get the template that read nothing looked at -",
-                "its columns are in the wrong place, and it will keep winning the match on",
-                "statements like this one."))
     if (isTRUE(metadata$multi$likely_multiple))
       add("upload", "multiple_statements", "high",
           paste(metadata$multi$reasons, collapse = "; "),
