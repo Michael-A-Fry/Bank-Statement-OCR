@@ -55,6 +55,31 @@ Dominant input: **genuinely mixed, heavy on PDFs** (both text-layer and scanned/
   the existing maintained-keyword logic; step 2: something better), kept out of the
   extraction core and never guessed. Tracked in `engine-audit.md` → Future directions.
 
+## The interface rule
+> **Never ask a question the tool can answer.
+> Never ask a question the person in front of you can't.**
+
+This is the cardinal rule for the *screen*, as "never silently wrong" is for the
+*figures* — and it is the one that keeps getting broken, because breaking it always
+feels like helping. Every time the engine learns to notice something subtle, the
+temptation is to put the subtlety in front of the user. That is how a tool that
+replaces "file in, spreadsheet out" ends up asking a forensic accountant which of
+two templates she would like to use.
+
+Applying it:
+- **Can the tool work it out?** Then work it out. Two templates fitting equally
+  well is not a question — pick deterministically (a tested template over a
+  hand-built one), convert, and flag it for review.
+- **Could this person answer it if asked?** Beth cannot know which column band is
+  three points too far left. So do not explain bands to her: do the safe thing, say
+  plainly whether she can use the file, and route the problem to whoever can fix it.
+- **Nothing is deleted, only re-homed.** Every diagnostic still exists and is still
+  reachable in one click — some users want all of it. The default just stops
+  assuming everybody does.
+- **Three audiences, never mixed on one screen:** the accountant ("can I use this
+  file?"), the maintainer ("what needs fixing?"), the auditor ("where did this
+  number come from?").
+
 ## Operating principles (how it behaves when it matters)
 - **Fail-closed when unsure:** emit `NA` + a flag (or `needs_review`), never a
   plausible guess.

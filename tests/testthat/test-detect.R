@@ -263,19 +263,27 @@ test_that("an unambiguous match is never called ambiguous", {
   expect_false(detect_ambiguous(det))
 })
 
-test_that("a tie carries the tied template names onto the result, so the screen can offer them", {
+# A tie is a question only a maintainer can answer -- an accountant cannot know
+# which internal variant a bank printed with. Stopping her to ask left her with no
+# spreadsheet over a problem that was never hers, so the tool now decides and
+# flags. It is not a guess: every figure still goes through reconciliation, and
+# needs_review never reaches the dashboards.
+test_that("a tie converts with the best template and is held for review, not refused", {
   f <- .twin_csv(); d <- .twin_dir()
   out <- tempfile("twinout_"); dir.create(out)
   res <- convert_statement(f, outdir = out, templates_dir = d, logdir = out)
-  expect_identical(res$status, "unsupported")     # unchanged: still refuses to guess
+  expect_gt(nrow(res$feed_rows), 0L)              # she gets her data
+  expect_identical(res$status, "needs_review")    # ...and it is never called clean
   expect_true(isTRUE(res$detect$ambiguous))
   expect_setequal(res$detect$tied,
                   c("twinbank_everyday_a", "twinbank_everyday_b"))
-  # and the analyst's choice really does convert it
+  # the tie is stated in words, not buried
+  expect_true(any(grepl("fit this statement equally well",
+                        as.character(res$messages), fixed = TRUE)))
+  # forcing one by hand still works, for whoever is fixing the duplicates
   res2 <- convert_statement(f, outdir = out, templates_dir = d, logdir = out,
-                            force_template = "twinbank_everyday_a")
-  expect_true(res2$status %in% c("ok", "needs_review"))
-  expect_identical(res2$template_id, "twinbank_everyday_a")
+                            force_template = "twinbank_everyday_b")
+  expect_identical(res2$template_id, "twinbank_everyday_b")
   expect_gt(nrow(res2$feed_rows), 0L)
 })
 
@@ -289,7 +297,8 @@ test_that("a tie is diagnosed as a tie, with the opposite advice to a new layout
   # third template that ties with the other two.
   expect_false("unknown_format" %in% cats)
   fix <- as.character(res$diagnostics$how_to_fix[cats == "ambiguous_template"])
-  expect_true(grepl("Pick one", fix, fixed = TRUE))
+  # aimed at whoever can retire a duplicate, not at whoever just wanted a spreadsheet
+  expect_true(grepl("near-duplicates", fix, fixed = TRUE))
   expect_false(grepl("Add a template for this layout", fix, fixed = TRUE))
 
   # A genuinely new layout keeps the old diagnostic and the old advice.

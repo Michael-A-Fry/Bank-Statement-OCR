@@ -137,29 +137,27 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     detect_detail <- det$detail
     parsed <- recon <- template <- NULL   # set in the matched branch; NULL otherwise
 
-    if (!isTRUE(det$matched)) {
-      # TWO different failures wear the same "unsupported" status, and they need
-      # OPPOSITE advice:
-      #   nothing eligible  -> a genuinely new layout. Build a template.
-      #   two+ eligible     -> a TIE. Templates that already fit this statement
-      #                        scored the same, so the tool refuses to guess which.
-      #                        Building another template would add a third tied
-      #                        candidate and make the next conversion worse.
-      # Carrying the candidate list onto the result is what lets the screen tell
-      # the analyst WHICH templates tied and offer to convert with one of them,
-      # instead of sending them off to build a duplicate of something we already
-      # have. Failing closed is right; failing closed without saying what we found
-      # is the "never silently wrong" rule half-applied.
-      ambiguous <- detect_ambiguous(det)
+    # A TIE IS NOT A DEAD END.
+    # Two templates fitting the same wording is a question only a maintainer can
+    # answer -- an accountant cannot know which internal variant a bank used to
+    # print her statement. Stopping her to ask was asking a question the person in
+    # front of us cannot answer (charter: the interface rule), and it left her with
+    # no spreadsheet over a problem that was never hers.
+    #
+    # So: take the best candidate (a tested template over a hand-built one, then
+    # deterministic), convert, and HOLD THE RUN FOR REVIEW with the tie named. She
+    # gets her data; the duplicate templates go to whoever can retire one; and
+    # nothing slips into the dashboards, because needs_review never reaches them.
+    # This is not a guess -- every figure still goes through full reconciliation,
+    # so the wrong variant shows up as a failing check rather than a clean answer.
+    ambiguous <- detect_ambiguous(det)
+    if (!isTRUE(det$matched) && !ambiguous) {
       result$status <- "unsupported"
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
-      result$messages <- status_message("unsupported",
-        if (ambiguous) "more than one template matches this equally well" else "no template matched",
-        det$detail)
+      result$messages <- status_message("unsupported", "no template matched", det$detail)
       result$candidates <- det$candidates
       result$detect <- list(margin = NA_real_, runner_up = det$runner_up,
-                            thin = FALSE, ambiguous = ambiguous,
-                            tied = detect_tied_ids(det))
+                            thin = FALSE, ambiguous = FALSE, tied = character(0))
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
       result$metadata <- c(meta, list(multiple = multi))
       result$diagnostics <- build_diagnostics("unsupported", det = det,
@@ -252,7 +250,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
         "unsupported"
       } else if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
                  isTRUE(multi_resolved$likely_multiple) || thin_match ||
-                 !is.na(rescued_from)) {
+                 !is.na(rescued_from) || ambiguous) {
         "needs_review"
       } else {
         "ok"
@@ -264,7 +262,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         # problem from an unknown layout, and has a different fix:
                         # the template exists, its columns are in the wrong place.
                         matched_empty = if (row_count == 0L) template$id else NULL,
-                        rescued_from = rescued_from))
+                        rescued_from = rescued_from,
+                        tied = if (ambiguous) detect_tied_ids(det) else NULL))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,
@@ -288,6 +287,14 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # Without this the analyst sees a template id they never expected and no
       # explanation, and the one that reads nothing stays broken forever because
       # nobody knows it is broken.
+      # Named, not hidden -- but stated as a fact about the TOOL, not as a task for
+      # the person reading it. She has her data; somebody else retires the duplicate.
+      if (ambiguous) {
+        msg <- c(status_message("needs_review",
+          sprintf("%s templates fit this statement equally well, so the tested one was used",
+                  length(detect_tied_ids(det))),
+          sprintf("worth a check: %s", paste(detect_tied_ids(det), collapse = ", "))), msg)
+      }
       if (!is.na(rescued_from)) {
         msg <- c(status_message("needs_review",
           sprintf("%s matched first but read no transactions, so %s was used instead",
@@ -341,8 +348,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # Candidate templates + margin, for the "matched but maybe wrong" panel.
       result$candidates <- det$candidates
       result$detect <- list(margin = det$margin, runner_up = det$runner_up,
-                            thin = thin_match, ambiguous = FALSE,
-                            tied = character(0))
+                            thin = thin_match, ambiguous = ambiguous,
+                            tied = if (ambiguous) detect_tied_ids(det) else character(0))
     }
     # LOCAL-ONLY metadata capture (the ML goldmine). Built here where every
     # artifact is in scope; written after the run log below. NEVER enters the feed.

@@ -55,6 +55,13 @@ if (ADMIN_PW_UNSET)
 # here (and in scripts/run_app.R, which is how the server actually starts) from one
 # config key so a site can tune it without touching code.
 MAX_UPLOAD_MB <- suppressWarnings(as.numeric(CONFIG$app$max_upload_mb %||% 200))
+# Do templates built HERE take part in detection? A deployment decision, read once
+# -- never a tick-box on the Convert page. Whether a colleague's template counts
+# is not a question to put to the person converting a statement, and the tick-box
+# only ever produced the puzzle "I built this template and it does not work".
+# Governance is unaffected: what reaches the dashboards is gated separately, on
+# template origin (feed.allowed_template_origins).
+USE_USER_TEMPLATES <- isTRUE(CONFIG$app$user_templates_default %||% TRUE)
 if (!is.finite(MAX_UPLOAD_MB) || MAX_UPLOAD_MB <= 0) MAX_UPLOAD_MB <- 200
 options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2)
 TEMPLATES_DIR      <- CONFIG$paths$templates       # curated, team-maintained (proven) templates
@@ -420,46 +427,63 @@ ui <- fluidPage(
           # default view is simply: file, name, Convert.
           tags$details(class = "adv-bank",
             tags$summary("It picked the wrong bank?"),
-            div(style = "padding-top:10px",
-              uiOutput("cv_bank_ui"),
-              checkboxInput("cv_user_templates", "Include templates built here (yours and your team's)",
-                            value = isTRUE(CONFIG$app$user_templates_default)),
-              conditionalPanel("input.cv_user_templates == true",
-                helpText(style = "margin-top:-6px;color:#8a5b00",
-                  "These were built here rather than shipped and checked - so read the verdict. Untick to use only the shipped, tested templates.")),
-              conditionalPanel("input.cv_user_templates != true",
-                helpText(style = "margin-top:-6px;color:#8a5b00",
-                  "OFF: templates you or your team built here are NOT used, so a bank you set up will come back as 'no template yet'."))))
+            # NO "include templates built here" tick-box. Whether a colleague's
+            # template counts is not a per-conversion decision an accountant should
+            # be making -- a template someone here built for this bank either works
+            # for the team or it does not, and it is reviewed before it is trusted
+            # for the dashboards (that gate is feed.allowed_template_origins, and it
+            # is untouched by this). The tick-box only ever produced the puzzle "I
+            # built this template and it does not work". It is now a deployment
+            # setting: app.user_templates_default in config/config.yaml.
+            div(style = "padding-top:10px", uiOutput("cv_bank_ui")))
         ),
         mainPanel(
           width = 8,
+          # ---------------------------------------------------------------
+          # THE INTERFACE RULE (charter), applied to the result page.
+          #
+          # ABOVE the fold: what a forensic accountant came here for -- did it
+          # work, here is your download, here are your transactions. That is the
+          # whole job, so it is the whole default view.
+          #
+          # BEHIND ONE CONTROL: evidence about how the tool did its job -- the
+          # X-ray, the chart, the checks, the diagnostics, the template controls.
+          # All of it still exists and none of it is more than one click away,
+          # because some people want every bit of it. It simply stops being
+          # pushed at the people who do not.
+          #
+          # That click is REMEMBERED for the session (cv_detail_open), so someone
+          # technical opens it once and never sees the button again. Nobody is
+          # ever asked "are you an advanced user?" -- a question the tool can
+          # answer for itself by watching what they do.
+          # ---------------------------------------------------------------
           uiOutput("cv_status"),
-          uiOutput("cv_headline"),   # plain verdict first (self-gates to an OK statement)
-          uiOutput("cv_downloads"),  # prominent download bar, right under the verdict
-          uiOutput("cv_feed"),       # ...and whether it reached the dashboards, or why not
-          uiOutput("cv_rematch"),    # "wrong bank / template? make the right one" - up top, obvious
+          uiOutput("cv_headline"),   # the verdict, in her words
+          uiOutput("cv_downloads"),  # the payoff, right under it
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
-          # Before any conversion, show a clear empty state (what this page does /
-          # what you'll get) instead of bare section headers over empty tables.
+          # Before any conversion, a clear empty state rather than bare headers.
           conditionalPanel("output.cv_has_result != true", uiOutput("cv_empty")),
-          # Transaction-statement result: EASY first. Lead with a plain-English
-          # verdict (did it work? how many transactions? can I trust it?), then the
-          # transactions themselves, then the DOWNLOAD. The technical checks,
-          # diagnostics and field-coverage tables live inside "Checks & detail"
-          # (cv_detail) - depth as an option on a clean result, and opened for you
-          # the moment anything was flagged.
           conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
-            # Analysis + transactions render only when the parse actually produced
-            # rows (ok / needs_review): an unsupported or failed result must never
-            # show zero-money cards and an empty graph under its honest verdict.
+            # Figures + transactions render only when the parse produced rows: an
+            # unsupported or failed result must never show zero-money cards and an
+            # empty graph under its honest verdict.
             conditionalPanel("output.cv_has_txns == true",
-            uiOutput("cv_summary"),
-            uiOutput("cv_split"),      # a bundle: what each statement in it says
-            h4("Your transactions"),
-            tabsetPanel(
-              tabPanel("Preview", br(), DTOutput("cv_txns")),
-              tabPanel("See it on the page (X-ray)", br(),
+              uiOutput("cv_summary"),
+              uiOutput("cv_split"),    # a bundle: what each statement in it says
+              h4("Your transactions"),
+              DTOutput("cv_txns")),
+            # cv_teach is the NEXT ACTION when a layout is new ("set it up once and
+            # it converts every time"), not evidence about the run -- so it stays
+            # above the fold. Burying the only thing left to do would be the same
+            # mistake in the other direction.
+            uiOutput("cv_teach"),
+            # ONE control; everything technical sits behind it.
+            uiOutput("cv_more_toggle"),
+            conditionalPanel("output.cv_detail_open == true",
+              conditionalPanel("output.cv_has_txns == true",
+                h4("See it on the page"),
+                div(
                 conditionalPanel("output.ix_is_pdf == true",
                   p(class = "muted", "Your statement page, with everything the tool read drawn on it. Green = kept transaction rows; amber dashed = skipped rows that look like transactions; the legend below names the rest."),
                   fluidRow(
@@ -483,10 +507,8 @@ ui <- fluidPage(
                   helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage inside 'Checks & detail' below shows which column feeds each field.")))),
-            # Analysis comes AFTER the transactions Beth came for - the trend chart
-            # and its controls are the secondary view, not the payoff.
-            h4("Analysis"),
+                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage below shows which column feeds each field."))),
+                h4("Analysis"),
             # Design-system tokens, not one-off greys: this panel is the last
             # surface on Convert that drew its own border.
             div(style = "border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:6px 0 14px",
@@ -500,12 +522,13 @@ ui <- fluidPage(
                 column(4, radioButtons("an_unit", "Measure",
                   c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
               plotOutput("cv_trend", height = "270px"),
-              uiOutput("cv_trend_note"))),
-            # Detection / "wrong template?" and the tweak-in-toolkit prompt: useful,
-            # but AFTER the data, not before the verdict.
-            uiOutput("cv_teach"),
-            uiOutput("cv_candidates"),
-            uiOutput("cv_detail")),
+              uiOutput("cv_trend_note"))
+              ),
+              # "Wrong template?" -- a real question, but for someone who wants to
+              # look under the bonnet, not for the person who just wanted a file.
+              uiOutput("cv_candidates"),
+              uiOutput("cv_detail"),
+              uiOutput("cv_feed"))),   # ...and whether it reached the dashboards
           uiOutput("cv_feedback")
         )
       )
@@ -1036,7 +1059,7 @@ server <- function(input, output, session) {
                   error = function(e) list())
     names(u)[!vapply(u, function(t) isTRUE(t$hidden), logical(1))] })
   cv_pick_templates <- reactive({
-    if (isTRUE(input$cv_user_templates)) templates() else proven_templates()
+    if (USE_USER_TEMPLATES) templates() else proven_templates()
   })
   output$cv_bank_ui <- renderUI({
     ts <- cv_pick_templates()
@@ -1964,10 +1987,10 @@ server <- function(input, output, session) {
     # The tick-box, an explicit force, or an explicit include_user brings in the
     # user-created set. include_user exists because updateCheckboxInput only
     # reaches the browser AFTER this observer finishes: right after a save we know
-    # the box is being ticked, but input$cv_user_templates still reads its old
-    # value, and without this the just-saved template would be excluded from the
-    # very conversion that is meant to demonstrate it.
-    use_user <- isTRUE(input$cv_user_templates) || !is.null(force_tpl) || isTRUE(include_user)
+    # this is for the moment right after a template is saved, when the caller
+    # already knows the new template must take part even if the deployment has
+    # user-built templates switched off.
+    use_user <- USE_USER_TEMPLATES || !is.null(force_tpl) || isTRUE(include_user)
     who <- who_now()
     withProgress(message = "Converting statement…", value = 0.2, {
       incProgress(0.2, detail = "Reading the file and detecting its format…")
@@ -2182,6 +2205,36 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "cv_has_txns", suspendWhenHidden = FALSE)
 
+  # ---------------------------------------------------------------------------
+  # "Show me how it read this" -- the one control that separates the accountant's
+  # view from the evidence view (charter: the interface rule).
+  #
+  # STICKY BY DESIGN. Once someone opens it, it stays open for every conversion
+  # for the rest of their session. That is the whole answer to "some users are
+  # more technical than others": we do not ask them which they are, and we do not
+  # make them re-open it on every file. They tell us by clicking once, and the
+  # tool remembers. Closing it again is equally sticky, so nobody is stuck with a
+  # view they did not want.
+  cv_detail_open <- reactiveVal(FALSE)
+  observeEvent(input$cv_more, cv_detail_open(!isTRUE(cv_detail_open())))
+  output$cv_detail_open <- reactive({ isTRUE(cv_detail_open()) })
+  outputOptions(output, "cv_detail_open", suspendWhenHidden = FALSE)
+
+  output$cv_more_toggle <- renderUI({
+    res <- cv_res(); req(res)
+    if (identical(res$kind, "form")) return(NULL)
+    open <- isTRUE(cv_detail_open())
+    # Named for what is BEHIND it, not for the mechanism. "Advanced" would make an
+    # accountant feel it is not for her; "how it read this" is a question she may
+    # genuinely want answered, and it is the honest description of the contents.
+    div(style = "margin:16px 0 6px",
+      actionLink("cv_more", style = "font-weight:700;font-size:14.5px",
+        label = if (open) "Hide how it read this" else "Show me how it read this"),
+      div(class = "muted", style = "font-size:13px;margin-top:2px",
+          if (open) "The page, the checks, the diagnostics and the template it used."
+          else "The statement page with everything marked on it, every check that ran, and the template it used."))
+  })
+
   # Empty state: shown before the first conversion. Tells a brand-new user what
   # this page is for and exactly what they'll get back, so the screen is never a
   # mystery or a wall of empty headers.
@@ -2293,13 +2346,13 @@ server <- function(input, output, session) {
   plain_trust <- function(trust) {
     proven <- !isFALSE(trust$completeness_verified)
     switch(trust$level %||% "",
-      high   = list(cls = "ok",   icon = "✓", line = "High confidence: the opening balance plus every transaction equals the closing balance the statement prints, so nothing is missing."),
+      high   = list(cls = "ok",   icon = "✓", line = "Every transaction adds up to the closing balance the statement prints. Nothing is missing."),
       medium = list(cls = "warn", icon = "✓", line = if (proven)
-          "Medium confidence: it read cleanly and every check that could run passed, but one thing about this statement could not be fully proven - it is named below. Worth a quick eyeball against the statement."
+          "Read cleanly. One thing could not be proven — it is named just below."
         else
-          "Medium confidence: it read cleanly, but this statement carries no closing balance or stated count to reconcile against, so a missing transaction could not be detected automatically. Check the row count against the statement."),
-      low    = list(cls = "bad",  icon = "!",      line = "Low confidence: please check these transactions against the statement before relying on them."),
-      list(cls = "warn", icon = "✓", line = "Read cleanly, but completeness could not be auto-verified. Check the transaction count against the statement."))
+          "Read cleanly. This statement prints no closing balance, so check the number of rows against it."),
+      low    = list(cls = "bad",  icon = "!",      line = "Check these against the statement before you use them."),
+      list(cls = "warn", icon = "✓", line = "Read cleanly. Check the number of rows against the statement."))
   }
   # Row FLAGS worth a chip: things the engine recorded per row that a clean-looking
   # result would otherwise never mention on screen. Each caps the trust level in
@@ -2347,8 +2400,6 @@ server <- function(input, output, session) {
         div(class = "verdict-title", sprintf("Converted%s",
           if (!is.na(n)) sprintf(" — %d transaction%s read", n, if (n == 1) "" else "s") else "")),
         p(class = "verdict-body", pt$line),
-        p(class = "muted", style = "margin:0 0 6px",
-          "Full detail is under 'Checks & detail' below."),
         if (length(chips)) div(chips)))
   })
 
@@ -3176,21 +3227,6 @@ server <- function(input, output, session) {
       # old app said nothing at all, so the answer to "I built this template and it
       # doesn't work" was buried in a tick-box inside a collapsed "wrong bank?"
       # panel. One sentence, one button.
-      nuser <- length(user_template_ids())
-      if (!isTRUE(input$cv_user_templates) && nuser > 0) {
-        return(tagList(
-          div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
-            strong(sprintf("Before you build one: %d template%s built here %s currently switched OFF.",
-                           nuser, if (nuser == 1) "" else "s", if (nuser == 1) "is" else "are")),
-            p(class = "muted", style = "margin:6px 0 10px",
-              "This statement was only checked against the shipped, tested templates. If you or a colleague already set this bank up, turning them on will find it."),
-            actionButton("cv_use_user_tpl", "Include them and convert again", class = "btn-warning")),
-          div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
-            strong("Nothing there either? Set it up once and it converts every time."),
-            p(class = "muted", style = "margin:6px 0 10px",
-              "The tool pre-fills what it can detect from your statement — you confirm against a live preview and save."),
-            actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-primary btn-lg"))))
-      }
       # A new layout is a FORK, not a cliff. We WANT analysts setting up their own
       # templates, so the prominent GREEN action is "set it up yourself" (the tool
       # pre-fills what it can); handing it to the team is the small fallback.
@@ -3213,24 +3249,6 @@ server <- function(input, output, session) {
   })
   # Tick the box AND re-run in one click. include_user = TRUE because the tick has
   # not reached the browser yet when this conversion starts.
-  observeEvent(input$cv_use_user_tpl, {
-    src <- cv_src(); req(src)
-    uid <- cv_upload_id()      # this is the SAME statement, not a new upload
-    updateCheckboxInput(session, "cv_user_templates", value = TRUE)
-    run_conversion(src$path, src$name, record = FALSE, include_user = TRUE)
-    cv_upload_id(uid)          # keep it tied to the pickup it came from
-    res <- cv_res()
-    # If it converts now, the pickup record must say so -- otherwise Admin keeps
-    # asking someone to build a template for a statement that already has one.
-    if (!is.na(uid) && (res$status %||% "") %in% c("ok", "needs_review"))
-      safe(set_upload_status(uid, res$status,
-        run_id = res$run_id %||% NA_character_,
-        template = res$template_id %||% NA_character_,
-        trust = res$trust$level %||% NA_character_,
-        detail = "converted once templates built here were included", dir = UPLOADS_DIR))
-    showNotification("Templates built here are now included - and stay on for the rest of this session.",
-                     type = "message", duration = 6)
-  })
   observeEvent(input$cv_goto_templates,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
   observeEvent(input$cv_empty_to_tmpl,
@@ -3707,10 +3725,6 @@ server <- function(input, output, session) {
       if (!is.na(cv_upload_id()))
         safe(set_upload_status(cv_upload_id(), "wizard_saved",
           template = tmpl$id %||% NA_character_, dir = UPLOADS_DIR))
-      # A saved template is only useful if it takes part in detection, so switch
-      # user-built templates ON. (The saved conversion below passes include_user
-      # explicitly -- this tick only reaches the browser after the observer ends.)
-      updateCheckboxInput(session, "cv_user_templates", value = TRUE)
       saved_id <- tmpl$id %||% NA_character_
       gp <- g$path; gn <- g$name %||% (if (!is.null(gp)) basename(gp) else NA_character_)
       if (!is.null(gp) && file.exists(gp) && !is.na(saved_id) && nzchar(saved_id)) {

@@ -19,24 +19,21 @@
 }
 
 # ---------------------------------------------------------------------------
-# #18 -- saving a template must actually switch it on. Before this, grep for
-# updateCheckboxInput over app.R returned zero hits: nothing in the app ever
-# ticked "include user-created templates", so a template Beth built took no part
-# in detection unless she found a tick-box inside a collapsed panel.
-test_that("saving a template ticks the box that lets it be detected (#18)", {
-  src <- .app_src()
-  expect_true(any(grepl('updateCheckboxInput\\(session, "cv_user_templates", value = TRUE\\)', src)))
-  save_block <- .app_block(src, 'observeEvent\\(input\\$g_save', 60L)
-  expect_match(save_block, 'updateCheckboxInput\\(session, "cv_user_templates", value = TRUE\\)')
-})
-
-test_that("the tick-box default comes from config, and Convert says when it is OFF (#18)", {
+# #18 -- a template someone builds here must actually take part in detection.
+# It once did not: nothing in the app ever ticked "include user-created
+# templates", so a template Beth built was ignored unless she found a tick-box
+# inside a collapsed panel. The tick-box itself is now gone -- whether a
+# colleague's template counts is not a question to put to the person converting a
+# statement -- so the invariant is stronger: they are ON, from config, with
+# nothing to find.
+test_that("templates built here take part in detection with nothing to switch on (#18)", {
   src <- paste(.app_src(), collapse = "\n")
-  expect_match(src, 'value = isTRUE\\(CONFIG\\$app\\$user_templates_default\\)')
-  # an unticked box is a silent exclusion unless the screen says so
-  expect_match(src, 'input.cv_user_templates != true', fixed = TRUE)
-  # ...and an unsupported result offers the one-click fix rather than a shrug
-  expect_match(src, 'cv_use_user_tpl', fixed = TRUE)
+  # one deployment setting, read once, defaulting ON
+  expect_match(src, "USE_USER_TEMPLATES <- isTRUE\\(CONFIG\\$app\\$user_templates_default %\\|\\|% TRUE\\)")
+  expect_match(src, "if \\(USE_USER_TEMPLATES\\) templates\\(\\) else proven_templates\\(\\)")
+  # and NO per-conversion control anywhere -- that is the whole point
+  expect_false(grepl("cv_user_templates", src, fixed = TRUE))
+  expect_false(grepl("cv_use_user_tpl", src, fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -60,7 +57,9 @@ test_that("the post-save conversion can see user templates before the tick lands
   # conversion that demonstrates the new template must include them explicitly --
   # otherwise it would convert without the template it just saved.
   expect_match(src, "include_user = TRUE", fixed = TRUE)
-  expect_match(src, "isTRUE\\(input\\$cv_user_templates\\) \\|\\| !is.null\\(force_tpl\\) \\|\\| isTRUE\\(include_user\\)")
+  # a deployment CAN switch user templates off; the conversion that demonstrates a
+  # just-saved template must still see it, or the save appears not to have worked.
+  expect_match(src, "USE_USER_TEMPLATES \\|\\| !is.null\\(force_tpl\\) \\|\\| isTRUE\\(include_user\\)")
 })
 
 # ---------------------------------------------------------------------------

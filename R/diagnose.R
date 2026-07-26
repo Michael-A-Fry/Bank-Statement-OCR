@@ -205,20 +205,10 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # instruction for it: templates that already fit scored the same, so a new one
     # would simply tie as well and the next conversion would be no better. Same
     # status, opposite fix -- so say the opposite thing.
-    if (detect_ambiguous(det)) {
-      tied <- detect_tied_ids(det)
-      add("detection", "ambiguous_template", "high",
-          sprintf("%s templates fit this statement equally well: %s",
-                  length(tied), paste(tied, collapse = ", ")),
-          paste("Pick one on the Convert page and it converts straight away.",
-                "If these are near-duplicates of each other, ask whoever looks after the tool",
-                "to merge or retire one, and the question stops being asked."))
-    } else {
-      add("detection", "unknown_format", "high",
-          det$detail %||% "no template matched this file",
-          paste("Add a template for this layout in the template toolkit (Add a template tab:",
-                "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
-    }
+    add("detection", "unknown_format", "high",
+        det$detail %||% "no template matched this file",
+        paste("Add a template for this layout in the template toolkit (Add a template tab:",
+              "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),
@@ -230,6 +220,17 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # A different template had to step in because the first one read nothing. Say
     # so, or the broken template stays broken: nobody knows it failed, because the
     # conversion appeared to work.
+    # A tie no longer stops the conversion -- the tested template is used and the
+    # run held for review. But the duplicate templates are still a real problem,
+    # and only a maintainer can fix them, so it is raised here rather than put to
+    # the person who just wanted her spreadsheet.
+    if (!is.null(metadata$tied) && length(metadata$tied) >= 2)
+      add("detection", "ambiguous_template", "medium",
+          sprintf("%s templates fit this statement equally well: %s",
+                  length(metadata$tied), paste(metadata$tied, collapse = ", ")),
+          paste("The tested one was used and the run held for review. These look like",
+                "near-duplicates of each other: merging or retiring one stops every",
+                "statement of this kind needing a second look."))
     if (!is.null(metadata$rescued_from) && !is.na(metadata$rescued_from))
       add("template", "read_by_another_template", "medium",
           sprintf("%s matched the wording first but read no transactions, so %s was used instead",
