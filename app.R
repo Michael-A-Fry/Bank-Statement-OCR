@@ -2079,8 +2079,13 @@ server <- function(input, output, session) {
                  actionLink("cv_qid_change", "change")))
     tagList(
       textInput("cv_qid", "Your QID", value = ""),
+      # Say what it is FOR. Never say why it is needed: the old wording announced
+      # that this server has no sign-in, which tells every person who opens the
+      # page - including anyone who should not be on it - exactly where the door
+      # is unlocked. What the tool cannot do is nobody's business but the
+      # maintainer's, and it is in the docs where it belongs.
       helpText(style = "margin-top:-6px",
-        "There is no sign-in on this server, so this is what the audit trail records as who ran the conversion. Asked once - remembered until you close the browser."),
+        "Recorded on the audit trail as who ran this conversion. Asked once - remembered until you close the browser."),
       actionButton("cv_qid_set", "Use this QID", class = "btn-default"),
       tags$hr(style = "margin:14px 0"))
   })

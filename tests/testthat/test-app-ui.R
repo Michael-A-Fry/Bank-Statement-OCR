@@ -198,3 +198,29 @@ test_that("the About page does not advertise Admin", {
   expect_false(grepl("Open Admin", joined, fixed = TRUE))
   expect_false(grepl("ab_go_admin", joined, fixed = TRUE))
 })
+
+# ---------------------------------------------------------------------------
+# Never tell the screen what the tool cannot do. Copy that explains WHY an input
+# is needed ("there is no sign-in on this server") is a description of a weakness,
+# shown to everyone who opens the page - including anyone who should not be on it.
+# The QID field says what it is FOR; where the limitation is written down is the
+# maintainer's documentation.
+test_that("no screen text advertises the absence of a sign-in", {
+  files <- c(file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R")),
+             list.files(file.path(engine_root(), "R"), "[.]R$", full.names = TRUE))
+  files <- files[file.exists(files)]
+  banned <- c("no sign-in", "no sign in", "There is no sign",
+              "not secured", "no password on", "anyone can access")
+  offenders <- character(0)
+  for (f in files) {
+    lines <- readLines(f, warn = FALSE)
+    lines <- lines[!grepl("^\\s*#", lines, useBytes = TRUE)]   # comments are for maintainers
+    for (b in banned) {
+      hit <- grep(b, lines, fixed = TRUE, value = TRUE, useBytes = TRUE)
+      if (length(hit)) offenders <- c(offenders, sprintf("%s: %s", basename(f), trimws(hit)))
+    }
+  }
+  expect_identical(offenders, character(0),
+                   info = paste("screen text describes a security weakness:",
+                                paste(offenders, collapse = " | ")))
+})
