@@ -2216,7 +2216,11 @@ server <- function(input, output, session) {
     if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
     st <- res$status %||% "failed"
     lvl <- switch(st, ok = "high", needs_review = , unsupported = "medium", "low")
-    trust <- if (!is.null(res$trust)) sprintf(" · confidence: %s", res$trust$level) else ""
+    # A tie is not "no template yet" (STATUS_PLAIN_AMBIGUOUS), and it has no
+    # confidence to quote -- nothing was converted to be confident about.
+    ambig <- isTRUE(res$detect$ambiguous)
+    headline <- if (ambig) STATUS_PLAIN_AMBIGUOUS else plain_status(st)
+    trust <- if (!is.null(res$trust) && !ambig) sprintf(" · confidence: %s", res$trust$level) else ""
     # Name the template ONLY when one was actually used to read the statement. On
     # an unsupported result the engine still carries a template id -- the CLOSEST
     # MISS, kept for the logs -- and printing it under "No template for this
@@ -2226,7 +2230,7 @@ server <- function(input, output, session) {
     div(class = paste0("verdict verdict-", lvl),
       div(class = "verdict-ico", if (identical(lvl, "high")) "✓" else "!"),
       div(style = "flex:1;min-width:0",
-        div(class = "verdict-title", paste0(plain_status(st), trust)),
+        div(class = "verdict-title", paste0(headline, trust)),
         # Engine messages carry a leading machine code ("needs_review: ...") for the
         # logs; the card headline already says it in words, so drop the code here.
         lapply(sub("^(ok|needs_review|unsupported|failed):\\s*", "",
@@ -3145,6 +3149,30 @@ server <- function(input, output, session) {
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
+      # "Unsupported" covers two opposite situations. If two or more templates fit
+      # this statement EQUALLY well, the tool refuses to guess which -- but telling
+      # the analyst "this layout is new, build a template" would be flatly wrong
+      # advice: we already have templates that fit, and a third would only tie too.
+      # So name them and let one click convert with either. Nothing is auto-chosen;
+      # the analyst decides, which is the one thing a machine can't do here.
+      tied <- as.character(res$detect$tied %||% character(0))
+      if (isTRUE(res$detect$ambiguous) && length(tied) >= 2) {
+        return(div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
+          strong(sprintf("%d templates fit this statement equally well - which one is it?", length(tied))),
+          p(class = "muted", style = "margin:6px 0 10px",
+            "They match the same wording on the page, so the tool won't pick for you. Choose one and it converts straight away - nothing is saved or changed."),
+          div(style = "display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end",
+            div(style = "flex:1 1 340px",
+              selectInput("cv_tie_pick", NULL, choices = tied, width = "100%")),
+            div(style = "margin-bottom:15px",
+              actionButton("cv_tie_go", "Convert with this one", class = "btn-primary"))),
+          div(class = "muted", style = "font-size:13px",
+            "Sure it's neither? ",
+            actionLink("cv_teach_go", "Set up a new template instead"),
+            " - but if these are near-duplicates of each other, tidying them up in ",
+            actionLink("cv_goto_templates", "Admin -> Templates"),
+            " stops this being asked every time.")))
+      }
       # BEFORE offering to build a template: if templates built here are switched
       # OFF, the statement may already have one and we simply refused to look. The
       # old app said nothing at all, so the answer to "I built this template and it
@@ -3280,10 +3308,17 @@ server <- function(input, output, session) {
         sprintf("Matched %s. Nearest others: %s.", res$template_id,
                 paste(sprintf("%s (score %s)", others_df$id, others_df$score), collapse = ", "))
         else sprintf("Matched %s.", res$template_id)),
+      # "Try the other one" must BE one click, not a trip to the toolkit. Opening
+      # the toolkit is a heavy action (a form full of settings, a template to name
+      # and save) for what is really the question "did it pick the right variant?".
+      # So converting with the other template is the primary button and the toolkit
+      # is the secondary link, for when the answer is "neither of these is right".
       if (length(others)) tagList(
-        selectInput("cv_cand_pick", "Wrong one? Open the toolkit with a different template:",
+        selectInput("cv_cand_pick", "Wrong one? Try a different template:",
                     choices = others, width = "100%"),
-        actionButton("cv_cand_go", "Open the toolkit with this template", class = "btn-default"))))
+        actionButton("cv_cand_convert", "Convert with this one instead", class = "btn-primary"),
+        span(style = "margin-left:10px", class = "muted", "or "),
+        actionLink("cv_cand_go", "open the toolkit with it"))))
   })
   observeEvent(input$cv_cand_go, {
     src <- cv_src(); req(src); tid <- input$cv_cand_pick; req(tid, nzchar(tid))
@@ -3292,6 +3327,32 @@ server <- function(input, output, session) {
     if (is.null(seed)) { showNotification("That template isn't available.", type = "error"); return() }
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   })
+
+  # convert_with_template(tid) -- re-run THIS statement against one exact template.
+  # Nothing is saved and no template is edited: it is the same conversion the
+  # analyst just ran, with the guess replaced by their choice. Reconciliation runs
+  # in full, so a wrong choice still comes back as needs_review rather than being
+  # trusted because a human picked it. Shared by the tie chooser and the close-call
+  # panel so "try the other one" behaves identically wherever it is offered.
+  convert_with_template <- function(tid) {
+    src <- cv_src(); req(src, tid, nzchar(tid))
+    uid <- cv_upload_id()          # same statement, same pickup - not a new upload
+    run_conversion(src$path, src$name, record = FALSE, force_tpl = tid)
+    cv_upload_id(uid)
+    res <- cv_res()
+    # The pickup record has to learn that this statement DID convert, or Admin
+    # keeps asking someone to build a template for a file that already has one.
+    if (!is.na(uid) && (res$status %||% "") %in% c("ok", "needs_review"))
+      safe(set_upload_status(uid, res$status,
+        run_id = res$run_id %||% NA_character_,
+        template = res$template_id %||% NA_character_,
+        trust = res$trust$level %||% NA_character_,
+        detail = sprintf("converted with %s, chosen by hand from the matching templates", tid),
+        dir = UPLOADS_DIR))
+    showNotification(sprintf("Converted with %s.", tid), type = "message", duration = 5)
+  }
+  observeEvent(input$cv_tie_go, convert_with_template(input$cv_tie_pick))
+  observeEvent(input$cv_cand_convert, convert_with_template(input$cv_cand_pick))
 
   # gl_build -- the guided template with the Simple-tab overrides applied.
   # meta_live = FALSE ISOLATES the three pure-metadata fields (template name / bank

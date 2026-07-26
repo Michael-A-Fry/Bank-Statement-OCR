@@ -13,6 +13,12 @@ STATUS_PLAIN <- c(
   needs_review = "Converted - please double-check it",
   unsupported  = "No template for this statement yet",
   failed       = "Could not read this file")
+# "unsupported" covers two OPPOSITE situations, and one headline cannot say both.
+# Nothing fit -> a layout we have genuinely never seen, so go and build a template.
+# Two or more fit equally -> we already HAVE templates for this statement; the tool
+# simply refuses to choose between them, and the screen must not tell the analyst
+# to build a third.
+STATUS_PLAIN_AMBIGUOUS <- "More than one template fits - pick which one"
 # ONE entry per check reconcile() can emit (R/reconcile.R -- the list at the
 # bottom of that file is the authoritative set). A check with no entry here shows
 # its raw code on screen, which is the moment a forensic reviewer stops trusting
@@ -53,6 +59,7 @@ RESULT_PLAIN <- c(pass = "OK", fail = "Problem", na = "not on this statement")
 # in R/diagnose.R, and test-seams.R fails the suite if this map falls behind it.
 DIAG_PLAIN <- c(
   unknown_format          = "layout not recognised",
+  ambiguous_template      = "more than one template fits",
   unreadable              = "file could not be read",
   scanned_no_ocr          = "a scan with no readable text",
   document_provenance     = "what the PDF says about itself",

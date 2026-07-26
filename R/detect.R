@@ -97,6 +97,7 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   if (length(ids) == 0) {
     return(list(template_id = NA_character_, score = 0, matched = FALSE,
                 candidates = data.frame(id = character(0), score = numeric(0),
+                                        eligible = logical(0),
                                         stringsAsFactors = FALSE),
                 detail = "no templates match the supplied hints"))
   }
@@ -138,6 +139,7 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
                   margin = margin,
                   runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
                   candidates = data.frame(id = ids, score = scores,
+                                          eligible = eligible,
                                           stringsAsFactors = FALSE),
                   detail = detail))
     }
@@ -156,7 +158,35 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     matched = FALSE,
     margin = NA_real_,
     runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
-    candidates = data.frame(id = ids, score = scores, stringsAsFactors = FALSE),
+    # `eligible` marks the templates that met their OWN min_score. It is the
+    # difference between the two reasons a match can fail, which need OPPOSITE
+    # advice: nothing eligible = a genuinely new layout, go and build a template;
+    # two or more eligible = a TIE between templates that both fit, so building a
+    # third would only add a third tied candidate. The caller cannot tell those
+    # apart from scores alone, because each template carries its own threshold.
+    candidates = data.frame(id = ids, score = scores, eligible = eligible,
+                            stringsAsFactors = FALSE),
     detail = detail
   )
+}
+
+# detect_ambiguous(det) -- TRUE when detection failed BECAUSE two or more
+# templates fit equally well, rather than because none fit. One helper so the
+# engine, the screen and the tests can never disagree about which case it is.
+detect_ambiguous <- function(det) {
+  if (isTRUE(det$matched)) return(FALSE)
+  cand <- det$candidates
+  if (is.null(cand) || is.null(cand$eligible)) return(FALSE)
+  sum(cand$eligible, na.rm = TRUE) >= 2
+}
+
+# detect_tied_ids(det) -- the templates that actually tied: eligible, and on the
+# top eligible score. These are the ones worth offering as a choice; a lower
+# eligible scorer is not part of the tie and adding it would just be noise.
+detect_tied_ids <- function(det) {
+  cand <- det$candidates
+  if (is.null(cand) || is.null(cand$eligible) || !nrow(cand)) return(character(0))
+  e <- cand[which(cand$eligible), , drop = FALSE]
+  if (!nrow(e)) return(character(0))
+  as.character(e$id[e$score == max(e$score)])
 }

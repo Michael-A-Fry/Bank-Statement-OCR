@@ -50,7 +50,9 @@ test_that("every result verdict uses the shared verdict card", {
 # read as though that template had read the file. It had not.
 test_that("a template is only named when one actually read the statement", {
   src <- .ui_src()
-  block <- .ui_block(src, "output\\$cv_status <- renderUI", 30L)
+  # 40, not 30: the block now also picks the headline for an ambiguous (tied)
+  # result. The window only has to reach the end of cv_status, which is 34 lines.
+  block <- .ui_block(src, "output\\$cv_status <- renderUI", 40L)
   expect_match(block, 'st %in% c\\("ok", "needs_review"\\)')
   expect_match(block, "friendly_tpl\\(tid\\)")          # a name, not an internal id
   # and the form panel no longer repeats the same id underneath it

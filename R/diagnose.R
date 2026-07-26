@@ -31,6 +31,7 @@
 .DIAG_FIX_OWNER <- c(
   # the analyst fixes it in the template toolkit
   unknown_format          = "template",
+  ambiguous_template      = "template",
   reconciliation_mismatch = "template",
   balance_break           = "template",
   row_count               = "template",
@@ -188,10 +189,24 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           paste("The scan quality was too low to read. Try a cleaner copy - scan at 300 dpi or higher,",
                 "straight, in good contrast - or ask the bank for a digital (text) PDF."))
   } else if (identical(status, "unsupported")) {
-    add("detection", "unknown_format", "high",
-        det$detail %||% "no template matched this file",
-        paste("Add a template for this layout in the template toolkit (Add a template tab:",
-              "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
+    # A TIE is not an unknown layout, and "go and add a template" is the wrong
+    # instruction for it: templates that already fit scored the same, so a new one
+    # would simply tie as well and the next conversion would be no better. Same
+    # status, opposite fix -- so say the opposite thing.
+    if (detect_ambiguous(det)) {
+      tied <- detect_tied_ids(det)
+      add("detection", "ambiguous_template", "high",
+          sprintf("%s templates fit this statement equally well: %s",
+                  length(tied), paste(tied, collapse = ", ")),
+          paste("Pick one on the Convert page and it converts straight away. If these are",
+                "near-duplicates of each other, merging or hiding one in Admin -> Templates",
+                "stops the question being asked on every statement of this kind."))
+    } else {
+      add("detection", "unknown_format", "high",
+          det$detail %||% "no template matched this file",
+          paste("Add a template for this layout in the template toolkit (Add a template tab:",
+                "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
+    }
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),

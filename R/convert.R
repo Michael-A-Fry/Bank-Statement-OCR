@@ -126,6 +126,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       det <- list(template_id = force_template, matched = TRUE, score = NA_real_,
                   margin = Inf, runner_up = NA_character_,
                   candidates = data.frame(id = force_template, score = NA_real_,
+                                          eligible = TRUE,
                                           stringsAsFactors = FALSE),
                   detail = "template chosen by the user")
     } else {
@@ -137,9 +138,28 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     parsed <- recon <- template <- NULL   # set in the matched branch; NULL otherwise
 
     if (!isTRUE(det$matched)) {
+      # TWO different failures wear the same "unsupported" status, and they need
+      # OPPOSITE advice:
+      #   nothing eligible  -> a genuinely new layout. Build a template.
+      #   two+ eligible     -> a TIE. Templates that already fit this statement
+      #                        scored the same, so the tool refuses to guess which.
+      #                        Building another template would add a third tied
+      #                        candidate and make the next conversion worse.
+      # Carrying the candidate list onto the result is what lets the screen tell
+      # the analyst WHICH templates tied and offer to convert with one of them,
+      # instead of sending them off to build a duplicate of something we already
+      # have. Failing closed is right; failing closed without saying what we found
+      # is the "never silently wrong" rule half-applied.
+      ambiguous <- detect_ambiguous(det)
       result$status <- "unsupported"
       result$template_id <- if (is.na(det$template_id)) NA_character_ else det$template_id
-      result$messages <- status_message("unsupported", "no template matched", det$detail)
+      result$messages <- status_message("unsupported",
+        if (ambiguous) "more than one template matches this equally well" else "no template matched",
+        det$detail)
+      result$candidates <- det$candidates
+      result$detect <- list(margin = NA_real_, runner_up = det$runner_up,
+                            thin = FALSE, ambiguous = ambiguous,
+                            tied = detect_tied_ids(det))
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
       result$metadata <- c(meta, list(multiple = multi))
       result$diagnostics <- build_diagnostics("unsupported", det = det,
@@ -256,7 +276,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # Candidate templates + margin, for the "matched but maybe wrong" panel.
       result$candidates <- det$candidates
       result$detect <- list(margin = det$margin, runner_up = det$runner_up,
-                            thin = thin_match)
+                            thin = thin_match, ambiguous = FALSE,
+                            tied = character(0))
     }
     # LOCAL-ONLY metadata capture (the ML goldmine). Built here where every
     # artifact is in scope; written after the run log below. NEVER enters the feed.

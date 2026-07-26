@@ -200,3 +200,102 @@ test_that("a match reports its margin + runner-up over near-duplicate templates"
   expect_true(is.infinite(solo$margin))
   expect_true(is.na(solo$runner_up))
 })
+
+# --- Ambiguity: a TIE and a NEW LAYOUT both fail, and need opposite advice -----
+# When two templates fit a statement equally well the engine refuses to guess --
+# correct. But the screen used to report that identically to "we have never seen
+# this layout", which sends the analyst off to build a THIRD template that ties
+# with the other two. The candidate frame now says which templates were genuine
+# contenders (met their own min_score), so the two cases can be told apart.
+
+.twin_dir <- function(min_score = 3, header = c("Tran Date", "Particulars", "Balance")) {
+  d <- tempfile("twintpl_"); dir.create(d)
+  for (v in c("a", "b")) writeLines(c(
+    sprintf("id: twinbank_everyday_%s", v), "bank: TwinBank",
+    "statement_type: everyday", "format: delimited", "version: 1",
+    sprintf("min_score: %s", min_score),
+    "fingerprint:",
+    sprintf("  header_contains_all: [%s]", paste(sprintf('"%s"', header), collapse = ", ")),
+    'delimiter: ","', "columns:",
+    '  date: {source: "Tran Date", format: "%d/%m/%Y"}',
+    "  amount: {source: Amount}", "  description: {source: Particulars}",
+    "amount_sign: signed", "currency: NZD"), file.path(d, paste0(v, ".yaml")))
+  d
+}
+.twin_csv <- function() {
+  f <- tempfile("twin_", fileext = ".csv")
+  writeLines(c("Tran Date,Particulars,Amount,Balance",
+               "01/04/2025,COFFEE,-4.50,100.00",
+               "02/04/2025,WAGES,2000.00,2100.00"), f)
+  f
+}
+
+test_that("candidates report which templates were genuine contenders", {
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(.twin_dir(), strict = FALSE))
+  expect_true("eligible" %in% names(det$candidates))
+  expect_type(det$candidates$eligible, "logical")
+})
+
+test_that("two templates that fit equally well are reported as a TIE, not a new layout", {
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(.twin_dir(), strict = FALSE))
+  expect_false(det$matched)                       # still fails closed
+  expect_true(detect_ambiguous(det))              # ...but for the tie reason
+  expect_setequal(detect_tied_ids(det),
+                  c("twinbank_everyday_a", "twinbank_everyday_b"))
+})
+
+test_that("a genuinely unknown layout is NOT reported as a tie", {
+  # min_score 3 over headings this file does not carry -> nothing eligible.
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(.twin_dir(header = c("Booking Ref", "Nights", "Room Rate")),
+                                         strict = FALSE))
+  expect_false(det$matched)
+  expect_false(detect_ambiguous(det))             # build a template IS right here
+  expect_identical(detect_tied_ids(det), character(0))
+})
+
+test_that("an unambiguous match is never called ambiguous", {
+  det <- detect_statement(read_input(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv")),
+                          load_templates(fixture("templates"), strict = FALSE))
+  expect_true(det$matched)
+  expect_false(detect_ambiguous(det))
+})
+
+test_that("a tie carries the tied template names onto the result, so the screen can offer them", {
+  f <- .twin_csv(); d <- .twin_dir()
+  out <- tempfile("twinout_"); dir.create(out)
+  res <- convert_statement(f, outdir = out, templates_dir = d, logdir = out)
+  expect_identical(res$status, "unsupported")     # unchanged: still refuses to guess
+  expect_true(isTRUE(res$detect$ambiguous))
+  expect_setequal(res$detect$tied,
+                  c("twinbank_everyday_a", "twinbank_everyday_b"))
+  # and the analyst's choice really does convert it
+  res2 <- convert_statement(f, outdir = out, templates_dir = d, logdir = out,
+                            force_template = "twinbank_everyday_a")
+  expect_true(res2$status %in% c("ok", "needs_review"))
+  expect_identical(res2$template_id, "twinbank_everyday_a")
+  expect_gt(nrow(res2$feed_rows), 0L)
+})
+
+test_that("a tie is diagnosed as a tie, with the opposite advice to a new layout", {
+  f <- .twin_csv(); d <- .twin_dir()
+  out <- tempfile("twindiag_"); dir.create(out)
+  res <- convert_statement(f, outdir = out, templates_dir = d, logdir = out)
+  cats <- as.character(res$diagnostics$category %||% character(0))
+  expect_true("ambiguous_template" %in% cats)
+  # NOT the "go and build a template" diagnostic -- that advice would produce a
+  # third template that ties with the other two.
+  expect_false("unknown_format" %in% cats)
+  fix <- as.character(res$diagnostics$how_to_fix[cats == "ambiguous_template"])
+  expect_true(grepl("Pick one", fix, fixed = TRUE))
+  expect_false(grepl("Add a template for this layout", fix, fixed = TRUE))
+
+  # A genuinely new layout keeps the old diagnostic and the old advice.
+  d2 <- .twin_dir(header = c("Booking Ref", "Nights", "Room Rate"))
+  res2 <- convert_statement(f, outdir = out, templates_dir = d2, logdir = out)
+  cats2 <- as.character(res2$diagnostics$category %||% character(0))
+  expect_true("unknown_format" %in% cats2)
+  expect_false("ambiguous_template" %in% cats2)
+})
