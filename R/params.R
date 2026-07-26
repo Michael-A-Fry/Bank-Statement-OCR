@@ -25,6 +25,15 @@ PARAM_YEAR_MAX <- 2100L
 # Two money figures are "equal" within half a cent (never == on floats).
 PARAM_MONEY_TOL <- 0.005
 
+# ---- detection re-reads ----------------------------------------------------
+# When the chosen template reads ZERO transactions, how many OTHER templates that
+# also fit the wording may be tried before giving up. This is the trade against
+# speed: it is 0 extra work whenever the first template reads rows (the normal
+# case), and at most this many extra parses on a file that was already going to
+# come back empty. Raise it only if you have many near-duplicate templates per
+# bank; each step is a full parse of the file.
+PARAM_DETECT_MAX_REREADS <- 2L
+
 # ---- OCR routing (page_needs_ocr) ------------------------------------------
 PARAM_OCR_MIN_CHARS     <- 20L    # fewer non-space chars than this -> treat as image
 PARAM_OCR_MIN_WORDS     <- 3L     # fewer real word boxes than this -> scanned page

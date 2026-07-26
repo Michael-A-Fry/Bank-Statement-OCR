@@ -154,3 +154,47 @@ test_that("Add a template leads with the action, not the guide", {
   expect_false(is.na(i_go) || is.na(i_help))
   expect_true(i_go < i_help)
 })
+
+# ---------------------------------------------------------------------------
+# NOBODY who uses this app has the Admin password. So Admin must never appear in
+# the wording a user reads: not as a card on About, not as "go to Admin ->
+# Templates" in an error, not as "ask your administrator". Every one of those is
+# an instruction the reader cannot follow, and it makes the tool feel like it is
+# withholding something. Maintainer routes belong inside the Admin tab only.
+test_that("no wording anywhere tells a user to go to Admin", {
+  # Scanned across every file whose text can reach a screen -- the app, the label
+  # maps, and the engine's own messages and how-to-fix lines, which are printed
+  # verbatim on the Convert page. Console messages (message()/warning()) are for
+  # whoever starts the server, not for a user, so they are excluded.
+  files <- c(file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R")),
+             list.files(file.path(engine_root(), "R"), "[.]R$", full.names = TRUE))
+  files <- files[file.exists(files)]
+  # Instructions, not the bare word: "admin" appears legitimately in code and in
+  # comments. What must never reach a user is a direction to a place they cannot
+  # open, or a person they do not have.
+  banned <- c("Admin ->", "Admin \u2192", "Admin tab", "Open Admin",
+              "your administrator", "the administrator", "ask an admin", "Admin >")
+  offenders <- character(0)
+  for (f in files) {
+    # useBytes throughout: this deploys in a C locale, where a plain grep over a
+    # source line containing a dash or a block glyph raises "unable to translate".
+    # The patterns are ASCII (bar the arrow, which is compared as its UTF-8 bytes),
+    # so byte-wise matching is identical and simply survives those lines.
+    lines <- readLines(f, warn = FALSE)
+    lines <- lines[!grepl("^\\s*#", lines, useBytes = TRUE)]   # comments are for maintainers
+    lines <- lines[!grepl("message\\(|warning\\(|stop\\(", lines, useBytes = TRUE)]
+    for (b in banned) {
+      hit <- grep(b, lines, fixed = TRUE, value = TRUE, useBytes = TRUE)
+      if (length(hit)) offenders <- c(offenders, sprintf("%s: %s", basename(f), trimws(hit)))
+    }
+  }
+  expect_identical(offenders, character(0),
+                   info = paste("user-visible text points at Admin:",
+                                paste(offenders, collapse = " | ")))
+})
+
+test_that("the About page does not advertise Admin", {
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_false(grepl("Open Admin", joined, fixed = TRUE))
+  expect_false(grepl("ab_go_admin", joined, fixed = TRUE))
+})

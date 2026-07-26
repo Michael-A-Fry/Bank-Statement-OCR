@@ -32,6 +32,8 @@
   # the analyst fixes it in the template toolkit
   unknown_format          = "template",
   ambiguous_template      = "template",
+  matched_but_empty       = "template",
+  read_by_another_template = "template",
   reconciliation_mismatch = "template",
   balance_break           = "template",
   row_count               = "template",
@@ -188,6 +190,16 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         else
           paste("The scan quality was too low to read. Try a cleaner copy - scan at 300 dpi or higher,",
                 "straight, in good contrast - or ask the bank for a digital (text) PDF."))
+  } else if (identical(status, "unsupported") && !is.null(metadata$matched_empty)) {
+    # The wording matched, the layout did not. "Add a template" is not the fix --
+    # there IS one, its columns just sit in the wrong place. Send the analyst to
+    # the template that failed, not to a blank form.
+    add("template", "matched_but_empty", "high",
+        sprintf("%s matches the wording on this statement but read no transactions from it",
+                metadata$matched_empty),
+        paste("Open this statement in the template toolkit with that template and check where the",
+              "columns sit - the usual cause is a column band drawn in the wrong place, or over",
+              "the wrong part of the page. The X-ray view shows what the tool saw."))
   } else if (identical(status, "unsupported")) {
     # A TIE is not an unknown layout, and "go and add a template" is the wrong
     # instruction for it: templates that already fit scored the same, so a new one
@@ -198,9 +210,9 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("detection", "ambiguous_template", "high",
           sprintf("%s templates fit this statement equally well: %s",
                   length(tied), paste(tied, collapse = ", ")),
-          paste("Pick one on the Convert page and it converts straight away. If these are",
-                "near-duplicates of each other, merging or hiding one in Admin -> Templates",
-                "stops the question being asked on every statement of this kind."))
+          paste("Pick one on the Convert page and it converts straight away.",
+                "If these are near-duplicates of each other, ask whoever looks after the tool",
+                "to merge or retire one, and the question stops being asked."))
     } else {
       add("detection", "unknown_format", "high",
           det$detail %||% "no template matched this file",
@@ -215,6 +227,16 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   }
 
   if (!is.null(metadata)) {
+    # A different template had to step in because the first one read nothing. Say
+    # so, or the broken template stays broken: nobody knows it failed, because the
+    # conversion appeared to work.
+    if (!is.null(metadata$rescued_from) && !is.na(metadata$rescued_from))
+      add("template", "read_by_another_template", "medium",
+          sprintf("%s matched the wording first but read no transactions, so %s was used instead",
+                  metadata$rescued_from, metadata$template$id %||% "another template"),
+          paste("Check the figures are right. Then get the template that read nothing looked at -",
+                "its columns are in the wrong place, and it will keep winning the match on",
+                "statements like this one."))
     if (isTRUE(metadata$multi$likely_multiple))
       add("upload", "multiple_statements", "high",
           paste(metadata$multi$reasons, collapse = "; "),

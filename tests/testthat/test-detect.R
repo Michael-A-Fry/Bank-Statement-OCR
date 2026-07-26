@@ -299,3 +299,90 @@ test_that("a tie is diagnosed as a tie, with the opposite advice to a new layout
   expect_true("unknown_format" %in% cats2)
   expect_false("ambiguous_template" %in% cats2)
 })
+
+# --- Shipped beats hand-built, and "matched but read nothing" ----------------
+
+test_that("a shipped template beats a hand-built one on an equal score", {
+  # Same fingerprint, and the hand-built one is FIRST alphabetically -- which is
+  # what used to decide it. A template's filename must never pick which figures
+  # reach a dashboard; the one with a golden test wins.
+  dflt <- tempfile("tpl_d_"); dir.create(dflt)
+  usr  <- tempfile("tpl_u_"); dir.create(usr)
+  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- base[!grepl("^sample: true", base)]
+  writeLines(sub("^id: .*", "id: zzz_shipped_pdf", base), file.path(dflt, "z.yaml"))
+  writeLines(sub("^id: .*", "id: aaa_handbuilt_pdf", base), file.path(usr, "a.yaml"))
+  det <- detect_statement(read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf")),
+                          load_template_set(dflt, usr))
+  expect_true(det$matched)
+  expect_identical(det$template_id, "zzz_shipped_pdf")
+  # and it is NOT reported as an ambiguous tie -- shipped-over-hand-built is a
+  # real answer, not a question for the analyst
+  expect_false(detect_ambiguous(det))
+})
+
+# A template can fingerprint perfectly and read NOTHING: detection matches text,
+# it never parses. This came back from real use -- "it says yup it matches, but
+# there are no transactions" -- and the result was needs_review, an amber notice
+# stapled to an empty workbook.
+.empty_tpl_dir <- function() {
+  d <- tempfile("tpl_empty_"); dir.create(d)
+  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- base[!grepl("^sample: true", base)]
+  base <- sub("^id: .*", "id: badbands_pdf", base)
+  # right wording, columns squeezed into the left margin: a mis-drawn band
+  base <- sub("date:.*x_min: 28.*", "date:        {x_min: 2,   x_max: 9}", base)
+  base <- sub("description:.*x_min: 95.*", "description: {x_min: 9,   x_max: 16}", base)
+  base <- sub("debit:.*x_min: 355.*", "debit:       {x_min: 16,  x_max: 20}", base)
+  base <- sub("credit:.*x_min: 405.*", "credit:      {x_min: 20,  x_max: 24}", base)
+  base <- sub("balance:.*x_min: 480.*", "balance:     {x_min: 24,  x_max: 28}", base)
+  writeLines(base, file.path(d, "bad.yaml"))
+  d
+}
+
+test_that("matched the wording but read no transactions is NOT 'needs review'", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  out <- tempfile("emptyout_"); dir.create(out)
+  res <- convert_statement(fixture("samples/raw/tutorial/sample_everyday_statement.pdf"),
+                           outdir = out, templates_dir = .empty_tpl_dir(), logdir = out)
+  expect_identical(nrow(res$feed_rows %||% data.frame()), 0L)
+  # An empty result is not a quality niggle to review -- there is nothing there.
+  expect_identical(res$status, "unsupported")
+  expect_false(identical(res$status, "needs_review"))
+  cats <- as.character(res$diagnostics$category %||% character(0))
+  expect_true("matched_but_empty" %in% cats)
+  # and it names the template that failed, so the analyst can go and fix THAT
+  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
+})
+
+test_that("when the matched template reads nothing, another that fits is tried", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  good <- tempfile("tpl_good_"); dir.create(good)
+  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- base[!grepl("^sample: true", base)]
+  writeLines(sub("^id: .*", "id: zzz_working_pdf", base), file.path(good, "z.yaml"))
+  out <- tempfile("rescueout_"); dir.create(out)
+  # the broken one is "default" and wins the match; the working one is next
+  res <- convert_statement(fixture("samples/raw/tutorial/sample_everyday_statement.pdf"),
+                           outdir = out, templates_dir = .empty_tpl_dir(),
+                           user_templates_dir = good, logdir = out)
+  expect_gt(nrow(res$feed_rows), 0L)
+  expect_identical(res$template_id, "zzz_working_pdf")
+  # never silently: the swap is stated, and the run is held for review
+  expect_identical(res$status, "needs_review")
+  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
+  expect_true("read_by_another_template" %in%
+                as.character(res$diagnostics$category %||% character(0)))
+})
+
+test_that("the re-read costs nothing when the first template works", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  # PARAM_DETECT_MAX_REREADS only ever spends parses on a file that already came
+  # back empty. Guard the contract that makes that true: the fallback is entered
+  # solely on a zero-row result.
+  src <- readLines(file.path(engine_root(), "R", "convert.R"))
+  i <- grep("empty_first <- ", src)
+  expect_length(i, 1L)
+  expect_match(src[i], "nrow\\(att\\$parsed\\$transactions\\) == 0L")
+  expect_match(paste(src[i:(i + 4)], collapse = " "), "if \\(empty_first\\)")
+})

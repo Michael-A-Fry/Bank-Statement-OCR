@@ -106,9 +106,20 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   scores <- vapply(sc, function(s) s$score, numeric(1))
   fns    <- vapply(sc, function(s) as.numeric(s$fn %||% 0L), numeric(1))
   mins   <- vapply(ids, function(i) templates[[i]]$min_score %||% 1, numeric(1))
-  # order by CONTENT score, then the filename tie-breaker, then id (deterministic).
-  ord <- order(scores, fns, ids, decreasing = c(TRUE, TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; fns <- fns[ord]; sc <- sc[ord]; mins <- mins[ord]
+  # SHIPPED BEFORE HAND-BUILT. A shipped template has a golden test proving it
+  # reads a real statement of that bank correctly; a template built in the app has
+  # not been through that. So when the evidence is equal, the tested one wins.
+  # This used to fall through to the alphabetical id tie-break, which meant a
+  # hand-built "anz_v2" quietly beat the tested "westpac_everyday_pdf" on nothing
+  # but its name -- a template's FILENAME deciding which figures reach a dashboard.
+  defaults <- vapply(ids, function(i)
+    as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
+  # order by CONTENT score, then shipped-over-hand-built, then the filename
+  # tie-breaker, then id (so the outcome is still fully deterministic).
+  ord <- order(scores, defaults, fns, ids,
+               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
+  ids <- ids[ord]; scores <- scores[ord]; fns <- fns[ord]; sc <- sc[ord]
+  mins <- mins[ord]; defaults <- defaults[ord]
 
   # Eligibility is per-candidate: a template is a genuine contender only when it
   # meets its OWN min_score. Ambiguity (best strictly > 2nd) is then judged among
@@ -121,14 +132,20 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
 
   if (any(eligible)) {
     e_ids <- ids[eligible]; e_scores <- scores[eligible]; e_mins <- mins[eligible]
-    e_fns <- fns[eligible]
+    e_fns <- fns[eligible]; e_def <- defaults[eligible]
     win_id <- e_ids[1]; win_score <- e_scores[1]; win_min <- e_mins[1]
     second <- if (length(e_scores) >= 2) e_scores[2] else -Inf
     second_fn <- if (length(e_fns) >= 2) e_fns[2] else -Inf
-    # Unambiguous when the winner's CONTENT score strictly beats the runner-up,
-    # OR they tie on content but the filename tie-breaker separates them.
+    second_def <- if (length(e_def) >= 2) e_def[2] else -Inf
+    # Unambiguous when the winner's CONTENT score strictly beats the runner-up, OR
+    # they tie on content and something PRINCIPLED separates them: a shipped
+    # (tested) template over a hand-built one first, then the filename hint. A
+    # shipped template drawing level with a hand-built one is not a real question -
+    # take the tested one and get on with it, rather than stopping the analyst to
+    # choose between a template with a golden test and one without.
     unambiguous <- (win_score > second) ||
-                   (win_score == second && e_fns[1] > second_fn)
+                   (win_score == second && e_def[1] > second_def) ||
+                   (win_score == second && e_def[1] == second_def && e_fns[1] > second_fn)
     matched <- unambiguous
     if (matched) {
       detail <- sprintf("matched %s (score %s/%s)", win_id, win_score, win_min)
@@ -178,6 +195,16 @@ detect_ambiguous <- function(det) {
   cand <- det$candidates
   if (is.null(cand) || is.null(cand$eligible)) return(FALSE)
   sum(cand$eligible, na.rm = TRUE) >= 2
+}
+
+# detect_eligible_ids(det) -- every template that met its own min_score, best
+# first. These are the templates worth trying if the chosen one reads nothing:
+# each of them fits the wording on the page, so any of them could be the right
+# one. Templates that never met their threshold are not worth a parse.
+detect_eligible_ids <- function(det) {
+  cand <- det$candidates
+  if (is.null(cand) || is.null(cand$eligible) || !nrow(cand)) return(character(0))
+  as.character(cand$id[which(cand$eligible)])
 }
 
 # detect_tied_ids(det) -- the templates that actually tied: eligible, and on the

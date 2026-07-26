@@ -94,8 +94,7 @@ uploads_retention_note <- function(keep_days) {
   if (!is.finite(kd) || kd <= 0)
     return(paste("A copy of the file you upload is kept on this server indefinitely,",
                  "so a statement the tool couldn't read can be picked up and fixed.",
-                 "Ask your administrator to set retention.uploads_keep_days if copies",
-                 "should be deleted automatically."))
+                 "Ask whoever looks after the tool if copies should be deleted automatically."))
   sprintf(paste("A copy of the file you upload is kept on this server for %d day%s,",
                 "so a statement the tool couldn't read can be picked up and fixed.",
                 "After that the copy is deleted automatically."),

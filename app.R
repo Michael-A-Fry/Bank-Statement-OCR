@@ -391,12 +391,12 @@ ui <- fluidPage(
             div(class = "hub-card-body",
                 "A new statement layout, or any other document - a form, a summary, a letter. The toolkit pre-fills what it can detect; you confirm against a live preview and save. About 2 minutes, no code."),
             div(class = "hub-card-go", "Open Add a template →"))),
-          actionLink("ab_go_admin", class = "hub-card hub-card-quiet", label = div(
-            div(class = "hub-card-kicker", "Looking after the tool"),
-            div(class = "hub-card-title", "Admin"),
-            div(class = "hub-card-body",
-                "Team insights from every run, template management, batch audits and folder intake."),
-            div(class = "hub-card-go", "Open Admin →"))))),
+          )),
+      # NOTE: no Admin card here, and no Admin anywhere else a user can see.
+      # Nobody who uses this app has the Admin password; advertising it is an
+      # invitation to a locked door. Maintainer tasks are reached from the Admin
+      # tab by the person who looks after the tool, and are never referred to in
+      # the wording on Convert, Add a template or About.
       about_html()),
     # ---- Convert -------------------------------------------------------
     tabPanel(
@@ -3169,9 +3169,7 @@ server <- function(input, output, session) {
           div(class = "muted", style = "font-size:13px",
             "Sure it's neither? ",
             actionLink("cv_teach_go", "Set up a new template instead"),
-            " - but if these are near-duplicates of each other, tidying them up in ",
-            actionLink("cv_goto_templates", "Admin -> Templates"),
-            " stops this being asked every time.")))
+            ".")))
       }
       # BEFORE offering to build a template: if templates built here are switched
       # OFF, the statement may already have one and we simply refused to look. The
@@ -3241,8 +3239,6 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "main_tabs", selected = "Convert"))
   observeEvent(input$ab_go_template,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
-  observeEvent(input$ab_go_admin,
-    updateTabsetPanel(session, "main_tabs", selected = "Admin"))
 
   observeEvent(input$cv_teach_go, {
     src <- cv_src(); req(src)

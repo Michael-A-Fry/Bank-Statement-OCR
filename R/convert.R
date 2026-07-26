@@ -169,27 +169,63 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         scanned_no_ocr = input$meta$scanned_no_ocr %||% 0L,
                         ocr_tools = input$meta$ocr_tools_available %||% TRUE))
     } else {
-      template <- templates[[det$template_id]]
-      detected_template <- template$id
-      template_version <- template$version %||% NA
-      template_origin <- template$origin %||% "default"
-      tmpl_sha <- template_sha256(template)
-
-      # Opt-in auto-split (see split.R): if this template declares a `split:` block
-      # AND the upload looks like a bundle, try to segment it deterministically and
-      # reconcile each statement on its own. Returns NULL unless the boundaries are
+      # .read_with(tid) -- read the statement with ONE template, all the way to a
+      # reconciled result. Opt-in auto-split (see split.R): if the template declares
+      # a `split:` block AND the upload looks like a bundle, segment it and reconcile
+      # each statement on its own. Returns NULL unless the boundaries are
       # independently confirmed -- so a template that hasn't opted in, or a bundle
       # whose boundaries can't be trusted, falls straight through to the normal
       # single parse, which (because multi$likely_multiple) routes to needs_review:
       # the safe flag-and-refuse default is unchanged.
-      sb <- if (isTRUE(multi$likely_multiple)) safe(split_bundle(input, template, meta), NULL) else NULL
-      did_split <- !is.null(sb)
-      if (did_split) {
-        parsed <- sb$parsed; recon <- sb$recon
-      } else {
-        parsed <- parse_statement(input, template, force_rows = force_rows, meta = meta)
-        recon <- reconcile(parsed, template)
+      .read_with <- function(tid) {
+        tpl <- templates[[tid]]
+        sb <- if (isTRUE(multi$likely_multiple)) safe(split_bundle(input, tpl, meta), NULL) else NULL
+        if (!is.null(sb))
+          return(list(template = tpl, parsed = sb$parsed, recon = sb$recon,
+                      sb = sb, did_split = TRUE))
+        p <- parse_statement(input, tpl, force_rows = force_rows, meta = meta)
+        list(template = tpl, parsed = p, recon = reconcile(p, tpl),
+             sb = NULL, did_split = FALSE)
       }
+
+      att <- .read_with(det$template_id)
+
+      # MATCHED THE WORDING, READ NOTHING.
+      # Detection only reads TEXT -- it never parses -- so a template can fingerprint
+      # perfectly and still take zero transactions off the page, because its columns
+      # are in the wrong place (a mis-drawn band is the usual cause). The analyst
+      # gets "it matched!" and an empty spreadsheet.
+      #
+      # Parsing every candidate to find the one that works would fix it and destroy
+      # the speed budget: a full parse per template on EVERY conversion, including
+      # the overwhelmingly common case where the first template is right.
+      #
+      # So the work is done ONLY where it is already lost: if the chosen template
+      # reads no transactions, try the other templates that fit the wording, best
+      # first, and stop at the first one that actually reads rows. On the happy path
+      # (rows found first time) this costs nothing at all -- the loop never runs.
+      # Bounded by PARAM_DETECT_MAX_REREADS so a file that no template can read
+      # cannot turn into an unbounded parse of every template installed.
+      empty_first <- nrow(att$parsed$transactions) == 0L
+      rescued_from <- NA_character_
+      if (empty_first) {
+        others <- setdiff(detect_eligible_ids(det), det$template_id)
+        for (tid in utils::head(others, PARAM_DETECT_MAX_REREADS)) {
+          alt <- safe(.read_with(tid), NULL)
+          if (!is.null(alt) && nrow(alt$parsed$transactions) > 0L) {
+            rescued_from <- det$template_id
+            att <- alt
+            break
+          }
+        }
+      }
+
+      template <- att$template
+      parsed <- att$parsed; recon <- att$recon; sb <- att$sb; did_split <- att$did_split
+      detected_template <- template$id
+      template_version <- template$version %||% NA
+      template_origin <- template$origin %||% "default"
+      tmpl_sha <- template_sha256(template)
       row_count <- nrow(parsed$transactions)
       kpi_fail_count <- sum(recon$kpis$status == "fail")
       trust_level <- recon$trust$level
@@ -206,15 +242,29 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # both the status gate and the diagnostics; raw `multi` still records that this
       # upload WAS a bundle for the metadata + run log.
       multi_resolved <- if (did_split) utils::modifyList(multi, list(likely_multiple = FALSE)) else multi
-      status <- if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                    isTRUE(multi_resolved$likely_multiple) || thin_match) {
+      # NO TRANSACTIONS IS NOT "REVIEW THIS" -- there is nothing to review. It used
+      # to come out as needs_review ("parsed 0 row(s) but review needed"), an amber
+      # warning attached to an empty workbook, which reads as a quality niggle
+      # rather than "this did not work". It is the same outcome as having no
+      # template at all: the wording matched, the layout did not. So say that, and
+      # route it where a new/fixed template gets built.
+      status <- if (row_count == 0L) {
+        "unsupported"
+      } else if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
+                 isTRUE(multi_resolved$likely_multiple) || thin_match ||
+                 !is.na(rescued_from)) {
         "needs_review"
       } else {
         "ok"
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
         metadata = list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
-                        template = template, pdf_doc = input$meta$pdf_doc))
+                        template = template, pdf_doc = input$meta$pdf_doc,
+                        # A template that matched but read nothing is a DIFFERENT
+                        # problem from an unknown layout, and has a different fix:
+                        # the template exists, its columns are in the wrong place.
+                        matched_empty = if (row_count == 0L) template$id else NULL,
+                        rescued_from = rescued_from))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,
@@ -224,10 +274,25 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       msg <- if (status == "ok") {
         status_message("ok", sprintf("matched %s, %d row(s), trust %s",
                                      template$id, row_count, recon$trust$level))
+      } else if (row_count == 0L) {
+        status_message("unsupported",
+          sprintf("%s matches the wording on this statement but read no transactions from it",
+                  template$id),
+          "the columns are most likely in the wrong place - open this statement in the template toolkit and check where they sit")
       } else {
         status_message("needs_review",
           sprintf("parsed %d row(s) but review needed", row_count),
           paste(recon$trust$reasons, collapse = "; "))
+      }
+      # Say plainly that the FIRST template read nothing and a different one did.
+      # Without this the analyst sees a template id they never expected and no
+      # explanation, and the one that reads nothing stays broken forever because
+      # nobody knows it is broken.
+      if (!is.na(rescued_from)) {
+        msg <- c(status_message("needs_review",
+          sprintf("%s matched first but read no transactions, so %s was used instead",
+                  rescued_from, template$id),
+          "check this is the right template - and that the one that read nothing gets fixed or removed"), msg)
       }
       # Auto-split note: say plainly that the upload was segmented and each
       # statement reconciled on its own (the `statement_index` column tags rows).

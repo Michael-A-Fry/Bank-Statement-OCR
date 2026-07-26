@@ -60,6 +60,8 @@ RESULT_PLAIN <- c(pass = "OK", fail = "Problem", na = "not on this statement")
 DIAG_PLAIN <- c(
   unknown_format          = "layout not recognised",
   ambiguous_template      = "more than one template fits",
+  matched_but_empty       = "matched the wording, read no transactions",
+  read_by_another_template = "a different template read it",
   unreadable              = "file could not be read",
   scanned_no_ocr          = "a scan with no readable text",
   document_provenance     = "what the PDF says about itself",
