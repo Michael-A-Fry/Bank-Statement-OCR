@@ -419,8 +419,12 @@ ui <- fluidPage(
           # that fact, the period, and the reason -- generated from the same
           # setting the purge uses, so it can never overstate or understate it.
           helpText(class = "muted", UPLOADS_NOTE),
-          textInput("cv_by", "Your name / initials (recorded as who ran this conversion)", value = ""),
-          uiOutput("cv_who_hint"),
+          # NO "your name" box. The environment identifies the person (a host
+          # sign-in or an SSO header), so asking her to type what the tool already
+          # knows is asking a question the tool can answer -- and a typed name is a
+          # weaker record than a sign-in anyway, because anyone can type anything.
+          # If the environment CANNOT identify a person, that is said out loud on
+          # every conversion (see cv_go) rather than papered over with a text box.
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           helpText(sprintf("Your bank is detected automatically — just upload and convert. Files up to %g MB (a long scan is fine).", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
@@ -2053,12 +2057,7 @@ server <- function(input, output, session) {
   # typed claim and the machine-detected identity are ALSO written as separate
   # fields (see stamp_identity below), so a reader can tell one from the other.
   who_now <- function() {
-    if (!is.null(input$cv_by) && nzchar(trimws(input$cv_by))) return(trimws(input$cv_by))
     detected_identity() %||% (session$user %||% current_user())
-  }
-  attested_now <- function() {
-    v <- trimws(input$cv_by %||% "")
-    if (!nzchar(v)) NA_character_ else v
   }
   # stamp_identity(run_id) -- write BOTH facts onto the run record: what was typed
   # (a claim) and what the machine could establish (with its source). The engine
@@ -2074,36 +2073,13 @@ server <- function(input, output, session) {
     if (is.na(rid) || !nzchar(rid)) return(invisible(FALSE))
     info <- detected_identity_info()
     ok <- safe(amend_log_record(LOGDIR, "runs", rid,
-      identity_fields(attested = attested_now(), detected = info$who, source = info$source)), FALSE)
+      identity_fields(attested = NA_character_, detected = info$who, source = info$source)), FALSE)
     if (!isTRUE(ok))
       showNotification(paste("This conversion ran, but its audit record could not be completed with who ran it.",
                              "Tell whoever looks after the tool before relying on this run."),
                        type = "warning", duration = 12)
     invisible(ok)
   }
-  # On connect, pre-fill the audit-trail name ONLY from a real per-person sign-in.
-  # Pre-filling the SERVER's OS account made every conversion in the department
-  # arrive stamped with the same name, looking like an attestation nobody made.
-  observe({
-    info <- isolate(detected_identity_info())
-    cur <- isolate(input$cv_by)
-    if (.identity_is_personal(info) && !is.na(info$who) && nzchar(info$who) &&
-        (is.null(cur) || !nzchar(trimws(cur))))
-      updateTextInput(session, "cv_by", value = info$who)
-  })
-  output$cv_who_hint <- renderUI({
-    info <- detected_identity_info()
-    if (.identity_is_personal(info))
-      return(helpText(sprintf("Signed in as %s - change it above if you're recording this for someone else.", info$who)))
-    # The honest version of what used to claim a sign-in: on the one-server
-    # deployment there is no per-person sign-in at all, so say so and ask.
-    if (identical(info$source, "os"))
-      return(helpText(style = "color:#8a5b00", sprintf(
-        "There is no sign-in on this tool: the server runs as \"%s\", which is the machine's account, not yours. Type your name above - that is what the audit trail records as who ran the conversion.", info$who)))
-    helpText(style = "color:#8a5b00",
-      "There is no sign-in on this tool. Type your name above - that is what the audit trail records as who ran the conversion.")
-  })
-
   # run_conversion -- the whole convert-a-file flow (session dir, convert, state,
   # upload capture), shared by the Convert button and "Try it on a sample".
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
@@ -2169,12 +2145,16 @@ server <- function(input, output, session) {
                        type = "warning", duration = 6)
       return()
     }
-    # The conversion still runs (blocking Beth over a name field would be worse),
-    # but she is told once, plainly, that the audit trail will have no attested
-    # name against this run rather than finding out later that it doesn't.
-    if (is.na(attested_now()) && !.identity_is_personal(detected_identity_info()))
-      showNotification("No name entered - this conversion is recorded with nobody attesting to it. Add your name or initials above if it needs to be traceable to you.",
-                       type = "warning", duration = 8)
+    # With no name box, the audit trail rests entirely on what the environment can
+    # establish. Where that is a real per-person sign-in, nothing needs saying. Where
+    # it is only the server's own account, the run identifies NOBODY -- and that has
+    # to be said out loud on every conversion, because a forensic tool whose "who"
+    # quietly means "the server" is worse than one that admits it has no idea.
+    if (!.identity_is_personal(detected_identity_info()))
+      showNotification(paste("This tool cannot tell who you are: there is no sign-in on this server, so the",
+                             "audit record names the machine's account, not a person. Tell whoever looks",
+                             "after the tool if these conversions need to be traceable to an individual."),
+                       type = "warning", duration = 10)
     run_conversion(input$cv_file$datapath, input$cv_file$name)
   })
 
