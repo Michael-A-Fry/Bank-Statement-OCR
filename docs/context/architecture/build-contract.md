@@ -6,7 +6,7 @@ The single source of truth every module and agent codes against. Pure **R only**
 Deterministic - **no machine learning**. Never crash - return structured status.
 
 ## 1. Directory layout
-`R/` holds **45 single-concern modules**. The core conversion path is the first
+`R/` holds **46 single-concern modules**. The core conversion path is the first
 group; the rest support it. (Every module's own header comment is the authority on
 what it does — this table is the map, not a duplicate spec.)
 
@@ -35,6 +35,7 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   outputs.R             write xlsx (multi-sheet) / csv (core) / json (full)
   feed.R                the governed analytics feed Qlik loads
   convert.R             convert_statement(...) orchestrator -- NEVER throws
+  batch.R               a whole case folder through the same front door, one row per file
 R/   -- OCR and image handling
   ocr.R                 system Tesseract, driven from R
   ocr_preprocess.R      pre-OCR image conditioning (magick)

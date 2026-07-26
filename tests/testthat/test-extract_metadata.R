@@ -62,6 +62,205 @@ test_that("account and card regexes are generic", {
   expect_equal(m$n_accounts, 2L)
 })
 
+# ---- ONE SPAN: a file that prints several periods -----------------------------
+# The reported defect: a statement covering three printed periods came back with
+# dates_within_period and balance_reconciliation both red on a file that was
+# completely fine -- the other periods' rows fell "outside", and the first
+# period's opening was compared with the first period's closing while the parse
+# held EVERY transaction. Two false alarms, which is how people learn to ignore
+# the one warning that matters.
+
+# .section(...) -- one printed statement section: an account line, its period line,
+# an opening balance, some rows and a closing balance. The layouts below are all
+# built from it, so what differs between them is only what each test is about.
+.section <- function(from, to, opening, rows, closing, account = "01-0902-0123456-00")
+  c(sprintf("ACME BANK  Account %s", account),
+    sprintf("Statement period %s to %s", from, to),
+    sprintf("Opening balance %s", opening),
+    rows,
+    sprintf("Closing balance %s", closing))
+
+# Three contiguous monthly sections for one account: 1000 -> 900 -> 1400 -> 1000.
+.three_periods <- function()
+  list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
+    .section("1 February 2026", "28 February 2026", "900.00", "10 Feb 2026 Wages 500.00", "1,400.00"),
+    .section("1 March 2026", "31 March 2026", "1,400.00", "12 Mar 2026 Rent -400.00", "1,000.00"))))
+
+test_that("several printed periods are read as ONE span, first opening to last closing", {
+  m <- extract_metadata(.three_periods())
+  expect_equal(m$n_periods, 3L)                       # the count is recorded, not hidden
+  expect_identical(m$period_start, "1 January 2026")  # EARLIEST start printed anywhere
+  expect_identical(m$period_end,   "31 March 2026")   # LATEST end
+  expect_identical(m$opening_balance, "1,000.00")     # the FIRST period's opening
+  expect_identical(m$closing_balance, "1,000.00")     # the LAST period's closing
+  expect_true(is.na(m$period_note))                   # contiguous: nothing to warn about
+})
+
+test_that("the two checks that false-failed now pass on that same file", {
+  # This is the whole point: first opening + EVERY transaction = last closing,
+  # and every row's date falls inside the merged span.
+  m <- extract_metadata(.three_periods())
+  tx <- data.frame(row_id = 1:3, amount = c(-100, 500, -400), balance = NA_real_,
+                   date = c("2026-01-05", "2026-02-10", "2026-03-12"),
+                   flags = "", stringsAsFactors = FALSE)
+  .with <- function(ps, pe, ob, cb) reconcile(list(
+    transactions = coerce_core(tx), extras = data.frame(row_id = integer(0)),
+    header = list(period_start = ps, period_end = pe, opening_balance = .num(ob),
+                  closing_balance = .num(cb), row_count = 3L),
+    provenance = data.frame(row_id = 1:3),
+    source_line_count = 3L, multiline_extra = 0L))$kpis
+  k <- .with(m$period_start, m$period_end, m$opening_balance, m$closing_balance)
+  expect_equal(k$status[k$name == "balance_reconciliation"], "pass")
+  expect_equal(k$status[k$name == "dates_within_period"], "pass")
+  # ...and the SAME transactions against a first-period-only view are exactly the
+  # two red checks that were reported. This pins the defect, so the fix cannot be
+  # quietly undone while the test above still passes for some other reason.
+  was <- .with("1 January 2026", "31 January 2026", "1,000.00", "900.00")
+  expect_equal(was$status[was$name == "balance_reconciliation"], "fail")
+  expect_equal(was$status[was$name == "dates_within_period"], "fail")
+})
+
+test_that("ONE period is left completely alone", {
+  # The overwhelmingly common case. The span code must not run at all: the values
+  # are the printed ones and there is nothing extra to say.
+  one <- list(kind = "text", pages = paste(collapse = "\n",
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00")))
+  m <- extract_metadata(one)
+  expect_equal(m$n_periods, 1L)
+  expect_identical(m$period_start, "1 January 2026")
+  expect_identical(m$period_end,   "31 January 2026")
+  expect_identical(m$opening_balance, "1,000.00")
+  expect_identical(m$closing_balance, "900.00")       # NOT a "last closing" anywhere else
+  expect_true(is.na(m$period_note))
+  # ...and the same period written two ways is still ONE period, not a merge.
+  twice <- list(kind = "text", pages = paste(one$pages,
+    "Statement period 1 January 2026 - 31 January 2026", sep = "\n"))
+  m2 <- extract_metadata(twice)
+  expect_identical(m2$period_start, "1 January 2026")
+  expect_identical(m2$period_end,   "31 January 2026")
+  expect_identical(m2$closing_balance, "900.00")
+  expect_true(is.na(m2$period_note))
+})
+
+test_that("a BUNDLE of statements is not merged into a span - split still owns it", {
+  # One statement with three sections is not the same thing as three statements in
+  # one file. A statement restarts its page numbering, so more than one "Page 1 of
+  # N" means separate documents, and those have a better answer than one long span
+  # (split each and reconcile it on its own anchors, or flag and refuse). Merging
+  # them would hand a bundle a clean bill of health on the merged path.
+  bundle <- list(kind = "text", pages = c(
+    paste(c(.section("1 January 2026", "31 January 2026", "1,000.00",
+                     "05 Jan 2026 Groceries -100.00", "900.00"), "Page 1 of 1"), collapse = "\n"),
+    paste(c(.section("1 February 2026", "28 February 2026", "900.00",
+                     "10 Feb 2026 Wages 500.00", "1,400.00"), "Page 1 of 1"), collapse = "\n")))
+  m <- extract_metadata(bundle)
+  expect_equal(m$page1_markers, 2L)
+  expect_identical(m$period_start, "1 January 2026")   # the FIRST period only,
+  expect_identical(m$period_end,   "31 January 2026")  # exactly as before
+  expect_identical(m$closing_balance, "900.00")        # NOT the second statement's
+  expect_true(detect_multiple_statements(NULL, m)$likely_multiple)
+})
+
+test_that("the span is ordered by DATE, never by where it is printed", {
+  # A statement can print its sections (or a summary block) out of order. Taking
+  # the first opening and the last closing in DOCUMENT order would pair March's
+  # opening with January's closing -- a plausible, wrong reconciliation.
+  ood <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 February 2026", "28 February 2026", "900.00", "10 Feb 2026 Wages 500.00", "1,400.00"),
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"))))
+  m <- extract_metadata(ood)
+  expect_identical(m$period_start, "1 January 2026")
+  expect_identical(m$period_end,   "28 February 2026")
+  expect_identical(m$opening_balance, "1,000.00")   # January's, though printed second
+  expect_identical(m$closing_balance, "1,400.00")   # February's, though printed first
+})
+
+test_that("a HOLE between the periods is surfaced, not silently spanned", {
+  # One span over non-contiguous periods covers days no printed period covers, so
+  # a transaction missing from that window could never be noticed. Fail loudly.
+  gapped <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
+    .section("1 March 2026", "31 March 2026", "900.00", "12 Mar 2026 Rent -400.00", "500.00"))))
+  m <- extract_metadata(gapped)
+  expect_identical(m$period_start, "1 January 2026")
+  expect_identical(m$period_end,   "31 March 2026")
+  expect_false(is.na(m$period_note))
+  expect_true(grepl("2026-02-01", m$period_note, fixed = TRUE))   # the uncovered window,
+  expect_true(grepl("2026-02-28", m$period_note, fixed = TRUE))   # named exactly
+  # ...and it reaches the screen, where the reviewer is already being asked to look.
+  expect_true(any(m$period_note == detect_multiple_statements(NULL, m)$reasons))
+})
+
+test_that("an unprovable pairing keeps today's balances and says so", {
+  # Only the first section prints an opening/closing block; the second does not.
+  # There is then no evidence that "the last closing" belongs to the last period,
+  # so the balances must not move -- a wrong pairing reconciles to a plausible,
+  # WRONG figure, which is worse than the false alarm being fixed.
+  half <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
+    c("Statement period 1 February 2026 to 28 February 2026", "10 Feb 2026 Wages 500.00"))))
+  m <- extract_metadata(half)
+  expect_identical(m$period_start, "1 January 2026")   # dates need no pairing -> still widened
+  expect_identical(m$period_end,   "28 February 2026")
+  expect_identical(m$opening_balance, "1,000.00")      # unchanged from a single-period read
+  expect_identical(m$closing_balance, "900.00")
+  expect_false(is.na(m$period_note))
+  expect_true(grepl("balance", m$period_note, fixed = TRUE))
+})
+
+test_that("periods that do not CHAIN are never paired (the same-account proof)", {
+  # Two accounts, one period each, in one upload. Pairing account A's opening with
+  # account B's closing would reconcile to a plausible figure about nothing at all.
+  # What rules it out is the money: A closes on 900 and B opens on 50, so these are
+  # not consecutive sections of one ledger. (Account NUMBERS cannot decide this --
+  # a real statement names other accounts in its transfer narratives.)
+  two_accts <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00",
+             "900.00", account = "01-0902-0123456-00"),
+    .section("1 February 2026", "28 February 2026", "50.00", "10 Feb 2026 Wages 500.00",
+             "550.00", account = "12-3456-7890123-45"))))
+  m <- extract_metadata(two_accts)
+  expect_identical(m$opening_balance, "1,000.00")
+  expect_identical(m$closing_balance, "900.00")        # NOT the other account's 550.00
+  expect_false(is.na(m$period_note))
+  expect_true(grepl("consecutive sections", m$period_note, fixed = TRUE))
+  # The very same file with the sections chained (900 -> 900) IS one account, and
+  # then the span's balances are the first opening and the last closing.
+  chained <- list(kind = "text", pages = sub("Opening balance 50.00", "Opening balance 900.00",
+                                             two_accts$pages, fixed = TRUE))
+  mc <- extract_metadata(chained)
+  expect_identical(mc$opening_balance, "1,000.00")
+  expect_identical(mc$closing_balance, "550.00")
+})
+
+test_that("periods that cannot be ordered fall back to the first one, loudly", {
+  # A period whose dates do not parse leaves the ORDER of the set unknown, and an
+  # unknown order is exactly when guessing produces a wrong pairing.
+  odd <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
+    .section("1 Smarch 2026", "31 Smarch 2026", "900.00", "10 Feb 2026 Wages 500.00", "1,400.00"))))
+  m <- extract_metadata(odd)
+  expect_identical(m$period_start, "1 January 2026")   # exactly the pre-existing behaviour
+  expect_identical(m$period_end,   "31 January 2026")
+  expect_identical(m$opening_balance, "1,000.00")
+  expect_identical(m$closing_balance, "900.00")
+  expect_false(is.na(m$period_note))                   # ...but never in silence
+})
+
+test_that("overlapping periods widen the dates but never pair the balances", {
+  # Overlapping ranges are not one account's consecutive sections, so which period
+  # is "first" and which "last" is not established.
+  lap <- list(kind = "text", pages = paste(collapse = "\n", c(
+    .section("1 January 2026", "31 March 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
+    .section("1 February 2026", "30 April 2026", "900.00", "10 Feb 2026 Wages 500.00", "1,400.00"))))
+  m <- extract_metadata(lap)
+  expect_identical(m$period_start, "1 January 2026")
+  expect_identical(m$period_end,   "30 April 2026")
+  expect_identical(m$closing_balance, "900.00")        # left where a single read leaves it
+  expect_true(grepl("overlap", m$period_note, fixed = TRUE))
+})
+
 test_that("metadata reaches the convert result and the workbook", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   skip_if_not(file.exists(fixture(IF_META_PDF)))
