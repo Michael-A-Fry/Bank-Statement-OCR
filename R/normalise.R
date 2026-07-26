@@ -40,6 +40,19 @@
   z <- gsub("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*", "\\1",
             z, perl = TRUE)
   z <- gsub("(?<![0-9])0+([0-9])", "\\1", z, perl = TRUE)  # strip leading zeros in numbers
+  # A digit run together with a month NAME ("20Apr") is separated, on BOTH sides of
+  # the comparison. WHY: OCR reads a tightly-set date column as ONE token -- measured
+  # at 86% of day+month tokens on a real ANZ scan. base as.Date() parses "20Apr 2026"
+  # under "%d %b %Y" CORRECTLY (strptime treats format whitespace as optional), but
+  # the round-trip below reformats it to "20 Apr 2026", and without this fold the two
+  # strings differed, the date failed closed to NA, and the reader dropped the row --
+  # 41 rows survived out of 300 on that statement. Because .date_strict canonicalises
+  # the round-trip AND the source with this same function, the change is symmetric: it
+  # adds no parse leniency, a genuinely space-less declared format still matches, and
+  # the guard's real target ("13/08/2025" misread under %d/%m/%y) carries no month
+  # name and is untouched, as is the year bound.
+  z <- gsub("(?<=[0-9])(?=(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))", " ", z, perl = TRUE)
+  z <- gsub("(?<=(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))(?=[0-9])", " ", z, perl = TRUE)
   trimws(gsub("[[:space:]]+", " ", z))
 }
 

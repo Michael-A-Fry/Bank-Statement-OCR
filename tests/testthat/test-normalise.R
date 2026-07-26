@@ -167,3 +167,21 @@ test_that(".normalise_date_str is the shared fold used by reader and detector", 
   # "September" (%B) must be left intact -- only the 4-letter "Sept" folds
   expect_equal(.normalise_date_str("2 September"),        "2 September")
 })
+
+# OCR reads a tightly-set date column as ONE token ("20Apr"), which base as.Date
+# parses correctly but the round-trip guard used to reject -- so the row was dropped.
+# Measured on a real ANZ scan: 41 rows survived out of 300 before this fold.
+test_that("a date whose day and month name are run together still parses (#27)", {
+  expect_equal(parse_date("20Apr 2026", "%d %b %Y")$iso, "2026-04-20")
+  expect_equal(parse_date("20Apr2026", "%d %b %Y")$iso, "2026-04-20")
+  expect_equal(parse_date("Apr20 2026", "%b %d %Y")$iso, "2026-04-20")
+  # and the ordinary spaced form is unchanged
+  expect_equal(parse_date("20 Apr 2026", "%d %b %Y")$iso, "2026-04-20")
+})
+
+# The guard this fold sits inside exists to catch a genuinely wrong read. It must
+# still fire: "13/08/2025" under %d/%m/%y is the 2020 mis-parse the round-trip was
+# written for, and it carries no month name, so the fold cannot rescue it.
+test_that("the round-trip guard still rejects the mis-parsed 2-digit year (#27 guard)", {
+  expect_true(is.na(parse_date("13/08/2025", "%d/%m/%y")$iso))
+})

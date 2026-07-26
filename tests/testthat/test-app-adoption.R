@@ -153,3 +153,19 @@ test_that("the launcher script warns too - that is how the server is started (#6
   expect_match(txt, "SETTINGS FILE NOT LOADED", fixed = TRUE)
   expect_match(txt, "admin_password_is_default", fixed = TRUE)
 })
+
+# A template may declare several candidate date formats (templates/asb_everyday_csv.yaml
+# does, so it can read both ASB exports). The Simple tab is one dropdown showing the
+# first candidate, so merely opening the toolkit and pressing Save must NOT write that
+# single value back and silently narrow the template again.
+test_that("the guided editor cannot narrow a multi-format template on save", {
+  app <- file.path(engine_root(), "app.R")
+  skip_if_not(file.exists(app))
+  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
+  expect_true(grepl("\\.datefmt_unchanged <- function", src))
+  # both write sites (pdf table + delimited columns) must consult the guard
+  writes <- length(gregexpr("!\\.datefmt_unchanged\\(tmpl, datefmt\\)", src)[[1]])
+  expect_gte(writes, 2L)
+  # and the dropdown must show a single value, never the whole vector
+  expect_true(grepl("gv_datefmt <- function\\(tmpl\\) as\\.character\\(gv_datefmt_all\\(tmpl\\)\\)\\[1\\]", src))
+})

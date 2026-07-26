@@ -2424,13 +2424,28 @@ server <- function(input, output, session) {
 
   # The current date-format / amount-sign of a template, wherever the format
   # stores them (PDF keeps them under `table`, delimited at the top / in columns).
-  gv_datefmt <- function(tmpl) if (identical(tmpl$format, "pdf")) (tmpl$table$date_format %||% "%d/%m/%Y")
-                               else (tmpl$columns$date$format %||% "%d/%m/%Y")
+  # A template may declare SEVERAL candidate date formats (the engine accepts one
+  # only if it reads every value). The Simple tab is a single dropdown, so it shows
+  # the first candidate -- and apply_overrides below refuses to write that single
+  # value back unless the user actually PICKED a different one, otherwise merely
+  # opening the toolkit on a multi-format template and pressing Save would silently
+  # narrow it back to one format and re-break the statement it was widened for.
+  gv_datefmt_all <- function(tmpl) if (identical(tmpl$format, "pdf")) (tmpl$table$date_format %||% "%d/%m/%Y")
+                                   else (tmpl$columns$date$format %||% "%d/%m/%Y")
+  gv_datefmt <- function(tmpl) as.character(gv_datefmt_all(tmpl))[1]
   gv_sign    <- function(tmpl) if (identical(tmpl$format, "pdf")) (tmpl$table$amount_sign %||% "signed")
                                else (tmpl$amount_sign %||% "signed")
 
   # apply_overrides -- fold the Basic-tab choices onto the working template. Only
   # the common fields live here; everything else is edited as YAML on Advanced.
+  # .datefmt_unchanged -- did the user leave the date dropdown on what the template
+  # already declares? True when the template lists SEVERAL formats and the shown
+  # (first) one came back unchanged: writing it would drop the other candidates.
+  .datefmt_unchanged <- function(tmpl, datefmt) {
+    cur <- as.character(gv_datefmt_all(tmpl))
+    length(cur) > 1L && identical(datefmt, cur[1])
+  }
+
   apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
                               unsigned_default = NULL, desc_col = NULL,
                               ref_col = NULL, bal_col = NULL,
@@ -2464,14 +2479,16 @@ server <- function(input, output, session) {
           tmpl$min_score <- max(1L, length(ph))
         }
       }
-      if (!is.null(datefmt) && nzchar(datefmt)) tmpl$table$date_format <- datefmt
+      if (!is.null(datefmt) && nzchar(datefmt) && !.datefmt_unchanged(tmpl, datefmt))
+        tmpl$table$date_format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$table$amount_sign <- sign
       # Shared-date (HSBC-style) opt-in: only stamp the key when ON, so normal
       # templates stay clean and unaffected.
       if (!is.null(keep_dateless))
         tmpl$table$keep_dateless_rows <- if (isTRUE(keep_dateless)) TRUE else NULL
     } else {
-      if (!is.null(datefmt) && nzchar(datefmt) && !is.null(tmpl$columns$date))
+      if (!is.null(datefmt) && nzchar(datefmt) && !is.null(tmpl$columns$date) &&
+          !.datefmt_unchanged(tmpl, datefmt))
         tmpl$columns$date$format <- datefmt
       if (!is.null(sign) && nzchar(sign)) tmpl$amount_sign <- sign
       # Basic column-pickers (delimited): "" means "(none)" -> drop the mapping;
