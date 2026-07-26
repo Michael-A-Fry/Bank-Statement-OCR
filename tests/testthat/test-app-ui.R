@@ -261,7 +261,7 @@ test_that("controls that only exist because of the amount style follow it out", 
 test_that("the disclosure describes what it actually still holds", {
   joined <- paste(.ui_src(), collapse = "\n")
   expect_false(grepl("How the dates are written, how amounts are shown", joined, fixed = TRUE))
-  expect_match(joined, "The phrase that identifies this bank next time", fixed = TRUE)
+  expect_match(joined, "Identifying phrase, save name", fixed = TRUE)
 })
 
 # ---------------------------------------------------------------------------

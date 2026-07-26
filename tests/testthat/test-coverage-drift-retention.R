@@ -127,12 +127,14 @@ test_that("purge_uploads uses the injected clock, like rollup_logs", {
 
 test_that("uploads_retention_note tells the truth for every setting", {
   expect_match(uploads_retention_note(90), "90 days")
-  expect_match(uploads_retention_note(1), "1 day,")            # not "1 days"
+  expect_match(uploads_retention_note(1), "1 day ")            # not "1 days"
   expect_match(uploads_retention_note(0), "indefinitely")
   expect_match(uploads_retention_note(NULL), "indefinitely")
   expect_match(uploads_retention_note("nonsense"), "indefinitely")
-  # every wording admits a copy is kept -- that is the whole point of the line
-  for (v in list(90, 0, NULL)) expect_match(uploads_retention_note(v), "copy of the file")
+  # Every wording admits the upload is KEPT -- that is the whole point of the line,
+  # and it survives rewording. Asserted on the fact, not on a phrase, so the copy
+  # can be tightened without silently dropping the disclosure.
+  for (v in list(90, 0, NULL)) expect_match(uploads_retention_note(v), "kept")
 })
 
 # #7 -- the per-session scratch folders (outputs + a copy of the source) were only

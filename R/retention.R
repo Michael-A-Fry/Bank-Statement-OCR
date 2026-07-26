@@ -92,12 +92,9 @@ purge_uploads <- function(uploads_dir, keep_days = 90, now = as.numeric(Sys.time
 uploads_retention_note <- function(keep_days) {
   kd <- suppressWarnings(as.numeric(keep_days %||% NA)[1])
   if (!is.finite(kd) || kd <= 0)
-    return(paste("A copy of the file you upload is kept on this server indefinitely,",
-                 "so a statement the tool couldn't read can be picked up and fixed.",
-                 "Ask whoever looks after the tool if copies should be deleted automatically."))
-  sprintf(paste("A copy of the file you upload is kept on this server for %d day%s,",
-                "so a statement the tool couldn't read can be picked up and fixed.",
-                "After that the copy is deleted automatically."),
+    return("Uploads are kept indefinitely so a statement that failed can be picked up and fixed.")
+  sprintf(paste("Uploads are kept %d day%s so a statement that failed can be",
+                "picked up and fixed, then deleted."),
           as.integer(kd), if (as.integer(kd) == 1L) "" else "s")
 }
 

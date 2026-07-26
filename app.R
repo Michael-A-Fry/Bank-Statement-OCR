@@ -428,7 +428,7 @@ ui <- fluidPage(
           # account for the whole department.
           uiOutput("cv_whoami"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
-          helpText(sprintf("Your bank is detected automatically — just upload and convert. Files up to %g MB (a long scan is fine).", MAX_UPLOAD_MB)),
+          helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
           tags$details(class = "adv-bank",
@@ -492,7 +492,7 @@ ui <- fluidPage(
                 h4("See it on the page"),
                 div(
                 conditionalPanel("output.ix_is_pdf == true",
-                  p(class = "muted", "Your statement page, with everything the tool read drawn on it. Green = kept transaction rows; amber dashed = skipped rows that look like transactions; the legend below names the rest."),
+                  p(class = "muted", "Green = rows kept. Amber dashed = skipped rows that look like transactions."),
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
                     column(9, br(),
@@ -506,12 +506,12 @@ ui <- fluidPage(
                   plotOutput("ix_plot", height = "640px"),
                   uiOutput("ix_legend"),
                   h4("Rows skipped on this page - and why"),
-                  helpText(HTML("A real transaction in here usually means a one-line template fix (most often the <b>date format</b> or an amount column) - that brings back every row like it. A genuine one-off? Select it and add it by hand; it's kept, flagged <b>forced</b>.")),
+                  helpText(HTML("A real transaction here usually means a one-line template fix - most often the <b>date format</b>. A genuine one-off: select it and add it, flagged <b>forced</b>.")),
                   DTOutput("ix_skipped"),
                   br(),
                   actionButton("ix_add_row", "This IS a transaction - add the selected row", class = "btn-warning"),
                   tags$hr(),
-                  helpText("Still stuck and can't share the statement? The diagnostic below uses only page sizes and counts - no dates, names or amounts leave this machine."),
+                  helpText("Can't share the statement? This uses only page sizes and counts."),
                   downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
                 conditionalPanel("output.ix_is_pdf != true",
                   helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage below shows which column feeds each field."))),
@@ -547,7 +547,7 @@ ui <- fluidPage(
       wellPanel(
         h4(style = "margin-top:0", "Teach the tool a new layout"),
         p(class = "muted", style = "max-width:820px",
-          "Upload one example of the document. The tool reads what it can from your own file - the columns, the way dates are written, the way amounts are shown - and you confirm it against a live preview of that file, then save. From then on this layout converts on its own. Around two minutes, and nothing to write."),
+          "Upload one example. The tool reads what it can, you confirm it against a live preview, and save. About two minutes."),
         fileInput("ts_file", "One example of the document (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
@@ -2086,7 +2086,7 @@ server <- function(input, output, session) {
       # is unlocked. What the tool cannot do is nobody's business but the
       # maintainer's, and it is in the docs where it belongs.
       helpText(style = "margin-top:-6px",
-        "Recorded on the audit trail as who ran this conversion. Asked once - remembered until you close the browser."),
+        "Recorded as who ran this. Asked once."),
       actionButton("cv_qid_set", "Use this QID", class = "btn-default"),
       tags$hr(style = "margin:14px 0"))
   })
@@ -2246,8 +2246,8 @@ server <- function(input, output, session) {
       actionLink("cv_more", style = "font-weight:700;font-size:14.5px",
         label = if (open) "Hide how it read this" else "Show me how it read this"),
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          if (open) "The page, the checks, the diagnostics and the template it used."
-          else "The statement page with everything marked on it, every check that ran, and the template it used."))
+          if (open) "The page, the checks, and the template it used."
+          else "The page, the checks, and the template it used."))
   })
 
   # Empty state: shown before the first conversion. Tells a brand-new user what
@@ -2547,7 +2547,7 @@ server <- function(input, output, session) {
   output$cv_trend_note <- renderUI({
     req(cv_data())
     msg <- switch(input$an_view %||% "inout",
-      inout   = "Green = money in, red = money out, per period. Switch 'Measure' to count transactions instead of dollars.",
+      inout   = "Green = money in, red = money out.",
       balance = "The running balance as it moves through the statement (only if the statement shows a balance column).",
       cumnet  = "The running total of every transaction added up over time - where the account net sits at each point.")
     p(class = "muted", style = "margin:6px 0 0", msg)
@@ -3036,7 +3036,7 @@ server <- function(input, output, session) {
         label = if (open) "Hide the settings for this statement"
                 else "Show the settings for this statement"),
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          "The phrase that identifies this bank next time, the name it saves under, and number punctuation. All filled in from your own file already - most statements need none of them."))
+          "Identifying phrase, save name, number punctuation. Rarely needed."))
   })
 
   # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
@@ -3057,11 +3057,8 @@ server <- function(input, output, session) {
     # carries the difference (see .meta_field), so the page has one thing to do.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
-      p(class = "muted", HTML(paste0(
-        "Drag a box across a column, say what it is, and click <b>Assign it</b>. ",
-        "A <b>column</b> runs the <b>full height of the page</b> - only the <b>left-right</b> ",
-        "position of your box matters, its height is ignored. ",
-        "Rows are found by the date, not by your box."))),
+      p(class = "muted", HTML(
+        "Drag a box across a column and say what it is. Only its <b>left-right</b> position matters - a column runs the full height of the page.")),
       fluidRow(
         column(3, numericInput("g_pdf_page",
           if (isTRUE(g$n_pages > 1L)) sprintf("Page (1 to %d)", g$n_pages) else "Page",
@@ -3127,7 +3124,7 @@ server <- function(input, output, session) {
         textInput("g_bank", "Which bank is this statement from?", value = tmpl$bank, width = "100%"),
         if (!is.null(g$cols) && length(g$cols)) tagList(
           p(class = "muted", style = "margin:2px 0 8px",
-            "Which column holds each field? Leave them as detected unless the preview below looks wrong."),
+            "Leave as detected unless the preview looks wrong."),
           fluidRow(
             column(4, selectInput("g_col_date", "Date (required)",
                                   choices = c("(pick a column)" = "", g$cols),
@@ -3148,7 +3145,7 @@ server <- function(input, output, session) {
         # these two, so it asks, with its best guess already selected.
         tags$hr(style = "margin:14px 0 10px"),
         p(class = "muted", style = "margin:0 0 8px",
-          "Detected from your statement - these two are the ones worth checking against the preview."),
+          "Detected from your statement - worth a check against the preview."),
         fluidRow(
           column(6, selectInput("g_date", "How are the dates written?",
                                 choices = guided_date_choices(cur_fmt), selected = cur_fmt)),
