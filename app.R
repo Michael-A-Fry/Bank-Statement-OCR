@@ -427,6 +427,13 @@ ui <- fluidPage(
           # because the alternative is an audit trail that names the server's own
           # account for the whole department.
           uiOutput("cv_whoami"),
+          # THE BANK, IN FRONT. It sat inside "It picked the wrong bank?" on the
+          # assumption detection usually gets it right. On real statements it does
+          # not yet, which makes the override one of the most-used controls on the
+          # page - so hiding it put a click on a common path. Auto-detect stays the
+          # default, so nobody has to answer it; it is simply visible when they do.
+          selectInput("cv_bank_quick", "Bank",
+                      choices = c("Detect automatically" = ""), width = "100%"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
           helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
@@ -1082,6 +1089,16 @@ server <- function(input, output, session) {
   cv_pick_templates <- reactive({
     if (USE_USER_TEMPLATES) templates() else proven_templates()
   })
+  # Keep the visible picker's list in step with the templates actually loaded.
+  observe({
+    ts <- cv_pick_templates()
+    b <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
+    b <- b[nzchar(b)]
+    updateSelectInput(session, "cv_bank_quick",
+                      choices = c("Detect automatically" = "", stats::setNames(b, b)),
+                      selected = isolate(input$cv_bank_quick) %||% "")
+  })
+
   output$cv_bank_ui <- renderUI({
     ts <- cv_pick_templates()
     banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
@@ -2007,7 +2024,10 @@ server <- function(input, output, session) {
   # identically (the second just adds force_rows and reuses the same session dir).
   convert_now <- function(src, sess, forced_rows = NULL, force_tpl = NULL,
                           include_user = FALSE) {
-    bank <- if (is.null(input$cv_bank) || input$cv_bank == "(auto-detect)") NULL else input$cv_bank
+    # The picker in front wins; the one inside "It picked the wrong bank?" is the
+    # same choice for anyone who opens that panel. Blank in both means auto-detect.
+    pick <- function(v) if (is.null(v) || !nzchar(v) || identical(v, "(auto-detect)")) NULL else v
+    bank <- pick(input$cv_bank_quick) %||% pick(input$cv_bank)
     forced_tpl <- force_tpl %||%
       (if (!is.null(input$cv_template) && nzchar(input$cv_template)) input$cv_template else NULL)
     # The tick-box, an explicit force, or an explicit include_user brings in the

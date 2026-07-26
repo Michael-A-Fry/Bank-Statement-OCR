@@ -297,3 +297,28 @@ test_that("every check named in the proof strip has plain-English wording", {
                "running_balance_continuity", "dates_readable"))
     expect_true(nm %in% names(e$CHECK_PLAIN), info = paste("no plain wording for", nm))
 })
+
+# ---------------------------------------------------------------------------
+# THE BANK PICKER IS IN FRONT. It sat inside "It picked the wrong bank?" on the
+# assumption detection usually gets it right. On real statements it does not yet,
+# which makes the override one of the most-used controls on the page - the same
+# frequency argument as the date format. Auto-detect stays the default, so nobody
+# is asked a question they do not have to answer; it is simply visible when they
+# do. This test fails if it is ever hidden again.
+test_that("the bank picker is on the page, not behind a disclosure", {
+  src <- .ui_src()
+  i_bank <- grep('selectInput\\("cv_bank_quick"', src)
+  i_adv  <- grep('tags\\$summary\\("It picked the wrong bank\\?"\\)', src)
+  expect_length(i_bank, 1L)
+  expect_length(i_adv, 1L)
+  expect_true(i_bank < i_adv, info = "the bank picker fell back behind the disclosure")
+  # auto-detect is still the default: the tool answers it unless told otherwise
+  expect_match(paste(src[i_bank:(i_bank + 2)], collapse = " "),
+               '"Detect automatically" = ""', fixed = TRUE)
+})
+
+test_that("the visible bank picker actually reaches the conversion", {
+  # A control that looks like it works and does not is worse than no control.
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_match(joined, "pick\\(input\\$cv_bank_quick\\) %\\|\\|% pick\\(input\\$cv_bank\\)")
+})
