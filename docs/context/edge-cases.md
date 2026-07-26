@@ -14,6 +14,14 @@ against - "this is real world."
 Tests proving the ✅ items live in `tests/testthat/` (fixtures under
 `tests/testthat/fixtures/`).
 
+**How a ⛔ becomes a ✅.** Not by guessing — by describing a real statement that
+has the case in it. The prompt in
+[survey-a-statement-with-ai.md](../operational/survey-a-statement-with-ai.md)
+produces that description with no client information in it, so real statements
+can be surveyed without leaving the building. Sections 8, 9 and 10 of the survey
+map onto this register almost line for line; a batch of them is what moves rows
+down this page.
+
 ---
 
 ## A. File / format

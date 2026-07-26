@@ -69,3 +69,12 @@ else — dates, amount style, saving — is identical.
 If a statement is genuinely a new kind the wizard can't handle, that's rare — see
 [when-something-goes-wrong.md](when-something-goes-wrong.md) for how to report it
 safely.
+
+## Stuck on the layout itself?
+If you can't work out what the columns are, where the year comes from, or which
+lines are totals rather than transactions, don't guess. Attach the statement to
+Copilot and paste the prompt in
+[survey-a-statement-with-ai.md](survey-a-statement-with-ai.md): it answers exactly
+those questions, in the same order every time, and is written so that no client
+detail ends up in the answer. The result fills in this wizard's fields directly —
+and is safe to send on if you'd rather someone else built the template.

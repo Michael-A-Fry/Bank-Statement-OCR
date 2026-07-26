@@ -173,7 +173,11 @@ one either stays where it is or starts rejecting legitimate templates nobody has
 written yet — and the failure mode of over-tightening (an analyst's correct
 template silently refuses to match) is the same class of harm as the hole itself.
 *Unblocks when:* three or four more real forms are in the repo. The fix is then
-half an hour in `.fp_specific`.
+half an hour in `.fp_specific`. Section 2 of
+[survey-a-statement-with-ai.md](../operational/survey-a-statement-with-ai.md)
+collects exactly this — candidate phrases plus an honest judgement of whether
+another provider could print the same words — with no client detail in it, so a
+stack of real forms can be surveyed without any of them leaving the building.
 
 **N16 — residual OCR digit errors on recovered scans.** We now recover 300 rows
 from the ANZ scan that used to yield 41 (N9). Some digits are still misread, so
@@ -185,7 +189,11 @@ in `samples/_private_staging/scans/` have no verified correct values attached. A
 blind tweak could raise the row count while lowering digit accuracy, which turns a
 loud failure into a quiet wrong answer — the one outcome the charter forbids.
 *Unblocks when:* one scan is keyed in by hand as a golden. Then character accuracy
-is measurable and preprocessing can be tuned against a number.
+is measurable and preprocessing can be tuned against a number. Section 9.7 of
+[survey-a-statement-with-ai.md](../operational/survey-a-statement-with-ai.md)
+narrows the search first — it asks which digits are hard to read and why (tilt,
+speckle, faintness, a 3/8 or 5/6 typeface confusion), so the golden gets keyed
+for the scan that actually represents the problem.
 
 **N19 — trust MEDIUM, not HIGH, on the split ANZ bundle.** This is a **correction
 to a measurement**, not a defect: MEDIUM is the right answer for a statement whose

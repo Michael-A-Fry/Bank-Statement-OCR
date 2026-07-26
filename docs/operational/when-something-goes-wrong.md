@@ -60,3 +60,11 @@ What's genuinely useful to whoever maintains the engine:
 > every value to its shape). If you need it, ask whoever maintains the engine to run
 > the built-in audit on the file — it produces a safe `*.audit.md` describing the
 > layout with no real values in it, which is the ideal thing to share.
+
+**The quickest way to produce all of the above**, without waiting for anyone:
+attach the statement to Copilot and paste the ready-made prompt in
+[survey-a-statement-with-ai.md](survey-a-statement-with-ai.md). It asks all these
+questions for you, in a fixed order, and is written to keep every client detail
+out of its answer. Doing it for a stack of problem statements at once is the
+single most useful thing you can send us — it's how the awkward layouts get fixed
+properly rather than one at a time.

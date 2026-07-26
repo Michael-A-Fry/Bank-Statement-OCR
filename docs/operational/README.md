@@ -19,6 +19,7 @@ Background — what it is, how it was built, the audit and research — lives in
 |---|---|
 | Convert a statement and download the result | [converting-statements.md](converting-statements.md) |
 | Teach it a new bank layout (no code) | [adding-a-bank-template.md](adding-a-bank-template.md) |
+| Describe a tricky statement's layout, with no client information in it | [survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) |
 | Do admin: password, review queue, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
