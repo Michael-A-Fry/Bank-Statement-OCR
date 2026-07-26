@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 90 findings, 81 fixed, 9 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
+**Where it stands: 91 findings, 81 fixed, 10 open.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
 only open finding that CAN produce a wrong figure quietly, so it is the next thing
 to fix. The other three are waiting on evidence (more real forms, a hand-keyed
 golden scan) rather than on effort.
@@ -217,6 +217,43 @@ first: without the measure there is nothing to hang the offer on.
 | N27 | medium | open | The save name is generated from the BANK alone, so every layout from one bank drafts the same name and the second one collides or gets a "_2" suffix. It should be built from bank AND the kind of statement (`g_bank` + `g_type`), which the toolkit already asks for and already stores as `statement_type`. Directly worsens the near-duplicate problem: templates that cannot be told apart by name are exactly the ones that tie in detection. | app.R `g_id` / `g_bank` / `g_type` |
 
 | N28 | high | open | "None of these fit? Tell our team" (`g_req_detail` / `g_req_send`, app.R:3286-3290) sits INSIDE the settings disclosure on the Simple tab, so to a user it appears only on Advanced. It is the escape hatch for somebody already stuck, and the tool then makes them hunt for it. Worse, picking "None of these" in the date or amount dropdown pops a notification saying "use the Tell our team box below" - and the box it names is not visible. It belongs in front, on Simple, always. | app.R:3286 |
+
+| N29 | **high** | open | Two symptoms reported from real use, probably ONE cause: (a) every second page shows the DEFAULT box positions rather than the ones drawn; (b) a credit column with a box drawn over it reads nothing, while the debit column beside it reads fine. | app.R band editor + R/parse_pdf_table.R |
+
+### N29 - bands on the wrong page, and a credit column that reads nothing
+
+Reported together, and the leading hypothesis explains both at once.
+
+The PARSER does not match bands against a page's raw coordinates. Every page's
+words are first scaled to a REFERENCE page size (`.scale_words_to_ref`,
+R/parse_pdf_table.R:81, `ref_width` defaulting to A4 at :349-359), so a band is
+stored in reference coordinates, not in the coordinates of the page you drew it on.
+
+**If the band EDITOR draws boxes at raw template coordinates over a page rendered
+at that page's own size, then any page whose width differs from `ref_width` shows
+every box displaced** - which looks exactly like "the defaults came back", because
+a displaced box is indistinguishable from an untouched one. Alternating pages
+differing in size is common: a letterhead page, a landscape insert, or a scan
+where every second sheet was fed at a slightly different scale.
+
+The same displacement explains the credit column. It is usually the NARROWEST
+money band, so it is the first to fall outside its words when the scale is even
+slightly off, while the wider debit band beside it still catches them. That is
+precisely the reported shape: "picking up debits next to it but no credits."
+
+**Check this first, it is cheap:** `row_coverage()` already reports `ref_width`,
+`ref_height` and `any_page_rescaled`, and gives per-page kept counts. Run it on
+the offending statement. If `any_page_rescaled` is TRUE, or the per-page kept
+counts alternate high/low, the hypothesis is confirmed and the fix is to make the
+editor draw in the same reference frame the parser matches in - one frame, defined
+once, used by both.
+
+If `any_page_rescaled` is FALSE the hypothesis is wrong and the credit miss is a
+separate band/alignment problem: check whether right-aligned credit amounts extend
+past the drawn band's right edge, since a word is assigned by its x position.
+
+Filed HIGH: a mis-drawn band is the reported commonest cause of a wrong amount
+column, and a *silently* mis-placed one is worse than a visibly wrong one.
 
 ### What is holding the last three open
 
