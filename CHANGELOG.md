@@ -79,6 +79,14 @@ One rule now governs it, recorded in [`docs/context/charter.md`](docs/context/ch
   behind **"Show me how it read this"**. Nothing was deleted. **The click is
   remembered for the session**, so someone technical opens it once and never sees
   the button again; nobody is asked whether they are an advanced user.
+- **The checks that matter are on screen, pass or fail.** Only FAILING checks were
+  shown, which reads as "no news is good news" — the wrong way round for a tool
+  whose output has to be defensible. The reason to trust a conversion is that the
+  opening balance plus every transaction equals the closing balance the statement
+  prints, and a *passing* proof said nothing at all. Four now sit under the figures:
+  does it add up, was every row read, does the running balance follow, could every
+  date be read. A dash means the check could not run on this statement — a fact
+  worth seeing, not a pass.
 - **The date format and the amount style stay in front.** They were briefly moved
   behind the toolkit's disclosure with everything else, on the theory that the
   drafter fills them in. It does - and it is wrong often enough that these are the

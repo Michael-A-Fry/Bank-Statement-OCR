@@ -476,6 +476,7 @@ ui <- fluidPage(
             # empty graph under its honest verdict.
             conditionalPanel("output.cv_has_txns == true",
               uiOutput("cv_summary"),
+              uiOutput("cv_proof"),    # did it add up - always, pass or fail
               uiOutput("cv_split"),    # a bundle: what each statement in it says
               h4("Your transactions"),
               DTOutput("cv_txns")),
@@ -2335,6 +2336,46 @@ server <- function(input, output, session) {
           tags$b(plain_check(f$name[i])),
           if (nzchar(f$detail[i] %||% "")) sprintf(" - %s", f$detail[i]) else NULL))))
   }
+
+  # THE CHECKS THAT MATTER, ALWAYS ON SCREEN.
+  #
+  # Only FAILING checks were shown. That reads as "no news is good news", and for a
+  # tool whose whole purpose is a defensible figure it is the wrong way round: the
+  # reason to trust this output is that the opening balance plus every transaction
+  # equals the closing balance the statement prints, and a passing proof said
+  # nothing at all. It sat inside a panel nobody opens on a clean run.
+  #
+  # These four are the ones a forensic reviewer would ask about, in the order they
+  # would ask. Everything else stays in the full checks table.
+  #   - does it add up (the cardinal proof)
+  #   - was every row read
+  #   - does the running balance follow from row to row
+  #   - could every date be read
+  # A dash means the check could not run on this statement (no printed closing
+  # balance, no running balance column) - which is a fact worth seeing, not a pass.
+  .PROOF_CHECKS <- c("balance_reconciliation", "no_unparsed_rows",
+                     "running_balance_continuity", "dates_readable")
+  output$cv_proof <- renderUI({
+    res <- cv_res(); req(res)
+    k <- res$kpis
+    if (is.null(k) || !all(c("name", "status") %in% names(k))) return(NULL)
+    if (!nrow(k)) return(NULL)
+    pick <- .PROOF_CHECKS[.PROOF_CHECKS %in% k$name]
+    if (!length(pick)) return(NULL)
+    chip <- function(nm) {
+      st <- k$status[k$name == nm][1]
+      m <- switch(st %||% "na",
+        pass = list("\u2713", "#137333", "#e9f5ec"),
+        fail = list("\u2717", "#b00020", "#fdecef"),
+        list("\u2013", "#6b7780", "#f2f4f6"))     # na / anything else: could not run
+      span(style = sprintf(paste0("display:inline-flex;align-items:center;gap:6px;",
+                                  "margin:0 8px 6px 0;padding:5px 10px;border-radius:999px;",
+                                  "background:%s;color:%s;font-size:13px;font-weight:600"),
+                           m[[3]], m[[2]]),
+           span(style = "font-size:14px", m[[1]]), plain_check(nm))
+    }
+    div(style = "margin:2px 0 12px", lapply(pick, chip))
+  })
 
   # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.

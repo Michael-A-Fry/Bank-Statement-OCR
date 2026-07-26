@@ -263,3 +263,37 @@ test_that("the disclosure describes what it actually still holds", {
   expect_false(grepl("How the dates are written, how amounts are shown", joined, fixed = TRUE))
   expect_match(joined, "The phrase that identifies this bank next time", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# THE PROOF IS THE PRODUCT. Only failing checks were shown, which reads as "no
+# news is good news" - wrong for a tool whose output has to be defensible. The
+# reason to trust a conversion is that the opening balance plus every transaction
+# equals the closing balance the statement prints, and a PASSING proof said
+# nothing at all: it sat in a panel nobody opens on a clean run.
+test_that("the checks that matter are on screen whether they pass or fail", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  expect_match(joined, "output\\$cv_proof <- renderUI", fixed = FALSE)
+  # the cardinal proof first, then completeness, continuity, dates
+  i <- grep("\\.PROOF_CHECKS <- c\\(", src)
+  expect_length(i, 1L)
+  blk <- paste(src[i:(i + 2)], collapse = " ")
+  for (nm in c("balance_reconciliation", "no_unparsed_rows",
+               "running_balance_continuity", "dates_readable"))
+    expect_match(blk, nm, fixed = TRUE)
+  # ...and it is rendered in the DEFAULT view, not behind the disclosure
+  i_proof <- grep('uiOutput\\("cv_proof"\\)', src)
+  i_more  <- grep('uiOutput\\("cv_more_toggle"\\)', src)
+  expect_length(i_proof, 1L)
+  expect_true(i_proof < min(i_more))
+})
+
+test_that("every check named in the proof strip has plain-English wording", {
+  # plain_check() falls back to the raw code, and a forensic reviewer who sees
+  # "no_unparsed_rows" on screen stops trusting the screen.
+  e <- new.env(parent = globalenv())
+  sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
+  for (nm in c("balance_reconciliation", "no_unparsed_rows",
+               "running_balance_continuity", "dates_readable"))
+    expect_true(nm %in% names(e$CHECK_PLAIN), info = paste("no plain wording for", nm))
+})
