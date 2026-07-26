@@ -106,16 +106,23 @@ detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
   if (!requireNamespace("pdftools", quietly = TRUE) ||
       !requireNamespace("magick", quietly = TRUE))
     return(list(ok = FALSE, occluded = rep(FALSE, n)))
-  img <- tryCatch(magick::image_read(pdftools::pdf_render_page(
-    path, page = page, dpi = dpi, numeric = FALSE)), error = function(e) NULL)
-  if (is.null(img)) return(list(ok = FALSE, occluded = rep(FALSE, n)))
-  info <- tryCatch(magick::image_info(img), error = function(e) NULL)
-  g <- tryCatch(magick::image_data(magick::image_convert(img, colorspace = "gray"),
-                                   channels = "gray"), error = function(e) NULL)
-  if (is.null(info) || is.null(g) || is.na(info$width) || info$width == 0)
-    return(list(ok = FALSE, occluded = rep(FALSE, n)))
-  W <- info$width; H <- info$height
-  m <- matrix(as.integer(g[1, , ]), nrow = W, ncol = H)   # [x, y]; 0 black .. 255 white
+  # Render + read the page inside with_image_scratch() so ImageMagick's disk
+  # spill (raw pixels of the client's statement) is deleted with it -- see
+  # R/util.R. Everything after this point is plain R numbers, no magick image.
+  px <- with_image_scratch({
+    img <- tryCatch(magick::image_read(pdftools::pdf_render_page(
+      path, page = page, dpi = dpi, numeric = FALSE)), error = function(e) NULL)
+    info <- if (is.null(img)) NULL else tryCatch(magick::image_info(img), error = function(e) NULL)
+    g <- if (is.null(img)) NULL else
+      tryCatch(magick::image_data(magick::image_convert(img, colorspace = "gray"),
+                                  channels = "gray"), error = function(e) NULL)
+    if (is.null(info) || is.null(g) || is.na(info$width) || info$width == 0) NULL
+    else list(W = info$width, H = info$height,
+              m = matrix(as.integer(g[1, , ]), nrow = info$width, ncol = info$height))
+  })
+  if (is.null(px)) return(list(ok = FALSE, occluded = rep(FALSE, n)))
+  W <- px$W; H <- px$H
+  m <- px$m                                              # [x, y]; 0 black .. 255 white
   dark <- m < PARAM_REDACT_DARK_LEVEL
   # points -> render pixels. pdf_data word coords are points from the TOP-LEFT and
   # the render shares that frame, so the scale is just pixels/point per axis.

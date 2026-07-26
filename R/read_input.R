@@ -226,8 +226,12 @@ render_page_view <- function(path, page = 1L, dpi = 100L) {
   # suppressWarnings: a PDF that embeds fonts the machine lacks (e.g. Symbol /
   # ArialUnicode) makes the renderer warn -- harmless (a few glyphs may look off),
   # so keep it out of the console.
-  ras <- tryCatch(suppressWarnings(as.raster(magick::image_read(
-    pdftools::pdf_render_page(path, page = page, dpi = dpi)))), error = function(e) NULL)
+  # with_image_scratch: ImageMagick spills big pages to disk, so keep that spill
+  # in a folder that goes away with the call (R/util.R). as.raster() gives a
+  # plain R object, so nothing here outlives the scratch folder.
+  ras <- with_image_scratch(
+    tryCatch(suppressWarnings(as.raster(magick::image_read(
+      pdftools::pdf_render_page(path, page = page, dpi = dpi)))), error = function(e) NULL))
   if (is.null(ras)) return(NULL)
   out <- list(ras = ras, w = sz$width[page], h = sz$height[page], pg = page)
   if (length(ls(.PAGE_RASTER_CACHE)) >= 8L) rm(list = ls(.PAGE_RASTER_CACHE), envir = .PAGE_RASTER_CACHE)

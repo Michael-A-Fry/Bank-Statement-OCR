@@ -89,3 +89,49 @@ test_that("read_pdf exposes ocr flags and does not OCR a text-layer page", {
   expect_true("ocr_conf" %in% names(w))
   expect_true(all(is.na(w$ocr_conf)))
 })
+
+# --- N17: ImageMagick's disk spill is confined and cleaned up ---------------
+# Under memory pressure ImageMagick writes a page's raw pixels to a temp file and
+# only removes it when the process exits -- on a server that runs for months,
+# never. with_image_scratch() gives each call its own folder and deletes it, so
+# no readable statement imagery is left on the host's disk.
+
+test_that("with_image_scratch points MAGICK_TMPDIR at a private folder and removes it", {
+  outside_before <- Sys.getenv("MAGICK_TMPDIR", unset = NA_character_)
+  seen <- with_image_scratch({
+    d <- Sys.getenv("MAGICK_TMPDIR", unset = NA_character_)
+    expect_false(is.na(d))
+    expect_true(dir.exists(d))
+    # a spill file written while inside must be inside the scratch folder
+    writeLines("pretend pixel cache", file.path(d, "magick-spill"))
+    d
+  })
+  expect_false(dir.exists(seen))                       # folder gone, spill with it
+  after <- Sys.getenv("MAGICK_TMPDIR", unset = NA_character_)
+  expect_identical(after, outside_before)              # env restored exactly
+})
+
+test_that("with_image_scratch restores a pre-existing MAGICK_TMPDIR", {
+  keep <- Sys.getenv("MAGICK_TMPDIR", unset = NA_character_)
+  on.exit(if (is.na(keep)) Sys.unsetenv("MAGICK_TMPDIR") else
+            Sys.setenv(MAGICK_TMPDIR = keep), add = TRUE)
+  Sys.setenv(MAGICK_TMPDIR = "/some/preset/dir")
+  inner <- with_image_scratch(Sys.getenv("MAGICK_TMPDIR"))
+  expect_false(identical(inner, "/some/preset/dir"))
+  expect_identical(Sys.getenv("MAGICK_TMPDIR"), "/some/preset/dir")
+})
+
+test_that("with_image_scratch returns the value and cleans up even on an error", {
+  expect_identical(with_image_scratch(1 + 1), 2)
+  before <- length(Sys.glob(file.path(tempdir(), "imgscratch_*")))
+  expect_error(with_image_scratch(stop("boom")), "boom")
+  expect_identical(length(Sys.glob(file.path(tempdir(), "imgscratch_*"))), before)
+})
+
+test_that("ocr_pdf_page leaves no scratch folder behind", {
+  skip_if_not(ocr_available(), "tesseract/pdftoppm not installed")
+  pdf <- fixture(SAMPLE_PDF_OCR)
+  before <- length(Sys.glob(file.path(tempdir(), "imgscratch_*")))
+  invisible(ocr_pdf_page(pdf, 1))
+  expect_identical(length(Sys.glob(file.path(tempdir(), "imgscratch_*"))), before)
+})

@@ -11,6 +11,11 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
+**Where it stands: 81 findings, 78 fixed, 3 open.** All three open ones are
+described under [What is holding the last three open](#what-is-holding-the-last-three-open)
+at the bottom — each is waiting on evidence (more real forms, a hand-keyed golden
+scan), not on effort, and none of them can produce a wrong figure quietly.
+
 _Last updated: 2026-07-26._
 
 
@@ -150,6 +155,39 @@ _Anything discovered after the review lands here, newest at the bottom._
 | N14 | medium | **fixed** | RUN-ME.bat's failure path exited 0, so a scheduled task recorded a clean run for a launch that never started; install-offline.R likewise reported success when packages failed. | RUN-ME.bat / scripts/install-offline.R |
 | N15 | medium | open | A single distinctive-but-ubiquitous phrase still passes the form fingerprint gate (any two-word phrase counts as distinctive). Narrower than the original hole but not closed. | R/forms.R / `.fp_specific` |
 | N16 | medium | open | Recovering the ANZ scan's rows exposes residual OCR digit errors, so it still fails reconciliation — correctly, and loudly. Improving scanned digit accuracy is the next real coverage step. | measured: 300 rows, reconciliation fails |
-| N17 | low | open | ImageMagick can spill a disk-backed pixel cache (~83 MB) of a statement page under memory pressure. | observed during the #29 test |
-| N18 | low | open | The local `feed/transactions/136c69b731ca8698.csv` is a stale pre-fix artifact in the old 26-column schema. | delete or re-convert |
+| N17 | low | **fixed** | ImageMagick can spill a disk-backed pixel cache (~83 MB) of a statement page under memory pressure, and only clears it when the PROCESS exits — never, on a server up for months. `with_image_scratch()` now gives each piece of image work a private folder and deletes it. | R/util.R + R/ocr.R, R/detect_redaction.R, R/read_input.R |
+| N18 | low | **fixed** | The local `feed/transactions/136c69b731ca8698.csv` is a stale pre-fix artifact in the old 26-column schema. | gone; `feed/` is local-only and git-ignored |
 | N19 | low | open | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in — a correction to the original #61 measurement. | samples/_private_staging/anz_multiple.pdf |
+
+### What is holding the last three open
+
+None of them is blocked on effort or on a decision. Each is blocked on **evidence
+we do not have**, and the charter's rule — never silently wrong — says a change we
+cannot measure is worse than the known, loud, honest failure it replaces.
+
+**N15 — the form fingerprint gate.** Tightening "how distinctive must a phrase be
+before a form template may claim a PDF?" needs a spread of real forms to tune
+against. There is exactly **one** shipped fields template
+(`fields_templates/anz_kiwisaver_fields.yaml`). A threshold fitted to a sample of
+one either stays where it is or starts rejecting legitimate templates nobody has
+written yet — and the failure mode of over-tightening (an analyst's correct
+template silently refuses to match) is the same class of harm as the hole itself.
+*Unblocks when:* three or four more real forms are in the repo. The fix is then
+half an hour in `.fp_specific`.
+
+**N16 — residual OCR digit errors on recovered scans.** We now recover 300 rows
+from the ANZ scan that used to yield 41 (N9). Some digits are still misread, so
+reconciliation fails — **correctly and loudly**: the run is withheld from Qlik,
+marked needs-review, and no wrong figure reaches a dashboard. Improving this means
+changing preprocessing (thresholding, DPI, per-cell re-OCR), and there is no way
+to tell an improvement from a regression without **ground truth**: the three scans
+in `samples/_private_staging/scans/` have no verified correct values attached. A
+blind tweak could raise the row count while lowering digit accuracy, which turns a
+loud failure into a quiet wrong answer — the one outcome the charter forbids.
+*Unblocks when:* one scan is keyed in by hand as a golden. Then character accuracy
+is measurable and preprocessing can be tuned against a number.
+
+**N19 — trust MEDIUM, not HIGH, on the split ANZ bundle.** This is a **correction
+to a measurement**, not a defect: MEDIUM is the right answer for a statement whose
+running balance does not span the whole bundle. Nothing to build; it is recorded
+so the earlier #61 note is not read as a promise of HIGH.

@@ -82,6 +82,16 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
 ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", preprocess = TRUE) {
   if (!ocr_available() || !file.exists(pdf))
     return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
+  # All of this page's image work happens inside with_image_scratch(), so
+  # ImageMagick's disk spill goes in a folder of ours that is deleted on the way
+  # out (see R/util.R). Nothing below reads a magick image after this returns.
+  with_image_scratch(.ocr_pdf_page_work(pdf, page, dpi, lang, preprocess))
+}
+
+# The actual page work, split out only so ocr_pdf_page() above can wrap the whole
+# of it in one with_image_scratch() without indenting every line. Never call this
+# directly -- call ocr_pdf_page().
+.ocr_pdf_page_work <- function(pdf, page, dpi, lang, preprocess) {
   prefix <- tempfile("ocrpg_")
   # EVERY intermediate image this function makes must be named under `prefix`, so
   # this single sweep removes all of them -- the poppler render AND the two

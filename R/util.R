@@ -49,6 +49,43 @@ file_sha256 <- function(path) {
   unname(tools::md5sum(path))
 }
 
+# with_image_scratch(expr) -- run a piece of image work with ImageMagick's
+# spill files confined to a private folder that is deleted straight afterwards.
+#
+# WHY: when a page is too big to hold in memory, ImageMagick stops using RAM and
+# writes the raw pixels to a temporary file instead (measured at ~83 MB for ONE
+# 300 dpi A4 statement page). It only tidies those away when the PROCESS exits --
+# and this server is meant to run for months without a restart, so in practice
+# never. They are raw pixels of a CLIENT'S BANK STATEMENT sitting on the system
+# drive. Giving each call its own folder means the sweep below is guaranteed to
+# find every spill file, and can never delete another program's.
+#
+# HOW TO USE IT: put the WHOLE piece of image work inside the braces --
+# everything that reads a magick image, right through to the plain R value you
+# want out of it. Once this returns, the scratch folder is gone, so a magick
+# image left over from inside must not be read again.
+#
+#   dark <- with_image_scratch({
+#     img <- magick::image_read(page_png)
+#     as.integer(magick::image_data(img, channels = "gray"))   # plain R value
+#   })
+with_image_scratch <- function(expr) {
+  scratch <- tempfile("imgscratch_")
+  if (dir.create(scratch, showWarnings = FALSE)) {
+    previous <- Sys.getenv("MAGICK_TMPDIR", unset = NA_character_)
+    Sys.setenv(MAGICK_TMPDIR = scratch)
+    on.exit({
+      if (is.na(previous)) Sys.unsetenv("MAGICK_TMPDIR")
+      else Sys.setenv(MAGICK_TMPDIR = previous)
+      unlink(scratch, recursive = TRUE, force = TRUE)
+    }, add = TRUE)
+  }
+  # `expr` is only evaluated HERE, on this last line -- after MAGICK_TMPDIR has
+  # been pointed at the scratch folder and before on.exit() removes it. (That is
+  # R's normal "arguments are evaluated when first used" behaviour.)
+  expr
+}
+
 # ---------------------------------------------------------------------------
 # yaml_append_phrase(path, key, value, under) -- teach a hand-maintained YAML
 # dictionary ONE new wording, WITHOUT rewriting the file.
