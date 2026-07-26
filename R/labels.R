@@ -40,16 +40,25 @@
 # for tax and "-$489.22" for fees, so the one shipped form template was reading
 # both with the wrong sign: a silently wrong figure, which is the one thing this
 # tool exists not to do.
+# And the minus is not always an ASCII hyphen. PDF typesetting routinely emits
+# U+2212 MINUS SIGN, and financial documents use U+2013 EN DASH; both LOOK like a
+# minus and neither matched, so the sign was dropped exactly as before. Found by
+# throwing generated PDFs at the form path - the R pdf() device emits U+2212 for a
+# plain "-", which is precisely what a real typesetter does.
 #   -$577.80   minus before the symbol   (NZ banks, most common)
 #   $-577.80   minus inside              (already worked)
 #   577.80-    trailing minus            (accounting exports)
 #   ($577.80)  brackets                  (already worked)
 # The trailing minus cannot swallow a hyphen from a date or a range: both
 # alternatives require cents (".80" / ",80") or a leading "$", which no date has.
+# Every character that means "negative" in a printed document: ASCII hyphen, the
+# typographic minus, and the en dash. Named once so the two alternatives below
+# cannot drift apart, and so adding a fourth is one edit.
+.MINUS <- "[-\u2212\u2013]"
 .MONEY_RX <- paste0(
-  "\\(?-?[$]?-?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?-?(?:\\s?(?:DR|CR|OD))?",
+  "\\(?", .MINUS, "?[$]?", .MINUS, "?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?", .MINUS, "?(?:\\s?(?:DR|CR|OD))?",
   "|",
-  "\\(?-?[$]-?[0-9][0-9,]*(?![0-9.,])\\)?-?(?:\\s?(?:DR|CR|OD))?")
+  "\\(?", .MINUS, "?[$]", .MINUS, "?[0-9][0-9,]*(?![0-9.,])\\)?", .MINUS, "?(?:\\s?(?:DR|CR|OD))?")
 .DATE_RX  <- "[0-9]{1,2}[/ .-][A-Za-z0-9]{2,9}[/ .-][0-9]{2,4}"
 
 # .spec_terms(spec) -- the list of label phrases a spec matches on.

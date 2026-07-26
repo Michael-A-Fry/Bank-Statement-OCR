@@ -171,11 +171,33 @@ convert_form <- function(path, fields_dir = "fields_templates",
     res$n_fields <- nrow(fields)
     res$required_missing <- sum(isTRUE(fields$flagged) | fields$flagged, na.rm = TRUE)
     res$outputs <- write_form_outputs(fields, outdir, base, formats)
-    res$status <- if (res$required_missing > 0) "needs_review" else "ok"
-    res$messages <- if (res$required_missing > 0)
-      status_message(res$status, sprintf("%d required field(s) not found", res$required_missing),
+    # HOW MANY VALUES DID WE ACTUALLY GET? n_fields counts the fields the template
+    # DECLARES, not the ones found - so a document where nothing was read still
+    # reported "4 field(s) extracted", status ok. A form has no reconciliation to
+    # catch that: a labelled value is trusted because it was read, so an empty or
+    # contradictory read must say so itself. This is the same gate the statement
+    # path got (zero rows is not "ok"), which the form path never had.
+    res$n_values <- sum(!is.na(fields$value) & nzchar(fields$value %||% ""))
+    # A label found more than once with DIFFERENT values. The tool takes the first
+    # and marks it; it must never be reported as a clean read, because which one is
+    # right is a question only someone holding the document can answer.
+    res$n_conflicts <- sum(isTRUE(fields$conflict) | fields$conflict, na.rm = TRUE)
+    res$status <- if (res$n_values == 0L) "unsupported"
+                  else if (res$n_conflicts > 0 || res$required_missing > 0) "needs_review"
+                  else "ok"
+    res$messages <- if (res$n_values == 0L)
+      status_message("unsupported",
+        sprintf("%s matches this document but found none of its %d values",
+                res$template_id, res$n_fields),
+        "the labels are probably printed differently here, or the values sit in a table rather than beside their label")
+      else if (res$n_conflicts > 0)
+      status_message("needs_review",
+        sprintf("%d label(s) appear more than once with different values", res$n_conflicts),
+        "the first of each was taken - check them against the document")
+      else if (res$required_missing > 0)
+      status_message("needs_review", sprintf("%d required field(s) not found", res$required_missing),
                      "check the document or the template labels")
-      else status_message("ok", sprintf("%d field(s) extracted", res$n_fields))
+      else status_message("ok", sprintf("%d of %d value(s) found", res$n_values, res$n_fields))
     res
   }, error = function(e) {
     res$messages <- paste("error:", conditionMessage(e)); res
@@ -221,6 +243,18 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
   if (is.null(force_template) && identical(res$status, "unsupported")) {
     fr <- tryCatch(convert_form(path, fields_dir = fields_dir, user_fields_dir = user_fields_dir,
                                 outdir = outdir, formats = formats), error = function(e) NULL)
+    # A form template that MATCHED this document but read none of its values is a
+    # different answer from "we have no template for this layout", and needs the
+    # opposite advice: the template exists, its labels do not match how this
+    # document prints them (or the values sit in a table rather than beside their
+    # label). Without this the specific message was thrown away and the analyst was
+    # sent to build a template that already exists - the same mistake the statement
+    # path made before matched_but_empty.
+    if (!is.null(fr) && identical(fr$status, "unsupported") &&
+        !is.na(fr$template_id %||% NA) && (fr$n_fields %||% 0L) > 0L) {
+      res$messages <- fr$messages
+      res$form_matched_empty <- fr$template_id
+    }
     if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
       fr$kind <- "form"
       fr$run_id <- res$run_id      # keep the run id so logging/feedback still line up

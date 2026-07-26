@@ -49,12 +49,25 @@ screen would have questioned.
 
 ### Privacy
 
+- **The form path polices itself now.** A labelled value has no reconciliation to
+  prove it — it is trusted because it was read — so an empty or contradictory read
+  has to say so itself, and it did not. Every outcome reported `ok`: nothing found,
+  the same label twice with different values, even a transaction statement fed to
+  it. The count in the message was of fields the template *declares*, not values
+  found, so a document where nothing was read still said "4 field(s) extracted".
+  Zero values is now `unsupported` and names the template that matched but read
+  nothing; conflicting values are `needs_review` with the conflicts named. The
+  shipped ANZ sample turns out to print three of its labels twice with different
+  values — it now says so instead of silently taking the first.
 - **A negative kept its sign.** The money pattern allowed a minus only *inside* the
   currency symbol (`$-577.80`), so the two forms banks actually print — a minus
   before the symbol (`-$577.80`) and a trailing minus (`577.80-`) — matched without
   it, and a deduction was extracted as a positive. The ANZ KiwiSaver sample shipped
   in this repo prints `-$577.80` for tax and `-$489.22` for fees, so the one shipped
-  form template was reading both with the wrong sign.
+  form template was reading both with the wrong sign. The minus is also not always
+  an ASCII hyphen: PDF typesetting emits U+2212 MINUS SIGN and financial documents
+  use U+2013 EN DASH, and neither matched — found by generating test PDFs, since
+  R's own `pdf()` device emits U+2212 for a plain "-", exactly as a typesetter does.
 
 ### Privacy
 

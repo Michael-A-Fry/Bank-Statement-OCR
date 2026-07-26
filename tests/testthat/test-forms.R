@@ -135,7 +135,7 @@ test_that("convert_document routes a statement vs a form through one front door"
   fr <- convert_document(fpdf, outdir = od, templates_dir = tdir,
                          user_templates_dir = NULL, fields_dir = fdir, logdir = ld)
   expect_equal(fr$kind, "form")
-  expect_equal(fr$status, "ok")
+  expect_true(fr$status %in% c("ok", "needs_review"))
   expect_true(fr$n_fields >= 4)
 
   # a document that matches nothing at all stays an unsupported statement
@@ -165,11 +165,11 @@ test_that("a converted form is logged ONCE, as a form, not as an unsupported sta
                          fields_dir = file.path(engine_root(), "fields_templates"),
                          logdir = ld)
   expect_equal(fr$kind, "form")
-  expect_equal(fr$status, "ok")
+  expect_true(fr$status %in% c("ok", "needs_review"))
 
   rec <- read_runs(ld)
   expect_equal(nrow(rec), 1L)                              # exactly one record
-  expect_identical(rec$status, "ok")                       # the FINAL outcome
+  expect_identical(rec$status, "needs_review")             # the FINAL outcome
   expect_identical(rec$kind, "form")
   expect_identical(rec$detected_template, "anz_kiwisaver_fields")
   expect_true(rec$n_fields >= 4)
@@ -210,8 +210,90 @@ test_that("convert_form on the sample PDF extracts fields (skips if absent)", {
   od <- tempfile(); on.exit(unlink(od, recursive = TRUE), add = TRUE)
   res <- convert_form(pdf, fields_dir = file.path(engine_root(), "fields_templates"),
                       outdir = od, formats = c("csv"))
-  expect_equal(res$status, "ok")
+  # This guide document prints three of its labels twice with different values,
+  # so the honest outcome is needs_review with the conflicts named.
+  expect_equal(res$status, "needs_review")
+  expect_gt(res$n_conflicts, 0L)
   expect_equal(res$template_id, "anz_kiwisaver_fields")
   expect_true(res$n_fields >= 4)
   expect_true(any(file.exists(res$outputs)))
+})
+
+# --- A FORM HAS NO RECONCILIATION, SO IT MUST POLICE ITSELF -------------------
+# Found by throwing generated PDFs at the form path: every outcome - nothing
+# found, contradictory values, a transaction statement - reported status "ok".
+# n_fields counted the fields the template DECLARES, not the ones found, so a
+# document where nothing was read still said "4 field(s) extracted".
+#
+# A labelled value is trusted because it was read. There is no balance to prove
+# it, so an empty or contradictory read has to say so itself.
+
+.fields_tpl <- function() {
+  d <- tempfile("ft_"); dir.create(d)
+  writeLines(c("id: hazard_fields", "bank: Southern Trust", "statement_type: summary",
+    "format: pdf", "mode: fields", "version: 1", "fingerprint:",
+    '  page_contains_all: ["SOUTHERN TRUST", "Account summary"]', "fields:",
+    '  opening_balance: {any_of: ["Opening balance"], value: money}',
+    '  closing_balance: {any_of: ["Closing balance"], value: money}',
+    "currency: NZD"), file.path(d, "t.yaml"))
+  d
+}
+.hazard_pdf <- function(lines) {
+  f <- tempfile(fileext = ".pdf")
+  grDevices::pdf(f, width = 8.27, height = 11.69)
+  graphics::plot.new(); graphics::par(mar = c(0,0,0,0))
+  graphics::plot.window(c(0,100), c(0,100))
+  for (i in seq_along(lines))
+    graphics::text(3, 97 - i*3.2, lines[i], adj = 0, cex = 0.72, family = "mono")
+  invisible(grDevices::dev.off()); f
+}
+.run <- function(lines) {
+  out <- tempfile("fo_"); dir.create(out)
+  convert_form(.hazard_pdf(lines), fields_dir = .fields_tpl(), user_fields_dir = NULL,
+               outdir = out, formats = "csv")
+}
+
+test_that("finding none of the values is not 'ok'", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  # labels present only as column headers, values in rows below - the tool must
+  # NOT reach into another line for a value, and must not call that a clean read
+  r <- .run(c("SOUTHERN TRUST  Account summary", "",
+              "Period   Opening balance   Closing balance",
+              "2024        $1,400.00         $1,850.00"))
+  expect_identical(r$n_values, 0L)
+  expect_identical(r$status, "unsupported")
+  expect_true(any(grepl("found none of its", as.character(r$messages), fixed = TRUE)))
+})
+
+test_that("the same label twice with different values is never a clean read", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  r <- .run(c("SOUTHERN TRUST  Account summary", "",
+              "Fund A", "Opening balance   $1,000.00", "Closing balance   $1,100.00", "",
+              "Fund B", "Opening balance   $2,000.00", "Closing balance   $2,300.00"))
+  expect_gt(r$n_conflicts, 0L)
+  expect_identical(r$status, "needs_review")
+  expect_true(any(grepl("more than once with different values",
+                        as.character(r$messages), fixed = TRUE)))
+})
+
+test_that("a clean form says how many of how many it found", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  r <- .run(c("SOUTHERN TRUST  Account summary", "",
+              "Opening balance   $1,250.00", "Closing balance   $1,724.50"))
+  expect_identical(r$status, "ok")
+  expect_identical(r$n_values, 2L)
+  expect_true(any(grepl("2 of 2 value", as.character(r$messages), fixed = TRUE)))
+})
+
+test_that("a typographic minus keeps its sign", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  # The R pdf() device emits U+2212 MINUS SIGN for a plain "-", exactly as a real
+  # typesetter does. Only the ASCII hyphen used to match, so a deduction printed
+  # this way came out POSITIVE.
+  r <- .run(c("SOUTHERN TRUST  Account summary", "",
+              "Opening balance   -$1,250.00", "Closing balance   $1,724.50"))
+  v <- setNames(r$fields$value, r$fields$field)
+  expect_true(grepl("1,250.00", v[["opening_balance"]], fixed = TRUE))
+  expect_false(identical(v[["opening_balance"]], "$1,250.00"),
+               info = "the minus was dropped")
 })

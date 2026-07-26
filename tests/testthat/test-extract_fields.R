@@ -94,7 +94,10 @@ test_that("the shipped form template reads its own sample with the right signs",
                         fields_dir = fixture("fields_templates"), user_fields_dir = NULL,
                         logdir = out)
   expect_identical(r$kind, "form")
-  expect_identical(r$status, "ok")
+  # needs_review, not ok: this guide document prints Contributions, Tax and Fees
+  # more than once with different values. The tool takes the first and SAYS so;
+  # it used to pick silently and call the result clean.
+  expect_identical(r$status, "needs_review")
   v <- setNames(r$fields$value, r$fields$field)
   # deductions are NEGATIVE, as the document prints them
   expect_match(v[["tax"]],  "^-", info = paste("tax came out as", v[["tax"]]))
