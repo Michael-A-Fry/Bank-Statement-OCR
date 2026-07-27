@@ -546,7 +546,7 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
   # the arithmetic taken out. Asserted as an ORDER, not as a spelling, so the two
   # cannot be mistaken for each other again.
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 34L)
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 44L)
   expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
   expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
   expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
@@ -804,13 +804,16 @@ test_that("a validity window that runs backwards is refused, never quietly saved
   expect_match(blk, "g_more_open\\(TRUE\\)")             # opens where the fix is
   # the same words inline as it is picked, from ONE constant, so the message the
   # box shows and the message the save gives can never drift apart
-  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 12L),
+  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 24L),
                "\\.eff_backwards\\(input\\$g_eff_from, input\\$g_eff_to\\)")
   expect_length(grep("\\.EFF_BACKWARDS_MSG", src), 3L)   # declared once, used twice
-  # the deleted machinery really is gone, not merely unreferenced
+  # The deleted machinery really is gone, not merely unreferenced. Matched on a
+  # WORD BOUNDARY, not as a substring: `.eff_show` is a prefix of `.eff_shows`,
+  # which is a different, live helper, and a substring test would report the
+  # deleted one as still present forever. A guard that cries wolf gets deleted.
   joined <- paste(src, collapse = "\n")
   for (dead in c(".eff_bad", ".eff_txt", ".eff_show", ".eff_problems", ".eff_sentence"))
-    expect_false(grepl(dead, joined, fixed = TRUE), info = dead)
+    expect_false(grepl(paste0("\\Q", dead, "\\E\\b"), joined, perl = TRUE), info = dead)
 })
 
 test_that("a validity window the pickers cannot show is refused, and never silently emptied", {
@@ -822,17 +825,25 @@ test_that("a validity window the pickers cannot show is refused, and never silen
   #     open over a bad template locks the repair tool inside the thing it repairs --
   #     with the boxes empty and a line saying so.
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  ok <- .ui_fun(".eff_stored_ok", also = ".eff_date")
+  # .eff_shows too: the "can the pickers show this?" question is asked directly
+  # now, instead of by catching .eff_date()'s exception - a guard that rested on
+  # another function throwing was one tidy-up away from silently disappearing.
+  ok <- .ui_fun(".eff_stored_ok", also = c(".eff_date", ".eff_shows"))
   expect_true(ok(list(effective_from = "2020-01-01", effective_to = NULL)))
   expect_true(ok(list()))                                   # no window is fine
   expect_false(ok(list(effective_from = "last year")))
+  # ...and the four letters "NA" mean ALWAYS, not a broken window: yaml round-trips
+  # an absent value through that string, and a template saying "always" must not
+  # open under a red banner telling the user to fix something that is correct.
+  expect_true(ok(list(effective_from = "NA")))
+  expect_true(ok(list(effective_from = "", effective_to = "")))
   blk <- .ui_block(src, "observeEvent\\(input\\$g_adv_apply", 30L)
   expect_match(blk, "\\.eff_stored_ok\\(parsed\\)")
   expect_match(blk, "must be dates", fixed = TRUE)
   # opening never throws...
   expect_match(joined, "value = tryCatch\\(\\.eff_date\\(v\\) %\\|\\|% \"\", error = function\\(e\\) \"\"\\)")
   # ...and never pretends the template said "always"
-  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 10L),
+  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 24L),
                "!\\.eff_stored_ok\\(g\\$tmpl\\)")
   expect_match(joined, "saved validity window is not a date", fixed = TRUE)
 })
@@ -1129,4 +1140,33 @@ test_that("no on-screen text points at a control that is off screen", {
   # above" - a control the modal is covering. Same mistake as N28.
   src <- .ui_src()
   expect_false(any(grepl("pick 'Something else' above", src, fixed = TRUE)))
+})
+
+
+# ---- what the adversarial review found in this sweep -------------------------
+test_that("the batch Result column gathers the FAILURES on the first click", {
+  # orderData points column 1 at the hidden severity key, and DataTables' default
+  # first click is ASCENDING - which on that key puts the CLEAN files on top, on
+  # the very click meant to gather what went wrong. The initial order was right
+  # and the old test only checked the initial order, so the inversion was
+  # invisible. Pin the click direction, not just the opening state.
+  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 44L)
+  expect_match(blk, 'orderSequence = list\\("desc", "asc"\\)')
+})
+
+test_that("the stored-window banner stops claiming the boxes are empty once they are not", {
+  # It returned EARLY, so it both stated something false the moment the user
+  # picked a date, and hid the backwards warning for exactly the templates the
+  # branch was added for - the one mistake a pair of date pickers still allows
+  # went unnamed until Save.
+  blk <- .ui_block(.ui_src(), "output\\$g_eff_msg <- renderUI", 24L)
+  expect_match(blk, "picked <- ")
+  expect_match(blk, "!\\.eff_stored_ok\\(g\\$tmpl\\) && !picked")
+})
+
+test_that("a template that says ALWAYS does not open looking broken", {
+  # yaml round-trips an absent value through the four letters "NA". Without this
+  # the red "not a date" banner appears on a template that is perfectly correct.
+  expect_match(paste(.ui_src(), collapse = "\n"),
+               'identical\\(toupper\\(s\\), "NA"\\)')
 })

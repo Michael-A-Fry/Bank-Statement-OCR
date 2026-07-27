@@ -142,6 +142,17 @@ row_coverage <- function(input, template) {
     else if (act_tot > 0)
       sprintf("%d row(s) were skipped for an unreadable date or a missing amount%s -- usually OCR quality on a scan, or a band that is slightly off.",
               act_tot, if (any_ocr) " (this document was machine-read / OCR'd)" else "")
+    # All clear -- but NOT unconditionally. The headline is what a maintainer
+    # actually reads, and a band that read no words ANYWHERE can sit under a fully
+    # green sentence: nothing was skipped, because a dead band produces no rows to
+    # skip. The withdrawn empty-band VERDICT was wrong to tell anyone to redraw
+    # (no threshold separates a misplaced band from a column with no entries this
+    # period - see the note above), but staying silent is the opposite error. So
+    # the fact is stated and the judgement is left to the person who can see the
+    # statement.
+    else if (length(empty_bands))
+      sprintf("Every candidate row was kept. Note: the %s band read no words anywhere on this document - check that column against the statement; it may simply have no entries this period.",
+              paste(empty_bands, collapse = ", "))
     else "Every candidate row was kept."
 
   list(applicable = TRUE, ref_width = round(frame$width, 2), ref_height = round(frame$height, 2),

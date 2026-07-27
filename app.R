@@ -2183,7 +2183,7 @@ server <- function(input, output, session) {
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
   run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL,
-                             include_user = FALSE) {
+                             include_user = FALSE, upload_id = NULL) {
     old <- isolate(cv_dir())
     sess <- tempfile("cv_")   # guaranteed-unique per session/process (no cross-user bleed)
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
@@ -2222,16 +2222,29 @@ server <- function(input, output, session) {
       detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
     else NA_character_
     # The result page is now THIS statement's, in one line...
-    show_result(res, list(path = src, name = name), uid)
+    # upload_id given = this is a RE-RUN of a statement already picked up, so keep
+    # its id. Passing it through beats the call-then-repair this replaced: setting
+    # the state and then patching it back afterwards is exactly the shape
+    # show_result() exists to remove.
+    show_result(res, list(path = src, name = name), upload_id %||% uid)
     # ...and this is what the governed feed did with it (the last word on
     # cv_recorded / cv_feed_gate, which show_result has just cleared).
     publish_result(res, record)
   }
 
-  # show_result(res, src, upload_id, gate, recorded) -- THE RESULT PAGE'S STATE,
-  # defined ONCE. Everything below the Convert sidebar (the verdict, the proof
-  # strip, the transactions, the downloads, the feedback panel, the feed line, the
-  # "teach it this layout" route) reads these seven reactives and nothing else.
+  # show_result(res, src, upload_id, gate, recorded) -- THE RESULT PAGE'S STATE.
+  # Everything below the Convert sidebar (the verdict, the proof strip, the
+  # transactions, the downloads, the feedback panel, the feed line, the "teach it
+  # this layout" route) reads these seven reactives and nothing else.
+  #
+  # It is the one place a RESULT is opened, and it is NOT the only writer of every
+  # field in it. Saying "defined ONCE" would be tidier and false, and a lone
+  # maintainer would believe it. Three sites write into this set deliberately:
+  #   * publish_result() sets cv_recorded / cv_feed_gate, because the feed verdict
+  #     is only known AFTER the write;
+  #   * the X-ray forced-row re-run must NOT come through here - this clears
+  #     cv_forced, and keeping those rows is the entire point of that path;
+  #   * open_guided() sets cv_upload_id when the toolkit adopts an upload.
   #
   # Three functions used to set overlapping subsets of them by hand -- a single
   # conversion, a batch finishing, and a batch row being opened -- and the way that
@@ -2464,7 +2477,13 @@ server <- function(input, output, session) {
         pageLength = 15,
         order = list(list(5, "desc"), list(4, "asc")),
         columnDefs = list(list(visible = FALSE, targets = 5),
-                          list(orderData = 5, targets = 1))))
+                          # Clicking "Result" sorts on the hidden severity key, and
+                          # DataTables' default first click is ASCENDING - which on
+                          # this key puts the CLEAN files on top, on the very click
+                          # meant to gather the failures. The table exists to group
+                          # what went wrong, so worst-first is the first click.
+                          list(orderData = 5, targets = 1,
+                               orderSequence = list("desc", "asc")))))
   })
 
   output$cv_batch_open <- renderUI({
@@ -3304,8 +3323,19 @@ server <- function(input, output, session) {
   .eff_date <- function(x) {
     if (is.null(x) || !length(x) || is.na(x[1])) return(NULL)
     s <- trimws(as.character(x[1]))
-    if (!nzchar(s)) return(NULL)
-    format(as.Date(s), "%Y-%m-%d")
+    # The four letters "NA" mean ALWAYS, not a broken window. yaml round-trips an
+    # absent value through that string, and without this a template saying "always"
+    # opens with a red banner telling the user to fix something that is correct.
+    if (!nzchar(s) || identical(toupper(s), "NA")) return(NULL)
+    # NULL, never a throw. The docstring says "a string or NULL, full stop", but
+    # as.Date("last year") ERRORS rather than returning NA -- so three call sites
+    # wrapped this in tryCatch while set_eff() inside apply_overrides did not.
+    # Unreachable today (its only caller feeds it dateInput values), which is
+    # exactly the kind of gap that stops being unreachable when someone adds a
+    # fourth caller. Honour the contract here instead of at each call site.
+    d <- suppressWarnings(tryCatch(as.Date(s), error = function(e) as.Date(NA)))
+    if (is.na(d)) return(NULL)
+    format(d, "%Y-%m-%d")
   }
   # .eff_backwards(from, to) -- TRUE for the one window a date picker still lets a
   # person build by accident: one that applies to nothing at all.
@@ -3332,9 +3362,21 @@ server <- function(input, output, session) {
   # toolkit that will not open over a bad template is a dead end with the repair
   # tool locked inside it. Never silent either -- g_eff_msg says so, and says that
   # saving replaces it.
+  # .eff_stored_ok(tmpl) -- can the pickers actually SHOW this template's stored
+  # window? It used to answer by catching .eff_date()'s error, which meant the
+  # detection depended on that helper THROWING -- so the moment .eff_date was made
+  # to honour its "a string or NULL, full stop" contract, a stored "last year"
+  # silently became "always" and the red banner stopped appearing. A guard that
+  # rests on another function's exception is a guard waiting to be deleted by
+  # someone tidying up. It now asks the question directly.
+  .eff_shows <- function(v) {
+    if (is.null(v) || !length(v) || is.na(v[1])) return(TRUE)     # absent = always
+    s <- trimws(as.character(v[1]))
+    if (!nzchar(s) || identical(toupper(s), "NA")) return(TRUE)   # blank / "NA" = always
+    !is.null(.eff_date(s))                                        # anything else must parse
+  }
   .eff_stored_ok <- function(tmpl)
-    isTRUE(tryCatch({ .eff_date(tmpl$effective_from); .eff_date(tmpl$effective_to); TRUE },
-                    error = function(e) FALSE))
+    .eff_shows(tmpl$effective_from) && .eff_shows(tmpl$effective_to)
   .eff_picker <- function(id, label, v)
     suppressWarnings(dateInput(id, label,
                                value = tryCatch(.eff_date(v) %||% "", error = function(e) ""),
@@ -4001,9 +4043,9 @@ server <- function(input, output, session) {
   # panel so "try the other one" behaves identically wherever it is offered.
   convert_with_template <- function(tid) {
     src <- cv_src(); req(src, tid, nzchar(tid))
-    uid <- cv_upload_id()          # same statement, same pickup - not a new upload
-    run_conversion(src$path, src$name, record = FALSE, force_tpl = tid)
-    cv_upload_id(uid)
+    # same statement, same pickup - not a new upload, so the id goes THROUGH
+    run_conversion(src$path, src$name, record = FALSE, force_tpl = tid,
+                   upload_id = cv_upload_id())
     res <- cv_res()
     # The pickup record has to learn that this statement DID convert, or Admin
     # keeps asking someone to build a template for a file that already has one.
@@ -4106,7 +4148,14 @@ server <- function(input, output, session) {
     g <- guided()
     # A window the boxes could not show is stated, not silently emptied: without
     # this the template would open looking like "always" and save that way.
-    if (!is.null(g) && !.eff_stored_ok(g$tmpl))
+    #
+    # ...but ONLY while the boxes are still empty. The message says "the boxes
+    # above could not show it", and the moment the user picks a date that is no
+    # longer true - and because it returned early, it also HID the backwards
+    # warning for exactly the templates this branch was added for, so the only
+    # mistake a pair of date pickers still allows went unnamed until Save.
+    picked <- !is.null(.eff_date(input$g_eff_from)) || !is.null(.eff_date(input$g_eff_to))
+    if (!is.null(g) && !.eff_stored_ok(g$tmpl) && !picked)
       return(span(class = "bad", style = "font-size:12.5px",
         paste("This template's saved validity window is not a date, so the boxes above could not show it.",
               "Pick the dates again, or leave them empty for always - saving replaces it either way.")))

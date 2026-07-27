@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 102 findings, 99 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 107 findings, 104 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -474,6 +474,57 @@ what actually makes splitting safe. That gap is closed; the two mechanisms stay.
 | N39 | high | **fixed** | Auto-split was OPT-IN and only 1 of 13 shipped templates opted in, so a bundle read by any of the other twelve - or by any template an analyst builds - got no split at all and fell through to the merged parse. Measured on a two-statement Westpac bundle: needs_review, trust LOW, balance_reconciliation AND running_balance_continuity both failing - the exact symptom auto-split exists to remove. The opt-in was never what made splitting safe; the commit gate in split_bundle() is. | R/split.R `.split_spec` |
 
 | N40 | medium | **fixed** | `templates_seed/` ships ten starting points whose bands are placeholders marked `# TODO draw` - and YAML drops comments, so once one is copied into `templates_user/` NOTHING the loader can see says it is unfinished. Six of the ten validate as-is, so a half-drawn template would join detection with placeholder coordinates. It fails loudly rather than silently, but the person is then debugging a template they never finished drawing. A `draft: true` key (the same shape as the existing `sample: true`) now makes that state visible: the loader refuses it and says what to do. | R/templates.R load_templates, templates_seed/*.yaml |
+
+| N41 | medium | **fixed** | The batch table's Result column sorted BEST-first on the first click. `orderData` points it at a hidden severity key and DataTables' default first click is ascending, so the click meant to gather the failures put the clean files on top. The initial order was right, and the test only asserted the initial order, so the inversion was invisible. | app.R cv_batch `orderSequence` |
+| N42 | medium | **fixed** | The toolkit's "this template's saved validity window is not a date" banner returned EARLY, so it kept claiming the boxes were empty after the user had picked dates - and hid the backwards-window warning for exactly the templates the branch was added for, meaning the one mistake a pair of date pickers still allows went unnamed until Save. | app.R g_eff_msg |
+| N43 | low | **fixed** | A template whose validity window is the four letters `NA` (how yaml round-trips an absent value) opened under a red banner telling the user to fix something correct. `NA` and blank both mean ALWAYS. | app.R `.eff_date` |
+| N44 | low | **fixed** | `.eff_stored_ok` detected an unshowable window by CATCHING `.eff_date`'s exception, so making that helper honour its documented "a string or NULL, full stop" contract silently removed the detection. A guard resting on another function throwing is one tidy-up away from disappearing; it now asks the question directly (`.eff_shows`). | app.R |
+| N45 | low | **fixed** | `row_coverage`'s all-clear headline could read "Every candidate row was kept" while a mapped band had read no words anywhere - a dead band produces no rows to skip, so nothing was skipped. The withdrawn verdict was wrong to order a redraw (no threshold separates a misplaced band from a column with no entries), but silence is the opposite error: the fact is now stated and the judgement left to whoever can see the statement. | R/row_coverage.R |
+
+### The app.R split - a concrete plan, deliberately not started
+
+`server <- function` is ~3,800 of app.R's ~4,600 lines: 128 `output$`, 68
+`observeEvent`, 33 `reactive()` and 30 `reactiveVal` in ONE lexical scope where
+every name is visible to every other. Moving the CSS out made the file 250 lines
+shorter and removed **zero** reactive-graph complexity - CSS was the cheapest
+250 lines in it to lose. The argument for splitting is unchanged.
+
+**The blocker is the test suite, and it has a two-line fix.**
+`tests/testthat/test-app-ui.R` greps app.R's SOURCE TEXT: `.ui_src()` reads the
+one file, `.ui_fun()` lifts a function by regex, `.ui_block()` takes a fixed
+n-line window hand-tuned per test. 38 `grepl` assertions and 10 `.ui_fun` lifts
+across 60 `test_that` blocks are pinned to physical layout. Fix that FIRST, in its
+own commit, before anything moves:
+
+```r
+.ui_src <- function() {
+  fs <- c(file.path(engine_root(), "app.R"),
+          list.files(file.path(engine_root(), "server"), "\\.R$", full.names = TRUE))
+  skip_if_not(file.exists(fs[1]))
+  unlist(lapply(fs, readLines, warn = FALSE))
+}
+```
+
+**Then split with `source(..., local = TRUE)` INSIDE `server()`** - not Shiny
+modules. One environment, zero namespacing, no input-id changes, no changes to
+the 60 tests. Modules would mean rewriting every id and every cross-reference,
+which is a different and much larger job with its own silent-failure modes.
+
+| file | from app.R | approx lines |
+|---|---|---|
+| `server/admin.R` | the Admin tab's server half | ~740 |
+| `server/toolkit.R` | the template toolkit + form builder | ~1,290 |
+| `server/xray.R` | the X-ray / inspect view | ~510 |
+| `server/convert.R` | Convert, batch, the result page | ~970 |
+
+Leaves app.R at ~1,100: the `ui`, the shared `reactiveVal`s, and four `source()`
+lines. Add `server/` to `scripts/bundle-offline.R` in the SAME commit - `www/` has
+just shown how quietly that breaks (nothing fails; the install is simply wrong).
+
+**Why it was not done here:** it is a ~1,300-line move through a reactive scope,
+verified by a suite that pins physical layout, at the end of a long session in
+which two agents and one reviewer each caught a real error in work that looked
+finished. The plan above is the de-risked version; it wants a session of its own.
 
 ### N39 - the opt-in was the wrong lock
 
