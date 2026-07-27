@@ -3616,10 +3616,18 @@ server <- function(input, output, session) {
       div(actionButton("g_pdf_assign", "Assign it", class = "btn-primary"),
           actionButton("g_pdf_remove", "Remove it")),
       # Behind the one disclosure: a column of your own naming, and the shared-date
-      # opt-in. Neither belongs in setting up an ordinary statement. The toggle has
-      # to be HERE as well as on the delimited panel -- these controls are on the
-      # PDF side, and without it they could never be opened.
-      uiOutput("g_more_toggle"),
+      # opt-in. Neither belongs in setting up an ordinary statement.
+      #
+      # THE TOGGLE ITSELF IS NOT REPEATED HERE. It used to be, and a second
+      # uiOutput with the same id threw "Duplicate binding for ID g_more_toggle"
+      # in the browser, which ABORTS Shiny's whole bind pass for the modal: on a
+      # PDF, not one control the toolkit draws statically - the bank name, the
+      # date format, the amount style, the page number, Assign it, Remove it -
+      # was ever wired to the server. Boxes drawn did nothing, the page number did
+      # nothing, and the bands stayed at their drafted defaults, which is exactly
+      # the "the boxes I drew came back, and the credit column reads nothing"
+      # N29 was filed for. One id, one place. The toggle on the Simple tab is
+      # always rendered and opens this panel too.
       conditionalPanel("output.g_more_open == true",
         tags$hr(style = "margin:8px 0"),
         textInput("g_pdf_custom", "…or a column name of your own (used instead of the list above)",

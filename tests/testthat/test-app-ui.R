@@ -704,3 +704,182 @@ test_that("an unmapped column is titled, not fatal, in the transactions preview"
   # ...and the split marker now has a name of its own rather than a fallback
   expect_identical(e$cv_friendly_cols("statement_index"), "Statement #")
 })
+
+# ---------------------------------------------------------------------------
+# N29 (the editor half) - AND THE THING THAT ACTUALLY BROKE IT.
+#
+# `uiOutput("g_more_toggle")` was written TWICE in the toolkit modal. A second
+# output with an id already bound makes Shiny throw "Duplicate binding for ID"
+# in the browser, and that exception ABORTS the whole bind pass for the inserted
+# scope - so on a PDF, not one statically-drawn control in the toolkit reached
+# the server: not the bank name, the date format, the amount style, the page
+# number, Assign it or Remove it. Boxes drawn did nothing at all and the bands
+# stayed at their drafted defaults, which is precisely the reported "the boxes I
+# drew came back, and the credit column beside the debit one reads nothing".
+# It is invisible from R - the app starts, the suite is green, the page renders -
+# so the rule is held here, over every output the file draws.
+test_that("no output id is drawn twice, because a duplicate unbinds the screen", {
+  src <- .ui_src()
+  pat <- paste0("(uiOutput|plotOutput|DTOutput|dataTableOutput|tableOutput|textOutput",
+                "|verbatimTextOutput|imageOutput|downloadButton|downloadLink)\\(\\s*\"([A-Za-z0-9_]+)\"")
+  ids <- unlist(regmatches(src, gregexpr(pat, src, perl = TRUE)))
+  ids <- sub("\"$", "", sub("^[^\"]*\"", "", ids))
+  expect_true(length(ids) > 50)                       # the scan really found them
+  expect_identical(names(which(table(ids) > 1)), character(0))
+})
+
+# THE BAND FRAME (R/parse_pdf_table.R) is the one space stored bands live in.
+# The editor draws on the page at its OWN size, so it must divide going out and
+# multiply coming in. Drawn or stored raw, every page that is not the frame's
+# size is displaced - and a displaced band cannot be told from an untouched one.
+test_that("the band editor draws and stores in the template's band frame", {
+  src <- .ui_src()
+  expect_match(.ui_block(src, "g_band_scale <- function", 1L),
+               "pdf_band_frame_scale\\(pdf_band_frame\\(")
+  drawn <- .ui_block(src, "output\\$g_pdf_plot <- renderPlot", 34L)
+  expect_match(drawn, "b\\$x_min / s\\[1\\]")         # divide to draw
+  expect_false(grepl("rect(b$x_min, 0", drawn, fixed = TRUE))
+  stored <- .ui_block(src, "observeEvent\\(input\\$g_pdf_assign", 30L)
+  expect_match(stored, "br\\$xmin \\* s\\[1\\]")      # multiply to store
+  expect_false(grepl("round(br$xmin)", stored, fixed = TRUE))
+  # and the two engine functions really are exact inverses, for a page that is
+  # not the frame's size (the case the whole contract exists for)
+  fr <- pdf_band_frame(list(table = list(ref_width = 595.28, ref_height = 841.89)))
+  s  <- pdf_band_frame_scale(fr, 1240, 1754)
+  expect_lt(s[1], 1)                    # a page BIGGER than the frame scales into it
+  expect_equal((100 / s[1]) * s[1], 100)   # draw out, store back: the same band
+  # an A4 page on an A4 frame is left bit-for-bit alone
+  expect_equal(pdf_band_frame_scale(fr, 595.28, 841.89), c(1, 1))
+})
+
+# ---------------------------------------------------------------------------
+# N26. Shiny sends a brush on every mouse-move, so nudging a band fought a
+# re-read the whole way. A long debounce swallows the mid-drag sends; the mouse
+# release flushes immediately (shiny.js calls immediateCall on mouseup). A
+# mis-drawn band is the commonest cause of a wrong amount column, so this is a
+# correctness fix wearing a usability costume.
+test_that("a drawn box commits on release, not on every mouse move", {
+  src <- paste(.ui_src(), collapse = " ")
+  for (id in c("g_pdf_brush", "fb_brush")) {
+    blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
+    expect_match(blk, "delay = 1500")
+    expect_match(blk, 'delayType = "debounce"')
+  }
+})
+
+# ---------------------------------------------------------------------------
+# N27. The save name was fixed at draft time and built from the BANK alone, so
+# every layout one bank issues drafted the same name and the second save
+# overwrote the first. Templates that cannot be told apart by name are exactly
+# the ones that tie in detection. Both answers are already on screen.
+test_that("the save name is built from the bank and the kind of statement", {
+  blk <- .ui_block(.ui_src(), "observeEvent\\(list\\(input\\$g_bank, input\\$g_type\\)", 14L)
+  expect_match(blk, "\\.compose_id\\(input\\$g_bank, input\\$g_type")
+  expect_match(blk, 'updateTextInput\\(session, "g_id"')
+  # it stops following the moment she names it herself
+  expect_match(blk, "g_id_auto\\(\\)")
+  # the engine really composes both halves into the id
+  expect_identical(.compose_id("ANZ", "credit card", "pdf", "somefile"), "anz_credit_card_pdf")
+  expect_false(identical(.compose_id("ANZ", "everyday", "pdf", "f"),
+                         .compose_id("ANZ", "credit card", "pdf", "f")))
+})
+
+# ---------------------------------------------------------------------------
+# N28. "None of these fit? Tell our team" is the way out for somebody ALREADY
+# stuck, and it sat inside the settings disclosure - so to a user it existed only
+# on Advanced. Worse, picking "None of these" in a dropdown named a box that was
+# not on screen. It belongs in front, on Simple, always.
+test_that("the way out is on Simple and outside the settings disclosure", {
+  src <- .ui_src()
+  hatch <- grep("None of these fit\\? Tell our team", src)
+  expect_length(hatch, 1L)
+  # the nearest enclosing disclosure must be BEFORE the escape hatch's own hr,
+  # so walk back: the last conditionalPanel on g_more_open has to be closed by
+  # then. Simplest honest check: the request box is not inside that panel.
+  panel <- grep('conditionalPanel\\("output\\.g_more_open == true"', src)
+  panel <- panel[panel < hatch]
+  expect_true(length(panel) >= 1)
+  between <- paste(src[max(panel):hatch], collapse = "\n")
+  # the disclosure's block ends (uiOutput("g_eff_msg")),) before the hatch begins
+  expect_match(between, 'uiOutput\\("g_eff_msg"\\)\\)')
+  # and the notification points at a box that is now genuinely below it
+  expect_match(paste(src, collapse = " "), "'Tell our team' box below")
+})
+
+# ---------------------------------------------------------------------------
+# N31. The form builder opened with the ABSTRACT step - a blank box headed "the
+# values to pull out" - and put the one concrete thing a person can do, point at
+# a number, last and marked optional. The page now leads with the document.
+test_that("the form builder leads with the document, not a blank list", {
+  src <- .ui_src()
+  draw <- grep("1\\. Draw a box round a value you want", src)
+  what <- grep("2\\. What is this\\?", src)
+  save <- grep("5\\. Name it and save", src)
+  typed <- grep('textAreaInput\\("fb_fields"', src)
+  expect_length(draw, 1L); expect_length(what, 1L); expect_length(save, 1L)
+  expect_true(draw < what && what < save)          # the concrete step is first
+  expect_true(typed > draw)                        # the typed list is no longer the door
+  # and it is behind the disclosure, not in front of it
+  det <- grep("Know the wording\\? Type them instead", src)
+  expect_length(det, 1L)
+  expect_true(det < typed && typed - det < 4L)
+  # nothing is deleted: the shortcut still parses to the same fields{} block
+  expect_true(any(grepl("parse_fields_spec\\(input\\$fb_fields\\)", src)))
+  # the old edge-case section is gone as a section
+  expect_false(any(grepl("Value printed away from its wording", src, fixed = TRUE)))
+})
+
+# The builder answers "what is this?" itself: what the box contains, and the
+# wording printed beside it. A box drawn just PAST its value used to be named
+# after the value it missed, which could never match the next document.
+test_that("the builder reads the box and the wording beside it", {
+  f <- .ui_fun(".fb_read_box", also = ".fb_wording")
+  w <- data.frame(
+    text   = c("Opening", "balance", "$875.20", "Closing", "balance", "$2,477.80"),
+    x      = c(145, 190, 355, 145, 190, 355),
+    y      = c(100, 100, 100, 112, 112, 112),
+    width  = c(40, 35, 45, 38, 35, 55),
+    height = rep(8, 6), stringsAsFactors = FALSE)
+  on_value <- f(w, list(x_min = 350, x_max = 405, y_min = 96, y_max = 110))
+  expect_identical(on_value$value, "$875.20")
+  expect_identical(on_value$label, "Opening balance")
+  # a box drawn PAST the value: nothing in it, and the label is still the wording
+  past <- f(w, list(x_min = 420, x_max = 500, y_min = 96, y_max = 110))
+  expect_identical(past$value, "")
+  expect_identical(past$label, "Opening balance")   # not "Opening balance $875.20"
+  # the row below is a different value with its own wording
+  below <- f(w, list(x_min = 350, x_max = 415, y_min = 108, y_max = 122))
+  expect_identical(below$label, "Closing balance")
+  expect_identical(f(NULL, list(x_min = 0, x_max = 1, y_min = 0, y_max = 1))$label, "")
+})
+
+# The kind of value is read, not asked - with the SAME matchers the extractor
+# uses, so whatever is offered is what the extraction would really do.
+test_that("the builder reads what kind of value it is", {
+  k <- .ui_fun(".fb_kind")
+  expect_identical(k("$875.20"), "money")
+  expect_identical(k("-$577.80"), "money")
+  expect_identical(k("31 Mar 2026"), "date")
+  expect_identical(k("Sam Okafor"), "text")
+  expect_identical(k(""), "text")
+  expect_identical(k(NULL), "text")
+})
+
+# Reading by WORDING survives the value moving on the next document; reading from
+# a box does not. So the wording is preferred - but only when it actually finds
+# the value she boxed. That is a question the tool can answer, which is why
+# "the value is printed away from its wording" is no longer a question it asks.
+test_that("wording is only trusted when it reaches the value she boxed", {
+  same <- .ui_fun(".fb_same")
+  expect_true(same("$875.20", "875.20"))
+  expect_true(same(" 875.20 ", "$875.20"))
+  expect_false(same("875.20", "2477.80"))
+  expect_false(same("", ""))          # nothing read proves nothing
+  expect_false(same(NA, "875.20"))
+  blk <- .ui_block(.ui_src(), "observeEvent\\(input\\$fb_rf_set", 22L)
+  expect_match(blk, "byword <- \\.fb_same\\(fb_by_wording\\(")
+  # and the template really emits one or the other
+  tpl <- .ui_block(.ui_src(), "fb_template <- reactive", 22L)
+  expect_match(tpl, "any_of = list\\(b\\$label\\)")
+  expect_match(tpl, "region = list\\(page = b\\$page")
+})
