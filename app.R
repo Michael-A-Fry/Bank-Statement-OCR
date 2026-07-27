@@ -131,6 +131,9 @@ ui <- fluidPage(
      .ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
      .muted{color:var(--muted)}
      .mono{font-family:Consolas,'Courier New',monospace;white-space:pre-wrap}
+     /* .note -- the pale blue 'here is what the tool worked out' panel. It was
+        hand-rolled inline in two places, which is how two panels drift apart. */
+     .note{padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px}
      .modal-lg{width:95%;max-width:1240px}
      .modal-content{border-radius:12px}
      /* header */
@@ -593,60 +596,78 @@ ui <- fluidPage(
           div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
             strong("Heads up - an 'Other' document is read differently"),
             p(style = "margin:6px 0 0;color:#555",
-              "It has no transaction table or running balance, so the completeness checks don't apply: the tool pulls the labelled values you name, and you eyeball each one. Set it up with the builder below.")))),
+              "No transaction table, no running balance - so the completeness checks don't apply. You point at the values you want and check each one yourself. Set it up below.")))),
       # One flow: the toolkit above is THE way to add a statement template (its
       # Advanced tab covers field-by-field / YAML editing, so there is no separate
       # "build by hand" path). 'Other' documents (labelled values) are set up with
       # this builder, shown right here when "Something else" is picked above.
+      # THE DOCUMENT LEADS. This page used to open with a blank box headed "the
+      # values to pull out", and put the one concrete thing a person can do -
+      # point at a number - last, marked optional. Somebody opening this has the
+      # document in front of her and no idea what a value is called, so the order
+      # is now: draw a box, say what it is, repeat, check, save. The typed list is
+      # what it should always have been - a shortcut for someone who already knows
+      # the field names, behind the disclosure.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
-      helpText("Name each value you want pulled out and the wording printed next to it on the page. Preview it against your document, then save."),
-      sidebarLayout(
-        sidebarPanel(
-          width = 4,
-          textInput("fb_id", "Template name (saves as this)", "newpdf_fields"),
-          textInput("fb_bank", "Which bank or issuer?", "NewIssuer"),
-          textInput("fb_type", "Kind of document", "summary"),
-          textAreaInput("fb_fp", "A distinctive phrase printed on this document (one per line)",
-                        rows = 3, value = "KiwiSaver\nOpening balance"),
-          helpText(class = "muted", "This is how the tool recognises this document next time. All of the phrases must appear on it."),
-          textAreaInput("fb_fields", "The values to pull out - one per line", rows = 6,
-                        value = paste("opening_balance = Opening balance; Balance brought forward | money",
-                                      "closing_balance = Closing balance | money", sep = "\n")),
-          helpText(class = "muted", HTML(paste0(
-            "One line per value: <b>a name for it</b> = <b>the wording printed on the page</b> | <b>what kind of value</b>.<br>",
-            "Extra wordings for the same value go after a semicolon. Kinds: money, date, date_range, text.<br>",
-            "So <code>closing_balance = Closing balance; Balance at end | money</code> reads either wording as money."))),
-          tags$hr(),
-          strong("Value printed away from its wording?"),
-          helpText("Draw a box around the value on the page, name it, and click Set - it is read from that spot instead."),
-          fileInput("fb_sample", "A different PDF to draw on (optional)", accept = ".pdf"),
-          fluidRow(
-            column(6, textInput("fb_rf_field", "Name for this value", "")),
-            column(6, selectInput("fb_rf_type", "What kind of value",
-                                  c("money", "date", "date_range", "text")))),
-          fluidRow(
-            column(4, numericInput("fb_rf_page", "Page", 1, min = 1, step = 1)),
-            column(8, br(),
-                   actionButton("fb_rf_set", "Set value box", class = "btn-primary"),
-                   actionButton("fb_rf_clear", "Clear boxes"))),
-          tags$hr(),
-          actionButton("fb_preview", "Preview on the document"),
-          actionButton("fb_save", "Save template", class = "btn-primary"),
-          br(), br(), uiOutput("fb_msg")),
-        mainPanel(
-          width = 8,
+      fluidRow(
+        column(7,
+          strong("1. Draw a box round a value you want"),
+          p(class = "muted", style = "margin:4px 0 8px",
+            "A balance, a date, a total - anything."),
+          conditionalPanel("output.fb_has_sample != true",
+            p(class = "muted", "Upload the document at the top first.")),
           conditionalPanel("output.fb_has_sample == true",
-            h4("Draw a box to place a value (optional)"),
-            plotOutput("fb_plot", brush = brushOpts("fb_brush", direction = "xy"), height = "540px"),
-            tableOutput("fb_regions_tbl")),
-          h4("Preview - what will be pulled out"), uiOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
-          # The template file itself is the data analyst's view, not Beth's: it is
-          # kept, one click away, instead of ending her flow with a wall of YAML.
+            numericInput("fb_rf_page", "Page", 1, min = 1, step = 1),
+            # Same reason as the band editor: commit on release, not on every
+            # mouse-move, so a small correction is not fighting a re-read.
+            plotOutput("fb_plot", height = "540px",
+                       brush = brushOpts("fb_brush", direction = "xy",
+                                         delay = 1500, delayType = "debounce")))),
+        column(5,
+          strong("2. What is this?"),
+          # The tool reads the box and the wording beside it and offers both, so
+          # the question it asks is one she can actually answer.
+          uiOutput("fb_box_read"),
+          fluidRow(
+            column(7, textInput("fb_rf_field", "Call it", "", width = "100%")),
+            column(5, selectInput("fb_rf_type", "Kind of value",
+                                  c("money", "date", "date_range", "text")))),
+          actionButton("fb_rf_set", "Add this value", class = "btn-primary"),
+          tags$hr(style = "margin:14px 0 10px"),
+          strong("3. Repeat for the ones that matter"),
+          uiOutput("fb_values_note"),
+          tableOutput("fb_regions_tbl"),
+          conditionalPanel("output.fb_has_values == true",
+            actionButton("fb_rf_clear", "Clear them and start again", class = "btn-default btn-sm")),
+          tags$hr(style = "margin:14px 0 10px"),
+          strong("4. Check what comes out"),
+          div(style = "margin:6px 0", actionButton("fb_preview", "Preview on the document")),
+          tags$hr(style = "margin:14px 0 10px"),
+          strong("5. Name it and save"),
+          fluidRow(
+            column(6, textInput("fb_bank", "Bank or issuer", "NewIssuer")),
+            column(6, textInput("fb_type", "Kind of document", "summary"))),
+          textInput("fb_id", "Saves under this name", "newpdf_fields", width = "100%"),
+          textAreaInput("fb_fp", "A phrase printed on it (one per line)",
+                        rows = 2, width = "100%", value = "KiwiSaver\nOpening balance"),
+          helpText(class = "muted", "Recognised by these - all must appear."),
+          actionButton("fb_save", "Save template", class = "btn-primary"),
+          uiOutput("fb_msg"),
           tags$details(style = "margin-top:14px",
             tags$summary(class = "muted", style = "cursor:pointer",
-                         "The template file this will save (for your data analyst)"),
-            div(class = "mono", verbatimTextOutput("fb_yaml")))))
+                         "Know the wording? Type them instead"),
+            textAreaInput("fb_fields", NULL, rows = 5, width = "100%", value = ""),
+            helpText(class = "muted", HTML(
+              "One per line: <b>name</b> = <b>the wording on the page</b> | <b>kind</b>. Extra wordings after a semicolon. Kinds: money, date, date_range, text.<br><code>closing_balance = Closing balance; Balance at end | money</code>")),
+            fileInput("fb_sample", "Draw on a different PDF instead", accept = ".pdf")))),
+      h4("What will be pulled out"), uiOutput("fb_prev_status"), DTOutput("fb_prev_tbl"),
+      # The template file itself is the data analyst's view, not Beth's: it is
+      # kept, one click away, instead of ending her flow with a wall of YAML.
+      tags$details(style = "margin-top:14px",
+        tags$summary(class = "muted", style = "cursor:pointer",
+                     "The template file this will save (for your data analyst)"),
+        div(class = "mono", verbatimTextOutput("fb_yaml")))
     )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -1670,8 +1691,104 @@ server <- function(input, output, session) {
     }
     fields
   }
-  # Positional value boxes drawn on the sample: field -> list(page,x_min..y_max,value).
+  # The values drawn on the document: field -> list(page, x_min..y_max, value =
+  # the kind, label = the wording found beside it or "", read = what was in the box).
   fb_regions <- reactiveVal(list())
+
+  # .fb_read_box(w, box) -- what is INSIDE a drawn box, and the wording printed
+  # beside it: the words on the same line to its left, else the line directly
+  # above. This is how "what is this?" stops being a question only somebody who
+  # has already done the task can answer.
+  # A label is the WORDING, never the value. Trailing tokens that are themselves a
+  # figure are dropped, or a box drawn just PAST its value is named after the very
+  # value it missed ("Opening balance $875.20") - a name that could never match
+  # anything on the next document.
+  .fb_wording <- function(toks) {
+    while (length(toks) && grepl("^[$(]?[-+]?[0-9][0-9,.:/-]*[%)]?$", toks[length(toks)]))
+      toks <- toks[-length(toks)]
+    utils::tail(toks, 4)
+  }
+  .fb_read_box <- function(w, box) {
+    out <- list(value = "", label = "")
+    if (is.null(w) || !nrow(w)) return(out)
+    w <- as.data.frame(w, stringsAsFactors = FALSE)
+    cx <- w$x + w$width / 2; cy <- w$y + w$height / 2
+    ord <- function(d) d[order(round(d$y / 3), d$x), , drop = FALSE]
+    inbox <- cx >= box$x_min & cx <= box$x_max & cy >= box$y_min & cy <= box$y_max
+    if (any(inbox)) out$value <- paste(ord(w[inbox, , drop = FALSE])$text, collapse = " ")
+    beside <- cy >= box$y_min & cy <= box$y_max & (w$x + w$width) <= box$x_min
+    lab <- if (any(beside)) ord(w[beside, , drop = FALSE])$text else {
+      # nothing beside it -- a column heading directly above is the other place a
+      # form prints the wording for a value.
+      above <- cy < box$y_min & cy >= (box$y_min - 26) & cx >= box$x_min & cx <= box$x_max
+      if (any(above)) ord(w[above, , drop = FALSE])$text else character(0)
+    }
+    out$label <- sub("[[:punct:][:space:]]+$", "", trimws(paste(.fb_wording(lab), collapse = " ")))
+    out
+  }
+  # .fb_kind(v) -- money, date or text, decided by reading the value rather than
+  # asking. The same two matchers the extractor itself uses.
+  .fb_kind <- function(v) {
+    v <- trimws(as.character(v %||% ""))
+    if (!nzchar(v)) return("text")
+    if (!is.na(.value_from_line(v, "money"))) return("money")
+    if (!is.na(.value_from_line(v, "date")))  return("date")
+    "text"
+  }
+  # .fb_same(a, b) -- the same printed value, ignoring punctuation and case. Used
+  # to decide whether reading by WORDING lands on the value she actually boxed.
+  .fb_same <- function(a, b) {
+    n <- function(x) gsub("[^a-z0-9]+", "", tolower(trimws(as.character(x %||% ""))))
+    nzchar(n(a)) && identical(n(a), n(b))
+  }
+  # What the box she has drawn contains, and what is printed beside it.
+  fb_box <- reactive({
+    br <- input$fb_brush; p <- fb_doc()
+    if (is.null(br) || is.null(p)) return(NULL)
+    i <- tryCatch(read_input(p), error = function(e) NULL); if (is.null(i)) return(NULL)
+    pg <- .clamp_page(input$fb_rf_page, fb_n_pages())
+    wl <- i$words %||% list(); if (pg > length(wl)) return(NULL)
+    box <- list(x_min = br$xmin, x_max = br$xmax, y_min = br$ymin, y_max = br$ymax)
+    c(.fb_read_box(wl[[pg]], box), list(page = pg, box = box))
+  })
+  # Reading by its WORDING travels to the next copy of this document, wherever the
+  # value has moved to; reading from the box does not. So prefer the wording -- but
+  # only when the wording actually finds the value she boxed. That is a question
+  # the tool can answer, and answering it is what makes "the value is printed away
+  # from its wording" an observation rather than a section of the form.
+  fb_by_wording <- function(label, vtype) {
+    p <- fb_doc(); if (is.null(p) || !nzchar(label %||% "")) return(NA_character_)
+    i <- tryCatch(read_input(p), error = function(e) NULL); if (is.null(i)) return(NA_character_)
+    r <- tryCatch(match_label(list(any_of = list(label), value = vtype), i$pages %||% character(0)),
+                  error = function(e) NULL)
+    if (is.null(r) || !isTRUE(r$matched)) NA_character_ else trimws(r$value %||% "")
+  }
+  # Say what was read, before anything is named or saved.
+  output$fb_box_read <- renderUI({
+    b <- fb_box()
+    if (is.null(b)) return(p(class = "muted", style = "margin:4px 0 8px",
+                             "Draw a box; what it says appears here."))
+    div(class = "note", style = "margin:4px 0 8px",
+      div(HTML(sprintf("In the box: <b>%s</b>",
+        htmltools::htmlEscape(if (nzchar(b$value)) b$value else "(nothing readable)")))),
+      div(class = "muted", if (nzchar(b$label))
+            sprintf("Printed beside it: \"%s\"", b$label)
+          else "Nothing beside it - read from this spot."))
+  })
+  # Offer the wording as the name (she can overwrite it) and the kind the value
+  # reads as. Only fills a name box she has left empty.
+  observeEvent(fb_box(), {
+    b <- fb_box(); req(b)
+    if (!nzchar(trimws(input$fb_rf_field %||% "")) && nzchar(b$label))
+      updateTextInput(session, "fb_rf_field", value = b$label)
+    updateSelectInput(session, "fb_rf_type", selected = .fb_kind(b$value))
+  })
+  output$fb_values_note <- renderUI({
+    if (length(fb_regions())) return(NULL)
+    p(class = "muted", style = "margin:4px 0", "Nothing added yet.")
+  })
+  output$fb_has_values <- reactive({ length(fb_regions()) > 0L })
+  outputOptions(output, "fb_has_values", suspendWhenHidden = FALSE)
   # ONE upload for this whole flow. The page asks for the document at the top;
   # asking again inside the builder ("sample PDF to draw on") meant the first
   # picker did nothing at all on this path, and nothing said so. The document
@@ -1698,24 +1815,42 @@ server <- function(input, output, session) {
   output$fb_has_sample <- reactive({ !is.null(fb_doc()) })
   outputOptions(output, "fb_has_sample", suspendWhenHidden = FALSE)
   observeEvent(input$fb_rf_set, {
-    nm <- gsub("[^A-Za-z0-9_]+", "_", trimws(input$fb_rf_field %||% ""))
-    br <- input$fb_brush
-    if (!nzchar(nm)) { showNotification("Name the field first.", type = "warning"); return() }
-    if (is.null(br)) { showNotification("Draw a box on the page around the value first.", type = "warning"); return() }
+    # Lower snake, like every other field name in the tool - and the only spelling
+    # the base dictionary's synonyms are keyed under, so "Opening balance" typed
+    # here still inherits "balance brought forward".
+    nm <- tolower(gsub("^_+|_+$", "", gsub("[^A-Za-z0-9_]+", "_", trimws(input$fb_rf_field %||% ""))))
+    b <- fb_box()
+    if (is.null(b)) { showNotification("Draw a box round the value first.", type = "warning"); return() }
+    if (!nzchar(nm)) { showNotification("Say what this value is first.", type = "warning"); return() }
+    vt <- input$fb_rf_type %||% "text"
+    # Compare like with like: the box text coerced the same way the extractor
+    # would coerce it ("text" has no coercion, so the box text stands as read).
+    boxval <- .value_from_line(b$value, vt)
+    if (is.na(boxval) || !nzchar(boxval)) boxval <- b$value
+    byword <- .fb_same(fb_by_wording(b$label, vt), boxval)
     r <- fb_regions()
-    r[[nm]] <- list(page = .clamp_page(input$fb_rf_page, fb_n_pages()),
-                    x_min = round(br$xmin), x_max = round(br$xmax),
-                    y_min = round(br$ymin), y_max = round(br$ymax),
-                    value = input$fb_rf_type %||% "text")
+    r[[nm]] <- list(page = b$page,
+                    x_min = round(b$box$x_min), x_max = round(b$box$x_max),
+                    y_min = round(b$box$y_min), y_max = round(b$box$y_max),
+                    value = vt, label = if (byword) b$label else "",
+                    read = trimws(b$value))
     fb_regions(r)
-    showNotification(sprintf("Placed the value box for '%s'.", nm), type = "message")
+    updateTextInput(session, "fb_rf_field", value = "")
+    session$resetBrush("fb_brush")
+    showNotification(sprintf("Added '%s' - %s.", nm,
+      if (byword) sprintf("read by its wording \"%s\"", b$label) else "read from this spot on the page"),
+      type = "message", duration = 5)
   })
   observeEvent(input$fb_rf_clear, fb_regions(list()))
+  # The list so far, said as how each value will be FOUND next time -- which is
+  # the thing that decides whether the template still works on the next document.
   output$fb_regions_tbl <- renderTable({
     r <- fb_regions(); if (!length(r)) return(NULL)
-    do.call(rbind, lapply(names(r), function(nm) data.frame(field = nm, page = r[[nm]]$page,
-      box = sprintf("x %d-%d, y %d-%d", r[[nm]]$x_min, r[[nm]]$x_max, r[[nm]]$y_min, r[[nm]]$y_max),
-      value = r[[nm]]$value, stringsAsFactors = FALSE)))
+    do.call(rbind, lapply(names(r), function(nm) { b <- r[[nm]]
+      data.frame(value = nm, reads = b$read %||% "",
+        `found by` = if (nzchar(b$label %||% "")) sprintf("its wording \"%s\"", b$label)
+                     else sprintf("its place on page %d", b$page),
+        check.names = FALSE, stringsAsFactors = FALSE) }))
   })
   fb_render <- reactive({
     p <- fb_doc(); req(p)
@@ -1735,11 +1870,15 @@ server <- function(input, output, session) {
   fb_template <- reactive({
     phrases <- trimws(strsplit(input$fb_fp %||% "", "\n")[[1]]); phrases <- phrases[nzchar(phrases)]
     flds <- parse_fields_spec(input$fb_fields)
-    # Merge the drawn value boxes: a positional field reads its value from the box,
-    # regardless of where (or whether) a label appears.
+    # Merge the drawn values. Read by WORDING when the wording was found to reach
+    # the value she boxed (it survives the value moving on the next document);
+    # otherwise pin the box, which is the "printed away from its wording" case,
+    # decided by the tool instead of asked as a question.
     for (nm in names(fb_regions())) { b <- fb_regions()[[nm]]
-      flds[[nm]] <- list(region = list(page = b$page, x_min = b$x_min, x_max = b$x_max,
-                                       y_min = b$y_min, y_max = b$y_max), value = b$value)
+      flds[[nm]] <- if (nzchar(b$label %||% ""))
+        list(any_of = list(b$label), value = b$value)
+      else list(region = list(page = b$page, x_min = b$x_min, x_max = b$x_max,
+                              y_min = b$y_min, y_max = b$y_max), value = b$value)
     }
     list(id = gsub("[^A-Za-z0-9_]+", "_", input$fb_id %||% "newpdf_fields"),
          bank = input$fb_bank %||% "NewIssuer", statement_type = input$fb_type %||% "summary",
@@ -1754,6 +1893,9 @@ server <- function(input, output, session) {
     p <- fb_doc()
     if (is.null(p)) { showNotification("Upload the document at the top of this page first (or a PDF to draw on, above).",
                                        type = "warning", duration = 6); return() }
+    if (!length(fb_template()$fields)) {
+      showNotification("Nothing to pull out yet - draw a box.",
+                       type = "warning", duration = 6); return() }
     inp <- tryCatch(read_input(p), error = function(e) NULL)
     if (is.null(inp)) { showNotification("Couldn't read that file.", type = "error"); return() }
     f <- tryCatch(extract_fields(inp, fb_template()), error = function(e) NULL)
@@ -1764,7 +1906,7 @@ server <- function(input, output, session) {
   output$fb_prev_status <- renderUI({
     f <- fb_preview()
     if (is.null(f)) return(p(class = "muted",
-      "Click \"Preview on the document\" to see what each wording pulls out."))
+      "Click Preview to see what comes out."))
     got <- sum(f$matched %in% TRUE); miss <- nrow(f) - got
     missing <- if (miss > 0) paste(f$field[!(f$matched %in% TRUE)], collapse = ", ") else ""
     div(class = if (miss > 0) "verdict verdict-medium" else "verdict verdict-high",
@@ -1774,8 +1916,8 @@ server <- function(input, output, session) {
         div(class = "verdict-title", sprintf("%d of %d value%s found", got, nrow(f),
                                              if (nrow(f) == 1L) "" else "s")),
         p(class = "verdict-body", style = "margin:0", if (miss > 0)
-            sprintf("Not found: %s. The wording on the page has to match what you typed - copy it exactly, or draw a box around the value instead.", missing)
-          else "Check each value below against the document, then Save template.")))
+            sprintf("Not found: %s. Draw a box round it.", missing)
+          else "Check each value, then Save template.")))
   })
   output$fb_prev_tbl <- renderDT({
     f <- fb_preview(); req(!is.null(f))
@@ -3485,7 +3627,14 @@ server <- function(input, output, session) {
         checkboxInput("g_keep_dateless",
           "Several rows share one date (e.g. HSBC) - keep the undated rows too (blank date, flagged)",
           value = isTRUE(tmpl$table$keep_dateless_rows))),
-      plotOutput("g_pdf_plot", brush = brushOpts("g_pdf_brush"), height = "560px"))
+      # The box commits when the mouse is RELEASED, not while it is being dragged.
+      # Shiny sends the brush on every mouse-move, and each send re-reads the
+      # statement, so nudging a band a few points fought a re-parse the whole way.
+      # A long debounce is how that is said: mid-drag sends are swallowed, and the
+      # release flushes immediately. A mis-drawn band is the commonest cause of a
+      # wrong amount column, so this is correctness, not comfort.
+      plotOutput("g_pdf_plot", height = "560px",
+                 brush = brushOpts("g_pdf_brush", delay = 1500, delayType = "debounce")))
     else tagList(
       strong("Your statement - sample rows"),
       p(class = "muted", "The first rows of your file, so you can see the columns while you set things up."),
@@ -3626,15 +3775,21 @@ server <- function(input, output, session) {
             column(6, textInput("g_eff_to", "…to",
                                 value = .eff_txt(tmpl$effective_to),
                                 placeholder = "yyyy-mm-dd (blank = no end)"))),
-          uiOutput("g_eff_msg"),
-          tags$hr(),
-          div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
-            strong("None of these fit? Tell our team"),
-            p(class = "muted", "Describe the FORMAT in plain words (no names / account numbers / statement details) and we'll build a template."),
-            textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
-              placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for Haben (credit)."),
-            actionButton("g_req_send", "Send to our team", class = "btn-warning"),
-            uiOutput("g_req_msg")))),
+          uiOutput("g_eff_msg")),
+        # THE WAY OUT STAYS IN FRONT. This is for someone ALREADY stuck, so putting
+        # it inside the settings disclosure meant it appeared only to people who had
+        # worked out there was a disclosure - and the "none of these fit" dropdown
+        # option pointed at a box that was not on screen. It is now the last thing on
+        # Simple, outside the disclosure, on every statement.
+        tags$hr(style = "margin:14px 0 10px"),
+        div(style = "padding:10px 12px;border:1px dashed #c98a00;background:#fffbe9;border-radius:8px",
+          strong("None of these fit? Tell our team"),
+          p(class = "muted", style = "margin:4px 0 6px",
+            "In plain words - no names or numbers."),
+          textAreaInput("g_req_detail", NULL, width = "100%", rows = 2,
+            placeholder = "e.g. Dates look like 2 Dez (German). Amounts end in 'H' for credit."),
+          actionButton("g_req_send", "Send to our team", class = "btn-warning"),
+          uiOutput("g_req_msg"))),
       tabPanel(
         "Advanced", br(),
         helpText(HTML("The <b>complete</b> template as text - edit anything (identifiers, column mapping, label synonyms, region bounds, row tolerance, metadata labels). Load your Simple choices in, edit, then Check &amp; apply.")),
@@ -3645,7 +3800,7 @@ server <- function(input, output, session) {
 
     showModal(modalDialog(
       title = "Statement template toolkit", size = "l", easyClose = FALSE,
-      div(style = "padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px;margin-bottom:8px",
+      div(class = "note", style = "margin-bottom:8px",
         HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s",
              htmltools::htmlEscape(g$name %||% "your file"),
              if (is_pdf) "PDF" else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
@@ -3721,6 +3876,7 @@ server <- function(input, output, session) {
            NA_integer_) else NA_integer_
     if (!isTRUE(npages >= 1L)) npages <- NA_integer_
     cv_upload_id(upload_id)
+    g_id_auto(tmpl$id %||% NA_character_)   # the drafted name is the tool's, not hers
     guided(list(path = path, name = name, tmpl = tmpl, default_ids = default_ids,
                 cols = cols, n_pages = npages,
                 fp_candidates = unique(trimws(as.character(fp_cands %||% character(0))))))
@@ -3750,7 +3906,7 @@ server <- function(input, output, session) {
     if (identical(res$kind, "form")) {
       # A form result is set up in the PDF form builder, not the statement toolkit.
       return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", "Want to change which values are pulled, or add more (including a value in a different place than its label)? "),
+        span(class = "muted", "Change or add values? "),
         actionLink("cv_goto_templates", "Open the PDF form builder →")))
     }
     if (identical(st, "unsupported")) {
@@ -3951,6 +4107,27 @@ server <- function(input, output, session) {
   }
   guided_live <- reactive(gl_build(meta_live = TRUE))
 
+  # THE SAVE NAME follows the bank AND the kind of statement. It used to be fixed
+  # at draft time, so every layout one bank issues drafted the same name and the
+  # second save overwrote the first -- and templates that cannot be told apart by
+  # name are exactly the ones that tie in detection. Both answers are already on
+  # screen, so the tool composes the name itself instead of asking again.
+  # It stops following the moment she types a name of her own: g_id_auto holds
+  # what the tool last put there, so "still ours" is a fact, not a guess.
+  g_id_auto <- reactiveVal(NA_character_)
+  observeEvent(list(input$g_bank, input$g_type), {
+    g <- guided(); req(g)
+    cur <- trimws(input$g_id %||% "")
+    if (nzchar(cur) && !identical(cur, g_id_auto())) return()   # hers now
+    sfx <- switch(g$tmpl$format %||% "delimited", pdf = "pdf", excel = "xlsx", "csv")
+    # Same fallback draft_template() uses, so a bank still called "New bank" keeps
+    # the filename-derived name it was drafted with rather than gaining a suffix.
+    new <- .compose_id(input$g_bank, input$g_type, sfx,
+                       tools::file_path_sans_ext(g$name %||% ""))
+    g_id_auto(new)
+    updateTextInput(session, "g_id", value = new)
+  }, ignoreInit = TRUE)
+
   # "Add it" -- append a phrase the drafter found on the page to the box, rather
   # than making the user retype it exactly (a fingerprint must match the page text
   # character for character, so retyping is where this goes wrong).
@@ -3997,7 +4174,7 @@ server <- function(input, output, session) {
   # Nudge the user to the "tell our team" box when they pick "none of these".
   observeEvent(list(input$g_date, input$g_sign), {
     if (identical(input$g_date, "__report__") || identical(input$g_sign, "__report__"))
-      showNotification("None of the options fit? Use the 'Tell our team' box below to describe it.",
+      showNotification("Use the 'Tell our team' box below.",
                        type = "message", duration = 6)
   }, ignoreInit = TRUE)
 
@@ -4047,6 +4224,9 @@ server <- function(input, output, session) {
       return()
     }
     g$tmpl <- parsed; guided(g)
+    # A name written by hand in the YAML is hers, so the bank/kind composer leaves
+    # it alone from here (an id is how a template is found again).
+    g_id_auto(NA_character_)
     updateTextInput(session, "g_id", value = parsed$id %||% "")
     updateTextInput(session, "g_type", value = parsed$statement_type %||% "")
     updateTextInput(session, "g_currency", value = parsed$currency %||% "NZD")
@@ -4101,19 +4281,30 @@ server <- function(input, output, session) {
     # plot), and the render is cached, so assigning a box no longer re-renders it.
     render_page_view(g$path, .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_), 100)
   })
+  # THE BAND FRAME (R/parse_pdf_table.R) is the one coordinate space every stored
+  # band lives in: the size of the page it was drawn on, recorded as ref_width /
+  # ref_height. This plot is the page at its OWN size. So DIVIDE a band to draw it
+  # here, MULTIPLY a drawn box to store it -- the exact mirror of what the reader
+  # does to the words, which is the only reason the box she draws is the box the
+  # reader matches. Drawn or stored raw, every page that is not the frame's size
+  # is displaced, and a displaced band is indistinguishable from an untouched
+  # default one: "the boxes I drew came back", and the narrowest money column
+  # (usually credit) reads nothing. A page the frame's size scales by exactly 1.
+  g_band_scale <- function(r) pdf_band_frame_scale(pdf_band_frame(guided()$tmpl), r$w, r$h)
   output$g_pdf_plot <- renderPlot({
     r <- g_pdf_render(); req(r)
     op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
     plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
          xlab = "", ylab = "", axes = FALSE)
     rasterImage(r$ras, 0, r$h, r$w, 0)
+    s <- g_band_scale(r)
     cols <- guided()$tmpl$table$columns %||% list()
     if (length(cols)) {
       pal <- grDevices::hcl(seq(0, 300, length.out = length(cols)), 70, 55)
       for (i in seq_along(cols)) {
         b <- cols[[i]]; if (is.null(b$x_min) || is.null(b$x_max)) next
-        rect(b$x_min, 0, b$x_max, r$h, border = pal[i], lwd = 2)
-        text(mean(c(b$x_min, b$x_max)), 16, names(cols)[i], col = pal[i], font = 2)
+        rect(b$x_min / s[1], 0, b$x_max / s[1], r$h, border = pal[i], lwd = 2)
+        text(mean(c(b$x_min, b$x_max)) / s[1], 16, names(cols)[i], col = pal[i], font = 2)
       }
     }
     # pinned header-value boxes (metadata_regions) for the CURRENT page, in orange
@@ -4122,9 +4313,9 @@ server <- function(input, output, session) {
     for (nm in names(mr)) { b <- mr[[nm]]
       if (is.null(b$x_min) || is.null(b$x_max)) next
       if (!identical(as.integer(b$page %||% 1), pg)) next
-      y0 <- b$y_min %||% 0; y1 <- b$y_max %||% r$h
-      rect(b$x_min, y0, b$x_max, y1, border = "#a15c00", lwd = 2)
-      text(b$x_min, y0, nm, col = "#a15c00", font = 2, cex = 0.85, pos = 3, offset = 0.2)
+      y0 <- (b$y_min %||% 0) / s[2]; y1 <- if (is.null(b$y_max)) r$h else b$y_max / s[2]
+      rect(b$x_min / s[1], y0, b$x_max / s[1], y1, border = "#a15c00", lwd = 2)
+      text(b$x_min / s[1], y0, nm, col = "#a15c00", font = 2, cex = 0.85, pos = 3, offset = 0.2)
     }
     # Live feedback: the box being drawn is shown as the FULL-HEIGHT column it will
     # become (a translucent band over the whole page height), so it is obvious the
@@ -4173,12 +4364,15 @@ server <- function(input, output, session) {
     # on every row -- a balance, the statement period, an account detail -- read
     # straight from that spot when the automatic reader can't label it. It never
     # touches the transaction region, which is why it is not a column band.
+    # Into the band frame before it is stored (see g_band_scale): the brush reports
+    # this page's own points, the template holds the frame's.
+    r <- g_pdf_render(); s <- if (is.null(r)) c(1, 1) else g_band_scale(r)
     mf <- .meta_field(f)
     if (!is.na(mf)) {
       pg <- .clamp_page(input$g_pdf_page, g$n_pages %||% NA_integer_)
       g$tmpl$table$metadata_regions[[mf]] <- list(page = pg,
-        x_min = round(br$xmin), x_max = round(br$xmax),
-        y_min = round(br$ymin), y_max = round(br$ymax))
+        x_min = round(br$xmin * s[1]), x_max = round(br$xmax * s[1]),
+        y_min = round(br$ymin * s[2]), y_max = round(br$ymax * s[2]))
       guided(g)
       updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
       output$g_adv_msg <- renderUI(span(class = "ok",
@@ -4186,7 +4380,7 @@ server <- function(input, output, session) {
       return()
     }
     slot <- .pdf_field_ref(f)
-    g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin), x_max = round(br$xmax))
+    g$tmpl$table[[slot]][[f]] <- list(x_min = round(br$xmin * s[1]), x_max = round(br$xmax * s[1]))
     # Mapping a money-in / money-out band means this is a separate debit/credit
     # statement: switch the amount style to match, so saving never demands a single
     # 'amount' column (the reported "amount is still required even when debit and

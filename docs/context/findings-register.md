@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 95 findings, 86 fixed, 9 open.** Six of the nine are the screen findings raised from real use tonight (N26-N29, N31, N32) and are in hand. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
+**Where it stands: 99 findings, 88 fixed, 11 open.** Eight of the eleven are the screen findings raised from real use tonight (N26-N29, N31, N32, N34, N35) and are in hand. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -385,6 +385,53 @@ THE TRAP, worth stating because the obvious fix is the wrong one: a bare
 precisely what would start eating `Total Payments to ACME Ltd`. So the footer
 rule stays separate and REQUIRES the page words (`to next page`, `from previous
 page`); the summary rule is untouched. Both directions are pinned by test.
+
+| N34 | medium | open | The X-ray at template-creation time reports a DIFFERENT row count from the conversion that follows it, with nothing saying why - so the number people check the template against is not the number they get. Either make them the same or say "showing the first X rows". | app.R X-ray / R/inspect.R |
+| N35 | medium | open | "Statement or other" is asked once and then cannot be revisited: having picked one, there is no way back. The stickiness is right for other things; here it strands anyone who picks wrong on their first go. | app.R, the toolkit's first question |
+| N36 | **high** | **fixed** | A year-less date format ("October 12") reads NOTHING when the statement prints no period the tool can parse AND more than one distinct year appears on the page. Every date comes back blank. It fails CLOSED (rows are kept, flagged `date_unresolved`), so no figure is wrong - but the screen never says the real reason, which is that no YEAR could be found, not that the dates could not be read. | R/parse_pdf_table.R:544-569 |
+| N37 | **critical** | **fixed** | On a credit-card statement that prints CR on the line BELOW the amount, the CR is captured into the DESCRIPTION instead of the amount, so every credit is emitted as a debit. Silently wrong figures, in the sign - the cardinal failure. | R/parse_pdf_table.R, the row grouping / continuation merge |
+
+### N36 - the dates are not unreadable, the YEAR is missing
+
+Reproduced deterministically. A month-first year-less statement ("March 30",
+"April 10", "September 5") with `date_format: "%B %d"`:
+
+| the page prints | rows kept | dates |
+|---|---|---|
+| a period the tool can parse | 3 | all three correct, no flags |
+| no parseable period | 3 | all `NA`, flagged `date_unresolved` |
+
+So the format is fine and the parser is fine. The year is the whole problem, and
+it has exactly two sources today (`R/parse_pdf_table.R:544-569`): the parsed
+statement period, or - only if that fails - **one single distinct 4-digit year in
+the entire page text**. A credit-card statement routinely prints several (payment
+due date, card expiry, a copyright line), so the unambiguity test fails and no
+year is attached at all.
+
+Refusing to guess is RIGHT and must stay. Two things are wrong around it:
+
+1. **The screen blames the wrong thing.** `date_parse` says "dates couldn't be
+   read". They were read perfectly; what is missing is a year. The tool knows
+   exactly which of those two happened and says the less useful one - the
+   interface rule, broken in the direction that sends the analyst to fix a date
+   format that was never the problem.
+2. **A third deterministic source is available and unused.** A labelled statement
+   date ("Statement date", "Closing date", "Issue date") is a fact printed on the
+   page, read through the same label dictionary as everything else. It should be
+   tried BEFORE the desperate "one year in the whole text" scan - reading the
+   document's own structure, not counting digits.
+
+### N37 - a credit read as a debit
+
+The reported shape: the amount prints on one line and its `CR` marker on the line
+BELOW it. The row grouper puts the marker on the following visual row, so the
+amount cell never sees its own CR and `.num` has nothing to make it positive -
+every credit comes out as a debit. Meanwhile the stray CR lands in whatever band
+covers it, which is the description.
+
+This is the cardinal failure: no error, no flag, a full set of figures with the
+wrong SIGN on every credit. Balance reconciliation is the only thing that would
+notice, and only if the statement prints balances to reconcile against.
 
 ### What is holding the last three open
 

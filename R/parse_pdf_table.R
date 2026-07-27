@@ -559,6 +559,18 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # Only used when it is UNAMBIGUOUS (a single distinct year on the page): if
   # the text shows zero or several years we do not guess, keeping to the
   # "never silently wrong" contract. date_raw stays verbatim regardless.
+  # SECOND SOURCE: the labelled statement date ("Statement date: 12 October 2026").
+  # A fact the document states about itself, read through the same label
+  # dictionary as everything else, so it is deterministic and an analyst can widen
+  # the wording without a code change. It is tried BEFORE the text scan below,
+  # because reading a labelled value beats counting 4-digit numbers on the page.
+  year_from_stmt_date <- FALSE
+  if (!length(yrs)) {
+    sd <- pdate(md$statement_date)
+    if (!is.na(sd)) {
+      yrs <- as.integer(format(sd, "%Y")); year_from_stmt_date <- TRUE
+    }
+  }
   year_from_text <- FALSE
   if (!length(yrs)) {
     alltext <- paste(unlist(input$pages %||% input$text %||% character(0)), collapse = " ")
@@ -798,6 +810,30 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # HERE -- not from the transaction's own baseline -- lets a value wrap across
     # SEVERAL lines (a reference printed over three lines), each close to the line
     # above it, instead of only the first continuation folding in.
+    # ---- a sign marker printed on the line BELOW its amount (N37) ------------
+    # Credit-card statements routinely print the amount on one line and its CR on
+    # the next. That marker is the SIGN of the amount above it and nothing else --
+    # but the line carries no date and no digits, so it looked exactly like a
+    # wrapped description: the amount cell never saw its own CR, `unsigned` style
+    # applied the CHARGE sign, and EVERY payment and refund came out as a debit.
+    # A wrong sign on every credit, beside a marker printed right there on the
+    # page, with no flag and nothing to notice it but a balance reconciliation.
+    #
+    # The markers come from the LEXICON, never hardcoded. R/normalise.R already
+    # learned that lesson: the same admin-approved vocabulary was honoured in one
+    # amount style and silently ignored in another, so a bank whose payment marker
+    # is written any other way had every payment read with the charge sign.
+    .sign_markers <- toupper(c(lex("dr_cr_suffix_credit"), lex("dr_cr_suffix_debit")))
+    .marker_rx <- sprintf("(%s)\\s*$", paste(.sign_markers, collapse = "|"))
+    .money_flds <- intersect(c("amount", "debit", "credit", "balance"), names(cols))
+    # Every word on the line is a marker, and there is at least one. A line with
+    # ANYTHING else on it is ordinary text and is left to the description merge --
+    # this claims a bare "CR", never a description that happens to contain one.
+    .marker_only <- function(r) {
+      tk <- toupper(trimws(as.character(r$.txt %||% character(0))))
+      tk <- tk[nzchar(tk)]
+      length(tk) > 0L && all(tk %in% .sign_markers)
+    }
     last_txn <- 0L; last_y1 <- -Inf; drop <- logical(length(recs))
     for (i in seq_along(recs)) {
       if (is_txn[i]) { last_txn <- i; last_y1 <- recs[[i]]$.y1; next }
@@ -812,6 +848,32 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
       close <- identical(r$page, prev$page) &&
                is.finite(r$.y0) && is.finite(last_y1) &&
                (r$.y0 - last_y1) <= 0.9 * lh && (r$.y0 - last_y1) >= -lh
+      # The marker line is resolved BEFORE the description merge, because to that
+      # merge it is indistinguishable from wrapped text. It is appended to the
+      # money cell it sits under, so parse_amount reads "150.00 CR" exactly as it
+      # would have on one line -- no new sign logic, no second place that decides
+      # what CR means. Guarded three ways: the cell must already hold a figure (a
+      # marker cannot invent an amount), it must not already carry a marker (never
+      # flip a sign twice), and the marker must sit in that column's own band.
+      if (close && .marker_only(r)) {
+        moved <- FALSE
+        for (fld in .money_flds) {
+          hit <- .pdf_in_band(r$.cx, cols[[fld]])
+          if (!any(hit)) next
+          cur <- recs[[last_txn]][[fld]] %||% NA_character_
+          if (is.na(cur) || !grepl("[0-9]", cur)) next
+          if (grepl(.marker_rx, toupper(trimws(cur)))) next
+          recs[[last_txn]][[fld]] <- paste(trimws(cur), paste(r$.txt[hit], collapse = " "))
+          moved <- TRUE
+        }
+        if (moved) {
+          # Consumed as a SIGN, so it must not also be folded into the description
+          # (where it read as part of the payee) -- the reported symptom.
+          drop[i] <- TRUE
+          if (is.finite(r$.y1)) last_y1 <- max(last_y1, r$.y1)
+          next
+        }
+      }
       if (nzchar(line_txt) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
           !.is_summary(r) && !.is_footer_noise(line_txt) && close) {
         # NOTHING on a merged line may be dropped. Descriptions are VERBATIM, and a

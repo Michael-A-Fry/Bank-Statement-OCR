@@ -246,6 +246,20 @@ extract_metadata <- function(input, dict = default_label_dict()) {
   n_opening_labels <- .count_occ(dict$opening_balance$any_of %||% "opening balance")
   n_closing_labels <- .count_occ(dict$closing_balance$any_of %||% "closing balance")
 
+  # The labelled STATEMENT DATE ("Statement date: 12 October 2026", "Date of
+  # issue"). It has been in dictionaries/labels.yaml since the beginning and was
+  # read by NOTHING -- a documented label that did nothing.
+  #
+  # It matters because it is a third, deterministic source of the YEAR for a
+  # statement whose table prints day+month only ("October 12"). The reader had
+  # exactly two: the printed period, or -- only when the whole page carries ONE
+  # distinct 4-digit year -- a text scan. A credit-card statement routinely prints
+  # several (payment due date, card expiry, a copyright line), so the scan finds
+  # nothing usable and EVERY date comes back blank on a statement that prints its
+  # own date at the top. Reading a labelled fact is not a guess, so it belongs
+  # ahead of counting digits in the page text.
+  sd <- match_label(dict$statement_date %||% list(any_of = "statement date", value = "date"),
+                    pages, dict)
   # opening/closing balance via the label dictionary (synonyms, not hardcoded).
   ob <- match_label(ospec, pages, dict)
   cb <- match_label(cspec, pages, dict)
@@ -281,6 +295,9 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     # the periods, or balances that could not be paired). Reaches the screen via
     # detect_multiple_statements(), and the Metadata sheet via metadata_df().
     period_note    = period_note,
+    # The date the statement says it was issued. NA when it prints none. Used as a
+    # year source for day+month-only tables (see the note above match_label).
+    statement_date = sd$value,
     accounts       = accounts,
     n_accounts     = length(accounts),
     opening_balance = opening_balance,

@@ -803,3 +803,123 @@ test_that("a bare carried/brought-forward SUMMARY line is not footer noise", {
   expect_true(.pdf_is_summary("Carried forward 1,234.00"))
   expect_true(.pdf_is_summary("Balance brought forward 55.00"))
 })
+
+# ---- N37: a CR printed on the line BELOW its amount ---------------------------
+# Credit-card statements print the amount on one line and its CR on the next. That
+# marker is the SIGN of the amount above it, but the line carries no date and no
+# digits, so it looked exactly like a wrapped description: the CR was folded into
+# the payee, the amount cell never saw it, and EVERY payment and refund came out
+# with the charge sign. Reported from real use as "all are coming up as debits".
+.cc_words <- function(cr_gap = 8) {
+  # amount at x~455 (centre inside the amount band), CR directly beneath it.
+  r <- function(txt, x, y, w) data.frame(text = txt, x = x, y = y, width = w,
+                                         height = 7, stringsAsFactors = FALSE)
+  rbind(
+    r("02", 40, 100, 8),  r("Mar", 52, 100, 13), r("SUPERMARKET", 90, 100, 60),
+    r("84.20", 452, 100, 20),
+    r("09", 40, 120, 8),  r("Mar", 52, 120, 13), r("PAYMENT", 90, 120, 36),
+    r("150.00", 450, 120, 22),
+    r("CR", 455, 120 + cr_gap, 12))
+}
+.cc_input <- function(cr_gap = 8) list(
+  kind = "pdf", path = tempfile(fileext = ".pdf"),
+  pages = "Statement period 1 Mar 2026 to 31 Mar 2026",
+  words = list(.cc_words(cr_gap)), meta = list(page_count = 1L))
+.cc_tmpl <- list(
+  id = "synth_cc_pdf", bank = "SYNTH", format = "pdf", version = 1,
+  unsigned_default = "debit",
+  table = list(row_tol = 3, date_format = "%d %b", amount_sign = "unsigned",
+    columns = list(date = list(x_min = 30, x_max = 80),
+                   description = list(x_min = 80, x_max = 400),
+                   amount = list(x_min = 430, x_max = 560))))
+
+test_that("a CR on the line below its amount makes the amount a CREDIT", {
+  tx <- parse_pdf_table(.cc_input(), .cc_tmpl)$transactions
+  expect_equal(nrow(tx), 2L)
+  # the purchase is untouched...
+  expect_equal(tx$amount[1], -84.20)
+  expect_identical(tx$direction[1], "debit")
+  # ...and the payment is a credit, because its own marker reached its own cell.
+  expect_equal(tx$amount[2], 150.00)
+  expect_identical(tx$direction[2], "credit")
+})
+
+test_that("the marker is not left in the description", {
+  # The reported symptom: "the CR is being picked up in description and not
+  # amount". A marker consumed as a sign must not ALSO be folded into the payee.
+  tx <- parse_pdf_table(.cc_input(), .cc_tmpl)$transactions
+  expect_false(any(grepl("\\bCR\\b", tx$description)))
+  expect_identical(tx$description[2], "PAYMENT")
+})
+
+test_that("a marker far from any transaction is not applied to one", {
+  # Proximity still governs it. A CR halfway down the page is not the sign of the
+  # last transaction above it, and inventing that link would be a wrong figure
+  # produced from nothing -- worse than the blank it replaces.
+  tx <- parse_pdf_table(.cc_input(cr_gap = 200), .cc_tmpl)$transactions
+  expect_equal(tx$amount[2], -150.00)      # unchanged: still read as a charge
+  expect_false(any(grepl("\\bCR\\b", tx$description)))
+})
+
+test_that("a marker cannot invent an amount, and cannot flip a sign twice", {
+  # No figure in the cell -> nothing to sign. And a cell that ALREADY carries a
+  # marker is left alone, so "150.00 CR" + a stray CR below never double-flips.
+  w <- .cc_words(); w$text[w$text == "150.00"] <- "150.00 CR"
+  inp <- .cc_input(); inp$words <- list(w)
+  tx <- parse_pdf_table(inp, .cc_tmpl)$transactions
+  expect_equal(tx$amount[2], 150.00)       # one flip, not two
+})
+
+# ---- N36: the YEAR is what is missing, not the date ---------------------------
+# A day+month-only table ("October 12") needs a year from somewhere. There were
+# two sources: the printed period, or -- only when the whole page carries ONE
+# distinct 4-digit year -- a scan of the page text. A credit-card statement prints
+# several (payment due, card expiry, a copyright line), so the scan refuses and
+# EVERY date comes back blank on a statement that prints its own date at the top.
+# The labelled statement date has been in dictionaries/labels.yaml from the start
+# and was read by nothing; it is a stated fact, so it goes ahead of the text scan.
+.yl_words <- function() {
+  r <- function(txt, x, y, w) data.frame(text = txt, x = x, y = y, width = w,
+                                         height = 7, stringsAsFactors = FALSE)
+  rbind(r("March",   40, 100, 26), r("30", 70, 100, 8), r("COFFEE", 120, 100, 34),
+        r("12.50",  452, 100, 20),
+        r("April",   40, 112, 22), r("10", 66, 112, 8), r("PETROL", 120, 112, 34),
+        r("60.00",  452, 112, 20))
+}
+.yl_input <- function(pages) list(
+  kind = "pdf", path = tempfile(fileext = ".pdf"), pages = pages,
+  words = list(.yl_words()), meta = list(page_count = 1L))
+.yl_tmpl <- list(
+  id = "synth_yl_pdf", bank = "SYNTH", format = "pdf", version = 1,
+  table = list(row_tol = 3, date_format = "%B %d", amount_sign = "signed",
+    columns = list(date = list(x_min = 30, x_max = 110),
+                   description = list(x_min = 110, x_max = 400),
+                   amount = list(x_min = 430, x_max = 560))))
+
+test_that("a labelled statement date supplies the year for day+month-only dates", {
+  # No period range, and TWO distinct years on the page, so the text scan refuses.
+  tx <- parse_pdf_table(.yl_input(paste(
+    "MEGABANK CREDIT CARD",
+    "Statement date: 30 September 2026",
+    "Card expires 03/28   (c) 2024 MegaBank Ltd", sep = "\n")), .yl_tmpl)$transactions
+  expect_equal(nrow(tx), 2L)
+  expect_equal(tx$date, c("2026-03-30", "2026-04-10"))
+  expect_false(any(grepl("date_year_inferred", tx$flags)))   # stated, not inferred
+  expect_equal(tx$date_raw, c("March 30", "April 10"))       # raw stays verbatim
+})
+
+test_that("the printed PERIOD still wins over the statement date", {
+  # Order matters: the period is what the transactions actually fall inside.
+  tx <- parse_pdf_table(.yl_input(paste(
+    "Statement period 1 March 2025 to 31 December 2025",
+    "Statement date: 30 September 2026", sep = "\n")), .yl_tmpl)$transactions
+  expect_equal(tx$date, c("2025-03-30", "2025-04-10"))
+})
+
+test_that("with no year anywhere the dates stay blank and the rows are flagged", {
+  # Refusing to guess is the point; it must fail CLOSED and visibly, never quietly.
+  tx <- parse_pdf_table(.yl_input("MEGABANK CREDIT CARD"), .yl_tmpl)$transactions
+  expect_true(all(is.na(tx$date)))
+  expect_true(all(grepl("date_unresolved", tx$flags)))
+  expect_equal(tx$date_raw, c("March 30", "April 10"))       # nothing lost
+})
