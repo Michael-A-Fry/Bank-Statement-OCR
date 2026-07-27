@@ -1,59 +1,18 @@
 # batch.R -- convert a WHOLE CASE in one go.
 #
-# A case arrives as a folder of 10-50 statements. They may all be one bank, all
-# different, or anything in between. convert_batch() runs each file through the
-# ordinary front door and hands back one row per file, so the analyst triages
-# ONCE at the end instead of babysitting thirty conversions.
-#
-# Two rules shape everything below.
+# A case is a folder of 10-50 statements, one bank or twenty. convert_batch()
+# runs each file through the ordinary front door and hands back one row per file,
+# so the analyst triages ONCE at the end instead of babysitting thirty
+# conversions. Two rules shape it.
 #
 # PUSH THROUGH ON FAILURE. A file that cannot be read never stops the rest: it
-# becomes a row carrying its own status and its own reason. A 30-file case has to
-# finish unattended, because the alternative is an analyst discovering at file 4
-# that files 5-30 never ran.
+# becomes a row carrying its own status and its own reason. The alternative is an
+# analyst discovering at file 4 that files 5-30 never ran.
 #
 # NOTHING NEW HAPPENS PER FILE. Every file goes through convert_document() --
 # same detection, same reconciliation, same outputs, same ONE run-log record as a
-# single conversion. There is no batch pipeline; there is a loop. That is the
-# whole point: a batch answer and a single-file answer for the same statement can
-# never disagree, because they are the same code.
-
-# ---- plain words, taken from the one place they are written ------------------
-#
-# `failing_check` exists so a caller can SORT by it and fix every file that
-# failed the same way together -- that sortability is the point of the column.
-# It only works if the same failure produces the same STRING every time, so the
-# wording comes from the shipped maps (CHECK_PLAIN / DIAG_PLAIN / STATUS_PLAIN in
-# ui_labels.R) rather than a second copy here, which would drift away from what
-# the screen says and quietly split one failure kind into two.
-#
-# ui_labels.R is UI copy and is deliberately NOT part of the R/ engine, so it is
-# read from disk into a private environment instead of being assumed loaded. That
-# keeps convert_batch() usable from a bare R console with no Shiny and no app.R.
-# If the file cannot be found, the raw engine code is used instead: harder to
-# read, still exact, still sortable -- never blank.
-.plain_words <- function() {
-  e <- new.env(parent = globalenv())          # ui_labels.R needs %||% from R/util.R
-  # Same resolution order engine_version() uses: ENGINE_ROOT for the tests and the
-  # scripts, "." for the app and RUN-ME.bat, which start in the repo root.
-  cand <- unique(c(file.path(Sys.getenv("ENGINE_ROOT", "."), "ui_labels.R"), "ui_labels.R"))
-  for (p in cand) {
-    if (!file.exists(p)) next
-    if (isTRUE(safe({ sys.source(p, envir = e); TRUE }, FALSE))) break
-  }
-  e
-}
-
-# .say(L, code, map) -- one engine code, in the words the screen uses. An unknown
-# code, or no wording file at all, falls back to the code itself. Never blank: a
-# blank cell in this column hides a file that needs attention.
-.say <- function(L, code, map) {
-  code <- as.character(code %||% NA_character_)[1]
-  if (is.na(code) || !nzchar(code)) return(NA_character_)
-  words <- L[[map]]
-  v <- if (is.null(words)) NA_character_ else unname(words[code])
-  if (is.na(v)) code else v
-}
+# single conversion. There is no batch pipeline, only a loop, so a batch answer
+# and a single-file answer for the same statement cannot disagree.
 
 # The statement-index tag an auto-split run puts on every KPI name
 # ("balance_reconciliation [statement 2]"). It says WHERE in a bundle the check
@@ -62,94 +21,68 @@
 # statements. The per-statement detail is still in the result and the workbook.
 .STATEMENT_TAG <- "[[:space:]]*\\[statement [0-9]+\\]$"
 
-# .failing_check(res, L) -- the SINGLE most useful thing that went wrong, in plain
-# words. Three tiers, most useful first; a converted-and-clean file gets NA,
-# because nothing went wrong.
-.failing_check <- function(res, L) {
+# .failing_check(res) -- the SINGLE most useful thing that went wrong, as the
+# engine's own CODE prefixed with the map that words it. Three tiers, most useful
+# first; a converted-and-clean file gets NA, because nothing went wrong.
+#
+# The CODE, not the sentence: the words are UI copy (CHECK_PLAIN / DIAG_PLAIN /
+# STATUS_PLAIN in ui_labels.R) that the screen already has loaded, and
+# test-seams.R holds those maps to every code the engine can emit. Sorting --
+# gathering every file that failed the same way so one fix clears them all -- is
+# what this column is for, and codes sort just as well. The prefix says WHICH
+# map, because a code appearing in two of them would render the wrong sentence.
+.failing_check <- function(res) {
   if (identical(res$status, "ok")) return(NA_character_)
 
   # 1. A failing reconciliation check is the most useful answer there is: it names
-  #    the thing that did not add up, and it is the same failure on every file that
-  #    has it. reconcile() lists checks in report order, so the first failure is
-  #    the most important one.
+  #    the thing that did not add up, and reconcile() lists checks in report
+  #    order, so the first is the most important. CHECK_PLAIN words a check as
+  #    what it PROVES ("Row dates could be read"), so the screen must say
+  #    "Failed: <phrase>" -- this frame has no pass/fail column to read it beside.
   k <- res$kpis
   if (is.data.frame(k) && nrow(k)) {
     fail <- k$name[!is.na(k$status) & k$status == "fail"]
-    # CHECK_PLAIN words each check as what it PROVES ("Row dates could be read"),
-    # for use beside a separate pass/fail column. This frame has no such column,
-    # so the bare phrase said the OPPOSITE of what happened. Prefixing is enough
-    # and costs no second wording map to keep in step: the string is still
-    # identical for every file that failed the same way, which is what makes the
-    # column sortable, and that sortability is the whole point of it.
-    if (length(fail))
-      return(paste0("Failed: ", .say(L, sub(.STATEMENT_TAG, "", fail[1]), "CHECK_PLAIN")))
+    if (length(fail)) return(paste0("check:", sub(.STATEMENT_TAG, "", fail[1])))
   }
 
-  # 2. No check failed, so the problem is the file or the match itself -- it could
-  #    not be read, no template fits, two templates fit, a scan had no text.
-  #    build_diagnostics() already sorts most-severe-first; "info" rows are
-  #    context, not a fault, and "none" is the explicit no-issues row.
+  # 2. No check failed, so the problem is the file or the match itself. Ordered
+  #    most-severe-first by build_diagnostics(); "info" rows are context, not a
+  #    fault, and "none" is the explicit no-issues row.
   d <- res$diagnostics
   if (is.data.frame(d) && nrow(d)) {
     hit <- d$category[!is.na(d$severity) & d$severity != "info" & d$category != "none"]
-    if (length(hit)) return(.say(L, hit[1], "DIAG_PLAIN"))
+    if (length(hit)) return(paste0("diag:", hit[1]))
   }
 
-  # 3. Held for review with nothing specific to point at -- a template that won by
-  #    a hair, say. Say the verdict rather than leave the cell empty, so sorting
-  #    still gathers these files together instead of losing them at the bottom.
-  .say(L, res$status, "STATUS_PLAIN")
+  # 3. Nothing specific to point at -- a template that won by a hair, say. Say the
+  #    verdict rather than leave the cell empty and lose the file at the bottom.
+  st <- as.character(res$status %||% NA_character_)[1]
+  if (is.na(st) || !nzchar(st)) NA_character_ else paste0("status:", st)
 }
 
-# .rows_of(res) -- how much DATA came out of this file.
-#
-# A statement is counted in transactions, read straight off the run-log record the
-# engine just wrote, so the number on screen and the number on disk cannot
-# disagree. A FORM (an IRD summary, a KiwiSaver letter) has no transactions, so it
-# is counted in the labelled values actually read -- not the values its template
-# declares, which would overstate a document where nothing was found.
+# .rows_of(res) -- how much DATA came out. A statement is counted in transactions,
+# read straight off the run-log record just written, so the number on screen and
+# the number on disk cannot disagree. A FORM (an IRD summary, a KiwiSaver letter)
+# has no transactions, so it is counted in the labelled values actually read --
+# not the values its template declares, which would overstate an empty read.
 .rows_of <- function(res) {
   v <- if (identical(res$kind, "form")) res$n_values %||% 0L else res$run_log$row_count %||% 0L
   v <- suppressWarnings(as.integer(v)[1])
   if (is.na(v)) 0L else v
 }
 
-# .trim_result(res, keep_rows) -- what goes in the `result` column.
-#
-# BOUNDED MEMORY. A 50-file case would otherwise hold fifty complete transaction
-# tables in one object, for a frame whose job is triage. Nothing is lost by
-# dropping them: the conversion has ALREADY written every row to the workbook /
-# CSV / JSON named in result$outputs, so the in-memory copy is a copy.
-# keep_rows = TRUE keeps them, for a caller that genuinely wants one object.
-#
-# The drop is STATED, never silent. A caller reading result$feed_rows must be able
-# to tell "dropped to save memory" from "this statement had no transactions" --
-# the two look identical otherwise, and guessing between them is exactly the kind
-# of quiet wrongness this tool exists to prevent.
-#
-# The marker is named `dropped_feed_rows` and NOT `feed_rows_dropped` on purpose.
-# R's `$` partially matches list names, so with the second name a caller asking
-# for res$feed_rows would silently get the marker (TRUE) instead of NULL -- a
-# reader would see a value where the data used to be. The prefix must not collide.
-.trim_result <- function(res, keep_rows) {
-  if (isTRUE(keep_rows) || is.null(res$feed_rows)) return(res)
-  res$feed_rows <- NULL
-  res$dropped_feed_rows <- TRUE
-  res
-}
-
 # .failed_result(why) -- the result a file gets when even convert_document() could
-# not produce one. convert_document() promises never to throw, so this should be
-# unreachable; it exists because "should be unreachable" is not a guarantee, and
-# one impossible error must not cost the other twenty-nine files their run. The
-# reason is carried through verbatim rather than replaced with a tidy phrase.
+# not produce one. It promises never to throw, so this should be unreachable; it
+# exists because "should be unreachable" is not a guarantee, and one impossible
+# error must not cost the other twenty-nine files their run. The reason is carried
+# verbatim rather than replaced with a tidy phrase.
 .failed_result <- function(why) {
   list(status = "failed", template_id = NA_character_, kind = "statement",
        messages = status_message("failed", why,
                                  "check the file is readable and matches a template"))
 }
 
-# convert_batch(paths, ..., progress, keep_rows) -> data.frame, one row per file.
+# convert_batch(paths, ..., progress) -> data.frame, one row per file.
 #
 #   file           the path exactly as it was given (so the analyst can find it)
 #   status         ok | needs_review | unsupported | failed
@@ -157,29 +90,33 @@
 #                  and for a form, whose result carries none -- see template_id
 #   template_id    the template that was USED; NA unless the file converted
 #   rows           transactions read (labelled values, for a form)
-#   trust          high | medium | low -- the same value the run log records; NA
-#                  for a form, which has no reconciliation to have confidence in
-#   failing_check  the single most useful thing that went wrong, in plain words
+#   trust          high | medium | low -- as the run log records it; NA for a
+#                  form, which has no reconciliation to have confidence in
+#   failing_check  what went wrong, as the engine code the screen words (above)
 #   message        the engine's own status message for this file
 #   result         the full result object convert_document() returned
 #
-# `...` is passed straight through to convert_document(), so every argument it
-# takes (outdir, templates_dir, formats, logdir, bank, force_template, ...) works
-# here unchanged and cannot drift as that function grows.
-#
-# `progress` is an optional function called as progress(i, n, file) just BEFORE
-# file i is converted -- a plain callback rather than a Shiny call, so a
-# maintainer can run a folder from the R console with no Shiny loaded. A callback
-# that errors is ignored: a broken progress bar must not cost a case its run.
-#
 # ONE ROW PER PATH, in the order given: nothing is sorted, deduplicated or
-# skipped, so the same inputs always give the same rows in the same order. (The
-# run ids and timestamps inside `result` vary per attempt by design; no column of
-# this frame does.)
-convert_batch <- function(paths, ..., progress = NULL, keep_rows = FALSE) {
+# skipped. (Run ids and timestamps inside `result` vary per attempt by design; no
+# column of this frame does.)
+#
+# `...` goes straight to convert_document(), so every argument it takes works here
+# unchanged. It has no `...` of its own, so an argument THIS function does not
+# take lands there and fails every file with "unused argument".
+#
+# `progress(i, n, file)` is called just BEFORE file i is converted -- a plain
+# callback, not a Shiny call, so a folder can be run from the R console. One that
+# errors is ignored: a broken progress bar must not cost a case its run.
+#
+# `result` is the WHOLE object, rows included, so a 50-file case holds fifty
+# tables. Trimming is the caller's, because only the caller knows when it has
+# finished with them (app.R writes the governed feed from the rows, then drops
+# them and marks the result `dropped_feed_rows` -- that word order on purpose:
+# `$` partially matches, so `feed_rows_dropped` would make res$feed_rows return
+# the marker instead of NULL and a stated drop would read as data).
+convert_batch <- function(paths, ..., progress = NULL) {
   paths <- as.character(paths %||% character(0))
   n <- length(paths)
-  L <- .plain_words()                   # read once per batch, not once per file
 
   out <- data.frame(
     file          = paths,
@@ -200,18 +137,17 @@ convert_batch <- function(paths, ..., progress = NULL, keep_rows = FALSE) {
 
     out$status[i] <- as.character(res$status %||% "failed")[1]
     out$bank[i]   <- as.character(res$header$bank %||% NA_character_)[1]
-    # The engine keeps the CLOSEST template on an unsupported result -- useful
-    # evidence for whoever builds the missing one, but on this frame a template id
-    # beside an unsupported row reads as "this template was used". The run log
-    # blanks it for exactly that reason, so take the log's answer rather than
-    # re-deriving the rule and risking the two saying different things.
+    # The engine keeps the CLOSEST template on an unsupported result -- evidence
+    # for whoever builds the missing one, but here a template id beside an
+    # unsupported row reads as "this template was used". The run log blanks it for
+    # that reason, so take the log's answer rather than re-derive the rule.
     out$template_id[i]   <- as.character(res$run_log$detected_template %||% NA_character_)[1]
     out$rows[i]          <- .rows_of(res)
     out$trust[i]         <- as.character(res$trust$level %||% NA_character_)[1]
-    out$failing_check[i] <- .failing_check(res, L)
+    out$failing_check[i] <- .failing_check(res)
     msg <- paste(as.character(res$messages %||% character(0)), collapse = " | ")
     out$message[i]       <- if (nzchar(msg)) msg else NA_character_
-    results[[i]]         <- .trim_result(res, keep_rows)
+    results[[i]]         <- res
   }
 
   out$result <- results
@@ -224,13 +160,10 @@ convert_batch <- function(paths, ..., progress = NULL, keep_rows = FALSE) {
 BATCH_STATUSES <- c("ok", "needs_review", "unsupported", "failed")
 
 # batch_summary(batch) -> data.frame(status, n): the counts a screen prints when a
-# case finishes.
-#
-# Every status is listed even when its count is zero, so the summary has the same
-# shape every run and "0 failed" is SAID rather than inferred from a missing row.
-# Anything unexpected is appended rather than dropped, and the counts always add
-# up to the number of files -- a tally that quietly omits a file is worse than one
-# with an unfamiliar word in it.
+# case finishes. Every status is listed even at zero, so the shape never changes
+# and "0 failed" is SAID rather than inferred from a missing row; anything
+# unexpected is appended rather than dropped, and the counts always add up to the
+# number of files -- a tally that quietly omits a file is the worse tally.
 batch_summary <- function(batch) {
   s <- as.character(batch$status %||% character(0))
   s[is.na(s)] <- "?"

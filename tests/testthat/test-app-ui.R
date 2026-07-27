@@ -43,12 +43,22 @@
   testthat::expect_true(length(i) >= 1)
   paste(src[i[1]:min(i[1] + n, length(src))], collapse = " ")
 }
+# The stylesheet, as text. It used to be three tags$style(HTML(...)) blocks inside
+# app.R; it is now www/app.css, served off disk by Shiny (no CDN, so air-gapping
+# is untouched). The rules below are about the CSS wherever it lives, so they read
+# it from its own file -- and would have gone quietly, vacuously green if they had
+# kept scanning app.R after the move.
+.css_src <- function() {
+  p <- file.path(engine_root(), "www", "app.css")
+  skip_if_not(file.exists(p))
+  readLines(p, warn = FALSE)
+}
 
 # ---------------------------------------------------------------------------
 # The design tokens. There used to be TWO :root blocks; the first was shadowed by
 # the second, so a maintainer editing a colour there saw nothing change on screen.
 test_that("the design tokens are declared in exactly one place", {
-  joined <- paste(.ui_src(), collapse = "\n")
+  joined <- paste(.css_src(), collapse = "\n")
   expect_equal(length(gregexpr(":root\\{", joined)[[1]]), 1L)
   # ...and the surviving block still declares every token the CSS consumes, or a
   # surface loses its colour. --panel was the one only the deleted block had.
@@ -57,6 +67,31 @@ test_that("the design tokens are declared in exactly one place", {
                       unlist(regmatches(joined, gregexpr("var\\(--[a-z0-9-]+\\)", joined)))))
   expect_identical(sort(setdiff(used, unlist(regmatches(root, gregexpr("--[a-z0-9-]+", root))))),
                    character(0))
+})
+
+# The stylesheet is a FILE now, and a file can fail to travel. If www/ is missing
+# from an install every screen renders as bare Bootstrap -- so app.R must link it,
+# must not have quietly grown a second copy inline, and must say so out loud at
+# startup rather than let a user conclude the tool is broken.
+test_that("the design system is one linked stylesheet, and its absence is announced", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'tags\\$link\\(rel = "stylesheet"')
+  expect_match(joined, 'href = sprintf\\("app.css\\?v=%s", engine_version\\(\\)\\)')
+  # no CSS left behind in app.R, and no second stylesheet to drift from this one
+  expect_false(grepl("tags$style(", joined, fixed = TRUE))
+  expect_length(grep("app\\.css", list.files(file.path(engine_root(), "www")), value = TRUE), 1L)
+  # a missing stylesheet is loud, not a mystery
+  expect_match(joined, "STYLESHEET NOT FOUND", fixed = TRUE)
+  expect_match(joined, 'APP_CSS <- file.path\\("www", "app.css"\\)')
+  # ...and the rules really did all arrive: the classes the screen names must exist
+  css <- paste(.css_src(), collapse = "\n")
+  for (cls in c("\\.verdict-high", "\\.verdict-medium", "\\.verdict-low", "\\.stat-grid",
+                "\\.dl-hero", "\\.chip-warn", "\\.hub-card-go", "\\.app-header",
+                "details\\.adv-bank", "#ss-busy", "body\\.ss-run", "\\.split-table"))
+    expect_match(css, cls, info = cls)
+  # the deployment box runs a C locale: a byte the browser has to guess at in a
+  # file served as text/css is a needless way to lose a rule.
+  expect_false(any(grepl("[^\x01-\x7f]", css, useBytes = TRUE)))
 })
 
 # ---------------------------------------------------------------------------
@@ -343,10 +378,35 @@ test_that("the bank picker is on the page, not behind a disclosure", {
                '"Detect automatically" = ""', fixed = TRUE)
 })
 
-test_that("the visible bank picker actually reaches the conversion", {
-  # A control that looks like it works and does not is worse than no control.
-  joined <- paste(.ui_src(), collapse = "\n")
-  expect_match(joined, "pick\\(input\\$cv_bank_quick\\) %\\|\\|% pick\\(input\\$cv_bank\\)")
+# REWRITTEN. This used to assert the exact line
+#     bank_choice <- reactive(pick(input$cv_bank_quick) %||% pick(input$cv_bank))
+# as proof that "the visible bank picker reaches the conversion". It did -- but
+# that line was also a BUG, and the test was pinning it in place. There were TWO
+# bank pickers: cv_bank_quick in front, and cv_bank inside "It picked the wrong
+# bank?", with separate state and two spellings of "no bank". Because the front
+# one was read first, a bank chosen inside the disclosure was silently discarded
+# whenever the front one named a different bank -- the tool converted with a bank
+# the user had stopped asking for and never said so. Confirmed in the browser
+# before the fix: front=ANZ + disclosure=ASB left the exact-template list showing
+# ANZ's four templates. The second picker is gone; the rule is now the stronger
+# one it was always trying to express -- ONE control, read in ONE place.
+test_that("there is exactly one bank picker, and it reaches the conversion", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_length(grep("selectInput\\(\"cv_bank", src), 1L)     # one, and it is cv_bank_quick
+  expect_length(grep('selectInput\\("cv_bank_quick"', src), 1L)
+  expect_match(joined, "bank_choice <- reactive\\(pick\\(input\\$cv_bank_quick\\)\\)")
+  # the second picker and its list-builder are gone entirely, not merely unread
+  expect_false(grepl("cv_bank_ui", joined, fixed = TRUE))
+  expect_false(grepl('selectInput("cv_bank"', joined, fixed = TRUE))
+  # ...and with one spelling of "no bank" left, pick() no longer needs the literal
+  # "(auto-detect)" sentinel that only the deleted, unnamed-choices picker produced
+  expect_match(joined, "pick <- function\\(v\\) if \\(is.null\\(v\\) \\|\\| !nzchar\\(v\\)\\) NULL else v")
+  # every remaining control pick() reads uses a NAMED "" choice, so no control can
+  # hand a label through as if it were a value
+  for (id in c("cv_bank_quick", "cv_template")) {
+    i <- grep(sprintf('selectInput\\("%s"', id), src)
+    expect_match(paste(src[i:(i + 2)], collapse = " "), '= ""', fixed = TRUE, info = id)
+  }
 })
 
 # ---------------------------------------------------------------------------
@@ -428,14 +488,46 @@ test_that("the QID is asked once for the whole batch, before it starts", {
   expect_equal(length(gregexpr("Enter your QID first", joined)[[1]]), 1L)
 })
 
-test_that("a batch row opens the ordinary result page, not a lesser one", {
+# REWRITTEN, because the thing it was guarding got a name. It used to list the
+# four reactives open_batch_row() had to set by hand and check they were all
+# there -- a checklist kept in a test because the code had no single place to keep
+# it. Three functions each set an overlapping subset of "the result page's state",
+# and the failure mode is silent: one reactive left behind shows the PREVIOUS
+# statement's feed verdict or feedback panel beside this statement's figures.
+# There is now ONE definition, show_result(), and the checklist lives there. (It
+# caught a real one: a finished batch left cv_feed_gate/cv_recorded holding the
+# last file in the loop.)
+test_that("the result page's state has exactly one definition", {
   src <- .ui_src()
   joined <- paste(src, collapse = "\n")
-  blk <- .ui_block(src, "open_batch_row <- function", 16L)
-  # the same session state a single conversion sets -- so the page below IS the
-  # result page: verdict, proof strip, transactions, downloads, feedback
-  for (setter in c("cv_res\\(res\\)", "cv_src\\(", "cv_upload_id\\(", "cv_feed_gate\\("))
+  blk <- .ui_block(src, "show_result <- function", 14L)
+  # every piece of it, in one function
+  for (setter in c("cv_res\\(res\\)", "cv_src\\(src\\)", "cv_upload_id\\(upload_id\\)",
+                   "cv_feed_gate\\(gate\\)", "cv_recorded\\(isTRUE\\(recorded\\)\\)",
+                   "cv_fb_done\\(FALSE\\)", "cv_fb_rec\\(NULL\\)", "cv_forced\\(list\\(\\)\\)"))
     expect_match(blk, setter)
+  # ...and all three routes onto the result page go through it: a single
+  # conversion, a batch finishing with no row open, and a batch row being opened
+  expect_gte(length(grep("^\\s*show_result\\(", src)), 3L)
+  expect_match(.ui_block(src, "open_batch_row <- function", 12L), "show_result\\(b\\$result\\[\\[i\\]\\]")
+  expect_match(.ui_block(src, "run_conversion <- function", 45L), "show_result\\(res, list\\(path = src")
+  # a batch clears the screen's copy of the LAST file's feed verdict
+  expect_match(.ui_block(src, "run_batch <- function", 65L), "show_result\\(\\)")
+  # Nothing sets the result page's reactives behind show_result's back. Counted
+  # over WRITES only (a line that starts with the call; `res <- cv_res()` is a
+  # read). show_result holds one of each; the only other writers are named, and
+  # both are deliberate:
+  #   * cv_feed_gate / cv_recorded, in publish_result -- the feed's verdict is not
+  #     known until the write has happened, so it is the last word on those two;
+  #   * cv_res, in the X-ray "add this row" re-run -- which must NOT go through
+  #     show_result, because show_result clears cv_forced and the forced row it has
+  #     just added is the entire point of that path.
+  wr <- function(nm) sum(grepl(sprintf("^\\s*%s\\(", nm), src))
+  expect_equal(wr("cv_res"), 2L)          # show_result + the X-ray re-run
+  expect_equal(wr("cv_src"), 1L)          # show_result alone
+  expect_equal(wr("cv_feed_gate"), 2L)    # show_result + publish_result
+  expect_equal(wr("cv_recorded"), 2L)     # show_result + publish_result
+  expect_match(.ui_block(src, "publish_result <- function", 6L), "cv_feed_gate\\(gate\\)")
   # and there is exactly ONE transactions table / downloads bar in the whole app
   expect_length(grep('DTOutput\\("cv_txns"\\)', src), 1L)
   expect_length(grep('uiOutput\\("cv_downloads"\\)', src), 1L)
@@ -447,16 +539,30 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
   # together so they can be fixed together. Alphabetical order on the verdict
   # would scatter them ("Could not read" before "No template"), so the verdict
   # column sorts off the engine's own worst-last status order instead.
+  #
+  # The hidden sort key used to be `length(BATCH_STATUSES) + 1L - match(...)`
+  # sorted ASCENDING -- a subtraction whose only job was to turn a descending sort
+  # into an ascending one. It is now match() sorted DESCENDING: the same order with
+  # the arithmetic taken out. Asserted as an ORDER, not as a spelling, so the two
+  # cannot be mistaken for each other again.
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 30L)
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 34L)
   expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
   expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
   expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
-  expect_match(blk, 'order = list\\(list\\(5, "asc"\\), list\\(4, "asc"\\)\\)')
+  expect_match(blk, "severity <- match\\(b\\$status, BATCH_STATUSES")
+  expect_match(blk, 'order = list\\(list\\(5, "desc"\\), list\\(4, "asc"\\)\\)')
+  expect_false(grepl("length(BATCH_STATUSES) + 1L -", blk, fixed = TRUE))
   # the table is sortable and clickable at all
   expect_match(blk, 'selection = "single"', fixed = TRUE)
-  # the engine's order really is worst-last, which is what the "- match()" flips
+  # the engine's order really is worst-last, which is what descending re-reads
   expect_identical(BATCH_STATUSES, c("ok", "needs_review", "unsupported", "failed"))
+  # ...and the key it builds really does put the worst first when sorted that way,
+  # with an unrecognised verdict at the very top (nobody has words for it yet)
+  key <- match(c("ok", "failed", "needs_review", "something_new", "unsupported"),
+               BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+  expect_identical(c("ok", "failed", "needs_review", "something_new", "unsupported")[order(-key)],
+                   c("something_new", "failed", "unsupported", "needs_review", "ok"))
 })
 
 test_that("a long batch shows progress per file", {
@@ -529,7 +635,7 @@ test_that("the exact-template picker is called exactly 'Template (optional)'", {
   expect_match(src[i], '"cv_template", "Template \\(optional\\)"')
 })
 
-test_that("both bank pickers and the forced template are read in one place", {
+test_that("the bank and the forced template are read in one place", {
   # Two readings of the same control is how a filter comes to offer a template
   # the conversion would not have used.
   src <- .ui_src()
@@ -593,36 +699,83 @@ test_that("JSON is a link, not a third download button, and still works", {
 # and 2024 is a real variant; the schema has always had effective_from /
 # effective_to and nothing on screen ever showed them, so the only way to have
 # both was two rival templates that tie on every statement forever.
-test_that("the validity window is on the toolkit, behind the settings disclosure", {
-  src <- .ui_src()
-  i_from <- grep('textInput\\("g_eff_from"', src)
-  i_to   <- grep('textInput\\("g_eff_to"', src)
+# REWRITTEN for the control, not the machinery. The window used to be two free
+# TEXT boxes, so "is this even a date?" was a question the screen had to ask,
+# answer and refuse: six helpers, a tri-state .eff_date (NULL / NA / string) that
+# only worked because length(NULL) == 0, an inline problems list, a read-back
+# sentence and a save-time refusal, ~85 lines for two boxes the code itself calls
+# rarely needed. They are DATE PICKERS now, which makes a non-date impossible to
+# enter, so all of that goes and the FEATURE is untouched: a template can still
+# carry effective_from / effective_to, and the one mistake a pair of pickers still
+# allows -- an end before its start -- is still named inline and still refused at
+# Save. The assertions below are the surviving rules, not the deleted plumbing.
+test_that("the validity window is picked, not typed, and sits behind the disclosure", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  i_from <- grep('\\.eff_picker\\("g_eff_from"', src)
+  i_to   <- grep('\\.eff_picker\\("g_eff_to"', src)
   i_more <- max(grep('uiOutput\\("g_more_toggle"\\)', src))
   expect_length(i_from, 1L); expect_length(i_to, 1L)
   # rare -> behind the one disclosure, with the rest of the rarely-touched settings
   expect_true(i_from > i_more && i_to > i_more)
   # said in plain words, not as a schema key
   expect_match(src[i_from], "This layout applies from", fixed = TRUE)
+  # a date picker, so a non-date cannot be entered at all
+  expect_false(any(grepl('textInput("g_eff_', src, fixed = TRUE)))
+  expect_match(joined, "\\.eff_picker <- function\\(id, label, v\\)")
+  expect_match(joined, "suppressWarnings\\(dateInput\\(id, label,")
 })
 
-test_that("the validity window reaches the saved template, and blank means always", {
-  apply_eff <- .ui_fun("apply_overrides", also = c(".eff_date", ".eff_bad"))
+# THE BOX HAS TO BE ABLE TO BE EMPTY, and shiny::dateInput cannot do that by
+# itself: given no value its JS falls back to TODAY. Found by opening the toolkit
+# in a browser, where both boxes came up showing today's date on a template that
+# declares no window at all -- and a save would then have written a ONE-DAY
+# validity window onto every template built here, which R/diagnose.R would use to
+# caution against every statement not dated today. Empty is the usual answer, so
+# it is the case that must be pinned.
+test_that("an empty validity window is reachable, and is what 'always' looks like", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # value = "" is the ONE input shiny's date JS reads as "leave the box alone"
+  expect_match(joined, 'value = tryCatch\\(\\.eff_date\\(v\\) %\\|\\|% ""')
+  expect_match(joined, "back to TODAY", fixed = TRUE)
+  # and putting a box BACK to empty (loading a windowless template over a windowed
+  # one) is done explicitly, because updateDateInput drops a NULL value entirely
+  expect_match(joined, "\\.eff_set <- function\\(id, v\\) session\\$sendInputMessage")
+  expect_length(grep("\\.eff_set\\(\"g_eff_", src), 2L)
+  # the two ways of saying "no window" both reach the same one place
+  eff <- .ui_fun(".eff_date")
+  expect_null(eff(""))            # what the picker is built with
+  expect_null(eff(NA))            # what the picker hands back when emptied
+  # ...and putting the app's FIRST date box on screen must not throw. Shiny renames
+  # bootstrap-datepicker's plugin to bsDatepicker, but the library's own ready hook
+  # still calls $(...).datepicker() -- an uncaught TypeError in the middle of a
+  # modal full of dynamically inserted inputs, which is exactly where this app has
+  # been bitten before by an exception aborting a bind pass. Seen in the browser
+  # console the moment the toolkit was opened; the shim below makes the hook the
+  # no-op it was meant to be.
+  expect_match(joined, "\\$\\.fn\\.datepicker = \\$\\.fn\\.datepicker \\|\\| function")
+  expect_match(joined, "\\$\\.fn\\.bsDatepicker\\.apply\\(this, arguments\\)")
+})
+
+test_that("the validity window reaches the saved template, and empty means always", {
+  apply_eff <- .ui_fun("apply_overrides", also = ".eff_date")
   base <- list(id = "t", bank = "B", format = "delimited",
                columns = list(date = list(source = "Date", format = "%d/%m/%Y"),
                               description = list(source = "Desc"),
                               amount = list(source = "Amt")))
-  # a typed range is written as the schema stores it
+  # a picked range is written as the schema stores it, whether it arrives as the
+  # Date a dateInput hands back or as the string the YAML holds
   t1 <- apply_eff(base, bank = NULL, datefmt = NULL, sign = NULL,
-                  effective_from = "2020-01-01", effective_to = "2024-12-31")
+                  effective_from = as.Date("2020-01-01"), effective_to = "2024-12-31")
   expect_identical(t1$effective_from, "2020-01-01")
   expect_identical(t1$effective_to, "2024-12-31")
-  # blank CLEARS it: a template that says "always" has no key at all, exactly
-  # like one that never had one
+  # an EMPTY picker CLEARS it: a template that says "always" has no key at all,
+  # exactly like one that never had one. Shiny hands back NA for an empty date box.
   t2 <- apply_eff(t1, bank = NULL, datefmt = NULL, sign = NULL,
-                  effective_from = "", effective_to = "  ")
+                  effective_from = as.Date(NA), effective_to = "  ")
   expect_false("effective_from" %in% names(t2))
   expect_false("effective_to" %in% names(t2))
-  # the control not being on screen leaves whatever is there untouched
+  # the control not being on screen at all leaves whatever is there untouched --
+  # absence of a control is not an instruction to delete a rule
   t3 <- apply_eff(t1, bank = NULL, datefmt = NULL, sign = NULL)
   expect_identical(t3$effective_from, "2020-01-01")
   # and the engine really does consume these keys, so this is not a dead setting
@@ -630,31 +783,58 @@ test_that("the validity window reaches the saved template, and blank means alway
     readLines(file.path(engine_root(), "R", "diagnose.R"), warn = FALSE), fixed = TRUE)))
 })
 
-test_that("a validity window that is not a date is refused, never quietly dropped", {
-  probs <- .ui_fun(".eff_problems", also = c(".eff_date", ".eff_bad"))
-  eff   <- .ui_fun(".eff_date")
-  expect_length(probs("", ""), 0L)                       # both blank is fine
-  expect_length(probs("2020-01-01", ""), 0L)
-  expect_gt(length(probs("01/02/2014", "")), 0L)         # not yyyy-mm-dd
-  expect_gt(length(probs("", "last year")), 0L)
-  expect_gt(length(probs("2024-01-01", "2020-01-01")), 0L)  # runs backwards
-  expect_null(eff(""))                                   # blank = always
-  expect_true(is.na(eff("nonsense")))
+test_that("a validity window that runs backwards is refused, never quietly saved", {
+  back <- .ui_fun(".eff_backwards", also = ".eff_date")
+  eff  <- .ui_fun(".eff_date")
+  expect_false(back(NA, NA))                             # both empty is fine
+  expect_false(back("2020-01-01", NA))
+  expect_false(back("2020-01-01", "2024-12-31"))
+  expect_false(back("2020-01-01", "2020-01-01"))         # one day wide is a window
+  expect_true(back("2024-01-01", "2020-01-01"))
+  expect_true(back(as.Date("2024-01-01"), as.Date("2020-01-01")))
+  expect_null(eff(NA))                                   # an empty box = always
+  expect_null(eff(NULL)); expect_null(eff(""))
   expect_identical(eff(" 2020-01-01 "), "2020-01-01")
-  # ...and the save is blocked on it, rather than writing a template whose window
-  # silently went missing
+  expect_identical(eff(as.Date("2020-01-01")), "2020-01-01")
+  # ...and the save is blocked on it, rather than writing a template that applies
+  # to no statement ever printed
   src <- .ui_src()
   blk <- .ui_block(src, "observeEvent\\(input\\$g_save", 18L)
-  expect_match(blk, "\\.eff_problems\\(input\\$g_eff_from, input\\$g_eff_to\\)")
+  expect_match(blk, "\\.eff_backwards\\(input\\$g_eff_from, input\\$g_eff_to\\)")
   expect_match(blk, "g_more_open\\(TRUE\\)")             # opens where the fix is
+  # the same words inline as it is picked, from ONE constant, so the message the
+  # box shows and the message the save gives can never drift apart
+  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 12L),
+               "\\.eff_backwards\\(input\\$g_eff_from, input\\$g_eff_to\\)")
+  expect_length(grep("\\.EFF_BACKWARDS_MSG", src), 3L)   # declared once, used twice
+  # the deleted machinery really is gone, not merely unreferenced
+  joined <- paste(src, collapse = "\n")
+  for (dead in c(".eff_bad", ".eff_txt", ".eff_show", ".eff_problems", ".eff_sentence"))
+    expect_false(grepl(dead, joined, fixed = TRUE), info = dead)
 })
 
-test_that("the validity window is read back to the person typing it", {
-  say <- .ui_fun(".eff_sentence", also = c(".eff_date", ".eff_show"))
-  expect_match(say("", ""), "any date")
-  expect_match(say("2020-01-01", ""), "^This layout applies from 01 Jan 2020")
-  expect_match(say("", "2024-12-31"), "up to 31 Dec 2024")
-  expect_match(say("2020-01-01", "2024-12-31"), "from 01 Jan 2020 to 31 Dec 2024")
+test_that("a validity window the pickers cannot show is refused, and never silently emptied", {
+  # A date picker can only hold a date, so a window written any other way has to be
+  # dealt with rather than quietly dropped. Two ways in, two answers:
+  #   * the Advanced YAML box REFUSES to apply one, so it can never be saved here;
+  #   * a template hand-edited on the server still OPENS -- it must, because this
+  #     modal is the only place that YAML can be fixed, and a toolkit that will not
+  #     open over a bad template locks the repair tool inside the thing it repairs --
+  #     with the boxes empty and a line saying so.
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  ok <- .ui_fun(".eff_stored_ok", also = ".eff_date")
+  expect_true(ok(list(effective_from = "2020-01-01", effective_to = NULL)))
+  expect_true(ok(list()))                                   # no window is fine
+  expect_false(ok(list(effective_from = "last year")))
+  blk <- .ui_block(src, "observeEvent\\(input\\$g_adv_apply", 30L)
+  expect_match(blk, "\\.eff_stored_ok\\(parsed\\)")
+  expect_match(blk, "must be dates", fixed = TRUE)
+  # opening never throws...
+  expect_match(joined, "value = tryCatch\\(\\.eff_date\\(v\\) %\\|\\|% \"\", error = function\\(e\\) \"\"\\)")
+  # ...and never pretends the template said "always"
+  expect_match(.ui_block(src, "output\\$g_eff_msg <- renderUI", 10L),
+               "!\\.eff_stored_ok\\(g\\$tmpl\\)")
+  expect_match(joined, "saved validity window is not a date", fixed = TRUE)
 })
 
 # ---------------------------------------------------------------------------
@@ -742,9 +922,12 @@ test_that("no INPUT id is drawn twice either", {
   # exception has to be argued in writing rather than happen by accident.
   src <- .ui_src()
   allow <- character(0)
+  # `.eff_picker` is in the list because it IS an input constructor: the validity
+  # window's two date boxes are built through it, so leaving it out would take two
+  # ids off the scan without anyone noticing.
   pat <- paste0("(actionButton|actionLink|textInput|textAreaInput|numericInput|dateInput",
                 "|selectInput|selectizeInput|checkboxInput|checkboxGroupInput|radioButtons",
-                "|sliderInput|fileInput|passwordInput)\\(\\s*\"([A-Za-z0-9_]+)\"")
+                "|sliderInput|fileInput|passwordInput|\\.eff_picker)\\(\\s*\"([A-Za-z0-9_]+)\"")
   ids <- unlist(regmatches(src, gregexpr(pat, src, perl = TRUE)))
   ids <- sub("\"$", "", sub("^[^\"]*\"", "", ids))
   ids <- setdiff(ids, allow)

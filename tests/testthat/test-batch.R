@@ -4,8 +4,8 @@
 # The failures these exist to prevent:
 #   * one unreadable file costing the other twenty-nine their conversion;
 #   * a row that looks converted when it was not (a template id beside a file no
-#     template read, rows that are really a memory-saving NULL);
-#   * `failing_check` splitting one kind of failure across several wordings, which
+#     template read);
+#   * `failing_check` splitting one kind of failure across several strings, which
 #     is the one thing that makes the column worth having.
 
 # ---- fixtures: CSV only, so nothing here needs poppler/tesseract -------------
@@ -33,9 +33,9 @@
   b
 }
 
-# The shipped wording maps, read the same way the app reads them. Tests assert
-# against THESE rather than against a copied sentence, so ui_labels.R stays free
-# to be reworded without silently dropping the check.
+# The shipped wording maps. `failing_check` carries engine CODES and the SCREEN
+# words them, so what these tests hold is the join: every code this file can emit
+# is a key of the map its prefix names. ui_labels.R stays free to be reworded.
 .b_labels <- function() {
   f <- file.path(engine_root(), "ui_labels.R")
   expect_true(file.exists(f))
@@ -139,16 +139,14 @@ test_that("files that failed the same way carry the identical failing_check", {
   expect_identical(sorted$failing_check[1], sorted$failing_check[2])
 })
 
-test_that("failing_check uses the wording the screen uses, not a raw code", {
-  L <- .b_labels()
+test_that("failing_check carries the engine code, not a sentence", {
   dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
   b <- .b_run(c(file.path(dir, "b_unknown.csv"), file.path(dir, "gone.csv")))
-  expect_identical(b$failing_check[1], unname(L$DIAG_PLAIN[["unknown_format"]]))
-  expect_identical(b$failing_check[2], unname(L$DIAG_PLAIN[["unreadable"]]))
+  expect_identical(b$failing_check[1], "diag:unknown_format")
+  expect_identical(b$failing_check[2], "diag:unreadable")
 })
 
-test_that("a failing check is named in plain words and beats the diagnostics", {
-  L <- .b_labels()
+test_that("a failing check names the check itself and beats the diagnostics", {
   fix <- fixture("tests/testthat/fixtures/kiwibank_broken_balance.csv")
   expect_true(file.exists(fix))
   b <- .b_run(fix)
@@ -156,76 +154,93 @@ test_that("a failing check is named in plain words and beats the diagnostics", {
   k <- b$result[[1]]$kpis
   first_fail <- k$name[k$status == "fail"][1]
   expect_false(is.na(first_fail))                        # the fixture must fail one
-  # "Failed: " prefix -- CHECK_PLAIN words a check as what it PROVES, and this
-  # frame has no pass/fail column beside it, so the bare phrase said the opposite.
-  expect_identical(b$failing_check, paste0("Failed: ", unname(L$CHECK_PLAIN[[first_fail]])))
+  expect_identical(b$failing_check, paste0("check:", first_fail))
 })
 
 test_that("a bundle's per-statement tag is stripped so grouping still works", {
   # An auto-split run tags every check "<name> [statement N]". That says WHERE in
   # the bundle, not WHAT went wrong; left in, one failure kind would scatter into
   # as many groups as the bundle has statements.
-  L <- .b_labels()
   res <- list(status = "needs_review",
               kpis = data.frame(name = "balance_reconciliation [statement 2]",
                                 status = "fail", stringsAsFactors = FALSE))
-  expect_identical(.failing_check(res, L),
-                   paste0("Failed: ", unname(L$CHECK_PLAIN[["balance_reconciliation"]])))
+  expect_identical(.failing_check(res), "check:balance_reconciliation")
 })
 
 test_that("a failing check wins over a diagnostic, and a diagnostic over the status", {
-  L <- .b_labels()
   kpis <- data.frame(name = c("dates_readable", "balance_reconciliation"),
                      status = c("pass", "fail"), stringsAsFactors = FALSE)
   diag <- data.frame(category = c("row_parse", "ocr"), severity = c("high", "info"),
                      stringsAsFactors = FALSE)
   # tier 1: the check, even though a high diagnostic is also present
-  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag), L),
-                   paste0("Failed: ", unname(L$CHECK_PLAIN[["balance_reconciliation"]])))
+  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag)),
+                   "check:balance_reconciliation")
   # tier 2: no failing check -> the most severe diagnostic that is not context
   kpis$status <- c("pass", "pass")
-  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag), L),
-                   unname(L$DIAG_PLAIN[["row_parse"]]))
+  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag)),
+                   "diag:row_parse")
   # tier 3: nothing specific at all -> the verdict, never a blank cell
   info_only <- data.frame(category = "none", severity = "info", stringsAsFactors = FALSE)
-  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = info_only), L),
-                   unname(L$STATUS_PLAIN[["needs_review"]]))
+  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = info_only)),
+                   "status:needs_review")
 })
 
-test_that("an unknown code falls back to the code itself rather than a blank", {
+test_that("every prefix names a wording map, and the code is a key of it", {
+  # THE SEAM. batch.R emits codes; the screen turns them into sentences. If a
+  # prefix named no map, or carried a code that map has never heard of, the
+  # "What to check" column would show Beth a raw snake_case code -- which is
+  # nothing crashing, so only a test that reads both sides can catch it.
+  # (test-seams.R separately pins those maps to cover EVERY code the engine can
+  # emit; between the two, no cell in this column can reach her as a code.)
   L <- .b_labels()
-  res <- list(status = "needs_review",
-              kpis = data.frame(name = "a_check_that_does_not_exist", status = "fail",
-                                stringsAsFactors = FALSE))
-  expect_identical(.failing_check(res, L), "Failed: a_check_that_does_not_exist")
-  # and with no wording file loaded at all, the raw code still comes through
-  expect_identical(.failing_check(res, new.env()), "Failed: a_check_that_does_not_exist")
+  emitted <- c(
+    .failing_check(list(status = "needs_review",
+                        kpis = data.frame(name = "balance_reconciliation", status = "fail",
+                                          stringsAsFactors = FALSE))),
+    .failing_check(list(status = "unsupported",
+                        diagnostics = data.frame(category = "unknown_format", severity = "high",
+                                                 stringsAsFactors = FALSE))),
+    .failing_check(list(status = "needs_review")))
+  expect_identical(emitted, c("check:balance_reconciliation", "diag:unknown_format",
+                              "status:needs_review"))
+  maps <- c(check = "CHECK_PLAIN", diag = "DIAG_PLAIN", status = "STATUS_PLAIN")
+  for (e in emitted) {
+    kind <- sub(":.*$", "", e)
+    expect_true(kind %in% names(maps), info = e)
+    expect_true(sub("^[^:]*:", "", e) %in% names(L[[maps[[kind]]]]), info = e)
+  }
 })
 
 # ---------------------------------------------------------------------------
-# Bounded memory
+# What the `result` column holds
 # ---------------------------------------------------------------------------
 
-test_that("a 50-file case does not hold 50 transaction tables, and says so", {
+test_that("the result column is the whole result, transaction rows included", {
+  # ONE rule in ONE place. convert_batch used to trim the rows itself behind a
+  # keep_rows flag, but only the CALLER knows when it has finished with them --
+  # app.R writes the governed feed from the rows, so it had to opt out and do the
+  # drop by hand, leaving two implementations with the engine's unreachable.
   dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
   b <- .b_run(file.path(dir, "a_anz.csv"))
-  r <- b$result[[1]]
-  # NULL, not a partially-matched marker: `$feed_rows` must not resolve to the
-  # flag that records the drop, or a reader sees a value where the data was.
-  expect_null(r$feed_rows)
-  expect_true(isTRUE(r$dropped_feed_rows))
-  # the count survives the drop, and the rows themselves are on disk
-  expect_equal(b$rows, 2L)
-  expect_true(any(grepl("\\.csv$", r$outputs)))
-})
-
-test_that("keep_rows = TRUE keeps the full table for a caller that asks", {
-  dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
-  b <- .b_run(file.path(dir, "a_anz.csv"), keep_rows = TRUE)
   r <- b$result[[1]]
   expect_true(is.data.frame(r$feed_rows))
   expect_equal(nrow(r$feed_rows), b$rows)
   expect_null(r$dropped_feed_rows)
+  expect_true(any(grepl("\\.csv$", r$outputs)))   # and the rows are on disk too
+})
+
+test_that("the app no longer asks convert_batch to keep the rows", {
+  # THE OTHER HALF OF THE SAME CHANGE, and it fails loudly if only one half lands.
+  # convert_batch has no `keep_rows` formal now, and convert_document() has no
+  # `...`, so a stale `keep_rows = TRUE` is forwarded into it and EVERY file in
+  # the case comes back "failed: unused argument". Nothing else in the suite runs
+  # the app's batch path, so this seam is the only thing that would notice.
+  expect_false("keep_rows" %in% names(formals(convert_batch)))
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  i <- grep("convert_batch\\(paths,", src)
+  expect_length(i, 1L)
+  blk <- src[i:min(length(src), i + 16L)]
+  expect_false(any(grepl("keep_rows", blk, fixed = TRUE)))
 })
 
 test_that("a form is counted in the values read, never in transactions", {

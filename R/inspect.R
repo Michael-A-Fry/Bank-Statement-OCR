@@ -51,48 +51,50 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   wbp <- input$words %||% list()
 
-  # Bands live in the template's reference space. The X-ray draws overlays ON each
-  # page's rendered raster, which is in that page's OWN point space, so scale the
-  # bands INTO the page's space per page. Membership then matches parse_pdf_table
-  # (which does the mirror -- scaling the words into the reference space). Same-size
-  # pages are unchanged (snap-to-1), so text-layer X-rays are identical to before.
-  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% .A4_W)); if (is.na(ref_w) || ref_w <= 0) ref_w <- .A4_W
-  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% .A4_H)); if (is.na(ref_h) || ref_h <= 0) ref_h <- .A4_H
+  # Bands live in THE BAND FRAME -- declared once at the top of R/parse_pdf_table.R,
+  # which is the authority. The X-ray is one of the DRAWERS named there: it paints
+  # overlays on each page's rendered raster, which is in that page's OWN point
+  # space, so it DIVIDES each band by the frame scale to land on the page. The
+  # reader does the exact mirror with the SAME function (multiplying each word into
+  # the frame), so a band drawn here and a band matched there are the same band.
+  #
+  # This file used to hand-roll the frame, the scale and the snap. The copy was not
+  # equivalent: it snapped on the RECIPROCAL ratio (|page/frame - 1| < snap) where
+  # pdf_band_frame_scale snaps on |frame/page - 1| < snap, so for a page 2.0-2.04%
+  # off the frame one of them treated it as the same size and the other did not --
+  # and the X-ray then drew a band up to 2% (about 10pt across an A4 page) away from
+  # where the reader matched it. A band drawn 10pt from where it is read is exactly
+  # the picture an analyst uses to decide a correct template is broken.
+  # Same-size pages scale by 1, so text-layer X-rays are untouched.
+  frame  <- pdf_band_frame(template)
   page_w <- input$page_width  %||% rep(NA_real_, length(wbp))
   page_h <- input$page_height %||% rep(NA_real_, length(wbp))
-  .band_to_page <- function(b, sx, sy) {
+  .band_to_page <- function(b, s) {
     if (is.null(b) || !length(b)) return(b)
-    if (!is.null(b$x_min)) b$x_min <- b$x_min * sx
-    if (!is.null(b$x_max)) b$x_max <- b$x_max * sx
-    if (!is.null(b$y_min)) b$y_min <- b$y_min * sy
-    if (!is.null(b$y_max)) b$y_max <- b$y_max * sy
+    if (!is.null(b$x_min)) b$x_min <- b$x_min / s[1]
+    if (!is.null(b$x_max)) b$x_max <- b$x_max / s[1]
+    if (!is.null(b$y_min)) b$y_min <- b$y_min / s[2]
+    if (!is.null(b$y_max)) b$y_max <- b$y_max / s[2]
     b
-  }
-  .page_scale <- function(p) {
-    sx <- if (is.finite(page_w[p]) && page_w[p] > 0) page_w[p] / ref_w else 1
-    sy <- if (is.finite(page_h[p]) && page_h[p] > 0) page_h[p] / ref_h else 1
-    if (abs(sx - 1) < .PAGE_SCALE_SNAP) sx <- 1
-    if (abs(sy - 1) < .PAGE_SCALE_SNAP) sy <- 1
-    c(sx, sy)
   }
 
   # metadata_regions that belong on page p (default page 1), scaled into page space
   # -> drawn as pinned header-value boxes so the X-ray shows where each is read from.
-  .page_meta <- function(p, sx = 1, sy = 1) {
+  .page_meta <- function(p, s = c(1, 1)) {
     if (!length(meta_regions)) return(list())
     keep <- vapply(meta_regions, function(b) identical(as.integer(b$page %||% 1), as.integer(p)), logical(1))
-    lapply(meta_regions[keep], .band_to_page, sx, sy)
+    lapply(meta_regions[keep], .band_to_page, s)
   }
   pages <- lapply(seq_along(wbp), function(p) {
-    s <- .page_scale(p); sx <- s[1]; sy <- s[2]
-    cols_p   <- lapply(cols, .band_to_page, sx, sy)
-    region_p <- .band_to_page(region, sx, sy)
-    # force_rows are stored in reference space; scale to this page for the overlay.
+    s <- pdf_band_frame_scale(frame, page_w[p], page_h[p])
+    cols_p   <- lapply(cols, .band_to_page, s)
+    region_p <- .band_to_page(region, s)
+    # force_rows are stored in the band frame; divide onto this page for the overlay.
     fr_p <- if (is.null(force_rows) || !length(force_rows)) force_rows
-            else lapply(force_rows, function(fb) { fb$y_min <- (fb$y_min %||% NA) * sy; fb$y_max <- (fb$y_max %||% NA) * sy; fb })
+            else lapply(force_rows, function(fb) { fb$y_min <- (fb$y_min %||% NA) / s[2]; fb$y_max <- (fb$y_max %||% NA) / s[2]; fb })
     w <- wbp[[p]]
     if (is.null(w) || !nrow(w)) return(list(region = region_p, bands = cols_p,
-      words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p, sx, sy)))
+      words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p, s)))
     w <- as.data.frame(w, stringsAsFactors = FALSE)
     if (is.null(w$redacted)) w$redacted <- FALSE
     cx <- w$x + w$width / 2
@@ -152,7 +154,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
       rows <- .mark_stitched(rows, info)
       rows <- .mark_continuations(rows)
     }
-    list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, sx, sy))
+    list(region = region_p, bands = cols_p, words = words, rows = rows, meta_regions = .page_meta(p, s))
   })
   names(pages) <- as.character(seq_along(wbp))
   # Year-less fallback, mirrored from parse_pdf_table so the X-ray never

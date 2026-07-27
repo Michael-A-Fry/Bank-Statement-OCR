@@ -110,102 +110,45 @@ source("ui_labels.R")
 # About-page + tutorial HTML content lives in ui_content.R (readability).
 source("ui_content.R")
 
+# The whole design system is www/app.css, served off disk by Shiny. If the folder
+# did not travel with the install, every screen renders as bare Bootstrap: still
+# usable, but it does not look like the tool anyone was shown, and a user's first
+# thought is that something is broken with their data. Say it once, loudly, to
+# whoever started the server -- the same rule as a settings file that would not
+# parse. NB: whatever copies this app to the server (scripts/bundle-offline.R,
+# or a hand copy) has to include www/.
+APP_CSS <- file.path("www", "app.css")
+if (!file.exists(APP_CSS))
+  warning(paste("STYLESHEET NOT FOUND: www/app.css is missing, so Statement Studio will",
+                "render unstyled. Copy the www/ folder next to app.R and restart."),
+          call. = FALSE, immediate. = TRUE)
+
 # ---------------------------------------------------------------------------
 ui <- fluidPage(
   tags$head(
     tags$title("Statement Studio"),
-    # One design system, all inline (the app must work offline / air-gapped: no CDN
-    # fonts, scripts or icon packs). Two style tags: this one is layout and shape,
-    # the one below carries the colour/size tokens and the elevated surfaces.
-    tags$style(HTML("
-     /* Layout and shape rules. THE COLOURS AND SIZES LIVE IN ONE PLACE ONLY --
-        the single :root block in the second style tag below. There used to be a
-        :root here too; being first, every value in it was overridden by that one,
-        so editing a colour here changed nothing on screen. If you are changing a
-        colour, a radius or a shadow, do it there. */
-     body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,'Helvetica Neue',Arial,sans-serif;
-          color:var(--ink);font-size:14px}
-     h1,h2,h3,h4,h5{font-weight:600;color:var(--ink)}
-     h4{font-size:16.5px;margin-top:20px}
-     hr{border-top-color:var(--line)}
-     .ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
-     .muted{color:var(--muted)}
-     .mono{font-family:Consolas,'Courier New',monospace;white-space:pre-wrap}
-     /* .note -- the pale blue 'here is what the tool worked out' panel. It was
-        hand-rolled inline in two places, which is how two panels drift apart. */
-     .note{padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px}
-     .modal-lg{width:95%;max-width:1240px}
-     .modal-content{border-radius:12px}
-     /* header */
-     .app-header{display:flex;align-items:baseline;flex-wrap:wrap;padding:14px 0 10px}
-     .app-header>*{margin-right:12px}
-     .app-mark{display:inline-block;width:13px;height:13px;border-radius:4px;background:var(--brand);align-self:center}
-     .app-title{font-size:21px;font-weight:700;letter-spacing:.2px}
-     .app-tagline{font-size:13px;color:var(--muted)}
-     /* tabs: quiet underline style, active = product green */
-     .nav-tabs{border-bottom:2px solid var(--line);margin-bottom:4px}
-     .nav-tabs>li>a{border:none;border-bottom:3px solid transparent;border-radius:0;
-       color:var(--muted);font-weight:600;padding:9px 14px;margin-right:2px}
-     .nav-tabs>li>a:hover{background:var(--brand-tint);border:none;
-       border-bottom:3px solid var(--brand-line);color:var(--brand)}
-     .nav-tabs>li.active>a,.nav-tabs>li.active>a:hover,.nav-tabs>li.active>a:focus{
-       border:none;border-bottom:3px solid var(--brand);color:var(--brand);background:transparent}
-     /* buttons. NB: Shiny action/download buttons always carry btn-default even
-        when another btn-* class is added, so the btn-default skin must exclude
-        those or it beats them on focus (a clicked Convert would turn pale). */
-     .btn{border-radius:7px;font-weight:600}
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){
-       border-color:#cfd6d2;color:var(--ink)}
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):focus{
-       background:var(--panel);border-color:#b9c2bd;color:var(--ink)}
-     .btn-primary{background:var(--brand);border-color:var(--brand-dark);color:#fff}
-     .btn-primary:hover,.btn-primary:focus,.btn-primary:active,.btn-primary:active:focus{
-       background:var(--brand-dark);border-color:var(--brand-dark);color:#fff}
-     .btn-warning{background:#f7c948;border-color:#dfa92e;color:#4a3200}
-     .btn-warning:hover,.btn-warning:focus{background:#eeb63c;border-color:#c99518;color:#402b00}
-     .btn-danger{background:#fff;border-color:#e3a4ae;color:var(--bad)}
-     .btn-danger:hover,.btn-danger:focus{background:#fdecec;border-color:var(--bad);color:var(--bad)}
-     /* panels + forms */
-     .well{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:none}
-     .form-control{border-radius:7px;border-color:#cfd6d2;box-shadow:none}
-     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,32,91,.15)}
-     .help-block{color:var(--muted);font-size:12.5px}
-     .progress-bar{background-color:var(--brand)}
-     /* tables (DT) */
-     table.dataTable{font-size:13px}
-     table.dataTable thead th,table.dataTable thead td{
-       background-color:var(--panel)!important;border-bottom:2px solid var(--line)!important;font-size:12.5px}
-     table.dataTable tbody tr:hover{background:#f3f8f4}
-     /* collapsed sections */
-     details>summary{cursor:pointer}
-     /* downloads box (appears in the sidebar once a conversion produced files) */
-     .dl-box{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:10px;
-       padding:10px 12px;margin:10px 0}
-     .dl-box .btn{margin:3px 6px 3px 0}
-     /* small status chips on the result headline */
-     .chip{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;
-       margin:2px 6px 0 0;background:#f2f4f3;border:1px solid var(--line);color:#4a555f}
-     .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
-     .shiny-notification{border-radius:10px;border:1px solid var(--line);
-       box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:13.5px}
-     /* About hub: the journey entry - two doors and a quiet third */
-     .hub{max-width:1020px}
-     .hub-lead{font-size:15.5px;color:#3a4652;max-width:780px;line-height:1.55;margin:4px 0 18px}
-     .hub-cards{display:flex;flex-wrap:wrap}
-     a.hub-card{flex:1 1 260px;max-width:330px;margin:0 14px 14px 0;padding:16px 18px;
-       border:1px solid var(--line);border-radius:12px;background:#fff;display:block;
-       color:var(--ink);text-decoration:none}
-     a.hub-card:hover,a.hub-card:focus{border-color:var(--brand-line);
-       box-shadow:0 4px 14px rgba(0,32,91,.12);text-decoration:none;color:var(--ink)}
-     a.hub-card-primary{background:var(--brand-tint);border-color:var(--brand-line)}
-     a.hub-card-quiet{background:var(--panel)}
-     .hub-card-kicker{font-size:11.5px;font-weight:700;letter-spacing:.6px;
-       text-transform:uppercase;color:var(--brand);margin-bottom:4px}
-     .hub-card-title{font-size:17px;font-weight:700;margin-bottom:6px}
-     .hub-card-body{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:10px}
-     .hub-card-go{font-size:13px;font-weight:700;color:var(--brand)}
-    ")),
+    # THE DESIGN SYSTEM lives in www/app.css, which Shiny serves from disk. It is
+    # still entirely ours and entirely local -- no CDN font, script or icon pack --
+    # so air-gapping is untouched; it is simply not 265 lines of CSS wedged into the
+    # R that builds the screen. The ?v= is the engine version, so an upgraded
+    # install cannot serve a browser its cached copy of the old stylesheet.
+    tags$link(rel = "stylesheet", type = "text/css",
+              href = sprintf("app.css?v=%s", engine_version())),
+    # A DATE BOX MUST NOT THROW ON ITS WAY IN. Shiny bundles bootstrap-datepicker
+    # (the validity window on the template toolkit is the app's only date box) and
+    # then renames the plugin to bsDatepicker via its own noConflict. The library's
+    # OWN document-ready hook still calls $(...).datepicker(), which by then no
+    # longer exists, so the first date box on a page throws a TypeError into the
+    # console. noConflict puts back whatever $.fn.datepicker was BEFORE the library
+    # loaded, which on Bootstrap 3 is nothing -- so give it something: a shim that
+    # forwards to bsDatepicker. The hook's selector ([data-provide=datepicker-inline])
+    # matches nothing Shiny renders, so this makes it the no-op it was always meant
+    # to be. Left alone it is an uncaught exception in the middle of a modal full of
+    # dynamically inserted inputs, which is the one place this app has already been
+    # bitten by an exception aborting a bind pass.
+    tags$script(HTML(
+      "$.fn.datepicker = $.fn.datepicker || function(){
+         return $.fn.bsDatepicker ? $.fn.bsDatepicker.apply(this, arguments) : this; };")),
     # Enter in the Admin password box = click Enter (no mouse trip). The
     # trigger('change') first flushes the debounced text value, so a fast
     # type-then-Enter never submits a stale password.
@@ -216,66 +159,8 @@ ui <- fluidPage(
     # Loading feedback: a real animation, not just the grey-out. A busy pill shows
     # whenever Shiny is working (convert, X-ray render, any recompute); recalculating
     # outputs dim and float a spinner so a slow plot/table clearly says "loading".
-    tags$style(HTML("
-     @keyframes ss-spin{to{transform:rotate(360deg)}}
-     @keyframes ss-fade{from{opacity:0}to{opacity:1}}
-     #ss-busy{position:fixed;right:18px;bottom:18px;z-index:2000;display:none;
-       align-items:center;gap:9px;background:#fff;border:1px solid var(--line);
-       border-left:4px solid var(--brand);border-radius:10px;padding:9px 14px;
-       box-shadow:0 6px 22px rgba(0,0,0,.14);font-size:13px;font-weight:600;color:var(--ink)}
-     #ss-busy.on{display:flex;animation:ss-fade .15s ease}
-     .ss-ring{width:16px;height:16px;border-radius:50%;border:2.5px solid var(--brand-line);
-       border-top-color:var(--brand);animation:ss-spin .7s linear infinite}
-     /* dim + spinner over any output that is recalculating */
-     .shiny-bound-output.recalculating{opacity:.45;transition:opacity .1s}
-     .shiny-plot-output.recalculating{position:relative}
-     .shiny-plot-output.recalculating::after{content:'';position:absolute;top:50%;left:50%;
-       width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
-       border:3px solid var(--brand-line);border-top-color:var(--brand);
-       animation:ss-spin .7s linear infinite}
-     /* CONVERTING: unmissable, not a corner (N32). A scanned statement can run for
-        tens of seconds while the page looks completely idle, so people click
-        Convert again, switch tabs, or assume it has hung. Shiny puts its progress
-        panel bottom-right; centre it, enlarge it, and dim the page behind it.
-        Styled ONCE here, so all five withProgress sites are covered together.
-        An ordinary showNotification toast is untouched and stays in the corner --
-        the body class below is only set for a PROGRESS notification. */
-     body.ss-run::before{content:'';position:fixed;inset:0;background:rgba(21,32,43,.42);
-       z-index:1900;animation:ss-fade .15s ease}
-     body.ss-run #shiny-notification-panel{position:fixed;top:50%;left:50%;right:auto;bottom:auto;
-       transform:translate(-50%,-50%);width:min(440px,92vw);z-index:1901}
-     body.ss-run #shiny-notification-panel .shiny-notification{padding:28px 30px 26px;
-       text-align:center;border:1px solid var(--brand-line);border-left:1px solid var(--brand-line);
-       box-shadow:0 18px 50px rgba(0,0,0,.28);opacity:1}
-     body.ss-run #shiny-notification-panel .shiny-notification::before{content:'';display:block;
-       width:34px;height:34px;margin:0 auto 16px;border-radius:50%;
-       border:3px solid var(--brand-line);border-top-color:var(--brand);
-       animation:ss-spin .7s linear infinite}
-     /* A running job is not dismissible: closing this cancels nothing, it only
-        hides the one thing on screen saying the tool is busy. */
-     body.ss-run #shiny-notification-panel .shiny-notification-close{display:none}
-     /* Shiny nests .shiny-progress-notification > [.progress, .progress-text] --
-        the BAR before the words, with an inline display:block no rule can hide.
-        Make that element the column and re-order: message, detail, then how far.
-        The two texts are SPANS, so they need display:block. */
-     body.ss-run #shiny-notification-panel .shiny-progress-notification{display:flex;
-       flex-direction:column}
-     body.ss-run #shiny-notification-panel .progress-text{order:1}
-     body.ss-run #shiny-notification-panel .progress{order:2;margin:20px 0 0;height:6px;
-       background:var(--line);border-radius:999px;box-shadow:none}
-     body.ss-run #shiny-notification-panel .progress-bar{background:var(--brand);box-shadow:none}
-     body.ss-run #shiny-notification-panel .progress-message{display:block;font-size:20px;
-       font-weight:700;color:var(--ink);line-height:1.35}
-     body.ss-run #shiny-notification-panel .progress-detail{display:block;font-size:14px;
-       color:var(--muted);margin-top:8px}
-     body.ss-run #ss-busy{display:none}   /* the corner pill is redundant now */
-     /* prominent download bar at the top of a result */
-     .dl-hero{display:flex;align-items:center;flex-wrap:wrap;gap:10px;
-       background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:10px;
-       padding:12px 16px;margin:2px 0 14px}
-     .dl-hero .dl-hero-label{font-weight:700;color:var(--brand);margin-right:4px}
-     .dl-hero .btn{font-size:15px;padding:8px 18px}
-    ")),
+    # The pill, the dim and the centred CONVERTING overlay are styled in app.css
+    # (part 2); this is only what turns them on.
     tags$script(HTML(
       "(function(){var t=null;
         function pill(){var p=document.getElementById('ss-busy');
@@ -303,134 +188,6 @@ ui <- fluidPage(
           ssRun();
         });
       })();")),
-    # ---- Elevated design system (layered last so it wins the cascade). One
-    # brand accent (NZ-Police navy); green/amber/red reserved for trust meaning.
-    # All self-contained: no CDN fonts, scripts or icons. ------------------------
-    tags$style(HTML("
-     /* THE design tokens. One block, one place: every colour, radius and shadow
-        the app uses is declared here. (Nothing above re-declares them.) */
-     :root{
-       /* Brand accent = a Qlik-family green, so arriving from Qlik Sense feels
-          continuous. Deep enough that white button text stays legible. Green also
-          reads as go/positive/money-in here, which coheres. The wordmark stays
-          NZ-Police navy (below) so this is our tool in the Qlik world, not a clone. */
-       --brand:#00793d; --brand-dark:#004a24; --brand-600:#00612f;
-       --brand-tint:#e6f3ec; --brand-line:#bcdcc8;
-       --ink:#15202b; --slate:#43515f; --muted:#68727d;
-       --line:#e6eaee; --line-2:#d6dce2; --bg:#f3f5f4; --surface:#ffffff; --panel:#f8faf9;
-       --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
-       --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
-       --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
-       --r:10px; --r-sm:8px; --r-lg:14px;
-       --sh-1:0 1px 2px rgba(16,32,50,.05);
-       --sh-2:0 1px 3px rgba(16,32,50,.06),0 6px 18px rgba(16,32,50,.07);
-     }
-     body{background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
-     .container-fluid{max-width:1340px;margin:0 auto;padding:0 22px 40px}
-     a{color:var(--brand)} a:hover,a:focus{color:var(--brand-dark)}
-     h1,h2,h3,h4,h5{color:var(--ink);font-weight:700;letter-spacing:-.01em}
-     h3{font-size:19px} h4{font-size:16px;margin-top:22px}
-     p{line-height:1.55} .muted,.help-block{color:var(--muted)}
-     hr{border-top-color:var(--line)}
-     /* app bar: slim wordmark row, full-bleed with a hairline under it */
-     .app-header{display:flex;align-items:center;gap:12px;margin:0 -22px;
-       padding:13px 22px;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:var(--sh-1)}
-     .app-mark{width:22px;height:22px;border-radius:6px;align-self:center;
-       background:linear-gradient(135deg,var(--brand),var(--brand-600));
-       box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
-     .app-title{font-size:19px;font-weight:800;letter-spacing:-.02em;color:#00205b}
-     .app-tagline{font-size:13px;color:var(--muted);align-self:center}
-     /* main tab row = the app nav */
-     #main_tabs.nav-tabs{margin:0 -22px 20px;padding:0 22px;background:var(--surface);
-       border-bottom:1px solid var(--line);box-shadow:var(--sh-1);gap:2px}
-     #main_tabs.nav-tabs>li>a{font-size:14.5px;font-weight:700;padding:12px 16px;color:var(--muted)}
-     #main_tabs.nav-tabs>li.active>a{color:var(--brand)}
-     .nav-tabs>li>a{font-weight:600;color:var(--muted)}
-     /* surfaces */
-     .well{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);padding:20px}
-     /* inputs */
-     .form-control{height:auto;padding:9px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
-       font-size:14.5px;color:var(--ink);background:var(--surface);box-shadow:none}
-     .form-control:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(0,121,61,.16)}
-     select.form-control{padding-right:30px}
-     .shiny-input-container>label,label.control-label{font-weight:700;font-size:13.5px;color:var(--slate);margin-bottom:6px}
-     .selectize-input{border:1px solid var(--line-2)!important;border-radius:var(--r-sm)!important;padding:8px 12px!important;box-shadow:none!important}
-     .selectize-input.focus{border-color:var(--brand)!important;box-shadow:0 0 0 3px rgba(0,121,61,.16)!important}
-     .selectize-dropdown{border-radius:var(--r-sm);border-color:var(--line-2)}
-     /* buttons: one navy accent; the old gold 'toolkit' buttons become navy-secondary */
-     .btn{border-radius:var(--r-sm);font-weight:700;padding:9px 16px;font-size:14.5px;box-shadow:none;transition:background .12s,border-color .12s}
-     .btn-primary{background:var(--brand);border:1px solid var(--brand);color:#fff;box-shadow:var(--sh-1)}
-     .btn-primary:hover,.btn-primary:focus,.btn-primary:active,.btn-primary:active:focus{background:var(--brand-600);border-color:var(--brand-600);color:#fff}
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){background:var(--surface);border:1px solid var(--line-2);color:var(--ink)}
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,
-     .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):focus{background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand)}
-     .btn-warning{background:var(--brand-tint);border:1px solid var(--brand-line);color:var(--brand)}
-     .btn-warning:hover,.btn-warning:focus{background:#e2ebf7;border-color:var(--brand);color:var(--brand-dark)}
-     .btn-danger{background:#fff;border:1px solid var(--bad-line);color:var(--bad)}
-     .btn-danger:hover,.btn-danger:focus{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
-     /* advanced disclosure (Convert: 'It picked the wrong bank?') — obvious, one click */
-     details.adv-bank{margin:4px 0 2px}
-     details.adv-bank>summary{cursor:pointer;color:var(--brand);font-weight:700;font-size:13.5px;list-style:none;padding:4px 0}
-     details.adv-bank>summary::-webkit-details-marker{display:none}
-     details.adv-bank>summary::before{content:'\\25B8  '}
-     details.adv-bank[open]>summary::before{content:'\\25BE  '}
-     /* tables (DT) */
-     table.dataTable{font-size:13.5px}
-     table.dataTable thead th,table.dataTable thead td{background:var(--bg)!important;color:var(--slate)!important;
-       text-transform:uppercase;font-size:11.5px;letter-spacing:.4px;font-weight:700;
-       border-bottom:1px solid var(--line-2)!important;padding:10px 12px!important}
-     table.dataTable tbody td{padding:9px 12px}
-     table.dataTable tbody tr:hover{background:var(--brand-tint)!important}
-     /* DataTables paints its sort arrow as a background SPRITE on the header cell.
-        The rule above uses the `background:` SHORTHAND with !important, which
-        resets background-repeat to its initial `repeat` -- so the arrow tiled
-        across the whole cell as a row of stray triangles over the last column.
-        Put the sprite back where it belongs; the header keeps its colour. */
-     table.dataTable thead th.sorting,table.dataTable thead th.sorting_asc,
-     table.dataTable thead th.sorting_desc{background-repeat:no-repeat!important;
-       background-position:center right 8px!important;padding-right:26px}
-     .dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{
-       border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 8px}
-     /* verdict banner: the result hero */
-     .verdict{display:flex;gap:14px;align-items:flex-start;border:1px solid;border-left-width:5px;
-       border-radius:var(--r-lg);padding:16px 20px;margin:2px 0 16px;box-shadow:var(--sh-1)}
-     .verdict-ico{flex:0 0 auto;width:34px;height:34px;border-radius:50%;color:#fff;font-size:19px;font-weight:800;
-       display:flex;align-items:center;justify-content:center;margin-top:1px}
-     .verdict-title{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:0 0 3px;line-height:1.2}
-     .verdict-body{margin:0 0 6px;color:var(--slate);line-height:1.5}
-     .verdict-high{background:var(--ok-bg);border-color:var(--ok-line);border-left-color:var(--ok)}
-     .verdict-high .verdict-ico{background:var(--ok)}
-     .verdict-medium{background:var(--warn-bg);border-color:var(--warn-line);border-left-color:var(--warn)}
-     .verdict-medium .verdict-ico{background:var(--warn)}
-     .verdict-low{background:var(--bad-bg);border-color:var(--bad-line);border-left-color:var(--bad)}
-     .verdict-low .verdict-ico{background:var(--bad)}
-     /* stat tiles */
-     .stat-grid{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 10px}
-     .stat{flex:1 1 130px;min-width:118px;background:var(--surface);border:1px solid var(--line);
-       border-radius:var(--r);padding:12px 14px;box-shadow:var(--sh-1)}
-     .stat-label{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
-     .stat-value{font-size:22px;font-weight:800;letter-spacing:-.01em;margin-top:3px;color:var(--ink)}
-     /* per-statement table for an auto-split bundle */
-     .split-table{border-collapse:collapse;font-size:13px;margin:0 0 14px;max-width:900px}
-     .split-table th,.split-table td{border:1px solid var(--line);padding:5px 10px;text-align:left}
-     .split-table th{background:var(--brand-tint);color:var(--slate);font-weight:700}
-     /* chips */
-     .chip{background:#eef1f4;border:1px solid var(--line);color:var(--slate);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600}
-     .chip-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
-     /* download bars */
-     .dl-hero{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r-lg);padding:13px 18px}
-     .dl-hero .btn{font-size:15px;padding:9px 18px}
-     .dl-box{background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:var(--r)}
-     /* About hub cards */
-     .hub-lead{font-size:17px;color:var(--slate);line-height:1.55;margin:6px 0 20px}
-     a.hub-card{border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1);background:var(--surface);padding:18px 20px}
-     a.hub-card:hover,a.hub-card:focus{box-shadow:var(--sh-2);border-color:var(--brand-line)}
-     a.hub-card-primary{background:linear-gradient(180deg,#eef7f1,#e3f2e9);border-color:var(--brand-line)}
-     a.hub-card-quiet{background:var(--bg)}
-     .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
-     .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
-     .hub-card-go{color:var(--brand)}
-    "))
   ),
   div(class = "app-header",
     span(class = "app-mark"),
@@ -494,11 +251,20 @@ ui <- fluidPage(
           # because the alternative is an audit trail that names the server's own
           # account for the whole department.
           uiOutput("cv_whoami"),
-          # THE BANK, IN FRONT. It sat inside "It picked the wrong bank?" on the
-          # assumption detection usually gets it right. On real statements it does
-          # not yet, which makes the override one of the most-used controls on the
-          # page - so hiding it put a click on a common path. Auto-detect stays the
-          # default, so nobody has to answer it; it is simply visible when they do.
+          # THE BANK, IN FRONT, AND ONLY HERE. It sat inside "It picked the wrong
+          # bank?" on the assumption detection usually gets it right. On real
+          # statements it does not yet, which makes the override one of the
+          # most-used controls on the page - so hiding it put a click on a common
+          # path. Auto-detect stays the default, so nobody has to answer it; it is
+          # simply visible when they do.
+          #
+          # There used to be a SECOND bank picker inside the disclosure below, with
+          # its own state and its own spelling of "no bank". bank_choice() read the
+          # front one first, so choosing a bank in the disclosure while this one
+          # named a different bank was silently discarded - the tool converted with
+          # the bank the user had stopped asking for and said nothing. Verified in
+          # the browser before it was removed: front=ANZ + disclosure=ASB left the
+          # template list showing ANZ's templates only. One control, one answer.
           selectInput("cv_bank_quick", "Bank",
                       choices = c("Detect automatically" = ""), width = "100%"),
           actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
@@ -515,10 +281,14 @@ ui <- fluidPage(
             # is untouched by this). The tick-box only ever produced the puzzle "I
             # built this template and it does not work". It is now a deployment
             # setting: app.user_templates_default in config/config.yaml.
-            div(style = "padding-top:10px", uiOutput("cv_bank_ui"),
-              # STATIC, not part of cv_bank_ui: its choices are rewritten every
-              # time a bank is chosen, and a control that re-renders under the
-              # hand choosing it loses the choice being made.
+            # The bank itself is the control in FRONT of this panel; what is left
+            # in here is the one thing that is genuinely rarer - forcing an exact
+            # audited template. STATIC, never a renderUI: its choices are rewritten
+            # every time a bank is chosen, and a control that re-renders under the
+            # hand choosing it loses the choice being made.
+            div(style = "padding-top:10px",
+              helpText(class = "muted", style = "margin-top:0",
+                       "Set the Bank above. If you need one exact template, force it here."),
               selectInput("cv_template", "Template (optional)",
                           choices = c("(auto-detect)" = ""), width = "100%")))
         ),
@@ -1192,7 +962,10 @@ server <- function(input, output, session) {
   cv_pick_templates <- reactive({
     if (USE_USER_TEMPLATES) templates() else proven_templates()
   })
-  # Keep the visible picker's list in step with the templates actually loaded.
+  # Keep THE bank picker's list in step with the templates actually loaded. One
+  # list-builder, because there is now one picker: this observer used to have a
+  # twin immediately below it, building the same list of banks off the same
+  # reactive for a second, hidden bank control.
   observe({
     ts <- cv_pick_templates()
     b <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
@@ -1202,20 +975,11 @@ server <- function(input, output, session) {
                       selected = isolate(input$cv_bank_quick) %||% "")
   })
 
-  output$cv_bank_ui <- renderUI({
-    ts <- cv_pick_templates()
-    banks <- sort(unique(vapply(ts, function(t) t$bank %||% "", character(1))))
-    banks <- banks[nzchar(banks)]
-    # The exact-template picker is declared in the UI and FILLED IN by the
-    # observer below, not here: it has to follow whichever bank picker was used.
-    selectInput("cv_bank", "Bank (optional)", c("(auto-detect)", banks), width = "100%")
-  })
-
   # THE EXACT-TEMPLATE LIST FOLLOWS THE BANK. Choosing a bank and then scrolling a
   # hundred other banks' templates is the tool refusing to use what it already
   # knows -- the same rule as "never ask a question the tool can answer", applied
-  # to a list. Either bank picker narrows it (bank_choice() reads them in the same
-  # order the conversion does), and "Detect automatically" shows everything.
+  # to a list. The bank picker narrows it (through bank_choice(), the same reading
+  # the conversion does), and "Detect automatically" shows everything.
   # A template already picked survives a bank change when it still belongs to that
   # bank; otherwise it clears, because leaving a hidden, out-of-scope template
   # selected is how a statement gets read by a template nobody chose on purpose.
@@ -2246,13 +2010,13 @@ server <- function(input, output, session) {
     open_guided(p, basename(p), upload_id = id)
   })
 
-  # bank_choice() -- WHICH BANK the user asked for, read in ONE place. The picker
-  # in front wins; the one inside "It picked the wrong bank?" is the same choice
-  # for anyone who opens that panel. Blank in both means auto-detect. The
-  # conversion and the exact-template list both read it here, so the list can
-  # never offer templates the conversion would not have used.
-  pick <- function(v) if (is.null(v) || !nzchar(v) || identical(v, "(auto-detect)")) NULL else v
-  bank_choice <- reactive(pick(input$cv_bank_quick) %||% pick(input$cv_bank))
+  # bank_choice() -- WHICH BANK the user asked for: ONE control, read in ONE place.
+  # Blank means auto-detect. The conversion and the exact-template list both read
+  # it here, so the list can never offer templates the conversion would not have
+  # used. (Until now there were two pickers and this line preferred the front one,
+  # which meant a bank chosen in the disclosure was thrown away without a word.)
+  pick <- function(v) if (is.null(v) || !nzchar(v)) NULL else v
+  bank_choice <- reactive(pick(input$cv_bank_quick))
   # ...and the exact template, if one was forced. Same one-place reading, so the
   # single conversion and a whole case folder cannot honour different overrides.
   tpl_choice <- reactive(pick(input$cv_template))
@@ -2438,7 +2202,6 @@ server <- function(input, output, session) {
     # this conversion is using, and any file open in the toolkit, are excluded.
     safe(sweep_temp_dirs(keep_hours = 24,
                          exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
-    cv_forced(list())   # a new file -> forget any force-included rows from the last one
     # A single conversion ends any case folder on screen. It has to: the sweep
     # above has just reclaimed the batch's scratch folder, so every other file's
     # workbook is gone, and a table whose downloads no longer resolve is worse
@@ -2447,8 +2210,7 @@ server <- function(input, output, session) {
     who <- who_now()
     res <- convert_now(src, sess, forced_rows = NULL, force_tpl = force_tpl,
                        include_user = include_user)
-    cv_res(res); cv_dir(sess); cv_src(list(path = src, name = name))
-    cv_fb_done(FALSE); cv_fb_rec(NULL)   # reset the feedback panel for the new conversion
+    cv_dir(sess)
     # Complete the audit record with the attested vs detected identity split.
     stamp_identity(res$run_id %||% NA_character_)
     # Capture the upload + its outcome so a failed/abandoned new format is a
@@ -2459,8 +2221,36 @@ server <- function(input, output, session) {
       trust = res$trust$level %||% NA_character_,
       detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
     else NA_character_
-    cv_upload_id(uid)
+    # The result page is now THIS statement's, in one line...
+    show_result(res, list(path = src, name = name), uid)
+    # ...and this is what the governed feed did with it (the last word on
+    # cv_recorded / cv_feed_gate, which show_result has just cleared).
     publish_result(res, record)
+  }
+
+  # show_result(res, src, upload_id, gate, recorded) -- THE RESULT PAGE'S STATE,
+  # defined ONCE. Everything below the Convert sidebar (the verdict, the proof
+  # strip, the transactions, the downloads, the feedback panel, the feed line, the
+  # "teach it this layout" route) reads these seven reactives and nothing else.
+  #
+  # Three functions used to set overlapping subsets of them by hand -- a single
+  # conversion, a batch finishing, and a batch row being opened -- and the way that
+  # goes wrong is silent: one reactive left behind puts the PREVIOUS statement's
+  # feed verdict, feedback panel or download beside this statement's figures, and
+  # every one of those reads as a fact about the statement on screen. (It really
+  # did: a finished batch left cv_feed_gate / cv_recorded holding the last file in
+  # the loop.) Called with no arguments it means "no statement is open" -- which is
+  # exactly the state a batch table sits in until a row is clicked.
+  show_result <- function(res = NULL, src = NULL, upload_id = NA_character_,
+                          gate = NULL, recorded = FALSE) {
+    cv_res(res)
+    cv_src(src)                        # the file itself, for the toolkit / X-ray
+    cv_upload_id(upload_id)            # the tracked upload this result belongs to
+    cv_feed_gate(gate)                 # what the governed feed did with THIS run
+    cv_recorded(isTRUE(recorded))      # ...and whether this run feeds at all
+    cv_fb_done(FALSE); cv_fb_rec(NULL) # the rating is per statement
+    cv_forced(list())                  # rows forced onto the last one are not this one's
+    invisible(res)
   }
 
   # publish_result(res, record) -- write the governed feed for this conversion and
@@ -2474,8 +2264,9 @@ server <- function(input, output, session) {
   # `record = FALSE` (the bundled sample, and the preview re-convert after saving a
   # template) neither feeds nor claims anything about the feed.
   # Returns the gate so a caller converting MANY files can keep one verdict per
-  # file; the reactives it sets are the single-result screen's copy of the last
-  # one, and a batch overwrites them when a row is opened.
+  # file. The two reactives it sets are show_result()'s, written here because the
+  # feed verdict is only known once the write has happened; a batch clears them
+  # again when its loop ends and sets them from the row the user opens.
   publish_result <- function(res, record) {
     cv_recorded(isTRUE(record))
     gate <- if (isTRUE(record)) safe(write_feed(res, CONFIG), NULL) else NULL
@@ -2500,6 +2291,17 @@ server <- function(input, output, session) {
   # "statement.pdf" would have the second silently overwrite the first's workbook
   # and both rows would offer the same download. A "(2)" suffix is visible in the
   # table and in the downloaded file name, so the clash is stated, never quiet.
+  #
+  # IT CANNOT BE REPLACED BY GIVING EACH FILE ITS OWN SUBFOLDER, which is the
+  # obvious-looking cure. The clash is in the OUTPUT name, not the input path:
+  # convert_document() writes to `outdir` under
+  # tools::file_path_sans_ext(basename(path)) (R/convert.R), and convert_batch()
+  # takes ONE outdir for the whole case (R/batch.R passes `...` straight through,
+  # so it cannot vary per file). Two inputs at sess/1/statement.pdf and
+  # sess/2/statement.pdf therefore still both write sess/statement.xlsx, and both
+  # rows' Download buttons -- which resolve through res$outputs -- still point at
+  # the same workbook. This function is the only thing standing between a 30-file
+  # case and one statement's figures downloading as another's.
   .unique_names <- function(x) {
     seen <- character(0)
     vapply(as.character(x), function(nm) {
@@ -2529,13 +2331,16 @@ server <- function(input, output, session) {
       safe(unlink(old, recursive = TRUE))
     safe(sweep_temp_dirs(keep_hours = 24,
                          exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
-    cv_forced(list())
     who <- who_now(); n <- length(paths)
     # A 50-file case must not look frozen, and "converting…" for four minutes is
     # the same as frozen. The callback names the file being read RIGHT NOW, so the
     # bar answers "is it stuck?" and "how much longer?" at the same time.
-    # keep_rows = TRUE because the governed feed is written from the parsed rows;
-    # they are dropped again below, per file, the moment that write is done.
+    # convert_batch() hands back each file's WHOLE result, rows included, and says
+    # so: trimming is the caller's job because only the caller knows when it has
+    # finished with them. This one has not -- the governed feed is written from the
+    # parsed rows -- so they are dropped below, per file, the moment that write is
+    # done. Anything convert_batch does not itself take goes to convert_document(),
+    # which has no `...`, so a stray argument here fails every file in the case.
     b <- withProgress(message = sprintf("Converting %d files…", n), value = 0,
       convert_batch(paths,
         outdir = sess, templates_dir = TEMPLATES_DIR,
@@ -2543,7 +2348,6 @@ server <- function(input, output, session) {
         fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
         requested_by = who, logdir = LOGDIR,
         bank = bank_choice(), force_template = tpl_choice(),
-        keep_rows = TRUE,
         progress = function(i, nn, f)
           setProgress(value = (i - 1) / nn,
                       detail = sprintf("%d of %d - %s", i, nn, basename(f)))))
@@ -2575,28 +2379,28 @@ server <- function(input, output, session) {
       }
     }
     cv_dir(sess)
-    # No file is open yet -- the table is. Every per-file piece of state is
-    # cleared rather than left pointing at whatever was converted last, so
-    # nothing on the page can belong to a statement that is no longer on it.
-    cv_res(NULL); cv_src(NULL); cv_batch_row(NA_integer_)
-    cv_upload_id(NA_character_)
-    cv_fb_done(FALSE); cv_fb_rec(NULL)
+    # No file is open yet -- the table is. show_result() with nothing in it says
+    # exactly that, and clears every per-file piece of state in one place rather
+    # than leaving any of it pointing at whatever the loop above converted last.
+    # (The loop's publish_result calls leave the LAST file's feed verdict behind;
+    # this is what takes it off the screen's copy.)
+    show_result()
+    cv_batch_row(NA_integer_)
     cv_batch(b)
   }
 
-  # open_batch_row(i) -- put THAT file's result on the ordinary result page. Every
-  # piece of session state a single conversion sets is set here too, so the page
-  # below is not a copy of the result view, it IS the result view.
+  # open_batch_row(i) -- put THAT file's result on the ordinary result page. It
+  # goes through show_result(), the same one line a single conversion uses, so the
+  # page below is not a copy of the result view, it IS the result view.
   open_batch_row <- function(i) {
     b <- cv_batch()
     if (is.null(b) || length(i) != 1L || is.na(i) || i < 1L || i > nrow(b)) return(invisible(FALSE))
-    res <- b$result[[i]]
-    cv_forced(list())
-    cv_res(res)
-    cv_src(list(path = b$file[i], name = basename(b$file[i])))
-    cv_fb_done(FALSE); cv_fb_rec(NULL)
-    cv_upload_id(b$upload_id[i])
-    cv_recorded(TRUE); cv_feed_gate(b$feed_gate[[i]])
+    show_result(b$result[[i]],
+                src = list(path = b$file[i], name = basename(b$file[i])),
+                upload_id = b$upload_id[i],
+                # This file really was fed, in run_batch's loop: its own verdict,
+                # never the one belonging to whichever row was open before.
+                gate = b$feed_gate[[i]], recorded = TRUE)
     cv_batch_row(as.integer(i))
     invisible(TRUE)
   }
@@ -2633,15 +2437,24 @@ server <- function(input, output, session) {
   output$cv_batch <- renderDT({
     b <- cv_batch(); req(b)
     dash <- function(v) { v <- as.character(v); v[is.na(v) | !nzchar(v)] <- "-"; v }
-    worst_first <- length(BATCH_STATUSES) + 1L -
-      match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+    # BATCH_STATUSES is worst-LAST, so a status's position in it IS its severity:
+    # ok 1 ... failed 4, and anything the engine has learned to say since 5, which
+    # sorts to the very top because a verdict this screen has no wording for is the
+    # one a person most needs to look at. Sorted DESCENDING below. (It used to be
+    # this same match() subtracted from one-past-the-end and then sorted ascending
+    # -- the same order written as a double negative, with the nomatch value
+    # load-bearing by accident.)
+    severity <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
     disp <- data.frame(
       File = basename(b$file),
       Result = vapply(b$status, plain_status, character(1), USE.NAMES = FALSE),
       Bank = dash(b$bank),
       Rows = suppressWarnings(as.integer(b$rows)),
-      `What to check` = dash(b$failing_check),
-      order = worst_first,
+      # plain_failing_check() lives in ui_labels.R with the other wording maps: the
+      # engine carries its own CODE ("check:balance_reconciliation") so it never has
+      # to read a UI file off disk, and the words are added here.
+      `What to check` = dash(plain_failing_check(b$failing_check)),
+      order = severity,
       check.names = FALSE, stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, selection = "single",
       options = list(
@@ -2649,7 +2462,7 @@ server <- function(input, output, session) {
         # and the clone's sort arrows render as a stack of triangles over the last
         # column. Five short columns fit without it.
         pageLength = 15,
-        order = list(list(5, "asc"), list(4, "asc")),
+        order = list(list(5, "desc"), list(4, "asc")),
         columnDefs = list(list(visible = FALSE, targets = 5),
                           list(orderData = 5, targets = 1))))
   })
@@ -3480,42 +3293,59 @@ server <- function(input, output, session) {
   # every statement forever. R/diagnose.R already reads the range and cautions
   # when a statement falls outside it.
   #
-  # .eff_date(x): the typed value as the schema stores it ("yyyy-mm-dd"); NULL for
-  # blank (= always, the normal answer); NA when it is neither, so every caller
-  # can refuse rather than quietly narrow a template's window to nothing.
+  # The two boxes are DATE PICKERS. That is the whole of the simplification: the
+  # window used to be two free-text boxes, so "is this even a date?" was a question
+  # the screen had to ask, answer and refuse in five helpers and eighty lines. A
+  # date picker cannot hand back "last year", so the only thing left to check is
+  # the one thing a pair of pickers still lets you say: an end before its start.
+  #
+  # .eff_date(x): a picker's value as the schema stores it ("yyyy-mm-dd"), or NULL
+  # for an empty box -- which means ALWAYS, and is the normal answer.
   .eff_date <- function(x) {
-    s <- trimws(as.character(x %||% "")[1])
-    if (!nzchar(s) || identical(s, "NA")) return(NULL)
-    d <- suppressWarnings(as.Date(s, format = "%Y-%m-%d"))
-    if (is.na(d)) NA_character_ else format(d, "%Y-%m-%d")
+    if (is.null(x) || !length(x) || is.na(x[1])) return(NULL)
+    s <- trimws(as.character(x[1]))
+    if (!nzchar(s)) return(NULL)
+    format(as.Date(s), "%Y-%m-%d")
   }
-  .eff_bad <- function(v) { d <- .eff_date(v); length(d) == 1L && is.na(d) }
-  # What goes in the box when the toolkit opens: the template's own value, or an
-  # empty box. Never the four letters "NA" -- a template that says "always" must
-  # not open showing a word the user then has to know to delete.
-  .eff_txt <- function(v) { s <- as.character(v %||% "")[1]; if (is.na(s) || identical(s, "NA")) "" else s }
-  .eff_show <- function(d) format(as.Date(d), "%d %b %Y")
-  # .eff_problems -- what is wrong with the pair, in words the person typing them
-  # can act on. Empty when they are fine (including both blank).
-  .eff_problems <- function(from, to) {
-    probs <- character(0)
-    if (.eff_bad(from)) probs <- c(probs,
-      "'This layout applies from' is not a date - write it as yyyy-mm-dd (e.g. 2020-01-01), or leave it blank for always.")
-    if (.eff_bad(to)) probs <- c(probs,
-      "'...to' is not a date - write it as yyyy-mm-dd (e.g. 2024-12-31), or leave it blank for no end.")
+  # .eff_backwards(from, to) -- TRUE for the one window a date picker still lets a
+  # person build by accident: one that applies to nothing at all.
+  .eff_backwards <- function(from, to) {
     f <- .eff_date(from); t <- .eff_date(to)
-    if (!length(probs) && !is.null(f) && !is.null(t) && as.Date(t) < as.Date(f))
-      probs <- c(probs, "The end date is before the start date, so this layout would apply to nothing at all.")
-    probs
+    !is.null(f) && !is.null(t) && as.Date(t) < as.Date(f)
   }
-  # .eff_sentence -- the range said out loud, blank meaning always.
-  .eff_sentence <- function(from, to) {
-    f <- .eff_date(from); t <- .eff_date(to)
-    if (is.null(f) && is.null(t)) "This layout applies to statements of any date."
-    else if (is.null(t)) sprintf("This layout applies from %s onwards.", .eff_show(f))
-    else if (is.null(f)) sprintf("This layout applies to statements up to %s.", .eff_show(t))
-    else sprintf("This layout applies from %s to %s.", .eff_show(f), .eff_show(t))
-  }
+  .EFF_BACKWARDS_MSG <- "The end date is before the start date, so this layout would apply to nothing at all."
+  # .eff_picker(id, label, v) -- a date box that can be EMPTY, which is what a
+  # template with no validity window says and is the usual answer.
+  #
+  # shiny::dateInput has no empty state of its own: given no value, its JS falls
+  # back to TODAY (DateInputBinding.initialize in shiny.js). Left like that,
+  # opening the toolkit on any ordinary template would show today's date in both
+  # boxes and the save would stamp a one-day window on it -- a rule its author
+  # never wrote, on a template that would then caution against every statement not
+  # dated today. Caught by opening the toolkit in a browser. An EMPTY
+  # data-initial-date is the one thing that JS reads as "leave the box alone", and
+  # value = "" is how R produces it; shiny's date coercion warns on its way past a
+  # non-date, which is the warning suppressed here and the only one.
+  # A stored window that is NOT a date (hand-edited YAML on the server; the
+  # Advanced tab refuses to apply one) opens the box EMPTY rather than throwing.
+  # It must not throw: this modal is the only place that YAML can be fixed, so a
+  # toolkit that will not open over a bad template is a dead end with the repair
+  # tool locked inside it. Never silent either -- g_eff_msg says so, and says that
+  # saving replaces it.
+  .eff_stored_ok <- function(tmpl)
+    isTRUE(tryCatch({ .eff_date(tmpl$effective_from); .eff_date(tmpl$effective_to); TRUE },
+                    error = function(e) FALSE))
+  .eff_picker <- function(id, label, v)
+    suppressWarnings(dateInput(id, label,
+                               value = tryCatch(.eff_date(v) %||% "", error = function(e) ""),
+                               format = "dd M yyyy", startview = "year",
+                               autoclose = TRUE, width = "100%"))
+  # .eff_set(id, v) -- put a schema date into a picker already on screen, or EMPTY
+  # it again. Emptying is why this is not a plain updateDateInput: that call DROPS
+  # a NULL value (leaving whatever is already in the box), so loading a template
+  # that says "always" would keep the previous one's dates on screen and then save
+  # them. NA is how R says JSON null, which is what clears a date picker.
+  .eff_set <- function(id, v) session$sendInputMessage(id, list(value = .eff_date(v) %||% NA))
 
   apply_overrides <- function(tmpl, bank, datefmt, sign, decimal = NULL,
                               unsigned_default = NULL, desc_col = NULL,
@@ -3526,13 +3356,15 @@ server <- function(input, output, session) {
                               type_debit_value = NULL, type_credit_value = NULL,
                               fingerprint_text = NULL,
                               effective_from = NULL, effective_to = NULL) {
-    # The validity window. Blank clears the key outright, so a template with no
-    # window looks exactly like one that never had one. A value that is not a date
-    # is LEFT ALONE here and refused at Save (g_save), rather than written as
-    # nonsense or silently thrown away.
+    # The validity window. An EMPTY picker clears the key outright, so a template
+    # with no window looks exactly like one that never had one. NULL is different
+    # and means "the control is not on screen at all" (it has not rendered yet):
+    # that leaves whatever the template already carries alone, because absence of a
+    # control is not an instruction to delete anything. That is Shiny's own
+    # distinction between an input that does not exist and an empty one.
     set_eff <- function(t, key, v) {
-      if (is.null(v) || .eff_bad(v)) return(t)
-      t[[key]] <- .eff_date(v)
+      if (is.null(v)) return(t)
+      t[[key]] <- .eff_date(v)      # NULL from an empty box DELETES the key
       t
     }
     tmpl <- set_eff(tmpl, "effective_from", effective_from)
@@ -3841,21 +3673,21 @@ server <- function(input, output, session) {
           # rest of the rarely-touched settings - but it is the only answer to a
           # real problem: the same bank and the same product printed differently in
           # 2020 and in 2024. Without it the two layouts have to be two templates
-          # that fit equally well and tie on every statement forever. Blank means
-          # always, which is the normal answer and what every shipped template says.
+          # that fit equally well and tie on every statement forever.
+          #
+          # DATE PICKERS, not text boxes: the format is then the tool's problem
+          # rather than the user's, and "that is not a date" stops being something
+          # the screen has to detect, word and refuse. Empty means always, which is
+          # the normal answer and what every shipped template says.
           tags$hr(),
           strong("When this layout applies"),
           p(class = "muted", style = "margin:4px 0 6px",
-            paste("Banks change their layouts. If this template is for a particular run of years, say so,",
-                  "and a statement dated outside them is flagged for a check instead of quietly trusted.",
-                  "Leave both blank for always - that is the usual answer.")),
+            "Banks change their layouts. Leave both empty for always - the usual answer."),
           fluidRow(
-            column(6, textInput("g_eff_from", "This layout applies from",
-                                value = .eff_txt(tmpl$effective_from),
-                                placeholder = "yyyy-mm-dd (blank = always)")),
-            column(6, textInput("g_eff_to", "…to",
-                                value = .eff_txt(tmpl$effective_to),
-                                placeholder = "yyyy-mm-dd (blank = no end)"))),
+            column(6, .eff_picker("g_eff_from", "This layout applies from",
+                                  tmpl$effective_from)),
+            column(6, .eff_picker("g_eff_to", "…to (empty = no end)",
+                                  tmpl$effective_to))),
           uiOutput("g_eff_msg")),
         # THE WAY OUT STAYS IN FRONT. This is for someone ALREADY stuck, so putting
         # it inside the settings disclosure meant it appeared only to people who had
@@ -4267,17 +4099,19 @@ server <- function(input, output, session) {
     span(class = "bad", style = "font-size:12.5px", paste(fpp, collapse = " "))
   })
 
-  # The validity window, said back in plain words as it is typed - "This layout
-  # applies from 1 Jan 2020 to 31 Dec 2024", or "to statements of any date" when
-  # both boxes are empty. A date range is exactly the kind of setting where a
-  # yyyy-mm-dd typo looks fine, so it is read back rather than merely accepted,
-  # and a nonsense one is named here as well as refused at Save.
+  # A window that runs backwards is named the moment it is picked, not first heard
+  # about at Save. The pickers read their own dates back ("01 Jan 2020"), so there
+  # is nothing else here to say: this is the only mistake still available.
   output$g_eff_msg <- renderUI({
-    probs <- .eff_problems(input$g_eff_from, input$g_eff_to)
-    if (length(probs))
-      return(span(class = "bad", style = "font-size:12.5px", paste(probs, collapse = " ")))
-    span(class = "muted", style = "font-size:12.5px",
-         .eff_sentence(input$g_eff_from, input$g_eff_to))
+    g <- guided()
+    # A window the boxes could not show is stated, not silently emptied: without
+    # this the template would open looking like "always" and save that way.
+    if (!is.null(g) && !.eff_stored_ok(g$tmpl))
+      return(span(class = "bad", style = "font-size:12.5px",
+        paste("This template's saved validity window is not a date, so the boxes above could not show it.",
+              "Pick the dates again, or leave them empty for always - saving replaces it either way.")))
+    if (!.eff_backwards(input$g_eff_from, input$g_eff_to)) return(NULL)
+    span(class = "bad", style = "font-size:12.5px", .EFF_BACKWARDS_MSG)
   })
 
   # Nudge the user to the "tell our team" box when they pick "none of these".
@@ -4332,6 +4166,15 @@ server <- function(input, output, session) {
         paste("Not a valid template:", paste(probs, collapse = "; "))))
       return()
     }
+    # The validity window has to survive the trip into the two date pickers below,
+    # and a picker can only hold a date. Refuse a window written any other way HERE
+    # -- otherwise it would simply not appear on screen and would then be saved
+    # away, which is the template quietly losing a rule its author wrote.
+    if (!.eff_stored_ok(parsed)) {
+      output$g_adv_msg <- renderUI(span(class = "bad",
+        "effective_from / effective_to must be dates (yyyy-mm-dd), or left out for always."))
+      return()
+    }
     g$tmpl <- parsed; guided(g)
     # A name written by hand in the YAML is hers, so the bank/kind composer leaves
     # it alone from here (an id is how a template is found again).
@@ -4349,8 +4192,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "g_unsigned_default", selected = parsed$unsigned_default %||% "debit")
     updateTextInput(session, "g_type_debit",  value = parsed$type_debit_value %||% "")
     updateTextInput(session, "g_type_credit", value = parsed$type_credit_value %||% "")
-    updateTextInput(session, "g_eff_from", value = .eff_txt(parsed$effective_from))
-    updateTextInput(session, "g_eff_to",   value = .eff_txt(parsed$effective_to))
+    .eff_set("g_eff_from", parsed$effective_from)
+    .eff_set("g_eff_to",   parsed$effective_to)
     updateSelectInput(session, "g_col_date", selected = parsed$columns$date$source %||% "")
     updateSelectInput(session, "g_col_amt",  selected = parsed$columns$amount$source %||% "")
     updateSelectInput(session, "g_col_desc", selected = parsed$columns$description$source %||% "")
@@ -4613,16 +4456,14 @@ server <- function(input, output, session) {
   })
   observeEvent(input$g_save, {
     g <- guided(); req(g)
-    # A validity window that is not a date, or that runs backwards, is refused
-    # BEFORE anything is written. apply_overrides() deliberately leaves an
-    # unreadable one alone, so without this the save would go through with the
-    # window silently missing - a template that says "always" when its author
-    # meant "2020 onwards".
-    eff_probs <- .eff_problems(input$g_eff_from, input$g_eff_to)
-    if (length(eff_probs)) {
+    # A validity window that runs backwards is refused BEFORE anything is written:
+    # it would save a template that applies to no statement ever printed, and
+    # nothing downstream would say so. The disclosure it lives behind is opened, so
+    # the fix is on screen rather than somewhere to go and find.
+    if (.eff_backwards(input$g_eff_from, input$g_eff_to)) {
       g_more_open(TRUE)
       showNotification(HTML(paste0("<b>Couldn't save.</b> ",
-        htmltools::htmlEscape(paste(eff_probs, collapse = " ")),
+        htmltools::htmlEscape(.EFF_BACKWARDS_MSG),
         "<br>The settings for this statement are now open on the right - it is under <b>When this layout applies</b>.")),
         type = "error", duration = 12)
       return()

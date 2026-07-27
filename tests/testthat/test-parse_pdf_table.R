@@ -754,22 +754,35 @@ test_that("row_coverage counts the words each band read, and what no band read",
   expect_false(grepl("COFFEE|SALARY", format_row_coverage(cov)))
 })
 
-test_that("a band that reads nothing while words go unclaimed is named", {
-  # The credit band is moved off the page's right edge: its words then belong to no
-  # band at all. That pair -- an empty band AND unclaimed words -- is what makes
-  # this a misplaced band rather than a column with no entries this month.
+# `empty_bands` used to be a VERDICT ("the credit band read no words ... redraw
+# that band"), gated on there also being unclaimed words. It was withdrawn, and
+# these two tests are the reason it had to be: they are the SAME `empty_bands`
+# value for a genuinely misplaced band and for a band that is perfectly correct.
+# Measured on real files, no threshold separates them either - a genuine fault
+# leaves 5.13% of words unclaimed on one statement while a CORRECT template leaves
+# 9.44% on another, because templates deliberately leave whole columns unmapped.
+# A word is unclaimed exactly when it is outside EVERY band, so it can never be
+# evidence about WHICH band is wrong.
+#
+# So `empty_bands` is now a measurement that says what it is called, and the
+# verdict is gone. The pair below pins that: the same reading, and no instruction
+# to redraw in either.
+test_that("a misplaced band reads nothing, and the REAL signal is not suppressed", {
   tmpl <- .tmpl
   tmpl$table$columns$credit <- list(x_min = 560, x_max = 580)
   cov <- row_coverage(.mk_input(), tmpl)
-  expect_identical(cov$empty_bands, "credit")
-  expect_gt(sum(vapply(cov$pages, function(p) p$unbanded_words, integer(1))), 0)
-  expect_match(cov$diagnosis, "credit band read no words")
+  expect_identical(cov$empty_bands, "credit")             # measured, not judged
+  expect_gt(cov$unbanded_words_total, 0)
+  # The withdrawn verdict was the FIRST branch of the if-chain, so it hid the
+  # message that actually names the damage. That message is back.
+  expect_match(cov$diagnosis, "skipped for an unreadable date or a missing amount")
+  expect_false(grepl("[Rr]edraw", cov$diagnosis))
 })
 
-test_that("an empty band on a statement with nothing unclaimed is NOT reported", {
-  # A month with no deposits leaves the credit band empty and everything else in a
-  # band. Nothing is wrong, so the diagnostic must not send the analyst to redraw a
-  # band that is fine -- the same mistake this file's headings bug once made.
+test_that("a correct band that is simply empty reads identically, and accuses nobody", {
+  # A month with no deposits. Nothing is wrong, and the tool must not send the
+  # analyst to redraw a band that is fine -- telling someone to move a correct band
+  # is how you MAKE a wrong figure.
   w <- data.frame(stringsAsFactors = FALSE,
     text  = c("05", "Jan", "COFFEE", "4.50", "95.50"),
     x     = c(45, 60, 110, 355, 490), y = rep(40, 5),
@@ -779,9 +792,12 @@ test_that("an empty band on a statement with nothing unclaimed is NOT reported",
     page_width = .A4_W, page_height = .A4_H, meta = list(page_count = 1L))
   cov <- row_coverage(input, .tmpl)
   expect_equal(cov$band_words_total[["credit"]], 0L)      # genuinely no deposits
-  expect_equal(sum(vapply(cov$pages, function(p) p$unbanded_words, integer(1))), 0L)
-  expect_identical(cov$empty_bands, character(0))         # ...so nothing is reported
+  expect_equal(cov$unbanded_words_total, 0L)
+  # SAME as the misplaced-band case above. That identity is the whole point: the
+  # reading cannot tell the two apart, so it must not pretend to.
+  expect_identical(cov$empty_bands, "credit")
   expect_match(cov$diagnosis, "Every candidate row was kept")
+  expect_false(grepl("[Rr]edraw", cov$diagnosis))
 })
 
 # ---- N33: a page footer is not the tail of the transaction above it ----------

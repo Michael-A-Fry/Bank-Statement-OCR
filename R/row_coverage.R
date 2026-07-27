@@ -53,12 +53,16 @@ row_coverage <- function(input, template) {
     buckets <- if (is.null(rows) || !nrow(rows)) character(0)
                else vapply(rows$reason %||% rep("", nrow(rows)), .rowcov_bucket, character(1))
     tab <- table(factor(buckets, levels = .ROWCOV_LEVELS))
-    # The rescaled VERDICT comes from the parser's frame maths, not a local copy.
-    # The ratio reported below is page-over-frame because that is the direction a
-    # person reads ("this page is 2.08x the size the bands were drawn on").
+    # THE BAND FRAME's own scale, and nothing beside it. This used to call
+    # pdf_band_frame_scale for the "was this page rescaled?" verdict and then
+    # hand-compute pw/frame$width for the number it PRINTED -- two answers from two
+    # sums, so the report could say "rescaled: yes" and print 1.00x, or say "no" and
+    # be describing a page the reader had in fact rescaled. The printed ratio is now
+    # the reciprocal of the one scale: page-over-frame, because that is the direction
+    # a person reads ("this page is 2.08x the size the bands were drawn on"), and a
+    # page the parser treats as the same size therefore prints exactly 1.
     s <- pdf_band_frame_scale(frame, pw[i], ph[i])
-    sx <- if (is.finite(pw[i]) && pw[i] > 0) pw[i] / frame$width  else 1
-    sy <- if (is.finite(ph[i]) && ph[i] > 0) ph[i] / frame$height else 1
+    sx <- 1 / s[1]; sy <- 1 / s[2]
     kept <- as.integer(tab[["kept"]])
     actionable <- as.integer(tab[["date_unreadable"]] + tab[["amount_missing"]])
     denom <- kept + actionable
@@ -72,11 +76,9 @@ row_coverage <- function(input, template) {
          kept = kept, actionable_skips = actionable,
          yield = if (denom > 0) round(kept / denom, 3) else NA_real_,
          # Words each band claimed on this page, and words inside the table region
-         # that NO band claimed. Counts only, so safe to share. The pair is what
-         # tells a misplaced band from a genuinely empty column: a band reading
-         # nothing while nothing is unclaimed just means that column is blank on
-         # this statement; a band reading nothing while words sit unclaimed means
-         # the band is not where the printing is.
+         # that NO band claimed. Counts only, so safe to share. EVIDENCE, not a
+         # verdict -- see the note above empty_bands below for the measurements
+         # that say why neither number can be read as a fault on its own.
          band_words = stats::setNames(vapply(band_names,
            function(k) sum(!is.na(cn) & cn == k), integer(1)), band_names),
          unbanded_words = as.integer(sum(P$words$in_region & is.na(cn))),
@@ -88,25 +90,50 @@ row_coverage <- function(input, template) {
   any_scaled <- any(vapply(pages, function(p) isTRUE(p$scaled), logical(1)))
   any_ocr <- any(vapply(pages, function(p) isTRUE(p$ocr), logical(1)))
   empty_pages <- which(vapply(pages, function(p) p$kept == 0 && p$n_words > 30, logical(1)))
-  # A mapped band that claimed NOTHING anywhere in the document, WHILE words inside
-  # the table region went unclaimed by any band. That pair is the exact shape of the
-  # reported "a box is drawn over the credit column but it reads nothing while the
-  # debit beside it reads fine": the printing is there, the band is not over it.
-  # Both halves are required. A band that reads nothing on a statement with nothing
-  # unclaimed is simply a column with no entries this period -- reporting that would
-  # send the analyst to redraw a band that is fine, which is the mistake this file
-  # already had to fix once for headings.
+  # THE TWO BAND MEASUREMENTS, AND WHY NEITHER IS A VERDICT.
+  # band_totals: words each mapped band read across the whole document.
+  # unbanded_tot: words inside the table region that no band claimed.
+  #
+  # These used to be JOINED into a diagnosis -- "band X read nothing while N words
+  # are unclaimed, so the printing is there and the band is not over it. Redraw
+  # that band" -- gated on unbanded_tot > 0. That verdict was withdrawn. It is not
+  # sound at ANY threshold, and these are the measurements (all on real statements
+  # in samples/_private_staging, each with its shipped, proven template):
+  #
+  #  * FALSE POSITIVE on one word. anz_single.pdf / anz_everyday_pdf: all five
+  #    bands correct, 311 of 311 rows kept, and exactly ONE word of 4251 unclaimed
+  #    -- a page-corner mark at x=29, y=1. Map one further column over a strip this
+  #    statement happens not to print in, and that single word made the report order
+  #    a maintainer to redraw a band that was correct. It also SUPPRESSED the true
+  #    message ("14 row(s) were skipped for an unreadable date or a missing
+  #    amount"), because it was the first branch of this chain.
+  #  * FALSE NEGATIVE on one word. anz_0382025_feb.pdf with the credit band
+  #    genuinely moved off its column: 54 words unclaimed, rows lost -- and no
+  #    verdict at all, because one stray word landed inside the misplaced band.
+  #  * NO THRESHOLD SEPARATES THEM, in either units. A REAL fault (credit band
+  #    misplaced on anz_single.pdf) leaves 5.13% of the region's words unclaimed;
+  #    the CORRECT shipped westpac_everyday_pdf on westpac_B.pdf leaves 9.44%. By
+  #    count: that real fault on the 2-page ANZ leaves 54 unclaimed, the correct
+  #    Westpac 124. The fault is under the healthy baseline on both scales.
+  #  * NOR DOES THE SHAPE OF THE HOLE. A misplaced band leaves a column-shaped gap,
+  #    but so do correct templates: 79% of Westpac's 124 unclaimed words sit in one
+  #    20pt strip, against 62% for the genuine ANZ fault. The reason is simple and
+  #    permanent -- a template maps the columns it needs and deliberately leaves the
+  #    rest of the printing unmapped, so unclaimed words are the NORMAL state.
+  #
+  # The root cause is structural, which is why no tuning fixes it: a word is
+  # unclaimed precisely when it is outside EVERY band, so it can never be evidence
+  # about which band is wrong. Both counts stay, as counts, for a maintainer who
+  # has the statement in front of them. They are not joined into a verdict again.
   band_totals <- if (!length(band_names)) integer(0) else
     stats::setNames(vapply(band_names, function(k)
       sum(vapply(pages, function(p) as.integer(p$band_words[[k]]), integer(1))), integer(1)), band_names)
   unbanded_tot <- sum(vapply(pages, function(p) p$unbanded_words, integer(1)))
-  empty_bands <- if (unbanded_tot > 0 && length(band_totals))
-    names(band_totals)[band_totals == 0L] else character(0)
+  # Bands that read no words anywhere in the document -- exactly that, and nothing
+  # implied by it. A column with no entries this period reads nothing and is fine.
+  empty_bands <- if (!length(band_totals)) character(0) else names(band_totals)[band_totals == 0L]
 
-  diag <- if (length(empty_bands))
-      sprintf("The %s band read no words anywhere, yet %d word(s) inside the table are in no band at all -- so the printing is there and the band is not over it. Redraw that band, or check the band frame (the page size the bands were drawn on) matches this file.",
-              paste(empty_bands, collapse = " and "), unbanded_tot)
-    else if (length(empty_pages) && any_scaled)
+  diag <- if (length(empty_pages) && any_scaled)
       sprintf("Page(s) %s are a different physical size than the template and kept no rows -- a page-scale mismatch. The parser normalises this automatically; if it persists the template's reference page size is likely wrong.",
               paste(empty_pages, collapse = ", "))
     else if (length(empty_pages))
@@ -121,6 +148,7 @@ row_coverage <- function(input, template) {
        page_count = length(pages), kept_total = kept_tot, actionable_skips_total = act_tot,
        any_page_rescaled = any_scaled, any_ocr = any_ocr, empty_pages = empty_pages,
        band_words_total = band_totals, empty_bands = empty_bands,
+       unbanded_words_total = as.integer(unbanded_tot),
        diagnosis = diag, pages = pages)
 }
 
@@ -132,9 +160,22 @@ format_row_coverage <- function(cov) {
   add(sprintf("Band frame (the page size the bands were drawn on): **%g x %g pt**. Pages: **%d**. Rows kept: **%d**. Rows skipped as unreadable-date / missing-amount: **%d**.",
       cov$ref_width, cov$ref_height, cov$page_count, cov$kept_total, cov$actionable_skips_total))
   add(sprintf("\n**Diagnosis:** %s\n", cov$diagnosis))
-  if (length(cov$band_words_total))
-    add(sprintf("Words read by each band, whole document: %s\n",
+  # The band counts are EVIDENCE for whoever maintains the template, printed with
+  # the two things that stop them being misread. They are deliberately NOT folded
+  # into the diagnosis above: a band reading 0 and words sitting in no band are both
+  # normal on a correct template (a column with no entries this period; printing the
+  # template deliberately does not map), and joining them into a verdict told
+  # maintainers to redraw correct bands. See the note above empty_bands.
+  if (length(cov$band_words_total)) {
+    add(sprintf("Words read by each band, whole document: %s",
         paste(sprintf("%s %d", names(cov$band_words_total), cov$band_words_total), collapse = " | ")))
+    add(sprintf("Words inside the table region that no band read: **%d**.\n",
+        cov$unbanded_words_total %||% 0L))
+    add(paste0("_Both lines are counts, not faults. A band reads 0 when its column has no ",
+               "entries this period, and a template maps only the columns it needs, so other ",
+               "printing is expected to sit in no band. Read them against the statement ",
+               "before moving a band._\n"))
+  }
   add("| page | size (pt) | rescaled? | OCR? | words | kept | skipped(date/amt) | yield |")
   add("|---|---|---|---|---|---|---|---|")
   for (p in cov$pages)

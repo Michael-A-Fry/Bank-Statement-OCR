@@ -48,7 +48,11 @@ test_that("the offline bundle never ships the live dictionaries over a server's 
   items <- .dep_eval_assign("scripts/bundle-offline.R", "app_items")
   expect_false("dictionaries" %in% items)
   # ...while still shipping everything that IS product.
-  expect_true(all(c("R", "templates", "config", "app.R", "RUN-ME.bat") %in% items))
+  # "www" holds app.css. Omitting it breaks NOTHING that a test or a launch would
+  # notice - the app runs, and it is entirely unstyled. That is why it is pinned.
+  expect_true(all(c("R", "templates", "config", "www",
+                    "app.R", "ui_content.R", "ui_labels.R", "RUN-ME.bat") %in% items))
+  expect_true(file.exists(file.path(.dep_root(), "www", "app.css")))
 
   src <- .dep_read("scripts/bundle-offline.R")
   # It must still carry STARTING vocabularies, as examples, or a brand-new install

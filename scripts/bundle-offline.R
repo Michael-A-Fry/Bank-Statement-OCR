@@ -65,8 +65,12 @@ options(timeout = 600)
 # every word the team taught it, and statements that reconciled last week quietly
 # stop reconciling. Same reason config.yaml is deleted from the dist below; the
 # dist carries *.example.yaml instead and RUN-ME.bat seeds them only if absent.
+# "www" carries app.css. Shiny serves that folder from disk, so leaving it out of
+# this list does not fail the build or the tests -- it ships an install that runs
+# perfectly and looks completely unstyled, which is the kind of break nobody finds
+# until it is in front of someone. test-deployment-docs.R pins it.
 app_items <- c("R", "templates", "templates_user", "templates_seed",
-               "fields_templates", "config", "scripts",
+               "fields_templates", "config", "scripts", "www",
                "tests", "samples", "docs",
                "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat")
 cat("Copying the app into the dist folder ...\n")
