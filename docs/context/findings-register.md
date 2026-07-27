@@ -8,10 +8,21 @@ working backlog: fix, tick, and append anything new to the bottom.
 (62 verdicts returned: 47 CONFIRMED, 15 OVERSTATED/downgraded, 0 rejected outright), and a
 completeness critic added 8 more. Severities below are POST-verification. The remaining
 51 medium/low findings were not individually verified and are not listed here.
+N48 onwards came from later sweeps that drove the running app and followed the written
+documentation, rather than reading code; every one was reproduced before it was fixed and
+re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 109 findings, 104 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 141 findings, 136 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+
+N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
+but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
+found the worst defect in the register (N48, a wrong bank on a reconciled workbook) and the
+one that most undercut the product's central claim (N51, the auto-drafter reading nothing on
+two statements this repo ships proven templates for). Neither was reachable by reading code
+against its own comments; both needed the code run against a real statement and the result
+read as a stranger would read it. That is worth remembering when choosing the next sweep.
 
 _Last updated: 2026-07-27._
 
@@ -483,6 +494,48 @@ what actually makes splitting safe. That gap is closed; the two mechanisms stay.
 
 | N46 | low | open | The design system is half-real. `www/app.css` declares the tokens, but app.R still carries **37 distinct hex colours across 87 uses and 125 inline `style=` attributes**, several of them near-misses for the tokens they should be using: `#b00020` x19 vs `--bad:#b3261e`, `#137333` x12 vs `--ok:#0f7a37`, `#c77700`/`#a15c00` x13 vs `--warn:#b7791f`. Nothing is wrong on screen; the colours are close enough that nobody notices, which is exactly why it will not self-correct. The test that looks like it guards this (`expect_false(grepl("tags$style(", joined))`) forbids style TAGS while 125 style ATTRIBUTES sit untouched - it passes and proves nothing. | app.R |
 | N47 | low | open | Comment density where the recent work landed: `R/batch.R` is 93 comment lines to 67 code lines (1.39) and `R/row_coverage.R` 71 to 105 (0.68, down from 0.83 after the measurements moved into this register). The charter asks for comments "at the density of the code around them"; `R/schema.R`, a stable comprehensible file, is 0.08. Where an explanation is longer than the function it explains, the decision is usually the thing to simplify. Not all of it is fat - the surviving comments record WHY something surprising is the way it is, which is the valuable kind. | R/batch.R, R/row_coverage.R |
+
+### The truth-and-docs sweep (N48-N79)
+
+Ten agents read the whole repo against one question - *does the code do what it says, and
+does anything on a customer-facing screen tell a lie?* - and two more drove the app and
+followed the documentation as a maintainer on call and a forensic accountant. Everything
+below was reproduced before it was fixed and re-proved after.
+
+| ID | Severity | Status | Finding | Evidence |
+|---|---|---|---|---|
+| N48 | **critical** | **fixed** | On an ambiguous match the engine converted with the template that scored HIGHEST - which need not be either of the two the screen named, and need not have matched at all. A statement whose tie was between two Kowhai templates was read by the ANZ template, reconciled to the cent, and stamped `bank: ANZ` on the workbook and the Qlik feed. The screen said "2 templates fit equally well" and named neither of the two it used. A wrong figure, in the field a court filing quotes first. | R/convert.R:258-270; `det$template_id` used instead of `det$tied[1]` |
+| N49 | high | **fixed** | The balance check told the reviewer "no opening or closing balance was found, and no running-balance column to derive one from" on a statement whose running-balance column sat on the same screen, passing its own check. The refusal was right; the reason was false. | R/reconcile.R:114-125 |
+| N50 | high | **fixed** | A file the tool could not read at all - random bytes named `.pdf`, an empty file, prose - was reported as "we don't have a template for this layout yet", which invites the analyst into the 2-minute template flow with nothing to draw a band on. | R/convert.R:70-113 `.unreadable_reason` |
+| N51 | high | **fixed** | The auto-drafter read **0 rows** on `asb.pdf` and `anz_single.pdf` - two statements this repo ships proven hand-written templates for. Six general faults, none file-specific: the month was never inside the date band (`28 Apr` read as `28`, so `%d %b` parsed nothing and every row dropped - which is also why redrawing by hand never helped); money columns were measured over the whole page, so a balance-summary block invented columns; duplicate column roles collapsed silently; the headings printed on the statement were never read; the money pattern was pinned to `$`, so a GBP statement showed no money at all; ordinal dates were unknown. The drafted template now produces **byte-identical output to the proven template** on six statements, and reads rows on all 48 PDFs in the corpus. | R/wizard_auto.R `suggest_pdf_columns`, `.WA_MONEY`, `.WA_DATE` |
+| N52 | high | **fixed** | The drafter guessed the bank from the first keyword found anywhere in the document, so an ASB statement mentioning ANZ once in a payee line drafted as ANZ - and the toolkit pre-filled that into the save form. | R/wizard_auto.R `.sniff_bank` |
+| N53 | high | **fixed** | The confidence level was computed on every run and shown on **no clean run**, while four documents keyed their advice on it. It is on the card now, and says when medium is the format's normal ceiling rather than something to chase. | app.R cv_card, `.medium_is_the_ceiling` |
+| N54 | high | **fixed** | Two of the three Analysis charts failed on every statement with `invalid RGB specification`: `#fff` passed to a function that requires 6 hex digits. The page had shipped with one working chart out of three. | app.R chart palette |
+| N55 | high | **fixed** | Admin - Templates: a reactive named `user_template_ids` shadowed the engine function of the same name, so the origin line printed an R error object to the screen and both Hide and Delete were dead. | app.R |
+| N56 | high | **fixed** | "More than one template fits - pick which one" was shown with no picker anywhere on the page. | app.R |
+| N57 | high | **fixed** | The bundled sample statement - the first thing a new user is invited to click - could never convert: its template carried `sample: true`, which the loader drops. | templates/, R/templates.R |
+| N58 | medium | **fixed** | `DIAG_PLAIN["amount_parse"]` served two opposite meanings, so a *direction* warning ("money in/out may be the wrong way round") rendered as "amounts couldn't be read". Now its own category, with the seam test asserting both ways. | R/diagnose.R:70,175; ui_labels.R |
+| N59 | medium | **fixed** | `convert_document`'s `tryCatch` started 39 lines into the body, so the front door threw on inputs Shiny cannot produce but a caller can. Twelve hostile inputs now all return `status = "failed"` with a message; none throws. | R/convert.R:122-131 |
+| N60 | medium | **fixed** | `validate_template` accepted a validity window that starts after it ends. | R/templates.R:201-216 |
+| N61 | medium | **fixed** | Both irreversible Admin actions - purge uploads, delete template - fired on one click with no confirmation. They now state the count and what survives, and name the exact file. | app.R |
+| N62 | medium | **fixed** | Three Admin downloads returned HTTP 500 when there was nothing to download (`req(FALSE)` inside the handler), and one wrote a file literally named `.audit.md`. Every download now returns a file or a readable one-line reason. | app.R |
+| N63 | medium | **fixed** | "Try it on a sample statement" bypassed the QID gate that every other route enforces, so a run could be written with no record of who ran it. | app.R `.identity_ok` |
+| N64 | medium | **fixed** | The feedback question was pre-answered "Correct", so the default reading of every conversion was an endorsement nobody gave. | app.R |
+| N65 | medium | **fixed** | `output$cv_rematch` was never rendered, so on a clean result there was no on-screen route to say "wrong bank" - and a code comment claimed the opposite. | app.R |
+| N66 | medium | **fixed** | X-ray: unticking the last remaining layer turned all six back on. | app.R |
+| N67 | medium | **fixed** | Raw engine codes, template ids and internal metrics on customer-facing surfaces: `balance_reconciliation` in a sentence, "closest anz_everyday_pdf score 2/3", schema field names in Field coverage, engine column names in the X-ray legend. | R/detect.R:187-196, R/reconcile.R, app.R |
+| N68 | medium | **fixed** | One screen, four names - "X-ray", "the inspect view", "Look inside", "See it on the page". Now one name everywhere a user can read it. | app.R, ui_content.R, R/reconcile.R, R/diagnose.R, docs/ |
+| N69 | medium | **fixed** | The proof strip drew tick / cross / dash glyphs with no key anywhere on the page. | app.R cv_proof |
+| N70 | medium | **fixed** | The QID is the first thing the app asks and appeared in none of the analyst's pages. | docs/for-analysts/ |
+| N71 | medium | **fixed** | `when-something-goes-wrong.md` navigated by a fix-owner column that is maintainer-only and not on the analyst's screen at all. | docs/for-analysts/ |
+| N72 | medium | **fixed** | `adding-a-bank-template.md` described seven steps against the app's five, and the two it added were the two hardest - both of which the app does for her. | docs/for-analysts/ |
+| N73 | medium | **fixed** | No document said how to run the tool, how to ship a change, or how to roll one back; and there was no procedure for the one call that will actually come - "a user says this conversion is wrong". | docs/operational/ (new) |
+| N74 | low | **fixed** | Admin said things that were not true: the gaps list included a file that converts cleanly; placeholder rows read as data; an empty suggestion picker carried instructions for using it. | app.R |
+| N75 | low | **fixed** | Silent successes across Admin and the toolkit - actioned requests, lexicon reloads, template deletes and the toolkit's Assign/Remove all completed with no message, the last of them writing its confirmation to an invisible tab. | app.R |
+| N76 | low | **fixed** | Invariant 17 (no non-ASCII in an R name) had no enforcement. A test now walks `getParseData()` over app.R and all 44 `R/*.R`. | tests/testthat/test-app-adoption.R |
+| N77 | low | **fixed** | Cosmetics with the same root - text assembled without reading it back: "Read as: X statement statement"; the page box accepting page 99 of a 3-page PDF; the X-ray legend listing layers it had not drawn; notifications stacking rather than replacing; the Admin tab node present in the DOM without `?admin`. | app.R |
+| N78 | low | **fixed** | Form templates are outranked by statement templates while the save message said detection is automatic. | app.R wording |
+| N79 | low | **fixed** | The fingerprint dropdown offered single generic words that the same screen then refused to save. | app.R |
 
 ### The empty-band verdict - the measurements that withdrew it
 
