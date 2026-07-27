@@ -11,12 +11,9 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 94 findings, 81 fixed, 13 open — N30 is CRITICAL and is being fixed now.** N20 and N21 are the live ones and are described in full at the bottom; N20 is the
-only open finding that CAN produce a wrong figure quietly, so it is the next thing
-to fix. The other three are waiting on evidence (more real forms, a hand-keyed
-golden scan) rather than on effort.
+**Where it stands: 95 findings, 86 fixed, 9 open.** Six of the nine are the screen findings raised from real use tonight (N26-N29, N31, N32) and are in hand. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
 
-_Last updated: 2026-07-26._
+_Last updated: 2026-07-27._
 
 
 ## Correctness
@@ -159,9 +156,9 @@ _Anything discovered after the review lands here, newest at the bottom._
 | N18 | low | **fixed** | The local `feed/transactions/136c69b731ca8698.csv` is a stale pre-fix artifact in the old 26-column schema. | gone; `feed/` is local-only and git-ignored |
 | N19 | low | open | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in — a correction to the original #61 measurement. | samples/_private_staging/anz_multiple.pdf |
 
-| N20 | high | open | The zero-row re-read is a CLIFF, not a measure. A template that reads 5 rows of a 500-row statement is exactly as wrong as one that reads 0, and passes every check: `transaction_count` only requires `n > 0` when the statement prints no stated count. | R/convert.R `empty_first`, R/reconcile.R:179 |
+| N20 | high | **fixed** | The zero-row re-read is a CLIFF, not a measure. A template that reads 5 rows of a 500-row statement is exactly as wrong as one that reads 0, and passes every check: `transaction_count` only requires `n > 0` when the statement prints no stated count. | R/convert.R `empty_first`, R/reconcile.R:179 |
 | N22 | high | **fixed** | The toolkit could not repair a shipped template: the fix saved as `<id>_custom` with the same fingerprint, tied on every statement, and lost the tie-break to the very template it was correcting. It now saves `refines: <id>` and detection ranks a correction one step above the single template it names. | app.R `g_save` / R/detect.R |
-| N21 | medium | open | When a conversion is obviously wrong, the route to "this isn't right, build the right one" is not offered on the result that shows it. | the Convert result page |
+| N21 | medium | **fixed** | When a conversion is obviously wrong, the route to "this isn't right, build the right one" is not offered on the result that shows it. | the Convert result page |
 
 ### N20 - reading 5 of 500 is the same defect as reading 0
 
@@ -208,9 +205,9 @@ seeded from this statement and this template, so the analyst is one click from
 the band editor with the wrong bands already on screen. Depends on N20 landing
 first: without the measure there is nothing to hang the offer on.
 
-| N23 | high | open | **Batch conversion.** Confirmed as a real working pattern: a case arrives as a folder of 10-50 statements, banks anywhere from all-same to all-different. Agreed shape: a second upload mode on Convert; one row per file (status, bank, rows, the failing check), sortable so every failure of the same kind can be fixed together; click a row to open that file's normal result; a file that cannot be read never blocks the rest - push through and report at the end. Today batch intake exists only in Admin, which nobody using the app can open. | Convert |
-| N24 | medium | open | Surface `effective_from` / `effective_to` in the toolkit. The same bank and product in 2020 vs 2024 is a real variant; the schema already supports a date range but nothing shows it, so the only route is two rival templates that tie forever. Owner: "same would be good but plan for both." | app.R toolkit |
-| N25 | low | open | JSON download is unused (CSV and Excel only). Demote it to a small link rather than a third equal button. | Convert |
+| N23 | high | **fixed** | **Batch conversion.** Confirmed as a real working pattern: a case arrives as a folder of 10-50 statements, banks anywhere from all-same to all-different. Agreed shape: a second upload mode on Convert; one row per file (status, bank, rows, the failing check), sortable so every failure of the same kind can be fixed together; click a row to open that file's normal result; a file that cannot be read never blocks the rest - push through and report at the end. Today batch intake exists only in Admin, which nobody using the app can open. | Convert |
+| N24 | medium | **fixed** | Surface `effective_from` / `effective_to` in the toolkit. The same bank and product in 2020 vs 2024 is a real variant; the schema already supports a date range but nothing shows it, so the only route is two rival templates that tie forever. Owner: "same would be good but plan for both." | app.R toolkit |
+| N25 | low | **fixed** | JSON download is unused (CSV and Excel only). Demote it to a small link rather than a third equal button. | Convert |
 
 | N26 | medium | open | The band editor commits the box WHILE you drag, so it re-detects the column on every mouse move and small positional corrections are almost impossible. It should draw on mouse RELEASE. Reported from real use; given that a mis-drawn band is the commonest cause of a wrong amount column, this is a correctness problem wearing a usability costume. | app.R, the PDF band editor brush |
 
@@ -255,7 +252,7 @@ past the drawn band's right edge, since a word is assigned by its x position.
 Filed HIGH: a mis-drawn band is the reported commonest cause of a wrong amount
 column, and a *silently* mis-placed one is worse than a visibly wrong one.
 
-| N30 | **critical** | open | Opening/closing balances are kept as TRANSACTIONS, with the balance figure landing in the debit column ("Balance -9000 debit"). Invents large wrong transactions rather than losing data. Same root cause as N29, plus a second failure that turns a displaced band into a phantom row. | R/parse_pdf_table.R:184-186 |
+| N30 | **critical** | **fixed** | Opening/closing balances are kept as TRANSACTIONS, with the balance figure landing in the debit column ("Balance -9000 debit"). Invents large wrong transactions rather than losing data. Same root cause as N29, plus a second failure that turns a displaced band into a phantom row. | R/parse_pdf_table.R:184-186 |
 
 ### N30 - a balance read as a nine-thousand-dollar debit
 
@@ -361,6 +358,33 @@ conversion, carrying the stage text that is already being produced. It must cove
 all three withProgress sites (single convert at :2086, and the two batch/audit ones
 at :1472 and :1478) - a batch of 30 files is the case where "is it doing anything?"
 bites hardest. Style it once in the design tokens rather than three times.
+
+| N33 | high | **fixed** | A page footer was folded into the PREVIOUS transaction's description, silently rewriting text the tool promises verbatim. Found by the N30 agent while testing, not reported from use. | R/parse_pdf_table.R `.is_footer_noise` |
+
+### N33 - the statement's own wording, rewritten
+
+`doc.pdf` prints `Carried Forward to next page` at the foot of a page. That is a
+date-less, money-less text line, which is exactly the shape of a WRAPPED
+DESCRIPTION, so the continuation merge folded it into the last real transaction
+above it:
+
+    To 63A Rent Rent 63A Sar                -> To 63A Rent Rent 63A Sar Carried Forward to next page
+    2025 Wellington Golden Takeaway         -> 2025 Wellington Golden Takeaway Carried Forward to next page
+
+Measured on the real file: 2 of 79 descriptions on `doc.pdf`, 0 after the fix,
+with the row count unchanged at 79 - nothing was lost, but two rows said something
+the statement never said.
+
+**No figure was wrong, which is exactly why nothing caught it.** Every check this
+tool has is about money and dates; none of them reads the description. A forensic
+reviewer quoting that line in a report would be quoting the tool, not the bank.
+
+THE TRAP, worth stating because the obvious fix is the wrong one: a bare
+`Carried forward` IS a real summary line, matched as a WHOLE label by
+`.pdf_is_summary`. Loosening that anchor so it also catches the footer is
+precisely what would start eating `Total Payments to ACME Ltd`. So the footer
+rule stays separate and REQUIRES the page words (`to next page`, `from previous
+page`); the summary rule is untouched. Both directions are pinned by test.
 
 ### What is holding the last three open
 

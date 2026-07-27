@@ -777,3 +777,29 @@ test_that("an empty band on a statement with nothing unclaimed is NOT reported",
   expect_identical(cov$empty_bands, character(0))         # ...so nothing is reported
   expect_match(cov$diagnosis, "Every candidate row was kept")
 })
+
+# ---- N33: a page footer is not the tail of the transaction above it ----------
+# ".is_footer_noise" decides what the CONTINUATION MERGE may fold into the
+# previous transaction's description. A "Carried Forward to next page" footer is
+# a date-less, money-less text line, so without this it was folded in and the
+# statement's own wording was rewritten: "To 63A Rent Rent 63A Sar" came out as
+# "To 63A Rent Rent 63A Sar Carried Forward to next page". No figure was wrong,
+# which is exactly why nothing caught it -- descriptions are promised verbatim.
+test_that("a carried/brought-forward PAGE FOOTER is footer noise", {
+  for (s in c("Carried Forward to next page", "carried forward to the next page",
+              "Brought Forward from previous page", "Carried forward to following page",
+              "brought forward from the preceding page"))
+    expect_true(.is_footer_noise(s), info = s)
+})
+
+test_that("a bare carried/brought-forward SUMMARY line is not footer noise", {
+  # The two rules must stay separate. A bare "Carried forward" is a real summary
+  # line, caught as a whole label by .pdf_is_summary; loosening THAT anchor to
+  # cover the footer is precisely what would start eating "Total Payments to
+  # ACME Ltd". So the footer rule requires the page words, and nothing else moved.
+  for (s in c("Carried forward", "Balance carried forward", "Brought forward",
+              "TFR TO SAVINGS - BALANCE", "Total Payments to ACME Ltd"))
+    expect_false(.is_footer_noise(s), info = s)
+  expect_true(.pdf_is_summary("Carried forward 1,234.00"))
+  expect_true(.pdf_is_summary("Balance brought forward 55.00"))
+})

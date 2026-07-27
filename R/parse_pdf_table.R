@@ -289,7 +289,21 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
   grepl(paste0("^page\\s+\\d+(\\s+of\\s+\\d+)?$",         # "Page 2 of 2"
                "|^\\d+\\s+of\\s+\\d+$",
                "|continued\\s+(on\\s+)?(next|over)",       # "continued on next page"
-               "|^statement\\s+(continued|continues)"), s)
+               "|^statement\\s+(continued|continues)",
+               # "Carried Forward to next page" / "Brought forward from previous
+               # page" (N33). Without this the footer is a date-less, money-less
+               # text line, so the continuation merge folded it into the LAST real
+               # transaction above it and emitted "To 63A Rent Rent 63A Sar Carried
+               # Forward to next page" - a description the statement never printed.
+               # No figure was wrong, which is why nothing caught it; descriptions
+               # are promised VERBATIM, so a silent rewrite is the defect.
+               #
+               # The page words are required. A bare "Carried forward" IS a real
+               # summary line and is caught by .pdf_is_summary as a whole label --
+               # loosening THAT anchor to cover this footer is what would start
+               # eating "Total Payments to ACME Ltd", so the two stay separate.
+               "|(carried|brought)\\s+forward\\s+(to|from)\\s+(the\\s+)?",
+               "(next|previous|following|preceding|last)\\b"), s)
 }
 
 # .pdf_real_amount(rec, style) -- the money cell holds a VISIBLE number, not just a
