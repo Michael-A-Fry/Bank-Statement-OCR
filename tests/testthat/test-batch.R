@@ -156,7 +156,9 @@ test_that("a failing check is named in plain words and beats the diagnostics", {
   k <- b$result[[1]]$kpis
   first_fail <- k$name[k$status == "fail"][1]
   expect_false(is.na(first_fail))                        # the fixture must fail one
-  expect_identical(b$failing_check, unname(L$CHECK_PLAIN[[first_fail]]))
+  # "Failed: " prefix -- CHECK_PLAIN words a check as what it PROVES, and this
+  # frame has no pass/fail column beside it, so the bare phrase said the opposite.
+  expect_identical(b$failing_check, paste0("Failed: ", unname(L$CHECK_PLAIN[[first_fail]])))
 })
 
 test_that("a bundle's per-statement tag is stripped so grouping still works", {
@@ -168,7 +170,7 @@ test_that("a bundle's per-statement tag is stripped so grouping still works", {
               kpis = data.frame(name = "balance_reconciliation [statement 2]",
                                 status = "fail", stringsAsFactors = FALSE))
   expect_identical(.failing_check(res, L),
-                   unname(L$CHECK_PLAIN[["balance_reconciliation"]]))
+                   paste0("Failed: ", unname(L$CHECK_PLAIN[["balance_reconciliation"]])))
 })
 
 test_that("a failing check wins over a diagnostic, and a diagnostic over the status", {
@@ -179,7 +181,7 @@ test_that("a failing check wins over a diagnostic, and a diagnostic over the sta
                      stringsAsFactors = FALSE)
   # tier 1: the check, even though a high diagnostic is also present
   expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag), L),
-                   unname(L$CHECK_PLAIN[["balance_reconciliation"]]))
+                   paste0("Failed: ", unname(L$CHECK_PLAIN[["balance_reconciliation"]])))
   # tier 2: no failing check -> the most severe diagnostic that is not context
   kpis$status <- c("pass", "pass")
   expect_identical(.failing_check(list(status = "needs_review", kpis = kpis, diagnostics = diag), L),
@@ -195,9 +197,9 @@ test_that("an unknown code falls back to the code itself rather than a blank", {
   res <- list(status = "needs_review",
               kpis = data.frame(name = "a_check_that_does_not_exist", status = "fail",
                                 stringsAsFactors = FALSE))
-  expect_identical(.failing_check(res, L), "a_check_that_does_not_exist")
+  expect_identical(.failing_check(res, L), "Failed: a_check_that_does_not_exist")
   # and with no wording file loaded at all, the raw code still comes through
-  expect_identical(.failing_check(res, new.env()), "a_check_that_does_not_exist")
+  expect_identical(.failing_check(res, new.env()), "Failed: a_check_that_does_not_exist")
 })
 
 # ---------------------------------------------------------------------------

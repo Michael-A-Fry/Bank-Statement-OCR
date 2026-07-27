@@ -683,17 +683,23 @@ test_that("reading the raw line does NOT swallow a real transaction", {
   expect_false(.pdf_is_summary("Closing Balance Holdings Ltd"))
 })
 
-test_that("a line is reduced to its label by dropping dates, money and markers", {
+test_that("a line is reduced to its label by dropping the LEADING date and TRAILING money", {
   # The reduction is what makes reading the raw line safe: it removes the date and
   # money COLUMNS the raw line also carries, so a whole-label match still means the
-  # whole label. Numbers glued into a word are not numbers and must survive.
+  # whole label. POSITION is the point -- content in the MIDDLE of the line is what
+  # the line SAYS and is never touched, which is why the account number below
+  # survives. Stripping numbers and month-ish words anywhere was how
+  # "MAYFAIR CLOSING BALANCE" became "closing balance" and got silently dropped.
   expect_equal(.pdf_line_label("13 Jul Closing Balance $0.00 $2.00 1.97"), "closing balance")
   expect_equal(.pdf_line_label("Closing balance:  1,234.00"), "closing balance")
   expect_equal(.pdf_line_label("Opening balance -  9,000.00"), "opening balance")
   expect_equal(.pdf_line_label("19 Feb DC 06-0705-0503820-28 CREDIT TRANSFER 133307 901.11"),
-               "dc  credit transfer")
+               "dc 06-0705-0503820-28 credit transfer")   # the account number is CONTENT
   expect_equal(.pdf_line_label("Interest 0502 0792845-93 147.43"), "interest")
-  expect_equal(.pdf_line_label("13.90% per annum"), "13.90% per annum")   # not a number
+  # A leading numeric token goes with the date run. That only ever makes the label
+  # SHORTER at the front, which is the safe direction: a shorter label is LESS
+  # likely to whole-match, so the row is kept.
+  expect_equal(.pdf_line_label("13.90% per annum"), "% per annum")
   expect_equal(.pdf_line_label(NA_character_), "")
   expect_equal(.pdf_line_label(NULL), "")
 })
@@ -922,4 +928,31 @@ test_that("with no year anywhere the dates stay blank and the rows are flagged",
   expect_true(all(is.na(tx$date)))
   expect_true(all(grepl("date_unresolved", tx$flags)))
   expect_equal(tx$date_raw, c("March 30", "April 10"))       # nothing lost
+})
+
+# ---- The label reducer must not eat real payees (adversarial review) ----------
+# The first version stripped every number, dr/cr/od and month-ish word ANYWHERE on
+# the line, with `[a-z]*` after the month alternation - so any word merely
+# BEGINNING with a month abbreviation was deleted. `MAYFAIR CLOSING BALANCE`
+# reduced to "closing balance" and the row was silently DROPPED, bucketed
+# non-actionable so it never even reached the thin-parse measure. A silent row
+# drop is strictly worse than the phantom row the guard exists to prevent.
+test_that("a real payee that merely starts with a month is KEPT", {
+  for (s in c("MAYFAIR CLOSING BALANCE", "DECOR TOTAL FEES", "MARKET TOTAL PAYMENTS",
+              "JUNCTION TOTAL DEPOSITS", "TOTAL FEES AUGUST", "SEPTIC TANK SERVICES 90.00",
+              "NOVOTEL WELLINGTON", "ACME CLOSING BALANCE"))
+    expect_false(.pdf_is_summary(s), info = s)
+})
+
+test_that("the summary lines this guard exists for are still caught", {
+  for (s in c("13 Jul Closing Balance $0.00 $2.00 1.97", "18 Feb Opening balance 17,731.96 OD",
+              "Opening balance - 9,000.00", "Closing balance: 1,234.00"))
+    expect_true(.pdf_is_summary(s), info = s)
+})
+
+test_that("only the LEADING date and the TRAILING money are removed", {
+  # Position is the whole point: what is in the MIDDLE is what the line says.
+  expect_identical(.pdf_line_label("13 Jul Closing Balance $0.00 $2.00 1.97"), "closing balance")
+  expect_identical(.pdf_line_label("24 Aug TFR To 63A Rent 465.00 17.26"), "tfr to 63a rent")
+  expect_identical(.pdf_line_label("MARKET TOTAL PAYMENTS"), "market total payments")
 })

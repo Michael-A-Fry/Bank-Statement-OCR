@@ -233,6 +233,42 @@ ui <- fluidPage(
        width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
        border:3px solid var(--brand-line);border-top-color:var(--brand);
        animation:ss-spin .7s linear infinite}
+     /* CONVERTING: unmissable, not a corner (N32). A scanned statement can run for
+        tens of seconds while the page looks completely idle, so people click
+        Convert again, switch tabs, or assume it has hung. Shiny puts its progress
+        panel bottom-right; centre it, enlarge it, and dim the page behind it.
+        Styled ONCE here, so all five withProgress sites are covered together.
+        An ordinary showNotification toast is untouched and stays in the corner --
+        the body class below is only set for a PROGRESS notification. */
+     body.ss-run::before{content:'';position:fixed;inset:0;background:rgba(21,32,43,.42);
+       z-index:1900;animation:ss-fade .15s ease}
+     body.ss-run #shiny-notification-panel{position:fixed;top:50%;left:50%;right:auto;bottom:auto;
+       transform:translate(-50%,-50%);width:min(440px,92vw);z-index:1901}
+     body.ss-run #shiny-notification-panel .shiny-notification{padding:28px 30px 26px;
+       text-align:center;border:1px solid var(--brand-line);border-left:1px solid var(--brand-line);
+       box-shadow:0 18px 50px rgba(0,0,0,.28);opacity:1}
+     body.ss-run #shiny-notification-panel .shiny-notification::before{content:'';display:block;
+       width:34px;height:34px;margin:0 auto 16px;border-radius:50%;
+       border:3px solid var(--brand-line);border-top-color:var(--brand);
+       animation:ss-spin .7s linear infinite}
+     /* A running job is not dismissible: closing this cancels nothing, it only
+        hides the one thing on screen saying the tool is busy. */
+     body.ss-run #shiny-notification-panel .shiny-notification-close{display:none}
+     /* Shiny nests .shiny-progress-notification > [.progress, .progress-text] --
+        the BAR before the words, with an inline display:block no rule can hide.
+        Make that element the column and re-order: message, detail, then how far.
+        The two texts are SPANS, so they need display:block. */
+     body.ss-run #shiny-notification-panel .shiny-progress-notification{display:flex;
+       flex-direction:column}
+     body.ss-run #shiny-notification-panel .progress-text{order:1}
+     body.ss-run #shiny-notification-panel .progress{order:2;margin:20px 0 0;height:6px;
+       background:var(--line);border-radius:999px;box-shadow:none}
+     body.ss-run #shiny-notification-panel .progress-bar{background:var(--brand);box-shadow:none}
+     body.ss-run #shiny-notification-panel .progress-message{display:block;font-size:20px;
+       font-weight:700;color:var(--ink);line-height:1.35}
+     body.ss-run #shiny-notification-panel .progress-detail{display:block;font-size:14px;
+       color:var(--muted);margin-top:8px}
+     body.ss-run #ss-busy{display:none}   /* the corner pill is redundant now */
      /* prominent download bar at the top of a result */
      .dl-hero{display:flex;align-items:center;flex-wrap:wrap;gap:10px;
        background:var(--brand-tint);border:1px solid var(--brand-line);border-radius:10px;
@@ -250,6 +286,22 @@ ui <- fluidPage(
           t=setTimeout(function(){pill().classList.add('on');},250);});
         $(document).on('shiny:idle',function(){clearTimeout(t);
           var p=document.getElementById('ss-busy');if(p)p.classList.remove('on');});
+        // N32: a PROGRESS notification carries .progress-message; an ordinary
+        // toast never does. So the centred overlay follows withProgress only, and
+        // warnings stay in the corner. MutationObserver rather than CSS :has(),
+        // because the deployment browser may be older than :has() support.
+        // $(function(){}) because this script runs BEFORE <body> exists: observing
+        // document.body at head time throws a TypeError (it is null), the observer
+        // never attaches, and the overlay silently never appears -- which is
+        // exactly what happened, and what a prototype injected AFTER page load
+        // cannot catch.
+        $(function(){
+          function ssRun(){var p=document.getElementById('shiny-notification-panel');
+            document.body.classList.toggle('ss-run',
+              !!(p && p.querySelector('.progress-message')));}
+          new MutationObserver(ssRun).observe(document.body,{childList:true,subtree:true});
+          ssRun();
+        });
       })();")),
     # ---- Elevated design system (layered last so it wins the cascade). One
     # brand accent (NZ-Police navy); green/amber/red reserved for trust meaning.
@@ -329,6 +381,14 @@ ui <- fluidPage(
        border-bottom:1px solid var(--line-2)!important;padding:10px 12px!important}
      table.dataTable tbody td{padding:9px 12px}
      table.dataTable tbody tr:hover{background:var(--brand-tint)!important}
+     /* DataTables paints its sort arrow as a background SPRITE on the header cell.
+        The rule above uses the `background:` SHORTHAND with !important, which
+        resets background-repeat to its initial `repeat` -- so the arrow tiled
+        across the whole cell as a row of stray triangles over the last column.
+        Put the sprite back where it belongs; the header keeps its colour. */
+     table.dataTable thead th.sorting,table.dataTable thead th.sorting_asc,
+     table.dataTable thead th.sorting_desc{background-repeat:no-repeat!important;
+       background-position:center right 8px!important;padding-right:26px}
      .dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{
        border:1px solid var(--line-2);border-radius:var(--r-sm);padding:5px 8px}
      /* verdict banner: the result hero */
@@ -1695,19 +1755,19 @@ server <- function(input, output, session) {
   # the kind, label = the wording found beside it or "", read = what was in the box).
   fb_regions <- reactiveVal(list())
 
-  # .fb_read_box(w, box) -- what is INSIDE a drawn box, and the wording printed
-  # beside it: the words on the same line to its left, else the line directly
-  # above. This is how "what is this?" stops being a question only somebody who
-  # has already done the task can answer.
-  # A label is the WORDING, never the value. Trailing tokens that are themselves a
-  # figure are dropped, or a box drawn just PAST its value is named after the very
-  # value it missed ("Opening balance $875.20") - a name that could never match
-  # anything on the next document.
+  # .fb_wording(toks) -- the last few words that are WORDING, never the value.
+  # Trailing tokens that are themselves a figure are dropped, or a box drawn just
+  # PAST its value gets named after the very value it missed ("Opening balance
+  # $875.20") - a name that could never match anything on the next document.
   .fb_wording <- function(toks) {
     while (length(toks) && grepl("^[$(]?[-+]?[0-9][0-9,.:/-]*[%)]?$", toks[length(toks)]))
       toks <- toks[-length(toks)]
     utils::tail(toks, 4)
   }
+  # .fb_read_box(w, box) -- what is INSIDE a drawn box, and the wording printed
+  # beside it: the words on the same line to its left, else the line directly
+  # above. This is how "what is this?" stops being a question only somebody who
+  # has already done the task can answer.
   .fb_read_box <- function(w, box) {
     out <- list(value = "", label = "")
     if (is.null(w) || !nrow(w)) return(out)
@@ -2557,7 +2617,7 @@ server <- function(input, output, session) {
       h4(style = "margin:0 0 2px", sprintf("%d files", nrow(b))),
       p(class = "muted", style = "margin:0",
         paste(unlist(bits), collapse = "  -  "),
-        ". Sort by any column - files that failed the same way sit together, so they can be fixed together."))
+        "."))
   })
 
   # THE TABLE. Sorting is the whole point of it, so the two columns worth sorting
@@ -2580,7 +2640,10 @@ server <- function(input, output, session) {
       check.names = FALSE, stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, selection = "single",
       options = list(
-        pageLength = 15, scrollX = TRUE,
+        # No scrollX: it makes DataTables clone the header into the scroll body,
+        # and the clone's sort arrows render as a stack of triangles over the last
+        # column. Five short columns fit without it.
+        pageLength = 15,
         order = list(list(5, "asc"), list(4, "asc")),
         columnDefs = list(list(visible = FALSE, targets = 5),
                           list(orderData = 5, targets = 1))))
@@ -2595,7 +2658,7 @@ server <- function(input, output, session) {
     div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
       h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))),
       div(class = "muted", style = "font-size:13px",
-          sprintf("File %d of %d. Click another row above for its result.", i, nrow(b))))
+          "Click another row above for its result."))
   })
 
   observeEvent(input$cv_go, {
@@ -3286,14 +3349,19 @@ server <- function(input, output, session) {
       div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
         span(if (!is.na(nice)) sprintf("Read as %s — worth checking it's the right match.", nice)
              else "Please check this is the right match."),
-        actionButton("cv_rematch_go", "Set up the right template", class = "btn-warning btn-sm"))
+        actionButton("cv_rematch_go_rv", "Set up the right template", class = "btn-warning btn-sm"))
     }
   })
-  observeEvent(input$cv_rematch_go, {
+  # Same action, several places to ask for it. Each element has its OWN input id
+  # (two elements sharing one id keep separate click counters, which is how a
+  # button ends up dead), and they all run this.
+  .rematch_now <- function() {
     src <- cv_src(); req(src)
     # Fresh draft from the file itself, never seeded from the wrong match.
     open_guided(src$path, src$name, seed_tmpl = NULL, upload_id = cv_upload_id())
-  })
+  }
+  observeEvent(input$cv_rematch_go,    .rematch_now())
+  observeEvent(input$cv_rematch_go_rv, .rematch_now())
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
       p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
@@ -3937,7 +4005,12 @@ server <- function(input, output, session) {
               actionButton("cv_tie_go", "Convert with this one", class = "btn-primary"))),
           div(class = "muted", style = "font-size:13px",
             "Sure it's neither? ",
-            actionLink("cv_teach_go", "Set up a new template instead"),
+            # Its own id: this link and the "Set up a template" button below render
+            # TOGETHER on a tied-and-unsupported result, and two elements sharing an
+            # input id keep independent click counters -- so one of them sends a
+            # value identical to the current one and its observer never fires. A
+            # dead button, invisible from R. Both call the same handler.
+            actionLink("cv_teach_go_tie", "Set up a new template instead"),
             ".")))
       }
       # BEFORE offering to build a template: if templates built here are switched
@@ -3962,7 +4035,7 @@ server <- function(input, output, session) {
       if (identical(st, "ok")) return(NULL)
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", "Open this statement in setup to fix how it's read and save an improved template."), " ",
-        actionButton("cv_teach_go", "Open the template toolkit", class = "btn-default"))
+        actionButton("cv_teach_go_fix", "Open the template toolkit", class = "btn-default"))
     }
   })
   # Tick the box AND re-run in one click. include_user = TRUE because the tick has
@@ -3976,7 +4049,7 @@ server <- function(input, output, session) {
   observeEvent(input$ab_go_template,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
 
-  observeEvent(input$cv_teach_go, {
+  .teach_now <- function() {
     src <- cv_src(); req(src)
     res <- cv_res()
     seed <- NULL
@@ -3993,7 +4066,10 @@ server <- function(input, output, session) {
       }
     }
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
-  })
+  }
+  observeEvent(input$cv_teach_go,     .teach_now())
+  observeEvent(input$cv_teach_go_tie, .teach_now())
+  observeEvent(input$cv_teach_go_fix, .teach_now())
 
   # Send an unsupported layout to the team (PII-safe: generic context only - a
   # file extension, the detected bank guess and the closest template - never file

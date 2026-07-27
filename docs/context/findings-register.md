@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 99 findings, 88 fixed, 11 open.** Eight of the eleven are the screen findings raised from real use tonight (N26-N29, N31, N32, N34, N35) and are in hand. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
+**Where it stands: 99 findings, 94 fixed, 5 open.** Two of the five are the screen findings raised last (N34 the X-ray row count, N35 the unrevisitable first question) and are scoped, not started. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -209,13 +209,13 @@ first: without the measure there is nothing to hang the offer on.
 | N24 | medium | **fixed** | Surface `effective_from` / `effective_to` in the toolkit. The same bank and product in 2020 vs 2024 is a real variant; the schema already supports a date range but nothing shows it, so the only route is two rival templates that tie forever. Owner: "same would be good but plan for both." | app.R toolkit |
 | N25 | low | **fixed** | JSON download is unused (CSV and Excel only). Demote it to a small link rather than a third equal button. | Convert |
 
-| N26 | medium | open | The band editor commits the box WHILE you drag, so it re-detects the column on every mouse move and small positional corrections are almost impossible. It should draw on mouse RELEASE. Reported from real use; given that a mis-drawn band is the commonest cause of a wrong amount column, this is a correctness problem wearing a usability costume. | app.R, the PDF band editor brush |
+| N26 | medium | **fixed** | The band editor commits the box WHILE you drag, so it re-detects the column on every mouse move and small positional corrections are almost impossible. It should draw on mouse RELEASE. Reported from real use; given that a mis-drawn band is the commonest cause of a wrong amount column, this is a correctness problem wearing a usability costume. | app.R, the PDF band editor brush |
 
-| N27 | medium | open | The save name is generated from the BANK alone, so every layout from one bank drafts the same name and the second one collides or gets a "_2" suffix. It should be built from bank AND the kind of statement (`g_bank` + `g_type`), which the toolkit already asks for and already stores as `statement_type`. Directly worsens the near-duplicate problem: templates that cannot be told apart by name are exactly the ones that tie in detection. | app.R `g_id` / `g_bank` / `g_type` |
+| N27 | medium | **fixed** | The save name is generated from the BANK alone, so every layout from one bank drafts the same name and the second one collides or gets a "_2" suffix. It should be built from bank AND the kind of statement (`g_bank` + `g_type`), which the toolkit already asks for and already stores as `statement_type`. Directly worsens the near-duplicate problem: templates that cannot be told apart by name are exactly the ones that tie in detection. | app.R `g_id` / `g_bank` / `g_type` |
 
-| N28 | high | open | "None of these fit? Tell our team" (`g_req_detail` / `g_req_send`, app.R:3286-3290) sits INSIDE the settings disclosure on the Simple tab, so to a user it appears only on Advanced. It is the escape hatch for somebody already stuck, and the tool then makes them hunt for it. Worse, picking "None of these" in the date or amount dropdown pops a notification saying "use the Tell our team box below" - and the box it names is not visible. It belongs in front, on Simple, always. | app.R:3286 |
+| N28 | high | **fixed** | "None of these fit? Tell our team" (`g_req_detail` / `g_req_send`, app.R:3286-3290) sits INSIDE the settings disclosure on the Simple tab, so to a user it appears only on Advanced. It is the escape hatch for somebody already stuck, and the tool then makes them hunt for it. Worse, picking "None of these" in the date or amount dropdown pops a notification saying "use the Tell our team box below" - and the box it names is not visible. It belongs in front, on Simple, always. | app.R:3286 |
 
-| N29 | **high** | open | Two symptoms reported from real use, probably ONE cause: (a) every second page shows the DEFAULT box positions rather than the ones drawn; (b) a credit column with a box drawn over it reads nothing, while the debit column beside it reads fine. | app.R band editor + R/parse_pdf_table.R |
+| N29 | **high** | **fixed** | Two symptoms reported from real use, probably ONE cause: (a) every second page shows the DEFAULT box positions rather than the ones drawn; (b) a credit column with a box drawn over it reads nothing, while the debit column beside it reads fine. | app.R band editor + R/parse_pdf_table.R |
 
 ### N29 - bands on the wrong page, and a credit column that reads nothing
 
@@ -299,7 +299,7 @@ Also worth a test that no kept transaction's description or raw matches
 .PDF_SUMMARY_LABELS - an invariant that would have failed loudly the first time
 this happened.
 
-| N31 | **high** | open | The form builder ("Something else") opens with the ABSTRACT step and buries the concrete one. First thing on screen is a blank box: "The values to pull out - one per line" (app.R:608) - it asks you to already know the answer. The obvious, teachable step, drawing a box on the page, is at the bottom under "optional" (app.R:635). Needs reordering, not rewording. | app.R:596-640 |
+| N31 | **high** | **fixed** | The form builder ("Something else") opens with the ABSTRACT step and buries the concrete one. First thing on screen is a blank box: "The values to pull out - one per line" (app.R:608) - it asks you to already know the answer. The obvious, teachable step, drawing a box on the page, is at the bottom under "optional" (app.R:635). Needs reordering, not rewording. | app.R:596-640 |
 
 ### N31 - the form builder asks the hard question first
 
@@ -336,7 +336,7 @@ what happens when the box you drew is not beside its label, and the tool can say
 Filed high. The form path is the one an accountant meets with no template to fall
 back on and no reconciliation to catch a mistake, so the flow has to carry her.
 
-| N32 | medium | open | The converting/loading status is a small panel in a screen corner (Shiny's default `withProgress` placement), so people do not notice a conversion is running and click around while it works. It should be large and centred - unmissable - because a scanned statement can take tens of seconds and the page otherwise looks idle. | app.R:2086 (and 1472, 1478), CSS at app.R:187 |
+| N32 | medium | **fixed** | The converting/loading status is a small panel in a screen corner (Shiny's default `withProgress` placement), so people do not notice a conversion is running and click around while it works. It should be large and centred - unmissable - because a scanned statement can take tens of seconds and the page otherwise looks idle. | app.R:2086 (and 1472, 1478), CSS at app.R:187 |
 
 ### N32 - the user cannot tell it is working
 

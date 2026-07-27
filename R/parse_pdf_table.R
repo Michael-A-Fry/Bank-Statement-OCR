@@ -219,19 +219,34 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
   rx
 }
 
-# .PDF_LINE_NOISE -- the tokens that are never part of a line's LABEL: any number
-# (a date, an amount, a balance, an account or reference number), a month name, and
-# a dr/cr/od marker. Stripping them is how a printed line is reduced to the words a
-# human reads as its label -- "13 Jul Closing Balance $0.00 $2.00 1.97" is the
-# closing balance line however many money columns it happens to print into.
-# A token must be whole (bounded by spaces), so "13.90%" and "74c168003e" survive
-# untouched: they are not numbers, they are part of what the line SAYS.
-.PDF_LINE_NOISE <- paste0(
-  "(?:^|\\s)(?:",
-    "[$(]?[0-9][0-9,./:-]*[0-9)]?",                                 # 1,234.56  03/02/2026  12-3456-0789012-50
-    "|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*",    # a month name, abbreviated or full
-    "|dr|cr|od",                                                    # debit / credit / overdrawn marker
-  ")(?=\\s|$)")
+# Reducing a printed line to its LABEL means removing the two things a table row
+# wraps around the label: the DATE at the front and the MONEY at the back.
+# "13 Jul Closing Balance $0.00 $2.00 1.97" is the closing balance line however
+# many money columns it happens to print into.
+#
+# POSITION IS THE WHOLE POINT, and the first version of this ignored it. It
+# stripped every number, every dr/cr/od and every month-ish word ANYWHERE on the
+# line, with `[a-z]*` after the month alternation -- so any word merely BEGINNING
+# with a month abbreviation was deleted. `MAYFAIR CLOSING BALANCE` reduced to
+# "closing balance", `MARKET TOTAL PAYMENTS` to "total payments",
+# `JUNCTION TOTAL DEPOSITS` to "total deposits". Those are ordinary NZ payees, and
+# each was silently DROPPED as a summary line -- and bucketed non-actionable, so it
+# did not even reach the thin-parse measure. A silent row drop is strictly worse
+# than the phantom row this whole guard exists to prevent.
+#
+# So: only the LEADING date tokens and only the TRAILING money/marker tokens go.
+# Anything in the middle is what the line SAYS and is never touched. Month names
+# are matched as real spellings, not as prefixes, so `MARKET` and `DECOR` survive
+# even at the front of a line.
+.PDF_MONTH <- paste0("jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?",
+                     "|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?",
+                     "|nov(?:ember)?|dec(?:ember)?")
+# A leading run of date pieces: "13 Jul", "03/02/2026", "18 Feb", "Mon 5 Sept".
+.PDF_LEAD_DATE <- paste0(
+  "^(?:\\s*(?:[0-9][0-9,./:-]*|", .PDF_MONTH,
+  "|mon|tue|wed|thu|fri|sat|sun)(?:day)?\\b)+")
+# A trailing run of money / balance markers: "$0.00 $2.00 1.97", "17,731.96 OD".
+.PDF_TRAIL_MONEY <- "(?:\\s*(?:[$(]?[0-9][0-9,./:-]*[0-9)]?|dr|cr|od)\\b\\)?)+\\s*$"
 
 # .pdf_line_label(s) -- one printed line reduced to its label, lower-cased.
 # perl + useBytes: this runs 5-8x per visual row across the split / continuation /
@@ -247,7 +262,9 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 .pdf_line_label <- function(s) {
   s <- s %||% ""
   if (length(s) != 1L || is.na(s) || !nzchar(s)) return("")
-  s <- gsub(.PDF_LINE_NOISE, " ", tolower(s), perl = TRUE, useBytes = TRUE)
+  s <- tolower(s)
+  s <- sub(.PDF_LEAD_DATE,   " ", s, perl = TRUE, useBytes = TRUE)
+  s <- sub(.PDF_TRAIL_MONEY, " ", s, perl = TRUE, useBytes = TRUE)
   sub("[\\s:-]+$", "", sub("^\\s+", "", s, perl = TRUE, useBytes = TRUE),
       perl = TRUE, useBytes = TRUE)
 }

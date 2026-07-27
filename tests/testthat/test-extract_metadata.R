@@ -192,7 +192,7 @@ test_that("a HOLE between the periods is surfaced, not silently spanned", {
   expect_true(any(m$period_note == detect_multiple_statements(NULL, m)$reasons))
 })
 
-test_that("an unprovable pairing keeps today's balances and says so", {
+test_that("an unprovable pairing moves NOTHING and says so", {
   # Only the first section prints an opening/closing block; the second does not.
   # There is then no evidence that "the last closing" belongs to the last period,
   # so the balances must not move -- a wrong pairing reconciles to a plausible,
@@ -201,8 +201,13 @@ test_that("an unprovable pairing keeps today's balances and says so", {
     .section("1 January 2026", "31 January 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
     c("Statement period 1 February 2026 to 28 February 2026", "10 Feb 2026 Wages 500.00"))))
   m <- extract_metadata(half)
-  expect_identical(m$period_start, "1 January 2026")   # dates need no pairing -> still widened
-  expect_identical(m$period_end,   "28 February 2026")
+  # The DATES stay put too. This test used to assert they widened, on the theory
+  # that "earliest start and latest end are printed facts" - but what is printed
+  # is a date RANGE, and a statement prints ranges that are not statement periods
+  # (a loan term, a tax year). Widening on an unproven set moved the reader's year
+  # context and produced dates two years out that dates_within_period then PASSED.
+  expect_identical(m$period_start, "1 January 2026")
+  expect_identical(m$period_end,   "31 January 2026")  # NOT widened to 28 February
   expect_identical(m$opening_balance, "1,000.00")      # unchanged from a single-period read
   expect_identical(m$closing_balance, "900.00")
   expect_false(is.na(m$period_note))                   # ...and never in silence
@@ -246,15 +251,16 @@ test_that("periods that cannot be ordered fall back to the first one, loudly", {
   expect_false(is.na(m$period_note))                   # ...but never in silence
 })
 
-test_that("overlapping periods widen the dates but never pair the balances", {
+test_that("overlapping periods move nothing at all", {
   # Overlapping ranges are not one account's consecutive sections, so which period
-  # is "first" and which "last" is not established.
+  # is "first" and which "last" is not established -- and neither the balances NOR
+  # the dates may move on an unproven set (see the note above).
   lap <- list(kind = "text", pages = paste(collapse = "\n", c(
     .section("1 January 2026", "31 March 2026", "1,000.00", "05 Jan 2026 Groceries -100.00", "900.00"),
     .section("1 February 2026", "30 April 2026", "900.00", "10 Feb 2026 Wages 500.00", "1,400.00"))))
   m <- extract_metadata(lap)
   expect_identical(m$period_start, "1 January 2026")
-  expect_identical(m$period_end,   "30 April 2026")
+  expect_identical(m$period_end,   "31 March 2026")    # its OWN end, not the span
   expect_identical(m$opening_balance, "1,000.00")      # left where a single read leaves them
   expect_identical(m$closing_balance, "900.00")
   expect_false(is.na(m$period_note))
@@ -290,4 +296,72 @@ test_that("a real statement's page size is within limits", {
   m <- extract_metadata(read_input(fixture(IF_META_PDF)))
   expect_true(is.finite(m$max_page_pt))
   expect_lt(m$max_page_pt, 2880)   # A4 ~842 pt
+})
+
+# ---- The multi-period span: what the adversarial review found -----------------
+# Every case below is a defect the first version of .period_span actually had,
+# reproduced by an independent reviewer. They are kept as tests because each one
+# is a WRONG FIGURE, not a cosmetic slip, and three of them looked correct.
+.mp <- function(...) extract_metadata(list(
+  kind = "pdf", path = tempfile(fileext = ".pdf"),
+  pages = paste(c(...), collapse = "\n"), meta = list(page_count = 1L)))
+
+test_that("a stray date range does NOT widen a single-period statement", {
+  # A loan term / tax year / term-deposit window is a DATE RANGE, not a statement
+  # period. Widening on it moved the reader's year context: a January statement
+  # beside a 2024-2026 loan term resolved every year-less date to 2024, and
+  # dates_within_period read the same widened period and PASSED.
+  m <- .mp("Statement period 01/01/2026 to 31/01/2026",
+           "Your fixed loan runs 01/01/2024 to 31/12/2026")
+  expect_identical(m$period_start, "01/01/2026")
+  expect_identical(m$period_end,   "31/01/2026")
+  expect_false(is.na(m$period_note))          # and it says why it refused
+})
+
+test_that("a shared boundary day is not an overlap", {
+  # Banks routinely print the previous closing date as the next opening date.
+  # Rejecting that rejected the commonest real multi-period statement there is.
+  m <- .mp("Statement period 31/12/2025 to 31/01/2026", "Opening balance 100.00",
+           "Closing balance 150.00",
+           "Statement period 31/01/2026 to 28/02/2026", "Opening balance 150.00",
+           "Closing balance 175.00")
+  expect_identical(m$period_start, "31/12/2025")
+  expect_identical(m$period_end,   "28/02/2026")
+  expect_identical(m$opening_balance, "100.00")
+  expect_identical(m$closing_balance, "175.00")
+  expect_true(is.na(m$period_note))
+})
+
+test_that("balances are never paired across two different accounts", {
+  # Two dormant accounts both opening and closing on 0.00 chain PERFECTLY. The
+  # chain proof alone believed that, paired across two accounts, and said nothing.
+  m <- .mp("Statement period 01/01/2026 to 31/01/2026", "Account 12-3456-0789012-50",
+           "Opening balance 0.00", "Closing balance 0.00",
+           "Statement period 01/02/2026 to 28/02/2026", "Account 12-3456-0789012-99",
+           "Opening balance 0.00", "Closing balance 0.00")
+  expect_identical(m$period_start, "01/01/2026")   # not merged
+  expect_match(m$period_note, "more than one account")
+})
+
+test_that("one period printed two ways counts as one period", {
+  # `periods` is unique on the matched STRING, so a statement printing its period
+  # in two styles announced "2 periods" on screen for a single-period statement.
+  m <- .mp("Statement period 01/01/2026 to 31/01/2026",
+           "Statement period 01/01/2026 - 31/01/2026")
+  expect_equal(m$n_periods, 1L)
+  expect_true(is.na(m$period_note))
+})
+
+test_that("a genuine consecutive single-account file still merges", {
+  m <- .mp("Statement period 01/01/2026 to 31/01/2026", "Opening balance 100.00",
+           "Closing balance 150.00",
+           "Statement period 01/02/2026 to 28/02/2026", "Opening balance 150.00",
+           "Closing balance 175.00",
+           "Statement period 01/03/2026 to 31/03/2026", "Opening balance 175.00",
+           "Closing balance 200.00")
+  expect_identical(m$period_start, "01/01/2026")
+  expect_identical(m$period_end,   "31/03/2026")
+  expect_identical(m$opening_balance, "100.00")
+  expect_identical(m$closing_balance, "200.00")
+  expect_equal(m$n_periods, 3L)
 })

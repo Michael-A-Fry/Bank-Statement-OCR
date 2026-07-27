@@ -728,6 +728,30 @@ test_that("no output id is drawn twice, because a duplicate unbinds the screen",
   expect_identical(names(which(table(ids) > 1)), character(0))
 })
 
+test_that("no INPUT id is drawn twice either", {
+  # The output test above was written for the duplicate that unbound the toolkit,
+  # and it does not reach inputs -- where the failure is quieter but just as real.
+  # Two actionButtons sharing an id keep INDEPENDENT click counters, so one of them
+  # sends a value identical to the current one and its observeEvent never fires: a
+  # dead button, invisible from R and green in the suite. Found live on
+  # cv_teach_go (three elements, two of which render together on a tied-and-
+  # unsupported result) and cv_rematch_go (two).
+  #
+  # Ids that are DELIBERATELY re-used across mutually exclusive screens would go in
+  # `allow` with the reason. There are none today, and that is the point: the
+  # exception has to be argued in writing rather than happen by accident.
+  src <- .ui_src()
+  allow <- character(0)
+  pat <- paste0("(actionButton|actionLink|textInput|textAreaInput|numericInput|dateInput",
+                "|selectInput|selectizeInput|checkboxInput|checkboxGroupInput|radioButtons",
+                "|sliderInput|fileInput|passwordInput)\\(\\s*\"([A-Za-z0-9_]+)\"")
+  ids <- unlist(regmatches(src, gregexpr(pat, src, perl = TRUE)))
+  ids <- sub("\"$", "", sub("^[^\"]*\"", "", ids))
+  ids <- setdiff(ids, allow)
+  expect_true(length(ids) > 50)
+  expect_identical(names(which(table(ids) > 1)), character(0))
+})
+
 # THE BAND FRAME (R/parse_pdf_table.R) is the one space stored bands live in.
 # The editor draws on the page at its OWN size, so it must divide going out and
 # multiply coming in. Drawn or stored raw, every page that is not the frame's

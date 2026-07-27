@@ -75,7 +75,14 @@
   k <- res$kpis
   if (is.data.frame(k) && nrow(k)) {
     fail <- k$name[!is.na(k$status) & k$status == "fail"]
-    if (length(fail)) return(.say(L, sub(.STATEMENT_TAG, "", fail[1]), "CHECK_PLAIN"))
+    # CHECK_PLAIN words each check as what it PROVES ("Row dates could be read"),
+    # for use beside a separate pass/fail column. This frame has no such column,
+    # so the bare phrase said the OPPOSITE of what happened. Prefixing is enough
+    # and costs no second wording map to keep in step: the string is still
+    # identical for every file that failed the same way, which is what makes the
+    # column sortable, and that sortability is the whole point of it.
+    if (length(fail))
+      return(paste0("Failed: ", .say(L, sub(.STATEMENT_TAG, "", fail[1]), "CHECK_PLAIN")))
   }
 
   # 2. No check failed, so the problem is the file or the match itself -- it could

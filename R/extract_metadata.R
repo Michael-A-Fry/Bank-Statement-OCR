@@ -74,33 +74,54 @@
   # The same period written two ways ("1 Jan 2026 to 31 Jan 2026" and "... - ...")
   # is ONE period, not two -- dedupe by the dates before deciding anything.
   pb <- pb[!duplicated(paste(pb$start, pb$end)), , drop = FALSE]
-  if (nrow(pb) < 2) return(quiet)
+  # Nothing to merge -- but the DEDUPED count still has to be reported, or the
+  # screen goes on announcing "2 periods" for the one period it just collapsed.
+  if (nrow(pb) < 2) return(modifyList(quiet, list(n = nrow(pb))))
 
   pb <- pb[order(pb$start, pb$end), , drop = FALSE]
-  first <- which.min(pb$start); last <- which.max(pb$end)
-  span_start <- pb$start_raw[first]; span_end <- pb$end_raw[last]
-  # Widening the DATES needs no pairing at all -- only the earliest start and the
-  # latest end, both facts printed on the page. So it is applied even when the
-  # balances below cannot be paired: the date check stops false-failing either way.
-  keep_balances <- function(why) list(
-    period_start = span_start, period_end = span_end, opening = NULL, closing = NULL,
-    note = sprintf(paste0("%d statement periods are read as one span %s to %s, but %s, so the ",
-                          "opening and closing balances are left as a single-period read would ",
-                          "leave them - the balance check may still fail on this file."),
-                   nrow(pb), span_start, span_end, why))
+  span_start <- pb$start_raw[1]; span_end <- pb$end_raw[nrow(pb)]
+
+  # NOTHING MOVES UNTIL THE WHOLE THING IS PROVEN -- not the balances, and not the
+  # dates either. The first version widened the DATES on the theory that "the
+  # earliest start and the latest end are both facts printed on the page", and that
+  # reasoning is wrong: what is printed is a DATE RANGE, and a statement prints
+  # plenty of those that are not statement periods. A fixed-rate loan window, an
+  # RWT tax year, a term-deposit maturity - any one of them made a perfectly
+  # ordinary single-period statement report a span it never printed.
+  #
+  # That was not cosmetic. The reader takes its YEAR CONTEXT from period_start /
+  # period_end (R/parse_pdf_table.R), so a January statement that also mentioned a
+  # 2024-2026 loan term resolved every year-less "15 Jan" to 2024 - two years out,
+  # on every row - and dates_within_period then read the SAME widened period and
+  # PASSED. A wrong figure that looks right, which is the one thing the charter
+  # forbids. The pre-change code got it right, so it was a regression too.
+  #
+  # So there are exactly two outcomes now: proven, and everything moves together;
+  # or not proven, and nothing moves and the reason is said out loud. One gate.
+  unproven <- function(why) list(
+    period_start = NA_character_, period_end = NA_character_, n = nrow(pb),
+    opening = NULL, closing = NULL,
+    note = sprintf(paste0("%d date ranges are printed on this file, but %s, so it is read as ",
+                          "its FIRST printed period only. If this really is one account over ",
+                          "%s to %s, the period and balance checks may fail on it."),
+                   nrow(pb), why, span_start, span_end))
 
   # Contiguity. Consecutive periods of one account meet end-to-start. A GAP means
-  # the single span silently covers days no printed period covers, so a missing
-  # transaction in that window could never be noticed -- say it loudly. An OVERLAP
-  # means these are not one account's consecutive sections at all, so the pairing
-  # below is not established and the balances must not move.
+  # the single span would silently cover days no printed period covers, so a
+  # missing transaction in that window could never be noticed -- say it loudly. An
+  # OVERLAP means these are not one account's consecutive sections at all.
+  #
+  # A SHARED BOUNDARY DAY IS NOT AN OVERLAP. Banks routinely print the previous
+  # closing date as the next opening date ("31 Dec to 31 Jan", then "31 Jan to
+  # 28 Feb"). Treating that as an overlap rejected the commonest real multi-period
+  # statement there is -- the exact false alarm this feature exists to remove.
   gaps <- character(0); overlap <- FALSE
   for (k in seq_len(nrow(pb))[-1]) {
-    if (pb$start[k] <= pb$end[k - 1L]) overlap <- TRUE
+    if (pb$start[k] < pb$end[k - 1L]) overlap <- TRUE
     else if (pb$start[k] > pb$end[k - 1L] + 1)
       gaps <- c(gaps, sprintf("%s to %s", format(pb$end[k - 1L] + 1), format(pb$start[k] - 1)))
   }
-  if (overlap) return(keep_balances("they overlap, so they are not one account's consecutive sections"))
+  if (overlap) return(unproven("they overlap, so they are not one account's consecutive sections"))
 
   # Sections: each period's line down to the line before the next period's. The
   # balances are then read PER SECTION with the very same matcher used on the whole
@@ -111,10 +132,22 @@
     i <- which(grepl(p, lines, fixed = TRUE)); if (length(i)) i[1] else NA_integer_
   }, integer(1), USE.NAMES = FALSE)
   if (anyNA(pos) || anyDuplicated(pos))
-    return(keep_balances("their sections could not be told apart on the page"))
+    return(unproven("their sections could not be told apart on the page"))
   o <- order(pos); bnd <- c(pos[o], length(lines) + 1L)
   sec <- vector("list", nrow(pb))
   for (k in seq_along(o)) sec[[o[k]]] <- lines[bnd[k]:(bnd[k + 1L] - 1L)]
+
+  # ONE ACCOUNT. The chain proof below is strong, but it can be satisfied by
+  # COINCIDENCE, and the commonest coincidence there is: two dormant or closed
+  # accounts that both open and close on 0.00. That chains perfectly, so the
+  # balances would be paired across two different accounts and -- worse -- the
+  # design would believe the pairing proven and say nothing at all.
+  # So: if the sections name accounts and they are not the same account, stop.
+  # Sections that name none are not evidence either way and do not block it.
+  accts <- lapply(sec, function(s) unique(.all_matches(paste(s, collapse = " "), .ACCT_RX)))
+  named <- unique(unlist(accts[lengths(accts) > 0]))
+  if (length(named) > 1L)
+    return(unproven("the sections name more than one account, so they are not one account's sections"))
 
   # THE PAIRING EVIDENCE: every period's section prints exactly ONE opening and
   # exactly ONE closing. That is what makes "the earliest period's opening" and
@@ -126,7 +159,7 @@
   cb <- lapply(sec, function(s) match_label(cspec, s, dict))
   exactly_one <- function(r) isTRUE(r$n == 1L) && !is.na(r$value)
   if (!all(vapply(ob, exactly_one, logical(1))) || !all(vapply(cb, exactly_one, logical(1))))
-    return(keep_balances("not every period prints exactly one opening and one closing balance"))
+    return(unproven("not every period prints exactly one opening and one closing balance"))
 
   # SAME ACCOUNT, PROVEN BY THE MONEY: each period must CLOSE on the figure the
   # next period OPENS on. That is the accounting definition of consecutive
@@ -141,11 +174,13 @@
   closes <- .num(vapply(cb, function(r) r$value, character(1)))
   links  <- abs(closes[-length(closes)] - opens[-1]) < PARAM_MONEY_TOL
   if (anyNA(links) || !all(links))
-    return(keep_balances(paste0("one period does not close on the figure the next opens on, so they ",
-                                "are not one account's consecutive sections")))
+    return(unproven(paste0("one period does not close on the figure the next opens on, so they ",
+                           "are not one account's consecutive sections")))
 
-  list(period_start = span_start, period_end = span_end,
-       opening = ob[[first]]$value, closing = cb[[last]]$value,
+  # After the sort these are 1 and nrow(pb) by construction -- the earliest
+  # period's opening, the latest period's closing.
+  list(period_start = span_start, period_end = span_end, n = nrow(pb),
+       opening = ob[[1]]$value, closing = cb[[nrow(pb)]]$value,
        note = if (!length(gaps)) NA_character_ else sprintf(paste0(
          "%d statement periods are read as one span %s to %s, but they do NOT join up: no ",
          "printed period covers %s. Transactions in %s are not part of this file - check it ",
@@ -290,7 +325,13 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     page1_markers  = page1_markers,
     period_start   = period_start,
     period_end     = period_end,
-    n_periods      = length(periods),
+    # DISTINCT periods, not distinct SPELLINGS of them. `periods` is unique on the
+    # matched string, so a statement that prints its period twice in two styles
+    # ("1 Jan 2026 to 31 Jan 2026" and "1 Jan 2026 - 31 Jan 2026") counted as two
+    # and the screen announced "2 periods" on an ordinary single-period statement.
+    # .period_span already dedupes by the parsed DATES to decide anything at all;
+    # its count is the honest one, so it is the one reported.
+    n_periods      = span$n %||% length(periods),
     # NA unless a multi-period file needed something said about it (a hole between
     # the periods, or balances that could not be paired). Reaches the screen via
     # detect_multiple_statements(), and the Metadata sheet via metadata_df().
