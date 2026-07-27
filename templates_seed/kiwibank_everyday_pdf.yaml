@@ -3,6 +3,7 @@
 # statement uses separate money-in / money-out columns, switch amount_sign to
 # debit_credit_cols and give debit/credit bands instead of amount.
 # Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: kiwibank_everyday_pdf
 bank: Kiwibank
 statement_type: everyday

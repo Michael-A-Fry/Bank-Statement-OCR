@@ -1,6 +1,7 @@
 # BNZ Visa (credit card) PDF. Legacy shape: Date | Details | Amount (no running
 # balance in the table). Day+month dates; year from the statement period.
 # Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: bnz_visa_pdf
 bank: BNZ
 statement_type: visa

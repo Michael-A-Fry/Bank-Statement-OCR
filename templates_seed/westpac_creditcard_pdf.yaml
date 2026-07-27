@@ -2,6 +2,7 @@
 # balance in the table). Closing balance labelled "Closing Balance" -> pin it.
 # Day+month dates; year from the statement period.
 # Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: westpac_creditcard_pdf
 bank: Westpac
 statement_type: credit_card

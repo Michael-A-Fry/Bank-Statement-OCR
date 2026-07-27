@@ -1,7 +1,12 @@
-# Opt-in, deterministic auto-split of statement bundles (R/split.R).
-# The forensic contract: split ONLY when a template opts in AND the boundaries are
-# independently confirmed (an independent count agrees, or every segment's balance
-# math ties out). Otherwise refuse -> the caller keeps the flag-and-refuse default.
+# Deterministic auto-split of statement bundles (R/split.R).
+# The forensic contract: split ONLY when the boundaries are independently confirmed
+# (an independent count agrees, or every segment's balance math ties out).
+# Otherwise refuse -> the caller keeps the flag-and-refuse default.
+#
+# It is no longer OPT-IN. Only one of thirteen shipped templates ever declared a
+# `split:` block, so a bundle read by any of the others got no split at all; the
+# opt-in was a second lock on a door the commit gate already holds shut. Explicit
+# `split: false` still turns it off for a template that must never be cut.
 
 # .sp_words -- two transaction rows (day/amount/balance) as positioned word boxes,
 # with the month name supplied so a statement can sit in its own month.
@@ -65,8 +70,18 @@ test_that("a confirmed bundle splits, tags rows, and rolls trust to the weakest"
   expect_equal(sb$parsed$header$page_count, 2L)
 })
 
-test_that("split is refused unless the template opts in", {
-  expect_null(split_bundle(.sp_bundle(), .sp_template(split = NULL)))
+test_that("a template that declares nothing still splits a CONFIRMED bundle", {
+  # This used to assert the opposite. The opt-in was refusing bundles the commit
+  # gate would have accepted, which is what left twelve of thirteen templates
+  # unable to split at all.
+  sb <- split_bundle(.sp_bundle(), .sp_template(split = NULL))
+  expect_false(is.null(sb))
+  expect_equal(sb$n_statements, 2L)
+})
+
+test_that("an explicit split: false still refuses", {
+  # The opt-OUT survives, for a template that must never be cut.
+  expect_null(split_bundle(.sp_bundle(), .sp_template(split = FALSE)))
 })
 
 test_that("a single statement is never split", {
@@ -107,8 +122,9 @@ test_that(".subinput_pages yields a standalone one-statement input", {
   expect_match(si$pages[1], "Feb")
 })
 
-test_that(".split_spec normalises the opt-in block", {
-  expect_null(.split_spec(list()))
+test_that(".split_spec is on by default and off only when explicitly refused", {
+  expect_equal(.split_spec(list())$on, "page1_marker")   # nothing declared -> on
+  expect_null(.split_spec(list(split = FALSE)))          # only this turns it off
   expect_equal(.split_spec(list(split = TRUE))$on, "page1_marker")
   expect_equal(.split_spec(list(split = list(on = "opening_label")))$on, "opening_label")
   expect_equal(.split_spec(list(split = list(min_statements = 5)))$min_statements, 5L)
@@ -148,13 +164,15 @@ test_that("validate_template rejects a bad split block, accepts a good one", {
 
 .anz_bundle_fixture <- function() fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf")
 
-test_that("anz_everyday_pdf opts in to auto-split", {
+test_that("the shipped ANZ template needs no split block to split", {
+  # It used to carry `split: {on: page1_marker, min_statements: 2}` - which is now
+  # exactly the default, so the block said nothing and implied ANZ was special.
+  # What matters is the SETTINGS that apply, not that a file restates them.
   t <- load_templates(templates_dir())[["anz_everyday_pdf"]]
+  expect_null(t$split)
   spec <- .split_spec(t)
-  expect_false(is.null(spec))
-  expect_identical(spec$on, "page1_marker")
+  expect_equal(spec$on, "page1_marker")
   expect_equal(spec$min_statements, 2L)
-  expect_length(validate_template(t), 0L)
 })
 
 test_that("the ANZ bundle splits into its statements with every KPI passing", {
@@ -197,14 +215,14 @@ test_that("the ANZ bundle splits into its statements with every KPI passing", {
   expect_equal(vapply(sb$statements, function(s) s$rows, numeric(1)), c(6, 3))
 })
 
-test_that("WITHOUT the opt-in the same bundle fails - this is what #61 fixes", {
-  # The before-picture, kept as a test so the opt-in can never be quietly dropped:
+test_that("WITHOUT splitting the same bundle fails - this is what #61 fixes", {
+  # The before-picture, kept as a test so splitting can never be quietly dropped:
   # one statement's opening balance is reconciled against two statements of
   # transactions, and statement 2's dates fall outside statement 1's period.
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   skip_if_not(file.exists(.anz_bundle_fixture()))
   t <- load_templates(templates_dir())[["anz_everyday_pdf"]]
-  t$split <- NULL
+  t$split <- FALSE            # the explicit opt-OUT, now the only way off
   expect_null(split_bundle(read_input(.anz_bundle_fixture()), t))
   p <- parse_statement(read_input(.anz_bundle_fixture()), t)
   k <- reconcile(p, t)$kpis
@@ -220,4 +238,23 @@ test_that("a genuine SINGLE ANZ statement is never split by the opt-in", {
   skip_if_not(file.exists(f))
   tp <- load_templates(templates_dir())
   expect_null(split_bundle(read_input(f), tp[["anz_everyday_pdf"]]))
+})
+
+test_that("a bundle from a template that declares nothing converts cleanly", {
+  # The measurement that justified dropping the opt-in. A two-statement Westpac
+  # bundle is read by westpac_everyday_pdf, which declares no split: block. Under
+  # the opt-in it fell through to the merged parse - needs_review, trust LOW, with
+  # balance_reconciliation AND running_balance_continuity both failing, which is
+  # the exact symptom auto-split exists to remove.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  src <- file.path(engine_root(), "samples/_private_staging/wp_2025.pdf")
+  skip_if_not(file.exists(src))
+  bundle <- tempfile(fileext = ".pdf")
+  pdftools::pdf_combine(c(src, src), output = bundle)
+  t <- load_templates(templates_dir())[["westpac_everyday_pdf"]]
+  expect_null(t$split)                      # it really does declare nothing
+  sb <- split_bundle(read_input(bundle), t)
+  expect_false(is.null(sb))
+  expect_equal(sb$n_statements, 2L)
+  expect_true(any(grepl("\\[statement 2\\]", sb$recon$kpis$name)))
 })

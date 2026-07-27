@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 100 findings, 97 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 102 findings, 99 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -476,6 +476,37 @@ wrong, but it is the symptom originally reported. Defaulting the spec on, guarde
 by the existing commit gate, is the real simplification here. It changes
 behaviour for twelve templates, so it wants measuring across the corpus rather
 than doing on a release day.
+
+| N39 | high | **fixed** | Auto-split was OPT-IN and only 1 of 13 shipped templates opted in, so a bundle read by any of the other twelve - or by any template an analyst builds - got no split at all and fell through to the merged parse. Measured on a two-statement Westpac bundle: needs_review, trust LOW, balance_reconciliation AND running_balance_continuity both failing - the exact symptom auto-split exists to remove. The opt-in was never what made splitting safe; the commit gate in split_bundle() is. | R/split.R `.split_spec` |
+
+| N40 | medium | **fixed** | `templates_seed/` ships ten starting points whose bands are placeholders marked `# TODO draw` - and YAML drops comments, so once one is copied into `templates_user/` NOTHING the loader can see says it is unfinished. Six of the ten validate as-is, so a half-drawn template would join detection with placeholder coordinates. It fails loudly rather than silently, but the person is then debugging a template they never finished drawing. A `draft: true` key (the same shape as the existing `sample: true`) now makes that state visible: the loader refuses it and says what to do. | R/templates.R load_templates, templates_seed/*.yaml |
+
+### N39 - the opt-in was the wrong lock
+
+`split_bundle()` already refuses unless an INDEPENDENT structural signal confirms
+the segment count AND every segment parses and reconciles. The `split:` block was a
+second lock on a door that gate already holds shut - and it was the one keeping out
+the templates that needed it.
+
+Measured before changing anything. Every PDF in the corpus, shipped templates,
+opt-in versus defaulted-on:
+
+* **No existing outcome changes.** Nothing gains a split it should not have
+  (`anz_multi_B.pdf`, 5 page-1 markers, is still refused by the commit gate);
+  nothing loses one.
+* That measurement is INERT on its own, because every bundle in the corpus already
+  matches the one template that opted in. So the case that matters was built:
+  a Westpac statement concatenated with itself, read by `westpac_everyday_pdf`,
+  which declares nothing.
+
+| | outcome |
+|---|---|
+| opt-in (as it was) | `needs_review`, trust **low**, `balance_reconciliation` and `running_balance_continuity` both **fail** |
+| defaulted on | 2 statements, reconciled separately, per-statement checks, **status ok**, trust medium, **no failing checks** |
+
+`split: false` remains as an explicit opt-OUT for a template that must never be
+cut. `templates/anz_everyday_pdf.yaml` had its block removed: it restated the
+defaults exactly, so it said nothing and implied ANZ was special.
 
 ### What is holding the last two open
 

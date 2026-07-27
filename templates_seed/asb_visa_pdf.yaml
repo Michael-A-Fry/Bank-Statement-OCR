@@ -2,6 +2,7 @@
 # balance IS in the table on this one). Closing balance labelled "Carried
 # forward" / "Closing Balance". Day+month dates; year from the period.
 # Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: asb_visa_pdf
 bank: ASB
 statement_type: visa

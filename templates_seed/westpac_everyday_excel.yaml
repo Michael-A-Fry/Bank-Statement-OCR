@@ -1,5 +1,6 @@
 # Westpac everyday Excel (.xlsx) export. Column map mirrors westpac_everyday_csv;
 # confirm the header names + date format against a real .xlsx.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: westpac_everyday_excel
 bank: Westpac
 statement_type: everyday

@@ -341,6 +341,20 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
                                   basename(f), conditionMessage(t)))
       next
     }
+    # AN UNFINISHED SEED IS NOT A TEMPLATE. templates_seed/ ships starting points
+    # whose bands are placeholders marked "# TODO draw" - and YAML drops comments,
+    # so once one is copied into templates_user/ nothing the loader can see says it
+    # is unfinished. Six of the ten shipped seeds validate as-is, so a half-drawn
+    # one would join detection with placeholder coordinates. It would fail loudly
+    # (garbage rows break reconciliation; no rows reports "matched, read nothing"),
+    # but the person would be debugging a template they had not finished drawing.
+    # `draft: true` makes that state visible to the loader, which refuses it and
+    # says what to do - the same shape as the `sample: true` exclusion below.
+    if (isTRUE(t$draft)) {
+      errors <- c(errors, sprintf("%s: this is an unfinished seed template - draw its bands in the toolkit, then delete the `draft: true` line",
+                                  t$id %||% basename(f)))
+      next
+    }
     probs <- validate_template(t)
     if (length(probs)) {
       label <- if (!is.null(t$id)) t$id else basename(f)

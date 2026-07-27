@@ -1,5 +1,6 @@
 # Kiwibank everyday Excel (.xlsx) export. Column map mirrors kiwibank_everyday_csv;
 # confirm the header names + date format against a real .xlsx.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: kiwibank_everyday_excel
 bank: Kiwibank
 statement_type: everyday

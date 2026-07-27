@@ -25,12 +25,34 @@
 
 .SPLIT_SIGNALS <- c("page1_marker", "opening_label")
 
-# .split_spec(template) -- normalise the opt-in `split:` block to a spec, or NULL
-# when the template does not opt in. Accepts `split: true` (defaults) or a block
-# with `on` / `min_statements`.
+# .split_spec(template) -- the split settings for a template. Accepts `split: true`,
+# a block with `on` / `min_statements`, or nothing at all; only an explicit
+# `split: false` turns it off.
+#
+# IT USED TO BE OPT-IN, AND THE OPT-IN WAS THE WRONG LOCK. Exactly ONE of the
+# thirteen shipped templates declared a `split:` block, so a bundle read by any of
+# the other twelve -- or by any template an analyst builds -- got no split at all
+# and fell through to the merged parse. Measured on a two-statement Westpac bundle:
+#
+#   opt-in (as it was):  needs_review, trust LOW, balance_reconciliation FAILED
+#                        and running_balance_continuity FAILED
+#   defaulted on:        2 statements, reconciled separately, per-statement checks
+#
+# That failing pair is the symptom this whole feature exists to remove, and the
+# opt-in was what kept it.
+#
+# Turning it on is safe because THE OPT-IN WAS NEVER WHAT MADE SPLITTING SAFE --
+# the commit gate in split_bundle() is: the segment count must be confirmed by an
+# INDEPENDENT structural signal (.count_agrees), and every segment must parse AND
+# reconcile, or the whole thing refuses and flag-and-refuse takes over. A second
+# lock on an already-locked door only ever kept out the people who should have
+# come in. Measured across every PDF in the corpus, defaulting on changes NO
+# existing outcome: nothing gains a split it should not have, nothing loses one.
+#
+# `split: false` remains, for a template that must never be cut.
 .split_spec <- function(template) {
-  s <- template$split
-  if (is.null(s) || isFALSE(s)) return(NULL)
+  s <- template$split %||% TRUE
+  if (isFALSE(s)) return(NULL)
   if (isTRUE(s)) s <- list()
   on <- tolower(as.character(s$on %||% "page1_marker"))
   on <- on[on %in% .SPLIT_SIGNALS]

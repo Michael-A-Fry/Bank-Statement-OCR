@@ -1,6 +1,7 @@
 # BNZ everyday Excel (.xlsx) export. Column map mirrors bnz_everyday_csv; the .xlsx
 # export may use slightly different header text -> confirm the header names against
 # a real file (open it, or use the toolkit's Basic field pickers).
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: bnz_everyday_excel
 bank: BNZ
 statement_type: everyday

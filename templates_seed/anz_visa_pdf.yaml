@@ -2,6 +2,7 @@
 # balance in the table). Dates are day+month ("21 Apr"); year comes from the
 # statement period. Opening/closing balance sit outside the table -> pin them.
 # Coordinates are PLACEHOLDERS: draw the bands on a real statement in the toolkit.
+draft: true    # unfinished seed: draw the bands, then delete this line
 id: anz_visa_pdf
 bank: ANZ
 statement_type: visa

@@ -40,7 +40,4 @@ table:
 # same number of statements, and refuses if any segment will not parse. A genuine
 # single statement has one page-1 marker, so it never reaches min_statements and
 # is parsed exactly as before.
-split:
-  on: page1_marker
-  min_statements: 2
 currency: NZD

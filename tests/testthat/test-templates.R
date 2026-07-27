@@ -272,3 +272,44 @@ test_that("an empty delimiter entry is rejected at load", {
                         validate_template(.min_tmpl(delimiter = c(",", ""))))))
   expect_length(validate_template(.min_tmpl(delimiter = c(",", "\t"))), 0L)
 })
+
+# ---- an unfinished seed can never join detection -----------------------------
+# templates_seed/ ships starting points whose bands are placeholders marked
+# "# TODO draw". YAML drops comments, so once a seed is copied into
+# templates_user/ nothing the loader can see says it is unfinished - and six of
+# the ten shipped seeds validate as-is, so a half-drawn one would take part in
+# detection with placeholder coordinates.
+test_that("every shipped seed template is marked draft", {
+  dir <- file.path(engine_root(), "templates_seed")
+  skip_if_not(dir.exists(dir))
+  files <- list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)
+  expect_gt(length(files), 0)
+  undrafted <- Filter(function(f) !isTRUE(yaml::read_yaml(f)$draft), files)
+  expect_identical(basename(undrafted), character(0))
+})
+
+test_that("a draft template is refused with a reason that says what to do", {
+  d <- tempfile(); dir.create(d)
+  t <- list(id = "seed_x", bank = "SEED", statement_type = "everyday",
+            format = "delimited", version = 1, currency = "NZD",
+            amount_sign = "signed", date_format = "%d/%m/%Y",
+            min_score = 1, draft = TRUE,
+            # a specific column name, so the control case below is refused by the
+            # DRAFT marker alone and not by the generic-fingerprint guard
+            fingerprint = list(header_contains_all = list("Date", "Seedbank Ref")),
+            columns = list(date = list(source = "Date"),
+                           description = list(source = "Description"),
+                           amount = list(source = "Amount")))
+  yaml::write_yaml(t, file.path(d, "seed_x.yaml"))
+  loaded <- suppressWarnings(load_templates(d, origin = "user", strict = FALSE))
+  expect_null(loaded[["seed_x"]])                       # refused, not loaded
+  why <- paste(attr(loaded, "load_errors"), collapse = " ")
+  expect_match(why, "unfinished seed")
+  expect_match(why, "draw its bands")                   # ...and what to do about it
+  # and the SAME template without the marker loads normally, so the refusal is
+  # the marker's doing and not a validation failure hiding behind it
+  t$draft <- NULL
+  yaml::write_yaml(t, file.path(d, "seed_x.yaml"))
+  ok <- suppressWarnings(load_templates(d, origin = "user", strict = FALSE))
+  expect_false(is.null(ok[["seed_x"]]))
+})
