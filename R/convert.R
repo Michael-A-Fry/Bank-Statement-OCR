@@ -67,6 +67,55 @@ log_run <- function(logdir, result) {
   safe(write_log_record(logdir, "runs", rec$run_id %||% result$run_id %||% "unknown", rec))
 }
 
+# .unreadable_reason(input) -- one sentence when the READER got nothing usable out
+# of the file, NULL when it did. This is the line between "could not be read" and
+# "no template for this layout yet", and the two need opposite answers: the first
+# is the sender's problem (re-export, rescan, unlock), the second is a template to
+# build. Getting it wrong wastes the analyst's time on a file that can never
+# convert, so each test below is a FACT about the bytes, never a judgement:
+#   pdf         -- read_pdf sets `pages` to NULL only when pdftools could not read
+#                  the document at all. A SCAN reads fine and comes back with empty
+#                  pages plus scanned_no_ocr, and keeps its own (correct, louder)
+#                  diagnostic -- so this must test the reader's verdict, not the
+#                  emptiness of the text.
+#   delimited   -- a delimited file is a table only if its lines SEPARATE. The
+#                  separators tested are the ones the installed templates declare
+#                  (plus the four any reader falls back to), so teaching the tool a
+#                  bank that separates some other way is still a YAML edit and can
+#                  never turn that bank's export into "unreadable". A header-only
+#                  export DOES separate, so it still reaches "matched the wording,
+#                  read no transactions" rather than being called unreadable.
+#   excel       -- no sheet, or a sheet with no columns, is nothing to read.
+.unreadable_reason <- function(input, templates = NULL) {
+  kind <- input$kind %||% NA_character_
+  if (identical(kind, "pdf")) {
+    if (is.null(input$pages) || !length(input$pages))
+      return(paste("no text could be read from this PDF - it is damaged, encrypted,",
+                   "or not a PDF at all"))
+    return(NULL)
+  }
+  if (identical(kind, "delimited")) {
+    lines <- input$lines %||% character(0)
+    lines <- lines[!is.na(lines) & nzchar(trimws(lines))]
+    if (!length(lines)) return("this file is empty - there is nothing in it to read")
+    seps <- unlist(lapply(templates %||% list(),
+                          function(t) as.character(unlist(t$delimiter %||% character(0)))))
+    seps <- unique(c(seps[!is.na(seps) & nzchar(seps)], ",", "\t", ";", "|"))
+    # fixed = TRUE: these are separator strings, and "|" is a regex alternation.
+    if (!any(vapply(seps, function(s) any(grepl(s, lines, fixed = TRUE)), logical(1))))
+      return(paste("no rows of separated values were found in this file - it holds",
+                   "text, but not a table"))
+    return(NULL)
+  }
+  if (identical(kind, "excel")) {
+    tbl <- input$table
+    if (is.null(tbl) || !ncol(tbl))
+      return("no worksheet with any data could be read from this workbook")
+    return(NULL)
+  }
+  NULL
+}
+
 # convert_statement(...) -> result (build-contract sections 6, 7).
 # `log = FALSE` builds the run record on the result (result$run_log) WITHOUT
 # writing it, so a caller that may still change the outcome (convert_document's
@@ -79,7 +128,16 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               logdir = "logs", redaction_rects = NULL,
                               force_template = NULL, force_rows = NULL,
                               log = TRUE) {
-  base <- tools::file_path_sans_ext(basename(path %||% "input"))
+  # NOTHING THAT TOUCHES `path` HAPPENS OUTSIDE THE FUNNEL. docs/design.md and
+  # docs/overview.md both state "never throws at the front door" as a fact, but the
+  # tryCatch used to open below this preamble -- so basename(path) sat outside it
+  # and convert_document(1L) threw "a character vector argument expected" before a
+  # single guard ran. Shiny always hands over a character datapath, so nothing was
+  # breaking; the danger was that the next maintainer to add a line here would
+  # believe it was protected. What is left above the tryCatch cannot throw for any
+  # input: `safe()` covers the hash and the config, and the run id is built from
+  # values that are already safe. Everything else moved inside.
+  base <- "input"
   cfg <- safe(load_config(), .config_defaults())      # for the metadata-capture level
   t0 <- Sys.time()                                    # elapsed timing (metadata only)
   # run_id: an intentional per-RUN handle for this conversion (feedback and logs
@@ -111,8 +169,18 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   tmpl_sha <- NA_character_        # build provenance: WHICH template content ran
 
   outcome <- tryCatch({
+    base <- tools::file_path_sans_ext(basename(path %||% "input"))
     templates <- load_template_set(templates_dir, user_templates_dir)
     input <- read_input(path, redaction_rects = redaction_rects)
+    # THE FILE ITSELF COULD NOT BE READ. That is not the same answer as "we have
+    # never seen this layout", and it must never be given the same one: a corrupt
+    # PDF and a note-to-self .txt both came back as "No template read this
+    # statement - set one up and it converts every time", sending somebody off to
+    # spend two minutes teaching the tool a file that has nothing in it to teach,
+    # while the server console printed "Couldn't read xref table". Raised through
+    # the funnel above, which is what turns it into a `failed` result with the
+    # `unreadable` diagnostic and the wording that already exists for it.
+    if (!is.null(why <- .unreadable_reason(input, templates))) stop(why, call. = FALSE)
     meta <- extract_metadata(input)
     multi <- detect_multiple_statements(input, meta)
     lsig <- layout_signature(input)
@@ -193,7 +261,19 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
              sb = NULL, did_split = FALSE)
       }
 
-      att <- .read_with(det$template_id)
+      # WHICH template actually reads it. On a tie, `det$template_id` is the top
+      # scorer over ALL templates, and `det$tied` is the templates that met their
+      # OWN min_score and share the top ELIGIBLE score -- two different sets. A
+      # template can out-score both tied ones and still be ineligible (it wanted 3
+      # phrases and found 2), and reading with THAT one stamped its bank on the
+      # workbook, the CSV and the JSON while the screen named the other two. The
+      # figures reconciled cleanly, so nothing looked wrong: a wrong figure that
+      # LOOKS right, which is the one outcome this tool must never produce.
+      # det$tied is already ordered by the principled order promised above -- a
+      # shipped/tested template over a hand-built one, then the filename hint, then
+      # id -- so its first entry IS the best candidate, deterministically.
+      used_id <- if (ambiguous) det$tied[1] else det$template_id
+      att <- .read_with(used_id)
       template <- att$template
       parsed <- att$parsed; recon <- att$recon; sb <- att$sb; did_split <- att$did_split
       detected_template <- template$id
@@ -237,7 +317,9 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         # problem from an unknown layout, and has a different fix:
                         # the template exists, its columns are in the wrong place.
                         matched_empty = if (row_count == 0L) template$id else NULL,
-                        tied = if (ambiguous) det$tied else NULL))
+                        tied = if (ambiguous) det$tied else NULL,
+                        # which of the tied templates produced these figures
+                        tied_used = if (ambiguous) template$id else NULL))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,
@@ -259,11 +341,16 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
       # Named, not hidden -- but stated as a fact about the TOOL, not as a task for
       # the person reading it. She has her data; somebody else retires the duplicate.
+      # It names the one that WAS used and the one(s) that were not: listing the tie
+      # without saying which of them produced these figures leaves the reader unable
+      # to check the answer against the right template.
       if (ambiguous) {
+        others <- setdiff(det$tied, template$id)
         msg <- c(status_message("needs_review",
-          sprintf("%s templates fit this statement equally well, so the tested one was used",
-                  length(det$tied)),
-          sprintf("worth a check: %s", paste(det$tied, collapse = ", "))), msg)
+          sprintf("%s templates fit this statement equally well; it was read with %s",
+                  length(det$tied), template$id),
+          sprintf("worth a check against the alternative%s: %s",
+                  if (length(others) == 1L) "" else "s", paste(others, collapse = ", "))), msg)
       }
 
       result$status <- status
@@ -306,8 +393,12 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     result
   }, error = function(e) {
     r <- new_result(status = "failed")
+    # NOT "...and matches a template". Everything that lands here failed BEFORE any
+    # template was in play, so pointing at templates sends the reader to build one
+    # for a file the tool could not even open. Same cure as the `unreadable`
+    # diagnostic (R/diagnose.R), so the message and the diagnostic say one thing.
     r$messages <- status_message("failed", conditionMessage(e),
-                                 "check the file is readable and matches a template")
+                                 "check the file opens, is the type it claims to be, and is not password-protected or damaged")
     r$diagnostics <- build_diagnostics("failed", messages = r$messages)
     r
   })
@@ -325,7 +416,9 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     run_id = run_id,
     kind = "statement",
     requested_by = requested_by %||% current_user(),
-    source_file = basename(path %||% NA_character_),
+    # safe(): the run log is written AFTER the funnel closes, so this is one of the
+    # few lines left that a hostile `path` could still throw from.
+    source_file = safe(basename(path %||% NA_character_), NA_character_),
     source_sha256 = sha,
     bank_hint = bank %||% NA_character_,
     detected_template = if (result$status %in% c("ok", "needs_review")) result$template_id else NA_character_,

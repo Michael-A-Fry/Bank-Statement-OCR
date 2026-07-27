@@ -18,7 +18,7 @@ conversion until you finish it and move it across.
 3. Copy this skeleton's known settings in (or load it), then **draw the column
    bands** on the page. For a credit card, **pin the opening/closing balance** with
    a drawn box (the toolkit's "pin box → value"). Use **"this IS a transaction"**
-   in the X-ray to catch any row the reader skipped.
+   under **See it on the page** to catch any row the reader skipped.
 4. Confirm the balance reconciles, then **Save**. It lands in `templates_user/`.
 5. To ship it to the whole team, move the saved file into `templates/` and add a
    golden-file test (see `tests/HOWTO-add-template-test.md`).

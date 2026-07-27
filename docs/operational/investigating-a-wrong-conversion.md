@@ -1,0 +1,141 @@
+# Someone says a conversion is wrong
+
+For the **maintainer**, on the day it happens. The analyst's own page is
+[when-something-goes-wrong.md](when-something-goes-wrong.md) — that one is about
+reading the verdict. This one is about going back to a conversion that already
+happened, reproducing the exact figure, and deciding whose problem it is.
+
+Everything you need is already on the box. Nothing here needs the internet, and
+nothing here changes a stored figure — there is no cell to edit, and the fix is
+always a template correction and a re-run.
+
+---
+
+## 1. Get the run id
+
+Every conversion has a **run id** — a content hash, a UTC timestamp and a short
+random suffix, e.g. `bbf83b15b9-20260727200534-bbee`. It is not printed on the
+analyst's screen, so do not ask her for one. You get it yourself:
+
+| Where | Table | Use it when |
+|---|---|---|
+| **Admin → Insights** | *Feedback flagged as wrong / minor issues* — `ts`, `verdict`, `comment`, `template_id`, `run_id` | somebody rated a result **wrong** or **minor issues** in the app |
+| **Admin → Insights** | *Uploads* — `ts`, `file_ext`, `status`, `template`, `trust`, `needs_pickup`, `purged`, `run_id` | you know the file or roughly when it was converted |
+
+If she can only tell you the file name and the day, the Uploads table is the
+route: it lists every statement converted on this server, newest first.
+
+A verdict of **wrong** has already withdrawn that run's rows from the published
+feed before you read it, and marked the run `retracted:user_reported_wrong` in the
+feed manifest so the coverage table shows a retraction rather than silently losing
+a row. With `feed.include_review_feed` on (the shipped default) the rows are moved
+to `feed\review\` rather than destroyed. Either way the dashboards are safe while
+you work.
+
+## 2. Read the run record
+
+One JSON file per run, never overwritten: `logs\runs\<run_id>.json`. Open it in
+Notepad. The fields that decide what you do next:
+
+| Field | What it tells you |
+|---|---|
+| `source_file`, `source_sha256` | which file, and its exact bytes |
+| `detected_template`, `template_origin` | which template ran, and whether it was shipped (`default`) or built in the app (`user`) |
+| `template_version`, `template_sha256` | **which content** of that template ran |
+| `detect_detail` | how it was chosen, e.g. `matched anz_everyday_csv (score 7/6)` |
+| `engine_version` | which build |
+| `status`, `trust_level`, `kpi_fail_count` | the verdict she saw |
+| `row_count`, `pages`, `period_start`, `period_end` | the shape of what was read |
+| `requested_by` | the identity the engine had. The screen amends the record afterwards with `attested_by` (the QID that was typed), `detected_identity` and `identity_source`, so a claim and a proven identity are never the same field |
+
+`logs\metadata\<run_id>.json` holds the local-only capture for the same run (how
+the columns looked, how long it took). `logs\feedback\<run_id>__<stamp>.json`
+holds her verdict and comment.
+
+## 3. Find the original file
+
+The uploaded statement is kept byte-for-byte under `uploads\<upload_id>\`,
+beside a `record.json` that names the `run_id`. So the run id finds the file —
+search every upload record for it:
+
+```
+cd /d D:\StatementStudio-offline\uploads
+findstr /s /m "<run_id>" record.json
+```
+
+The folder that comes back holds the statement itself, under its original name.
+(The upload id is *not* the run id: one uploaded file can be converted more than
+once, so they are deliberately separate.)
+
+**If nothing comes back**, the copy has passed its retention period and been
+deleted (`purged: true` in the record, and in the Admin Uploads table). The
+record of what happened is kept forever; the statement is not. Ask for the file
+again — and note that without it you cannot reproduce anything, which is the
+honest answer to give.
+
+## 4. Reproduce the figure
+
+`run.R` is the whole engine with no Shiny in front of it. From the app folder:
+
+```
+cd /d D:\StatementStudio-offline
+set "R_LIBS_USER=%CD%\R-lib"
+set "R_LIBS_SITE="
+"R-runtime\bin\x64\Rscript.exe" run.R uploads\<upload_id>\<file> "" out\check
+```
+
+Usage is `Rscript run.R <file> [bank] [outdir]`. The second argument is a **bank
+hint** — leave it `""` unless you are deliberately forcing detection down one
+bank's templates. It prints the status, the template, the trust level, every
+check with its detail, and the three output paths.
+
+Run it **from the app folder**, not from anywhere else: `templates_user\` is
+resolved relative to the working directory, and a run started somewhere else
+would silently leave out every template built in the app — including, quite
+possibly, the one that produced the figure you are chasing.
+
+Two things to confirm before you believe the re-run:
+
+1. **The same template ran.** Compare `detected_template` and `template_sha256`
+   in the new `logs\runs\<run_id>.json` against the old one. If the hashes
+   differ, the template has been edited since — *that is already your answer*,
+   and the old figure cannot be reproduced from today's template.
+2. **The output is byte-identical.** Same input plus same template gives the same
+   bytes, deliberately. If the workbook, CSV and JSON match the ones she
+   downloaded, the engine did exactly what it did before and the disagreement is
+   about what it *should* have done.
+
+## 5. Template bug, or bad file?
+
+| Symptom in the re-run | Read it as |
+|---|---|
+| `detected_template` names a template for a **different bank** | a fingerprint that is too loose. Fix the phrase or the `min_score` on the template that matched, not on the one that should have. |
+| The right template, but rows missing from the middle of a PDF | a column band in the wrong place. Open the file in the toolkit and look at **See it on the page**: amber dashed rows look like transactions and were skipped. **Template.** |
+| Dates real but wrong (day/month swapped), or a low count on *Row dates could be read* | the date format. **Template.** |
+| Balance out by exactly twice one transaction, or every sign inverted | the amount style, or *which value means money out* on an indicator column. **Template.** |
+| The run was OCR'd (`pages` set, *Scan / OCR read quality* present) and individual digits are wrong | **the file.** Ask for a better scan or the bank's CSV/Excel export. OCR accuracy is not something the engine can improve from here. |
+| A delimited or Excel export reads wrong | never a scan — it is the template or the export itself. Compare the file's own header row against the template's `columns:`. |
+| Everything reconciles and she still says it is wrong | ask which row and which figure. A conversion that reconciles to the cent and reads a description verbatim is usually a disagreement about what the statement means, not about what it says. |
+
+A template fix goes back through the toolkit like any other
+([adding-a-bank-template.md](adding-a-bank-template.md)); correcting a shipped
+template saves as `<id>_custom` with a `refines:` line and takes effect on the
+next conversion. Converting the file again is what puts the corrected figures
+back in front of the dashboards — there is no way to publish a withheld run
+without re-running it, and that is deliberate.
+
+## 6. Close it out
+
+- Convert the file again in the app so the corrected run is the one on record.
+- If you promoted or edited a shipped template, run the suite
+  ([maintaining-the-engine.md](maintaining-the-engine.md) §1).
+- If the cause was the engine rather than a template, it belongs in
+  [`../context/findings-register.md`](../context/findings-register.md) with its
+  evidence — that register is what the changelog is built from.
+
+---
+
+Related: [when-something-goes-wrong.md](when-something-goes-wrong.md) ·
+[maintaining-the-engine.md](maintaining-the-engine.md) ·
+[backup-and-restore.md](backup-and-restore.md) ·
+[`../design.md`](../design.md) (the map: which module owns each step)

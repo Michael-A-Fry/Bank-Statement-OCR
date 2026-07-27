@@ -33,3 +33,20 @@ test_that("a template with no extras block yields an empty extras frame", {
   expect_equal(nrow(p$extras), 0L)
   expect_identical(names(p$extras), "row_id")
 })
+
+# ---------------------------------------------------------------------------
+# A DOC POINTER IN AN ENGINE COMMENT IS A PROMISE TO THE NEXT MAINTAINER, and it
+# rots silently: R/logging.R pointed at docs/context/architecture/
+# deployment-integration-plan.md for the WHOLE concurrency story long after that
+# file stopped existing, so the one place the design is written down read as a
+# dead end. Nothing errors when a comment lies, so only a test that follows the
+# link can catch it.
+test_that("every docs/ path named in an engine comment exists", {
+  root <- engine_root()
+  src <- unlist(lapply(list.files(file.path(root, "R"), pattern = "\\.R$", full.names = TRUE),
+                       readLines, warn = FALSE))
+  paths <- unique(unlist(regmatches(src, gregexpr("docs/[A-Za-z0-9_/.-]+\\.md", src))))
+  expect_gte(length(paths), 5L)                       # the scan itself must not go quiet
+  missing <- paths[!file.exists(file.path(root, paths))]
+  expect_equal(missing, character(0))
+})

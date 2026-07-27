@@ -34,7 +34,7 @@
 .FIX_EMPTY_TEMPLATE <- paste(
   "Open this statement in the template toolkit with that template and check where the",
   "columns sit - the usual cause is a column band drawn in the wrong place, or over",
-  "the wrong part of the page. The X-ray view shows what the tool saw.")
+  "the wrong part of the page. \"See it on the page\" shows what the tool saw.")
 
 # Same rule, two more defects that were each written out twice in slightly
 # different words. Both are raised from two places -- a failing reconciliation KPI
@@ -67,6 +67,7 @@
   date_parse              = "template",
   date_format_mismatch    = "template",
   amount_parse            = "template",
+  amount_direction        = "template",
   date_out_of_range       = "template",
   # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
   unreadable              = "input",
@@ -166,8 +167,12 @@
   no_unparsed_rows = list(
     where = "rows", category = "row_parse", severity = "high",
     how_to_fix = .FIX_ROW_PARSE),
+  # Its own category, not amount_parse. The amounts here were read PERFECTLY -- it
+  # is their DIRECTION that may be inverted -- and amount_parse is worded on screen
+  # as "amounts couldn't be read", the opposite of what happened, on a card a
+  # forensic accountant acts on. Same code, same file, two different defects.
   amount_direction = list(
-    where = "amount direction", category = "amount_parse", severity = "high",
+    where = "amount direction", category = "amount_direction", severity = "high",
     how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
   # Had no entry, so the gravest verdict the engine can reach -- the redaction scan
   # did not finish, so blacked-out text may have been read and emitted -- was
@@ -229,8 +234,13 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # instruction for it: templates that already fit scored the same, so a new one
     # would simply tie as well and the next conversion would be no better. Same
     # status, opposite fix -- so say the opposite thing.
+    # detail_plain, not detail: this table is customer-facing, and `detail` is the
+    # log line ("closest anz_everyday_pdf score 2/3 (missing '...')"). The template
+    # id and the fraction stay in the run log and the audit record; the reader gets
+    # the same evidence in words. Falls back to `detail` for callers that build a
+    # det by hand.
     add("detection", "unknown_format", "high",
-        det$detail %||% "no template matched this file",
+        det$detail_plain %||% det$detail %||% "no template matched this file",
         paste("Add a template for this layout in the template toolkit (Add a template tab:",
               "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
   } else if (identical(status, "failed")) {
@@ -247,8 +257,13 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # person who just wanted her spreadsheet.
     if (length(metadata$tied %||% character(0)) >= 2)
       add("detection", "ambiguous_template", "medium",
-          sprintf("%s templates fit this statement equally well: %s",
-                  length(metadata$tied), paste(metadata$tied, collapse = ", ")),
+          # Naming the one that was USED matters: the tie list alone does not say
+          # which template these figures came from, and that is the first thing a
+          # reviewer needs in order to check them.
+          sprintf("%s templates fit this statement equally well: %s%s",
+                  length(metadata$tied), paste(metadata$tied, collapse = ", "),
+                  if (!is.null(metadata$tied_used))
+                    sprintf(" - it was read with %s", metadata$tied_used) else ""),
           paste("The tested one was used and the run held for review. These look like",
                 "near-duplicates of each other: merging or retiring one stops every",
                 "statement of this kind needing a second look."))

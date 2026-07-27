@@ -99,8 +99,17 @@ test_that("the app no longer claims a sign-in it does not have (#47)", {
   # ...and where it cannot, a conversion is BLOCKED rather than recorded against
   # the server's own account. Warning-and-continue is not enough: the run would
   # still be written, naming nobody, and a defensible output cannot rest on that.
-  expect_match(joined, "!\\.identity_is_personal\\(detected_identity_info\\(\\)\\) && is.na\\(cv_qid\\(\\)\\)")
-  expect_match(.app_block(src_go <- .app_src(), "observeEvent\\(input\\$cv_go", 25L), "return\\(\\)")
+  #
+  # The gate has a NAME now (.identity_ok), because writing it out inside cv_go
+  # meant the other way into a conversion - "Try it on a sample statement" - had
+  # no gate at all and produced a full result, with downloads, recorded against
+  # the server account. So the rule asserted here is the stronger one: one gate,
+  # and EVERY entry point goes through it.
+  expect_match(joined, "\\.identity_ok <- function")
+  expect_match(joined, "\\.identity_is_personal\\(detected_identity_info\\(\\)\\) \\|\\| !is\\.na\\(cv_qid\\(\\)\\)")
+  src_go <- .app_src()
+  for (h in c("observeEvent\\(input\\$cv_go", "observeEvent\\(input\\$cv_try_sample"))
+    expect_match(.app_block(src_go, h, 25L), "if \\(!\\.identity_ok\\(\\)\\) return\\(\\)")
   # asked once a session, not once a statement
   expect_match(joined, "cv_qid <- reactiveVal", fixed = TRUE)
   expect_match(joined, "Recording as %s", fixed = TRUE)

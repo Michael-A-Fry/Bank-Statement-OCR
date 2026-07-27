@@ -60,6 +60,47 @@ test_that("malformed / unparsed rows are diagnosed", {
   expect_true(any(d$category == "amount_parse"))
 })
 
+# The Diagnostics table is customer-facing, and the unknown_format row printed the
+# detection LOG line into it: "closest anz_everyday_pdf score 2/3 (missing
+# 'Transaction type and details')". A template id and a fraction are exactly what
+# the operational guide tells the analyst to report as a bug when they appear on a
+# screen. Same evidence, in words; the id and the score stay in the run log.
+test_that("the unknown-layout diagnostic carries no template id and no score", {
+  out <- tempfile("diagplain_"); dir.create(out)
+  res <- convert_statement(fixture("samples/raw/anz/anz_card_summary_sample.pdf"),
+                           outdir = out, templates_dir = templates_dir(), logdir = out)
+  expect_identical(res$status, "unsupported")
+  d <- res$diagnostics
+  detail <- d$detail[d$category == "unknown_format"]
+  expect_length(detail, 1L)
+  expect_false(grepl("anz_creditcard_csv", detail, fixed = TRUE))   # no id
+  expect_false(grepl("score", detail, ignore.case = TRUE))          # no metric
+  expect_match(detail, "ANZ creditcard statement", fixed = TRUE)    # the human name
+  expect_match(detail, "TransactionDate", fixed = TRUE)             # the missing wording
+  # ...and the id + score are NOT lost -- they are in the run log, where they belong
+  expect_match(res$run_log$detect_detail, "anz_creditcard_csv", fixed = TRUE)
+  expect_match(res$run_log$detect_detail, "score", fixed = TRUE)
+})
+
+test_that("a caller that builds a det by hand still gets its detail through", {
+  # build_diagnostics has callers that assemble a det themselves (the batch audit,
+  # the tests above); they carry no detail_plain and must not lose their message.
+  d <- build_diagnostics("unsupported", det = list(detail = "closest bnz score 2/3"))
+  expect_equal(d$detail, "closest bnz score 2/3")
+})
+
+# A tie now converts, so the reviewer is holding figures from ONE of the tied
+# templates. The tie list alone does not say which -- and that is the first thing
+# needed to check the figures against the right template.
+test_that("the ambiguous-template diagnostic names the template that was used", {
+  d <- build_diagnostics("needs_review",
+    metadata = list(tied = c("a_csv", "b_csv"), tied_used = "a_csv"))
+  row <- d[d$category == "ambiguous_template", , drop = FALSE]
+  expect_equal(nrow(row), 1L)
+  expect_match(row$detail, "it was read with a_csv", fixed = TRUE)
+  expect_match(row$detail, "a_csv, b_csv", fixed = TRUE)
+})
+
 test_that("clean statement yields a single 'none' diagnostic", {
   parsed <- list(transactions = .mk_tx())
   recon <- list(kpis = data.frame(name = "transaction_count", status = "pass",
@@ -79,6 +120,27 @@ test_that("convert_statement attaches diagnostics and writes a Diagnostics sheet
   skip_if_not(requireNamespace("openxlsx", quietly = TRUE))
   wb <- openxlsx::loadWorkbook(res$outputs[["xlsx"]])
   expect_true("Diagnostics" %in% names(wb))
+})
+
+# "the amounts were read fine but the DIRECTION may be inverted" is not "amounts
+# couldn't be read". It shared amount_parse's category, so the screen rendered the
+# opposite of what happened, on the card a forensic accountant acts on.
+test_that("an inverted-direction warning is its own category, not an unread-amount one", {
+  recon <- list(kpis = data.frame(
+    name = "amount_direction", status = "fail", expected = "mixed",
+    actual = "all money-in", discrepancy = NA,
+    detail = "every amount shares one sign", stringsAsFactors = FALSE))
+  d <- build_diagnostics("needs_review", parsed = list(transactions = .mk_tx()),
+                         recon = recon)
+  expect_true("amount_direction" %in% d$category)
+  expect_false("amount_parse" %in% d$category)
+  expect_equal(unname(.DIAG_FIX_OWNER[["amount_direction"]]), "template")
+  # ...and a genuinely unreadable amount still raises amount_parse
+  d2 <- build_diagnostics("needs_review",
+    parsed = list(transactions = .mk_tx(2, amount = c(-5, NA), flags = c("", ""))),
+    recon = list(kpis = NULL))
+  expect_true("amount_parse" %in% d2$category)
+  expect_false("amount_direction" %in% d2$category)
 })
 
 test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly", {

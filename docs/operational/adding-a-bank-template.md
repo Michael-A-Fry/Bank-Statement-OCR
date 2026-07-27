@@ -8,60 +8,113 @@ leaves the server.
 
 ## A transaction statement
 
-1. **Add a template** tab → **Browse** the example → leave the question on *A
-   bank or card statement* → **Open the toolkit**.
+**Browse the example, open the toolkit, read the preview.** If the dates, the
+descriptions and the money-in / money-out signs are right, name the bank and
+click **Save template**. On a statement the tool drafted cleanly, that is the
+entire job — the bands are already drawn and the columns already mapped from
+your own file, and the preview underneath is showing you the result.
 
-2. The toolkit opens with the statement on the left and the settings on the
-   right, already filled in from your file. **Look at the preview at the bottom
-   before you change anything.**
+So: **Add a template** tab → **Browse** the example → leave the question on *A
+bank or card statement* → **Open the toolkit**.
 
-   **If the preview is empty, stop and read the next section** — an empty preview
-   is not something you fix by pressing on.
+The toolkit prints its own numbered strip along the top. On a **PDF** it reads:
 
-3. **Check the columns.** Date and Description are required; Amount, Reference
-   and Balance are offered too. Pick the **balance** column if the statement has
-   one — it is what unlocks the balance checks. Without a balance and without a
-   printed opening/closing pair, nothing can prove a row was not dropped, and the
-   confidence level is capped at *medium* whatever else is right.
+> **1** Drag a box over a column and say what it is · **2** click **Assign it** ·
+> **3** name the bank on the right · **4** check the **Preview** below ·
+> **5** **Save**.
 
-4. **Answer the two questions the tool cannot answer for you.** Both come with
-   its best guess already selected; the preview below reacts as you change them.
+On a **CSV, TSV or Excel** file:
 
-   - **How are the dates written?** — `31/12/2025`, `31/12/25`, `2025-12-31`,
-     `31 Dec 2025`…
-   - **How are amounts shown?** — one signed column (minus = out); separate
-     withdrawals/deposits columns; a `DR`/`CR` suffix on the number; a short
-     `D`/`C` indicator column; or unsigned, where a bare number is a charge and
-     `CR` marks a payment (credit cards).
+> **1** check each column picker matches your file · **2** name the bank ·
+> **3** check the **Preview** below · **4** **Save**.
 
-     Picking the indicator style asks one more: *which value means money out*.
-     Get this backwards and every debit becomes a credit, with no error anywhere —
-     check the preview's signs against the statement before saving.
+**Do them in the order 4, 3, 5** on a PDF — preview, bank, Save — or 3, 2, 4 on a
+delimited file. Steps 1 and 2 of the PDF strip, and step 1 of the other, are
+**corrections**: what to do when the preview is wrong. The controls say so
+themselves — *"Leave as detected unless the preview looks wrong."*
 
-5. **Check the preview**, line by line, on these four things: the dates are the
-   right dates, money out is negative, descriptions are complete, and no row is
-   missing from the middle.
+### Check the Preview (PDF step 4 · delimited step 3)
 
-6. **The identifying phrase.** This is what recognises the bank next time. It is
-   matched **character for character** — `OPENING BALANCE`, `Opening Balance` and
-   `Opening balance` are three different phrases. Copy it off the page exactly,
-   including capitals and spacing. Prefer the masthead or a distinctive footer;
-   the tool refuses to save a phrase so generic it would claim other banks'
-   statements, and tells you which phrase was the problem.
+This is the step that matters, and it is the one you *can* do: it is your own
+transactions, on screen, as the tool will write them out. Read it line by line
+for four things:
 
-7. **Save template.** The tool then re-checks your file against every template it
-   has and tells you in words whether it will be recognised on its own next time.
+- the dates are the right dates;
+- **money out is negative**;
+- descriptions are complete, not cut off;
+- no row is missing from the middle.
 
-   If it says *saved, but this statement is NOT recognised by it yet*, read the
-   whole message. It suggests the phrase is not printed exactly as typed — usually
-   true, but not always. If it also says *ambiguous: X and Y both score N*, the
-   phrase is fine; an existing template fits your statement equally well and the
-   tool will not choose between them. That is a duplicate for whoever maintains
-   the engine to retire, not something you can fix by editing your phrase.
+**If the preview is empty, stop and read [When the preview reads
+nothing](#when-the-preview-reads-nothing)** — an empty preview is not something
+you fix by pressing on.
 
-**PDFs** work the same way with one extra step: you drag boxes over the columns
-on the page image, and the preview shows the rows being read out as you move
-them.
+### Name the bank (PDF step 3 · delimited step 2)
+
+One box on the right: *Which bank is this statement from?* It arrives filled in —
+the tool reads the name off the top of page one and off the bank's own legal
+imprint, not off a payee line, so a bank it has never been taught still gets its
+own name. **Confirm it, correct it if it is wrong**, and move on. It is the name
+the template is saved under; it is not what recognises the bank next time (that is
+the Identifying phrase, below).
+
+### Save (PDF step 5 · delimited step 4)
+
+**Save template.** The tool then re-runs full detection over your file against
+every template it has — not a forced match, a real one — and tells you in words
+whether it will be recognised on its own next time.
+
+If it says *saved, but this statement is NOT recognised by it yet*, read the
+whole message. Usually the Identifying phrase is not printed exactly as it was
+typed (see below). If it instead says *ambiguous: X and Y both score N*, nothing
+you typed is wrong: an existing template fits your statement equally well and the
+tool will not choose between them. That is a duplicate for whoever maintains the
+engine to retire.
+
+## When the preview is wrong
+
+Everything in this section is a correction. On a good draft you will not open any
+of it.
+
+**The columns are mapped to the wrong thing.** Date and Description are required;
+Amount, Reference and Balance are offered too. Pick the **balance** column if the
+statement has one — it is what unlocks the balance checks. Without a balance and
+without a printed opening/closing pair, nothing can prove a row was not dropped,
+and the confidence level is capped at *medium* whatever else is right. On a PDF
+this is where the strip's steps 1 and 2 come in: drag a box over the column and
+click **Assign it**. Only a box's left-right position matters — a column runs the
+full height of the page.
+
+**The dates or the signs are wrong.** Two pickers sit in front of the disclosure,
+both with the tool's best guess already selected, and the preview reacts as you
+change them:
+
+- **How are the dates written?** — `31/12/2025`, `31/12/25`, `2025-12-31`,
+  `31 Dec 2025`…
+- **How are amounts shown?** — one signed column (minus = out); separate
+  withdrawals/deposits columns; a `DR`/`CR` suffix on the number; a short `D`/`C`
+  indicator column; or unsigned, where a bare number is a charge and `CR` marks a
+  payment (credit cards).
+
+  Picking the indicator style asks one more: *which indicator value means money
+  OUT*. Get this backwards and every debit becomes a credit, with no error
+  anywhere — check the preview's signs against the statement before saving.
+
+**The save was refused, or it saved but is not recognised.** Open **Show the
+settings for this statement** — or rather, let the tool open it: a refused save
+opens that panel for you and names the problem. Inside is the **Identifying
+phrase**, which is how the bank is recognised next time.
+
+The toolkit fills it in for you from phrases it actually found on your page, and
+offers those phrases in a dropdown. You only touch it when the tool says so.
+When you do:
+
+- It is matched **character for character** — `OPENING BALANCE`, `Opening
+  Balance` and `Opening balance` are three different phrases. Copy it off the
+  page exactly, including capitals and spacing.
+- Prefer the masthead or a distinctive footer, and never a customer's name. One
+  phrase per line; **all of them must appear**.
+- The tool refuses to save a phrase so generic it would claim other banks'
+  statements, and tells you which phrase was the problem.
 
 **Everything as YAML** is on the toolkit's **Advanced** tab — *Load current
 settings* fills it, *Check & apply* validates and updates the preview, and a

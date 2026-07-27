@@ -1,8 +1,8 @@
 # User templates
 
-Templates created by accountants through the app's **Guided setup** (when a
-statement can't be read, the tool pre-fills a template and they confirm + Save)
-land here as `<id>.yaml`.
+Templates created by accountants on the app's **Add a template** tab (the toolkit
+pre-fills a template from their own file, they read the preview and Save) land
+here as `<id>.yaml`.
 
 How they differ from the curated templates in `../templates/`:
 
@@ -14,5 +14,11 @@ How they differ from the curated templates in `../templates/`:
   conversions. (Curated templates must be valid — that's a hard error.)
 
 Promoting a good user template to a curated default = move its `.yaml` into
-`../templates/`, tidy it, and add a golden test (see
-`../docs/context/wizard-tutorial.md`).
+`../templates/`, tidy it, and add a golden test. Both moves, never one: only
+`../templates/` feeds the Qlik dashboards, and a template dropped in there with
+no golden test fails the suite on purpose.
+
+- The recipe, step by step for the delimited and the PDF path:
+  `../tests/HOWTO-add-template-test.md`.
+- Who does it and what to check first:
+  `../docs/operational/maintaining-the-engine.md` §3.

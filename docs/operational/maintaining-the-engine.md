@@ -71,7 +71,7 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run on the build box measured **67 files, 725 tests, 3,366 passing
+The last full run on the build box measured **68 files, 792 tests, 3,783 passing
 assertions, 0 skipped** (2026-07-27). Treat that as a floor to compare against,
 not a target to match.
 
@@ -148,7 +148,9 @@ After promotion, tell the team: it starts feeding Qlik on the next conversion.
 
 | Question | Page |
 |---|---|
+| Somebody says a conversion is wrong — where do I start? | [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) |
 | What is this tool allowed to do, and never do? | [../context/charter.md](../context/charter.md) |
+| How is it built, and how do I ship a change to it? | [../design.md](../design.md) |
 | How does a statement get from upload to dashboard, and which module owns each step? | [../context/how-it-fits-together.md](../context/how-it-fits-together.md) |
 | What does the data contract guarantee? | [../context/architecture/build-contract.md](../context/architecture/build-contract.md) |
 | What does each numeric threshold do? | [../context/engine-parameters.md](../context/engine-parameters.md) |

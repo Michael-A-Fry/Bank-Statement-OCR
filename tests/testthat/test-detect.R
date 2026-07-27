@@ -284,6 +284,55 @@ test_that("a tie converts with the best template and is held for review, not ref
   expect_gt(nrow(res2$feed_rows), 0L)
 })
 
+# A SAVE THAT TIES IS NOT A TYPO. recognition_summary used to lead with "Almost
+# always the identifying phrase is not printed on the page exactly as typed" and
+# relegate the actual cause to a parenthesis -- so on a tie the analyst was sent
+# to retype a phrase that IS on the page (it is on the page for both templates),
+# and the other reading of that advice is "make another one", which would tie too.
+test_that("a save that ties with an existing template is diagnosed as a tie", {
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(.twin_dir(), strict = FALSE))
+  r <- recognition_summary(det, "twinbank_everyday_a")
+  expect_false(isTRUE(r$ok))
+  expect_match(r$headline, "twinbank_everyday_b", fixed = TRUE)
+  expect_match(r$headline, "exactly as well as yours", fixed = TRUE)
+  # the wrong cure is gone...
+  expect_false(grepl("not printed on the page exactly as typed", r$detail, fixed = TRUE))
+  # ...and the charter's rule about a third template is stated out loud
+  expect_match(r$detail, "Do not build a third", fixed = TRUE)
+  # it still says the run is not lost
+  expect_match(r$detail, "It still converts", fixed = TRUE)
+})
+
+test_that("a genuinely unrecognised save keeps the phrase advice", {
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(templates_dir(), strict = FALSE))
+  expect_identical(det$tied, character(0))            # not a tie
+  r <- recognition_summary(det, "twinbank_everyday_a")
+  expect_false(isTRUE(r$ok))
+  expect_match(r$detail, "not printed on the page exactly as typed", fixed = TRUE)
+})
+
+# The detection detail reaches the customer-facing Diagnostics table, where a
+# template id and a score fraction are what the operational guide tells the
+# analyst to report as a bug. Both facts are kept -- one for the log, one for her.
+test_that("detection carries a plain twin of its closest-match detail", {
+  det <- detect_statement(read_input(.twin_csv()),
+                          load_templates(.twin_dir(header = c("Booking Ref", "Nights", "Room Rate")),
+                                         strict = FALSE))
+  expect_match(det$detail, "twinbank_everyday_a", fixed = TRUE)   # the log line, unchanged
+  expect_match(det$detail, "score", fixed = TRUE)
+  expect_false(grepl("twinbank_everyday_a", det$detail_plain, fixed = TRUE))
+  expect_false(grepl("score", det$detail_plain, ignore.case = TRUE))
+  expect_match(det$detail_plain, "TwinBank everyday statement", fixed = TRUE)
+  expect_match(det$detail_plain, "Booking Ref", fixed = TRUE)
+  # a MATCH has nothing customer-facing to say here, and says nothing
+  ok <- detect_statement(read_input(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv")),
+                         load_templates(templates_dir(), strict = FALSE))
+  expect_true(ok$matched)
+  expect_null(ok$detail_plain)
+})
+
 test_that("a tie is diagnosed as a tie, with the opposite advice to a new layout", {
   f <- .twin_csv(); d <- .twin_dir()
   out <- tempfile("twindiag_"); dir.create(out)

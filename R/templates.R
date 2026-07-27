@@ -198,6 +198,22 @@ validate_template <- function(t) {
   if (!is.null(dm) && !(dm %in% c("auto", "dot", "comma")))
     problems <- c(problems, sprintf("decimal_mark '%s' is not one of auto/dot/comma", dm))
 
+  # effective_from / effective_to: a window that CLOSES BEFORE IT OPENS can never
+  # contain a statement. Such a template loads, validates and detects like any
+  # other, and the only sign of it is that every statement it should have caught
+  # comes back "no template for this layout yet" -- a silent no-op, which is the
+  # one thing this engine is not allowed to be. Unparseable bounds are left alone:
+  # the soft window check in diagnose.R already skips those rather than guessing,
+  # and a validator that rejected what it could not read would be guessing too.
+  eff_from <- .tolerant_date(t$effective_from)
+  eff_to   <- .tolerant_date(t$effective_to)
+  if (!is.na(eff_from) && !is.na(eff_to) && eff_from > eff_to)
+    problems <- c(problems, sprintf(
+      paste("effective_from (%s) is later than effective_to (%s), so this template",
+            "could never apply to any statement - swap the two dates, or clear the",
+            "one you did not mean to set"),
+      as.character(t$effective_from)[1], as.character(t$effective_to)[1]))
+
   if (identical(fmt, "pdf")) {
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$page_contains_all))
       problems <- c(problems, "fingerprint.page_contains_all is required for pdf templates")
@@ -445,6 +461,19 @@ template_overview <- function(tset) {
   out[order(out$bank, out$type, out$id), , drop = FALSE]
 }
 
+# template_display_name(t) -- the template said in words the person holding the
+# statement can check ("ANZ everyday statement"). Anything customer-facing uses
+# this; the id and the version stay for the logs. An id is a maintainer's handle
+# and a score is an internal metric -- neither is something an accountant can act
+# on, and the charter's interface rule forbids putting either in front of her.
+# Falls back to the id when a template declares no bank or type.
+template_display_name <- function(t) {
+  if (is.null(t) || !is.list(t)) return(NA_character_)
+  lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
+                      trimws(as.character(t$statement_type %||% ""))))
+  if (nzchar(lab)) paste(lab, "statement") else as.character(t$id %||% NA_character_)
+}
+
 # template_yaml(t) -- the template rendered as YAML text for preview/edit, with the
 # load-time `origin` marker stripped so it round-trips cleanly.
 template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
@@ -552,19 +581,10 @@ set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates_user") 
   stop("template not found: ", id)
 }
 
-# rename_user_template(old_id, new_id, dir) -> new id. Saves under the new id and
-# removes the old file. Only for user templates.
-rename_user_template <- function(old_id, new_id, dir = "templates_user") {
-  ids <- user_template_ids(dir)
-  if (!(old_id %in% ids)) stop("only user-created templates can be renamed")
-  t <- NULL
-  for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
-    cand <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
-    if (identical(cand$id %||% "", old_id)) { t <- cand; break }
-  }
-  if (is.null(t)) stop("template not found: ", old_id)
-  t$id <- gsub("[^A-Za-z0-9_]+", "_", new_id)
-  save_user_template(t, dir)
-  if (!identical(t$id, old_id)) delete_user_template(old_id, dir)
-  invisible(t$id)
-}
+# There is no rename_user_template(). There was one, and nothing ever called it
+# but its own test: no screen offers a rename, and a template id is a stable
+# handle that the run log, the feed manifest and every audit record point back to
+# -- so renaming one in place would leave those records naming a template that no
+# longer exists. A user template is re-saved under a new id (save_user_template)
+# and the old one deleted (delete_user_template) when that is genuinely wanted,
+# which is two visible steps rather than one silent one.

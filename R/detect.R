@@ -145,6 +145,7 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   best_id <- ids[1]           # overall top scorer (for "closest ..." reporting)
   best_score <- scores[1]
   best_min <- mins[1]
+  detail_plain <- NULL        # set only where a customer-facing screen reads it
 
   if (any(eligible)) {
     e_ids <- ids[eligible]; e_scores <- scores[eligible]; e_mins <- mins[eligible]
@@ -183,6 +184,17 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     detail <- sprintf("closest %s score %s/%s%s", best_id, best_score, best_min,
       if (length(miss)) sprintf(" (missing %s)",
         paste(sprintf("'%s'", miss), collapse = ", ")) else "")
+    # The SAME evidence, for the person holding the statement. `detail` is the log
+    # line -- template id, score, threshold -- and it reaches the customer-facing
+    # Diagnostics table, where a template id and a fraction are exactly what the
+    # operational guide tells the analyst to report as a bug. So the identical fact
+    # is also written out in words: the template's human name, and the wording that
+    # was not on the page. Nothing is hidden; the id and the score stay in the run
+    # log and the audit record.
+    detail_plain <- sprintf("The closest we have is the %s template, but this file doesn't print %s.",
+      template_display_name(templates[[best_id]]),
+      if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
+      else "the wording it looks for")
   }
 
   list(
@@ -202,7 +214,10 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     # not "build a template" (a third would tie too) but "retire a duplicate".
     tied = if (sum(eligible) >= 2) ids[eligible][scores[eligible] == max(scores[eligible])]
            else character(0),
-    detail = detail
+    detail = detail,
+    # the same fact as `detail`, in words, for the screens (NULL where nothing
+    # customer-facing reads it, and callers fall back to `detail`)
+    detail_plain = detail_plain
   )
 }
 

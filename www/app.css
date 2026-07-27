@@ -54,6 +54,13 @@ hr{border-top-color:var(--line)}
    when another btn-* class is added, so the btn-default skin must exclude
    those or it beats them on focus (a clicked Convert would turn pale). */
 .btn{border-radius:7px;font-weight:600}
+/* A DOWNLOAD THAT CANNOT WORK YET. It is still the real control (Shiny only
+   registers a download while a bound element exists, so replacing it would leave
+   the URL answering 404) - it just cannot be pressed, and the line beside it says
+   what to do first. Bootstrap 3 styles .btn.disabled but does NOT stop a click on
+   an <a>, which is what a downloadButton is. */
+a.btn.disabled,a.btn.disabled:hover,a.btn.disabled:focus{
+  pointer-events:none;opacity:.55;cursor:not-allowed;box-shadow:none}
 .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger){
   border-color:#cfd6d2;color:var(--ink)}
 .btn-default:not(.btn-primary):not(.btn-warning):not(.btn-danger):hover,

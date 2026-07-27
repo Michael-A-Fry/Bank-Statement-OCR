@@ -262,6 +262,29 @@ recognition_summary <- function(det, saved_id) {
                      "and make the identifying phrase more specific to this bank - or use the",
                      "existing template if it is the right one.")))
   why <- trimws(as.character(det$detail %||% "")[1])
+  # A TIE IS NOT A TYPO, and it used to be diagnosed as one: the headline said the
+  # template was not recognised and the lead sentence sent the analyst back to
+  # retype an identifying phrase that "is not printed on the page exactly as
+  # typed". On a tie that phrase IS printed on the page -- it is printed for both
+  # templates, which is the whole problem -- so she would retype something already
+  # correct, and the charter forbids the other reading of that advice (a third
+  # template would tie too). The real cause leads, and the cure is the one that
+  # actually separates them.
+  tied <- as.character(det$tied %||% character(0))
+  others <- setdiff(tied, sid)
+  if (length(tied) >= 2 && length(others))
+    return(list(ok = FALSE,
+      headline = if (length(others) == 1L)
+        sprintf("Saved - but \"%s\" fits this statement exactly as well as yours.", others)
+        else sprintf("Saved - but %d other templates fit this statement exactly as well as yours.",
+                     length(others)),
+      detail = paste0(
+        "Nothing on this file tells them apart, so the tool cannot know which one you ",
+        "meant. It still converts: it picks the tested template, reads the statement ",
+        "and holds the run for a check, so no figures are lost. To settle it, add a ",
+        "phrase to your template that ONLY this bank prints - that breaks the tie in ",
+        "its favour - or retire the duplicate (",
+        paste(others, collapse = ", "), "). Do not build a third: it would tie too.")))
   list(ok = FALSE,
     headline = "Saved - but this statement is NOT recognised by it yet.",
     detail = paste0(

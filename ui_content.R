@@ -39,7 +39,9 @@ Add a bank = add one template.</p>
 <tr><td>8</td><td>One account or several?</td><td>Combined statements parse but flag - balances aren&#39;t continuous across accounts.</td></tr>
 <tr><td>9</td><td>How many statements in the file?</td><td>Merged bundles are flagged up front - split into one statement per file.</td></tr></table>
 
-<h4>The ways AMOUNTS differ (pick one - named as in the toolkit dropdown)</h4>
+<h4>The ways AMOUNTS differ (pick one)</h4>
+<p class="lead">The name in bold is what the toolkit&#39;s dropdown says; the word after it is what
+the template file stores, which is what you will see on the <b>Advanced</b> tab.</p>
 <ul>
 <li><b>One amount column, a minus sign means money out</b> (<code>signed</code>): <code>-45.00</code> out, <code>45.00</code> in.</li>
 <li><b>Separate money-in and money-out columns</b> (<code>debit_credit_cols</code>): map <b>both</b>.</li>
@@ -98,7 +100,7 @@ usually a wrong amount style or date format.</p>
 <tr><td>Dates blank/wrong</td><td>Wrong date format (same place); for year-less dates confirm the period is detected</td></tr>
 <tr><td>The preview shows no rows at all</td><td>Rows are found by their date: check the date box covers the dates, then the date format. The preview reads only the <b>first few pages</b> - if the transactions start later, save and convert to see them all</td></tr>
 <tr><td>Column empty / description cut off</td><td>Redraw / widen the box (stop before the amount column)</td></tr>
-<tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date - widen/move it. After converting, the X-ray view lists every skipped row and why.</td></tr></table>
+<tr><td>Rows missing</td><td>Their date box didn&#39;t read as a date - widen/move it. After converting, &quot;See it on the page&quot; lists every skipped row and why.</td></tr></table>
 </div>')
 
 # about_html() -- the proof story under the About hub cards: how a conversion

@@ -28,8 +28,10 @@ it works and why — is in [`../context/`](../context/README.md).
 | I want to… | Page |
 |---|---|
 | Run the test suite on the server, re-apply an `R\params.R` change, promote a template to proven | [maintaining-the-engine.md](maintaining-the-engine.md) |
+| Go back to a conversion somebody says is wrong, and reproduce the figure | [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) |
 | Know what this tool must always do, and must never do | [../context/charter.md](../context/charter.md) — one page, the fixed points |
 | See the whole thing at once: the journey, which module owns each step, where each kind of change goes | [../context/how-it-fits-together.md](../context/how-it-fits-together.md) |
+| Read the whole design in one sitting, then ship a change to it | [../design.md](../design.md) |
 
 ## Where do I change…?
 

@@ -50,7 +50,7 @@ falls back to the FORM pipeline (`R/forms.R`, `R/extract_fields.R`) for a labell
 | Read any format | `R/read_input.R` | Everything downstream sees one shape. Add a format here, not in the parsers. |
 | Scanned pages | `R/ocr.R`, `R/ocr_preprocess.R` | OCR pages are never rated "high" confidence, by design. |
 | Which bank | `R/detect.R` | Fingerprint phrases are matched **character for character**. That is the #1 reason a new template "doesn't work". |
-| PDF tables | `R/parse_pdf_table.R` | Rows are found by their DATE. The keep-rule (`pdf_keep_row`) is shared with the X-ray and `R/row_coverage.R` so the screen cannot contradict the reader. |
+| PDF tables | `R/parse_pdf_table.R` | Rows are found by their DATE. The keep-rule (`pdf_keep_row`) is shared with *See it on the page* (`R/inspect.R`) and `R/row_coverage.R`, so the screen cannot contradict the reader. |
 | The checks | `R/reconcile.R` | One `.kpi_*()` builder per check; `reconcile()` is the list, in report order. |
 | Explaining a bad run | `R/diagnose.R` | `.DIAG_FIX_OWNER` says WHO fixes each category (you / the file / a developer). |
 | Downloads | `R/outputs.R` | Same table for the workbook and the CSV, built once. |

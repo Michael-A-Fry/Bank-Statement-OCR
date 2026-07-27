@@ -122,6 +122,10 @@ DIAG_PLAIN <- c(
   row_parse               = "rows didn't parse",
   date_parse              = "dates couldn't be read",
   amount_parse            = "amounts couldn't be read",
+  # NOT amount_parse. The amounts were read perfectly; it is their DIRECTION that
+  # may be inverted, and "amounts couldn't be read" is the opposite of what
+  # happened - on the one line a forensic accountant acts on.
+  amount_direction        = "money in / out may be the wrong way round",
   completeness_unverified = "completeness not auto-verified",
   redaction               = "redactions found and kept",
   redaction_unverified    = "hidden text could not be checked",

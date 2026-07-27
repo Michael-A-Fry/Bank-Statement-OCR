@@ -65,8 +65,8 @@ transaction against the printed closing, the running balance followed row by row
 dates, row counts, redaction counts, OCR quality — each stated as one plain
 sentence with a confidence level, and each able to say "could not be checked"
 rather than show a green tick it had not earned. Alongside them came diagnostics
-that name not just what went wrong but **who fixes it**: you, the file, or a
-developer.
+that name not just what went wrong but **what to do about it** — and, in the
+downloaded workbook, whose job it is: you, the file, or a developer.
 
 ### It turned from a converter into a governed data source
 
@@ -128,6 +128,20 @@ read as a debit, a printed balance kept as a transaction, a footer folded into t
 row above. It also caught the quieter class: sentences on screen that claimed more
 than the check beneath them proved. Those were treated as defects too, because a
 green tick nobody earned is exactly the failure this tool exists to prevent.
+
+### The pages about it became part of it
+
+The last thing to be held to the same standard as the figures was the writing.
+Every guarantee in the code had a test; not one sentence about the tool did, and
+several of them had quietly stopped being true — a screen with four names, a
+column the guide navigated that is deliberately not on the analyst's screen, a
+count of checks that was one short, a "never crashes" that was true of almost all
+of the front door. So the documents were read back against the running code, line
+by line, and the two guards that already watched the doc set were widened: no page
+can be orphaned from an index, and a path named anywhere in the tree — a document,
+an engine comment, a README beside the templates — has to resolve to a file that
+exists. A sentence about this tool is now a claim it can be held to, which is the
+same rule the figures have always been under.
 
 ### Where it stands
 

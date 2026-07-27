@@ -21,46 +21,166 @@
   out
 }
 
-# .sniff_bank(input, fallback) -- a friendlier default NAME for a new template,
-# recognised from the document's own text when it names a common NZ bank. This is
-# a DISPLAY + naming hint only (pre-fills the "Which bank?" box, which the user
-# confirms/edits); detection still matches on the template's fingerprint phrases,
-# never on this. Falls back to the caller's filename-derived guess.
+# .sniff_bank(input, fallback) -- the bank NAME to pre-fill, read from what the
+# document says about ITSELF. Detection still matches on the template's fingerprint
+# phrases, never on this; but the name is shown, saved into the template file and
+# put in front of the user with a Confirm next to it, so it has to be evidence.
+#
+# It used to walk .KNOWN_BANKS in declaration order and return the first whole-word
+# hit ANYWHERE in the text. On a real ASB statement that answered "ANZ", because
+# ANZ is one of the payees in the bill-payment list. A wrong answer the user is
+# invited to confirm is worse than no answer, so the order of a constant decides
+# nothing any more. In order of how much the document is actually asserting:
+#
+#   1. THE MASTHEAD. A name at the top of page 1 is the issuer; a name in a payee
+#      or transaction line is somebody being paid. One bank named up there wins
+#      outright. A masthead that names no bank the tool knows but does print a
+#      "<something> Bank" line IS that bank -- which is how a bank nobody has
+#      taught it ("Kowhai Bank NZ") gets its own name instead of a payee's.
+#   2. THE ISSUER'S IMPRINT. Every statement carries the legal entity, the website,
+#      or both ("ASB Bank Limited", "asb.co.nz", "ANZ Bank New Zealand Limited").
+#      A payee line never does. One bank imprinted wins.
+#   3. A SOLE MENTION -- exactly one known bank named anywhere at all.
+#   4. Nothing decisive: the tool does not know, and leaves the caller's fallback
+#      alone rather than picking the alphabetically-first candidate.
 .KNOWN_BANKS <- c(anz = "ANZ", asb = "ASB", bnz = "BNZ", kiwibank = "Kiwibank",
   westpac = "Westpac", tsb = "TSB", sbs = "SBS", cooperative = "Co-operative Bank",
   "co-operative" = "Co-operative Bank", heartland = "Heartland", rabobank = "Rabobank",
   "the co-operative" = "Co-operative Bank")
+
+# Words a bank puts next to its own name and a payee list never does. "nz" alone is
+# deliberately absent: it would make the payee line "Sam BNZ NZ Ltd" an imprint.
+.BANK_IMPRINT_RX <- "bank|banking|limited|ltd|new zealand"
+# Institution words that make a masthead line a BANK's NAME rather than a product
+# or a person. Kept narrow on purpose -- this rung fires only when no known bank is
+# named, so a loose match here would invent a bank out of a heading. "Banking" is
+# deliberately absent: it is how a heading describes an ACTIVITY, and it turned the
+# cover of a how-to guide titled "Internet Banking" into a bank called "Internet
+# Banking". A bank's own name says Bank.
+.BANK_INSTITUTION_RX <- "\\b(bank|bancorp|credit union|building society)\\b"
+
+# .banks_named(txt) -- the distinct bank NAMES whose keyword appears as a whole
+# word in `txt`. Keywords are plain words (the hyphen in "co-operative" is literal
+# outside a character class), so no metacharacter escaping is needed.
+.banks_named <- function(txt, template = "\\b%s\\b") {
+  if (!length(txt) || !nzchar(txt)) return(character(0))
+  hit <- vapply(names(.KNOWN_BANKS), function(kw)
+    grepl(sprintf(template, kw), txt, perl = TRUE), logical(1))
+  unique(unname(.KNOWN_BANKS[hit]))
+}
+
+# .masthead_lines(input) -- what is printed at the TOP of page one, as lines. Taken
+# from the word boxes (top quarter of the page) because that is literally "the top
+# of the page"; the text layer's line ORDER is not reliable -- on the ASB statement
+# the top-right account block comes out first and the masthead several lines down.
+# Falls back to the first lines of the page text when there are no word boxes.
+.masthead_lines <- function(input) {
+  wl <- input$words %||% list()
+  w <- if (length(wl)) wl[[1]] else NULL
+  if (!is.null(w) && nrow(w)) {
+    ph <- suppressWarnings(as.numeric((input$page_height %||% NA)[1]))
+    if (!isTRUE(ph > 0)) ph <- 841.89
+    w <- as.data.frame(w, stringsAsFactors = FALSE)
+    w <- w[w$y <= ph * 0.25, , drop = FALSE]
+    if (nrow(w)) {
+      w <- w[order(w$y, w$x), , drop = FALSE]
+      # Capped at the first few rows as well as the top quarter: on a compact
+      # one-page statement the transaction table itself can start inside the top
+      # quarter, and a payee named there would be reading a masthead off a
+      # transaction line -- the very thing this function exists to stop.
+      return(unname(utils::head(vapply(split(seq_len(nrow(w)), .group_rows(w$y, PARAM_PDF_ROW_TOL)),
+        function(ix) paste(w$text[ix], collapse = " "), character(1)), 8L)))
+    }
+  }
+  ln <- trimws(unlist(strsplit((input$pages %||% character(0))[1] %||% "", "\n", fixed = TRUE)))
+  utils::head(ln[nzchar(ln)], 12L)
+}
+
+# Words that belong to a bank's NAME after the institution word ("Bank Limited",
+# "Bank New Zealand"). Anything else after it says what the DOCUMENT is, not who
+# issued it, so the name stops there: "Dummy Bank Statement" is a statement from
+# Dummy Bank, not from a bank called "Dummy Bank Statement".
+.BANK_NAME_SUFFIX <- "limited|ltd|nz|new zealand|group|corporation|corp|inc|plc"
+
+# .masthead_bank_name(lines) -- a masthead line that names an INSTITUTION ("Kowhai
+# Bank NZ"), trimmed to the name itself, or "". Short, wordy-not-numeric and not a
+# person: a statement heading, never an account holder (the same PII rule the
+# fingerprint drafter applies). A line that BEGINS with the institution word is the
+# document's title ("Bank Statement"), not a bank, and is skipped.
+.masthead_bank_name <- function(lines) {
+  for (ln in lines) {
+    ln <- trimws(gsub("\\s+", " ", ln))
+    w <- unlist(regmatches(ln, gregexpr("[A-Za-z][A-Za-z'&.-]*", ln)))
+    if (length(w) < 2L || length(w) > 6L || nchar(ln) > 40L) next
+    if (grepl("[0-9]", ln) || isTRUE(.fp_has_pii(ln))) next
+    m <- regexpr(.BANK_INSTITUTION_RX, tolower(ln), perl = TRUE)
+    if (m < 0L) next
+    # A line STARTING with the institution word is the document's own title ("Bank
+    # Statement") -- unless it is the "Bank of <somewhere>" shape, which is a real
+    # bank's real name and is the whole line.
+    if (m == 1L) {
+      if (grepl("^[a-z]+\\s+of\\s+[a-z]", tolower(ln))) return(ln)
+      next
+    }
+    end <- m + attr(m, "match.length") - 1L
+    rest <- substr(ln, end + 1L, nchar(ln))
+    suf <- regexpr(paste0("^(?:[[:space:],]+(?:", .BANK_NAME_SUFFIX, ")\\b)+"),
+                   tolower(rest), perl = TRUE)
+    return(trimws(substr(ln, 1L, end + if (suf > 0L) attr(suf, "match.length") else 0L)))
+  }
+  ""
+}
+
 .sniff_bank <- function(input, fallback = "New bank") {
   txt <- tolower(paste(unlist(c(input$text, input$pages,
     if (!is.null(input$table)) names(input$table))), collapse = " "))
-  # Keywords are plain words (the hyphen in "co-operative" is literal outside a
-  # character class), so a word-boundary match needs no metacharacter escaping.
-  if (nzchar(txt)) for (kw in names(.KNOWN_BANKS)) {
-    if (grepl(paste0("\\b", kw, "\\b"), txt)) return(.KNOWN_BANKS[[kw]])
+  mast <- safe(.masthead_lines(input), character(0))
+  named <- .banks_named(tolower(paste(mast, collapse = " ")))
+  if (length(named) == 1L) return(named)
+  if (!length(named)) {
+    own <- safe(.masthead_bank_name(mast), "")
+    if (nzchar(own)) return(own)
   }
+  imprint <- .banks_named(txt, paste0("\\b%1$s\\b[[:space:],]*(?:", .BANK_IMPRINT_RX,
+                                      ")\\b|\\b%1$s\\.(?:co\\.)?nz\\b"))
+  if (length(imprint) == 1L) return(imprint)
+  everywhere <- .banks_named(txt)
+  if (length(everywhere) == 1L) return(everywhere)
   fallback
 }
 
-# .guess_pdf_date_format(input, band) -- sniff the date column's style. Handles
-# the common year-less "02 May" case (year comes from the period) plus the usual
-# full-date shapes.
-.guess_pdf_date_format <- function(input, band) {
-  wl <- input$words %||% list(); if (!length(wl)) return("%d/%m/%Y")
-  toks <- character(0)
-  for (w in wl) {
-    if (is.null(w) || !nrow(w)) next
-    w <- as.data.frame(w, stringsAsFactors = FALSE)
-    cx <- w$x + w$width / 2
-    toks <- c(toks, w$text[cx >= band$x_min & cx <= band$x_max])
+# .guess_pdf_date_format(input, band, cells) -- sniff the date column's style.
+# `cells` are the date CELLS the drafted band actually produces on the transaction
+# page (suggest_pdf_columns measures them while it is there), so the format is
+# chosen from the very strings the reader will hand to parse_date. The old
+# every-page scan of everything in the same x-range read the address block and the
+# account summary as if they were dates and reached "%d %b" by luck.
+# Falls back to that scan only when there are no measured cells (a hand-drawn band).
+.guess_pdf_date_format <- function(input, band, cells = NULL) {
+  toks <- trimws(as.character(cells %||% character(0)))
+  toks <- toks[nzchar(toks)]
+  if (!length(toks)) {
+    wl <- input$words %||% list(); if (!length(wl)) return("%d/%m/%Y")
+    for (w in wl) {
+      if (is.null(w) || !nrow(w)) next
+      w <- as.data.frame(w, stringsAsFactors = FALSE)
+      cx <- w$x + w$width / 2
+      toks <- c(toks, w$text[cx >= band$x_min & cx <= band$x_max])
+    }
+    toks <- trimws(toks[nzchar(toks)])
+    if (!length(toks)) return("%d/%m/%Y")
   }
-  toks <- trimws(toks[nzchar(toks)])
-  if (!length(toks)) return("%d/%m/%Y")
-  # group day + month-name tokens ("02","May") -> treat as "%d %b"
+  # Ask the shared detector first -- it is the one the delimited path uses, it
+  # validates with the reader's own parse_date, and it knows the year-less forms.
+  f <- detect_date_format(toks)
+  if (nzchar(f)) return(f)
+  # Nothing fit every cell (a stray non-date line in the band). Fall back to the
+  # shape the majority of them carry: day + month-name, unless a numeric date is
+  # what is printed.
   joined <- paste(utils::head(toks, 30), collapse = " ")
   if (grepl("[0-9]{1,2}\\s+[A-Za-z]{3,9}", joined) && !grepl("[0-9]{1,2}[/.-][0-9]", joined))
     return("%d %b")
-  f <- detect_date_format(toks)
-  if (nzchar(f)) f else "%d/%m/%Y"
+  "%d/%m/%Y"
 }
 
 # .draft_type_dc(style, headers, df, cols) -- when the amount style is a D/C
@@ -134,18 +254,23 @@
 }
 
 .draft_pdf <- function(input, id, bank) {
+  # Say so plainly rather than propose a template that reads nothing. A PDF that
+  # never prints a dated money line is a guide, a form or an account summary --
+  # draft_template returns NULL and the caller tells the user in words, the same
+  # way an Excel workbook with no transaction table already does. safe(TRUE): a
+  # failure to run the check must never turn into a refusal.
+  if (!isTRUE(safe(pdf_has_transaction_rows(input), TRUE))) return(NULL)
   sug <- safe(suggest_pdf_columns(input), data.frame())
-  style <- "signed"
   cols <- list()
   if (!is.null(sug) && nrow(sug)) {
-    # two money columns (besides balance) => Withdrawals/Deposits, not one signed amount
-    amt_rows <- which(sug$field == "amount")
-    if (length(amt_rows) == 2) {
-      sug$field[amt_rows[1]] <- "debit"; sug$field[amt_rows[2]] <- "credit"
-      style <- "debit_credit_cols"
-    }
+    # Every band the sniffer returns is already labelled with the role the
+    # statement's own column heading gives it (see suggest_pdf_columns). Assigning
+    # by name used to collide -- four clusters all called "amount" left ONE amount
+    # band, silently the last one -- so a repeated role is a defect, not something
+    # to absorb.
     for (i in seq_len(nrow(sug))) cols[[sug$field[i]]] <- list(x_min = sug$x_min[i], x_max = sug$x_max[i])
   }
+  style <- if (!is.null(cols$debit) || !is.null(cols$credit)) "debit_credit_cols" else "signed"
   # Skeleton fallback: even when the auto-sniffer recognises nothing (an unusual
   # layout, or a page whose money/date shapes it didn't match), STILL open the
   # toolkit with sensible starter bands the user can drag into place -- a readable
@@ -155,8 +280,7 @@
   if (is.na(page_w) || page_w <= 0) page_w <- 595.28
   if (is.null(cols$date))        cols$date        <- list(x_min = 0, x_max = round(page_w * 0.16))
   if (is.null(cols$description)) cols$description <- list(x_min = round(page_w * 0.17), x_max = round(page_w * 0.55))
-  if (style != "debit_credit_cols" && is.null(cols$amount) &&
-      is.null(cols$debit) && is.null(cols$credit))
+  if (style != "debit_credit_cols" && is.null(cols$amount))
     cols$amount <- list(x_min = round(page_w * 0.72), x_max = round(page_w * 0.95))
   date_band <- cols$date
   # Fingerprint: prefer the distinctive multi-word phrases header_phrases now
@@ -172,7 +296,8 @@
   ref_w <- suppressWarnings(as.numeric((input$page_width  %||% NA)[1]))
   ref_h <- suppressWarnings(as.numeric((input$page_height %||% NA)[1]))
   tbl <- list(row_tol = 3,
-      date_format = safe(.guess_pdf_date_format(input, date_band), "%d/%m/%Y") %||% "%d/%m/%Y",
+      date_format = safe(.guess_pdf_date_format(input, date_band,
+        attr(sug, "date_cells")), "%d/%m/%Y") %||% "%d/%m/%Y",
       amount_sign = style, columns = cols)
   if (!is.na(ref_w) && ref_w > 0) tbl$ref_width  <- round(ref_w, 2)
   if (!is.na(ref_h) && ref_h > 0) tbl$ref_height <- round(ref_h, 2)

@@ -145,7 +145,9 @@ test_that("the toolkit preview says what to do when it reads nothing", {
   joined <- paste(src, collapse = "\n")
   expect_match(joined, 'uiOutput\\("g_status"\\)')
   expect_false(grepl('verbatimTextOutput("g_status")', joined, fixed = TRUE))
-  block <- .ui_block(src, "output\\$g_status <- renderUI", 45L)
+  # 70, not 45: the "you removed the date column" branch now stands in front of
+  # these sentences. The assertions are unchanged - the window reaches them again.
+  block <- .ui_block(src, "output\\$g_status <- renderUI", 70L)
   expect_match(block, "No transaction rows read yet", fixed = TRUE)
   expect_match(block, "only the first few pages", fixed = TRUE)
   expect_match(block, "date format", fixed = TRUE)
@@ -549,17 +551,27 @@ test_that("every file in a batch goes through the engine's own batch loop", {
 })
 
 test_that("the QID is asked once for the whole batch, before it starts", {
+  # REWRITTEN for the shared gate. The check used to be written out inside
+  # cv_go, and this test read it there; it is now .identity_ok(), because the
+  # sample button was a second way into a conversion that had no gate at all.
+  # Same invariant, asserted where it now lives: the gate answers before the
+  # batch starts, and it is the one place the question is asked.
   src <- .ui_src()
   i_go   <- grep("observeEvent\\(input\\$cv_go, \\{", src)
   expect_length(i_go, 1L)
   blk <- src[i_go:(i_go + 25)]
-  i_qid   <- grep("is.na\\(cv_qid\\(\\)\\)", blk)[1]
+  i_qid   <- grep("\\.identity_ok\\(\\)", blk)[1]
   i_batch <- grep("run_batch\\(f\\)", blk)[1]
   expect_false(is.na(i_qid) || is.na(i_batch))
   expect_true(i_qid < i_batch, info = "the batch starts before who-ran-this is settled")
-  # asked once, not once per file: nothing inside run_batch asks again
-  joined <- paste(.ui_src(), collapse = "\n")
-  expect_equal(length(gregexpr("Enter your QID first", joined)[[1]]), 1L)
+  # ...and the gate really is the QID question
+  expect_match(.ui_block(src, "\\.identity_ok <- function", 8L), "is\\.na\\(cv_qid\\(\\)\\)")
+  # asked once, not once per file: nothing inside run_batch asks again. Counted
+  # over the LINES, because gregexpr on one joined string returns a length-1
+  # vector holding -1 when the sentence is not there at all -- so the old count
+  # passed just as happily if the wording had gone.
+  hits <- grep("Enter your QID first", .ui_src(), fixed = TRUE)
+  expect_length(hits, 1L)
 })
 
 # REWRITTEN, because the thing it was guarding got a name. It used to list the
@@ -1332,4 +1344,270 @@ test_that("a template that says ALWAYS does not open looking broken", {
   # the red "not a date" banner appears on a template that is perfectly correct.
   expect_match(paste(.ui_src(), collapse = "\n"),
                'identical\\(toupper\\(s\\), "NA"\\)')
+})
+
+# ---- the screen sweep: what the page says about itself -----------------------
+
+# INVARIANT 17, ENFORCED. The deployment box is an air-gapped Windows machine in a
+# C (non-UTF-8) locale, where a non-ASCII character in an R NAME -- a variable, a
+# function, an argument -- is not a style question: the parser cannot read the
+# file at all ("invalid multibyte character in parser"), so the app does not
+# start. A non-ASCII character in a string VALUE is fine, and the screen is full
+# of legitimate ones (the tick and cross in the proof strip, the middot in the
+# verdict line), so this reads the PARSE TOKENS and never the text.
+#
+# Until now the rule was guarded by one comment in app.R, beside the one control
+# that had already been bitten by it.
+.nonascii_symbols <- function(path) {
+  types <- c("SYMBOL", "SYMBOL_FUNCTION_CALL", "SYMBOL_FORMALS", "SYMBOL_SUB",
+             "SYMBOL_PACKAGE", "SLOT")
+  ex <- tryCatch(parse(path, keep.source = TRUE), error = function(e) e)
+  # In a C locale the parser REFUSES the file outright, which IS the deployment
+  # failure -- report it as one rather than skipping the file it happens in.
+  if (inherits(ex, "error"))
+    return(sprintf("%s: will not parse (%s)", basename(path), conditionMessage(ex)))
+  pd <- utils::getParseData(ex)
+  if (is.null(pd) || !nrow(pd)) return(character(0))
+  tok <- pd[pd$terminal & pd$token %in% types, , drop = FALSE]
+  bad <- tok[grepl("[^ -~\t]", tok$text, useBytes = TRUE), , drop = FALSE]
+  if (!nrow(bad)) return(character(0))
+  sprintf("%s:%d %s '%s'", basename(path), bad$line1, bad$token, bad$text)
+}
+
+test_that("no R name anywhere carries a non-ASCII character (invariant 17)", {
+  files <- c(file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R")),
+             list.files(file.path(engine_root(), "R"), "[.]R$", full.names = TRUE))
+  files <- files[file.exists(files)]
+  expect_gt(length(files), 20L)                       # the scan must not go quiet
+  offenders <- unlist(lapply(files, .nonascii_symbols))
+  expect_identical(offenders, character(0),
+                   info = paste("non-ASCII in an R name:", paste(offenders, collapse = " | ")))
+})
+
+test_that("the non-ASCII scan can tell a name from a string", {
+  # A guard nobody has seen fail is a guard nobody knows works. Values pass...
+  ok <- tempfile(fileext = ".R")
+  writeLines('x <- c("✓ Correct" = "correct", "· dot" = "d")', ok)
+  expect_identical(.nonascii_symbols(ok), character(0))
+  # ...and a NAME does not, in either locale: the C-locale parser refuses the
+  # file, a UTF-8 one parses it and the token scan catches the symbol.
+  bad <- tempfile(fileext = ".R")
+  writeLines('café <- 1', bad)
+  expect_gt(length(.nonascii_symbols(bad)), 0L)
+})
+
+# THE CONFIDENCE LEVEL IS NAMED IN FOUR PLACES THE ANALYST READS -- the About tab,
+# both operational guides ("Confidence medium on a PDF" is a troubleshooting row)
+# and the README -- and on a clean run it appeared on screen in NONE of them:
+# cv_status, the only renderer that printed it, returns NULL the moment a
+# statement converts cleanly. So the word existed only when something had gone
+# wrong, and there was no way to tell a high run from a medium one.
+test_that("the confidence level is on the hero card of every graded run", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_headline <- renderUI", 60L)
+  expect_match(blk, "confidence: %s")
+  expect_match(blk, "res\\$trust\\$level")
+  # and the didn't-go-cleanly card still carries it too, so both halves agree
+  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 40L), "confidence: %s")
+})
+
+test_that("a PDF that stops at medium says why medium is the ceiling", {
+  src <- .ui_src()
+  expect_match(paste(src, collapse = "\n"), "\\.medium_is_the_ceiling <- function")
+  blk <- .ui_block(src, "\\.medium_is_the_ceiling <- function", 12L)
+  # keyed on the CHECK that cannot run plus the format, not on a guess
+  expect_match(blk, "no_unparsed_rows")
+  expect_match(blk, 'fmt %in% c\\("pdf", "excel"\\)')
+  # ...and the sentence says it is the normal ceiling, not a fault to chase
+  expect_match(paste(src, collapse = "\n"), "CEILING_NOTE <- paste")
+  expect_match(.ui_block(src, "CEILING_NOTE <- paste", 4L), "cannot go higher than medium")
+})
+
+# The proof strip is the first quality signal on the page and had no key at all:
+# a grey dash beside "Opening + transactions = closing balance" is either the best
+# or the worst news on the screen, and nothing anywhere said which.
+test_that("the proof strip has a key, in the glyphs it actually draws", {
+  blk <- .ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 40L)
+  # the escapes, not the glyphs: the key must be drawn from the SAME three
+  # sequences the chips are, so the two cannot drift apart
+  for (g in c("\\\\u2713", "\\\\u2717", "\\\\u2013")) expect_match(blk, g)
+  expect_match(blk, "could not be checked")
+})
+
+# Every other route into a conversion is blocked without a QID, because a run
+# recorded against the server's own account identifies nobody. The sample button
+# ran the whole flow -- result, checks, working downloads -- without one.
+test_that("every way of starting a conversion goes through the same identity gate", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "\\.identity_ok <- function")
+  expect_match(.ui_block(src, "\\.identity_ok <- function", 8L),
+               "\\.identity_is_personal\\(detected_identity_info\\(\\)\\) \\|\\| !is\\.na\\(cv_qid\\(\\)\\)")
+  for (h in c("observeEvent\\(input\\$cv_go", "observeEvent\\(input\\$cv_try_sample"))
+    expect_match(.ui_block(src, h, 12L), "if \\(!\\.identity_ok\\(\\)\\) return\\(\\)")
+})
+
+test_that("the QID box says what shape a QID is, and still not why it is asked", {
+  src <- paste(.ui_src(), collapse = "\n")
+  expect_match(src, "Your six-character staff ID", fixed = TRUE)
+  # the shape it states is the shape the validator enforces
+  expect_match(src, 'QID_PATTERN <- "\\^\\[A-Za-z0-9\\]\\{6\\}\\$"')
+})
+
+# A pre-answered "Correct" means a submit-without-reading records a positive
+# rating, and that rating drives Admin's flagged list, template usage and the
+# suggestion ranking -- while "wrong" retracts rows from the dashboards.
+test_that("the feedback question is not answered for the reviewer", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'radioButtons\\("cv_fb_verdict", NULL, inline = TRUE, selected = character\\(0\\),')
+  # ...and submitting without choosing is refused with a reason, not defaulted
+  expect_match(.ui_block(src, "observeEvent\\(input\\$cv_fb_submit", 12L),
+               "!length\\(input\\$cv_fb_verdict")
+})
+
+# A clean result read by the WRONG template looks perfect. cv_rematch is the only
+# route back from that, and nothing rendered it -- while cv_teach stayed silent on
+# a clean result precisely BECAUSE it believed cv_rematch was on screen.
+test_that("a clean result still offers a way to fix a wrong match", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'uiOutput\\("cv_rematch"\\)')
+  expect_match(joined, "output\\$cv_rematch <- renderUI")
+  blk <- .ui_block(src, "output\\$cv_rematch <- renderUI", 24L)
+  expect_match(blk, "cv_rematch_go")
+  # it renders for a CLEAN result, not only for needs_review
+  expect_match(blk, 'st %in% c\\("ok", "needs_review"\\)')
+})
+
+# The charter's interface rule: no raw engine code, template id or internal metric
+# on a customer-facing screen. The close-call panel printed both an id and a
+# detection score, and two pickers offered raw ids as their options.
+test_that("no template id or match score reaches the result page", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_candidates <- renderUI", 44L)
+  expect_false(grepl("score %s", blk, fixed = TRUE))
+  expect_match(blk, "friendly_tpl\\(res\\$template_id\\)")
+  expect_match(blk, "tpl_choices\\(others\\)")
+  expect_match(.ui_block(src, 'selectInput\\("cv_tie_pick"', 2L), "tpl_choices\\(tied\\)")
+  # names for people, ids for the server -- and identical names stay distinguishable
+  expect_match(.ui_block(src, "tpl_choices <- function", 12L), "option %d")
+})
+
+test_that("a template name does not end in 'statement statement'", {
+  # A PDF drafted in the toolkit is saved with statement_type "statement"
+  # (R/draft.R), and the label appended the word again.
+  f <- .ui_fun("friendly_tpl")
+  # the pure tail of it: the suffix rule, exercised through the source it lives in
+  expect_match(.ui_block(.ui_src(), "friendly_tpl <- function", 30L),
+               'grepl\\("statements\\?\\$", lab, ignore.case = TRUE\\)')
+  expect_true(is.function(f))
+})
+
+# A typed page the document does not have was clamped for the PICTURE and left as
+# typed in the box, so the control and the picture disagreed about which page was
+# on screen -- on the view a reviewer takes evidence from.
+test_that("a page number the document does not have is corrected in the box", {
+  src <- .ui_src()
+  expect_match(paste(src, collapse = "\n"), "ix_page_settled <- debounce")
+  blk <- .ui_block(src, "ix_page_settled <- debounce", 12L)
+  expect_match(blk, 'updateNumericInput\\(session, "ix_page", value = p\\)')
+  expect_match(blk, "showing page %d")
+})
+
+test_that("the X-ray key names only what is drawn on this page", {
+  blk <- .ui_block(.ui_src(), "output\\$ix_legend <- renderUI", 40L)
+  for (cond in c("n_kept > 0", "n_skip > 0", "has_red", "has_meta"))
+    expect_true(grepl(cond, blk, fixed = TRUE), info = cond)
+  # ...and the column names in the key are the reader's, matching the page itself
+  expect_match(blk, "cv_friendly_cols\\(nm\\)")
+})
+
+test_that("a toast replaces the last one about the same thing", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "notify_once <- function\\(id, text")
+  expect_match(.ui_block(src, "notify_once <- function", 3L), 'id = paste0\\("n_", id\\)')
+  # and a message is withdrawn when it stops being true
+  expect_match(joined, 'clear_notice\\("cv_qid"\\)')
+})
+
+# ---- Admin (maintainer-only, but it must still tell the truth) ---------------
+
+test_that("the two irreversible actions ask first, and say what they will destroy", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  for (h in c("observeEvent\\(input\\$adm_purge_uploads", "observeEvent\\(input\\$adm_tpl_delete,")) {
+    blk <- .ui_block(src, h, 30L)
+    expect_match(blk, "showModal\\(modalDialog")
+    expect_match(blk, "permanently deletes")
+  }
+  # the deed itself moved behind a separate confirm input, still admin-gated
+  for (h in c("observeEvent\\(input\\$adm_purge_confirm", "observeEvent\\(input\\$adm_tpl_delete_confirm"))
+    expect_match(.ui_block(src, h, 4L), "req\\(admin_ok\\(\\)\\)")
+  # ...and the count is taken the way purge_uploads takes it, not guessed
+  expect_match(joined, "\\.uploads_due <- function")
+})
+
+test_that("an Admin download that cannot work is disabled and says why, never a 500", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "dl_when <- function\\(id, label, ready, why\\)")
+  # the REAL control, disabled - not a lookalike <button>: Shiny only registers a
+  # download while something is bound to it, so swapping the control out makes the
+  # URL answer 404, which is another error page for anyone holding an old link
+  expect_match(.ui_block(src, "dl_when <- function", 8L), 'class = "disabled"')
+  expect_match(paste(readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE),
+                     collapse = "\n"), "a\\.btn\\.disabled")
+  for (id in c("adm_ba_report", "adm_ba_csv", "adm_audit_dl", "adm_up_audit", "adm_inbox_audit"))
+    expect_match(joined, sprintf('dl_when\\("%s"', id))
+  # req(FALSE) in a download handler is what Shiny answers as an HTTP 500 page.
+  # Comments are stripped first: the fixes' own notes name the thing they removed,
+  # and a raw substring test would read that record as a relapse.
+  code <- src[!grepl("^\\s*#", src)]
+  expect_false(any(grepl("req(FALSE)", code, fixed = TRUE)))
+  # ...and the inbox summary cannot be named ".audit.md" any more
+  expect_match(joined, '"no-file-selected.audit.md"', fixed = TRUE)
+})
+
+test_that("an empty Admin table looks empty instead of holding a placeholder row", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "dt_none_opts <- function\\(msg")
+  expect_match(.ui_block(src, "dt_none_opts <- function", 2L), "emptyTable")
+  # the four intake tables used to render NOTE | empty and be counted as a record
+  expect_false(grepl('data.frame(note = "empty")', joined, fixed = TRUE))
+  expect_false(grepl('data.frame(note = "no uploads yet")', joined, fixed = TRUE))
+  expect_false(grepl('data.frame(message = "No feedback yet.")', joined, fixed = TRUE))
+})
+
+test_that("the gaps list holds only gaps, and a file that could not be opened says so", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  blk <- .ui_block(src, "output\\$adm_gaps <- renderDT", 22L)
+  expect_match(blk, 'runs\\$status\\) %in% "unsupported"')
+  expect_match(blk, "not recorded")                     # blanks are named, not left blank
+  expect_match(joined, "output\\$adm_unreadable <- renderDT")
+  expect_match(.ui_block(src, "output\\$adm_unreadable <- renderDT", 12L), '%in% "failed"')
+})
+
+test_that("Admin does not print instructions for a picker with no options", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$adm_sugg_help <- renderUI", 14L)
+  expect_match(blk, "Nothing to teach it yet")
+  expect_match(blk, "nrow\\(adm_suggestions\\(\\)\\$indicator_tokens")
+})
+
+test_that("every Admin action that changes something says what it changed", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # marking a format request done / dismissed writes to disk and said nothing
+  expect_match(joined, "\\.req_set <- function")
+  expect_match(.ui_block(src, "\\.req_set <- function", 16L), "adm_req_msg")
+  expect_match(joined, 'uiOutput\\("adm_req_msg"\\)')
+  # replacing the whole editor with the built-in defaults said nothing either
+  expect_match(.ui_block(src, "observeEvent\\(input\\$adm_lex_defaults", 6L), "adm_lex_msg")
+  expect_match(.ui_block(src, "observeEvent\\(input\\$adm_lex_reload", 5L), "adm_lex_msg")
+  expect_match(.ui_block(src, "observeEvent\\(input\\$adm_dict_reload", 5L), "adm_dict_msg")
+})
+
+test_that("assigning or removing a box says so where the box was drawn", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'uiOutput\\("g_pdf_msg"\\)')
+  expect_match(.ui_block(src, "\\.g_box_note <- function", 6L), "output\\$g_pdf_msg")
+  # ...and removing the DATE column is named as what it is, not as a mis-drawn box
+  expect_match(joined, "\\.has_date_col <- function")
+  expect_match(.ui_block(src, "output\\$g_status <- renderUI", 60L),
+               "There is no date column, so no rows can be read")
 })

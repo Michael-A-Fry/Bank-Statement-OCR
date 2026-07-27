@@ -11,9 +11,22 @@ writing code.
 
 ## Documentation
 
+Three pages read straight through, for whoever needs the whole thing at once:
+
+- **[overview.md](docs/overview.md)** — what it is and what it is for: the
+  problem, what it guarantees, what it deliberately does not, who does what, what
+  it costs to run. No code in it.
+- **[design.md](docs/design.md)** — the technical map, for a developer inheriting
+  it cold: the shape, the path a statement takes, the template schema, the
+  invariants, how to ship a change and how to put it back.
+- **[story.md](docs/story.md)** — how it got this shape: every turn that made it
+  something different, and why.
+
+Then one page per job:
+
 - **[Operational](docs/operational/README.md)** — how to *do* things: set it up,
   convert statements, add a bank, fix what looks wrong, run it, back it up,
-  update it, admin, and wire up Qlik. One page per task.
+  update it, admin, and wire up Qlik.
 - **[Context](docs/context/README.md)** — how it works and why: the charter, the
   data contract, the engine parameters, the edge-case register, the findings
   register, the roadmap.
@@ -23,12 +36,17 @@ double-clicks, then set the admin password and open the firewall port.
 
 **Inheriting it?** [charter.md](docs/context/charter.md) (one page: what this
 tool must always do and must never do), then
-[how-it-fits-together.md](docs/context/how-it-fits-together.md) (one page: upload
-to dashboard, which module owns each step), then
+[design.md](docs/design.md) (the map, the reasoning and the traps, including
+how to run it, ship a change to it and roll it back), then
 [maintaining-the-engine.md](docs/operational/maintaining-the-engine.md) (running
 the suite on the server, what an update overwrites, promoting a template). Then
 back up the irreplaceable folders:
 [backup-and-restore.md](docs/operational/backup-and-restore.md).
+
+**Someone says a conversion is wrong?**
+[investigating-a-wrong-conversion.md](docs/operational/investigating-a-wrong-conversion.md)
+— from a run id or a feedback record to the original file, the same figure
+reproduced from the command line, and template bug vs bad scan.
 
 ## What it does today
 
@@ -40,9 +58,12 @@ back up the irreplaceable folders:
   `asb_everyday_pdf`, `tutorial_everyday_pdf`, `westpac_everyday_pdf`) and one
   generic Excel template. Adding another bank on any path is a YAML template, not
   new code. A key-value mode for forms and IRD-style documents ships too.
-- **A point-and-click toolkit** to teach it a new layout, including a visual PDF
-  editor where you drag boxes over the columns. It writes the template; no YAML
-  by hand.
+- **A point-and-click toolkit** to teach it a new layout. It reads the file,
+  proposes the whole template — columns, bands, date format, amount style, the
+  bank's own name off the masthead — and shows a live preview of the real
+  statement beside it. Reading that preview is the job; the visual PDF editor,
+  where you drag a box over a column, is there for when it is wrong. It writes
+  the template; no YAML by hand.
 - **Ten reconciliation checks** — balance reconciliation, running-balance
   continuity, money-in/out direction, row count, dates in period, dates readable,
   rows that failed to read, redaction count, OCR read quality and the redaction
@@ -50,7 +71,9 @@ back up the irreplaceable folders:
 - **Honours incoming redactions.** The tool never un-redacts, never estimates a
   hidden value, and never back-calculates one from a balance.
 - **Never silently wrong.** Any non-clean run reports *where / why / how bad /
-  who fixes it*. A check that could not run says so; it never shows a green tick.
+  how to fix it*, with the fix-ownership triage carried in the downloaded
+  workbook. A check that could not run says so; it never shows a green tick, and
+  a check that is a count rather than a verdict is labelled as one.
 - **Governed analytics.** A clean conversion from a shipped template feeds the
   Qlik dashboards automatically, and every conversion is told on screen whether
   it was published or held back, and why. Marking a result *wrong* withdraws it.

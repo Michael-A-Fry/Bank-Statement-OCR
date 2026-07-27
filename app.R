@@ -341,6 +341,14 @@ ui <- fluidPage(
           uiOutput("cv_status"),
           uiOutput("cv_headline"),   # the verdict, in her words
           uiOutput("cv_downloads"),  # the payoff, right under it
+          # ...and the one question a CLEAN result still has to answer: is this
+          # the right bank? A statement read end to end by the wrong template is
+          # the exact failure this tool exists to prevent, and it looks perfect on
+          # screen -- so the way to correct it belongs above the fold, not behind
+          # the evidence toggle. (Nothing rendered this output at all, while
+          # cv_teach stayed silent on a clean result BECAUSE of it: between them
+          # there was no route back anywhere on the page.)
+          uiOutput("cv_rematch"),
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
           # Before any conversion, a clear empty state rather than bare headers.
@@ -544,7 +552,9 @@ ui <- fluidPage(
             column(8, DTOutput("adm_uploads")),
             column(4,
               selectInput("adm_up_pick", "Pick a saved upload", choices = NULL),
-              downloadButton("adm_up_audit", "Download its safe summary (no personal data)"),
+              # Rendered server-side (see dl_when): a download with nothing to send
+              # used to answer an HTTP 500 error page instead of a file.
+              uiOutput("adm_up_audit_ui"),
               br(), br(),
               actionButton("adm_up_wizard", "Set it up - open the toolkit",
                            class = "btn-warning"))),
@@ -557,7 +567,12 @@ ui <- fluidPage(
               selectInput("adm_req_pick", "A request", choices = NULL),
               actionButton("adm_req_actioned", "Mark done", class = "btn-primary"),
               br(), br(),
-              actionButton("adm_req_dismiss", "Dismiss"))),
+              actionButton("adm_req_dismiss", "Dismiss"),
+              # Both of these change a request's status ON DISK and said nothing at
+              # all: the row left the picker and that was the only sign anything
+              # had happened, which is indistinguishable from a control that did
+              # nothing.
+              br(), br(), uiOutput("adm_req_msg"))),
           tags$hr(),
           h4("Folder intake - inbox / processed / failed"),
           helpText("Statements dropped into the inbox/ folder land here. Anything in failed/ is worth a look."),
@@ -568,7 +583,7 @@ ui <- fluidPage(
               selectInput("adm_inbox_pick", "A failed file", choices = NULL),
               actionButton("adm_inbox_wizard", "Open in the toolkit", class = "btn-warning"),
               br(), br(),
-              downloadButton("adm_inbox_audit", "Download its safe summary (no personal data)"))),
+              uiOutput("adm_inbox_audit_ui"))),
           fluidRow(
             column(4, h5("Waiting in inbox"), DTOutput("adm_inbox_waiting")),
             column(4, h5("Processed"), DTOutput("adm_inbox_processed")),
@@ -579,8 +594,17 @@ ui <- fluidPage(
                    DTOutput("adm_overview")),
             column(7, h4("Feedback flagged as wrong / minor issues"), DTOutput("adm_feedback"))),
           h4("Statements the tool can't read yet - the gaps to fill"),
-          helpText("Each row is one layout the tool doesn't recognise yet (identical layouts are grouped). The biggest count is the one to build a template for first - it unblocks the most statements."),
+          helpText("Each row is one layout no template recognises yet (identical layouts are grouped). The biggest count is the one to build a template for first - it unblocks the most statements."),
           DTOutput("adm_gaps"),
+          # SPLIT OUT, because a template does not fix these and this list used to
+          # mix them in: a run that never reached a template at all arrived in the
+          # gaps table with a blank layout and a blank closest-template, and one
+          # unreadable moment (a file that had gone by the time it was opened) put
+          # a statement that converts cleanly every day on the "can't read yet"
+          # list for good.
+          h5("Files that could not be opened at all"),
+          helpText("Not a missing layout: these runs never got as far as a template - a damaged or password-protected file, a file that had gone by the time it was read, or something that isn't a statement. Building a template will not change them."),
+          DTOutput("adm_unreadable"),
           h4("Templates that started failing recently"),
           helpText("A statement's layout can change slightly - a field moves or gets renamed - and stop adding up. When that happens the tool flags the conversion for a check, and any template that's suddenly getting more of those shows here. Empty is good."),
           DTOutput("adm_drift"),
@@ -754,7 +778,15 @@ ui <- fluidPage(
           uiOutput("adm_word_msg"),
           br(),
           h4("Words your statements used that the tool didn't recognise"),
-          helpText("Taken from the conversions run here, most frequent first - so the word worth teaching it is at the top. Pick one, say which way the money goes, and Approve."),
+          # Rendered, not fixed: the instructions ("pick one, say which way the
+          # money goes, and Approve") stood over an EMPTY table with nothing in the
+          # picker - 249 conversion records scanned here, not one unrecognised
+          # marker among them - which reads as a control that has stopped working.
+          # It has not: a word only lands here when a statement uses a debit/credit
+          # INDICATOR COLUMN whose value the vocabulary has never met, and no
+          # template in use does. So when there is nothing, the line says that,
+          # rather than instructing the reader to use a picker with no options.
+          uiOutput("adm_sugg_help"),
           uiOutput("adm_sugg_scope"),
           fluidRow(
             column(6,
@@ -769,7 +801,17 @@ ui <- fluidPage(
             column(6,
               strong("Columns in your statements that no template uses"),
               tableOutput("adm_sugg_cols"),
-              helpText("A column that keeps turning up unused is usually a field worth mapping in that bank's template."))),
+              # Says where the odd entries come from. This list is harvested from
+              # EVERY conversion, including the ones where nothing was recognised,
+              # so a letter or a file that is not a statement contributes its first
+              # line as if it were a column heading ("Dear Sir", "a", "b", "c").
+              # Left in rather than filtered out - what a file offered as headings
+              # is a fact about that file - but no longer presented as though every
+              # row were a field somebody should go and map.
+              helpText(HTML(paste0(
+                "A column that keeps turning up unused is usually a field worth mapping in that bank's ",
+                "template. Rows that read as prose came from files nothing could read - the first line ",
+                "of a letter or a non-statement is offered here as if it were a heading."))))),
           br(),
           tags$details(
             tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
@@ -802,10 +844,10 @@ ui <- fluidPage(
                             value = FALSE),
               actionButton("adm_ba_run", "Run", class = "btn-primary"),
               br(), br(),
-              downloadButton("adm_ba_report", "Safe audit report (.md)"),
-              br(), br(),
-              downloadButton("adm_ba_csv", "Converted report (.csv)"),
-              br(), br(),
+              uiOutput("adm_ba_report_ui"),
+              br(),
+              uiOutput("adm_ba_csv_ui"),
+              br(),
               helpText("Also available headless: Rscript scripts/bulk-audit.R <folder>")),
             column(8,
               uiOutput("adm_ba_summary"),
@@ -818,7 +860,7 @@ ui <- fluidPage(
           helpText("Upload one statement to download its shapes-only summary (no personal data) for sharing."),
           fileInput("adm_audit_one", "Statement", multiple = FALSE,
                     accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
-          downloadButton("adm_audit_dl", "Download safe audit (.md)")
+          uiOutput("adm_audit_dl_ui")
         )
       )
       )
@@ -847,6 +889,34 @@ server <- function(input, output, session) {
     p <- suppressWarnings(as.integer(v %||% 1L)); if (!isTRUE(is.finite(p))) p <- 1L
     max(1L, if (is.na(n)) p else min(p, as.integer(n)))
   }
+
+  # notify_once(id, ...) -- a toast that REPLACES the last one about the same
+  # thing instead of stacking under it, and clear_notice(id) takes it down the
+  # moment it stops being true. Shiny keeps every notification up for its full
+  # duration, so three attempts at a QID left three copies of the same sentence
+  # sitting beside "Recording as AB1234" -- a screen still asking for something it
+  # had already been given. One id per topic, so a message can be corrected or
+  # withdrawn rather than only added to.
+  notify_once <- function(id, text, type = "warning", duration = 6)
+    showNotification(text, id = paste0("n_", id), type = type, duration = duration)
+  clear_notice <- function(id) removeNotification(paste0("n_", id))
+
+  # .dl_note(file, msg) -- what a download hands back when it cannot hand back
+  # what was asked for: the reason, in the file. Every alternative is worse -- an
+  # aborted request is an HTTP 500 error page, and an empty file is silence.
+  .dl_note <- function(file, msg) writeLines(c("Statement Studio", "", msg), file)
+
+  # dt_none_opts(msg, ...) -- DataTables options that say "nothing here" in the
+  # table's OWN empty slot.
+  #
+  # Every table in Admin said it by rendering a one-row data.frame instead --
+  # NOTE | empty, message | No feedback yet -- which DataTables then counts:
+  # "Showing 1 to 1 of 1 entries" underneath, directly below a counts line reading
+  # 0, and a placeholder sitting in the rows where records go. On the intake tables
+  # that is a fabricated record on the one screen whose whole job is telling a
+  # maintainer what is really in the folders.
+  dt_none_opts <- function(msg, ...)
+    c(list(language = list(emptyTable = msg, zeroRecords = msg)), list(...))
 
   tpl_bump <- reactiveVal(0)   # bump to force a reload after a save
   # Active set: hidden user templates are excluded, so they take no part in
@@ -879,12 +949,17 @@ server <- function(input, output, session) {
   # the maintainer bookmarks that link (see docs/operational/admin-and-maintenance.md).
   #
   # This is NOT the security boundary and must never be mistaken for one: the
-  # password is. Hiding the tab only stops it being advertised; every admin action
-  # is still checked server-side with req(admin_ok()), so a hand-typed ?admin gets
-  # a login form, exactly as before.
+  # password is. Taking the tab away only stops it being advertised; every admin
+  # action is still checked server-side with req(admin_ok()), so a hand-typed
+  # ?admin gets a login form, exactly as before.
+  #
+  # removeTab, not hideTab. hideTab only sets display:none, so the whole Admin tab
+  # -- its link, its four sub-tabs and every control on them -- stayed in the page
+  # sent to every visitor, where "View source" reads it out. The claim above was
+  # that it is not there; now it is not there.
   observe({
     q <- parseQueryString(session$clientData$url_search %||% "")
-    if (!("admin" %in% names(q))) hideTab("main_tabs", "Admin")
+    if (!("admin" %in% names(q))) removeTab("main_tabs", "Admin")
   })
   adm_fails <- reactiveVal(0L)          # consecutive wrong passwords this session
   adm_locked_until <- reactiveVal(0)    # epoch seconds; 0 = not locked
@@ -1093,8 +1168,40 @@ server <- function(input, output, session) {
     }))
   })
   # Delete a USER template (never a shipped one), then refresh the picker.
+  #
+  # ASKED FIRST. This and the uploads purge are the only irreversible actions in
+  # the product, and both fired on ONE click of an enabled red button: no modal,
+  # no typed confirmation, nothing to undo them with. The template is a file
+  # somebody built by hand and there is no copy of it anywhere else, so the
+  # question names the file it is about to remove and what stops working.
   observeEvent(input$adm_tpl_delete, {
     req(admin_ok())
+    id <- input$adm_tpl_pick
+    if (is.null(id) || !nzchar(id)) return()
+    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+      output$adm_tpl_msg <- .tpl_note("Only USER templates can be deleted; this one is shipped/read-only.", ok = FALSE)
+      return()
+    }
+    files <- Filter(function(f) {
+      t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
+      identical(t$id %||% "", id) ||
+        identical(tools::file_path_sans_ext(basename(f)), gsub("[^A-Za-z0-9_]+", "_", id))
+    }, list.files(USER_TEMPLATES_DIR, pattern = "\\.ya?ml$", full.names = TRUE))
+    showModal(modalDialog(
+      title = "Delete this template?", size = "m", easyClose = FALSE,
+      p(sprintf("This permanently deletes %d file(s) from %s:",
+                length(files), USER_TEMPLATES_DIR)),
+      tags$ul(lapply(files, function(f) tags$li(tags$code(basename(f))))),
+      p(strong("There is no undo and no backup."),
+        " Statements this template was reading will stop being recognised by it from the next conversion; conversions already run are unaffected."),
+      if (!length(files)) p(class = "bad", "No file matches that id - nothing would be deleted."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("adm_tpl_delete_confirm", sprintf("Delete %s", id), class = "btn-danger"))))
+  })
+  observeEvent(input$adm_tpl_delete_confirm, {
+    req(admin_ok())
+    removeModal()
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
     if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
@@ -1105,7 +1212,18 @@ server <- function(input, output, session) {
     if (isTRUE(ok)) {
       tpl_bump(isolate(tpl_bump()) + 1)
       output$adm_tpl_msg <- .tpl_note(sprintf("Deleted user template <b>%s</b>.", id))
-    } else output$adm_tpl_msg <- .tpl_note("Couldn't delete it.", ok = FALSE)
+      # ...and as a toast, because the line above does not survive its own
+      # success: deleting rebuilds the template picker, and the picker's own
+      # observer blanks adm_tpl_msg. So the only irreversible action in the tab
+      # reported itself for a fraction of a second and then looked like nothing.
+      notify_once("adm_tpl_delete", sprintf("Deleted the user template %s. It is gone from disk.", id),
+                  type = "message", duration = 8)
+    } else {
+      output$adm_tpl_msg <- .tpl_note("Couldn't delete it.", ok = FALSE)
+      notify_once("adm_tpl_delete",
+                  sprintf("Could not delete %s - check folder permissions on %s.", id, USER_TEMPLATES_DIR),
+                  type = "error", duration = 10)
+    }
   })
 
   # Duplicate the selected template with a fresh id, into the editor to tweak+save.
@@ -1191,7 +1309,10 @@ server <- function(input, output, session) {
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
   observeEvent(input$adm_dict_reload, { req(admin_ok())
-    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()) })
+    updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text())
+    output$adm_dict_msg <- renderUI(span(class = "ok", sprintf(
+      "Reloaded %s into the editor. Any unsaved edits in the box are gone; the file itself is unchanged.",
+      DICT_PATH))) })
   observeEvent(input$adm_dict_save, {
     req(admin_ok())
     txt <- input$adm_dict_edit %||% ""
@@ -1230,10 +1351,21 @@ server <- function(input, output, session) {
   .load_lex_text <- function() read_file_text(LEXICON_PATH)
   observeEvent(admin_ok(), if (isTRUE(admin_ok()))
     updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text()))
+  # Both REPLACE the whole editor, and both did it in silence -- including the one
+  # that overwrites unsaved work with a completely different document. What just
+  # happened to the box, and whether anything was written to disk (nothing was),
+  # is said out loud.
   observeEvent(input$adm_lex_reload, { req(admin_ok())
-    updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text()) })
+    updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text())
+    output$adm_lex_msg <- renderUI(span(class = "ok", sprintf(
+      "Reloaded %s into the editor. Any unsaved edits in the box are gone; the file itself is unchanged.",
+      LEXICON_PATH))) })
   observeEvent(input$adm_lex_defaults, { req(admin_ok())
-    updateTextAreaInput(session, "adm_lex_edit", value = safe(lexicon_defaults_yaml(), "")) })
+    updateTextAreaInput(session, "adm_lex_edit", value = safe(lexicon_defaults_yaml(), ""))
+    output$adm_lex_msg <- renderUI(span(class = "ok", paste(
+      "The editor now holds the BUILT-IN defaults, not your file - copy what you need.",
+      "Nothing is saved until you click Save vocabulary, and saving this as it stands",
+      "would replace your file with the defaults."))) })
   observeEvent(input$adm_lex_save, {
     req(admin_ok())
     txt <- input$adm_lex_edit %||% ""
@@ -1285,6 +1417,19 @@ server <- function(input, output, session) {
     safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
   output$adm_sugg_tokens <- renderTable({ req(admin_ok()); adm_suggestions()$indicator_tokens })
   output$adm_sugg_cols   <- renderTable({ req(admin_ok()); adm_suggestions()$unmapped_columns })
+  # Instructions only when there is something to act on. An empty list here is the
+  # healthy state, not a fault: only a template whose amount style is a D/C
+  # indicator column can produce an unrecognised marker at all, so on a site whose
+  # statements are all signed-amount or debit/credit-column exports it stays empty
+  # for good, and the old copy read as a control that had stopped working.
+  output$adm_sugg_help <- renderUI({
+    req(admin_ok())
+    n <- nrow(adm_suggestions()$indicator_tokens %||% data.frame())
+    if (isTRUE(n > 0))
+      helpText("Taken from the conversions run here, most frequent first - so the word worth teaching it is at the top. Pick one, say which way the money goes, and Approve.")
+    else
+      helpText("Nothing to teach it yet - every money-in / money-out marker on the statements converted here was one it already knows. A word appears here by itself the first time a statement writes one it has never met.")
+  })
   # The metadata corpus is kept forever and this read is BOUNDED (see
   # R/suggestions.R), so say which slice the ranking came from. A partial answer
   # that doesn't admit it is partial is the thing the charter forbids.
@@ -1381,9 +1526,13 @@ server <- function(input, output, session) {
                 sum(conv$status %in% c("unsupported", "failed")))))
   })
   output$adm_ba_clusters <- renderDT({
-    b <- adm_ba(); req(b); if (!nrow(b$clusters)) return(data.frame(note = "no gaps - everything parsed"))
-    b$clusters[, c("count", "kind", "layout_hint", "signature")]
-  }, options = list(pageLength = 10, dom = "tp"), rownames = FALSE)
+    b <- adm_ba(); req(b)
+    cols <- c("count", "kind", "layout_hint", "signature")
+    if (!nrow(b$clusters) || !all(cols %in% names(b$clusters)))
+      return(stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
+    b$clusters[, cols]
+  }, options = dt_none_opts("No gaps - every file in this batch was read by a template.",
+                            pageLength = 10, dom = "tp"), rownames = FALSE)
   output$adm_ba_files_tbl <- renderDT({
     b <- adm_ba(); req(b)
     b$per_file[, c("idx", "kind", "status", "template", "bank", "n_rows", "redacted", "amount_style", "date_format", "trust")]
@@ -1395,39 +1544,89 @@ server <- function(input, output, session) {
       h5(sprintf("%d file(s), %s - draft id: %s", r$count, r$kind, r$draft_id %||% "?")),
       tags$pre(style = "font-size:11px;max-height:260px;overflow:auto;background:#f7f7f7;padding:8px", r$draft_yaml))))
   })
+  # ---- Admin downloads that cannot work are not offered, and never 500 --------
+  #
+  # Three of these answered an HTTP 500 error page ("An error has occurred!")
+  # whenever the thing they export did not exist yet, and a fourth handed back a
+  # file called ".audit.md" holding one line of failure text. A browser error page
+  # where a file was asked for reads as a broken tool, not as "run the audit
+  # first"; req(FALSE) inside a download handler is exactly that, an aborted
+  # request Shiny can only report as a server error.
+  #
+  # dl_when: enabled only when the export really exists, and otherwise DISABLED
+  # AND STILL VISIBLE with the one line saying what to do first -- the maintainer
+  # should see that the export exists and what it needs, not an empty space.
+  #
+  # It stays the REAL button. A lookalike <button> would be wrong in one specific
+  # way: Shiny registers a download only while something on the page is bound to
+  # it, so swapping the control out leaves the URL itself answering 404 -- another
+  # error page, for anyone holding a link from a minute ago. Rendering the genuine
+  # control keeps the handler registered, and every handler below hands back a
+  # readable note instead of an error if it is reached anyway.
+  dl_when <- function(id, label, ready, why) {
+    if (isTRUE(ready)) return(downloadButton(id, label))
+    tagList(
+      downloadButton(id, label, class = "disabled", `aria-disabled` = "true"),
+      div(class = "muted", style = "font-size:12px;margin:4px 0 0", why))
+  }
+  BA_REPORT_WHY <- "Upload statements above and click Run - there is no audit report yet."
+  BA_CSV_WHY    <- "Tick \"Also convert & save\" before Run - the converted report is only produced on that pass."
+  AUDIT_ONE_WHY <- "Upload a statement above first."
+  UP_AUDIT_WHY  <- "Pick a saved upload above first."
+  INBOX_WHY     <- "Pick a failed file above first."
+
+  output$adm_ba_report_ui <- renderUI({ req(admin_ok())
+    dl_when("adm_ba_report", "Safe audit report (.md)", !is.null(adm_ba()), BA_REPORT_WHY) })
+  output$adm_ba_csv_ui <- renderUI({ req(admin_ok())
+    dl_when("adm_ba_csv", "Converted report (.csv)", !is.null(adm_ba_conv()), BA_CSV_WHY) })
+  output$adm_audit_dl_ui <- renderUI({ req(admin_ok())
+    dl_when("adm_audit_dl", "Download safe audit (.md)", !is.null(input$adm_audit_one), AUDIT_ONE_WHY) })
+  output$adm_up_audit_ui <- renderUI({ req(admin_ok())
+    dl_when("adm_up_audit", "Download its safe summary (no personal data)",
+            nzchar(input$adm_up_pick %||% ""), UP_AUDIT_WHY) })
+  output$adm_inbox_audit_ui <- renderUI({ req(admin_ok())
+    dl_when("adm_inbox_audit", "Download its safe summary (no personal data)",
+            nzchar(input$adm_inbox_pick %||% ""), INBOX_WHY) })
+
   output$adm_ba_report <- downloadHandler(
     filename = function() "bulk-audit.md",
     content = function(file) {
       req(admin_ok())        # admin-only export
       b <- adm_ba()
-      if (is.null(b)) { showNotification("Run a bulk audit first - nothing to download yet.",
-                                         type = "warning", duration = 6); req(FALSE) }
+      if (is.null(b)) { notify_once("adm_ba_report", BA_REPORT_WHY, duration = 6)
+                        return(.dl_note(file, BA_REPORT_WHY)) }
       writeLines(format_batch_audit(b), file) })
   output$adm_ba_csv <- downloadHandler(
     filename = function() "batch_converted.csv",
     content = function(file) {
       req(admin_ok())        # admin-only export
       conv <- adm_ba_conv()
-      if (is.null(conv)) { showNotification("Tick 'Also convert & save' and run first - no converted report yet.",
-                                            type = "warning", duration = 6); req(FALSE) }
+      if (is.null(conv)) { notify_once("adm_ba_csv", BA_CSV_WHY, duration = 8)
+                           return(.dl_note(file, BA_CSV_WHY)) }
       utils::write.csv(conv, file, row.names = FALSE) })
   output$adm_audit_dl <- downloadHandler(
     filename = function() "statement.audit.md",
     content = function(file) {
       req(admin_ok())        # admin-only export
-      if (is.null(input$adm_audit_one)) { showNotification("Upload a statement to audit first.",
-                                          type = "warning", duration = 6); req(FALSE) }
-      writeLines(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())), file) })
+      if (is.null(input$adm_audit_one)) { notify_once("adm_audit_dl", AUDIT_ONE_WHY, duration = 6)
+                                          return(.dl_note(file, AUDIT_ONE_WHY)) }
+      a <- tryCatch(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())),
+                    error = function(e) NULL)
+      if (is.null(a)) return(.dl_note(file, "That file could not be read, so there is no summary to give. The file itself is the problem, not the audit."))
+      writeLines(a, file) })
 
   # ---- Admin: uploads & pickups ----
   output$adm_uploads <- renderDT({
     cv_upload_id(); input$adm_refresh          # refresh after a convert or on demand
     u <- read_uploads(UPLOADS_DIR)
-    if (!nrow(u)) return(data.frame(note = "no uploads yet"))
+    cols <- c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "purged", "run_id")
+    if (!nrow(u) || !all(cols %in% names(u)))
+      return(stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
     # `purged` = the saved copy has passed its retention period and been deleted.
     # Shown, because a pickup row whose file is gone must not look actionable.
-    u[, c("ts", "file_ext", "status", "template", "trust", "needs_pickup", "purged", "run_id")]
-  }, options = list(pageLength = 8, dom = "tip"), rownames = FALSE)
+    u[, cols]
+  }, options = dt_none_opts("No statements have been converted here yet.",
+                            pageLength = 8, dom = "tip"), rownames = FALSE)
   observe({
     req(admin_ok())          # upload ids identify real client statements
     cv_upload_id(); input$adm_refresh
@@ -1443,7 +1642,13 @@ server <- function(input, output, session) {
       req(admin_ok())        # reads another analyst's saved statement off disk
       id <- input$adm_up_pick
       p <- if (!is.null(id) && nzchar(id)) upload_file_path(id, UPLOADS_DIR) else NA_character_
-      writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
+      if (is.na(p)) { notify_once("adm_up_audit", UP_AUDIT_WHY, duration = 6)
+                      return(.dl_note(file, UP_AUDIT_WHY)) }
+      a <- tryCatch(format_audit(statement_audit(need_file(p), templates = templates())),
+                    error = function(e) NULL)
+      if (is.null(a)) return(.dl_note(file, sprintf(
+        "The saved statement for %s could not be read - it may have been deleted by the retention purge. Its upload record is still in Insights.", id)))
+      writeLines(a, file)
     })
 
   # ---- Admin: format requests raised via the "tell our team" escape hatch ----
@@ -1451,9 +1656,12 @@ server <- function(input, output, session) {
   output$adm_requests <- renderDT({
     req_bump(); input$adm_refresh
     q <- read_template_requests(REQUESTS_DIR)
-    if (!nrow(q)) return(data.frame(note = "no format requests raised yet"))
-    q[, c("ts", "requested_by", "status", "detail", "context")]
-  }, options = list(pageLength = 6, dom = "tip"), rownames = FALSE)
+    cols <- c("ts", "requested_by", "status", "detail", "context")
+    if (!nrow(q) || !all(cols %in% names(q)))
+      return(stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
+    q[, cols]
+  }, options = dt_none_opts("Nobody has raised a format request.",
+                            pageLength = 6, dom = "tip"), rownames = FALSE)
   observe({
     # A bare observe() is NOT suspended when its tab is hidden, so without this
     # guard the template-request queue was read off disk and its ids pushed into
@@ -1465,15 +1673,30 @@ server <- function(input, output, session) {
     open <- if (nrow(q)) q$id[q$status == "open"] else character(0)
     updateSelectInput(session, "adm_req_pick", choices = open)
   })
+  # Every action that changes something says what it changed -- including the one
+  # that fails, which said nothing at all either.
+  .req_note <- function(html, ok = TRUE)
+    renderUI(span(class = if (ok) "ok" else "bad", HTML(html)))
+  .req_set <- function(id, status, done) {
+    if (is.null(id) || !nzchar(id)) {
+      output$adm_req_msg <- .req_note("Pick a request first.", ok = FALSE); return()
+    }
+    if (isTRUE(set_request_status(id, status, dir = REQUESTS_DIR))) {
+      req_bump(req_bump() + 1)
+      output$adm_req_msg <- .req_note(sprintf("Request <b>%s</b> marked %s - it has left the open list.",
+                                              id, done))
+    } else {
+      output$adm_req_msg <- .req_note(sprintf(
+        "Could not update request %s - check folder permissions on %s.", id, REQUESTS_DIR), ok = FALSE)
+    }
+  }
   observeEvent(input$adm_req_actioned, {
     req(admin_ok())
-    id <- input$adm_req_pick; req(id, nzchar(id))
-    if (isTRUE(set_request_status(id, "actioned", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
+    .req_set(input$adm_req_pick, "actioned", "done")
   })
   observeEvent(input$adm_req_dismiss, {
     req(admin_ok())
-    id <- input$adm_req_pick; req(id, nzchar(id))
-    if (isTRUE(set_request_status(id, "dismissed", dir = REQUESTS_DIR))) req_bump(req_bump() + 1)
+    .req_set(input$adm_req_pick, "dismissed", "dismissed")
   })
 
   # ---- Admin: folder-intake browser (inbox / processed / failed / outbox) ----
@@ -1484,15 +1707,13 @@ server <- function(input, output, session) {
       "Waiting: <b>%d</b> &nbsp;|&nbsp; Processed: <b>%d</b> &nbsp;|&nbsp; Failed: <b>%d</b> &nbsp;|&nbsp; Stuck: <b>%d</b> &nbsp;|&nbsp; Output folders: <b>%d</b>",
       c[["inbox"]], c[["processed"]], c[["failed"]], c[["stuck"]], c[["outbox"]])))
   })
-  inbox_tbl <- function(which) renderDT({
-    d <- inbox_state()$folders[[which]]
-    if (!nrow(d)) return(data.frame(note = "empty"))
-    d
-  }, options = list(pageLength = 6, dom = "tip"), rownames = FALSE)
-  output$adm_inbox_failed    <- inbox_tbl("failed")
-  output$adm_inbox_waiting   <- inbox_tbl("inbox")
-  output$adm_inbox_processed <- inbox_tbl("processed")
-  output$adm_inbox_outbox    <- inbox_tbl("outbox")
+  inbox_tbl <- function(which, none) renderDT({
+    inbox_state()$folders[[which]]
+  }, options = dt_none_opts(none, pageLength = 6, dom = "tip"), rownames = FALSE)
+  output$adm_inbox_failed    <- inbox_tbl("failed",    "Nothing has failed - good.")
+  output$adm_inbox_waiting   <- inbox_tbl("inbox",     "Nothing waiting in inbox/.")
+  output$adm_inbox_processed <- inbox_tbl("processed", "Nothing processed yet.")
+  output$adm_inbox_outbox    <- inbox_tbl("outbox",    "No output folders yet.")
   observe({
     # These are REAL filenames of failed client statements -- routinely a surname
     # and a case reference. They were being pushed to every connected browser on
@@ -1511,12 +1732,24 @@ server <- function(input, output, session) {
     open_guided(p, nm)
   })
   output$adm_inbox_audit <- downloadHandler(
-    filename = function() paste0(input$adm_inbox_pick %||% "file", ".audit.md"),
+    # With nothing picked this built the filename ".audit.md" -- a dot-file, hidden
+    # on the maintainer's own machine, holding a one-line failure message. `%||%`
+    # never fired because an empty selectInput sends "", not NULL.
+    filename = function() {
+      nm <- basename(trimws(input$adm_inbox_pick %||% ""))
+      if (nzchar(nm)) paste0(nm, ".audit.md") else "no-file-selected.audit.md"
+    },
     content = function(file) {
       req(admin_ok())        # reads a failed client statement off disk
       nm <- input$adm_inbox_pick
       p <- if (!is.null(nm) && nzchar(nm)) failed_file_path(nm, ".") else NA_character_
-      writeLines(format_audit(statement_audit(need_file(p), templates = templates())), file)
+      if (is.na(p)) { notify_once("adm_inbox_audit", INBOX_WHY, duration = 6)
+                      return(.dl_note(file, INBOX_WHY)) }
+      a <- tryCatch(format_audit(statement_audit(need_file(p), templates = templates())),
+                    error = function(e) NULL)
+      if (is.null(a)) return(.dl_note(file, sprintf(
+        "%s could not be read at all, so there is nothing to summarise. That it cannot be read IS the finding: it is not a statement this tool can open, or the file is damaged.", nm)))
+      writeLines(a, file)
     })
 
   # ---- Add a template: build a PDF-form template from labels + placed boxes --
@@ -1849,6 +2082,25 @@ server <- function(input, output, session) {
     updateNumericInput(session, "ix_page", max = n,
       label = if (n == 1L) "Page (this statement is 1 page)" else sprintf("Page (1 to %d)", n))
   })
+  # ...and put the number BACK when it is one the document does not have. The
+  # clamp above only ever applied to the picture: type 99 on an 11-page statement
+  # and the box kept saying 99 while page 11 was drawn under it, so the control and
+  # the picture disagreed about which page you were looking at -- and a reader
+  # taking evidence off that page had no way to notice. Debounced, because a number
+  # box sends every keystroke and correcting mid-type ("1" of "10") would fight the
+  # person typing. The toast says what it clamped to; it replaces itself rather
+  # than stacking.
+  ix_page_settled <- debounce(reactive(input$ix_page), 1200)
+  observe({
+    n <- ix_n_pages(); v <- ix_page_settled()
+    if (is.na(n) || is.null(v) || !length(v) || is.na(v)) return()
+    p <- .clamp_page(v, n)
+    if (identical(as.integer(v), as.integer(p))) return()
+    updateNumericInput(session, "ix_page", value = p)
+    notify_once("ix_page", sprintf("This statement has %d page%s - showing page %d.",
+                                   n, if (n == 1L) "" else "s", p),
+                type = "message", duration = 5)
+  })
 
   ix_pal <- function(bands) {
     if (!length(bands)) return(character(0))
@@ -1882,13 +2134,32 @@ server <- function(input, output, session) {
       tags$span(style = sprintf("display:inline-block;width:12px;height:12px;border:2px solid %s;margin-right:6px;vertical-align:middle", col)),
       tags$span(lab))
     has_ocr <- !is.null(P$words$ocr_conf) && any(!is.na(P$words$ocr_conf))
-    # Only name the layers currently shown, so the legend tracks the tick-boxes.
+    # A KEY NAMES WHAT IS ON THE PICTURE. It listed every ticked layer whether or
+    # not that layer drew anything, so a page with no redactions still carried
+    # "redaction (not read)" in its key -- and the only way to find out that the
+    # colour is not there is to search the page for it. Each entry below now has
+    # to have painted something on THIS page, using the same conditions the plot
+    # itself draws from (a legend derived from different rules than the picture is
+    # how the two come to disagree).
+    w <- P$words
+    rows <- P$rows
+    has_cols <- length(pal) > 0 && ("cols" %in% layers) &&
+      (any(!is.na(w$column)) ||
+       any(vapply(P$bands, function(b) !is.null(b$x_min) && !is.null(b$x_max), logical(1))))
+    n_kept <- sum(rows$kept %in% TRUE)
+    n_skip <- if (is.null(rows$reason)) 0L
+              else sum(!(rows$kept %in% TRUE) & grepl("didn't parse|no amount", rows$reason %||% ""))
+    has_red <- any(w$redacted %in% TRUE)
+    ml <- if (!is.null(st$meta_loc)) st$meta_loc[[ix_page_now()]] else NULL
+    has_meta <- (!is.null(ml) && any(ml$found %in% TRUE)) || length(P$meta_regions %||% list()) > 0
     tagList(strong("Legend"),
-      if ("cols" %in% layers) lapply(names(pal), function(nm) sw(pal[[nm]], nm)),
-      if ("kept" %in% layers) sw("#137333", "transaction row (kept)"),
-      if ("skipped" %in% layers) sw("#c77700", "skipped row that looks like a transaction"),
-      if ("meta" %in% layers) sw("#a15c00", "balance / account details"),
-      if ("redact" %in% layers) sw("#b00020", "redaction (not read)"),
+      # Friendly names, and the SAME ones the picture writes over each band: the
+      # stored column names are the engine's ("other_party"), not the reader's.
+      if (has_cols) lapply(names(pal), function(nm) sw(pal[[nm]], cv_friendly_cols(nm))),
+      if ("kept" %in% layers && n_kept > 0) sw("#137333", "transaction row (kept)"),
+      if ("skipped" %in% layers && n_skip > 0) sw("#c77700", "skipped row that looks like a transaction"),
+      if ("meta" %in% layers && has_meta) sw("#a15c00", "balance / account details"),
+      if ("redact" %in% layers && has_red) sw("#b00020", "redaction (not read)"),
       if (has_ocr) sw("#c77700", "shaded amber = machine-read word the tool is unsure about - double-check it"))
   })
   ix_render <- reactive({
@@ -1936,7 +2207,10 @@ server <- function(input, output, session) {
     if ("cols" %in% layers) for (nm in names(P$bands)) { b <- P$bands[[nm]]
       if (!is.null(b$x_min) && !is.null(b$x_max)) {
         rect(b$x_min, ybot, b$x_max, ytop, border = pal[[nm]], lwd = 2)
-        text((b$x_min + b$x_max) / 2, ytop, nm, col = pal[[nm]], font = 2, cex = 0.9, pos = 3, offset = 0.2)
+        # The reader's name for the column, not the stored one -- and the same
+        # string the legend prints, so the page and its key cannot differ.
+        text((b$x_min + b$x_max) / 2, ytop, cv_friendly_cols(nm), col = pal[[nm]],
+             font = 2, cex = 0.9, pos = 3, offset = 0.2)
       } }
     if ("kept" %in% layers) {
       kr <- P$rows[P$rows$kept, , drop = FALSE]
@@ -1988,19 +2262,23 @@ server <- function(input, output, session) {
   })
   output$ix_skipped <- renderDT({
     sk <- ix_skipped_rows()
-    if (is.null(sk)) return(datatable(data.frame(message = "Nothing to show for this page yet."),
-                                      rownames = FALSE, options = list(dom = "t")))
-    if (!nrow(sk)) return(datatable(
-      data.frame(message = "Every row on this page was either kept or is a heading / footer."),
-      rownames = FALSE, options = list(dom = "t")))
+    cols <- c("what's on the row", "date cell", "why it was skipped")
+    # "nothing was skipped" is not a row of the table -- see dt_none_opts. Here it
+    # matters twice over: this table is where a reviewer looks for a MISSING
+    # transaction, and a placeholder in the rows is the last thing that should
+    # look like one.
+    none <- if (is.null(sk)) "Nothing to show for this page yet."
+            else "Every row on this page was either kept or is a heading / footer."
     trunc <- function(s, n = 90) ifelse(nchar(s) > n, paste0(substr(s, 1, n), "…"), s)
-    out <- data.frame(
+    out <- if (is.null(sk) || !nrow(sk))
+      stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols)
+    else data.frame(
       `what's on the row` = trunc(sk$raw %||% ""),
       `date cell` = sk$date %||% NA_character_,
       `why it was skipped` = sk$reason,
       check.names = FALSE, stringsAsFactors = FALSE)
     datatable(out, rownames = FALSE, selection = "single",
-              options = list(pageLength = 10, dom = "tp", scrollX = TRUE))
+              options = dt_none_opts(none, pageLength = 10, dom = "tp", scrollX = TRUE))
   })
   # Shareable, PII-safe row-coverage diagnostic for the current statement: page
   # sizes vs the template reference, kept/skipped counts and reasons -- the numbers
@@ -2011,10 +2289,15 @@ server <- function(input, output, session) {
       st <- ix_state(); src <- cv_src(); res <- cv_res()
       tid <- (res$template_id %||% NA_character_)[1]
       tmpl <- if (!is.na(tid) && nzchar(tid)) tryCatch(templates()[[tid]], error = function(e) NULL) else NULL
+      # Same rule as the Admin exports: a download that cannot be produced hands
+      # back the reason in the file, never an HTTP 500 error page.
       if (is.null(src) || is.null(tmpl)) {
-        showNotification("Convert a PDF statement first - nothing to diagnose yet.", type = "warning", duration = 6); req(FALSE) }
+        notify_once("ix_cov", "Convert a PDF statement first - nothing to diagnose yet.", duration = 6)
+        return(.dl_note(file, "Nothing to diagnose yet: convert a PDF statement, then download this from its result page.")) }
       inp <- tryCatch(read_input(src$path), error = function(e) NULL)
-      if (is.null(inp)) { showNotification("Couldn't re-read the file for the diagnostic.", type = "error"); req(FALSE) }
+      if (is.null(inp)) {
+        notify_once("ix_cov", "Couldn't re-read the file for the diagnostic.", type = "error", duration = 6)
+        return(.dl_note(file, "The statement could not be re-read from disk, so no diagnostic could be built. The scratch copy may have been cleaned up - convert it again.")) }
       writeLines(format_row_coverage(row_coverage(inp, tmpl)), file)
     })
   # "This IS a transaction": select a skipped row and add it. We record its page +
@@ -2179,9 +2462,9 @@ server <- function(input, output, session) {
   observeEvent(input$cv_qid_set, {
     v <- trimws(input$cv_qid %||% "")
     if (!grepl(QID_PATTERN, v)) {
-      showNotification("A QID is six letters or numbers, e.g. AB1234.",
-                       type = "warning", duration = 6)
-    } else cv_qid(toupper(v))
+      notify_once("cv_qid", "A QID is six letters or numbers, e.g. AB1234.",
+                  type = "warning", duration = 6)
+    } else { cv_qid(toupper(v)); clear_notice("cv_qid") }
   })
   observeEvent(input$cv_qid_change, cv_qid(NA_character_))
   output$cv_whoami <- renderUI({
@@ -2199,8 +2482,12 @@ server <- function(input, output, session) {
       # page - including anyone who should not be on it - exactly where the door
       # is unlocked. What the tool cannot do is nobody's business but the
       # maintainer's, and it is in the docs where it belongs.
+      #
+      # The SHAPE is not a secret, and withholding it was the reason people typed
+      # their name into this box and were refused: the validator below already
+      # knows it is six characters, so the box says so before the refusal does.
       helpText(style = "margin-top:-6px",
-        "Recorded as who ran this. Asked once."),
+        "Your six-character staff ID. Recorded as who ran this conversion. Asked once per session."),
       actionButton("cv_qid_set", "Use this QID", class = "btn-default"),
       tags$hr(style = "margin:14px 0"))
   })
@@ -2549,22 +2836,30 @@ server <- function(input, output, session) {
       h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))))
   })
 
+  # No sign-in and no QID means the run would be recorded against the account the
+  # SERVER process runs as -- identical for the whole department, identifying
+  # nobody. For a tool whose output is meant to be defensible, that is worse than
+  # stopping, so it stops. Once per session, not once per statement -- and once
+  # per BATCH, not once per file in it.
+  #
+  # ONE gate, because there is more than one way to start a conversion. The sample
+  # button ran the whole flow -- result card, checks, working Excel / CSV / JSON
+  # downloads -- with no QID at all, and the run it wrote to the log carried the
+  # server's own account. The same argument that stops the Convert button stops it.
+  .identity_ok <- function() {
+    if (.identity_is_personal(detected_identity_info()) || !is.na(cv_qid())) return(TRUE)
+    notify_once("cv_qid",
+                "Enter your QID first - it is what the audit trail records as who ran this conversion.",
+                type = "warning", duration = 8)
+    FALSE
+  }
   observeEvent(input$cv_go, {
     f <- input$cv_file
     if (is.null(f) || !nrow(f)) {
-      showNotification("Choose a statement file first.", type = "warning", duration = 6)
+      notify_once("cv_file", "Choose a statement file first.", type = "warning", duration = 6)
       return()
     }
-    # No sign-in and no QID means the run would be recorded against the account the
-    # SERVER process runs as -- identical for the whole department, identifying
-    # nobody. For a tool whose output is meant to be defensible, that is worse than
-    # stopping, so it stops. Once per session, not once per statement -- and once
-    # per BATCH, not once per file in it.
-    if (!.identity_is_personal(detected_identity_info()) && is.na(cv_qid())) {
-      showNotification("Enter your QID first - it is what the audit trail records as who ran this conversion.",
-                       type = "warning", duration = 8)
-      return()
-    }
+    if (!.identity_ok()) return()
     if (nrow(f) > 1L) run_batch(f) else run_conversion(f$datapath[1], f$name[1])
   })
 
@@ -2582,10 +2877,12 @@ server <- function(input, output, session) {
   # the user needing a statement at hand.
   observeEvent(input$cv_try_sample, {
     if (!file.exists(SAMPLE_STATEMENT)) {
-      showNotification("The bundled sample statement isn't on this install (samples/ folder missing).",
-                       type = "warning", duration = 6)
+      notify_once("cv_sample",
+                  "The bundled sample statement isn't on this install (samples/ folder missing).",
+                  type = "warning", duration = 6)
       return()
     }
+    if (!.identity_ok()) return()
     run_conversion(SAMPLE_STATEMENT, basename(SAMPLE_STATEMENT), record = FALSE)
   })
 
@@ -2807,9 +3104,38 @@ server <- function(input, output, session) {
                            m[[3]], m[[2]]),
            span(style = "font-size:14px", m[[1]]), plain_check(nm))
     }
-    div(style = "margin:2px 0 12px", lapply(pick, chip))
+    # THE KEY, because this strip is the first quality signal on the page and it
+    # had none: no legend, no title attribute, nothing in About or in either
+    # guide. A grey dash beside "Opening + transactions = closing balance" above
+    # the fold is either the best or the worst news on the screen, and there was
+    # nothing anywhere to tell a reader which. Same three glyphs the chips draw.
+    div(style = "margin:2px 0 12px",
+      lapply(pick, chip),
+      # The glyphs are the SAME escapes the chips are drawn from, not literals
+      # retyped beside them: a key that can drift from its picture is worse than
+      # no key at all.
+      div(class = "muted", style = "font-size:12.5px;margin-top:2px",
+          sprintf("%s = checked and passed \u00b7 %s = a problem \u00b7 %s = could not be checked (why, in Checks below)",
+                  "\u2713", "\u2717", "\u2013")))
   })
 
+  # tpl_choices(ids) -- ids for the server, NAMES for the person. A template id is
+  # a maintainer's handle, and the charter's interface rule keeps it off a
+  # customer-facing screen; two pickers on the result page were offering the raw
+  # ids as their options.
+  #
+  # Identical names are numbered, never collapsed: several templates carrying one
+  # name is exactly what a tie often IS, and a picker whose two options read the
+  # same is a question nobody can answer.
+  tpl_choices <- function(ids) {
+    ids <- as.character(ids)
+    lab <- vapply(ids, function(i) friendly_tpl(i), character(1), USE.NAMES = FALSE)
+    blank <- is.na(lab) | !nzchar(lab); lab[blank] <- ids[blank]
+    if (anyDuplicated(lab))
+      lab <- stats::ave(lab, lab, FUN = function(x)
+        if (length(x) == 1L) x else sprintf("%s (option %d)", x, seq_along(x)))
+    stats::setNames(ids, lab)
+  }
   # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
   friendly_tpl <- function(tid) {
@@ -2828,7 +3154,13 @@ server <- function(input, output, session) {
     r <- ov[ov$id == tid, , drop = FALSE]
     if (!nrow(r)) return(tid)
     lab <- trimws(paste(trimws(r$bank[1] %||% ""), trimws(r$type[1] %||% "")))
-    if (nzchar(lab)) paste(lab, "statement") else tid
+    if (!nzchar(lab)) return(tid)
+    # "statement statement". A PDF drafted in the toolkit is saved with
+    # statement_type "statement" (R/draft.R), so the word was appended to a label
+    # that already ended in it -- "Read as: Sample Everyday Statement statement".
+    # The word is a suffix, not a fact about the template, so it goes on only when
+    # the name does not already say it.
+    if (grepl("statements?$", lab, ignore.case = TRUE)) lab else paste(lab, "statement")
   }
 
   # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
@@ -2871,6 +3203,28 @@ server <- function(input, output, session) {
     date_year_inferred = "%d row(s) took their YEAR from a number on the page, not a statement period - confirm it",
     date_unresolved    = "%d row(s) have no year at all (none was printed) - day and month only",
     ocr_low_conf       = "%d row(s) have a machine-read date/amount the scan was unsure of - check those cells")
+  # WHY A CLEAN PDF STOPS AT MEDIUM -- said where the level is said, or not at all.
+  #
+  # "No row failed to read" needs an independent count of the physical lines in the
+  # file. R/parse.R and R/parse_pdf_table.R both leave source_line_count NA for a
+  # PDF and for an Excel sheet, so that check comes back "could not be checked" and
+  # the trust ladder is capped at medium however clean the statement was. PDFs are
+  # most of what comes in, so without this line the ladder on About offers a rung
+  # this format can never reach and a perfect conversion reads as a near miss
+  # somebody should go and chase.
+  .medium_is_the_ceiling <- function(res) {
+    k <- res$kpis
+    if (is.null(k) || !all(c("name", "status") %in% names(k))) return(FALSE)
+    base <- sub("[[:space:]]*\\[statement [0-9]+\\]$", "", k$name)   # split-aware
+    if (!any(k$status[base == "no_unparsed_rows"] %in% "na")) return(FALSE)
+    fmt <- tryCatch(templates()[[(res$template_id %||% "")[1]]]$format,
+                    error = function(e) NULL) %||% ""
+    fmt %in% c("pdf", "excel")
+  }
+  CEILING_NOTE <- paste(
+    "A PDF or Excel statement cannot go higher than medium: proving no row was",
+    "missed needs a line count of the file itself, which only a CSV or TSV export",
+    "has. That is the normal ceiling for this format, not something to chase.")
   output$cv_headline <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     if (!isTRUE(res$status == "ok")) return(NULL)   # failures are shown by cv_status
@@ -2902,12 +3256,23 @@ server <- function(input, output, session) {
       nf <- sum(grepl(f, fl, fixed = TRUE))
       if (nf > 0) chips <- c(chips, list(chip(sprintf(ROW_FLAG_CHIPS[[f]], nf), warn = TRUE)))
     }
+    # THE CONFIDENCE LEVEL, ON THE LINE EVERYONE READS. It is named in the About
+    # tab, in both operational guides and in the README, and on a clean run it
+    # appeared on screen NOWHERE: the only renderer that printed it (cv_status)
+    # returns NULL the moment a statement converts cleanly. So the one word that
+    # tells a high run from a medium one was visible only when something had gone
+    # wrong, and an analyst following the troubleshooting guide ("confidence medium
+    # on a PDF") had nothing on screen to match it against.
+    lev <- (res$trust$level %||% "")[1]
     div(class = paste0("verdict verdict-", lvl),
       div(class = "verdict-ico", pt$icon),
       div(style = "flex:1;min-width:0",
-        div(class = "verdict-title", sprintf("Converted%s",
-          if (!is.na(n)) sprintf(" — %d transaction%s read", n, if (n == 1) "" else "s") else "")),
+        div(class = "verdict-title", sprintf("Converted%s%s",
+          if (!is.na(n)) sprintf(" — %d transaction%s read", n, if (n == 1) "" else "s") else "",
+          if (nzchar(lev)) sprintf(" · confidence: %s", lev) else "")),
         p(class = "verdict-body", pt$line),
+        if (identical(lev, "medium") && .medium_is_the_ceiling(res))
+          p(class = "verdict-body", style = "margin-top:2px", CEILING_NOTE),
         if (length(chips)) div(chips)))
   })
 
@@ -2995,8 +3360,10 @@ server <- function(input, output, session) {
     tagList(
       h4(sprintf("The %d statements in this file", length(sts))),
       p(class = "muted", style = "margin:0 0 6px",
+        # "a statement_index column" was the engine's own column name, on the
+        # customer's screen; the table and the download both head it "Statement #".
         paste("Each was read and reconciled on its own. The cards above cover the whole file, at the",
-              "weakest statement's confidence; every output row carries a statement_index column.")),
+              "weakest statement's confidence; every row you download says which statement it came from.")),
       tags$table(class = "split-table",
         tags$thead(tags$tr(lapply(hdr, tags$th))),
         tags$tbody(lapply(sts, function(s) tags$tr(
@@ -3193,12 +3560,16 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$coverage))
     cov <- res$coverage
     disp <- data.frame(
-      field   = cov$field,
-      verdict = plain_label(cov$verdict, COVERAGE_PLAIN),   # 'unmapped' -> 'not on this statement'
-      populated = cov$populated, empty = cov$empty, note = cov$note,
+      # The stored SCHEMA names ("other_party", "amount_raw") are the engine's, and
+      # this table is the one place they still reached a customer-facing screen --
+      # beside a "Field coverage" heading written for the person holding the
+      # statement. Same map the transactions table and the toolkit preview use.
+      Field   = cv_friendly_cols(cov$field),
+      Verdict = plain_label(cov$verdict, COVERAGE_PLAIN),   # 'unmapped' -> 'not on this statement'
+      Populated = cov$populated, Empty = cov$empty, Note = cov$note,
       stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
-      formatStyle("verdict",
+      formatStyle("Verdict",
         backgroundColor = styleEqual(unname(COVERAGE_PLAIN),
                                      c("#e6f4ea","#fff8e6","#fde7e7","#f2f2f2")))
   })
@@ -3228,14 +3599,19 @@ server <- function(input, output, session) {
   })
 
   # need_file(p) -- a download with nothing to give tells the user (a toast) and
-  # aborts, instead of handing the browser an empty "NA" file. `character(0)` is
+  # STOPS, instead of handing the browser an empty "NA" file. `character(0)` is
   # NOT NULL, so an unsupported/failed result (outputs = character(0)) must be
   # length-checked, not null-checked.
+  #
+  # stop(), not req(FALSE): req(FALSE) inside a download handler aborts the
+  # request and Shiny answers a bare HTTP 500 "An error has occurred!" page -- a
+  # browser error where a file was asked for. Its callers catch this and write the
+  # sentence into the file instead.
+  NOTHING_TO_DL <- "Nothing to download - this conversion produced no output. Convert a statement first."
   need_file <- function(p) {
     if (length(p) != 1 || is.na(p) || !nzchar(p) || !file.exists(p)) {
-      showNotification("Nothing to download - this produced no output (convert/run it first).",
-                       type = "warning", duration = 6)
-      req(FALSE)
+      notify_once("dl", NOTHING_TO_DL, duration = 6)
+      stop(NOTHING_TO_DL, call. = FALSE)
     }
     p
   }
@@ -3304,12 +3680,12 @@ server <- function(input, output, session) {
   # for this" without hunting. Drafts a fresh template from THIS file (never seeded
   # from the wrong match).
   #
-  # NOT ON SCREEN. There is no uiOutput("cv_rematch") anywhere in the UI, so this
-  # output, both of its buttons and every word in it are unreachable -- and
-  # cv_teach's `ok` branch returns NULL specifically because "the 'Wrong bank?'
-  # line up top already offers a fix", which it does not. Left exactly as it is:
-  # wiring it in adds two controls to the result page and deleting it drops a
-  # route, and both of those are the owner's call, not a wording one.
+  # ON SCREEN NOW, directly under the downloads (see the UI). It was rendered by
+  # nothing at all, so its two buttons and every word in it were unreachable --
+  # while cv_teach's `ok` branch stayed silent precisely because "the 'Wrong bank?'
+  # line up top already offers a fix". Between them a clean-looking result read by
+  # the wrong template had no route back anywhere on the page, which is the one
+  # case the charter cares most about.
   output$cv_rematch <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     st <- res$status %||% "failed"
@@ -3317,10 +3693,12 @@ server <- function(input, output, session) {
     tid <- (res$template_id %||% NA_character_)[1]
     nice <- if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else NA_character_
     if (identical(st, "ok")) {
-      # Happy path: one quiet line. No "did I pick the right template?" doubt.
+      # Happy path: one quiet line, and it does NOT re-state which template read
+      # the statement -- the "Read as" chip on the verdict card two inches above
+      # says that already, and saying it twice makes a question out of a fact.
       div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
-        span(if (!is.na(nice)) sprintf("Read as %s.", nice) else "Read automatically."),
-        actionLink("cv_rematch_go", "Wrong bank? Set up the right one"))
+        span("Not the right bank?"),
+        actionLink("cv_rematch_go", "Set up the right template for this statement"))
     } else {
       # needs_review: make the "fix the match" option clearly available.
       div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
@@ -3339,14 +3717,25 @@ server <- function(input, output, session) {
   }
   observeEvent(input$cv_rematch_go,    .rematch_now())
   observeEvent(input$cv_rematch_go_rv, .rematch_now())
+  # The file is NAMED for what is in it. With no output to send, the old handler
+  # aborted and the browser showed an HTTP 500 page; naming the download
+  # "download.xlsx" and putting an explanation in it would be worse still -- a
+  # workbook that will not open. So a download with nothing behind it comes back
+  # as a .txt saying so, and the toast says it on screen at the same time.
+  .out_path <- function(ext) {
+    p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
+    if (length(p) && file.exists(p[1])) p[1] else NA_character_
+  }
   mk_dl <- function(ext) downloadHandler(
     filename = function() {
-      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
-      if (length(p)) basename(p[1]) else paste0("download.", ext)
+      p <- .out_path(ext)
+      if (is.na(p)) "nothing-to-download.txt" else basename(p)
     },
     content = function(file) {
-      p <- cv_res()$outputs[grepl(paste0("\\.", ext, "$"), cv_res()$outputs)]
-      file.copy(need_file(if (length(p)) p[1] else NA_character_), file, overwrite = TRUE)
+      p <- .out_path(ext)
+      if (is.na(p)) { notify_once("dl", NOTHING_TO_DL, duration = 6)
+                      return(.dl_note(file, NOTHING_TO_DL)) }
+      file.copy(p, file, overwrite = TRUE)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
 
@@ -3361,7 +3750,14 @@ server <- function(input, output, session) {
         # choiceNames/choiceValues (not named choices): a non-ASCII name in
         # c(name = value) becomes a SYMBOL at parse time, which on a C-locale
         # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8.
-        radioButtons("cv_fb_verdict", NULL, inline = TRUE,
+        # NOTHING PRE-ANSWERED. "Correct" was selected on arrival, so a click on
+        # Submit without reading a figure recorded a positive rating -- and that
+        # rating is not just an opinion: it is what Admin's "flagged as wrong"
+        # list, the template-usage table and the suggestion ranking are all built
+        # from, and marking a run WRONG retracts its rows from the dashboards. A
+        # default answer to "was this correct?" is the tool answering for the
+        # reviewer, on the one question only she can answer.
+        radioButtons("cv_fb_verdict", NULL, inline = TRUE, selected = character(0),
           choiceNames = list("✓ Correct", "△ Minor issues", "✗ Wrong"),
           choiceValues = list("correct", "minor_issues", "wrong")),
         textAreaInput("cv_fb_comment", "Comment (optional - what was wrong?)",
@@ -3388,6 +3784,15 @@ server <- function(input, output, session) {
   }
   observeEvent(input$cv_fb_submit, {
     res <- cv_res(); req(res, res$run_id)
+    # Refused, not defaulted: with nothing chosen there is no rating to record,
+    # and the reviewer is told which of the three to pick rather than left in
+    # front of a button that did nothing.
+    if (!length(input$cv_fb_verdict %||% character(0))) {
+      notify_once("cv_fb", "Choose Correct, Minor issues or Wrong first - that is the rating being recorded.",
+                  type = "warning", duration = 8)
+      return()
+    }
+    clear_notice("cv_fb")
     rec <- tryCatch(
       submit_feedback(run_id = res$run_id, verdict = input$cv_fb_verdict,
                       comment = input$cv_fb_comment, requested_by = who_now(),
@@ -3705,6 +4110,12 @@ server <- function(input, output, session) {
                               width = "100%"))),
       div(actionButton("g_pdf_assign", "Assign it", class = "btn-primary"),
           actionButton("g_pdf_remove", "Remove it")),
+      # WHAT JUST HAPPENED, WHERE IT HAPPENED. Both buttons wrote their
+      # confirmation into g_adv_msg -- which lives on the ADVANCED tab, behind a
+      # click, out of sight of the person drawing boxes. So assigning a column and
+      # removing one both looked like nothing at all, on the two controls the whole
+      # toolkit is built around.
+      uiOutput("g_pdf_msg"),
       # Behind the one disclosure: a column of your own naming, and the shared-date
       # opt-in. Neither belongs in setting up an ordinary statement.
       #
@@ -4059,7 +4470,7 @@ server <- function(input, output, session) {
             "The one the tool used read no rows. Pick another and it converts straight away - nothing is saved or changed."),
           div(style = "display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end",
             div(style = "flex:1 1 340px",
-              selectInput("cv_tie_pick", NULL, choices = tied, width = "100%")),
+              selectInput("cv_tie_pick", NULL, choices = tpl_choices(tied), width = "100%")),
             div(style = "margin-bottom:15px",
               actionButton("cv_tie_go", "Convert with this one", class = "btn-primary"))),
           div(class = "muted", style = "font-size:13px",
@@ -4207,10 +4618,17 @@ server <- function(input, output, session) {
     tagList(div(style = sprintf("margin:12px 0;padding:10px 12px;border-radius:8px;%s", style),
       strong(if (thin) "Close call - please confirm this is the right template"
              else "Template match"),
+      # NAMES, and no scores. This line printed raw template ids and the engine's
+      # match score -- "Matched anz_everyday_pdf. Nearest others: asb_everyday_pdf
+      # (score 3)" -- on the customer-facing result page. The id is a maintainer's
+      # handle and the score is an internal metric; neither is something the person
+      # holding the statement can check against the paper in front of her, and both
+      # are exactly what the charter's interface rule keeps off this screen. Which
+      # ones nearly fitted is the useful half, and it is said in their names.
       p(class = "muted", if (nrow(others_df))
-        sprintf("Matched %s. Nearest others: %s.", res$template_id,
-                paste(sprintf("%s (score %s)", others_df$id, others_df$score), collapse = ", "))
-        else sprintf("Matched %s.", res$template_id)),
+        sprintf("Read as %s. Others that nearly fitted: %s.", friendly_tpl(res$template_id),
+                paste(names(tpl_choices(others_df$id)), collapse = ", "))
+        else sprintf("Read as %s.", friendly_tpl(res$template_id))),
       # "Try the other one" must BE one click, not a trip to the toolkit. Opening
       # the toolkit is a heavy action (a form full of settings, a template to name
       # and save) for what is really the question "did it pick the right variant?".
@@ -4218,7 +4636,7 @@ server <- function(input, output, session) {
       # is the secondary link, for when the answer is "neither of these is right".
       if (length(others)) tagList(
         selectInput("cv_cand_pick", "Wrong one? Try a different template:",
-                    choices = others, width = "100%"),
+                    choices = tpl_choices(others), width = "100%"),
         actionButton("cv_cand_convert", "Convert with this one instead", class = "btn-primary"),
         span(style = "margin-left:10px", class = "muted", "or "),
         actionLink("cv_cand_go", "open the toolkit with it"))))
@@ -4290,6 +4708,13 @@ server <- function(input, output, session) {
                     effective_from = input$g_eff_from, effective_to = input$g_eff_to)
   }
   guided_live <- reactive(gl_build(meta_live = TRUE))
+  # Is a date column mapped at all? Wherever this format keeps it. Rows are found
+  # by their date in both readers, so this is the one mapping whose absence is not
+  # a "check your settings" problem but a hard stop.
+  .has_date_col <- function(tmpl) {
+    if (identical(tmpl$format %||% "delimited", "pdf")) !is.null(tmpl$table$columns$date)
+    else nzchar(trimws(as.character(tmpl$columns$date$source %||% "")))
+  }
 
   # THE SAVE NAME follows the bank AND the kind of statement. It used to be fixed
   # at draft time, so every layout one bank issues drafted the same name and the
@@ -4555,6 +4980,13 @@ server <- function(input, output, session) {
   # "meta:" marks a one-off header value, anything else is a column. A typed custom
   # name can never collide -- .pdf_chosen_field strips the colon to an underscore.
   .meta_field <- function(f) if (grepl("^meta:", f %||% "")) sub("^meta:", "", f) else NA_character_
+  # Say it BESIDE THE BUTTON, and keep saying it on Advanced. Both of these
+  # confirmations only ever went to g_adv_msg, which is on the other tab.
+  .g_box_note <- function(msg, ok = TRUE) {
+    ui <- renderUI(span(class = if (ok) "ok" else "bad", msg))
+    output$g_pdf_msg <- ui
+    output$g_adv_msg <- ui
+  }
 
   observeEvent(input$g_pdf_assign, {
     g <- guided(); req(g); br <- input$g_pdf_brush
@@ -4577,8 +5009,7 @@ server <- function(input, output, session) {
         y_min = round(br$ymin * s[2]), y_max = round(br$ymax * s[2]))
       guided(g)
       updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-      output$g_adv_msg <- renderUI(span(class = "ok",
-        sprintf("Pinned '%s' to the box you drew on page %d.", mf, pg)))
+      .g_box_note(sprintf("Pinned '%s' to the box you drew on page %d.", mf, pg))
       return()
     }
     slot <- .pdf_field_ref(f)
@@ -4596,10 +5027,9 @@ server <- function(input, output, session) {
     }
     g <- .pdf_resize_region(g); guided(g)
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-    output$g_adv_msg <- renderUI(span(class = "ok",
-      sprintf("Set the '%s' column%s.%s Page and preview updated.", f,
-              if (identical(slot, "extras")) " (custom / extra)" else "",
-              if (switched) " Amount style set to separate money-in / money-out." else "")))
+    .g_box_note(sprintf("Set the '%s' column%s.%s Page and preview updated below.", f,
+                        if (identical(slot, "extras")) " (custom / extra)" else "",
+                        if (switched) " Amount style set to separate money-in / money-out." else ""))
     if (isTRUE(switched))
       showNotification(paste("Amount style set to separate money-in / money-out, because you drew",
                              "both a money-out and a money-in column."),
@@ -4620,7 +5050,7 @@ server <- function(input, output, session) {
       if (!length(g$tmpl$table$metadata_regions)) g$tmpl$table$metadata_regions <- NULL
       guided(g)
       updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-      output$g_adv_msg <- renderUI(span(class = "ok", sprintf("Removed the pinned box for '%s'.", mf)))
+      .g_box_note(sprintf("Removed the pinned box for '%s'.", mf))
       return()
     }
     slot <- if (!is.null(g$tmpl$table$columns[[f]])) "columns"
@@ -4630,8 +5060,7 @@ server <- function(input, output, session) {
     g$tmpl$table[[slot]][[f]] <- NULL
     g <- .pdf_resize_region(g); guided(g)
     updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
-    output$g_adv_msg <- renderUI(span(class = "ok",
-      sprintf("Removed the '%s' column. Page and preview updated.", f)))
+    .g_box_note(sprintf("Removed the '%s' column. Page and preview updated below.", f))
   })
 
   # ONE parse per change, shared by the preview table + the status line (each used
@@ -4697,6 +5126,22 @@ server <- function(input, output, session) {
             else "If they are right, click Save template."),
         if (n > PREVIEW_ROWS)
           span(class = "muted", sprintf(" The table shows the first %d.", PREVIEW_ROWS))))))
+    # THE DATE COLUMN IS NOT OPTIONAL, and its absence is not a mis-drawn box.
+    # Remove it and the panel below handed out advice about widening a band and
+    # checking the date format - advice for a template that HAS a date column -
+    # while the actual cause was one click old and unmentioned. Rows are found by
+    # their date, so with no date column nothing can ever be read, whatever else
+    # is set.
+    if (!.has_date_col(gl_build(meta_live = FALSE)))
+      return(div(class = "verdict verdict-low", style = "margin:2px 0 12px",
+        div(class = "verdict-ico", "!"),
+        div(style = "flex:1;min-width:0",
+          div(class = "verdict-title", "There is no date column, so no rows can be read"),
+          p(class = "verdict-body", style = "margin:0",
+            if (is_pdf)
+              "Draw a box over the dates on the page, choose \"date\" and click Assign it. Every row this tool reads is found by its date - nothing else will bring the rows back."
+            else
+              "Point the Date picker above at the column holding the dates. Every row this tool reads is found by its date - nothing else will bring the rows back."))))
     div(class = "verdict verdict-medium", style = "margin:2px 0 12px",
       div(class = "verdict-ico", "!"),
       div(style = "flex:1;min-width:0",
@@ -4812,29 +5257,54 @@ server <- function(input, output, session) {
     op <- par(mar = c(5, 4, 1, 1)); on.exit(par(op))
     barplot(setNames(ov$n, ov$status), col = cols, las = 2, ylab = "conversions")
   })
+  # THE GAPS ARE THE `unsupported` RUNS ONLY. unsupported_clusters() takes the
+  # FAILED ones too, and a failed run is not a gap: the file never reached a
+  # template, so it lands here with no layout, no closest template and no reason --
+  # three blank cells under a heading promising a layout to build. One such run
+  # (an unreadable moment on a file that converts cleanly every day) left that file
+  # on the "can't read yet" list permanently. They are shown as what they are, in
+  # adm_unreadable below.
+  .GAP_COLS <- c("count", "layout", "closest_template", "why", "last_seen", "example_file")
   output$adm_gaps <- renderDT({
     d <- adm_data(); req(d)
-    g <- unsupported_clusters(d$runs)
-    if (!nrow(g)) return(datatable(data.frame(message = "No unsupported statements logged yet."),
-                                   rownames = FALSE, options = list(dom = "t")))
-    datatable(g[, c("count", "layout", "closest_template", "why", "last_seen", "example_file")],
-              rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE)) |>
+    runs <- d$runs
+    if (nrow(runs) && "status" %in% names(runs))
+      runs <- runs[as.character(runs$status) %in% "unsupported", , drop = FALSE]
+    g <- unsupported_clusters(runs)
+    # A blank cell reads as "the layout is empty" / "nothing was close". Both are
+    # facts the log simply does not carry for these runs, so say that instead.
+    said <- function(v) { v <- as.character(v); v[is.na(v) | !nzchar(trimws(v))] <- "not recorded"; v }
+    g <- g[, .GAP_COLS, drop = FALSE]
+    for (nm in c("layout", "closest_template", "why", "example_file")) g[[nm]] <- said(g[[nm]])
+    datatable(g, rownames = FALSE,
+              options = dt_none_opts("No statement has come back 'no template for this yet'.",
+                                     pageLength = 10, scrollX = TRUE)) |>
       formatStyle("count", fontWeight = "bold")
   })
+  output$adm_unreadable <- renderDT({
+    d <- adm_data(); req(d)
+    runs <- d$runs
+    cols <- intersect(c("ts", "source_file", "message"), names(runs))
+    if (!nrow(runs) || !("status" %in% names(runs)) || !length(cols))
+      return(stats::setNames(data.frame(matrix(character(0), 0, 3)), c("ts", "source_file", "message")))
+    f <- runs[as.character(runs$status) %in% "failed", cols, drop = FALSE]
+    f[order(as.character(f$ts), decreasing = TRUE), , drop = FALSE]
+  }, options = dt_none_opts("Every run reached a template - nothing failed to open.",
+                            pageLength = 5, dom = "tip"), rownames = FALSE)
   output$adm_usage <- renderDT({
     d <- adm_data(); req(d)
     u <- template_usage(d$runs, d$fb)
-    if (!nrow(u)) return(datatable(data.frame(message = "No matched conversions yet."),
-                                   rownames = FALSE, options = list(dom = "t")))
-    datatable(u, rownames = FALSE, options = list(dom = "t", pageLength = 20))
+    datatable(u, rownames = FALSE,
+              options = dt_none_opts("No conversion has matched a template yet.",
+                                     dom = "t", pageLength = 20))
   })
   output$adm_drift <- renderDT({
     d <- adm_data(); req(d)
     dr <- template_drift(d$runs)
-    if (!nrow(dr)) return(datatable(data.frame(message = "No drift detected."),
-                                    rownames = FALSE, options = list(dom = "t")))
-    datatable(dr, rownames = FALSE, options = list(dom = "t")) |>
-      formatStyle("drop", fontWeight = "bold", color = "#b00020")
+    tbl <- datatable(dr, rownames = FALSE,
+                     options = dt_none_opts("No template has started failing - good.", dom = "t"))
+    if (nrow(dr)) tbl <- formatStyle(tbl, "drop", fontWeight = "bold", color = "#b00020")
+    tbl
   })
   observeEvent(input$adm_rollup, {
     req(admin_ok())
@@ -4845,6 +5315,24 @@ server <- function(input, output, session) {
       sprintf("Archived %d old run file(s); %d kept. History is preserved in logs/archive/.",
               (r$archived %||% 0) + (r2$archived %||% 0), (r$kept %||% 0))))
   })
+  # WHAT WILL BE DELETED, COUNTED BEFORE IT IS. purge_uploads() has no dry-run, so
+  # the count is taken exactly the way it takes it: the saved statement's own
+  # mtime, never record.json's (every status change rewrites that, which would
+  # keep resetting the clock on a file nobody has touched).
+  .uploads_due <- function(keep_days) {
+    kd <- suppressWarnings(as.numeric(keep_days %||% NA)[1])
+    if (!is.finite(kd) || kd <= 0) return(0L)
+    cutoff <- as.numeric(Sys.time()) - kd * 86400
+    recs <- Sys.glob(file.path(UPLOADS_DIR, "*", "record.json"))
+    sum(vapply(recs, function(rp) {
+      files <- setdiff(list.files(dirname(rp), full.names = TRUE), rp)
+      if (!length(files)) return(FALSE)
+      when <- suppressWarnings(max(as.numeric(file.info(files)$mtime), na.rm = TRUE))
+      isTRUE(is.finite(when) && when < cutoff)
+    }, logical(1)))
+  }
+  # These are real client bank statements, deleted for good on one click of an
+  # enabled red button. Ask, and say how many and what survives.
   observeEvent(input$adm_purge_uploads, {
     req(admin_ok())
     if (UPLOADS_KEEP_DAYS <= 0) {
@@ -4852,6 +5340,21 @@ server <- function(input, output, session) {
         "Nothing deleted: retention is set to keep saved statements indefinitely. Set retention.uploads_keep_days in config/config.yaml and restart."))
       return()
     }
+    n <- .uploads_due(UPLOADS_KEEP_DAYS)
+    showModal(modalDialog(
+      title = "Delete saved statements?", size = "m", easyClose = FALSE,
+      p(sprintf("%d saved client statement file(s) in %s are older than %d days.",
+                n, UPLOADS_DIR, as.integer(UPLOADS_KEEP_DAYS))),
+      p(strong("This permanently deletes those files. There is no undo."),
+        " The record of each upload is kept, so Insights and the audit trail are unchanged - only the statement itself goes."),
+      if (n == 0L) p(class = "muted", "Nothing is old enough to delete, so this would do nothing."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("adm_purge_confirm", sprintf("Delete %d file(s)", n), class = "btn-danger"))))
+  })
+  observeEvent(input$adm_purge_confirm, {
+    req(admin_ok())
+    removeModal()
     p <- tryCatch(purge_uploads(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS), error = function(e) NULL)
     if (is.null(p)) {
       output$adm_purge_msg <- renderUI(span(class = "bad",
@@ -4864,13 +5367,14 @@ server <- function(input, output, session) {
   })
   output$adm_feedback <- renderDT({
     d <- adm_data(); req(d); fb <- d$fb
+    cols <- c("ts", "verdict", "comment", "template_id", "run_id")
+    none <- if (is.null(fb) || !nrow(fb)) "Nobody has rated a conversion yet."
+            else "Nothing has been rated wrong or minor-issues."
     if (is.null(fb) || !nrow(fb) || !("flagged" %in% names(fb)))
-      return(datatable(data.frame(message = "No feedback yet."), rownames = FALSE, options = list(dom = "t")))
-    fl <- fb[isTRUE(TRUE) & as.logical(fb$flagged) %in% TRUE, , drop = FALSE]
-    if (!nrow(fl)) return(datatable(data.frame(message = "No flagged feedback."),
-                                    rownames = FALSE, options = list(dom = "t")))
-    datatable(fl[, intersect(c("ts", "verdict", "comment", "template_id", "run_id"), names(fl))],
-              rownames = FALSE, options = list(pageLength = 8, scrollX = TRUE))
+      fl <- stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols)
+    else fl <- fb[as.logical(fb$flagged) %in% TRUE, intersect(cols, names(fb)), drop = FALSE]
+    datatable(fl, rownames = FALSE,
+              options = dt_none_opts(none, pageLength = 8, scrollX = TRUE))
   })
 }
 

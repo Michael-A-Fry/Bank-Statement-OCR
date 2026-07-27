@@ -6,9 +6,17 @@ For a developer inheriting this cold. Read it in one sitting, then read
 column, every flag token, every KPI, every function signature). This page is the
 map, the reasoning, and the traps. It does not restate the contract.
 
-Everything below was checked against the code as it stands at `VERSION` 1.2.0.
-Line numbers are deliberately absent for `app.R` — it moves. Functions and files
-are named instead.
+It ends with the three things nobody wrote down before: how to run it (§8), how to
+ship a change to it and put it back (§9), and what to do when somebody says a
+figure is wrong (§10). The step-by-step versions of those live in
+`docs/operational/` — `maintaining-the-engine.md` (the suite on the server,
+promoting a template), `updating.md`, `backup-and-restore.md` and
+`investigating-a-wrong-conversion.md` — and this page points at them rather than
+repeating them.
+
+Everything below was checked against the running code on 2026-07-27, at `VERSION`
+1.3.0. Line numbers are deliberately absent for `app.R` — it moves. Functions and
+files are named instead, and every measured figure carries the date it was taken.
 
 ---
 
@@ -27,6 +35,11 @@ are named instead.
   reason (`.deterministic_core`, `.normalize_zip_timestamps` in `R/outputs.R`).
 - **Never throws at the front door.** `convert_statement()` wraps its whole body
   in `tryCatch`; any error becomes `status = "failed"` with an actionable message.
+  *Whole* body is the load-bearing word. The `tryCatch` used to open below a short
+  preamble, so `basename(path)` sat outside it and `convert_document(1L)` threw
+  before a single guard ran. Everything that touches `path` is now inside; what is
+  left above it cannot throw for any input. If you add a line to that preamble,
+  prove it — `convert_document(1L)` must come back `failed`, not error.
 - Two helpers are everywhere and are defined in `R/util.R`: `%||%` (null/empty
   coalesce) and `safe(expr, default)` (swallow an error, return a default).
 
@@ -61,7 +74,7 @@ are named instead.
 **The arrow only points one way.** `R/` never reads `app.R`, `ui_labels.R` or
 `ui_content.R`. Verified:
 `grep -rn "CHECK_PLAIN\|STATUS_PLAIN\|DIAG_PLAIN\|COVERAGE_PLAIN\|FEED_PLAIN\|RESULT_PLAIN\|ui_labels\|ui_content" R/`
-returns five hits, all inside comments. The engine emits **codes**
+returns comment lines only. The engine emits **codes**
 (`needs_review`, `balance_reconciliation`, `withheld:not_proven`); the screen owns
 **sentences**. `tests/run_tests.R` sources only `R/`, so a UI symbol is simply not
 in scope for the suite: an engine call into one errors the moment a test walks
@@ -70,18 +83,34 @@ environment of its own, precisely so that reading both halves stays a special
 case.)
 
 `run.R` is a thin CLI over the same engine and loads only `R/`. That is the
-second proof that the engine does not need Shiny.
+second proof that the engine does not need Shiny — and it is also the tool you
+reach for when somebody says a figure is wrong (§10).
 
-Sizes, for orientation: `R/` is 46 modules / ~11,400 lines. `app.R` is ~4,900
-lines. `ui_labels.R` is 257 lines and `ui_content.R` 156.
+```
+Rscript run.R <file> [bank] [outdir]
+```
 
-Where the **words** are matters more than where the lines are. Measured by an AST
-walk over every string literal (2026-07-27): ~11,300 user-facing words, of which
-`app.R` holds ~49%, `ui_content.R` + `ui_labels.R` ~16%, and **`R/` ~36%** —
-mostly KPI details in `R/reconcile.R` and how-to-fix advice in `R/diagnose.R`,
-which the engine writes because only it has the figures. A copy audit that reads
-`app.R` and the two `ui_` files still misses more than a third of what a user
-reads.
+Sizes, for orientation only — these move every week, so re-measure rather than
+quote: `R/` is 46 single-concern modules totalling a bit over twice the length of
+`app.R`; `app.R` is a few thousand lines; `ui_labels.R` and `ui_content.R` are a
+few hundred between them.
+
+Where the **words** are matters more than where the lines are, and that ratio is
+worth a real measurement. An AST walk over every string literal in `app.R`, the
+two `ui_` files and `R/`, counting whitespace-separated purely-alphabetic tokens
+(so hex colours, CSS lengths and snake_case codes drop out):
+
+| Measured 2026-07-27 | Share of user-facing words |
+|---|---|
+| `app.R` | ~45% |
+| `ui_content.R` + `ui_labels.R` | ~10% |
+| **`R/`** | **~45%** |
+
+Nearly half the words a user reads are written by the engine — KPI details in
+`R/reconcile.R`, how-to-fix advice in `R/diagnose.R` — because only the engine
+has the figures. **A copy audit that reads `app.R` and the two `ui_` files misses
+about half of what a user reads.** That is the durable fact here; the percentages
+drift with every release.
 
 ---
 
@@ -137,13 +166,20 @@ unverified, an unresolved or inferred year, and OCR on any page. Plus one lift: 
 `low` caused **only** by secondary checks when `balance_reconciliation` passed
 becomes `medium`.
 
+**"Applicable" excludes the informational ones.** `.reconcile_trust()` starts by
+dropping every KPI flagged `informational`, so a redaction count or an OCR
+confidence figure can never move the level or the score by being a count. OCR
+still caps trust — but through the caps below, from the header, not by being read
+as a failed check.
+
 **Consequence a newcomer must know: a PDF or Excel statement can never reach
 `high`.** `no_unparsed_rows` needs an independent physical source-line count,
 which only the delimited reader has (`R/parse.R` and `R/parse_pdf_table.R` both
 set `source_line_count = NA_integer_`), so it returns `na`, so `n_na > 0`, so the
-ceiling is `medium`. Measured: a clean 11-page ANZ PDF, 311 rows, balance
-reconciling, comes out `medium (92)`. That is the healthy ceiling for the format
-the charter calls dominant. Do not "fix" it by making the check pass.
+ceiling is `medium`. Measured 2026-07-27 on
+`samples/_private_staging/anz_single.pdf` — a clean 11-page ANZ PDF, 311 rows,
+balance reconciling — it comes out `medium (92)`. That is the healthy ceiling for
+the format the charter calls dominant. Do not "fix" it by making the check pass.
 
 ---
 
@@ -185,6 +221,46 @@ extras:                       # kept, named, out of the core schema
   fx_amount: {source: ForeignCurrencyAmount}
 currency: NZD
 ```
+
+### `min_score`, and why `header_contains_all` does not mean ALL
+
+One number decides both of this engine's detection failure modes, so it gets a
+paragraph of its own.
+
+**A score is a count of fingerprint phrases found, one point each.** For a
+delimited or Excel template, a phrase scores if it equals a whole column name
+(case-insensitively); for a PDF, if it appears anywhere in the page text as a
+fixed substring. `filename_regex` scores **nothing** — it is a tie-breaker only,
+so a template can never win on the file's name with no content evidence, and the
+same bytes under a different name always detect the same way. `R/detect.R`,
+`.score_template()`.
+
+A template **matches** only when it clears **its own** `min_score` *and* strictly
+beats the runner-up among the candidates that cleared theirs. A tie on content is
+broken by shipped-over-hand-built, then by the filename hint; if neither separates
+them the run converts on the best candidate and is held for review (§6), with the
+ordering still settled by id so the outcome stays deterministic. Winning by only
+one point is a *thin margin* and also routes to review — a near-duplicate template
+nearly matched too, and that is worth a second pair of eyes.
+
+So the example above — `min_score: 6` over seven `header_contains_all` phrases —
+means **"any six of these seven"**. The key is named `_all` and that is not what
+it does. The one number is a dial between two opposite ways of being wrong:
+
+- **Too low** and the fingerprint claims other banks' statements. Not
+  theoretical: `asb_everyday_pdf` once carried `min_score: 2` over
+  `["Debit/Withdrawal", "Deposit", "Balance"]`, and a foreign bank's PDF scored 2
+  on the bare words "Deposit" and "Balance", parsed as ASB, came out `ok`, and
+  reached the Qlik feed. `.fp_fingerprint_problems()` exists to refuse that
+  shape now.
+- **Equal to the phrase count** and the template dies the day the bank renames
+  one column or moves one line of the masthead — the layout is unchanged, the
+  score drops by one, nothing matches, and the analyst is told to build a
+  template for a bank the tool already has.
+
+The `detect_detail` field in every run log records what happened, e.g.
+`matched anz_everyday_csv (score 7/6)` — score over threshold. That is the field
+to read when a detection surprises you.
 
 ### PDF
 
@@ -256,25 +332,31 @@ does not ship them, and a test pins that.
 
 ## 5. Invariants that must never break
 
-| # | Invariant | What enforces it |
-|---|---|---|
-| 1 | The engine never reads a front-end file | `tests/run_tests.R` sources only `R/`, so a UI symbol is out of scope for every engine test; `run.R` runs the whole pipeline with no Shiny at all. Today the belt-and-braces guard is a grep, not an assertion — worth adding one |
-| 2 | Every code the engine can emit has wording, and there is no dead wording | `tests/testthat/test-seams.R` — `expect_setequal` **both ways** for `CHECK_PLAIN` vs `reconcile()`'s builder list, `DIAG_PLAIN` vs `.DIAG_FIX_OWNER`, plus `STATUS_PLAIN`, `RESULT_PLAIN`, `COVERAGE_PLAIN` |
-| 3 | A check label claims only what its check proves | `test-seams.R`, "no check label claims more than its KPI proves" — it forbids "every row" on `no_unparsed_rows`, "matches" on `transaction_count`, "honoured" on `redaction_summary` |
-| 4 | "could not be proved" and "not on this statement" must read differently | `test-seams.R` — `RESULT_PLAIN[["na"]]` must not equal or contain `COVERAGE_PLAIN[["unmapped"]]`. They render inside the same disclosure |
-| 5 | One run, one audit record, never overwritten | `write_log_record()` (`R/logging.R`) suffixes a clashing id with `~2`; `test-run-log-identity.R`, "two runs with the same run_id leave TWO audit records" |
-| 6 | Nothing under a redaction is read, and a scan that could not finish fails the run | `R/detect_redaction.R` + the `read_pdf` guard + `.kpi_redaction_scan()` returning `fail`; `test-detect_redaction.R`, `test-redaction_delimited.R` |
-| 7 | Descriptions verbatim | `clean_description()` is `trimws` and nothing else; the golden tests carry apostrophes and ampersands |
-| 8 | Byte-reproducible outputs | `test-outputs.R`, "xlsx / csv / json are byte-reproducible across runs" |
-| 9 | Every stored PDF band lives in ONE coordinate space | `pdf_band_frame()` / `pdf_band_frame_scale()` (`R/parse_pdf_table.R`) are the only converters; `test-row_coverage.R`, "row_coverage.R keeps no private copy of the band frame" |
-| 10 | The reader, the X-ray and the coverage report share ONE keep rule | `pdf_keep_row()` is called by `parse_pdf_table()` and by `R/inspect.R`; `test-inspect.R` asserts the counts cannot diverge |
-| 11 | The feed gate is machine-only, and nothing but a clean run from an allowed origin reaches `feed/transactions/` | `.feed_gate()` (`R/feed.R`) takes no human input; `test-feed.R` (20 blocks) covers accept, withhold, re-convert flip, atomic write, NA trust, content-hash keying |
-| 12 | A feed write failure is never recorded as a clean accept | `.atomic_write_csv()` captures warnings as well as errors (a read-only share warns and returns normally); `test-feed.R`, "a failed feed write is reported" |
-| 13 | The `R/` module map in the build contract matches `R/` in both directions | `test-deployment-docs.R`, "build-contract.md's module map matches the modules that exist" |
-| 14 | Every internal doc link resolves | `test-deployment-docs.R`, "every internal link in the docs resolves to a file that exists" — it walks `README.md`, `CHANGELOG.md` and every `.md` under `docs/` |
-| 15 | No page under `docs/operational/` or `docs/context/` is orphaned from its index | `test-deployment-docs.R`, "no operational or context page is orphaned" |
-| 16 | A skipped test is a failure | `tests/run_tests.R` exits 1 on any skip unless `BSO_ALLOW_SKIPS=1`. ~100 skip guards can dark the whole PDF/OCR/Excel surface while the board stays green |
-| 17 | No non-ASCII character in an R **name** | **Nothing automated.** One comment in `app.R` and this page. `app.R` carries raw UTF-8 bytes on ~46 lines, all inside string values or literal lists; `ui_labels.R` and `ui_content.R` carry none. Treat this as an unguarded invariant |
+| # | Invariant | Guarded? | What enforces it |
+|---|---|---|---|
+| 1 | The engine never reads a front-end file | structural | `tests/run_tests.R` sources only `R/`, so a UI symbol is simply not in scope: an engine call into one errors the moment a test walks that line. `run.R` runs the whole pipeline with no Shiny at all. There is no assertion that greps `R/` for a UI symbol — the structure is the guard |
+| 2 | Every code the engine can emit has wording, and there is no dead wording | **yes** | `tests/testthat/test-seams.R` — `expect_setequal` **both ways** for `CHECK_PLAIN` vs `reconcile()`'s builder list, `DIAG_PLAIN` vs **`.DIAG_FIX_OWNER`**, and **`INFORMATIONAL_CHECKS`** vs the `.kpi_*()` builders that pass `informational = TRUE`, plus `STATUS_PLAIN`, `RESULT_PLAIN`, `COVERAGE_PLAIN`. Those three symbol names are the ones a new check has to be added to; see §8 |
+| 3 | A check label claims only what its check proves | **yes** | `test-seams.R`, "no check label claims more than its KPI proves" — it forbids "every row" on `no_unparsed_rows`, "matches" on `transaction_count`, "honoured" on `redaction_summary` |
+| 4 | "could not be proved" and "not on this statement" must read differently | **yes** | `test-seams.R` — `RESULT_PLAIN[["na"]]` must not equal or contain `COVERAGE_PLAIN[["unmapped"]]`. They render inside the same disclosure |
+| 5 | One run, one audit record, never overwritten | **yes** | `write_log_record()` (`R/logging.R`) suffixes a clashing id with `~2`; `test-run-log-identity.R`, "two runs with the same run_id leave TWO audit records" |
+| 6 | Nothing under a redaction is read, and a scan that could not finish fails the run | **yes** | `R/detect_redaction.R` + the `read_pdf` guard + `.kpi_redaction_scan()` returning `fail`; `test-detect_redaction.R`, `test-redaction_delimited.R` |
+| 7 | Descriptions verbatim | **yes** | `clean_description()` is `trimws` and nothing else; the golden tests carry apostrophes and ampersands |
+| 8 | Byte-reproducible outputs | **yes** | `test-outputs.R`, "xlsx / csv / json are byte-reproducible across runs" |
+| 9 | Every stored PDF band lives in ONE coordinate space | **yes** | `pdf_band_frame()` / `pdf_band_frame_scale()` (`R/parse_pdf_table.R`) are the only converters; `test-row_coverage.R`, "row_coverage.R keeps no private copy of the band frame" |
+| 10 | The reader, *See it on the page* and the coverage report share ONE keep rule | **yes** | `pdf_keep_row()` is called by `parse_pdf_table()` and by `R/inspect.R` (which draws that screen); `test-inspect.R` asserts the counts cannot diverge |
+| 11 | The feed gate is machine-only, and nothing but a clean run from an allowed origin reaches `feed/transactions/` | **yes** | `.feed_gate()` (`R/feed.R`) takes no human input; `test-feed.R` covers accept, withhold, re-convert flip, atomic write, NA trust, content-hash keying |
+| 12 | A feed write failure is never recorded as a clean accept | **yes** | `.atomic_write_csv()` captures warnings as well as errors (a read-only share warns and returns normally); `test-feed.R`, "a failed feed write is reported" |
+| 13 | The `R/` module map in the build contract matches `R/` in both directions | **yes** | `test-deployment-docs.R`, "build-contract.md's module map matches the modules that exist" |
+| 14 | Every path into this tree that a document or a comment names, resolves | **yes** | `test-deployment-docs.R` — markdown links across `README.md`, `CHANGELOG.md` and every `.md` under `docs/`, plus a second pass over `R/`, `app.R`, the `ui_` files, `scripts/`, `tests/`, `www/` and the two template-folder READMEs for any path-shaped `.md` reference however it is written |
+| 15 | No documentation page is orphaned from its index | **yes** | `test-deployment-docs.R`, "no docs page is orphaned from its index" — `docs/operational/` and `docs/context/` against their own `README.md`, and `docs/*.md` against the repo `README.md` |
+| 16 | A skipped test is a failure | **yes** | `tests/run_tests.R` exits 1 on any skip unless `BSO_ALLOW_SKIPS=1`. Counted 2026-07-27: **168** skip guards, which between them can dark the whole PDF/OCR/Excel surface while the board stays green. This is why the exit code, not the summary line, is the pass condition |
+| 17 | No non-ASCII character in an R **name** | **yes** | `test-app-ui.R`, "no R name anywhere carries a non-ASCII character (invariant 17)" — it reads the *parse tokens* of `app.R`, both `ui_` files and all of `R/`, so a non-ASCII character in a string VALUE (of which the screen has many, legitimately) still passes. A companion test feeds it a known-bad file so the guard is known to work |
+| 18 | The screen's colours come from the design system, not from the file they are typed in | **no** | **Unguarded.** The only test that looks at this forbids CSS style *tags*, and passes while the inline style *attributes* it does not read carry a private palette. Open as `N46`; see §7 |
+
+Rows marked **structural** need no assertion because the code cannot express the
+violation. The one marked **no** is the point of the column: a reader scanning
+this table for "what will the suite catch me on" must not get a false negative
+from an invariant that is filed somewhere else.
 
 ---
 
@@ -311,8 +393,8 @@ agrees on the same number of statements — checked **before** any parsing work.
 The temptation is to drop that and rely on "every segment reconciled". Do not: a
 running-balance column is continuous across **any** cut, so a wrongly-placed
 boundary still reconciles inside each piece. Only an independent count can confirm
-a boundary. Measured working: `anz_multiple.pdf` splits into 6 statements, 1,253
-rows, each reconciled on its own anchors, trust rolled up to the weakest segment.
+a boundary. Measured working (2026-07-27): `anz_multiple.pdf` splits into 6
+statements, 1,253 rows, each reconciled on its own anchors, trust rolled up to the weakest segment.
 
 **Auto-split is on by default; `split: false` opts out.** It used to be opt-in and
 exactly 1 of 13 shipped templates opted in, so a bundle read by any of the other
@@ -370,37 +452,48 @@ the key can.
 
 ## 7. Where the bodies are buried
 
-**`app.R` is ~4,900 lines and ~4,000 of them are one `server <- function(input,
-output, session)` scope.** Counted on 2026-07-27 (these drift by the day): 134
-`output$` assignments, 70 `observeEvent`, 33 `reactive()`, 31 `reactiveVal` and
-132 distinct `input$` ids, all in one lexical environment where every name is
-visible to every other. Moving the CSS out to `www/app.css` made the file 250
-lines shorter and removed **zero** reactive-graph complexity — CSS was the
-cheapest 250 lines in it to lose.
+**Most of `app.R` is one `server <- function(input, output, session)` scope**, and
+that — not its length — is what makes it hard. Something over a hundred `output$`
+assignments, and dozens each of `observeEvent`, `reactive()` and `reactiveVal`,
+all in one lexical environment where every name is visible to every other. Counts
+are deliberately not pinned here; they move weekly, and any of them is one grep
+away. Moving the CSS out to `www/app.css` made the file a few hundred lines
+shorter and removed **zero** reactive-graph complexity — CSS was the cheapest
+lines in it to lose.
 
 **The blocker on splitting it is the test suite, and it has a two-line fix.**
 `tests/testthat/test-app-ui.R` reads `app.R` as **text** — the suite never sources
-it, because it needs a live Shiny session. `.ui_src()` reads the one file (63
-call sites across 70 `test_that` blocks); `.ui_fun()` lifts a function by regex on
-`^\s*name <- function` and parses forward until it parses (10 lifts); `.ui_block()`
-takes a **fixed n-line window** after a pattern match (39 uses, hand-tuned per
-test). `test-app-adoption.R` (11 blocks) and `test-admin_auth.R` (10 blocks) read
-it the same way, and `test-seams.R` (5 places), `test-detect.R` and `test-batch.R`
-read it too. Change `.ui_src()` to concatenate `app.R` plus `server/*.R` **first, in
-its own commit**, then split with `source(..., local = TRUE)` inside `server()` —
-not Shiny modules, which would mean rewriting every input id. The full plan, with
-the four proposed files and their line counts, is in
+it, because it needs a live Shiny session. Three helpers do the reading, and each
+breaks differently if the file is split:
+
+- `.ui_src()` reads the one file, from most `test_that` blocks in that file;
+- `.ui_fun()` lifts a function out by regex on `^\s*name <- function` and parses
+  forward until it parses;
+- `.ui_block()` takes a **fixed n-line window** after a pattern match, hand-tuned
+  per test — this is the one that fails silently, by matching a window that no
+  longer holds what the test is asserting about.
+
+`test-app-adoption.R` and `test-admin_auth.R` read `app.R` the same way, and
+`test-seams.R`, `test-detect.R`, `test-batch.R` and `test-run-log-identity.R`
+read it too. Change `.ui_src()` to concatenate `app.R` plus `server/*.R` **first,
+in its own commit**, then split with `source(..., local = TRUE)` inside `server()`
+— not Shiny modules, which would mean rewriting every input id. The full plan,
+with the four proposed files and their line counts, is in
 `docs/context/findings-register.md` under "The app.R split".
 
-**`R/parse_pdf_table.R` is 1,173 lines** and is the one module that is genuinely
-hard. Read its band-frame header comment before touching anything with an `x_min`
-in it. The rest of `R/` is single-concern and small.
+**`R/parse_pdf_table.R` is by some way the longest module in `R/`** and the one
+that is genuinely hard. Read its band-frame header comment before touching
+anything with an `x_min` in it. The rest of `R/` is single-concern and small.
 
-**`app.R` still carries 37 distinct hex colours across 87 uses and 125 inline
-`style=` attributes**, several of them near-misses for the token they should use
-(`#b00020` x19 against `--bad:#b3261e`). Nothing looks wrong, which is why it will
-not self-correct. The test that appears to guard this forbids style *tags* while
-125 style *attributes* sit untouched — it passes and proves nothing. Open as N46.
+**`app.R` still carries a private palette inlined in `style=` attributes.**
+Measured 2026-07-27 by an AST walk over its string literals and named arguments:
+**49 distinct hex colours across 96 uses, and 141 `style=` attributes**. Several
+of the colours are near-misses for the design token they should use — `#b00020`,
+the most-used of them, against `--bad: #b3261e`. Nothing *looks* wrong on screen,
+which is why this will not self-correct: the failure is that the stylesheet stops
+being the place a colour changes. The test that appears to guard it forbids style
+*tags* (`tags$style(`) and never reads a style *attribute*, so it passes and
+proves nothing — it is invariant 18, the unguarded row of §5. Open as `N46`.
 
 **`STATUS_PLAIN_AMBIGUOUS` and the `cv_tie_pick` panel are near-dead.** A tie now
 converts (§6), so the ambiguous headline and the picker only apply on the narrow
@@ -416,31 +509,187 @@ closed and loudly today.
 
 ## 8. Working on it safely
 
+### Run it
+
 ```
-Rscript tests/run_tests.R          # from the repo root; several minutes
+Rscript scripts/run_app.R                # the app, on config's port, host 0.0.0.0
+Rscript run.R <file> [bank] [outdir]     # the whole engine, no Shiny
+Rscript tests/run_tests.R                # the suite; from the repo root, several minutes
 ```
 
-It sources every file in `R/`, sets `ENGINE_ROOT`, runs `testthat::test_dir`, and
-**exits 1 on any skip**. The last measured baseline lives in one place,
-`docs/operational/maintaining-the-engine.md` — not in this file, so a stale number
-here cannot masquerade as a regression signal.
+`scripts/run_app.R` — not a bare `runApp()` — is the way in: it self-locates (a
+boot service can start it anywhere), reads the port and the upload ceiling from
+`config/config.yaml`, and says on the console if the settings file did not parse
+or the admin password is still the shipped placeholder. `run.R` and
+`scripts/run_app.R` are the two entry points; everything else is called by them.
 
-**To add a bank:** write a YAML template (in the app, or by hand), add a fixture
-and a golden test. `tests/HOWTO-add-template-test.md` is the recipe. No R change.
-If you find yourself editing `R/`, stop and re-read §4.
+On the deployment box none of those is the command you type. **`RUN-ME.bat` is
+what the Windows server double-clicks**, and it runs `scripts/run_app.R` through
+the app's **own private R** under `R-runtime\`, installed with `!recordversion` so
+it never becomes the machine's R and is never on `PATH`. The suite has to be run
+the same way, naming that executable and the app's own `R-lib\`. Both exact
+commands are in `docs/operational/maintaining-the-engine.md` §1 — use them, not a
+bare `Rscript`.
 
-**To add a check:** write a `.kpi_<name>()` builder in `R/reconcile.R`, add one
-line to the list in `reconcile()`, add a `CHECK_PLAIN` entry in `ui_labels.R`, and
-— if it can `fail` — a how-to-fix entry in `build_diagnostics()`. Miss the third
-and `test-seams.R` fails the suite rather than showing a reviewer a raw code.
+The suite sources every file in `R/`, sets `ENGINE_ROOT`, runs
+`testthat::test_dir`, and **exits 1 on any skip**. The last measured baseline
+lives in one place, `docs/operational/maintaining-the-engine.md` — not in this
+file, so a stale number here cannot masquerade as a regression signal.
 
-**To change a threshold:** `R/params.R`, which is the only place a tuning number
-is allowed to live. Catalogue in `docs/context/engine-parameters.md`.
+### To add a bank
 
-**To change what reaches Qlik:** `config/config.yaml` → `feed:`. Never the gate.
+Write a YAML template (in the app, or by hand), add a fixture and a golden test.
+`tests/HOWTO-add-template-test.md` is the recipe. No R change. If you find
+yourself editing `R/`, stop and re-read §4.
 
-**Before you delete something that looks redundant:** check
-`docs/context/findings-register.md`. Several things in this codebase look like
-duplication and are not — the two period mechanisms, the two dictionaries, the
-separate `feed/review` folder — and the register records the measurement that
+### To add a check
+
+The recipe is five places, not three, and the two most often missed are two the
+suite fails you on. In this order:
+
+1. **`R/reconcile.R`** — a `.kpi_<name>()` builder. Return `NULL` when the check
+   does not apply to this statement; `reconcile()` filters those out, and that is
+   how a check stays genuinely absent instead of pretending to be an `na`.
+2. **`R/reconcile.R`** — one line in the builder list at the bottom of
+   `reconcile()`. `test-seams.R` reads **that list** (not the builders) for the set
+   of checks that exist.
+3. **`ui_labels.R`** — a `CHECK_PLAIN` entry. `expect_setequal` **both ways**
+   against the list in step 2: a check with no wording fails the suite, and so does
+   wording for a check that no longer exists. The label must claim only what the
+   check proves — invariant 3 forbids specific overclaims by name.
+4. **If it can `fail`:** a `.DIAG_FIX_OWNER` entry in **`R/diagnose.R`** *and* a
+   matching `DIAG_PLAIN` entry in **`ui_labels.R`**. `test-seams.R` compares those
+   two sets both ways too, so a new diagnostic category needs both or neither.
+   `build_diagnostics()` is where the how-to-fix sentence gets written, and it is
+   worth writing — but it is not what the test reads, so it will not stop you.
+5. **If it is a count rather than a verdict:** pass `informational = TRUE` in the
+   builder *and* add the name to `INFORMATIONAL_CHECKS` in **`ui_labels.R`**.
+   `test-seams.R` re-derives the engine's list by reading `R/reconcile.R` for
+   builders that set the flag, and pins the screen's copy against it. Skip it and
+   your count renders as *could not be checked* — precisely the silent lie the
+   fourth result word exists to prevent.
+
+### To change a threshold
+
+`R/params.R`, which is the only place a tuning number is allowed to live.
+Catalogue in `docs/context/engine-parameters.md`.
+
+### To change what reaches Qlik
+
+`config/config.yaml` → `feed:`. Never the gate.
+
+### Before you delete something that looks redundant
+
+Check `docs/context/findings-register.md`. Several things in this codebase look
+like duplication and are not — the two period mechanisms, the two dictionaries,
+the separate `feed/review` folder — and the register records the measurement that
 decided each one.
+
+---
+
+## 9. Shipping a change, and putting it back
+
+The target is an air-gapped Windows box with no internet, no database, no version
+control and no admin rights to spare. That shapes the whole delivery end: there is
+no deploy pipeline, there is a folder you carry across.
+
+### The install is one folder, and half of it is live state
+
+```
+StatementStudio-offline\
+  R\  app.R  ui_labels.R  ui_content.R  run.R  scripts\  www\  RUN-ME.bat
+  templates\  templates_seed\  fields_templates\  tests\  samples\  docs\   <- product
+  config\config.yaml                    <- LIVE: port, admin password, feed policy
+  dictionaries\labels.yaml  lexicon.yaml <- LIVE: every wording Admin has taught it
+  templates_user\<id>.yaml              <- LIVE: every template built in the app
+  fields_templates_user\                <- LIVE: form templates built in the app
+  logs\runs\  logs\feedback\  logs\metadata\  <- LIVE: the audit trail, kept forever
+  uploads\<id>\                         <- LIVE: real client statements
+  feed\                                 <- LIVE: what Qlik reads
+  R-runtime\  R-lib\                    <- the app's own private R, installed on the box
+```
+
+**Everything in the second group is server state that exists nowhere else**, and
+an update must not touch any of it. Two of them are irreplaceable in the strict
+sense — `templates_user\` and `dictionaries\` are the accumulated work of the team
+and cannot be rebuilt from the repo — which is why
+`docs/operational/backup-and-restore.md` exists and why it is the first thing in
+the update procedure, not the last.
+
+### Build
+
+On a PC **with** internet, double-click `make-bundle.bat` (it runs
+`scripts/bundle-offline.R`). It assembles `StatementStudio-offline\`: the app
+files, plus `offline\` holding the R installer for *this PC's* R, every CRAN
+package, the Poppler and Tesseract binaries, and `offline\manifest.txt` recording
+`app_version`, `r_version` and every package version. Check its last lines for
+`MISSING` before you carry it anywhere — a failed download is a hard build error
+by design, because the alternative was a bundle that reported success and failed
+days later on a box with no internet in the room.
+
+Two omissions from the bundle are deliberate and are pinned by tests:
+`config/config.yaml` and `dictionaries/*.yaml` ship only as `.example` files, so
+copying a fresh bundle over a live server cannot revert its settings or its taught
+words. `RUN-ME.bat` seeds them on a first install and restores them from
+`%LOCALAPPDATA%\StatementStudio` if the folder's copies have gone.
+
+### Copy, and what the copy replaces
+
+Copy the folder over the existing one and choose **Replace the files in the
+destination**. That replaces every file the bundle carries and leaves everything
+else alone — which is why the state list above matters: it is safe **because** the
+bundle does not carry those files, not because the copy is clever.
+
+The one code file this catches out is **`R\params.R`**: it lives in `R\`, so it is
+replaced, and it is the one code file a maintainer is expected to edit. Keep a copy
+beside your backups, then merge your values into the *new* file by hand — never
+copy the old file over the new one, because a release may have added parameters the
+rest of the engine now expects. Full procedure:
+`docs/operational/updating.md` and `docs/operational/maintaining-the-engine.md` §2.
+
+### Restart, and prove it
+
+Double-click `RUN-ME.bat`. It does not re-install R or the packages, so it is
+quick. Then, in order:
+
+1. `offline\manifest.txt` — does `app_version` say what you just shipped?
+2. Run the suite the way §8 describes. `failed: 0`, `errors: 0`, `skipped: 0`.
+3. Convert **one statement you know reconciles**, and confirm it still does.
+4. Open that conversion's `.json` and check `build.engine_version`. It is read
+   from the `VERSION` file at run time and stamped into every run log, every JSON
+   and the feed manifest, so this is the one check that proves "which build
+   produced this figure?" is answerable on *this box*. If it says `unknown`, the
+   `VERSION` file did not travel — fix that before anyone converts anything real.
+
+`VERSION` and the newest `## ` heading in `CHANGELOG.md` must agree; a test pins
+it. Bump both in the same change.
+
+### Roll back
+
+Keep the previous `StatementStudio-offline` folder. To go back: restore it and run
+its `RUN-ME.bat`. `config\`, `dictionaries\`, `templates_user\`, `logs\`,
+`uploads\` and `feed\` are untouched by either direction, because none of them is
+in the bundle. No internet is needed, and nothing has to be uninstalled — the
+private R lives inside whichever folder you are running.
+
+The one thing a rollback cannot undo is a **template** edited or promoted since
+the update, because `templates\` *is* in the bundle. If that is what you are
+rolling back, take the template out of `templates_user\` first, or you will
+restore the old one over it.
+
+---
+
+## 10. When somebody says a figure is wrong
+
+That is the day this document earns its keep, and it has its own procedure rather
+than a paragraph here:
+[`docs/operational/investigating-a-wrong-conversion.md`](operational/investigating-a-wrong-conversion.md)
+— getting the run id out of Admin, finding the byte-identical original under
+`uploads/`, reading `logs/runs/<run_id>.json`, reproducing the figure with
+`run.R`, and telling a template bug from a bad scan.
+
+Two things to know before you open it. The engine is deterministic, so a re-run of
+the same file against the same template *will* reproduce the figure — if it does
+not, the template changed, and `template_sha256` in the run log is how you prove
+that. And no figure is ever edited: the only fix is a template correction and a
+re-run, which is what keeps the output reproducible and the provenance intact.

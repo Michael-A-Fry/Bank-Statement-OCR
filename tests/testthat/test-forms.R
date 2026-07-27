@@ -28,6 +28,9 @@ test_that("detect_form reports UNMATCHED on an equal-specificity tie (never gues
   d <- detect_form(page, ft)
   expect_false(d$matched)                       # two equally-specific -> ask, don't guess
   expect_true(grepl("equally", d$detail))
+  # ...and it does NOT tell anybody to "pick a bank": no form screen has a bank
+  # control, so that was an instruction nobody could follow.
+  expect_false(grepl("pick a bank", d$detail, fixed = TRUE))
   # ...and convert_form must therefore NOT silently extract with a guessed template
   od <- tempfile(); on.exit(unlink(od, recursive = TRUE), add = TRUE)
   # (no real file needed: detect happens on text; use the sample dir with a tie)

@@ -121,7 +121,10 @@ test_that("admin download handlers re-check the session server-side (#37)", {
   expect_true(length(starts) >= 2)
   unguarded <- character(0)
   for (i in starts) {
-    window <- paste(src[i:min(i + 8L, length(src))], collapse = " ")
+    # 16 lines, not 8: a handler now carries a comment and a filename() that
+    # names its own file properly before content() starts. The gate is the same
+    # gate, in the same place - the window simply has to reach it.
+    window <- paste(src[i:min(i + 16L, length(src))], collapse = " ")
     if (!grepl("req\\(admin_ok\\(\\)\\)", window))
       unguarded <- c(unguarded, trimws(src[i]))
   }
@@ -129,26 +132,34 @@ test_that("admin download handlers re-check the session server-side (#37)", {
 })
 
 # ---------------------------------------------------------------------------
-# The Admin tab is hidden unless the URL carries ?admin. Nobody converting a
-# statement has the password, so an unopenable tab is a reference to Admin on
+# The Admin tab is not rendered unless the URL carries ?admin. Nobody converting
+# a statement has the password, so an unopenable tab is a reference to Admin on
 # every screen and an invitation to try one.
 #
 # It is NOT the security boundary and must never be allowed to become one. These
-# assertions exist to make that impossible to forget: the tab is hidden, AND
+# assertions exist to make that impossible to forget: the tab is taken away, AND
 # every admin action is still checked server-side, so a hand-typed ?admin reaches
 # a login form exactly as before.
-test_that("the Admin tab is hidden unless the URL asks for it", {
+#
+# CHANGED from hideTab to removeTab, and this test with it. hideTab only sets
+# display:none: the tab link, all four sub-tabs and every control on them were
+# still in the DOM of every visitor's page, readable from View Source, while the
+# code beside it claimed the tab was hidden. Asserting hideTab was pinning that
+# claim in place. Nothing about the authorisation changed -- it never was the
+# boundary -- but what the screen says about itself is now true.
+test_that("the Admin tab is not rendered unless the URL asks for it", {
   src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
   joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'hideTab\\("main_tabs", "Admin"\\)')
+  expect_match(joined, 'removeTab\\("main_tabs", "Admin"\\)')
+  expect_false(grepl('hideTab\\("main_tabs", "Admin"\\)', joined))   # display:none is not "not there"
   expect_match(joined, "parseQueryString\\(session\\$clientData\\$url_search")
-  # hiding must be the DEFAULT: shown only when ?admin is present
-  i <- grep('hideTab\\("main_tabs", "Admin"\\)', src)
+  # removing must be the DEFAULT: present only when ?admin is
+  i <- grep('removeTab\\("main_tabs", "Admin"\\)', src)
   expect_length(i, 1L)
   expect_match(paste(src[(i - 1):i], collapse = " "), '!\\("admin" %in% names\\(q\\)\\)')
 })
 
-test_that("hiding the tab did not become the lock", {
+test_that("taking the tab away did not become the lock", {
   # The password is the boundary. If someone ever deletes the server-side checks
   # because "the tab is hidden anyway", this fails.
   src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)

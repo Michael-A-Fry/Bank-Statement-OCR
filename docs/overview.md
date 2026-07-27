@@ -62,9 +62,10 @@ conversions from tested templates feed the Qlik dashboards automatically.
 - **Outputs per statement:** a six-sheet workbook (Transactions, Summary, Checks,
   Provenance, Diagnostics, Metadata), a CSV of the transactions, and a JSON
   holding everything including the build stamp.
-- **Speed:** seconds. On the development box, an 11-page PDF with 311
-  transactions converted in about 3.5 seconds; a two-page scan took about 9
-  seconds including OCR. A case folder is one click and one progress bar.
+- **Speed:** seconds, not minutes. Measured on a development box on 2026-07-27,
+  an 11-page PDF with 311 transactions converted in about five seconds. A scanned
+  page adds several seconds of OCR on top of that, which is why a scan is the one
+  case worth waiting for. A case folder is one click and one progress bar.
 
 ---
 
@@ -86,13 +87,30 @@ that fail the build if it stops being true.
    output carries the engine version and a content hash of the template that
    produced it, so a figure can be reproduced years later and it can be proved
    which build made it.
-4. **It never crashes.** Every failure becomes a status with a reason a person
-   can act on.
+4. **It never crashes.** `convert_statement()` wraps its whole body in a
+   `tryCatch`, including everything that touches the file path, so every failure —
+   right down to being handed something that is not a file name at all — comes
+   back as a status with a reason a person can act on.
 5. **A check that could not run never shows a green tick.** This is the one that
-   matters most. Ten checks exist; each statement gets the ones that apply to it
-   (three are raised only when there is something to say — the money-direction
-   check, OCR read quality, and the redaction scan). Every check reports pass,
-   fail, or "could not be checked" with the reason. There is no fourth state.
+   matters most. Ten checks exist; each statement gets the ones that apply to it.
+   Four of the ten appear only when there is something to say: the money-direction
+   check (only when the direction cannot be proved), *Row dates could be read*
+   (only once at least one row has been read), OCR read quality (only when a page
+   was machine-read) and the redaction scan (only when the scan could not finish).
+
+   Every check that does appear says one of **four** things: **OK**, **Problem**,
+   **could not be checked**, or **for information**. The fourth is not an
+   exception to the rule, it is the rule applied twice: *Redactions found* and
+   *Scan / OCR read quality* are **counts**, not verdicts. Nothing about them can
+   pass or fail, so the engine hands them back with the same "nothing proved here"
+   status as a check that could not run — and until they were named separately, a
+   statement that really had been OCR'd on two pages reported its scan quality as
+   *not on this statement*. Marking a count as a count is what stops it ever
+   reading as a pass it did not earn.
+
+   There is no fifth state, and — the part that matters — no silent one. Every
+   check that exists for a statement is on the screen with one of those four words
+   beside it and its figures in the two columns next to it.
 6. **Only clean, reconciled conversions from tested templates reach the
    dashboards** — and every conversion, published or held back, is told on screen
    which it was and why.
@@ -173,8 +191,12 @@ them so a break cannot hide inside a gap.
    why. Nobody can wave it through: the gate takes no human input at all. The way
    a withheld conversion gets published is by fixing the template and converting
    again, which leaves an audit trail.
-4. A diagnostic names the discrepancy, the rows involved, and **who fixes it** —
-   the analyst in the template toolkit, whoever supplied the file, or a developer.
+4. A diagnostic names the discrepancy, the rows involved, and **what to do about
+   it**, in a sentence that says whose job it is by naming the action: change a
+   setting in the template toolkit (the analyst), re-export or re-scan or split the
+   file (whoever supplied it), or something neither of them can do (escalate). The
+   screen shows the sentence; the downloaded workbook carries the same rows plus a
+   one-word `fix_owner` triage for whoever maintains the tool.
 
 ---
 
@@ -255,9 +277,14 @@ a scheduled reload. Never touches the app.
 **No figure is ever hand-edited.** There is no cell to type in. If a figure is
 wrong, the fix is a template correction and a re-run, so the output stays
 reproducible and provenance survives. The one human override that exists is
-narrow and self-declaring: from the X-ray view an analyst can say "this skipped
-line *is* a transaction", which adds the row **as the page printed it**, flags it
-`forced`, and lowers the run's stated confidence.
+narrow and self-declaring: from **See it on the page** an analyst can say "this
+skipped line *is* a transaction", which adds the row **as the page printed it**,
+flags it `forced`, and lowers the run's stated confidence.
+
+When somebody says a conversion is wrong, the maintainer's procedure — from a
+run id to the original file, the same figure reproduced from the command line,
+and template bug versus bad scan — is
+[`docs/operational/investigating-a-wrong-conversion.md`](operational/investigating-a-wrong-conversion.md).
 
 ---
 
@@ -299,7 +326,7 @@ That is the whole maintenance model.
 
 ## Where it stands
 
-Version 1.2.0. 13 shipped templates, ten reconciliation checks, an automated suite
+Version 1.3.0. 13 shipped templates, ten reconciliation checks, an automated suite
 of several hundred tests that fails on a *skipped* test as well as a failing one
 (because a skip proves nothing). A register of 109 findings from adversarial
 review and real use, 104 of them fixed; the open ones are recorded with what they

@@ -104,7 +104,11 @@ detect_form <- function(input, ftemplates) {
   list(template_id = names(ftemplates)[best], matched = matched,
        score = need_len[best],
        detail = if (matched) "matched by identifying phrases"
-                else "several form templates matched equally; pick a bank")
+                # NOT "pick a bank": no form screen has a bank control, so that was
+                # an instruction nobody could follow. State the fact and stop --
+                # separating two equally-specific form templates is a maintainer's
+                # job, not the job of whoever uploaded the document.
+                else "several form templates are equally specific here, so none was chosen")
 }
 
 # write_form_outputs(fields, outdir, basename, formats) -> named path vector.

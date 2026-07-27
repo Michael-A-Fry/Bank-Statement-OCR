@@ -220,6 +220,41 @@ test_that("the balance_reconciliation 'na' detail says WHICH balance is missing"
   expect_match(d3, "no opening balance")
 })
 
+# The same untruth, still live in the BOTH-missing branch: it said "and no
+# running-balance column to derive one from" unconditionally -- on a statement
+# whose balance column was present, populated, and passing its own check two rows
+# lower on the same screen. It sent reviewers looking for a balance that was on
+# the page all along, which is the exact wording of the comment above the fix.
+test_that("the both-missing balance detail does not deny a balance column that is there", {
+  with_col <- .parsed(.tx(c(-10, 40), balance = c(90, 130)), source_line_count = 2)
+  k <- reconcile(with_col)$kpis
+  d <- k$detail[k$name == "balance_reconciliation"]
+  expect_equal(k$status[k$name == "balance_reconciliation"], "na")
+  expect_false(grepl("no running-balance column", d, fixed = TRUE))
+  # ...and it says the REAL reason both anchors are refused
+  expect_match(d, "its own endpoints")
+  # the column really is there and really does pass, on the same result
+  expect_equal(k$status[k$name == "running_balance_continuity"], "pass")
+
+  # with genuinely no column, the original sentence is still the true one
+  without <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
+  expect_match(reconcile(without)$kpis$detail[
+    reconcile(without)$kpis$name == "balance_reconciliation"],
+    "no running-balance column")
+})
+
+# A real conversion, end to end: the kiwibank export is the file the untrue
+# sentence was found on.
+test_that("a real statement with a balance column is not told it has none", {
+  out <- tempfile("reconbal_"); dir.create(out)
+  res <- convert_statement(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv"),
+                           outdir = out, templates_dir = templates_dir(), logdir = out)
+  k <- res$kpis
+  expect_false(grepl("no running-balance column",
+                     k$detail[k$name == "balance_reconciliation"], fixed = TRUE))
+  expect_equal(k$status[k$name == "running_balance_continuity"], "pass")
+})
+
 # ---- no_unparsed_rows on formats with no source-line count ------------------
 test_that("no_unparsed_rows is 'na', not a false 'pass', when it cannot be computed", {
   # `lost` is 0 by construction without a source line count, so this KPI reported
@@ -242,6 +277,100 @@ test_that("no_unparsed_rows is 'na', not a false 'pass', when it cannot be compu
   pd <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
   expect_equal(reconcile(pd)$kpis$status[
     reconcile(pd)$kpis$name == "no_unparsed_rows"], "pass")
+})
+
+# That same detail is customer-facing, and it carried two things it should not:
+# a raw KPI name (which the operational guide tells the analyst to report AS A
+# BUG when it appears on screen), and a screen name -- "the Inspect view" -- that
+# is printed on screen as "See it on the page".
+test_that("the no_unparsed_rows detail names no engine code and no other screen", {
+  p <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  p$visual_row_count <- 5L; p$skipped_row_count <- 3L; p$actionable_skip_count <- 0L
+  d <- reconcile(p)$kpis
+  d <- d$detail[d$name == "no_unparsed_rows"]
+  expect_false(grepl("balance_reconciliation", d, fixed = TRUE))
+  expect_match(d, "the balance proof above", fixed = TRUE)
+  expect_false(grepl("Inspect view", d, fixed = TRUE))
+  expect_match(d, "See it on the page", fixed = TRUE)
+  # the same, for the branch with no skipped/visual counts at all
+  q <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  dq <- reconcile(q)$kpis
+  dq <- dq$detail[dq$name == "no_unparsed_rows"]
+  expect_false(grepl("balance_reconciliation", dq, fixed = TRUE))
+})
+
+# The skipped count is the most alarming number on that row, sitting beside a
+# Result of "could not be checked". The engine already knows the fact that settles
+# it -- how many of those skips looked like transactions -- and said nothing.
+test_that("the skipped-row count says how many of them looked like transactions", {
+  none <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  none$visual_row_count <- 29L; none$skipped_row_count <- 17L; none$actionable_skip_count <- 0L
+  dn <- reconcile(none)$kpis
+  expect_match(dn$detail[dn$name == "no_unparsed_rows"],
+               "None of the skipped rows looked like a transaction.", fixed = TRUE)
+
+  # ...and when some DID, the number is stated rather than implied
+  some <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  some$visual_row_count <- 29L; some$skipped_row_count <- 17L; some$actionable_skip_count <- 2L
+  ds <- reconcile(some)$kpis
+  expect_match(ds$detail[ds$name == "no_unparsed_rows"],
+               "2 of the skipped rows looked like a transaction", fixed = TRUE)
+
+  # a format that cannot count them says neither thing rather than guessing
+  unk <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  unk$visual_row_count <- 29L; unk$skipped_row_count <- 17L
+  du <- reconcile(unk)$kpis
+  expect_false(grepl("looked like a transaction",
+                     du$detail[du$name == "no_unparsed_rows"], fixed = TRUE))
+})
+
+# The real statement the wording was found on.
+test_that("a real PDF's skipped-row sentence is complete and code-free", {
+  tpl <- load_templates(templates_dir())[["tutorial_everyday_pdf"]]
+  skip_if(is.null(tpl))
+  p <- parse_statement(read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf")), tpl)
+  k <- reconcile(p, tpl)$kpis
+  d <- k$detail[k$name == "no_unparsed_rows"]
+  expect_match(d, "None of the skipped rows looked like a transaction.", fixed = TRUE)
+  expect_match(d, "See it on the page", fixed = TRUE)
+  expect_false(grepl("balance_reconciliation", d, fixed = TRUE))
+})
+
+# ---- dates_readable: "at least one" was never what the label says ------------
+# The threshold was d_ok > 0, so 1 readable date out of 500 passed, under a label
+# a reviewer reads as a claim about the whole column.
+test_that("dates_readable passes only when EVERY row date read", {
+  all_ok <- .parsed(.tx(c(-10, 40), date = c("2024-01-05", "2024-01-06")),
+                    source_line_count = 2)
+  k <- reconcile(all_ok)$kpis
+  expect_equal(k$status[k$name == "dates_readable"], "pass")
+  expect_match(k$detail[k$name == "dates_readable"], "all 2 row date")
+
+  partial <- .parsed(.tx(c(-10, 40), date = c("2024-01-05", NA)), source_line_count = 2)
+  kp <- reconcile(partial)$kpis
+  expect_equal(kp$status[kp$name == "dates_readable"], "fail")
+  expect_match(kp$detail[kp$name == "dates_readable"], "1 of 2 row date\\(s\\) could not be read")
+  expect_equal(as.integer(kp$actual[kp$name == "dates_readable"]), 1L)
+  expect_equal(as.integer(kp$expected[kp$name == "dates_readable"]), 2L)
+
+  # none readable is still the loudest case, with its own cause named
+  gone <- .parsed(.tx(c(-10, 40), date = c(NA, NA)), source_line_count = 2)
+  kg <- reconcile(gone)$kpis
+  expect_equal(kg$status[kg$name == "dates_readable"], "fail")
+  expect_match(kg$detail[kg$name == "dates_readable"], "mapping or format is wrong")
+})
+
+# transaction_count KEEPS "pass" when the statement prints no count -- see the
+# comment on .kpi_transaction_count for why. What must stay true is that the row
+# SAYS what it tested, so a generous pass is visible rather than silent.
+test_that("a transaction_count with no printed count declares what it proved", {
+  p <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
+  k <- reconcile(p)$kpis
+  row <- k[k$name == "transaction_count", ]
+  expect_equal(row$status, "pass")
+  expect_identical(row$expected, ">0")          # the Expected column carries the weakness
+  expect_match(row$detail, "prints no transaction count")
+  expect_match(row$detail, "the only thing proved here")
 })
 
 # ---- redaction_scan: an incomplete scan may have leaked hidden text ---------
@@ -308,8 +437,9 @@ test_that("more rows missed than captured is a FAILURE, not 'cannot be proved'",
   k <- .thin(n = 1, actionable = 13)          # asb.pdf, measured
   expect_identical(k$status, "fail")
   expect_match(k$detail, "look like transactions but could not be read")
-  # the numbers are stated, so a reviewer can check them in the Inspect view
+  # the numbers are stated, so a reviewer can check them on the page
   expect_match(k$detail, "13 row", fixed = TRUE)
+  expect_match(k$detail, "See it on the page", fixed = TRUE)   # ONE name for that screen
 })
 
 test_that("a healthy statement's ordinary skips are left alone", {

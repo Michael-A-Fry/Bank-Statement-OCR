@@ -40,7 +40,7 @@ R/   -- OCR and image handling
   ocr.R                 system Tesseract, driven from R
   ocr_preprocess.R      pre-OCR image conditioning (magick)
   detect_redaction.R    rasterised (solid black box) redaction detection
-  inspect.R             "Statement X-ray" page geometry
+  inspect.R             "See it on the page" geometry
 R/   -- templates without code (the wizard + drafting)
   draft.R               draft a template from a single file
   column_profile.R      everything needed to draft, captured from a sample
@@ -113,7 +113,7 @@ three; the rest are PDF-only, because they describe things only a page can do.
 | `date_year_inferred` | the row printed no year; it was taken from the statement's own period text. Caps trust — an inferred year is not a proven one | PDF |
 | `no_date` | a shared-date row deliberately kept with a blank date rather than inheriting one | PDF |
 | `date_alt_format` | read through the year-less fallback format | PDF |
-| `forced` | a row a human added by hand from the X-ray view | PDF |
+| `forced` | a row a human added by hand from *See it on the page* | PDF |
 | `row_stitched` | two half-rows the reader re-joined | PDF |
 | `row_text_merged` | a wrapped line whose words strayed outside the descriptive bands was folded in: the description is complete, but it was **assembled** | PDF |
 | `ocr_low_conf` | an OCR'd date/amount/balance cell held a word below the per-cell confidence floor (`PARAM_OCR_CELL_MIN_CONF`) — a likely misread digit the page-mean confidence would mask | PDF (OCR pages) |

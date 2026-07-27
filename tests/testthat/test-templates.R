@@ -99,20 +99,49 @@ test_that("template_yaml round-trips back to a valid template", {
   expect_null(back$origin)                                 # origin stripped for edit
 })
 
-test_that("user templates can be listed, renamed, and deleted (management)", {
+# A template whose validity window CLOSES BEFORE IT OPENS can never apply to any
+# statement. It loaded, validated and detected like any other, and the only sign
+# of it was that every statement it should have caught came back "no template for
+# this layout yet" -- a silent no-op, which is the one thing this engine may not
+# be. It is now rejected with a sentence an analyst can act on.
+test_that("an effective window that closes before it opens is refused", {
+  bad <- .min_tmpl(effective_from = "2030-01-01", effective_to = "2020-01-01")
+  probs <- validate_template(bad)
+  expect_length(probs, 1L)
+  expect_match(probs, "effective_from")
+  expect_match(probs, "could never apply")
+  expect_match(probs, "swap")                          # says what to DO about it
+
+  # every legitimate shape is untouched
+  expect_length(validate_template(.min_tmpl(effective_from = "2014-01-01",
+                                            effective_to = "2026-01-01")), 0L)
+  expect_length(validate_template(.min_tmpl(effective_from = "2014-01-01")), 0L)
+  expect_length(validate_template(.min_tmpl(effective_to = "2026-01-01")), 0L)
+  expect_length(validate_template(.min_tmpl(effective_from = "2020-01-01",
+                                            effective_to = "2020-01-01")), 0L)
+  # a bound the tolerant parser cannot read is left alone rather than guessed at
+  # (the soft window check in diagnose.R skips those for the same reason)
+  expect_length(validate_template(.min_tmpl(effective_from = "some time in 2030",
+                                            effective_to = "2020-01-01")), 0L)
+  # ...and the shipped set still validates
+  expect_gte(length(load_templates(templates_dir())), 6L)
+})
+
+# The rename half of this used to live here and NOWHERE else -- no screen offered
+# a rename, so the only caller rename_user_template() ever had was this test. It
+# is gone, and with it the risk of a template id changing under the run log, the
+# feed manifest and the audit records that point back to it by that id.
+test_that("user templates can be listed and deleted (management)", {
   dir <- tempfile(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
   t <- .min_tmpl(); t$id <- "mybank_csv"
   save_user_template(t, dir)
   expect_true("mybank_csv" %in% user_template_ids(dir))
 
-  new_id <- rename_user_template("mybank_csv", "mybank everyday csv", dir)  # spaces sanitised
-  expect_equal(new_id, "mybank_everyday_csv")
-  expect_true("mybank_everyday_csv" %in% user_template_ids(dir))
-  expect_false("mybank_csv" %in% user_template_ids(dir))                    # old removed
-
-  expect_true(delete_user_template("mybank_everyday_csv", dir))
-  expect_false("mybank_everyday_csv" %in% user_template_ids(dir))
+  expect_true(delete_user_template("mybank_csv", dir))
+  expect_false("mybank_csv" %in% user_template_ids(dir))
   expect_false(delete_user_template("does_not_exist", dir))
+  # ...and the engine no longer offers a rename at all
+  expect_false(exists("rename_user_template", mode = "function"))
 })
 
 test_that("a user template can be hidden and un-hidden without deleting it", {

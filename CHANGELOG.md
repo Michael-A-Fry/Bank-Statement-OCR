@@ -13,6 +13,61 @@ finding id.
 
 ---
 
+## 1.3.0
+
+The release where the pages about the tool were held to the same standard as the
+figures in it — and where the toolkit stopped asking for things it can work out
+for itself.
+
+**The tool answers more of it**
+
+- The toolkit reads the bank's own name off the statement — the masthead first,
+  then the legal imprint — instead of the first bank word anywhere on the page.
+  That had answered "ANZ" on an ASB statement, because ANZ was one of the payees.
+  A bank nobody has taught it now gets its own name too.
+- When the wrong template read a statement, the way to correct it is on the
+  result above the fold, not behind the evidence toggle. A statement read end to
+  end by the wrong template looks perfect on screen; it is the failure this tool
+  exists to prevent.
+
+**Nothing fails quietly — including the front door**
+
+- `convert_statement()` now wraps everything that touches the file path. Handing
+  it something that is not a filename comes back as a status with a reason. Two
+  documents had claimed "it never crashes" before it was true of the whole
+  function.
+- Admin controls that changed something on disk and said nothing now say so, and
+  a table with nothing in it says so rather than instructing the reader to use a
+  picker with no options in it.
+
+**The documentation became part of the product**
+
+- Three read-through pages — what it is, how it is built, how it got this shape —
+  are linked from the README and inside the guards, instead of sitting where the
+  orphan test could not see them.
+- Both doc guards were widened: no page can be orphaned from an index, and a path
+  named anywhere in the tree — a document, an engine comment, a README beside the
+  templates — has to resolve to a file that exists. Each caught a real break
+  before it was fixed.
+- Every claim in those pages was read back against the running code, and the ones
+  that had stopped being true were corrected — a fourth result word the docs never
+  mentioned, a count of checks that was one short, one screen with four names, and
+  measurements nobody had re-taken.
+
+**Two things a reader could not do, and now can**
+
+- The analyst's guides describe the screen she actually has: the first thing the
+  app asks her for, the four words a check can come back with, and the column that
+  tells her whose problem it is. "Teach it a new bank" now follows the toolkit's
+  own numbered steps and starts where the work really starts — reading the preview.
+- The maintainer has a procedure for *somebody says a conversion is wrong*: run
+  id, original file, the same figure reproduced from the command line, template
+  bug or bad scan. And a design document that says how to run it, how to ship a
+  change to it, and how to put it back.
+
+**Suite:** 792 tests, 3,783 passing assertions · 0 errors · 0 skipped (from 725
+tests at 1.2.0). Register: 109 findings, 104 fixed, 4 open, 1 not-a-defect.
+
 ## 1.2.0
 
 Eighteen findings, all but two raised from real use on real statements. Five put
@@ -81,7 +136,7 @@ release and caught by reviewing it.
   tests fail the suite if a doc link dangles or a page is orphaned from its index.
 
 **Suite:** 725 tests, 3,366 passing assertions · 0 errors · 0 skipped (from 2,880
-at 1.1.0). Register: 107 findings, 104 fixed, 2 open.
+at 1.1.0). Register: 109 findings, 104 fixed, 4 open, 1 not-a-defect.
 
 **Known and deliberate**
 

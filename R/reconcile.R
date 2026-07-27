@@ -105,7 +105,19 @@
   # "no opening/closing balance and no running-balance column" even when the
   # statement printed both -- factually untrue, and it sent reviewers looking for
   # a balance that was on the page all along.
+  # ...and the same untruth was still live in the BOTH-missing branch: it claimed
+  # there was no running-balance column even when the column was present, populated
+  # and passing running_balance_continuity two rows lower on the same screen. When
+  # the column IS there, the reason both anchors are refused is not that it is
+  # missing -- it is that deriving BOTH from it would only check that column against
+  # its own endpoints, which proves nothing. Say the real reason.
+  has_bal <- any(!is.na(bal))
   why <- if (n == 0) "no transactions to reconcile"
+    else if (is.na(opening) && is.na(closing) && has_bal)
+      paste("no opening or closing balance was found. This statement DOES have a",
+            "running-balance column, but deriving both ends from it would only check that",
+            "column against its own endpoints, so it is refused - the running-balance",
+            "check below is the one that tests that column")
     else if (is.na(opening) && is.na(closing))
       "no opening or closing balance was found, and no running-balance column to derive one from"
     else if (is.na(opening))
@@ -170,6 +182,29 @@
 }
 
 # 3. transaction_count: parsed > 0 and == stated count if present.
+#
+# WHY THE NO-COUNT CASE KEEPS "pass" (it was challenged, and the answer is not
+# "because it always did"). The rule this file already enforces is that a check
+# which did not run must not report pass -- that is why no_unparsed_rows says
+# "na" on a PDF. The difference is what the row DISPLAYS. The PDF case set
+# expected = n and actual = n, so it showed a proof it had not performed. This
+# case sets expected = ">0", which is exactly and only the thing it did test: the
+# row on screen reads "Row count | Expected >0 | Read 7 | OK", and a reviewer can
+# see from the Expected column that no printed figure was involved. A check that
+# declares its own weakness on the same line is not a silent one.
+#
+# The alternative (return "na" when the statement prints no count) was built and
+# measured. It is honest, but every real sample in this repo prints no count, so
+# it demotes essentially every statement from "high" to "medium" -- and a grade
+# that stops varying stops carrying information, which is the same defect moved
+# somewhere else. Keeping it would need a compensating trust rule ("high stands
+# when the balance proof passed"), i.e. machinery to undo most of what the change
+# did. The claim the reviewer reads was already corrected where it belonged: the
+# label is "Row count", the topic, not "Row count matches the statement".
+#
+# n == 0 is still a real failure and still reported as one -- it is reachable from
+# every caller that reconciles without going through convert (an auto-split
+# segment, the batch audit).
 .kpi_transaction_count <- function(h, n) {
   stated <- suppressWarnings(as.integer(h$stated_count %||% NA))
   if (!is.na(stated))
@@ -178,7 +213,9 @@
                 detail = "parsed vs stated transaction count"))
   .kpi("transaction_count", if (n > 0) "pass" else "fail",
        expected = ">0", actual = n, discrepancy = NA,
-       detail = "no stated count; require at least one parsed row")
+       detail = sprintf(paste0("this statement prints no transaction count, so the only thing ",
+                               "proved here is that %d row(s) were read - count them against the ",
+                               "statement if the total matters"), n))
 }
 
 # 4. dates_within_period: all dates within period_start..period_end.
@@ -202,12 +239,24 @@
 # re-cased header, wrong sheet, wrong format) - every date comes back NA and,
 # with no period to check against, nothing above would fail. Rows with no
 # readable date at ALL must never leave as a clean "ok".
+#
+# EVERY row, not "at least one". The threshold used to be d_ok > 0, so 1 readable
+# date out of 500 passed, under a label ("Row dates could be read") a reviewer
+# reads as a statement about the whole column. That is the silently-wrong shape
+# the charter forbids: 499 rows with no usable date, behind a green tick. A
+# PARTIAL read is not "could not be checked" either -- the check ran and found a
+# real defect in specific rows -- so it fails, and the rows are named by the
+# date_parse / date_unresolved diagnostics that already exist for them.
 .kpi_dates_readable <- function(tx, n) {
   if (n == 0) return(NULL)
   d_ok <- sum(!is.na(suppressWarnings(as.Date(tx$date))))
-  .kpi("dates_readable", if (d_ok > 0) "pass" else "fail",
+  .kpi("dates_readable", if (d_ok == n) "pass" else "fail",
        expected = n, actual = d_ok, discrepancy = n - d_ok,
-       detail = if (d_ok > 0) sprintf("%d of %d row date(s) read", d_ok, n)
+       detail = if (d_ok == n) sprintf("all %d row date(s) read", n)
+                else if (d_ok > 0)
+                  sprintf(paste0("%d of %d row date(s) could not be read - the date format is ",
+                                 "wrong for those rows, or the date was blank/redacted"),
+                          n - d_ok, n)
                 else "no row dates could be read - the date column mapping or format is wrong")
 }
 
@@ -236,6 +285,16 @@
 
   if (!is.na(src_lines)) {
     # Delimited: the physical data-line count is known, so completeness is provable.
+    #
+    # THIS ONE KEEPS ITS "pass", deliberately. It is the third of the three checks
+    # that were challenged for passing more generously than they sound, and it is
+    # the one that holds up: it compares two independently-counted quantities, it
+    # can and does come back "fail" on real files, and its label ("No row failed to
+    # read") claims exactly what it proves and nothing more. It is true that it
+    # never looks inside a cell -- and it must not, because that is what
+    # dates_readable, balance_reconciliation and the malformed flag are for. A
+    # check that proves one thing soundly is not the same defect as a check that
+    # proves nothing and says "pass".
     return(.kpi(
       "no_unparsed_rows", if (malformed == 0 && lost == 0) "pass" else "fail",
       expected = expected_rows, actual = good, discrepancy = expected_rows - good,
@@ -252,7 +311,7 @@
   # 0 by construction and this KPI reported "pass" for every such statement -- a
   # green tick for a check that never ran, which is exactly the failure the
   # charter forbids. Say "not applicable" instead, and show the skipped-row count
-  # so the number is a fact the reviewer can check in the X-ray rather than a
+  # so the number is a fact the reviewer can check on the page rather than a
   # reassurance nobody computed.
   # THE THIN PARSE. A PDF has no source-line count, so completeness "cannot be
   # proved" -- but there is one thing it CAN prove, and it used to throw away:
@@ -293,22 +352,37 @@
                               "read, against %d that were - so more of it was missed than captured. ",
                               "The template is almost certainly reading the wrong part of the page ",
                               "(most often the date format, or a column band in the wrong place). ",
-                              "See the Inspect view for which rows and why."),
+                              "See it on the page shows which rows and why."),
                        actionable, n)))
   }
+  # THE SKIPPED COUNT IS THE MOST ALARMING NUMBER ON THIS ROW, and it sat beside a
+  # Result column reading "could not be checked" with nothing to size it. The
+  # engine already knows the fact that settles it: `actionable` counts only the
+  # skips that MEAN something -- a row shaped like a transaction that would not
+  # read -- while headings, summary lines and wrapped text are excluded and are
+  # skipped on every healthy statement. When that count is zero, say so; a reviewer
+  # should not have to open a second screen to find out that 122 is the normal
+  # number for a statement of this length.
+  skip_note <- if (is.na(skipped_rows) || skipped_rows == 0L || is.na(actionable)) ""
+    else if (actionable == 0L) " None of the skipped rows looked like a transaction."
+    else sprintf(" %d of the skipped rows looked like a transaction and could not be read.",
+                 actionable)
   .kpi("no_unparsed_rows", "na", expected = expected_rows, actual = good,
        discrepancy = NA,
+       # "the balance proof above", not `balance_reconciliation`: a raw engine code
+       # on a customer-facing screen is something the operational guide tells the
+       # analyst to REPORT AS A BUG, so this row must not be the one that prints it.
        detail = if (!is.na(skipped_rows) && !is.na(visual_rows))
          sprintf(paste0("cannot be proved for this format: there is no independent ",
                         "source line count. %d of %d visual row(s) were read as ",
                         "transactions and %d were skipped (headings, summary lines, ",
-                        "wrapped text, or a date/amount that could not be read) - ",
-                        "check those in the Inspect view; completeness otherwise ",
-                        "rests on balance_reconciliation."),
-                 n, visual_rows, skipped_rows)
+                        "wrapped text, or a date/amount that could not be read).%s ",
+                        "See it on the page shows every skipped row and why; ",
+                        "completeness otherwise rests on the balance proof above."),
+                 n, visual_rows, skipped_rows, skip_note)
        else paste0("cannot be proved for this format: the total source line count is ",
                    "not independently known, so rows dropped by column/date filtering ",
-                   "are NOT counted here -- rely on balance_reconciliation for ",
+                   "are NOT counted here -- rely on the balance proof above for ",
                    "completeness."))
 }
 

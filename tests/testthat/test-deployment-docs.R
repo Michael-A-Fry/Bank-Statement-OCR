@@ -344,6 +344,31 @@ test_that("the changelog points at documents that exist", {
                    recursive = TRUE, full.names = TRUE)))
 }
 
+# .dep_ref_files() -- every file that can NAME a page of this tree, not just the
+# ones written in markdown. A pointer rots the same way whether it is a markdown
+# link, a backticked path in a README, an R comment, or an href: the file moves
+# and the reader is sent nowhere. Scanning only docs/ left three whole classes
+# unguarded -- R/ engine comments, the two template-folder READMEs, and the test
+# HOWTOs -- and templates_user/README.md sat pointing at a deleted page for the
+# one decision it exists to explain (how a user template becomes a curated one).
+.dep_ref_files <- function() {
+  root <- .dep_root()
+  rel <- function(dir, pat, recursive = FALSE)
+    sub(paste0("^", root, "/"), "",
+        list.files(file.path(root, dir), pattern = pat,
+                   recursive = recursive, full.names = TRUE))
+  out <- c(.dep_md_files(),
+           "app.R", "ui_content.R", "ui_labels.R", "run.R",
+           "templates_user/README.md", "templates_seed/README.md",
+           rel("R", "\\.R$"), rel("scripts", "\\.R$"),
+           rel("tests", "\\.(R|md)$", recursive = TRUE),
+           rel("www", "\\.(html|css|js)$"))
+  # samples/_private_staging/ is gitignored (real client statements are staged
+  # there), so anything in it exists on one box and not the next -- a guard that
+  # reads it would pass or fail by accident.
+  unique(out[file.exists(file.path(root, out))])
+}
+
 test_that("every internal link in the docs resolves to a file that exists", {
   root <- .dep_root()
   broken <- character(0)
@@ -364,20 +389,58 @@ test_that("every internal link in the docs resolves to a file that exists", {
                    info = paste("dangling doc link(s):", paste(broken, collapse = "; ")))
 })
 
-test_that("no operational or context page is orphaned from its index", {
+test_that("every path into this tree named OUTSIDE the docs resolves too", {
+  # Same failure, wider net: a path that names a file of this tree must resolve
+  # wherever it is written. Only tokens with a "/" in them are followed, so a
+  # generated OUTPUT name (`report.md`, `statement.audit.md`) is never mistaken
+  # for a pointer. Either reading is accepted -- relative to the naming file's own
+  # folder, or from the repo root -- because both are how these are written and
+  # both are how a reader follows one; what is forbidden is a path that resolves
+  # NEITHER way.
+  root <- .dep_root()
+  broken <- character(0)
+  n <- 0L
+  for (rel in .dep_ref_files()) {
+    txt <- paste(readLines(file.path(root, rel), warn = FALSE), collapse = "\n")
+    toks <- unique(unlist(regmatches(
+      txt, gregexpr("[.A-Za-z0-9_-]+(?:/[.A-Za-z0-9_-]+)+\\.md", txt, perl = TRUE))))
+    for (t in toks) {
+      n <- n + 1L
+      if (!file.exists(file.path(root, dirname(rel), t)) &&
+          !file.exists(file.path(root, t)))
+        broken <- c(broken, paste0(rel, " -> ", t))
+    }
+  }
+  expect_gt(n, 40L)                  # the scan itself must not go quiet
+  expect_identical(broken, character(0),
+                   info = paste("dangling page reference(s):",
+                                paste(broken, collapse = "; ")))
+})
+
+test_that("no docs page is orphaned from its index", {
   # A how-to nobody can find is a how-to that does not exist. Each index must name
   # every page in its own tree (charter.md and the two indexes themselves excepted
   # -- the indexes are reached from README.md, and charter.md is named by both).
+  #
+  # docs/ ROOT used to be exempt BY CONSTRUCTION: this walked one directory down,
+  # so overview.md, design.md and story.md -- nine hundred lines, one of them
+  # opening "for a developer inheriting this cold" -- had no referrer anywhere in
+  # the tree and nothing said so. Their index is README.md, the page a newcomer
+  # actually opens.
   root <- .dep_root()
-  for (dir in c("operational", "context")) {
-    idx <- .dep_read(file.path("docs", dir, "README.md"))
-    pages <- list.files(file.path(root, "docs", dir), pattern = "\\.md$",
-                        recursive = TRUE)
-    pages <- setdiff(pages, "README.md")
+  named_in <- function(idx, pages, where) {
     missing <- pages[!vapply(pages, function(p) grepl(basename(p), idx, fixed = TRUE),
                              logical(1))]
     expect_identical(unname(missing), character(0),
-                     info = paste0("docs/", dir, "/README.md does not link: ",
+                     info = paste0(where, " does not link: ",
                                    paste(missing, collapse = ", ")))
   }
+  for (dir in c("operational", "context")) {
+    pages <- list.files(file.path(root, "docs", dir), pattern = "\\.md$",
+                        recursive = TRUE)
+    named_in(.dep_read(file.path("docs", dir, "README.md")),
+             setdiff(pages, "README.md"), paste0("docs/", dir, "/README.md"))
+  }
+  named_in(.dep_read("README.md"),
+           list.files(file.path(root, "docs"), pattern = "\\.md$"), "README.md")
 })
