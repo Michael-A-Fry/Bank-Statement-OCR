@@ -71,6 +71,62 @@ test_that("every result status has plain-English wording", {
   expect_setequal(c("ok", "needs_review", "unsupported", "failed"), names(L$STATUS_PLAIN))
 })
 
+# ---------------------------------------------------------------------------
+# ROW FLAGS. Every transactions table on screen mapped its column HEADERS through
+# cv_friendly_cols() and then printed the VALUES verbatim -- so the Convert table
+# showed a Flags column reading `ocr_low_conf`, and a drafted template previewed
+# nineteen rows of `date_year_inferred`, in the cells a forensic reviewer checks
+# figures in. FLAG_PLAIN is the wording; this is the seam that keeps it honest.
+#
+# The authoritative set is the two files that WRITE the column: R/parse.R for the
+# flags every path can emit, R/parse_pdf_table.R for the PDF-only ones. Read off
+# the emission sites themselves rather than off a doc table, so a token the engine
+# starts or stops emitting shows up here and not on screen.
+.row_flag_tokens <- function() {
+  src <- c(.src("R/parse.R"), .src("R/parse_pdf_table.R"))
+  # the delimited path appends with `f <- c(f, "malformed")`; the PDF path with
+  # `f <- add(f, cond, "no_date")`
+  hits <- unlist(regmatches(src, gregexpr('(c\\(f,\\s*|add\\(f,[^,]+,\\s*)"[a-z_]+"', src)))
+  toks <- sub('^.*"([a-z_]+)"$', "\\1", hits)
+  # ...and the PDF path SEEDS the column with the two a redacted or unreadable row
+  # carries, which no add() call names.
+  seed <- grep('ifelse\\(redacted, "redacted", ifelse\\(malformed, "malformed", ""\\)\\)', src)
+  unique(c(toks, if (length(seed)) c("redacted", "malformed") else character(0)))
+}
+
+test_that("every row flag the engine can emit has plain-English wording", {
+  L <- .ui_labels()
+  toks <- .row_flag_tokens()
+  expect_gte(length(toks), 10L)                      # the scan must not go quiet
+  expect_true("ocr_low_conf" %in% toks)
+  expect_setequal(toks, names(L$FLAG_PLAIN))         # BOTH ways: no gaps, no dead entries
+  # no entry may be the code itself dressed up as a sentence
+  expect_false(any(names(L$FLAG_PLAIN) == unname(L$FLAG_PLAIN)))
+  expect_false(any(grepl("_", unname(L$FLAG_PLAIN), fixed = TRUE)))
+})
+
+test_that("a row's flags render as words, and an unknown one is never dropped", {
+  L <- .ui_labels()
+  expect_identical(L$plain_flags(c("", NA)), c("", ""))
+  expect_identical(L$plain_flags("ocr_low_conf"), unname(L$FLAG_PLAIN[["ocr_low_conf"]]))
+  # several on one row, in the order the engine wrote them
+  expect_identical(L$plain_flags("redacted,date_year_inferred"),
+                   paste(unname(L$FLAG_PLAIN[["redacted"]]),
+                         unname(L$FLAG_PLAIN[["date_year_inferred"]]), sep = "; "))
+  # a flag this screen has no wording for is still a fact about that row
+  expect_identical(L$plain_flags("something_new"), "something_new")
+})
+
+test_that("both transactions tables put the flags through that map", {
+  src <- .src("app.R")
+  for (pat in c("output\\$cv_txns <- renderDT", "output\\$g_preview <- renderDT")) {
+    i <- grep(pat, src)
+    expect_length(i, 1L)
+    blk <- paste(src[i:(i + 26)], collapse = " ")
+    expect_match(blk, "plain_flags\\(", info = pat)
+  }
+})
+
 # The other two small maps, held to the values the engine really emits: a KPI's
 # status (R/reconcile.R's .kpi()) and a field's coverage verdict (R/coverage.R).
 test_that("check results and coverage verdicts are wording for real engine values", {

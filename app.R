@@ -21,6 +21,34 @@ suppressMessages({
   library(DT)
 })
 
+# AN EMPTY DATE BOX, DECODED WITHOUT SHOUTING ABOUT IT.
+#
+# The only dateInputs in this app are the two template-validity pickers
+# (.eff_picker), and both are deliberately EMPTY when a template has no validity
+# window -- which is the usual case. An empty bootstrap-datepicker holds an
+# Invalid Date, shiny's DateInputBinding formats that as the literal string
+# "NaN-NaN-NaN" and posts it, and shiny's own `shiny.date` handler then calls
+# as.Date() on it, catches the error and re-raises it as a warning. Measured in a
+# browser: two warnings on the console every time the toolkit is opened, for a
+# value the app handles correctly (it becomes NA, and .eff_date takes it from
+# there). A console that cries wolf twice per open is a console nobody reads the
+# real warnings in.
+#
+# Same contract as shiny's own handler -- a Date vector, NA where the browser sent
+# nothing usable -- with the sentinel recognised instead of thrown at as.Date.
+# Per element rather than all-or-nothing, so one empty box in a pair can no longer
+# blank the other. Registered once, at load: an input handler is global, and the
+# gate this closes is a decoding rule, not a session's business.
+.decode_shiny_date <- function(val, ...) {
+  v <- vapply(val, function(x) if (is.null(x)) NA_character_ else as.character(x)[1],
+              character(1), USE.NAMES = FALSE)
+  # shiny's JS sends ISO dates and nothing else; anything that is not one is an
+  # empty picker, not a date this app should try to guess at.
+  v[!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v)] <- NA_character_
+  as.Date(v)
+}
+shiny::registerInputHandler("shiny.date", force = TRUE, .decode_shiny_date)
+
 # Load the engine (all pure-R modules) into the session.
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 
@@ -430,9 +458,13 @@ ui <- fluidPage(
       br(),
       wellPanel(
         h4(style = "margin-top:0", "Teach the tool a new layout"),
-        # No "about two minutes": true on the bundled specimen, false on the real
-        # bank PDFs it was measured against (draft_template reads 0 rows on asb.pdf
-        # and anz_single.pdf, and redrawing the bands by hand did not recover it).
+        # No "about two minutes". Re-measured on the same two real bank PDFs the
+        # old note was written from, after the drafter was fixed: anz_single.pdf
+        # now drafts cleanly (311 rows over the file, 79 in the 3-page preview),
+        # but asb.pdf still drafts a template that reads ONE row out of ten
+        # candidate lines and keeps nothing at all on page 2. One statement in two
+        # is not a promise of a couple of minutes, and the sentence below is true
+        # of both.
         p(class = "muted", style = "max-width:820px",
           "Upload one example. The tool reads what it can; you confirm it against a live preview and save."),
         fileInput("ts_file", "One example of the document (.csv / .tsv / .tdv / .pdf / .xlsx)",
@@ -2803,27 +2835,47 @@ server <- function(input, output, session) {
       Result = vapply(b$status, plain_status, character(1), USE.NAMES = FALSE),
       Bank = dash(b$bank),
       Rows = suppressWarnings(as.integer(b$rows)),
+      # THE SAME GRADE THE SINGLE-FILE CARD PRINTS. convert_batch() has carried
+      # `trust` all along and this table threw it away, so the row for a file read
+      # `Converted successfully` with `-` under What to check, while opening that
+      # very row said "Converted - 11 transactions read - confidence: medium /
+      # Read cleanly. Something could not be proven". Two gradings of one file,
+      # the more confident one on the screen built for skimming - and on a
+      # thirty-file case there was no way to tell the clean files from the
+      # merely-uncomplaining ones without opening all thirty.
+      #
+      # The word is the card's word, not a second vocabulary: cv_headline prints
+      # `res$trust$level` and so does this.
+      Confidence = dash(b$trust),
       # plain_failing_check() lives in ui_labels.R with the other wording maps: the
       # engine carries its own CODE ("check:balance_reconciliation") so it never has
       # to read a UI file off disk, and the words are added here.
       `What to check` = dash(plain_failing_check(b$failing_check)),
       order = severity,
       check.names = FALSE, stringsAsFactors = FALSE)
+    # DataTables counts columns from zero, and the two that matter are addressed
+    # by NAME rather than by a literal: adding Confidence in the middle shifted
+    # every index below it, and a hard-coded 5 would have hidden the wrong column
+    # and sorted the table on the wrong key with nothing to notice it.
+    at <- function(nm) which(names(disp) == nm) - 1L
     datatable(disp, rownames = FALSE, selection = "single",
       options = list(
         # No scrollX: it makes DataTables clone the header into the scroll body,
         # and the clone's sort arrows render as a stack of triangles over the last
-        # column. Five short columns fit without it.
+        # column. Six short columns fit without it.
         pageLength = 15,
-        order = list(list(5, "desc"), list(4, "asc")),
-        columnDefs = list(list(visible = FALSE, targets = 5),
+        order = list(list(at("order"), "desc"), list(at("What to check"), "asc")),
+        columnDefs = list(list(visible = FALSE, targets = at("order")),
                           # Clicking "Result" sorts on the hidden severity key, and
                           # DataTables' default first click is ASCENDING - which on
                           # this key puts the CLEAN files on top, on the very click
                           # meant to gather the failures. The table exists to group
                           # what went wrong, so worst-first is the first click.
-                          list(orderData = 5, targets = 1,
-                               orderSequence = list("desc", "asc")))))
+                          list(orderData = at("order"), targets = at("Result"),
+                               orderSequence = list("desc", "asc"))))) |>
+      formatStyle("Confidence", fontWeight = "bold",
+                  color = styleEqual(c("high", "medium", "low"),
+                                     c("#137333", "#8a6d00", "#b00020")))
   })
 
   output$cv_batch_open <- renderUI({
@@ -3050,17 +3102,63 @@ server <- function(input, output, session) {
   # detail". Same source of truth as that table (res$kpis) and the same wording
   # (CHECK_PLAIN), so the two can never say different things. NULL when nothing
   # failed, so a clean result is unchanged.
+  #
+  # ...AND THE DIAGNOSTIC THAT OUTRANKS THEM ALL, FIRST. build_diagnostics()
+  # returns most-severe-first, and the top row on a real needs_review run read
+  # "This upload looks like more than one statement bundled together, which
+  # corrupts a single parse. Split it into one statement per file and re-run." --
+  # severity HIGH, and nowhere on the card. "What to check" listed only the
+  # secondary dates item, so the highest-severity thing on the page was the one
+  # thing the list of what to check left out.
+  #
+  # ONLY where a conversion happened. On a `failed` or `unsupported` result the
+  # engine's headline message IS the top diagnostic, already printed on this card
+  # two lines up, so listing it again would say one sentence twice.
+  top_diagnostics <- function(res) {
+    d <- res$diagnostics
+    empty <- data.frame(category = character(0), severity = character(0),
+                        detail = character(0), how_to_fix = character(0),
+                        stringsAsFactors = FALSE)
+    if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(empty)
+    if (!is.data.frame(d) || !nrow(d) ||
+        !all(c("category", "severity", "detail", "how_to_fix") %in% names(d))) return(empty)
+    # "info" is context, not a fault, and "none" is the explicit no-issues row --
+    # the same two exclusions R/batch.R makes when it picks a file's headline
+    # problem, so the card and the batch table can never disagree about what the
+    # top issue is.
+    d[d$severity %in% "high" & !(d$category %in% "none"),
+      c("category", "severity", "detail", "how_to_fix"), drop = FALSE]
+  }
   failed_checks_ui <- function(res) {
     k <- res$kpis
-    if (is.null(k) || !all(c("name", "status") %in% names(k))) return(NULL)
-    f <- k[k$status %in% "fail", , drop = FALSE]
-    if (!nrow(f)) return(NULL)
-    div(class = "verdict-body", style = "margin-top:2px",
-      tags$b("What to check:"),
-      tags$ul(style = "margin:4px 0 0 18px;padding:0",
-        lapply(seq_len(nrow(f)), function(i) tags$li(
-          tags$b(plain_check(f$name[i])),
-          if (nzchar(f$detail[i] %||% "")) sprintf(" - %s", f$detail[i]) else NULL))))
+    f <- if (is.null(k) || !all(c("name", "status") %in% names(k))) NULL
+         else k[k$status %in% "fail", , drop = FALSE]
+    dg <- top_diagnostics(res)
+    if ((is.null(f) || !nrow(f)) && !nrow(dg)) return(NULL)
+    tagList(
+      div(class = "verdict-body", style = "margin-top:2px",
+        tags$b("What to check:"),
+        tags$ul(style = "margin:4px 0 0 18px;padding:0",
+          # The diagnostic named in plain English (never its code) and what was
+          # actually seen -- the same shape as a failing check, so the list reads
+          # as one list. Its remedy is not repeated here; it is the action line
+          # below, which is the only place on the card that tells anyone to DO
+          # something.
+          lapply(seq_len(nrow(dg)), function(i) tags$li(
+            tags$b(plain_label(dg$category[i], DIAG_PLAIN)),
+            if (nzchar(dg$detail[i] %||% "")) sprintf(" - %s", dg$detail[i]) else NULL)),
+          lapply(seq_len(if (is.null(f)) 0L else nrow(f)), function(i) tags$li(
+            tags$b(plain_check(f$name[i])),
+            if (nzchar(f$detail[i] %||% "")) sprintf(" - %s", f$detail[i]) else NULL)))),
+      # THE REMEDY IS THE TOOL'S OWN, AND IT SITS WITH THE DIAGNOSIS. The
+      # prominent action on this screen used to be "Set up the right template",
+      # rendered further down the page and keyed on the verdict rather than on any
+      # evidence -- so a run whose top diagnostic said "split the file" carried a
+      # warning-coloured button pointing at the template toolkit instead. One
+      # screen, two remedies, and the tool contradicting itself.
+      if (nrow(dg) && nzchar(dg$how_to_fix[1] %||% ""))
+        div(class = "verdict-body", style = "margin-top:6px",
+            tags$b("Do this first: "), dg$how_to_fix[1]) else NULL)
   }
 
   # THE CHECKS THAT MATTER, ALWAYS ON SCREEN.
@@ -3085,12 +3183,32 @@ server <- function(input, output, session) {
   # error - a reviewer wants to see that one confirmed, not merely not-complained-about.
   .PROOF_CHECKS <- c("balance_reconciliation", "no_unparsed_rows", "amount_direction",
                      "running_balance_continuity", "dates_readable")
+  # .proof_pick(name, status, listed) -- which chips the strip draws, in order.
+  #
+  # THE FIVE ABOVE ARE THE ONES WORTH CONFIRMING ON A CLEAN RUN. They are not the
+  # five that can go wrong: dates_within_period and transaction_count are verdict
+  # checks that can FAIL, and they were permanently off this strip with no way
+  # back on. So a real statement drew three ticks and a dash under a key promising
+  # "x = a problem", while the Checks table two disclosures down read "All dates
+  # fall in the statement period | Problem | 34 date(s) outside period" -- and a
+  # statement that PRINTED nine transactions and gave up seven drew four chips,
+  # none red, with transaction_count failed. The first quality signal on the page
+  # said clean about the one thing this tool exists to catch.
+  #
+  # Appended, never substituted: nothing is hidden, a clean run's strip is exactly
+  # what it was (there is nothing to append), and the strip is now INCAPABLE of
+  # being all-clear while any check failed. `%in%` rather than `==` so an NA status
+  # cannot slip an NA name into the list.
+  .proof_pick <- function(name, status, listed) {
+    pick <- listed[listed %in% name]
+    c(pick, setdiff(name[status %in% "fail"], pick))
+  }
   output$cv_proof <- renderUI({
     res <- cv_res(); req(res)
     k <- res$kpis
     if (is.null(k) || !all(c("name", "status") %in% names(k))) return(NULL)
     if (!nrow(k)) return(NULL)
-    pick <- .PROOF_CHECKS[.PROOF_CHECKS %in% k$name]
+    pick <- .proof_pick(k$name, k$status, .PROOF_CHECKS)
     if (!length(pick)) return(NULL)
     chip <- function(nm) {
       st <- k$status[k$name == nm][1]
@@ -3136,6 +3254,35 @@ server <- function(input, output, session) {
         if (length(x) == 1L) x else sprintf("%s (option %d)", x, seq_along(x)))
     stats::setNames(ids, lab)
   }
+  # .tpl_label(bank, type) -- bank + statement type as a name Beth reads, or NA
+  # when there is nothing to build one from. Lifted out because two template sets
+  # feed it (transaction templates and form templates) and one of them was
+  # printing raw ids for want of these four lines.
+  #
+  # "statement statement". A PDF drafted in the toolkit is saved with
+  # statement_type "statement" (R/draft.R), so the word was appended to a label
+  # that already ended in it -- "Read as: Sample Everyday Statement statement".
+  # The word is a suffix, not a fact about the template, so it goes on only when
+  # the name does not already say it.
+  # NA is EMPTY here, not the two letters "N" and "A". `%||%` only replaces NULL,
+  # so a template whose bank is missing used to paste the string "NA" into the
+  # label -- which is exactly the "Read as: NA NA statement" this helper's other
+  # caller was fixed for. Absent means absent, and a label built from nothing at
+  # all comes back NA so the caller can fall back.
+  .tpl_label <- function(bank, type) {
+    one <- function(v) { s <- trimws(as.character(v %||% "")[1]); if (is.na(s)) "" else s }
+    lab <- trimws(paste(one(bank), one(type)))
+    if (!nzchar(lab)) return(NA_character_)
+    if (grepl("statements?$", lab, ignore.case = TRUE)) lab else paste(lab, "statement")
+  }
+  # Form (mode: fields) templates, loaded the same way convert_document loads them.
+  # They are deliberately NOT in all_templates() -- keeping them out of that set is
+  # what stops them affecting transaction detection - which is exactly why
+  # friendly_tpl had nothing to look up.
+  all_field_templates <- reactive({
+    tpl_bump()
+    tryCatch(load_fields_templates(FIELDS_DIR, USER_FIELDS_DIR), error = function(e) list())
+  })
   # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
   friendly_tpl <- function(tid) {
@@ -3143,8 +3290,19 @@ server <- function(input, output, session) {
     # A FORM template is not in the statement set, and `list[["missing"]]` on a
     # named list gives one NULL element named NA -- which template_overview() turns
     # into a row of NAs, so an IRD form that extracted all seven of its fields
-    # correctly was labelled "Read as: NA NA statement". Ask first.
-    if (!(tid %in% names(all_templates()))) return(tid)
+    # correctly was labelled "Read as: NA NA statement".
+    #
+    # ...and then it fell back to the RAW ID, so the chip read "Read as:
+    # anz_kiwisaver_fields" -- one wrong answer swapped for an engine code on a
+    # customer-facing screen, which the charter's interface rule forbids outright.
+    # The form template carries `bank: ANZ` and `statement_type: kiwisaver`, so the
+    # name is derivable from the same two fields as any other template's; ask the
+    # set it really lives in before giving up.
+    if (!(tid %in% names(all_templates()))) {
+      ft <- tryCatch(all_field_templates()[[tid]], error = function(e) NULL)
+      lab <- if (is.null(ft)) NA_character_ else .tpl_label(ft$bank, ft$statement_type)
+      return(if (is.na(lab)) tid else lab)
+    }
     # Build the overview for JUST this template, not the whole set: friendly_tpl
     # runs on every successful convert and only needs this id's bank + type, and
     # the full-set build grows with every template the team adds. Same function,
@@ -3153,14 +3311,8 @@ server <- function(input, output, session) {
     if (is.null(ov) || !nrow(ov)) return(tid)
     r <- ov[ov$id == tid, , drop = FALSE]
     if (!nrow(r)) return(tid)
-    lab <- trimws(paste(trimws(r$bank[1] %||% ""), trimws(r$type[1] %||% "")))
-    if (!nzchar(lab)) return(tid)
-    # "statement statement". A PDF drafted in the toolkit is saved with
-    # statement_type "statement" (R/draft.R), so the word was appended to a label
-    # that already ended in it -- "Read as: Sample Everyday Statement statement".
-    # The word is a suffix, not a fact about the template, so it goes on only when
-    # the name does not already say it.
-    if (grepl("statements?$", lab, ignore.case = TRUE)) lab else paste(lab, "statement")
+    lab <- .tpl_label(r$bank[1], r$type[1])
+    if (is.na(lab)) tid else lab
   }
 
   # cv_headline -- the EASY, plain-English verdict for a transaction result: did it
@@ -3300,24 +3452,65 @@ server <- function(input, output, session) {
   cur_symbol <- function(h) switch(h$currency %||% "", NZD = "$", AUD = "$", USD = "$",
                                    GBP = "£", EUR = "€", "")
 
+  # .period_lines(txn_dates, period_start, period_end, n_periods) -- the date
+  # ranges for the summary card, each labelled for WHICH FACT IT IS.
+  #
+  # ONE LINE USED TO PRINT ONE OF THEM UNDER THE OTHER'S NAME. "Period:" was the
+  # min/max of the TRANSACTION dates whenever any row had one, with the
+  # statement's own printed period only a fallback -- so the screen read "Period:
+  # 15 Aug 2025 to 13 Sep 2025" over a statement whose header says 13 Aug to
+  # 1 Sep, and the failing check's Expected (2025-08-13..2025-09-01) named a range
+  # that appeared nowhere on the page.
+  #
+  # By construction every transaction sits inside the span, so "34 date(s) outside
+  # period" beside it can only ever look like a bug in the tool -- which teaches a
+  # reviewer to dismiss the one check that catches a mis-parsed year or a swapped
+  # day/month. Both ranges now, each named, so the check's Expected has a referent
+  # on the screen.
+  #
+  # The header's period goes through the SAME PARSER THE CHECK USES
+  # (.tolerant_date, R/params.R), so the range here and the range in Expected are
+  # the same two dates. A bound that will not parse is shown in the statement's own
+  # words rather than dropped -- never invented, never silently gone.
+  .period_lines <- function(txn_dates, period_start, period_end, n_periods = NA) {
+    day <- function(v) {
+      s <- as.character(v %||% NA_character_)[1]
+      if (is.na(s) || !nzchar(trimws(s))) return(NA_character_)
+      p <- suppressWarnings(.tolerant_date(s))
+      if (is.na(p)) s else format(p, "%d %b %Y")
+    }
+    dts <- suppressWarnings(as.Date(txn_dates %||% as.Date(character(0))))
+    span <- if (any(!is.na(dts)))
+        sprintf("%s to %s", format(min(dts, na.rm = TRUE), "%d %b %Y"),
+                format(max(dts, na.rm = TRUE), "%d %b %Y")) else NA_character_
+    hs <- day(period_start); he <- day(period_end)
+    hdr <- if (!is.na(hs)) sprintf("%s to %s", hs, he %||% "?") else NA_character_
+    # SEVERAL PRINTED PERIODS, SAID WHERE THE PERIOD IS SAID. The engine reads a
+    # multi-period file as ONE span (R/extract_metadata.R), which is what makes
+    # "all dates fall in the statement period" and the balance reconciliation pass
+    # on such a file - but a span silently standing in for three quarters reads as
+    # one quarter. The count goes on the range it came FROM: the statement's
+    # printed period, which is what was merged, falling back to the transaction
+    # span only when the header carries no period at all.
+    np <- suppressWarnings(as.integer(n_periods)[1])
+    if (isTRUE(np > 1L)) {
+      if (!is.na(hdr)) hdr <- sprintf("%s - %d periods", hdr, np)
+      else if (!is.na(span)) span <- sprintf("%s - %d periods", span, np)
+    }
+    out <- c(if (!is.na(span)) sprintf("Transactions span: %s", span),
+             if (!is.na(hdr))  sprintf("Statement period: %s", hdr))
+    if (length(out)) out else "Transactions span: -"
+  }
+
   output$cv_summary <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     d <- cv_data(); h <- res$header %||% list(); cur <- cur_symbol(h)
     n   <- if (!is.null(d)) nrow(d) else (h$row_count %||% NA)
     amt <- if (!is.null(d)) d$.amt[!is.na(d$.amt)] else numeric(0)
     money_in <- sum(amt[amt > 0]); money_out <- sum(amt[amt < 0]); net <- sum(amt)
-    drange <- if (!is.null(d) && any(!is.na(d$.date)))
-        sprintf("%s to %s", format(min(d$.date, na.rm = TRUE), "%d %b %Y"),
-                format(max(d$.date, na.rm = TRUE), "%d %b %Y"))
-      else if (!is.na(h$period_start %||% NA_character_))
-        sprintf("%s to %s", h$period_start, h$period_end %||% "?") else "-"
-    # SEVERAL PRINTED PERIODS, SAID WHERE THE PERIOD IS SAID. The engine reads a
-    # multi-period file as ONE span (R/extract_metadata.R), which is what makes
-    # "all dates fall in the statement period" and the balance reconciliation pass
-    # on such a file - but a span silently standing in for three quarters reads as
-    # one quarter. So the count goes on the same line as the range it came from.
-    np <- suppressWarnings(as.integer(res$metadata$n_periods %||% NA_integer_))
-    if (isTRUE(np > 1L)) drange <- sprintf("%s - %d periods", drange, np)
+    ranges <- .period_lines(if (is.null(d)) as.Date(character(0)) else d$.date,
+                            h$period_start, h$period_end,
+                            res$metadata$n_periods %||% NA_integer_)
     card <- function(label, value, col = NULL)
       div(class = "stat",
           div(class = "stat-label", label),
@@ -3330,7 +3523,8 @@ server <- function(input, output, session) {
         card("Money out", fmt_money(money_out, cur), "#b00020"),
         card("Net",       fmt_money(net, cur), if (isTRUE(net < 0)) "#b00020" else "#137333"),
         if (has_close) card("Closing balance", fmt_money(as.numeric(h$closing_balance), cur))),
-      p(class = "muted", style = "margin:0 0 4px", sprintf("Period: %s%s%s", drange,
+      p(class = "muted", style = "margin:0 0 4px", sprintf("%s%s%s",
+        paste(ranges, collapse = "  \u00b7  "),
         if (!is.na(h$account_number %||% NA_character_)) sprintf("  ·  Account: %s", h$account_number) else "",
         if (!is.na(h$bank %||% NA_character_)) sprintf("  ·  %s", h$bank) else "")),
       # ...and anything the engine had to say about that merge - a window no
@@ -3470,11 +3664,37 @@ server <- function(input, output, session) {
         "A labelled-value document, not a transaction statement: no transaction table and no running balance, so the completeness checks don't apply. Check each value below against the document."),
       h4("Values found"), DTOutput("cv_fields"))
   })
+  # THE ONE TABLE ON CONVERT THAT WENT STRAIGHT TO datatable(). Every other table
+  # on this page maps what it shows; this one handed the engine's frame over
+  # untouched, so a forensic reviewer read a FIELD column of schema names
+  # (opening_balance, government_contribution, investment_return) beside a LABEL
+  # column that already said the same thing in the document's own words, and three
+  # columns of `true` / `false`.
+  #
+  # The label is what the DOCUMENT prints, so it is the identity a reviewer can
+  # check against the page; the schema name is the maintainer's handle and belongs
+  # in the JSON. A field whose label is blank keeps its name in readable form
+  # rather than losing its row.
+  #
+  # `flagged` is the engine's own column, not re-derived here: it means required
+  # and not found, and it is the only row on the table that needs an action.
+  yes_no <- function(v) ifelse(v %in% TRUE, "yes", "no")
   output$cv_fields <- renderDT({
     res <- cv_res(); req(res, !is.null(res$fields))
-    d <- res$fields[, intersect(c("field", "label", "value", "matched", "required", "flagged"),
-                                names(res$fields)), drop = FALSE]
-    datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 30))
+    f <- res$fields
+    lab <- trimws(as.character(f$label %||% rep(NA_character_, nrow(f))))
+    fallback <- cv_friendly_cols(as.character(f$field %||% rep("", nrow(f))))
+    lab[is.na(lab) | !nzchar(lab)] <- fallback[is.na(lab) | !nzchar(lab)]
+    disp <- data.frame(
+      `What the document calls it` = lab,
+      Value = as.character(f$value %||% rep(NA_character_, nrow(f))),
+      Found = yes_no(f$matched),
+      Required = yes_no(f$required),
+      `Needs a look` = ifelse(f$flagged %in% TRUE, "yes - required and not found", ""),
+      check.names = FALSE, stringsAsFactors = FALSE)
+    datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 30)) |>
+      formatStyle("Found", fontWeight = "bold",
+                  color = styleEqual(c("yes", "no"), c("#137333", "#b00020")))
   })
 
   # THE FIGURES THE CHECK WAS DECIDED ON, BESIDE THE VERDICT.
@@ -3532,19 +3752,38 @@ server <- function(input, output, session) {
   # clean pass (a non-ok status, or any check that FAILED) opens the section, so the
   # reasons sit in front of the reviewer instead of one collapsed click behind the
   # chart. A clean, fully-passing conversion still starts tidy.
+  #
+  # AN EMPTY TABLE CANNOT BE TOLD FROM A BROKEN ONE, and these two are empty on
+  # exactly the screens with the least to go on. A failed or unsupported run has no
+  # KPIs and no coverage frame, so both DTOutputs rendered nothing at all -- a
+  # "Checks" heading over blank space, under a page that promises "every check that
+  # exists for your statement is in this table with one of those four words beside
+  # it". A reviewer has no way to tell that from a table that failed to draw.
+  #
+  # The reason is the same for both and is a fact the result already carries: no
+  # transactions came out, so there was nothing to check and no field to report on.
+  .why_empty <- function(res) {
+    if (isTRUE((res$status %||% "") == "failed"))
+      "Nothing was read from this file, so there is nothing to check and no fields to report."
+    else
+      "No template read this statement, so no transactions were produced - there is nothing to check and no fields to report."
+  }
   output$cv_detail <- renderUI({
     res <- cv_res(); req(res)
     k <- res$kpis
     any_failed <- !is.null(k) && "status" %in% names(k) && any(k$status %in% "fail")
     open_it <- !isTRUE((res$status %||% "") == "ok") || isTRUE(any_failed)
+    has_kpis <- is.data.frame(k) && nrow(k) > 0L
+    has_cov  <- is.data.frame(res$coverage) && nrow(res$coverage) > 0L
+    said <- p(class = "muted", style = "margin:0 0 8px", .why_empty(res))
     tags$details(style = "margin-top:14px", open = if (open_it) NA else NULL,
       tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
                    "Checks & detail (for review)"),
       div(style = "padding:8px 2px",
-        h4("Checks"), DTOutput("cv_kpis"),
+        h4("Checks"), if (has_kpis) DTOutput("cv_kpis") else said,
         h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
         h4("Field coverage - what's present / empty / not on this statement"),
-        uiOutput("cv_cov_summary"), DTOutput("cv_coverage")))
+        if (has_cov) tagList(uiOutput("cv_cov_summary"), DTOutput("cv_coverage")) else said))
   })
 
   output$cv_cov_summary <- renderUI({
@@ -3594,6 +3833,10 @@ server <- function(input, output, session) {
                         "direction", "type", "reference", "particulars", "code", "other_party"),
                       names(df))
     df <- df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
+    # The HEADERS were mapped and the VALUES were not, so the Flags column read
+    # `ocr_low_conf` and `date_year_inferred` in the cells of the table she is
+    # checking figures in. Same map both tables use (ui_labels.R, FLAG_PLAIN).
+    if ("flags" %in% names(df)) df$flags <- plain_flags(df$flags)
     datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
               options = list(pageLength = 10, scrollX = TRUE))
   })
@@ -3686,26 +3929,43 @@ server <- function(input, output, session) {
   # line up top already offers a fix". Between them a clean-looking result read by
   # the wrong template had no route back anywhere on the page, which is the one
   # case the charter cares most about.
+  # .match_is_thin(res) -- did DETECTION actually leave room for doubt? The engine
+  # already answers this: detect_statement() records `thin` (won by a hair over a
+  # near-duplicate), `ambiguous`, and `tied` (two or more fitting equally well).
+  #
+  # The invitation below was keyed on `needs_review` instead, which is a verdict
+  # about the FIGURES, not about the match. Measured: a run where the balance
+  # reconciles to the cent and all 79 dates read was told "worth checking it's the
+  # right match" with a prominent button, while nothing whatsoever suggested the
+  # match was wrong -- and the charter is explicit that the tool decides the
+  # template. So the line is now shown on the evidence that would justify it.
+  .match_is_thin <- function(res) {
+    d <- res$detect
+    if (is.null(d)) return(FALSE)
+    isTRUE(d$thin) || isTRUE(d$ambiguous) || length(d$tied %||% character(0)) >= 2L
+  }
   output$cv_rematch <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     st <- res$status %||% "failed"
     if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
     tid <- (res$template_id %||% NA_character_)[1]
     nice <- if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else NA_character_
-    if (identical(st, "ok")) {
-      # Happy path: one quiet line, and it does NOT re-state which template read
-      # the statement -- the "Read as" chip on the verdict card two inches above
-      # says that already, and saying it twice makes a question out of a fact.
-      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
-        span("Not the right bank?"),
-        actionLink("cv_rematch_go", "Set up the right template for this statement"))
-    } else {
-      # needs_review: make the "fix the match" option clearly available.
-      div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
-        span(if (!is.na(nice)) sprintf("Read as %s — worth checking it's the right match.", nice)
-             else "Please check this is the right match."),
-        actionButton("cv_rematch_go_rv", "Set up the right template", class = "btn-warning btn-sm"))
-    }
+    quiet <- div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
+      span("Not the right bank?"),
+      actionLink("cv_rematch_go", "Set up the right template for this statement"))
+    # Happy path: one quiet line, and it does NOT re-state which template read
+    # the statement -- the "Read as" chip on the verdict card two inches above
+    # says that already, and saying it twice makes a question out of a fact.
+    if (identical(st, "ok")) return(quiet)
+    # needs_review. The route back is always here, but it only ANNOUNCES ITSELF as
+    # a doubt about the match when detection left one. The remedy for whatever
+    # actually went wrong is on the verdict card, beside the diagnosis it belongs
+    # to (failed_checks_ui), not competing with it from further down the page.
+    if (!.match_is_thin(res)) return(quiet)
+    div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:13px",
+      span(if (!is.na(nice)) sprintf("Read as %s \u2014 more than one template nearly fitted, so it's worth checking.", nice)
+           else "More than one template nearly fitted, so it's worth checking this is the right match."),
+      actionButton("cv_rematch_go_rv", "Set up the right template", class = "btn-warning btn-sm"))
   })
   # Same action, several places to ask for it. Each element has its OWN input id
   # (two elements sharing one id keep separate click counters, which is how a
@@ -3740,16 +4000,31 @@ server <- function(input, output, session) {
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
 
   # ---- Feedback (every conversion can be rated; one file per logs/feedback/) ----
+  #
+  # A CONVERSION THAT PRODUCED NOTHING IS NOT A CONVERSION TO RATE. "Was this
+  # conversion correct?" appeared under a card reading "Could not read this file"
+  # -- a question about figures on a screen with no figures, and the one answer
+  # that does anything (Wrong) withdraws rows from the dashboards that were never
+  # published. The run is still logged; there is simply nothing here for a reviewer
+  # to have an opinion about.
   output$cv_feedback <- renderUI({
     res <- cv_res(); if (is.null(res) || is.null(res$run_id)) return(NULL)
+    if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(NULL)
     if (isTRUE(cv_fb_done()))
       return(div(style = "margin-top:16px", span(class = "ok",
         "Thanks - your feedback was recorded."), cv_fb_note()))
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
+        # NO TICK, NO CROSS. These three used to be drawn with the SAME glyphs the
+        # proof-strip key twenty lines above defines as "checked and passed" and
+        # "a problem" -- so one screen used one mark for two different things: what
+        # the tool proved, and what the reader thinks. On a page whose whole job is
+        # a defensible figure, that is the one collision that must not happen. The
+        # three words carry the meaning on their own.
         # choiceNames/choiceValues (not named choices): a non-ASCII name in
         # c(name = value) becomes a SYMBOL at parse time, which on a C-locale
-        # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8.
+        # host mangles to '<U+2713>'. Lists of plain literals stay UTF-8, and the
+        # form is kept for the day one of these needs a glyph of its own.
         # NOTHING PRE-ANSWERED. "Correct" was selected on arrival, so a click on
         # Submit without reading a figure recorded a positive rating -- and that
         # rating is not just an opinion: it is what Admin's "flagged as wrong"
@@ -3758,7 +4033,7 @@ server <- function(input, output, session) {
         # default answer to "was this correct?" is the tool answering for the
         # reviewer, on the one question only she can answer.
         radioButtons("cv_fb_verdict", NULL, inline = TRUE, selected = character(0),
-          choiceNames = list("✓ Correct", "△ Minor issues", "✗ Wrong"),
+          choiceNames = list("Correct", "Minor issues", "Wrong"),
           choiceValues = list("correct", "minor_issues", "wrong")),
         textAreaInput("cv_fb_comment", "Comment (optional - what was wrong?)",
                       width = "100%", rows = 2),
@@ -3900,7 +4175,22 @@ server <- function(input, output, session) {
   # dated today. Caught by opening the toolkit in a browser. An EMPTY
   # data-initial-date is the one thing that JS reads as "leave the box alone", and
   # value = "" is how R produces it; shiny's date coercion warns on its way past a
-  # non-date, which is the warning suppressed here and the only one.
+  # non-date, which is the warning suppressed here.
+  #
+  # IT IS NOT THE ONLY ONE, and this comment said it was. An empty box leaves
+  # bootstrap-datepicker holding an Invalid Date, and shiny's DateInputBinding
+  # formats that into the literal string "NaN-NaN-NaN" and POSTS it -- once per
+  # picker, so twice per toolkit open. The `shiny.date` input HANDLER then runs
+  # as.Date() over it and re-signals the coercion error as a warning
+  # ("character string is not in a standard unambiguous format", raised inside
+  # the handler's own tryCatch, which is why the console blames value[[3L]]).
+  # Verified in the browser: the binding's getValue() really does return
+  # "NaN-NaN-NaN", and the log gained exactly two warnings per open.
+  #
+  # suppressWarnings() here cannot reach that one: it fires on a later tick, in
+  # shiny's input decoding, long after this call returned. So the sentinel is
+  # translated where it arrives -- see the shiny.date input handler registered at
+  # the top of this file.
   # A stored window that is NOT a date (hand-edited YAML on the server; the
   # Advanced tab refuses to apply one) opens the box EMPTY rather than throwing.
   # It must not throw: this modal is the only place that YAML can be fixed, so a
@@ -4510,8 +4800,12 @@ server <- function(input, output, session) {
       # was printed verbatim over 4,000 bytes of /dev/urandom named .pdf and over a
       # 31-byte text file: neither is a layout, and neither is new. And the promise
       # underneath it -- "takes a couple of minutes, no data background needed" --
-      # held for the bundled specimen and for nothing else measured: on asb.pdf and
-      # anz_single.pdf the drafter reads 0 rows and there is no two-minute path.
+      # is not promised either. Re-measured after the drafter was fixed:
+      # anz_single.pdf now drafts 311 rows over the file (79 in the toolkit's
+      # 3-page preview), while asb.pdf still drafts a template that keeps one row
+      # of ten and nothing on page 2. Half the measured cases are a couple of
+      # minutes; the other half are not, so the button says what it does and
+      # stops.
       div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
         strong("No template read this statement — set one up and it converts every time."),
         p(class = "muted", style = "margin:6px 0 10px",
@@ -4522,8 +4816,18 @@ server <- function(input, output, session) {
           actionLink("cv_unsup_raise", "Send it to the team instead")))
     } else {
       # Happy path stays quiet: the "Wrong bank?" line up top already offers a fix,
-      # so we don't repeat a toolkit prompt here. needs_review/failed keep the offer.
+      # so we don't repeat a toolkit prompt here.
       if (identical(st, "ok")) return(NULL)
+      # ...AND SO DOES A FILE THAT WAS NEVER READ. `failed` means no text came out
+      # of it at all -- damaged, encrypted, or not the type it claims to be. The
+      # toolkit's whole job is drawing boxes over columns on a page, and there is
+      # no page: over a text file renamed .pdf the screen said "no text could be
+      # read from this PDF" and then offered to "save an improved template" from
+      # it. A template cannot be built out of nothing, so offering it is a wasted
+      # trip. The card's own message already says what to do (check the file
+      # opens, is the type it claims, is not password-protected), so nothing is
+      # left unanswered by dropping this.
+      if (identical(st, "failed")) return(NULL)
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", "Fix how it's read and save an improved template. "),
         actionButton("cv_teach_go_fix", "Open the template toolkit", class = "btn-default"))
@@ -5090,9 +5394,80 @@ server <- function(input, output, session) {
                         "balance", "reference", "particulars", "code", "other_party", "type"), show)
     show <- c(lead, setdiff(show, lead))
     if (!length(show)) show <- names(tx)
-    datatable(tx[, show, drop = FALSE], rownames = FALSE, colnames = cv_friendly_cols(show),
+    tx <- tx[, show, drop = FALSE]
+    # Same as the Convert table: the header was mapped, the cells were not, so a
+    # drafted template previewed nineteen rows of `date_year_inferred`.
+    if ("flags" %in% names(tx)) tx$flags <- plain_flags(tx$flags)
+    datatable(tx, rownames = FALSE, colnames = cv_friendly_cols(show),
               options = list(dom = "t", pageLength = PREVIEW_ROWS, scrollX = TRUE))
   })
+  # g_preview_cov -- row coverage for EXACTLY the pages the preview parsed.
+  #
+  # row_coverage() reads the whole document; draft_preview() deliberately reads
+  # only the first few pages so a 46-page statement does not re-parse on every
+  # keystroke. Handing the two different page sets would put "19 rows read" beside
+  # a skip count from pages the preview never looked at, so the input is trimmed
+  # the same way draft_preview trims it (R/draft.R, .subinput_pages) and the two
+  # numbers describe the same paper. read_input is content-cached, so this costs
+  # the layout pass and not a re-read.
+  g_preview_cov <- reactive({
+    g <- guided(); req(g)
+    t <- gl_build(meta_live = FALSE)
+    if (!identical(t$format %||% "", "pdf")) return(NULL)
+    inp <- tryCatch(read_input(g$path), error = function(e) NULL)
+    if (is.null(inp)) return(NULL)
+    np <- length(inp$pages %||% inp$words %||% list())
+    if (np > PREVIEW_PAGES) inp <- tryCatch(.subinput_pages(inp, seq_len(PREVIEW_PAGES)),
+                                            error = function(e) inp)
+    tryCatch(row_coverage(inp, t), error = function(e) NULL)
+  })
+  # preview_doubts(tx, cov) -- WHAT THE TOOL ALREADY KNOWS THAT ARGUES AGAINST THE
+  # TICK. This is the screen on which a template is decided and SAVED, and its
+  # verdict branched on nothing but `n > 0`: asb.pdf drew a green tick over "1
+  # transaction row read - ... If they are right, click Save template" while
+  # row_coverage() on that same drafted template already knew page 2 kept nothing;
+  # d5_sample.pdf drew one over "19 transaction rows read", and the very next
+  # screen after saving said "11 discontinuity(ies)". The Convert page asks both
+  # questions. The toolkit, which decides the template, did not.
+  #
+  # Both answers come from the engine, not from a rule invented here: the running
+  # balance from the same .kpi_running_balance_continuity() the Checks table
+  # prints, and the page evidence from row_coverage()'s own diagnosis. A tick now
+  # means the page was read, not that a number was greater than zero.
+  preview_doubts <- function(tx, cov) {
+    out <- character(0)
+    n <- if (is.null(tx)) 0L else nrow(tx)
+    if (n >= 2L && "balance" %in% names(tx)) {
+      k <- tryCatch(.kpi_running_balance_continuity(tx, n), error = function(e) NULL)
+      bad <- suppressWarnings(as.integer((k$actual %||% NA)[1]))
+      # A break between two printed balances is what a DROPPED ROW looks like from
+      # here: the balances are the statement's own arithmetic, so a step the rows
+      # do not account for is a row the template did not keep.
+      if (!is.null(k) && identical((k$status %||% "")[1], "fail") && isTRUE(bad > 0L))
+        out <- c(out, sprintf(paste("the balances do not follow in %d place(s):",
+                                    "rows are probably being skipped"), bad))
+    }
+    if (isTRUE(cov$applicable)) {
+      skipped <- suppressWarnings(as.integer(cov$actionable_skips_total %||% 0L))
+      # A PAGE THAT KEPT NOTHING IS NOT BY ITSELF EVIDENCE OF ANYTHING, and the
+      # first version of this fired on one. Measured on the bundled specimen: page
+      # 1 kept 0 rows and skipped 0 candidates -- it is the cover page, nothing was
+      # lost, and the screen said "but not all of the page" over a perfect draft.
+      # A tool that cries wolf on the common case teaches people to ignore it,
+      # which is the failure this whole item is about.
+      #
+      # What IS evidence: a line that LOOKED like a transaction and was not kept
+      # (actionable_skips_total), or a page the parser had to rescale that then
+      # kept nothing -- a page-scale mismatch loses rows without leaving candidates
+      # behind to count.
+      empty <- length(cov$empty_pages %||% integer(0)) > 0L
+      if (isTRUE(skipped > 0L) || (empty && isTRUE(cov$any_page_rescaled)))
+        # Its own words. row_coverage() writes one sentence per situation and it
+        # is better than anything restated here.
+        out <- c(out, trimws(as.character(cov$diagnosis %||% "")[1]))
+    }
+    out[nzchar(out)]
+  }
   # The preview verdict. This is where a template gets abandoned: a grey line of
   # monospace saying "no rows detected" reads as a dead end, so it now says which
   # setting to reach for -- and, for a PDF, that the preview only reads the first
@@ -5112,20 +5487,32 @@ server <- function(input, output, session) {
     # the two settings live when there are none.
     check_them <- "Check the dates, descriptions and amounts below against your statement."
     two_settings <- "If so, open \"Show the settings for this statement\" and check the date format and the amount style."
-    if (n > 0L) return(div(class = "verdict verdict-high", style = "margin:2px 0 12px",
-      div(class = "verdict-ico", "✓"),
-      div(style = "flex:1;min-width:0",
-        div(class = "verdict-title",
-            if (partial)
-              sprintf("%d transaction row%s read from the first %d of %d pages",
-                      n, if (n == 1L) "" else "s", PREVIEW_PAGES, np)
-            else sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s")),
-        p(class = "verdict-body", style = "margin:0",
-          paste(check_them, if (partial)
-            "Converting reads every page, so expect a bigger number then."
-            else "If they are right, click Save template."),
-        if (n > PREVIEW_ROWS)
-          span(class = "muted", sprintf(" The table shows the first %d.", PREVIEW_ROWS))))))
+    if (n > 0L) {
+      doubts <- preview_doubts(tx, g_preview_cov())
+      ok <- !length(doubts)
+      return(div(class = if (ok) "verdict verdict-high" else "verdict verdict-medium",
+                 style = "margin:2px 0 12px",
+        div(class = "verdict-ico", if (ok) "\u2713" else "!"),
+        div(style = "flex:1;min-width:0",
+          div(class = "verdict-title",
+              sprintf("%s%s", if (partial)
+                sprintf("%d transaction row%s read from the first %d of %d pages",
+                        n, if (n == 1L) "" else "s", PREVIEW_PAGES, np)
+                else sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s"),
+                if (ok) "" else " - but not all of the page")),
+          # The doubts FIRST: they are the reason not to press Save, and they went
+          # above the "if they are right, click Save template" line that used to be
+          # the only thing here.
+          if (!ok) tags$ul(class = "verdict-body", style = "margin:4px 0 0 18px;padding:0",
+                           lapply(doubts, tags$li)),
+          p(class = "verdict-body", style = "margin:0",
+            paste(check_them, if (partial)
+              "Converting reads every page, so expect a bigger number then."
+              else if (ok) "If they are right, click Save template."
+              else "Fixing the column boxes or the date format above usually recovers the missing rows."),
+          if (n > PREVIEW_ROWS)
+            span(class = "muted", sprintf(" The table shows the first %d.", PREVIEW_ROWS))))))
+    }
     # THE DATE COLUMN IS NOT OPTIONAL, and its absence is not a mis-drawn box.
     # Remove it and the panel below handed out advice about widening a band and
     # checking the date format - advice for a template that HAS a date column -

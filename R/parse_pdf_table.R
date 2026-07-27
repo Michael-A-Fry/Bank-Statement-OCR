@@ -1059,10 +1059,21 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # date_year_inferred (P3-a): a year-less table with NO parseable period took its
   # year from a single 4-digit number in free page text (e.g. a footer "(c) 2019").
   # The date parses, so date_unresolved won't fire -- but the year is a GUESS from
-  # non-period text, so flag every dated row with a resolved date, so trust/review
-  # never treat that year as proven. date_raw stays verbatim regardless.
+  # non-period text, so flag those rows, so trust/review never treat that year as
+  # proven. date_raw stays verbatim regardless.
+  #
+  # PER ROW, not per document: year_from_text says a year was AVAILABLE from the
+  # page text, not that this row used it. A row's year is inferred only where the
+  # parse actually took it from `yrs`, which is exactly two paths -- the declared
+  # format carries no year token (%Y/%y), so full_date() appends one; or the row
+  # was read by the year-less fallback, which always appends. When the format
+  # carries the year the row's own text supplied it, whatever the page footer says.
+  # Flagging those spent the loudest warning the tool owns ("confirm the year
+  # against the statement") on dates printed verbatim -- measured at 19 of 19 rows
+  # on a real statement whose every date reads "1st November 2018" -- and dropped
+  # the run to needs_review, out of the dashboards, for nothing.
   date_year_inferred <- if (n == 0) logical(0)
-    else (year_from_text & !is.na(date_iso))
+    else (year_from_text & !is.na(date_iso) & (!has_year | fb_used))
   # no_date: a shared-date row kept without a date of its own (keep_dateless_rows).
   # The blank date is deliberate -- flagged so a reviewer sees it was never guessed.
   no_date_kept <- if (n == 0) logical(0)

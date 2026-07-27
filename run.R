@@ -33,6 +33,13 @@ local({
     logdir = file.path(root, "logs")
   )
 
+  # FIRST, because it is the handle for everything else. The incident procedure
+  # (docs/operational/investigating-a-wrong-conversion.md) says to open
+  # logs/runs/<run_id>.json for the re-run, and this CLI printed no way to know
+  # which of the hundreds of records it had just written. Always present: the id
+  # is built before the funnel opens and stamped on the result after it closes,
+  # so a failed run prints one too -- and it has a log record to match.
+  cat(sprintf("run id:      %s\n", res$run_id %||% NA))
   cat(sprintf("status:      %s\n", res$status))
   cat(sprintf("template:    %s\n", res$template_id %||% NA))
   cat(sprintf("trust:       %s (score %s)\n",

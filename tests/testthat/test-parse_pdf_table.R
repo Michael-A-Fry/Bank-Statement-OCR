@@ -946,6 +946,42 @@ test_that("with no year anywhere the dates stay blank and the rows are flagged",
   expect_equal(tx$date_raw, c("March 30", "April 10"))       # nothing lost
 })
 
+# ---- E1: "inferred year" must mean THIS ROW's year was inferred ---------------
+# The flag caps trust and puts "confirm the year against the statement" on screen,
+# so it has to be about the row, not about the document. It was keyed on the
+# document fact alone (a year was available from page text), which flagged rows
+# that print their own year in full -- measured at 19 of 19 on a real statement
+# reading "1st November 2018". Both directions are asserted here, on ONE page text,
+# so the only difference is where the row's year came from.
+.dy_words <- function() {
+  r <- function(txt, x, y, w) data.frame(text = txt, x = x, y = y, width = w,
+                                         height = 7, stringsAsFactors = FALSE)
+  rbind(r("March",  40, 100, 26), r("30", 70, 100, 8), r("2018", 82, 100, 20),
+        r("COFFEE", 120, 100, 34), r("12.50", 452, 100, 20),
+        r("April",  40, 112, 22), r("10", 66, 112, 8), r("2018", 78, 112, 20),
+        r("PETROL", 120, 112, 34), r("60.00", 452, 112, 20))
+}
+# Same bands as .yl_tmpl; the declared format is the only difference.
+.dy_tmpl <- utils::modifyList(.yl_tmpl, list(table = list(date_format = "%B %d %Y")))
+# One 4-digit year in free text, and deliberately NOT the year the rows print, so
+# a date built from the page text is unmistakable in the ISO output.
+.DY_PAGE <- "MEGABANK CREDIT CARD\nCard expires 03/28   (c) 2019 MegaBank Ltd"
+
+test_that("a row that prints its own year is NOT flagged as inferred", {
+  inp <- .yl_input(.DY_PAGE); inp$words <- list(.dy_words())
+  tx <- parse_pdf_table(inp, .dy_tmpl)$transactions
+  expect_equal(nrow(tx), 2L)
+  expect_equal(tx$date, c("2018-03-30", "2018-04-10"))   # the row's year, not 2019
+  expect_false(any(grepl("date_year_inferred", tx$flags)))
+})
+
+test_that("a row that prints NO year under a page-text year IS still flagged", {
+  # The mirror image: same page, year-less dates, so the year really is inferred.
+  tx <- parse_pdf_table(.yl_input(.DY_PAGE), .yl_tmpl)$transactions
+  expect_equal(tx$date, c("2019-03-30", "2019-04-10"))
+  expect_true(all(grepl("date_year_inferred", tx$flags)))
+})
+
 # ---- The label reducer must not eat real payees (adversarial review) ----------
 # The first version stripped every number, dr/cr/od and month-ish word ANYWHERE on
 # the line, with `[a-z]*` after the month alternation - so any word merely

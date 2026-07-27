@@ -65,13 +65,56 @@ test_that("the tie message names the template that was USED, then the alternativ
   res <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
                            outdir = out, templates_dir = d, logdir = out)
   m <- paste(as.character(res$messages), collapse = " ")
-  expect_match(m, "it was read with b_tiedlayout_csv", fixed = TRUE)
-  expect_match(m, "c_tiedlayout_csv", fixed = TRUE)          # the alternative is still named
-  # the diagnostic says which one produced these figures too
+  # IN WORDS. This message renders on the verdict card, beside "Read as: BBANK
+  # everyday statement" -- five raw ids used to print there, on the one card the
+  # charter's interface rule is strictest about.
+  expect_match(m, "it was read as BBANK everyday statement", fixed = TRUE)
+  expect_match(m, "CBANK everyday statement", fixed = TRUE)  # the alternative is still named
+  expect_false(grepl("_csv", m, fixed = TRUE))               # and no template id at all
+  # the diagnostic (the maintainer's evidence trail) still carries the ids
   cats <- as.character(res$diagnostics$category)
   expect_true("ambiguous_template" %in% cats)
   expect_match(res$diagnostics$detail[cats == "ambiguous_template"][1],
                "read with b_tiedlayout_csv", fixed = TRUE)
+})
+
+# Two set-ups of the SAME layout is the common tie, and they share a display name
+# -- so "worth a check against the alternative: BBANK everyday statement" would
+# repeat what she was just told, against a template she cannot tell apart.
+test_that("a tie between duplicates of one layout does not name a twin", {
+  d <- tempfile("convdup_"); dir.create(d); out <- tempfile("convdupout_"); dir.create(out)
+  for (v in c("b", "c")) writeLines(c(
+    sprintf("id: %s_duplayout_csv", v), "bank: BBANK", "statement_type: everyday",
+    "format: delimited", "version: 1", "min_score: 2",
+    "fingerprint:", "  header_contains_all: [Particulars, Reference]",
+    'delimiter: ","', "columns:",
+    '  date: {source: Date, format: "%d/%m/%Y"}',
+    "  amount: {source: Amount}", "  description: {source: Details}",
+    "amount_sign: signed", "currency: NZD"), file.path(d, paste0(v, ".yaml")))
+  res <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
+                           outdir = out, templates_dir = d, logdir = out)
+  m <- paste(as.character(res$messages), collapse = " ")
+  expect_match(m, "the same layout is set up more than once", fixed = TRUE)
+  expect_false(grepl("worth a check against the alternative", m, fixed = TRUE))
+  expect_false(grepl("_csv", m, fixed = TRUE))
+})
+
+test_that("no engine code reaches the verdict card on a clean or an empty read", {
+  out <- tempfile("convname_"); dir.create(out)
+  ok <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
+                          outdir = out, templates_dir = templates_dir(), logdir = out)
+  expect_match(paste(ok$messages, collapse = " "), "matched ANZ everyday statement", fixed = TRUE)
+  expect_false(grepl("anz_everyday_csv", paste(ok$messages, collapse = " "), fixed = TRUE))
+  # ...and the template that matched the wording and read nothing says so by name
+  hdr <- tempfile("asbempty_", fileext = ".csv")
+  writeLines(c("Created date / time : 24 December 2014 / 19:38:14",
+               "From date 20141220", "To date 20141224",
+               "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount"), hdr)
+  e <- convert_statement(hdr, outdir = out, templates_dir = templates_dir(), logdir = out)
+  expect_identical(e$status, "unsupported")
+  expect_match(paste(e$messages, collapse = " "),
+               "ASB everyday statement matches the wording", fixed = TRUE)
+  expect_false(grepl("asb_everyday_csv", paste(e$messages, collapse = " "), fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -82,8 +125,22 @@ test_that("a file the reader cannot read is reported as unreadable, not as a new
   out <- tempfile("convbad_"); dir.create(out)
   junk <- tempfile("junk_", fileext = ".pdf")
   writeBin(as.raw(rep(c(0x25, 0x7d, 0x00, 0xff), 1000)), junk)   # 4000 bytes of noise
-  prose <- tempfile("prose_", fileext = ".txt")
-  writeLines("This is just a note to myself.", prose)
+  # PROSE THAT HOLDS A SEPARATOR. The old fixture was one sentence with no
+  # separator in it at all, so it passed over a guard that only asked whether a
+  # separator character appeared ANYWHERE -- and every one of these came back as
+  # "we don't have a template for this layout yet", the answer this guard exists
+  # to prevent. Real notes have commas in them; the fixture has to as well.
+  prose <- vapply(list(
+    "This is just a note to myself.",
+    "Use the transaction export, not the PDF.",
+    c("Hi Beth,", "", "Please find attached the statement for June.",
+      "Let me know if you need anything else.", "", "Regards,", "Tim"),
+    c("Meeting minutes - 12 June", "Present: Tim, Beth, Sam",
+      "1. Budget discussed; no decision taken", "2. Next meeting Friday"),
+    "Nothing here; nothing at all.",
+    "See the shared drive | folder for the export."
+  ), function(txt) { p <- tempfile("prose_", fileext = ".txt"); writeLines(txt, p); p },
+  character(1))
   empty <- tempfile("empty_", fileext = ".csv"); file.create(empty)
 
   for (p in c(junk, prose, empty)) {
@@ -130,6 +187,56 @@ test_that("what counts as separated is read off the templates, not hard-coded", 
     writeLines(paste("Date", "Amount", "Details", sep = sep), p)
     expect_null(.unreadable_reason(read_input(p), shipped), info = sep)
   }
+})
+
+# What makes a file a table is a REPEATED SHAPE, not a separator character. These
+# are the files a character test cannot tell apart from a statement.
+test_that("a table is a repeated shape, read the way the reader will read it", {
+  shipped <- load_template_set(templates_dir(), NULL)
+  wr <- function(txt) { p <- tempfile("shape_", fileext = ".csv"); writeLines(txt, p); p }
+  # the 6-line preamble is not a table; the header and its rows below it are
+  expect_null(.unreadable_reason(
+    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv")), shipped))
+  # the same export with no transactions in the period: nothing repeats, but a
+  # template names the header line it is looking straight at
+  expect_null(.unreadable_reason(read_input(wr(c(
+    "Created date / time : 24 December 2014 / 19:38:14",
+    "Bank 12; Branch 3456; Account 7890123-45-00",
+    "From date 20141220",
+    "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount"))), shipped))
+  # A QUOTED comma is part of a payee, not a field boundary. Counted blind, this
+  # file reads 3 then 4 then 3 fields -- no shape at all -- and a real ASB export
+  # ("Acme, Inc.") would have been called unreadable.
+  expect_null(.unreadable_reason(read_input(wr(c(
+    "Date,Payee,Amount",
+    '2014/12/23,"Acme, Inc.",5678.90',
+    "2014/12/24,Bob Ltd,-3.80"))), shipped))
+})
+
+# ---------------------------------------------------------------------------
+# THE RUN ID IS THE HANDLE THE INCIDENT PROCEDURE IS BUILT ON.
+# docs/operational/investigating-a-wrong-conversion.md sends the maintainer to
+# logs/runs/<run_id>.json for the re-run. The CLI printed status, template,
+# trust, checks, outputs and message -- and no run id, so there was no way to
+# know which of the hundreds of records it had just written.
+test_that("the CLI prints a run id that names the record it just wrote", {
+  root <- engine_root()
+  out <- tempfile("cliout_"); dir.create(out)
+  rc <- file.path(R.home("bin"), "Rscript")
+  txt <- suppressWarnings(system2(rc, c(shQuote(file.path(root, "run.R")),
+    shQuote(file.path(root, "samples/raw/anz/anz_transaction_export_01.csv")), '""',
+    shQuote(out)), stdout = TRUE, stderr = FALSE))
+  skip_if(!length(txt), "Rscript produced no output")
+  line <- grep("^run id:", txt, value = TRUE)
+  expect_length(line, 1L)
+  id <- trimws(sub("^run id:", "", line))
+  expect_true(nzchar(id))
+  # the whole point: that id opens the record the procedure asks for
+  rec <- file.path(root, "logs", "runs", paste0(id, ".json"))
+  expect_true(file.exists(rec))
+  # a test must not leave the install's own run history behind. The id names
+  # every record this run wrote, which is exactly what makes that possible.
+  unlink(c(rec, file.path(root, "logs", "metadata", paste0(id, ".json"))))
 })
 
 # ---------------------------------------------------------------------------

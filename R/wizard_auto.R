@@ -470,15 +470,22 @@ suggest_pdf_columns <- function(input, gap = 18) {
     stringsAsFactors = FALSE)))
   out <- out[order(out$x_min), , drop = FALSE]
   rownames(out) <- NULL
-  # The date cells this band actually yields, so the date-format sniff reads the
-  # same strings the reader will (see .guess_pdf_date_format, R/draft.R) instead of
-  # scanning every page for anything that falls in the same x-range.
-  db <- out[out$field == "date", , drop = FALSE]
-  cells <- vapply(split(seq_len(nrow(tw)), tw$row), function(ix) {
-    s <- ix[tw$cx[ix] >= db$x_min[1] & tw$cx[ix] <= db$x_max[1]]
-    if (!length(s)) "" else paste(tw$text[s][order(tw$x[s])], collapse = " ")
-  }, character(1), USE.NAMES = FALSE)
+  # The cells these bands actually yield, so the sniffs that follow read the same
+  # strings the reader will instead of scanning every page for anything that falls
+  # in the same x-range: the date format (.guess_pdf_date_format, R/draft.R) and
+  # the currency (.draft_currency, same file) -- a currency mark printed in the
+  # DESCRIPTION ("VISA PURCHASE USD 25.00") is somebody's foreign purchase, not the
+  # currency of the statement, and only the money bands exclude it by construction.
+  cells <- function(b) {
+    v <- vapply(split(seq_len(nrow(tw)), tw$row), function(ix) {
+      s <- ix[tw$cx[ix] >= b$x_min[1] & tw$cx[ix] <= b$x_max[1]]
+      if (!length(s)) "" else paste(tw$text[s][order(tw$x[s])], collapse = " ")
+    }, character(1), USE.NAMES = FALSE)
+    v[nzchar(v)]
+  }
   attr(out, "page") <- as.integer(pg)
-  attr(out, "date_cells") <- cells[nzchar(cells)]
+  attr(out, "date_cells") <- cells(out[out$field == "date", , drop = FALSE])
+  attr(out, "money_cells") <- unlist(lapply(which(out$kind == "money"),
+    function(i) cells(out[i, , drop = FALSE])), use.names = FALSE) %||% character(0)
   out
 }

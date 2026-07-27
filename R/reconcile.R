@@ -15,8 +15,25 @@
 # (R/diagnose.R, section 1) -- a failing check with no fix text falls back to a
 # generic "review this against the source statement".
 
+# A CHECK THAT DID NOT RUN SHOWS NO FIGURES.
+#
+# The Checks table prints Expected and Read beside the verdict, so a row could
+# read "No row failed to read | could not be checked | Expected 79 | Read 79" --
+# two numbers that agree, under a result saying nothing was proved. On a clean
+# CSV the identical "7 | 7" IS the proof, so the figures cannot tell a reviewer
+# which of the two she is looking at, and 79 = 79 beside a check that never ran
+# reads as a pass. balance_reconciliation already gets this right by passing no
+# figures on its "na" path; enforcing it HERE rather than in each builder means
+# it holds for every check, including the next one written.
+#
+# INFORMATIONAL rows are exempt: their `actual` is the fact they exist to report
+# (redacted row count, OCR confidence), the table gives them their own word
+# rather than "could not be checked", and app.R reads the redaction count off it.
 .kpi <- function(name, status, expected = NA, actual = NA,
                  discrepancy = NA, detail = "", informational = FALSE) {
+  if (identical(status, "na") && !isTRUE(informational)) {
+    expected <- NA; actual <- NA; discrepancy <- NA
+  }
   data.frame(name = name, status = status,
              expected = as.character(expected), actual = as.character(actual),
              discrepancy = as.character(discrepancy), detail = detail,

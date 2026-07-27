@@ -183,6 +183,70 @@
   "%d/%m/%Y"
 }
 
+# ---- THE CURRENCY IS ON THE MONEY, NOT IN A CONSTANT ------------------------
+# Every drafted template used to say NZD because that is what the constant said.
+# On a pound-sterling statement the drafter printed the pound sign in the
+# description of a row whose currency column read NZD, and the tiles above that
+# table totalled pounds as dollars. A currency is a LABEL ON MONEY, so a wrong one
+# is a wrong figure; it is read off the document like everything else.
+#
+# The glyphs are \u escapes and not glyphs because a glyph in this source is not
+# portable: the deployment box runs a C locale, where a pound sign written into a
+# .R file parses as two bytes of unknown encoding and matches nothing, while
+# "\u00a3" parses as the one UTF-8 character the reader actually hands back.
+# (Same reason .WA_MONEY is an ASCII-only negated class -- R/wizard_auto.R.)
+#
+# "$" is deliberately UNRESOLVED: it is the New Zealand, Australian and US dollar
+# alike and nothing in the glyph says which, so it names no currency -- it only
+# says that a currency named elsewhere has to be a dollar one to agree with it.
+#
+# Two parallel vectors and NOT one named vector: a name written as an argument tag
+# becomes an R symbol, and symbols are held in the NATIVE encoding -- so under the
+# deployment's C locale the pound tag arrived as the eight literal characters
+# "<U+00A3>" and matched no pound at all. Values keep their UTF-8; tags do not.
+.CUR_GLYPH     <- c("$",      "\u00a3", "\u20ac", "\u00a5")
+.CUR_OF_GLYPH  <- c("dollar", "GBP",    "EUR",    "JPY")
+# ISO codes read from the page. A code is unambiguous where "$" is not, so it
+# outranks the glyph: "AUD $25.00" is Australian, and only the code says so.
+.CUR_CODES  <- c("NZD", "AUD", "USD", "GBP", "EUR", "JPY")
+.CUR_DOLLAR <- c("NZD", "AUD", "USD")
+# The shape a mark has to be printed against to count -- deliberately the shape
+# .WA_MONEY calls money, so the currency is read off the very figures the drafter
+# matched and the two can never disagree about which figures are money.
+.CUR_FIGURE <- "-?[0-9][0-9,]*\\.[0-9]{2}"
+
+# .draft_currency(cells, default) -- the ISO currency for a drafted template, read
+# from the MONEY CELLS its callers pass (the drafted money bands for a PDF, the
+# mapped money columns for a delimited/Excel file). Never from the description:
+# "VISA PURCHASE USD 25.00" is one customer's foreign purchase, not the currency
+# the statement is printed in.
+#
+# A template carries ONE currency, so evidence that disagrees cannot be resolved
+# from the page and is not guessed at. Two different marks on the figures, or a
+# named non-dollar currency sitting beside a "$", leave `default` standing for the
+# analyst to confirm -- the same thing .sniff_bank does with a name it cannot pin
+# down. Figures with no mark at all (most NZ statements print a bare "1,234.56")
+# are the ordinary case and default too, which is right for this deployment.
+.draft_currency <- function(cells, default = "NZD") {
+  s <- as.character(cells %||% character(0))
+  s <- s[!is.na(s) & nzchar(s)]
+  if (!length(s)) return(default)
+  found <- function(rx) unlist(regmatches(s, gregexpr(rx, s)), use.names = FALSE)
+  codes <- unique(sub(paste0("[[:space:]]?", .CUR_FIGURE, "$"), "", found(paste0(
+    "\\b(?:", paste(.CUR_CODES, collapse = "|"), ")[[:space:]]?", .CUR_FIGURE))))
+  # The glyph run is matched with .WA_MONEY's own ASCII-only negated class, so what
+  # is collected here is exactly the symbol the money test accepted -- and a mark
+  # this build has never heard of maps to nothing, which is evidence of nothing.
+  gly <- unique(sub(paste0(.CUR_FIGURE, "$"), "",
+    found(paste0("[^0-9A-Za-z[:space:].,'()+-]{1,3}", .CUR_FIGURE))))
+  gcur <- .CUR_OF_GLYPH[match(gly, .CUR_GLYPH)]
+  gcur <- gcur[!is.na(gcur)]
+  named <- unique(c(codes, setdiff(gcur, "dollar")))
+  if (length(named) != 1L) return(default)            # nothing named, or two
+  if ("dollar" %in% gcur && !(named %in% .CUR_DOLLAR)) return(default)
+  named
+}
+
 # .draft_type_dc(style, headers, df, cols) -- when the amount style is a D/C
 # indicator column, pin BOTH the indicator column and the token that means a
 # debit, so a drafted template never falls back to the blind "D" default (which
@@ -236,7 +300,13 @@
     if (!is.na(cc)) cols$credit <- list(source = cc)
   }
   tdc <- .draft_type_dc(style, h, df, cols)
-  list(cols = tdc$cols, amount_sign = style, keys = tdc$keys, date_format = date_format)
+  # The currency comes off the MONEY columns alone -- a code in a description, or a
+  # "foreign amount" column beside the real one, names a transaction, not the file.
+  mcell <- unlist(lapply(c("amount", "debit", "credit", "balance"), function(f)
+    if (!is.null(cols[[f]]) && !is.null(df)) as.character(df[[cols[[f]]$source]])),
+    use.names = FALSE)
+  list(cols = tdc$cols, amount_sign = style, keys = tdc$keys, date_format = date_format,
+       currency = safe(.draft_currency(mcell), "NZD"))
 }
 
 .draft_delimited <- function(path, id, bank) {
@@ -249,7 +319,8 @@
   out <- list(id = .compose_id(bank, "everyday", "csv", id), bank = bank, statement_type = "everyday", format = "delimited",
     version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)), delimiter = delim,
-    columns = dm$cols, amount_sign = dm$amount_sign, currency = "NZD", origin = "user")
+    columns = dm$cols, amount_sign = dm$amount_sign,
+    currency = dm$currency %||% "NZD", origin = "user")
   utils::modifyList(out, dm$keys)
 }
 
@@ -304,7 +375,8 @@
   list(id = .compose_id(bank, "statement", "pdf", id), bank = bank, statement_type = "statement", format = "pdf",
     version = 1, min_score = max(1L, length(fp)),
     fingerprint = list(page_contains_all = as.list(fp)),
-    table = tbl, currency = "NZD", origin = "user")
+    table = tbl, currency = safe(.draft_currency(attr(sug, "money_cells")), "NZD"),
+    origin = "user")
 }
 
 # .draft_excel -- the sheet-aware Excel draft. read_input has already picked the
@@ -321,7 +393,8 @@
   out <- list(id = .compose_id(bank, "everyday", "xlsx", id), bank = bank, statement_type = "everyday", format = "excel",
     version = 1, min_score = .draft_min_score(length(h)),
     fingerprint = list(header_contains_all = as.list(h)),
-    columns = dm$cols, amount_sign = dm$amount_sign, currency = "NZD", origin = "user")
+    columns = dm$cols, amount_sign = dm$amount_sign,
+    currency = dm$currency %||% "NZD", origin = "user")
   utils::modifyList(out, dm$keys)
 }
 

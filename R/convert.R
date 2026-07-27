@@ -78,14 +78,54 @@ log_run <- function(logdir, result) {
 #                  pages plus scanned_no_ocr, and keeps its own (correct, louder)
 #                  diagnostic -- so this must test the reader's verdict, not the
 #                  emptiness of the text.
-#   delimited   -- a delimited file is a table only if its lines SEPARATE. The
+#   delimited   -- a delimited file is a table only if its lines SEPARATE INTO THE
+#                  SAME SHAPE, line after line (see .delimited_tabular). The
 #                  separators tested are the ones the installed templates declare
 #                  (plus the four any reader falls back to), so teaching the tool a
 #                  bank that separates some other way is still a YAML edit and can
 #                  never turn that bank's export into "unreadable". A header-only
-#                  export DOES separate, so it still reaches "matched the wording,
-#                  read no transactions" rather than being called unreadable.
+#                  export is still a table, so it still reaches "matched the
+#                  wording, read no transactions" rather than being called
+#                  unreadable.
 #   excel       -- no sheet, or a sheet with no columns, is nothing to read.
+
+# The narrowest a statement table can be. validate_template requires date +
+# description + a money column of every delimited template, so three is the
+# FEWEST fields a header row of a statement this tool can convert ever carries.
+# Used ONLY on a file with a single record, where there is no second line to
+# compare a shape against -- everywhere else the repeated shape decides, and a
+# two-column file with rows in it really is a table whatever the templates want.
+.MIN_TABLE_FIELDS <- 3L
+# How far in to look for the table. The evidence is a repeated shape, so it is
+# settled within the first couple of data rows of wherever the table starts;
+# reading further only costs time on every conversion of a large export.
+.TABULAR_SCAN_LINES <- 200L
+
+# .delimited_tabular(lines, sep) -- do these lines hold a TABLE under `sep`?
+#
+# A separator CHARACTER is not evidence: one comma in "Use the transaction export,
+# not the PDF." was enough to make that sentence "a statement layout we don't have
+# a template for yet" -- the exact answer this guard exists to prevent, and an
+# email body, meeting minutes and a line holding one ';' all did the same. What
+# makes a file a table is that the same split gives the SAME SHAPE on line after
+# line. Split with the reader's own quote-aware splitter so a quoted comma and a
+# preamble are counted exactly as the reader will read them.
+.delimited_tabular <- function(lines, sep) {
+  recs <- .split_records(lines, seq_along(lines))
+  n <- vapply(recs, function(r) length(.record_fields(r$text, sep)), integer(1))
+  if (!length(n) || max(n) < 2L) return(FALSE)
+  # Two or more CONSECUTIVE records splitting the same way: a table. Runs, not
+  # totals -- an email whose greeting and sign-off both end in a comma has two
+  # matching lines scattered through prose, and is not a table anywhere.
+  r <- rle(n)
+  if (any(r$lengths[r$values >= 2L] >= 2L)) return(TRUE)
+  # ONE record has nothing to repeat, so the shape cannot decide it -- and the
+  # two candidates are indistinguishable byte for byte: a header-only export, or
+  # a sentence with a comma in it. Fall back to the narrowest a statement table
+  # can be, which is the closest thing to a fact available here.
+  length(n) == 1L && n[1] >= .MIN_TABLE_FIELDS
+}
+
 .unreadable_reason <- function(input, templates = NULL) {
   kind <- input$kind %||% NA_character_
   if (identical(kind, "pdf")) {
@@ -101,11 +141,19 @@ log_run <- function(logdir, result) {
     seps <- unlist(lapply(templates %||% list(),
                           function(t) as.character(unlist(t$delimiter %||% character(0)))))
     seps <- unique(c(seps[!is.na(seps) & nzchar(seps)], ",", "\t", ";", "|"))
-    # fixed = TRUE: these are separator strings, and "|" is a regex alternation.
-    if (!any(vapply(seps, function(s) any(grepl(s, lines, fixed = TRUE)), logical(1))))
-      return(paste("no rows of separated values were found in this file - it holds",
-                   "text, but not a table"))
-    return(NULL)
+    head_lines <- utils::head(lines, .TABULAR_SCAN_LINES)
+    for (s in seps) if (.delimited_tabular(head_lines, s)) return(NULL)
+    # A declared header_regex is a template saying "MY table starts at this line",
+    # so finding one is direct evidence of that bank's table even when the shape
+    # test cannot see it -- an export with a preamble and no transactions at all
+    # has one wide line among narrow ones and no run to find. It stays a YAML
+    # fact, so a new bank with a preamble is covered without a code change.
+    hdr <- unlist(lapply(templates %||% list(),
+                         function(t) as.character(t$preamble$header_regex %||% character(0))))
+    for (h in hdr[!is.na(hdr) & nzchar(hdr)])
+      if (any(safe(grepl(h, lines, perl = TRUE), FALSE))) return(NULL)
+    return(paste("no rows of separated values were found in this file - it holds",
+                 "text, but not a table"))
   }
   if (identical(kind, "excel")) {
     tbl <- input$table
@@ -326,13 +374,21 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                      template_version = as.character(template_version),
                      template_sha256 = tmpl_sha))
 
+      # EVERY status message below lands on the VERDICT CARD (app.R renders
+      # res$messages there, under the headline and above the "Read as: ANZ
+      # everyday statement" chip). So they say the template in WORDS. A template
+      # id is a maintainer's handle: the person holding the statement cannot
+      # check a figure against "zz_tie_b_csv", and the charter's interface rule
+      # forbids putting an engine code in front of her. The id is still on every
+      # run-log record, every diagnostic and Admin, which is where it is useful.
+      used_name <- template_display_name(template)
       msg <- if (status == "ok") {
         status_message("ok", sprintf("matched %s, %d row(s), trust %s",
-                                     template$id, row_count, recon$trust$level))
+                                     used_name, row_count, recon$trust$level))
       } else if (row_count == 0L) {
         status_message("unsupported",
           sprintf("%s matches the wording on this statement but read no transactions from it",
-                  template$id),
+                  used_name),
           "the columns are most likely in the wrong place - open this statement in the template toolkit and check where they sit")
       } else {
         status_message("needs_review",
@@ -345,12 +401,20 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # without saying which of them produced these figures leaves the reader unable
       # to check the answer against the right template.
       if (ambiguous) {
-        others <- setdiff(det$tied, template$id)
+        # Names, not ids -- see used_name above. A tie is most often the SAME
+        # layout set up twice, so the alternatives can share the used template's
+        # display name; naming "the alternative" would then just repeat what she
+        # was already told. When nothing distinguishes them there is nothing for
+        # her to check against, and the count is the whole fact.
+        others <- setdiff(unique(vapply(det$tied,
+          function(id) template_display_name(templates[[id]]), character(1))), used_name)
         msg <- c(status_message("needs_review",
-          sprintf("%s templates fit this statement equally well; it was read with %s",
-                  length(det$tied), template$id),
-          sprintf("worth a check against the alternative%s: %s",
-                  if (length(others) == 1L) "" else "s", paste(others, collapse = ", "))), msg)
+          sprintf("%s templates fit this statement equally well; it was read as %s",
+                  length(det$tied), used_name),
+          if (length(others))
+            sprintf("worth a check against the alternative%s: %s",
+                    if (length(others) == 1L) "" else "s", paste(others, collapse = ", "))
+          else "the same layout is set up more than once - one of them read this file"), msg)
       }
 
       result$status <- status

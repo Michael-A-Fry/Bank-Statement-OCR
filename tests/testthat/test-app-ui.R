@@ -631,14 +631,23 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
   # into an ascending one. It is now match() sorted DESCENDING: the same order with
   # the arithmetic taken out. Asserted as an ORDER, not as a spelling, so the two
   # cannot be mistaken for each other again.
+  #
+  # The column POSITIONS are no longer written as literals. A Confidence column
+  # was added in the middle of this frame, which shifted every index below it, and
+  # a hard-coded `5` would have hidden the wrong column and sorted the table on the
+  # wrong key with nothing on screen to notice it. They are addressed by name.
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 44L)
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 60L)
   expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
   expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
   expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
   expect_match(blk, "severity <- match\\(b\\$status, BATCH_STATUSES")
-  expect_match(blk, 'order = list\\(list\\(5, "desc"\\), list\\(4, "asc"\\)\\)')
+  expect_match(blk, 'at <- function\\(nm\\) which\\(names\\(disp\\) == nm\\) - 1L')
+  expect_match(blk, 'order = list\\(list\\(at\\("order"\\), "desc"\\), list\\(at\\("What to check"\\), "asc"\\)\\)')
+  expect_match(blk, 'visible = FALSE, targets = at\\("order"\\)')
   expect_false(grepl("length(BATCH_STATUSES) + 1L -", blk, fixed = TRUE))
+  # ...and no bare integer target survives, which is the whole point of at()
+  expect_false(grepl("targets = 5", blk, fixed = TRUE))
   # the table is sortable and clickable at all
   expect_match(blk, 'selection = "single"', fixed = TRUE)
   # the engine's order really is worst-last, which is what descending re-reads
@@ -940,13 +949,22 @@ test_that("a validity window the pickers cannot show is refused, and never silen
 # quarters reads as one quarter unless the count is said beside it.
 test_that("the number of statement periods is shown where the period is shown", {
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_summary <- renderUI", 40L)
+  # The card reads the ranges off .period_lines(), which is where the count now
+  # lives too -- on the range it came FROM (the statement's printed period, which
+  # is what the engine merged), not on whichever range happened to be shown.
+  expect_match(.ui_block(src, "output\\$cv_summary <- renderUI", 12L),
+               "\\.period_lines\\(")
+  blk <- .ui_block(src, "\\.period_lines <- function", 40L)
   expect_match(blk, "n_periods", fixed = TRUE)
   expect_match(blk, "%d periods", fixed = TRUE)
-  # on the same line as the range it belongs to
-  expect_match(blk, 'sprintf\\("Period: %s%s%s", drange')
-  # and only when there really is more than one
-  expect_match(blk, "isTRUE\\(np > 1L\\)")
+  expect_match(blk, "isTRUE\\(np > 1L\\)")      # only when there really is more than one
+  f <- .ui_fun(".period_lines")
+  got <- f(as.Date(c("2025-01-05", "2025-03-20")), "2025-01-01", "2025-03-31", 3L)
+  expect_true(any(grepl("3 periods", got, fixed = TRUE)))
+  expect_true(any(grepl("^Statement period: ", got)))
+  # one period says nothing extra
+  expect_false(any(grepl("periods", f(as.Date("2025-01-05"), "2025-01-01", "2025-01-31", 1L),
+                         fixed = TRUE)))
 })
 
 test_that("anything the engine had to say about a merged span is said on screen", {
@@ -1325,8 +1343,9 @@ test_that("the batch Result column gathers the FAILURES on the first click", {
   # the very click meant to gather what went wrong. The initial order was right
   # and the old test only checked the initial order, so the inversion was
   # invisible. Pin the click direction, not just the opening state.
-  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 44L)
+  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 60L)
   expect_match(blk, 'orderSequence = list\\("desc", "asc"\\)')
+  expect_match(blk, 'orderData = at\\("order"\\), targets = at\\("Result"\\)')
 })
 
 test_that("the stored-window banner stops claiming the boxes are empty once they are not", {
@@ -1494,11 +1513,20 @@ test_that("no template id or match score reaches the result page", {
 test_that("a template name does not end in 'statement statement'", {
   # A PDF drafted in the toolkit is saved with statement_type "statement"
   # (R/draft.R), and the label appended the word again.
-  f <- .ui_fun("friendly_tpl")
-  # the pure tail of it: the suffix rule, exercised through the source it lives in
-  expect_match(.ui_block(.ui_src(), "friendly_tpl <- function", 30L),
-               'grepl\\("statements\\?\\$", lab, ignore.case = TRUE\\)')
-  expect_true(is.function(f))
+  #
+  # The suffix rule is now .tpl_label(), because TWO template sets feed it: the
+  # transaction templates and the form (mode: fields) templates, which were
+  # printing raw ids for want of exactly these four lines.
+  f <- .ui_fun(".tpl_label")
+  expect_identical(f("Sample Everyday Statement", ""), "Sample Everyday Statement")
+  expect_identical(f("BNZ", "everyday"), "BNZ everyday statement")
+  expect_identical(f("ANZ", "kiwisaver"), "ANZ kiwisaver statement")
+  expect_true(is.na(f("", "")))                      # nothing to build a name from
+  # ...and an ABSENT bank is absent, not the two letters "N" and "A" -- which is
+  # the "Read as: NA NA statement" this helper's other caller was fixed for
+  expect_true(is.na(f(NA, NA)))
+  expect_identical(f(NA, "everyday"), "everyday statement")
+  expect_true(is.function(.ui_fun("friendly_tpl")))
 })
 
 # A typed page the document does not have was clamped for the PICTURE and left as
@@ -1610,4 +1638,286 @@ test_that("assigning or removing a box says so where the box was drawn", {
   expect_match(joined, "\\.has_date_col <- function")
   expect_match(.ui_block(src, "output\\$g_status <- renderUI", 60L),
                "There is no date column, so no rows can be read")
+})
+
+# ---- the screen that grades a conversion cannot look clean while it is not ---
+#
+# Everything below was measured on a real statement in a browser before it was
+# written; each one is a place the screen said something the tool itself already
+# knew to be untrue.
+
+# CARDINAL. The proof strip is the first quality signal on the page, and it was
+# pinned to five NAMED checks. dates_within_period and transaction_count are
+# verdict checks that CAN FAIL and were permanently off it -- so a statement drew
+# three ticks and a dash under a key promising "a problem", while the Checks table
+# two disclosures down read "All dates fall in the statement period | Problem |
+# 34 date(s) outside period"; and a statement that printed nine transactions and
+# gave up seven drew four chips, none red.
+test_that("the proof strip cannot be all-clear while a check has failed", {
+  pick <- .ui_fun(".proof_pick")
+  listed <- c("balance_reconciliation", "no_unparsed_rows", "amount_direction",
+              "running_balance_continuity", "dates_readable")
+  # a failing check that is NOT on the list is added, and named last so the
+  # confirmations a reviewer asked for keep their order
+  got <- pick(name   = c("balance_reconciliation", "dates_readable", "dates_within_period"),
+              status = c("pass", "pass", "fail"), listed = listed)
+  expect_true("dates_within_period" %in% got)
+  expect_identical(got[length(got)], "dates_within_period")
+  # a CLEAN run's strip is exactly what it was: the listed checks, nothing added
+  expect_identical(pick(c("balance_reconciliation", "dates_readable", "dates_within_period"),
+                        c("pass", "pass", "pass"), listed),
+                   c("balance_reconciliation", "dates_readable"))
+  # a listed check that fails is not drawn twice
+  expect_identical(pick(c("balance_reconciliation"), c("fail"), listed),
+                   "balance_reconciliation")
+  # an NA status is not a failure, and must not put an NA name on the strip
+  expect_identical(pick(c("balance_reconciliation", "transaction_count"),
+                        c("pass", NA), listed), "balance_reconciliation")
+  # ...and the renderer really uses it
+  expect_match(.ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 8L),
+               "\\.proof_pick\\(k\\$name, k\\$status, \\.PROOF_CHECKS\\)")
+})
+
+# "Period:" was the min/max of the TRANSACTION dates whenever any row had one, so
+# every transaction was inside the range the screen called the period BY
+# CONSTRUCTION -- and "34 date(s) outside period" beside it could only ever read
+# as a bug in the tool. The statement's own printed period appeared nowhere.
+test_that("the transaction span and the statement's printed period are both named", {
+  f <- .ui_fun(".period_lines")
+  got <- f(as.Date(c("2025-08-15", "2025-09-13")), "13 Aug 25", "1 Sep 25")
+  expect_length(got, 2L)
+  expect_identical(got[1], "Transactions span: 15 Aug 2025 to 13 Sep 2025")
+  # the header goes through the same parser the check uses, so the dates on screen
+  # are the dates in the check's Expected column (2025-08-13..2025-09-01)
+  expect_identical(got[2], "Statement period: 13 Aug 2025 to 01 Sep 2025")
+  # neither range is ever printed under the other's name
+  expect_false(any(grepl("^Period:", got)))
+  # a header with no period says so by absence, not by borrowing the span
+  expect_identical(f(as.Date("2025-08-15"), NA, NA), "Transactions span: 15 Aug 2025 to 15 Aug 2025")
+  # a period bound that will not parse is shown in the statement's own words
+  expect_match(f(as.Date(character(0)), "the 2024 tax year", NA)[1],
+               "Statement period: the 2024 tax year")
+  # nothing at all still leaves a labelled line, never a blank
+  expect_identical(f(as.Date(character(0)), NA, NA), "Transactions span: -")
+})
+
+# The toolkit is where a template is DECIDED and SAVED, and its verdict branched
+# on nothing but n > 0. Measured: asb.pdf drew a green tick over "1 transaction
+# row read ... If they are right, click Save template" while row_coverage() on
+# that same drafted template already knew page 2 kept nothing; d5_sample.pdf drew
+# one over "19 transaction rows read", and the screen after saving said "11
+# discontinuity(ies)".
+test_that("the toolkit preview asks what the tool already knows before it ticks", {
+  f <- .ui_fun("preview_doubts")
+  clean <- data.frame(row_id = 1:3, amount = c(10, -5, -2), balance = c(10, 5, 3))
+  cov_ok <- list(applicable = TRUE, actionable_skips_total = 0L, empty_pages = integer(0),
+                 diagnosis = "Every candidate row was kept.")
+  expect_identical(f(clean, cov_ok), character(0))       # a clean draft still ticks
+  # balances that do not follow are what a dropped row looks like from here
+  broken <- data.frame(row_id = 1:3, amount = c(10, -5, -2), balance = c(10, 5, -40))
+  d <- f(broken, cov_ok)
+  expect_length(d, 1L)
+  expect_match(d, "balances do not follow in 1 place")
+  # a page that carried words and kept nothing is the engine's own sentence
+  cov_bad <- list(applicable = TRUE, actionable_skips_total = 9L, empty_pages = 2L,
+                  diagnosis = "Page(s) 2 carry words but kept no rows -- either the column bands don't line up on this layout, or those pages hold no transactions.")
+  expect_match(f(clean, cov_bad)[1], "Page(s) 2 carry words but kept no rows", fixed = TRUE)
+  # ...but an empty page that lost NOTHING is not evidence of anything. Measured
+  # on the bundled specimen: page 1 is the cover, keeps 0 rows and skips 0
+  # candidates, and the first version of this said "but not all of the page" over
+  # a perfect draft. A tool that cries wolf on the common case gets ignored.
+  cov_cover <- list(applicable = TRUE, actionable_skips_total = 0L, empty_pages = 1L,
+                    any_page_rescaled = FALSE,
+                    diagnosis = "Page(s) 1 carry words but kept no rows -- either the column bands don't line up on this layout, or those pages hold no transactions.")
+  expect_identical(f(clean, cov_cover), character(0))
+  # ...unless the parser had to RESCALE that page, which loses rows without
+  # leaving candidates behind to count
+  cov_scaled <- utils::modifyList(cov_cover, list(any_page_rescaled = TRUE))
+  expect_length(f(clean, cov_scaled), 1L)
+  # both at once, and neither swallows the other
+  expect_length(f(broken, cov_bad), 2L)
+  # a non-PDF (no coverage to read) is judged on the balances alone, not refused
+  expect_identical(f(clean, NULL), character(0))
+  expect_length(f(broken, NULL), 1L)
+  # ...and the tick itself is spent on the answer, not on n > 0
+  blk <- .ui_block(.ui_src(), "output\\$g_status <- renderUI", 40L)
+  expect_match(blk, "preview_doubts\\(tx, g_preview_cov\\(\\)\\)")
+  expect_match(blk, 'if \\(ok\\) "verdict verdict-high" else "verdict verdict-medium"')
+  expect_false(grepl('if (n > 0L) return(div(class = "verdict verdict-high"', blk, fixed = TRUE))
+})
+
+# The form result was the only table on Convert handed straight to datatable():
+# a FIELD column of engine schema names beside a LABEL column that already said
+# the same thing in the document's words, and three columns of `true` / `false`.
+test_that("the form result table shows no schema name and no raw true/false", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_fields <- renderDT", 22L)
+  expect_match(blk, "yes_no\\(f\\$matched\\)")
+  expect_match(blk, "yes_no\\(f\\$required\\)")
+  expect_match(blk, "What the document calls it")
+  # the engine's own column names never reach the frame that is drawn
+  expect_false(grepl('"field", "label", "value", "matched"', blk, fixed = TRUE))
+  # a field whose label is blank keeps its identity in readable form
+  expect_match(blk, "cv_friendly_cols\\(as\\.character\\(f\\$field")
+  yn <- .ui_fun("yes_no")
+  expect_identical(yn(c(TRUE, FALSE, NA)), c("yes", "no", "no"))
+})
+
+# "Read as: anz_kiwisaver_fields". friendly_tpl returned the RAW ID for anything
+# not in all_templates(), and form templates are deliberately not in that set --
+# so the fix for "Read as: NA NA statement" swapped one wrong answer for an engine
+# code on a customer-facing screen, which the charter forbids outright.
+test_that("a form template is named, not printed as its id", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "all_field_templates <- reactive")
+  expect_match(.ui_block(src, "all_field_templates <- reactive", 4L),
+               "load_fields_templates\\(FIELDS_DIR, USER_FIELDS_DIR\\)")
+  expect_match(.ui_block(src, "friendly_tpl <- function", 20L),
+               "all_field_templates\\(\\)\\[\\[tid\\]\\]")
+  # the shipped form template really does carry the two fields the name is built
+  # from, so this is wired to a fact and not to a hope
+  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"))
+  t <- ft[["anz_kiwisaver_fields"]]
+  expect_false(is.null(t))
+  expect_identical(.ui_fun(".tpl_label")(t$bank, t$statement_type), "ANZ kiwisaver statement")
+})
+
+# One needs_review screen carried three alarm levels: a headline calling the
+# failures "secondary and commonly flag", a What-to-check list holding only the
+# dates item, a HIGH diagnostic saying "split it into one statement per file", and
+# a prominent button offering the template toolkit instead.
+test_that("what to check leads with the highest-severity diagnostic, and it carries the action", {
+  top <- .ui_fun("top_diagnostics")
+  d <- data.frame(where = c("upload", "dates"),
+                  category = c("multiple_statements", "date_out_of_range"),
+                  severity = c("high", "medium"),
+                  detail = c("the balance block appears 2 times", "34 date(s) outside period"),
+                  how_to_fix = c("Split it into one statement per file and re-run.", "..."),
+                  stringsAsFactors = FALSE)
+  got <- top(list(status = "needs_review", diagnostics = d))
+  expect_identical(nrow(got), 1L)
+  expect_identical(got$category[1], "multiple_statements")
+  # a failed / unsupported run's top diagnostic IS its headline message, already on
+  # the card, so it is not listed a second time
+  expect_identical(nrow(top(list(status = "failed", diagnostics = d))), 0L)
+  expect_identical(nrow(top(list(status = "unsupported", diagnostics = d))), 0L)
+  # "none" is the explicit no-issues row, not a fault
+  expect_identical(nrow(top(list(status = "ok", diagnostics = data.frame(
+    category = "none", severity = "high", detail = "", how_to_fix = "",
+    stringsAsFactors = FALSE)))), 0L)
+  expect_identical(nrow(top(list(status = "ok"))), 0L)          # no diagnostics at all
+  # the card lists it, and the remedy is the action line under it
+  blk <- .ui_block(.ui_src(), "failed_checks_ui <- function", 34L)
+  expect_match(blk, "dg <- top_diagnostics\\(res\\)")
+  expect_match(blk, "plain_label\\(dg\\$category\\[i\\], DIAG_PLAIN\\)")   # never the code
+  expect_match(blk, "Do this first: ")
+  expect_match(blk, "dg\\$how_to_fix\\[1\\]")
+})
+
+# The template invitation was keyed on `needs_review` -- a verdict about the
+# FIGURES -- so a run whose balance reconciled to the cent and whose 79 dates all
+# read was told "worth checking it's the right match" with a warning-coloured
+# button. The charter says the tool decides the template.
+test_that("the match is only called into question when detection left a question", {
+  thin <- .ui_fun(".match_is_thin")
+  expect_false(thin(list(detect = list(thin = FALSE, ambiguous = FALSE, tied = character(0)))))
+  expect_true(thin(list(detect = list(thin = TRUE))))
+  expect_true(thin(list(detect = list(ambiguous = TRUE))))
+  expect_true(thin(list(detect = list(tied = c("a", "b")))))
+  expect_false(thin(list()))                       # nothing detected: claim nothing
+  # the engine really does record those three, so this reads a fact
+  det <- readLines(file.path(engine_root(), "R", "convert.R"), warn = FALSE)
+  expect_true(any(grepl("thin", det, fixed = TRUE)))
+  blk <- .ui_block(.ui_src(), "output\\$cv_rematch <- renderUI", 24L)
+  expect_match(blk, "\\.match_is_thin\\(res\\)")
+  expect_false(grepl("worth checking it's the right match", blk, fixed = TRUE))
+})
+
+# A text file renamed .pdf: "no text could be read from this PDF - it is damaged,
+# encrypted, or not a PDF at all", and directly under it an offer to open the
+# template toolkit and "save an improved template". There is no page to draw on.
+test_that("the template toolkit is not offered for a file that was never read", {
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 105L)
+  i <- regexpr('if (identical(st, "failed")) return(NULL)', blk, fixed = TRUE)
+  expect_gt(i, 0L)
+  j <- regexpr('actionButton("cv_teach_go_fix"', blk, fixed = TRUE)
+  expect_gt(j, 0L)
+  expect_lt(i, j)                     # the guard is BEFORE the offer, so it works
+})
+
+# A "Checks" heading with no rows under it, on the one screen with the least to
+# go on -- and the page promises "every check that exists for your statement is in
+# this table". A blank table cannot be told from a rendering failure.
+test_that("an empty checks or coverage table says why it is empty", {
+  why <- .ui_fun(".why_empty")
+  expect_match(why(list(status = "failed")), "Nothing was read from this file")
+  expect_match(why(list(status = "unsupported")), "No template read this statement")
+  for (st in c("failed", "unsupported"))
+    expect_match(why(list(status = st)), "nothing to check and no fields to report")
+  blk <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 22L)
+  expect_match(blk, "if \\(has_kpis\\) DTOutput\\(\"cv_kpis\"\\) else said")
+  expect_match(blk, "if \\(has_cov\\) tagList")
+})
+
+# "Was this conversion correct?" appeared under "Could not read this file" -- a
+# question about figures on a screen with no figures, whose one consequential
+# answer withdraws rows from the dashboards that were never published. And the
+# three answers were drawn with the SAME tick and cross the proof-strip key
+# twenty lines above defines as "checked and passed" and "a problem".
+test_that("feedback is asked only about a conversion, and never in the proof glyphs", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_feedback <- renderUI", 40L)
+  expect_match(blk, 'res\\$status %\\|\\|% ""\\) %in% c\\("ok", "needs_review"\\)')
+  expect_match(blk, 'choiceNames = list\\("Correct", "Minor issues", "Wrong"\\)')
+  # the proof strip's three glyphs mean one thing each on this page
+  for (g in c("\\u2713", "\\u2717")) expect_false(grepl(g, blk, fixed = TRUE))
+  expect_match(blk, "choiceValues = list\\(\"correct\", \"minor_issues\", \"wrong\"\\)")
+})
+
+# The batch row for a file said "Converted successfully" with "-" under What to
+# check, while opening that same row said "confidence: medium / Read cleanly.
+# Something could not be proven". On a thirty-file case there was no way to tell
+# the clean files from the merely-uncomplaining ones without opening all thirty.
+test_that("the batch table grades a file with the same word its own card uses", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 60L)
+  expect_match(blk, "Confidence = dash\\(b\\$trust\\)")
+  # the card prints res$trust$level, and convert_batch really carries it per file
+  expect_match(.ui_block(src, "output\\$cv_headline <- renderUI", 45L),
+               "res\\$trust\\$level")
+  bsrc <- readLines(file.path(engine_root(), "R", "batch.R"), warn = FALSE)
+  expect_true(any(grepl("^\\s*trust\\s+= rep\\(NA_character_", bsrc)))
+  expect_true(any(grepl("out\\$trust\\[i\\]", bsrc)))
+})
+
+# app.R is the file a maintainer reads first, and two comments in it stated a
+# MEASURED fact that a later fix had made false.
+test_that("no comment in app.R still claims the drafter reads nothing", {
+  joined <- paste(.ui_src(), collapse = "\n")
+  expect_false(grepl("draft_template reads 0 rows", joined, fixed = TRUE))
+  expect_false(grepl("the drafter reads 0 rows", joined, fixed = TRUE))
+  # ...and what replaced them is a figure, which is what makes it re-checkable
+  expect_match(joined, "311 rows over the file")
+})
+
+# An empty date box posts the literal string "NaN-NaN-NaN", and shiny's own
+# shiny.date handler ran as.Date() over it, caught the error and re-raised it as a
+# warning -- twice on every toolkit open, for a value the app handles correctly.
+# suppressWarnings() at the widget cannot reach it: it fires a tick later, inside
+# shiny's input decoding.
+test_that("an empty date picker is decoded quietly, and a real date still arrives", {
+  f <- .ui_fun(".decode_shiny_date")
+  expect_warning(got <- f("NaN-NaN-NaN"), NA)
+  expect_true(is.na(got))
+  expect_s3_class(got, "Date")
+  expect_identical(f("2024-03-01"), as.Date("2024-03-01"))
+  expect_identical(f(list("2024-03-01", NULL)), as.Date(c("2024-03-01", NA)))
+  # one empty box in a pair no longer blanks the other, which shiny's own
+  # all-or-nothing coercion did
+  expect_identical(f(list("2024-03-01", "NaN-NaN-NaN")), as.Date(c("2024-03-01", NA)))
+  # and it is really registered, before anything can render a date box
+  src <- .ui_src()
+  i <- grep('registerInputHandler\\("shiny.date", force = TRUE, \\.decode_shiny_date\\)', src)
+  expect_length(i, 1L)
+  expect_true(i < grep("\\.eff_picker <- function", src)[1])
 })

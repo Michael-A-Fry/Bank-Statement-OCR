@@ -279,6 +279,36 @@ test_that("no_unparsed_rows is 'na', not a false 'pass', when it cannot be compu
     reconcile(pd)$kpis$name == "no_unparsed_rows"], "pass")
 })
 
+# ---- a check that did not run shows no figures ------------------------------
+# The Checks table prints Expected and Read beside the verdict. "could not be
+# checked | Expected 2 | Read 2" is the SAME pair of numbers a clean CSV shows
+# under "OK", so the figures could not tell the two apart -- and two numbers that
+# agree, beside a check that never ran, read as a pass.
+test_that("an 'na' check reports no expected/actual figures", {
+  p <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
+  p$visual_row_count <- 5L; p$skipped_row_count <- 3L
+  k <- reconcile(p)$kpis
+  row <- k[k$name == "no_unparsed_rows", ]
+  expect_equal(row$status, "na")
+  expect_true(is.na(row$expected))
+  expect_true(is.na(row$actual))
+  expect_match(row$detail, "2 of 5 visual row")   # the numbers stay, in the Detail
+  # ...and it holds for EVERY check, because the rule lives in .kpi() itself --
+  # a builder cannot opt out of it by forgetting.
+  expect_true(is.na(.kpi("anything", "na", expected = 9, actual = 9)$expected))
+  expect_true(is.na(.kpi("anything", "na", expected = 9, actual = 9)$actual))
+  # INFORMATIONAL rows are not checks that could not run -- their figure is the
+  # whole point of the row, and the screen gives them their own word.
+  expect_equal(as.integer(k$actual[k$name == "redaction_summary"]), 0L)
+  expect_equal(as.integer(
+    .kpi("anything", "na", actual = 9, informational = TRUE)$actual), 9L)
+  # and a check that DID run still shows both figures
+  pd <- .parsed(.tx(c(-10, 40)), source_line_count = 2)
+  kd <- reconcile(pd)$kpis
+  expect_equal(as.integer(kd$expected[kd$name == "no_unparsed_rows"]), 2L)
+  expect_equal(as.integer(kd$actual[kd$name == "no_unparsed_rows"]), 2L)
+})
+
 # That same detail is customer-facing, and it carried two things it should not:
 # a raw KPI name (which the operational guide tells the analyst to report AS A
 # BUG when it appears on screen), and a screen name -- "the Inspect view" -- that

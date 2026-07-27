@@ -133,6 +133,43 @@ DIAG_PLAIN <- c(
   ocr                     = "page(s) machine-read (OCR)",
   ocr_confidence_unknown  = "scan quality unknown",
   none                    = "no issues found")
+# ROW FLAGS -> plain words. A flag is how one ROW says something is true of it
+# ("this value arrived hidden", "the year came from the statement, not this
+# line"). Both transaction tables mapped their column HEADERS through
+# cv_friendly_cols() and then printed the VALUES verbatim, so the cells of the
+# one table a forensic reviewer checks figures in read `ocr_low_conf` and
+# `date_year_inferred` -- engine codes, on the screen she is meant to trust.
+#
+# ONE entry per token the engine can emit. R/parse.R (all paths) and
+# R/parse_pdf_table.R (the PDF-only ones) are the authoritative pair, and
+# test-seams.R reads the tokens back off those two files, so this map cannot
+# fall behind the engine or keep an entry the engine has stopped emitting.
+#
+# Each says what is TRUE of the row, never what to do about it: the row is one
+# cell wide, and the advice belongs to the check or diagnostic that owns it.
+FLAG_PLAIN <- c(
+  redacted           = "hidden on the statement - no value was derived",
+  malformed          = "the amount could not be read as a number",
+  fx                 = "carries a foreign-currency amount",
+  date_unresolved    = "a date was printed but could not be read",
+  date_year_inferred = "year taken from the statement, not from this line",
+  no_date            = "no date of its own was printed",
+  date_alt_format    = "date read in a different style than expected",
+  forced             = "added by hand from See it on the page",
+  row_stitched       = "re-joined from two half-rows",
+  row_text_merged    = "wrapped description reassembled",
+  ocr_low_conf       = "machine-read, and the scan was unsure of a character")
+# plain_flags(x) -- a row's comma-separated flags, in words, one cell at a time.
+# An unknown token falls back to ITSELF, never to a blank: a flag this screen has
+# no wording for is still something true of that row, and a blank cell would hide
+# it. "" in, "" out -- most rows carry nothing.
+plain_flags <- function(x) vapply(as.character(x), function(e) {
+  if (is.na(e) || !nzchar(trimws(e))) return("")
+  toks <- trimws(strsplit(e, ",", fixed = TRUE)[[1]])
+  toks <- toks[nzchar(toks)]
+  if (!length(toks)) return("")
+  paste(plain_label(toks, FLAG_PLAIN), collapse = "; ")
+}, character(1), USE.NAMES = FALSE)
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
 # plain_failing_check(x) -- the batch table's "What to check" column, in words.
