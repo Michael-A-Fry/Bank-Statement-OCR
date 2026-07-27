@@ -108,6 +108,22 @@ were regressions introduced during this same release and caught by reviewing it.
 - **Several statements in one file are still split, not merged** — verified on a
   real 3-statement bundle, where the per-statement balances chain 95.22 → 37.88 →
   11.66 and each reconciles on its own anchors.
+- **…and that split now works for every bank.** It was gated on a template asking
+  permission, and of thirteen shipped templates **only ANZ ever did** — so a
+  Westpac, ASB, BNZ or Kiwibank bundle, and anything an analyst built, got no
+  split at all and fell back to being read as one merged statement. That is where
+  *"dates outside the period"* and *"balance failed"* came from. Measured on a real
+  two-statement Westpac bundle: `needs_review` with **low** trust and both the
+  balance and running-balance checks failing → **converted, no failing checks**.
+  The safety never lived in the opt-in: `split_bundle()` still refuses unless an
+  independent signal confirms the statement count *and* every statement reconciles
+  on its own. `split: false` remains, for a template that must never be cut.
+  (`N39`)
+- **A span is only claimed when one was made.** On a bundle the screen said *"3
+  distinct statement periods found, read as one span 20 Apr to 19 Jun"* — and no
+  span existed; the file had been split into three and reconciled separately. The
+  figures were right and the sentence describing how they were produced was false.
+  (`N38`)
 
 ### Smaller, all from use
 
@@ -143,6 +159,50 @@ were regressions introduced during this same release and caught by reviewing it.
   the dates it applies between, and the dashboard is no longer mentioned to people
   who cannot see one.
 
+### Simplification, and what it turned up
+
+Three agents on strictly disjoint files, then an adversarial review of the result.
+`app.R` 4,782 → 4,620 lines, `R/batch.R` 241 → 174, CSS extracted to `www/app.css`.
+The simplifications are the small part; what they exposed is the point.
+
+- **Two bank pickers, and the front one silently won.** The Bank control appeared
+  twice — once in front, once inside "It picked the wrong bank?" — with separate
+  state. Confirmed live: with ANZ in front and ASB chosen inside, the conversion
+  ran on **ANZ**. A bank chosen inside the panel was discarded, under a comment
+  claiming the two were "the same choice". One control now.
+- **The X-ray was drawing bands ~9.5pt from where the reader reads them.** It and
+  the parser snapped page scaling on *reciprocal* ratios, so on a band of page
+  sizes the view an analyst uses to judge a template disagreed with the parse it
+  was judging. Proven across 144 render cases: 122 identical to floating-point
+  noise, and all 22 that moved were the correction.
+- **One definition of the result page's state.** Three routes each hand-maintained
+  an overlapping set of ~9 reactives, which is how a previous statement's feed
+  verdict ends up beside a new statement's figures. Writing it found a real
+  instance: a finished batch left the last file's verdict in session state.
+- **A "redraw that band" instruction was withdrawn, not tuned.** It fired on
+  correct bands — and, being first in its chain, hid the message that named the
+  real damage. No threshold separates the cases: a genuine fault leaves 5.13% of
+  words unclaimed on one statement while a *correct* template leaves 9.44% on
+  another. The measurements stay; the verdict is gone. Telling someone to move a
+  correct band is how you make a wrong figure.
+- **The batch table now gathers the failures on the first click.** It sorted
+  *best*-first — the click meant to group what went wrong put the clean files on
+  top. (`N41`)
+- **The engine no longer reads a UI file off disk.** `R/batch.R` was `sys.source`ing
+  `ui_labels.R` at runtime to fetch a sentence, for a caller that does not exist.
+  It carries its own codes now and the screen adds the words.
+- **An unfinished seed template cannot join detection.** `templates_seed/` holds
+  ten drafts whose column positions are placeholders marked `# TODO` — and YAML
+  drops comments, so a half-drawn one copied into use had nothing the loader could
+  see. Six of the ten validated as-is. They now carry `draft: true`, and the
+  loader refuses them with instructions. (`N40`)
+- **Smaller, all found by review:** a validity-window banner that kept claiming
+  the boxes were empty after they were filled and hid the backwards-date warning
+  (`N42`); a template whose window is the four letters `NA` opening under a red
+  error (`N43`); a guard that detected a bad window by *catching an exception*,
+  which a later contract fix silently removed (`N44`); and an all-clear headline
+  that could appear while a mapped band had read nothing anywhere (`N45`).
+
 ### For the maintainer
 
 - **Two duplicate input ids were live** — one button existed three times, two of
@@ -156,23 +216,34 @@ were regressions introduced during this same release and caught by reviewing it.
   summary-line invariant was mutation-tested and found *vacuous* — deleting the
   guard did not trip it — so it carries a case with teeth as well as the golden net.
 
-**Suite:** 3,101 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
-(from 2,880 at 1.1.0). Register: 99 findings, 96 fixed, 3 open —
+**Suite:** 3,342 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
+(from 2,880 at 1.1.0). Register: 107 findings, 104 fixed, 2 open —
 [`docs/context/findings-register.md`](docs/context/findings-register.md).
 
 ### Known and deliberate
 
-- **`app.R` is 4,661 lines and still not split.** The case is now stronger, not
-  weaker: the duplicate-id bug above was findable only by reading two distant
-  regions of one file at once, which is the failure mode a split exists to prevent.
-  The cheapest cut — moving the CSS to `www/` — is 265 lines and moves no concepts.
-- **Three older findings wait on evidence, not effort** — a spread of real forms to
+- **`app.R` is ~4,600 lines and still not split.** The CSS move took 250 lines out
+  and removed **zero** reactive complexity — CSS was the cheapest 250 lines in the
+  file to lose. What makes it hard is ~3,800 lines of interleaved reactives in one
+  scope. A concrete, de-risked plan is in the findings register, including the
+  two-line test-helper change that must go first: 60 tests currently grep `app.R`
+  by physical line offset, so nothing can move until they read a directory.
+- **Two older findings wait on evidence, not effort** — a spread of real forms to
   tune the form fingerprint against, and one hand-keyed golden scan to measure OCR
-  digit accuracy. Both fail closed and loudly today.
-- **Two mechanisms now answer "one file, several periods"** — the span merge and the
-  bundle split, mutually excluded by a page-marker count. One of them is the right
-  answer and the other should go; that is the largest single simplification
-  available in the engine.
+  digit accuracy. Both fail closed and loudly today, so neither can put a wrong
+  figure on screen. The register says exactly what to collect, and which of the two
+  a no-PII AI survey can answer (the first; not the second, because the evidence
+  there is the client's own figures).
+- **Two mechanisms answer "one file, several periods", and both are needed.** The
+  bundle split takes several separately-issued documents, each with its own anchors
+  to reconcile against; the span merge takes one document with several sections,
+  where there are no boundaries to cut on at all. An earlier review called them
+  redundant and recommended deleting one — the register records why that is wrong.
+- **`.unique_names()` looks like duplication and is a guard.** Two files both named
+  `statement.pdf` in one case would otherwise write one workbook, and both rows'
+  Download buttons would resolve to it — the second statement's figures arriving as
+  the first's. The proof is a comment above it, because it has been proposed for
+  deletion once already.
 
 ---
 
