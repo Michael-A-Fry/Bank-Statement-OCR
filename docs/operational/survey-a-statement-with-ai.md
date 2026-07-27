@@ -124,6 +124,12 @@ without complaining.
    print the same words. Say so honestly — a phrase like "Date Description
    Amount Balance" appears on almost every statement in the world and is useless
    as a fingerprint.
+   If the document is a SUMMARY / FORM, answer the same question about the FORM
+   TYPE rather than the bank: could a DIFFERENT form - from this issuer or any
+   other - plausibly print the same phrase? "Tax certificate" and "Annual
+   statement" are printed on thousands of unrelated documents; an official form
+   code is the opposite. This distinction is what stops one form template
+   claiming every unrecognised document that lands on it.
 
 3. THE TRANSACTION TABLE   (skip if the document is a SUMMARY / FORM)
    3.1 The column headings, in left-to-right order, exactly as printed. If the
@@ -145,6 +151,25 @@ without complaining.
    3.4 Is each column left-, right- or centre-aligned? (Amounts are usually
        right-aligned; getting this wrong splits columns in the wrong place.)
    3.5 Roughly how many transaction rows per page?
+
+3F. IF THIS IS A SUMMARY / FORM  (skip if it has a transaction table)
+    A form has no rows to check and no balance to reconcile, so the only thing
+    holding it together is the WORDING beside each figure. Get that exactly.
+    3F.1 List every labelled figure on the document, in printed order. For each,
+         quote THE LABEL EXACTLY as printed - the words only, never the value.
+         Include the units or period if the label carries them ("Total PIE income
+         for the year ended 31 March", not "Total PIE income").
+    3F.2 For each label, say where the value sits relative to it: SAME LINE TO THE
+         RIGHT, DIRECTLY BELOW, IN A BOX ELSEWHERE ON THE PAGE, or IN A TABLE CELL.
+         This decides whether the value can be found by its wording at all.
+    3F.3 Does any label appear MORE THAN ONCE on the document with a DIFFERENT
+         value beside it (e.g. once per fund, per account, or per period)? Name
+         every label this happens to. This is the single most important answer in
+         this section - a label that repeats cannot be read as one value.
+    3F.4 Which labels are printed on EVERY copy of this form, and which appear
+         only when the holder has that kind of income/product? Say which is which.
+    3F.5 Is there an official form code or version printed anywhere (e.g. "IR 15S",
+         "RWT certificate", a revision date in the footer)? Quote it exactly.
 
 4. DATES
    4.1 How is a transaction date written? Give the pattern, and one invented
@@ -274,6 +299,9 @@ survey:
   closing_balance_label: ""   # exact wording
   period_label: ""            # exact wording of the statement-period line
   summary_labels: []          # exact wording of every non-transaction money line
+  form_labels: []             # form only: every label, exactly as printed
+  form_repeated_labels: []    # form only: labels that appear more than once
+  form_code: ""               # form only: official form/version code, or ""
   wrapped_descriptions: null  # true | false
   multiple_statements: null   # true | false
   redactions_present: null    # true | false

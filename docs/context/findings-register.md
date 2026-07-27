@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 100 findings, 97 fixed, 3 open.** The three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort: a spread of real forms to tune the form fingerprint against, and one hand-keyed golden scan to measure OCR digit accuracy against. Each fails closed and loudly today, so none of them can put a wrong figure on screen; what would unblock them is set out at the bottom of this file.
+**Where it stands: 100 findings, 97 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -154,7 +154,7 @@ _Anything discovered after the review lands here, newest at the bottom._
 | N16 | medium | open | Recovering the ANZ scan's rows exposes residual OCR digit errors, so it still fails reconciliation — correctly, and loudly. Improving scanned digit accuracy is the next real coverage step. | measured: 300 rows, reconciliation fails |
 | N17 | low | **fixed** | ImageMagick can spill a disk-backed pixel cache (~83 MB) of a statement page under memory pressure, and only clears it when the PROCESS exits — never, on a server up for months. `with_image_scratch()` now gives each piece of image work a private folder and deletes it. | R/util.R + R/ocr.R, R/detect_redaction.R, R/read_input.R |
 | N18 | low | **fixed** | The local `feed/transactions/136c69b731ca8698.csv` is a stale pre-fix artifact in the old 26-column schema. | gone; `feed/` is local-only and git-ignored |
-| N19 | low | open | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in — a correction to the original #61 measurement. | samples/_private_staging/anz_multiple.pdf |
+| N19 | low | **not-a-defect** | The real ANZ bundle reaches trust MEDIUM (not HIGH) after the split opt-in - a correction to the original #61 measurement, not a task. Trust on a split bundle is the WEAKEST segment's by design, so medium is the correct answer, not a shortfall. Re-measured after the 1.2.0 engine changes: still medium, still correct. Recorded so the earlier claim is not quoted again; nothing to build. | samples/_private_staging/anz_multiple.pdf |
 
 | N20 | high | **fixed** | The zero-row re-read is a CLIFF, not a measure. A template that reads 5 rows of a 500-row statement is exactly as wrong as one that reads 0, and passes every check: `transaction_count` only requires `n > 0` when the statement prints no stated count. | R/convert.R `empty_first`, R/reconcile.R:179 |
 | N22 | high | **fixed** | The toolkit could not repair a shipped template: the fix saved as `<id>_custom` with the same fingerprint, tied on every statement, and lost the tie-break to the very template it was correcting. It now saves `refines: <id>` and detection ranks a correction one step above the single template it names. | app.R `g_save` / R/detect.R |
@@ -477,11 +477,72 @@ by the existing commit gate, is the real simplification here. It changes
 behaviour for twelve templates, so it wants measuring across the corpus rather
 than doing on a release day.
 
-### What is holding the last three open
+### What is holding the last two open
 
-None of them is blocked on effort or on a decision. Each is blocked on **evidence
-we do not have**, and the charter's rule — never silently wrong — says a change we
-cannot measure is worse than the known, loud, honest failure it replaces.
+Neither is blocked on effort or on a decision. Each is blocked on **evidence we do
+not have**, and the charter's rule — never silently wrong — says a change we cannot
+measure is worse than the known, loud, honest failure it replaces.
+
+**Exactly what is needed, and whether an AI survey can supply it.** The short
+answer is that N15 can be answered entirely by
+[`docs/operational/survey-a-statement-with-ai.md`](../operational/survey-a-statement-with-ai.md),
+and N16 cannot be answered by it at all — for a reason worth stating plainly.
+
+**N15 — the form fingerprint gate. YES, the survey answers this.**
+What the gate has to decide is whether a phrase is distinctive enough to identify
+one form TYPE. That is a property of a CORPUS, not of a document: "Tax
+certificate" looks distinctive until you have seen it on eleven unrelated forms.
+So the missing evidence is a phrase inventory across many forms, not any one form.
+
+* **What to collect:** the survey run over **8–12 different form types**, ideally
+  from **3 or more issuers** (IRD certificates, KiwiSaver annual statements,
+  account/interest summaries, insurance or fund letters). More issuers matters
+  more than more documents — two forms from one issuer share house style and will
+  understate the collision rate.
+* **Which answers do the work:** `fingerprint_candidates`, `fingerprint_risk`,
+  `form_code`, and section 3F's `form_labels` / `form_repeated_labels`.
+* **What it becomes:** every candidate phrase from every form, cross-matched
+  against every other form and against the statement surveys already collected.
+  A phrase that appears in exactly one document is a fingerprint; a phrase that
+  appears in two is not. That measured collision rate is what `.fp_specific`
+  should be tuned against — instead of today's "any two-word phrase counts".
+* **No client data is involved.** These are the printed words of the form itself,
+  identical on every copy ever issued, and Rule 2 of the prompt already says so.
+
+**N16 — scanned digit accuracy. NO, the survey cannot answer this.**
+The evidence needed is GROUND TRUTH: what the digits on a scanned page actually
+are, to compare against what OCR read. On a real statement those digits are the
+client's money. Any output carrying them is client data by definition, so no
+no-PII survey can ever contain it. This is not a limitation of the prompt; it is
+what the finding is about.
+
+Three routes, and they are not equivalent:
+
+1. **Hand-key one real scan, in-house.** Someone types the date, description and
+   amount of every row of one scanned statement into a CSV that stays in
+   `samples/_private_staging/` (git-ignored, never leaves the building). ~20–40
+   minutes for a few hundred rows. This is the only route that measures the
+   degradations of the scanners actually in use, so it is the one that says
+   whether any tuning is real.
+2. **A synthetic scan harness — buildable with no data at all.** Render a
+   statement with known values, rasterise it at realistic DPI, degrade it
+   (blur / noise / skew / JPEG), OCR it, and compare against the truth we started
+   from. Repeatable, zero PII, and it is what tells you WHERE digits break —
+   8↔B, 5↔S, 0↔O, a lost decimal point, a thousands separator read as a full
+   stop. It cannot tell you whether those are the failures your real scans have.
+3. **A genuinely scanned public specimen** with published figures. Cheapest, but
+   there is no guarantee one exists that resembles the statements in use.
+
+**Recommended order: 2, then 1.** The harness makes the failure modes visible and
+tunable without waiting for anyone; the single hand-keyed scan then confirms the
+tuning against reality. Doing 1 alone gives one data point with no way to
+generalise; doing 2 alone risks tuning for degradations that never occur here.
+
+**Where the survey still helps N16:** it cannot supply the truth, but section 1.5
+and the scan questions describe the *character* of the degradation — DPI, whether
+the type is tightly set, whether digits touch, whether the page looks faxed. That
+is what decides which degradations the harness should model, so a handful of scan
+surveys is worth collecting before building it.
 
 **N15 — the form fingerprint gate.** Tightening "how distinctive must a phrase be
 before a form template may claim a PDF?" needs a spread of real forms to tune
