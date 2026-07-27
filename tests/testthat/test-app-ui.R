@@ -108,7 +108,7 @@ test_that("the toolkit preview says what to do when it reads nothing", {
   joined <- paste(src, collapse = "\n")
   expect_match(joined, 'uiOutput\\("g_status"\\)')
   expect_false(grepl('verbatimTextOutput("g_status")', joined, fixed = TRUE))
-  block <- .ui_block(src, "output\\$g_status <- renderUI", 25L)
+  block <- .ui_block(src, "output\\$g_status <- renderUI", 45L)
   expect_match(block, "No transaction rows read yet", fixed = TRUE)
   expect_match(block, "only the first few pages", fixed = TRUE)
   expect_match(block, "date format", fixed = TRUE)
@@ -906,4 +906,44 @@ test_that("wording is only trusted when it reaches the value she boxed", {
   tpl <- .ui_block(.ui_src(), "fb_template <- reactive", 22L)
   expect_match(tpl, "any_of = list\\(b\\$label\\)")
   expect_match(tpl, "region = list\\(page = b\\$page")
+})
+
+# ---- N34: the preview's row count is a PARTIAL read, and must say so ---------
+# draft_preview stops at PREVIEW_PAGES so the toolkit stays quick on a 46-page
+# statement. The verdict then announced that count as "N transaction rows read" -
+# so the number the analyst checks her template against is not the number the
+# conversion gives her, with nothing on screen saying why.
+test_that("the toolkit preview states that it read only the first few pages", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # the page limit and the sentence quoting it come from ONE constant
+  expect_match(joined, "PREVIEW_PAGES <- 3L", fixed = TRUE)
+  expect_match(joined, "PREVIEW_ROWS  <- 12L", fixed = TRUE)
+  expect_false(any(grepl("preview_pages = 3L", src, fixed = TRUE)))   # no stray literal
+  expect_false(any(grepl("utils::head(tx, 12)", src, fixed = TRUE)))
+  blk <- .ui_block(src, "output\\$g_status <- renderUI", 40L)
+  # it is only called partial when the document really is longer than the preview
+  expect_match(blk, "np > PREVIEW_PAGES")
+  expect_match(blk, "read from the first %d of %d pages")
+})
+
+# ---- N35: the first question has to be answerable again ----------------------
+# "A statement, or labelled values?" is asked once on the page BEHIND the toolkit
+# modal, and not at all when the toolkit is opened from a Convert result. Cancel
+# threw the work away without answering it.
+test_that("the toolkit offers a way back to the other builder, carrying the file", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'actionLink("g_not_statement"', fixed = TRUE)
+  blk <- .ui_block(src, "observeEvent\\(input\\$g_not_statement", 12L)
+  expect_match(blk, "fb_handoff\\(g\\$path\\)")                 # the file goes with it
+  expect_match(blk, "ts_doctype", fixed = TRUE)                # ...and the answer changes
+  expect_match(blk, "removeModal\\(\\)")
+  # the form builder must actually READ the handoff, or the link is theatre
+  expect_match(.ui_block(src, "fb_doc <- reactive", 8L), "fb_handoff\\(\\)")
+})
+
+test_that("no on-screen text points at a control that is off screen", {
+  # The old wording told someone stuck inside the modal to "pick 'Something else'
+  # above" - a control the modal is covering. Same mistake as N28.
+  src <- .ui_src()
+  expect_false(any(grepl("pick 'Something else' above", src, fixed = TRUE)))
 })

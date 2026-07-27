@@ -1854,8 +1854,13 @@ server <- function(input, output, session) {
   # picker did nothing at all on this path, and nothing said so. The document
   # uploaded at the top is used by default; the builder's own picker stays for the
   # case where a different PDF is handier to draw on.
+  # A document handed over from the toolkit ("Not a transaction table?"). Without
+  # it, the answer to that question would be "upload it again" -- and opened from
+  # the Convert page the file was never in ts_file to begin with.
+  fb_handoff <- reactiveVal(NULL)
   fb_doc <- reactive({
-    if (!is.null(input$fb_sample)) return(input$fb_sample$datapath)
+    if (!is.null(input$fb_sample)) return(input$fb_sample$datapath)   # an explicit choice wins
+    h <- fb_handoff(); if (!is.null(h) && file.exists(h)) return(h)
     f <- input$ts_file
     if (!is.null(f) && identical(tolower(tools::file_ext(f$name %||% "")), "pdf"))
       return(f$datapath)
@@ -3877,9 +3882,17 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "Statement template toolkit", size = "l", easyClose = FALSE,
       div(class = "note", style = "margin-bottom:8px",
-        HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s",
+        HTML(sprintf("Setting up: <b>%s</b> &nbsp;·&nbsp; %s &nbsp;·&nbsp; ",
              htmltools::htmlEscape(g$name %||% "your file"),
-             if (is_pdf) "PDF" else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited"))),
+             if (is_pdf) "PDF" else if (identical(tmpl$format, "excel")) "Excel" else "CSV / delimited")),
+        # THE WAY BACK. The first question -- statement, or labelled values? --
+        # is asked once on the page BEHIND this modal, so from in here it could
+        # not be revisited, and opened from Convert it was never asked at all.
+        # Cancel threw the work away without answering it. This carries the same
+        # file to the other builder. (The old wording pointed at a control
+        # "above", which is not on screen once this modal is open - the same
+        # mistake N28 was.)
+        actionLink("g_not_statement", "Not a transaction table?")),
       # An always-visible mini-guide: the 2-minute guide is a separate modal and
       # Shiny shows one modal at a time, so once the toolkit is open it can't be
       # reopened. This strip keeps the whole flow on screen the entire time.
@@ -3903,6 +3916,18 @@ server <- function(input, output, session) {
         actionButton("g_save", "Save template", class = "btn-primary"))))
   }
 
+  # "Not a transaction table?" -- close the toolkit, put the SAME file in the form
+  # builder and select it there. Nothing is re-uploaded and nothing is lost.
+  observeEvent(input$g_not_statement, {
+    g <- isolate(guided())
+    removeModal()
+    if (!is.null(g$path) && file.exists(g$path)) fb_handoff(g$path)
+    updateRadioButtons(session, "ts_doctype", selected = "other")
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+    showNotification("Switched to labelled values - your document came with you.",
+                     type = "message", duration = 6)
+  })
+
   # open_guided -- the single entry into the setup modal, shared by every launch
   # point (Convert result, Admin pickup, Add-a-template). Drafts a template from
   # the file unless the caller already has one (e.g. the matched template).
@@ -3924,7 +3949,7 @@ server <- function(input, output, session) {
                          type = "warning", duration = 10)
       } else {
         showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
-                               "or try a text PDF / CSV export. If it isn't a transaction table, pick 'Something else' above."),
+                               "or try a text PDF / CSV export. If it isn't a transaction table, use \u201cNot a transaction table?\u201d at the top of this window."),
                          type = "error", duration = 10)
       }
       return(invisible(FALSE))
@@ -4521,14 +4546,20 @@ server <- function(input, output, session) {
   # The live preview parses only the FIRST FEW PDF pages -- enough to confirm the
   # columns read correctly -- so a big statement previews in a fraction of the time
   # (the full convert on Save still parses every page).
+  # How many pages the preview reads, and how many rows it shows. Deliberately NOT
+  # the whole document: a 46-page statement would re-parse on every keystroke in
+  # the toolkit. Both numbers are QUOTED ON SCREEN, so they live here once rather
+  # than as a literal in one place and a sentence in another that drifts from it.
+  PREVIEW_PAGES <- 3L
+  PREVIEW_ROWS  <- 12L
   g_preview_tx <- reactive({ g <- guided(); req(g)
     # Isolated build: editing template name / bank / statement-type won't re-parse
     # the statement (they don't affect the rows); currency and every column /
     # date / amount setting stay live, so the preview still updates on those.
-    draft_preview(g$path, gl_build(meta_live = FALSE), preview_pages = 3L) })
+    draft_preview(g$path, gl_build(meta_live = FALSE), preview_pages = PREVIEW_PAGES) })
   output$g_preview <- renderDT({
     tx <- g_preview_tx(); req(!is.null(tx))
-    tx <- utils::head(tx, 12)
+    tx <- utils::head(tx, PREVIEW_ROWS)
     # Show every field that was actually read -- including reference, and the
     # separate debit / credit columns when the statement splits them -- so the
     # user can confirm each mapped column, not just date/description/amount.
@@ -4538,7 +4569,7 @@ server <- function(input, output, session) {
     show <- c(lead, setdiff(show, lead))
     if (!length(show)) show <- names(tx)
     datatable(tx[, show, drop = FALSE], rownames = FALSE, colnames = cv_friendly_cols(show),
-              options = list(dom = "t", pageLength = 12, scrollX = TRUE))
+              options = list(dom = "t", pageLength = PREVIEW_ROWS, scrollX = TRUE))
   })
   # The preview verdict. This is where a template gets abandoned: a grey line of
   # monospace saying "no rows detected" reads as a dead end, so it now says which
@@ -4549,13 +4580,27 @@ server <- function(input, output, session) {
     tx <- g_preview_tx()
     n <- if (is.null(tx)) 0L else nrow(tx)
     is_pdf <- identical(g$tmpl$format, "pdf")
+    # Is this a PARTIAL read? Only when the document has more pages than the
+    # preview looks at. A 2-page statement is read whole, and "the first 3 pages"
+    # there would be a caveat about nothing.
+    np <- suppressWarnings(as.integer(g$n_pages %||% NA))
+    partial <- is_pdf && !is.na(np) && np > PREVIEW_PAGES
     if (n > 0L) return(div(class = "verdict verdict-high", style = "margin:2px 0 12px",
       div(class = "verdict-ico", "✓"),
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title",
-            sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s")),
+            if (partial)
+              sprintf("%d transaction row%s read from the first %d of %d pages",
+                      n, if (n == 1L) "" else "s", PREVIEW_PAGES, np)
+            else sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s")),
         p(class = "verdict-body", style = "margin:0",
-          "Check the dates, descriptions and amounts below against your statement. If they are right, click Save template."))))
+          if (partial)
+            paste("Check the dates, descriptions and amounts below against your statement.",
+                  "The preview stops at a few pages so the toolkit stays quick - converting",
+                  "reads every page, so expect a bigger number then.")
+          else "Check the dates, descriptions and amounts below against your statement. If they are right, click Save template.",
+        if (n > PREVIEW_ROWS)
+          span(class = "muted", sprintf(" The table shows the first %d.", PREVIEW_ROWS))))))
     div(class = "verdict verdict-medium", style = "margin:2px 0 12px",
       div(class = "verdict-ico", "!"),
       div(style = "flex:1;min-width:0",

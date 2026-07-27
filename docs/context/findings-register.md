@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 99 findings, 94 fixed, 5 open.** Two of the five are the screen findings raised last (N34 the X-ray row count, N35 the unrevisitable first question) and are scoped, not started. The other three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today; what would unblock them is set out at the bottom of this file.
+**Where it stands: 99 findings, 96 fixed, 3 open.** The three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort: a spread of real forms to tune the form fingerprint against, and one hand-keyed golden scan to measure OCR digit accuracy against. Each fails closed and loudly today, so none of them can put a wrong figure on screen; what would unblock them is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -386,8 +386,8 @@ precisely what would start eating `Total Payments to ACME Ltd`. So the footer
 rule stays separate and REQUIRES the page words (`to next page`, `from previous
 page`); the summary rule is untouched. Both directions are pinned by test.
 
-| N34 | medium | open | The X-ray at template-creation time reports a DIFFERENT row count from the conversion that follows it, with nothing saying why - so the number people check the template against is not the number they get. Either make them the same or say "showing the first X rows". | app.R X-ray / R/inspect.R |
-| N35 | medium | open | "Statement or other" is asked once and then cannot be revisited: having picked one, there is no way back. The stickiness is right for other things; here it strands anyone who picks wrong on their first go. | app.R, the toolkit's first question |
+| N34 | medium | **fixed** | The X-ray at template-creation time reports a DIFFERENT row count from the conversion that follows it, with nothing saying why - so the number people check the template against is not the number they get. Either make them the same or say "showing the first X rows". | app.R X-ray / R/inspect.R |
+| N35 | medium | **fixed** | "Statement or other" is asked once and then cannot be revisited: having picked one, there is no way back. The stickiness is right for other things; here it strands anyone who picks wrong on their first go. | app.R, the toolkit's first question |
 | N36 | **high** | **fixed** | A year-less date format ("October 12") reads NOTHING when the statement prints no period the tool can parse AND more than one distinct year appears on the page. Every date comes back blank. It fails CLOSED (rows are kept, flagged `date_unresolved`), so no figure is wrong - but the screen never says the real reason, which is that no YEAR could be found, not that the dates could not be read. | R/parse_pdf_table.R:544-569 |
 | N37 | **critical** | **fixed** | On a credit-card statement that prints CR on the line BELOW the amount, the CR is captured into the DESCRIPTION instead of the amount, so every credit is emitted as a debit. Silently wrong figures, in the sign - the cardinal failure. | R/parse_pdf_table.R, the row grouping / continuation merge |
 

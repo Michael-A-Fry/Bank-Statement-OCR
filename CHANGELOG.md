@@ -125,6 +125,19 @@ were regressions introduced during this same release and caught by reviewing it.
   people did not notice a run and clicked around during it. It is centred, large,
   and dims the page — one rule covering all five places the app reports progress.
   An ordinary warning still goes quietly to the corner. (`N32`)
+- **The preview says how much it read.** It stops at the first few pages so the
+  toolkit stays quick on a long statement, then announced that partial count as
+  *"N transaction rows read"* — so the number an analyst checked her template
+  against was not the number the conversion then gave her, with nothing saying why.
+  It now reads *"N rows read from the first 3 of 11 pages"*, and only says that
+  when the document really is longer than the preview. (`N34`)
+- **The first question can be answered again.** *"A statement, or labelled
+  values?"* is asked once on the page behind the toolkit — and not at all when the
+  toolkit is opened from a result — so from inside it there was no way back, and
+  Cancel threw the work away without answering it. **Not a transaction table?**
+  now sits at the top of the toolkit and carries the same document across to the
+  form builder, with nothing re-uploaded. The old wording pointed at a control
+  *"above"*, which the modal is covering. (`N35`)
 - **Choosing a bank narrows the template list**, the label is just *Template
   (optional)*, JSON is a link rather than a third equal button, a layout can carry
   the dates it applies between, and the dashboard is no longer mentioned to people
@@ -143,8 +156,8 @@ were regressions introduced during this same release and caught by reviewing it.
   summary-line invariant was mutation-tested and found *vacuous* — deleting the
   guard did not trip it — so it carries a case with teeth as well as the golden net.
 
-**Suite:** 3,085 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
-(from 2,880 at 1.1.0). Register: 99 findings, 94 fixed, 5 open —
+**Suite:** 3,101 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
+(from 2,880 at 1.1.0). Register: 99 findings, 96 fixed, 3 open —
 [`docs/context/findings-register.md`](docs/context/findings-register.md).
 
 ### Known and deliberate
@@ -153,9 +166,6 @@ were regressions introduced during this same release and caught by reviewing it.
   weaker: the duplicate-id bug above was findable only by reading two distant
   regions of one file at once, which is the failure mode a split exists to prevent.
   The cheapest cut — moving the CSS to `www/` — is 265 lines and moves no concepts.
-- **Two findings are scoped but not started**: the X-ray's row count differs from
-  the conversion that follows it (`N34`), and the statement/other choice cannot be
-  revisited once made (`N35`).
 - **Three older findings wait on evidence, not effort** — a spread of real forms to
   tune the form fingerprint against, and one hand-keyed golden scan to measure OCR
   digit accuracy. Both fail closed and loudly today.
