@@ -9,6 +9,163 @@ which carries the evidence.
 
 ---
 
+## 1.2.0
+
+Eighteen findings, all but two raised from **real use on real statements**. Read
+the first section: five of them put wrong figures on screen, and two of those
+were regressions introduced during this same release and caught by reviewing it.
+
+### Wrong figures — the ones to read
+
+- **A credit was read as a debit, on every credit.** Credit-card statements print
+  the amount on one line and its `CR` on the next. That marker is the *sign* of
+  the amount above it, but the line carries no date and no digits, so it looked
+  exactly like a wrapped description: the `CR` was folded into the payee, the
+  amount cell never saw it, and every payment and refund came out with the charge
+  sign. No error, no flag, a complete set of figures with the wrong sign — only a
+  balance reconciliation could have noticed, and only if the statement prints
+  balances. The marker is now appended to the money cell it sits under, so the
+  amount is read as `150.00 CR` exactly as if it had been printed on one line.
+  (`N37`)
+- **A printed balance was kept as a transaction.** An opening or closing balance is
+  not a transaction; when one was kept the output did not lose data, it *gained* a
+  transaction that never happened, at the balance's own material amount — reported
+  from use as *"Balance −9000 debit"*. The guard read the description cell and fell
+  back to the whole line only when that cell was empty; a displaced band makes the
+  cell non-empty but *wrong*, so the fallback never ran. It reads both, always.
+  (`N30`)
+- **The fix for that then dropped real transactions.** Reducing a line to its label
+  stripped every number, marker and month-ish word *anywhere* on it — so any payee
+  merely beginning with a month abbreviation was eaten. `MAYFAIR CLOSING BALANCE`
+  became "closing balance"; `MARKET TOTAL PAYMENTS`, `JUNCTION TOTAL DEPOSITS` the
+  same. Each was silently skipped, and bucketed non-actionable so the drop never
+  reached the completeness measure. Only the *leading* date and *trailing* money
+  are removed now — what is in the middle is what the line says. 23 cases are
+  pinned in both directions.
+- **A stray date range moved the year on every transaction.** A statement covering
+  several periods is read as one span, and the first version widened the *dates*
+  even when it had refused to pair the balances, on the theory that the earliest
+  start and latest end are printed facts. What is printed is a date *range*, and
+  statements print plenty that are not statement periods — a fixed-rate loan
+  window, a tax year. The reader takes its year context from those two values, so
+  a January statement beside a 2024–2026 loan term resolved every year-less date
+  to **2024**, and the "all dates fall in the period" check read the same widened
+  period and *passed*. Two outcomes now, not three: proven and everything moves
+  together, or nothing moves and the reason is said out loud.
+- **Balances could be paired across two different accounts.** Two dormant accounts
+  both opening and closing on `0.00` chain perfectly, so the money proof believed
+  it and stayed silent. If the sections name more than one account, it stops.
+
+### The toolkit was not connected
+
+- **A duplicate output id unbound the whole toolkit on PDFs.** `uiOutput("g_more_toggle")`
+  was rendered twice. Two outputs sharing an id make the browser throw *"Duplicate
+  binding for ID"*, and that aborts Shiny's entire bind pass for the modal — so on
+  a PDF **not one** statically drawn control reached the server: the bank name, the
+  date format, the amount style, the page number, "Assign it", "Remove it". Boxes
+  drawn did nothing and the bands stayed at their drafted defaults, which is
+  exactly the reported *"every second page has the default box assignments"* and
+  *"I've drawn the box over the credit column and it reads nothing"*. Proven in the
+  browser: typing `ANZ` into the bank box left the server holding the old value.
+  A test now fails on any repeated output **or input** id. (`N29`)
+- **The coordinate space is a contract, not a comment.** The parser was measured
+  *innocent* here — across every real statement, no page differs in size from any
+  other in its file, and a page rescaled 4.55× keeps an identical row count. The
+  risk was on the drawing side, so the frame is now two callable, tested functions
+  replacing four hand-rolled copies of the rule, one of which computed the ratio in
+  the opposite direction.
+- **The band editor draws on mouse release**, not during the drag, so small
+  positional corrections are possible. (`N26`)
+- **The save name is built from the bank *and* the kind of statement**, so two
+  layouts from one bank no longer collide. It stops following the moment you type
+  your own. (`N27`)
+- **"None of these fit? Tell our team" is in front**, not inside the settings
+  disclosure — it is the escape hatch for somebody already stuck, and the tool was
+  making them hunt for it. (`N28`)
+- **The form builder leads with the document.** Five steps, the concrete one first:
+  draw a box round a value · what is this · repeat · check what comes out · save.
+  The blank "type the values you want, one per line" box that used to open the
+  screen is now optional and behind a disclosure. It also answers the question it
+  used to ask: it reads what is in the box and the wording printed beside it, and
+  decides whether to find the value *by its wording* (portable to the next
+  document) or by *pinning the box*. (`N31`)
+
+### A whole case, and statements that span several periods
+
+- **Convert takes a folder.** The same picker takes one file or fifty: one row per
+  file — status, bank, rows, and the one thing to check — sortable, worst-first,
+  and clicking a row opens that file's *ordinary* result page. Nothing new happens
+  per file; it is a loop over the same conversion, so a batch answer and a
+  single-file answer cannot disagree. A file that cannot be read never stops the
+  rest, and the QID is asked once per batch. (`N23`)
+- **Several periods in one statement reconcile as one span** — earliest opening +
+  every transaction = latest closing — but only when four things prove the pairing:
+  the periods read as dates, they do not overlap, each section prints exactly one
+  opening and one closing, and **each period closes on the figure the next one
+  opens on**. A shared boundary day is not an overlap: banks routinely print the
+  previous closing date as the next opening date, and rejecting that rejected the
+  commonest real multi-period statement there is.
+- **Several statements in one file are still split, not merged** — verified on a
+  real 3-statement bundle, where the per-statement balances chain 95.22 → 37.88 →
+  11.66 and each reconciles on its own anchors.
+
+### Smaller, all from use
+
+- **A page footer was being folded into the previous transaction's description**,
+  so `"To 63A Rent Rent 63A Sar"` came out as `"To 63A Rent Rent 63A Sar Carried
+  Forward to next page"`. No figure was wrong, which is exactly why nothing caught
+  it — every check is about money and dates, none reads the description. (`N33`)
+- **A year-less date format read nothing** when the statement printed no period the
+  tool could parse and more than one year appeared on the page — which a credit
+  card always does (payment due, card expiry, a copyright line). The labelled
+  statement date has been in the dictionary since the beginning and **nothing read
+  it**; it is now a year source, ahead of scanning the page for numbers. Reading a
+  labelled fact is not a guess. (`N36`)
+- **Converting is unmissable.** The status was a small panel in a screen corner, so
+  people did not notice a run and clicked around during it. It is centred, large,
+  and dims the page — one rule covering all five places the app reports progress.
+  An ordinary warning still goes quietly to the corner. (`N32`)
+- **Choosing a bank narrows the template list**, the label is just *Template
+  (optional)*, JSON is a link rather than a third equal button, a layout can carry
+  the dates it applies between, and the dashboard is no longer mentioned to people
+  who cannot see one.
+
+### For the maintainer
+
+- **Two duplicate input ids were live** — one button existed three times, two of
+  which render together. Two buttons sharing an id keep independent click counters,
+  so one sends a value identical to the current one and its handler never fires: a
+  dead button, invisible from R and green in the suite.
+- **A global CSS defect**: the table-header rule uses the `background` shorthand
+  with `!important`, which resets `background-repeat`, so the sort arrow *tiled*
+  across the header. Every table in the app was affected.
+- **A test that passes with the guard removed is worse than no test.** The new
+  summary-line invariant was mutation-tested and found *vacuous* — deleting the
+  guard did not trip it — so it carries a case with teeth as well as the golden net.
+
+**Suite:** 3,085 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
+(from 2,880 at 1.1.0). Register: 99 findings, 94 fixed, 5 open —
+[`docs/context/findings-register.md`](docs/context/findings-register.md).
+
+### Known and deliberate
+
+- **`app.R` is 4,661 lines and still not split.** The case is now stronger, not
+  weaker: the duplicate-id bug above was findable only by reading two distant
+  regions of one file at once, which is the failure mode a split exists to prevent.
+  The cheapest cut — moving the CSS to `www/` — is 265 lines and moves no concepts.
+- **Two findings are scoped but not started**: the X-ray's row count differs from
+  the conversion that follows it (`N34`), and the statement/other choice cannot be
+  revisited once made (`N35`).
+- **Three older findings wait on evidence, not effort** — a spread of real forms to
+  tune the form fingerprint against, and one hand-keyed golden scan to measure OCR
+  digit accuracy. Both fail closed and loudly today.
+- **Two mechanisms now answer "one file, several periods"** — the span merge and the
+  bundle split, mutually excluded by a page-marker count. One of them is the right
+  answer and the other should go; that is the largest single simplification
+  available in the engine.
+
+---
+
 ## 1.1.0
 
 ### Correctness — figures that could have been wrong
