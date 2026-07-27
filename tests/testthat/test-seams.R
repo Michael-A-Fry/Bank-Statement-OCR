@@ -83,6 +83,77 @@ test_that("check results and coverage verdicts are wording for real engine value
   expect_true(length(verdicts) >= 4L)
 })
 
+# ADDED. The two maps above were only ever held to their KEYS, and the values
+# quietly collided: RESULT_PLAIN["na"] and COVERAGE_PLAIN["unmapped"] were both
+# "not on this statement". In COVERAGE_PLAIN that is right -- a field this
+# statement does not have. In RESULT_PLAIN it was wrong, and both render inside
+# the same "Checks & detail" disclosure, so one screen carried two meanings for
+# one phrase: a statement OCR'd on two pages at 88% confidence had its
+# "Scan / OCR read quality" row read "not on this statement". A KPI "na" means the
+# check could not be PROVED, which is what the grey dash in the proof strip
+# already means (app.R, cv_proof: "na / anything else: could not run").
+test_that("a check that could not run and a field that isn't there read differently", {
+  L <- .ui_labels()
+  expect_false(identical(unname(L$RESULT_PLAIN[["na"]]),
+                         unname(L$COVERAGE_PLAIN[["unmapped"]])))
+  expect_identical(unname(L$COVERAGE_PLAIN[["unmapped"]]), "not on this statement")
+  expect_false(grepl("not on this statement", L$RESULT_PLAIN[["na"]], fixed = TRUE))
+  # ...and the informational KPIs get a third word: they are counts the engine READ
+  # successfully, not checks that could not run, even though both carry status "na".
+  expect_true(nzchar(L$RESULT_PLAIN_INFO))
+  expect_false(L$RESULT_PLAIN_INFO %in% unname(L$RESULT_PLAIN))
+  src <- .src("app.R")
+  expect_true(any(grepl("RESULT_PLAIN_INFO", src, fixed = TRUE)))
+  expect_true(any(grepl("INFORMATIONAL_CHECKS", src, fixed = TRUE)))
+})
+
+# INFORMATIONAL_CHECKS is a list of names the screen keeps because reconcile()
+# strips its own `informational` column on the way out ("Return KPIs without the
+# internal informational flag column exposed downstream"), so the result the app
+# holds cannot be asked. A hand-kept copy of an engine fact falls behind silently,
+# which is the whole reason this file exists -- so it is read back off the engine.
+test_that("the screen's list of informational checks is the engine's list", {
+  L <- .ui_labels()
+  src <- .src("R/reconcile.R")
+  # per KPI builder: does .kpi_<name>() pass informational = TRUE?
+  from_engine <- Filter(function(nm) {
+    i <- grep(sprintf("^\\.kpi_%s <- function", nm), src)
+    if (!length(i)) return(FALSE)
+    j <- grep("^\\.kpi_[a-z_]+ <- function|^# ", src)
+    end <- j[j > i[1]]; end <- if (length(end)) min(end) - 1L else length(src)
+    any(grepl("informational = TRUE", src[i[1]:end], fixed = TRUE))
+  }, names(L$CHECK_PLAIN))
+  expect_gte(length(from_engine), 2L)                 # the scan must not go quiet
+  expect_setequal(from_engine, L$INFORMATIONAL_CHECKS)
+  # and they really do come back as "na", which is why they needed their own word
+  expect_true(all(from_engine %in% names(L$CHECK_PLAIN)))
+})
+
+# ADDED. Each CHECK_PLAIN label is read as a claim about the statement, beside a
+# green "OK". Three of them claimed more than their KPI proves, and the Checks
+# table dropped the expected/actual columns that would have shown the gap -- so a
+# file whose date column did not map showed "Every row was read: OK",
+# "Row count matches the statement: OK" and "Row dates could be read: OK" over
+# 499 unreadable dates. The labels are held to what the engine actually computes.
+test_that("no check label claims more than its KPI proves", {
+  L <- .ui_labels()
+  # no_unparsed_rows compares LINE COUNTS; it never looks at a cell.
+  expect_false(grepl("every row", L$CHECK_PLAIN[["no_unparsed_rows"]], ignore.case = TRUE))
+  # transaction_count degrades to n > 0 when the statement prints no count.
+  expect_false(grepl("matches", L$CHECK_PLAIN[["transaction_count"]], ignore.case = TRUE))
+  # redaction_summary is sum(grepl("redacted", flags)) -- honouring is proved by
+  # redaction_scan, which is a different check with its own row.
+  expect_false(grepl("honoured", L$CHECK_PLAIN[["redaction_summary"]], ignore.case = TRUE))
+  expect_match(L$CHECK_PLAIN[["redaction_scan"]], "redaction")
+  # ...and the figures the verdict rests on are on screen, so a generous pass is
+  # verifiable rather than silent.
+  src <- .src("app.R")
+  blk <- paste(src[grep("output\\$cv_kpis <- renderDT", src)[1] + 0:14], collapse = " ")
+  expect_match(blk, "Expected = ")
+  expect_match(blk, "Read\\s+= ")
+  expect_match(blk, "k\\$expected"); expect_match(blk, "k\\$actual")
+})
+
 # ---------------------------------------------------------------------------
 # THE GOVERNED FEED. write_feed() decides whether a conversion's figures reach the
 # Qlik dashboards, records the verdict in the manifest and its own log -- and the
@@ -102,6 +173,21 @@ test_that("every reason the feed gate can give has plain-English wording", {
     expect_false(is.null(p), info = r)
     expect_false(identical(p$line, L$FEED_PLAIN_UNKNOWN$line), info = r)
   }
+})
+
+# ADDED. `withheld:needs_review` promised "Fix what is flagged above and convert
+# again, and it goes through". Passing the checks clears only the FIRST gate
+# (R/feed.R): a conversion read by a template built here is then withheld again as
+# `not_proven`, whose own wording correctly says only a data analyst can change
+# that. An unconditional promise in front of a conditional gate is precisely the
+# "silently wrong" shape the charter forbids, dressed up as helpfulness.
+test_that("the feed note does not promise a gate it cannot clear", {
+  L <- .ui_labels()
+  nr <- L$FEED_PLAIN[["withheld:needs_review"]]
+  expect_false(isTRUE(nr$ok))
+  expect_false(grepl("goes through", paste(nr$line, nr$why), fixed = TRUE))
+  # the second gate is still stated where it applies, and still names who can move it
+  expect_match(L$FEED_PLAIN[["withheld:not_proven"]]$why, "data analyst")
 })
 
 test_that("the feed note says accepted, held back, and 'the write failed' differently", {

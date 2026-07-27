@@ -128,7 +128,7 @@ estimate what is hidden. Expected outcomes:
 
 | Case | Status | How |
 |---|---|---|
-| Ambiguous match (two templates tie) | ✅ | requires strict > 2nd best → else `unsupported` (tested) |
+| Ambiguous match (two templates tie) | ✅ | a match requires strictly greater than the 2nd best. A tie no longer dead-ends: `R/convert.R` takes the best candidate (tested over hand-built, then deterministic), converts, and holds the run at `needs_review` with the tie named — so the analyst gets her data, full reconciliation still runs, and nothing reaches the dashboards. Only a tie whose winner reads **zero** rows is reported `unsupported`, and that is the one case the screen offers a pick (tested) |
 | No template matches | ✅ | `unsupported` + closest‑match diagnostic |
 | Wrong bank forced by user | ✅ | hint is a hard filter; mismatch → `unsupported`, not a wrong parse |
 | Any error anywhere | ✅ | wrapped → `failed` with actionable message; one JSON log line per run |

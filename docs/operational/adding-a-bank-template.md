@@ -1,90 +1,138 @@
-# Teaching it a new bank (no code)
+# Teaching it a new layout (no code)
 
-When a statement comes in that the app calls **UNSUPPORTED**, it just means the app
-hasn't seen that bank's layout yet. You teach it **once**, in the built-in wizard —
-by pointing and clicking, never by writing code. After that, everyone on the server
-can convert that bank.
+When Convert says **No template for this statement yet**, the tool has not seen
+that layout. You teach it once, here, and it converts for everyone from then on.
 
----
+You need **one example** of the statement. Any real one will do; nothing about it
+leaves the server.
 
-## Steps
-1. Go to the **Add a template** tab → **Browse** a sample of that export → **Open
-   the toolkit**. The app pre-fills everything it can detect, with the sample rows on
-   screen so you can check as you go.
-2. **Confirm the columns.** The toolkit guesses which column is which; fix any it got
-   wrong:
+## A transaction statement
 
-   | Field | Pick the column that holds… | Notes |
-   |---|---|---|
-   | **date** | the transaction date | then set the **date format** below |
-   | **amount** | the money value | then set the **amount style** below |
-   | **description** | the payee / details / narrative | kept exactly as written |
-   | particulars / code / reference | NZ bank fields, if present | leave as `(none)` if absent |
-   | **type** | e.g. "Tran Type" | optional |
-   | **other party** | the counterparty account/name | optional |
-   | **balance** | the running-balance column | pick it if present — it unlocks the balance check |
+1. **Add a template** tab → **Browse** the example → leave the question on *A
+   bank or card statement* → **Open the toolkit**.
 
-3. **Confirm the small settings** (all pre-detected — only change them if the preview
-   looks wrong):
-   - **How are the dates written?** — e.g. `31/12/2025` (day/month/year), `31/12/25`
-     (2-digit year), `2025-12-31` (ISO).
-   - **How are amounts shown?**:
-     - one signed column, minus = money out *(most NZ CSV exports)*
-     - a `D`/`C` column decides the sign *(credit cards)*
-     - separate withdrawals and deposits columns
-     - a `DR`/`CR` suffix on the number (`123.45 DR`)
-   - The **fingerprint** (the header names that must all be present for this template
-     to match) is drafted for you; tweak it on the **Advanced** tab only if it's too
-     loose or too strict.
-4. **Watch the preview** at the bottom. Check: dates look right, money out is
-   negative, descriptions are intact, no rows missing.
-5. Click **Save template**. Done — that bank is now supported for everyone, and the
-   app re-converts your sample so you can confirm it worked.
+2. The toolkit opens with the statement on the left and the settings on the
+   right, already filled in from your file. **Look at the preview at the bottom
+   before you change anything.**
 
-There's an **ⓘ guide** in the tab covering the ways statements differ.
+   **If the preview is empty, stop and read the next section** — an empty preview
+   is not something you fix by pressing on.
 
----
+3. **Check the columns.** Date and Description are required; Amount, Reference
+   and Balance are offered too. Pick the **balance** column if the statement has
+   one — it is what unlocks the balance checks. Without a balance and without a
+   printed opening/closing pair, nothing can prove a row was not dropped, and the
+   confidence level is capped at *medium* whatever else is right.
 
-## PDF statements
-It's the same fill-in-the-blanks, with one extra step: you **draw boxes** over the
-columns on the page, and the live preview shows the rows being read out. Everything
-else — dates, amount style, saving — is identical.
+4. **Answer the two questions the tool cannot answer for you.** Both come with
+   its best guess already selected; the preview below reacts as you change them.
 
----
+   - **How are the dates written?** — `31/12/2025`, `31/12/25`, `2025-12-31`,
+     `31 Dec 2025`…
+   - **How are amounts shown?** — one signed column (minus = out); separate
+     withdrawals/deposits columns; a `DR`/`CR` suffix on the number; a short
+     `D`/`C` indicator column; or unsigned, where a bare number is a charge and
+     `CR` marks a payment (credit cards).
 
-## Proven vs. user-created templates
-- Templates you save here are **user-created**. They are **used by default** on the
-  **Convert** tab — a bank you set up works for everyone from the next conversion,
-  with no tick-box to find. (The switch is still there, under "It picked the wrong
-  bank?" → *Include templates built here*; untick it to convert against only the
-  shipped, tested set. `app.user_templates_default` in `config\config.yaml` sets
-  which way it starts.)
-- Only **proven** templates feed the Qlik dashboards (see
-  [connecting-qlik.md](connecting-qlik.md)) — this is the one thing being
-  user-created still changes, and the Convert screen says so on every conversion
-  ("Held back from the dashboards — it was read by a template built here").
-  To promote a user template to proven, ask whoever maintains the engine to move it
-  into the built-in `templates\` set.
+     Picking the indicator style asks one more: *which value means money out*.
+     Get this backwards and every debit becomes a credit, with no error anywhere —
+     check the preview's signs against the statement before saving.
 
-If a statement is genuinely a new kind the wizard can't handle, that's rare — see
-[when-something-goes-wrong.md](when-something-goes-wrong.md) for how to report it
-safely.
+5. **Check the preview**, line by line, on these four things: the dates are the
+   right dates, money out is negative, descriptions are complete, and no row is
+   missing from the middle.
 
-## Fixing a bank the tool already knows
-Open the statement in the toolkit, correct what is wrong, and save. It saves as a
-separate template (the shipped one is left alone so it can still be updated), and
-records that it is a **correction of** that bank's template - which is what makes
-your fix win from then on. Before this, a correction quietly lost to the template
-it was correcting, because both recognise the same bank equally well.
+6. **The identifying phrase.** This is what recognises the bank next time. It is
+   matched **character for character** — `OPENING BALANCE`, `Opening Balance` and
+   `Opening balance` are three different phrases. Copy it off the page exactly,
+   including capitals and spacing. Prefer the masthead or a distinctive footer;
+   the tool refuses to save a phrase so generic it would claim other banks'
+   statements, and tells you which phrase was the problem.
 
-It is still a template built here, so it converts for everyone but does not reach
-the Qlik dashboards until whoever maintains the engine reviews it and promotes it.
+7. **Save template.** The tool then re-checks your file against every template it
+   has and tells you in words whether it will be recognised on its own next time.
 
-## Stuck on the layout itself?
-If you can't work out what the columns are, where the year comes from, or which
-lines are totals rather than transactions, don't guess. Attach the statement to
-Copilot and paste the prompt in
-[survey-a-statement-with-ai.md](survey-a-statement-with-ai.md): it answers exactly
-those questions, in the same order every time, and is written so that no client
-detail ends up in the answer. The result fills in this wizard's fields directly —
-and is safe to send on if you'd rather someone else built the template.
+   If it says *saved, but this statement is NOT recognised by it yet*, read the
+   whole message. It suggests the phrase is not printed exactly as typed — usually
+   true, but not always. If it also says *ambiguous: X and Y both score N*, the
+   phrase is fine; an existing template fits your statement equally well and the
+   tool will not choose between them. That is a duplicate for whoever maintains
+   the engine to retire, not something you can fix by editing your phrase.
+
+**PDFs** work the same way with one extra step: you drag boxes over the columns
+on the page image, and the preview shows the rows being read out as you move
+them.
+
+**Everything as YAML** is on the toolkit's **Advanced** tab — *Load current
+settings* fills it, *Check & apply* validates and updates the preview, and a
+syntax error is reported with its line and column. The Simple tab picks up
+whatever you applied.
+
+## When the preview reads nothing
+
+The toolkit's auto-draft does not succeed on every real bank PDF. Two things go
+wrong, and the fix is different for each:
+
+- **The boxes are in the wrong place.** Common on dense PDFs: the proposed date
+  box is a few points too narrow for the dates it has to hold, so no row parses.
+  Drag the date box wider first — everything downstream depends on rows being
+  found at all.
+- **It is not a transaction table.** An IRD certificate, a KiwiSaver annual
+  statement, a summary letter. Click **Not a transaction table?** in the toolkit:
+  it closes, switches the Add-a-template tab to *Something else*, and brings your
+  document with it, so you land in the labelled-value builder with nothing to
+  re-upload.
+
+  If the toolkit **never opened** — you got a notification instead — the draft
+  found no table at all. There is no link in a window that did not appear: set
+  the radio on the Add-a-template tab to *Something else* yourself.
+
+If neither works, do not guess your way to a template that reads *something*: a
+template that reads the wrong part of the page is worse than no template. Use
+[survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) to describe the
+layout with no client detail in it, and send that on.
+
+## A form or summary (labelled values)
+
+For a document with no transaction table — an IRD certificate, an annual
+statement, a letter with figures in it — pick **Something else** on the Add a
+template tab. The builder appears below the upload:
+
+1. **Draw a box** round a value you want. The tool reports what it read inside
+   the box and the wording printed beside it, and pre-fills a name.
+2. **Add this value**, pick its kind (money / date / date range / text), repeat
+   for the values that matter.
+3. **Preview on the document** — it reports *N of M values found* and which are
+   missing. If it says a value was not found and you have already drawn a box
+   round it, the box read nothing: redraw it slightly larger, or type the wording
+   instead under *Know the wording? Type them instead*.
+4. Name it, give it **a phrase printed on it** (all of them must appear), and
+   **Save template**.
+
+**The gotcha to know before you start.** A form template is only tried when the
+transaction-statement path finds nothing. If any statement template already
+recognises your document, that one wins and your form template never runs — so
+the save message *"now upload the document on the Convert tab"* can be followed
+by the document converting as a statement instead. Check the result names your
+form; if it names a bank statement template, tell whoever maintains the engine.
+
+## Templates built here vs. shipped templates
+
+- A template you save here is used **by default**, for everyone, from the next
+  conversion. There is no tick-box to find — whether colleagues' templates count
+  is a deployment setting, `app.user_templates_default` in `config\config.yaml`.
+- What being built-here *does* change: the conversion is **held back from the
+  Qlik dashboards**. Your downloads are complete either way. Promoting it is a
+  maintainer job ([maintaining-the-engine.md](maintaining-the-engine.md) §3).
+
+## Correcting a bank the tool already knows
+
+Open the statement in the toolkit, fix what is wrong, Save. The shipped template
+is left alone so it can still be updated; your copy is saved as `<id>_custom`
+with a `refines:` line naming the one it replaces, and detection honours that —
+which is what makes your fix win. Without it the two would tie on every statement
+(same fingerprint) and the shipped one would keep winning.
+
+Related: [converting-statements.md](converting-statements.md) ·
+[when-something-goes-wrong.md](when-something-goes-wrong.md) ·
+[survey-a-statement-with-ai.md](survey-a-statement-with-ai.md)

@@ -1,38 +1,32 @@
 # Survey a statement with an AI assistant (no personal information)
 
-**What this is for.** When a statement won't convert — or converts but looks
-wrong — the fix almost always needs the same handful of facts about how that
-bank lays its page out. This page holds one ready-made prompt you paste into
-Copilot (or any AI assistant) **with the statement attached**. It returns a
-structured survey of the layout that contains **no client information**, so you
-can paste it into a chat, an email or a ticket and get a template or a fix built
-from it.
+When a statement will not convert — or converts but looks wrong — the fix almost
+always needs the same handful of facts about how that bank lays its page out.
+This page holds one ready-made prompt you paste into Copilot (or any AI
+assistant) **with the statement attached**. It returns a structured description
+of the layout containing **no client information**, so you can put it in a chat,
+an email or a ticket and get a template built from it.
 
-Run it over a stack of statements and you build a picture of every layout your
-team actually receives, without any of them leaving the room.
-
-**Why it exists.** Some problems can only be solved with real examples — how
-distinctive a form's wording is, how a scanner mangles a particular typeface,
-what a bank calls its closing balance. We can't fix those from one sample and we
-can't fix them from a redacted picture. We *can* fix them from twenty-five
-honest descriptions of the page.
-
----
+Some problems can only be solved from real examples — how distinctive a form's
+wording is, how a scanner mangles a particular typeface, what a bank calls its
+closing balance. They cannot be fixed from a redacted picture. They can be fixed
+from twenty-five honest descriptions of the page.
 
 ## How to use it
 
 1. Open Copilot and **attach the statement** (PDF, CSV or Excel — the prompt
    handles all three).
-2. Paste the whole prompt below, unchanged, and send.
+2. Paste the whole prompt below, **unchanged**, and send. The privacy rules are
+   the load-bearing part; editing them down is how client detail leaks.
 3. Read the reply, run the 30-second check at the bottom of this page, then send
-   the reply on.
+   it on.
 
-Do this once per statement. Numbering the files (`survey-01`, `survey-02`, …) as
-you go makes a batch much easier to work through afterwards.
+One per statement. Numbering the files (`survey-01`, `survey-02`, …) makes a
+batch much easier to work through afterwards.
 
 **If Statement Studio already had a go at the file**, paste what it said as well
-— the red message on the Convert page, or the **Diagnostics** table on the
-result page. Its wording (`date_parse`, `row_count`, `balance_break`,
+— the message on the Convert page, or the **Diagnostics** table under *Show me
+how it read this*. Its wording (`date_parse`, `row_count`, `balance_break`,
 `reconciliation_mismatch`, `amount_parse`, `row_parse`, `date_out_of_range`,
 `redaction_unverified`, `scanned_no_ocr`) points straight at the part of the
 survey that matters, and saves a round trip.

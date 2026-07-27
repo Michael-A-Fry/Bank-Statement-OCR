@@ -108,11 +108,11 @@ tokens emitted are a low-cardinality indicator column's short distinct values
 that a description column *can contain* an account-number pattern
 (`AA 99-9999-9999999-99`) without ever storing a real digit.
 
-These "unrecognised" fields are the exact feedback loop for supplementing the
-engine's vocabularies (see the customisation model): a model clusters what keeps
-turning up unrecognised, proposes a new lexicon/template entry, a human approves
-it, and the deterministic engine picks it up — the model never changes behaviour
-directly.
+These "unrecognised" fields feed the suggestion queue in **Admin → Data capture**
+(see [`../operational/admin-and-maintenance.md`](../operational/admin-and-maintenance.md)):
+what keeps turning up unrecognised is counted, offered most-frequent-first, a
+human approves one, and the deterministic engine picks it up on the next
+conversion. Nothing is ever learned without that approval step.
 
 Balances and the statement period are financial metadata, not personal
 identifiers, and never leave the machine. Account numbers appear only as a hash.

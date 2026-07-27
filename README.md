@@ -1,102 +1,91 @@
 # Statement Studio — statement & document conversion engine
 
-A pure-**R** engine that turns a bank or credit-card statement into clean,
+A pure-**R** engine that turns a bank, card or financial statement into clean,
 structured, downloadable data (**Excel + CSV + JSON**) with reconciliation checks
-and a trust score. Built for forensic-accounting use: high-fidelity extraction,
-verbatim descriptions, honoured redactions, and no silent data loss.
+and a confidence level. Built for forensic accounting: high-fidelity extraction,
+verbatim descriptions, honoured redactions, no silent data loss.
 
-**No Python, no machine learning.** Deterministic behaviour and declarative per-bank
-templates — a data analyst adds a new bank by pointing and clicking in a wizard, not
-by writing code.
+**No Python, no machine learning.** Deterministic behaviour and declarative
+per-bank templates — an analyst adds a new bank by pointing and clicking, not by
+writing code.
 
----
-
-## 📖 Documentation
-
-The docs are split in two:
+## Documentation
 
 - **[Operational](docs/operational/README.md)** — how to *do* things: set it up,
-  update it, run it, convert statements, add a bank, admin, and wire up Qlik. Written
-  for the data team, step by step, no code.
-- **[Context](docs/context/README.md)** — background: what's built, how we got here,
-  the launch audit, the architecture, and the research.
+  convert statements, add a bank, fix what looks wrong, run it, back it up,
+  update it, admin, and wire up Qlik. One page per task.
+- **[Context](docs/context/README.md)** — how it works and why: the charter, the
+  data contract, the engine parameters, the edge-case register, the findings
+  register, the roadmap.
 
-**New here?** Start with the [operational guide](docs/operational/README.md). The
-whole setup is two double-clicks — [first-time-setup](docs/operational/first-time-setup.md).
+**New here?** [first-time-setup.md](docs/operational/first-time-setup.md) — two
+double-clicks, then set the admin password and open the firewall port.
 
-**Inheriting it?** Read the [charter](docs/context/charter.md) (one page: what this
-tool must always do, and must never do), then
-[how-it-fits-together](docs/context/how-it-fits-together.md) (one page: the journey
-from upload to dashboard, which module owns each step, and where each kind of change
-goes), then the maintainer's runbook —
-[maintaining-the-engine](docs/operational/maintaining-the-engine.md) — for how to run
-the test suite on the server, what an update overwrites, and how to promote a
-template to proven. Back up the irreplaceable folders:
-[backup-and-restore](docs/operational/backup-and-restore.md).
-
----
+**Inheriting it?** [charter.md](docs/context/charter.md) (one page: what this
+tool must always do and must never do), then
+[how-it-fits-together.md](docs/context/how-it-fits-together.md) (one page: upload
+to dashboard, which module owns each step), then
+[maintaining-the-engine.md](docs/operational/maintaining-the-engine.md) (running
+the suite on the server, what an update overwrites, promoting a template). Then
+back up the irreplaceable folders:
+[backup-and-restore.md](docs/operational/backup-and-restore.md).
 
 ## What it does today
 
-- **Reads CSV, TSV, Excel (`.xlsx`) and PDF** statements. Digital PDFs are read from
-  their text layer; scanned/image PDFs are read with OCR (each OCR'd page is flagged).
-- **Six banks end-to-end** on the delimited (CSV/TSV) path — ANZ everyday, ANZ credit
-  card, ASB, BNZ, Kiwibank, Westpac — plus a cross-bank Xero-standard import, each with
-  a passing golden-file test.
-- **PDF and Excel are shipped and tested, not merely built.** `templates/` ships proven
-  PDF templates — `anz_everyday_pdf`, `anz_investmentfunds_pdf`, `asb_everyday_pdf`,
-  `tutorial_everyday_pdf`, `westpac_everyday_pdf` — and a generic Excel template
-  (`excel_generic_xlsx`); the PDF and Excel extraction paths are covered by golden
-  round-trip tests, and a key-value (form/IRD) mode is built too. Adding another bank on
-  any path is a YAML template, not new code.
-- **Point-and-click wizard** to teach it a new bank — including a visual PDF editor
-  where you draw boxes over the columns. It writes the template for you; no YAML by
-  hand.
-- **Reconciliation + trust score** — ten checks: balance reconciliation, running-balance
-  continuity, money-in/out direction, transaction count, dates-in-period, dates readable,
-  completeness, redaction summary, OCR read quality and the redaction scan — each shown
-  as a plain sentence, not a code, with a high/medium/low trust level.
-- **Honours incoming redactions** — the tool never un-redacts; it reads only what is
-  visible and never estimates hidden values.
-- **Never silently wrong** — any non-clean run reports *where / why / how bad /
-  who fixes it*; every run is logged; the engine never returns a silent wrong answer.
-- **Governed analytics** — a clean conversion from a proven template also feeds the
-  Qlik dashboards automatically, and every conversion is told on screen whether it was
-  published or held back, and why. Marking a result *wrong* withdraws it again.
-- **A full automated test suite** guards every guarantee — over 2,200 assertions across
-  500+ tests when last measured, **0 failures and 0 skips**. A skipped test proves
-  nothing, so the runner fails on one. `Rscript tests/run_tests.R` prints the current
-  totals, and the exact last-measured baseline is kept in ONE place —
-  [maintaining-the-engine](docs/operational/maintaining-the-engine.md) — so a
+- **Reads CSV, TSV, Excel (`.xlsx`) and PDF.** Digital PDFs are read from their
+  text layer; scanned pages are OCR'd and flagged as such.
+- **13 shipped, golden-tested templates** in `templates/` — 7 delimited (ANZ
+  everyday, ANZ credit card, ASB, BNZ, Kiwibank, Westpac, plus a cross-bank
+  Xero-standard import), 5 PDF (`anz_everyday_pdf`, `anz_investmentfunds_pdf`,
+  `asb_everyday_pdf`, `tutorial_everyday_pdf`, `westpac_everyday_pdf`) and one
+  generic Excel template. Adding another bank on any path is a YAML template, not
+  new code. A key-value mode for forms and IRD-style documents ships too.
+- **A point-and-click toolkit** to teach it a new layout, including a visual PDF
+  editor where you drag boxes over the columns. It writes the template; no YAML
+  by hand.
+- **Ten reconciliation checks** — balance reconciliation, running-balance
+  continuity, money-in/out direction, row count, dates in period, dates readable,
+  rows that failed to read, redaction count, OCR read quality and the redaction
+  scan — each shown as a plain sentence with a high/medium/low confidence level.
+- **Honours incoming redactions.** The tool never un-redacts, never estimates a
+  hidden value, and never back-calculates one from a balance.
+- **Never silently wrong.** Any non-clean run reports *where / why / how bad /
+  who fixes it*. A check that could not run says so; it never shows a green tick.
+- **Governed analytics.** A clean conversion from a shipped template feeds the
+  Qlik dashboards automatically, and every conversion is told on screen whether
+  it was published or held back, and why. Marking a result *wrong* withdraws it.
+- **A full automated test suite** guards every guarantee, and the runner fails on
+  a skipped test because a skip proves nothing. `Rscript tests/run_tests.R`
+  prints the current totals; the last-measured baseline is kept in one place —
+  [maintaining-the-engine.md](docs/operational/maintaining-the-engine.md) — so a
   noticeably lower total is a real signal rather than a stale number here.
-
----
 
 ## The app
 
 Four tabs, all point-and-click:
-- **About** — what the tool does and how to read the trust signals.
-- **Convert** — upload a statement, click Convert, read the verdict and checks,
-  download the Excel/CSV/JSON. ([converting-statements](docs/operational/converting-statements.md))
-- **Add a template** — upload a sample, confirm what the tool detected against a live
-  preview, Save. ([adding-a-bank-template](docs/operational/adding-a-bank-template.md))
-- **Admin** (password) — insights, template management, review queue, folder intake.
-  ([admin-and-maintenance](docs/operational/admin-and-maintenance.md))
 
-Outputs per statement:
-- **`.xlsx`** — `Transactions`, `Summary`, `Checks`, `Provenance`, `Diagnostics` and
-  `Metadata` sheets.
-- **`.csv`** — the same `Transactions` table the workbook holds.
-- **`.json`** — the full object (build stamp, header, transactions, extras, checks,
-  trust, diagnostics, provenance, metadata).
+- **About** — what the tool does and how to read the confidence signals.
+- **Convert** — upload one statement or a whole case folder, click Convert, read
+  the verdict, download.
+  ([converting-statements.md](docs/operational/converting-statements.md))
+- **Add a template** — upload a sample, confirm what the tool detected against a
+  live preview, Save.
+  ([adding-a-bank-template.md](docs/operational/adding-a-bank-template.md))
+- **Admin** (reached with `?admin`, password-protected) — insights, templates,
+  dictionaries, batch audit.
+  ([admin-and-maintenance.md](docs/operational/admin-and-maintenance.md))
 
----
+Outputs per statement: a six-sheet `.xlsx` (`Transactions`, `Summary`, `Checks`,
+`Provenance`, `Diagnostics`, `Metadata`), a `.csv` of the transactions table, and
+a `.json` holding everything including the build stamp and provenance.
 
 ## Forensic guarantees
 
-1. Descriptions preserved **verbatim** (special characters intact).
-2. The tool **never redacts** — statements arrive redacted and it reads only what is
-   visible. Hidden values are never derived or estimated.
-3. **No silent drops** — completeness is proven by a check.
-4. **Reproducible** — same input + template ⇒ identical output; no manual edits.
+1. Descriptions preserved **verbatim**, special characters intact.
+2. The tool **never redacts** and never reveals — statements arrive redacted and
+   it reads only what is visible.
+3. **No silent drops** — completeness is proven by a check, or the check says
+   plainly that it could not be proven.
+4. **Reproducible** — same input + same template ⇒ identical output, stamped with
+   the engine version and a hash of the template.
 5. **Never crashes** — every error becomes a status with an actionable reason.

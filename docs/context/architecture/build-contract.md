@@ -74,7 +74,7 @@ tests/testthat/         golden-file + unit tests
 app.R  ui_content.R  ui_labels.R   the Shiny app
 run.R                   thin CLI entrypoint
 scripts/                bundle / install / audit command-line entry points
-docs/                   operational guide + context (charter, audits, research)
+docs/                   operational how-tos + context (charter, this contract, …)
 ```
 
 ## 2. Canonical core schema (per transaction) - STABLE, identical across banks
@@ -83,7 +83,7 @@ docs/                   operational guide + context (charter, audits, research)
 | column        | type    | notes |
 |---------------|---------|-------|
 | `row_id`      | integer | 1-based within the statement |
-| `date`        | character (ISO `YYYY-MM-DD`) | normalised; `NA` if unpar04able |
+| `date`        | character (ISO `YYYY-MM-DD`) | normalised; `NA` if unparseable |
 | `date_raw`    | character | exactly as shown |
 | `description` | character | **verbatim** - never strip special chars (`O'Connor & Sons`), only trim outer whitespace |
 | `amount`      | numeric  | signed; debit negative, credit positive; `NA` if redacted/unparsed |
@@ -250,8 +250,14 @@ is rejected by `validate_template` on any other format or with an unknown `on` v
 - `parse_date(x, fmt) -> list(iso, raw)`; `parse_amount(x, style, ...) -> list(value, direction, raw)`; `clean_description(x) -> character` (verbatim-preserving: only `trimws`).
 - `reconcile(parsed, template) -> list(kpis=data.frame, trust=list(level, score, reasons))`. KPI rows: `name, status(pass|fail|na), expected, actual, discrepancy, detail`.
 - `write_outputs(parsed, recon, outdir, basename, formats=c("xlsx","csv","json")) -> character[]` (paths written).
-- `log_event(logdir, record) -> invisible` (append JSONL).
-- `convert_statement(path, bank=NULL, statement_type=NULL, outdir, templates_dir="templates", requested_by=NULL, formats=c("xlsx","csv","json")) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages)`.
+- `write_log_record(logdir, subdir, id, record) -> invisible(path)`. **One JSON file
+  per event, never an append** (§10). It never overwrites: a clashing id gets a
+  `~2` suffix. There is deliberately no `log_event()` / JSONL appender — a shared
+  append is the one write that can interleave over SMB.
+- `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates", user_templates_dir="templates_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", redaction_rects=NULL, force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`.
+- `convert_document(path, ...)` is the **front door**: it runs `convert_statement()`
+  and falls back to the form/labelled-value pipeline (`R/forms.R`) only when the
+  statement path returns `unsupported` and no template was forced.
 
 ## 7. Status model (`result$status`)
 `ok` (matched + parsed + reconciled) · `needs_review` (parsed but a KPI failed
@@ -261,20 +267,41 @@ or low trust) · `unsupported` (no confident template match) · `failed`
 bnz_everyday_csv score 2/3 (missing 'Tran Type' header)"`).
 
 ## 8. Reconciliation KPIs (compute where data allows, else `na` with reason)
-- `balance_reconciliation`: `opening + sum(amount) == closing` (needs opening+closing).
-- `running_balance_continuity`: `balance[i] == balance[i-1] + amount[i]` (needs balance column).
-- `transaction_count`: parsed count > 0 and == stated count if present.
-- `dates_within_period`: all `date` within `period_start..period_end` (if known).
-- `no_unparsed_rows`: every non-empty data row became a transaction (completeness).
-- `redaction_summary`: count of redacted rows/fields (informational).
-`trust.level` ∈ `high|medium|low`: `high` = all applicable KPIs pass;
-`medium` = only informational/NA gaps; `low` = any `fail`. Deterministic.
+The authoritative list is the one in `reconcile()` at the bottom of
+`R/reconcile.R`, in report order. Every one of them must have a `CHECK_PLAIN`
+entry in `ui_labels.R`; `test-seams.R` fails the suite if one does not.
+
+| KPI | Proves | `na` when |
+|---|---|---|
+| `balance_reconciliation` | `opening + sum(amount) == closing`, on a rounded-cent tolerance | no opening/closing, and none derivable from a running-balance column |
+| `running_balance_continuity` | `balance[i] == balance[i-1] + amount[i]` | no balance column |
+| `amount_direction` | money in/out is the right way round for the declared style | the style makes it undecidable |
+| `transaction_count` | parsed count `== stated count`; **degrades to `n > 0`** when the statement prints no count, which is most statements | never — but read the detail |
+| `dates_within_period` | every date falls inside `period_start..period_end` | no period was found |
+| `dates_readable` | **at least one** row date parsed — the safety net for a mis-mapped date column, not a completeness proof | zero rows |
+| `no_unparsed_rows` | no source data line failed to become a transaction | **PDF and Excel always**: there is no independent physical-line count, so it cannot be proved (it can still `fail`, when more rows looked like transactions and could not be read than were read) |
+| `redaction_summary` | informational count of redacted rows | always — it is a count, not a check |
+| `ocr_confidence` | the page-mean OCR confidence | the statement was not OCR'd |
+| `redaction_scan` | nothing under a redaction overlay was read | the scan could not run |
+
+`trust.level` ∈ `high | medium | low`, deterministic: `high` = every applicable
+KPI passed; `medium` = one or more could not run; `low` = any failed. Two
+adjustments: a `low` caused **only** by secondary checks when
+`balance_reconciliation` passed is lifted to `medium`; and a run where **neither**
+balance check ran and there is no stated count can never be `high`, because
+nothing independently proves a row was not dropped.
+
+**Consequence worth stating plainly: a PDF or Excel statement can never reach
+`high`**, because `no_unparsed_rows` is always `na` for those formats. `medium`
+is the healthy ceiling there.
 
 ## 9. Output artifacts
-- **xlsx** (primary): `Transactions` (core schema), `Summary` (header block),
-  `Checks` (KPIs + trust), `Provenance` (row_id → source_ref → raw).
+- **xlsx** (primary), six sheets: `Transactions` (core schema), `Summary` (header
+  block), `Checks` (KPIs + trust), `Provenance` (row_id → source_ref → raw),
+  `Diagnostics`, `Metadata`.
 - **csv**: the core `Transactions` table only (tool-agnostic).
-- **json**: full object (`header`, `transactions`, `extras`, `kpis`, `trust`).
+- **json**: the full object — build stamp, `header`, `transactions`, `extras`,
+  `kpis`, `trust`, `diagnostics`, `provenance`, `metadata`.
 
 ## 10. Logging (`logs/runs/<run_id>.json`, one FILE per run)
 `ts, requested_by, source_file, source_sha256, bank_hint, detected_template,

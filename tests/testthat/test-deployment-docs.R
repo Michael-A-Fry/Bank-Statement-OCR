@@ -255,7 +255,11 @@ test_that("the published test-suite figures are dated, and the stale ones are go
   # train the maintainer to ignore this test. What must hold is that a published
   # figure is (a) not the long-dead one and (b) marked as a measurement, so nobody
   # reads it as a promise.
-  for (d in c("README.md", "docs/context/roadmap.md", "docs/context/launch-audit.md")) {
+  # launch-audit.md was the third file checked here. It was a point-in-time
+  # go/no-go written before launch, and it was deleted rather than maintained -- a
+  # readiness verdict that is never re-taken decays into a claim about today that
+  # nobody re-measured. The two files that DO carry live figures stay pinned.
+  for (d in c("README.md", "docs/context/roadmap.md")) {
     txt <- .dep_read(d)
     expect_false(grepl("343 tests", txt, fixed = TRUE), info = d)
     expect_false(grepl("1,430", txt, fixed = TRUE), info = d)
@@ -322,4 +326,58 @@ test_that("the changelog points at documents that exist", {
   expect_identical(missing, character(0),
                    info = paste("changelog links to a missing file:",
                                 paste(missing, collapse = ", ")))
+})
+
+# ------------------------------------------------------------ the doc graph ---
+# The rules above pin the CONTENT of individual pages. These two pin the SHAPE of
+# the set, which is the failure mode a doc cull introduces: a page is deleted or
+# renamed and the six pages that pointed at it now send the reader to a 404, or a
+# page survives with nothing linking to it and is quietly never read again.
+# Neither breaks a test, a build, or the app -- which is exactly why they are
+# asserted here.
+
+.dep_md_files <- function() {
+  root <- .dep_root()
+  c("README.md", "CHANGELOG.md",
+    sub(paste0("^", root, "/"), "",
+        list.files(file.path(root, "docs"), pattern = "\\.md$",
+                   recursive = TRUE, full.names = TRUE)))
+}
+
+test_that("every internal link in the docs resolves to a file that exists", {
+  root <- .dep_root()
+  broken <- character(0)
+  for (rel in .dep_md_files()) {
+    txt <- .dep_read(rel)
+    links <- unlist(regmatches(txt, gregexpr("\\]\\([^)]+\\)", txt)))
+    links <- gsub("^\\]\\(|\\)$", "", links)
+    links <- links[!grepl("^https?://|^mailto:|^#", links)]
+    links <- sub("#.*$", "", links)                 # drop the anchor
+    links <- trimws(links); links <- links[nzchar(links)]
+    for (l in links) {
+      # relative to the linking file's own directory, the way a reader follows it
+      target <- normalizePath(file.path(root, dirname(rel), l), mustWork = FALSE)
+      if (!file.exists(target)) broken <- c(broken, paste0(rel, " -> ", l))
+    }
+  }
+  expect_identical(broken, character(0),
+                   info = paste("dangling doc link(s):", paste(broken, collapse = "; ")))
+})
+
+test_that("no operational or context page is orphaned from its index", {
+  # A how-to nobody can find is a how-to that does not exist. Each index must name
+  # every page in its own tree (charter.md and the two indexes themselves excepted
+  # -- the indexes are reached from README.md, and charter.md is named by both).
+  root <- .dep_root()
+  for (dir in c("operational", "context")) {
+    idx <- .dep_read(file.path("docs", dir, "README.md"))
+    pages <- list.files(file.path(root, "docs", dir), pattern = "\\.md$",
+                        recursive = TRUE)
+    pages <- setdiff(pages, "README.md")
+    missing <- pages[!vapply(pages, function(p) grepl(basename(p), idx, fixed = TRUE),
+                             logical(1))]
+    expect_identical(unname(missing), character(0),
+                     info = paste0("docs/", dir, "/README.md does not link: ",
+                                   paste(missing, collapse = ", ")))
+  }
 })

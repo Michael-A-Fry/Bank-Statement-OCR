@@ -1,440 +1,127 @@
 # Changelog
 
-What changed, in the order it matters. Newest release first.
+The version record. Newest release first.
 
-Written for whoever inherits this: each entry says what it does for the person
-using the tool, and — where it matters — what it stops going wrong. The finding
-ids (`#3`, `N20`, …) point into [`docs/context/findings-register.md`](docs/context/findings-register.md),
-which carries the evidence.
+`VERSION` is stamped into every run log, every JSON output and the feed manifest,
+so the heading below has to match it: that is what makes "which build produced
+this figure?" answerable after the fact.
+
+This file is deliberately terse. Each entry says what changed and, where a wrong
+figure was possible, what stopped it. The evidence for every line is in
+[`docs/context/findings-register.md`](docs/context/findings-register.md), keyed by
+finding id.
 
 ---
 
 ## 1.2.0
 
-Eighteen findings, all but two raised from **real use on real statements**. Read
-the first section: five of them put wrong figures on screen, and two of those
-were regressions introduced during this same release and caught by reviewing it.
+Eighteen findings, all but two raised from real use on real statements. Five put
+wrong figures on screen; two of those were regressions introduced inside this
+release and caught by reviewing it.
 
-### Wrong figures — the ones to read
+**Wrong figures**
 
-- **A credit was read as a debit, on every credit.** Credit-card statements print
-  the amount on one line and its `CR` on the next. That marker is the *sign* of
-  the amount above it, but the line carries no date and no digits, so it looked
-  exactly like a wrapped description: the `CR` was folded into the payee, the
-  amount cell never saw it, and every payment and refund came out with the charge
-  sign. No error, no flag, a complete set of figures with the wrong sign — only a
-  balance reconciliation could have noticed, and only if the statement prints
-  balances. The marker is now appended to the money cell it sits under, so the
-  amount is read as `150.00 CR` exactly as if it had been printed on one line.
-  (`N37`)
-- **A printed balance was kept as a transaction.** An opening or closing balance is
-  not a transaction; when one was kept the output did not lose data, it *gained* a
-  transaction that never happened, at the balance's own material amount — reported
-  from use as *"Balance −9000 debit"*. The guard read the description cell and fell
-  back to the whole line only when that cell was empty; a displaced band makes the
-  cell non-empty but *wrong*, so the fallback never ran. It reads both, always.
-  (`N30`)
-- **The fix for that then dropped real transactions.** Reducing a line to its label
-  stripped every number, marker and month-ish word *anywhere* on it — so any payee
-  merely beginning with a month abbreviation was eaten. `MAYFAIR CLOSING BALANCE`
-  became "closing balance"; `MARKET TOTAL PAYMENTS`, `JUNCTION TOTAL DEPOSITS` the
-  same. Each was silently skipped, and bucketed non-actionable so the drop never
-  reached the completeness measure. Only the *leading* date and *trailing* money
-  are removed now — what is in the middle is what the line says. 23 cases are
-  pinned in both directions.
-- **A stray date range moved the year on every transaction.** A statement covering
-  several periods is read as one span, and the first version widened the *dates*
-  even when it had refused to pair the balances, on the theory that the earliest
-  start and latest end are printed facts. What is printed is a date *range*, and
-  statements print plenty that are not statement periods — a fixed-rate loan
-  window, a tax year. The reader takes its year context from those two values, so
-  a January statement beside a 2024–2026 loan term resolved every year-less date
-  to **2024**, and the "all dates fall in the period" check read the same widened
-  period and *passed*. Two outcomes now, not three: proven and everything moves
-  together, or nothing moves and the reason is said out loud.
-- **Balances could be paired across two different accounts.** Two dormant accounts
-  both opening and closing on `0.00` chain perfectly, so the money proof believed
-  it and stayed silent. If the sections name more than one account, it stops.
+- `N37` — a `CR` marker printed on the line below its amount was folded into the
+  payee, so every credit-card payment and refund came out with the charge sign.
+  The marker is now appended to the money cell it sits under.
+- `N30` — a printed opening or closing balance could be kept as a transaction, at
+  the balance's own material amount. The summary-line guard now reads both the
+  description cell and the whole line, always.
+- The first fix for `N30` then ate real transactions whose payee began with a
+  month abbreviation (`MAYFAIR CLOSING BALANCE`). Narrowed.
+- `N38` — a stray date range on the page could move the inferred year on every
+  transaction. A span is no longer claimed unless it was actually found.
+- Balances could be paired across two different dormant accounts in one bundle.
 
-### The toolkit was not connected
+**The toolkit**
 
-- **A duplicate output id unbound the whole toolkit on PDFs.** `uiOutput("g_more_toggle")`
-  was rendered twice. Two outputs sharing an id make the browser throw *"Duplicate
-  binding for ID"*, and that aborts Shiny's entire bind pass for the modal — so on
-  a PDF **not one** statically drawn control reached the server: the bank name, the
-  date format, the amount style, the page number, "Assign it", "Remove it". Boxes
-  drawn did nothing and the bands stayed at their drafted defaults, which is
-  exactly the reported *"every second page has the default box assignments"* and
-  *"I've drawn the box over the credit column and it reads nothing"*. Proven in the
-  browser: typing `ANZ` into the bank box left the server holding the old value.
-  A test now fails on any repeated output **or input** id. (`N29`)
-- **The coordinate space is a contract, not a comment.** The parser was measured
-  *innocent* here — across every real statement, no page differs in size from any
-  other in its file, and a page rescaled 4.55× keeps an identical row count. The
-  risk was on the drawing side, so the frame is now two callable, tested functions
-  replacing four hand-rolled copies of the rule, one of which computed the ratio in
-  the opposite direction.
-- **The band editor draws on mouse release**, not during the drag, so small
-  positional corrections are possible. (`N26`)
-- **The save name is built from the bank *and* the kind of statement**, so two
-  layouts from one bank no longer collide. It stops following the moment you type
-  your own. (`N27`)
-- **"None of these fit? Tell our team" is in front**, not inside the settings
-  disclosure — it is the escape hatch for somebody already stuck, and the tool was
-  making them hunt for it. (`N28`)
-- **The form builder leads with the document.** Five steps, the concrete one first:
-  draw a box round a value · what is this · repeat · check what comes out · save.
-  The blank "type the values you want, one per line" box that used to open the
-  screen is now optional and behind a disclosure. It also answers the question it
-  used to ask: it reads what is in the box and the wording printed beside it, and
-  decides whether to find the value *by its wording* (portable to the next
-  document) or by *pinning the box*. (`N31`)
+- `N29` — a duplicate output id aborted Shiny's bind pass for the whole modal, so
+  on a PDF not one control the toolkit drew statically was live. Fixed, and the
+  id collision is now a test.
+- `N34`, `N35` — the preview says how much it read, and the first question the
+  builder asks is one the person in front of it can answer.
+- `N28` — the escape hatch is reachable from the screens that need it.
+- A correction to a shipped template is saved as `<id>_custom` carrying a
+  `refines:` line, and detection honours it. Before this, a correction tied with
+  the template it was correcting and lost.
 
-### A whole case, and statements that span several periods
+**Cases, bundles and periods**
 
-- **Convert takes a folder.** The same picker takes one file or fifty: one row per
-  file — status, bank, rows, and the one thing to check — sortable, worst-first,
-  and clicking a row opens that file's *ordinary* result page. Nothing new happens
-  per file; it is a loop over the same conversion, so a batch answer and a
-  single-file answer cannot disagree. A file that cannot be read never stops the
-  rest, and the QID is asked once per batch. (`N23`)
-- **Several periods in one statement reconcile as one span** — earliest opening +
-  every transaction = latest closing — but only when four things prove the pairing:
-  the periods read as dates, they do not overlap, each section prints exactly one
-  opening and one closing, and **each period closes on the figure the next one
-  opens on**. A shared boundary day is not an overlap: banks routinely print the
-  previous closing date as the next opening date, and rejecting that rejected the
-  commonest real multi-period statement there is.
-- **Several statements in one file are still split, not merged** — verified on a
-  real 3-statement bundle, where the per-statement balances chain 95.22 → 37.88 →
-  11.66 and each reconciles on its own anchors.
-- **…and that split now works for every bank.** It was gated on a template asking
-  permission, and of thirteen shipped templates **only ANZ ever did** — so a
-  Westpac, ASB, BNZ or Kiwibank bundle, and anything an analyst built, got no
-  split at all and fell back to being read as one merged statement. That is where
-  *"dates outside the period"* and *"balance failed"* came from. Measured on a real
-  two-statement Westpac bundle: `needs_review` with **low** trust and both the
-  balance and running-balance checks failing → **converted, no failing checks**.
-  The safety never lived in the opt-in: `split_bundle()` still refuses unless an
-  independent signal confirms the statement count *and* every statement reconciles
-  on its own. `split: false` remains, for a template that must never be cut.
-  (`N39`)
-- **A span is only claimed when one was made.** On a bundle the screen said *"3
-  distinct statement periods found, read as one span 20 Apr to 19 Jun"* — and no
-  span existed; the file had been split into three and reconciled separately. The
-  figures were right and the sentence describing how they were produced was false.
-  (`N38`)
+- Batch conversion: select a whole case folder, one row per file, click a row for
+  that file's full result.
+- Multi-period reconciliation, and `N39`/`N40`: auto-split is no longer opt-in
+  (one of thirteen templates ever opted in), and an unfinished seed template can
+  no longer join detection.
+- `N33` — a page footer is no longer folded into the transaction above it.
 
-### Smaller, all from use
+**Wording and screen**
 
-- **A page footer was being folded into the previous transaction's description**,
-  so `"To 63A Rent Rent 63A Sar"` came out as `"To 63A Rent Rent 63A Sar Carried
-  Forward to next page"`. No figure was wrong, which is exactly why nothing caught
-  it — every check is about money and dates, none reads the description. (`N33`)
-- **A year-less date format read nothing** when the statement printed no period the
-  tool could parse and more than one year appeared on the page — which a credit
-  card always does (payment due, card expiry, a copyright line). The labelled
-  statement date has been in the dictionary since the beginning and **nothing read
-  it**; it is now a year source, ahead of scanning the page for numbers. Reading a
-  labelled fact is not a guess. (`N36`)
-- **Converting is unmissable.** The status was a small panel in a screen corner, so
-  people did not notice a run and clicked around during it. It is centred, large,
-  and dims the page — one rule covering all five places the app reports progress.
-  An ordinary warning still goes quietly to the corner. (`N32`)
-- **The preview says how much it read.** It stops at the first few pages so the
-  toolkit stays quick on a long statement, then announced that partial count as
-  *"N transaction rows read"* — so the number an analyst checked her template
-  against was not the number the conversion then gave her, with nothing saying why.
-  It now reads *"N rows read from the first 3 of 11 pages"*, and only says that
-  when the document really is longer than the preview. (`N34`)
-- **The first question can be answered again.** *"A statement, or labelled
-  values?"* is asked once on the page behind the toolkit — and not at all when the
-  toolkit is opened from a result — so from inside it there was no way back, and
-  Cancel threw the work away without answering it. **Not a transaction table?**
-  now sits at the top of the toolkit and carries the same document across to the
-  form builder, with nothing re-uploaded. The old wording pointed at a control
-  *"above"*, which the modal is covering. (`N35`)
-- **Choosing a bank narrows the template list**, the label is just *Template
-  (optional)*, JSON is a link rather than a third equal button, a layout can carry
-  the dates it applies between, and the dashboard is no longer mentioned to people
-  who cannot see one.
+- Every check label now claims only what its check proves. "Every row was read"
+  became "No row failed to read"; "Row count matches the statement" became "Row
+  count"; "Redactions found and honoured" became "Redactions found".
+- A check that could not run says "could not be checked" rather than borrowing
+  the field-coverage wording "not on this statement", which meant something else
+  on the same screen.
+- A tie between two templates converts and holds for review instead of demanding
+  a pick from a screen that had no picker on it.
+- Admin's `user_template_ids` reactive shadowed the engine function of the same
+  name, so the template origin line printed an R error and Hide and Delete did
+  nothing, silently. Removed.
 
-### Simplification, and what it turned up
+**For the maintainer**
 
-Three agents on strictly disjoint files, then an adversarial review of the result.
-`app.R` 4,782 → 4,620 lines, `R/batch.R` 241 → 174, CSS extracted to `www/app.css`.
-The simplifications are the small part; what they exposed is the point.
+- Admin refuses to open at all while the admin password is the shipped
+  placeholder.
+- A safe, shapes-only audit any statement or folder can be described with, and
+  the no-PII AI survey prompt
+  ([`docs/operational/survey-a-statement-with-ai.md`](docs/operational/survey-a-statement-with-ai.md))
+  that produces the same description without the file leaving the room.
+- The docs were culled: the point-in-time audits, the research briefings and the
+  superseded plans are gone from `docs/`, and git history keeps them. Two new
+  tests fail the suite if a doc link dangles or a page is orphaned from its index.
 
-- **Two bank pickers, and the front one silently won.** The Bank control appeared
-  twice — once in front, once inside "It picked the wrong bank?" — with separate
-  state. Confirmed live: with ANZ in front and ASB chosen inside, the conversion
-  ran on **ANZ**. A bank chosen inside the panel was discarded, under a comment
-  claiming the two were "the same choice". One control now.
-- **The X-ray was drawing bands ~9.5pt from where the reader reads them.** It and
-  the parser snapped page scaling on *reciprocal* ratios, so on a band of page
-  sizes the view an analyst uses to judge a template disagreed with the parse it
-  was judging. Proven across 144 render cases: 122 identical to floating-point
-  noise, and all 22 that moved were the correction.
-- **One definition of the result page's state.** Three routes each hand-maintained
-  an overlapping set of ~9 reactives, which is how a previous statement's feed
-  verdict ends up beside a new statement's figures. Writing it found a real
-  instance: a finished batch left the last file's verdict in session state.
-- **A "redraw that band" instruction was withdrawn, not tuned.** It fired on
-  correct bands — and, being first in its chain, hid the message that named the
-  real damage. No threshold separates the cases: a genuine fault leaves 5.13% of
-  words unclaimed on one statement while a *correct* template leaves 9.44% on
-  another. The measurements stay; the verdict is gone. Telling someone to move a
-  correct band is how you make a wrong figure.
-- **The batch table now gathers the failures on the first click.** It sorted
-  *best*-first — the click meant to group what went wrong put the clean files on
-  top. (`N41`)
-- **The engine no longer reads a UI file off disk.** `R/batch.R` was `sys.source`ing
-  `ui_labels.R` at runtime to fetch a sentence, for a caller that does not exist.
-  It carries its own codes now and the screen adds the words.
-- **An unfinished seed template cannot join detection.** `templates_seed/` holds
-  ten drafts whose column positions are placeholders marked `# TODO` — and YAML
-  drops comments, so a half-drawn one copied into use had nothing the loader could
-  see. Six of the ten validated as-is. They now carry `draft: true`, and the
-  loader refuses them with instructions. (`N40`)
-- **Smaller, all found by review:** a validity-window banner that kept claiming
-  the boxes were empty after they were filled and hid the backwards-date warning
-  (`N42`); a template whose window is the four letters `NA` opening under a red
-  error (`N43`); a guard that detected a bad window by *catching an exception*,
-  which a later contract fix silently removed (`N44`); and an all-clear headline
-  that could appear while a mapped band had read nothing anywhere (`N45`).
+**Suite:** 725 tests, 3,366 passing assertions · 0 errors · 0 skipped (from 2,880
+at 1.1.0). Register: 107 findings, 104 fixed, 2 open.
 
-### For the maintainer
+**Known and deliberate**
 
-- **Two duplicate input ids were live** — one button existed three times, two of
-  which render together. Two buttons sharing an id keep independent click counters,
-  so one sends a value identical to the current one and its handler never fires: a
-  dead button, invisible from R and green in the suite.
-- **A global CSS defect**: the table-header rule uses the `background` shorthand
-  with `!important`, which resets `background-repeat`, so the sort arrow *tiled*
-  across the header. Every table in the app was affected.
-- **A test that passes with the guard removed is worse than no test.** The new
-  summary-line invariant was mutation-tested and found *vacuous* — deleting the
-  guard did not trip it — so it carries a case with teeth as well as the golden net.
-
-**Suite:** 3,342 passing · 0 failed · 0 errors · 0 warnings · 0 skipped
-(from 2,880 at 1.1.0). Register: 107 findings, 104 fixed, 2 open —
-[`docs/context/findings-register.md`](docs/context/findings-register.md).
-
-### Known and deliberate
-
-- **`app.R` is ~4,600 lines and still not split.** The CSS move took 250 lines out
-  and removed **zero** reactive complexity — CSS was the cheapest 250 lines in the
-  file to lose. What makes it hard is ~3,800 lines of interleaved reactives in one
-  scope. A concrete, de-risked plan is in the findings register, including the
-  two-line test-helper change that must go first: 60 tests currently grep `app.R`
-  by physical line offset, so nothing can move until they read a directory.
-- **Two older findings wait on evidence, not effort** — a spread of real forms to
+- `app.R` is ~4,600 lines and not yet split. What makes it hard is ~3,800 lines of
+  interleaved reactives in one scope; a de-risked plan is in the register,
+  including the test-helper change that must go first (60 tests grep `app.R` by
+  physical line offset).
+- Two older findings wait on **evidence, not effort**: a spread of real forms to
   tune the form fingerprint against, and one hand-keyed golden scan to measure OCR
-  digit accuracy. Both fail closed and loudly today, so neither can put a wrong
-  figure on screen. The register says exactly what to collect, and which of the two
-  a no-PII AI survey can answer (the first; not the second, because the evidence
-  there is the client's own figures).
-- **Two mechanisms answer "one file, several periods", and both are needed.** The
-  bundle split takes several separately-issued documents, each with its own anchors
-  to reconcile against; the span merge takes one document with several sections,
-  where there are no boundaries to cut on at all. An earlier review called them
-  redundant and recommended deleting one — the register records why that is wrong.
-- **`.unique_names()` looks like duplication and is a guard.** Two files both named
-  `statement.pdf` in one case would otherwise write one workbook, and both rows'
-  Download buttons would resolve to it — the second statement's figures arriving as
-  the first's. The proof is a comment above it, because it has been proposed for
-  deletion once already.
-
----
+  digit accuracy. Both fail closed and loudly today.
+- Two mechanisms answer "one file, several periods" and both are needed — the
+  bundle split (several separately-issued documents) and the span merge (one
+  document, several sections). The register records why deleting either is wrong.
 
 ## 1.1.0
 
-### Correctness — figures that could have been wrong
+**Correctness**
 
-These are the ones to read. Each was a route to a wrong number that nothing on
-screen would have questioned.
+- A tie between two templates was broken by template id, alphabetically, so a
+  hand-built `aaa_bank` beat a tested `westpac_everyday_pdf` on nothing but its
+  name. Shipped templates now win an equal score.
+- `%y` / `%Y` year truncation could read a four-digit-year export into 2020.
+- `type_dc` sign inversion in drafted templates: a bank marking debits `DR` or
+  `Debit` had every debit read as a credit.
+- Delimited and Excel statement metadata is threaded into the header, so the
+  balance, count and period checks can run on those formats at all.
+- A re-convert that flips accepted → withheld now withdraws the previously
+  accepted rows from the feed.
 
-- **A template's filename decided which figures reached the dashboards.** When two
-  templates fitted a statement equally well, the winner was chosen by template id,
-  alphabetically — so a hand-built `aaa_bank` beat a tested `westpac_everyday_pdf`
-  on nothing but its name. Shipped templates now win an equal score; they have a
-  golden test proving they read that bank correctly, and hand-built ones do not.
-- **Reading 5 rows of a 500-row statement passed every check.** The row-count check
-  requires only "more than zero" when a statement prints no stated count, and the
-  completeness check returned "cannot be proved" for every PDF. A conversion could
-  come back clean, feed the dashboards, and be missing 99% of the money. The tool
-  now counts rows that *looked like transactions and could not be read* — the date
-  wouldn't parse, or there was no amount in the money columns — and fails when more
-  were missed than captured. Headings, notes, summary lines and wrapped text are
-  excluded: most statements skip more rows than they keep, and that is normal.
-  (`N20`)
-- **"It matched, but there are no transactions" was an amber warning.** A template
-  whose wording fits but whose columns are in the wrong place produced an empty
-  workbook labelled *needs review*. It now reports plainly that the template read
-  nothing, names it, and points at fixing that template rather than building
-  another one.
-- **A correction of a shipped template could never take effect.** Opening a shipped
-  template to fix a moved column band saved it as `<id>_custom` with the same
-  identifying phrase — so the two tied on every statement of that bank, and the
-  tie-break preferred the tested one. The fix now records `refines: <id>`, and a
-  correction outranks the single template it names. A hand-built *rival* still
-  loses to the tested one. (`N22`)
-- **Every conversion was about to become untraceable.** This deployment has no
-  sign-in, so identity fell through to the account the server process runs as —
-  the same for everyone. A QID is now required before the first conversion of a
-  session, and the conversion is refused without one. Behind a real sign-in
-  (Shiny host auth or an SSO header) nothing is asked at all.
+**Privacy and governance**
 
-### Privacy
+- Destructive Admin actions are authorised server-side; visibility is not
+  authorisation in Shiny.
+- Local metadata capture: levels, per-category switches, account numbers stored
+  only as a one-way hash, never in the Qlik feed.
 
-- **The form path polices itself now.** A labelled value has no reconciliation to
-  prove it — it is trusted because it was read — so an empty or contradictory read
-  has to say so itself, and it did not. Every outcome reported `ok`: nothing found,
-  the same label twice with different values, even a transaction statement fed to
-  it. The count in the message was of fields the template *declares*, not values
-  found, so a document where nothing was read still said "4 field(s) extracted".
-  Zero values is now `unsupported` and names the template that matched but read
-  nothing; conflicting values are `needs_review` with the conflicts named. The
-  shipped ANZ sample turns out to print three of its labels twice with different
-  values — it now says so instead of silently taking the first.
-- **A negative kept its sign.** The money pattern allowed a minus only *inside* the
-  currency symbol (`$-577.80`), so the two forms banks actually print — a minus
-  before the symbol (`-$577.80`) and a trailing minus (`577.80-`) — matched without
-  it, and a deduction was extracted as a positive. The ANZ KiwiSaver sample shipped
-  in this repo prints `-$577.80` for tax and `-$489.22` for fees, so the one shipped
-  form template was reading both with the wrong sign. The minus is also not always
-  an ASCII hyphen: PDF typesetting emits U+2212 MINUS SIGN and financial documents
-  use U+2013 EN DASH, and neither matched — found by generating test PDFs, since
-  R's own `pdf()` device emits U+2212 for a plain "-", exactly as a typesetter does.
-
-### Privacy
-
-- **Client statement imagery no longer accumulates on disk.** Under memory pressure
-  ImageMagick writes a page's raw pixels to a temporary file (~83 MB for one 300 dpi
-  A4 page) and clears them only when the process exits — on a server running for
-  months, never. Each piece of image work now gets a private folder that is deleted
-  on the way out. (`N17`)
-- **The screen no longer describes the tool's weaknesses.** The identity field
-  explained itself with *"There is no sign-in on this server"* — a description of
-  where the door is unlocked, shown to everyone who opens the page. A test now
-  blocks that class of wording across the app, the label maps and every engine
-  message.
-- **The Admin tab is hidden unless the URL carries `?admin`.** Nobody converting a
-  statement has the password, so a tab they cannot open was a reference to Admin on
-  every screen and an invitation to try one. The maintainer bookmarks
-  `http://your-server:8100/?admin`. This is not the lock — the password is, and
-  every admin action is still checked server-side, so a hand-typed `?admin` reaches
-  a login form and nothing else.
-- **A QID is validated: six letters or numbers, stored uppercase.** Free text meant
-  a typo or a name could be recorded against a conversion — a record nobody can
-  follow back to a person, which is the same as having none.
-- **An unguarded observer was found and closed.** Tightening the invariant test to
-  read whole observer bodies (instead of a fixed nine lines) immediately caught one:
-  the template-request queue was read off disk and its ids pushed into every
-  session, admin or not, because a bare `observe()` is not suspended when its tab
-  is hidden.
-- **Admin is not named anywhere a user can read.** Nobody using the app has the
-  password, so the About card advertising it, an error that said "tidy them up in
-  Admin → Templates", and "ask your administrator" were all directions to a door
-  that will not open.
-
-### The screen
-
-One rule now governs it, recorded in [`docs/context/charter.md`](docs/context/charter.md):
-
-> **Never ask a question the tool can answer. Never ask a question the person in
-> front of you can't.**
-
-- **The result page shows the verdict, the download, the figures and the
-  transactions — and nothing else by default.** Measured before: one result could
-  show 19 blocks and 41 distinct sentences behind 19 controls, of which about five
-  were questions an accountant could actually answer. Everything technical — the
-  X-ray, the chart, every check, every diagnostic, the template controls — sits
-  behind **"Show me how it read this"**. Nothing was deleted. **The click is
-  remembered for the session**, so someone technical opens it once and never sees
-  the button again; nobody is asked whether they are an advanced user.
-- **The checks that matter are on screen, pass or fail.** Only FAILING checks were
-  shown, which reads as "no news is good news" — the wrong way round for a tool
-  whose output has to be defensible. The reason to trust a conversion is that the
-  opening balance plus every transaction equals the closing balance the statement
-  prints, and a *passing* proof said nothing at all. Four now sit under the figures:
-  does it add up, was every row read, does the running balance follow, could every
-  date be read. A dash means the check could not run on this statement — a fact
-  worth seeing, not a pass.
-- **The date format and the amount style stay in front.** They were briefly moved
-  behind the toolkit's disclosure with everything else, on the theory that the
-  drafter fills them in. It does - and it is wrong often enough that these are the
-  two settings an analyst reports changing on almost every template she builds.
-  Frequency beats how technical a control looks: hiding what is needed nearly every
-  time puts a click on the *most* common path, not the rarest. The controls that
-  exist only because of the amount style (what a bare number means, what the D/C
-  indicator values are) sit beside it, so choosing "a D/C column" no longer shows
-  nowhere to say what D means.
-- **Setting up a bank is four steps stated at the top of the toolkit**: drag a box,
-  say what it is, name the bank, save. One dropdown answers both "which column is
-  this" and "pin this header value". Date format, amount style, the identifying
-  phrase and the save name sit behind **"Show the settings for this statement"** —
-  filled in from the file already, changed only if the preview looks wrong.
-  Advanced and the raw YAML are unchanged, one click away.
-- **A tie no longer stops a conversion.** Two templates fitting the same wording is
-  a question only a maintainer can answer — an accountant cannot know which internal
-  variant a bank printed with. The tested one is used, the run is held for review,
-  the tie is named, and it is raised for whoever can retire the duplicate.
-- **The "include templates built here" tick-box is gone.** Whether a colleague's
-  template counts is a deployment setting (`app.user_templates_default`), not a
-  per-conversion decision. It only ever produced the puzzle *"I built this template
-  and it doesn't work"*. What reaches the Qlik dashboards is gated separately and
-  is unchanged.
-- **Verdict wording lost its hedging.** *"Medium confidence: it read cleanly and
-  every check that could run passed, but one thing about this statement could not be
-  fully proven — it is named below. Worth a quick eyeball against the statement."*
-  is now *"Read cleanly. One thing could not be proven — it is named just below."*
-  Engine detail — template ids, scores, missing phrases — moved off the verdict card
-  into the evidence view, unchanged and still exact.
-
-### For the maintainer
-
-- **A no-PII prompt for describing an awkward statement.**
-  [`docs/operational/survey-a-statement-with-ai.md`](docs/operational/survey-a-statement-with-ai.md)
-  — attach a statement to Copilot, paste the prompt, and get back a structured
-  description of the layout with no client detail in it: fingerprint candidates and
-  how distinctive they really are, column order and alignment, date and amount
-  styles, the exact wording of every balance and total line, and the three things
-  most likely to make an automated reader wrong without noticing. A batch of these
-  is what unblocks the remaining open findings.
-- **Decisions are made on codes, not on English.** The completeness check used to
-  decide by pattern-matching the display sentence *"the date didn't parse — usually
-  the date format in the template is wrong"*. Rewording that sentence — which this
-  codebase does constantly — would have switched the check off silently. The engine
-  decides on `.PDF_ACTIONABLE_CODES`; the sentence is a lookup, free to reword.
-- **Deletions.** Three exported detection helpers that each re-derived the same
-  answer, one duplicated diagnostic category, one dead function, and the
-  try-another-template rescue loop with its parameter, its field and its message.
-  A sweep of all 344 functions in the engine and the app found exactly one with no
-  caller, and no helper defined twice.
-- **A one-page audit of the interface rule** and the reasoning behind each open
-  finding is in [`docs/context/findings-register.md`](docs/context/findings-register.md)
-  (84 findings, 81 fixed, 3 open).
-
-### Known and deliberate
-
-- **`app.R` is ~3,900 lines and has not been split.** A split was attempted and
-  stopped: several tests read `app.R` as text, and a split that *passed* would have
-  silently blinded the admin-authorisation guard — a test that no longer checks
-  anything is worse than no test. Three small unblocking edits are documented in the
-  findings register. This is the largest remaining maintainability risk.
-- **`R/forms.R` + `R/extract_fields.R`** are a second template engine serving one
-  shipped form template, kept for the IRD-document work they were built for.
-- **Two open findings wait on evidence, not effort:** the form fingerprint gate
-  needs more than one real form to tune against, and scanned-digit accuracy needs
-  one hand-keyed golden scan to measure against. Both fail closed and loudly today.
-
-**Suite:** 2,528 passing · 0 failed · 0 errors · 0 warnings · 0 skipped.
-
----
+**Suite:** 2,880 passing · 0 failed · 0 skipped.
 
 ## 1.0.0
 
-First production build. The engine, the templates, the governed Qlik feed, the
-audit trail and the offline installer, as described in
+First production build: the engine, the shipped templates, the governed Qlik
+feed, the audit trail and the offline installer, as described in
 [`docs/context/charter.md`](docs/context/charter.md).

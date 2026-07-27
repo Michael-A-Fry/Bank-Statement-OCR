@@ -96,6 +96,26 @@ being shown `amount_direction`.
 
 ---
 
+## Ten people at once
+
+There is no lock, no queue, no database and nothing to tune, because **nothing is
+ever appended to a shared file.**
+
+- Each conversion writes its outputs into its own `tempfile()`-unique directory.
+- Each writes **one** run record, `logs/runs/<run_id>.json`. A clashing id gets a
+  `~2` suffix rather than overwriting — a destroyed audit record is the cardinal
+  failure.
+- Each feedback submission writes one file under `logs/feedback/`.
+- The feed writes one content-hash-keyed file per statement, atomically (temp file
+  in the same directory, then rename), so a Qlik reload can never read a
+  half-written CSV.
+
+Appending to one shared log from several machines over SMB is the single
+operation that genuinely can interleave and corrupt; one-file-per-event sidesteps
+it. Shiny sessions are isolated, so nobody sees another person's upload or
+result. The one deliberately shared resource is the template library — a team
+asset, not user data.
+
 ## Three rules the code is built around
 
 1. **Never silently wrong.** A check that could not run reports "not applicable",

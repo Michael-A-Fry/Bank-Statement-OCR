@@ -1,44 +1,21 @@
-# Context — background and reference
+# Context — how it works, and why
 
-The "good to know" material: **what was built, how we got here, what was researched,
-and the honest limits.** None of this tells you how to *do* a task — for that, see
-[`../operational/`](../operational/README.md). If you have just inherited the tool,
-read [charter.md](charter.md), then
+Reference for whoever owns or changes the engine. None of this tells you how to
+*do* a task — for that, see [`../operational/`](../operational/README.md).
+
+**Just inherited it?** [charter.md](charter.md), then
+[how-it-fits-together.md](how-it-fits-together.md), then
 [`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md).
 
-## Start here
-| Doc | What it is |
+| Doc | What it is, and when you read it |
 |---|---|
-| [charter.md](charter.md) | **Read this first.** Purpose, users, scope and the non-negotiables — if a change conflicts with the charter, the change is wrong. |
-| [how-it-fits-together.md](how-it-fits-together.md) | **Read this second.** One page: how a statement flows from upload to dashboard, which module owns each step, where the on-screen wording lives, and where you change each kind of thing. |
-| [launch-audit.md](launch-audit.md) | Readiness: what's ready, the honest boundaries, and the go/no-go. |
-| [ux-audit.md](ux-audit.md) | Enterprise UX/UI audit — every screen reviewed by four specialist personas, with findings. |
-| [engine-audit.md](engine-audit.md) | Engine & platform audit — correctness/bugs/refactors across engine, preprocessing, templates, flow, feed; prioritised with a fix sequence. |
-| [edge-cases.md](edge-cases.md) | Real-world edge cases and known limits — what the tool handles and what it doesn't. |
-| [roadmap.md](roadmap.md) | The prioritised backlog, ranked by value ÷ effort. |
-
-## How we got here
-| Doc | What it is |
-|---|---|
-| [discovery/discovery-log.md](discovery/discovery-log.md) | The requirements and decisions history — every constraint and why. |
-| [template-suite-plan.md](template-suite-plan.md) | The plan for building out the bank-template suite. |
-| [wizard-tutorial.md](wizard-tutorial.md) | A detailed walkthrough of the template wizard (the deep version of [adding-a-bank-template](../operational/adding-a-bank-template.md)). |
-| [wizard-vision-and-roadmap.md](wizard-vision-and-roadmap.md) | The design thinking behind the visual wizard, and its A/B/C roadmap. |
-
-## How it's built (architecture)
-| Doc | What it is |
-|---|---|
-| [architecture/build-contract.md](architecture/build-contract.md) | The template format and the full data contract every conversion honours. |
-| [architecture/deployment-integration-plan.md](architecture/deployment-integration-plan.md) | Server deployment, concurrency, and access-control design. |
-| [architecture/qlik-sense-integration.md](architecture/qlik-sense-integration.md) | The Qlik architecture: the app converts, Qlik loads the analytics feed. |
-| [architecture/qlik-options-analysis.md](architecture/qlik-options-analysis.md) | The Qlik-side options that were weighed, and why the chosen shape won. |
-| [architecture/legacy-qlik-mapping.md](architecture/legacy-qlik-mapping.md) | What the legacy Qlik app produced, as a reference to measure against. |
-| [metadata-capture.md](metadata-capture.md) | The local-only "ML goldmine" metadata capture — levels, the record shape, and the per-level PII notes. |
-| [customisation.md](customisation.md) | How to teach the engine new things — templates vs lexicon vs config, and the human-approved learning loop. |
-| [engine-parameters.md](engine-parameters.md) | The engine's numeric tuning decisions (year window, money tolerance, OCR/redaction thresholds) — all named in one file, with the effect of moving each. |
-
-## Research
-| Doc | What it is |
-|---|---|
-| [research/ocr-preprocessing.md](research/ocr-preprocessing.md) | OCR pre-processing research — how scanned-page accuracy is lifted. |
-| [research/open-source-landscape.md](research/open-source-landscape.md) | Survey of the open-source tools considered, and what was borrowed vs. built. |
+| [charter.md](charter.md) | **Read first.** Purpose, users, scope and the non-negotiables. If a change conflicts with the charter, the change is wrong. |
+| [how-it-fits-together.md](how-it-fits-together.md) | **Read second.** One page: how a statement flows from upload to dashboard, which module owns each step, where the on-screen wording lives, and where each kind of change goes. |
+| [architecture/build-contract.md](architecture/build-contract.md) | The data contract every conversion honours — transaction schema, flags vocabulary, template YAML spec, statuses, output artefacts. Check it before changing anything the engine emits. |
+| [engine-parameters.md](engine-parameters.md) | Every numeric threshold, what it decides, and the effect of moving it. Read before editing `R/params.R`. |
+| [metadata-capture.md](metadata-capture.md) | What the local-only metadata corpus stores per run, and the per-level privacy notes. Read before answering "what does this tool keep about our clients?". |
+| [edge-cases.md](edge-cases.md) | Real-world statement edge cases, each with an honest status. Read to decide whether an odd statement is a known limit or a bug. |
+| [findings-register.md](findings-register.md) | Every defect found by review or real use, with its evidence and whether it is fixed. The audit trail behind the changelog. |
+| [roadmap.md](roadmap.md) | The short prioritised backlog, the simplicity guardrails, and what was killed. |
+| [engine-audit.md](engine-audit.md) | What the engine audit left standing: the ideas deliberately **not** built, each with the fact that would change the answer. Read before proposing one of them again. |
+| [architecture/legacy-qlik-mapping.md](architecture/legacy-qlik-mapping.md) | What the legacy Qlik tool produced, kept as the parity reference for downstream categorisation. Cited as evidence by the findings register. |

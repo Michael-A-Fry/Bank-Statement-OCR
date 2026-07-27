@@ -99,7 +99,9 @@ test_that("the design system is one linked stylesheet, and its absence is announ
 # didn't-go-well card used to be two separately hand-coloured boxes.
 test_that("every result verdict uses the shared verdict card", {
   src <- .ui_src()
-  block <- .ui_block(src, "output\\$cv_status <- renderUI", 30L)
+  # 45, not 30: the block now also carries the note recording why the tie headline
+  # is gated on `unsupported`. The window only has to reach the end of cv_status.
+  block <- .ui_block(src, "output\\$cv_status <- renderUI", 45L)
   expect_match(block, 'paste0\\("verdict verdict-", lvl\\)')
   expect_match(block, 'class = "verdict-title"')
   # no second, hand-rolled palette
@@ -421,6 +423,78 @@ test_that("a flagged result opens the evidence view without being asked", {
   expect_match(joined, "if \\(isTRUE\\(cv_detail_touched\\(\\)\\)\\) return\\(\\)")
   # opens on a non-ok status OR any failing check
   expect_match(joined, 'any\\(k\\$status %in% "fail"\\)')
+})
+
+# ---------------------------------------------------------------------------
+# A TIE THAT CONVERTED IS NOT A QUESTION. R/convert.R picks deterministically
+# (tested over hand-built), reads the statement and holds the run at
+# needs_review. The verdict card was replacing "Converted - please double-check
+# it" with "More than one template fits - pick which one" on those runs -- on a
+# screen with no picker anywhere on it (cv_tie_pick renders only when the status
+# is `unsupported`) -- and suppressing the confidence grade the engine had already
+# computed for real rows. The headline now follows the picker.
+test_that("the tie headline only appears where there is a pick to make", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_status <- renderUI", 40L)
+  expect_match(blk, 'ambig <- isTRUE\\(res\\$detect\\$ambiguous\\) && identical\\(st, "unsupported"\\)')
+  # ...and the confidence grade is no longer withheld from an ambiguous run that
+  # converted: `graded` turns on the status alone.
+  expect_match(blk, 'graded <- st %in% c\\("ok", "needs_review"\\)')
+  expect_false(grepl("graded <- !ambig", blk, fixed = TRUE))
+  # the picker's own gate is the same condition, so the two cannot drift
+  expect_match(.ui_block(src, "output\\$cv_teach <- renderUI", 45L),
+               'identical\\(st, "unsupported"\\)')
+})
+
+# The engine's messages carry machine codes for the LOG. ui_labels.R's own note
+# says a raw code on screen "is the moment a forensic reviewer stops trusting the
+# screen", and the verdict card was printing "2 KPI(s) failed:
+# balance_reconciliation, running_balance_continuity" -- the same checks
+# failed_checks_ui() lists directly underneath in plain words with figures.
+test_that("no raw check code reaches the verdict card", {
+  src <- .ui_src()
+  strip <- .ui_fun("plain_messages")
+  expect_identical(strip("needs_review: parsed 22 row(s) but review needed; 2 KPI(s) failed: balance_reconciliation, running_balance_continuity"),
+                   "parsed 22 row(s) but review needed")
+  expect_identical(strip("ok: matched anz_everyday_csv, 7 row(s), trust medium"),
+                   "matched anz_everyday_csv, 7 row(s), trust medium")
+  expect_identical(strip("needs_review: parsed 3 row(s) but review needed; 1 KPI(s) not applicable: dates_within_period; all applicable checks passed"),
+                   "parsed 3 row(s) but review needed; all applicable checks passed")
+  expect_identical(strip(character(0)), character(0))
+  expect_identical(strip(NULL), character(0))
+  # a message that was ONLY a KPI clause disappears rather than leaving an empty <p>
+  expect_identical(strip("needs_review: 1 KPI(s) failed: amount_direction"), character(0))
+  # and the card really uses it
+  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 45L),
+               "plain_messages\\(res\\$messages\\)")
+})
+
+# ---------------------------------------------------------------------------
+# "Untick to hide a layer" has to work at the boundary. Both the picture and the
+# legend read `input$ix_layers %||% <all six>`, and an empty checkboxGroupInput
+# sends NULL -- so unticking every box drew a byte-identical plot to ticking every
+# box. The label promised the opposite of what happened.
+test_that("unticking every X-ray layer really hides every layer", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "ix_layers_now <- reactive")
+  # nobody falls back to "all six" on an empty selection any more
+  expect_false(grepl('input$ix_layers %||% c("cols"', joined, fixed = TRUE))
+  # both readers go through the one helper
+  expect_equal(length(grep("layers <- ix_layers_now\\(\\)", src)), 2L)
+})
+
+# Base R takes #rrggbb or #rrggbbaa and raises "invalid RGB specification" on the
+# three-digit CSS form. One of those sat in the shared area_line() helper, so the
+# two line charts rendered nothing but that error message on every statement that
+# had the column to draw them from.
+test_that("no chart colour is three-digit hex", {
+  src <- .ui_src()
+  hits <- grep('"#[0-9a-fA-F]{3}"', src, perl = TRUE, value = TRUE)
+  hits <- hits[!grepl("^\\s*#", hits)]          # comments explain the rule
+  expect_identical(hits, character(0))
+  # and the thing itself: this is what the app used to hand grDevices
+  expect_error(grDevices::col2rgb("#fff"), "invalid RGB")
+  expect_silent(grDevices::col2rgb("#ffffff"))
 })
 
 test_that("the proof strip carries the check that catches the commonest error", {
@@ -1140,6 +1214,95 @@ test_that("no on-screen text points at a control that is off screen", {
   # above" - a control the modal is covering. Same mistake as N28.
   src <- .ui_src()
   expect_false(any(grepl("pick 'Something else' above", src, fixed = TRUE)))
+  # ...and the draft-failed notification made it a third time: it names a control
+  # and then RETURNS without ever showing the window that control lives in, so
+  # "Not a transaction table?" (an actionLink built inside showModal) was quoted at
+  # someone looking at the Convert page. The branch must not name it.
+  #
+  # Comments stripped before the assertion: the fix's own note quotes the old
+  # wording so a future reader knows what went wrong, and a substring test over
+  # the raw block would read that record as a relapse.
+  i <- grep("# Fail loud AND specific", src)
+  expect_length(i, 1L)
+  blk <- src[i:min(i + 22L, length(src))]
+  expect_match(paste(blk, collapse = " "), "return\\(invisible\\(FALSE\\)\\)")  # no modal is shown
+  blk <- blk[!grepl("^\\s*#", blk)]
+  expect_false(any(grepl("Not a transaction table?", blk, fixed = TRUE)))
+  expect_false(any(grepl("top of this window", blk, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# THE CARD MUST NOT GIVE THREE ANSWERS AT ONCE. R/diagnose.R is explicit: a
+# template that matched the wording and read nothing means "'Add a template' is
+# not the fix -- there IS one, its columns just sit in the wrong place. Send the
+# analyst to the template that failed, not to a blank form." The card said "This
+# layout is new", the engine's message directly above it named the template that
+# matched, and the green button drafted a FRESH template from the file.
+test_that("a template that matched and read nothing sends you to that template", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, "\\.matched_but_empty <- function")
+  expect_match(joined, 'd\\$category %in% "matched_but_empty"')
+  blk <- .ui_block(src, "output\\$cv_teach <- renderUI", 80L)
+  expect_match(blk, "\\.matched_but_empty\\(res\\)")
+  expect_match(blk, "matched this statement but read no rows from it")
+  expect_match(blk, "cv_teach_go_empty")
+  # ...and that button seeds the toolkit with the template that failed, which is
+  # the ONE unsupported result whose template id is a real match, not a near miss
+  expect_match(joined, "observeEvent\\(input\\$cv_teach_go_empty, \\.teach_now\\(seed_matched = TRUE\\)\\)")
+  expect_match(.ui_block(src, "\\.teach_now <- function", 22L),
+               'isTRUE\\(seed_matched\\) \\|\\| \\(res\\$status %\\|\\|% ""\\) %in% c\\("ok", "needs_review"\\)')
+  # the engine really raises that category, so this is wired to a fact
+  expect_true("matched_but_empty" %in% names(.DIAG_FIX_OWNER))
+})
+
+# ---------------------------------------------------------------------------
+# CLAIMS THE CODE CANNOT KEEP. Each of these was measured false by driving the
+# app, and each is the kind that reads as reassurance rather than as a fact -
+# which is exactly why nobody checked it.
+test_that("the screen makes no promise the engine does not keep", {
+  files <- c(file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R")))
+  lines <- unlist(lapply(files, function(f) {
+    l <- readLines(f, warn = FALSE)
+    l[!grepl("^\\s*#", l, useBytes = TRUE)]                 # comments record WHY
+  }))
+  banned <- c(
+    # a template drafted from a real bank PDF can read 0 rows, with no path on
+    "2-minute", "2 minutes", "two minutes", "couple of minutes",
+    # convert_document only tries form templates after the statement path fails
+    "it's detected automatically",
+    # passing the checks clears the first feed gate, not the second
+    "and it goes through",
+    # reconciliation returns "na" on any statement with no balance anchor
+    "Proof nothing's missing",
+    # R/reconcile.R derives a missing closing from the running-balance column
+    "closing balance the statement prints",
+    # completeness_verified is FALSE for a missing OPENING balance too
+    "This statement prints no closing balance",
+    # R/convert.R picks, always; it holds the run for review afterwards
+    "the tool won't pick for you")
+  offenders <- unlist(lapply(banned, function(b)
+    grep(b, lines, fixed = TRUE, value = TRUE, useBytes = TRUE)))
+  expect_identical(as.character(offenders %||% character(0)), character(0),
+                   info = paste("unkept promise on screen:", paste(offenders, collapse = " | ")))
+})
+
+# The bundled specimen is the ONE button offered to somebody with no statement to
+# hand, and it must actually convert. It pointed at a tutorial PDF whose template
+# carries `sample: true`, which load_template_set() deliberately drops from the
+# detection set - so the button answered "No template for this statement yet"
+# every time, and forcing the id would not have helped either (convert_document
+# looks a forced id up in that same filtered set).
+test_that("the sample button converts with a template that is actually loaded", {
+  joined <- paste(.ui_src(), collapse = "\n")
+  p <- regmatches(joined, regexpr('SAMPLE_STATEMENT <- file\\.path\\([^)]*\\)', joined))
+  expect_length(p, 1L)
+  f <- eval(parse(text = sub("^SAMPLE_STATEMENT <- ", "", p)))
+  skip_if_not(file.exists(file.path(engine_root(), f)))
+  tset <- load_template_set(file.path(engine_root(), "templates"),
+                            file.path(engine_root(), "templates_user"))
+  det <- detect_statement(read_input(file.path(engine_root(), f)), tset)
+  expect_true(isTRUE(det$matched),
+              info = "the 'Try it on a sample' file is not recognised by any loaded template")
 })
 
 

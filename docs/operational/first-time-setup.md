@@ -1,96 +1,103 @@
 # First-time setup (air-gapped server)
 
-Get Statement Studio running on a server that has **no internet**. It's **two
-double-clicks**: build a package on a PC that has internet, copy one folder to the
-server, run it. No typing, no compiling, no admin knowledge needed.
+Two double-clicks: build a package on a PC with internet, copy one folder to the
+server, run it. Nothing needs to be pre-installed on the server — not even R.
 
-You need:
-- **One Windows PC with internet**, with **R** installed (any recent version — get
-  it from `cran.r-project.org` if it isn't already there). This is only used to
-  build the package.
-- **The server** (air-gapped Windows). Nothing needs to be pre-installed on it —
-  not even R. Whatever R or RStudio the server already has is **ignored and left
-  untouched**.
-- A copy of the **Statement Studio app folder** on the internet PC, and an approved
-  way to copy a folder to the server (share or USB).
+You need a Windows PC **with internet and R installed** (any recent version, from
+`cran.r-project.org`) to build the package, the app folder on that PC, the
+air-gapped Windows server, and an approved way to copy a folder between them.
+
+Whatever R or RStudio the server already has is ignored and left untouched — the
+package brings its own and installs it inside its own folder.
 
 ---
 
-## Step 1 — Build the package (on the internet PC)
-In the app folder, **double-click `make-bundle.bat`**.
+## 1 — Build the package (on the internet PC)
 
-It gathers the whole app plus every package and installer the server needs into a
-single self-contained folder called **`StatementStudio-offline`**. This takes a few
-minutes (it's downloading R packages and the R/OCR installers). When it says it's
-done, that folder is everything the server needs.
+In the app folder, double-click **`make-bundle.bat`**.
 
-> No version-matching to worry about: the R on this PC ships inside the package and
-> the server uses that exact R, so it always matches.
+A few minutes later you have one folder, **`StatementStudio-offline`**, holding
+the app plus every R package, the R installer, and the Poppler/Tesseract
+installers the server needs.
 
----
+Read the last lines before you walk away. If it reports anything **MISSING**,
+the PC's internet was blocked or proxied — fix that and run it again. A bundle
+missing Poppler/Tesseract installs and runs fine and then cannot read a single
+scanned PDF, which is the failure you least want to discover on the server.
 
-## Step 2 — Copy it to the server
-Copy the whole **`StatementStudio-offline`** folder to the server, e.g. to
-`D:\StatementStudio-offline`. That one folder is the entire product — there is
-nothing else to carry.
+## 2 — Copy it to the server
 
----
+Copy the whole `StatementStudio-offline` folder across, e.g. to
+`D:\StatementStudio-offline`. That folder is the entire product.
 
-## Step 3 — Run it (on the server)
-Open the folder and **double-click `RUN-ME.bat`**.
+## 3 — Run it (on the server)
 
-The **first** run, with no internet, it automatically:
-1. installs a **private copy of R** inside the folder (isolated — your existing R /
-   RStudio is not touched),
-2. installs all the **R packages** it needs,
-3. sets up **Poppler** and **Tesseract** so scanned-PDF reading works,
-4. creates the settings file `config\config.yaml`,
-5. **starts the app** and prints a web address like `http://<this-server>:8100`.
+Double-click **`RUN-ME.bat`**.
 
-Every run after that just starts the app. **Leave the window open** while the app
-is running; press `Ctrl-C` in it to stop.
+The first run installs a private copy of R inside the folder, installs the R
+packages, sets up Poppler and Tesseract, creates `config\config.yaml`, and starts
+the app on `http://<this-server>:8100`. Every run after that just starts it.
 
-> If a Windows permission prompt appears during the one-time R install, accept it,
-> then run `RUN-ME.bat` again.
+If a Windows permission prompt appears during the R install, accept it and run
+`RUN-ME.bat` again. Setup retries until it succeeds — the "already done" marker
+is only written when the install actually worked.
 
----
+Leave the window open while the app runs; `Ctrl-C` stops it.
 
-## Step 4 — Open it
-On the server, open the printed address in a browser. You should see the Statement
-Studio home page.
+## 4 — Set the admin password
 
-**To reach it from anyone else's machine, open the port once** (Administrator
-Command Prompt on the server):
+Open `config\config.yaml` in Notepad and change:
+
+```yaml
+app:
+  admin_password: changeme
+```
+
+**Until you change it, the Admin tab refuses to open for anybody** — not even
+with the right password typed, because the placeholder is printed in this repo
+and in the example file. Admin manages templates, the shared label dictionary and
+the analytics feed, so it stays shut. The app prints
+`Admin is CLOSED - no admin password is set` at startup while that is the case.
+
+Set it here, or set the `BSO_ADMIN_PASSWORD` environment variable (which wins),
+then **restart the app**.
+
+## 5 — Open the firewall port
+
+On the server itself, browse to the printed address. It works.
+
+For anyone else to reach it, open the port once. Windows Server blocks
+unsolicited inbound TCP by default, so until you do this the app works on the
+server and **times out for every other machine** — which looks exactly like the
+app being broken.
+
+Administrator Command Prompt, on the server:
 
 ```
 netsh advfirewall firewall add rule name="Statement Studio 8100" dir=in action=allow protocol=TCP localport=8100
 ```
 
-Windows Server blocks incoming connections by default, so without this the app works
-on the server and **times out for everyone else** — see
-[running-and-keeping-it-up.md](running-and-keeping-it-up.md). Then browse to
-`http://<server-name>:8100` from another machine.
-
-**Set the admin password and, if you use Qlik, the app URL** — see
-[running-and-keeping-it-up.md](running-and-keeping-it-up.md) for the settings file.
+Then browse to `http://<server-name>:8100` from another machine. Still nothing?
+Ask your network team — a separate network firewall between the users and the
+server can block it too, and that one is not yours to change.
 
 ---
 
-## What next
+## Next
+
 - Keep it running after reboots → [running-and-keeping-it-up.md](running-and-keeping-it-up.md)
 - Convert your first statement → [converting-statements.md](converting-statements.md)
 - Wire up the Qlik dashboards → [connecting-qlik.md](connecting-qlik.md)
-- Copy the irreplaceable folders off the box → [backup-and-restore.md](backup-and-restore.md)
+- Get the irreplaceable folders off the box → [backup-and-restore.md](backup-and-restore.md)
 - Inherited this tool? → [maintaining-the-engine.md](maintaining-the-engine.md)
 
----
+## If it goes wrong
 
-## If something goes wrong
 | Symptom | Fix |
 |---|---|
-| "No R installer in offline\prereqs" | The build PC couldn't download R. Re-run `make-bundle.bat` on a PC with clean internet, then re-copy the folder. (The build now stops with an error rather than producing a package without R.) |
-| A permission prompt was declined | Run `RUN-ME.bat` again and accept it. |
-| "Offline setup did NOT complete" / some R packages reported `MISSING` | The build PC couldn't download them all (proxy/partial build), or the bundle was built under a different R x.y. Re-run `make-bundle.bat` on a PC with clean internet and re-copy the folder, then run `RUN-ME.bat` again — **setup retries by itself** until it succeeds. |
-| It works on the server but **times out from other machines** | The firewall port isn't open — run the `netsh` line in Step 4. |
-| Scanned PDFs don't read | Poppler/Tesseract are missing. Check `offline\manifest.txt`: if it says `MISSING`, the build PC never downloaded them — rebuild with `make-bundle.bat` on a PC with clean internet and re-copy. If it says `included`, delete `offline\.installed` and run `RUN-ME.bat` again to redo the OCR install. Text PDFs, CSV and Excel keep working either way. |
-| Which version is on this server? | Open `offline\manifest.txt` — app version, the exact R, and every bundled package version. |
+| `Could not set up the private R` | The build PC could not download R, or a permission prompt was declined. Check `offline\prereqs` holds an `R-*-win.exe`; if not, rebuild on a PC with clean internet and re-copy. |
+| `Offline setup did NOT complete` / packages reported `MISSING` | Usually the bundle was built under a different R x.y. Rebuild with `make-bundle.bat`, re-copy the whole folder, run `RUN-ME.bat` again. |
+| Works on the server, times out from everywhere else | The firewall port is not open — step 5. |
+| Scanned PDFs do not read | Check `offline\manifest.txt`. `MISSING` → the build PC never downloaded Poppler/Tesseract; rebuild and re-copy. `included` → delete `offline\.installed` and run `RUN-ME.bat` again to redo the OCR install. Text PDFs, CSV and Excel keep working either way. |
+| Admin will not open with the right password | The password is still `changeme` or blank. Step 4, then restart. |
+| Which version is on this server? | `offline\manifest.txt` — app version, the exact R, and every bundled package version. |

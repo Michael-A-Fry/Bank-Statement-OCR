@@ -73,9 +73,18 @@ FIELDS_DIR         <- CONFIG$paths$fields          # curated mode:fields (IRD/fo
 USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the app
 DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
 LEXICON_PATH       <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexicon.yaml")  # recognition vocabularies
-# The bundled specimen statement (public sample, ships with the app) that "Try it
-# on a sample" converts, so a brand-new user sees a full result without a file.
-SAMPLE_STATEMENT <- file.path("samples", "raw", "tutorial", "sample_everyday_statement.pdf")
+# The bundled specimen statement (public, synthetic, ships with the app) that "Try
+# it on a sample" converts, so a brand-new user sees a full result without a file.
+#
+# IT HAS TO BE A FILE A SHIPPED TEMPLATE ACTUALLY READS. This pointed at
+# samples/raw/tutorial/sample_everyday_statement.pdf, whose template carries
+# `sample: true` -- and load_template_set() deliberately drops those from the
+# detection set (R/templates.R), so the one button offered to somebody with no
+# statement to hand answered "No template for this statement yet" every single
+# time. Forcing the id does not help either: convert_document looks the forced id
+# up in that same filtered set. So the specimen is one the shipped templates
+# really do read; verified end to end (anz_everyday_csv, status ok, 7 rows).
+SAMPLE_STATEMENT <- file.path("samples", "raw", "anz", "anz_transaction_export_01.csv")
 
 # How many days of run/feedback logs to keep before "Tidy up logs" archives them.
 # One place, so the button label and both rollup calls can never disagree.
@@ -202,21 +211,26 @@ ui <- fluidPage(
     tabPanel("About", br(),
       div(class = "hub",
         div(class = "hub-lead",
-          "Turn any bank statement or financial document — PDF, CSV or Excel —",
-          " into clean, checked data. It never guesses: every figure comes straight",
-          " off your statement, and anything it can't verify is flagged with the reason."),
+          "Bank statements and financial documents — PDF, CSV or Excel — into clean,",
+          " checked data. Every figure comes straight off your statement; anything",
+          " that can't be verified is flagged with the reason."),
         div(class = "hub-cards",
           actionLink("ab_go_convert", class = "hub-card hub-card-primary", label = div(
             div(class = "hub-card-kicker", "Most days"),
             div(class = "hub-card-title", "Convert a statement"),
             div(class = "hub-card-body",
-                "Upload your bank's export, click Convert. You get the verdict, the analysis, every transaction, and the download."),
+                "Upload, click Convert. The verdict, the analysis, every transaction, the download."),
             div(class = "hub-card-go", "Open Convert →"))),
           actionLink("ab_go_template", class = "hub-card", label = div(
             div(class = "hub-card-kicker", "New bank or document"),
             div(class = "hub-card-title", "Teach it a new layout"),
+            # No "about 2 minutes, no code". On a real bank PDF the drafter can
+            # come back with 0 rows and no path to a working template at all, so
+            # the number was a promise the toolkit could not keep.
+            # The "pre-fills what it can, you confirm against a live preview" half
+            # is the lead sentence of the page this card opens. Said once, there.
             div(class = "hub-card-body",
-                "A new statement layout, or any other document - a form, a summary, a letter. The toolkit pre-fills what it can detect; you confirm against a live preview and save. About 2 minutes, no code."),
+                "A new statement layout, or any other document - a form, a summary, a letter."),
             div(class = "hub-card-go", "Open Add a template →"))),
           )),
       # NOTE: no Admin card here, and no Admin anywhere else a user can see.
@@ -241,8 +255,7 @@ ui <- fluidPage(
           fileInput("cv_file", "Statement file(s) (.pdf / .csv / .tsv / .xlsx)",
                     multiple = TRUE,
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
-          helpText(class = "muted",
-                   "One statement, or select several to convert a whole case folder in one go."),
+          helpText(class = "muted", "One statement, or several for a whole case folder."),
           # WHO RAN THIS. Asked only when the tool genuinely cannot work it out.
           # Where the server sits behind a real sign-in (host or SSO) this renders
           # nothing at all -- asking for what the environment already established
@@ -286,9 +299,10 @@ ui <- fluidPage(
             # audited template. STATIC, never a renderUI: its choices are rewritten
             # every time a bank is chosen, and a control that re-renders under the
             # hand choosing it loses the choice being made.
+            # No caption: the Bank picker is directly above and this control's own
+            # label says what it is. A sentence describing two visible controls is
+            # the screen explaining itself.
             div(style = "padding-top:10px",
-              helpText(class = "muted", style = "margin-top:0",
-                       "Set the Bank above. If you need one exact template, force it here."),
               selectInput("cv_template", "Template (optional)",
                           choices = c("(auto-detect)" = ""), width = "100%")))
         ),
@@ -354,11 +368,12 @@ ui <- fluidPage(
                 h4("See it on the page"),
                 div(
                 conditionalPanel("output.ix_is_pdf == true",
-                  p(class = "muted", "Green = rows kept. Amber dashed = skipped rows that look like transactions."),
+                  # No "green = kept, amber = skipped" line here: ix_legend says it
+                  # under the picture, beside the colours it is naming.
                   fluidRow(
                     column(3, numericInput("ix_page", "Page", 1, min = 1, step = 1)),
                     column(9, br(),
-                      checkboxGroupInput("ix_layers", "Show on the page (untick to hide a layer):",
+                      checkboxGroupInput("ix_layers", "Show on the page",
                         choices = c("Columns" = "cols", "Kept transaction rows" = "kept",
                                     "Skipped rows" = "skipped", "Redactions" = "redact",
                                     "Balances / dates / account" = "meta",
@@ -368,15 +383,14 @@ ui <- fluidPage(
                   plotOutput("ix_plot", height = "640px"),
                   uiOutput("ix_legend"),
                   h4("Rows skipped on this page - and why"),
-                  helpText(HTML("A real transaction here usually means a one-line template fix - most often the <b>date format</b>. A genuine one-off: select it and add it, flagged <b>forced</b>.")),
+                  helpText(HTML("A real transaction here usually means a template fix - most often the <b>date format</b>. A one-off: select it and add it, flagged <b>forced</b>.")),
                   DTOutput("ix_skipped"),
                   br(),
                   actionButton("ix_add_row", "This IS a transaction - add the selected row", class = "btn-warning"),
                   tags$hr(),
-                  helpText("Can't share the statement? This uses only page sizes and counts."),
-                  downloadButton("ix_coverage_dl", "Download shareable diagnostic (no statement contents)")),
+                  downloadButton("ix_coverage_dl", "Download shareable diagnostic (page sizes and counts only)")),
                 conditionalPanel("output.ix_is_pdf != true",
-                  helpText("The X-ray view is for PDF statements. For CSV / Excel, the field coverage below shows which column feeds each field."))),
+                  helpText("For CSV / Excel, the field coverage below shows which column feeds each field."))),
                 h4("Analysis"),
             # Design-system tokens, not one-off greys: this panel is the last
             # surface on Convert that drew its own border.
@@ -408,8 +422,11 @@ ui <- fluidPage(
       br(),
       wellPanel(
         h4(style = "margin-top:0", "Teach the tool a new layout"),
+        # No "about two minutes": true on the bundled specimen, false on the real
+        # bank PDFs it was measured against (draft_template reads 0 rows on asb.pdf
+        # and anz_single.pdf, and redrawing the bands by hand did not recover it).
         p(class = "muted", style = "max-width:820px",
-          "Upload one example. The tool reads what it can, you confirm it against a live preview, and save. About two minutes."),
+          "Upload one example. The tool reads what it can; you confirm it against a live preview and save."),
         fileInput("ts_file", "One example of the document (.csv / .tsv / .tdv / .pdf / .xlsx)",
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
@@ -421,12 +438,12 @@ ui <- fluidPage(
           # The guide sits AFTER the action it explains, so the thing to click is
           # the most prominent thing on the page.
           p(class = "muted", style = "margin:12px 0 0",
-            actionLink("ts_help", "New here? Read the 2-minute guide - the ways statements differ and what each setting means"))),
+            actionLink("ts_help", "The guide - the ways statements differ, and what each setting means"))),
         conditionalPanel("input.ts_doctype == 'other'",
           div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
-            strong("Heads up - an 'Other' document is read differently"),
+            strong("An 'Other' document is read differently"),
             p(style = "margin:6px 0 0;color:#555",
-              "No transaction table, no running balance - so the completeness checks don't apply. You point at the values you want and check each one yourself. Set it up below.")))),
+              "No transaction table, no running balance - so the completeness checks don't apply. You point at the values you want and check each one yourself.")))),
       # One flow: the toolkit above is THE way to add a statement template (its
       # Advanced tab covers field-by-field / YAML editing, so there is no separate
       # "build by hand" path). 'Other' documents (labelled values) are set up with
@@ -496,7 +513,7 @@ ui <- fluidPage(
       # kept, one click away, instead of ending her flow with a wall of YAML.
       tags$details(style = "margin-top:14px",
         tags$summary(class = "muted", style = "cursor:pointer",
-                     "The template file this will save (for your data analyst)"),
+                     "The template file this will save"),
         div(class = "mono", verbatimTextOutput("fb_yaml")))
     )
     ),
@@ -815,7 +832,7 @@ server <- function(input, output, session) {
   # ---- Tutorial: the step-by-step "how to build a template" guide, reachable
   # from the Add-a-template tab and from inside the toolkit itself.
   show_tutorial <- function() showModal(modalDialog(
-    title = "Building a template - the 2-minute guide", size = "l", easyClose = TRUE,
+    title = "Building a template", size = "l", easyClose = TRUE,
     tutorial_html(), footer = modalButton("Close")))
   # (Only from the tab, not from inside the toolkit modal: Shiny shows one modal
   # at a time, so opening the guide there would close the toolkit mid-edit.)
@@ -952,13 +969,15 @@ server <- function(input, output, session) {
   # what's shown unless you ask for more.
   proven_templates <- reactive({ tpl_bump()
     tryCatch(load_templates(TEMPLATES_DIR, strict = FALSE), error = function(e) list()) })
-  # The templates built HERE (visible ones only). Used to tell a user whose
-  # statement came back "unsupported" that her own templates were switched off --
-  # rather than leaving her to find a tick-box inside a collapsed panel.
-  user_template_ids <- reactive({ tpl_bump()
-    u <- tryCatch(load_templates(USER_TEMPLATES_DIR, origin = "user", strict = FALSE),
-                  error = function(e) list())
-    names(u)[!vapply(u, function(t) isTRUE(t$hidden), logical(1))] })
+  # NO `user_template_ids` REACTIVE HERE. There was one -- a leftover from the
+  # deleted "include templates built here" tick-box, unread by anything -- and it
+  # SHADOWED the engine function of the same name (R/templates.R). The three Admin
+  # call sites below pass it a directory, so every one of them raised
+  # "unused argument (USER_TEMPLATES_DIR)": the origin line printed that error
+  # instead of saying whether the selected template is shipped or yours, and Hide
+  # and Delete did nothing at all, silently. The reactive also excluded HIDDEN
+  # templates, which is the wrong set for a button whose whole job is un-hiding
+  # one. Gone, so those three calls reach the engine function they were written for.
   cv_pick_templates <- reactive({
     if (USE_USER_TEMPLATES) templates() else proven_templates()
   })
@@ -1131,6 +1150,12 @@ server <- function(input, output, session) {
     } else output$adm_tpl_msg <- .tpl_note(paste("Could not save:", path), FALSE)
   })
 
+  # The two YAML editors (dictionary, vocabulary) refuse and fail in exactly the
+  # same two ways, and each had written out its own copy of both sentences. One
+  # copy, so a reword of either can never leave the other behind.
+  YAML_BAD_MSG   <- "Not valid YAML - not saved."
+  YAML_WRITE_MSG <- "Could not write the file - check folder permissions."
+
   # ---- Admin: label dictionary edit (the fix for "check shows NA") ----
   # Two controls, ONE write path each way round: the plain-English "teach it this
   # wording" goes through dictionary_append() (R/labels.R), the whole-file editor
@@ -1171,14 +1196,14 @@ server <- function(input, output, session) {
     req(admin_ok())
     txt <- input$adm_dict_edit %||% ""
     if (!isTRUE(tryCatch({ yaml::yaml.load(txt); TRUE }, error = function(e) FALSE))) {
-      output$adm_dict_msg <- renderUI(div(style = "color:#b00020", "Not valid YAML - not saved."))
+      output$adm_dict_msg <- renderUI(div(style = "color:#b00020", YAML_BAD_MSG))
       return()
     }
     safe(file.copy(DICT_PATH, paste0(DICT_PATH, ".bak"), overwrite = TRUE))
     okw <- isTRUE(tryCatch({ writeLines(txt, DICT_PATH); TRUE }, error = function(e) FALSE))
     output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved (backup at labels.yaml.bak). New wordings apply to the next conversion."
-      else "Could not write the file - check folder permissions."))
+      else YAML_WRITE_MSG))
   })
 
   # ---- Admin: local metadata-capture settings (level + category switches) ----
@@ -1214,7 +1239,7 @@ server <- function(input, output, session) {
     txt <- input$adm_lex_edit %||% ""
     parsed <- tryCatch(yaml::yaml.load(txt), error = function(e) e)
     if (inherits(parsed, "error")) {
-      output$adm_lex_msg <- renderUI(div(style = "color:#b00020", "Not valid YAML - not saved.")); return()
+      output$adm_lex_msg <- renderUI(div(style = "color:#b00020", YAML_BAD_MSG)); return()
     }
     probs <- validate_lexicon(parsed)
     if (length(probs)) {
@@ -1228,7 +1253,7 @@ server <- function(input, output, session) {
     if (okw) clear_lexicon_cache()   # the next conversion re-reads the vocabulary
     output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
       if (okw) "Saved (backup at lexicon.yaml.bak). Applies to the next conversion, everywhere."
-      else "Could not write the file - check folder permissions."))
+      else YAML_WRITE_MSG))
   })
 
   # ---- Admin: teaching the engine a word -- typed in, or approved from what the
@@ -1720,7 +1745,7 @@ server <- function(input, output, session) {
   fb_preview <- reactiveVal(NULL)
   observeEvent(input$fb_preview, {
     p <- fb_doc()
-    if (is.null(p)) { showNotification("Upload the document at the top of this page first (or a PDF to draw on, above).",
+    if (is.null(p)) { showNotification("Upload the document at the top of this page first.",
                                        type = "warning", duration = 6); return() }
     if (!length(fb_template()$fields)) {
       showNotification("Nothing to pull out yet - draw a box.",
@@ -1734,8 +1759,7 @@ server <- function(input, output, session) {
   # empty: a value that did not match is the whole reason to look at this preview.
   output$fb_prev_status <- renderUI({
     f <- fb_preview()
-    if (is.null(f)) return(p(class = "muted",
-      "Click Preview to see what comes out."))
+    if (is.null(f)) return(p(class = "muted", "Nothing previewed yet."))
     got <- sum(f$matched %in% TRUE); miss <- nrow(f) - got
     missing <- if (miss > 0) paste(f$field[!(f$matched %in% TRUE)], collapse = ", ") else ""
     div(class = if (miss > 0) "verdict verdict-medium" else "verdict verdict-high",
@@ -1744,8 +1768,10 @@ server <- function(input, output, session) {
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title", sprintf("%d of %d value%s found", got, nrow(f),
                                              if (nrow(f) == 1L) "" else "s")),
+        # No "Draw a box round it." -- reaching this line means a box HAS been
+        # drawn and read nothing, so the advice was to repeat what had just failed.
         p(class = "verdict-body", style = "margin:0", if (miss > 0)
-            sprintf("Not found: %s. Draw a box round it.", missing)
+            sprintf("Not found: %s.", missing)
           else "Check each value, then Save template.")))
   })
   output$fb_prev_tbl <- renderDT({
@@ -1759,8 +1785,12 @@ server <- function(input, output, session) {
     if (length(probs)) {
       output$fb_msg <- renderUI(span(class = "bad", paste("Not valid:", paste(probs, collapse = "; ")))); return() }
     ok <- tryCatch({ save_fields_template(t, USER_FIELDS_DIR); TRUE }, error = function(e) FALSE)
+    # NOT "it's detected automatically". convert_document() only reaches the form
+    # templates at all once the STATEMENT path has returned `unsupported`
+    # (R/forms.R): the same PDF saved as a form here still came back "Read as: ASB
+    # everyday statement" on Convert, because a statement template matched it first.
     output$fb_msg <- renderUI(if (isTRUE(ok))
-      span(class = "ok", sprintf("Saved '%s'. Now upload the document on the Convert tab - it's detected automatically.", t$id))
+      span(class = "ok", sprintf("Saved '%s'. On Convert it is used when no statement template reads the document.", t$id))
       else span(class = "bad", "Couldn't save - check the fields."))
   })
 
@@ -1824,12 +1854,30 @@ server <- function(input, output, session) {
     if (!length(bands)) return(character(0))
     stats::setNames(grDevices::hcl(seq(5, 320, length.out = length(bands)), 75, 50), names(bands))
   }
+  # WHICH LAYERS ARE TICKED -- and "none" has to mean none.
+  #
+  # The picture and the legend each read `input$ix_layers %||% <all six>`, and an
+  # empty checkboxGroupInput sends NULL, so unticking every box drew exactly the
+  # same plot as ticking every box (md5-identical, verified). The label promised
+  # "untick to hide a layer" and at the boundary it did the opposite.
+  # `already_bound` distinguishes "the browser has not sent this input yet"
+  # (draw everything, as before) from "the user unticked them all" (draw nothing
+  # but the page). checkboxGroupInput sends its selection on bind, so the first is
+  # a single frame at most.
+  ix_layers_bound <- reactiveVal(FALSE)
+  observeEvent(input$ix_layers, ix_layers_bound(TRUE), once = TRUE)
+  ix_layers_now <- reactive({
+    v <- input$ix_layers
+    if (is.null(v)) return(if (isTRUE(ix_layers_bound())) character(0)
+                           else c("cols", "kept", "skipped", "redact", "meta", "words"))
+    as.character(v)
+  })
   output$ix_legend <- renderUI({
     st <- ix_state(); req(st, st$is_pdf, !is.null(st$layout))
     pg <- as.character(ix_page_now())
     P <- st$layout$pages[[pg]]; req(P)
     pal <- ix_pal(P$bands)
-    layers <- input$ix_layers %||% c("cols", "kept", "skipped", "redact", "meta", "words")
+    layers <- ix_layers_now()
     sw <- function(col, lab) tags$div(style = "margin:2px 0",
       tags$span(style = sprintf("display:inline-block;width:12px;height:12px;border:2px solid %s;margin-right:6px;vertical-align:middle", col)),
       tags$span(lab))
@@ -1855,11 +1903,15 @@ server <- function(input, output, session) {
     rasterImage(r$ras, 0, r$h, r$w, 0)
     lay <- st$layout; if (is.null(lay)) return(invisible())
     P <- lay$pages[[as.character(r$pg)]]; if (is.null(P)) return(invisible())
-    layers <- input$ix_layers %||% c("cols", "kept", "skipped", "redact", "meta", "words")
+    layers <- ix_layers_now()
     reg <- P$region; ytop <- reg$y_min %||% 0; ybot <- reg$y_max %||% r$h
     pal <- ix_pal(P$bands)
+    # #666666, not #666 -- see the note on area_line() in cv_trend: base R rejects
+    # three-digit hex. This branch only fires for a template whose table region
+    # carries an x_min, so the X-ray survived on the shipped set and would have
+    # thrown "invalid RGB specification" on any template the band editor resized.
     if (!is.null(reg$x_min)) rect(reg$x_min, ybot, reg$x_max %||% r$w, ytop,
-                                  border = "#666", lty = 2, lwd = 1.4)
+                                  border = "#666666", lty = 2, lwd = 1.4)
     w <- P$words
     if ("words" %in% layers && nrow(w))
       rect(w$x, w$y, w$x + w$width, w$y + w$height, border = "#cfcfcf", lwd = 0.4)
@@ -2437,9 +2489,10 @@ server <- function(input, output, session) {
     if (!length(bits)) bits <- list("nothing to convert")
     div(style = "margin:2px 0 10px",
       h4(style = "margin:0 0 2px", sprintf("%d files", nrow(b))),
+      # paste0, not a second argument: shiny's tag builder joins children with a
+      # space, so the tally read "2 with no template yet ." with a gap before it.
       p(class = "muted", style = "margin:0",
-        paste(unlist(bits), collapse = "  -  "),
-        "."))
+        paste0(paste(unlist(bits), collapse = "  -  "), ".")))
   })
 
   # THE TABLE. Sorting is the whole point of it, so the two columns worth sorting
@@ -2491,18 +2544,15 @@ server <- function(input, output, session) {
     i <- cv_batch_row()
     if (is.na(i))
       return(p(class = "muted", style = "margin:8px 0 0",
-               "Click a row to open that file's full result - the same verdict, checks, transactions and downloads as converting it on its own."))
+               "Click a row for that file's full result."))
     div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
-      h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))),
-      div(class = "muted", style = "font-size:13px",
-          "Click another row above for its result."))
+      h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))))
   })
 
   observeEvent(input$cv_go, {
     f <- input$cv_file
     if (is.null(f) || !nrow(f)) {
-      showNotification("Choose a statement file first - a PDF, CSV or Excel export from your bank.",
-                       type = "warning", duration = 6)
+      showNotification("Choose a statement file first.", type = "warning", duration = 6)
       return()
     }
     # No sign-in and no QID means the run would be recorded against the account the
@@ -2598,9 +2648,10 @@ server <- function(input, output, session) {
     div(style = "margin:16px 0 6px",
       actionLink("cv_more", style = "font-weight:700;font-size:14.5px",
         label = if (open) "Hide how it read this" else "Show me how it read this"),
+      # One caption. It used to be an if/else whose two branches were the same
+      # string, byte for byte -- a dead conditional pretending to be a decision.
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          if (open) "The page, the checks, and the template it used."
-          else "The page, the checks, and the template it used."))
+          "The page, the checks, and the template it used."))
   })
 
   # Empty state: shown before the first conversion. Tells a brand-new user what
@@ -2611,20 +2662,24 @@ server <- function(input, output, session) {
       h4(style = "margin-top:4px", "Convert a bank statement"),
       p("Upload a statement on the left - a ", tags$b("PDF"), ", ", tags$b("CSV"),
         " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
-      p(class = "muted", style = "margin-bottom:6px", "You'll get back, right here:"),
+      p(class = "muted", style = "margin-bottom:6px", "You'll get back:"),
       tags$ul(style = "color:#444",
         tags$li(tags$b("Every transaction"), ", read verbatim - date, description, amount, balance."),
-        tags$li(tags$b("Proof nothing's missing"), " - the balance reconciles, with a plain confidence level."),
+        # NOT "proof nothing's missing". On four of the six statements this was
+        # measured against, balance_reconciliation could not run at all -- no
+        # printed opening or closing and no running-balance column to derive one
+        # from -- so the page promised a proof it then did not give. What it always
+        # does give is the answer either way.
+        tags$li(tags$b("Whether it reconciles"), " - the balance proof, or plainly why it couldn't run."),
         tags$li(tags$b("Your download"), " - Excel or CSV.")),
       p(class = "muted", "Your bank is detected automatically. A layout the tool hasn't seen points you to ",
-        actionLink("cv_empty_to_tmpl", "Add a template"), " - a 2-minute, no-code setup."),
+        actionLink("cv_empty_to_tmpl", "Add a template"), "."),
       # First visit, nothing to upload yet? One click shows the whole payoff on
-      # a bundled specimen statement (public sample - not anyone's real data).
+      # a bundled specimen statement (public, synthetic - not anyone's real data).
       if (file.exists(SAMPLE_STATEMENT))
         div(style = "margin-top:14px;padding:12px 14px;background:#f8faf9;border:1px dashed #bfe0c8;border-radius:10px",
           actionButton("cv_try_sample", "Try it on a sample statement", class = "btn-default"),
-          div(class = "muted", style = "margin-top:6px",
-              "No file needed - converts a bundled specimen so you can see a full result in seconds.")))
+          div(class = "muted", style = "margin-top:6px", "No file needed.")))
   })
 
   output$cv_status <- renderUI({
@@ -2637,14 +2692,21 @@ server <- function(input, output, session) {
     if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
     st <- res$status %||% "failed"
     lvl <- switch(st, ok = "high", needs_review = , unsupported = "medium", "low")
-    # A tie is not "no template yet" (STATUS_PLAIN_AMBIGUOUS), and it has no
-    # confidence to quote -- nothing was converted to be confident about.
-    ambig <- isTRUE(res$detect$ambiguous)
+    # THE TIE HEADLINE, ONLY WHERE THERE IS A PICK TO MAKE. An ordinary tie
+    # CONVERTS: R/convert.R takes the best candidate (tested over hand-built, then
+    # deterministic), reads the statement and holds it at needs_review with the tie
+    # named in the message. This line was replacing "Converted - please double-check
+    # it" on those runs -- demanding a pick on a screen with no picker anywhere on
+    # it (cv_tie_pick renders only when the status is `unsupported`), and throwing
+    # away the confidence grade the engine had already computed for 7 real rows.
+    # So it is tied to the same condition the picker is: the tie whose winner read
+    # nothing, which is the one case where there genuinely is a choice to make.
+    ambig <- isTRUE(res$detect$ambiguous) && identical(st, "unsupported")
     headline <- if (ambig) STATUS_PLAIN_AMBIGUOUS else plain_status(st)
     # No confidence grade on a run that produced nothing: there is no work to be
     # confident about, and "confidence: low" beside "no template yet" reads as a
     # warning about the file rather than a plain statement of where we are.
-    graded <- !ambig && st %in% c("ok", "needs_review")
+    graded <- st %in% c("ok", "needs_review")
     trust <- if (!is.null(res$trust) && graded) sprintf(" · confidence: %s", res$trust$level) else ""
     # Name the template ONLY when one was actually used to read the statement. On
     # an unsupported result the engine still carries a template id -- the CLOSEST
@@ -2656,15 +2718,29 @@ server <- function(input, output, session) {
       div(class = "verdict-ico", if (identical(lvl, "high")) "✓" else "!"),
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title", paste0(headline, trust)),
-        # Engine messages carry a leading machine code ("needs_review: ...") for the
-        # logs; the card headline already says it in words, so drop the code here.
-        lapply(sub("^(ok|needs_review|unsupported|failed):\\s*", "",
-                   as.character(res$messages %||% character(0))),
-               function(m) p(class = "verdict-body", m)),
+        lapply(plain_messages(res$messages), function(m) p(class = "verdict-body", m)),
         failed_checks_ui(res),
         if (!is.na(tid) && nzchar(tid))
           div(span(class = "chip", paste("Read as:", friendly_tpl(tid))))))
   })
+
+  # plain_messages(m) -- the engine's status messages with their MACHINE CODES
+  # taken off, and empties dropped.
+  #
+  # Two kinds of code reached the screen. The leading status ("needs_review: ...")
+  # was already stripped; the KPI clauses were not, so the verdict card read
+  # "parsed 22 row(s) but review needed; 2 KPI(s) failed: balance_reconciliation,
+  # running_balance_continuity". ui_labels.R's own note says a raw code on screen
+  # "is the moment a forensic reviewer stops trusting the screen" -- and those very
+  # checks are listed directly underneath by failed_checks_ui(), in the words the
+  # Checks table uses and with the engine's figures beside them. So the clause was
+  # the same fact twice, once in a language the reader cannot use.
+  plain_messages <- function(m) {
+    m <- sub("^(ok|needs_review|unsupported|failed):\\s*", "", as.character(m %||% character(0)))
+    m <- gsub(";?\\s*[0-9]+ KPI\\(s\\) (failed|not applicable):[^;]*", "", m)
+    m <- trimws(sub("^\\s*;\\s*", "", sub("\\s*;\\s*$", "", m)))
+    m[nzchar(m)]
+  }
 
   # failed_checks_ui(res) -- WHICH check failed, in the words the Checks table
   # uses, with the engine's own figures beside it.
@@ -2738,6 +2814,11 @@ server <- function(input, output, session) {
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
   friendly_tpl <- function(tid) {
     if (length(tid) != 1 || is.na(tid) || !nzchar(tid)) return(NA_character_)
+    # A FORM template is not in the statement set, and `list[["missing"]]` on a
+    # named list gives one NULL element named NA -- which template_overview() turns
+    # into a row of NAs, so an IRD form that extracted all seven of its fields
+    # correctly was labelled "Read as: NA NA statement". Ask first.
+    if (!(tid %in% names(all_templates()))) return(tid)
     # Build the overview for JUST this template, not the whole set: friendly_tpl
     # runs on every successful convert and only needs this id's bank + type, and
     # the full-set build grows with every template the team adds. Same function,
@@ -2754,21 +2835,32 @@ server <- function(input, output, session) {
   # work, how many transactions, and can I trust it, said in words rather than KPI
   # codes. This is what a non-technical reviewer reads first; the KPI tables stay
   # available under "Checks & detail".
-  # The medium line used to assert its own cause ("usually because this statement
-  # has no running balance"). The engine KNOWS the cause -- and it is just as often
-  # OCR, or a year it had to infer -- so the sentence sat directly under a chip
-  # contradicting it. It now says which of the two it is, and trust_caveats()
-  # below prints the engine's remaining reasons verbatim rather than guessing.
+  # THE LINE MUST NOT NAME A CAUSE IT DOES NOT KNOW. It has been wrong twice in
+  # this spot, both times by asserting a fact about the file:
+  #   * "usually because this statement has no running balance" -- it is just as
+  #     often OCR, or a year the tool had to infer;
+  #   * "This statement prints no closing balance" -- completeness_verified is
+  #     FALSE whenever NEITHER balance check ran and no count was stated, which
+  #     includes a statement that prints a closing balance but no opening one. The
+  #     engine's own detail said the OPPOSITE ("no opening balance was found") two
+  #     inches below.
+  # So the medium branch names no cause at all: the checks underneath name it, per
+  # check, from the engine's own words. One line where there were two.
+  #
+  # The high line likewise dropped "the closing balance the statement PRINTS":
+  # R/reconcile.R derives a missing closing from the last running balance when the
+  # opening is labelled, and reconciliation then passes at trust `high` -- so that
+  # headline quoted a figure the statement never printed.
   plain_trust <- function(trust) {
-    proven <- !isFALSE(trust$completeness_verified)
     switch(trust$level %||% "",
-      high   = list(cls = "ok",   icon = "✓", line = "Every transaction adds up to the closing balance the statement prints. Nothing is missing."),
-      medium = list(cls = "warn", icon = "✓", line = if (proven)
-          "Read cleanly. One thing could not be proven — it is named just below."
-        else
-          "Read cleanly. This statement prints no closing balance, so check the number of rows against it."),
-      low    = list(cls = "bad",  icon = "!",      line = "Check these against the statement before you use them."),
-      list(cls = "warn", icon = "✓", line = "Read cleanly. Check the number of rows against the statement."))
+      high   = list(cls = "ok",   icon = "✓",
+                    line = "Every transaction adds up to the closing balance. Nothing is missing."),
+      medium = list(cls = "warn", icon = "✓",
+                    line = "Read cleanly. Something could not be proven - the checks below say which."),
+      low    = list(cls = "bad",  icon = "!",
+                    line = "Check these against the statement before you use them."),
+      list(cls = "warn", icon = "✓",
+           line = "Read cleanly. Check the number of rows against the statement."))
   }
   # Row FLAGS worth a chip: things the engine recorded per row that a clean-looking
   # result would otherwise never mention on screen. Each caps the trust level in
@@ -2903,9 +2995,8 @@ server <- function(input, output, session) {
     tagList(
       h4(sprintf("The %d statements in this file", length(sts))),
       p(class = "muted", style = "margin:0 0 6px",
-        paste("Each one was read and reconciled on its own. The cards above cover the whole file,",
-              "and its confidence level is the weakest statement's; every output row carries a",
-              "statement_index column saying which statement it came from.")),
+        paste("Each was read and reconciled on its own. The cards above cover the whole file, at the",
+              "weakest statement's confidence; every output row carries a statement_index column.")),
       tags$table(class = "split-table",
         tags$thead(tags$tr(lapply(hdr, tags$th))),
         tags$tbody(lapply(sts, function(s) tags$tr(
@@ -2919,8 +3010,10 @@ server <- function(input, output, session) {
     req(cv_data())
     msg <- switch(input$an_view %||% "inout",
       inout   = "Green = money in, red = money out.",
-      balance = "The running balance as it moves through the statement (only if the statement shows a balance column).",
-      cumnet  = "The running total of every transaction added up over time - where the account net sits at each point.")
+      # No "(only if the statement shows a balance column)": when there is none the
+      # chart itself says so, in the space the chart would have been.
+      balance = "The running balance as it moves through the statement.",
+      cumnet  = "Every transaction added up over time - where the account net sits at each point.")
     p(class = "muted", style = "margin:6px 0 0", msg)
   })
 
@@ -2945,7 +3038,11 @@ server <- function(input, output, session) {
     area_line <- function(x, y, col, fill) {
       polygon(c(x[1], x, x[length(x)]), c(min(y, 0), y, min(y, 0)), col = fill, border = NA)
       lines(x, y, col = col, lwd = 2.6)
-      points(x, y, pch = 21, cex = 0.65, col = "#fff", bg = col, lwd = 1)
+      # "#fff" is CSS, not R: grDevices wants #rrggbb or #rrggbbaa and raises
+      # "invalid RGB specification" on three digits. Both line views ("Balance over
+      # time" and "Running total of every transaction") drew nothing but that error
+      # in the chart panel, on every statement that had the column to draw.
+      points(x, y, pch = 21, cex = 0.65, col = "#ffffff", bg = col, lwd = 1)
     }
     if (view == "balance") {
       b <- d[!is.na(d$.bal), , drop = FALSE]
@@ -3003,7 +3100,7 @@ server <- function(input, output, session) {
       # says the one thing that card cannot: WHY there are no completeness checks on
       # a form, and therefore what the reviewer has to do instead.
       p(class = "muted", style = "margin:8px 0 12px; max-width:760px",
-        "This is a form / labelled-value document, not a transaction statement: there is no transaction table and no running balance, so the completeness checks don't apply. Check each value below against the document. Your download is at the top of this page."),
+        "A labelled-value document, not a transaction statement: no transaction table and no running balance, so the completeness checks don't apply. Check each value below against the document."),
       h4("Values found"), DTOutput("cv_fields"))
   })
   output$cv_fields <- renderDT({
@@ -3013,16 +3110,37 @@ server <- function(input, output, session) {
     datatable(d, rownames = FALSE, options = list(dom = "t", pageLength = 30))
   })
 
+  # THE FIGURES THE CHECK WAS DECIDED ON, BESIDE THE VERDICT.
+  #
+  # The engine records `expected` and `actual` on every KPI and this table printed
+  # neither, so a check could report OK while its own numbers said otherwise and
+  # nothing on screen showed the gap. Real example: a statement whose date column
+  # did not map gave "Row dates could be read | OK", because .kpi_dates_readable
+  # passes on ONE readable date -- while the row it came from said expected 500,
+  # actual 1. Same for "Row count", which degrades to n > 0 when no count is
+  # printed. Two columns of numbers is not more words; it is what makes a
+  # generous pass verifiable instead of silent, which is the whole charter.
+  #
+  # `informational` gets its own word. redaction_summary and ocr_confidence are
+  # counts the engine read successfully, not checks that could not run, so
+  # RESULT_PLAIN["na"] ("could not be checked") is wrong for them -- and the old
+  # wording, "not on this statement", claimed a scanned statement had no scan.
   output$cv_kpis <- renderDT({
     res <- cv_res(); req(res); req(!is.null(res$kpis))
     k <- res$kpis
-    # Show a plain-English check name + a plain result word, not snake_case codes.
+    info <- if ("informational" %in% names(k)) k$informational %in% TRUE
+            else sub("[[:space:]]*\\[statement [0-9]+\\]$", "", k$name) %in% INFORMATIONAL_CHECKS
+    dash <- function(v) { v <- as.character(v %||% rep(NA, nrow(k)))
+                          v[is.na(v) | !nzchar(v)] <- "-"; v }
     disp <- data.frame(
-      Check  = plain_check(k$name),      # split-aware: "... (statement 2)"
-      Result = plain_label(k$status, RESULT_PLAIN),
-      Detail = if ("detail" %in% names(k)) k$detail else "",
+      Check    = plain_check(k$name),      # split-aware: "... (statement 2)"
+      Result   = ifelse(info, RESULT_PLAIN_INFO, plain_label(k$status, RESULT_PLAIN)),
+      Expected = dash(k$expected),
+      Read     = dash(k$actual),
+      Detail   = if ("detail" %in% names(k)) k$detail else "",
       stringsAsFactors = FALSE)
-    datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
+    datatable(disp, rownames = FALSE,
+              options = list(dom = "t", pageLength = 20, scrollX = TRUE)) |>
       formatStyle("Result", fontWeight = "bold",     # coloured off the same map
         color = styleEqual(unname(RESULT_PLAIN[c("pass", "fail")]), c("#137333", "#b00020")))
   })
@@ -3066,9 +3184,14 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$coverage))
     p(class = "muted", coverage_summary(res$coverage))
   })
+  # EVERY FIELD, because the line above counts every field. This dropped `unmapped`
+  # rows unless they happened to be balance / particulars / reference, so the
+  # summary read "6 populated, 5 not on this statement" over a table showing 2 --
+  # a reader can only conclude that three fields went somewhere unexplained. The
+  # count and the rows now come from the same frame.
   output$cv_coverage <- renderDT({
     res <- cv_res(); req(res); req(!is.null(res$coverage))
-    cov <- res$coverage[res$coverage$verdict != "unmapped" | res$coverage$field %in% c("balance","particulars","reference"), ]
+    cov <- res$coverage
     disp <- data.frame(
       field   = cov$field,
       verdict = plain_label(cov$verdict, COVERAGE_PLAIN),   # 'unmapped' -> 'not on this statement'
@@ -3161,15 +3284,32 @@ server <- function(input, output, session) {
     if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(NULL)
     fb <- plain_feed(cv_feed_gate())
     if (is.null(fb)) return(NULL)          # feed switched off, or a form result
+    # ...UNLESS the reviewer has since marked this conversion WRONG, which
+    # retracts its rows (submit_feedback -> retract_feed). The gate reactive holds
+    # the verdict from the WRITE and nothing refreshes it, so "Sent to the
+    # dashboards. …now available to the Qlik dashboards." sat on screen at the same
+    # time as "7 row(s) have been withdrawn from the dashboards" a few inches
+    # below. Read the retraction here rather than write the gate a third time: the
+    # feed manifest is the authority on what was published, and this is the screen.
+    rec <- cv_fb_rec()
+    if (isTRUE(identical(rec$verdict, "wrong")) && isTRUE(fb$ok))
+      fb <- list(ok = FALSE, line = "Withdrawn from the dashboards.", why = "")
     div(style = paste("display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;",
                       "margin:0 0 12px;font-size:13px"),
       span(class = if (isTRUE(fb$ok)) "ok" else "bad", style = "font-weight:600", fb$line),
-      span(class = "muted", fb$why))
+      if (nzchar(fb$why %||% "")) span(class = "muted", fb$why))
   })
-  # cv_rematch -- an obvious, always-there escape hatch for a WRONG match: a bank
-  # that matched the wrong template (or the wrong bank) needs a one-click "no, set
-  # up the right template for this" without hunting. Drafts a fresh template from
-  # THIS file (never seeded from the wrong match).
+  # cv_rematch -- an escape hatch for a WRONG match: a bank that matched the wrong
+  # template (or the wrong bank) needs a one-click "no, set up the right template
+  # for this" without hunting. Drafts a fresh template from THIS file (never seeded
+  # from the wrong match).
+  #
+  # NOT ON SCREEN. There is no uiOutput("cv_rematch") anywhere in the UI, so this
+  # output, both of its buttons and every word in it are unreachable -- and
+  # cv_teach's `ok` branch returns NULL specifically because "the 'Wrong bank?'
+  # line up top already offers a fix", which it does not. Left exactly as it is:
+  # wiring it in adds two controls to the result page and deleting it drops a
+  # route, and both of those are the owner's call, not a wording one.
   output$cv_rematch <- renderUI({
     res <- cv_res(); req(res); req(!identical(res$kind, "form"))
     st <- res$status %||% "failed"
@@ -3240,11 +3380,11 @@ server <- function(input, output, session) {
     if (!identical(rec$verdict, "wrong")) return(NULL)
     div(class = "muted", style = "margin-top:4px",
       if (is.na(n))
-        "Because you marked it wrong, the tool tried to withdraw its rows from the dashboards but could not reach the feed folder - tell whoever looks after the server."
+        "The tool could not reach the feed folder to withdraw its rows - tell whoever looks after the server."
       else if (n > 0)
-        sprintf("Because you marked it wrong, %d row(s) have been withdrawn from the dashboards and moved to the held-back feed. Fixing the template and converting again puts the corrected figures back.", n)
+        sprintf("%d row(s) withdrawn from the dashboards and moved to the held-back feed. Fixing the template and converting again puts the corrected figures back.", n)
       else
-        "Nothing to withdraw from the dashboards - this conversion had not been published to them.")
+        "Nothing to withdraw - this conversion had not been published to the dashboards.")
   }
   observeEvent(input$cv_fb_submit, {
     res <- cv_res(); req(res, res$run_id)
@@ -3520,7 +3660,7 @@ server <- function(input, output, session) {
         label = if (open) "Hide the settings for this statement"
                 else "Show the settings for this statement"),
       div(class = "muted", style = "font-size:13px;margin-top:2px",
-          "Identifying phrase, save name, number punctuation, when this layout applies. Rarely needed."))
+          "Identifying phrase, save name, number punctuation, when this layout applies."))
   })
 
   # Statement template toolkit. Your statement is ALWAYS on the left (the PDF page,
@@ -3541,8 +3681,11 @@ server <- function(input, output, session) {
     # carries the difference (see .meta_field), so the page has one thing to do.
     left_panel <- if (is_pdf) tagList(
       strong("Your statement"),
+      # "Drag a box across a column and say what it is" is step 1 of the strip four
+      # inches above; what is left here is the part the strip does not say and the
+      # page cannot show.
       p(class = "muted", HTML(
-        "Drag a box across a column and say what it is. Only its <b>left-right</b> position matters - a column runs the full height of the page.")),
+        "Only a box's <b>left-right</b> position matters - a column runs the full height of the page.")),
       fluidRow(
         column(3, numericInput("g_pdf_page",
           if (isTRUE(g$n_pages > 1L)) sprintf("Page (1 to %d)", g$n_pages) else "Page",
@@ -3577,7 +3720,7 @@ server <- function(input, output, session) {
       # always rendered and opens this panel too.
       conditionalPanel("output.g_more_open == true",
         tags$hr(style = "margin:8px 0"),
-        textInput("g_pdf_custom", "…or a column name of your own (used instead of the list above)",
+        textInput("g_pdf_custom", "…or a column name of your own (overrides the list)",
                   "", width = "100%"),
         checkboxInput("g_keep_dateless",
           "Several rows share one date (e.g. HSBC) - keep the undated rows too (blank date, flagged)",
@@ -3591,8 +3734,7 @@ server <- function(input, output, session) {
       plotOutput("g_pdf_plot", height = "560px",
                  brush = brushOpts("g_pdf_brush", delay = 1500, delayType = "debounce")))
     else tagList(
-      strong("Your statement - sample rows"),
-      p(class = "muted", "The first rows of your file, so you can see the columns while you set things up."),
+      strong("Your statement - the first rows"),
       div(class = "mono", style = "max-height:560px;overflow:auto;border:1px solid #eee;padding:8px;font-size:12px",
           verbatimTextOutput("g_raw_sample")))
 
@@ -3664,11 +3806,11 @@ server <- function(input, output, session) {
             fluidRow(
               column(6, textInput("g_type_debit", "Which indicator value means money OUT (debit)?",
                                   value = tmpl$type_debit_value %||% "")),
-              column(6, textInput("g_type_credit", "…and money IN (credit)?  (optional - leave blank to treat anything else as a credit)",
+              column(6, textInput("g_type_credit", "…and money IN (credit)? (blank = anything else is a credit)",
                                   value = tmpl$type_credit_value %||% "")))),
         uiOutput("g_more_toggle"),   # what is left is genuinely rare
         conditionalPanel("output.g_more_open == true",
-          fluidRow(column(6, selectInput("g_decimal", "How are numbers punctuated? (usually leave on Auto)",
+          fluidRow(column(6, selectInput("g_decimal", "How are numbers punctuated?",
                                   choices = c("Auto-detect (NZ / AU / UK / US)" = "auto",
                                               "1,234.56 - dot is the decimal point" = "dot",
                                               "1.234,56 - comma is the decimal (European)" = "comma"),
@@ -3682,9 +3824,11 @@ server <- function(input, output, session) {
           if (is_pdf) tagList(
             tags$hr(),
             strong("A distinctive phrase printed on this statement"),
+            # No "avoid single common words like Balance": the box below says so
+            # live, by name, against the same rule the save uses (g_fp_msg).
             p(class = "muted", style = "margin:4px 0 6px",
-              HTML(paste0("This is how the tool recognises this bank next time. Use something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name. ",
-                          "Avoid single common words like &quot;Balance&quot; (they appear on every statement), and never a customer's name. One phrase per line; all of them must appear."))),
+              HTML(paste0("How the tool recognises this bank next time. Something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name; never a customer's name. ",
+                          "One phrase per line; all must appear."))),
             if (length(g$fp_candidates)) fluidRow(
               column(9, selectInput("g_fp_pick", "Phrases found on your statement",
                                     choices = c("(choose one to add)" = "", g$fp_candidates),
@@ -3723,8 +3867,7 @@ server <- function(input, output, session) {
           # the normal answer and what every shipped template says.
           tags$hr(),
           strong("When this layout applies"),
-          p(class = "muted", style = "margin:4px 0 6px",
-            "Banks change their layouts. Leave both empty for always - the usual answer."),
+          p(class = "muted", style = "margin:4px 0 6px", "Leave both empty for always."),
           fluidRow(
             column(6, .eff_picker("g_eff_from", "This layout applies from",
                                   tmpl$effective_from)),
@@ -3747,7 +3890,7 @@ server <- function(input, output, session) {
           uiOutput("g_req_msg"))),
       tabPanel(
         "Advanced", br(),
-        helpText(HTML("The <b>complete</b> template as text - edit anything (identifiers, column mapping, label synonyms, region bounds, row tolerance, metadata labels). Load your Simple choices in, edit, then Check &amp; apply.")),
+        helpText(HTML("The <b>complete</b> template as text. Load your Simple choices in, edit, then Check &amp; apply.")),
         div(actionButton("g_adv_load", "Load current settings"),
             actionButton("g_adv_apply", "Check & apply", class = "btn-primary")),
         br(), uiOutput("g_adv_msg"),
@@ -3767,20 +3910,25 @@ server <- function(input, output, session) {
         # "above", which is not on screen once this modal is open - the same
         # mistake N28 was.)
         actionLink("g_not_statement", "Not a transaction table?")),
-      # An always-visible mini-guide: the 2-minute guide is a separate modal and
-      # Shiny shows one modal at a time, so once the toolkit is open it can't be
-      # reopened. This strip keeps the whole flow on screen the entire time.
+      # An always-visible mini-guide: the guide is a separate modal and Shiny shows
+      # one modal at a time, so once the toolkit is open it can't be reopened. This
+      # strip keeps the whole flow on screen the entire time.
+      #
+      # It ended with "Everything else is already filled in from your own file -
+      # you're just confirming it", twice, once per branch. On the bundled specimen
+      # that is true; on asb.pdf and anz_single.pdf draft_template() fills in
+      # nothing that reads a single row, and the sentence then tells somebody
+      # staring at an empty preview that there is nothing left to do. The steps say
+      # what to do; the preview says whether it worked. Neither needs reassuring.
       div(style = "padding:8px 12px;background:#f6faf7;border:1px solid #cfe6d8;border-radius:6px;margin-bottom:10px;font-size:13px",
         HTML(if (is_pdf)
           paste0("<b>How this works:</b> &nbsp;1&nbsp;Drag a box over a column and say what it is &nbsp;·&nbsp; ",
                  "2&nbsp;click <b>Assign it</b> &nbsp;·&nbsp; 3&nbsp;name the bank on the right &nbsp;·&nbsp; ",
-                 "4&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 5&nbsp;<b>Save</b>. ",
-                 "Everything else is already filled in from your own file - you're just confirming it.")
+                 "4&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; 5&nbsp;<b>Save</b>.")
         else
           paste0("<b>How this works:</b> &nbsp;1&nbsp;check each column picker matches your file &nbsp;·&nbsp; ",
                  "2&nbsp;name the bank &nbsp;·&nbsp; 3&nbsp;check the <b>Preview</b> below &nbsp;·&nbsp; ",
-                 "4&nbsp;<b>Save</b>. ",
-                 "Everything else is already filled in from your own file - you're just confirming it."))),
+                 "4&nbsp;<b>Save</b>."))),
       fluidRow(column(6, left_panel), column(6, right_panel)),
       tags$hr(),
       h4("Preview - what will be pulled out of your statement"),
@@ -3816,14 +3964,21 @@ server <- function(input, output, session) {
     if (is.null(tmpl)) {
       # Fail loud AND specific. An Excel draft comes back NULL only when no sheet
       # held a recognisable transaction table (a date column + a money column).
+      #
+      # AND POINT AT A CONTROL THAT IS ON SCREEN. This branch RETURNS -- the toolkit
+      # modal is never shown -- so "use 'Not a transaction table?' at the top of
+      # this window" named a link inside a window that does not exist, from Convert
+      # as well as from Add a template. That is the identical mistake the comment
+      # on g_not_statement was written to record. "Something else" is a radio on
+      # the Add-a-template tab, which is always reachable and always visible.
       if (tolower(tools::file_ext(name %||% "")) %in% c("xlsx", "xlsm", "xls")) {
-        showNotification(paste("No transaction table found in this workbook - the toolkit needs a sheet",
-                               "with a date column and an amount column. If the table is unusual,",
-                               "save the sheet as CSV (File > Save As in Excel) and set that up instead."),
+        showNotification(paste("No transaction table in this workbook - the toolkit needs a sheet with a",
+                               "date column and an amount column. If the table is unusual, save the sheet",
+                               "as CSV and set that up instead."),
                          type = "warning", duration = 10)
       } else {
-        showNotification(paste("Couldn't read this file automatically. If it's a scanned/image PDF give it a moment,",
-                               "or try a text PDF / CSV export. If it isn't a transaction table, use \u201cNot a transaction table?\u201d at the top of this window."),
+        showNotification(paste("Couldn't read this file as a transaction table. Try a text PDF or a CSV export.",
+                               "If it is a form or a summary, set it up on Add a template as \u201cSomething else\u201d."),
                          type = "error", duration = 10)
       }
       return(invisible(FALSE))
@@ -3889,14 +4044,19 @@ server <- function(input, output, session) {
       # this statement EQUALLY well, the tool refuses to guess which -- but telling
       # the analyst "this layout is new, build a template" would be flatly wrong
       # advice: we already have templates that fit, and a third would only tie too.
-      # So name them and let one click convert with either. Nothing is auto-chosen;
-      # the analyst decides, which is the one thing a machine can't do here.
+      # So name them and let one click convert with either.
+      #
+      # The old line here said "the tool won't pick for you". It does pick, always:
+      # R/convert.R takes the best candidate and reads the statement with it. What
+      # brought her to THIS panel is that the one it picked read no rows. Saying
+      # otherwise contradicted the engine's own design note two files away, and
+      # made a deliberate deterministic choice look like a refusal to choose.
       tied <- as.character(res$detect$tied %||% character(0))
       if (isTRUE(res$detect$ambiguous) && length(tied) >= 2) {
         return(div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
           strong(sprintf("%d templates fit this statement equally well - which one is it?", length(tied))),
           p(class = "muted", style = "margin:6px 0 10px",
-            "They match the same wording on the page, so the tool won't pick for you. Choose one and it converts straight away - nothing is saved or changed."),
+            "The one the tool used read no rows. Pick another and it converts straight away - nothing is saved or changed."),
           div(style = "display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end",
             div(style = "flex:1 1 340px",
               selectInput("cv_tie_pick", NULL, choices = tied, width = "100%")),
@@ -3912,18 +4072,39 @@ server <- function(input, output, session) {
             actionLink("cv_teach_go_tie", "Set up a new template instead"),
             ".")))
       }
-      # BEFORE offering to build a template: if templates built here are switched
-      # OFF, the statement may already have one and we simply refused to look. The
-      # old app said nothing at all, so the answer to "I built this template and it
-      # doesn't work" was buried in a tick-box inside a collapsed "wrong bank?"
-      # panel. One sentence, one button.
+      # A TEMPLATE THAT MATCHED AND READ NOTHING IS NOT A NEW LAYOUT.
+      #
+      # R/diagnose.R states the rule outright: "'Add a template' is not the fix --
+      # there IS one, its columns just sit in the wrong place. Send the analyst to
+      # the template that failed, not to a blank form." The card did the opposite:
+      # the headline said "This layout is new", the engine's own message directly
+      # above it said "badbands_pdf matches the wording on this statement but read
+      # no transactions from it", and the green button drafted a FRESH template
+      # rather than opening the one that had just failed. Same card, three answers.
+      if (.matched_but_empty(res)) {
+        tid <- (res$template_id %||% NA_character_)[1]
+        return(div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
+          strong(sprintf("%s matched this statement but read no rows from it.",
+                         if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else "A template")),
+          p(class = "muted", style = "margin:6px 0 10px",
+            "Its columns sit in the wrong place. Open it and move them - a new template would read nothing either."),
+          actionButton("cv_teach_go_empty", "Open that template and fix its columns",
+                       class = "btn-primary btn-lg")))
+      }
       # A new layout is a FORK, not a cliff. We WANT analysts setting up their own
       # templates, so the prominent GREEN action is "set it up yourself" (the tool
       # pre-fills what it can); handing it to the team is the small fallback.
+      #
+      # The headline says what happened, not what the file is. "This layout is new"
+      # was printed verbatim over 4,000 bytes of /dev/urandom named .pdf and over a
+      # 31-byte text file: neither is a layout, and neither is new. And the promise
+      # underneath it -- "takes a couple of minutes, no data background needed" --
+      # held for the bundled specimen and for nothing else measured: on asb.pdf and
+      # anz_single.pdf the drafter reads 0 rows and there is no two-minute path.
       div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
-        strong("This layout is new — set it up once and it converts every time."),
+        strong("No template read this statement — set one up and it converts every time."),
         p(class = "muted", style = "margin:6px 0 10px",
-          "The tool pre-fills what it can detect from your statement — you confirm against a live preview and save. Takes a couple of minutes, no data background needed."),
+          "The tool pre-fills what it can detect from your statement; you confirm against a live preview and save."),
         actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-primary btn-lg"),
         div(style = "margin-top:8px",
           span(class = "muted", "Would rather not? "),
@@ -3933,7 +4114,7 @@ server <- function(input, output, session) {
       # so we don't repeat a toolkit prompt here. needs_review/failed keep the offer.
       if (identical(st, "ok")) return(NULL)
       div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", "Open this statement in setup to fix how it's read and save an improved template."), " ",
+        span(class = "muted", "Fix how it's read and save an improved template. "),
         actionButton("cv_teach_go_fix", "Open the template toolkit", class = "btn-default"))
     }
   })
@@ -3948,16 +4129,27 @@ server <- function(input, output, session) {
   observeEvent(input$ab_go_template,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
 
-  .teach_now <- function() {
+  # .matched_but_empty(res) -- the engine matched a template's identifying wording
+  # and that template then read zero transactions. The engine raises it as a
+  # diagnostic category (R/diagnose.R), which is where this reads it from: it is
+  # the one `unsupported` result whose template id is a REAL match rather than the
+  # closest miss, so it is the one that may be seeded into the toolkit.
+  .matched_but_empty <- function(res) {
+    d <- res$diagnostics
+    isTRUE(!is.null(d) && "category" %in% names(d) && any(d$category %in% "matched_but_empty"))
+  }
+  .teach_now <- function(seed_matched = FALSE) {
     src <- cv_src(); req(src)
     res <- cv_res()
     seed <- NULL
     # If the conversion MATCHED a template (ok / needs_review), open that template
     # so the user refines the real one. An unsupported result also carries a
-    # template id - the CLOSEST MISS, for the logs - and seeding from that would
-    # open the wrong bank's settings and save a fingerprint that can never match
-    # this file. Unsupported/failed always drafts fresh from the file itself.
-    if ((res$status %||% "") %in% c("ok", "needs_review")) {
+    # template id - usually the CLOSEST MISS, for the logs - and seeding from that
+    # would open the wrong bank's settings and save a fingerprint that can never
+    # match this file. So unsupported drafts fresh from the file itself, EXCEPT on
+    # matched_but_empty, where the wording really did match and the template that
+    # failed is exactly the thing to open (seed_matched, from the card that names it).
+    if (isTRUE(seed_matched) || (res$status %||% "") %in% c("ok", "needs_review")) {
       tid <- (res$template_id %||% NA_character_)[1]
       if (!is.na(tid) && nzchar(tid)) {
         tset <- tryCatch(templates(), error = function(e) list())
@@ -3966,9 +4158,10 @@ server <- function(input, output, session) {
     }
     open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
   }
-  observeEvent(input$cv_teach_go,     .teach_now())
-  observeEvent(input$cv_teach_go_tie, .teach_now())
-  observeEvent(input$cv_teach_go_fix, .teach_now())
+  observeEvent(input$cv_teach_go,       .teach_now())
+  observeEvent(input$cv_teach_go_tie,   .teach_now())
+  observeEvent(input$cv_teach_go_fix,   .teach_now())
+  observeEvent(input$cv_teach_go_empty, .teach_now(seed_matched = TRUE))
 
   # Send an unsupported layout to the team (PII-safe: generic context only - a
   # file extension, the detected bank guess and the closest template - never file
@@ -3986,7 +4179,10 @@ server <- function(input, output, session) {
     if (is.null(id))
       showNotification("Couldn't send just now - please try again.", type = "error")
     else
-      showNotification("Sent to the team. They'll set up a template for this layout - you'll be able to convert it once it's ready.",
+      # What follows this is a promise about people ("you'll be able to convert it
+      # once it's ready"), which no code here can keep or check. What IS checkable
+      # is what left the machine, so that is what it says.
+      showNotification("Sent to the team - the layout only, no statement contents.",
                        type = "message", duration = 7)
   })
 
@@ -4049,6 +4245,11 @@ server <- function(input, output, session) {
     res <- cv_res()
     # The pickup record has to learn that this statement DID convert, or Admin
     # keeps asking someone to build a template for a file that already has one.
+    # `uid` was a bare name with no binding anywhere in the server -- run_conversion
+    # has a local of that name, this function does not -- so every use of "Convert
+    # with this one instead" (the tie chooser AND the close-call panel) threw
+    # "object 'uid' not found" after the conversion had already run.
+    uid <- cv_upload_id()
     if (!is.na(uid) && (res$status %||% "") %in% c("ok", "needs_review"))
       safe(set_upload_status(uid, res$status,
         run_id = res$run_id %||% NA_character_,
@@ -4188,7 +4389,7 @@ server <- function(input, output, session) {
       output$g_req_msg <- renderUI(span(class = "bad", "Couldn't save - try again.")); return() }
     updateTextAreaInput(session, "g_req_detail", value = "")
     output$g_req_msg <- renderUI(span(class = "ok",
-      "Thanks - raised for review. Our team will build a template for this format."))
+      "Raised for review, with no statement contents."))
   })
 
   # Advanced tab: pull the current Basic settings into the YAML editor on demand.
@@ -4360,7 +4561,7 @@ server <- function(input, output, session) {
     if (is.null(br)) { showNotification("Draw a box on the page first.", type = "warning"); return() }
     f <- .pdf_chosen_field()
     if (!nzchar(trimws(f %||% ""))) {
-      showNotification("First say what you boxed (date, description, amount, opening balance...), then Assign it.", type = "warning"); return() }
+      showNotification("Say what you boxed first, then Assign it.", type = "warning"); return() }
     # A one-off header value: a specific box (x AND y) around ONE value that isn't
     # on every row -- a balance, the statement period, an account detail -- read
     # straight from that spot when the automatic reader can't label it. It never
@@ -4477,6 +4678,11 @@ server <- function(input, output, session) {
     # there would be a caveat about nothing.
     np <- suppressWarnings(as.integer(g$n_pages %||% NA))
     partial <- is_pdf && !is.na(np) && np > PREVIEW_PAGES
+    # The four branches below shared two sentences between them, written out in
+    # full each time. One copy each: what to look at when there ARE rows, and where
+    # the two settings live when there are none.
+    check_them <- "Check the dates, descriptions and amounts below against your statement."
+    two_settings <- "If so, open \"Show the settings for this statement\" and check the date format and the amount style."
     if (n > 0L) return(div(class = "verdict verdict-high", style = "margin:2px 0 12px",
       div(class = "verdict-ico", "✓"),
       div(style = "flex:1;min-width:0",
@@ -4486,22 +4692,21 @@ server <- function(input, output, session) {
                       n, if (n == 1L) "" else "s", PREVIEW_PAGES, np)
             else sprintf("%d transaction row%s read", n, if (n == 1L) "" else "s")),
         p(class = "verdict-body", style = "margin:0",
-          if (partial)
-            paste("Check the dates, descriptions and amounts below against your statement.",
-                  "The preview stops at a few pages so the toolkit stays quick - converting",
-                  "reads every page, so expect a bigger number then.")
-          else "Check the dates, descriptions and amounts below against your statement. If they are right, click Save template.",
+          paste(check_them, if (partial)
+            "Converting reads every page, so expect a bigger number then."
+            else "If they are right, click Save template."),
         if (n > PREVIEW_ROWS)
           span(class = "muted", sprintf(" The table shows the first %d.", PREVIEW_ROWS))))))
     div(class = "verdict verdict-medium", style = "margin:2px 0 12px",
       div(class = "verdict-ico", "!"),
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title", "No transaction rows read yet"),
-        p(class = "verdict-body", style = "margin:0 0 4px", if (is_pdf)
-            "Rows are found by their date, so start with the date column: does your box cover the dates on the page? If it does, open \"Show the settings for this statement\" and check the date format and the amount style."
-          else "Start with the Date and Amount column pickers above - are they pointing at the right columns? If they are, open \"Show the settings for this statement\" and check the date format and the amount style."),
+        p(class = "verdict-body", style = "margin:0 0 4px",
+          paste(if (is_pdf) "Rows are found by their date. Does your box cover the dates on the page?"
+                else "Are the Date and Amount pickers above on the right columns?",
+                two_settings)),
         if (is_pdf) p(class = "muted", style = "margin:0",
-          "This preview reads only the first few pages. If the transactions start further into the document that is why nothing shows here - saving and converting reads every page.")))
+          "This preview reads only the first few pages - if the transactions start later, that is why nothing shows here.")))
   })
   observeEvent(input$g_save, {
     g <- guided(); req(g)
@@ -4513,7 +4718,7 @@ server <- function(input, output, session) {
       g_more_open(TRUE)
       showNotification(HTML(paste0("<b>Couldn't save.</b> ",
         htmltools::htmlEscape(.EFF_BACKWARDS_MSG),
-        "<br>The settings for this statement are now open on the right - it is under <b>When this layout applies</b>.")),
+        "<br>Opened on the right, under <b>When this layout applies</b>.")),
         type = "error", duration = 12)
       return()
     }
@@ -4578,7 +4783,7 @@ server <- function(input, output, session) {
       # and find -- the tool knows where the fix is, so it should not make her look.
       g_more_open(TRUE)
       showNotification(HTML(paste0("<b>Couldn't save.</b> ", htmltools::htmlEscape(err),
-        "<br>The settings for this statement are now open on the right - fix it there, or use <b>Advanced</b> for the whole template as text.")),
+        "<br>Opened on the right - or use <b>Advanced</b> for the whole template as text.")),
         type = "error", duration = 12)
     }
   })
@@ -4603,7 +4808,7 @@ server <- function(input, output, session) {
     d <- adm_data(); req(d); ov <- runs_overview(d$runs); if (!nrow(ov)) return(NULL)
     cols <- c(ok = "#137333", needs_review = "#e3b341", unsupported = "#b00020",
               failed = "#7d1a1a")[ov$status]
-    cols[is.na(cols)] <- "#888"
+    cols[is.na(cols)] <- "#888888"   # three-digit hex throws in base R
     op <- par(mar = c(5, 4, 1, 1)); on.exit(par(op))
     barplot(setNames(ov$n, ov$status), col = cols, las = 2, ylab = "conversions")
   })
