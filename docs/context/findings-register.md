@@ -466,16 +466,10 @@ different inputs:
   document boundaries to cut on, so splitting is not available at all; the only
   way to make the checks work is to read it as one long span.
 
-Delete either and the other cannot cover its cases. What IS worth revisiting is
-the `split:` opt-in: only **1 of 13** shipped templates declares one, and the
-commit gate inside `split_bundle()` (an independent count must confirm the
-segment count, and every segment must parse and reconcile) is already the thing
-that makes splitting safe. A bundle read by any of the other twelve templates
-gets neither mechanism and lands on flag-and-refuse - loud, never silently
-wrong, but it is the symptom originally reported. Defaulting the spec on, guarded
-by the existing commit gate, is the real simplification here. It changes
-behaviour for twelve templates, so it wants measuring across the corpus rather
-than doing on a release day.
+Delete either and the other cannot cover its cases. What WAS worth revisiting -
+and has now been done, see `N39` - is the `split:` opt-in, which only 1 of 13
+shipped templates declared even though the commit gate inside `split_bundle()` is
+what actually makes splitting safe. That gap is closed; the two mechanisms stay.
 
 | N39 | high | **fixed** | Auto-split was OPT-IN and only 1 of 13 shipped templates opted in, so a bundle read by any of the other twelve - or by any template an analyst builds - got no split at all and fell through to the merged parse. Measured on a two-statement Westpac bundle: needs_review, trust LOW, balance_reconciliation AND running_balance_continuity both failing - the exact symptom auto-split exists to remove. The opt-in was never what made splitting safe; the commit gate in split_bundle() is. | R/split.R `.split_spec` |
 

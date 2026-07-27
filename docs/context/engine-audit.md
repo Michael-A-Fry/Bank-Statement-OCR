@@ -55,7 +55,7 @@ detection was hardened; auto-split is scoped in the research section below).
 | P3-h drafted fingerprint pins all headers | ✅ resolved | `590f4c7` |
 | P3-i narrow redacted cell blank | ✅ resolved | `2c1b0ef` |
 | P3-j OCR confidence image mismatch | ✅ resolved | `2c1b0ef` |
-| multi-statement `split:` auto-split | ✅ shipped | opt-in, deterministic, per-segment reconcile + weakest-link roll-up (`R/split.R`); default stays flag-and-refuse |
+| multi-statement auto-split | ✅ shipped | ON by default, deterministic, per-segment reconcile + weakest-link roll-up (`R/split.R`); refuses unless the segment count is independently confirmed, and then flag-and-refuse takes over. `split: false` opts a template out. |
 
 Alongside the fixes, this pass also shipped the **local metadata-capture subsystem**
 (`c2b5fbd`) — the on-box "ML goldmine" (see [metadata-capture.md](metadata-capture.md))
@@ -276,8 +276,8 @@ The parser segments the row stream at boundaries, then runs the existing parse +
 
 **Sequencing:** harden the *flag* first (fix P2-4 so bundles are reliably detected across labelled-pair/year-less/fingerprint-repeat cases) — this is immediately worth it and low-risk. Build auto-split next, only behind the `split:` opt-in with per-segment reconciliation and roll-up trust.
 
-> **Implemented (`R/split.R`).** The auto-split now ships behind the opt-in
-> `split:` block, close to the sketch above with two deliberate simplifications
+> **Implemented (`R/split.R`).** The auto-split ships close to the sketch above,
+> with two deliberate simplifications
 > for safety and simplicity: the shipped boundary signals are `page1_marker` and
 > `opening_label` (the two most reliable, deterministic, page-based resets), and it
 > emits **one combined result** with a `statement_index` column + a per-statement
@@ -331,8 +331,11 @@ subsystem is in place, these are the forward bets — ordered roughly by value �
 effort. None are committed work; they are the map.
 
 ### Near-term, low-risk
-- **`split:` opt-in for statement bundles — SHIPPED (`R/split.R`).** A PDF template
-  can now opt into auto-splitting a proven bundle at deterministic boundaries
+- **Auto-split for statement bundles — SHIPPED (`R/split.R`), on by default.** It
+  was originally gated on a template declaring a `split:` block, and exactly one of
+  thirteen shipped templates ever did, so a bundle read by any of the others got no
+  split at all — see `N39` in the findings register for the measurement that
+  retired the opt-in. A PDF bundle is now split at deterministic boundaries
   (`Page 1 of N` reset, or a repeated opening-balance header). Each segment is
   parsed and **reconciled independently** and trust rolls up to the weakest
   segment; the split commits only when the boundary count is independently
