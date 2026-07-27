@@ -91,6 +91,36 @@ DIAG_PLAIN <- c(
   none                    = "no issues found")
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
+# plain_failing_check(x) -- the batch table's "What to check" column, in words.
+#
+# convert_batch() (R/batch.R) carries the engine's own CODE with the map that
+# words it as a prefix: "check:balance_reconciliation", "diag:unknown_format",
+# "status:needs_review". The engine deliberately does NOT do this translation --
+# it used to read this very file off disk with sys.source() to get the wording,
+# for a bare-console caller that does not exist. The words belong here, with the
+# other four wording maps, and only the app has them loaded.
+#
+# The prefix is not decoration. The three key sets are disjoint today, but a code
+# that appeared in two of them would render the wrong sentence with nothing to
+# notice it -- so the map is named rather than guessed.
+#
+# "Failed: " on a check because CHECK_PLAIN words a check as what it PROVES ("Row
+# dates could be read"), for use beside a separate pass/fail column. This table
+# has no such column, so the bare phrase would say the OPPOSITE of what happened.
+#
+# NOT plain_check(): that re-appends "(statement N)", and batch.R strips that tag
+# precisely so a split bundle's files group together under one kind of failure.
+# An unknown code falls back to itself -- never to a blank cell, which would hide
+# a file that needs attention.
+plain_failing_check <- function(x) vapply(x, function(e) {
+  if (is.na(e)) return(NA_character_)
+  code <- sub("^[^:]*:", "", e)
+  switch(sub(":.*$", "", e),
+         check  = paste0("Failed: ", plain_label(code, CHECK_PLAIN)),
+         diag   = plain_label(code, DIAG_PLAIN),
+         status = plain_label(code, STATUS_PLAIN),
+         e)
+}, character(1), USE.NAMES = FALSE)
 
 # ---------------------------------------------------------------------------
 # The governed feed, said out loud. write_feed() (R/feed.R) decides whether a
