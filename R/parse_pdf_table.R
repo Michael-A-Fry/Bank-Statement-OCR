@@ -63,30 +63,71 @@
 # leading), which silently merged many transactions -- the "only 3 rows on the
 # page" bug. Anchoring to the row start separates lines correctly as long as the
 # line pitch exceeds tol, and is identical to the old method on well-spaced pages.
-# A4 portrait in points -- the size virtually every NZ bank statement PDF uses.
-# When a template doesn't record the page size it was built on, we assume this, so
-# a scanned/re-exported A4 statement still normalises correctly.
+# =============================== THE BAND FRAME ==============================
+# THE one coordinate space every stored band lives in. Defined here, once.
+#
+# A template's bands -- table$columns$<col>$x_min/x_max, table$region,
+# table$metadata_regions, and stored force_rows y-bands -- are PDF points measured
+# on a page of size table$ref_width x table$ref_height: the size of the page the
+# analyst drew them on, recorded by draft_template() (R/draft.R). THAT page size,
+# and nothing else, is the BAND FRAME. Origin top-left, y increasing downward, the
+# same axes pdftools reports word boxes in.
+#
+# Everything that touches a band converts with the two functions below and nowhere
+# else. They are exact inverses:
+#   * the READER scales each page's WORDS into the frame     (page value  x  scale)
+#   * anything DRAWING on a page -- the X-ray, the band editor -- scales each BAND
+#     out to that page                                       (band value  /  scale)
+#     because it paints over a raster of the page's own size.
+# So a band drawn on screen and a band matched by the reader are the same band.
+#
+# Anything that draws or stores a band in raw page coordinates is displaced on
+# every page whose size differs from the frame -- and a displaced band is
+# indistinguishable from an untouched default one, which is exactly why this
+# contract is written down once rather than re-derived at each call site.
+#
+# A page within .PAGE_SCALE_SNAP of the frame counts as the SAME size (scale
+# exactly 1), so the overwhelmingly common A4-on-A4 case is bit-for-bit untouched
+# and never accumulates rounding drift.
+# A4 portrait in points -- the size virtually every NZ bank statement PDF uses,
+# and the frame assumed when a template records none.
 .A4_W <- 595.28
 .A4_H <- 841.89
-.PAGE_SCALE_SNAP <- 0.02   # treat a page within 2% of the reference as same-size
+.PAGE_SCALE_SNAP <- 0.02   # a page within 2% of the frame counts as the same size
 
-# .scale_words_to_ref(w, page_w, page_h, ref_w, ref_h) -- map one page's word
-# boxes into the template's REFERENCE point space, so absolute x-bands line up even
-# when this copy of the statement is a different physical size (a rescan, a
-# different export, a different scanner DPI). A page the same size as the reference
-# is left untouched (snap-to-1), so same-size parsing is bit-for-bit unchanged.
-# Without this, a differently-sized page pushes every value out of its band (all
-# rows drop) or, for a small difference, pushes right-aligned amounts out on SOME
-# rows only -- the "match a chunk, miss a chunk" bug.
-.scale_words_to_ref <- function(w, page_w, page_h, ref_w, ref_h) {
+# pdf_band_frame(template) -- the frame this template's bands are stored in.
+# Always a usable positive size: a missing, unparseable or nonsense ref falls back
+# to A4 rather than producing a scale of NA/Inf that would move every band.
+pdf_band_frame <- function(template) {
+  t <- template$table %||% list()
+  num <- function(v, dflt) { v <- suppressWarnings(as.numeric(v %||% dflt))
+    if (length(v) != 1L || is.na(v) || v <= 0) dflt else v }
+  list(width = num(t$ref_width, .A4_W), height = num(t$ref_height, .A4_H))
+}
+
+# pdf_band_frame_scale(frame, page_w, page_h) -- c(sx, sy). MULTIPLY a page
+# coordinate by this to land in the frame; DIVIDE a band by it to draw that band
+# on the page. An unknown page size scales by 1 (assume it is already the frame).
+pdf_band_frame_scale <- function(frame, page_w, page_h) {
+  one <- function(pv, fv) {
+    s <- if (length(pv) == 1L && !is.na(pv) && is.finite(pv) && pv > 0) fv / pv else 1
+    if (abs(s - 1) < .PAGE_SCALE_SNAP) 1 else s
+  }
+  c(one(page_w, frame$width), one(page_h, frame$height))
+}
+
+# .words_to_band_frame(w, frame, page_w, page_h) -- map one page's word boxes into
+# the band frame, so absolute x-bands line up even when this copy of the statement
+# is a different physical size (a rescan, another export, a different scanner DPI).
+# Without it a differently-sized page pushes every value out of its band (all rows
+# drop) or, for a small difference, pushes right-aligned amounts out on SOME rows
+# only -- the "match a chunk, miss a chunk" bug.
+.words_to_band_frame <- function(w, frame, page_w, page_h) {
   if (is.null(w) || !nrow(w)) return(w)
-  sx <- if (is.finite(page_w) && page_w > 0 && is.finite(ref_w) && ref_w > 0) ref_w / page_w else 1
-  sy <- if (is.finite(page_h) && page_h > 0 && is.finite(ref_h) && ref_h > 0) ref_h / page_h else 1
-  if (abs(sx - 1) < .PAGE_SCALE_SNAP) sx <- 1
-  if (abs(sy - 1) < .PAGE_SCALE_SNAP) sy <- 1
-  if (sx == 1 && sy == 1) return(w)
-  w$x <- w$x * sx; w$width  <- w$width  * sx
-  w$y <- w$y * sy; w$height <- w$height * sy
+  s <- pdf_band_frame_scale(frame, page_w, page_h)
+  if (s[1] == 1 && s[2] == 1) return(w)
+  w$x <- w$x * s[1]; w$width  <- w$width  * s[1]
+  w$y <- w$y * s[2]; w$height <- w$height * s[2]
   w
 }
 
@@ -178,22 +219,65 @@
   rx
 }
 
+# .PDF_LINE_NOISE -- the tokens that are never part of a line's LABEL: any number
+# (a date, an amount, a balance, an account or reference number), a month name, and
+# a dr/cr/od marker. Stripping them is how a printed line is reduced to the words a
+# human reads as its label -- "13 Jul Closing Balance $0.00 $2.00 1.97" is the
+# closing balance line however many money columns it happens to print into.
+# A token must be whole (bounded by spaces), so "13.90%" and "74c168003e" survive
+# untouched: they are not numbers, they are part of what the line SAYS.
+.PDF_LINE_NOISE <- paste0(
+  "(?:^|\\s)(?:",
+    "[$(]?[0-9][0-9,./:-]*[0-9)]?",                                 # 1,234.56  03/02/2026  12-3456-0789012-50
+    "|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*",    # a month name, abbreviated or full
+    "|dr|cr|od",                                                    # debit / credit / overdrawn marker
+  ")(?=\\s|$)")
+
+# .pdf_line_label(s) -- one printed line reduced to its label, lower-cased.
+# perl + useBytes: this runs 5-8x per visual row across the split / continuation /
+# keep passes (~1300-5000 calls per parse) and the cost is almost entirely R's
+# default TRE engine compiling the alternations. PCRE is 3-4x faster on the same
+# patterns, and useBytes both removes the C-locale warning and makes the
+# substitutions robust on invalid-UTF-8 bytes (no new failure mode).
+# An empty band reads as NA, which is the commonest input here, so it exits first.
+# Only the ENDS are trimmed: .pdf_summary_rx compiles a literal space in a label to
+# "\s+", so runs of spaces left INSIDE by the noise strip already match, and the
+# squeeze they would need is pure cost. Trailing "-" and ":" go with the
+# whitespace -- "Opening balance -" and "Closing balance:" are still the label.
+.pdf_line_label <- function(s) {
+  s <- s %||% ""
+  if (length(s) != 1L || is.na(s) || !nzchar(s)) return("")
+  s <- gsub(.PDF_LINE_NOISE, " ", tolower(s), perl = TRUE, useBytes = TRUE)
+  sub("[\\s:-]+$", "", sub("^\\s+", "", s, perl = TRUE, useBytes = TRUE),
+      perl = TRUE, useBytes = TRUE)
+}
+
 # A summary line (opening/closing balance, brought/carried forward, totals) is NOT
 # a transaction even though it carries a money value on a dated line. Match the
-# WHOLE label so a real "Total Payments to ACME Ltd" is KEPT; errs toward keeping.
+# WHOLE label so a real "Total Payments to ACME Ltd", or a real "TFR TO SAVINGS -
+# BALANCE", is KEPT.
+#
+# BOTH the description cell AND the whole raw line are checked, ALWAYS (N30). The
+# old code read `raw` only when the description band came back EMPTY -- so when a
+# band was displaced and the description came back non-empty but WRONG (a date
+# fragment, part of a number, a neighbouring column), the fallback never ran,
+# "Opening balance" was never seen even though it sat in `raw`, and the row was
+# kept as a transaction with the balance figure landing in the debit column: an
+# INVENTED transaction at a material amount. Reading a wrongly-captured fragment
+# INSTEAD of the full line is never better than reading both.
+#
+# Checking raw is safe because a label must match WHOLE (.pdf_summary_rx anchors
+# ^...$) after .pdf_line_label has removed the date and money columns the raw line
+# also carries. "24 Aug TFR To 63A Rent 465.00 17.26" reduces to "tfr to rent",
+# not to a label. The residual cost is a payee literally NAMED "Closing Balance",
+# which would be skipped -- and skipped VISIBLY (it is counted in skipped_row_count
+# and the X-ray names it a summary line), where the bug it replaces was silent.
+# An analyst can drop the wording in the Admin vocabulary; no code change.
 .pdf_is_summary <- function(description, raw = NULL) {
-  d <- tolower(trimws(description %||% ""))
-  if (!nzchar(d)) d <- tolower(trimws(raw %||% ""))
-  # perl + useBytes: these two regexes run 5-8x per visual row across the split /
-  # continuation / keep passes (~1300-5000 calls per parse) and the cost is almost
-  # entirely R's default TRE engine compiling the big alternation. PCRE is 3-4x
-  # faster on the IDENTICAL patterns -- they use only constructs with the same
-  # POSIX-ERE / PCRE meaning (^ $ \s [bc] () | ? f/?wd?), no backrefs / \b / locale
-  # POSIX classes -- and useBytes both removes the C-locale warning and makes the
-  # sub() robust on invalid-UTF-8 bytes (no new failure mode). Byte-identical.
-  lbl <- trimws(sub("[-:]*\\s*[$(]?[0-9][0-9,. ]*[0-9)]*\\s*(dr|cr|od)?\\s*$", "", d,
-                    perl = TRUE, useBytes = TRUE))
-  grepl(.pdf_summary_rx(), lbl, perl = TRUE, useBytes = TRUE)
+  rx <- .pdf_summary_rx()
+  hit <- function(s) { s <- .pdf_line_label(s)
+    nzchar(s) && grepl(rx, s, perl = TRUE, useBytes = TRUE) }
+  hit(description) || hit(raw)          # `||` keeps the common path at one reduction
 }
 
 # .is_footer_noise(s) -- a page footer / running header ("Page 2 of 2", "continued
@@ -344,29 +428,27 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   tdv <- template$type_debit_value  %||% t$type_debit_value  %||% "D"
   tcv <- template$type_credit_value %||% t$type_credit_value
   words_by_page <- input$words %||% list()
-  # Reference page size the bands were drawn in (recorded when the template was
-  # built; A4 otherwise). Each page's words are scaled into this space below.
-  ref_w <- suppressWarnings(as.numeric(t$ref_width  %||% .A4_W)); if (is.na(ref_w) || ref_w <= 0) ref_w <- .A4_W
-  ref_h <- suppressWarnings(as.numeric(t$ref_height %||% .A4_H)); if (is.na(ref_h) || ref_h <= 0) ref_h <- .A4_H
+  # The band frame these bands are stored in (see THE BAND FRAME, top of file).
+  frame <- pdf_band_frame(template)
   page_w <- input$page_width  %||% rep(NA_real_, length(words_by_page))
   page_h <- input$page_height %||% rep(NA_real_, length(words_by_page))
-  # Normalise every page's words into the template's reference space ONCE, so the
-  # row loop, the metadata_regions lookups and the force_rows bands all share one
-  # coordinate space. Same-size pages are untouched (snap-to-1).
+  # Bring every page's words into the frame ONCE, so the row loop, the
+  # metadata_regions lookups and the force_rows bands all work in one coordinate
+  # space. Same-size pages are untouched (snap-to-1).
   words_by_page <- lapply(seq_along(words_by_page), function(p) {
     wp <- words_by_page[[p]]
     if (is.null(wp) || !nrow(wp)) return(wp)
-    .scale_words_to_ref(as.data.frame(wp, stringsAsFactors = FALSE), page_w[p], page_h[p], ref_w, ref_h)
+    .words_to_band_frame(as.data.frame(wp, stringsAsFactors = FALSE), frame, page_w[p], page_h[p])
   })
-  # force_rows y-bands come from the X-ray, which is drawn in each page's own space;
-  # bring them into the reference space too so a forced row on a rescaled page still
-  # matches the (now normalised) word rows.
+  # force_rows y-bands come from the X-ray, which draws in each page's own space;
+  # bring them into the frame too so a forced row on a rescaled page still matches
+  # the (now normalised) word rows.
   if (!is.null(force_rows) && length(force_rows)) force_rows <- lapply(force_rows, function(fb) {
     pg <- suppressWarnings(as.integer(fb$page %||% 1L))
-    s <- if (!is.na(pg) && pg >= 1 && pg <= length(page_h) && is.finite(page_h[pg]) && page_h[pg] > 0) ref_h / page_h[pg] else 1
-    if (abs(s - 1) < .PAGE_SCALE_SNAP) s <- 1
-    if (!is.null(fb$y_min)) fb$y_min <- fb$y_min * s
-    if (!is.null(fb$y_max)) fb$y_max <- fb$y_max * s
+    sy <- if (!is.na(pg) && pg >= 1 && pg <= length(page_h))
+            pdf_band_frame_scale(frame, page_w[pg], page_h[pg])[2] else 1
+    if (!is.null(fb$y_min)) fb$y_min <- fb$y_min * sy
+    if (!is.null(fb$y_max)) fb$y_max <- fb$y_max * sy
     fb
   })
 
@@ -396,7 +478,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   for (p in seq_along(words_by_page)) {
     w <- words_by_page[[p]]
     if (is.null(w) || !nrow(w)) next
-    w <- as.data.frame(w, stringsAsFactors = FALSE)   # already normalised to ref space above
+    w <- as.data.frame(w, stringsAsFactors = FALSE)   # already in the band frame (above)
     if (!is.null(region$x_min)) w <- w[(w$x + w$width) >= region$x_min, , drop = FALSE]
     if (!is.null(region$x_max)) w <- w[w$x <= region$x_max, , drop = FALSE]
     if (!is.null(region$y_min)) w <- w[w$y >= region$y_min, , drop = FALSE]

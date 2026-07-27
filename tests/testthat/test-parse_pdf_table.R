@@ -645,3 +645,135 @@ test_that("tightly-set lines are NOT merged into one giant row (row-height group
   expect_equal(nrow(tx), 2L)                          # two rows, not one merged blob
   expect_equal(tx$date, c("2026-01-05", "2026-01-06"))
 })
+
+# --------------------------------------------------------------------------
+# The summary-line guard reads the WHOLE LINE, always (N30).
+#
+# .pdf_is_summary used to read `raw` only when the description band came back
+# EMPTY. A displaced band comes back non-empty and WRONG, so the fallback never
+# ran and "Opening balance" was never seen even though it sat in `raw` -- the row
+# survived as a transaction carrying the balance figure. The end-to-end proof of
+# the fix, and the invariant over every shipped golden, are in
+# test-pdf_summary_invariant.R; these pin the matcher's own behaviour.
+# --------------------------------------------------------------------------
+test_that("a summary line is recognised from the raw line, whatever the band caught", {
+  # description non-empty and WRONG (the displaced-band case) -- raw still decides
+  expect_true(.pdf_is_summary("9,000.00", "01 Jan Opening balance 9,000.00 9,000.00"))
+  expect_true(.pdf_is_summary("$0.00", "13 Jul Closing Balance $0.00 $2.00 1.97"))
+  expect_true(.pdf_is_summary("17,731.96", "18 Feb Opening balance 17,731.96 OD"))
+  expect_true(.pdf_is_summary("Jun", "13 Jun Balance carried forward 0.03 OD"))
+  # the description alone said nothing -- which is why the old code kept the row
+  expect_false(.pdf_is_summary("9,000.00"))
+  # and a correctly-caught description still decides on its own
+  expect_true(.pdf_is_summary("Opening Balance", "01 Jan Opening Balance 9,000.00"))
+})
+
+test_that("reading the raw line does NOT swallow a real transaction", {
+  # The whole reason .pdf_summary_rx anchors ^...$: a real payee may mention a
+  # balance, a total or a carry. If any of these ever flips to TRUE the guard has
+  # started eating real rows, and money goes missing silently -- the one
+  # unforgivable failure.
+  expect_false(.pdf_is_summary(NULL, "05 Apr TFR TO SAVINGS - BALANCE 250.00"))
+  expect_false(.pdf_is_summary(NULL, "15 Mar Total Payments to ACME Ltd 1,250.00"))
+  expect_false(.pdf_is_summary(NULL, "03 Feb EFTPOS RIVERSIDE DAIRY 12.40 2,398.15"))
+  expect_false(.pdf_is_summary(NULL, "24 Aug TFR To 63A Rent Rent 63A Sar 465.00 17.26"))
+  expect_false(.pdf_is_summary(NULL, "12 Jun BALANCE PHARMACY LTD 41.20 900.00"))
+  expect_false(.pdf_is_summary(NULL, "Overdraft Interest Rate at closing date is 13.90% per annum."))
+  # ...including when the label is a genuine prefix of a longer, real description
+  expect_false(.pdf_is_summary("Closing Balance Holdings Ltd"))
+})
+
+test_that("a line is reduced to its label by dropping dates, money and markers", {
+  # The reduction is what makes reading the raw line safe: it removes the date and
+  # money COLUMNS the raw line also carries, so a whole-label match still means the
+  # whole label. Numbers glued into a word are not numbers and must survive.
+  expect_equal(.pdf_line_label("13 Jul Closing Balance $0.00 $2.00 1.97"), "closing balance")
+  expect_equal(.pdf_line_label("Closing balance:  1,234.00"), "closing balance")
+  expect_equal(.pdf_line_label("Opening balance -  9,000.00"), "opening balance")
+  expect_equal(.pdf_line_label("19 Feb DC 06-0705-0503820-28 CREDIT TRANSFER 133307 901.11"),
+               "dc  credit transfer")
+  expect_equal(.pdf_line_label("Interest 0502 0792845-93 147.43"), "interest")
+  expect_equal(.pdf_line_label("13.90% per annum"), "13.90% per annum")   # not a number
+  expect_equal(.pdf_line_label(NA_character_), "")
+  expect_equal(.pdf_line_label(NULL), "")
+})
+
+# --------------------------------------------------------------------------
+# THE BAND FRAME -- the contract the reader, the X-ray and the band editor share.
+# Pinned here because it is now stated in ONE place (R/parse_pdf_table.R) and
+# everything that draws or matches a band has to obey it. A band drawn or stored
+# in raw page coordinates is displaced on any page that is not the frame's size,
+# and a displaced band is indistinguishable from an untouched default one -- so
+# the contract has to be a test, not a comment.
+# --------------------------------------------------------------------------
+test_that("the band frame's two directions are exact inverses", {
+  frame <- pdf_band_frame(list(table = list(ref_width = 595.28, ref_height = 841.89)))
+  s <- pdf_band_frame_scale(frame, 1190.56, 1683.78)     # this page is 2x the frame
+  expect_equal(s, c(0.5, 0.5))
+  expect_equal(200 * s[1], 100)     # a WORD at page x=200 is matched at frame x=100
+  expect_equal(100 / s[1], 200)     # a BAND at frame x=100 is DRAWN at page x=200
+})
+
+test_that("a page within the snap counts as the frame; a missing ref means A4", {
+  frame <- pdf_band_frame(list())                        # no ref recorded
+  expect_equal(frame, list(width = .A4_W, height = .A4_H))
+  expect_equal(pdf_band_frame_scale(frame, .A4_W * 1.01, .A4_H * 1.01), c(1, 1))
+  expect_false(all(pdf_band_frame_scale(frame, .A4_W * 1.5, .A4_H) == 1))
+  # An unknown page size assumes the page IS the frame, rather than scaling by NA
+  # and moving every band off the statement.
+  expect_equal(pdf_band_frame_scale(frame, NA_real_, NA_real_), c(1, 1))
+})
+
+test_that("a nonsense reference page size falls back to A4, never to a bad scale", {
+  expect_equal(pdf_band_frame(list(table = list(ref_width = 0, ref_height = -3))),
+               list(width = .A4_W, height = .A4_H))
+  expect_equal(pdf_band_frame(list(table = list(ref_width = "not a number")))$width, .A4_W)
+})
+
+# --------------------------------------------------------------------------
+# row_coverage's band measurements (R/row_coverage.R). They live here because the
+# frame and the bands they measure are the parser's, and because they exist to
+# answer the reported "a box is drawn over the credit column but it reads nothing
+# while the debit beside it reads fine" without anyone having to see the statement.
+# --------------------------------------------------------------------------
+test_that("row_coverage counts the words each band read, and what no band read", {
+  cov <- row_coverage(.mk_input(), .tmpl)
+  expect_true(cov$applicable)
+  expect_true(all(c("date", "description", "debit", "credit", "balance") %in%
+                  names(cov$band_words_total)))
+  expect_gt(cov$band_words_total[["debit"]], 0)
+  expect_gt(cov$band_words_total[["credit"]], 0)
+  expect_identical(cov$empty_bands, character(0))
+  # counts only -- the report must stay safe to share
+  expect_false(grepl("COFFEE|SALARY", format_row_coverage(cov)))
+})
+
+test_that("a band that reads nothing while words go unclaimed is named", {
+  # The credit band is moved off the page's right edge: its words then belong to no
+  # band at all. That pair -- an empty band AND unclaimed words -- is what makes
+  # this a misplaced band rather than a column with no entries this month.
+  tmpl <- .tmpl
+  tmpl$table$columns$credit <- list(x_min = 560, x_max = 580)
+  cov <- row_coverage(.mk_input(), tmpl)
+  expect_identical(cov$empty_bands, "credit")
+  expect_gt(sum(vapply(cov$pages, function(p) p$unbanded_words, integer(1))), 0)
+  expect_match(cov$diagnosis, "credit band read no words")
+})
+
+test_that("an empty band on a statement with nothing unclaimed is NOT reported", {
+  # A month with no deposits leaves the credit band empty and everything else in a
+  # band. Nothing is wrong, so the diagnostic must not send the analyst to redraw a
+  # band that is fine -- the same mistake this file's headings bug once made.
+  w <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05", "Jan", "COFFEE", "4.50", "95.50"),
+    x     = c(45, 60, 110, 355, 490), y = rep(40, 5),
+    width = c(12, 16, 45, 25, 30), height = rep(10, 5))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = "Statement period 1 Jan 2026 to 31 Jan 2026", words = list(w),
+    page_width = .A4_W, page_height = .A4_H, meta = list(page_count = 1L))
+  cov <- row_coverage(input, .tmpl)
+  expect_equal(cov$band_words_total[["credit"]], 0L)      # genuinely no deposits
+  expect_equal(sum(vapply(cov$pages, function(p) p$unbanded_words, integer(1))), 0L)
+  expect_identical(cov$empty_bands, character(0))         # ...so nothing is reported
+  expect_match(cov$diagnosis, "Every candidate row was kept")
+})
