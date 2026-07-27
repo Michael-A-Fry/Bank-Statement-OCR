@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 107 findings, 104 fixed, 2 open, 1 not-a-defect.** The two open ones - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 109 findings, 104 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -480,6 +480,36 @@ what actually makes splitting safe. That gap is closed; the two mechanisms stay.
 | N43 | low | **fixed** | A template whose validity window is the four letters `NA` (how yaml round-trips an absent value) opened under a red banner telling the user to fix something correct. `NA` and blank both mean ALWAYS. | app.R `.eff_date` |
 | N44 | low | **fixed** | `.eff_stored_ok` detected an unshowable window by CATCHING `.eff_date`'s exception, so making that helper honour its documented "a string or NULL, full stop" contract silently removed the detection. A guard resting on another function throwing is one tidy-up away from disappearing; it now asks the question directly (`.eff_shows`). | app.R |
 | N45 | low | **fixed** | `row_coverage`'s all-clear headline could read "Every candidate row was kept" while a mapped band had read no words anywhere - a dead band produces no rows to skip, so nothing was skipped. The withdrawn verdict was wrong to order a redraw (no threshold separates a misplaced band from a column with no entries), but silence is the opposite error: the fact is now stated and the judgement left to whoever can see the statement. | R/row_coverage.R |
+
+| N46 | low | open | The design system is half-real. `www/app.css` declares the tokens, but app.R still carries **37 distinct hex colours across 87 uses and 125 inline `style=` attributes**, several of them near-misses for the tokens they should be using: `#b00020` x19 vs `--bad:#b3261e`, `#137333` x12 vs `--ok:#0f7a37`, `#c77700`/`#a15c00` x13 vs `--warn:#b7791f`. Nothing is wrong on screen; the colours are close enough that nobody notices, which is exactly why it will not self-correct. The test that looks like it guards this (`expect_false(grepl("tags$style(", joined))`) forbids style TAGS while 125 style ATTRIBUTES sit untouched - it passes and proves nothing. | app.R |
+| N47 | low | open | Comment density where the recent work landed: `R/batch.R` is 93 comment lines to 67 code lines (1.39) and `R/row_coverage.R` 71 to 105 (0.68, down from 0.83 after the measurements moved into this register). The charter asks for comments "at the density of the code around them"; `R/schema.R`, a stable comprehensible file, is 0.08. Where an explanation is longer than the function it explains, the decision is usually the thing to simplify. Not all of it is fat - the surviving comments record WHY something surprising is the way it is, which is the valuable kind. | R/batch.R, R/row_coverage.R |
+
+### The empty-band verdict - the measurements that withdrew it
+
+Kept here rather than in `R/row_coverage.R`, where they had grown to thirty lines
+of comment justifying a three-line change. All on real statements in
+`samples/_private_staging`, each with its shipped, proven template:
+
+* **False positive on ONE word.** `anz_single.pdf` / `anz_everyday_pdf`: all five
+  bands correct, 311 of 311 rows kept, exactly **1** word of 4,251 unclaimed - a
+  page-corner mark at x=29, y=1. Map one further column over a strip this statement
+  happens not to print in, and that single word made the report order a maintainer
+  to redraw a band that was correct. It also SUPPRESSED the true message ("14 rows
+  were skipped for an unreadable date or a missing amount"), being first in the chain.
+* **False negative on ONE word.** `anz_0382025_feb.pdf` with the credit band
+  genuinely moved off its column: 54 words unclaimed, rows lost - and no verdict at
+  all, because one stray word landed inside the misplaced band.
+* **No threshold separates them, in either unit.** A REAL fault (credit band
+  misplaced on `anz_single.pdf`) leaves **5.13%** of the region's words unclaimed;
+  the CORRECT shipped `westpac_everyday_pdf` on `westpac_B.pdf` leaves **9.44%**.
+  By count: that real fault on the 2-page ANZ leaves 54, the correct Westpac 124.
+  The fault is under the healthy baseline on both scales.
+* **Nor does the shape of the hole.** 79% of correct-Westpac's 124 unclaimed words
+  sit in one 20pt strip, against 62% for the genuine ANZ fault.
+
+Structural, and therefore untunable: a word is unclaimed precisely when it is
+outside EVERY band, so it can never be evidence about WHICH band is wrong. The
+counts remain as counts; the verdict does not come back.
 
 ### The app.R split - a concrete plan, deliberately not started
 

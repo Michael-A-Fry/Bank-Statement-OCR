@@ -90,41 +90,25 @@ row_coverage <- function(input, template) {
   any_scaled <- any(vapply(pages, function(p) isTRUE(p$scaled), logical(1)))
   any_ocr <- any(vapply(pages, function(p) isTRUE(p$ocr), logical(1)))
   empty_pages <- which(vapply(pages, function(p) p$kept == 0 && p$n_words > 30, logical(1)))
-  # THE TWO BAND MEASUREMENTS, AND WHY NEITHER IS A VERDICT.
-  # band_totals: words each mapped band read across the whole document.
-  # unbanded_tot: words inside the table region that no band claimed.
+  # TWO MEASUREMENTS, AND NEITHER IS A VERDICT.
+  # band_totals: words each mapped band read. unbanded_tot: words inside the table
+  # region that no band claimed.
   #
-  # These used to be JOINED into a diagnosis -- "band X read nothing while N words
-  # are unclaimed, so the printing is there and the band is not over it. Redraw
-  # that band" -- gated on unbanded_tot > 0. That verdict was withdrawn. It is not
-  # sound at ANY threshold, and these are the measurements (all on real statements
-  # in samples/_private_staging, each with its shipped, proven template):
+  # These were once JOINED into "band X read nothing while N words are unclaimed --
+  # redraw that band". That verdict was withdrawn: it fired on correct bands, and
+  # no threshold separates the cases in any units. The root cause is structural, so
+  # no tuning fixes it -- a word is unclaimed exactly when it is outside EVERY band,
+  # so it can never be evidence about WHICH band is wrong. Templates also leave
+  # whole printed columns unmapped on purpose, so unclaimed words are the normal
+  # state, not a symptom.
   #
-  #  * FALSE POSITIVE on one word. anz_single.pdf / anz_everyday_pdf: all five
-  #    bands correct, 311 of 311 rows kept, and exactly ONE word of 4251 unclaimed
-  #    -- a page-corner mark at x=29, y=1. Map one further column over a strip this
-  #    statement happens not to print in, and that single word made the report order
-  #    a maintainer to redraw a band that was correct. It also SUPPRESSED the true
-  #    message ("14 row(s) were skipped for an unreadable date or a missing
-  #    amount"), because it was the first branch of this chain.
-  #  * FALSE NEGATIVE on one word. anz_0382025_feb.pdf with the credit band
-  #    genuinely moved off its column: 54 words unclaimed, rows lost -- and no
-  #    verdict at all, because one stray word landed inside the misplaced band.
-  #  * NO THRESHOLD SEPARATES THEM, in either units. A REAL fault (credit band
-  #    misplaced on anz_single.pdf) leaves 5.13% of the region's words unclaimed;
-  #    the CORRECT shipped westpac_everyday_pdf on westpac_B.pdf leaves 9.44%. By
-  #    count: that real fault on the 2-page ANZ leaves 54 unclaimed, the correct
-  #    Westpac 124. The fault is under the healthy baseline on both scales.
-  #  * NOR DOES THE SHAPE OF THE HOLE. A misplaced band leaves a column-shaped gap,
-  #    but so do correct templates: 79% of Westpac's 124 unclaimed words sit in one
-  #    20pt strip, against 62% for the genuine ANZ fault. The reason is simple and
-  #    permanent -- a template maps the columns it needs and deliberately leaves the
-  #    rest of the printing unmapped, so unclaimed words are the NORMAL state.
+  # The five measurements that settle it (real statements, shipped templates, both
+  # false-positive and false-negative on a single word) are in
+  # docs/context/findings-register.md -- "the empty-band verdict". They belong in
+  # the record, not in thirty lines here.
   #
-  # The root cause is structural, which is why no tuning fixes it: a word is
-  # unclaimed precisely when it is outside EVERY band, so it can never be evidence
-  # about which band is wrong. Both counts stay, as counts, for a maintainer who
-  # has the statement in front of them. They are not joined into a verdict again.
+  # Both counts stay, as counts, for a maintainer who has the statement in front of
+  # them. They are not joined into a verdict again.
   band_totals <- if (!length(band_names)) integer(0) else
     stats::setNames(vapply(band_names, function(k)
       sum(vapply(pages, function(p) as.integer(p$band_words[[k]]), integer(1))), integer(1)), band_names)
