@@ -100,7 +100,8 @@ row_coverage <- function(input, template) {
     stats::setNames(vapply(band_names, function(k)
       sum(vapply(pages, function(p) as.integer(p$band_words[[k]]), integer(1))), integer(1)), band_names)
   unbanded_tot <- sum(vapply(pages, function(p) p$unbanded_words, integer(1)))
-  empty_bands <- if (unbanded_tot > 0) names(band_totals)[band_totals == 0L] else character(0)
+  empty_bands <- if (unbanded_tot > 0 && length(band_totals))
+    names(band_totals)[band_totals == 0L] else character(0)
 
   diag <- if (length(empty_bands))
       sprintf("The %s band read no words anywhere, yet %d word(s) inside the table are in no band at all -- so the printing is there and the band is not over it. Redraw that band, or check the band frame (the page size the bands were drawn on) matches this file.",

@@ -55,14 +55,6 @@
 # hidden). A row with a redacted amount is still kept when its DATE is real.
 .has_real_money <- function(x) { x <- as.character(x); grepl("[0-9]", x, perl = TRUE, useBytes = TRUE) & !grepl("REDACT", x, ignore.case = TRUE, perl = TRUE, useBytes = TRUE) }
 
-# .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
-# A new row starts when a word's top is more than `tol` below the CURRENT row's
-# top -- anchored to the row's start, NOT cumulative pairwise gaps. The old
-# gap method (cumsum(diff(y) > tol)) collapsed a whole block of tightly-set lines
-# into ONE giant row whenever no single word-to-word gap exceeded tol (dense
-# leading), which silently merged many transactions -- the "only 3 rows on the
-# page" bug. Anchoring to the row start separates lines correctly as long as the
-# line pitch exceeds tol, and is identical to the old method on well-spaced pages.
 # =============================== THE BAND FRAME ==============================
 # THE one coordinate space every stored band lives in. Defined here, once.
 #
@@ -155,6 +147,14 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
   m
 }
 
+# .group_rows(ys, tol) -- assign each word (y sorted ascending) to a visual ROW.
+# A new row starts when a word's top is more than `tol` below the CURRENT row's
+# top -- anchored to the row's start, NOT cumulative pairwise gaps. The old
+# gap method (cumsum(diff(y) > tol)) collapsed a whole block of tightly-set lines
+# into ONE giant row whenever no single word-to-word gap exceeded tol (dense
+# leading), which silently merged many transactions -- the "only 3 rows on the
+# page" bug. Anchoring to the row start separates lines correctly as long as the
+# line pitch exceeds tol, and is identical to the old method on well-spaced pages.
 .group_rows <- function(ys, tol) {
   n <- length(ys); if (n == 0) return(integer(0))
   grp <- integer(n); cur <- 1L; ref <- ys[1]
