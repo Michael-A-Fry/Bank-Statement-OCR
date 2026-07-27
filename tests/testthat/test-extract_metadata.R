@@ -365,3 +365,29 @@ test_that("a genuine consecutive single-account file still merges", {
   expect_identical(m$closing_balance, "200.00")
   expect_equal(m$n_periods, 3L)
 })
+
+test_that("a span is only claimed on screen when one was actually made", {
+  # period_start / period_end always hold SOMETHING - on a bundle they are simply
+  # the first period's dates - so naming them as "read as one span" told a reader
+  # that three statements had been read end to end when they had in fact been
+  # SPLIT and reconciled separately (R/split.R). A sentence describing a merge
+  # that did not happen is the tool misreporting how its own figures were made.
+  merged <- .mp("Statement period 01/01/2026 to 31/01/2026", "Opening balance 100.00",
+                "Closing balance 150.00",
+                "Statement period 01/02/2026 to 28/02/2026", "Opening balance 150.00",
+                "Closing balance 175.00")
+  expect_true(isTRUE(merged$period_merged))
+  expect_match(paste(detect_multiple_statements(list(kind = "text", pages = ""), merged)$reasons,
+                     collapse = " "), "read as one span")
+
+  # A BUNDLE: more than one "Page 1 of N", so the merge is deliberately skipped
+  # and split.R owns the file. The periods are still reported; the span is not.
+  bundle <- .mp("Page 1 of 3", "Statement period 01/01/2026 to 31/01/2026",
+                "Page 1 of 3", "Statement period 01/02/2026 to 28/02/2026",
+                "Page 1 of 3", "Statement period 01/03/2026 to 31/03/2026")
+  expect_false(isTRUE(bundle$period_merged))
+  r <- paste(detect_multiple_statements(list(kind = "text", pages = ""), bundle)$reasons,
+             collapse = " ")
+  expect_match(r, "distinct statement periods found")
+  expect_false(grepl("read as one span", r, fixed = TRUE))
+})

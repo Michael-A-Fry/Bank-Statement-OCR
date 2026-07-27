@@ -11,7 +11,7 @@ completeness critic added 8 more. Severities below are POST-verification. The re
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 99 findings, 96 fixed, 3 open.** The three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort: a spread of real forms to tune the form fingerprint against, and one hand-keyed golden scan to measure OCR digit accuracy against. Each fails closed and loudly today, so none of them can put a wrong figure on screen; what would unblock them is set out at the bottom of this file.
+**Where it stands: 100 findings, 97 fixed, 3 open.** The three - N15, N16, N19 - are blocked on **evidence we do not have** rather than on effort: a spread of real forms to tune the form fingerprint against, and one hand-keyed golden scan to measure OCR digit accuracy against. Each fails closed and loudly today, so none of them can put a wrong figure on screen; what would unblock them is set out at the bottom of this file.
 
 _Last updated: 2026-07-27._
 
@@ -432,6 +432,50 @@ covers it, which is the description.
 This is the cardinal failure: no error, no flag, a full set of figures with the
 wrong SIGN on every credit. Balance reconciliation is the only thing that would
 notice, and only if the statement prints balances to reconcile against.
+
+| N38 | high | **fixed** | On a BUNDLE the screen said "3 distinct statement periods found, read as one span 20 Apr to 19 Jun" - and no span was made. split.R had cut the file into 3 statements and reconciled each separately. The tool was misreporting how its own figures were produced. Introduced by the multi-period work in this same release. | R/extract_metadata.R detect_multiple_statements |
+
+### N38 - a span that never happened
+
+`period_start` / `period_end` always hold something. On a bundle they are simply
+the FIRST period's dates, because `.period_span` is deliberately skipped when
+more than one "Page 1 of N" is printed - `R/split.R` owns those files and cuts
+them into separate statements, each reconciled on its own anchors.
+
+Naming those two dates as "read as one span" therefore told a reader that three
+statements had been read end to end, when the figures in front of her came from
+three INDEPENDENT reconciliations. Nothing was wrong with the figures; the
+sentence describing them was false.
+
+Found by tracing whether tonight's `n_periods` change had broken the split (it
+had not - the KPIs are still tagged `[statement 1..3]`). `period_merged` now
+records whether a merge was actually made, and the span is only named when it was.
+
+### The two mechanisms for "one file, several periods"
+
+The simplicity review called these redundant - "two answers to the same shape of
+problem, mutually excluded by a marker count" - and recommended deleting one.
+**That is wrong, and the measurement above is why.** They take structurally
+different inputs:
+
+* **`split.R`** - several separately-issued statement DOCUMENTS concatenated.
+  Each prints its own "Page 1 of N" and its own opening and closing, so each can
+  be reconciled on its OWN anchors. Merging them would throw those anchors away
+  and replace three independent proofs with one weaker one.
+* **`.period_span`** - ONE document with several period sections. There are no
+  document boundaries to cut on, so splitting is not available at all; the only
+  way to make the checks work is to read it as one long span.
+
+Delete either and the other cannot cover its cases. What IS worth revisiting is
+the `split:` opt-in: only **1 of 13** shipped templates declares one, and the
+commit gate inside `split_bundle()` (an independent count must confirm the
+segment count, and every segment must parse and reconcile) is already the thing
+that makes splitting safe. A bundle read by any of the other twelve templates
+gets neither mechanism and lands on flag-and-refuse - loud, never silently
+wrong, but it is the symptom originally reported. Defaulting the spec on, guarded
+by the existing commit gate, is the real simplification here. It changes
+behaviour for twelve templates, so it wants measuring across the corpus rather
+than doing on a release day.
 
 ### What is holding the last three open
 

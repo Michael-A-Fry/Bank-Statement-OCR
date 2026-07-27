@@ -179,7 +179,7 @@
 
   # After the sort these are 1 and nrow(pb) by construction -- the earliest
   # period's opening, the latest period's closing.
-  list(period_start = span_start, period_end = span_end, n = nrow(pb),
+  list(period_start = span_start, period_end = span_end, n = nrow(pb), merged = TRUE,
        opening = ob[[1]]$value, closing = cb[[nrow(pb)]]$value,
        note = if (!length(gaps)) NA_character_ else sprintf(paste0(
          "%d statement periods are read as one span %s to %s, but they do NOT join up: no ",
@@ -336,6 +336,11 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     # the periods, or balances that could not be paired). Reaches the screen via
     # detect_multiple_statements(), and the Metadata sheet via metadata_df().
     period_note    = period_note,
+    # TRUE only when the several printed periods were actually merged into one
+    # span. It is FALSE for a BUNDLE (split.R handles those, and the merge is
+    # deliberately skipped) and for a set the merge refused to pair -- and the
+    # screen may only claim a span when this says one was made.
+    period_merged  = isTRUE(span$merged),
     # The date the statement says it was issued. NA when it prints none. Used as a
     # year source for day+month-only tables (see the note above match_label).
     statement_date = sd$value,
@@ -368,12 +373,20 @@ detect_multiple_statements <- function(input, meta = NULL) {
   reasons <- character(0); strong <- FALSE
 
   # STRONG 1: more than one distinct statement PERIOD (inline date ranges).
-  # The SPAN those periods were merged into is named here too, because it is the
-  # difference between "3 periods, 1 Jan to 31 Mar" and pretending there was one.
+  # The span is named here too when one was MADE, because that is the difference
+  # between "3 periods, 1 Jan to 31 Mar" and pretending there was one.
+  #
+  # ...and ONLY when one was made. period_start/period_end always hold something -
+  # on a bundle they are simply the FIRST period's dates - so claiming them as a
+  # span told a reader that three statements had been read end to end when they
+  # had in fact been SPLIT and reconciled separately. A sentence describing a
+  # merge that did not happen is worse than no sentence: it is the tool
+  # misreporting how its own figures were produced.
   if (isTRUE(meta$n_periods > 1)) {
     ps <- meta$period_start %||% NA_character_; pe <- meta$period_end %||% NA_character_
+    say_span <- isTRUE(meta$period_merged) && !is.na(ps) && !is.na(pe)
     reasons <- c(reasons, sprintf("%d distinct statement periods found%s", meta$n_periods,
-      if (!is.na(ps) && !is.na(pe)) sprintf(", read as one span %s to %s", ps, pe) else ""))
+      if (say_span) sprintf(", read as one span %s to %s", ps, pe) else ""))
     strong <- TRUE
   }
   # Anything .period_span needed to say about that merge -- a gap between the
