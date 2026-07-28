@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 166 findings, 161 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 178 findings, 161 fixed, 16 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -576,6 +576,30 @@ Treat them as verified by test, not by walkthrough.
 | N102 | low | **fixed** | Two console warnings per toolkit open, and a comment asserting the one warning suppressed there was the only one. | app.R:3925-3929 |
 | N103 | low | **fixed** | The add-a-check recipe was accurate but did not warn that minimal fixtures trip any new check - so the three tests that fail name date-year inference, not the check just added. | docs/design.md |
 | N104 | low | **fixed** | Two tests asserted that a customer-facing message CONTAINS a raw template id - the one thing the charter forbids on that surface - so the suite defended the breach. They now assert the friendly name is present and the id absent. | tests/testthat/test-detect.R:410, :432 |
+
+### The accountant's second pass (N105-N116)
+
+Found by driving real statements with the analyst documentation open, after the drive audit
+was fixed. The first two are the worst kind of defect this tool can have short of a wrong
+figure: **it cries wolf on a clean statement.** Every one of these was reproduced on a
+statement in this repo.
+
+_Status at time of writing: open, with a round in flight against them._
+
+| ID | Severity | Status | Finding | Evidence |
+|---|---|---|---|---|
+| N105 | **critical** | open | The tool quarantined a **perfect** conversion. On `anz_0382025_feb.pdf` the card read, in amber, confidence LOW: *"12 row(s) look like transactions but could not be read, against 7 that were - so more of it was missed than captured. The template is almost certainly reading the wrong part of the page"*, and the run was held back from the dashboards. The statement prints `Totals at end of period $2,625.15 $1,126.11 $19,231.00 OD`; the app's tiles read MONEY IN $1,126.11, MONEY OUT -$2,625.15 - **exact agreement, to the cent, both directions.** The 12 "missed transactions" are a page heading, four UPCOMING automatic payments, an other-accounts balance, three of the statement's own Totals lines, the ANZ footer and an interest-rate table. `.pdf_is_summary()` recognises "Opening balance" but not "Totals at end of page". The calibration this rests on (R/reconcile.R:340-345: *"healthy conversions sit at 4-36% actionable skips, broken ones at 100-1300%"*) is falsified by a shipped sample sitting at 171% while being perfect. | R/parse_pdf_table.R `.pdf_is_summary`; R/reconcile.R:340-345 |
+| N106 | **critical** | open | The documented Admin escape hatch silently cannot work. `.PDF_TRAIL_MONEY` strips a trailing overdraft marker with a pattern whose `od\b` matches **inside the word "period"**, so the label becomes `totals at end of peri`. R/parse_pdf_table.R:289 promises *"An analyst can drop the wording in the Admin vocabulary; no code change."* Tested with the phrases exactly as printed: "totals at end of page" works, "totals at end of period" does not. She types what is on the page, saves, re-converts, and nothing happens, with no feedback anywhere saying why. Every label ending `od` / `dr` / `cr` is affected - period, record, method. | R/parse_pdf_table.R:249, :289 |
+| N107 | high | open | `docs/for-analysts/` - the directory the analyst is handed - **does not exist**. Her three pages sit in `docs/operational/`, a directory named for operators. | docs/ |
+| N108 | medium | open | On a needs_review run the engine headline calls the failing checks *"secondary and commonly flag on combined/multi-account statements"* directly above a HIGH diagnostic saying the file is several statements bundled together and must be split. The What-to-check list and the button were fixed in the drive audit; this sentence was not. | R/reconcile.R `.reconcile_trust` |
+| N109 | medium | open | The form result says *"3 label(s) appear more than once with different values; the first of each was taken - check them against the document"* and the NEEDS A LOOK column beside it is empty on every row. The tool knows which three and will not say. | app.R |
+| N110 | medium | open | Every failing check is listed twice on one screen, and one of the two names it in words that state the opposite of what happened. | app.R / R/reconcile.R |
+| N111 | medium | open | A figure in a column headed EXPECTED that the statement never printed anywhere - so the reviewer cannot check the checker. | R/reconcile.R |
+| N112 | low | open | "Everything past the verdict is behind one link" - it is two on a clean run, and the dashboard line is two clicks deep. | app.R |
+| N113 | low | open | A heading that promises something that is not under it. | app.R |
+| N114 | low | open | `app.R:3452 cur_symbol()` holds raw non-ASCII glyph literals. The charter's ASCII rule covers string literals, and this round's drafter change means a GBP statement now really reaches that code - so on the C-locale box the suite runs on, these are a live risk rather than a style nit. | app.R:3452 |
+| N115 | low | open | `design.md` section 8 now warns that adding a check breaks existing tests, but a maintainer following it got **27 failed + 1 error**, not the 3 the page implies - and the reporter caps output at 10, so most are invisible. | docs/design.md |
+| N116 | low | open | `scripts/run_app.R` prints the literal placeholder `http://<this-vm>:8100` rather than a resolvable address, so a document saying it "prints the address" is generous. | scripts/run_app.R |
 
 ### The empty-band verdict - the measurements that withdrew it
 
