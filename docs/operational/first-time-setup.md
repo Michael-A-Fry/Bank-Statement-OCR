@@ -35,8 +35,15 @@ Copy the whole `StatementStudio-offline` folder across, e.g. to
 Double-click **`RUN-ME.bat`**.
 
 The first run installs a private copy of R inside the folder, installs the R
-packages, sets up Poppler and Tesseract, creates `config\config.yaml`, and starts
-the app on `http://<this-server>:8100`. Every run after that just starts it.
+packages, sets up Poppler and Tesseract, **copies `config\config.example.yaml` to
+`config\config.yaml`** — which is why step 4 finds the placeholder password
+already in it — and starts the app on `http://<this-server>:8100`. Every run
+after that just starts it.
+
+`RUN-ME.bat` is the only thing that does that setup. If you are not on Windows,
+the equivalent start command is `Rscript scripts/run_app.R` from the app folder,
+but it starts the app and nothing else: it installs nothing and it will not
+create `config\config.yaml`, so copy the example file across by hand first.
 
 If a Windows permission prompt appears during the R install, accept it and run
 `RUN-ME.bat` again. Setup retries until it succeeds — the "already done" marker

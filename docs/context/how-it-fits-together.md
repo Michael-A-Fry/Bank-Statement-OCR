@@ -118,16 +118,20 @@ asset, not user data.
 
 ## Three rules the code is built around
 
-1. **Never silently wrong.** A check that could not run reports "not applicable",
-   never a green tick. A figure that cannot be read is `NA` plus a flag, never a
-   plausible guess. When the engine refuses, it says so on screen — including the
+1. **Never silently wrong.** A check that could not run reports *could not be
+   checked*, never a green tick — and a check that is a **count** rather than a
+   verdict reports *for information*, so an absence of proof and a successful
+   count are never worded the same. A figure that cannot be read is `NA` plus a
+   flag, never a plausible guess. When the engine refuses, it says so on screen — including the
    quiet refusals: rows held back from the dashboards, a redaction scan that could
    not finish, a year that was inferred rather than printed.
 2. **A new bank is a template, never new code.** If a change would make adding a
    bank require an edit in `R/`, it is the wrong change.
-3. **Deterministic.** Same input + same template = the same bytes out. The outputs
-   carry the engine version and a hash of the template that produced them, so a
-   figure can be reproduced years later.
+3. **Deterministic.** Same input + same template + same build = the same bytes
+   out. The outputs carry the engine version and a hash of the template that
+   produced them, so a figure can be reproduced years later — and, because those
+   stamps live inside the file, so that a comparison across two builds is read on
+   the figures rather than on the bytes.
 
 Full statements of these: [charter.md](charter.md).
 

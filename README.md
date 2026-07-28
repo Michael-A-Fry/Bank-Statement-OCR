@@ -95,7 +95,9 @@ Four tabs, all point-and-click:
   live preview, Save.
   ([adding-a-bank-template.md](docs/operational/adding-a-bank-template.md))
 - **Admin** (reached with `?admin`, password-protected) — insights, templates,
-  dictionaries, batch audit.
+  dictionaries, batch audit. Until `app.admin_password` is changed from the
+  shipped placeholder it **refuses to open for anybody**, since that placeholder
+  is printed in the example config and in these docs.
   ([admin-and-maintenance.md](docs/operational/admin-and-maintenance.md))
 
 Outputs per statement: a six-sheet `.xlsx` (`Transactions`, `Summary`, `Checks`,
@@ -109,6 +111,10 @@ a `.json` holding everything including the build stamp and provenance.
    it reads only what is visible.
 3. **No silent drops** — completeness is proven by a check, or the check says
    plainly that it could not be proven.
-4. **Reproducible** — same input + same template ⇒ identical output, stamped with
-   the engine version and a hash of the template.
+4. **Reproducible** — same input + same template + **same build** ⇒ byte-identical
+   output. The engine version and a hash of the template are stamped *inside* each
+   output, which is what makes the claim checkable — and is also why outputs from
+   two different builds cannot match byte for byte even when every figure does.
+   Comparing an old conversion against a re-run: read `engine_version` first, then
+   the figures.
 5. **Never crashes** — every error becomes a status with an actionable reason.

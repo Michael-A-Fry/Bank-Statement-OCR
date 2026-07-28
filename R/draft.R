@@ -212,8 +212,11 @@
 .CUR_DOLLAR <- c("NZD", "AUD", "USD")
 # The shape a mark has to be printed against to count -- deliberately the shape
 # .WA_MONEY calls money, so the currency is read off the very figures the drafter
-# matched and the two can never disagree about which figures are money.
+# matched and the two can never disagree about which figures are money. .CUR_MARK
+# is .WA_MONEY's own leading-symbol run: an ASCII-only negation, so no glyph is
+# ever written into a pattern.
 .CUR_FIGURE <- "-?[0-9][0-9,]*\\.[0-9]{2}"
+.CUR_MARK   <- "[^0-9A-Za-z[:space:].,'()+-]{1,3}"
 
 # .draft_currency(cells, default) -- the ISO currency for a drafted template, read
 # from the MONEY CELLS its callers pass (the drafted money bands for a PDF, the
@@ -231,14 +234,27 @@
   s <- as.character(cells %||% character(0))
   s <- s[!is.na(s) & nzchar(s)]
   if (!length(s)) return(default)
+  # Declare the cells UTF-8 wherever their bytes are valid UTF-8. pdftools declares
+  # it; utils::read.csv under the deployment's C locale hands the SAME BYTES back
+  # UNdeclared, and an undeclared string never matches a declared one -- so the
+  # pound on a pound-denominated CSV matched nothing at all, silently. Bytes that
+  # are not valid UTF-8 are left exactly as they are: they are none of these
+  # glyphs, and declaring them would only invite an invalid-multibyte error.
+  enc <- Encoding(s)
+  enc[enc == "unknown" & validUTF8(s)] <- "UTF-8"
+  Encoding(s) <- enc
   found <- function(rx) unlist(regmatches(s, gregexpr(rx, s)), use.names = FALSE)
-  codes <- unique(sub(paste0("[[:space:]]?", .CUR_FIGURE, "$"), "", found(paste0(
-    "\\b(?:", paste(.CUR_CODES, collapse = "|"), ")[[:space:]]?", .CUR_FIGURE))))
+  # A code counts when it is printed ON a figure. The glyph is allowed to sit
+  # between the two ("AUD $25.00" is how a statement disambiguates its own dollar,
+  # and is the case this branch exists for); every code is three characters, so the
+  # code is the first three of whatever matched.
+  codes <- unique(substr(found(paste0(
+    "\\b(?:", paste(.CUR_CODES, collapse = "|"), ")[[:space:]]?-?(?:",
+    .CUR_MARK, ")?", .CUR_FIGURE)), 1L, 3L))
   # The glyph run is matched with .WA_MONEY's own ASCII-only negated class, so what
   # is collected here is exactly the symbol the money test accepted -- and a mark
   # this build has never heard of maps to nothing, which is evidence of nothing.
-  gly <- unique(sub(paste0(.CUR_FIGURE, "$"), "",
-    found(paste0("[^0-9A-Za-z[:space:].,'()+-]{1,3}", .CUR_FIGURE))))
+  gly <- unique(sub(paste0(.CUR_FIGURE, "$"), "", found(paste0(.CUR_MARK, .CUR_FIGURE))))
   gcur <- .CUR_OF_GLYPH[match(gly, .CUR_GLYPH)]
   gcur <- gcur[!is.na(gcur)]
   named <- unique(c(codes, setdiff(gcur, "dollar")))

@@ -42,7 +42,27 @@ for four things:
 - the dates are the right dates;
 - **money out is negative**;
 - descriptions are complete, not cut off;
-- no row is missing from the middle.
+- no row is missing from the middle;
+- **the balances follow from one row to the next** — if there is a Balance column,
+  each row's balance should be the one above it plus that row's amount. A jump
+  means a row is being skipped, even though the preview looks complete. This is
+  the one that catches a missing row you cannot see, because the statement's own
+  arithmetic notices it and your eye does not.
+
+**Read the line above the preview before you read the preview.** The toolkit
+checks those last two for you and says so:
+
+- *N transaction rows read* with a green tick — nothing argues against it. If the
+  rows are right, Save.
+- *N transaction rows read — but not all of the page*, in amber, with the reasons
+  listed underneath: "the balances do not follow in 11 place(s): rows are probably
+  being skipped", or how many rows were skipped for an unreadable date or a
+  missing amount, or which pages carried words and kept nothing. **Do not Save on
+  an amber line** — fix the column boxes or the date format and watch it change.
+
+On a PDF the preview reads only the first few pages, and the line says so
+(*"read from the first 3 of 11 pages"*) — converting reads every page, so expect a
+bigger number then.
 
 **If the preview is empty, stop and read [When the preview reads
 nothing](#when-the-preview-reads-nothing)** — an empty preview is not something
@@ -101,8 +121,14 @@ change them:
 
 **The save was refused, or it saved but is not recognised.** Open **Show the
 settings for this statement** — or rather, let the tool open it: a refused save
-opens that panel for you and names the problem. Inside is the **Identifying
-phrase**, which is how the bank is recognised next time.
+opens that panel for you and names the problem. Behind it: the **Identifying
+phrase**, the name it saves under, the **Currency**, the kind of statement, the
+number punctuation, and when this layout applies. Everything is filled in
+already. The one worth a glance even when nothing is wrong is **Currency**,
+below.
+
+Inside is the **Identifying phrase**, which is how the bank is recognised next
+time.
 
 The toolkit fills it in for you from phrases it actually found on your page, and
 offers those phrases in a dropdown. You only touch it when the tool says so.
@@ -115,6 +141,23 @@ When you do:
   phrase per line; **all of them must appear**.
 - The tool refuses to save a phrase so generic it would claim other banks'
   statements, and tells you which phrase was the problem.
+
+**Currency** is in the same panel, and it is the one setting in there that is
+wrong quietly. The tool reads it off the money on your own statement: a currency
+**code** printed against the figures wins (`AUD 25.00` saves as AUD), and a
+distinct symbol is next (`£25.00` saves as GBP). Two cases it cannot resolve, and
+both fall back to **NZD** for you to confirm:
+
+- **A bare `$`.** It is the New Zealand, Australian and US dollar alike and the
+  glyph does not say which — nothing on the page names one, so nothing is guessed.
+- **Figures with no mark at all** — most NZ statements print `1,234.56` — and
+  anything self-contradictory, such as two different symbols on the figures.
+
+So on a dollar or an unmarked statement the box says NZD because nobody said
+otherwise, not because the tool checked. **If the statement is not in New Zealand
+dollars, look at this box before you Save.** A currency is a label on money, and a
+wrong one is a wrong figure: it stamps the currency column and the totals above
+the transactions table.
 
 **Everything as YAML** is on the toolkit's **Advanced** tab — *Load current
 settings* fills it, *Check & apply* validates and updates the preview, and a

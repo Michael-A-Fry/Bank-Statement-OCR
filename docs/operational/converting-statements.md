@@ -29,19 +29,29 @@ the rest of your session.
 
 ## The verdict
 
-There are four outcomes, and the headline says which in plain English. These are
-the exact words on the screen:
+There are four outcomes. The **Result** column of the batch table prints them in
+exactly these words:
 
 | Outcome | What it means | Do |
 |---|---|---|
 | **Converted successfully** | Matched a template, parsed, and every check that ran, passed. | Download it. |
 | **Converted - please double-check it** | You have the data, and the tool wants a second pair of eyes on it. Usually a check **failed**; it can also mean the file looks like several statements bundled together, or that another template nearly fitted it too. | Open **Show me how it read this** → **Checks**, then **Diagnostics**. Compare the flagged rows against the statement. |
-| **No template for this statement yet** | Nothing recognised this layout. | [Add a template](adding-a-bank-template.md). If the card instead offers you a choice between templates that fit equally well, pick one and it converts — and tell the maintainer, because two templates fitting one statement is a duplicate to retire. |
+| **No template for this statement yet** | Nothing recognised this layout. | [Add a template](adding-a-bank-template.md). If the card instead reads **More than one template fits - pick which one**, two templates fit equally well: pick one and it converts — and tell the maintainer, because that is a duplicate to retire. |
 | **Could not read this file** | The file itself is the problem — empty, wrong type, password-protected, a scan with no OCR available. | The message says which. |
 
+**Converting one file at a time, the clean result is worded differently**, and it
+is the one you will see most. Instead of *Converted successfully* the card counts
+the rows and states the confidence level:
+
+> **Converted — 7 transactions read · confidence: medium**
+
+Same outcome, same row of the table above; it just says more, because on a single
+file there is room to. The other three read as printed above on both screens (the
+double-check headline picks up the same ` · confidence:` suffix on the card).
+
 **A check that *could not be checked* does not change the headline.** A clean PDF
-routinely has two or three checks with nothing to run against, and it still says
-*Converted successfully* — because nothing about it failed. What carries the
+routinely has two or three checks with nothing to run against, and it still comes
+back as a clean conversion — because nothing about it failed. What carries the
 missing proof is the **confidence level**, which is capped at *medium* for exactly
 that reason, and the checks table, which names each absence and why. An absence of
 proof is never dressed up as a problem, and never dressed up as a pass either.
@@ -60,9 +70,34 @@ bug — report it.
 
 **A PDF or an Excel file can never reach "high", however perfect it is.** High
 needs a count of physical source lines to prove no row was lost, and only a
-delimited file (CSV/TSV) has one (`R/reconcile.R`, `.kpi_no_unparsed_rows`). On
-a PDF, "medium" is the ceiling and is the normal, healthy result — read it as
-"clean, and here is the one thing nobody could prove", not as a warning.
+delimited file (CSV/TSV) has one — the check *No row failed to read* is the one
+that reports it. On a PDF, "medium" is the ceiling and is the normal, healthy
+result — read it as "clean, and here is the one thing nobody could prove", not as
+a warning. The card says so itself under a medium PDF verdict, so you do not have
+to remember it.
+
+## The strip of ticks under the figures
+
+Between the summary cards and your transactions is a row of coloured pills — the
+checks a forensic reviewer would ask about, on the page whether they passed or
+not, so a clean run *shows* its proof instead of merely not complaining. There is
+a key printed under them:
+
+> ✓ = checked and passed · ✗ = a problem · – = could not be checked (why, in
+> Checks below)
+
+Five are always there when they apply: *Opening + transactions = closing
+balance*, *No row failed to read*, *Money in / money out is the right way round*,
+*Each running balance follows from the last*, *Row dates could be read*. **Any
+other check that failed is added to the end**, so the strip can never be
+all-clear while something failed. A grey dash is not a pass and not a fault — it
+is the check that had nothing to run against, and the Checks table below says
+which.
+
+These three marks mean what the tool proved. **They are not the buttons you rate
+the conversion with** — that control is words only (*Correct* · *Minor issues* ·
+*Wrong*), deliberately, so one mark never stands for both what the tool found and
+what you think.
 
 ## Reading the Checks table
 
@@ -88,6 +123,13 @@ The Result column says one of four things, and the fourth is the one people miss
 There is no fifth thing, and in particular there is no silent one: every check
 that exists for your statement is in this table with one of those four words
 beside it.
+
+**On a run that produced no transactions there is no table**, and that is not the
+same as an empty one. *Could not read this file* and *No template for this
+statement yet* both mean nothing was extracted, so there was nothing to check —
+the Checks heading carries a sentence in place of the table saying exactly that,
+and Field coverage says the same. A blank table would be indistinguishable from
+one that failed to draw; a sentence is not.
 
 Two checks pass on less than their name suggests, and their detail is the only
 place that says so:
@@ -121,9 +163,18 @@ dashboards:
   again. Converting the same file again with nothing changed reproduces the same
   result exactly; the engine is deterministic.
 
-Marking a result **wrong** in the feedback box withdraws its rows from the
-dashboards immediately — they move to the held-back feed, and the line above
-changes to say so. Fixing the template and converting again puts the corrected
+## Rating the conversion
+
+*Was this conversion correct?* sits under the result on any run that produced
+figures. Three choices — **Correct**, **Minor issues**, **Wrong** — in words, not
+marks, and **nothing is pre-selected**: it is the one question only you can
+answer, so the tool will not answer it for you. Submit with none chosen and it
+says so rather than recording anything.
+
+Marking a result **Wrong** does more than log an opinion: it withdraws that run's
+rows from the dashboards immediately — they move to the held-back feed, the
+dashboard line above changes to say so, and the screen tells you how many rows
+were withdrawn. Fixing the template and converting again puts the corrected
 figures back.
 
 ## Batch runs
@@ -132,8 +183,12 @@ Select several files and Convert. You get one summary line and a table, one row
 per file. **Click a row** to open that file's full result — the same verdict,
 checks, transactions and downloads as converting it alone.
 
-A file the tool cannot read at all is reported in the batch table as *no
-template yet*, not as unreadable. Open the row to see the real reason.
+Six columns: **File**, **Result**, **Bank**, **Rows**, **Confidence**, **What to
+check**. It opens worst-first — the files that need work are already at the top
+and already grouped by what went wrong — and clicking **Result** re-sorts by
+severity, not alphabetically. **Confidence** is the same word the single-file
+card prints, so on a thirty-file case you can tell the *high* files from the
+merely-uncomplaining *medium* ones without opening any of them.
 
 ## Good habits
 

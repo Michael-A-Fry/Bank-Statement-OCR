@@ -34,8 +34,36 @@ is**, and it does it by naming the action:
 | none of the above, and nothing in it you can act on | **not yours** | Report it (below). Rare, and it means the engine needs a general improvement that then helps every bank. |
 
 Severity orders the table — **high** first, then **medium**, then **info** — so
-the first row is always the one worth reading. A clean run shows a single row
-saying so.
+the first row is always the one worth reading.
+
+**A clean run still has rows here, and that is normal.** The table is a record of
+what the tool noticed, not a list of faults, so *Converted successfully* and
+*Sent to the dashboards* routinely sit above one, two or three diagnostic rows.
+Two real examples, both clean, both published:
+
+| Statement | What the Diagnostics table showed |
+|---|---|
+| A 7-row CSV with no balances printed | one **medium** row — *completeness not auto-verified*, "no balance or stated count to reconcile against" |
+| A 311-row PDF | two **info** rows — *several accounts in one statement*, and *what the PDF says about itself* |
+
+Read the severity and the *How to fix* column, not the row count:
+
+- **info** is a note, never a problem. "5 account numbers appear in one statement
+  period", "the PDF says it was written by …". *How to fix* says **No action
+  needed**, and that is the whole message.
+- **medium** on *completeness not auto-verified* is the same fact the confidence
+  level already told you: the statement prints no balance and no count, so
+  nothing could prove a row was not dropped. It is an absence of proof, not a
+  discrepancy — count the rows against the statement if the total matters, or ask
+  for a CSV export next time.
+- Nothing on this table can quietly downgrade the verdict. The headline, the
+  confidence level and the dashboard line are decided by the **checks**; the
+  diagnostics explain them.
+
+The single row reading *No issues detected; all applicable checks passed* is real
+but rare — it appears only when the tool found **nothing at all** to note, which
+a statement with any structure to it almost never manages. Its absence is not a
+sign that something is wrong.
 
 The **Diagnostics** sheet in the downloaded workbook holds these same rows, plus
 one extra column the screen leaves off: a short `fix_owner` code (`template`,

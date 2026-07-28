@@ -17,6 +17,12 @@ Every conversion has a **run id** — a content hash, a UTC timestamp and a shor
 random suffix, e.g. `bbf83b15b9-20260727200534-bbee`. It is not printed on the
 analyst's screen, so do not ask her for one. You get it yourself:
 
+**Both routes below are the Admin tab, and Admin will not open at all until the
+admin password has been set** — `app.admin_password` in `config\config.yaml`,
+[first-time-setup.md](first-time-setup.md) §4. On a server where nobody ever did
+that, do that first; it is a two-minute job and a restart. (Everything from step 2
+on works without it.)
+
 | Where | Table | Use it when |
 |---|---|---|
 | **Admin → Insights** | *Feedback flagged as wrong / minor issues* — `ts`, `verdict`, `comment`, `template_id`, `run_id` | somebody rated a result **wrong** or **minor issues** in the app |
@@ -86,24 +92,62 @@ set "R_LIBS_SITE="
 
 Usage is `Rscript run.R <file> [bank] [outdir]`. The second argument is a **bank
 hint** — leave it `""` unless you are deliberately forcing detection down one
-bank's templates. It prints the status, the template, the trust level, every
-check with its detail, and the three output paths.
+bank's templates.
+
+Its first line is the thing you need next:
+
+```
+run id:      d53202504d-20260727233840-b6e0
+status:      ok
+template:    anz_everyday_pdf
+trust:       medium (score 92)
+```
+
+That id names the record this re-run just wrote — **`logs\runs\` holds one file
+per conversion and there are hundreds of them**, so read it off the console
+rather than hunting by timestamp. It then prints every check with its detail and
+the three output paths.
+
+The re-run is a conversion like any other, so it **writes its own new record**
+under `logs\runs\` with `requested_by: cli`. That is deliberate — the
+investigation leaves a trail too — but it means Admin's Insights and coverage
+tables will show your check runs alongside the analyst's. They are the ones with
+`cli` as the requester.
 
 Run it **from the app folder**, not from anywhere else: `templates_user\` is
 resolved relative to the working directory, and a run started somewhere else
 would silently leave out every template built in the app — including, quite
 possibly, the one that produced the figure you are chasing.
 
-Two things to confirm before you believe the re-run:
+Three things to confirm before you believe the re-run, in this order:
 
-1. **The same template ran.** Compare `detected_template` and `template_sha256`
-   in the new `logs\runs\<run_id>.json` against the old one. If the hashes
-   differ, the template has been edited since — *that is already your answer*,
-   and the old figure cannot be reproduced from today's template.
-2. **The output is byte-identical.** Same input plus same template gives the same
-   bytes, deliberately. If the workbook, CSV and JSON match the ones she
-   downloaded, the engine did exactly what it did before and the disagreement is
-   about what it *should* have done.
+1. **The same build ran.** Compare `engine_version` in the new
+   `logs\runs\<run_id>.json` against the old one. If the app has been updated
+   since her conversion they will differ, and then the two *downloads* **cannot**
+   be byte-identical however right the figures are: the same stamp is written
+   *inside* every output JSON, on its third line, as `build.engine_version` — so
+   one number changing changes the file. That on its own is not a fault and not
+   an answer — carry on to 2 and 3.
+2. **The same template ran.** Compare `detected_template` and `template_sha256`.
+   If the hashes differ, the template has been edited since — *that is already
+   your answer*, and the old figure cannot be reproduced from today's template.
+3. **The figures match.** Compare `row_count`, `status`, `trust_level` and the
+   figures themselves — the check details the re-run printed against the ones in
+   the old record, and if you still have her download, the `Transactions` sheet
+   against the new one.
+
+**Compare the figures, not the bytes.** Same input + same template + *same build*
+gives the same bytes, and that is a real guarantee — the suite proves it on every
+run. But two entirely ordinary things break it with nothing wrong at all: the app
+has been updated, or the template has been edited. So:
+
+- same `engine_version` **and** same `template_sha256` → a byte-for-byte match is
+  the expected outcome, and any difference is a finding;
+- either one different → the bytes will differ and that tells you nothing.
+  Compare the figures.
+
+A re-run that reproduces 11 rows, `ok`, `medium` and the same `template_sha256`
+off a newer build has reproduced the figure. It has not failed to.
 
 ## 5. Template bug, or bad file?
 

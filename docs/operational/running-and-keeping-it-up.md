@@ -8,6 +8,20 @@ Start it, keep it running after reboots, change its settings.
   `http://<this-server>:8100`. Leave the window open.
 - **Stop:** `Ctrl-C` in that window, or close it.
 
+`RUN-ME.bat` is the Windows server's way in, and it does more than start the app:
+it installs the private R the first time, seeds `config\config.yaml` from the
+example, and then starts the app. If you are not on Windows, or you already have
+R and want to start it from a shell, run this from the app folder instead:
+
+```
+Rscript scripts/run_app.R
+```
+
+It reads the port and the upload ceiling from `config\config.yaml`, prints the
+address, and warns on the console if the settings file did not parse or the admin
+password is still the placeholder. It does **not** do any of the setup — it will
+not create `config\config.yaml` for you (see **Settings** below).
+
 Anyone on the network opens `http://<server-name>:8100` in a browser. Nobody else
 installs anything — but the first time, that needs one firewall rule.
 
@@ -88,12 +102,20 @@ fields — so a reader can tell an attested name from a proven one.
 
 ## Settings — `config\config.yaml`
 
-One file, created on first run. Edit in Notepad and **restart the app** to apply.
-Any key you leave out uses a built-in default, so a short file is fine.
+One file. **`RUN-ME.bat` creates it**, by copying `config\config.example.yaml` the
+first time it runs (and it restores your saved copy from `%LOCALAPPDATA%` after an
+update instead, if there is one). Nothing else creates it: start the app with
+`Rscript scripts/run_app.R` on a fresh folder and `config\` still holds only
+`config.example.yaml`, the app runs on built-in defaults, and it says
+`Admin is CLOSED - no admin password is set` with no file there to edit. If that
+is where you are, copy `config.example.yaml` to `config.yaml` yourself.
+
+Edit in Notepad and **restart the app** to apply. Any key you leave out uses a
+built-in default, so a short file is fine.
 
 ```yaml
 app:
-  admin_password: change-me            # until this is changed, Admin refuses to open at all
+  admin_password: changeme             # PLACEHOLDER. Admin refuses to open until you replace it
   shiny_url: http://your-server:8100   # the address the Qlik tile opens
   port: 8100
   max_upload_mb: 200
@@ -104,6 +126,12 @@ feed:
   feed_dir: D:/StatementStudio/feed    # point at the Qlik share
   min_trust: medium                    # medium = every clean conversion; high = balance-proven only
 ```
+
+`changeme` above is the shipped placeholder, printed verbatim so that copying this
+block leaves the Admin lock **on**. It is not a password — the app treats it as
+"nobody has set one yet" and refuses to open Admin for anybody, including with
+`changeme` typed. Replace it with your own (or set `BSO_ADMIN_PASSWORD`, which
+wins over the file) and restart. A blank value means the same thing.
 
 Paths take forward slashes (`D:/folder`) or doubled backslashes (`D:\\folder`).
 The full annotated list is `config\config.example.yaml`.

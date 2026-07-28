@@ -110,7 +110,7 @@ test_that("money columns are labelled from the statement's own header row", {
 
 test_that("header_phrases prefers a distinctive multi-word phrase (P2-7)", {
   input <- list(pages = paste(
-    "Kōwhai Bank — Statement of transactions",
+    "K\u014dwhai Bank \u2014 Statement of transactions",
     "Account 12-3456-7890123-00",
     "Date Withdrawals Deposits Balance",
     "01 May COFFEE 4.50 995.50", sep = "\n"))
@@ -153,6 +153,12 @@ test_that("a statement in another currency, with ordinal dates, is still read", 
   expect_true(all(c("date", "description", "debit", "balance") %in% s$field))
   expect_equal(attr(s, "date_cells"), c("1st November 2018", "3rd November 2018"))
   expect_true(pdf_has_transaction_rows(list(words = list(page))))
+  # The money cells the bands yield, for the same reason the date cells are
+  # measured here: the currency is read off the figures the drafter matched
+  # (.draft_currency, R/draft.R), not off the page at large -- a currency named in
+  # a DESCRIPTION is one customer's foreign purchase, not the statement's currency.
+  expect_equal(attr(s, "money_cells"),
+    paste0(pound, c("10.00", "6.50", "20.00", "13.50")))
 })
 
 test_that("the last column stops after its balance marker, not at the page margin", {

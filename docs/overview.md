@@ -83,10 +83,13 @@ that fail the build if it stops being true.
    authoritative and does not read what is underneath. If the scan that detects
    those boxes could not finish on a page, the run **fails** and says so, rather
    than quietly falling back to the raw text.
-3. **The same file plus the same template always produces the same bytes.** Every
-   output carries the engine version and a content hash of the template that
-   produced it, so a figure can be reproduced years later and it can be proved
-   which build made it.
+3. **The same file plus the same template, on the same build, always produces the
+   same bytes.** Every output carries the engine version and a content hash of the
+   template that produced it, so a figure can be reproduced years later and it can
+   be proved which build made it. Those two stamps are *inside* the output, which
+   is the point — and the reason a re-run on a newer build cannot match the old
+   bytes even when every figure is identical. Reproducing an old figure means
+   comparing the figures, having first checked what has changed underneath.
 4. **It never crashes.** `convert_statement()` wraps its whole body in a
    `tryCatch`, including everything that touches the file path, so every failure —
    right down to being handed something that is not a file name at all — comes
@@ -110,7 +113,10 @@ that fail the build if it stops being true.
 
    There is no fifth state, and — the part that matters — no silent one. Every
    check that exists for a statement is on the screen with one of those four words
-   beside it and its figures in the two columns next to it.
+   beside it and its figures in the two columns next to it. Where no check exists
+   — a file that could not be read, a layout with no template — the table is
+   replaced by a sentence saying nothing was extracted and so there was nothing to
+   check, because a blank table cannot be told from one that failed to draw.
 6. **Only clean, reconciled conversions from tested templates reach the
    dashboards** — and every conversion, published or held back, is told on screen
    which it was and why.
@@ -328,11 +334,13 @@ That is the whole maintenance model.
 
 Version 1.3.0. 13 shipped templates, ten reconciliation checks, an automated suite
 of several hundred tests that fails on a *skipped* test as well as a failing one
-(because a skip proves nothing). A register of 109 findings from adversarial
-review and real use, 104 of them fixed; the open ones are recorded with what they
-are waiting for. Two of them are waiting on evidence rather than effort — a spread
-of real forms, and one hand-keyed scanned statement to measure OCR digit accuracy
-against — and both fail closed and loudly today.
+(because a skip proves nothing). A register of 141 findings from adversarial
+review and real use, 136 of them fixed and one measured and dismissed; the four
+still open are recorded with what they are waiting for. Two of those are waiting
+on evidence rather than effort — a spread of real forms, and one hand-keyed
+scanned statement to measure OCR digit accuracy against — and both fail closed
+and loudly today. The other two are internal tidiness (colour tokens, comment
+density) with nothing wrong on screen.
 
 The engine is done in the sense that matters: the next three things on the roadmap
 are watching a real analyst build a template on a real statement, proving the

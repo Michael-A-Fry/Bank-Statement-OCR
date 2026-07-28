@@ -406,8 +406,13 @@ test_that("matched the wording but read no transactions is NOT 'needs review'", 
   expect_false(identical(res$status, "needs_review"))
   cats <- as.character(res$diagnostics$category %||% character(0))
   expect_true("matched_but_empty" %in% cats)
-  # and it names the template that failed, so the analyst can go and fix THAT
-  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
+  # and it names the template that failed, so the analyst can go and fix THAT --
+  # by the name she reads on the template, never by its id. This assertion used to
+  # require the id, which is the one thing the charter forbids on a message that
+  # renders on the verdict card; it now guards the rule instead of contradicting it.
+  msgs <- as.character(res$messages)
+  expect_true(any(grepl("Kowhai Bank NZ (sample) everyday statement", msgs, fixed = TRUE)))
+  expect_false(any(grepl("badbands_pdf", msgs, fixed = TRUE)))
 })
 
 # The re-read that used to try another template here has been deleted. Swapping
@@ -429,7 +434,10 @@ test_that("a template that reads nothing says so instead of being swapped out", 
   expect_identical(res$status, "unsupported")
   expect_true("matched_but_empty" %in%
                 as.character(res$diagnostics$category %||% character(0)))
-  expect_true(any(grepl("badbands_pdf", as.character(res$messages), fixed = TRUE)))
+  # It names itself on screen -- in the analyst's words, not the engine's id.
+  msgs <- as.character(res$messages)
+  expect_true(any(grepl("Kowhai Bank NZ (sample) everyday statement", msgs, fixed = TRUE)))
+  expect_false(any(grepl("badbands_pdf", msgs, fixed = TRUE)))
 })
 
 

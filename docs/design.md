@@ -569,6 +569,16 @@ suite fails you on. In this order:
    your count renders as *could not be checked* — precisely the silent lie the
    fourth result word exists to prevent.
 
+**Expect existing tests to fail, and read the fixture before you read your
+check.** `.tx()` and the other helpers in `test-reconcile.R` build *minimal*
+statements — three amounts, no balance column, no period — so a new check very
+often fires on them, and none of the failures will name it. What you will see is
+`any(r$kpis$status == "fail") is not FALSE` inside a test about something else
+entirely (date-year inference, trust capping), because those tests assert that
+the whole KPI set is clean. That is the fixture being too thin for your check,
+not your check being wrong — but decide it by reading the fixture, and fix
+whichever is actually at fault.
+
 ### To change a threshold
 
 `R/params.R`, which is the only place a tuning number is allowed to live.
@@ -689,7 +699,11 @@ than a paragraph here:
 `run.R`, and telling a template bug from a bad scan.
 
 Two things to know before you open it. The engine is deterministic, so a re-run of
-the same file against the same template *will* reproduce the figure — if it does
-not, the template changed, and `template_sha256` in the run log is how you prove
-that. And no figure is ever edited: the only fix is a template correction and a
-re-run, which is what keeps the output reproducible and the provenance intact.
+the same file against the same template **on the same build** reproduces the
+figure. Three things break that, and the run log names all three: the template was
+edited (`template_sha256`), the app was updated (`engine_version`), or the figure
+really did change. Check the first two before concluding the third — and note that
+`engine_version` is stamped inside every output, so a re-run on a newer build can
+never be *byte*-identical to the old one however right it is. Compare the figures.
+And no figure is ever edited: the only fix is a template correction and a re-run,
+which is what keeps the output reproducible and the provenance intact.
