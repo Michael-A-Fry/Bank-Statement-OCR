@@ -24,8 +24,17 @@ if (!exists("REDACTION_TOKEN")) REDACTION_TOKEN <- "[REDACTED]"
 # Block/shade glyphs commonly used to visually blank out text. Kept as a
 # separate vector so the pattern is built with explicit UTF-8 encoding (this
 # engine runs in a C locale where raw multibyte regex literals are unreliable).
-.PDF_BLOCK_GLYPHS <- c("█", "▓", "▒", "░", "■",
-                       "▬", "▮", "▀", "▄", "█")
+#
+# WRITTEN AS \u ESCAPES, not as the glyphs themselves. The comment above already
+# said the C locale cannot be trusted with multibyte literals, and then spelt
+# these ten out in raw bytes anyway -- bytes that also have to survive every
+# editor, mail client and zip between here and an air-gapped Windows box. An
+# escape is seven ASCII characters meaning the same thing everywhere, and it
+# produces byte-identical strings. They are consumed as an ALTERNATION and
+# matched with useBytes (see pdf_redaction_markers / .matches_marker below),
+# which is what keeps them working whatever the locale.
+.PDF_BLOCK_GLYPHS <- c("\u2588", "\u2593", "\u2592", "\u2591", "\u25a0",
+                       "\u25ac", "\u25ae", "\u2580", "\u2584", "\u2588")
 
 pdf_redaction_markers <- function() {
   # marker regexes + the block/shade glyphs come from the lexicon (admin/ML

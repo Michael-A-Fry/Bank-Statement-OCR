@@ -251,12 +251,44 @@
                                "statement if the total matters"), n))
 }
 
+# .period_runs_backwards(start, end) -- does this period END BEFORE IT STARTS?
+# TRUE only when BOTH bounds read as dates and the end is the earlier one; an
+# unreadable bound is unknown, not backwards.
+#
+# A BACKWARDS PERIOD IS NEVER DATA, IT IS ALWAYS A DEFECT. No statement covers
+# negative time, so wherever one appears the tool has mis-assembled it -- and one
+# did: a bundle's combined header took the first statement's start and the last
+# statement's end IN FILE ORDER, so a newest-first bundle published "20 Apr 2026
+# to 19 Feb 2026" and the governed feed accepted it (see .bundle_period, R/split.R,
+# for the fix and the reasoning). Named once, here, so the two places that must
+# refuse one -- the bundle header as it is built, and every reconciled statement
+# as it is checked -- cannot come to different conclusions about what backwards is.
+.period_runs_backwards <- function(start, end) {
+  s <- .tolerant_date(start %||% NA); e <- .tolerant_date(end %||% NA)
+  !is.na(s) && !is.na(e) && e < s
+}
+
 # 4. dates_within_period: all dates within period_start..period_end.
 # Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
 # tolerantly (the shared .tolerant_date, see R/params.R) so an unparseable bound
 # skips the check rather than crashing.
+#
+# A BACKWARDS PERIOD FAILS HERE, AND SAYS SO IN ITS OWN WORDS. It already failed,
+# arithmetically -- no date can be inside an empty range, so every row counted as
+# "outside period" -- but the detail then read "34 date(s) outside period", which
+# blames the rows for a fault in the period and sends the reviewer to check
+# thirty-four transactions that are all perfectly fine. The fault is stated
+# instead, and the check cannot pass: containment against a range that runs
+# backwards proves nothing about the rows either way.
 .kpi_dates_within_period <- function(tx, h, n) {
   ps <- .tolerant_date(h$period_start %||% NA); pe <- .tolerant_date(h$period_end %||% NA)
+  if (.period_runs_backwards(h$period_start, h$period_end))
+    return(.kpi("dates_within_period", "fail",
+                expected = sprintf("%s..%s", ps, pe), actual = "ends before it starts",
+                detail = sprintf(paste0("the statement period ends before it starts (%s to %s), ",
+                                        "so the row dates could not be checked against it - ",
+                                        "the period was read wrongly, the rows may be fine"),
+                                 h$period_start, h$period_end)))
   if (!(!is.na(ps) && !is.na(pe) && n > 0))
     return(.kpi("dates_within_period", "na", detail = "statement period not available"))
   d <- suppressWarnings(as.Date(tx$date))

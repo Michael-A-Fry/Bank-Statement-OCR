@@ -226,7 +226,30 @@ fingerprint_phrases <- function(text) {
   unique(ph[!is.na(ph) & nzchar(ph)])
 }
 
-# recognition_summary(det, saved_id) -> list(ok, headline, detail).
+# .saved_name(id, templates) -- a template said in the words the person holding
+# the statement can check ("SAMPLE BANK statement"), never its id.
+#
+# WHY: the card two inches to the left of this message already says "Read as:
+# SAMPLE BANK statement", while the save confirmation said, twice, Saved
+# "sample_bank_statement_pdf" ... it matched yours ("sample_bank_statement_pdf").
+# An id is a maintainer's handle -- an accountant cannot check a figure against
+# it, and the charter's interface rule forbids putting an engine code in front of
+# her. One screen must not speak two languages about the same template.
+#
+# The id remains the fallback, and deliberately: when no template set is supplied
+# there is no name to be had, and a save confirmation that named NOTHING would be
+# worse than one naming a handle. Callers on a customer-facing screen pass the
+# set they already loaded (app.R) and get words.
+.saved_name <- function(id, templates = NULL) {
+  id <- trimws(as.character(id %||% NA_character_)[1])
+  if (is.na(id) || !nzchar(id)) return(id)
+  t <- if (is.list(templates) && !is.null(templates[[id]])) templates[[id]] else NULL
+  nm <- if (is.null(t)) NA_character_ else safe(template_display_name(t), NA_character_)
+  nm <- as.character(nm %||% NA_character_)[1]
+  if (!is.na(nm) && nzchar(nm)) nm else id
+}
+
+# recognition_summary(det, saved_id, templates) -> list(ok, headline, detail).
 #
 # Turns a REAL detection result into the one sentence the analyst needs after
 # saving a template: "will this statement be recognised on its own next time?".
@@ -241,8 +264,16 @@ fingerprint_phrases <- function(text) {
 #
 # It lives here, not in app.R, because app.R is not sourced by the test suite --
 # a pure helper in R/ is a helper the suite can actually hold to its word.
-recognition_summary <- function(det, saved_id) {
+#
+# `templates` is the template SET the caller already loaded. Given it, every
+# template named below is named in WORDS (see .saved_name); without it they are
+# named by id, as they always were. It is optional rather than required so that
+# adding it could not break a caller, and it defaults to the old behaviour rather
+# than to silence -- a confirmation that named no template at all would be worse
+# than one naming a handle.
+recognition_summary <- function(det, saved_id, templates = NULL) {
   sid <- trimws(as.character(saved_id %||% NA_character_)[1])
+  nm  <- function(id) .saved_name(id, templates)
   if (is.null(det) || !is.list(det))
     return(list(ok = NA,
       headline = "Saved - but we could not check whether this statement will be recognised next time.",
@@ -253,10 +284,10 @@ recognition_summary <- function(det, saved_id) {
   if (isTRUE(det$matched) && !is.na(got) && identical(got, sid))
     return(list(ok = TRUE,
       headline = "Next time, a statement like this one is recognised automatically.",
-      detail = sprintf("We re-checked it against every template and it matched yours (\"%s\") on its own, with nothing forced.", sid)))
+      detail = sprintf("We re-checked it against every template and it matched yours (\"%s\") on its own, with nothing forced.", nm(sid))))
   if (isTRUE(det$matched))
     return(list(ok = FALSE,
-      headline = sprintf("Careful: this statement is still recognised as \"%s\", not your new template.", got),
+      headline = sprintf("Careful: this statement is still recognised as \"%s\", not your new template.", nm(got)),
       detail = paste("Your template was saved, but another one wins on this file, so next",
                      "time it would be read with that other template. Open the toolkit again",
                      "and make the identifying phrase more specific to this bank - or use the",
@@ -271,11 +302,17 @@ recognition_summary <- function(det, saved_id) {
   # template would tie too). The real cause leads, and the cure is the one that
   # actually separates them.
   tied <- as.character(det$tied %||% character(0))
+  # Set-differenced by ID (the identity), then said in NAMES. A tie is most often
+  # the same layout set up twice, so two ids can share one display name; the names
+  # are deduped so the sentence cannot list the same words twice, and the count
+  # that leads the headline is the count of ids -- how many templates there really
+  # are is the fact she needs, and it is the one a maintainer will act on.
   others <- setdiff(tied, sid)
+  other_names <- unique(vapply(others, nm, character(1), USE.NAMES = FALSE))
   if (length(tied) >= 2 && length(others))
     return(list(ok = FALSE,
       headline = if (length(others) == 1L)
-        sprintf("Saved - but \"%s\" fits this statement exactly as well as yours.", others)
+        sprintf("Saved - but \"%s\" fits this statement exactly as well as yours.", other_names[1])
         else sprintf("Saved - but %d other templates fit this statement exactly as well as yours.",
                      length(others)),
       detail = paste0(
@@ -284,7 +321,7 @@ recognition_summary <- function(det, saved_id) {
         "and holds the run for a check, so no figures are lost. To settle it, add a ",
         "phrase to your template that ONLY this bank prints - that breaks the tie in ",
         "its favour - or retire the duplicate (",
-        paste(others, collapse = ", "), "). Do not build a third: it would tie too.")))
+        paste(other_names, collapse = ", "), "). Do not build a third: it would tie too.")))
   list(ok = FALSE,
     headline = "Saved - but this statement is NOT recognised by it yet.",
     detail = paste0(
@@ -323,12 +360,12 @@ current_user <- function() {
 # safe_readlines(path, encoding) -- read text lines without warnings/crashes, and
 # WITHOUT corrupting non-UTF-8 input. readLines(encoding="UTF-8") only TAGS bytes
 # as UTF-8, it does not transcode; a Windows-1252 / Latin-1 bank export (a payee
-# with a £, é, or non-breaking space) then flows in as mojibake / invalid UTF-8,
+# with a pound sign, an accented letter, or a non-breaking space) then flows in as
 # breaking the verbatim-description guarantee, and a UTF-16 file garbles entirely.
 # So: sniff the byte-order mark, else validate UTF-8 and fall back to the dominant
 # 8-bit codepage -- all deterministic (`encoding` overrides the sniff when known).
 #   * UTF-8 BOM (Excel writes one on every CSV export) is stripped -- left in it
-#     corrupts the first header name ("﻿Date" is not "Date").
+#     corrupts the first header name (a BOM followed by "Date" is not "Date").
 #   * UTF-16 LE/BE BOM -> transcoded (readLines would garble it).
 #   * no BOM + valid UTF-8 -> read as UTF-8 (the common path, unchanged).
 #   * no BOM + invalid UTF-8 -> Windows-1252 (superset of Latin-1; every byte maps,

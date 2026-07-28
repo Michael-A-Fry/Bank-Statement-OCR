@@ -103,7 +103,7 @@ parse_date <- function(x, fmt) {
 #   thousands : 1,234.56  /  1 234.56  /  1'234.56
 #   decimals  : 1,234.56 (US)  and  1.234,56 (European comma) via last-separator
 #   negatives : -123.45  /  (123.45)  /  123.45-  /  trailing DR or OD ; CR = +ve
-#   currency  : $ £ € and any other symbol/letters stripped
+#   currency  : dollar, pound, euro and any other symbol/letters stripped
 #
 # `decimal` selects how a LONE separator is read (a template can declare its
 # bank's locale via `decimal_mark:` so nothing is guessed):

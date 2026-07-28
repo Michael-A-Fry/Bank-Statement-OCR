@@ -52,9 +52,10 @@
 .INDICATOR_COL_RX <- "type|dr.?cr|cr.?dr|d/?c|debit.?credit|credit.?debit|\\bsign\\b|indicat|in/?out|money.?in|money.?out|direction"
 
 # A character is "currency-ish" if it is NOT a digit, letter, standard number
-# punctuation or space. This ASCII-only negation matches $ / £ / € (and any other
+# punctuation or space. This ASCII-only negation matches the dollar, pound and euro
+# signs (and any other
 # currency glyph) WITHOUT embedding a multibyte character in the pattern -- raw
-# £/€ in a regex warn and can mis-match in a non-UTF-8 locale (the air-gapped
+# such a glyph in a regex warns and can mis-match in a non-UTF-8 locale (the air-gapped
 # Windows box), so every money test here stays ASCII.
 .CURRENCY_RX <- "[^0-9A-Za-z.,'()+[:space:]-]"
 

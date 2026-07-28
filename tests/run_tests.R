@@ -2,6 +2,22 @@
 # run_tests.R -- the single test runner for everyone.
 # Sources all engine functions, loads packages, runs testthat over tests/testthat.
 
+# Force a UTF-8 locale FIRST -- the same guard, in the same words, as app.R and
+# run.R. ALL THREE need it: they all source the same engine, and the engine reads
+# bank statements, which carry pound signs, euro signs, macrons and accented
+# payees. On a host whose default locale is C/ASCII (this container, and any bare
+# Windows service account) R cannot translate those bytes, and the failure is
+# silent -- a value comes back NA, or short of a byte, with only a console warning.
+#
+# WHY THE SUITE ESPECIALLY: a suite that runs in a locale nobody deploys in has
+# proved nothing about the deployment. app.R has forced UTF-8 for a long time, so
+# every test of engine behaviour was being run in the ONE locale the app never
+# uses. Both halves are covered now: this line makes the suite match the app and
+# the CLI, and test-labels.R holds the engine itself to being locale-independent
+# by running the same input under C and under C.UTF-8 and demanding one answer.
+suppressWarnings(for (.loc in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"))
+  if (nzchar(Sys.setlocale("LC_CTYPE", .loc))) break)
+
 .this_dir <- function() {
   args <- commandArgs(FALSE)
   m <- grep("^--file=", args, value = TRUE)

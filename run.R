@@ -1,6 +1,28 @@
 #!/usr/bin/env Rscript
 # run.R -- thin CLI. Usage: Rscript run.R <file> [bank] [outdir]
 
+# Force a UTF-8 locale FIRST -- the same guard, in the same words, as app.R and
+# tests/run_tests.R. ALL THREE need it, because all three source the same engine
+# and the engine reads bank statements, which carry pound signs, euro signs,
+# macrons and accented payees. On a host whose default locale is C/ASCII (this
+# container, and any bare Windows service account) R cannot translate those bytes,
+# and the failure is not a crash: a value comes back NA, or short of a byte, with
+# nothing but a console warning to say so.
+#
+# WHY THE CLI ESPECIALLY. docs/operational/investigating-a-wrong-conversion.md
+# tells a maintainer to reproduce a disputed conversion with `Rscript run.R`. If
+# the CLI ran in a different locale from the app, the re-run could disagree with
+# the conversion it was meant to reproduce -- so the incident procedure would be
+# comparing two different engines and calling the difference a finding. The suite
+# needs it for the mirror-image reason: a test that passes in a locale nobody
+# deploys in has proved nothing.
+#
+# The guard is belt to the engine's braces, not a substitute for them: R/labels.R
+# is written to be locale-independent on its own (byte matching, no multibyte
+# character classes). Neither alone is trusted.
+suppressWarnings(for (.loc in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"))
+  if (nzchar(Sys.setlocale("LC_CTYPE", .loc))) break)
+
 .script_dir <- function() {
   args <- commandArgs(FALSE)
   m <- grep("^--file=", args, value = TRUE)

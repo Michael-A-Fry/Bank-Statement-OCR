@@ -110,6 +110,18 @@ log_run <- function(logdir, result) {
 # makes a file a table is that the same split gives the SAME SHAPE on line after
 # line. Split with the reader's own quote-aware splitter so a quoted comma and a
 # preamble are counted exactly as the reader will read them.
+#
+# `lines` MUST ARRIVE WITH ITS BLANK LINES STILL IN IT. The evidence this function
+# weighs is ADJACENCY -- two matching records NEXT TO each other -- and a blank
+# line is the commonest thing in the world separating two lines that are not next
+# to each other. The caller used to strip blanks before calling, which quietly
+# turned a note to self
+#     Hi Beth,  /  <blank>  /  Use the transaction export, not the PDF.
+# into two adjacent 2-field records, i.e. a table, i.e. "we don't have a template
+# for this layout yet" plus an offer to build one. The guard's own comment below
+# says the matching lines in an email are SCATTERED through prose; keeping the
+# blanks is what leaves them scattered. A blank record splits into no fields at
+# all, so it counts as 0 and breaks the run without being mistaken for content.
 .delimited_tabular <- function(lines, sep) {
   recs <- .split_records(lines, seq_along(lines))
   n <- vapply(recs, function(r) length(.record_fields(r$text, sep)), integer(1))
@@ -122,8 +134,10 @@ log_run <- function(logdir, result) {
   # ONE record has nothing to repeat, so the shape cannot decide it -- and the
   # two candidates are indistinguishable byte for byte: a header-only export, or
   # a sentence with a comma in it. Fall back to the narrowest a statement table
-  # can be, which is the closest thing to a fact available here.
-  length(n) == 1L && n[1] >= .MIN_TABLE_FIELDS
+  # can be, which is the closest thing to a fact available here. Counted over
+  # records that carry CONTENT, so a trailing newline cannot cost a header-only
+  # export its one fallback.
+  sum(n > 0L) == 1L && max(n) >= .MIN_TABLE_FIELDS
 }
 
 .unreadable_reason <- function(input, templates = NULL) {
@@ -135,13 +149,23 @@ log_run <- function(logdir, result) {
     return(NULL)
   }
   if (identical(kind, "delimited")) {
-    lines <- input$lines %||% character(0)
-    lines <- lines[!is.na(lines) & nzchar(trimws(lines))]
-    if (!length(lines)) return("this file is empty - there is nothing in it to read")
+    raw <- input$lines %||% character(0)
+    raw[is.na(raw)] <- ""
+    content <- which(nzchar(trimws(raw)))
+    if (!length(content)) return("this file is empty - there is nothing in it to read")
+    lines <- raw[content]
     seps <- unlist(lapply(templates %||% list(),
                           function(t) as.character(unlist(t$delimiter %||% character(0)))))
     seps <- unique(c(seps[!is.na(seps) & nzchar(seps)], ",", "\t", ";", "|"))
-    head_lines <- utils::head(lines, .TABULAR_SCAN_LINES)
+    # THE SHAPE TEST GETS THE FILE'S REAL LINE STRUCTURE, blanks included -- see
+    # .delimited_tabular, which decides on ADJACENCY and so cannot be handed a
+    # view of the file with the gaps taken out. The stripped view is still what
+    # decides "empty" above and what the header_regex scan reads below; neither
+    # of those cares where a blank line was.
+    # The window is the first .TABULAR_SCAN_LINES lines WITH CONTENT, together
+    # with whatever separated them, so the amount of file examined is unchanged
+    # and a blank preamble cannot push the table out of view.
+    head_lines <- raw[seq_len(content[min(length(content), .TABULAR_SCAN_LINES)])]
     for (s in seps) if (.delimited_tabular(head_lines, s)) return(NULL)
     # A declared header_regex is a template saying "MY table starts at this line",
     # so finding one is direct evidence of that bank's table even when the shape

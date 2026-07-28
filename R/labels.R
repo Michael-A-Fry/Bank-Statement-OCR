@@ -54,7 +54,33 @@
 # Every character that means "negative" in a printed document: ASCII hyphen, the
 # typographic minus, and the en dash. Named once so the two alternatives below
 # cannot drift apart, and so adding a fourth is one edit.
-.MINUS <- "[-\u2212\u2013]"
+#
+# AN ALTERNATION, for the same reason as .LABEL_SEP_RX below: this was a bracket
+# expression, and in the C locale this engine deploys and tests in, a multibyte
+# character in a bracket expression is read one byte at a time. Measured on
+# "Opening Balance <pound>1,234.56" under LC_ALL=C, .value_from_line came back
+# NA -- the printed balance simply went missing -- with only a translation
+# warning on the console nobody reads. NA is fail-closed, so no wrong figure was
+# emitted, but a balance the statement prints must not vanish because of the
+# host's locale. The two matchers below therefore run with useBytes = TRUE.
+.MINUS <- "(?:[-]|\u2212|\u2013)"
+# The separators that sit between a label and its value: spaces, a colon, and the
+# dashes a typesetter prints (ASCII hyphen, EN DASH, typographic MINUS).
+#
+# AN ALTERNATION, MATCHED AS BYTES -- not a character class, and not a raw glyph.
+# This engine deploys and tests in a C (ASCII) locale, and there a multibyte
+# character inside a BRACKET EXPRESSION is read one byte at a time, so
+# "^[ :<en-dash>-]+" ate the leading byte of any non-ASCII VALUE that followed the
+# label: "Account name: <euro>1,234.00" came back as an invalid-UTF-8 string that
+# was silently no longer verbatim, and a UTF-8-marked line threw outright ("unable
+# to translate ... to a wide string"). Writing the dash as \u2013 does NOT fix that
+# -- measured, the byte is still eaten -- because the fault is the bracket
+# expression, not the spelling. An alternation matches each multibyte sequence
+# whole, and useBytes = TRUE takes the locale out of it entirely, so this behaves
+# identically under C and under C.UTF-8. Nothing else in this file may put a
+# multibyte character in a bracket expression either -- see .MINUS above, which
+# had the same fault.
+.LABEL_SEP_RX <- "^(?:[ :-]|\u2013|\u2212)+"
 .MONEY_RX <- paste0(
   "\\(?", .MINUS, "?[$]?", .MINUS, "?[0-9][0-9,.]*(?:\\.[0-9]{2}|,[0-9]{2})(?![0-9])\\)?", .MINUS, "?(?:\\s?(?:DR|CR|OD))?",
   "|",
@@ -90,12 +116,18 @@
     return(if (length(m) && nzchar(m)) m[1] else NA_character_)
   }
   money_rx <- lex("money_regex"); date_rx <- lex("date_regex")   # lexicon (admin-editable)
+  # useBytes on every one of these: the money pattern carries the two non-ASCII
+  # minus signs (see .MINUS), and a statement line carries whatever currency
+  # symbol the bank printed. Byte matching is the only way both stay reliable in
+  # a C locale AND in a UTF-8 one, and every pattern here is otherwise ASCII, so
+  # matching bytes changes nothing about what they mean.
   switch(vtype,
-    money = { m <- regmatches(line, gregexpr(money_rx, line, perl = TRUE, ignore.case = TRUE))[[1]]
+    money = { m <- regmatches(line, gregexpr(money_rx, line, perl = TRUE,
+                                             ignore.case = TRUE, useBytes = TRUE))[[1]]
               if (length(m)) m[length(m)] else NA_character_ },   # value sits to the right
-    date  = { m <- regmatches(line, regexpr(date_rx, line))
+    date  = { m <- regmatches(line, regexpr(date_rx, line, useBytes = TRUE))
               if (length(m)) m[1] else NA_character_ },
-    date_range = { m <- regmatches(line, gregexpr(date_rx, line))[[1]]
+    date_range = { m <- regmatches(line, gregexpr(date_rx, line, useBytes = TRUE))[[1]]
                    if (length(m) >= 2) paste(m[1], "|", m[2]) else NA_character_ },
     NA_character_)   # "text" handled by the caller (needs the label position)
 }
@@ -106,7 +138,7 @@
   p <- regexpr(tolower(term), tolower(line), fixed = TRUE)
   if (p < 0) return(NA_character_)
   rest <- substr(line, p + attr(p, "match.length"), nchar(line))
-  rest <- trimws(sub("^[ :–-]+", "", rest))
+  rest <- trimws(sub(.LABEL_SEP_RX, "", rest, perl = TRUE, useBytes = TRUE))
   if (nzchar(rest)) rest else NA_character_
 }
 

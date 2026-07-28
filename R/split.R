@@ -126,6 +126,85 @@
 # .trust_rank(level) -- order trust so the weakest segment can be found.
 .trust_rank <- function(level) match(level %||% "low", c("low", "medium", "high"))
 
+# .bundle_period(statements) -> list(start, end, why)
+#   start/end : the bundle's period as the statements PRINT it, or NA
+#   why        : one plain sentence when it is NA, else NA
+#
+# THE BUG THIS REPLACES. The combined header took statement 1's start and
+# statement k's end IN FILE ORDER. Bank bundles are routinely filed newest-first,
+# so on samples/_private_staging/anz_0382004_multi.pdf that produced
+# "20 Apr 2026 to 19 Feb 2026" -- a period that ENDS TWO MONTHS BEFORE IT STARTS --
+# and it went out to the governed feed's run manifest as an `accepted` row. Nothing
+# on screen, in the checks or in the feed noticed. Date order, not file order, is
+# the only thing that can decide a span.
+#
+# SHOULD A BUNDLE PUBLISH ONE MERGED PERIOD AT ALL? Only when the parts JOIN UP.
+# Here is the reasoning, because it is the interesting half of the fix:
+#
+# A period on a court-facing extract is a claim about COVERAGE -- "these figures
+# are everything this account did between these two dates". For statements that
+# meet end-to-start, min(start)..max(end) is exactly that claim and it is true.
+# For statements that do NOT, it is false in the most dangerous direction: on the
+# very sample above the three statements leave 18-19 Apr 2026 covered by no printed
+# statement, so a merged span would silently assert two days of coverage the file
+# does not have, and a transaction missing from that window could never be noticed.
+# That is a plausible figure standing in for one nobody checked, which the charter
+# calls the cardinal failure. An OVERLAP is worse still: overlapping sections are
+# not one account's consecutive statements at all, so there is no single span to
+# state. So: contiguous -> publish the true span; anything else -> publish nothing,
+# and say why.
+#
+# Nothing is lost by publishing nothing. Every statement's own period is in
+# `statements`, the feed stamps each transaction row with ITS OWN statement's
+# period (.split_stamp, R/feed.R), and the card's split table shows them all. The
+# empty field is the honest answer to a question the bundle does not answer.
+#
+# The rules are the ones .period_span (R/extract_metadata.R) already applies to
+# several periods printed inside ONE statement, so the engine cannot hold two
+# different opinions about when periods join up -- including that A SHARED
+# BOUNDARY DAY IS NOT AN OVERLAP (banks print the previous closing date as the
+# next opening date), and that one unreadable bound means the ORDER of the whole
+# set is unknown, which is exactly when a guess produces a wrong answer.
+.bundle_period <- function(statements) {
+  none <- function(why) list(start = NA_character_, end = NA_character_, why = why)
+  if (!length(statements)) return(none("no statements"))
+  raw_s <- vapply(statements, function(s) as.character(s$period_start %||% NA)[1], character(1))
+  raw_e <- vapply(statements, function(s) as.character(s$period_end   %||% NA)[1], character(1))
+  ds <- do.call(c, lapply(raw_s, .tolerant_date))   # the SHARED tolerant parser
+  de <- do.call(c, lapply(raw_e, .tolerant_date))   # (R/params.R), so one answer
+  if (anyNA(ds) || anyNA(de))
+    return(none(paste("the statements in this file do not all print a readable period, so they",
+                      "could not be put in date order and no single period is stated for the",
+                      "file as a whole - each statement's own period is listed above")))
+  if (any(de < ds))
+    return(none(paste("at least one statement in this file prints a period that ends before it",
+                      "starts, so no single period is stated for the file as a whole - check",
+                      "that statement against the source")))
+  o  <- order(ds, de)
+  ds <- ds[o]; de <- de[o]
+  # Join up: each statement starts on, or the day after, the one before it ends.
+  # `<` is an overlap; `> +1` is a gap. Both mean this is not one continuous span,
+  # and they are told apart because they are different faults with different cures:
+  # a gap is days nobody has a statement for (ask the bank for the missing one), an
+  # overlap means these are not one account's consecutive statements at all.
+  if (length(ds) > 1) {
+    nxt <- ds[-1]; prv <- de[-length(de)]
+    if (any(nxt < prv))
+      return(none(paste("the statements in this file overlap in time, so they are not one",
+                        "account's consecutive statements and no single period is stated for",
+                        "the file as a whole - each statement's own period is listed above")))
+    hole <- which(nxt > prv + 1)
+    if (length(hole))
+      return(none(sprintf(paste("no statement in this file covers %s, so no single period is",
+                                "stated for the file as a whole - if this account should be",
+                                "covered end to end, a statement is missing"),
+                          paste(sprintf("%s to %s", format(prv[hole] + 1), format(nxt[hole] - 1)),
+                                collapse = "; "))))
+  }
+  # Verbatim, as the statements print it -- never a reformatted date.
+  list(start = raw_s[o][1], end = raw_e[o][length(o)], why = NA_character_)
+}
+
 # .count_agrees(k, meta, on) -- does an INDEPENDENT structural count (one the split
 # signal did not itself produce) agree that there are k statements? This is the
 # corroboration that guards against a marker that legitimately repeats inside one
@@ -213,16 +292,34 @@ split_bundle <- function(input, template, meta = NULL) {
   # Per-statement IDENTITY fields (account, balances, count) are nulled here: they
   # differ per statement, and the feed stamps header fields onto EVERY row, so a
   # single value would mislabel other statements' rows. The truth is in `statements`
-  # (and each row's statement_index). The period is kept as the bundle's honest span.
-  header <- segs[[1]]$parsed$header          # period_start inherited from statement 1
+  # (and each row's statement_index).
+  #
+  # The PERIOD is one of those fields, not an exception to them: it is published
+  # only when the statements join up into one continuous span, and is empty
+  # otherwise. See .bundle_period above for the whole argument.
+  period <- .bundle_period(statements)
+  header <- segs[[1]]$parsed$header
   header$row_count       <- nrow(combined_tx)
   header$n_statements    <- k
   header$page_count      <- npages
-  header$period_end      <- segs[[k]]$parsed$header$period_end   # ...to statement k's end
+  header$period_start    <- period$start    # DATE order, and only if they join up
+  header$period_end      <- period$end
   header$account_number  <- NA_character_   # differs per statement -> not one value
   header$opening_balance <- NA_real_        # per-segment in `statements`
   header$closing_balance <- NA_real_
   header$stated_count    <- NA_integer_
+  # THE LAST GATE, and the reason a backwards period cannot come back silently.
+  # .bundle_period cannot construct one -- but the whole point of this fix is that
+  # the previous author did not think he could either. A period that runs backwards
+  # is not a value to report, it is proof this function is broken, so it is refused
+  # here rather than published: split_bundle is called through safe() (R/convert.R),
+  # so the refusal drops the run onto the flag-and-refuse default (needs_review,
+  # "this looks like several statements") instead of onto a court-facing extract.
+  # The matching check on the ordinary single-statement path is in reconcile()
+  # (.kpi_dates_within_period, R/reconcile.R), which is where a reviewer sees it.
+  if (.period_runs_backwards(header$period_start, header$period_end))
+    stop("internal: the bundle period was built backwards - refusing to publish it",
+         call. = FALSE)
 
   combined_parsed <- list(
     transactions = combined_tx, extras = combined_extras, header = header,
@@ -250,6 +347,12 @@ split_bundle <- function(input, template, meta = NULL) {
     sprintf("upload auto-split into %d statements at %s boundaries (pages %s); each reconciled independently",
             k, spec$on, paste(vapply(statements, function(s) s$pages, character(1)), collapse = ", ")),
     "statement count confirmed by an independent structural signal (period / page-1 / balance-block count)",
+    # WHY THE FILE HAS NO ONE PERIOD, on the same screen as the split itself. An
+    # empty field with no explanation reads as something the tool forgot to fill
+    # in; this is the one thing about the bundle the reviewer cannot work out for
+    # herself, so it is said out loud rather than left to silence. (Same treatment
+    # .period_span's `period_note` already gets on the single-statement path.)
+    if (!is.na(period$why)) period$why,
     sprintf("overall trust is the weakest statement's (statement%s %s): %s",
             if (length(weakest) > 1) "s" else "",
             paste(weakest, collapse = ", "), level))

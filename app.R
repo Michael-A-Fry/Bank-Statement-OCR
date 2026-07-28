@@ -3396,6 +3396,28 @@ server <- function(input, output, session) {
             tags$b("Do this first: "), dg$how_to_fix[1]) else NULL)
   }
 
+  # THE TAG AN AUTO-SPLIT RUN PUTS ON EVERY CHECK, read in ONE place.
+  #
+  # R/split.R names each segment's checks "<code> [statement 2]", so every reader
+  # of a KPI name on this page has to know the tag. Three readers did, each
+  # carrying its own copy of the regex, and the fourth -- the proof strip, the
+  # first quality signal on the page -- did not, and matched nothing at all on a
+  # bundle. One definition, so a fifth reader cannot be written that quietly
+  # disagrees with the other four. ui_labels.R keeps its own copy on purpose: it
+  # is loaded by the test suite without app.R, and the wording map is what the
+  # suite holds to its word.
+  .STMT_TAG <- "[[:space:]]*\\[statement ([0-9]+)\\]$"
+  .stmt_base <- function(name) sub(.STMT_TAG, "", as.character(name))
+  # Which statement of a bundle a check belongs to -- a NUMBER, and 0 for a file
+  # that was not split, so a caller can group by it without special-casing an NA.
+  .stmt_index <- function(name) {
+    name <- as.character(name)
+    n <- sub(paste0("^.*", .STMT_TAG), "\\1", name)
+    out <- suppressWarnings(as.integer(n))
+    out[n == name | is.na(out)] <- 0L        # no tag, or one that will not read
+    out
+  }
+
   # THE CHECKS THAT MATTER, ALWAYS ON SCREEN.
   #
   # Only FAILING checks were shown. That reads as "no news is good news", and for a
@@ -3434,9 +3456,26 @@ server <- function(input, output, session) {
   # what it was (there is nothing to append), and the strip is now INCAPABLE of
   # being all-clear while any check failed. `%in%` rather than `==` so an NA status
   # cannot slip an NA name into the list.
+  #
+  # SPLIT-AWARE, because it was matching whole KPI names against the bare check
+  # codes. An auto-split upload is several statements in one file and R/split.R
+  # tags every check "<code> [statement 2]", so on a bundle NOTHING matched: the
+  # picker came back empty and the renderer's `if (!length(pick)) return(NULL)`
+  # took the strip AND its key off the page altogether -- measured at zero
+  # characters on an 824-row three-statement ANZ file that had converted cleanly.
+  # Worse when a check had failed: the `setdiff` branch still matched (it compares
+  # names to names), so the bundle drew nothing but RED chips under a key whose
+  # first entry defines a tick. The picking is now per statement, because that is
+  # how a bundle is reconciled -- the listed checks in the order a reviewer asks
+  # them, then anything that failed and is not on the list, for each part in turn.
   .proof_pick <- function(name, status, listed) {
-    pick <- listed[listed %in% name]
-    c(pick, setdiff(name[status %in% "fail"], pick))
+    name <- as.character(name)
+    keep <- .stmt_base(name) %in% listed | status %in% "fail"
+    if (!any(keep)) return(character(0))
+    nm <- name[keep]
+    rank <- match(.stmt_base(nm), listed)
+    rank[is.na(rank)] <- length(listed) + 1L   # failed, and not one of the listed
+    nm[order(.stmt_index(nm), rank)]
   }
   output$cv_proof <- renderUI({
     res <- cv_res(); req(res)
@@ -3455,18 +3494,31 @@ server <- function(input, output, session) {
                                   "margin:0 8px 6px 0;padding:5px 10px;border-radius:999px;",
                                   "background:%s;color:%s;font-size:13px;font-weight:600"),
                            m[[3]], m[[2]]),
-           span(style = "font-size:14px", m[[1]]), plain_check(nm))
+           # The row already says which statement, so the chip does not repeat it.
+           span(style = "font-size:14px", m[[1]]), plain_check(.stmt_base(nm)))
     }
-    # THE KEY, because this strip is the first quality signal on the page and it
-    # had none: no legend, no title attribute, nothing in About or in either
-    # guide. A grey dash beside "Opening + transactions = closing balance" above
-    # the fold is either the best or the worst news on the screen, and there was
-    # nothing anywhere to tell a reader which. Same three glyphs the chips draw.
+    # A BUNDLE IS CHECKED PART BY PART, AND NOW SAYS SO. Each statement in a split
+    # upload is reconciled on its own, and the reviewer's question is whether EVERY
+    # part was proved -- so the strip is one labelled row per statement. The parts
+    # are counted off the whole check table rather than off the chips, so a part
+    # with nothing to draw still appears, and says so, instead of vanishing.
+    part_of <- .stmt_index(k$name); parts <- sort(unique(part_of)); n_parts <- max(parts)
     div(style = "margin:2px 0 12px",
-      lapply(pick, chip),
-      # The glyphs are the SAME escapes the chips are drawn from, not literals
-      # retyped beside them: a key that can drift from its picture is worse than
-      # no key at all.
+      lapply(parts, function(s) {
+        got <- pick[.stmt_index(pick) == s]
+        div(style = "margin-bottom:2px",
+          if (s > 0L) div(class = "muted", style = "font-size:12.5px;font-weight:600",
+                          sprintf("Statement %d of %d", s, n_parts)),
+          if (length(got)) lapply(got, chip)
+          else span(class = "bad", "No check ran on this part of the file."))
+      }),
+      # THE KEY, because this strip is the first quality signal on the page and it
+      # had none: no legend, no title attribute, nothing in About or in either
+      # guide. A grey dash beside "Opening + transactions = closing balance" above
+      # the fold is either the best or the worst news on the screen, and there was
+      # nothing anywhere to tell a reader which. The glyphs are the SAME escapes
+      # the chips are drawn from, not literals retyped beside them: a key that can
+      # drift from its picture is worse than no key at all.
       div(class = "muted", style = "font-size:12.5px;margin-top:2px",
           sprintf("%s = checked and passed \u00b7 %s = a problem \u00b7 %s = could not be checked (why, in Checks below)",
                   "\u2713", "\u2717", "\u2013")))
@@ -3602,7 +3654,7 @@ server <- function(input, output, session) {
   .medium_is_the_ceiling <- function(res) {
     k <- res$kpis
     if (is.null(k) || !all(c("name", "status") %in% names(k))) return(FALSE)
-    base <- sub("[[:space:]]*\\[statement [0-9]+\\]$", "", k$name)   # split-aware
+    base <- .stmt_base(k$name)                                       # split-aware
     if (!any(k$status[base == "no_unparsed_rows"] %in% "na")) return(FALSE)
     fmt <- tryCatch(templates()[[(res$template_id %||% "")[1]]]$format,
                     error = function(e) NULL) %||% ""
@@ -3979,7 +4031,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); req(!is.null(res$kpis))
     k <- res$kpis
     info <- if ("informational" %in% names(k)) k$informational %in% TRUE
-            else sub("[[:space:]]*\\[statement [0-9]+\\]$", "", k$name) %in% INFORMATIONAL_CHECKS
+            else .stmt_base(k$name) %in% INFORMATIONAL_CHECKS
     dash <- function(v) { v <- as.character(v %||% rep(NA, nrow(k)))
                           v[is.na(v) | !nzchar(v)] <- "-"; v }
     disp <- data.frame(
