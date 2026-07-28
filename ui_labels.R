@@ -172,6 +172,39 @@ plain_flags <- function(x) vapply(as.character(x), function(e) {
 }, character(1), USE.NAMES = FALSE)
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
+
+# ---------------------------------------------------------------------------
+# ONE NAME FOR THE ONE SKIP THAT MEANS SOMETHING. The engine divides skipped PDF
+# rows in two (R/parse_pdf_table.R): headings, notes, wrapped lines and summary
+# lines, which every healthy statement skips, and the ACTIONABLE ones -- a row
+# shaped like a transaction that would not read. Two screens named that second
+# set in two different vocabularies, and on a real Westpac statement they named
+# two different SETS: the verdict card said "N of the M row(s) the reader
+# examined look like transactions and could not be read" from the engine's count,
+# while See-it-on-the-page drew 26 amber boxes on page 1 against the engine's 2
+# and legended them "skipped row that looks like a transaction" -- with the table
+# underneath telling the reader those same rows were "treated as a heading, note
+# or wrapped line". One screen saying both things about one row is how a reviewer
+# learns to disbelieve the screen.
+#
+# The wording lives here so the layer name, the key and the table heading cannot
+# drift apart; WHICH rows it applies to is never decided on this text -- that is
+# pdf_reason_actionable() in the engine, off the reason CODE.
+UNREAD_ROW_PLAIN_LAYER <- "Rows that look like transactions but weren't read"
+UNREAD_ROW_PLAIN_KEY   <- "row that looks like a transaction and could not be read"
+
+# ---------------------------------------------------------------------------
+# THE "NEEDS A LOOK" COLUMN ON A FORM RESULT, one entry per column extract_fields
+# (R/extract_fields.R) sets on a field. It listed `flagged` alone, so on a real
+# ANZ KiwiSaver summary the verdict card said "3 label(s) appear more than once
+# with different values; the first of each was taken - check them against the
+# document" over a table whose NEEDS A LOOK cell was empty on all seven rows.
+# `conflict` is the very column convert_form() counts into that sentence, so the
+# tool knew which three and would not say -- which leaves a reviewer suspecting
+# all seven. A field can carry both, and then it says both.
+FIELD_LOOK_PLAIN <- c(
+  flagged  = "required and not found",
+  conflict = "appears more than once with different values - the first was taken")
 # plain_failing_check(x) -- the batch table's "What to check" column, in words.
 #
 # convert_batch() (R/batch.R) carries the engine's own CODE with the map that
@@ -296,3 +329,13 @@ cv_friendly_cols <- function(cols) vapply(cols, function(cn) {
 FRIENDLY_READ_ERROR <- paste(
   "We couldn't read this file. It may be password-protected, an image-only scan,",
   "or not a statement. Try a PDF or CSV export from your bank.")
+# ...and its pair: a conversion that DIED rather than failed to read the file. Two
+# different facts needing two different sentences -- telling somebody their
+# statement may be password-protected when the truth is that the server ran out of
+# room is a wrong answer, which is the one thing this tool must not give. Says what
+# happened, what it means for the dashboards, and what to do next; no process ids,
+# no engine words. (It lived in app.R with a note saying it belonged here.)
+CONVERT_STOPPED <- paste(
+  "This conversion stopped before it finished, so there is nothing to show and",
+  "nothing was sent to the dashboards. Try it again - if it stops a second time,",
+  "tell whoever looks after the tool.")

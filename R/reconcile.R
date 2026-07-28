@@ -29,6 +29,22 @@
 # INFORMATIONAL rows are exempt: their `actual` is the fact they exist to report
 # (redacted row count, OCR confidence), the table gives them their own word
 # rather than "could not be checked", and app.R reads the redaction count off it.
+#
+# AN `expected` MUST BE SOMETHING THE REVIEWER CAN CHECK. It may be a figure the
+# STATEMENT PRINTS, or a plain target for the rows we produced (0, ">0", n). It
+# may never be a count synthesised from our own skips -- a number in a column
+# headed Expected that appears nowhere in the document leaves a forensic reviewer
+# unable to check the checker, and it is the checker's own arithmetic presented as
+# the document's. See .kpi_no_unparsed_rows for the case this rule was written for.
+#
+# A `detail` IS RENDERED UNDER TWO DIFFERENT NAMES. build_diagnostics()
+# (R/diagnose.R) re-emits every FAILING check as a diagnostic carrying this exact
+# string, and the verdict card prints the diagnostics and the failing checks in one
+# list -- so a failing check's detail appears twice on one screen, once under the
+# diagnostic's wording and once under the check's own. Write it as a self-contained
+# statement of WHAT WAS FOUND, leading with the fault, so it stays true under a
+# heading worded either way. (That the same finding is listed twice at all is not
+# this file's to fix; the emitter and the card own that.)
 .kpi <- function(name, status, expected = NA, actual = NA,
                  discrepancy = NA, detail = "", informational = FALSE) {
   if (identical(status, "na") && !isTRUE(informational)) {
@@ -336,41 +352,91 @@
   # parse, or there was no amount in the money bands). Headings and summary lines
   # are skipped on every healthy statement and mean nothing; these do not.
   #
-  # When MORE rows failed to read than were read, the template is reading the
-  # wrong part of the page. That is not a percentage anybody had to tune - it is
-  # two like quantities compared, and it is indefensible on a real statement.
-  # Measured across every sample in the repo, healthy conversions sit at 4-36%
-  # actionable skips against kept rows; the broken ones are at 100-1300%.
-  #
   # WHY THIS MATTERS: reading 5 rows of a 500-row statement used to pass every
   # check -- transaction_count only requires n > 0 when the statement prints no
   # stated count, and this KPI returned "na". A green run, on the dashboards,
   # missing 99% of the money. That is the exact failure the charter forbids.
-  # THE SMALL-STATEMENT ASYMMETRY. The comparison is fair at 300 rows and fragile
-  # at 5: a 5-transaction statement needs only 5 unreadable rows to trip, and one
-  # unusual "brought forward" line that the summary matcher misses, plus a wrapped
-  # note, can get most of the way there. A 300-row statement would need 300.
   #
-  # So the comparison must carry enough evidence to mean something. Three is the
-  # smallest count that cannot be one stray row plus its neighbour -- below that,
-  # "more missed than read" is noise rather than a finding, and crying wolf on a
-  # small honest statement teaches people to ignore the one warning that matters.
+  # WHAT IT IS MEASURED AGAINST, AND WHY THAT CHANGED. The test used to be "more
+  # rows were missed than captured" (actionable >= kept), calibrated here as
+  # "healthy conversions sit at 4-36% actionable skips against kept rows; the
+  # broken ones are at 100-1300%". That sentence was false, and a file shipped in
+  # this repo falsified it: samples/_private_staging/anz_0382025_feb.pdf converts
+  # PERFECTLY -- 7 transactions whose money-in and money-out agree to the cent,
+  # both directions, with the totals the statement prints on its own page 2 -- and
+  # it sat at 171%, failed this check, and was held back from the dashboards.
+  # Re-measured over every PDF sample in the repo, actionable-against-kept on
+  # conversions that reconcile exactly runs 0, 1, 5, 7, 12, 13, 14, 20, 23, 36,
+  # 64, 78, 129 and 800 per cent. The 800% is an ASB statement with ONE real
+  # transaction and eight lines of account-number / statement-number / page-number
+  # furniture, and it is a perfect read. No threshold on that ratio separates a
+  # healthy conversion from a broken one, because the two quantities are not
+  # comparable: `kept` counts transactions, while `actionable` counts whatever
+  # page furniture happens to carry a digit in a money band -- a phone number in a
+  # footer, an upcoming-payments block, an other-accounts balance line. The number
+  # could not be moved, so the sentence had to go.
   #
-  # Note this is NOT the same as "more rows didn't look like transactions than
-  # did", which is true of most statements and is fine: headings, notes, summary
-  # lines and wrapped text are excluded from `actionable` entirely. The worked
-  # example measures 12 kept, 17 skipped, 0 actionable.
+  # So the old comparison KEEPS its place -- more missed than captured is still
+  # necessary -- and gains the MAGNITUDE guard it never had. What is comparable is
+  # rows against rows over one denominator: of every visual row the reader
+  # examined, how many were transaction-shaped and unreadable? A handful of such
+  # rows on a full page is furniture; a QUARTER of the whole document is not.
+  #
+  # Measured that way (parse_pdf_table's own visual_row_count, the number this KPI
+  # is handed): every PDF sample in the repo that reconciles runs 0-16% -- the
+  # worst is 11 of 67 rows -- while the same statements with the template pushed
+  # off the table run 34-52%, and the one the suite pins (tests/testthat/
+  # test-reconcile.R, tutorial with the date band off its column: 12 unreadable
+  # rows, 31 examined, 0 read) is 39%. A quarter sits above every healthy sample
+  # with room and below every broken one this repo can produce.
+  #
+  # This IS a threshold, and calling it anything else is how the last one survived
+  # being wrong. What makes it safe is not the number, it is that both conditions
+  # must hold and that everything under it is still REPORTED: the "na" row below
+  # states the actionable count in words, and See it on the page lists every
+  # skipped row with its reason. The threshold decides whether the run is held
+  # back, not whether the reviewer is told.
+  #
+  # It is also strictly NARROWER than the rule it replaces (it adds a condition),
+  # so it can only stop a false alarm, never raise a new one -- and narrower is
+  # affordable, because every way a template can be pushed off the table on these
+  # samples reads ZERO rows rather than a few: n == 0 already fails
+  # transaction_count and comes out of convert_statement as "matched the wording on
+  # this statement but read no transactions from it". Be honest that no PARTIAL
+  # read exists in this repo to calibrate against.
+  #
+  # THE SMALL-STATEMENT FLOOR STAYS. Three is the smallest count that cannot be one
+  # stray row plus its neighbour; below that this is noise rather than a finding,
+  # and crying wolf on a small honest statement teaches people to ignore the one
+  # warning that matters.
+  #
+  # Note this is NOT "more rows didn't look like transactions than did", which is
+  # true of most statements and is fine: headings, notes, summary lines and wrapped
+  # text are excluded from `actionable` entirely.
   actionable <- suppressWarnings(as.integer(parsed$actionable_skip_count %||% NA))
-  if (!is.na(actionable) && actionable >= 3L && actionable >= n) {
+  if (!is.na(actionable) && !is.na(visual_rows) && actionable >= 3L &&
+      actionable >= n && actionable * 4L > visual_rows) {
     return(.kpi(
-      "no_unparsed_rows", "fail", expected = n + actionable, actual = n,
-      discrepancy = actionable,
-      detail = sprintf(paste0("%d row(s) on this statement look like transactions but could not be ",
-                              "read, against %d that were - so more of it was missed than captured. ",
-                              "The template is almost certainly reading the wrong part of the page ",
+      "no_unparsed_rows", "fail",
+      # NOTHING IN THE EXPECTED COLUMN. It used to read `n + actionable`: on the
+      # ANZ statement above that printed "Expected 19" beside "Read 7", and the
+      # statement prints no 19 anywhere -- a figure invented by the checker, in the
+      # column a reviewer uses to check the checker, on the one row that quarantines
+      # the run. Expected may hold something the statement PRINTS, or a plain target
+      # for the rows we produced (0, ">0", n); it may never hold a synthesised count
+      # of what the document "should" have contained. The two figures that are real
+      # -- how many rows were read, and how many were transaction-shaped and
+      # unreadable -- are both in the detail and both countable on the page.
+      # balance_reconciliation already declines to print figures it cannot stand
+      # behind; so does this.
+      expected = NA, actual = n, discrepancy = actionable,
+      detail = sprintf(paste0("%d of the %d row(s) the reader examined look like transactions and ",
+                              "could not be read, against %d that were read - more than a quarter ",
+                              "of everything on these pages, and more than were captured. The ",
+                              "template is almost certainly reading the wrong part of the page ",
                               "(most often the date format, or a column band in the wrong place). ",
                               "See it on the page shows which rows and why."),
-                       actionable, n)))
+                       actionable, visual_rows, n)))
   }
   # THE SKIPPED COUNT IS THE MOST ALARMING NUMBER ON THIS ROW, and it sat beside a
   # Result column reading "could not be checked" with nothing to size it. The
@@ -480,13 +546,30 @@
   # check alone -- typical of combined/multi-account statements where the balance
   # column resets between sections -- should not drag trust to "low". The result
   # still surfaces as needs-review (a KPI failed), but honestly rated medium.
+  #
+  # THE REASON JUSTIFIES THE LEVEL. IT DOES NOT GRADE THE OTHER CHECK.
+  # It used to add "the running-balance / period checks are secondary and commonly
+  # flag on combined/multi-account statements". On a real needs_review run that
+  # sentence was printed directly above a HIGH diagnostic reading "This upload looks
+  # like more than one statement bundled together, which corrupts a single parse.
+  # Split it into one statement per file and re-run" -- so the tool excused, as
+  # commonplace, the exact condition another line of the same screen was calling
+  # corrupting. This function cannot see the diagnostics (build_diagnostics runs
+  # AFTER reconcile and takes its output), so it can never know whether something
+  # worse is being said elsewhere on the run -- which means it must not rank the
+  # failing check at all. State the fact that earns the medium, say plainly that it
+  # does not clear anything, and leave the grading to the surfaces that can see the
+  # whole run.
   if (identical(level, "low")) {
     fails <- applicable$name[applicable$status == "fail"]
     bal_pass <- any(applicable$name == "balance_reconciliation" & applicable$status == "pass")
     secondary <- c("running_balance_continuity", "dates_within_period")
     if (bal_pass && length(fails) && all(fails %in% secondary)) {
       level <- "medium"
-      reasons <- c(reasons, "balance fully reconciles (opening + every transaction = closing); the running-balance / period checks are secondary and commonly flag on combined/multi-account statements")
+      reasons <- c(reasons, paste(
+        "balance fully reconciles (opening + every transaction = closing), which is why this is rated",
+        "medium rather than low - it does NOT clear the check(s) that failed, and it says nothing about",
+        "anything else flagged on this run; read those before relying on the figures"))
     }
   }
 

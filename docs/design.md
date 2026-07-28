@@ -557,11 +557,18 @@ suite fails you on. In this order:
    against the list in step 2: a check with no wording fails the suite, and so does
    wording for a check that no longer exists. The label must claim only what the
    check proves — invariant 3 forbids specific overclaims by name.
-4. **If it can `fail`:** a `.DIAG_FIX_OWNER` entry in **`R/diagnose.R`** *and* a
-   matching `DIAG_PLAIN` entry in **`ui_labels.R`**. `test-seams.R` compares those
-   two sets both ways too, so a new diagnostic category needs both or neither.
-   `build_diagnostics()` is where the how-to-fix sentence gets written, and it is
-   worth writing — but it is not what the test reads, so it will not stop you.
+4. **If it can `fail`:** three edits, not two, and the third is the one that
+   catches people out. A `.DIAG_FIX_OWNER` entry in **`R/diagnose.R`**, a matching
+   `DIAG_PLAIN` entry in **`ui_labels.R`**, and — in the same file — a
+   **`.KPI_DIAGNOSIS` entry keyed by your check's name**, which is what actually
+   *raises* the category when the check fails and carries its where / severity /
+   how-to-fix sentence. `test-seams.R` compares the first two sets both ways, and
+   `test-diagnose.R` re-derives the set the file can really raise by reading it,
+   so declaring a category that nothing raises fails the suite as a **dead row**
+   (`sort(setdiff(names(.DIAG_FIX_OWNER), raised)) not equal to character(0)`).
+   Adding the `.KPI_DIAGNOSIS` entry is what clears it; without one, a failing
+   check falls back to a generic "review this check against the source
+   statement", under the wrong category and the wrong owner.
 5. **If it is a count rather than a verdict:** pass `informational = TRUE` in the
    builder *and* add the name to `INFORMATIONAL_CHECKS` in **`ui_labels.R`**.
    `test-seams.R` re-derives the engine's list by reading `R/reconcile.R` for
@@ -569,15 +576,65 @@ suite fails you on. In this order:
    your count renders as *could not be checked* — precisely the silent lie the
    fourth result word exists to prevent.
 
-**Expect existing tests to fail, and read the fixture before you read your
-check.** `.tx()` and the other helpers in `test-reconcile.R` build *minimal*
-statements — three amounts, no balance column, no period — so a new check very
-often fires on them, and none of the failures will name it. What you will see is
-`any(r$kpis$status == "fail") is not FALSE` inside a test about something else
-entirely (date-year inference, trust capping), because those tests assert that
-the whole KPI set is clean. That is the fixture being too thin for your check,
-not your check being wrong — but decide it by reading the fixture, and fix
-whichever is actually at fault.
+#### Adding a check breaks about thirty tests. Read this before you start.
+
+Not three. **Measured on 2026-07-28**: adding one ordinary check (*was the
+statement period read?*), with all five steps above followed completely, took the
+suite from green to **27 failed + 1 error, in 17 tests across 10 files**. That is
+the expected outcome of a correct change, not a sign you did it wrong.
+
+Two things make it worse than the number:
+
+- **The runner shows you ten of them.** `tests/run_tests.R` uses testthat's
+  `SummaryReporter`, which stops after ten and prints *"Maximum number of 10
+  failures reached, some test results may be missing."* Two thirds of the
+  evidence is off-screen, and the ten you get are alphabetical, not important.
+- **Almost none of them name your check.** Fifteen of the twenty-seven are one
+  fact repeated: a failing check turns the run's status from `ok` to
+  `needs_review`, so every test asserting a clean conversion fails with
+  `r$status not identical to "ok"` — and the feed gate then refuses to write, so
+  a test that reads the feed CSV afterwards **errors** on a file that was never
+  created.
+
+**So, in this order:**
+
+1. **Record the baseline first.** Run `Rscript tests/run_tests.R` before you
+   touch anything and keep the numbers. Everything below is a subtraction.
+2. **See all of it.** Raise the reporter's cap. Same run as `run_tests.R` —
+   sources `R/`, sets `ENGINE_ROOT`, same directory — with nothing hidden. One
+   line, from the repo root:
+
+   ```
+   Rscript -e 'suppressMessages(library(testthat)); for (f in list.files("R", pattern="[.]R$", full.names=TRUE)) source(f); Sys.setenv(ENGINE_ROOT = normalizePath(".")); test_dir("tests/testthat", reporter = SummaryReporter$new(max_reports = 999L), stop_on_failure = FALSE)'
+   ```
+
+   It prints every failure instead of the first ten. It does **not** replace
+   `run_tests.R`: only the runner enforces the skip rule and the exit status, so
+   use this to read the damage and `run_tests.R` to decide whether you are done.
+
+3. **Read the per-bank golden tests first — they are the only ones that are
+   evidence about your check.** Twelve of the twenty-seven were the six shipped
+   bank fixtures (`test-anz_everyday_csv.R`, `test-anz_creditcard_csv.R`,
+   `test-asb_everyday_csv.R`, `test-bnz_everyday_csv.R`,
+   `test-kiwibank_everyday_csv.R`, `test-westpac_everyday_csv.R`) reporting
+   `any(k$status == "fail") is not FALSE` and a trust level that is no longer
+   high or medium. Those are **real bank statements**. A check that fires on six
+   of six is a check that is wrong, or one that should have returned `NULL`
+   because it does not apply — not a fixture that is too thin.
+4. **Then the seam tests**, which are the ones that actually name what you
+   missed: `test-diagnose.R`'s dead-category failure means step 4 above is only
+   half done, and `test-seams.R` fails you for missing wording.
+5. **The status cascade last** (`test-convert.R`, `test-batch.R`,
+   `test-jobs.R`, `test-feed.R`). Fixing 3 fixes all of these at once; there is
+   nothing to read in them individually.
+
+**Where this does *not* land, despite what you would expect:**
+`test-reconcile.R` did not fail at all. It has exactly one test that asserts the
+whole KPI set is clean (`expect_false(any(r$kpis$status == "fail"))`, inside
+*date_year_inferred caps trust*), and its `.parsed()` helper fills in a period,
+balances and a stated count — so it is often the *least* thin fixture in the
+suite, not the most. If it does fail, read the fixture before you read your
+check and decide honestly which is at fault; but do not start there.
 
 ### To change a threshold
 

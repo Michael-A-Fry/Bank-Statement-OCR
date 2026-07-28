@@ -11,6 +11,8 @@ thing. Everything here is a pointer — the detail is in the file named.
 ```
   a file            app.R (Convert)
      |              R/uploads.R          keep a copy, so a failed format can be picked up
+     |              R/jobs.R             everything below runs in its OWN child R process,
+     |                                   polled from app.R; queued past the cap, and said so
      v
   READ              R/read_input.R  ->  read_pdf / read_delimited / ocr(+ocr_preprocess)
      |                                  one shape whatever the format: pages, words, table
@@ -55,6 +57,7 @@ falls back to the FORM pipeline (`R/forms.R`, `R/extract_fields.R`) for a labell
 | Explaining a bad run | `R/diagnose.R` | `.DIAG_FIX_OWNER` says WHO fixes each category (you / the file / a developer). |
 | Downloads | `R/outputs.R` | Same table for the workbook and the CSV, built once. |
 | Dashboards | `R/feed.R` | `.feed_gate()` is machine-only: no human can wave a conversion through. |
+| Running it at all | `R/jobs.R` | Every conversion runs in its own child R process, so one long OCR cannot freeze the team. The cap is threads as well as processes; the file head has the measurements. |
 | Settings | `R/config.R` | Every deployment setting; an absent key falls back to the built-in default. |
 | Tuning numbers | `R/params.R` | Every threshold, named once. Catalogue: [engine-parameters.md](engine-parameters.md). |
 
@@ -89,7 +92,7 @@ being shown `amount_direction`.
 | Teach a wording ("balance at start" = opening balance) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Label dictionary**, plain English |
 | Teach a marker word ("cow" means money out) | `dictionaries/lexicon.yaml` | admin — **Admin → Data capture → Words the tool knows to look for** |
 | Reword anything on screen | `ui_labels.R` / `ui_content.R` | analyst with an editor |
-| Add a check | `R/reconcile.R` (builder + the list), `CHECK_PLAIN`, `.KPI_DIAGNOSIS` | maintainer — the file head lists all four |
+| Add a check | `R/reconcile.R` (builder + the list), `CHECK_PLAIN`, and — if it can fail — `.KPI_DIAGNOSIS` + `.DIAG_FIX_OWNER` + `DIAG_PLAIN` | maintainer — [`../design.md`](../design.md) §8 has the full recipe **and the measured blast radius**: adding a check turns the suite red in about thirty places, and the runner shows you ten of them |
 | Move a threshold | `R/params.R` | maintainer → [engine-parameters.md](engine-parameters.md) |
 | Change what reaches Qlik | `config/config.yaml` → `feed:` | admin → [connecting-qlik.md](../operational/connecting-qlik.md) |
 | Change a deployment setting | `config/config.yaml` | admin — copy from `config.example.yaml` |
@@ -98,8 +101,10 @@ being shown `amount_direction`.
 
 ## Ten people at once
 
-There is no lock, no queue, no database and nothing to tune, because **nothing is
-ever appended to a shared file.**
+Two separate stories, and they used to be confused for each other.
+
+**Nothing on disk can collide, because nothing is ever appended to a shared
+file.** There is no lock and no database:
 
 - Each conversion writes its outputs into its own `tempfile()`-unique directory.
 - Each writes **one** run record, `logs/runs/<run_id>.json`. A clashing id gets a
@@ -115,6 +120,23 @@ operation that genuinely can interleave and corrupt; one-file-per-event sidestep
 it. Shiny sessions are isolated, so nobody sees another person's upload or
 result. The one deliberately shared resource is the template library — a team
 asset, not user data.
+
+**The CPU is a different story, and there IS a queue.** R is single-threaded and
+one Shiny process serves the whole team, so an engine call made inside the
+Convert observer froze every other analyst's browser for as long as it ran.
+`R/jobs.R` fixes that: each conversion runs in **its own short-lived R process**
+(`system2(wait = FALSE)`, polled from `app.R` with `invalidateLater()` — base R
+and base Shiny, no new dependency), and the child reports back through files in
+its own job directory so a child that dies is still a result and not a hang.
+
+That makes concurrency real, which makes a cap necessary. `app.max_concurrent_jobs`
+is the tunable; absent, `job_max_concurrent()` works one out from the box. It
+caps **threads as well as processes** — `tesseract` is OpenMP-parallel and takes
+a thread per core by default, so three uncapped OCR jobs on a four-core box are
+twelve threads over four cores and finish nothing. Anyone past the cap is queued
+**and told they are queuing**; a silent wait is the screen failure the charter
+forbids. Read the file head before changing any of this: the measurements that
+chose a process per conversion over a worker pool are written down there.
 
 ## Three rules the code is built around
 

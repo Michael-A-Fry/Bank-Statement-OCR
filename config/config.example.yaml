@@ -20,6 +20,19 @@ app:
   # Biggest statement a user may upload, in MB. Shiny's own default is only 5 MB,
   # which rejects scanned statements; 200 comfortably fits a year-long 300-dpi scan.
   max_upload_mb: 200
+  # How many statements the server may convert AT THE SAME TIME. Each conversion
+  # runs in its own short-lived R process, so one analyst's scanned statement no
+  # longer freezes everybody else's page - but the machine has only so many cores.
+  # THE TRADE-OFF: higher lets more analysts convert at once, and past the core
+  # count they all get slower together (OCR is CPU-bound) and memory climbs, on
+  # the same box that has to keep serving every browser. Lower keeps each
+  # conversion fast and makes people queue - which the screen tells them, by
+  # name and by position, so a wait is never silent.
+  # Leave it out and it works itself out from the hardware: one less than the
+  # core count, never fewer than 2, never more than 6. Set it only if you have
+  # measured this server. 1 means strictly one at a time (still queued, still
+  # announced - the old behaviour, minus the frozen pages).
+  # max_concurrent_jobs: 3
   # Whether Convert's "Include user-created templates" box starts TICKED. true, so
   # a template someone builds here really does convert that bank automatically from
   # then on. This does NOT loosen governance: what reaches Qlik is gated separately

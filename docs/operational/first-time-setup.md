@@ -37,8 +37,10 @@ Double-click **`RUN-ME.bat`**.
 The first run installs a private copy of R inside the folder, installs the R
 packages, sets up Poppler and Tesseract, **copies `config\config.example.yaml` to
 `config\config.yaml`** — which is why step 4 finds the placeholder password
-already in it — and starts the app on `http://<this-server>:8100`. Every run
-after that just starts it.
+already in it — and starts the app on port **8100**. Every run after that just
+starts it. The console line naming a URL contains the literal placeholder
+`<this-vm>`; the app cannot know what name your network calls this box, so
+substitute the server's own name or IP yourself.
 
 `RUN-ME.bat` is the only thing that does that setup. If you are not on Windows,
 the equivalent start command is `Rscript scripts/run_app.R` from the app folder,
@@ -71,7 +73,7 @@ then **restart the app**.
 
 ## 5 — Open the firewall port
 
-On the server itself, browse to the printed address. It works.
+On the server itself, browse to `http://localhost:8100`. It works.
 
 For anyone else to reach it, open the port once. Windows Server blocks
 unsolicited inbound TCP by default, so until you do this the app works on the

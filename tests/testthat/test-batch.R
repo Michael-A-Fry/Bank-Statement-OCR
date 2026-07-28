@@ -236,11 +236,25 @@ test_that("the app no longer asks convert_batch to keep the rows", {
   # the case comes back "failed: unused argument". Nothing else in the suite runs
   # the app's batch path, so this seam is the only thing that would notice.
   expect_false("keep_rows" %in% names(formals(convert_batch)))
-  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
-  i <- grep("convert_batch\\(paths,", src)
-  expect_length(i, 1L)
-  blk <- src[i:min(length(src), i + 16L)]
-  expect_false(any(grepl("keep_rows", blk, fixed = TRUE)))
+  # This used to grep app.R for one exact call spelling. When the batch moved into
+  # a child process the call moved to R/jobs.R, the grep found nothing, and the
+  # guard did not fail loudly -- it errored on `src[integer(0)]`, which reads as a
+  # broken test rather than a broken seam. Ask the invariant of every caller
+  # instead, wherever it lives, so moving the call cannot silently disarm this.
+  roots <- c(file.path(engine_root(), "app.R"),
+             list.files(file.path(engine_root(), "R"), "\\.R$", full.names = TRUE))
+  callers <- Filter(function(f) any(grepl("convert_batch(", readLines(f, warn = FALSE),
+                                         fixed = TRUE)), roots)
+  expect_gt(length(callers), 0L)          # if nobody calls it, this guard is asleep
+  for (f in callers) {
+    src <- readLines(f, warn = FALSE)
+    for (i in grep("convert_batch(", src, fixed = TRUE)) {
+      blk <- src[i:min(length(src), i + 16L)]
+      expect_false(any(grepl("keep_rows", blk, fixed = TRUE)),
+                   info = sprintf("%s:%d forwards keep_rows into convert_batch",
+                                  basename(f), i))
+    }
+  }
 })
 
 test_that("a form is counted in the values read, never in transactions", {

@@ -24,9 +24,12 @@ Three pages read straight through, for whoever needs the whole thing at once:
 
 Then one page per job:
 
-- **[Operational](docs/operational/README.md)** — how to *do* things: set it up,
-  convert statements, add a bank, fix what looks wrong, run it, back it up,
-  update it, admin, and wire up Qlik.
+- **[For analysts](docs/for-analysts/README.md)** — the four pages a forensic
+  accountant needs and nothing else: convert a statement, teach it a new bank,
+  work out what to do when something looks wrong, describe a layout safely. This
+  is the folder to hand to somebody new.
+- **[Operational](docs/operational/README.md)** — how to *do* things: the four
+  above, plus set it up, run it, back it up, update it, admin, and wire up Qlik.
 - **[Context](docs/context/README.md)** — how it works and why: the charter, the
   data contract, the engine parameters, the edge-case register, the findings
   register, the roadmap.

@@ -392,3 +392,129 @@ test_that("the Convert screen shows an auto-split bundle statement by statement"
   expect_true(any(grepl("uiOutput\\(\"cv_split\"\\)", src)))
   expect_true(grepl("split-table", joined))
 })
+
+# ---------------------------------------------------------------------------
+# THE FORM RESULT: the card counts contested labels, and the table must NAME the
+# same ones. convert_form() (R/forms.R) counts the `conflict` column into "N
+# label(s) appear more than once with different values"; the Values-found table
+# marked only `flagged` (required and not found), so on a real ANZ KiwiSaver
+# summary the card said three and the NEEDS A LOOK column was empty on all seven
+# rows. A reviewer told that three of seven figures are contested and not which
+# three has to distrust all seven -- the opposite of what the message is for.
+.app_helper <- function(name) {
+  src <- .src("app.R")
+  env <- new.env(parent = globalenv())
+  lab <- file.path(engine_root(), "ui_labels.R")
+  skip_if_not(file.exists(lab))
+  sys.source(lab, envir = env)
+  i <- grep(sprintf("^\\s*\\Q%s\\E <- function", name), src, perl = TRUE)
+  expect_length(i, 1L)
+  for (j in seq(i[1], min(i[1] + 250L, length(src)))) {
+    f <- tryCatch(eval(parse(text = paste(src[i[1]:j], collapse = "\n"))[[1]], envir = env),
+                  error = function(e) NULL)
+    if (is.function(f)) return(f)
+  }
+  fail(paste("could not lift", name, "out of app.R"))
+}
+
+test_that("every conflicted form field the card counts is marked on the table", {
+  look <- .app_helper(".field_needs_look")
+  f <- data.frame(field = c("a", "b", "c", "d"),
+                  flagged  = c(FALSE, FALSE, TRUE, TRUE),
+                  conflict = c(FALSE, TRUE, FALSE, TRUE),
+                  stringsAsFactors = FALSE)
+  got <- look(f)
+  expect_identical(got[1], "")                              # clean row: nothing said
+  expect_match(got[2], "appears more than once")            # the card's own fact
+  expect_match(got[3], "required and not found")
+  expect_match(got[4], "required and not found")            # both, not the first match
+  expect_match(got[4], "appears more than once")
+  # the count the card prints and the count the table marks are the same number,
+  # because both are sum(conflict)
+  expect_identical(sum(nzchar(got[f$conflict])), sum(f$conflict))
+  # a frame with no conflict column at all (an older result) still renders
+  expect_identical(look(data.frame(flagged = c(TRUE, FALSE))), c("yes - required and not found", ""))
+})
+
+test_that("the two Needs-a-look sentences are wording, kept with the other wording", {
+  L <- .ui_labels()
+  expect_setequal(names(L$FIELD_LOOK_PLAIN), c("flagged", "conflict"))
+  # ...and those are really the engine's own two columns on a field
+  ef <- .src("R/extract_fields.R")
+  expect_true(any(grepl("flagged  = required && !res\\$matched", ef)))
+  expect_true(any(grepl("conflict = res\\$conflict", ef)))
+})
+
+# ---------------------------------------------------------------------------
+# WHICH SKIPPED ROWS "LOOK LIKE TRANSACTIONS" IS THE ENGINE'S ANSWER, NOT A
+# SEARCH OF ITS PROSE. The X-ray drew its amber boxes, counted its key and sorted
+# its table with grepl("didn't parse|no amount", reason) -- and the heading
+# sentence is "no date and no amount - treated as a heading, note or wrapped
+# line", which contains "no amount". So the picture called 26 rows on page 1 of a
+# real Westpac statement "a skipped row that looks like a transaction" against
+# the engine's 2, and the table beside it called those same rows headings. One
+# screen, two answers, about one row.
+test_that("the X-ray asks the engine which skipped rows look like transactions", {
+  src <- .src("app.R")
+  # The prose search is gone from every one of the three places that had it. Read
+  # off the PARSER's own string tokens, so the comment above .ix_unread that
+  # quotes the old pattern (and should stay) cannot pass for a live search.
+  pd <- utils::getParseData(parse(file.path(engine_root(), "app.R"), keep.source = TRUE))
+  lits <- pd$text[pd$terminal & pd$token == "STR_CONST"]
+  expect_gt(length(lits), 100L)                          # the scan must not go quiet
+  expect_identical(grep("didn't parse\\|no amount", lits, value = TRUE), character(0))
+  expect_gte(length(grep("\\.ix_unread\\(", src)), 4L)   # helper + its three callers
+  unread <- .app_helper(".ix_unread")
+  rows <- data.frame(
+    kept   = c(TRUE, FALSE, FALSE, FALSE, FALSE),
+    reason = c("", .PDF_ROW_REASON_TEXT[["heading_or_note"]],
+               .PDF_ROW_REASON_TEXT[["summary_line"]],
+               .PDF_ROW_REASON_TEXT[["date_unparsed"]],
+               .PDF_ROW_REASON_TEXT[["amount_missing"]]),
+    stringsAsFactors = FALSE)
+  expect_identical(unread(rows), c(FALSE, FALSE, FALSE, TRUE, TRUE))
+  # the heading sentence really does contain the words the old search looked for
+  expect_true(grepl("no amount", .PDF_ROW_REASON_TEXT[["heading_or_note"]], fixed = TRUE))
+  # and the engine's own predicate agrees, row for row
+  expect_identical(unread(rows),
+                   !rows$kept & pdf_reason_actionable(rows$reason))
+})
+
+test_that("the layer, the key and the engine use one name for that one fact", {
+  L <- .ui_labels()
+  src <- .src("app.R")
+  joined <- paste(src, collapse = "\n")
+  for (nm in c("UNREAD_ROW_PLAIN_LAYER", "UNREAD_ROW_PLAIN_KEY")) {
+    expect_true(nzchar(L[[nm]]))
+    expect_true(grepl(nm, joined, fixed = TRUE))     # the screen really uses it
+  }
+  # "Skipped rows" named a layer that drew only the unread ones, so ticking it and
+  # counting the table's rows gave two different numbers
+  expect_false(grepl('"Skipped rows" = "skipped"', joined, fixed = TRUE))
+  # both say "looks like a transaction", which is the verdict card's phrase for
+  # the same rows (R/reconcile.R, no_unparsed_rows)
+  expect_match(L$UNREAD_ROW_PLAIN_KEY, "looks like a transaction")
+  expect_match(L$UNREAD_ROW_PLAIN_LAYER, "look like transactions")
+  expect_true(any(grepl("look like transactions", .src("R/reconcile.R"))))
+})
+
+# ---------------------------------------------------------------------------
+# ONE FAULT, ONE BULLET. "What to check" is built from two frames -- the top
+# diagnostics and the failing checks -- and the engine writes the SAME sentence
+# into both when they describe the same fault. On a real ASB statement the list
+# read "dates couldn't be read - no row dates could be read ..." immediately
+# followed by "Row dates could be read - no row dates could be read ...": one
+# fault twice, the second bullet named by what its check PROVES, which beside a
+# failure says the opposite of what happened.
+test_that("a fault listed as a diagnostic is not listed again as a check", {
+  src <- .src("app.R")
+  i <- grep("failed_checks_ui <- function", src)
+  expect_length(i, 1L)
+  blk <- paste(src[i:min(i + 12L, length(src))], collapse = " ")
+  expect_match(blk, "f\\$detail %\\|\\|% \"\"\\) %in% dg\\$detail")
+  # and a failing check says it failed, the way the batch table's column does
+  # (ui_labels.R, plain_failing_check: CHECK_PLAIN words a check as what it
+  # PROVES, which beside a failure and with no pass/fail column says the opposite)
+  expect_match(paste(src, collapse = "\n"), 'sprintf\\("Failed: %s", plain_check')
+  expect_match(.ui_labels()$plain_failing_check("check:dates_readable"), "^Failed: ")
+})

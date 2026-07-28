@@ -26,6 +26,7 @@ setwd(app_dir)
 suppressWarnings(tryCatch({
   source(file.path(app_dir, "R", "util.R"))
   source(file.path(app_dir, "R", "config.R"))
+  source(file.path(app_dir, "R", "jobs.R"))     # for the concurrency line printed below
 }, error = function(e) NULL))
 .cfg <- tryCatch(load_config(), error = function(e) NULL)
 # A config.yaml that does not parse reverts to built-in defaults -- including the
@@ -49,6 +50,15 @@ port <- suppressWarnings(as.integer(Sys.getenv("BSO_PORT", as.character(cfg_port
 if (is.na(port)) port <- cfg_port
 cat(sprintf("Statement Studio — starting on port %d (from %s). Open http://<this-vm>:%d\n",
             port, app_dir, port))
+# How many statements this server will convert at once. Say it HERE, where the
+# operator is looking: each conversion is its own R process now, so this number
+# is the load the box will actually take, and anyone past it is told they are
+# queuing. Worth seeing on the console the day someone raises it in config.yaml.
+suppressWarnings(tryCatch({
+  .cap <- job_set_max_concurrent(.cfg$app$max_concurrent_jobs)
+  cat(sprintf("Converting up to %d statement(s) at once (app.max_concurrent_jobs). Anyone past that is queued and told so.\n",
+              as.integer(.cap)))
+}, error = function(e) NULL))
 # Match app.R's upload ceiling here too: this script is how the server actually
 # starts, and Shiny's 5 MB default would reject the scanned statements the OCR path
 # exists for before they ever reach the engine.

@@ -4,9 +4,20 @@ Start it, keep it running after reboots, change its settings.
 
 ## Start / stop
 
-- **Start:** double-click **`RUN-ME.bat`** in the app folder. It prints
-  `http://<this-server>:8100`. Leave the window open.
+- **Start:** double-click **`RUN-ME.bat`** in the app folder. Leave the window
+  open.
 - **Stop:** `Ctrl-C` in that window, or close it.
+
+**It does not print an address you can click.** Its startup line names the port
+and the folder it is running from, and then says `Open http://<this-vm>:8100` —
+where `<this-vm>` is printed exactly like that. It is a placeholder the app does
+not fill in, because it does not know what name your network calls this box.
+Shiny then prints `Listening on http://0.0.0.0:8100`, which means "every network
+card", not an address either.
+
+Substitute the server's own name or IP yourself: `http://<server-name>:8100`.
+What those two lines *do* prove is the port it actually came up on, which is the
+thing worth reading when you have changed `app.port`.
 
 `RUN-ME.bat` is the Windows server's way in, and it does more than start the app:
 it installs the private R the first time, seeds `config\config.yaml` from the
@@ -18,9 +29,19 @@ Rscript scripts/run_app.R
 ```
 
 It reads the port and the upload ceiling from `config\config.yaml`, prints the
-address, and warns on the console if the settings file did not parse or the admin
-password is still the placeholder. It does **not** do any of the setup — it will
-not create `config\config.yaml` for you (see **Settings** below).
+port it is starting on and the folder it is running from, says how many
+statements it will convert at once, and warns on the console if the settings file
+did not parse or the admin password is still the placeholder. It does **not** do
+any of the setup — it will not create `config\config.yaml` for you (see
+**Settings** below).
+
+The concurrency line reads *"Converting up to N statement(s) at once
+(app.max_concurrent_jobs). Anyone past that is queued and told so."* Each
+conversion runs in its own short-lived R process, so one person converting a
+scanned statement no longer freezes everybody else's browser. N comes from
+`app.max_concurrent_jobs` in `config\config.yaml`; leave it out and the app works
+one out from the box. Anyone past N is queued and told they are queuing — nobody
+gets a dead screen.
 
 Anyone on the network opens `http://<server-name>:8100` in a browser. Nobody else
 installs anything — but the first time, that needs one firewall rule.

@@ -20,37 +20,76 @@ Open **Show me how it read this** under the verdict. Everything below lives ther
 ## Reading the Diagnostics table
 
 Five columns: **Where**, **What**, **Severity**, **Detail**, **How to fix**.
-*Where* is the part of the statement — a row range, `file`, `detection`,
-`redactions`, `pages (OCR)`. *What* is the problem in plain words. *Detail* is
-the evidence. **The How to fix column is the one that tells you whose job it
-is**, and it does it by naming the action:
 
-| If How to fix says… | It is | Do |
-|---|---|---|
-| anything naming **the toolkit** — "re-map it in the template toolkit", "fix the Date column / format", "set the correct amount style", "check this template's delimiter and header/footer settings" | **yours, and it is most problems** | Open the toolkit on this file, change that one setting, watch the preview, Save. |
-| **split** it into one statement per file · **re-export** at a standard page size · **re-scan** at higher DPI · "check those pages against the source PDF" | **the file's** | Back to whoever supplied it: one statement per file, a cleaner scan, or the bank's CSV/Excel export instead of the PDF. |
-| **compare** · **check** · **review** · **spot-check** — "compare the total against the source", "check the rows around the break", "review per account", "spot-check machine-read values against the image" | **a look, not a fix** | The figures were extracted; they want a human glance against the statement. |
-| **"No action needed"**, or a plain statement of what the PDF says about itself | **nothing** | Informational. Redactions kept as `[REDACTED]`, OCR was used, the PDF names the tool that wrote it. |
-| none of the above, and nothing in it you can act on | **not yours** | Report it (below). Rare, and it means the engine needs a general improvement that then helps every bank. |
+- **Where** is the part of the *run* the row is about, and it is usually **not**
+  a place in the statement. Only three of its forms point at rows —
+  `rows 4,9,12`, `rows 1,2 (date)`, `rows 3 (amount)`. The rest name a stage:
+  `file`, `upload`, `document`, `detection`, `template`, `template period`,
+  `parse`, `rows`, `dates`, `completeness`, `balance check`, `running balance`,
+  `amount direction`, `currency`, `redactions`, `pages (OCR)`, `OCR text`, or a
+  bare `check`. On a run with nothing at all to note it is a bare `-`. On a file
+  the tool split into several statements, each row's *Where* carries
+  `[statement 2]` on the end so you can tell which one it is about.
+- **What** is the problem in plain words, from a fixed list of twenty-seven.
+  Every one of them is in the table below.
+- **Detail** is the evidence — the figures, the row numbers, the wording it
+  looked for.
+- **How to fix** is a full sentence written for this statement.
 
 Severity orders the table — **high** first, then **medium**, then **info** — so
 the first row is always the one worth reading.
 
+### Whose job is it? Read the *What* column
+
+Every phrase the *What* column can print, and what it means for you:
+
+| What it says | Whose job |
+|---|---|
+| layout not recognised · more than one template fits · matched the wording, read no transactions · the balance doesn't add up · running balance jumps · row count doesn't match · rows didn't parse · dates couldn't be read · dates in a different style than expected · date range doesn't look right · amounts couldn't be read · money in / out may be the wrong way round | **Yours, and it is most problems.** Open the toolkit on this file, change the one setting the *How to fix* sentence names, watch the preview, Save. |
+| file could not be read · a scan with no readable text · several statements in one file · unusually large file · unusually large page · scan read with low confidence · scan quality unknown · completeness not auto-verified | **The file's.** Back to whoever supplied it: one statement per file, a cleaner scan at a higher DPI, a standard page size, or the bank's CSV/Excel export instead of the PDF. |
+| several accounts in one statement · more than one currency · page(s) machine-read (OCR) | **A look, not a fix.** The figures were extracted. Read the *How to fix* sentence and give the data the glance it asks for. |
+| redactions found and kept · what the PDF says about itself · no issues found | **Nothing.** Stated for the record. |
+| hidden text could not be checked | **Stop.** The tool could not prove that text under a black box stayed hidden. **Do not release this output.** It is not the file's fault and not yours — the server is missing its image reader. Tell the maintainer. |
+
+**"info" does not mean "nothing to do".** Six kinds of row are *info* severity
+and three of them still ask you for something:
+
+- *several accounts in one statement* — **info**, and its *How to fix* ends
+  "review per account". If transactions from more than one account are mixed,
+  the running balance is not continuous across them, which is exactly the kind
+  of thing that looks like a break and is not one.
+- *page(s) machine-read (OCR)* — **info**, and it says "spot-check machine-read
+  values against the image".
+- *more than one currency* — **info**, and it asks you to confirm how the
+  foreign-currency lines are handled downstream.
+- *redactions found and kept* — **info**, and it really does say "No action
+  needed".
+- *what the PDF says about itself* — **info**, and it says "No action — this is
+  recorded, not a problem", then adds one conditional: if the origin of the
+  document matters to this case, compare those details against the copy the bank
+  issued.
+- *no issues found* — **info**, and it is the whole table. Described at the end
+  of this section.
+
+So read the sentence, not the severity word.
+
 **A clean run still has rows here, and that is normal.** The table is a record of
 what the tool noticed, not a list of faults, so *Converted successfully* and
 *Sent to the dashboards* routinely sit above one, two or three diagnostic rows.
-Two real examples, both clean, both published:
+Two real examples, both clean, both published, both re-run on 2026-07-28:
 
 | Statement | What the Diagnostics table showed |
 |---|---|
-| A 7-row CSV with no balances printed | one **medium** row — *completeness not auto-verified*, "no balance or stated count to reconcile against" |
-| A 311-row PDF | two **info** rows — *several accounts in one statement*, and *what the PDF says about itself* |
+| A 7-row CSV with no balances printed | one **medium** row — Where `completeness`, What *completeness not auto-verified*, Detail "no balance or stated count to reconcile against" |
+| A 311-row, 11-page PDF | two **info** rows — Where `upload`, *several accounts in one statement*, "5 account numbers appear in one statement period"; and Where `document`, *what the PDF says about itself* |
 
-Read the severity and the *How to fix* column, not the row count:
+Both of those are *Converted successfully*, confidence **medium**, published to
+the dashboards — with rows on this table. Read the *How to fix* sentence, not the
+row count and not the severity word:
 
-- **info** is a note, never a problem. "5 account numbers appear in one statement
-  period", "the PDF says it was written by …". *How to fix* says **No action
-  needed**, and that is the whole message.
+- **info** is a note. It is not always "nothing to do" — see the five kinds
+  above. On the 311-row PDF, one of the two info rows asks you to review per
+  account.
 - **medium** on *completeness not auto-verified* is the same fact the confidence
   level already told you: the statement prints no balance and no count, so
   nothing could prove a row was not dropped. It is an absence of proof, not a
@@ -62,14 +101,19 @@ Read the severity and the *How to fix* column, not the row count:
 
 The single row reading *No issues detected; all applicable checks passed* is real
 but rare — it appears only when the tool found **nothing at all** to note, which
-a statement with any structure to it almost never manages. Its absence is not a
-sign that something is wrong.
+a statement with any structure to it almost never manages. You will know it by
+its shape as much as its words: *Where* and *How to fix* are both a bare `-`, and
+*What* reads *no issues found*. Its absence is not a sign that something is
+wrong.
 
 The **Diagnostics** sheet in the downloaded workbook holds these same rows, plus
 one extra column the screen leaves off: a short `fix_owner` code (`template`,
-`input`, `review`, `none`, `escalate`) that says the same thing as the table
-above in one word. It is there for whoever maintains the tool; you do not need it
-to act.
+`input`, `review`, `none`, `escalate`) that says in one word what the table above
+says in a row. It is there for whoever maintains the tool; you do not need it to
+act, and where it disagrees with the *How to fix* sentence the sentence is the
+one written for your statement. One row disagrees today: *page(s) machine-read
+(OCR)* is coded `none` while its sentence asks you to spot-check the machine-read
+values against the image. Do what the sentence says.
 
 ## The three most common causes, in order
 

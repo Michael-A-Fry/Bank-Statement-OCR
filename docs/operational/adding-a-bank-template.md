@@ -143,21 +143,45 @@ When you do:
   statements, and tells you which phrase was the problem.
 
 **Currency** is in the same panel, and it is the one setting in there that is
-wrong quietly. The tool reads it off the money on your own statement: a currency
-**code** printed against the figures wins (`AUD 25.00` saves as AUD), and a
-distinct symbol is next (`£25.00` saves as GBP). Two cases it cannot resolve, and
-both fall back to **NZD** for you to confirm:
+wrong quietly. The tool reads it off the money on your own statement — the money
+cells only, never a description, because `VISA PURCHASE USD 25.00` is one
+customer's foreign purchase, not the currency the statement is printed in.
 
-- **A bare `$`.** It is the New Zealand, Australian and US dollar alike and the
-  glyph does not say which — nothing on the page names one, so nothing is guessed.
-- **Figures with no mark at all** — most NZ statements print `1,234.56` — and
-  anything self-contradictory, such as two different symbols on the figures.
+**How it decides.** It collects every currency it can name from the figures, and
+it saves that name **only if there is exactly one of them**. Anything else —
+nothing named, or two names that disagree — leaves **NZD** standing for you to
+confirm. It is not a ladder where a code outranks a symbol; they go into the
+same pile.
 
-So on a dollar or an unmarked statement the box says NZD because nobody said
-otherwise, not because the tool checked. **If the statement is not in New Zealand
-dollars, look at this box before you Save.** A currency is a label on money, and a
-wrong one is a wrong figure: it stamps the currency column and the totals above
-the transactions table.
+It saves what it read when:
+
+- a **code** is printed immediately before a figure — `NZD 25.00`, `USD 25.00`,
+  and `AUD $25.00` too, because a dollar sign between a dollar code and its
+  figure is how a statement disambiguates its own dollar;
+- or a **distinct symbol** is — `£25.00` saves as GBP, `€25.00` as EUR.
+
+It falls back to **NZD** when:
+
+- **the figures carry a bare `$`.** It is the New Zealand, Australian and US
+  dollar alike and the glyph does not say which, so nothing is guessed;
+- **the figures carry no mark at all** — most NZ statements print `1,234.56`;
+- **two marks disagree.** `£25.00` beside `$4.10`, or `GBP 25.00` beside a bare
+  `$4.10`, or an `NZD` figure beside a `USD` one: all save as NZD, because the
+  page contradicts itself and a template carries one currency;
+- **the mark is one this build does not know.** It knows six codes — NZD, AUD,
+  USD, GBP, EUR, JPY — and four symbols: `$`, `£`, `€`, `¥`. `CAD $25.00` and
+  `SGD 25.00` name nothing it recognises, so both save as NZD;
+- **the mark is not printed against a figure with cents.** The mark has to sit
+  immediately before something shaped like `25.00` or `1,234.56`. A code printed
+  *after* the figure (`25.00 GBP`) is not read, and neither is a symbol on a
+  whole number (`¥2500`). `¥2,500.00` is.
+
+So **NZD in that box is usually a fallback, not a reading** — it is what the tool
+says when nothing on the page named a currency, or when two things named
+different ones. It looks identical either way. **If the statement is not in New
+Zealand dollars, look at this box before you Save.** A currency is a label on
+money, and a wrong one is a wrong figure: it stamps the currency column and the
+totals above the transactions table.
 
 **Everything as YAML** is on the toolkit's **Advanced** tab — *Load current
 settings* fills it, *Check & apply* validates and updates the preview, and a

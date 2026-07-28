@@ -65,8 +65,61 @@ for itself.
   bug or bad scan. And a design document that says how to run it, how to ship a
   change to it, and how to put it back.
 
-**Suite:** 792 tests, 3,783 passing assertions · 0 errors · 0 skipped (from 725
-tests at 1.2.0). Register: 109 findings, 104 fixed, 4 open, 1 not-a-defect.
+**The pages were measured against the running app, not against each other**
+
+- `N107` — the folder an accountant was handed, `docs/for-analysts/`, did not
+  exist; her pages sat in a directory named for operators. That folder now
+  exists, as the short index of her four pages, and the README and the
+  operational index both route to it. A new guard fails the suite when any
+  `docs/` path named in prose — **including a folder, which has no `.md` on the
+  end and which every earlier scan therefore skipped** — points at nothing.
+- A second new guard loads **every fenced settings block in the documentation
+  through the real config loader** and fails if the Admin tab would open. A
+  printed admin password is a password everybody has; the shipped placeholder is
+  safe only because the app treats it as "nobody has set one yet", and a
+  near-miss like `change-me` is a working password that reads like a placeholder.
+- `design.md` §8 said adding a check makes "existing tests" fail and pointed at
+  three. Re-run and counted: one ordinary new check took the suite to **27 failed
+  and 1 error, in 17 tests across 10 files**, and the runner's reporter shows the
+  first ten and says so in a line that is easy to miss. The section now carries
+  the real number, the command that shows all of it, and the order to read it in
+  — the six bank goldens first, because they are the only failures that are
+  evidence about the check. Its recipe also gained the step that was missing: a
+  new diagnostic category must be **raised**, not just declared, or the suite
+  fails it as a dead row.
+- `when-something-goes-wrong.md` was re-checked against the Diagnostics table as
+  it renders. It had told the accountant that an *info* row's "How to fix" says
+  *No action needed* — false for three of the five, including the one the page
+  used as its example, whose sentence asks her to review per account when several
+  accounts are mixed. It had also filed *"check those pages against the source
+  PDF"* under "ask the supplier for a cleaner scan"; that sentence belongs to the
+  one diagnostic that means **do not release this output**. The page now lists
+  every phrase the *What* column can print, against what it means for her.
+- `adding-a-bank-template.md` now describes what the drafter really does with
+  currency: every name found on the figures goes into one pile and is saved only
+  if there is exactly one, so a code does *not* outrank a symbol that disagrees
+  with it. Six codes and four symbols are recognised, the mark has to sit before
+  a figure printed with cents, and **NZD in that box is usually a fallback nobody
+  checked** — which looks identical to a reading.
+- A doc said `scripts/run_app.R` "prints the address". It prints the literal
+  placeholder `http://<this-vm>:8100`, which nothing resolves. Reworded, in both
+  places that said it, with what the console really shows.
+- The root pages were re-read against the code: `R/jobs.R` runs every conversion
+  in its own child process, so "no lock, no queue, nothing to tune" is no longer
+  true — there is a queue, it is capped in threads as well as processes, and
+  anyone past the cap is told they are queuing. The stale findings tally and an
+  un-retaken speed measurement were replaced with the register's own figure and a
+  fresh one.
+
+**Suite:** grew again this release (725 tests at 1.2.0, 792 partway through this
+one). The live totals are not repeated here, because 1.3.0 is still open and a
+number frozen mid-release reads as a promise about today; the last full run is
+recorded in
+[`docs/operational/maintaining-the-engine.md`](docs/operational/maintaining-the-engine.md),
+and the pass condition that does not move is *nothing failed, nothing errored,
+nothing was skipped*. Register totals likewise live in
+[`docs/context/findings-register.md`](docs/context/findings-register.md), which
+states its own.
 
 ## 1.2.0
 

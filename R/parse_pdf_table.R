@@ -189,7 +189,24 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
   "balance (brought|carried) (forward|fwd|f/?wd?)",
   "balance [bc]/f",
   "(brought|carried) forward",
-  "total (withdrawals|deposits|credits|debits|payments|fees|transactions)")
+  "total (withdrawals|deposits|credits|debits|payments|fees|transactions)",
+  # A STATEMENT'S OWN TOTALS LINE. The entry above knows "Total <one noun>" and
+  # nothing else, so the shape banks actually print at the foot of a page or a
+  # period was not a summary line at all: ANZ's "Totals at end of page" /
+  # "Totals at end of period" and ASB's bare "Total" were read as dated money
+  # lines the template had failed on. Three of them on one clean ANZ statement
+  # were enough to fail the completeness check and hold a conversion back from
+  # the dashboards -- while that statement's own printed totals agreed with the
+  # tool to the cent, in both directions.
+  #
+  # A totals line is "total(s)" plus SCOPE -- what it totals over (page, period,
+  # statement, month, account, section) -- and nothing else. Listing the scope
+  # words rather than allowing anything after "total" is what keeps a real
+  # "Total Payments to ACME Ltd" a transaction; a payee is never a scope word.
+  "totals?",
+  "(sub|grand|page|period|statement|account|running)[-]?\\s*totals?",
+  "totals? (at|for|of|on|to)( the)?( end of)?( the)? (page|period|statement|month|year|day|section|account)",
+  "totals? (this|the) (page|period|statement|month|year|day|section|account)")
 
 # .pdf_summary_rx() -- the compiled whole-label alternation, built ONCE and cached.
 # The cache lives in the LEXICON's own environment so an admin vocabulary edit
@@ -245,8 +262,31 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 .PDF_LEAD_DATE <- paste0(
   "^(?:\\s*(?:[0-9][0-9,./:-]*|", .PDF_MONTH,
   "|mon|tue|wed|thu|fri|sat|sun)(?:day)?\\b)+")
-# A trailing run of money / balance markers: "$0.00 $2.00 1.97", "17,731.96 OD".
-.PDF_TRAIL_MONEY <- "(?:\\s*(?:[$(]?[0-9][0-9,./:-]*[0-9)]?|dr|cr|od)\\b\\)?)+\\s*$"
+# ONE trailing token: a money figure ("$588.41", "(1,234.56)", "17,731.96"), or a
+# balance marker printed as its OWN word ("OD", "DR", "CR").
+#
+# THE MARKER MUST BE A WHOLE WORD, and the first version of this only required it
+# to END at one. `\b` after `od` is satisfied by the last two letters of "period",
+# and the run is anchored at `$` with `\s*` (which matches nothing) in front, so
+# the pattern was free to start INSIDE a word: "Totals at end of period" reduced to
+# the label "totals at end of peri", and so did every label ending od / dr / cr
+# ("Payment method" -> "payment meth"). Nothing crashed and no figure moved -- the
+# label simply never matched again, so the Admin vocabulary promised two lines
+# above (.pdf_is_summary: "an analyst can drop the wording in the Admin
+# vocabulary; no code change") silently could not work for those wordings: an
+# analyst types the words that are printed on the page, saves, re-converts, and
+# nothing happens, with no feedback anywhere.
+#
+# So the run now has to START at the beginning of the line or after whitespace,
+# and its tokens are separated by real whitespace -- a trailing token is a token,
+# never a word ending. Sweeping the file's other patterns: .PDF_LEAD_DATE cannot
+# have the same fault (it is anchored at `^`, and every one of its tokens ends at
+# `\b`, so a token can only ever start where a word starts), and the sign-marker
+# pattern built in the reader (.marker_rx, further down) is only ever applied to a
+# cell whose every word has already been tested against the marker list.
+.PDF_TRAIL_TOKEN <- "(?:[$(]?[0-9][0-9,./:-]*[0-9)]?|dr|cr|od)\\b\\)?"
+.PDF_TRAIL_MONEY <- paste0("(?:^|(?<=\\s))", .PDF_TRAIL_TOKEN,
+                           "(?:\\s+", .PDF_TRAIL_TOKEN, ")*\\s*$")
 
 # .pdf_line_label(s) -- one printed line reduced to its label, lower-cased.
 # perl + useBytes: this runs 5-8x per visual row across the split / continuation /
@@ -384,7 +424,7 @@ pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
 .PDF_ACTIONABLE_CODES <- c("date_unparsed", "amount_missing")
 
 # The sentence for each code, in words a non-engineer can act on. Reword freely:
-# nothing decides anything on this text.
+# nothing decides anything on this text -- USE pdf_reason_actionable() below.
 .PDF_ROW_REASON_TEXT <- c(
   summary_line    = "summary line (opening / closing balance, carried forward, or a total) - not a transaction",
   heading_or_note = "no date and no amount - treated as a heading, note or wrapped line",
@@ -395,6 +435,31 @@ pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
   code <- .pdf_row_code(rec, style, date_ok)
   if (!nzchar(code)) return("")
   unname(.PDF_ROW_REASON_TEXT[code])
+}
+
+# pdf_reason_actionable(reason) -- given the SENTENCE a skipped row carries, did
+# that row look like a transaction and fail to read? Vectorised; FALSE for a kept
+# row (""), a summary line, a heading, a continuation, and for any sentence this
+# engine did not write.
+#
+# WHY IT EXISTS. The rule that "nothing decides anything on this text" is written
+# above and is not kept: surfaces outside this file still pattern-match the prose,
+# and the collision that costs is measurable. A loose search for the words the
+# date and amount sentences use also hits the HEADING sentence, because "no date
+# and no amount" ends in the same two words the amount sentence starts with -- so
+# on a clean 2-page ANZ statement 52 rows get marked "a skipped row that looks
+# like a transaction" against the engine's 9, and each of the extra 43 carries its
+# own explanation that it is "treated as a heading, note or wrapped line". One
+# screen saying both things about the same row is worse than either alone, and
+# R/row_coverage.R has an explicit guard against this exact substring (see
+# .rowcov_bucket) that the other callers never got.
+#
+# Mapping the sentence back through the table that produced it is exact -- no
+# substring can be shared by accident -- and it means a reword really is free.
+pdf_reason_actionable <- function(reason) {
+  reason <- as.character(reason %||% character(0))
+  code <- names(.PDF_ROW_REASON_TEXT)[match(reason, .PDF_ROW_REASON_TEXT)]
+  !is.na(code) & code %in% .PDF_ACTIONABLE_CODES
 }
 
 # .append_cell(cur, add) -- append wrapped text to a cell that may be EMPTY. An
@@ -841,7 +906,14 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # amount style and silently ignored in another, so a bank whose payment marker
     # is written any other way had every payment read with the charge sign.
     .sign_markers <- toupper(c(lex("dr_cr_suffix_credit"), lex("dr_cr_suffix_debit")))
-    .marker_rx <- sprintf("(%s)\\s*$", paste(.sign_markers, collapse = "|"))
+    # "does this cell ALREADY carry a marker?" -- so the sign is never flipped
+    # twice. Swept with .PDF_TRAIL_MONEY (see the top of this file): the marker
+    # must not be the tail of a WORD. A marker glued to a NUMBER is still a marker
+    # ("150.00CR"), so the character in front may be a digit -- it may not be a
+    # letter, or a stray word in the money band ending in CR/DR would read as a
+    # marker already present, and the real marker printed on the line below would
+    # then be dropped instead of applied: a wrong SIGN, silently.
+    .marker_rx <- sprintf("(^|[^A-Za-z])(%s)\\s*$", paste(.sign_markers, collapse = "|"))
     .money_flds <- intersect(c("amount", "debit", "credit", "balance"), names(cols))
     # Every word on the line is a marker, and there is at least one. A line with
     # ANYTHING else on it is ordinary text and is left to the description merge --

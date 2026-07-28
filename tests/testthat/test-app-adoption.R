@@ -17,6 +17,25 @@
   testthat::expect_true(length(i) >= 1)
   paste(src[i[1]:min(i[1] + n, length(src))], collapse = " ")
 }
+# .app_fun(name) -- one of app.R's PURE helpers, lifted out and made callable, so
+# a rule can be tested on BEHAVIOUR rather than on the spelling of its source.
+# Found by name, read forward until it parses (which is exactly where the
+# function ends), evaluated in an environment carrying the engine and the wording
+# maps -- the only two things these helpers close over.
+.app_fun <- function(name) {
+  src <- .app_src()
+  env <- new.env(parent = globalenv())     # globalenv carries the engine (%||%)
+  lab <- file.path(engine_root(), "ui_labels.R")
+  if (file.exists(lab)) sys.source(lab, envir = env)
+  i <- grep(sprintf("^\\s*\\Q%s\\E <- function", name), src, perl = TRUE)
+  testthat::expect_length(i, 1L)
+  for (j in seq(i[1], min(i[1] + 250L, length(src)))) {
+    f <- tryCatch(eval(parse(text = paste(src[i[1]:j], collapse = "\n"))[[1]], envir = env),
+                  error = function(e) NULL)
+    if (is.function(f)) return(f)
+  }
+  testthat::fail(paste("could not lift", name, "out of app.R"))
+}
 
 # ---------------------------------------------------------------------------
 # #18 -- a template someone builds here must actually take part in detection.
@@ -199,4 +218,100 @@ test_that("the guided editor cannot narrow a multi-format template on save", {
   expect_gte(writes, 2L)
   # and the dropdown must show a single value, never the whole vector
   expect_true(grepl("gv_datefmt <- function\\(tmpl\\) as\\.character\\(gv_datefmt_all\\(tmpl\\)\\)\\[1\\]", src))
+})
+
+# ---------------------------------------------------------------------------
+# INVARIANT 17, THE OTHER HALF: the STRING LITERALS, not just the names.
+#
+# test-app-ui.R already refuses a non-ASCII character in an R NAME, because in a
+# C locale the parser cannot read the file at all. That guard deliberately let
+# VALUES through -- and app.R carried 40 of them, including the pound and euro
+# signs in cur_symbol(). They are not decoration: a GBP statement now really does
+# reach that switch, and the file is read on an air-gapped Windows box whose
+# locale is not ours. A literal glyph also depends on the file staying UTF-8
+# through every editor, mail client and zip it passes on the way to that box,
+# while an escape is seven ASCII characters meaning the same thing everywhere.
+#
+# BYTES, not characters, and the whole file including comments: this has to fail
+# for the same reason the deployment fails, which is a byte the parser cannot
+# read where it stands.
+.nonascii_bytes <- function(path) {
+  ln <- readLines(path, warn = FALSE)
+  bad <- grep("[^ -~\t]", ln, useBytes = TRUE)
+  if (!length(bad)) return(character(0))
+  sprintf("%s:%d %s", basename(path), bad, substr(ln[bad], 1, 90))
+}
+
+test_that("no non-ASCII byte survives in the three UI files, literals included", {
+  files <- file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R"))
+  files <- files[file.exists(files)]
+  expect_identical(length(files), 3L)               # the scan must not go quiet
+  offenders <- unlist(lapply(files, .nonascii_bytes))
+  expect_identical(offenders, character(0),
+                   info = paste("non-ASCII byte:", paste(offenders, collapse = " | ")))
+  # ...and the glyphs are still THERE, as escapes: a file that passed by losing
+  # the tick and the currency symbols would be worse than the one it replaced.
+  app <- paste(readLines(file.path(engine_root(), "app.R"), warn = FALSE), collapse = "\n")
+  for (esc in c("\\\\u2713", "\\\\u00a3", "\\\\u20ac", "\\\\u00b7", "\\\\u2014"))
+    expect_match(app, esc)
+  # the currency switch really is one of them -- the literal that made this a live
+  # risk rather than a style nit, now that a GBP statement reaches it
+  expect_true(grepl('GBP = "\\u00a3", EUR = "\\u20ac"',
+                    .app_block(.app_src(), "cur_symbol <- function", 3L), fixed = TRUE))
+})
+
+# ---------------------------------------------------------------------------
+# ONE CLICK FROM THE VERDICT, which is what the page promises and what the
+# charter promises ("every diagnostic still exists and is still reachable in one
+# click"). Two things broke it: the checks lived at the bottom of the panel that
+# "Show me how it read this" opens, inside a SECOND collapsible, and the
+# dashboards line lived there too -- so on a case folder "did my rows reach
+# Qlik?" was three controls deep. Both now sit outside that panel.
+test_that("the checks and the dashboards line are not behind the evidence toggle", {
+  src <- .app_src()
+  i_feed   <- grep('^\\s*uiOutput\\("cv_feed"\\),', src)
+  i_detail <- grep('^\\s*uiOutput\\("cv_detail"\\),', src)
+  i_toggle <- grep('^\\s*uiOutput\\("cv_more_toggle"\\),', src)
+  i_panel  <- grep('conditionalPanel\\("output\\.cv_detail_open == true"', src)
+  expect_length(i_feed, 1L); expect_length(i_detail, 1L)
+  expect_length(i_toggle, 1L); expect_length(i_panel, 1L)
+  expect_true(i_feed < i_panel)         # the dashboards line: above the fold
+  expect_true(i_detail < i_toggle)      # the checks: above the link, one click
+  expect_true(i_toggle < i_panel)
+  # the toggle's caption no longer claims the checks it does not open
+  cap <- .app_block(src, "output\\$cv_more_toggle <- renderUI", 20L)
+  expect_false(grepl("The page, the checks, and the template it used.", cap, fixed = TRUE))
+  # ...and the panel is not offered at all where there is nothing behind it: on a
+  # run with no transactions the X-ray, the charts and the candidates all render
+  # nothing, so the link used to open an empty box.
+  expect_true(i_toggle > grep('conditionalPanel\\("output\\.cv_has_txns == true",\\s*$', src)[1])
+})
+
+# A heading is a promise about what is under it. "See it on the page" sat outside
+# the is-this-a-PDF test, so every CSV and Excel conversion printed it over a
+# single sentence explaining that there is no page.
+test_that("the page heading renders only where there is a page", {
+  src <- .app_src()
+  i_head <- grep('h4\\("See it on the page"\\)', src)
+  i_pdf  <- grep('conditionalPanel\\("output\\.ix_is_pdf == true"', src)
+  expect_length(i_head, 1L)
+  expect_true(length(i_pdf) >= 1 && i_pdf[1] < i_head)     # inside the PDF branch
+  # and the non-PDF branch says what IS true instead of pointing at a picture
+  blk <- .app_block(src, 'conditionalPanel\\("output\\.ix_is_pdf != true"', 4L)
+  expect_match(blk, "no page picture for a CSV or Excel export")
+})
+
+# The case-folder table graded a file the verdict card deliberately leaves
+# ungraded: "No template for this statement yet | - | 0 | low", a confidence
+# score for a conversion that never happened, in the column a reviewer skims to
+# decide which of thirty files to open.
+test_that("a file that converted nothing carries no confidence grade anywhere", {
+  graded <- .app_fun(".is_graded")
+  expect_true(all(graded(c("ok", "needs_review"))))
+  expect_false(any(graded(c("unsupported", "failed", "", NA))))
+  # the batch table blanks the grade with it, and the card's own rule is the same
+  expect_match(.app_block(.app_src(), "output\\$cv_batch <- renderDT", 4L),
+               "b\\$trust\\[!\\.is_graded\\(b\\$status\\)\\] <- NA_character_")
+  expect_match(.app_block(.app_src(), "output\\$cv_status <- renderUI", 45L),
+               'graded <- st %in% c\\("ok", "needs_review"\\)')
 })

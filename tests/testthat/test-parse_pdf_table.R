@@ -1008,3 +1008,125 @@ test_that("only the LEADING date and the TRAILING money are removed", {
   expect_identical(.pdf_line_label("24 Aug TFR To 63A Rent 465.00 17.26"), "tfr to 63a rent")
   expect_identical(.pdf_line_label("MARKET TOTAL PAYMENTS"), "market total payments")
 })
+
+# ---------------------------------------------------------------------------
+# A TRAILING BALANCE MARKER IS A WHOLE WORD, NEVER A WORD ENDING (G2).
+#
+# .PDF_TRAIL_MONEY only required its dr/cr/od marker to END at a word boundary,
+# and the run is anchored at `$` with `\s*` (which matches nothing) in front - so
+# it was free to start INSIDE a word. "Totals at end of period" reduced to the
+# label "totals at end of peri"; so did every label ending od / dr / cr. Nothing
+# crashed and no figure moved, so nothing caught it: the label simply never
+# matched, which silently broke the escape hatch .pdf_is_summary promises an
+# analyst ("drop the wording in the Admin vocabulary; no code change").
+# ---------------------------------------------------------------------------
+test_that("a trailing od/dr/cr is stripped only when it is a standalone token", {
+  expect_identical(.pdf_line_label("Totals at end of period $2,625.15 $1,126.11 $19,231.00 OD"),
+                   "totals at end of period")
+  expect_identical(.pdf_line_label("Totals at end of period"), "totals at end of period")
+  expect_identical(.pdf_line_label("Payment method 25.00"), "payment method")
+  expect_identical(.pdf_line_label("Statement of record 12.00"), "statement of record")
+  # ...and the markers this pattern exists to remove still go
+  expect_identical(.pdf_line_label("Opening balance 17,731.96 OD"), "opening balance")
+  expect_identical(.pdf_line_label("Closing balance 1,234.56 DR"), "closing balance")
+  expect_identical(.pdf_line_label("Closing balance (1,234.56) CR"), "closing balance")
+  expect_identical(.pdf_line_label("Totals at end of page $588.41 $0.00 $18,320.37 OD"),
+                   "totals at end of page")
+})
+
+test_that("the Admin vocabulary really reaches a wording that ends in od/dr/cr", {
+  # The promise tested end to end: an analyst types the words that are PRINTED on
+  # the statement, saves, re-converts. Deliberately a wording the built-ins do not
+  # know, so this can only pass through the lexicon.
+  lx <- tempfile(fileext = ".yaml")
+  writeLines("summary_line_labels: ['balance summary at end of period']", lx)
+  old <- Sys.getenv("BSO_LEXICON", NA_character_)
+  Sys.setenv(BSO_LEXICON = lx); clear_lexicon_cache()
+  on.exit({ if (is.na(old)) Sys.unsetenv("BSO_LEXICON") else Sys.setenv(BSO_LEXICON = old)
+            clear_lexicon_cache() }, add = TRUE)
+  expect_true(.pdf_is_summary("Balance summary at end of period 1,234.00 OD"))
+  expect_true(.pdf_is_summary("Balance summary at end of period"))
+})
+
+# ---------------------------------------------------------------------------
+# A STATEMENT'S OWN TOTALS LINE IS A SUMMARY LINE (G1).
+#
+# The vocabulary knew "Total <one noun>" only, so ANZ's "Totals at end of page" /
+# "Totals at end of period" and ASB's bare "Total" were counted as rows that
+# looked like transactions and could not be read. Three of them on one clean
+# statement failed the completeness check and held a perfect conversion back from
+# the dashboards.
+# ---------------------------------------------------------------------------
+test_that("a statement's own totals line is recognised as a summary line", {
+  for (s in c("Totals at end of page $588.41 $0.00 $18,320.37 OD",
+              "Totals at end of period $2,625.15 $1,126.11 $19,231.00 OD",
+              "Total 0.00", "Totals 1,234.00", "Sub total 99.00", "Sub-total 99.00",
+              "Subtotal 99.00", "Page total 12.00", "Grand total 5.00",
+              "Statement total 4.00", "Running total 4.00",
+              "Total for the period 12.00", "Total for period 12.00",
+              "Totals this page 12.00", "Totals at end of statement 12.00"))
+    expect_true(.pdf_is_summary(s), info = s)
+})
+
+test_that("the totals vocabulary does not swallow a payee that starts with Total", {
+  # The whole reason the scope words are LISTED instead of allowing anything after
+  # "total": a payee is never a scope word, and a silently dropped transaction is
+  # strictly worse than the phantom row this guard exists to prevent.
+  for (s in c("15 Mar Total Payments to ACME Ltd 1,250.00",
+              "Total Deposits & Other Credits 4.00", "Total ATM Withdrawals & Debits 4.00",
+              "Total Checks Paid 3.00", "Total money in: 5,474.00",
+              "TOTAL ENERGIES NZ 45.00", "Totalspan Buildings 99.00",
+              "MARKET TOTAL PAYMENTS", "DECOR TOTAL FEES", "TOTAL FEES AUGUST"))
+    expect_false(.pdf_is_summary(s), info = s)
+})
+
+test_that("a totals line is not counted as a row that failed to read", {
+  # The measurable half of G1: a totals line carries three money cells and no date,
+  # so before the vocabulary knew it, it was an ACTIONABLE skip -- the count that
+  # quarantines a run. ANZ prints two of these per statement plus one per page.
+  words <- data.frame(stringsAsFactors = FALSE,
+    text  = c("05","Jan","COFFEE","-4.50","95.50",
+              "06","Jan","SALARY","1000.00","1095.50",
+              "Totals","at","end","of","page","4.50","1000.00","1095.50",
+              "Totals","at","end","of","period","4.50","1000.00","1095.50"),
+    x     = c(45,60,110,415,490,   45,60,110,415,490,
+              80,115,135,155,170,  370,400,490,
+              80,115,135,155,170,  370,400,490),
+    y     = c(40,40,40,40,40,      70,70,70,70,70,
+              100,100,100,100,100, 100,100,100,
+              130,130,130,130,130, 130,130,130),
+    width = c(12,16,45,25,30,  12,16,45,34,34,
+              30,10,20,10,25,  25,25,30,   30,10,20,10,30,  25,25,30),
+    height = rep(10, 26))
+  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
+    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
+    meta = list(page_count = 1L))
+  clear_lexicon_cache()
+  p <- parse_pdf_table(input, .simple_tmpl())
+  expect_equal(nrow(p$transactions), 2L)          # the two real transactions, no more
+  expect_identical(p$actionable_skip_count, 0L)   # and NEITHER totals line is "missed"
+  expect_identical(p$skipped_row_count, 2L)       # they are skipped, and visibly so
+})
+
+# ---------------------------------------------------------------------------
+# A SKIPPED ROW'S REASON MAPS BACK TO ITS CODE, NEVER BY SUBSTRING (G1/G5).
+# ---------------------------------------------------------------------------
+test_that("pdf_reason_actionable decides on the code, not on words in the sentence", {
+  expect_true(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["date_unparsed"]]))
+  expect_true(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["amount_missing"]]))
+  expect_false(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["heading_or_note"]]))
+  expect_false(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["summary_line"]]))
+  expect_false(pdf_reason_actionable(""))
+  expect_false(pdf_reason_actionable("continuation - its text is folded into the transaction above"))
+  expect_false(pdf_reason_actionable("split row - re-joined with the line above into one transaction"))
+  expect_identical(pdf_reason_actionable(character(0)), logical(0))
+  expect_identical(pdf_reason_actionable(unname(.PDF_ROW_REASON_TEXT)),
+                   c(FALSE, FALSE, TRUE, TRUE))
+  # THE COLLISION IT EXISTS FOR. The loose substring test still used outside this
+  # file calls the HEADING sentence actionable, because "no date and no amount"
+  # contains "no amount" -- which is how one screen came to mark 52 rows "a skipped
+  # row that looks like a transaction" against the engine's 9, each of them
+  # carrying its own explanation that it is a heading.
+  expect_true(grepl("didn't parse|no amount", .PDF_ROW_REASON_TEXT[["heading_or_note"]]))
+  expect_false(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["heading_or_note"]]))
+})

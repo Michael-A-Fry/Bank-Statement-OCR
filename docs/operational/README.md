@@ -3,6 +3,12 @@
 One page per task, written for analysts rather than developers. Background — how
 it works and why — is in [`../context/`](../context/README.md).
 
+**Converting statements, not running the server?** Only the four *Every day*
+pages below are yours. [`../for-analysts/`](../for-analysts/README.md) is the
+short index that lists just those four, and it is the folder name to hand to
+somebody new — everything from *Running the server* down is for whoever owns the
+box.
+
 ## Every day
 
 | I want to… | Page |

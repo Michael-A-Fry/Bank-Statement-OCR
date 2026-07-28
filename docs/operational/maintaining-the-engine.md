@@ -71,9 +71,16 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run on the build box measured **68 files, 792 tests, 3,783 passing
-assertions, 0 skipped** (2026-07-27). Treat that as a floor to compare against,
+The last full run on the build box measured **71 files, 855 tests, 4,213 passing
+assertions, 0 skipped** (2026-07-28). Treat that as a floor to compare against,
 not a target to match.
+
+**One exception to "stop".** If you have just added a reconciliation check, a
+suite in the twenties of failures is the expected outcome of a correct change,
+not a broken engine — and the runner will show you only the first ten of them.
+Read [`../design.md`](../design.md) §8 *"Adding a check breaks about thirty
+tests"* before you start unpicking them: it has the measured number, the command
+that prints all of them, and the order to read them in.
 
 The runner's exit code is `0` only when everything passed and nothing was
 skipped.

@@ -450,40 +450,71 @@ test_that("date_year_inferred caps trust and states where the year came from", {
 # no_unparsed_rows returned "na" for every PDF. A green run, on the dashboards,
 # missing 99% of the money.
 #
-# The signal is not a tuned percentage. It is two like quantities: rows that
-# LOOKED like transactions and could not be read (date wouldn't parse, or no
-# amount in the money bands) against rows that were read. Headings, summary lines
-# and wrapped text are skipped on every healthy statement and are excluded.
-# Measured across every sample in this repo: healthy 4-36%, broken 100-1300%.
-
-.thin <- function(n, actionable) {
+# The signal is rows that LOOKED like transactions and could not be read (date
+# wouldn't parse, or no amount in the money bands). Headings, summary lines and
+# wrapped text are skipped on every healthy statement and are excluded.
+#
+# IT TAKES TWO CONDITIONS, and it used to take one. "More rows missed than
+# captured" alone was calibrated in the engine as "healthy 4-36%, broken
+# 100-1300%", and a file shipped in this repo falsifies that: anz_0382025_feb.pdf
+# converts perfectly -- its money-in and money-out agree to the cent with the
+# totals the statement prints on page 2 -- and sat at 171%, failed this check and
+# was held out of the dashboards. Re-measured, healthy conversions in this repo
+# reach 800% on that ratio (an ASB statement with ONE transaction and eight lines
+# of account-number / statement-number / page-number furniture). So the comparison
+# keeps its place and gains the magnitude guard it never had: the unreadable rows
+# must ALSO be more than a quarter of every visual row examined. Measured that
+# way, healthy runs 0-16% and a template pushed off the table runs 34-52%.
+#
+# `visual` defaults to kept + actionable, which is the WORST case for the
+# magnitude guard (no furniture at all in the denominator); pass it explicitly for
+# the shape a real statement has.
+.thin <- function(n, actionable, visual = n + actionable) {
   parsed <- list(transactions = data.frame(flags = rep("", n), stringsAsFactors = FALSE),
-                 source_line_count = NA_integer_, visual_row_count = n + actionable,
-                 skipped_row_count = actionable, actionable_skip_count = actionable)
+                 source_line_count = NA_integer_, visual_row_count = visual,
+                 skipped_row_count = visual - n, actionable_skip_count = actionable)
   .kpi_no_unparsed_rows(parsed, parsed$transactions, n)
 }
 
-test_that("more rows missed than captured is a FAILURE, not 'cannot be proved'", {
-  k <- .thin(n = 1, actionable = 13)          # asb.pdf, measured
+test_that("a page mostly made of unreadable transaction rows is a FAILURE", {
+  k <- .thin(n = 0, actionable = 12, visual = 31)   # tutorial, date band off column
   expect_identical(k$status, "fail")
-  expect_match(k$detail, "look like transactions but could not be read")
+  expect_match(k$detail, "look like transactions and could not be read")
   # the numbers are stated, so a reviewer can check them on the page
-  expect_match(k$detail, "13 row", fixed = TRUE)
+  expect_match(k$detail, "12 of the 31 row", fixed = TRUE)
   expect_match(k$detail, "See it on the page", fixed = TRUE)   # ONE name for that screen
 })
 
 test_that("a healthy statement's ordinary skips are left alone", {
-  # 311 kept / 14 actionable -- anz_single.pdf, measured. Headings and summary
-  # lines are normal; flagging these would cry wolf on every real conversion.
-  expect_identical(.thin(n = 311, actionable = 14)$status, "na")
-  expect_identical(.thin(n = 79,  actionable = 22)$status, "na")   # asb_B.pdf
-  expect_identical(.thin(n = 12,  actionable = 0)$status,  "na")
+  # 311 kept / 2 actionable over 433 visual rows -- anz_single.pdf, measured.
+  # Headings and summary lines are normal; flagging these would cry wolf on every
+  # real conversion.
+  expect_identical(.thin(n = 311, actionable = 2,  visual = 433)$status, "na")
+  expect_identical(.thin(n = 79,  actionable = 18, visual = 148)$status, "na")  # asb_B.pdf
+  expect_identical(.thin(n = 12,  actionable = 0,  visual = 30)$status,  "na")  # tutorial
 })
 
-test_that("the boundary is 'more missed than captured', with no tuning knob", {
-  expect_identical(.thin(n = 10, actionable = 9)$status,  "na")    # fewer missed
-  expect_identical(.thin(n = 10, actionable = 10)$status, "fail")  # equal
-  expect_identical(.thin(n = 10, actionable = 11)$status, "fail")  # more
+test_that("a PERFECT conversion is never held back by its page furniture (G1)", {
+  # THE CASE THAT MADE THIS RULE CHANGE. Each of these reconciles exactly against
+  # the totals its own statement prints, and each has MORE unreadable-looking rows
+  # than transactions, because a short statement's headings, upcoming-payment
+  # blocks, other-account balances and footers all carry digits. Under the old
+  # single condition every one of them failed this check and was withheld from the
+  # dashboards.
+  expect_identical(.thin(n = 7,  actionable = 9,  visual = 63)$status,  "na")  # anz_0382025_feb
+  expect_identical(.thin(n = 1,  actionable = 8,  visual = 60)$status,  "na")  # asb
+  expect_identical(.thin(n = 10, actionable = 11, visual = 67)$status,  "na")  # wp_ROT2
+  expect_identical(.thin(n = 6,  actionable = 8,  visual = 70)$status,  "na")  # wp_2026_MORPH
+  expect_identical(.thin(n = 8,  actionable = 10, visual = 131)$status, "na")  # anz investmentfunds
+})
+
+test_that("BOTH conditions are required, and each one alone is not enough", {
+  # more missed than captured, but a handful of rows on a full page -> furniture
+  expect_identical(.thin(n = 5,  actionable = 6,  visual = 60)$status, "na")
+  # a quarter of the page unreadable, but most of the statement still read
+  expect_identical(.thin(n = 40, actionable = 20, visual = 60)$status, "na")
+  # both -> the template really is reading the wrong part of the page
+  expect_identical(.thin(n = 5,  actionable = 20, visual = 60)$status, "fail")
 })
 
 test_that("a genuinely small statement is not cried wolf over", {
@@ -495,6 +526,17 @@ test_that("a genuinely small statement is not cried wolf over", {
   expect_identical(.thin(n = 2, actionable = 2)$status, "na")
   expect_identical(.thin(n = 1, actionable = 3)$status, "fail")   # 3x the statement
   expect_identical(.thin(n = 5, actionable = 5)$status, "fail")   # half unread: real
+})
+
+test_that("the Expected column never shows a figure the statement never printed (G4)", {
+  # It used to read n + actionable: "Expected 19 | Read 7" on a statement that
+  # prints no 19 anywhere -- the checker's own arithmetic in the column a reviewer
+  # uses to check the checker, on the row that quarantines the run.
+  k <- .thin(n = 0, actionable = 12, visual = 31)
+  expect_identical(k$status, "fail")
+  expect_true(is.na(k$expected))
+  expect_identical(k$actual, "0")           # rows read: countable in the output
+  expect_identical(k$discrepancy, "12")     # rows that would not read: countable on the page
 })
 
 test_that("skipped rows that are not transactions never count against a statement", {
@@ -534,6 +576,10 @@ test_that("a real PDF with a wrong date band really does produce actionable skip
   ps <- parse_statement(inp, tpl, meta = extract_metadata(inp))
   expect_gt(ps$actionable_skip_count, 0L)
   expect_gte(ps$actionable_skip_count, nrow(ps$transactions))
+  # ...and it is a MAGNITUDE, not a handful: this is the measurement the quarter
+  # threshold sits under (12 of 31 rows examined = 39%). If a change ever pushes a
+  # real break below the threshold this fails here rather than on a real statement.
+  expect_gt(4L * ps$actionable_skip_count, ps$visual_row_count)
   expect_identical(reconcile(ps, tpl)$kpis$status[
     reconcile(ps, tpl)$kpis[[1]] == "no_unparsed_rows"], "fail")
 })
@@ -545,4 +591,68 @@ test_that("the actionable codes are codes, not sentences a reword can break", {
   expect_false(any(grepl(" ", .PDF_ACTIONABLE_CODES)))    # codes, not sentences
   src <- readLines(file.path(engine_root(), "R", "parse_pdf_table.R"), warn = FALSE)
   expect_false(any(grepl("grepl\\(\"didn't parse", src, useBytes = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# THE TRUST REASON JUSTIFIES THE LEVEL. IT DOES NOT GRADE ANOTHER CHECK (G3).
+#
+# The medium-instead-of-low reason used to add "the running-balance / period
+# checks are secondary and commonly flag on combined/multi-account statements".
+# On a real needs_review run that sentence was printed directly above a HIGH
+# diagnostic reading "This upload looks like more than one statement bundled
+# together, which corrupts a single parse. Split it into one statement per file
+# and re-run" -- the tool calling commonplace the exact condition another line of
+# the same screen was calling corrupting. .reconcile_trust cannot see the
+# diagnostics (build_diagnostics runs after reconcile and takes its output), so it
+# can never know whether something worse is being said, which is precisely why it
+# must not rank the failing check at all.
+# ---------------------------------------------------------------------------
+.trust_bal_pass_rbc_fail <- function() {
+  kpis <- rbind(
+    .kpi("balance_reconciliation", "pass", expected = 130, actual = 130, discrepancy = 0),
+    .kpi("running_balance_continuity", "fail", expected = 0, actual = 2, discrepancy = 2),
+    .kpi("transaction_count", "pass", expected = ">0", actual = 3))
+  tx <- data.frame(flags = rep("", 3), stringsAsFactors = FALSE)
+  .reconcile_trust(kpis, tx, list(stated_count = 3), 3L)
+}
+
+test_that("the medium-not-low reason states the proof and downplays nothing", {
+  tr <- .trust_bal_pass_rbc_fail()
+  expect_identical(tr$level, "medium")               # the rating itself is unchanged
+  why <- paste(tr$reasons, collapse = " | ")
+  expect_match(why, "balance fully reconciles", fixed = TRUE)   # the fact that earns it
+  # ...and nothing that ranks, excuses or normalises the check that failed
+  expect_false(grepl("secondary", why, ignore.case = TRUE))
+  expect_false(grepl("commonly flag", why, ignore.case = TRUE))
+  expect_match(why, "does NOT clear", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# A FAILING CHECK'S DETAIL IS RENDERED UNDER TWO DIFFERENT NAMES (G5).
+#
+# build_diagnostics() re-emits every failing check as a diagnostic carrying this
+# exact string, and the verdict card prints the diagnostics and the failing checks
+# in ONE list -- so a failing check's detail appears twice on one screen, once
+# under the diagnostic's wording ("rows didn't parse") and once under the check's
+# own, which for a check named as what it PROVES states the opposite of what
+# happened ("No row failed to read"). This file cannot stop it being listed twice;
+# it can make sure the sentence leads with the fault, so it stays true under a
+# heading worded either way.
+# ---------------------------------------------------------------------------
+test_that("every failing check's detail leads with what went wrong", {
+  fails <- list(
+    .kpi_no_unparsed_rows(list(transactions = data.frame(flags = rep("", 0)),
+                               source_line_count = NA_integer_, visual_row_count = 31L,
+                               skipped_row_count = 31L, actionable_skip_count = 12L),
+                          data.frame(flags = character(0)), 0L),
+    .kpi_dates_readable(data.frame(date = c("2026-01-01", NA), stringsAsFactors = FALSE), 2L),
+    .kpi_running_balance_continuity(
+      data.frame(balance = c(100, 130), amount = c(0, 5), stringsAsFactors = FALSE), 2L),
+    .kpi_transaction_count(list(stated_count = 9L), 7L))
+  for (k in fails) {
+    expect_identical(k$status, "fail", info = k$name)
+    # not empty, and not a bare restatement of the check's own reassuring name
+    expect_true(nzchar(k$detail), info = k$name)
+    expect_false(grepl("^(all|no|every|each) ", k$detail, ignore.case = TRUE), info = k$name)
+  }
 })

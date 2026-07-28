@@ -541,13 +541,32 @@ test_that("a batch is more files in the same picker, not a second screen", {
 test_that("every file in a batch goes through the engine's own batch loop", {
   # There must be no second conversion pipeline in the UI: a batch answer and a
   # single-file answer for the same statement have to be the same code.
+  #
+  # REWRITTEN for the move off this process. The loop is unchanged and is still
+  # R/batch.R's; what changed is WHICH PROCESS runs it (R/jobs.R, job_run_task),
+  # so the assertion follows it there rather than going quietly vacuous scanning
+  # an app.R that no longer holds the call.
   joined <- paste(.ui_src(), collapse = "\n")
-  expect_match(joined, "convert_batch\\(paths,")
+  jobs <- paste(readLines(file.path(engine_root(), "R", "jobs.R"), warn = FALSE), collapse = "\n")
+  expect_match(joined, 'cv_slot\\$start\\("batch", paths, sess')     # app.R asks for it
+  expect_match(jobs, "convert_batch, c\\(list\\(paths\\), args,")   # ...and this runs it
   expect_true(exists("convert_batch"))
   expect_true(exists("batch_summary"))
   expect_true(exists("BATCH_STATUSES"))
-  # ...and app.R never calls the single-file front door in a loop of its own
-  expect_false(grepl("for \\([a-z]+ in seq_along\\(paths\\)\\)[^\n]*convert_document", joined))
+  # ...and neither side calls the single-file front door in a loop of its own
+  for (s in c(joined, jobs))
+    expect_false(grepl("for \\([a-z]+ in seq_along\\(paths\\)\\)[^\n]*convert_document", s))
+  # THE SEAM test-batch.R guards, asserted where the arguments now are: anything
+  # convert_batch does not itself take goes on to convert_document(), which has no
+  # `...`, so one stale argument fails EVERY file in the case.
+  blk <- .ui_block(.ui_src(), 'cv_slot\\$start\\("batch", paths, sess', 12L)
+  expect_false(grepl("keep_rows", blk, fixed = TRUE))
+  a <- sub("(?s).*args = list\\(", "", blk, perl = TRUE)
+  a <- sub("(?s)\\),\\s*finish =.*", "", a, perl = TRUE)
+  sent <- unique(unlist(regmatches(a, gregexpr("[A-Za-z_][A-Za-z_0-9]*(?= =)", a, perl = TRUE))))
+  expect_gt(length(sent), 4L)                       # the scan must not go quiet
+  expect_identical(setdiff(sent, names(formals(convert_document))), character(0))
+  expect_true("outdir" %in% names(formals(convert_document)))   # job_start adds this one
 })
 
 test_that("the QID is asked once for the whole batch, before it starts", {
@@ -596,7 +615,9 @@ test_that("the result page's state has exactly one definition", {
   # conversion, a batch finishing with no row open, and a batch row being opened
   expect_gte(length(grep("^\\s*show_result\\(", src)), 3L)
   expect_match(.ui_block(src, "open_batch_row <- function", 12L), "show_result\\(b\\$result\\[\\[i\\]\\]")
-  expect_match(.ui_block(src, "run_conversion <- function", 45L), "show_result\\(res, list\\(path = src")
+  # 45 -> 60: run_conversion now LAUNCHES and hands the tail of the flow to a
+  # continuation, so the same one line lives a little further down the function.
+  expect_match(.ui_block(src, "run_conversion <- function", 60L), "show_result\\(res, list\\(path = src")
   # a batch clears the screen's copy of the LAST file's feed verdict
   expect_match(.ui_block(src, "run_batch <- function", 65L), "show_result\\(\\)")
   # Nothing sets the result page's reactives behind show_result's back. Counted
@@ -662,10 +683,94 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
 
 test_that("a long batch shows progress per file", {
   # A 50-file case that looks frozen is a case the analyst kills half way.
-  blk <- .ui_block(.ui_src(), "convert_batch\\(paths,", 16L)
-  expect_match(blk, "progress = function\\(i, nn, f\\)")
-  expect_match(blk, "setProgress", fixed = TRUE)
-  expect_match(blk, "basename\\(f\\)")                 # says WHICH file, not just a bar
+  #
+  # REWRITTEN for the move off this process. The bar cannot be driven from inside
+  # the loop any more -- the loop is in another process -- so the child writes one
+  # line per file and the poll reads it. Same promise, two halves, and both are
+  # asserted because either alone leaves the analyst watching a blank bar.
+  jobs <- paste(readLines(file.path(engine_root(), "R", "jobs.R"), warn = FALSE), collapse = "\n")
+  expect_match(jobs, "progress = \\.job_progress_writer\\(jobdir\\)")
+  expect_match(jobs, 'sprintf\\("%d/%d %s\\\\n", i, n, basename\\(f\\)\\)')  # WHICH file
+  blk <- .ui_block(.ui_src(), "job_say <- function", 20L)
+  expect_match(blk, "job_progress\\(h\\)")
+  expect_match(blk, '"%d of %d - %s", p\\$i, p\\$n, p\\$file', fixed = FALSE)
+  # ...and it really does come back as a number and a name, not a blob of text
+  expect_true(all(c("i", "n", "file") %in% names(formals(function(i, n, file) NULL))))
+})
+
+test_that("nobody waits in silence: a queued conversion says how many are ahead", {
+  # THE POINT OF THE QUEUE. Capping concurrency without saying so would replace a
+  # frozen page with a slow one and tell the analyst nothing either way.
+  src <- .ui_src()
+  blk <- .ui_block(src, "job_say <- function", 20L)
+  expect_match(blk, 'identical\\(st, "queued"\\)')
+  expect_match(blk, "job_queue_ahead\\(h\\)")
+  expect_match(blk, "ahead of yours", fixed = TRUE)
+  # it is spoken through the SAME progress panel the centred overlay follows, so
+  # there is no second, quieter place for a wait to hide
+  expect_match(paste(src, collapse = "\n"), "Progress\\$new\\(session\\)")
+  # ...and the WORDING carries no engine word. Read off the real string literals
+  # (the parser's own STR_CONST tokens), not a regex over the source: a naive
+  # quote-pairing scan matches across the code between two unrelated strings and
+  # reports words that are only ever in identifiers.
+  f <- .ui_fun("job_say")
+  pd <- utils::getParseData(parse(text = paste(deparse(body(f)), collapse = "\n"),
+                                  keep.source = TRUE))
+  lits <- pd$text[pd$terminal & pd$token == "STR_CONST"]
+  expect_gt(length(lits), 2L)                       # the scan must not go quiet
+  said <- lits[grepl("[ ]", lits)]                  # the sentences, not the state names
+  expect_gt(length(said), 1L)
+  for (w in c("job", "slot", "pid", "process", "queue"))
+    expect_identical(grep(w, said, value = TRUE, ignore.case = TRUE), character(0),
+                     info = paste("the waiting message says", w))
+})
+
+test_that("no conversion runs in the app's own R process any more", {
+  # THE WHOLE CHANGE, in one assertion. An engine call made on this thread freezes
+  # every other analyst's browser for as long as it takes -- measured at 65
+  # seconds of a dead page while one person converted one scanned statement.
+  app <- file.path(engine_root(), "app.R")
+  skip_if_not(file.exists(app))
+  # The PARSER's own call tokens, so a comment naming convert_batch() (there are
+  # several, and they should stay) can never be mistaken for a call, and a call
+  # hidden after a "#" inside a string can never be missed.
+  pd <- utils::getParseData(parse(app, keep.source = TRUE))
+  calls <- pd$text[pd$terminal & pd$token == "SYMBOL_FUNCTION_CALL"]
+  expect_gt(length(calls), 100L)                    # the scan must not go quiet
+  expect_identical(
+    intersect(calls, c("convert_document", "convert_statement", "convert_batch",
+                       "batch_audit", "convert_form")),
+    character(0))
+  # ...and every launch goes through the one slot object, which caps and queues
+  expect_gt(length(grep("\\$start\\(\"(convert|batch|audit)\"", .ui_src())), 3L)
+})
+
+test_that("a tab closed mid-conversion takes its process with it", {
+  # An abandoned scan would otherwise hold a core for two more minutes producing
+  # a result no browser is left to read -- and the cap would count it the while.
+  blk <- .ui_block(.ui_src(), "session\\$onSessionEnded\\(function", 8L)
+  expect_match(blk, "cv_slot\\$cancel\\(\\)")
+  expect_match(blk, "adm_slot\\$cancel\\(\\)")
+  # the jobs go BEFORE the scratch folder: a child is still writing into it
+  i_job <- regexpr("cv_slot\\$cancel", blk)
+  i_dir <- regexpr("unlink\\(d", blk)
+  expect_true(i_job > 0 && i_dir > 0 && i_job < i_dir)
+  # ...and the whole app taking a child with it, for a server that is restarted
+  expect_match(paste(.ui_src(), collapse = "\n"), "onStop\\(function\\(\\) safe\\(job_reap_all\\(\\)\\)\\)")
+})
+
+test_that("the cap is a deployment setting, read once, and named in the example config", {
+  expect_match(paste(.ui_src(), collapse = "\n"),
+               "job_set_max_concurrent\\(CONFIG\\$app\\$max_concurrent_jobs\\)")
+  ex <- file.path(engine_root(), "config", "config.example.yaml")
+  skip_if_not(file.exists(ex))
+  txt <- paste(readLines(ex, warn = FALSE), collapse = "\n")
+  expect_match(txt, "max_concurrent_jobs", fixed = TRUE)
+  # the example must say what the number BUYS and what it COSTS, or it is a
+  # number nobody can set responsibly
+  expect_match(txt, "AT THE SAME TIME", fixed = TRUE)   # what it buys
+  expect_match(txt, "TRADE-OFF", fixed = TRUE)          # ...and what it costs
+  expect_match(txt, "queue", fixed = TRUE)
 })
 
 test_that("a batch file is audited, captured and published exactly like a single one", {
@@ -737,8 +842,14 @@ test_that("the bank and the forced template are read in one place", {
   joined <- paste(src, collapse = "\n")
   expect_length(grep("bank_choice <- reactive", src), 1L)
   expect_length(grep("tpl_choice <- reactive", src), 1L)
-  expect_match(joined, "bank <- bank_choice\\(\\)")
-  expect_match(joined, "forced_tpl <- force_tpl %\\|\\|% tpl_choice\\(\\)")
+  # Both are read in convert_args(), which is the ONE place the front door's
+  # arguments are assembled -- so the single conversion, a whole case folder and
+  # the X-ray's re-run cannot honour different overrides. (This used to be
+  # convert_now(), which assembled them AND ran the conversion; running it is now
+  # a child process's job, and only the assembling is shared.)
+  expect_match(joined, "bank = bank_choice\\(\\)")
+  expect_match(joined, "force_template = force_tpl %\\|\\|% tpl_choice\\(\\)")
+  expect_length(grep("^\\s*convert_args <- function", .ui_src()), 1L)
   # nothing reads the raw inputs a second time
   expect_length(grep("input\\$cv_bank_quick", src), 2L)   # the update + bank_choice
 })

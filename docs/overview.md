@@ -62,10 +62,13 @@ conversions from tested templates feed the Qlik dashboards automatically.
 - **Outputs per statement:** a six-sheet workbook (Transactions, Summary, Checks,
   Provenance, Diagnostics, Metadata), a CSV of the transactions, and a JSON
   holding everything including the build stamp.
-- **Speed:** seconds, not minutes. Measured on a development box on 2026-07-27,
-  an 11-page PDF with 311 transactions converted in about five seconds. A scanned
-  page adds several seconds of OCR on top of that, which is why a scan is the one
-  case worth waiting for. A case folder is one click and one progress bar.
+- **Speed:** seconds, not minutes. Re-measured on a development box on
+  2026-07-28: an 11-page PDF with 311 transactions takes **about 1.2 seconds** of
+  engine time, 1.5 with all three output files written. A scanned page adds
+  several seconds of OCR on top of that, which is why a scan is the one case
+  worth waiting for. A case folder is one click and one progress bar. Those are
+  engine timings on one box; what a person waits for also includes the upload and
+  the browser, and a busy server queues past its concurrency cap.
 
 ---
 
@@ -313,7 +316,7 @@ aspiration — the charter says "one analyst can run and grow it, no engineer
 required", and it is why a new bank is a YAML template rather than a code change.
 
 **Disk:** small and bounded. Everything is one file per event, never a shared
-append, which is also why ten people can use it at once with no locking. Uploaded
+append, which is why ten people can use it at once with no locking. Uploaded
 statements are copied so a failed format can be picked up; those copies are real
 client data, so they are deleted automatically after 90 days (configurable) while
 the small record of what happened is kept forever. Run logs older than 90 days are
@@ -323,6 +326,13 @@ rolled into a yearly archive; nothing is lost.
 week, with per-user isolation — Shiny sessions are isolated, so nobody sees
 another person's upload or result. The one deliberately shared resource is the
 template library, because that is a team asset rather than user data.
+
+**Several people converting at once is now genuinely parallel.** Each conversion
+runs in its own short-lived process rather than inside the one that draws the
+screen, so a colleague's scanned statement no longer freezes your page while it
+reads. How many run at once is capped for the size of the box, and anyone past
+the cap is queued **and told on screen that they are queuing** — the tool does
+not do silent waiting any more than it does silent figures.
 
 **The ongoing cost is templates, and it is meant to be.** Every new bank, and
 every layout change at an existing bank, is one YAML template plus one test file.
@@ -334,13 +344,20 @@ That is the whole maintenance model.
 
 Version 1.3.0. 13 shipped templates, ten reconciliation checks, an automated suite
 of several hundred tests that fails on a *skipped* test as well as a failing one
-(because a skip proves nothing). A register of 141 findings from adversarial
-review and real use, 136 of them fixed and one measured and dismissed; the four
-still open are recorded with what they are waiting for. Two of those are waiting
-on evidence rather than effort — a spread of real forms, and one hand-keyed
-scanned statement to measure OCR digit accuracy against — and both fail closed
-and loudly today. The other two are internal tidiness (colour tokens, comment
-density) with nothing wrong on screen.
+(because a skip proves nothing). The tally is deliberately not repeated here — it
+moves with every commit, and a stale number in this page would read as a
+regression signal; the last full run is recorded in
+[`operational/maintaining-the-engine.md`](operational/maintaining-the-engine.md).
+
+Every defect found by adversarial review or real use is in
+[`context/findings-register.md`](context/findings-register.md) with its evidence
+and status, and that file states its own running total — **178 findings, 161
+fixed, 16 open, 1 not-a-defect** as of 2026-07-28. Read it there rather than
+here, because it is appended to faster than this page is. Two of the open ones
+are blocked on **evidence nobody has** rather than on effort — a spread of real
+forms, and one hand-keyed scanned statement to measure OCR digit accuracy against
+— and both fail closed and loudly today, so neither can put a wrong figure on
+screen.
 
 The engine is done in the sense that matters: the next three things on the roadmap
 are watching a real analyst build a template on a real statement, proving the
