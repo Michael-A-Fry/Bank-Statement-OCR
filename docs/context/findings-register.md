@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 141 findings, 136 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
+**Where it stands: 166 findings, 161 fixed, 4 open, 1 not-a-defect.** Two of the four - N15 and N16 - are blocked on **evidence we do not have** rather than on effort, and each fails closed and loudly today, so neither can put a wrong figure on screen. What would unblock them, and which of the two an AI survey can answer, is set out at the bottom of this file.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -24,7 +24,7 @@ two statements this repo ships proven templates for). Neither was reachable by r
 against its own comments; both needed the code run against a real statement and the result
 read as a stranger would read it. That is worth remembering when choosing the next sweep.
 
-_Last updated: 2026-07-27._
+_Last updated: 2026-07-28._
 
 
 ## Correctness
@@ -536,6 +536,46 @@ below was reproduced before it was fixed and re-proved after.
 | N77 | low | **fixed** | Cosmetics with the same root - text assembled without reading it back: "Read as: X statement statement"; the page box accepting page 99 of a 3-page PDF; the X-ray legend listing layers it had not drawn; notifications stacking rather than replacing; the Admin tab node present in the DOM without `?admin`. | app.R |
 | N78 | low | **fixed** | Form templates are outranked by statement templates while the save message said detection is automatic. | app.R wording |
 | N79 | low | **fixed** | The fingerprint dropdown offered single generic words that the same screen then refused to save. | app.R |
+
+### The drive audit (N80-N104)
+
+Two people worked the tool over rather than reading it: one drove every screen in a browser,
+one followed the written documentation as a maintainer on call and then as a forensic
+accountant. Every item was reproduced on a real statement before it was fixed.
+
+**A caveat on this block.** N48-N79 were re-driven cold by an agent that had not made the
+changes. N80-N104 were not - the independent re-drive was killed part-way by an
+infrastructure restart. They are fixed, each with a regression test that fails when the fix
+is reverted, and the suite is green at 4,006 - but the second pair of eyes did not land.
+Treat them as verified by test, not by walkthrough.
+
+| ID | Severity | Status | Finding | Evidence |
+|---|---|---|---|---|
+| N80 | **critical** | **fixed** | The proof strip - the first quality signal on the page, above the fold - was pinned to five checks. `dates_within_period` and `transaction_count` can FAIL and were permanently off it, and nothing ever added a failing check back. A statement printing "9 transactions" from which 7 were read drew four chips, none red, under a key promising a symbol it would never draw. | app.R:3086-3093 `.PROOF_CHECKS` |
+| N81 | **critical** | **fixed** | The toolkit put a green tick on a draft that read a tenth of the page: the verdict branched on `n > 0`, never on n against what was on the statement. Measured on `asb.pdf` (1 row kept, page 2 yielding nothing) and on a draft that silently dropped every date-less continuation line - which then reconciled with 11 balance discontinuities on the very next screen. `row_coverage()` already held the answer at that moment. | app.R:5115 |
+| N82 | **critical** | **fixed** | A row printing its own 4-digit year was flagged `date_year_inferred`, on every row, whenever the statement's PERIOD text could not be parsed. The flag caps trust, drops the run to needs-review and withholds it from the dashboards - so the loudest warning the tool owns was spent on dates that were verbatim. 19 of 19 rows on a real statement. | R/parse_pdf_table.R:1064 |
+| N83 | **critical** | **fixed** | One comma in a sentence made prose "a statement layout we don't know yet". The guard fired only when NO line held ANY separator character, so a note to self, an email body and meeting minutes were all invited into the template flow - the exact outcome the guard's own comment said it existed to prevent. The test covering it used the one prose string with no separator in it. | R/convert.R:105 |
+| N84 | high | **fixed** | The settings block a maintainer copy-pastes printed `admin_password: change-me`; the code checks for `changeme`. Copy it verbatim and the guard concluded a password HAD been set - Admin opened, with its password printed in the documentation. The same page contradicted itself 40 lines later. | docs/operational/running-and-keeping-it-up.md:96 |
+| N85 | high | **fixed** | "Period:" on the card was the min/max of the TRANSACTION dates, not the statement's printed period. By construction every transaction falls inside it, so "34 date(s) outside period" could only ever look like a bug - training an analyst to dismiss the one check that catches a mis-parsed year or a swapped day/month. The statement's own period appeared nowhere on screen. | app.R:3309-3313 |
+| N86 | medium | **fixed** | Raw template ids on the customer-facing verdict card: the tie message named five, and the matched-but-empty message reached the screen as "badbands_pdf matches the wording...". | R/convert.R:334, :349-353 |
+| N87 | medium | **fixed** | The transactions tables mapped column HEADERS to English and passed the VALUES verbatim, so the Flags column printed `ocr_low_conf` and `date_year_inferred` - on the screen the analyst's own page tells her to report as a bug. 11 emitable tokens, 3 of them with English anywhere. | app.R:3597, :5094; ui_labels.R |
+| N88 | medium | **fixed** | The form result card: a FIELD column of engine schema names redundant with the LABEL beside it, MATCHED/REQUIRED/FLAGGED as `true`/`false`, and a chip reading "Read as: anz_kiwisaver_fields". The earlier fix for "Read as: NA NA statement" had swapped one wrong answer for a charter breach. | app.R:3473-3478, :3262 |
+| N89 | medium | **fixed** | Three alarm levels for one run: the headline called the failing checks "secondary and commonly flag"; What-to-check listed only the dates item; the top diagnostic, severity HIGH, said the file was several statements bundled together; and the button offered the template toolkit. What-to-check omitted the highest-severity item on the page, and the CTA contradicted the tool's own diagnosis. | app.R |
+| N90 | medium | **fixed** | The template toolkit was offered on a file that could not be read at all - nothing to draw a band on, on the same card that said so. | app.R |
+| N91 | medium | **fixed** | A "Checks" heading over no rows and a "Field coverage" heading over no rows, on the screens with the least to go on - and a blank table cannot be told from a rendering failure. Plus "Was this conversion correct?" offered on a run that produced nothing. | app.R |
+| N92 | medium | **fixed** | The batch table graded a file more confidently than the single-file card did - "Converted successfully" and "what to check: -" for a run the card called medium confidence with two unproven checks - and carried no confidence column at all, so a 30-file batch had to be opened row by row. | app.R |
+| N93 | medium | **fixed** | A pound-sterling statement was drafted as NZD, with the pound printed in the cell beside a currency column reading NZD. All three drafters stamped the literal "NZD"; currency is now read off the money the drafter actually matched. | R/draft.R, R/wizard_auto.R |
+| N94 | medium | **fixed** | "could not be checked" printed beside two matching numbers (Expected 79, Read 79) - identical in shape to the passing case, so the numbers carried no information about which, and a check that did not run read as a pass. | R/reconcile.R |
+| N95 | medium | **fixed** | `run.R` printed no run id, so step 4 of the incident procedure - open `logs/runs/<run_id>.json` for the re-run - could not be followed against a folder of 291 files. | run.R |
+| N96 | medium | **fixed** | "The output is byte-identical" is false after any engine update: `engine_version` is stamped inside the JSON. The procedure offered exactly one cause for a mismatch and pointed the maintainer at a template that was innocent. | docs/operational/investigating-a-wrong-conversion.md |
+| N97 | low | **fixed** | The operational pages gave only `RUN-ME.bat`, with the working non-Windows command buried in a design document; and both said `config.yaml` is "created on first run" when the batch file copies it - which is why a clean start announced "Admin is CLOSED" with no file to edit. | docs/operational/ |
+| N98 | low | **fixed** | The analyst's page said "these are the exact words on the screen" and then quoted a headline the app no longer builds; handed her an R symbol 14 lines after telling her a raw internal name on screen is a bug; and carried a stale sentence accusing correct behaviour of being wrong. | docs/operational/converting-statements.md |
+| N99 | low | **fixed** | "A clean run shows a single row saying so" - it does not; real statements essentially never reach that branch. A clean CSV shows one medium-severity row and a clean 311-row PDF shows two info rows. | docs/, R/diagnose.R:433 |
+| N100 | low | **fixed** | Tick and cross meant "checked and passed" / "a problem" in the proof-strip key and the analyst's OWN verdict in the feedback control twenty lines below. | app.R |
+| N101 | low | **fixed** | Two comments in app.R stated a measured fact that a fix in the same release had made false ("draft_template reads 0 rows on asb.pdf and anz_single.pdf"). | app.R:434-435, :4514 |
+| N102 | low | **fixed** | Two console warnings per toolkit open, and a comment asserting the one warning suppressed there was the only one. | app.R:3925-3929 |
+| N103 | low | **fixed** | The add-a-check recipe was accurate but did not warn that minimal fixtures trip any new check - so the three tests that fail name date-year inference, not the check just added. | docs/design.md |
+| N104 | low | **fixed** | Two tests asserted that a customer-facing message CONTAINS a raw template id - the one thing the charter forbids on that surface - so the suite defended the breach. They now assert the friendly name is present and the id absent. | tests/testthat/test-detect.R:410, :432 |
 
 ### The empty-band verdict - the measurements that withdrew it
 
