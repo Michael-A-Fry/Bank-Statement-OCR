@@ -171,6 +171,21 @@ source("ui_content.R")
 # whoever started the server -- the same rule as a settings file that would not
 # parse. NB: whatever copies this app to the server (scripts/bundle-offline.R,
 # or a hand copy) has to include www/.
+# THE SCREEN'S COLOURS, ONCE. The stylesheet's :root block is the design system,
+# but the X-ray draws its layers with base-R graphics (rect/text/border), which
+# cannot read a CSS variable -- so those four values had been typed as raw hex in
+# app.R, drifting into NEAR-MISSES of the tokens they meant: b00020 against
+# --bad:#b3261e, 137333 against --ok:#0f7a37, c77700 against --warn:#b7791f.
+# Nothing looked wrong, which is exactly why it would never have self-corrected.
+# One list here, the same values in app.css, and test-app-ui.R fails if the two
+# ever disagree -- so a colour can still only be changed in one place, even though
+# two languages have to read it.
+PALETTE <- list(ok = "#0f7a37", bad = "#b3261e", warn = "#b7791f", meta = "#a15c00")
+# Base-R graphics take 8-digit hex for a translucent fill; CSS names the same
+# thing with its own alpha. Kept as a helper so a fill is visibly the SAME colour
+# as its outline rather than a second literal that has to be remembered.
+pal_fill <- function(name, alpha) paste0(PALETTE[[name]], alpha)
+
 APP_CSS <- file.path("www", "app.css")
 if (!file.exists(APP_CSS))
   warning(paste("STYLESHEET NOT FOUND: www/app.css is missing, so Statement Studio will",
@@ -1074,7 +1089,7 @@ server <- function(input, output, session) {
   .adm_lock_seconds <- function(fails) if (fails < 3L) 0 else min(300, 5 * 2^(fails - 3L))
   .adm_lock_left <- function() max(0, ceiling(adm_locked_until() - as.numeric(Sys.time())))
   .adm_login_error <- function(msg) output$adm_login_msg <- renderUI(
-    div(style = "color:#b00020;margin-top:6px", msg))
+    div(style = "color:var(--bad);margin-top:6px", msg))
   observeEvent(input$adm_login, {
     if (ADMIN_PW_UNSET) {            # rule 1 -- no password set, no Admin, ever
       admin_ok(FALSE)
@@ -1291,7 +1306,7 @@ server <- function(input, output, session) {
       ids <- groups[[gi]]
       rows <- ov[ov$id %in% ids, , drop = FALSE]
       lab <- sprintf("%s \u00b7 %s", rows$bank[1] %||% "?", rows$format[1] %||% "?")
-      tags$div(style = "margin:6px 0;padding:6px 10px;border-left:3px solid #c77700;background:#fff8ef",
+      tags$div(style = "margin:6px 0;padding:6px 10px;border-left:3px solid var(--warn);background:var(--warn-bg)",
         strong(sprintf("Same layout (%d): %s", length(ids), lab)),
         tags$ul(lapply(seq_len(nrow(rows)), function(i) tags$li(
           sprintf("%s%s", rows$id[i], if (nzchar(rows$hidden[i])) " (hidden)" else "")))))
@@ -1372,7 +1387,7 @@ server <- function(input, output, session) {
 
   .tpl_from_editor <- function() tryCatch(yaml::yaml.load(input$adm_tpl_edit), error = function(e) NULL)
   .tpl_note <- function(html, ok = TRUE)
-    renderUI(div(style = sprintf("color:%s;font-size:12px", if (ok) "#137333" else "#b00020"), HTML(html)))
+    renderUI(div(style = sprintf("color:%s;font-size:12px", if (ok) PALETTE$ok else PALETTE$bad), HTML(html)))
 
   observeEvent(input$adm_tpl_validate, {
     req(admin_ok())
@@ -1447,12 +1462,12 @@ server <- function(input, output, session) {
     req(admin_ok())
     txt <- input$adm_dict_edit %||% ""
     if (!isTRUE(tryCatch({ yaml::yaml.load(txt); TRUE }, error = function(e) FALSE))) {
-      output$adm_dict_msg <- renderUI(div(style = "color:#b00020", YAML_BAD_MSG))
+      output$adm_dict_msg <- renderUI(div(style = "color:var(--bad)", YAML_BAD_MSG))
       return()
     }
     safe(file.copy(DICT_PATH, paste0(DICT_PATH, ".bak"), overwrite = TRUE))
     okw <- isTRUE(tryCatch({ writeLines(txt, DICT_PATH); TRUE }, error = function(e) FALSE))
-    output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+    output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
       if (okw) "Saved (backup at labels.yaml.bak). New wordings apply to the next conversion."
       else YAML_WRITE_MSG))
   })
@@ -1471,7 +1486,7 @@ server <- function(input, output, session) {
     # writing this toggle would wipe every other setting in it"). Show it -- a bare
     # "check folder permissions" would send the admin hunting the wrong problem.
     why <- attr(okw, "reason")
-    output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+    output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
       if (okw) "Saved. Applies to the next conversion. Capture is local only and never enters the Qlik feed."
       else if (!is.null(why)) paste("Not saved:", why)
       else "Could not write config/config.yaml - check folder permissions."))
@@ -1501,11 +1516,11 @@ server <- function(input, output, session) {
     txt <- input$adm_lex_edit %||% ""
     parsed <- tryCatch(yaml::yaml.load(txt), error = function(e) e)
     if (inherits(parsed, "error")) {
-      output$adm_lex_msg <- renderUI(div(style = "color:#b00020", YAML_BAD_MSG)); return()
+      output$adm_lex_msg <- renderUI(div(style = "color:var(--bad)", YAML_BAD_MSG)); return()
     }
     probs <- validate_lexicon(parsed)
     if (length(probs)) {
-      output$adm_lex_msg <- renderUI(div(style = "color:#b00020",
+      output$adm_lex_msg <- renderUI(div(style = "color:var(--bad)",
         HTML(paste("Not saved -", paste(probs, collapse = "; "))))); return()
     }
     safe(file.copy(LEXICON_PATH, paste0(LEXICON_PATH, ".bak"), overwrite = TRUE))
@@ -1513,7 +1528,7 @@ server <- function(input, output, session) {
       dir.create(dirname(LEXICON_PATH), recursive = TRUE, showWarnings = FALSE)
       writeLines(txt, LEXICON_PATH); TRUE }, error = function(e) FALSE))
     if (okw) clear_lexicon_cache()   # the next conversion re-reads the vocabulary
-    output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) "#137333" else "#b00020"),
+    output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
       if (okw) "Saved (backup at lexicon.yaml.bak). Applies to the next conversion, everywhere."
       else YAML_WRITE_MSG))
   })
@@ -1593,7 +1608,7 @@ server <- function(input, output, session) {
       value = read_file_text(LEXICON_PATH))
     sugg_bump(sugg_bump() + 1)
     ok <- isTRUE(out)
-    output$adm_sugg_msg <- renderUI(div(style = sprintf("color:%s", if (ok) "#137333" else "#b00020"),
+    output$adm_sugg_msg <- renderUI(div(style = sprintf("color:%s", if (ok) PALETTE$ok else PALETTE$bad),
       if (ok) sprintf("Added '%s' to %s. The engine will use it on the next conversion.",
                       tolower(tok), sub("_markers$", "", cat_))
       else attr(out, "reason") %||% "Could not write the vocabulary file."))
@@ -2080,8 +2095,8 @@ server <- function(input, output, session) {
     rasterImage(r$ras, 0, r$h, r$w, 0)
     for (nm in names(fb_regions())) { b <- fb_regions()[[nm]]
       if (isTRUE(b$page == r$pg)) {
-        rect(b$x_min, b$y_max, b$x_max, b$y_min, border = "#a15c00", lwd = 2)
-        text(b$x_min, b$y_min, nm, col = "#a15c00", font = 2, cex = 0.9, adj = c(0, 1))
+        rect(b$x_min, b$y_max, b$x_max, b$y_min, border = PALETTE$meta, lwd = 2)
+        text(b$x_min, b$y_min, nm, col = PALETTE$meta, font = 2, cex = 0.9, adj = c(0, 1))
       } }
   })
   fb_template <- reactive({
@@ -2317,12 +2332,12 @@ server <- function(input, output, session) {
       # Friendly names, and the SAME ones the picture writes over each band: the
       # stored column names are the engine's ("other_party"), not the reader's.
       if (has_cols) lapply(names(pal), function(nm) sw(pal[[nm]], cv_friendly_cols(nm))),
-      if ("kept" %in% layers && n_kept > 0) sw("#137333", "transaction row (kept)"),
-      if ("skipped" %in% layers && n_skip > 0) sw("#c77700", UNREAD_ROW_PLAIN_KEY, dashed = TRUE),
-      if ("meta" %in% layers && has_meta) sw("#a15c00", "balance / account details"),
-      if ("redact" %in% layers && has_red) sw("#b00020", "redaction (not read)", fill = "#b0002022"),
-      if (has_ocr) sw("#c77700", "machine-read word the tool is unsure about - double-check it",
-                      fill = "#c7770040"))
+      if ("kept" %in% layers && n_kept > 0) sw(PALETTE$ok, "transaction row (kept)"),
+      if ("skipped" %in% layers && n_skip > 0) sw(PALETTE$warn, UNREAD_ROW_PLAIN_KEY, dashed = TRUE),
+      if ("meta" %in% layers && has_meta) sw(PALETTE$meta, "balance / account details"),
+      if ("redact" %in% layers && has_red) sw(PALETTE$bad, "redaction (not read)", fill = pal_fill("bad", "22")),
+      if (has_ocr) sw(PALETTE$warn, "machine-read word the tool is unsure about - double-check it",
+                      fill = pal_fill("warn", "40")))
   })
   ix_render <- reactive({
     st <- ix_state(); req(st, st$is_pdf)
@@ -2354,7 +2369,7 @@ server <- function(input, output, session) {
     if (!is.null(w$ocr_conf)) {
       lc <- w[!is.na(w$ocr_conf) & w$ocr_conf < PARAM_OCR_CELL_MIN_CONF, , drop = FALSE]
       if (nrow(lc)) rect(lc$x, lc$y, lc$x + lc$width, lc$y + lc$height,
-                         border = "#c77700", col = "#c7770040", lwd = 1.2)
+                         border = PALETTE$warn, col = pal_fill("warn", "40"), lwd = 1.2)
     }
     if ("cols" %in% layers) {
       sel <- w[!is.na(w$column), , drop = FALSE]
@@ -2364,7 +2379,7 @@ server <- function(input, output, session) {
     if ("redact" %in% layers) {
       red <- w[w$redacted %in% TRUE, , drop = FALSE]
       if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
-                          border = "#b00020", col = "#b0002022", lwd = 1)
+                          border = PALETTE$bad, col = pal_fill("bad", "22"), lwd = 1)
     }
     if ("cols" %in% layers) for (nm in names(P$bands)) { b <- P$bands[[nm]]
       if (!is.null(b$x_min) && !is.null(b$x_max)) {
@@ -2376,7 +2391,7 @@ server <- function(input, output, session) {
       } }
     if ("kept" %in% layers) {
       kr <- P$rows[P$rows$kept, , drop = FALSE]
-      if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = "#137333", lwd = 1)
+      if (nrow(kr)) rect(kr$x0 - 1, kr$y0 - 1, kr$x1 + 1, kr$y1 + 1, border = PALETTE$ok, lwd = 1)
     }
     # Amber dashed: rows the engine skipped that LOOK like transactions (bad date
     # or missing amount) -- the "why aren't you seeing it" rows. Continuations,
@@ -2385,13 +2400,13 @@ server <- function(input, output, session) {
     if ("skipped" %in% layers) {
       sk <- P$rows[.ix_unread(P$rows), , drop = FALSE]
       if (nrow(sk)) rect(sk$x0 - 1, sk$y0 - 1, sk$x1 + 1, sk$y1 + 1,
-                         border = "#c77700", lty = 2, lwd = 1.6)
+                         border = PALETTE$warn, lty = 2, lwd = 1.6)
     }
     if ("meta" %in% layers && !is.null(st$meta_loc)) {
       ml <- st$meta_loc[[r$pg]]
       if (!is.null(ml)) { f <- ml[ml$found %in% TRUE, , drop = FALSE]
-        if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = "#a15c00", lwd = 2)
-          text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = "#a15c00", font = 2, cex = 0.8, adj = c(0, 0.5)) } }
+        if (nrow(f)) { rect(f$x0 - 2, f$y0 - 2, f$x1 + 2, f$y1 + 2, border = PALETTE$meta, lwd = 2)
+          text(f$x1 + 3, (f$y0 + f$y1) / 2, f$field, col = PALETTE$meta, font = 2, cex = 0.8, adj = c(0, 0.5)) } }
     }
     # pinned header-value boxes (metadata_regions) the template defines for this page
     if ("meta" %in% layers) {
@@ -3120,7 +3135,7 @@ server <- function(input, output, session) {
                                orderSequence = list("desc", "asc"))))) |>
       formatStyle("Confidence", fontWeight = "bold",
                   color = styleEqual(c("high", "medium", "low"),
-                                     c("#137333", "#8a6d00", "#b00020")))
+                                     c(PALETTE$ok, "#8a6d00", PALETTE$bad)))
   })
 
   output$cv_batch_open <- renderUI({
@@ -3528,8 +3543,8 @@ server <- function(input, output, session) {
     chip <- function(nm) {
       st <- k$status[k$name == nm][1]
       m <- switch(st %||% "na",
-        pass = list("\u2713", "#137333", "#e9f5ec"),
-        fail = list("\u2717", "#b00020", "#fdecef"),
+        pass = list("\u2713", PALETTE$ok, "#e9f5ec"),
+        fail = list("\u2717", PALETTE$bad, "#fdecef"),
         list("\u2013", "#6b7780", "#f2f4f6"))     # na / anything else: could not run
       span(style = sprintf(paste0("display:inline-flex;align-items:center;gap:6px;",
                                   "margin:0 8px 6px 0;padding:5px 10px;border-radius:999px;",
@@ -3847,9 +3862,9 @@ server <- function(input, output, session) {
     tagList(
       div(class = "stat-grid",
         card("Transactions", if (is.na(n)) "-" else n),
-        card("Money in",  fmt_money(money_in, cur),  "#137333"),
-        card("Money out", fmt_money(money_out, cur), "#b00020"),
-        card("Net",       fmt_money(net, cur), if (isTRUE(net < 0)) "#b00020" else "#137333"),
+        card("Money in",  fmt_money(money_in, cur),  PALETTE$ok),
+        card("Money out", fmt_money(money_out, cur), PALETTE$bad),
+        card("Net",       fmt_money(net, cur), if (isTRUE(net < 0)) PALETTE$bad else PALETTE$ok),
         if (has_close) card("Closing balance", fmt_money(as.numeric(h$closing_balance), cur))),
       p(class = "muted", style = "margin:0 0 4px", sprintf("%s%s%s",
         paste(ranges, collapse = "  \u00b7  "),
@@ -3913,7 +3928,7 @@ server <- function(input, output, session) {
     # human date labels and a $k money axis, so it reads as product, not raw plot.
     # Green = money in, red = out (their meaning everywhere); brand blue for the
     # neutral balance / cumulative lines, softly area-filled so they read as product.
-    GREEN <- "#0b7a34"; RED <- "#b00020"; BLUE <- "#00205b"; BLUE_FILL <- "#00205b1f"
+    GREEN <- "#0b7a34"; RED <- PALETTE$bad; BLUE <- "#00205b"; BLUE_FILL <- "#00205b1f"
     INK <- "#1f2a33"; GRID <- "#eceef1"; AXIS <- "#6b7280"
     fmt_k <- function(v) ifelse(abs(v) >= 1000,
       paste0(formatC(v / 1000, format = "f", digits = 1), "k"),
@@ -4046,11 +4061,11 @@ server <- function(input, output, session) {
       check.names = FALSE, stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 30)) |>
       formatStyle("Found", fontWeight = "bold",
-                  color = styleEqual(c("yes", "no"), c("#137333", "#b00020"))) |>
+                  color = styleEqual(c("yes", "no"), c(PALETTE$ok, PALETTE$bad))) |>
       # The rows the card is talking about, findable at a glance on a table of
       # thirty fields -- styleEqual("") leaves an unflagged row untouched.
       formatStyle("Needs a look", fontWeight = "bold",
-                  color = styleEqual("", "inherit", "#b00020"))
+                  color = styleEqual("", "inherit", PALETTE$bad))
   })
 
   # THE FIGURES THE CHECK WAS DECIDED ON, BESIDE THE VERDICT.
@@ -4085,7 +4100,7 @@ server <- function(input, output, session) {
     datatable(disp, rownames = FALSE,
               options = list(dom = "t", pageLength = 20, scrollX = TRUE)) |>
       formatStyle("Result", fontWeight = "bold",     # coloured off the same map
-        color = styleEqual(unname(RESULT_PLAIN[c("pass", "fail")]), c("#137333", "#b00020")))
+        color = styleEqual(unname(RESULT_PLAIN[c("pass", "fail")]), c(PALETTE$ok, PALETTE$bad)))
   })
 
   output$cv_diag <- renderDT({
@@ -5631,8 +5646,8 @@ server <- function(input, output, session) {
       if (is.null(b$x_min) || is.null(b$x_max)) next
       if (!identical(as.integer(b$page %||% 1), pg)) next
       y0 <- (b$y_min %||% 0) / s[2]; y1 <- if (is.null(b$y_max)) r$h else b$y_max / s[2]
-      rect(b$x_min / s[1], y0, b$x_max / s[1], y1, border = "#a15c00", lwd = 2)
-      text(b$x_min / s[1], y0, nm, col = "#a15c00", font = 2, cex = 0.85, pos = 3, offset = 0.2)
+      rect(b$x_min / s[1], y0, b$x_max / s[1], y1, border = PALETTE$meta, lwd = 2)
+      text(b$x_min / s[1], y0, nm, col = PALETTE$meta, font = 2, cex = 0.85, pos = 3, offset = 0.2)
     }
     # Live feedback: the box being drawn is shown as the FULL-HEIGHT column it will
     # become (a translucent band over the whole page height), so it is obvious the
@@ -6044,7 +6059,7 @@ server <- function(input, output, session) {
   })
   output$adm_status_plot <- renderPlot({
     d <- adm_data(); req(d); ov <- runs_overview(d$runs); if (!nrow(ov)) return(NULL)
-    cols <- c(ok = "#137333", needs_review = "#e3b341", unsupported = "#b00020",
+    cols <- c(ok = PALETTE$ok, needs_review = "#e3b341", unsupported = PALETTE$bad,
               failed = "#7d1a1a")[ov$status]
     cols[is.na(cols)] <- "#888888"   # three-digit hex throws in base R
     op <- par(mar = c(5, 4, 1, 1)); on.exit(par(op))
@@ -6096,7 +6111,7 @@ server <- function(input, output, session) {
     dr <- template_drift(d$runs)
     tbl <- datatable(dr, rownames = FALSE,
                      options = dt_none_opts("No template has started failing - good.", dom = "t"))
-    if (nrow(dr)) tbl <- formatStyle(tbl, "drop", fontWeight = "bold", color = "#b00020")
+    if (nrow(dr)) tbl <- formatStyle(tbl, "drop", fontWeight = "bold", color = PALETTE$bad)
     tbl
   })
   observeEvent(input$adm_rollup, {

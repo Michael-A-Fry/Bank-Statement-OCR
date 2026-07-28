@@ -294,8 +294,17 @@
   d <- suppressWarnings(as.Date(tx$date))
   within <- !is.na(d) & d >= ps & d <= pe
   outside <- sum(!within, na.rm = TRUE)
+  # EXPECTED AND ACTUAL MUST BE THE SAME KIND OF THING. They are rendered side by
+  # side under exactly those two headings, and this check used to put a date RANGE
+  # in one and a COUNT in the other -- "Expected 2025-08-13..2025-09-01, Actual 34"
+  # invites the reviewer to read 34 as a date and find it is not one. The count is
+  # the finding, not the measurement: what the rows actually span is the thing
+  # comparable to the period, so that goes in Actual and the count stays in the
+  # detail, where it already was.
+  span <- if (any(!is.na(d))) sprintf("%s..%s", min(d, na.rm = TRUE), max(d, na.rm = TRUE))
+          else NA_character_
   .kpi("dates_within_period", if (outside == 0) "pass" else "fail",
-       expected = sprintf("%s..%s", ps, pe), actual = outside,
+       expected = sprintf("%s..%s", ps, pe), actual = span,
        discrepancy = outside, detail = sprintf("%d date(s) outside period", outside))
 }
 

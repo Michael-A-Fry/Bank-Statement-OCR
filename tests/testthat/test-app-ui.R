@@ -94,6 +94,45 @@ test_that("the design system is one linked stylesheet, and its absence is announ
   # a missing stylesheet is loud, not a mystery
   expect_match(joined, "STYLESHEET NOT FOUND", fixed = TRUE)
   expect_match(joined, 'APP_CSS <- file.path\\("www", "app.css"\\)')
+})
+
+# THE TEST ABOVE FORBIDS STYLE *TAGS* AND PROVED NOTHING ABOUT COLOUR. It passed
+# while app.R carried 41 distinct hex values across 99 uses, several of them
+# near-misses of the token they meant (#b00020 for --bad:#b3261e, #137333 for
+# --ok:#0f7a37, #c77700 for --warn:#b7791f). Nothing looked wrong on screen --
+# which is why it would never have corrected itself.
+#
+# It cannot simply be "no hex in app.R": the X-ray draws with base-R graphics,
+# which cannot read a CSS variable, so those colours HAVE to exist as R values.
+# The rule that is actually true is that a colour with a token is spelled the same
+# in both languages, so this asserts the two lists agree, value for value.
+test_that("the R palette and the stylesheet's tokens are the same colours", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # Take the LINE, not a regex over the whole file: `.` does not cross newlines,
+  # so a whole-file sub() silently matched nothing and eval'd all of app.R.
+  i <- grep("^PALETTE <- list\\(", src)
+  expect_length(i, 1L)
+  pal <- eval(parse(text = src[i]))
+  css <- paste(readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE),
+               collapse = "\n")
+  token <- function(nm) {
+    m <- regmatches(css, regexpr(sprintf("--%s:#[0-9a-fA-F]{6}", nm), css))
+    expect_length(m, 1L)                       # the token must exist to be matched
+    sub(sprintf("--%s:", nm), "", m)
+  }
+  for (nm in names(pal))
+    expect_identical(tolower(pal[[nm]]), tolower(token(nm)),
+                     info = sprintf("PALETTE$%s and --%s disagree", nm, nm))
+
+  # and the near-misses may not come back. Only the three that were WRONG are
+  # forbidden: #a15c00 was never a near-miss of anything, it is the real value of
+  # --meta, so it legitimately appears once -- in the PALETTE line this test just
+  # read. Forbidding it too would have meant forbidding the fix.
+  code <- src[!grepl("^\\s*#", src)]
+  code <- code[-grep("^PALETTE <- list\\(", code)]
+  for (gone in c("#b00020", "#137333", "#c77700"))
+    expect_false(any(grepl(gone, code, fixed = TRUE)),
+                 info = sprintf("%s is back in app.R; use PALETTE / var(--token)", gone))
   # ...and the rules really did all arrive: the classes the screen names must exist
   css <- paste(.css_src(), collapse = "\n")
   for (cls in c("\\.verdict-high", "\\.verdict-medium", "\\.verdict-low", "\\.stat-grid",

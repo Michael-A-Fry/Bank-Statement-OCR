@@ -705,3 +705,31 @@ test_that("a forward period is checked exactly as before", {
   expect_identical(row$status, "pass")
   expect_match(row$detail, "0 date(s) outside period", fixed = TRUE)
 })
+
+# EXPECTED AND ACTUAL ARE RENDERED SIDE BY SIDE UNDER THOSE TWO WORDS, so they
+# have to be the same kind of thing. This check used to print a date RANGE in one
+# and a COUNT of offending rows in the other -- "Expected 2025-08-13..2025-09-01,
+# Actual 34" -- which reads as a comparison and is not one. The count was never
+# lost: it is the detail sentence, and the discrepancy, both asserted here.
+test_that("dates_within_period compares a span with a span, not a span with a count", {
+  p <- .parsed(.tx(c(-10, 40), date = c("2026-01-05", "2026-01-20")),
+               header = list(period_start = "1 Jan 2026", period_end = "31 Jan 2026"),
+               source_line_count = 2)
+  row <- reconcile(p)$kpis
+  row <- row[row$name == "dates_within_period", ]
+  expect_identical(as.character(row$expected), "2026-01-01..2026-01-31")
+  expect_identical(as.character(row$actual),   "2026-01-05..2026-01-20")
+  expect_false(grepl("^[0-9]+$", as.character(row$actual)))   # never a bare count
+  expect_equal(as.numeric(row$discrepancy), 0)
+
+  # and when it fails, Actual still shows what the rows span so the reviewer can
+  # see HOW far out they are, with the count in the sentence beside it
+  p2 <- .parsed(.tx(c(-10, 40), date = c("2026-01-05", "2026-06-20")),
+                header = list(period_start = "1 Jan 2026", period_end = "31 Jan 2026"),
+                source_line_count = 2)
+  r2 <- reconcile(p2)$kpis
+  r2 <- r2[r2$name == "dates_within_period", ]
+  expect_identical(r2$status, "fail")
+  expect_identical(as.character(r2$actual), "2026-01-05..2026-06-20")
+  expect_match(r2$detail, "1 date(s) outside period", fixed = TRUE)
+})

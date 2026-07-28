@@ -188,6 +188,12 @@ body.ss-run #ss-busy{display:none}   /* the corner pill is redundant now */
   --ok:#0f7a37; --ok-bg:#e9f6ee; --ok-line:#bfe0c8;
   --bad:#b3261e; --bad-bg:#fdecec; --bad-line:#f1b6b6;
   --warn:#b7791f; --warn-ink:#8a5b00; --warn-bg:#fff7e8; --warn-line:#f0c979;
+  /* The X-ray draws its layers with base-R graphics, which cannot read a CSS
+     variable -- so those colours are ALSO declared as R constants (PALETTE, app.R)
+     and a test asserts the two lists agree. --meta is the balance/account layer:
+     a real semantic of its own, not a shade of --warn, and it needs a name here so
+     it is governed rather than typed in. */
+  --meta:#a15c00;
   --r:10px; --r-sm:8px; --r-lg:14px;
   --sh-1:0 1px 2px rgba(16,32,50,.05);
   --sh-2:0 1px 3px rgba(16,32,50,.06),0 6px 18px rgba(16,32,50,.07);

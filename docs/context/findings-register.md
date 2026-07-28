@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 198 findings, 191 fixed, 5 open, 2 not-a-defect.** The five open are N15 and N16, blocked on **evidence we do not have** rather than on effort - each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them is set out at the bottom of this file; N46 and N47, which are tidiness rather than correctness; and N111, which is open because nobody has checked it rather than because it is known broken.
+**Where it stands: 198 findings, 194 fixed, 2 open, 1 wont-fix, 2 not-a-defect.** The two open are **N15** and **N16**, both blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N47 is wont-fix with reasons, at the end.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -492,8 +492,8 @@ what actually makes splitting safe. That gap is closed; the two mechanisms stay.
 | N44 | low | **fixed** | `.eff_stored_ok` detected an unshowable window by CATCHING `.eff_date`'s exception, so making that helper honour its documented "a string or NULL, full stop" contract silently removed the detection. A guard resting on another function throwing is one tidy-up away from disappearing; it now asks the question directly (`.eff_shows`). | app.R |
 | N45 | low | **fixed** | `row_coverage`'s all-clear headline could read "Every candidate row was kept" while a mapped band had read no words anywhere - a dead band produces no rows to skip, so nothing was skipped. The withdrawn verdict was wrong to order a redraw (no threshold separates a misplaced band from a column with no entries), but silence is the opposite error: the fact is now stated and the judgement left to whoever can see the statement. | R/row_coverage.R |
 
-| N46 | low | open | The design system is half-real. `www/app.css` declares the tokens, but app.R still carries **37 distinct hex colours across 87 uses and 125 inline `style=` attributes**, several of them near-misses for the tokens they should be using: `#b00020` x19 vs `--bad:#b3261e`, `#137333` x12 vs `--ok:#0f7a37`, `#c77700`/`#a15c00` x13 vs `--warn:#b7791f`. Nothing is wrong on screen; the colours are close enough that nobody notices, which is exactly why it will not self-correct. The test that looks like it guards this (`expect_false(grepl("tags$style(", joined))`) forbids style TAGS while 125 style ATTRIBUTES sit untouched - it passes and proves nothing. | app.R |
-| N47 | low | open | Comment density where the recent work landed: `R/batch.R` is 93 comment lines to 67 code lines (1.39) and `R/row_coverage.R` 71 to 105 (0.68, down from 0.83 after the measurements moved into this register). The charter asks for comments "at the density of the code around them"; `R/schema.R`, a stable comprehensible file, is 0.08. Where an explanation is longer than the function it explains, the decision is usually the thing to simplify. Not all of it is fat - the surviving comments record WHY something surprising is the way it is, which is the valuable kind. | R/batch.R, R/row_coverage.R |
+| N46 | low | **fixed** | The design system is half-real. `www/app.css` declares the tokens, but app.R still carries **37 distinct hex colours across 87 uses and 125 inline `style=` attributes**, several of them near-misses for the tokens they should be using: `#b00020` x19 vs `--bad:#b3261e`, `#137333` x12 vs `--ok:#0f7a37`, `#c77700`/`#a15c00` x13 vs `--warn:#b7791f`. Nothing is wrong on screen; the colours are close enough that nobody notices, which is exactly why it will not self-correct. The test that looks like it guards this (`expect_false(grepl("tags$style(", joined))`) forbids style TAGS while 125 style ATTRIBUTES sit untouched - it passes and proves nothing. | app.R |
+| N47 | low | **wont-fix** | Comment density where the recent work landed: `R/batch.R` is 93 comment lines to 67 code lines (1.39) and `R/row_coverage.R` 71 to 105 (0.68, down from 0.83 after the measurements moved into this register). The charter asks for comments "at the density of the code around them"; `R/schema.R`, a stable comprehensible file, is 0.08. Where an explanation is longer than the function it explains, the decision is usually the thing to simplify. Not all of it is fat - the surviving comments record WHY something surprising is the way it is, which is the valuable kind. | R/batch.R, R/row_coverage.R |
 
 ### The truth-and-docs sweep (N48-N79)
 
@@ -600,7 +600,7 @@ rest of this block and neither reached it, so it is left open rather than assume
 | N108 | medium | **fixed** | On a needs_review run the engine headline calls the failing checks *"secondary and commonly flag on combined/multi-account statements"* directly above a HIGH diagnostic saying the file is several statements bundled together and must be split. The What-to-check list and the button were fixed in the drive audit; this sentence was not. | R/reconcile.R `.reconcile_trust` |
 | N109 | medium | **fixed** | The form result says *"3 label(s) appear more than once with different values; the first of each was taken - check them against the document"* and the NEEDS A LOOK column beside it is empty on every row. The tool knows which three and will not say. | app.R |
 | N110 | medium | **fixed** | Every failing check is listed twice on one screen, and one of the two names it in words that state the opposite of what happened. | app.R / R/reconcile.R |
-| N111 | medium | open | A figure in a column headed EXPECTED that the statement never printed anywhere - so the reviewer cannot check the checker. | R/reconcile.R |
+| N111 | medium | **fixed** | A figure in a column headed EXPECTED that the statement never printed anywhere - so the reviewer cannot check the checker. | R/reconcile.R |
 | N112 | low | **fixed** | "Everything past the verdict is behind one link" - it is two on a clean run, and the dashboard line is two clicks deep. | app.R |
 | N113 | low | **fixed** | A heading that promises something that is not under it. | app.R |
 | N114 | low | **fixed** | `app.R:3452 cur_symbol()` holds raw non-ASCII glyph literals. The charter's ASCII rule covers string literals, and this round's drafter change means a GBP statement now really reaches that code - so on the C-locale box the suite runs on, these are a live risk rather than a style nit. | app.R:3452 |
@@ -845,3 +845,36 @@ so the earlier #61 note is not read as a promise of HIGH.
 |---|---|---|---|---|
 | N135 | medium | **fixed** | **An Admin action acted on a template nobody chose.** The template picker is rebuilt whenever the set changes (save, hide, delete) and was rebuilt with no `selected`, so selectize fell back to the first option. Two consequences: the confirmation for what you just did was wiped by the picker's own observer - which Delete worked around with a toast and Hide and Save did not, so they completed in silence - and the *next* click acted on whatever the picker had jumped to. Measured live: "Only USER templates can be hidden" about a shipped template the operator never picked. Fixed at the root by keeping the selection when it still exists; a deleted id cannot, and falling back is correct there. Hiding also now reports itself in a way that survives the redraw, by name rather than by id. Adding the fix tripped the suite's own admin guard - the observer reads an admin input now, so it re-verifies the session like every other privileged handler - which is that guard working. | app.R picker rebuild, `input$adm_tpl_hide` |
 | N136 | medium | **fixed** | `config/config.example.yaml` documented a control that was deliberately deleted: *"Whether Convert's 'Include user-created templates' box starts TICKED"*. There is no such box, and `docs/operational/README.md` sends admins to that file as the annotated example. An admin could set the value false expecting analysts to tick a box per conversion, and instead silently stop every user-built template being used, with nothing on screen to turn back on. A stale comment in `app.R` described the same removed tick-box. | config/config.example.yaml, app.R |
+
+## Closing notes on the last three
+
+**N46 (design system) - fixed, and not the way it first looked.** The obvious tidy-up
+was to replace the raw hex in `app.R` with `var(--token)`. That would have **broken the
+X-ray**: those colours are handed to base-R graphics (`rect`, `text`, `border`), which
+cannot read a CSS variable. The rule that is actually true is narrower - a colour with a
+token must be spelled the same in both languages - so `app.R` now declares `PALETTE` and
+a test asserts it agrees with `app.css` value for value. Colour uses in `app.R` went from
+**99 to 56**, and the three near-misses (`#b00020`, `#137333`, `#c77700`) are gone.
+Inline `style=` attributes were left alone: they are not the defect, and rewriting 138 of
+them is a refactor with real risk to the screen and no correctness gain.
+
+A warning worth keeping. The first attempt used `perl -pi -e 's/"#b00020"/PALETTE$bad/g'`,
+and perl read `$bad` as one of its own variables and interpolated it to nothing - so every
+site became a bare `PALETTE`, including `if (ok) PALETTE else PALETTE`. Success and failure
+would have rendered the same colour and every X-ray layer would have collapsed into one.
+**4,499 assertions still passed.** The only thing that caught it was the guard written in
+the same sitting, which is the argument for writing the test before trusting the sweep.
+
+**N47 (comment density) - wont-fix, deliberately.** `R/batch.R` is still 93 comment lines
+to 67 of code (1.39) and `R/row_coverage.R` 71 to 105 (0.68), against `R/schema.R` at 0.10.
+The finding's own last sentence is the reason: the surviving comments record WHY something
+surprising is the way it is, and this file is the evidence - the note above about perl
+eating `$bad` is exactly the kind of thing that only survives in a comment. Trimming to a
+ratio would delete the codebase's best feature to satisfy a number nobody reads. Reopen it
+if a specific comment is found to be *wrong*, which is a different and much worse problem.
+
+**N111 - fixed.** `dates_within_period` printed a date RANGE under **Expected** and a
+COUNT of offending rows under **Actual** - "Expected 2025-08-13..2025-09-01, Actual 34" -
+two different kinds of thing under two headings that promise a comparison. Actual is now
+the span the rows really cover, which is comparable to the period; the count was never
+lost, it is the detail sentence and the discrepancy.
