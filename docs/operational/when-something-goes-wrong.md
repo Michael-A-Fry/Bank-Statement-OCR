@@ -6,7 +6,17 @@ that.
 
 ## Start here
 
-Open **Show me how it read this** under the verdict. Everything below lives there.
+Most of what follows is already on the result page. The **Checks**, the
+**Diagnostics** and the **Field coverage** sit under your transactions in one
+disclosure headed **Checks & detail (for review)**. Whenever a check failed, or
+the tool asked for a second look, or nothing could be read at all, it is already
+open. On a clean run you open it yourself, in one click.
+
+One section of this page is a click further in: *See it on the page* — the
+statement with the columns drawn on it, the list of rows it skipped, and the
+shareable diagnostic underneath. All of that sits behind **Show me how it read
+this**, the link below **Checks & detail**, and that opens itself on a flagged
+run too.
 
 | What you see | What it means | What to do |
 |---|---|---|
@@ -87,7 +97,7 @@ Both of those are *Converted successfully*, confidence **medium**, published to
 the dashboards — with rows on this table. Read the *How to fix* sentence, not the
 row count and not the severity word:
 
-- **info** is a note. It is not always "nothing to do" — see the five kinds
+- **info** is a note. It is not always "nothing to do" — see the six kinds
   above. On the 311-row PDF, one of the two info rows asks you to review per
   account.
 - **medium** on *completeness not auto-verified* is the same fact the confidence

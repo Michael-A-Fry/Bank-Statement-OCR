@@ -635,8 +635,24 @@ ui <- fluidPage(
           br(),
           actionButton("adm_refresh", "Refresh from logs", class = "btn-primary"),
           helpText("A live picture from every conversion the team has run and every rating left."),
-          h4("Uploads - new formats to pick up"),
-          helpText("Statements the tool couldn't read, that nobody has set up yet. Pick one up: download its safe summary (no personal data) or open it in the toolkit."),
+          # THE HEADING DESCRIBED THE PICKUP QUEUE; THE TABLE IS THE WHOLE LOG.
+          # read_uploads() returns EVERY upload record, newest first, with no
+          # filter -- which is exactly what the incident procedure sends a
+          # maintainer here for ("you know the file, or roughly when it was
+          # converted"). It was headed "new formats to pick up" over help text
+          # reading "Statements the tool couldn't read, that nobody has set up
+          # yet", so at step 1 of that procedure, hunting a SUCCESSFUL conversion,
+          # the screen told the maintainer not to look in the one table that had
+          # it. (Measured: two rows, one `ok / westpac_everyday_pdf /
+          # needs_pickup false`, under a heading that says it cannot be there.)
+          # The pickup queue is still here -- it is the `needs_pickup` column, and
+          # the picker beside the table still offers only those -- so nothing is
+          # lost by naming the table after what it holds.
+          h4("Uploads - every statement converted here, newest first"),
+          helpText(paste("One row per upload, whatever became of it - the route in when you know the file",
+                         "or roughly when it was converted. `needs_pickup` marks a new format the tool",
+                         "couldn't read that nobody has set up yet; the picker on the right offers those:",
+                         "download an upload's safe summary (no personal data) or open it in the toolkit.")),
           fluidRow(
             column(8, DTOutput("adm_uploads")),
             column(4,
@@ -1127,10 +1143,12 @@ server <- function(input, output, session) {
   })
   outputOptions(output, "adm_cfg_banner", suspendWhenHidden = FALSE)
 
-  # The Convert picker offers PROVEN (curated) templates by default. Ticking
-  # "Include user-created templates" adds the ones users built (with a not-tested
-  # warning) -- so you can always reach your own templates, but the vetted set is
-  # what's shown unless you ask for more.
+  # The Convert picker offers PROVEN (curated) templates by default. Whether the
+  # ones users built here join them is the deployment setting
+  # `app.user_templates_default` (USE_USER_TEMPLATES), NOT a tick-box on the page --
+  # see the note at the top of this file for why that question is not the
+  # converting analyst's to answer. This comment used to describe the tick-box as
+  # though it were still there, which is how a reader learns to distrust comments.
   proven_templates <- reactive({ tpl_bump()
     tryCatch(load_templates(TEMPLATES_DIR, strict = FALSE), error = function(e) list()) })
   # NO `user_template_ids` REACTIVE HERE. There was one -- a leftover from the
@@ -1188,7 +1206,21 @@ server <- function(input, output, session) {
     template_overview(all_templates()),
     options = list(pageLength = 25, dom = "tip"), rownames = FALSE, selection = "single")
 
-  observe(updateSelectInput(session, "adm_tpl_pick", choices = sort(names(all_templates()))))
+  # Rebuilding the choices used to DROP the selection: selectize falls back to the
+  # first option, the picker's own observer below then blanks adm_tpl_msg, and the
+  # confirmation for whatever you just did went with it. Delete worked around that
+  # with a toast; Hide and Save did not, so they completed in silence. The worse
+  # half was not the missing message: the picker had silently moved, so a SECOND
+  # click acted on a template nobody chose -- measured, "Only USER templates can be
+  # hidden" about a shipped template the operator never picked. Keep the selection
+  # whenever it still exists (a deleted one cannot, and falling back is right there).
+  observe({
+    req(admin_ok())      # reads an admin input now, so it re-verifies like the rest
+    ids  <- sort(names(all_templates()))
+    keep <- isolate(input$adm_tpl_pick)
+    updateSelectInput(session, "adm_tpl_pick", choices = ids,
+                      selected = if (!is.null(keep) && keep %in% ids) keep else NULL)
+  })
 
   # clicking a row selects it in the picker
   # Server-side admin gate. The Admin tab's controls are hidden until login, but
@@ -1234,9 +1266,18 @@ server <- function(input, output, session) {
     res <- safe(set_user_template_hidden(id, !now_hidden, USER_TEMPLATES_DIR), NULL)
     if (is.null(res)) { output$adm_tpl_msg <- .tpl_note("Couldn't change it.", ok = FALSE); return() }
     tpl_bump(isolate(tpl_bump()) + 1)
+    nm <- template_display_name(all_templates()[[id]]) %||% id
     output$adm_tpl_msg <- .tpl_note(if (isTRUE(res))
       sprintf("Hid <b>%s</b> - it won't be used for detection until you un-hide it.", id)
       else sprintf("Un-hid <b>%s</b> - it's active again.", id))
+    # Also as a toast, for the same reason Delete has one: this changes whether a
+    # template is used at all, and a state change that reports itself only in a
+    # panel that a redraw can wipe is a state change nobody can be sure happened.
+    notify_once("adm_tpl_hide",
+                if (isTRUE(res))
+                  sprintf("Hid %s. It stays on disk and will not be used to read statements until you un-hide it.", nm)
+                else sprintf("Un-hid %s. It is back in use for reading statements.", nm),
+                type = "message", duration = 8)
   })
   # Near-duplicate user templates, grouped by identical layout, so a heap of
   # variants can be consolidated (keep one, hide/delete the rest via the controls
@@ -4091,6 +4132,19 @@ server <- function(input, output, session) {
     else
       "No template read this statement, so no transactions were produced - there is nothing to check and no fields to report."
   }
+  # ...AND THE THIRD TABLE WAS LEFT OUT OF THAT FIX, which is the whole of this
+  # defect: two of the three headings learned to say why they were empty and
+  # Diagnostics did not, so it alone still sat over blank space.
+  #
+  # It needs its OWN sentence, because its empty state has a different cause.
+  # build_diagnostics() always returns at least a "no issues detected" row, so a
+  # conversion that RAN cannot leave this table empty. The way to get here is a
+  # conversion that never finished: a child process killed from outside leaves
+  # job_failed_result() to build a result out of a status and a sentence and
+  # nothing else (no checks, no coverage, no diagnostics). Borrowing "nothing was
+  # read from this file" there would name the wrong cause -- the file was never
+  # the problem.
+  WHY_NO_DIAG <- "No diagnosis was recorded for this run - it did not get far enough to make one."
   output$cv_detail <- renderUI({
     res <- cv_res(); req(res)
     k <- res$kpis
@@ -4098,14 +4152,16 @@ server <- function(input, output, session) {
     open_it <- !isTRUE((res$status %||% "") == "ok") || isTRUE(any_failed)
     has_kpis <- is.data.frame(k) && nrow(k) > 0L
     has_cov  <- is.data.frame(res$coverage) && nrow(res$coverage) > 0L
+    has_diag <- is.data.frame(res$diagnostics) && nrow(res$diagnostics) > 0L
     said <- p(class = "muted", style = "margin:0 0 8px", .why_empty(res))
     tags$details(style = "margin-top:14px", open = if (open_it) NA else NULL,
       tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
                    "Checks & detail (for review)"),
       div(style = "padding:8px 2px",
         h4("Checks"), if (has_kpis) DTOutput("cv_kpis") else said,
-        h4("Diagnostics - where / why / how to fix"), DTOutput("cv_diag"),
-        h4("Field coverage - what's present / empty / not on this statement"),
+        h4("Diagnostics - where / why / how to fix"),
+        if (has_diag) DTOutput("cv_diag") else p(class = "muted", style = "margin:0 0 8px", WHY_NO_DIAG),
+        h4("Field coverage - what's present / empty / not read as its own column"),
         if (has_cov) tagList(uiOutput("cv_cov_summary"), DTOutput("cv_coverage")) else said))
   })
 
@@ -4127,7 +4183,8 @@ server <- function(input, output, session) {
       # beside a "Field coverage" heading written for the person holding the
       # statement. Same map the transactions table and the toolkit preview use.
       Field   = cv_friendly_cols(cov$field),
-      Verdict = plain_label(cov$verdict, COVERAGE_PLAIN),   # 'unmapped' -> 'not on this statement'
+      # 'unmapped' is a fact about the TEMPLATE, not the file -- see COVERAGE_PLAIN.
+      Verdict = plain_label(cov$verdict, COVERAGE_PLAIN),
       Populated = cov$populated, Empty = cov$empty, Note = cov$note,
       stringsAsFactors = FALSE)
     datatable(disp, rownames = FALSE, options = list(dom = "t", pageLength = 20)) |>
@@ -5302,7 +5359,13 @@ server <- function(input, output, session) {
         trust = res$trust$level %||% NA_character_,
         detail = sprintf("converted with %s, chosen by hand from the matching templates", tid),
         dir = UPLOADS_DIR))
-    showNotification(sprintf("Converted with %s.", tid), type = "message", duration = 5)
+    # The NAME, not the id: the picker she chose from offers names (tpl_choices),
+    # and the "Read as:" chip that appears next to the new figures says the name
+    # too, so the id here was the one word on the exchange that named nothing she
+    # had seen. `detail` above is the upload record on disk -- a maintainer's file,
+    # where the id is the useful handle -- so that one keeps it.
+    showNotification(sprintf("Converted with %s.", friendly_tpl(tid)),
+                     type = "message", duration = 5)
   }
   observeEvent(input$cv_tie_go, convert_with_template(input$cv_tie_pick))
   observeEvent(input$cv_cand_convert, convert_with_template(input$cv_cand_pick))
@@ -5902,6 +5965,18 @@ server <- function(input, output, session) {
         safe(set_upload_status(cv_upload_id(), "wizard_saved",
           template = tmpl$id %||% NA_character_, dir = UPLOADS_DIR))
       saved_id <- tmpl$id %||% NA_character_
+      # THE NAME SHE GAVE IT, NEVER THE ID THE FILE IS SAVED UNDER. This toast read
+      # `Saved "newbank_everyday_everyday_csv".` and then, in R/util.R's sentence
+      # underneath, printed the same id a second time -- an engine handle twice on
+      # one confirmation, on the screen a non-technical analyst uses to add a bank.
+      # friendly_tpl is the app's single answer to what a template is CALLED, and
+      # the bump above has already put the new template in the set it reads; it
+      # falls back to the id when it cannot resolve a name, and here there is
+      # always something better to say, because the template itself is in hand.
+      saved_name <- friendly_tpl(saved_id)
+      if (is.na(saved_name) || identical(saved_name, saved_id))
+        saved_name <- .tpl_label(tmpl$bank, tmpl$statement_type)
+      if (is.na(saved_name) || !nzchar(saved_name)) saved_name <- "your new template"
       gp <- g$path; gn <- g$name %||% (if (!is.null(gp)) basename(gp) else NA_character_)
       if (!is.null(gp) && file.exists(gp) && !is.na(saved_id) && nzchar(saved_id)) {
         updateTabsetPanel(session, "main_tabs", selected = "Convert")
@@ -5913,23 +5988,31 @@ server <- function(input, output, session) {
         # REAL detection pass over the whole template set first, say in plain words
         # what it means, and only fall back to forcing when detection did NOT pick
         # this template (so she still sees her template's output, correctly labelled).
+        # THE SET IS PASSED IN, or the sentence falls back to the id. This is the
+        # caller's half of the same fix as saved_name above: recognition_summary
+        # names templates by their display name and can only do that if it is
+        # handed the set they live in -- without it, `.saved_name` has nothing to
+        # look the id up in and returns the id, which is what this toast printed
+        # twice. The detection pass already loads exactly that set, so there is
+        # one load and one answer, not two that can disagree.
         recog <- safe({
           tset <- load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR)
-          recognition_summary(detect_statement(read_input(gp), tset), saved_id)
+          recognition_summary(detect_statement(read_input(gp), tset), saved_id,
+                              templates = tset)
         }, NULL)
         recog <- recog %||% recognition_summary(NULL, saved_id)
         run_conversion(gp, gn, record = FALSE,
                        force_tpl = if (isTRUE(recog$ok)) NULL else saved_id,
                        include_user = TRUE)
         showNotification(
-          HTML(paste0("<b>Saved \"", htmltools::htmlEscape(saved_id), "\".</b><br>",
+          HTML(paste0("<b>Saved \"", htmltools::htmlEscape(saved_name), "\".</b><br>",
                       "<b>", htmltools::htmlEscape(recog$headline), "</b><br>",
                       htmltools::htmlEscape(recog$detail))),
           type = if (isTRUE(recog$ok)) "message" else "warning",
           duration = if (isTRUE(recog$ok)) 10 else NULL)
       } else {
         showNotification(sprintf("Saved as your template \"%s\". Click Convert again to run this statement with it.",
-                                 saved_id %||% "template"),
+                                 saved_name),
                          type = "message", duration = 8)
       }
     } else {

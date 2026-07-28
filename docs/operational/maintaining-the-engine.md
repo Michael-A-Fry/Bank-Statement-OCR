@@ -71,9 +71,15 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run on the build box measured **71 files, 855 tests, 4,213 passing
-assertions, 0 skipped** (2026-07-28). Treat that as a floor to compare against,
-not a target to match.
+The last full run measured **71 files, 903 tests, 4,504 passing assertions, 0
+failed, 0 errors, 0 skipped** — taken on the build tree on 2026-07-28, at
+`VERSION` 1.4.0. Treat it as a floor to compare against, not a target to match.
+
+**Check the `files` figure first.** If it is not the number of
+`tests\testthat\test-*.R` files on your box, this line was written against a
+different tree and the other two numbers are worth nothing to you. Re-measure
+before you use them. (The suite checks that one figure for itself, so a stale
+`files` count fails the board rather than sitting there being believed.)
 
 **One exception to "stop".** If you have just added a reconciliation check, a
 suite in the twenties of failures is the expected outcome of a correct change,

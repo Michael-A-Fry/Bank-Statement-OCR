@@ -260,3 +260,112 @@ test_that("the front door never throws, whatever it is handed", {
     expect_true(nzchar(paste(r$messages, collapse = " ")), info = paste("input", i))
   }
 })
+
+# ---------------------------------------------------------------------------
+# N83, THE OTHER HALF: THE PROSE GUARD WAS DEFEATED BY A BLANK LINE.
+#
+# .delimited_tabular decides on ADJACENCY -- two records that split the same way
+# NEXT TO each other. Its own comment says an email's matching lines are
+# "SCATTERED through prose" -- and .unreadable_reason stripped the blank lines
+# before calling it, which is exactly what scattered them. So
+#     Hi Beth,  /  <blank>  /  Use the transaction export, not the PDF.
+# arrived as two adjacent 2-field records, i.e. a table, and a note to self came
+# back as "we don't have a template for this layout yet" plus an offer to build
+# one -- the answer this whole guard exists to prevent.
+#
+# The fix is at the caller: the shape test now sees the file's real line
+# structure. The emptiness test and the header_regex scan keep the stripped view,
+# because neither of them cares where a blank line was.
+# ---------------------------------------------------------------------------
+test_that("blank lines still scatter prose - a note to self is not a table", {
+  shipped <- load_template_set(templates_dir(), NULL)
+  wr <- function(txt) { p <- tempfile("blank_", fileext = ".txt"); writeLines(txt, p); p }
+  # the note that was read as a statement layout
+  note <- c("Hi Beth,", "", "Use the transaction export, not the PDF.", "",
+            "Thanks", "Michael")
+  expect_false(is.null(.unreadable_reason(read_input(wr(note)), shipped)))
+  # a sign-off separated from a greeting by a paragraph break, same shape
+  expect_false(is.null(.unreadable_reason(read_input(wr(
+    c("Morning Beth,", "", "Statement attached.", "", "Regards,", "Tim"))), shipped)))
+  # ...and end to end it is UNREADABLE, not a layout nobody has built yet
+  r <- convert_statement(wr(note), outdir = tempfile("blankout_"),
+                         templates_dir = templates_dir(), logdir = tempfile("blanklog_"))
+  expect_identical(r$status, "failed")
+  expect_true("unreadable" %in% as.character(r$diagnostics$category))
+  expect_false("unknown_format" %in% as.character(r$diagnostics$category))
+})
+
+test_that("the case the earlier round protected is still a table", {
+  # THE LINE THIS FIX MUST NOT CROSS. Two adjacent records that split the same way
+  # ARE a table, however narrow -- test-forms.R depends on this one coming back
+  # `unsupported` (a layout with no template), never `failed`.
+  shipped <- load_template_set(templates_dir(), NULL)
+  wr <- function(txt) { p <- tempfile("tab_", fileext = ".csv"); writeLines(txt, p); p }
+  expect_null(.unreadable_reason(read_input(wr(c("a,b", "1,2"))), shipped))
+  # a real export with a blank line in the middle of its rows is still a table:
+  # the run either side of the gap is what proves it
+  expect_null(.unreadable_reason(read_input(wr(
+    c("Date,Payee,Amount", "2026-01-01,A,1.00", "", "2026-01-02,B,2.00",
+      "2026-01-03,C,3.00"))), shipped))
+  # a header-only export with a trailing newline keeps its one-record fallback
+  expect_null(.unreadable_reason(read_input(wr(
+    c("Date,Unique Id,Tran Type,Payee,Memo,Amount", ""))), shipped))
+  # the shipped preamble export is unaffected
+  expect_null(.unreadable_reason(
+    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv")), shipped))
+})
+
+test_that("every delimited sample in the corpus is still read as a table", {
+  # The blast radius, measured rather than argued: whatever the shape test now
+  # sees, no real bank export may become "could not be read".
+  shipped <- load_template_set(templates_dir(), NULL)
+  files <- list.files(file.path(engine_root(), "samples", "raw"),
+                      pattern = "\\.(csv|tsv|txt)$", recursive = TRUE, full.names = TRUE)
+  skip_if(length(files) == 0)
+  bad <- Filter(function(f) !is.null(.unreadable_reason(read_input(f), shipped)), files)
+  expect_identical(basename(bad), character(0),
+                   info = paste("newly unreadable:", paste(basename(bad), collapse = ", ")))
+})
+
+# ---------------------------------------------------------------------------
+# N1xx: THE SAVE CONFIRMATION SPOKE THE CARD'S LANGUAGE IN IDS.
+# The verdict card two inches to the left says "Read as: SAMPLE BANK statement";
+# the save confirmation said, twice, sample_bank_statement_pdf. An id is a
+# maintainer's handle -- an accountant cannot check a figure against it, and the
+# charter's interface rule forbids putting an engine code in front of her.
+# ---------------------------------------------------------------------------
+test_that("recognition_summary names templates in words when it can", {
+  tset <- list(
+    sample_bank_statement_pdf = list(id = "sample_bank_statement_pdf", bank = "SAMPLE BANK"),
+    sample_bank_twin_pdf      = list(id = "sample_bank_twin_pdf", bank = "SAMPLE BANK"),
+    anz_everyday_pdf          = list(id = "anz_everyday_pdf", bank = "ANZ",
+                                     statement_type = "everyday"))
+  sid <- "sample_bank_statement_pdf"
+  # it is the SAME wording the card uses, which is the whole point
+  expect_identical(template_display_name(tset[[sid]]), "SAMPLE BANK statement")
+
+  ok <- recognition_summary(list(matched = TRUE, template_id = sid), sid, tset)
+  expect_match(ok$detail, "SAMPLE BANK statement", fixed = TRUE)
+  expect_false(grepl(sid, ok$detail, fixed = TRUE))
+
+  lost <- recognition_summary(list(matched = TRUE, template_id = "anz_everyday_pdf"), sid, tset)
+  expect_match(lost$headline, "ANZ everyday statement", fixed = TRUE)
+  expect_false(grepl("anz_everyday_pdf", lost$headline, fixed = TRUE))
+
+  tie <- recognition_summary(list(matched = FALSE, tied = c(sid, "sample_bank_twin_pdf")),
+                             sid, tset)
+  expect_false(grepl("sample_bank_twin_pdf", paste(tie$headline, tie$detail), fixed = TRUE))
+  expect_match(tie$headline, "SAMPLE BANK statement", fixed = TRUE)
+})
+
+test_that("recognition_summary falls back to the id rather than naming nothing", {
+  # No template set to look in -> there is no name to be had, and a confirmation
+  # that named NOTHING would be worse than one naming a handle. This is also what
+  # keeps every existing caller working unchanged.
+  r <- recognition_summary(list(matched = TRUE, template_id = "beth_bank_pdf"), "beth_bank_pdf")
+  expect_match(r$detail, "beth_bank_pdf", fixed = TRUE)
+  # a set that simply does not hold the id behaves the same way
+  r2 <- recognition_summary(list(matched = TRUE, template_id = "beth_bank_pdf"),
+                            "beth_bank_pdf", list(other = list(id = "other", bank = "X")))
+  expect_match(r2$detail, "beth_bank_pdf", fixed = TRUE)
+})

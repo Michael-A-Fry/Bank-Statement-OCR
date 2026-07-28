@@ -33,11 +33,14 @@ app:
   # measured this server. 1 means strictly one at a time (still queued, still
   # announced - the old behaviour, minus the frozen pages).
   # max_concurrent_jobs: 3
-  # Whether Convert's "Include user-created templates" box starts TICKED. true, so
-  # a template someone builds here really does convert that bank automatically from
-  # then on. This does NOT loosen governance: what reaches Qlik is gated separately
-  # on template origin (feed.allowed_template_origins below). Set false only if
-  # your team wants to opt in to its own templates on every conversion.
+  # Whether templates your team builds here are used to read statements at all.
+  # true, so a template someone builds really does convert that bank automatically
+  # from then on. There is NO tick-box on the Convert page to override this per
+  # conversion -- it was removed deliberately, so this setting is the whole answer:
+  # set it false and every user-built template stops being used, with nothing on
+  # screen for an analyst to turn back on. This does NOT loosen governance: what
+  # reaches Qlik is gated separately on template origin
+  # (feed.allowed_template_origins below).
   user_templates_default: true
 
 paths:

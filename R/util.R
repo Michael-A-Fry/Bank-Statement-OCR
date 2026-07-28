@@ -361,7 +361,8 @@ current_user <- function() {
 # WITHOUT corrupting non-UTF-8 input. readLines(encoding="UTF-8") only TAGS bytes
 # as UTF-8, it does not transcode; a Windows-1252 / Latin-1 bank export (a payee
 # with a pound sign, an accented letter, or a non-breaking space) then flows in as
-# breaking the verbatim-description guarantee, and a UTF-16 file garbles entirely.
+# mojibake / invalid UTF-8, breaking the verbatim-description guarantee, and a
+# UTF-16 file garbles entirely.
 # So: sniff the byte-order mark, else validate UTF-8 and fall back to the dominant
 # 8-bit codepage -- all deterministic (`encoding` overrides the sniff when known).
 #   * UTF-8 BOM (Excel writes one on every CSV export) is stripped -- left in it

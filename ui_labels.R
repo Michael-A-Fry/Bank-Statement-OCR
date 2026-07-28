@@ -65,15 +65,29 @@ plain_check <- function(x) {
   lab[tagged] <- sprintf("%s (statement %s)", lab[tagged], n[tagged])
   lab
 }
+# `unmapped` SAID "not on this statement", AND THAT IS A CLAIM ABOUT THE FILE the
+# verdict is in no position to make. field_coverage() (R/coverage.R) reads the
+# TEMPLATE: `unmapped` means this template has no column wired to this field, and
+# says nothing whatever about what the page prints. westpac.pdf prints the column
+# headings TYPE, NAME OF OTHER PARTY and TRANSACTION PARTICULARS, and its template
+# deliberately folds all three into one `description` band -- so all three fields
+# came back `unmapped` and the screen told a forensic reviewer that a statement in
+# her hand did not have columns she could read off it. Two different facts, and
+# the row asserted the one it cannot know.
+#
+# The new words are true either way: a field the file never printed was not read
+# as its own column either. Never wrong beats more informative (charter).
 COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
-                    empty = "empty (check the mapping)", unmapped = "not on this statement")
+                    empty = "empty (check the mapping)",
+                    unmapped = "not read as its own column")
 # How a single check came out (the `status` column of the KPI table). Lived inline
 # in app.R, which meant one of the five wording maps was somewhere else; all five
 # are here now, and test-seams.R holds each to the values the engine really emits.
 #
-# "na" USED TO SAY "not on this statement" -- the same words as COVERAGE_PLAIN's
-# `unmapped` above, where they are right (a field this statement does not have) and
-# here they were not. A scanned statement was OCR'd on two pages at 88% confidence
+# "na" USED TO SAY "not on this statement" -- the same words COVERAGE_PLAIN's
+# `unmapped` used to carry, and wrong in both places for the same reason: a
+# wording that asserts something about the FILE, chosen for a value that only ever
+# described the TOOL. A scanned statement was OCR'd on two pages at 88% confidence
 # and the Scan / OCR row read "not on this statement"; the balance checks read the
 # same over a statement that prints both balances. The status means the check could
 # not be PROVED, which is what the grey dash in the proof strip already means, so

@@ -32,10 +32,16 @@ the first three tries, then a doubling wait up to five minutes.
 A live picture from the run and feedback logs. Click **Refresh from logs** first
 — it re-reads the folder, and takes a few seconds on a busy box.
 
-- **Uploads — new formats to pick up**: statements someone converted that had no
-  template. *Download its safe summary* gives a shapes-only markdown description
-  with no client data in it, safe to send on. (Select an upload first — with
-  nothing selected the download still fires and produces an error file.)
+- **Uploads — every statement converted here, newest first**: one row per upload,
+  whatever became of it. It is the route in when you know the file or roughly when
+  it was converted, which is where
+  [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) §1
+  sends you. The `needs_pickup` column marks the subset that matters for setting
+  up a new bank — a layout nobody has a template for — and the picker beside the
+  table offers only those. *Download its safe summary* gives a shapes-only
+  markdown description with no client data in it, safe to send on. (Select an
+  upload first — with nothing selected the download still fires and produces an
+  error file.)
 - **Format requests**: raised by users from a *no template yet* result. **Mark
   done** updates the request file on disk; it does so without saying anything on
   screen, so re-check the list rather than waiting for a confirmation.

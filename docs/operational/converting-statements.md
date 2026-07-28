@@ -21,11 +21,18 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 5. Click **Convert**. A scanned PDF takes tens of seconds — it is being OCR'd.
 6. Read the verdict, then **Download** Excel, CSV or JSON.
 
-Everything past the verdict is behind one link, **Show me how it read this** —
-**See it on the page**, the analysis, the checks, the diagnostics, the field
-coverage and the dashboard decision. It opens itself whenever a check has failed
-or the run needs review, and once you click it either way it stays that way for
-the rest of your session.
+Everything the tool *proved* stays on the page under the verdict: whether the
+figures reached the dashboards, the summary cards, the strip of ticks, your
+transactions — and, in one disclosure headed **Checks & detail (for review)**,
+the **Checks**, the **Diagnostics** and the **Field coverage**. That disclosure
+opens itself whenever a check has failed or the run needs review, so on the runs
+that need reading it is already open.
+
+One link goes further in, **Show me how it read this**, and it holds three
+things and no more: **See it on the page** (the statement with the columns drawn
+on it — PDF only), the charts, and the template it used. It appears only on a run
+that produced transactions, it opens itself on a flagged run too, and once you
+click it either way it stays that way for the rest of your session.
 
 ## The verdict
 
@@ -35,7 +42,7 @@ exactly these words:
 | Outcome | What it means | Do |
 |---|---|---|
 | **Converted successfully** | Matched a template, parsed, and every check that ran, passed. | Download it. |
-| **Converted - please double-check it** | You have the data, and the tool wants a second pair of eyes on it. Usually a check **failed**; it can also mean the file looks like several statements bundled together, or that another template nearly fitted it too. | Open **Show me how it read this** → **Checks**, then **Diagnostics**. Compare the flagged rows against the statement. |
+| **Converted - please double-check it** | You have the data, and the tool wants a second pair of eyes on it. Usually a check **failed**; it can also mean the file looks like several statements bundled together, or that another template nearly fitted it too. | Read **Checks**, then **Diagnostics**, in **Checks & detail (for review)** under your transactions — on a result like this it is already open. Compare the flagged rows against the statement. |
 | **No template for this statement yet** | Nothing recognised this layout. | [Add a template](adding-a-bank-template.md). If the card instead reads **More than one template fits - pick which one**, two templates fit equally well: pick one and it converts — and tell the maintainer, because that is a duplicate to retire. |
 | **Could not read this file** | The file itself is the problem — empty, wrong type, password-protected, a scan with no OCR available. | The message says which. |
 

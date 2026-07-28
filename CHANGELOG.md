@@ -13,6 +13,127 @@ finding id.
 
 ---
 
+## 1.4.0
+
+Two rounds in one release: the one that let a squad use the tool at the same
+time, and the one that read the result back and found what it had cost.
+
+**Why the version moved at all**
+
+- `N120` — two run records existed for one statement carrying the **same**
+  `engine_version`, the **same** `template_sha256` and **opposite verdicts**
+  (`needs_review` / low, then `ok` / medium). Behaviour had changed inside a
+  release while the stamp stood still. The incident procedure's headline test is
+  *same version + same template hash, so any difference is a finding* — so it had
+  begun crying wolf on exactly the statements the previous round had fixed. From
+  1.4.0 the stamp moves with every shipped change of behaviour, and
+  [`docs/operational/investigating-a-wrong-conversion.md`](docs/operational/investigating-a-wrong-conversion.md)
+  §4 now carries the caveat for every record written before it, with the real
+  pair on this box as the worked example.
+
+**Five to ten analysts can convert at once**
+
+- Every conversion runs in its **own short-lived R process** (`R/jobs.R`), and the
+  app polls for the result. Before: R is single-threaded, so one scanned statement
+  froze a second analyst's browser for **65 seconds** with 13 consecutive probes
+  unanswered. After: the same scan, the same two browsers, and the second page
+  answers in **0.06–0.30s** throughout while a colleague's CSV comes back. No new
+  dependency — `run.R` was already a tested command-line entry point, and loading
+  the whole engine costs 0.27s, so a worker pool would have bought ~7% on the
+  cheapest conversion and cost a dependency.
+- **A cap and a queue that says so.** Ten OCR jobs on a four-core box helps
+  nobody, so the cap is one under the machine's cores (three here), settable per
+  site with `app.max_concurrent_jobs`. It caps **threads** as well as processes,
+  because `tesseract` is OpenMP-parallel and takes a thread per core by default:
+  one scan alone reads in 36 seconds, and three uncapped had not finished a single
+  page after ten minutes. Anyone past the cap is told where they are — *"3
+  conversions ahead of yours - yours starts as soon as one finishes"* — and the
+  number falls as the queue drains. Waiting is fine; waiting without being told is
+  what this removes.
+
+**What running in a child process broke, found by driving it**
+
+- `N134` — **a wrong figure's close cousin.** The child inherited the *service's*
+  locale rather than the app's, so a description with an accented character came
+  back mangled **in the delivered CSV** (`Caf<U+00E9> Kr<U+00F6>ne` where an
+  in-process run rendered `Cafe Krone` correctly); byte comparison put the first
+  difference at position 186. It would only ever have shown up on a real
+  customer's statement.
+- Reaping a job killed the R child and left **`tesseract` orphaned** — three of
+  them, a core each, still running 14 minutes after the tabs closed. Jobs now kill
+  the whole process tree.
+- `N131` — a killed conversion reported the child's **locale string** as its
+  reason: `convert job job00023 (stopped): [1] "C.UTF-8"`. The maintainer's crash
+  log now carries the reason.
+- `N117` — the concurrency work **disarmed the only guard on the batch seam**, and
+  it failed in the way guards fail worst: `test-batch.R` grepped `app.R` for one
+  exact call spelling, the call moved into the child, and the guard *errored* on
+  an empty match rather than failing. It now asks the invariant of every caller
+  wherever the call lives, so moving code cannot silently disarm it again.
+
+**Wrong figures, and a wrong figure that had already been published**
+
+- `N118` — **a backwards statement period reached the governed feed as accepted.**
+  On an auto-split bundle the merged header took the first segment's start and the
+  last segment's end in *file* order; on a bundle printed newest-first that is
+  "20 Apr 2026 to 19 Feb 2026", a period ending two months before it starts,
+  stamped on every row of a court-facing extract. No check saw it: the checks run
+  per statement against each statement's own correct period, and the merged header
+  is assembled afterwards. Sorting by date was only half of it — a span is a claim
+  about *coverage*, and min-start/max-end would have silently asserted two days
+  this very file does not have. Gaps and overlaps now publish **no** period and
+  say why, naming the uncovered dates, and a backwards period is refused at the
+  point of construction rather than reported.
+- `N121` — **a non-ASCII literal that ate bytes.** An en dash inside a regex
+  character class in `R/labels.R`: under `LC_ALL=C` — the stated deployment
+  locale, and the one the command-line entry point the incident procedure uses ran
+  in — a labelled value carrying a currency symbol came back a byte short, and no
+  longer verbatim. The byte scan that had covered the three UI files now covers
+  `R/`, `run.R` and the test runner as well, and `run.R` and `tests/run_tests.R`
+  gained the locale guard `app.R` already had.
+
+**The screen says what it is, not what the engine calls it**
+
+- `N127` — Field coverage said *not on this statement* about columns the statement
+  **prints**: westpac.pdf heads three of them, and its template deliberately folds
+  all three into one description band. That verdict reads the *template*, so it
+  was making a claim about the file it is in no position to make. It now says
+  *not read as its own column*, which is true either way.
+- `N126` — Admin's Uploads table lists **every** upload, newest first, which is
+  what the incident procedure sends a maintainer there for. It was headed *"new
+  formats to pick up"* over help text saying the tool couldn't read them — so at
+  step 1, hunting a successful conversion, the screen told him not to look in the
+  one table that had it.
+- `N123` — a raw template id appeared **twice** on the toolkit's save
+  confirmation, on the screen a non-technical analyst uses to add a bank, while
+  the card two inches away correctly gave the name.
+- `N124` — on a run that never finished, the **Diagnostics** heading still sat
+  over blank space while Checks and Field coverage had learned to say why they
+  were empty. Its empty state has a different cause and now has its own sentence.
+
+**The pages, re-read against the screen that exists**
+
+- `N125` — **the first navigation instruction a new analyst gets was wrong.** The
+  previous round moved Checks, Diagnostics, Field coverage and the dashboard line
+  out from behind *Show me how it read this*; three sentences still sent her
+  there, including the one on the page her own index tells her to start with. All
+  three now describe where each surface really is, and a new guard reads `app.R`
+  itself for what is behind that link, so the pages cannot drift from it again.
+- `N128`, `N129`, `N130`, `N132` — `design.md` sent you to the wrong file for the
+  step it flags as the one that catches people out; it also still said a non-ASCII
+  string literal was fine, which had stopped being true. A page listed six kinds
+  of *info* row and then referred back to five. And the maintainer's runbook
+  recorded a build baseline this tree cannot produce, on the page that tells him a
+  wrong number means stop.
+
+**Suite:** re-measured on the tree this release was cut from and recorded, with
+its date, in
+[`docs/operational/maintaining-the-engine.md`](docs/operational/maintaining-the-engine.md).
+The pass condition does not move and is not a total: *nothing failed, nothing
+errored, nothing was skipped*. Register totals likewise live in
+[`docs/context/findings-register.md`](docs/context/findings-register.md), which
+states its own.
+
 ## 1.3.0
 
 The release where the pages about the tool were held to the same standard as the

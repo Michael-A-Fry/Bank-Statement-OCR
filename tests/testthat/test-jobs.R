@@ -149,8 +149,76 @@ test_that("a child that dies saying nothing comes back FAILED, with a readable r
     # the sentence a person would be shown says what happened, not how
     expect_false(grepl("pid|SIG|[Ee]rror in ", f$reason))
     expect_null(job_result(h))
+    # THE MAINTAINER'S HALF. app.R writes f$detail, and nothing else, into
+    # logs/errors.log. For a job killed before it printed anything the whole line
+    # used to read
+    #     [2026-07-28 06:59:05] convert job job00023 (stopped): [1] "C.UTF-8"
+    # -- the auto-printed value of the child's own Sys.setlocale() call, a locale
+    # string where the reason should be. It must now name what ran and point at
+    # where the cause has to be.
+    if (identical(f$kind, "stopped")) {
+      expect_false(grepl("^\\[1\\]", trimws(f$detail)))
+      expect_match(f$detail, "convert task")
+      expect_match(f$detail, "gone after")
+      expect_match(f$detail, "out-of-memory|last output was")
+    }
   }
   job_reap(h)
+})
+
+# NOTHING IN THE CHILD MAY PRINT. Its stdout/stderr is out.log, which is the only
+# evidence about a process that was killed from outside, and Rscript auto-prints
+# the value of every visible top-level expression -- which is how a locale string
+# came to be line 1 of every child's log and the recorded reason for every job
+# that died early.
+test_that("a child that runs cleanly leaves no output of its own", {
+  on.exit(.jobs_reset())
+  .jobs_reset()
+  od <- tempfile("tjob_"); dir.create(od)
+  h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
+                 templates_dir = file.path(engine_root(), "templates"),
+                 logdir = .tlog(), requested_by = "TSTJOB")
+  st <- .await(list(h), 240)
+  expect_identical(unname(st), "done")            # a clean CSV converts
+  said <- trimws(readLines(file.path(h$dir, "out.log"), warn = FALSE))
+  expect_identical(said[nzchar(said)], character(0))
+  # ...and the script itself says why, so the next line added to it keeps the rule
+  s <- .job_child_script(h$dir, engine_root())
+  expect_true(any(grepl("invisible(suppressWarnings(Sys.setlocale", s, fixed = TRUE)))
+  expect_true(any(grepl("invisible(tryCatch({", s, fixed = TRUE)))
+  job_reap(h)
+})
+
+# The line itself, without needing a process to die on cue. This is what a
+# maintainer opening logs/errors.log after a 3am crash actually reads.
+test_that("a stopped job records what ran, for how long, and where the cause must be", {
+  jd <- tempfile("tjd_"); dir.create(jd)
+  j <- new.env(parent = emptyenv())
+  j$dir <- jd; j$task <- "convert"; j$pid <- 4242L; j$launched <- Sys.time() - 12
+
+  # A child killed from OUTSIDE says nothing at all, and the silence is itself
+  # the finding: nothing inside the conversion asked it to stop.
+  d <- .job_stopped_detail(j)
+  expect_match(d, "^convert task, process 4242, gone after [0-9]+s\\. ")
+  expect_match(d, "left no output of its own")
+  expect_match(d, "out-of-memory kill")
+  expect_false(grepl("^\\[1\\]", d))            # never an auto-printed R value
+  expect_false(grepl("UTF-8", d, fixed = TRUE))
+
+  # ...and when the child DID leave words, they are what a maintainer wants most.
+  writeLines(c("", "Error: cannot allocate vector of size 2.1 Gb"), file.path(jd, "out.log"))
+  d2 <- .job_stopped_detail(j)
+  expect_match(d2, "Its last output was: Error: cannot allocate vector", fixed = TRUE)
+  expect_false(grepl("left no output of its own", d2, fixed = TRUE))
+
+  # A log holding nothing but blank lines is silence, not words -- otherwise the
+  # "it said nothing" finding would be reported as an empty quotation.
+  writeLines(c("", "   ", ""), file.path(jd, "out.log"))
+  expect_match(.job_stopped_detail(j), "left no output of its own")
+
+  # A job that never reported a pid must still produce a sentence, not "NA".
+  j$pid <- NA_integer_; unlink(file.path(jd, "out.log"))
+  expect_match(.job_stopped_detail(j), "process \\(no process id\\)")
 })
 
 test_that("an engine error inside the child is reported as an error, not as a death", {

@@ -15,8 +15,10 @@ promoting a template), `updating.md`, `backup-and-restore.md` and
 repeating them.
 
 Everything below was checked against the running code on 2026-07-27, at `VERSION`
-1.3.0. Line numbers are deliberately absent for `app.R` — it moves. Functions and
-files are named instead, and every measured figure carries the date it was taken.
+1.3.0. Four parts were re-checked on **2026-07-28 at `VERSION` 1.4.0**: §1's
+locale rule, invariants **4** and **17** in §5, and §8's *add a check* recipe.
+Line numbers are deliberately absent for `app.R` — it moves. Functions and files
+are named instead, and every measured figure carries the date it was taken.
 
 ---
 
@@ -25,11 +27,20 @@ files are named instead, and every measured figure carries the date it was taken
 - **Pure R.** Base R plus `yaml`, `jsonlite`, `openxlsx`, `readxl`, `pdftools`;
   `tesseract` + `magick` only on the scanned-PDF path; `testthat` for the suite.
   No Python, no `reticulate`, no ML, no network.
-- **Air-gapped Windows target, C (non-UTF-8) locale.** A non-ASCII character
-  inside a string literal is fine. A non-ASCII character in an **R name** is not:
-  `c("✓ Correct" = "correct")` becomes a symbol at parse time and mangles to
-  `'<U+2713>'` on a C-locale host. The fix already in the code is
+- **Air-gapped Windows target, C (non-UTF-8) locale — so every R source the app or
+  the engine loads is pure ASCII, byte for byte, literals and comments included.**
+  Not a style rule. `R/labels.R` held an en dash inside a regex character class,
+  and under `LC_ALL=C` — the stated deployment locale, the locale the suite runs
+  in, and the one `run.R` used — it ate the leading byte off any amount printed
+  with a currency symbol: a customer value silently no longer verbatim, and
+  `validUTF8()` false. Write every glyph as a `\uXXXX` escape — `"\u2713"` for
+  the tick, `"\u00a3"` for the pound — seven ASCII characters meaning the same
+  thing in every locale and through every editor, mail client and zip on the way
+  to that box. A non-ASCII character in an **R name** is worse again: `c("✓ Correct" =
+  "correct")` becomes a symbol at parse time, and a C-locale host refuses the file
+  outright — the app does not start. The fix already in the code is
   `choiceNames = list(...)` / `choiceValues = list(...)` — literals, never names.
+  Guarded by three scans; see invariant 17 for what each one covers.
 - **Deterministic.** Same input + same template ⇒ the same bytes out. The xlsx
   writer pins `docProps/core.xml` and normalises zip timestamps for exactly this
   reason (`.deterministic_core`, `.normalize_zip_timestamps` in `R/outputs.R`).
@@ -337,7 +348,7 @@ does not ship them, and a test pins that.
 | 1 | The engine never reads a front-end file | structural | `tests/run_tests.R` sources only `R/`, so a UI symbol is simply not in scope: an engine call into one errors the moment a test walks that line. `run.R` runs the whole pipeline with no Shiny at all. There is no assertion that greps `R/` for a UI symbol — the structure is the guard |
 | 2 | Every code the engine can emit has wording, and there is no dead wording | **yes** | `tests/testthat/test-seams.R` — `expect_setequal` **both ways** for `CHECK_PLAIN` vs `reconcile()`'s builder list, `DIAG_PLAIN` vs **`.DIAG_FIX_OWNER`**, and **`INFORMATIONAL_CHECKS`** vs the `.kpi_*()` builders that pass `informational = TRUE`, plus `STATUS_PLAIN`, `RESULT_PLAIN`, `COVERAGE_PLAIN`. Those three symbol names are the ones a new check has to be added to; see §8 |
 | 3 | A check label claims only what its check proves | **yes** | `test-seams.R`, "no check label claims more than its KPI proves" — it forbids "every row" on `no_unparsed_rows`, "matches" on `transaction_count`, "honoured" on `redaction_summary` |
-| 4 | "could not be proved" and "not on this statement" must read differently | **yes** | `test-seams.R` — `RESULT_PLAIN[["na"]]` must not equal or contain `COVERAGE_PLAIN[["unmapped"]]`. They render inside the same disclosure |
+| 4 | "this check could not be proved" and "this template has no column for that field" must read differently | **yes** | `test-seams.R` — `RESULT_PLAIN[["na"]]` must not equal or contain `COVERAGE_PLAIN[["unmapped"]]`. They render inside the same disclosure, and both once read *not on this statement* — a claim about the FILE that neither value is in any position to make |
 | 5 | One run, one audit record, never overwritten | **yes** | `write_log_record()` (`R/logging.R`) suffixes a clashing id with `~2`; `test-run-log-identity.R`, "two runs with the same run_id leave TWO audit records" |
 | 6 | Nothing under a redaction is read, and a scan that could not finish fails the run | **yes** | `R/detect_redaction.R` + the `read_pdf` guard + `.kpi_redaction_scan()` returning `fail`; `test-detect_redaction.R`, `test-redaction_delimited.R` |
 | 7 | Descriptions verbatim | **yes** | `clean_description()` is `trimws` and nothing else; the golden tests carry apostrophes and ampersands |
@@ -350,7 +361,7 @@ does not ship them, and a test pins that.
 | 14 | Every path into this tree that a document or a comment names, resolves | **yes** | `test-deployment-docs.R` — markdown links across `README.md`, `CHANGELOG.md` and every `.md` under `docs/`, plus a second pass over `R/`, `app.R`, the `ui_` files, `scripts/`, `tests/`, `www/` and the two template-folder READMEs for any path-shaped `.md` reference however it is written |
 | 15 | No documentation page is orphaned from its index | **yes** | `test-deployment-docs.R`, "no docs page is orphaned from its index" — `docs/operational/` and `docs/context/` against their own `README.md`, and `docs/*.md` against the repo `README.md` |
 | 16 | A skipped test is a failure | **yes** | `tests/run_tests.R` exits 1 on any skip unless `BSO_ALLOW_SKIPS=1`. Counted 2026-07-27: **168** skip guards, which between them can dark the whole PDF/OCR/Excel surface while the board stays green. This is why the exit code, not the summary line, is the pass condition |
-| 17 | No non-ASCII character in an R **name** | **yes** | `test-app-ui.R`, "no R name anywhere carries a non-ASCII character (invariant 17)" — it reads the *parse tokens* of `app.R`, both `ui_` files and all of `R/`, so a non-ASCII character in a string VALUE (of which the screen has many, legitimately) still passes. A companion test feeds it a known-bad file so the guard is known to work |
+| 17 | No non-ASCII **byte** in any R source the app or the engine loads — string literals and comments included, not only names | **yes** | Three scans, and each has a companion test that feeds it a known-bad file so no guard can go quiet. The two byte scans are what the rule now is: `test-labels.R`, "no non-ASCII byte survives anywhere in `R/`, `run.R` or the test runner", and `test-app-adoption.R`, "no non-ASCII byte survives in the three UI files, literals included" — between them `app.R`, both `ui_` files, all of `R/`, `run.R` and `tests/run_tests.R`, **52 files, byte by byte** (2026-07-28). Both also assert the escaped glyphs are still *there*, so a file cannot pass by deleting the character it needed. `test-app-ui.R`, "no R name anywhere carries a non-ASCII character (invariant 17)", reads the *parse tokens* over the same files and stays, because a bad NAME is the worse failure: a C-locale host will not parse the file at all. **`tests/testthat/` is deliberately outside all three** — ten of those files carry a non-ASCII byte on purpose, as the input that proves a scan works |
 | 18 | The screen's colours come from the design system, not from the file they are typed in | **no** | **Unguarded.** The only test that looks at this forbids CSS style *tags*, and passes while the inline style *attributes* it does not read carry a private palette. Open as `N46`; see §7 |
 
 Rows marked **structural** need no assertion because the code cannot express the
@@ -558,9 +569,11 @@ suite fails you on. In this order:
    wording for a check that no longer exists. The label must claim only what the
    check proves — invariant 3 forbids specific overclaims by name.
 4. **If it can `fail`:** three edits, not two, and the third is the one that
-   catches people out. A `.DIAG_FIX_OWNER` entry in **`R/diagnose.R`**, a matching
-   `DIAG_PLAIN` entry in **`ui_labels.R`**, and — in the same file — a
-   **`.KPI_DIAGNOSIS` entry keyed by your check's name**, which is what actually
+   catches people out — **because it is back in the file you have just left**. In
+   **`R/diagnose.R`**, a `.DIAG_FIX_OWNER` entry. In **`ui_labels.R`**, a matching
+   `DIAG_PLAIN` entry. Then back in **`R/diagnose.R`**, a few dozen lines below the
+   first edit, a **`.KPI_DIAGNOSIS` entry keyed by your check's name**, which is
+   what actually
    *raises* the category when the check fails and carries its where / severity /
    how-to-fix sentence. `test-seams.R` compares the first two sets both ways, and
    `test-diagnose.R` re-derives the set the file can really raise by reading it,

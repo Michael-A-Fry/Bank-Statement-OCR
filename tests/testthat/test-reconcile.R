@@ -656,3 +656,52 @@ test_that("every failing check's detail leads with what went wrong", {
     expect_false(grepl("^(all|no|every|each) ", k$detail, ignore.case = TRUE), info = k$name)
   }
 })
+
+# ---------------------------------------------------------------------------
+# N1xx: A PERIOD THAT ENDS BEFORE IT STARTS IS A DEFECT IN THE PERIOD, NOT IN THE
+# ROWS. A newest-first bundle published "20 Apr 2026 to 19 Feb 2026" (fixed in
+# R/split.R). Arithmetically that already failed this check -- nothing can be
+# inside an empty range -- but the detail read "34 date(s) outside period", which
+# blames thirty-four perfectly good transactions and sends the reviewer to check
+# every one of them. The check must name the real fault, and must not be able to
+# pass by accident on a range nothing could ever be inside.
+# ---------------------------------------------------------------------------
+
+test_that(".period_runs_backwards is TRUE only when both bounds read and END < START", {
+  expect_true(.period_runs_backwards("20 Apr 2026", "19 Feb 2026"))
+  expect_true(.period_runs_backwards("2026-04-20", "2026-02-19"))
+  expect_false(.period_runs_backwards("19 Feb 2026", "20 Apr 2026"))
+  expect_false(.period_runs_backwards("1 Jan 2026", "1 Jan 2026"))   # one-day period
+  # unreadable is UNKNOWN, never backwards -- an unknown bound must not be able to
+  # fail a statement that is perfectly fine
+  expect_false(.period_runs_backwards("not a date", "19 Feb 2026"))
+  expect_false(.period_runs_backwards(NA, NA))
+  expect_false(.period_runs_backwards(NULL, "19 Feb 2026"))
+})
+
+test_that("a backwards period FAILS the period check and blames the period", {
+  p <- .parsed(.tx(c(-10, 40), date = c("2026-03-05", "2026-03-20")),
+               header = list(period_start = "20 Apr 2026", period_end = "19 Feb 2026"),
+               source_line_count = 2)
+  k <- reconcile(p)$kpis
+  row <- k[k$name == "dates_within_period", ]
+  expect_identical(row$status, "fail")
+  # the sentence names the fault, not the rows: no "2 date(s) outside period"
+  expect_match(row$detail, "ends before it starts", fixed = TRUE)
+  expect_match(row$detail, "the rows may be fine", fixed = TRUE)
+  expect_false(grepl("date(s) outside period", row$detail, fixed = TRUE))
+  # both printed bounds are shown so the reviewer can see WHICH way round it is
+  expect_match(row$detail, "20 Apr 2026", fixed = TRUE)
+  expect_match(row$detail, "19 Feb 2026", fixed = TRUE)
+})
+
+test_that("a forward period is checked exactly as before", {
+  # the guard must cost the ordinary statement nothing
+  p <- .parsed(.tx(c(-10, 40), date = c("2026-01-05", "2026-01-20")),
+               header = list(period_start = "1 Jan 2026", period_end = "31 Jan 2026"),
+               source_line_count = 2)
+  row <- reconcile(p)$kpis
+  row <- row[row$name == "dates_within_period", ]
+  expect_identical(row$status, "pass")
+  expect_match(row$detail, "0 date(s) outside period", fixed = TRUE)
+})

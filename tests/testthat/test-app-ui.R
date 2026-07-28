@@ -22,9 +22,20 @@
 # check actually rejects 01/02/2014" -- a fact about behaviour, which survives
 # any rewording of the code around it. `also` names the helpers it calls, which
 # are put in the same environment so it can find them.
-.ui_fun <- function(name, also = character(0)) {
+#
+# `consts` does the same job for plain VALUES -- a shared regex, a threshold. A
+# helper that reads a module-level constant is unliftable without them, and
+# inlining the constant into each caller instead is exactly the duplication the
+# constant exists to remove (three copies of the auto-split tag regex is how the
+# proof strip came to be the one reader that did not know about it).
+.ui_fun <- function(name, also = character(0), consts = character(0)) {
   src <- .ui_src()
   env <- new.env(parent = globalenv())      # globalenv carries the engine (%||%, safe)
+  for (nm in consts) {
+    i <- grep(sprintf("^\\s*\\Q%s\\E <- ", nm), src, perl = TRUE)
+    testthat::expect_length(i, 1L)
+    assign(nm, eval(parse(text = src[i[1]])[[1]], envir = env), envir = env)
+  }
   for (nm in unique(c(also, name))) {
     i <- grep(sprintf("^\\s*\\Q%s\\E <- function", nm), src, perl = TRUE)
     testthat::expect_length(i, 1L)
@@ -828,6 +839,37 @@ test_that("the exact-template list is narrowed by the bank already chosen", {
   expect_match(blk, 'selected = if \\(keep %in% ch\\) keep else ""')
 })
 
+# ---------------------------------------------------------------------------
+# AN ACTION MUST ACT ON THE THING THAT WAS PICKED. Admin's template picker is
+# rebuilt whenever the template set changes (a save, a hide, a delete). It used
+# to be rebuilt with no `selected`, so selectize fell back to the first option:
+# the confirmation was wiped by the picker's own observer, and -- the half with
+# teeth -- the NEXT click acted on whatever the picker had jumped to. Measured
+# live: "Only USER templates can be hidden" about a shipped template the operator
+# never chose. Deleting is the one case where the selection SHOULD fall away,
+# and it does, because a deleted id is no longer among the choices.
+test_that("rebuilding the Admin template picker keeps the template you picked", {
+  src <- .ui_src()
+  i <- grep('updateSelectInput\\(session, "adm_tpl_pick"', src)
+  expect_gte(length(i), 1L)
+  blk <- paste(src[max(1L, min(i) - 6L):(max(i) + 3L)], collapse = " ")
+  expect_match(blk, "keep <- isolate\\(input\\$adm_tpl_pick\\)")
+  expect_match(blk, "selected = if \\(!is\\.null\\(keep\\) && keep %in% ids\\) keep else NULL")
+})
+
+# Hiding decides whether a template is used to read statements AT ALL. It landed
+# silently: the inline note was wiped by the rebuild above, and unlike Delete it
+# had no toast to survive it. A state change nobody can confirm happened is the
+# same class of defect as a silent success anywhere else in this app.
+test_that("hiding a template says so somewhere that survives the redraw", {
+  src <- .ui_src()
+  i <- grep("input\\$adm_tpl_hide", src)
+  expect_length(i, 1L)
+  blk <- paste(src[i:(i + 26L)], collapse = " ")
+  expect_match(blk, 'notify_once\\("adm_tpl_hide"')
+  expect_match(blk, "template_display_name")      # by its name, not its id
+})
+
 test_that("the exact-template picker is called exactly 'Template (optional)'", {
   src <- .ui_src()
   i <- grep('selectInput\\("cv_template"', src)
@@ -1557,7 +1599,7 @@ test_that("a PDF that stops at medium says why medium is the ceiling", {
 # a grey dash beside "Opening + transactions = closing balance" is either the best
 # or the worst news on the screen, and nothing anywhere said which.
 test_that("the proof strip has a key, in the glyphs it actually draws", {
-  blk <- .ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 40L)
+  blk <- .ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 46L)
   # the escapes, not the glyphs: the key must be drawn from the SAME three
   # sequences the chips are, so the two cannot drift apart
   for (g in c("\\\\u2713", "\\\\u2717", "\\\\u2013")) expect_match(blk, g)
@@ -1765,7 +1807,8 @@ test_that("assigning or removing a box says so where the box was drawn", {
 # 34 date(s) outside period"; and a statement that printed nine transactions and
 # gave up seven drew four chips, none red.
 test_that("the proof strip cannot be all-clear while a check has failed", {
-  pick <- .ui_fun(".proof_pick")
+  pick <- .ui_fun(".proof_pick", also = c(".stmt_base", ".stmt_index"),
+                  consts = ".STMT_TAG")
   listed <- c("balance_reconciliation", "no_unparsed_rows", "amount_direction",
               "running_balance_continuity", "dates_readable")
   # a failing check that is NOT on the list is added, and named last so the
@@ -1787,6 +1830,70 @@ test_that("the proof strip cannot be all-clear while a check has failed", {
   # ...and the renderer really uses it
   expect_match(.ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 8L),
                "\\.proof_pick\\(k\\$name, k\\$status, \\.PROOF_CHECKS\\)")
+})
+
+# CARDINAL, AND MEASURED ON SCREEN TWICE: an auto-split upload drew NO PROOF
+# STRIP AT ALL. R/split.R tags every check of a bundle "<code> [statement N]";
+# .proof_pick matched whole KPI names against the bare codes, so on a bundle
+# nothing matched, and the renderer's `if (!length(pick)) return(NULL)` took the
+# strip AND its key off the page -- anz_0382004_multi.pdf, 824 rows, "Sent to the
+# dashboards", #cv_proof innerText zero characters. All three split files in the
+# corpus did it. With a failing check it was worse by code: the failure branch
+# compares names to names, so it still matched, and the bundle drew nothing but
+# RED chips under a key whose first entry defines a tick.
+test_that("the proof strip covers every statement of an auto-split bundle", {
+  pick <- .ui_fun(".proof_pick", also = c(".stmt_base", ".stmt_index"),
+                  consts = ".STMT_TAG")
+  idx  <- .ui_fun(".stmt_index", consts = ".STMT_TAG")
+  listed <- c("balance_reconciliation", "no_unparsed_rows", "amount_direction",
+              "running_balance_continuity", "dates_readable")
+  tag <- function(code, i) sprintf("%s [statement %d]", code, i)
+  codes <- c("balance_reconciliation", "running_balance_continuity",
+             "dates_within_period", "dates_readable", "no_unparsed_rows")
+  nm <- unlist(lapply(1:3, function(i) tag(codes, i)))
+
+  # a CLEAN bundle: every part is confirmed, and the parts do not interleave
+  got <- pick(nm, rep("pass", length(nm)), listed)
+  expect_true(length(got) > 0L)
+  for (i in 1:3) expect_true(tag("balance_reconciliation", i) %in% got)
+  expect_false(is.unsorted(idx(got)))
+
+  # one part fails a check that is not on the list. It must appear, AND every
+  # part's passing confirmations must still be there -- a bundle drawn all-red
+  # over one bad check is the same lie as an all-clear strip over one.
+  st <- rep("pass", length(nm)); st[nm == tag("dates_within_period", 2)] <- "fail"
+  got2 <- pick(nm, st, listed)
+  expect_true(tag("dates_within_period", 2) %in% got2)
+  for (i in 1:3) expect_true(tag("balance_reconciliation", i) %in% got2)
+  expect_false(is.unsorted(idx(got2)))
+  # ...and it sits with its own statement, not orphaned at the end of the strip
+  expect_identical(idx(got2[which(got2 == tag("dates_within_period", 2))]), 2L)
+
+  # the tag readers themselves: an untagged run is one group numbered 0, which is
+  # what lets the renderer group without special-casing a missing tag
+  base <- .ui_fun(".stmt_base", consts = ".STMT_TAG")
+  expect_identical(base(c("dates_readable [statement 7]", "dates_readable")),
+                   c("dates_readable", "dates_readable"))
+  expect_identical(idx(c("dates_readable [statement 7]", "dates_readable")), c(7L, 0L))
+
+  # the renderer draws one LABELLED row per part, counted off the whole check
+  # table rather than off the chips, so a part with nothing to draw still appears
+  blk <- .ui_block(.ui_src(), "output\\$cv_proof <- renderUI", 46L)
+  expect_match(blk, "\\.stmt_index\\(k\\$name\\)")
+  expect_match(blk, "Statement %d of %d", fixed = TRUE)
+  expect_match(blk, "No check ran on this part of the file", fixed = TRUE)
+})
+
+# One definition of the auto-split tag. Three readers each carried their own copy
+# of the regex and the fourth -- the strip above -- did not know the tag existed.
+test_that("only one place in app.R knows what the auto-split tag looks like", {
+  src <- .ui_src()
+  # the literal pattern, matched literally: it appears once, in the constant
+  hits <- grep("[[:space:]]*\\\\[statement", src, fixed = TRUE)
+  expect_length(hits, 1L)
+  expect_match(src[hits], "^\\s*\\.STMT_TAG <- ")
+  # ...and every reader goes through the pair of helpers built on it
+  expect_gte(length(grep("\\.stmt_base\\(", src)), 3L)
 })
 
 # "Period:" was the min/max of the TRANSACTION dates whenever any row had one, so
@@ -1965,9 +2072,87 @@ test_that("an empty checks or coverage table says why it is empty", {
   expect_match(why(list(status = "unsupported")), "No template read this statement")
   for (st in c("failed", "unsupported"))
     expect_match(why(list(status = st)), "nothing to check and no fields to report")
-  blk <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 22L)
+  blk <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 26L)
   expect_match(blk, "if \\(has_kpis\\) DTOutput\\(\"cv_kpis\"\\) else said")
   expect_match(blk, "if \\(has_cov\\) tagList")
+})
+
+# ...AND THE THIRD TABLE WAS LEFT OUT OF THAT FIX. Two of the three headings in
+# "Checks & detail" learned to say why they were empty; "Diagnostics - where /
+# why / how to fix" did not, so it alone still sat over blank space on the screen
+# with the least to go on. build_diagnostics() always returns at least a "no
+# issues detected" row, so a conversion that RAN cannot leave it empty -- the way
+# in is a conversion that never finished, where job_failed_result() builds a
+# result out of a status and a sentence and nothing else.
+test_that("the Diagnostics table says why it is empty, like the two beside it", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_detail <- renderUI", 26L)
+  expect_match(blk, "has_diag <- is\\.data\\.frame\\(res\\$diagnostics\\) && nrow\\(res\\$diagnostics\\) > 0L")
+  expect_match(blk, 'if \\(has_diag\\) DTOutput\\("cv_diag"\\) else')
+  # ...in ITS OWN words. "Nothing was read from this file" (.why_empty) would name
+  # the wrong cause: for a run that was killed, the file was never the problem.
+  expect_match(blk, "WHY_NO_DIAG")
+  say <- .ui_block(src, "^\\s*WHY_NO_DIAG <- ", 1L)
+  expect_match(say, "did not get far enough")
+  expect_false(grepl("Nothing was read from this file", say, fixed = TRUE))
+})
+
+# THE TOOLKIT SAVE TOAST PRINTED A RAW TEMPLATE ID, TWICE, on the screen a
+# non-technical analyst uses to add a bank. Measured:
+#   Saved "newbank_everyday_everyday_csv".
+#   Next time, a statement like this one is recognised automatically.
+#   We re-checked it against every template and it matched yours
+#   ("newbank_everyday_everyday_csv") on its own, with nothing forced.
+# The second copy is R/util.R's sentence; this holds app.R's half, and the other
+# confirmation that named a template the same way.
+test_that("the toasts that name a template name it the way the rest of the screen does", {
+  src <- .ui_src()
+  # ONE display name, built where the template itself is in hand, so the id can
+  # never come back as friendly_tpl's fallback
+  blk <- .ui_block(src, "saved_name <- friendly_tpl\\(saved_id\\)", 4L)
+  expect_match(blk, "\\.tpl_label\\(tmpl\\$bank, tmpl\\$statement_type\\)")
+  expect_match(blk, "your new template", fixed = TRUE)
+  # ...and neither branch of the toast interpolates the id itself
+  toast <- .ui_block(src, "<b>Saved ", 6L)
+  expect_match(toast, "htmlEscape\\(saved_name\\)")
+  expect_false(grepl("saved_id", toast, fixed = TRUE))
+  again <- .ui_block(src, "Saved as your template", 3L)
+  expect_false(grepl("saved_id", again, fixed = TRUE))
+  # "Convert with this one instead" said the id too, beside a picker that offers
+  # names (tpl_choices) and a "Read as:" chip that prints one
+  conv <- .ui_block(src, "Converted with %s", 2L)
+  expect_match(conv, "friendly_tpl\\(tid\\)")
+  # ...and the SECOND copy of the id on that same toast came from R/util.R's
+  # sentence, which can only name a template if it is handed the set the template
+  # lives in. The caller's half is passing it; without it .saved_name falls back
+  # to the id and the toast prints it again.
+  expect_match(.ui_block(src, "recognition_summary\\(detect_statement", 2L),
+               "templates = tset")
+})
+
+# THE HEADING CONTRADICTED THE CONTENTS. read_uploads() returns EVERY upload
+# record, newest first, with no filter -- which is what the incident procedure
+# sends a maintainer to it for. It was headed "Uploads - new formats to pick up"
+# over help text reading "Statements the tool couldn't read, that nobody has set
+# up yet", so at step 1 of that procedure, hunting a conversion that WORKED, the
+# screen told her not to look in the only table that had it.
+test_that("the Admin uploads table is described as the whole log it really is", {
+  src <- .ui_src()
+  blk <- .ui_block(src, 'h4\\("Uploads', 5L)
+  expect_false(grepl("new formats to pick up", blk, fixed = TRUE))
+  expect_false(grepl("Statements the tool couldn't read", blk, fixed = TRUE))
+  expect_match(blk, "every statement converted here")
+  expect_match(blk, "needs_pickup")        # the pickup queue is still named, as a column
+  # ...and the engine really does hand back rows the old heading denied: a
+  # converted, template-matched upload that needs no pickup at all.
+  d <- tempfile("tup_"); dir.create(d)
+  f <- file.path(d, "seed.csv"); writeLines("date,amount", f)
+  record_upload(f, name = "seed.csv", status = "ok", template = "westpac_everyday_pdf",
+                trust = "medium", dir = d)
+  u <- read_uploads(d)
+  expect_equal(nrow(u), 1L)
+  expect_identical(u$status[1], "ok")
+  expect_false(u$needs_pickup[1])
 })
 
 # "Was this conversion correct?" appeared under "Could not read this file" -- a

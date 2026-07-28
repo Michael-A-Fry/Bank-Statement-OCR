@@ -66,6 +66,13 @@ layout_signature <- function(input) {
   toks <- sort(unique(toks[nzchar(toks)]))
   if (!length(toks)) return(list(signature = "empty", hint = ""))
   hint <- paste(utils::head(toks, 10), collapse = " | ")
-  list(signature = substr(.str_hash(paste(toks, collapse = "")), 1, 12),
+  # The join separator is US-ASCII 0x01, written as an OCTAL ESCAPE rather than
+  # as the raw control byte it used to be. Same byte, same signature -- but a
+  # non-printable character sitting in a source file is invisible in every
+  # editor and diff, and does not reliably survive the trip through an email
+  # client or a zip on the way to an air-gapped box. Held to that by
+  # test-labels.R, which now scans every R/*.R file for bytes outside
+  # printable ASCII, literals and comments alike.
+  list(signature = substr(.str_hash(paste(toks, collapse = "\001")), 1, 12),
        hint = hint)
 }

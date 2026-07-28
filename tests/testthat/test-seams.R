@@ -141,19 +141,32 @@ test_that("check results and coverage verdicts are wording for real engine value
 
 # ADDED. The two maps above were only ever held to their KEYS, and the values
 # quietly collided: RESULT_PLAIN["na"] and COVERAGE_PLAIN["unmapped"] were both
-# "not on this statement". In COVERAGE_PLAIN that is right -- a field this
-# statement does not have. In RESULT_PLAIN it was wrong, and both render inside
-# the same "Checks & detail" disclosure, so one screen carried two meanings for
-# one phrase: a statement OCR'd on two pages at 88% confidence had its
-# "Scan / OCR read quality" row read "not on this statement". A KPI "na" means the
-# check could not be PROVED, which is what the grey dash in the proof strip
-# already means (app.R, cv_proof: "na / anything else: could not run").
+# "not on this statement". Both render inside the same "Checks & detail"
+# disclosure, so one screen carried two meanings for one phrase: a statement
+# OCR'd on two pages at 88% confidence had its "Scan / OCR read quality" row read
+# "not on this statement". A KPI "na" means the check could not be PROVED, which
+# is what the grey dash in the proof strip already means (app.R, cv_proof:
+# "na / anything else: could not run").
+#
+# AND THE PHRASE WAS WRONG IN COVERAGE_PLAIN TOO, which the first pass took for
+# granted. field_coverage() (R/coverage.R) reads the TEMPLATE: `unmapped` means
+# no column is wired to that field, and says nothing about what the page prints.
+# westpac.pdf prints the headings TYPE, NAME OF OTHER PARTY and TRANSACTION
+# PARTICULARS and its template deliberately folds all three into one description
+# band -- so the screen told a reviewer that a statement in her hand did not have
+# columns printed on it. The verdict may only describe the tool.
 test_that("a check that could not run and a field that isn't there read differently", {
   L <- .ui_labels()
   expect_false(identical(unname(L$RESULT_PLAIN[["na"]]),
                          unname(L$COVERAGE_PLAIN[["unmapped"]])))
-  expect_identical(unname(L$COVERAGE_PLAIN[["unmapped"]]), "not on this statement")
+  # a claim about the TEMPLATE, never about the file
+  expect_identical(unname(L$COVERAGE_PLAIN[["unmapped"]]), "not read as its own column")
+  for (v in names(L$COVERAGE_PLAIN))
+    expect_false(grepl("on this statement", L$COVERAGE_PLAIN[[v]], fixed = TRUE))
   expect_false(grepl("not on this statement", L$RESULT_PLAIN[["na"]], fixed = TRUE))
+  # ...and the heading over that table says the same thing as the column under it
+  expect_true(any(grepl("Field coverage - what's present / empty / not read as its own column",
+                        .src("app.R"), fixed = TRUE)))
   # ...and the informational KPIs get a third word: they are counts the engine READ
   # successfully, not checks that could not run, even though both carry status "na".
   expect_true(nzchar(L$RESULT_PLAIN_INFO))

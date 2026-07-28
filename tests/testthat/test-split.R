@@ -258,3 +258,122 @@ test_that("a bundle from a template that declares nothing converts cleanly", {
   expect_equal(sb$n_statements, 2L)
   expect_true(any(grepl("\\[statement 2\\]", sb$recon$kpis$name)))
 })
+
+# ---------------------------------------------------------------------------
+# N1xx: THE BUNDLE'S PERIOD -- and why an empty one is the right answer.
+#
+# The combined header used to take statement 1's period_start and statement k's
+# period_end IN FILE ORDER. Bank bundles are routinely filed newest-first, so on
+# samples/_private_staging/anz_0382004_multi.pdf the card, the header and the
+# governed feed's run manifest all published
+#     "Statement period: 20 Apr 2026 to 19 Feb 2026"
+# -- a period that ENDS TWO MONTHS BEFORE IT STARTS -- and the manifest row said
+# "accepted". Nothing on screen and nothing in the checks noticed.
+#
+# Date order fixes the direction. It does NOT settle whether a bundle should
+# publish one period at all: on that same file the three statements leave
+# 18-19 Apr 2026 covered by no printed statement, so min..max would silently
+# assert two days of coverage the file does not have. So the rule is: publish the
+# true span when the parts JOIN UP, publish nothing when they do not, and say why.
+# ---------------------------------------------------------------------------
+
+# .sp_period_bundle(p1, p2) -- a 2-statement bundle whose two printed periods are
+# whatever the caller asks for. Only the period lines differ from .sp_bundle();
+# the transactions stay in Jan/Feb so both segments still parse and reconcile.
+.sp_period_bundle <- function(p1, p2) {
+  b <- .sp_bundle()
+  b$pages <- c(sprintf("Statement period from %s  Page 1 of 1", p1),
+               sprintf("Statement period from %s  Page 1 of 1", p2))
+  b
+}
+
+test_that("a bundle's period is the true span in DATE order, not file order", {
+  # Newest-first, exactly as the real ANZ bundle is filed: statement 1 is the
+  # LATER period. File order would publish "1 Feb 2026 to 31 Jan 2026".
+  sb <- split_bundle(.sp_period_bundle("1 Feb 2026 to 28 Feb 2026",
+                                       "1 Jan 2026 to 31 Jan 2026"), .sp_template())
+  expect_false(is.null(sb))
+  h <- sb$parsed$header
+  expect_identical(h$period_start, "1 Jan 2026")     # earliest START...
+  expect_identical(h$period_end,   "28 Feb 2026")    # ...latest END
+  # verbatim, as the statements print it -- not reformatted behind her back
+  expect_true(all(vapply(sb$statements, function(s) !is.na(s$period_start), logical(1))))
+  # and the file order really was the other way round
+  expect_identical(sb$statements[[1]]$period_start, "1 Feb 2026")
+})
+
+test_that("a bundle with a HOLE in it publishes no period, and names the hole", {
+  # This is the real sample's shape in miniature: 1-31 Jan then 3-28 Feb, so
+  # 1-2 Feb is covered by nothing. A merged span would claim those two days.
+  sb <- split_bundle(.sp_period_bundle("1 Jan 2026 to 31 Jan 2026",
+                                       "3 Feb 2026 to 28 Feb 2026"), .sp_template())
+  expect_false(is.null(sb))
+  expect_true(is.na(sb$parsed$header$period_start))
+  expect_true(is.na(sb$parsed$header$period_end))
+  # ...and the reason is on the same screen as the split, never left to silence
+  why <- paste(sb$recon$trust$reasons, collapse = " | ")
+  expect_match(why, "2026-02-01 to 2026-02-02", fixed = TRUE)
+  expect_match(why, "a statement is missing", fixed = TRUE)
+  # the per-statement truth is untouched -- nothing was lost by publishing nothing
+  expect_identical(sb$statements[[2]]$period_start, "3 Feb 2026")
+})
+
+test_that("overlapping statements publish no period, and are named as an overlap", {
+  # An overlap is a different fault from a gap and has a different cure: these are
+  # not one account's consecutive statements at all, so there is no span to state.
+  sb <- split_bundle(.sp_period_bundle("1 Jan 2026 to 20 Feb 2026",
+                                       "1 Feb 2026 to 28 Feb 2026"), .sp_template())
+  expect_false(is.null(sb))
+  expect_true(is.na(sb$parsed$header$period_start))
+  expect_match(paste(sb$recon$trust$reasons, collapse = " | "),
+               "overlap in time", fixed = TRUE)
+})
+
+test_that("a shared boundary day is NOT an overlap -- banks print them", {
+  # "31 Dec to 31 Jan" then "31 Jan to 28 Feb" is the commonest real multi-period
+  # shape there is. .period_span already refuses to call it an overlap; this must
+  # agree, or the engine holds two opinions about when periods join up.
+  p <- .bundle_period(list(
+    list(period_start = "31 Dec 2025", period_end = "31 Jan 2026"),
+    list(period_start = "31 Jan 2026", period_end = "28 Feb 2026")))
+  expect_identical(p$start, "31 Dec 2025")
+  expect_identical(p$end, "28 Feb 2026")
+  expect_true(is.na(p$why))
+})
+
+test_that(".bundle_period refuses when a statement's own period is unreadable", {
+  # One unreadable bound means the ORDER of the whole set is unknown, and an
+  # unknown order is exactly when a guess produces a wrong pairing.
+  p <- .bundle_period(list(
+    list(period_start = "1 Jan 2026", period_end = "31 Jan 2026"),
+    list(period_start = NA_character_, period_end = "28 Feb 2026")))
+  expect_true(is.na(p$start))
+  expect_match(p$why, "readable period", fixed = TRUE)
+})
+
+test_that(".bundle_period refuses a statement whose OWN period runs backwards", {
+  p <- .bundle_period(list(list(period_start = "28 Feb 2026", period_end = "1 Feb 2026")))
+  expect_true(is.na(p$start))
+  expect_match(p$why, "ends before it starts", fixed = TRUE)
+})
+
+test_that("a backwards bundle period cannot be published, even if one is built", {
+  # THE GUARD, tested by defeating the thing it guards. .bundle_period cannot
+  # construct a backwards span -- but the author of the code this replaces did not
+  # think he could either, so the header is checked as it is built. Stub the span
+  # builder into producing the exact backwards period the real sample produced and
+  # the whole split must refuse rather than publish it.
+  backwards <- function(statements) list(start = "20 Apr 2026", end = "19 Feb 2026",
+                                         why = NA_character_)
+  where <- environment(split_bundle)          # where split_bundle looks it up
+  orig <- get(".bundle_period", envir = where)
+  on.exit(assign(".bundle_period", orig, envir = where), add = TRUE)
+  assign(".bundle_period", backwards, envir = where)
+  expect_error(split_bundle(.sp_bundle(), .sp_template()), "backwards")
+  # and through the caller (safe(), R/convert.R) the run falls back to
+  # flag-and-refuse rather than reaching an extract with a backwards period on it
+  expect_null(safe(split_bundle(.sp_bundle(), .sp_template()), NULL))
+  assign(".bundle_period", orig, envir = where)
+  # the guard is off again, so the ordinary bundle still splits
+  expect_false(is.null(split_bundle(.sp_bundle(), .sp_template())))
+})

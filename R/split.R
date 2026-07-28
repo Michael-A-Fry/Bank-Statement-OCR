@@ -167,9 +167,14 @@
 # set is unknown, which is exactly when a guess produces a wrong answer.
 .bundle_period <- function(statements) {
   none <- function(why) list(start = NA_character_, end = NA_character_, why = why)
-  if (!length(statements)) return(none("no statements"))
-  raw_s <- vapply(statements, function(s) as.character(s$period_start %||% NA)[1], character(1))
-  raw_e <- vapply(statements, function(s) as.character(s$period_end   %||% NA)[1], character(1))
+  # Unreachable from split_bundle (it commits only with two statements or more),
+  # but every `why` below can reach a screen, so none of them may be a code word.
+  if (!length(statements))
+    return(none("no statement period is stated for this file as a whole"))
+  raw_s <- vapply(statements, function(s) as.character(s$period_start %||% NA)[1],
+                  character(1), USE.NAMES = FALSE)
+  raw_e <- vapply(statements, function(s) as.character(s$period_end   %||% NA)[1],
+                  character(1), USE.NAMES = FALSE)
   ds <- do.call(c, lapply(raw_s, .tolerant_date))   # the SHARED tolerant parser
   de <- do.call(c, lapply(raw_e, .tolerant_date))   # (R/params.R), so one answer
   if (anyNA(ds) || anyNA(de))

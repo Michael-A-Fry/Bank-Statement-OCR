@@ -265,9 +265,22 @@ job_kill_tree <- function(pid) {
 
 # The script the child runs. deparse() writes the paths as proper R string
 # literals, so a folder containing a space or a backslash still resolves.
+#
+# NOTHING IN HERE MAY PRINT. out.log is where the child's stdout and stderr go,
+# and it is the ONLY evidence a maintainer has about a process that was killed
+# from outside -- see .job_stopped_detail. Rscript auto-prints the value of every
+# visible top-level expression, so the locale call below put its own return value
+# ("C.UTF-8") on line 1 of every child's log, and a job killed before it printed
+# anything else was recorded in logs/errors.log as a locale string where the
+# reason should be. Every top-level statement here is therefore invisible(), and
+# a new one must be too: what reaches out.log is then the child's real voice --
+# an R warning, a tesseract complaint, a kernel message - or nothing at all,
+# which is itself a finding.
 .job_child_script <- function(jobdir, root, threads = job_threads_per_job()) {
   c("# Written by job_start() (R/jobs.R) -- one conversion, one process.",
     "# Safe to re-run by hand for a post-mortem:  Rscript child.R",
+    "# Everything at top level is invisible() on purpose: this script's stdout is",
+    "# the crash evidence for a job that never came back (R/jobs.R).",
     paste0(".jd <- ",   deparse(jobdir)),
     paste0(".root <- ", deparse(root)),
     "# THE SAME CHARACTER LOCALE AS THE APP, first thing and not negotiable.",
@@ -277,21 +290,22 @@ job_kill_tree <- function(pid) {
     "# readRDS warned about each one -- printing the transaction lines of a client",
     "# statement onto the server console to do it. Descriptions are kept VERBATIM",
     "# (charter), so a re-encoding across this boundary is not a cosmetic risk.",
-    paste0('suppressWarnings(Sys.setlocale("LC_CTYPE", ', deparse(Sys.getlocale("LC_CTYPE")), "))"),
+    paste0('invisible(suppressWarnings(Sys.setlocale("LC_CTYPE", ',
+           deparse(Sys.getlocale("LC_CTYPE")), ")))"),
     "# This conversion's share of the machine (see job_threads_per_job). Set on the",
     "# ENVIRONMENT, because the thing that has to read it is the tesseract binary",
     "# this process shells out to, not this process.",
-    paste0('Sys.setenv(OMP_THREAD_LIMIT = ', deparse(as.character(threads)),
-           ', OMP_NUM_THREADS = ', deparse(as.character(threads)), ")"),
-    'writeLines(as.character(Sys.getpid()), file.path(.jd, "pid"))',
+    paste0('invisible(Sys.setenv(OMP_THREAD_LIMIT = ', deparse(as.character(threads)),
+           ', OMP_NUM_THREADS = ', deparse(as.character(threads)), "))"),
+    'invisible(writeLines(as.character(Sys.getpid()), file.path(.jd, "pid")))',
     "# One terminal file, renamed into place, so the parent can never read half",
     "# a reason and call it the whole one.",
     '.say <- function(txt) {',
     '  p <- file.path(.jd, "exit.part")',
     '  writeLines(paste(as.character(txt), collapse = " "), p)',
-    '  file.rename(p, file.path(.jd, "exit"))',
+    '  invisible(file.rename(p, file.path(.jd, "exit")))',
     '}',
-    "tryCatch({",
+    "invisible(tryCatch({",
     "  setwd(.root)",
     '  for (f in list.files(file.path(.root, "R"), pattern = "[.]R$", full.names = TRUE)) source(f)',
     '  a <- readRDS(file.path(.jd, "args.rds"))',
@@ -302,7 +316,7 @@ job_kill_tree <- function(pid) {
     '  file.rename(file.path(.jd, "inputs.part"), file.path(.jd, "inputs.rds"))',
     '  saveRDS(res, file.path(.jd, "result.part"))',
     '  file.rename(file.path(.jd, "result.part"), file.path(.jd, "result.rds"))',
-    "}, error = function(e) .say(conditionMessage(e)))",
+    "}, error = function(e) .say(conditionMessage(e))))",
     "# Belt and braces: leaving with neither file would read to the parent as a",
     "# process that vanished, which is a different (and less useful) diagnosis.",
     'if (!file.exists(file.path(.jd, "result.rds")) && !file.exists(file.path(.jd, "exit")))',
@@ -505,17 +519,51 @@ job_start <- function(input_path, outdir, ..., task = "convert",
       # reported as a failure would throw away real work an analyst is waiting on.
       if (file.exists(rf)) { j$state <- "done"; return("done") }
       if (file.exists(ef)) return(.job_fail(j, "error", .job_read(ef)))
-      return(.job_fail(j, "stopped", .job_tail(file.path(j$dir, "out.log"))))
+      return(.job_fail(j, "stopped", .job_stopped_detail(j, now)))
     }
   }
   "running"
 }
 
 .job_read <- function(p) if (file.exists(p)) safe(readLines(p, warn = FALSE), character(0)) else character(0)
+# .job_tail(p, n) -- the child's own last words, or "" when it left none. THE
+# EMPTY ANSWER IS LOAD-BEARING: a process killed from outside says nothing at
+# all, and the caller has to be able to tell that apart from one that spoke.
+# Blank lines are not words, so they do not count as having spoken.
 .job_tail <- function(p, n = 20L) {
-  x <- .job_read(p)
-  if (!length(x)) return("the process left no output")
+  x <- trimws(.job_read(p))
+  x <- x[nzchar(x)]
+  if (!length(x)) return("")
   paste(utils::tail(x, n), collapse = " | ")
+}
+
+# .job_stopped_detail(j, now) -- WHAT A MAINTAINER CAN ACT ON when a conversion
+# process disappears. This is the text that lands in logs/errors.log, and it is
+# maintainer-only: the screen gets CONVERT_STOPPED and never a word of this.
+#
+# A child that R itself stopped writes the error into `exit` and is reported as
+# "error". A child killed from OUTSIDE -- the OOM killer, an operator kill, a
+# machine restart -- writes nothing, and this line is the only trace it leaves.
+# It used to be the tail of out.log, whose line 1 was the auto-printed value of
+# the child's own Sys.setlocale() call, so a job killed before printing anything
+# else was recorded as
+#     [1] "C.UTF-8"
+# a locale string where the reason should be. The child is silent now (see
+# .job_child_script), so state what THIS process actually knows: which task,
+# which pid, how long it had been running, and whether the child said anything.
+# Silence is itself the finding -- nothing inside the conversion asked it to
+# stop -- so it points at where the cause must be instead of trailing off.
+.job_stopped_detail <- function(j, now = Sys.time()) {
+  el <- suppressWarnings(as.numeric(difftime(now, j$launched, units = "secs")))
+  said <- .job_tail(file.path(j$dir, "out.log"))
+  sprintf("%s task, process %s, gone after %s. %s",
+          as.character(j$task %||% "unknown")[1],
+          if (is.na(j$pid)) "(no process id)" else as.character(j$pid),
+          if (isTRUE(is.finite(el))) sprintf("%.0fs", el) else "an unknown time",
+          if (nzchar(said)) paste("Its last output was:", said)
+          else paste("It left no output of its own, so nothing inside the conversion",
+                     "asked it to stop - look for an out-of-memory kill, an operator",
+                     "kill, or a restart of this machine at that time."))
 }
 
 # job_pump() -- keep exactly as many processes running as the cap allows, oldest

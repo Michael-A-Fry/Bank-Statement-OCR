@@ -25,11 +25,15 @@ One per statement. Numbering the files (`survey-01`, `survey-02`, …) makes a
 batch much easier to work through afterwards.
 
 **If Statement Studio already had a go at the file**, paste what it said as well
-— the message on the Convert page, or the **Diagnostics** table under *Show me
-how it read this*. Its wording (`date_parse`, `row_count`, `balance_break`,
-`reconciliation_mismatch`, `amount_parse`, `row_parse`, `date_out_of_range`,
-`redaction_unverified`, `scanned_no_ocr`) points straight at the part of the
-survey that matters, and saves a round trip.
+— the message on the Convert page, or the **Diagnostics** table, which is under
+your transactions in *Checks & detail (for review)*. Copy the *What* and
+*How to fix* columns as they are printed. Wording like *dates couldn't be read*,
+*row count doesn't match*, *running balance jumps*, *the balance doesn't add up*,
+*amounts couldn't be read*, *rows didn't parse*, *date range doesn't look right*,
+*hidden text could not be checked* or *a scan with no readable text* points
+straight at the part of the survey that matters, and saves a round trip. (Those
+are the words the table prints. The engine's own codes stay in the logs and in
+the workbook's Diagnostics sheet, so do not go hunting for them on screen.)
 
 ---
 

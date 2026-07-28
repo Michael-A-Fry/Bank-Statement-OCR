@@ -127,7 +127,9 @@ Three things to confirm before you believe the re-run, in this order:
    be byte-identical however right the figures are: the same stamp is written
    *inside* every output JSON, on its third line, as `build.engine_version` — so
    one number changing changes the file. That on its own is not a fault and not
-   an answer — carry on to 2 and 3.
+   an answer — carry on to 2 and 3. And if the two stamps are the **same** but
+   read `1.3.0` or earlier, that is not proof the same code ran either: see the
+   caveat at the end of this section.
 2. **The same template ran.** Compare `detected_template` and `template_sha256`.
    If the hashes differ, the template has been edited since — *that is already
    your answer*, and the old figure cannot be reproduced from today's template.
@@ -142,12 +144,44 @@ run. But two entirely ordinary things break it with nothing wrong at all: the ap
 has been updated, or the template has been edited. So:
 
 - same `engine_version` **and** same `template_sha256` → a byte-for-byte match is
-  the expected outcome, and any difference is a finding;
-- either one different → the bytes will differ and that tells you nothing.
-  Compare the figures.
+  the expected outcome, and any difference is a finding. **Read the caveat below
+  first**: this holds only when both records were written by **1.4.0 or later**;
+- either one different → the bytes will differ, and that on its own tells you
+  nothing. Compare the **figures**: `row_count`, `status`, `trust_level`,
+  `kpi_fail_count`, and the check details the re-run printed against the ones in
+  the old record. A difference in any of those is the finding. If it was the
+  *build* that changed, read [`../../CHANGELOG.md`](../../CHANGELOG.md) for the
+  newer version before you call it one — a verdict that moved from *please
+  double-check it* to *converted successfully* between two builds is usually a fix
+  that is written down there, and the changelog names it.
 
 A re-run that reproduces 11 rows, `ok`, `medium` and the same `template_sha256`
 off a newer build has reproduced the figure. It has not failed to.
+
+### The caveat: before 1.4.0, `engine_version` does not identify a build
+
+The stamp was only moved at release time, while the engine was changed many times
+*within* a release. So two records can carry the **same** `engine_version` and the
+**same** `template_sha256` and still disagree — and pairs like that exist on this
+box, permanently, because the records are never rewritten.
+
+A real one, still there: the same 7-row ANZ PDF, the same template hash
+`f4e79203...`, both stamped `1.3.0` —
+
+| Run | Written | `status` | `trust_level` | `kpi_fail_count` |
+|---|---|---|---|---|
+| `0fdca7c700-20260728004032-3a82` | 00:40, 28 Jul 2026 | `needs_review` | low | 1 |
+| `0fdca7c700-20260728061535-5908` | 06:15, 28 Jul 2026 | `ok` | medium | 0 |
+
+Nothing is broken. An engine fix landed between the two, and the later record is
+the right one. The headline test above, applied to that pair, would send you
+hunting a defect that is really the fix.
+
+**So when both records read `1.3.0` or earlier, the byte-for-byte rule does not
+apply.** Order the two by the timestamp inside the run id, read the changelog for
+what changed between them, and decide on the figures. From **1.4.0** the stamp
+moves with every shipped change of behaviour, which is what makes it usable as a
+test at all — that is why 1.4.0 exists.
 
 ## 5. Template bug, or bad file?
 

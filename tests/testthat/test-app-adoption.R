@@ -61,7 +61,7 @@ test_that("templates built here take part in detection with nothing to switch on
 # detection pass and report it.
 test_that("a successful save runs a real detection pass and reports it (#24)", {
   src <- .app_src()
-  save_block <- .app_block(src, 'observeEvent\\(input\\$g_save', 60L)
+  save_block <- .app_block(src, 'observeEvent\\(input\\$g_save', 80L)
   expect_match(save_block, "detect_statement\\(")        # detection actually runs
   expect_match(save_block, "recognition_summary\\(")     # ...and is turned into words
   # forcing is now the FALLBACK, not the default: it must be conditional on the
