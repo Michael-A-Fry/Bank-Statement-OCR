@@ -788,8 +788,20 @@ ui <- fluidPage(
           br(),
           fluidRow(
             column(5,
-              selectInput("adm_tpl_pick", "Preview / edit a template", choices = NULL),
+              selectizeInput("adm_tpl_pick", "Preview / edit a template", choices = NULL,
+                             options = list(placeholder = "Type to search, or click a row above")),
               uiOutput("adm_tpl_origin"),
+              # THE WAY BACK TO THE BANDS. Editing a template here meant editing its
+              # YAML as text -- fine for a threshold, useless for "the credit column
+              # has moved 4pt left", which is what actually goes wrong. The visual
+              # editor could only ever be reached by converting a statement first,
+              # so there was no route from "this template is wrong" to the picture
+              # of it. It needs a page to draw on, and the saved statements know
+              # which template read them, so the page comes from there.
+              actionButton("adm_tpl_bands", "Redraw its columns on a real statement",
+                           class = "btn-primary"),
+              uiOutput("adm_tpl_bands_msg"),
+              br(),
               actionButton("adm_tpl_dup", "Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
               actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
@@ -1804,6 +1816,64 @@ server <- function(input, output, session) {
                     error = function(e) NULL)
       if (is.null(a)) return(.dl_note(file, "That file could not be read, so there is no summary to give. The file itself is the problem, not the audit."))
       writeLines(a, file) })
+
+  # adm_tpl_bands -- open the SELECTED template in the visual editor, on a real
+  # statement it has actually read.
+  #
+  # The band editor needs two things: a template, and a page to draw it on. Admin
+  # had the first and no way to get the second, so the only route to the picture
+  # was to go and convert a statement first -- which is backwards when the reason
+  # you are in Admin is that you already know a template is wrong. The saved
+  # statements record WHICH template read them, so the page is already on disk:
+  # take the most recent one that this template read and still has its file.
+  #
+  # Most recent, not oldest: a template that has drifted is wrong on the newest
+  # statements first, and that is the one worth looking at.
+  .tpl_sample <- function(tid) {
+    u <- safe(read_uploads(UPLOADS_DIR), NULL)
+    if (is.null(u) || !nrow(u) || !"template" %in% names(u)) return(NULL)
+    ok <- !is.na(u$template) & u$template == tid & !u$purged
+    if (!any(ok)) return(NULL)
+    u <- u[ok, , drop = FALSE]          # read_uploads() is already newest-first
+    for (i in seq_len(nrow(u))) {
+      p <- safe(upload_file_path(u$id[i], UPLOADS_DIR), NA_character_)
+      if (!is.na(p) && file.exists(p)) return(list(path = p, id = u$id[i], ts = u$ts[i]))
+    }
+    NULL
+  }
+  observeEvent(input$adm_tpl_bands, {
+    req(admin_ok())
+    tid <- input$adm_tpl_pick
+    if (is.null(tid) || !nzchar(tid)) {
+      output$adm_tpl_bands_msg <- .tpl_note("Pick a template first.", ok = FALSE); return()
+    }
+    t <- all_templates()[[tid]]
+    if (is.null(t)) {
+      output$adm_tpl_bands_msg <- .tpl_note("That template could not be loaded.", ok = FALSE); return()
+    }
+    # A fields (form) template has no columns to draw -- say which kind it is
+    # rather than opening an editor with nothing in it.
+    if (identical(t$mode %||% "", "fields")) {
+      output$adm_tpl_bands_msg <- .tpl_note(paste(
+        "This is a form template - it reads labelled values, not columns, so there",
+        "are no bands to redraw. Edit its fields in the box on the right."), ok = FALSE)
+      return()
+    }
+    smp <- .tpl_sample(tid)
+    if (is.null(smp)) {
+      # The honest dead end, with the reason and the way out. Without a statement
+      # this template has read there is nothing to draw on, and no amount of
+      # clicking will change that.
+      output$adm_tpl_bands_msg <- .tpl_note(sprintf(paste(
+        "No saved statement was read with %s, so there is no page to draw its",
+        "columns on. Convert one statement with it first - then this button opens",
+        "it here. (Saved statements are deleted after the retention period, so an",
+        "old template may have none left.)"), htmltools::htmlEscape(tid)), ok = FALSE)
+      return()
+    }
+    output$adm_tpl_bands_msg <- renderUI(NULL)
+    open_guided(smp$path, basename(smp$path), seed_tmpl = t, upload_id = smp$id)
+  })
 
   # adm_feed_health -- did the analytics feed actually receive what it should have?
   #
@@ -5119,7 +5189,23 @@ server <- function(input, output, session) {
                                     selected = tmpl$columns$balance$source %||% "")))),
           tags$hr(),
           fluidRow(
-            column(6, textInput("g_id", "Saves under this name", value = tmpl$id %||% "")),
+            column(6, textInput("g_id", "Saves under this name", value = tmpl$id %||% ""),
+                   # SAY IT BEFORE THE SAVE, NOT AFTER. Saving a TESTED template
+                   # under its own name would be shadowed -- the curated set wins on
+                   # an id clash -- so the save quietly stores it as "<id>_custom"
+                   # with a `refines:` line, and detection then prefers the
+                   # correction. That is right, and it was invisible: the box said
+                   # one name and the toast afterwards said another, which reads as
+                   # the tool ignoring what you typed. A template built here has no
+                   # such problem and really is saved over, in place.
+                   if ((tmpl$id %||% "") %in% (g$default_ids %||% character(0)))
+                     helpText(HTML(sprintf(paste(
+                       "<b>%s is a tested template</b>, so it is not edited in place.",
+                       "Saving stores your version as <code>%s_custom</code>, which then",
+                       "wins over the original whenever this layout is detected -",
+                       "the original stays untouched as the thing you can fall back to."),
+                       htmltools::htmlEscape(tmpl$id), htmltools::htmlEscape(tmpl$id))))
+                   else helpText("Saving replaces this template, in place.")),
             column(6, textInput("g_currency", "Currency", value = tmpl$currency %||% "NZD"))),
           textInput("g_type", "Kind of statement", value = tmpl$statement_type %||% "everyday",
                     width = "100%"),
