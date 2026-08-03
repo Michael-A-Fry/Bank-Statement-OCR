@@ -434,7 +434,6 @@ ui <- fluidPage(
           # "did my conversion feed Qlik" cost a click on a single file and two
           # on a case folder (open the row, then open the panel), and the answer
           # was filed under a heading that does not cover it.
-          uiOutput("cv_feed"),
           # ...and the one question a CLEAN result still has to answer: is this
           # the right bank? A statement read end to end by the wrong template is
           # the exact failure this tool exists to prevent, and it looks perfect on
@@ -693,7 +692,10 @@ ui <- fluidPage(
           fluidRow(
             column(8, DTOutput("adm_uploads")),
             column(4,
-              selectInput("adm_up_pick", "Pick a saved upload", choices = NULL),
+              # selectize, not a plain select: on a busy server this is hundreds of
+              # entries and the only way to find one is to type part of it.
+              selectizeInput("adm_up_pick", "Pick a saved upload", choices = NULL,
+                             options = list(placeholder = "Type to search, or click a row on the left")),
               # Rendered server-side (see dl_when): a download with nothing to send
               # used to answer an HTTP 500 error page instead of a file.
               uiOutput("adm_up_audit_ui"),
@@ -706,7 +708,8 @@ ui <- fluidPage(
           fluidRow(
             column(9, DTOutput("adm_requests")),
             column(3,
-              selectInput("adm_req_pick", "A request", choices = NULL),
+              selectizeInput("adm_req_pick", "A request", choices = NULL,
+                             options = list(placeholder = "Loading\u2026")),
               actionButton("adm_req_actioned", "Mark done", class = "btn-primary"),
               br(), br(),
               actionButton("adm_req_dismiss", "Dismiss"),
@@ -722,7 +725,8 @@ ui <- fluidPage(
           fluidRow(
             column(8, h5("Failed - needs attention"), DTOutput("adm_inbox_failed")),
             column(4,
-              selectInput("adm_inbox_pick", "A failed file", choices = NULL),
+              selectizeInput("adm_inbox_pick", "A failed file", choices = NULL,
+                             options = list(placeholder = "Loading\u2026")),
               actionButton("adm_inbox_wizard", "Open in the toolkit", class = "btn-warning"),
               br(), br(),
               uiOutput("adm_inbox_audit_ui"))),
@@ -730,6 +734,14 @@ ui <- fluidPage(
             column(4, h5("Waiting in inbox"), DTOutput("adm_inbox_waiting")),
             column(4, h5("Processed"), DTOutput("adm_inbox_processed")),
             column(4, h5("Output folders (outbox)"), DTOutput("adm_inbox_outbox"))),
+          tags$hr(),
+          # THE ANALYTICS FEED, WHERE THE PERSON WHO CAN FIX IT WILL SEE IT.
+          # The Convert screen used to carry this, which told an analyst about a
+          # pipeline she has no part in and left the one case that MATTERS -- a
+          # feed write that failed -- announced only to whoever happened to run
+          # that conversion. It is a server fault, so it belongs here.
+          h4("Analytics feed"),
+          uiOutput("adm_feed_health"),
           tags$hr(),
           fluidRow(
             column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
@@ -1793,7 +1805,86 @@ server <- function(input, output, session) {
       if (is.null(a)) return(.dl_note(file, "That file could not be read, so there is no summary to give. The file itself is the problem, not the audit."))
       writeLines(a, file) })
 
+  # adm_feed_health -- did the analytics feed actually receive what it should have?
+  #
+  # Nobody was asking. write_feed() records every outcome under logs\feed\, and
+  # the ONLY place a failure ever surfaced was the screen of whichever analyst
+  # happened to run that conversion -- who cannot fix a read-only share and, since
+  # the feed line came off Convert, is no longer told at all. The documented check
+  # was `findstr /s /m "write_failed" logs\feed\*.json`, which nobody runs until
+  # they already suspect something. A failed write is silent by nature: the
+  # conversion succeeded, the download is complete, and only the dashboards are
+  # short. So it is counted here, and it leads with the bad news or says plainly
+  # that there is none.
+  output$adm_feed_health <- renderUI({
+    req(admin_ok())
+    input$adm_refresh
+    # read_log_records() returns a DATA FRAME, one row per conversion -- not a
+    # list of records. Treating it as a list iterates the COLUMNS, and `$` on an
+    # atomic vector printed "$ operator is invalid for atomic vectors" onto the
+    # Admin page. Caught by opening the page; no grep would have found it.
+    recs <- safe(read_log_records(LOGDIR, "feed"), NULL)
+    if (is.null(recs) || !nrow(recs))
+      return(p(class = "muted", "No conversions have been through the feed yet."))
+    col <- function(nm, default = NA) if (nm %in% names(recs)) recs[[nm]] else rep(default, nrow(recs))
+    gr    <- as.character(col("gate_result", ""))
+    gr[is.na(gr)] <- ""
+    wrote <- as.logical(col("feed_written", FALSE)); wrote[is.na(wrote)] <- FALSE
+    # A suffix after the gate reason is the failure half: accepted:write_failed,
+    # accepted:stale_row_kept. Those are the ones worth a maintainer's attention.
+    bad  <- grepl(":(write_failed|stale_row_kept)$", gr)
+    when <- function(i) {
+      t <- as.character(col("ts", ""))[i]
+      t <- t[!is.na(t) & nzchar(t)]
+      if (!length(t)) "" else paste0(" (most recent ", max(t), ")")
+    }
+    tagList(
+      p(class = if (any(bad)) "bad" else "ok", style = "font-weight:600;margin:0",
+        if (any(bad))
+          sprintf("%d of %d conversion(s) did not reach the dashboards as intended%s.",
+                  sum(bad), nrow(recs), when(bad))
+        else sprintf("All %d conversion(s) were handled as intended - %d published, %d held back by the gate.",
+                     nrow(recs), sum(wrote), nrow(recs) - sum(wrote))),
+      if (any(bad)) tags$ul(lapply(unique(gr[bad]), function(g) {
+        n <- sum(gr == g)
+        fb <- plain_feed(list(reason = sub(":[^:]*$", "", g), gate_result = g))
+        tags$li(HTML(sprintf("<b>%d</b> &times; %s", n, fb$why %||% g)))
+      })),
+      p(class = "muted", style = "margin:4px 0 0",
+        HTML(sprintf("Feed folder: <code>%s</code>. Full detail is one file per conversion under <code>%s</code>.",
+                     CONFIG$feed$feed_dir %||% "feed", file.path(LOGDIR, "feed")))))
+  })
+
+  # .fill_pick(session, id, choices, empty) -- fill an Admin picker and let it say
+  # what it is when there is nothing to pick.
+  #
+  # Every one of these controls used to be a plain selectInput fed a bare
+  # character vector. Two things followed. You could not TYPE in them, so finding
+  # one entry among hundreds meant scrolling; and an empty list rendered as an
+  # empty box, which reads as a broken control rather than as an empty queue --
+  # the report was "I click it and nothing comes up", for a picker that was
+  # working exactly as written. The placeholder carries the answer either way.
+  .fill_pick <- function(session, id, choices, empty, selected = NULL) {
+    if (is.null(choices)) choices <- character(0)
+    # NOT as.character(): that drops the names, and the names are the whole point
+    # for the uploads picker, where the value is an opaque id and the label is the
+    # date and status a person actually recognises.
+    keep <- selected %||% isolate(input[[id]]) %||% ""
+    if (!keep %in% unname(choices)) keep <- ""     # a stale pick must not survive
+    updateSelectizeInput(session, id, choices = choices, selected = keep,
+                         server = FALSE,
+                         options = list(placeholder = if (length(choices)) "Type to search" else empty))
+  }
+
   # ---- Admin: uploads & pickups ----
+  # A stored timestamp is ISO ("2026-07-28T00:20:57Z"), which is precise and hard
+  # to read down a list. The picker beside this table has to be scannable, so it
+  # gets the same instant in the form a person reads at a glance; the table keeps
+  # the exact value, because that is what you quote in an audit.
+  .up_when <- function(ts) {
+    p <- suppressWarnings(as.POSIXct(sub("Z$", "", ts), format = "%Y-%m-%dT%H:%M:%S", tz = "UTC"))
+    ifelse(is.na(p), ts %||% "(no date)", format(p, "%d %b %Y %H:%M"))
+  }
   output$adm_uploads <- renderDT({
     cv_upload_id(); input$adm_refresh          # refresh after a convert or on demand
     u <- read_uploads(UPLOADS_DIR)
@@ -1804,15 +1895,42 @@ server <- function(input, output, session) {
     # Shown, because a pickup row whose file is gone must not look actionable.
     u[, cols]
   }, options = dt_none_opts("No statements have been converted here yet.",
-                            pageLength = 8, dom = "tip"), rownames = FALSE)
+                            pageLength = 8, dom = "tip"), rownames = FALSE,
+     selection = "single")   # so clicking a row can fill the picker beside it
   observe({
     req(admin_ok())          # upload ids identify real client statements
     cv_upload_id(); input$adm_refresh
     u <- read_uploads(UPLOADS_DIR)
-    # Only offer uploads whose file is still on disk -- a purged one cannot be
-    # audited or opened in the toolkit, so offering it would be a dead end.
-    pick <- if (nrow(u)) u$id[u$needs_pickup & !u$purged] else character(0)
-    updateSelectInput(session, "adm_up_pick", choices = pick)
+    # EVERY upload still on disk, not just the ones that failed. This used to
+    # filter on `needs_pickup` -- unsupported-or-failed and not since taught --
+    # under a label that says "Pick a saved upload" and beside a table listing
+    # them all. On a server where conversions are working, that is the empty set,
+    # so the control looked broken rather than selective, and the audit download
+    # and "open in the toolkit" beside it were unreachable for every statement
+    # that had actually converted. Both are useful on a GOOD conversion: auditing
+    # one is how you check a template, and opening one in the toolkit is how you
+    # improve it. A purged upload is still excluded -- its file is gone, so both
+    # buttons would be dead ends.
+    keep <- if (nrow(u)) !u$purged else logical(0)
+    ids  <- if (any(keep)) u$id[keep] else character(0)
+    # Labelled, because a raw id ("0fdca7c700-20260728002057-fa1f") tells nobody
+    # anything. read_uploads() already returns newest first, so the order is the
+    # one a person wants.
+    lab <- if (length(ids)) sprintf("%s  -  %s%s", .up_when(u$ts[keep]),
+                                    u$status[keep],
+                                    ifelse(is.na(u$file_ext[keep]), "",
+                                           paste0(" (.", u$file_ext[keep], ")"))) else character(0)
+    .fill_pick(session, "adm_up_pick", stats::setNames(ids, lab),
+               empty = "Nothing has been converted here yet")
+  })
+  # Clicking a row in the table fills the picker, which is what everybody tries
+  # first and nothing was listening for.
+  observeEvent(input$adm_uploads_rows_selected, {
+    req(admin_ok())
+    u <- read_uploads(UPLOADS_DIR)
+    i <- input$adm_uploads_rows_selected
+    if (nrow(u) && length(i) && i <= nrow(u))
+      updateSelectizeInput(session, "adm_up_pick", selected = u$id[i])
   })
   output$adm_up_audit <- downloadHandler(
     filename = function() "upload.audit.md",
@@ -1849,7 +1967,11 @@ server <- function(input, output, session) {
     req_bump(); input$adm_refresh
     q <- read_template_requests(REQUESTS_DIR)
     open <- if (nrow(q)) q$id[q$status == "open"] else character(0)
-    updateSelectInput(session, "adm_req_pick", choices = open)
+    # An empty picker used to render as a blank box, which reads as broken rather
+    # than as "there is nothing here". The placeholder says which it is, so the
+    # control explains itself without needing a line of text beside it.
+    .fill_pick(session, "adm_req_pick", open,
+               empty = "No open requests - nothing to triage")
   })
   # Every action that changes something says what it changed -- including the one
   # that fails, which said nothing at all either.
@@ -1898,8 +2020,9 @@ server <- function(input, output, session) {
     # connect, with no login and no user action.
     req(admin_ok())
     s <- inbox_state()
-    updateSelectInput(session, "adm_inbox_pick",
-      choices = if (nrow(s$folders$failed)) s$folders$failed$file else character(0))
+    .fill_pick(session, "adm_inbox_pick",
+               if (nrow(s$folders$failed)) s$folders$failed$file else character(0),
+               empty = "Nothing in failed/ - good")
   })
   observeEvent(input$adm_inbox_wizard, {
     req(admin_ok())
@@ -4342,37 +4465,21 @@ server <- function(input, output, session) {
              downloadLink("dl_json", "JSON", class = "muted")))
   })
 
-  # cv_feed -- did this conversion reach the org dashboards, and if not, why not?
+  # THE FEED LINE IS NOT ON THIS SCREEN, DELIBERATELY.
   #
-  # write_feed() already decides that, records it in the feed manifest and logs it;
-  # this is the ONE place the person who ran the conversion is told. It matters
-  # most on the quiet case: a perfectly good conversion read by a template built
-  # here is withheld as "not proven", which is correct governance and was
-  # completely invisible. Wording lives in FEED_PLAIN (ui_labels.R), keyed by the
-  # engine's own gate reason, so the screen and the manifest cannot drift apart.
-  output$cv_feed <- renderUI({
-    res <- cv_res(); req(res)
-    # Only where there were figures to publish. On an unsupported / failed result
-    # the card above already says nothing was converted, and repeating it here
-    # would push the "set this layout up" action down the page for no new fact.
-    if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(NULL)
-    fb <- plain_feed(cv_feed_gate())
-    if (is.null(fb)) return(NULL)          # feed switched off, or a form result
-    # ...UNLESS the reviewer has since marked this conversion WRONG, which
-    # retracts its rows (submit_feedback -> retract_feed). The gate reactive holds
-    # the verdict from the WRITE and nothing refreshes it, so "Sent to the
-    # dashboards. ...now available to the Qlik dashboards." sat on screen at the same
-    # time as "7 row(s) have been withdrawn from the dashboards" a few inches
-    # below. Read the retraction here rather than write the gate a third time: the
-    # feed manifest is the authority on what was published, and this is the screen.
-    rec <- cv_fb_rec()
-    if (isTRUE(identical(rec$verdict, "wrong")) && isTRUE(fb$ok))
-      fb <- list(ok = FALSE, line = "Withdrawn from the dashboards.", why = "")
-    div(style = paste("display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;",
-                      "margin:0 0 12px;font-size:13px"),
-      span(class = if (isTRUE(fb$ok)) "ok" else "bad", style = "font-weight:600", fb$line),
-      if (nzchar(fb$why %||% "")) span(class = "muted", fb$why))
-  })
+  # It used to say "Sent to the dashboards." / "Held back from the dashboards -
+  # it needs checking first." right under the verdict. Whether a conversion
+  # reaches the org's dashboards is an ORG question, decided by a machine gate on
+  # template origin and trust, and there is nothing the analyst who ran it can do
+  # about the answer: her download is complete either way, and the checks above
+  # already tell her whether the figures are sound. Telling her about a Qlik
+  # pipeline she has no part in was noise dressed as information.
+  #
+  # Nothing about the gate changed -- write_feed() still decides, still records
+  # the verdict in the manifest, still logs it. What moved is WHO IS TOLD: a feed
+  # write that FAILS is an operational fault for whoever runs the server, so it
+  # is raised in Admin (adm_feed_health, below) where that person can act on it,
+  # instead of on the screen of an analyst who can only be puzzled by it.
   # cv_rematch -- an escape hatch for a WRONG match: a bank that matched the wrong
   # template (or the wrong bank) needs a one-click "no, set up the right template
   # for this" without hunting. Drafts a fresh template from THIS file (never seeded
@@ -4504,13 +4611,18 @@ server <- function(input, output, session) {
     rec <- cv_fb_rec(); if (is.null(rec)) return(NULL)
     n <- suppressWarnings(as.integer(rec$retracted_rows %||% NA))
     if (!identical(rec$verdict, "wrong")) return(NULL)
+    # WHAT MARKING IT WRONG DID, in terms of the statement in front of her rather
+    # than of the pipeline behind it. These lines used to name the org dashboards,
+    # which is somewhere she has no part in and cannot check: what she needs to
+    # know is that her verdict took effect and that fixing the template is what
+    # puts things right. Where it went is the server's business, and Admin's.
     div(class = "muted", style = "margin-top:4px",
       if (is.na(n))
-        "The tool could not reach the feed folder to withdraw its rows - tell whoever looks after the server."
+        "Recorded - but the figures could not be pulled back. Tell whoever looks after the server."
       else if (n > 0)
-        sprintf("%d row(s) withdrawn from the dashboards and moved to the held-back feed. Fixing the template and converting again puts the corrected figures back.", n)
+        sprintf("Recorded, and the %d row(s) this produced have been pulled back so nothing downstream uses them. Fix the template and convert again to replace them with corrected figures.", n)
       else
-        "Nothing to withdraw - this conversion had not been published to the dashboards.")
+        "Recorded. Nothing had to be pulled back - these figures had not gone anywhere.")
   }
   observeEvent(input$cv_fb_submit, {
     res <- cv_res(); req(res, res$run_id)

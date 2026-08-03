@@ -293,7 +293,13 @@ test_that("the feed note says accepted, held back, and 'the write failed' differ
 
 # The screen must actually USE all of this. app.R is not sourced by the suite, so
 # these are static assertions, the same way test-app-adoption.R does it.
-test_that("the Convert screen reports the feed outcome and names failing checks", {
+# The feed half of this seam moved to Admin: the analyst is no longer told about
+# the org's dashboards, because she has no part in that gate and cannot change its
+# answer. What must still hold is that there is exactly ONE writer -- so what
+# reaches Qlik and what any screen says about it can never come from different
+# runs -- and that a feed FAILURE, which is a server fault, is raised somewhere a
+# maintainer will see it.
+test_that("the Convert screen names failing checks, and the feed outcome is Admin's", {
   src <- .src("app.R")
   joined <- paste(src, collapse = "\n")
   # the gate's verdict is kept, not discarded -- and there is exactly ONE place
@@ -303,9 +309,13 @@ test_that("the Convert screen reports the feed outcome and names failing checks"
   expect_equal(length(grep("safe\\(write_feed\\(", src)), 1L)     # ONE writer
   expect_true(any(grepl("^\\s*publish_result\\(res, record\\)", src)))       # a conversion
   expect_true(any(grepl("^\\s*publish_result\\(res, cv_recorded\\(\\)\\)", src)))  # a forced-row re-run
-  expect_true(any(grepl("output\\$cv_feed <- renderUI", src)))
-  expect_true(any(grepl("uiOutput\\(\"cv_feed\"\\)", src)))
-  expect_true(grepl("plain_feed\\(cv_feed_gate\\(\\)\\)", joined))
+  # NOT on the customer-facing screen, in either half
+  expect_false(any(grepl("output\\$cv_feed <- renderUI", src)))
+  expect_false(any(grepl("uiOutput\\(\"cv_feed\"\\)", src)))
+  # ...and raised in Admin instead, where it can be acted on
+  expect_true(any(grepl("output\\$adm_feed_health <- renderUI", src)))
+  expect_true(grepl("plain_feed\\(", joined))
+  expect_true(grepl("write_failed\\|stale_row_kept", joined))   # the faults it looks for
   # which check failed, in the Checks table's own words, on the verdict card
   expect_true(any(grepl("failed_checks_ui <- function", src)))
   expect_true(grepl("failed_checks_ui\\(res\\)", joined))
@@ -314,13 +324,17 @@ test_that("the Convert screen reports the feed outcome and names failing checks"
   expect_false(grepl("plain_label\\(k\\$name, CHECK_PLAIN\\)", joined))
 })
 
-test_that("marking a conversion wrong says what left the dashboards", {
+test_that("marking a conversion wrong says what happened to the figures", {
   src <- .src("app.R")
   joined <- paste(src, collapse = "\n")
   # submit_feedback() retracts the run's rows from the accepted feed; the screen
   # used to say only "Thanks - your feedback was recorded".
   expect_true(grepl("retracted_rows", joined))
-  expect_true(grepl("withdrawn from the dashboards", joined))
+  # It must still say her verdict TOOK EFFECT -- but in terms of the statement in
+  # front of her, not of a pipeline she has no part in. "pulled back" is the fact
+  # she can act on; where they were pulled back FROM is the server's business.
+  expect_true(grepl("pulled back", joined, fixed = TRUE))
+  expect_false(grepl("withdrawn from the dashboards", joined, fixed = TRUE))
   # and the retraction must target the SAME feed folder the app fed
   expect_true(grepl("config = CONFIG", joined))
 })

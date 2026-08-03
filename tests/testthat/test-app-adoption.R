@@ -294,19 +294,24 @@ test_that("no non-ASCII byte survives in the three UI files, literals included",
 # ---------------------------------------------------------------------------
 # ONE CLICK FROM THE VERDICT, which is what the page promises and what the
 # charter promises ("every diagnostic still exists and is still reachable in one
-# click"). Two things broke it: the checks lived at the bottom of the panel that
-# "Show me how it read this" opens, inside a SECOND collapsible, and the
-# dashboards line lived there too -- so on a case folder "did my rows reach
-# Qlik?" was three controls deep. Both now sit outside that panel.
-test_that("the checks and the dashboards line are not behind the evidence toggle", {
+# click"). The checks used to live at the bottom of the panel that "Show me how it
+# read this" opens, inside a SECOND collapsible, so on a case folder they were
+# three controls deep. They now sit outside that panel.
+#
+# The dashboards line was here too, held to the same rule. It is GONE now, and
+# this test guards its absence instead: whether a conversion reaches the org's
+# dashboards is decided by a machine gate the analyst has no part in and cannot
+# change, so telling her was noise dressed as information. The one case that
+# matters -- a feed write that FAILED -- is a server fault, and it is raised in
+# Admin (adm_feed_health) where somebody can act on it.
+test_that("the checks are not behind the evidence toggle, and the feed line is gone", {
   src <- .app_src()
-  i_feed   <- grep('^\\s*uiOutput\\("cv_feed"\\),', src)
   i_detail <- grep('^\\s*uiOutput\\("cv_detail"\\),', src)
   i_toggle <- grep('^\\s*uiOutput\\("cv_more_toggle"\\),', src)
   i_panel  <- grep('conditionalPanel\\("output\\.cv_detail_open == true"', src)
-  expect_length(i_feed, 1L); expect_length(i_detail, 1L)
+  expect_length(i_detail, 1L)
   expect_length(i_toggle, 1L); expect_length(i_panel, 1L)
-  expect_true(i_feed < i_panel)         # the dashboards line: above the fold
+  expect_length(grep('uiOutput\\("cv_feed"\\)', src), 0L)   # not on the page at all
   expect_true(i_detail < i_toggle)      # the checks: above the link, one click
   expect_true(i_toggle < i_panel)
   # the toggle's caption no longer claims the checks it does not open

@@ -85,7 +85,7 @@ So read the sentence, not the severity word.
 
 **A clean run still has rows here, and that is normal.** The table is a record of
 what the tool noticed, not a list of faults, so *Converted successfully* and
-*Sent to the dashboards* routinely sit above one, two or three diagnostic rows.
+A clean verdict routinely sits above one, two or three diagnostic rows.
 Two real examples, both clean, both published, both re-run on 2026-07-28:
 
 | Statement | What the Diagnostics table showed |
@@ -93,9 +93,9 @@ Two real examples, both clean, both published, both re-run on 2026-07-28:
 | A 7-row CSV with no balances printed | one **medium** row — Where `completeness`, What *completeness not auto-verified*, Detail "no balance or stated count to reconcile against" |
 | A 311-row, 11-page PDF | two **info** rows — Where `upload`, *several accounts in one statement*, "5 account numbers appear in one statement period"; and Where `document`, *what the PDF says about itself* |
 
-Both of those are *Converted successfully*, confidence **medium**, published to
-the dashboards — with rows on this table. Read the *How to fix* sentence, not the
-row count and not the severity word:
+Both of those are *Converted successfully*, confidence **medium** — with rows on
+this table. Read the *How to fix* sentence, not the row count and not the
+severity word:
 
 - **info** is a note. It is not always "nothing to do" — see the six kinds
   above. On the 311-row PDF, one of the two info rows asks you to review per
@@ -105,9 +105,8 @@ row count and not the severity word:
   nothing could prove a row was not dropped. It is an absence of proof, not a
   discrepancy — count the rows against the statement if the total matters, or ask
   for a CSV export next time.
-- Nothing on this table can quietly downgrade the verdict. The headline, the
-  confidence level and the dashboard line are decided by the **checks**; the
-  diagnostics explain them.
+- Nothing on this table can quietly downgrade the verdict. The headline and the
+  confidence level are decided by the **checks**; the diagnostics explain them.
 
 The single row reading *No issues detected; all applicable checks passed* is real
 but rare — it appears only when the tool found **nothing at all** to note, which

@@ -22,7 +22,7 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 6. Read the verdict, then **Download** Excel, CSV or JSON.
 
 Everything the tool *proved* stays on the page under the verdict: whether the
-figures reached the dashboards, the summary cards, the strip of ticks, your
+the summary cards, the strip of ticks, your
 transactions — and, in one disclosure headed **Checks & detail (for review)**,
 the **Checks**, the **Diagnostics** and the **Field coverage**. That disclosure
 opens itself whenever a check has failed or the run needs review, so on the runs
@@ -156,20 +156,6 @@ place that says so:
 | **CSV** | The `Transactions` table only. |
 | **JSON** | Everything: build stamp, header, transactions, extras, checks, trust, diagnostics, provenance, metadata. |
 
-## The dashboard line
-
-Under the result, one sentence says whether the conversion reached the Qlik
-dashboards:
-
-- *Sent to the dashboards* — it was clean, and read by a shipped, tested template.
-- *Held back from the dashboards - it was read by a template built here* — it
-  converted fine and your download is complete; only the dashboards are gated.
-  To lift that, the template has to be promoted
-  ([maintaining-the-engine.md](maintaining-the-engine.md) §3).
-- *Held back* for a failed check — fix the template or the file and convert
-  again. Converting the same file again with nothing changed reproduces the same
-  result exactly; the engine is deterministic.
-
 ## Rating the conversion
 
 *Was this conversion correct?* sits under the result on any run that produced
@@ -178,11 +164,10 @@ marks, and **nothing is pre-selected**: it is the one question only you can
 answer, so the tool will not answer it for you. Submit with none chosen and it
 says so rather than recording anything.
 
-Marking a result **Wrong** does more than log an opinion: it withdraws that run's
-rows from the dashboards immediately — they move to the held-back feed, the
-dashboard line above changes to say so, and the screen tells you how many rows
-were withdrawn. Fixing the template and converting again puts the corrected
-figures back.
+Marking a result **Wrong** does more than log an opinion: it immediately pulls
+back the figures that run produced, so nothing downstream can keep using them,
+and the screen tells you how many rows that was. Fixing the template and
+converting again replaces them with corrected figures.
 
 ## Batch runs
 

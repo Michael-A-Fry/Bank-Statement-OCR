@@ -235,9 +235,12 @@ test_that("no page sends her behind the evidence toggle for something on the pag
                "Checks"             = "cv_kpis",
                "Diagnostics"        = "cv_diag",
                "Field coverage"     = "cv_coverage",
-               "field coverage"     = "cv_coverage",
-               "dashboard decision" = "cv_feed",
-               "dashboard line"     = "cv_feed")
+               "field coverage"     = "cv_coverage")
+  # No "dashboard" entries: that line is off the customer-facing screen for good.
+  # Whether a conversion reaches the org's dashboards is decided by a machine gate
+  # the analyst has no part in, so an analyst page must not send her looking for a
+  # control that is not there -- and a feed FAILURE, being a server fault, is
+  # raised in Admin instead.
   expect_identical(setdiff(unname(surface), .dt_outputs(.dt_app())), character(0))
 
   toggle <- "Show me how it read this"

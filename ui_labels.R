@@ -366,9 +366,10 @@ FRIENDLY_READ_ERROR <- paste(
 # different facts needing two different sentences -- telling somebody their
 # statement may be password-protected when the truth is that the server ran out of
 # room is a wrong answer, which is the one thing this tool must not give. Says what
-# happened, what it means for the dashboards, and what to do next; no process ids,
-# no engine words. (It lived in app.R with a note saying it belonged here.)
+# happened and what to do next; no process ids, no engine words, and nothing about
+# the analytics feed -- a stopped conversion produced no figures, so where figures
+# would have gone is not a fact about her statement. (It lived in app.R with a note
+# saying it belonged here.)
 CONVERT_STOPPED <- paste(
-  "This conversion stopped before it finished, so there is nothing to show and",
-  "nothing was sent to the dashboards. Try it again - if it stops a second time,",
-  "tell whoever looks after the tool.")
+  "This conversion stopped before it finished, so there is nothing to show.",
+  "Try it again - if it stops a second time, tell whoever looks after the tool.")
