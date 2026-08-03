@@ -85,6 +85,22 @@ FEED_CORE_COLUMNS <- c(
   structure(isTRUE(ok), why = why)
 }
 
+# .removed(path) -- attempt to remove a feed file and answer, truthfully, whether
+# it is GONE. Returns TRUE when the path no longer exists.
+#
+# WHY NOT just unlink(): unlink()'s return code is not the authority here. On the
+# documented Windows deployment the feed folder is a share that Qlik reloads and
+# analysts open in Excel, and a file another process holds open cannot be deleted
+# at all; a share can also be granted create-but-not-delete rights. In both cases
+# the row stays. unlink() itself never throws, so the safe() around the old call
+# caught nothing -- the return value was simply dropped, and a feed file that
+# refused to go looked exactly like one that went. file.exists() afterwards is the
+# only check that cannot be fooled by either platform.
+.removed <- function(path) {
+  safe(unlink(path))
+  !file.exists(path)
+}
+
 # .trust_ok(level, min_trust) -- does the trust level meet the floor? An NA / blank
 # level coalesces to the LOWEST trust (fail-closed -> withheld), never letting an
 # `if (NA)` throw inside the gate (which safe() would swallow, silently dropping
@@ -128,21 +144,48 @@ FEED_CORE_COLUMNS <- c(
 }
 
 # .feed_core_frame(rows) -- the FIXED transaction half of a feed row set: every
-# core column in FEED_CORE_COLUMNS order (missing ones present but empty), then
-# the template's named extras appended in their own order. `statement_index` and
-# the verbatim *_raw cells are excluded here -- the first is context (stamped per
-# row below), the second never leaves the JSON/Provenance record.
+# core column in FEED_CORE_COLUMNS order, missing ones present but empty, AND
+# NOTHING ELSE. `statement_index` and the verbatim *_raw cells are excluded here
+# -- the first is context (stamped per row below), the second never leaves the
+# JSON/Provenance record.
+#
+# THE EXTRAS USED TO BE APPENDED HERE, AND THAT SPLIT THE DASHBOARD. The comment
+# above FEED_CONTEXT_COLUMNS explains that a wildcard `LOAD *` concatenates only
+# on an EXACT field-set match -- and then this function appended each template's
+# own extras, so a card statement carrying fx_amount / conversion_charge produced
+# a 32-column file among 30-column ones. Measured on the real feed folder: 17
+# files at 30 columns, 2 at 32. Qlik does not merge those; it makes a second
+# table, and the unit's totals are short by whatever is in it, with nothing on
+# any screen saying so. connecting-qlik.md names this exact symptom ("Totals
+# split in two - a field set mismatch") two pages after the old comment here
+# promised it was safe. One of the two had to go, and the promise was the wrong
+# one to keep: a stable field set is worth more to a dashboard than an extra
+# column, and the extra is not lost -- see .feed_extras_frame below.
 .feed_core_frame <- function(rows) {
   rows <- as.data.frame(rows, stringsAsFactors = FALSE, check.names = FALSE)
   n <- nrow(rows)
   core <- lapply(FEED_CORE_COLUMNS,
                  function(col) if (col %in% names(rows)) rows[[col]] else rep(NA, n))
   names(core) <- FEED_CORE_COLUMNS
-  core <- as.data.frame(core, stringsAsFactors = FALSE, check.names = FALSE)
-  extra <- setdiff(names(rows),
-                   c(FEED_CONTEXT_COLUMNS, FEED_CORE_COLUMNS, .DISPLAY_DROP_COLS))
-  if (length(extra)) core <- cbind(core, rows[, extra, drop = FALSE])
-  core
+  as.data.frame(core, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+# .feed_extra_cols(rows) -- the template's own named columns, if any.
+.feed_extra_cols <- function(rows)
+  setdiff(names(rows), c(FEED_CONTEXT_COLUMNS, FEED_CORE_COLUMNS, .DISPLAY_DROP_COLS))
+
+# .feed_extras_frame(rows) -- a template's extras, carried in their own table
+# rather than widening the transactions one. Keyed by row_id so a dashboard that
+# wants fx_amount can join it back, and named verbatim because an extra is real
+# captured data and must stay identifiable. NULL when the template has none,
+# which is the ordinary case and writes no file at all.
+.feed_extras_frame <- function(rows) {
+  rows <- as.data.frame(rows, stringsAsFactors = FALSE, check.names = FALSE)
+  extra <- .feed_extra_cols(rows)
+  if (!length(extra) || !nrow(rows)) return(NULL)
+  key <- if ("row_id" %in% names(rows)) rows[["row_id"]] else seq_len(nrow(rows))
+  cbind(data.frame(row_id = key, stringsAsFactors = FALSE),
+        rows[, extra, drop = FALSE])
 }
 
 # .split_stamp(field, statements, si, fallback) -- per-statement value for each
@@ -235,6 +278,7 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   tx_written <- NA_character_
   tx_state <- "no_rows"
   tx_why <- NA_character_
+  extras_why <- NA_character_   # a failed EXTRAS write is recorded, never fatal
   dest_dir <- if (gate$accept) tx_dir
               else if (isTRUE(config$feed$include_review_feed)) rev_dir else NULL
   if (!is.null(rows) && nrow(rows)) {
@@ -277,6 +321,27 @@ write_feed <- function(result, config = load_config(), ts = NULL,
       wrote <- .atomic_write_csv(stamped, f)
       if (isTRUE(wrote)) { tx_written <- f; tx_state <- "written" }
       else { tx_state <- "write_failed"; tx_why <- attr(wrote, "why") %||% NA_character_ }
+      # A template's own extra columns travel in their own folder, keyed by
+      # run_id + row_id, so the transactions table keeps ONE field set for ever
+      # and Qlik can still join fx_amount back if a dashboard wants it. Written
+      # only when the template actually has extras, so the folder stays absent on
+      # an ordinary deployment rather than filling with empty files. A failure
+      # here must not fail the run: the figures are already safely in the
+      # transactions table, so it is recorded and carried, not raised.
+      # (This block sits AFTER the if/else above on purpose. Written between them
+      # it stole the `else`, so every ordinary run -- the ones with no extras at
+      # all -- was recorded as write_failed while its file sat there correctly
+      # written. The suite caught it; a dangling else is why it could happen.)
+      if (isTRUE(wrote)) {
+        ex <- .feed_extras_frame(rows)
+        if (!is.null(ex)) {
+          ex <- cbind(run_id = ctx$run_id[1], ex, stringsAsFactors = FALSE)
+          ex_dir <- file.path(dirname(dest_dir), "extras")
+          if (!dir.exists(ex_dir)) dir.create(ex_dir, recursive = TRUE, showWarnings = FALSE)
+          ex_ok <- .atomic_write_csv(ex, file.path(ex_dir, paste0(key, ".csv")))
+          if (!isTRUE(ex_ok)) extras_why <- attr(ex_ok, "why") %||% NA_character_
+        }
+      }
     }
   }
 
@@ -288,19 +353,37 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   # and nothing said so. Removing the sibling even when the write FAILED is
   # deliberate -- a wrong row on the dashboard is the cardinal failure, a missing
   # one is merely visible (and the record below says exactly what happened).
+  #
+  # That reasoning only holds while the removal actually happens, and it is the one
+  # step here that CANNOT be made to succeed: the old row sits on the share, not on
+  # this box. So each removal is verified, and a survivor is carried forward as
+  # `stale` -- an accepted row the tool no longer stands behind, still live on the
+  # dashboard, which nothing used to say out loud.
   kept <- if (identical(tx_state, "written")) dirname(tx_written) else character(0)
+  stale <- character(0)
   for (d in setdiff(c(tx_dir, rev_dir), kept)) {
     old <- file.path(d, paste0(key, ".csv"))
-    if (file.exists(old)) safe(unlink(old))
+    if (file.exists(old) && !.removed(old)) stale <- c(stale, old)
   }
 
   # The gate's verdict AS RECORDED. A write that failed is still reported: the
   # conversion was accepted, the feed did not receive it.
+  #
+  # At most ONE suffix, most serious first, because everything downstream reads the
+  # verdict as its last colon-segment (plain_feed in ui_labels.R, feed_health in
+  # R/analytics.R). Most serious is stale_row_kept: a wrong figure that is still
+  # being loaded outranks a right one that never arrived.
   gate_result <- gate$reason
-  if (identical(tx_state, "write_failed"))
+  if (length(stale)) {
+    gate_result <- paste0(gate_result, ":stale_row_kept")
+    why <- sprintf("an earlier row for this statement is still in %s and could not be removed",
+                   paste(unique(dirname(stale)), collapse = "; "))
+    tx_why <- if (is.na(tx_why)) why else paste0(tx_why, "; ", why)
+  } else if (identical(tx_state, "write_failed")) {
     gate_result <- paste0(gate_result, ":write_failed")
-  else if (identical(tx_state, "no_rows") && !is.na(row_count) && row_count > 0)
+  } else if (identical(tx_state, "no_rows") && !is.na(row_count) && row_count > 0) {
     gate_result <- paste0(gate_result, ":no_rows")
+  }
 
   # --- the manifest: one row per run (accepted AND withheld) -> the Qlik QA table --
   manifest <- data.frame(
@@ -355,6 +438,12 @@ write_feed <- function(result, config = load_config(), ts = NULL,
 # feed/review, not deleted -- and a corrected re-convert restores them), and
 # never silent. Withdrawal wins over keeping the review copy: if the review write
 # fails the row still leaves the dashboard.
+#
+# `rows` is NA when at least one accepted file could NOT be withdrawn (see below).
+# submit_feedback() passes that NA straight to the screen, whose existing wording
+# for it -- "could not reach the feed folder to withdraw its rows, tell whoever
+# looks after the server" -- is the true answer. A count is only ever returned for
+# a withdrawal that really happened.
 retract_feed <- function(run_id, config = load_config(), logdir = NULL,
                          reason = "retracted:user_reported_wrong") {
   out <- list(files = 0L, rows = 0L, moved = character(0))
@@ -366,6 +455,7 @@ retract_feed <- function(run_id, config = load_config(), logdir = NULL,
   if (!dir.exists(tx_dir)) return(out)
   logdir <- logdir %||% (config$paths$logs %||% "logs")
   keep_review <- isTRUE(config$feed$include_review_feed)
+  stuck <- character(0)
 
   for (f in list.files(tx_dir, pattern = "\\.csv$", full.names = TRUE)) {
     # colClasses="character" for the same reason the feed is no longer built by
@@ -376,11 +466,26 @@ retract_feed <- function(run_id, config = load_config(), logdir = NULL,
     if (!any(df$run_id == run_id, na.rm = TRUE)) next
     key <- sub("\\.csv$", "", basename(f))
     if ("gate_result" %in% names(df)) df$gate_result <- reason
+    review_copy <- file.path(rev_dir, basename(f))
     if (keep_review) {
       if (!dir.exists(rev_dir)) dir.create(rev_dir, recursive = TRUE, showWarnings = FALSE)
-      safe(.atomic_write_csv(df, file.path(rev_dir, basename(f))))
+      safe(.atomic_write_csv(df, review_copy))
     }
-    safe(unlink(f))
+    # The whole point of a retraction is that this file stops being loaded, and on
+    # the documented Windows share it can refuse to go (open in the Qlik reload or
+    # in Excel, or a create-but-not-delete permission). Verify it, because the
+    # alternative is telling the one person who KNOWS the figures are wrong that
+    # they have been withdrawn while they are still on the dashboard.
+    if (!.removed(f)) {
+      # Drop the review copy again. Leaving it would ADD a second, field-identical
+      # set of rows for a statement whose accepted rows are still there -- turning
+      # a withdrawal that failed into a dashboard that double-counts real money.
+      # The attempt is not lost: it is in the feed log below, and the caller is
+      # told the withdrawal did not happen.
+      if (keep_review) safe(unlink(review_copy))
+      stuck <- c(stuck, basename(f))
+      next
+    }
     # ...and say so in the manifest, so the Qlik coverage table shows the
     # statement as retracted rather than silently losing its accepted row.
     mf <- file.path(runs_dir, paste0(key, ".csv"))
@@ -397,12 +502,21 @@ retract_feed <- function(run_id, config = load_config(), logdir = NULL,
     out$rows <- out$rows + sum(df$run_id == run_id, na.rm = TRUE)
     out$moved <- c(out$moved, basename(f))
   }
-  if (out$files > 0L)
+  if (out$files > 0L || length(stuck))
     .log_feed_outcome(logdir, paste0(run_id, "__retracted"), list(
       ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
-      run_id = run_id, gate_result = reason, feed_written = FALSE,
-      feed_file = paste(out$moved, collapse = "; "), feed_dir = fdir,
-      manifest_written = TRUE, row_count = out$rows,
-      engine_version = engine_version()))
+      run_id = run_id,
+      gate_result = if (length(stuck)) paste0(reason, ":stale_row_kept") else reason,
+      feed_written = FALSE,
+      feed_file = paste(c(out$moved, stuck), collapse = "; "), feed_dir = fdir,
+      manifest_written = TRUE,
+      detail = if (length(stuck)) sprintf(
+        "%d accepted feed file(s) could not be removed from %s and are still being loaded: %s",
+        length(stuck), tx_dir, paste(stuck, collapse = "; ")) else NA_character_,
+      row_count = out$rows, engine_version = engine_version()))
+  # A number that cannot be stood behind is not returned. Some rows may well have
+  # gone, but while any accepted file is still there the honest answer to "was this
+  # withdrawn" is "no", and NA is what the caller renders as exactly that.
+  if (length(stuck)) out$rows <- NA_integer_
   out
 }

@@ -292,12 +292,26 @@ FEED_PLAIN <- list(
 FEED_PLAIN_UNKNOWN <- list(
   ok = FALSE, line = "Held back from the dashboards.",
   why = "The feed recorded a reason this screen doesn't have wording for; it is in the feed log.")
-# The two things that can go wrong AFTER the verdict: the feed folder refused the
-# write, or there were no rows to send. Both are appended to the reason by
-# write_feed(), and both mean the dashboards did not get this run.
+# The three things that can go wrong AFTER the verdict, appended to the reason by
+# write_feed(). The first two mean the dashboards did not get this run. The third
+# is the opposite and worse: the dashboards are still being fed an EARLIER row for
+# this statement that the tool could not delete, so the figures on screen here and
+# the figures on the dashboard disagree until somebody clears it by hand.
 FEED_PLAIN_SUFFIX <- c(
-  write_failed = "The feed folder could not be written to, so the dashboards did NOT receive this run. Tell whoever looks after the server.",
-  no_rows      = "No transaction rows were produced, so nothing was sent.")
+  write_failed   = "The feed folder could not be written to, so the dashboards did NOT receive this run. Tell whoever looks after the server.",
+  no_rows        = "No transaction rows were produced, so nothing was sent.",
+  stale_row_kept = "An earlier version of this statement is STILL on the dashboards - the tool could not remove it. Tell whoever looks after the server before relying on the dashboard figures for it.")
+# ...AND THE HEADLINE EACH ONE REPLACES. These three used to override `ok` and
+# `why` but leave `line` alone, and `line` is what the screen prints in bold,
+# first. So a feed write that FAILED rendered "Sent to the dashboards." as its
+# headline with the truth underneath it in grey - loudly wrong, on the one line
+# that says where the figures went, on the screen the go-live checklist tells the
+# operator to trust. A suffix that says the run did not arrive has to replace the
+# sentence that says it did.
+FEED_LINE_SUFFIX <- c(
+  write_failed   = "NOT sent to the dashboards - the feed could not be written.",
+  no_rows        = "Nothing was sent to the dashboards.",
+  stale_row_kept = "Sent to the dashboards - but an OLDER version of this statement is still there too.")
 # plain_feed(gate) -- write_feed()'s return value -> list(ok, line, why), or NULL
 # when there is nothing to say (feed switched off, or a form result).
 plain_feed <- function(gate) {
@@ -305,7 +319,12 @@ plain_feed <- function(gate) {
   out <- FEED_PLAIN[[as.character(gate$reason)[1]]] %||% FEED_PLAIN_UNKNOWN
   suffix <- sub("^.*:", "", as.character(gate$gate_result %||% "")[1])
   extra <- unname(FEED_PLAIN_SUFFIX[suffix])
-  if (!is.na(extra)) { out$ok <- FALSE; out$why <- trimws(paste(out$why, extra)) }
+  if (!is.na(extra)) {
+    out$ok <- FALSE
+    out$why <- trimws(paste(out$why, extra))
+    # The headline too, not just the detail -- see FEED_LINE_SUFFIX above.
+    out$line <- unname(FEED_LINE_SUFFIX[suffix]) %||% out$line
+  }
   out
 }
 # Human-readable HEADERS for the transactions preview. The stored core schema uses

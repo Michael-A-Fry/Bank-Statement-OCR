@@ -25,9 +25,30 @@ feed:
 
 Restart the app, then convert one statement so the feed has something in it.
 
-Point `feed_dir` at a location Qlik can read. If the share goes read-only the
-feed write fails **loudly** — the conversion still succeeds and the failure is
-recorded under `logs\feed\` with the reason.
+Point `feed_dir` at a location Qlik can read — **the same path the
+`StatementFeed` connection uses, not a similar one.** Left out entirely it
+defaults to a `feed` folder inside the app folder, which is fine for a trial and
+is not where Qlik is looking.
+
+**The app creates `feed_dir` if it is not there.** A typo in the path therefore
+produces a brand-new empty folder, files written into it, and a Convert page that
+says *Sent to the dashboards* — while the dashboard never gains a row. Nothing on
+any screen can tell the difference. **Prove it from the Qlik end**, not from the
+app: reload and look for the rows. That check is step 7 of
+[go-live-checklist.md](go-live-checklist.md).
+
+If the share goes read-only the feed write fails **loudly**: the conversion still
+succeeds and the download is complete, the Convert page tells the person who ran
+it *"The feed folder could not be written to, so the dashboards did NOT receive
+this run"*, and the failure is recorded under `logs\feed\` with the reason. But
+it is loud **only on that analyst's screen** — no Admin page raises it. On the
+server, this is the whole-box view of it, and it prints nothing when all is well:
+
+```
+findstr /s /m "write_failed" logs\feed\*.json
+```
+
+Worth running when the dashboards look stale.
 
 ## 2 — What the feed contains
 
@@ -55,14 +76,28 @@ row_id, date, description, amount, debit, credit, direction, balance,
 particulars, code, reference, other_party, type, currency, flags
 ```
 
-A template's named **extras** (card `fx_amount`, KiwiSaver `units`, …) are
-appended after those, keeping their own names.
+**That list is the whole file. Every `transactions` CSV has exactly those fields,
+in that order, always** — which is what lets a wildcard `LOAD *` pull the whole
+folder into one table.
 
-The fixed prefix is why adding a bank template — the cheap path — does not break
-your dashboard. A wildcard `LOAD *` concatenates two CSVs only when their field
-sets match **exactly**; differ by one column and Qlik invents a synthetic key and
-quietly splits your totals in two. A per-bank extra simply arrives as a
-mostly-null field, which is what it is.
+A template's named **extras** (card `fx_amount`, KiwiSaver `units`, …) do **not**
+go in it. They are written to `feed/extras/<key>.csv`, keyed by `run_id` and
+`row_id`, and only for the statements that have them — an ordinary deployment
+never grows the folder at all. Load and join it only if a dashboard needs one:
+
+```
+Extras:
+LOAD * FROM [lib://StatementFeed/extras/*.csv] (txt, delimiter is ',', embedded labels);
+```
+
+**Why they are not simply appended.** They used to be, and it was wrong. A
+wildcard `LOAD *` concatenates two CSVs only when their field sets match
+**exactly**; differ by one column and Qlik makes a *second* table, and your
+totals are short by whatever is in it with nothing on any screen saying so. A
+card statement carrying `fx_amount` produced a 32-column file among 30-column
+ones — measured on a real feed folder as 17 files at 30 and 2 at 32, already
+split before anybody had noticed. A stable field set is worth more to a dashboard
+than a column, so the column moved rather than the guarantee.
 
 `gate_result` is on **every transaction row**, not just the manifest — because
 Qlik concatenates on field set rather than table name, and `transactions` and
@@ -78,7 +113,12 @@ gate_result, feed_file, engine_version, template_sha256
 
 `engine_version` and `template_sha256` are the reproducibility pair: which build
 and which exact template content produced a figure, so a dashboard number can be
-reproduced years later.
+reproduced years later. They are also how you find every row one bad build
+published, if you ever have to withdraw a set of them
+([rolling-back.md](rolling-back.md) §4). **Check `engine_version` on the first
+row that lands** — if it reads `unknown` the `VERSION` file never reached the
+server, the pair is half-useless, and that is worth fixing before the dashboards
+fill up ([go-live-checklist.md](go-live-checklist.md) §2).
 
 ## 3 — The governance gate
 
@@ -157,5 +197,5 @@ pointing at `app.shiny_url`, opening in a new tab.
 | Everything is `withheld:not_proven` | The template is user-built. Promote it ([maintaining-the-engine.md](maintaining-the-engine.md) §3), or add `user` to `feed.allowed_template_origins`. |
 | `withheld:low_trust` | It did not reconcile. Only lower `feed.min_trust` if you genuinely want unreconciled data on dashboards. |
 | Qlik shows nothing at all | Check the `StatementFeed` connection points at `feed\`, that files exist, and that the reload ran. |
-| Totals split in two | A field set mismatch. Check whether one CSV carries template extras the others do not, and load `transactions` and `review` as separate tables. |
+| Totals split in two | A field set mismatch. Every `transactions` CSV is meant to have the SAME fields, so check whether an old file predates that guarantee (extras used to be appended) - and load `transactions` and `review` as separate tables. |
 | Special characters garbled | `codepage is 65001` on every `LOAD`. |

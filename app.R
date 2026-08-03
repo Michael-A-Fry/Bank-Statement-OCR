@@ -150,7 +150,29 @@ UPLOADS_NOTE <- uploads_retention_note(UPLOADS_KEEP_DAYS)
 #     onSessionEnded); this sweep is the backstop for a browser that closed
 #     abruptly, and it is re-run on each conversion (a fresh process's temp dir is
 #     empty, so at startup it usually finds nothing -- that is fine, it is cheap).
-safe(purge_uploads(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS))
+#
+# THE PURGE DOES NOT RUN ON A SETTINGS FILE THAT DID NOT LOAD, and this is the
+# reason. UPLOADS_KEEP_DAYS comes out of config/config.yaml, and when that file
+# cannot be parsed CONFIG is the BUILT-IN DEFAULTS -- so the number driving an
+# irreversible delete is one this site never chose. REPRODUCED: a deployment that
+# had set `uploads_keep_days: 0` (keep indefinitely -- the evidence-retention
+# choice, and the example config offers it in those words) took one stray tab in
+# config.yaml, which is exactly what the docs warn about because they tell a
+# non-technical analyst to edit that file in Notepad. On the next restart the
+# default 90 applied and every stored client statement older than 90 days was
+# deleted, record.json stamped `purged`, before anybody had read the warning three
+# lines above. Deleting evidence on a number nobody set is not a tidy-up.
+# So: keep everything, say why, and leave it to the Admin button, which states the
+# number and asks -- once the settings file is readable and the number is the
+# site's own again.
+if (is.null(CONFIG_ERROR)) {
+  safe(purge_uploads(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS))
+} else {
+  warning(paste("Saved statements were NOT tidied up at startup: the settings file",
+                "did not load, so the retention period is a built-in default and not",
+                "this deployment's. Nothing has been deleted. Fix the settings file",
+                "and restart."), call. = FALSE, immediate. = TRUE)
+}
 safe(sweep_temp_dirs(keep_hours = 24))
 # read_file_text(p) -- a file's contents as one string ("" if absent). Used by the
 # Admin YAML editors to load the dictionary / lexicon into their text boxes.
@@ -1073,10 +1095,21 @@ server <- function(input, output, session) {
   # action is still checked server-side with req(admin_ok()), so a hand-typed
   # ?admin gets a login form, exactly as before.
   #
-  # removeTab, not hideTab. hideTab only sets display:none, so the whole Admin tab
-  # -- its link, its four sub-tabs and every control on them -- stayed in the page
-  # sent to every visitor, where "View source" reads it out. The claim above was
-  # that it is not there; now it is not there.
+  # removeTab, not hideTab: hideTab only sets display:none, which leaves the tab in
+  # the live page for anyone who edits the style back.
+  #
+  # BUT BE CLEAR ABOUT WHAT THIS DOES NOT DO, because a maintainer reading only the
+  # word "remove" will believe more than is true. This runs in the SERVER, on the
+  # session's first flush, so the page Shiny serves over plain HTTP still contains
+  # the whole Admin tab -- its link, its sub-tabs and every control on them -- and
+  # `curl` or "View source" still reads them out (checked: the first response is
+  # ~70 KB and carries adm_login, adm_dict_save, adm_ba_run and the rest). It is
+  # taken away a moment later, once the browser has connected, which is also why an
+  # Admin tab is briefly visible to everyone on a slow first load.
+  # None of that is a way in -- the controls are inert markup, every hidden output
+  # is suspended so no admin DATA is ever computed or sent, and every admin action
+  # re-checks req(admin_ok()) server-side. What it means is only this: the tab is
+  # unadvertised, not absent, and nothing here should ever be described as absent.
   observe({
     q <- parseQueryString(session$clientData$url_search %||% "")
     if (!("admin" %in% names(q))) removeTab("main_tabs", "Admin")
@@ -2572,8 +2605,25 @@ server <- function(input, output, session) {
     }
     slot$start <- function(task, paths, outdir, message, finish, args = list()) {
       slot$cancel()
-      h <- do.call(job_start, c(list(paths, outdir), args,
-                                list(task = task, root = getwd())))
+      # A CONVERSION THAT CANNOT EVEN BE STARTED IS A FAILED CONVERSION, not a
+      # failed app. job_start() writes the job's folder and its arguments to disk
+      # before anything runs, so a full disk or a TEMP the service account cannot
+      # write makes it throw -- and an error thrown here, inside an observer, ends
+      # the whole Shiny session: the analyst's page greys out mid-click and takes
+      # the result she was reading with it, on a box where a full disk means it
+      # will do that to everybody, every time. It ends like any other conversion
+      # that did not come back: the maintainer gets the cause in the error log, she
+      # gets the plain sentence, and the app is still there for the next attempt.
+      h <- tryCatch(do.call(job_start, c(list(paths, outdir), args,
+                                         list(task = task, root = getwd()))),
+                    error = function(e) e)
+      if (inherits(h, "condition")) {
+        safe(cat(sprintf("[%s] %s job could not be started: %s\n", format(Sys.time()),
+                         as.character(task)[1], conditionMessage(h)),
+                 file = file.path(LOGDIR, "errors.log"), append = TRUE))
+        if (is.function(finish)) finish(list(status = "failed", messages = CONVERT_STOPPED))
+        return(invisible(NULL))
+      }
       # THE SAME progress panel withProgress used to raise, just held open across
       # polls instead of for the length of one blocking call -- so the centred
       # "converting" overlay (www/app.css, body.ss-run, which follows
@@ -2631,6 +2681,16 @@ server <- function(input, output, session) {
   # is the one users already know. A process that DIED is a different fact and
   # gets its own sentence. The child's own words go to the maintainer's error log
   # and nowhere near the screen.
+  #
+  # THE RULE, AND IT ONLY GOES ONE WAY. `error` is the ONLY kind that means the
+  # engine looked at this statement and refused it, and it is the only kind that
+  # may be answered with a sentence about her file. Every other kind -- broken,
+  # stopped, timeout, nostart, and anything added later -- is this server's
+  # failing, and saying "it may be password-protected" about a file that is
+  # perfectly good would send her back to her bank for a re-download that cannot
+  # help, while nothing at all said the server was in trouble. R/jobs.R is where
+  # that distinction is drawn (.job_exit_reason); this is the only place it is
+  # spent, so the `else` below must stay the safe half.
   job_failed_result <- function(h) {
     f <- job_failure(h) %||% list(kind = "unknown", detail = NA_character_)
     safe(cat(sprintf("[%s] convert job %s (%s): %s\n", format(Sys.time()),

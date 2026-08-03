@@ -41,4 +41,4 @@ for (r in b$recommendations) {
 g <- b$feature_gaps
 cat(sprintf("\nDone. %d parsed, %d unsupported across %d layouts. %d draft template(s) written to %s/.\n",
     g$total - g$unsupported, g$unsupported, g$distinct_gap_layouts, length(b$recommendations), ddir))
-cat("Safe report ->", normalizePath(out), "  (no PII — read it, then share it)\n")
+cat("Safe report ->", normalizePath(out), "  (no PII - read it, then share it)\n")

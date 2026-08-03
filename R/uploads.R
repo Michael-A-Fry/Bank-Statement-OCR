@@ -10,6 +10,26 @@
 
 .uploads_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "uploads")
 
+# .upload_leaf(name) -- the stored copy's filename, forced to ONE path segment
+# inside uploads/<id>/.
+#
+# `name` is the filename the BROWSER sent (Shiny hands input$file$name straight
+# through; it never sanitises it), so it is attacker-controlled, and it was being
+# pasted into file.path() unchecked. A name of "../../config/config.yaml" copied
+# the uploaded file over that path instead -- and a client's bank statement written
+# outside uploads/ is also outside purge_uploads(), so it would never be deleted by
+# the retention that the Convert page promises. upload_file_path() already refuses
+# a traversing id on the way OUT; this is the same guard on the way IN.
+#
+# Both separators are stripped, not just the host's: the deployment is Windows,
+# where "..\\..\\x" traverses, and basename() on Linux would hand that back whole.
+.upload_leaf <- function(name) {
+  nm <- as.character(name %||% "")[1]
+  nm <- if (is.na(nm)) "" else basename(gsub("\\\\", "/", nm))
+  if (!nzchar(nm) || nm %in% c(".", "..")) nm <- "statement"
+  nm
+}
+
 # record_upload(path, name, ...) -> upload_id. Copies the file into
 # uploads/<id>/ and writes record.json. `status` is the initial lifecycle state.
 record_upload <- function(path, name = basename(path), requested_by = NULL,
@@ -27,9 +47,12 @@ record_upload <- function(path, name = basename(path), requested_by = NULL,
   id <- base; n <- 1L
   while (dir.exists(file.path(dir, id)) && n < 1000L) { n <- n + 1L; id <- sprintf("%s~%d", base, n) }
   ud <- file.path(dir, id); dir.create(ud, recursive = TRUE, showWarnings = FALSE)
-  safe(file.copy(path, file.path(ud, name), overwrite = TRUE))
+  leaf <- .upload_leaf(name)
+  safe(file.copy(path, file.path(ud, leaf), overwrite = TRUE))
   ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
-  rec <- list(id = id, ts = ts, file = name, file_ext = tolower(tools::file_ext(name)),
+  # `file` stays the name as SENT -- the record is evidence about what arrived, and
+  # the stored copy's own name is the thing that has to be safe, not the record of it.
+  rec <- list(id = id, ts = ts, file = name, file_ext = tolower(tools::file_ext(leaf)),
               sha256 = sha, requested_by = requested_by %||% "unknown",
               status = status, run_id = run_id, template = template, trust = trust,
               detail = detail, history = list(list(ts = ts, status = status)))

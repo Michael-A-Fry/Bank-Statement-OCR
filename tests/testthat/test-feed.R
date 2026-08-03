@@ -197,9 +197,17 @@ test_that("the feed's core columns are identical and in order for every proven t
   }
 })
 
-test_that("templates with different extras still share one header prefix (wildcard-safe)", {
+# THIS TEST USED TO ASSERT THE DEFECT. It required the extras to be APPENDED to
+# the transactions row -- "wildcard-safe", on the reasoning that a shared prefix
+# was enough. It is not: Qlik's `LOAD *` concatenates only on an EXACT field-set
+# match, so a 32-column card file among 30-column ones becomes a SECOND table and
+# the unit's totals are short by it, silently. Measured on the real feed folder
+# before the fix: 17 files at 30 columns, 2 at 32. The extras now travel in their
+# own table; the assertion is inverted to match, and the extras are still checked
+# for -- just in the place they now live.
+test_that("templates with different extras write the SAME transactions field set", {
   fixed <- c(FEED_CONTEXT_COLUMNS, FEED_CORE_COLUMNS)
-  head_of <- function(fx, tid) {
+  feed_of <- function(fx, tid) {
     out <- tempfile("cv_"); ld <- tempfile("l_")
     res <- convert_statement(fixture(fx), outdir = out, templates_dir = templates_dir(),
                              logdir = ld)
@@ -207,16 +215,23 @@ test_that("templates with different extras still share one header prefix (wildca
     write_feed(res, cfg, ts = "t", proven_ids = tid)
     f <- list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)
     if (!length(f)) f <- list.files(file.path(cfg$feed$feed_dir, "review"), full.names = TRUE)
-    names(.read_feed(f[1]))
+    list(head = names(.read_feed(f[1])),
+         extras = list.files(file.path(cfg$feed$feed_dir, "extras"), full.names = TRUE))
   }
   # bnz has NO extras; anz_creditcard declares card / posted_date / fx_amount.
-  h1 <- head_of("samples/raw/bnz/bnz_transaction_export_01.csv", "bnz_everyday_csv")
-  h2 <- head_of("samples/raw/anz/anz_creditcard_01.csv", "anz_creditcard_csv")
-  expect_identical(h1[seq_along(fixed)], fixed)
-  expect_identical(h2[seq_along(fixed)], fixed)
-  # the named extras are APPENDED and keep their names (never extra_1..n).
-  expect_identical(setdiff(h1, fixed), character(0))
-  expect_true(all(c("card", "posted_date", "fx_amount") %in% setdiff(h2, fixed)))
+  a <- feed_of("samples/raw/bnz/bnz_transaction_export_01.csv", "bnz_everyday_csv")
+  b <- feed_of("samples/raw/anz/anz_creditcard_01.csv", "anz_creditcard_csv")
+  # THE POINT: byte-for-byte the same field set, so Qlik makes one table.
+  expect_identical(a$head, fixed)
+  expect_identical(b$head, fixed)
+  expect_identical(a$head, b$head)
+  # ...and the extras are not lost. They keep their own names (never extra_1..n),
+  # in their own table, joinable on run_id + row_id.
+  expect_length(a$extras, 0L)                       # no extras -> no file at all
+  expect_length(b$extras, 1L)
+  ex <- names(.read_feed(b$extras[1]))
+  expect_true(all(c("run_id", "row_id") %in% ex))
+  expect_true(all(c("card", "posted_date", "fx_amount") %in% ex))
 })
 
 # ---------------------------------------------------------------------------
@@ -370,4 +385,138 @@ test_that("the manifest stamps the engine build and the template content hash", 
   expect_identical(man$template_sha256, template_sha256(tpl))
   edited <- tpl; edited$min_score <- 99
   expect_false(identical(template_sha256(edited), template_sha256(tpl)))
+})
+
+# ---------------------------------------------------------------------------
+# A feed row this tool no longer stands behind must never be left LIVE in silence.
+#
+# One statement key maps to one feed file, and write_feed keeps that true by
+# deleting the sibling copy after a re-convert flips the gate. That delete is the
+# one step here that happens on the SHARE rather than on this box, and on the
+# documented Windows deployment it can simply refuse: the Qlik reload or an
+# analyst's Excel holds the file open, or the share grants create-but-not-delete.
+# unlink() never throws, so the safe() around it caught nothing and the return
+# value was dropped -- a file that would not go looked exactly like one that went,
+# and the dashboard kept an `accepted` row for a conversion now marked withheld.
+# ---------------------------------------------------------------------------
+
+# .undeletable(path) -- replace `path` with something R's unlink() cannot remove,
+# portably and regardless of who is running: unlink() will not delete a directory
+# without recursive = TRUE, so a directory standing where the stale CSV was
+# survives the removal exactly as a held-open file does on Windows. Permission
+# bits would not do -- root ignores them, and the suite runs as root.
+.undeletable <- function(path) {
+  unlink(path); dir.create(path, recursive = TRUE)
+  writeLines("held open", file.path(path, "inner"))
+  path
+}
+
+test_that(".removed() reports the truth when a feed file will not go", {
+  d <- tempfile("rm_"); dir.create(d)
+  gone <- file.path(d, "gone.csv"); writeLines("x", gone)
+  expect_true(.removed(gone))
+  expect_false(file.exists(gone))
+  stuck <- .undeletable(file.path(d, "stuck.csv"))
+  expect_false(.removed(stuck))          # unlink said 1; the answer is "still there"
+  expect_true(file.exists(stuck))
+})
+
+test_that("a stale accepted row that could not be deleted is reported, not hidden", {
+  cfg <- .cfg()
+  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  tx <- file.path(cfg$feed$feed_dir, "transactions", "deadbeef01234567.csv")
+  expect_true(file.exists(tx))
+  .undeletable(tx)
+
+  # re-convert, now below the trust floor: the run is WITHHELD, its review row is
+  # written -- and the accepted row is still being loaded by Qlik.
+  cfg$feed$min_trust <- "high"
+  g <- write_feed(.mk_result(trust = "low"), cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  expect_false(g$accept)
+  expect_true(g$written)                                  # the review row DID go
+  expect_true(file.exists(tx))                            # ...and the old one stayed
+  expect_identical(g$gate_result, "withheld:low_trust:stale_row_kept")
+
+  # the Qlik QA table says it too, so the coverage row is not quietly "withheld"
+  man <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "runs"), full.names = TRUE)[1])
+  expect_identical(man$gate_result, "withheld:low_trust:stale_row_kept")
+
+  # and the log, which lives with the app rather than on the share, names WHERE
+  fl <- read_feed_log(cfg$paths$logs)
+  last <- fl[nrow(fl), , drop = FALSE]
+  expect_identical(as.character(last$gate_result), "withheld:low_trust:stale_row_kept")
+  expect_match(as.character(last$detail), "could not be removed")
+  expect_match(as.character(last$detail), "transactions")
+})
+
+test_that("retract_feed never reports rows withdrawn that are still on the dashboard", {
+  cfg <- .cfg()
+  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  tx <- file.path(cfg$feed$feed_dir, "transactions", "deadbeef01234567.csv")
+  expect_true(file.exists(tx))
+
+  # The file has to stay READABLE for retract_feed to reach its removal at all, so
+  # the platform's refusal is injected at the one seam that models it: .removed()
+  # answering "still there". Without the fix retract_feed never asks.
+  orig <- .removed
+  assign(".removed", function(path) FALSE, envir = globalenv())
+  on.exit(assign(".removed", orig, envir = globalenv()), add = TRUE)
+
+  r <- retract_feed("deadbeef01-20260101000000", cfg,
+                    logdir = cfg$paths$logs)
+  expect_true(file.exists(tx))                 # it is still there...
+  expect_equal(r$files, 0L)                    # ...so nothing was withdrawn
+  # NA, not 0: submit_feedback renders 0 as "nothing to withdraw - this conversion
+  # had not been published", which is the one thing that is NOT true here.
+  expect_true(is.na(r$rows))
+  # and no second copy was added on top of the failure -- a retraction that could
+  # not happen must not leave the dashboard double-counting the same money.
+  expect_equal(length(list.files(file.path(cfg$feed$feed_dir, "review"))), 0L)
+
+  fl <- read_feed_log(cfg$paths$logs)
+  last <- fl[nrow(fl), , drop = FALSE]
+  expect_match(as.character(last$gate_result), "stale_row_kept")
+  expect_match(as.character(last$detail), "still being loaded")
+})
+
+# ---------------------------------------------------------------------------
+# The governance gate must not be switchable off by a quote character.
+# ---------------------------------------------------------------------------
+
+test_that("a quoted yes/no in config.yaml cannot switch the status gate off", {
+  p <- file.path(tempdir(), "cfg_feed_flags.yaml")
+  # `require_status_ok: 'true'` is what a person editing YAML in Notepad writes and
+  # reads back as ON. isTRUE() read it as OFF, and a needs_review conversion was
+  # written to feed/transactions stamped `accepted`.
+  writeLines(c("feed:", "  require_status_ok: 'true'"), p)
+  cfg <- load_config(p, refresh = TRUE)
+  cfg$feed$feed_dir <- tempfile("feed"); cfg$paths$logs <- tempfile("feedlog")
+  g <- write_feed(.mk_result(status = "needs_review"), cfg, ts = "t",
+                  proven_ids = "bnz_everyday_csv")
+  expect_false(g$accept)
+  expect_identical(g$gate_result, "withheld:needs_review")
+  expect_equal(length(list.files(file.path(cfg$feed$feed_dir, "transactions"))), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# ONE FIELD SET, FOR EVER. Qlik's wildcard `LOAD *` concatenates two CSVs only
+# when their field sets match EXACTLY; differ by one column and it builds a
+# SECOND table, and the unit's dashboard totals are quietly short by whatever is
+# in it. The feed used to append each template's own extras to the transactions
+# row, so a card statement carrying fx_amount produced a 32-column file among
+# 30-column ones -- measured on the real feed folder as 17 files at 30 and 2 at
+# 32, i.e. already split in production before anyone had converted a second bank.
+test_that("a template's extra columns cannot change the feed's field set", {
+  plain <- data.frame(row_id = 1:2, date = c("2026-01-01", "2026-01-02"),
+                      description = c("a", "b"), amount = c(-1, 2),
+                      stringsAsFactors = FALSE)
+  card <- cbind(plain, fx_amount = c(10, 20), conversion_charge = c(0.3, 0.6))
+  expect_identical(names(.feed_core_frame(plain)), names(.feed_core_frame(card)))
+  expect_identical(names(.feed_core_frame(card)), FEED_CORE_COLUMNS)
+  # the extras are NOT lost - they travel in their own table, joinable on row_id
+  ex <- .feed_extras_frame(card)
+  expect_true(all(c("row_id", "fx_amount", "conversion_charge") %in% names(ex)))
+  expect_identical(nrow(ex), 2L)
+  # ...and an ordinary statement writes no extras file at all
+  expect_null(.feed_extras_frame(plain))
 })

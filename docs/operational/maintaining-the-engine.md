@@ -71,8 +71,8 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **71 files, 905 tests, 4,523 passing assertions, 0
-failed, 0 errors, 0 skipped** — taken on the build tree on 2026-07-28, at
+The last full run measured **72 files, 947 tests, 4,912 passing assertions, 0
+failed, 0 errors, 0 skipped** — taken on the build tree on 2026-08-02, at
 `VERSION` 1.4.0. Treat it as a floor to compare against, not a target to match.
 
 **Check the `files` figure first.** If it is not the number of

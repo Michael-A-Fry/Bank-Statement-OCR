@@ -58,9 +58,13 @@ retention:
   # A copy of every converted statement is kept under uploads/<id>/ so a format
   # that failed can be picked up and fixed. These are REAL client statements.
   # After this many days the tidy-up deletes the copied file and keeps only the
-  # small record of what happened to it. The Convert page tells users this number
-  # before they upload. Set 0 to keep the copies indefinitely (then the page says
-  # that instead).
+  # small record of what happened to it. Set 0 to keep the copies indefinitely.
+  # The number is stated on ADMIN -> Insights -> "Saved statements - retention"
+  # (and on the delete button beside it), so an analyst converting a statement is
+  # not shown it. Confirm it against your unit's own retention policy before
+  # go-live: docs/operational/go-live-checklist.md step 5. The tidy-up runs at
+  # every startup as well as on that button, so shortening this deletes anything
+  # already older than the new number the next time the app starts.
   uploads_keep_days: 90
 
 # A `metadata:` block also exists (local-only capture detail). It is normally

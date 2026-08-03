@@ -23,6 +23,65 @@ here <- .self_dir()
 # helper it needs (run an expression, swallow any error) locally.
 safe <- function(expr, default = NULL) tryCatch(expr, error = function(e) default)
 
+# --- the USER PATH, read and written carefully ------------------------------
+# Poppler and Tesseract are only usable if their folders are on PATH (R/ocr.R
+# refuses a scan unless BOTH `tesseract` and `pdftoppm` resolve). Appending to the
+# HKCU PATH is therefore part of setup -- but it rewrites the whole value, so
+# getting the read wrong destroys the operator's environment silently.
+
+# .reg(args) -- run reg.exe and report whether it actually succeeded. system2()
+# returns character(0) with a status attribute on failure, so "no output" and
+# "command failed" have to be told apart before anything is built from the result.
+.reg <- function(args) {
+  out <- tryCatch(suppressWarnings(system2("reg", args, stdout = TRUE, stderr = FALSE)),
+                  error = function(e) structure(character(0), status = 1L))
+  st <- attr(out, "status")
+  list(ok = is.null(st) || identical(as.integer(st), 0L), out = as.character(out))
+}
+
+# .user_path() -- this user's own PATH exactly as stored (unexpanded, so a
+# %USERPROFILE% in it survives), "" when they simply have none yet, and NA when it
+# could not be read at all.
+#
+# The distinction is the whole point. The key was previously queried as
+# "HKCU\\Environment" -- in R source that is a DOUBLED backslash, which is not the
+# key name -- so the query always failed, the failed grep gave R's NA, and NA went
+# on to be treated as a real value: nzchar(NA) is TRUE, so the new PATH became the
+# literal string "NA;C:\...\poppler\bin" and everything the user had was gone.
+# Then the Tesseract step repeated it and wiped the Poppler entry, so scanned PDFs
+# stayed unreadable on a server that had shipped Poppler.
+.user_path <- function() {
+  if (!.reg(c("query", "HKCU\\Environment"))$ok) return(NA_character_)
+  val <- .reg(c("query", "HKCU\\Environment", "/v", "Path"))
+  if (!val$ok) return("")                      # readable key, no Path of their own
+  ln <- grep("Path", grep("REG(_EXPAND)?_SZ", val$out, value = TRUE), value = TRUE)
+  if (!length(ln)) return(NA_character_)
+  sub(".*REG(_EXPAND)?_SZ\\s+", "", ln[1])
+}
+
+# .add_to_user_path(dir, what) -- append one folder, or say plainly why not.
+# It REFUSES rather than guesses in two cases, because both alternatives are a
+# machine broken in a way nothing announces:
+#   - the current PATH could not be read (see above);
+#   - the result would pass 1024 characters, where setx TRUNCATES silently.
+.add_to_user_path <- function(dir, what) {
+  cur <- .user_path()
+  by_hand <- function(why) {
+    cat(sprintf("%s: %s, so your PATH was NOT changed.\n", what, why))
+    cat(sprintf("  Add this folder to your PATH by hand, then reopen the app: %s\n", dir))
+    invisible(FALSE)
+  }
+  if (is.na(cur))              return(by_hand("your current PATH could not be read"))
+  if (grepl(dir, cur, fixed = TRUE)) { cat(sprintf("%s: already on PATH.\n", what)); return(invisible(TRUE)) }
+  newp <- if (nzchar(cur)) paste0(cur, ";", dir) else dir
+  if (nchar(newp) > 1024)
+    return(by_hand(sprintf("your PATH is %d characters and setx truncates at 1024", nchar(cur))))
+  st <- safe(system2("setx", c("PATH", shQuote(newp)), stdout = FALSE, stderr = FALSE), default = 1L)
+  if (!identical(as.integer(st), 0L)) return(by_hand("setx would not write it"))
+  cat(sprintf("%s: added to your PATH -> %s\n  (open a NEW terminal for it to take effect)\n", what, dir))
+  invisible(TRUE)
+}
+
 # Locate the bundle folders whether the script sits inside the offline/ folder or beside it.
 find_dir <- function(name) {
   for (c in c(file.path(here, name), file.path(here, "offline", name),
@@ -57,16 +116,8 @@ if (nzchar(prereq) && length(Sys.glob(file.path(prereq, "poppler*.zip")))) {
     bin <- dirname(list.files(dest, pattern = "^pdftoppm\\.exe$",
                               recursive = TRUE, full.names = TRUE))
     if (length(bin)) {
-      bin <- normalizePath(bin[1])
-      cur <- tryCatch({
-        q <- system2("reg", c("query", "HKCU\\\\Environment", "/v", "Path"), stdout = TRUE, stderr = FALSE)
-        sub(".*REG(_EXPAND)?_SZ\\s+", "", grep("Path", q, value = TRUE)[1])
-      }, error = function(e) "")
-      if (!grepl(bin, cur, fixed = TRUE)) {
-        newp <- if (nzchar(cur)) paste0(cur, ";", bin) else bin
-        system2("setx", c("PATH", shQuote(newp)), stdout = FALSE, stderr = FALSE)
-        cat(sprintf("\nPoppler: added to your PATH -> %s\n  (open a NEW terminal for it to take effect)\n", bin))
-      } else cat("\nPoppler: already on PATH.\n")
+      cat("\n")
+      .add_to_user_path(normalizePath(bin[1]), "Poppler")
     } else cat("\nPoppler: unzipped to", dest, "-- add its bin\\ folder to PATH manually.\n")
   }, error = function(e) cat("\nPoppler: could not auto-configure --", conditionMessage(e),
                              "\n  Unzip", zip, "and add its bin\\ folder to PATH.\n"))
@@ -82,17 +133,9 @@ if (on_path) {
   safe(system2(normalizePath(tess[1]), "/S", wait = TRUE))   # NSIS silent
   tdir <- file.path(Sys.getenv("ProgramFiles", "C:/Program Files"), "Tesseract-OCR")
   if (dir.exists(tdir)) {
-    # Careful HKCU PATH append (same approach as Poppler above), not a raw setx of
-    # the whole expanded PATH.
-    cur <- tryCatch({
-      q <- system2("reg", c("query", "HKCU\\\\Environment", "/v", "Path"), stdout = TRUE, stderr = FALSE)
-      sub(".*REG(_EXPAND)?_SZ\\s+", "", grep("Path", q, value = TRUE)[1])
-    }, error = function(e) "")
-    if (!grepl(tdir, cur, fixed = TRUE)) {
-      newp <- if (nzchar(cur)) paste0(cur, ";", tdir) else tdir
-      system2("setx", c("PATH", shQuote(newp)), stdout = FALSE, stderr = FALSE)
-      cat(sprintf("Tesseract: installed + added to PATH -> %s\n  (open a NEW terminal for it to take effect)\n", tdir))
-    } else cat("Tesseract: installed; already on PATH.\n")
+    # Same careful HKCU append as Poppler above -- and it re-reads the value setx
+    # has just written, so adding Tesseract cannot drop the Poppler entry.
+    .add_to_user_path(tdir, "Tesseract")
   } else cat("Tesseract: installer ran but", tdir, "not found -- add its bin folder to PATH manually.\n")
 } else {
   cat("\nTesseract: not in the bundle -- only needed for scanned-PDF OCR.\n")

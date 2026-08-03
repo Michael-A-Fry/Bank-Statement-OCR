@@ -109,6 +109,75 @@ admin_password_is_default <- function(cfg = load_config()) {
 # with nothing said. Callers surface this (startup warning + Admin banner).
 config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 
+# ---- yes/no settings that decide how much governance is in force ------------
+# Every one of these is read with isTRUE(), so ANYTHING that is not a real logical
+# reads as FALSE. YAML makes that easy to trip over: `true`, `yes`, `on` and `True`
+# all parse to TRUE, but `'true'`, `"yes"` and `1` parse to a string or a number --
+# and quoting a value is the most ordinary thing a person editing YAML in Notepad
+# does. The result was silent and one-directional:
+#
+#   feed.require_status_ok: 'true'  -> the status gate switched OFF, so conversions
+#                                      the tool itself flags as needing review were
+#                                      written to feed/transactions marked accepted
+#   feed.enabled: 'true'            -> the feed switched OFF, and the dashboards
+#                                      simply stopped gaining data
+#
+# Neither said anything, and both were chosen by a quote character. So the words a
+# person would reasonably write are accepted, and anything unrecognisable keeps the
+# BUILT-IN DEFAULT (never the weaker reading) and is reported through config_error,
+# which the startup warning and the Admin banner already shout about.
+.FLAG_SETTINGS <- list(
+  c("app", "user_templates_default"),
+  c("feed", "enabled"), c("feed", "require_status_ok"),
+  c("feed", "include_review_feed"),
+  c("metadata", "retain_forever"))
+.FLAG_TRUE  <- c("true", "yes", "on", "y", "t", "1")
+.FLAG_FALSE <- c("false", "no", "off", "n", "f", "0")
+
+# .as_flag(v) -- v as TRUE/FALSE, or NA when it is not a yes/no at all.
+.as_flag <- function(v) {
+  if (is.logical(v) && length(v) == 1L && !is.na(v)) return(v)
+  if (is.null(v) || length(v) != 1L) return(NA)
+  w <- tolower(trimws(as.character(v)[1]))
+  if (is.na(w)) return(NA)
+  if (w %in% .FLAG_TRUE) return(TRUE)
+  if (w %in% .FLAG_FALSE) return(FALSE)
+  NA
+}
+
+# .coerce_flags(cfg, defaults) -> cfg with every .FLAG_SETTINGS value a real
+# logical, carrying attr "flag_error" naming anything that could not be read.
+#
+# It also repairs a SECTION of the wrong shape (`feed: 3`, `app: hello` -- a
+# mis-indented line is enough to produce one). That replaced the whole settings
+# block with a bare value, and the first `cfg$app$admin_password` then died with
+# "$ operator is invalid for atomic vectors" -- the app simply would not start, on
+# go-live morning, over one space. Defaults go back in and the banner says which
+# section, which is the same fail-loud-but-keep-running contract as an unparseable
+# file above.
+.coerce_flags <- function(cfg, defaults = .config_defaults()) {
+  bad <- character(0)
+  for (sec in unique(vapply(.FLAG_SETTINGS, `[[`, "", 1L))) {
+    if (!is.null(cfg[[sec]]) && !is.list(cfg[[sec]])) {
+      cfg[[sec]] <- defaults[[sec]]
+      bad <- c(bad, sprintf("the whole '%s:' section (it is not a group of settings)", sec))
+    }
+  }
+  for (k in .FLAG_SETTINGS) {
+    if (!is.list(cfg[[k[1]]])) next
+    v <- cfg[[k]]
+    if (is.null(v) || (is.logical(v) && length(v) == 1L && !is.na(v))) next
+    f <- .as_flag(v)
+    if (is.na(f)) {
+      cfg[[k]] <- defaults[[k]]
+      bad <- c(bad, sprintf("%s is '%s', which is not yes or no", paste(k, collapse = "."),
+                            paste(as.character(v), collapse = " ")))
+    } else cfg[[k]] <- f
+  }
+  if (length(bad)) attr(cfg, "flag_error") <- paste(bad, collapse = "; ")
+  cfg
+}
+
 # .deep_merge(base, over) -- override wins; sub-lists merge key-by-key, scalars
 # replace. A NULL override leaves the base untouched (so a blank YAML key = default).
 .deep_merge <- function(base, over) {
@@ -179,7 +248,14 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
         attr(c0, "config_error") <- sprintf("%s could not be read: %s", path,
                                             conditionMessage(fromfile))
       } else if (is.list(fromfile)) {
-        c0 <- .deep_merge(c0, fromfile)
+        c0 <- .coerce_flags(.deep_merge(c0, fromfile))
+        fe <- attr(c0, "flag_error", exact = TRUE)
+        if (!is.null(fe)) {
+          attr(c0, "flag_error") <- NULL
+          attr(c0, "config_error") <- sprintf(
+            "%s could not be used in full, so the built-in default is in force for: %s",
+            path, fe)
+        }
       } else if (!is.null(fromfile)) {
         # An empty file (or comments only) parses to NULL and legitimately means
         # "all defaults" -- silent. Anything else that is not a settings map (a

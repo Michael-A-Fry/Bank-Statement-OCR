@@ -40,6 +40,8 @@
 #               within a directory is atomic: the file exists only when it is
 #               whole, so "does it exist" is a safe test for "is it finished".
 #   exit        the child's own reason for producing no result, same rename trick.
+#               TWO lines: which KIND of failure it was, then the words. See
+#               .job_exit_reason for why the kind has to come from the child.
 #   out.log     stdout + stderr, for the maintainer. Never shown to a user.
 #
 # A child that dies without writing ANYTHING -- segfault, or the OOM killer
@@ -55,6 +57,18 @@
 # beyond that the disk and the OCR engine, not the queue, are the limit.
 JOB_CAP_MIN <- 2L
 JOB_CAP_MAX <- 6L
+# The highest number a SITE may set by hand. The two above are what this file
+# works out on its own; this is the guard on what an operator types, and it is
+# deliberately far looser -- somebody who has measured their own server may well
+# want 8 or 12, and refusing that would be refusing a decision they are entitled
+# to make. What it is here to stop is the typo. Every simultaneous conversion is
+# a whole R process that then shells out to `tesseract`, so a cap of 500 is not
+# an ambitious setting, it is a stray zero: measured on this box, one child peaks
+# at 108 MB resident on the CHEAPEST conversion there is (a small CSV) and a scan
+# is more, so 500 of them is upwards of 50 GB and a server that stops answering
+# anything at all. Past 32 there is no machine this ships to on which the number
+# could have been meant.
+JOB_CAP_HARD_MAX <- 32L
 # How long a child may take before it is declared failed. Generous on purpose: a
 # 4.4 MB scan measured over two minutes, and killing a real conversion is worse
 # than waiting. It exists so that a job whose process cannot be probed still
@@ -82,25 +96,47 @@ JOB_PROBE_SECS <- 2
 
 # job_set_max_concurrent(n) -- the deployment's cap, set once at startup from
 # config (app.max_concurrent_jobs). NULL/absent means "work it out from the
-# hardware". A value that is not a whole number of jobs is REFUSED out loud
-# rather than silently rounded away: a site that typed the wrong thing in
-# config.yaml must not discover it as mysterious slowness months later.
+# hardware". Anything that is not a whole number of jobs between 1 and
+# JOB_CAP_HARD_MAX is REFUSED OUT LOUD and the worked-out value used instead: a
+# site that typed the wrong thing in config.yaml must not discover it as
+# mysterious slowness months later, or as a server that will not start on Monday.
+#
+# EVERY REFUSED SHAPE HERE WAS REACHED BY TYPING IT, and each was silent before:
+#   500 / 1e9  taken literally -- 500 R processes, each shelling out to tesseract
+#   2.7        truncated to 2, which the comment here claimed was refused
+#   yes / no   YAML reads those as TRUE/FALSE; as.integer made them 1 and 0, so
+#              "max_concurrent_jobs: yes" quietly turned the whole team into a
+#              one-at-a-time queue
+#   [3, 4]     a list; the first element was used and the rest dropped
+# The refusal names the number it IS going to use, not the one it was using
+# before -- this text is what docs/operational/go-live-checklist.md has the
+# operator read off the console, and a message that states a figure the app then
+# does not honour is the one output this tool may never produce.
 job_set_max_concurrent <- function(n = NULL) {
-  if (is.null(n) || (length(n) == 1L && is.na(n))) {
+  # Clear FIRST, then report: job_max_concurrent() below must answer with the
+  # value that will actually be in force.
+  refuse <- function(why) {
     .JOB_CTL$cap <- NULL
-    return(invisible(job_max_concurrent()))
-  }
-  v <- suppressWarnings(as.integer(n)[1])
-  if (is.na(v) || v < 1L) {
-    warning(sprintf(paste("app.max_concurrent_jobs is '%s', which is not a number of jobs.",
+    warning(sprintf(paste("app.max_concurrent_jobs is '%s', which %s.",
                           "Statement Studio is using %d instead."),
-                    paste(as.character(n), collapse = " "), job_max_concurrent()),
+                    paste(as.character(n), collapse = " "), why, job_max_concurrent()),
             call. = FALSE, immediate. = TRUE)
+    invisible(job_max_concurrent())
+  }
+  if (is.null(n) || (length(n) == 1L && all(is.na(n)))) {
     .JOB_CTL$cap <- NULL
     return(invisible(job_max_concurrent()))
   }
-  .JOB_CTL$cap <- v
-  invisible(v)
+  if (length(n) != 1L) return(refuse("is a list, not one number of jobs"))
+  if (is.logical(n)) return(refuse("is a yes/no, not a number of jobs"))
+  v <- suppressWarnings(as.numeric(as.character(n))[1])
+  if (!is.finite(v)) return(refuse("is not a number of jobs"))
+  if (v != round(v)) return(refuse("is not a whole number of jobs"))
+  if (v < 1) return(refuse("is fewer than one job"))
+  if (v > JOB_CAP_HARD_MAX)
+    return(refuse(sprintf("is more than this tool will run at once (%d)", JOB_CAP_HARD_MAX)))
+  .JOB_CTL$cap <- as.integer(v)
+  invisible(.JOB_CTL$cap)
 }
 
 # job_max_concurrent() -- how many conversions may run at once.
@@ -299,28 +335,52 @@ job_kill_tree <- function(pid) {
            ', OMP_NUM_THREADS = ', deparse(as.character(threads)), "))"),
     'invisible(writeLines(as.character(Sys.getpid()), file.path(.jd, "pid")))',
     "# One terminal file, renamed into place, so the parent can never read half",
-    "# a reason and call it the whole one.",
-    '.say <- function(txt) {',
+    "# a reason and call it the whole one. Line 1 is the KIND, line 2 the words.",
+    "#",
+    "# WHY THE CHILD HAS TO SAY WHICH KIND. The parent cannot tell from the outside",
+    "# whether the engine looked at the statement and refused it, or whether this",
+    "# process broke before it ever reached the statement -- and those two facts get",
+    "# OPPOSITE sentences on screen (app.R: FRIENDLY_READ_ERROR vs CONVERT_STOPPED).",
+    "# Every error used to arrive as the same 'error', so a server fault was read out",
+    "# to the analyst as a fault in her file. MEASURED, twice, by breaking the server",
+    "# and not the file: with the app folder unreachable, and again with the job's own",
+    "# args.rds truncated, the screen said 'It may be password-protected, an image-only",
+    "# scan, or not a statement. Try a PDF or CSV export from your bank.' -- sending",
+    "# her back to the bank for a file that was never the problem, while nothing",
+    "# anywhere said the server was. Only this process knows which side of the line it",
+    "# fell on, so only this process can say.",
+    "#   engine -- job_run_task ran and raised. About the STATEMENT.",
+    "#   host   -- could not load the app, read its own arguments, or write its",
+    "#             answer. About this MACHINE, and never the analyst's file.",
+    '.say <- function(kind, txt) {',
     '  p <- file.path(.jd, "exit.part")',
-    '  writeLines(paste(as.character(txt), collapse = " "), p)',
+    '  writeLines(c(kind, paste(as.character(txt), collapse = " ")), p)',
     '  invisible(file.rename(p, file.path(.jd, "exit")))',
     '}',
+    "# Three phases, because the phase IS the diagnosis. .ready / .answer only come",
+    "# into existence when the phase before them finished, so a phase that failed",
+    "# stops the run without needing a flag to be reset anywhere.",
     "invisible(tryCatch({",
     "  setwd(.root)",
     '  for (f in list.files(file.path(.root, "R"), pattern = "[.]R$", full.names = TRUE)) source(f)',
     '  a <- readRDS(file.path(.jd, "args.rds"))',
-    "  res <- job_run_task(a$task, a$paths, a$args, jobdir = .jd)",
+    '  .ready <- TRUE',
+    '}, error = function(e) .say("host", conditionMessage(e))))',
+    'if (exists(".ready")) invisible(tryCatch({',
+    "  .answer <- job_run_task(a$task, a$paths, a$args, jobdir = .jd)",
+    '}, error = function(e) .say("engine", conditionMessage(e))))',
+    'if (exists(".answer")) invisible(tryCatch({',
     "  # The reader's cache BEFORE the answer: the parent seeds itself from this",
     "  # the moment it sees result.rds, so both files must already be on disk.",
     '  saveRDS(job_input_cache(), file.path(.jd, "inputs.part"))',
     '  file.rename(file.path(.jd, "inputs.part"), file.path(.jd, "inputs.rds"))',
-    '  saveRDS(res, file.path(.jd, "result.part"))',
+    '  saveRDS(.answer, file.path(.jd, "result.part"))',
     '  file.rename(file.path(.jd, "result.part"), file.path(.jd, "result.rds"))',
-    "}, error = function(e) .say(conditionMessage(e))))",
+    '}, error = function(e) .say("host", conditionMessage(e))))',
     "# Belt and braces: leaving with neither file would read to the parent as a",
     "# process that vanished, which is a different (and less useful) diagnosis.",
     'if (!file.exists(file.path(.jd, "result.rds")) && !file.exists(file.path(.jd, "exit")))',
-    '  .say("the conversion ended without producing a result")')
+    '  .say("host", "the conversion ended without producing a result")')
 }
 
 # job_input_cache() / job_seed_input_cache(x) -- hand the reader's work across the
@@ -428,6 +488,16 @@ job_start <- function(input_path, outdir, ..., task = "convert",
   id <- sprintf("job%05d", seq)
   jd <- file.path(.job_root(jobs_dir), id)
   dir.create(jd, recursive = TRUE, showWarnings = FALSE)
+  # SAY WHAT IS ACTUALLY WRONG. Without this the next line is what fails, and the
+  # only thing anybody ever sees of a full disk or a temp folder the service
+  # account cannot write is R's "cannot open the connection" -- a sentence that
+  # names neither the folder nor the reason. This is the text app.R puts in
+  # logs/errors.log for the maintainer, so it has to be the text that saves them
+  # the hour.
+  if (!dir.exists(jd))
+    stop(sprintf(paste("could not create the folder this conversion needs (%s).",
+                       "The disk may be full, or this account may not be allowed",
+                       "to write there."), jd), call. = FALSE)
   root <- normalizePath(root, winslash = "/", mustWork = FALSE)
   saveRDS(list(task = task, paths = paths, args = list(outdir = outdir, ...)),
           file.path(jd, "args.rds"))
@@ -473,18 +543,41 @@ job_start <- function(input_path, outdir, ..., task = "convert",
   invisible(j$state)
 }
 
+# The kinds, and what each one MEANS -- because app.R turns exactly this into the
+# sentence an analyst reads. Only `error` says anything about her statement; every
+# other kind is this machine's fault and must never be dressed up as hers.
 .job_fail <- function(j, kind, detail) {
   j$state <- "failed"
   j$reason_kind <- kind
   j$detail <- paste(as.character(detail %||% ""), collapse = " ")
   j$reason <- switch(kind,
     error   = "the conversion stopped with an error",
+    broken  = "the conversion could not be run on this server",
     stopped = "the conversion process stopped before it finished",
     timeout = sprintf("the conversion was still running after %d minutes",
                       as.integer(round(j$timeout / 60))),
     nostart = "no conversion process started",
     "the conversion did not finish")
   "failed"
+}
+
+# .job_exit_reason(j, ef) -- read the child's terminal file and fail the job as the
+# kind the CHILD said it was (see .job_child_script): "engine" means the engine
+# looked at the statement and raised, "host" means this machine let the conversion
+# down before it ever got there.
+#
+# AN EXIT FILE THIS PARENT CANNOT READ IS A HOST FAULT, not an engine one. That is
+# the fail-safe direction: reading it as an engine error would put "your file may
+# be password-protected" on screen on no evidence at all, and the charter's rule is
+# that a plausible wrong answer is worse than a plain refusal. The whole text is
+# kept either way -- the maintainer's log loses nothing.
+.job_exit_reason <- function(j, ef) {
+  x <- .job_read(ef)
+  kind <- trimws(as.character(x)[1])
+  if (is.na(kind) || !kind %in% c("engine", "host"))
+    return(.job_fail(j, "broken", paste(x, collapse = " ")))
+  .job_fail(j, if (identical(kind, "engine")) "error" else "broken",
+            paste(x[-1], collapse = " "))
 }
 
 # .job_refresh(j) -- is this job still occupying a slot? Cheap file tests first,
@@ -495,7 +588,7 @@ job_start <- function(input_path, outdir, ..., task = "convert",
   rf <- file.path(j$dir, "result.rds")
   ef <- file.path(j$dir, "exit")
   if (file.exists(rf)) { j$state <- "done"; return("done") }
-  if (file.exists(ef)) return(.job_fail(j, "error", .job_read(ef)))
+  if (file.exists(ef)) return(.job_exit_reason(j, ef))
   if (is.na(j$pid)) {
     p <- safe(suppressWarnings(as.integer(.job_read(file.path(j$dir, "pid"))))[1], NA_integer_)
     if (!is.na(p)) j$pid <- p
@@ -518,7 +611,7 @@ job_start <- function(input_path, outdir, ..., task = "convert",
       # this probe. Look again before calling it dead: a finished conversion
       # reported as a failure would throw away real work an analyst is waiting on.
       if (file.exists(rf)) { j$state <- "done"; return("done") }
-      if (file.exists(ef)) return(.job_fail(j, "error", .job_read(ef)))
+      if (file.exists(ef)) return(.job_exit_reason(j, ef))
       return(.job_fail(j, "stopped", .job_stopped_detail(j, now)))
     }
   }

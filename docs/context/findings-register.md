@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 198 findings, 194 fixed, 2 open, 1 wont-fix, 2 not-a-defect.** The two open are **N15** and **N16**, both blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N47 is wont-fix with reasons, at the end.
+**Where it stands: 206 findings, 201 fixed, 2 open, 1 wont-fix, 2 not-a-defect.** The two open are **N15** and **N16**, both blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N47 is wont-fix with reasons, at the end.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -24,7 +24,7 @@ two statements this repo ships proven templates for). Neither was reachable by r
 against its own comments; both needed the code run against a real statement and the result
 read as a stranger would read it. That is worth remembering when choosing the next sweep.
 
-_Last updated: 2026-07-28._
+_Last updated: 2026-08-03._
 
 
 ## Correctness
@@ -637,6 +637,33 @@ were each driven on real statements, and both verifiers independently measured t
 | N132 | low | **fixed** | `maintaining-the-engine.md` records a build baseline this tree cannot produce (71 files / 855 tests / 4,213 assertions against an actual 71 / 864 / 4,283), on the page that tells a maintainer a non-zero failure count means stop. | docs/operational/maintaining-the-engine.md |
 | N133 | - | **not-a-defect** | Recorded so the next reviewer does not have to rediscover it: the completeness guard was deliberately **loosened** this round (`no_unparsed_rows` now needs `actionable >= 3 && actionable >= n && actionable*4 > visual_rows`). A worked case of 10 kept / 11 actionable / 60 visual now returns "could not be checked" where it previously returned "failed". The comment at R/reconcile.R:352-410 gives the honest reason - no partial read exists in this repo to calibrate against - and it fails toward "unproven" rather than "passed", which is the right direction. | R/reconcile.R:352-410 |
 | N134 | high | **fixed** | Found while proving the concurrency work, and the reason it is recorded rather than folded silently into the feature: the conversion child inherited the **service's** locale rather than the app's, so a description with an accented character came back **mangled in the delivered CSV** (`Caf<U+00E9> Kr<U+00F6>ne` against `Cafe Krone` correctly rendered). Byte-comparison against an in-process run showed the first differing byte at position 186. It would only ever have appeared on a real customer's statement. Also fixed there: reaping a job killed the R child but left `tesseract` orphaned - three at a core each, 14 minutes after the tabs closed. | R/jobs.R:262, :206 |
+
+### The go-live sweep (N137-N144)
+
+The last sweep before production asked a different question again: not *is this correct*, but
+*what only breaks on the day, on a machine nobody has tested, in front of people who cannot
+fix it.* It found the worst defect in this register.
+
+| ID | Severity | Status | Finding | Evidence |
+|---|---|---|---|---|
+| N137 | **critical** | **fixed** | **The offline bundle carried real bank statements out of the building.** The bundle is the deliverable: a folder copied to a USB stick and walked to an air-gapped police server. Its payload list included `samples`, and `file.copy(recursive = TRUE)` takes a directory WHOLE - including `samples/_private_staging/`, which holds **80 real statements, 21 MB**, git-ignored and mode 0600, under a README that promises they are *"never shared or distributed, never included in any package"*. Proved end to end: a naive copy carries all 80; after the prune, 0 survive and only the README remains. The prune is not trusted either - the builder enumerates what is left and **stops the build** if anything is standing. | scripts/bundle-offline.R |
+| N138 | high | **fixed** | The same builder discarded the return value of `unlink(dist/config/config.yaml)`. A locked or read-only file meant the bundle shipped **the build PC's admin password**, and copying that bundle over a live install would have replaced the server's real settings including the feed folder. Now verified and fatal. | scripts/bundle-offline.R |
+| N139 | **critical** | **fixed** | **A failed feed write said "Sent to the dashboards."** The three post-verdict failures (write failed, no rows, a stale row left on the dashboard) overrode `ok` and `why` but never `line` - and `line` is what the screen prints in bold, first. So a run the dashboards never received was headlined as delivered, with the truth in grey underneath. Driven live with the feed folder made genuinely immutable. It is the charter's cardinal failure inverted - loudly wrong - on the one line that says where the figures went, on the screen the go-live checklist tells the operator to trust. The test that covered it asserted `ok` and `why` and never once looked at `line`. | ui_labels.R `plain_feed` |
+| N140 | high | **fixed** | `VERSION` never shipped in the bundle, so `engine_version()` on the server returned **"unknown"** - stamped into every run record and every workbook. The whole incident procedure rests on comparing `engine_version` between two runs, so it would have been unanswerable for ever, for every run made before anyone noticed. VERSION is now on the *essential* list, which fails the build rather than shipping without it. | scripts/bundle-offline.R |
+| N141 | high | **fixed** | The PC installer wrote garbage over the operator's PATH and Poppler never reached it. When the registry read returned no `Path` line - a fresh service account, or any failed query - the code produced `cur = NA`, and `nzchar(NA)` is TRUE, so it set PATH to a literal `NA;...`. The Tesseract block then repeated it and **overwrote the Poppler entry**, so a server that shipped Poppler could not read a single scanned page. `R/ocr.R` refuses a scan unless both binaries resolve, so this decided whether scanned statements worked at all. | scripts/install-offline.R |
+| N142 | high | **fixed** | A bundle could be built **without its own installer**, silently: the copy was guarded by `if (file.exists(...))` and nothing checked afterwards. RUN-ME.bat then runs `install-on-pc.R` unconditionally on the air-gapped server. Worse, the old failure blamed *"some R packages could not be installed - most often the bundle was built under a different R x.y"*, sending the operator to rebuild for a reason that was never true. Now fatal at build time. The manifest states **all seven** prerequisites where it used to state two. | scripts/bundle-offline.R, RUN-ME.bat |
+| N143 | medium | **fixed** | `RUN-ME.bat` threw the app's exit code away - the normal path ended on `goto :eof` after `pause`, so **every** run reported success. A Task Scheduler entry set to restart on failure would never restart, and an app dying at startup stayed dead silently. | RUN-ME.bat |
+| N144 | medium | **fixed** | **The Qlik dashboard was already splitting its totals in two, in production data.** Template extras were appended to each transactions row, so a card statement carrying `fx_amount` produced a 32-column file among 30-column ones - measured on the real feed folder as **17 files at 30 columns and 2 at 32**. Qlik's wildcard `LOAD *` concatenates only on an exact field-set match, so those two statements' figures were landing in a second table and the unit's totals were short by them, with nothing on any screen saying so. The extras now travel in their own folder keyed by run_id + row_id; the transactions field set is fixed for ever. The doc that promised extras were safe has been corrected - it contradicted itself two pages later, where it named this exact symptom as a fault to look for. | R/feed.R, docs/operational/connecting-qlik.md |
+
+**A near-miss worth recording, because it argues for the suite.** Fixing N144 I moved a
+block of code between an `if` and its `else`, so the `else` silently re-attached to my new
+`if`: every ordinary feed write - the ones with no extras at all - was recorded as
+`write_failed` while its file sat there correctly written. A successful write reported as a
+failure, which is the same class of lie as N139 in the other direction. It never reached a
+commit: the suite went from 0 failures to 32 in one run and named the seam. Written down
+because the lesson is not "be careful with braces", it is that a dangling `else` is a
+structure that can absorb a change silently, and the only reason this was caught in seconds
+rather than in production was 900-odd tests that actually exercise the write path.
 
 ### The empty-band verdict - the measurements that withdrew it
 

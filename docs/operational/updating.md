@@ -85,12 +85,21 @@ parameters the rest of the engine now expects. Full procedure:
   `offline\.installed` before running `RUN-ME.bat`. You do **not** need this after
   a failed setup — the marker is only written when the install succeeded, so
   setup retries on its own.
-- **To roll back:** keep the previous `StatementStudio-offline` folder, restore it
-  and run its `RUN-ME.bat`. No internet is needed and nothing is uninstalled — the
-  private R lives inside whichever folder you run. Your `config`, `dictionaries`,
-  `templates_user`, `logs`, `uploads` and `feed` are unaffected in either
-  direction, because none of them is in the package. The one thing a rollback
-  *does* undo is a change to `templates\`, which **is** in the package: if a
-  template was promoted since the update, copy it somewhere safe first.
+- **Keep the previous bundle** — the `StatementStudio-offline` folder as it came
+  off the internet PC, not a copy of the live server folder. It is what a rollback
+  needs, and the two are not interchangeable. Keep the last two.
 - **Run the test suite after updating** —
   [maintaining-the-engine.md](maintaining-the-engine.md) §1.
+
+## If the new version is wrong
+
+Going back is its own page, because the app folder is the easy half:
+[rolling-back.md](rolling-back.md). Copying the old bundle over the folder takes
+ten minutes and leaves your settings, dictionaries, templates and logs alone.
+
+What does **not** come back with it is the Qlik feed. Every conversion the bad
+version published is already in `feed\transactions\`, and if Qlik has reloaded
+since, it is already on the dashboards. Rolling back does not touch those rows and
+nothing withdraws them on your behalf — somebody has to re-convert the statements
+or withdraw the rows by hand, and then force a Qlik reload. That is
+[rolling-back.md](rolling-back.md) §4, and it is the reason to decide quickly.

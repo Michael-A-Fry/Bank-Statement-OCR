@@ -41,6 +41,32 @@ prereq    <- file.path(bundle, "prereqs")
 pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
           "pdftools", "magick", "testthat")
 
+# Paths that must NEVER travel inside a bundle. samples/_private_staging holds
+# REAL bank statements -- its own README promises the folder "stays local ...
+# never included in any package", and .gitignore refuses to commit it -- and
+# tests/testthat/logs holds run logs that name them. Both sit INSIDE directories
+# the bundle legitimately ships (samples/, tests/), and file.copy(recursive=TRUE)
+# takes a directory whole, so nothing in app_items stops them being carried out of
+# the building on the USB stick. Pruned, and then PROVEN pruned, in section 1.
+never_ship      <- c("samples/_private_staging", "tests/testthat/logs")
+never_ship_keep <- "samples/_private_staging/README.md"   # explains the empty folder
+
+# The bundle IS the product. These are the parts without which it is not a
+# runnable install at all, as opposed to one missing a capability.
+# VERSION is on this list, not merely in app_items: engine_version() reads it and
+# stamps the result into EVERY run record and every workbook. A bundle without it
+# installs and converts perfectly while answering "which build produced this
+# figure?" with "unknown" -- the one question investigating-a-wrong-conversion.md
+# is built on, unanswerable ever afterwards for every run made before anyone notices.
+essential <- c("R", "app.R", "ui_content.R", "ui_labels.R", "templates",
+               "config", "scripts", "www", "RUN-ME.bat", "VERSION")
+
+# .missing_from_repo(want, path) -- which of `want` has no .zip in the offline
+# package repo. A named helper so the seam can be checked without the internet.
+.missing_from_repo <- function(want, path)
+  setdiff(want, sub("_.*$", "", basename(
+    list.files(path, pattern = "\\.zip$", recursive = TRUE))))
+
 unlink(dist, recursive = TRUE)
 dir.create(repo_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(prereq,    recursive = TRUE, showWarnings = FALSE)
@@ -72,7 +98,8 @@ options(timeout = 600)
 app_items <- c("R", "templates", "templates_user", "templates_seed",
                "fields_templates", "config", "scripts", "www",
                "tests", "samples", "docs",
-               "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat")
+               "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat",
+               "VERSION")
 cat("Copying the app into the dist folder ...\n")
 copied <- 0L; missing <- character(0)
 for (it in app_items) {
@@ -88,14 +115,49 @@ for (it in app_items) {
 cat(sprintf("  copied %d items%s\n", copied,
             if (length(missing)) sprintf("; skipped (not present): %s",
                                          paste(missing, collapse = ", ")) else ""))
-# RUN-ME.bat must be in the dist root -- if it wasn't in the repo, that's fatal.
-if (!file.exists(file.path(dist, "RUN-ME.bat")))
-  stop("RUN-ME.bat is missing from the repo root -- cannot build a runnable bundle.")
+
+# Prune what must never travel, then PROVE the prune worked rather than trusting
+# it. One real statement leaving on a USB stick is the failure this unit cannot
+# take back, so anything still standing here stops the build.
+for (np in never_ship) unlink(file.path(dist, np), recursive = TRUE)
+keep_src <- file.path(app_root, never_ship_keep)
+if (file.exists(keep_src)) {
+  dir.create(dirname(file.path(dist, never_ship_keep)), recursive = TRUE, showWarnings = FALSE)
+  file.copy(keep_src, file.path(dist, never_ship_keep), overwrite = TRUE)
+}
+left <- unlist(lapply(never_ship, function(np) {
+  d <- file.path(dist, np)
+  if (!dir.exists(d)) return(character(0))
+  file.path(np, list.files(d, recursive = TRUE, all.files = TRUE))
+}))
+left <- setdiff(left, never_ship_keep)
+if (length(left)) stop(sprintf(paste0(
+  "private data would have shipped inside this bundle: %s\n",
+  "  Those paths hold real statements and never leave this machine. Remove them\n",
+  "  from '%s' and rebuild."), paste(left, collapse = ", "), dist))
+cat(sprintf("  private staging excluded (%s)\n", paste(never_ship, collapse = ", ")))
+
+# ...and every essential part actually ARRIVED. file.copy() reports failure by
+# return value, which the loop above discards, so "copied N items" counts attempts,
+# not successes: a full disk or a locked file otherwise yields a bundle with no app
+# in it that says nothing until it is on the air-gapped box.
+absent <- essential[!file.exists(file.path(dist, essential))]
+if (length(absent)) stop(sprintf(paste0(
+  "not a runnable bundle -- these never arrived in '%s': %s\n",
+  "  Either they are missing from %s, or the copy failed (disk full, file open).\n",
+  "  Fix that and rebuild."), dist, paste(absent, collapse = ", "), app_root))
 
 # Never ship a live config.yaml -- only config.example.yaml. This way copying a
 # fresh bundle over an existing server install can't overwrite server settings;
 # RUN-ME.bat seeds/restores config.yaml on the server.
+# Checked, not assumed: unlink() reports failure by return value. A config.yaml
+# that survived (locked, read-only) carries the build PC's ADMIN PASSWORD into the
+# bundle, and copying that bundle over an existing server install would replace
+# the server's real settings with it -- including the feed folder.
 unlink(file.path(dist, "config", "config.yaml"))
+if (file.exists(file.path(dist, "config", "config.yaml")))
+  stop("config/config.yaml could not be removed from the bundle. It holds the admin\n",
+       "  password and must never ship. Close whatever has it open, then rebuild.")
 
 # Dictionaries: ship EXAMPLES ONLY, for exactly the same reason as config.yaml.
 # The repo's dictionaries/*.yaml are the shipped starting vocabularies; on the
@@ -103,6 +165,7 @@ unlink(file.path(dist, "config", "config.yaml"))
 # <name>.example.yaml so RUN-ME.bat can seed a first install, while an update
 # leaves the server's taught words untouched.
 dict_src <- file.path(app_root, "dictionaries")
+dict_shipped <- 0L        # recorded in the manifest: no seeds is a real gap
 if (dir.exists(dict_src)) {
   dir.create(file.path(dist, "dictionaries"), recursive = TRUE, showWarnings = FALSE)
   dfiles <- list.files(dict_src, pattern = "\\.ya?ml$", full.names = TRUE)
@@ -111,8 +174,9 @@ if (dir.exists(dict_src)) {
     file.copy(d, file.path(dist, "dictionaries",
                            sub("\\.(ya?ml)$", ".example.\\1", basename(d))),
               overwrite = TRUE, copy.date = TRUE)
+  dict_shipped <- length(dfiles)
   cat(sprintf("  dictionaries shipped as %d example file(s) (server keeps its own)\n",
-              length(dfiles)))
+              dict_shipped))
 }
 
 # Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
@@ -141,6 +205,17 @@ all <- miniCRAN::pkgDep(pkgs, type = "win.binary", suggests = FALSE)
 cat(sprintf("\nDownloading %d R packages (with dependencies) into %s ...\n", length(all), repo_path))
 miniCRAN::makeRepo(all, path = repo_path, type = "win.binary")
 writeLines(pkgs, file.path(bundle, "packages.txt"))
+
+# makeRepo WARNS about a package it could not fetch and carries on, and a warning
+# scrolls off the screen. The only proof the server can install offline is a .zip
+# per package actually sitting in repo/. Without it the air-gapped box prints
+# "SETUP INCOMPLETE", RUN-ME.bat refuses to start the app, and there is no CRAN in
+# the room to fix it -- so it fails here, where there is.
+no_zip <- .missing_from_repo(all, repo_path)
+if (length(no_zip)) stop(sprintf(paste0(
+  "%d of %d packages did not download, so the server cannot install offline: %s\n",
+  "  Fix this PC's internet/proxy and run make-bundle.bat again."),
+  length(no_zip), length(all), paste(sort(no_zip), collapse = ", ")))
 
 ## 3. System installers -- best effort; on any failure it logs the manual URL
 grab <- function(url, dest, what) tryCatch({
@@ -195,8 +270,23 @@ got_tesseract <- tryCatch({
   FALSE })
 
 ## 4. The PC-side install script (RUN-ME.bat calls this) --------------------
-pc <- file.path(.self_dir(), "install-offline.R")
-if (file.exists(pc)) file.copy(pc, file.path(bundle, "install-on-pc.R"), overwrite = TRUE)
+# THE THIRD PREREQUISITE, and the one that used to be silent. RUN-ME.bat's first
+# run does `pushd offline` + `Rscript install-on-pc.R` unconditionally, so a bundle
+# without this file installs nothing -- no packages, no OCR, no app -- and then
+# blames "some R packages could not be installed", sending the operator off to
+# rebuild for a reason that was never true. Poppler and Tesseract only cost you
+# scanned PDFs, so they are recorded as MISSING and the build goes on; this one
+# costs you the whole install, exactly like the R installer above, so it FAILS THE
+# BUILD here, while the file that went missing is still within reach.
+pc      <- file.path(.self_dir(), "install-offline.R")
+pc_dest <- file.path(bundle, "install-on-pc.R")
+if (!file.exists(pc)) stop(sprintf(paste0(
+  "the bundle's own installer is missing, so nothing would install on the server.\n",
+  "  Expected: %s\n",
+  "  It ships as offline/install-on-pc.R and RUN-ME.bat runs it on the first\n",
+  "  launch. If it was renamed or moved, put it back and rebuild."), pc))
+if (!isTRUE(file.copy(pc, pc_dest, overwrite = TRUE)) || !file.exists(pc_dest))
+  stop(sprintf("could not copy %s -> %s. Check free disk space, then rebuild.", pc, pc_dest))
 
 ## 5. Manifest -- WHAT is actually in this bundle ---------------------------
 # An air-gapped box has no way to ask "which version am I running, and which
@@ -211,8 +301,30 @@ man <- c(
     error = function(e) "(no VERSION file)")),
   sprintf("r_version:   %s   <- the server installs and runs THIS R", R.version.string),
   sprintf("built_on:    %s", Sys.info()[["sysname"]]),
-  sprintf("poppler:     %s", if (isTRUE(got_poppler)) "included" else "MISSING (scanned PDFs will not be readable)"),
-  sprintf("tesseract:   %s", if (isTRUE(got_tesseract)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  "",
+  # EVERY prerequisite, present or absent -- not just the two that used to be
+  # listed. updating.md tells the operator to "check its last lines for MISSING
+  # before you carry it": the manifest is the only thing that travels with the
+  # USB stick, so anything it does not mention cannot be checked at all, and a
+  # prerequisite nobody knew was absent is discovered on the air-gapped box.
+  "prerequisites -- what the server needs, and whether it is here:",
+  sprintf("  r_installer:   %s", if (file.exists(r_dest)) basename(r_dest)
+          else "MISSING (the server cannot install its private R -- nothing runs)"),
+  sprintf("  installer:     %s", if (file.exists(pc_dest)) basename(pc_dest)
+          else "MISSING (RUN-ME.bat has nothing to run -- nothing installs)"),
+  sprintf("  packages:      %s", {
+    gap <- .missing_from_repo(pkgs, repo_path)
+    if (length(gap)) sprintf("MISSING %s (the app will not start)", paste(sort(gap), collapse = ", "))
+    else sprintf("%d file(s) in offline/repo", length(list.files(repo_path, pattern = "\\.zip$", recursive = TRUE)))
+  }),
+  sprintf("  poppler:       %s", if (isTRUE(got_poppler)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  sprintf("  tesseract:     %s", if (isTRUE(got_tesseract)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  sprintf("  app_payload:   %s", if (length(missing)) sprintf("INCOMPLETE -- not in the repo: %s", paste(missing, collapse = ", "))
+          else sprintf("complete (%d items)", copied)),
+  sprintf("  dictionaries:  %s", if (dict_shipped > 0L)
+          sprintf("%d starting vocabulary file(s)", dict_shipped)
+          else "MISSING (a brand-new install starts with no taught wordings)"),
+  sprintf("  private_data:  excluded (%s) -- real statements never travel", paste(never_ship, collapse = ", ")),
   "", "packages (name version) -- every file in offline/repo:")
 zips <- list.files(repo_path, pattern = "\\.zip$", recursive = TRUE)
 man <- c(man, if (length(zips)) sort(sub("^(.+)_([^_]+)\\.zip$", "\\1 \\2", basename(zips)))

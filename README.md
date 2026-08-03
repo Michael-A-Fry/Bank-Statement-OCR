@@ -37,6 +37,14 @@ Then one page per job:
 **New here?** [first-time-setup.md](docs/operational/first-time-setup.md) — two
 double-clicks, then set the admin password and open the firewall port.
 
+**Turning it on for a unit today?**
+[go-live-checklist.md](docs/operational/go-live-checklist.md) — the numbered
+list for the day, every step with something you can see that says it worked, and
+what "it is working" looks like an hour later. If the day goes wrong:
+[rolling-back.md](docs/operational/rolling-back.md), which answers the question
+the update page does not — what happens to the conversions the bad version
+already sent to Qlik.
+
 **Inheriting it?** [charter.md](docs/context/charter.md) (one page: what this
 tool must always do and must never do), then
 [design.md](docs/design.md) (the map, the reasoning and the traps, including

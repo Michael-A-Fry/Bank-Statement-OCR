@@ -183,6 +183,13 @@ what changed between them, and decide on the figures. From **1.4.0** the stamp
 moves with every shipped change of behaviour, which is what makes it usable as a
 test at all — that is why 1.4.0 exists.
 
+**And if `engine_version` reads `unknown`, it is not a build id at all.** That
+means the `VERSION` file never reached this server, so every record on the box
+carries the same word whatever produced it — the same trap as above, permanently,
+for every run. The rule does not apply to any of them; compare the figures and
+the timestamps instead. Fix the cause before it grows:
+[go-live-checklist.md](go-live-checklist.md) §2.
+
 ## 5. Template bug, or bad file?
 
 | Symptom in the re-run | Read it as |

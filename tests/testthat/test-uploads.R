@@ -74,3 +74,37 @@ test_that("upload_file_path refuses an id that is not a plain path segment (#37)
   expect_true(is.na(upload_file_path("", d)))
   expect_true(is.na(upload_file_path(NA_character_, d)))
 })
+
+# The FILENAME comes from the browser too, and Shiny hands input$file$name through
+# untouched. It was pasted straight into file.path(): "../../config/config.yaml"
+# copied the uploaded statement over that path instead of into uploads/<id>/ --
+# and a client's statement written outside uploads/ is also outside
+# purge_uploads(), so the retention the Convert page promises never reaches it.
+test_that("record_upload cannot be made to write outside uploads/<id>/", {
+  d <- tempfile("up_"); dir.create(d, recursive = TRUE)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  f <- tempfile(fileext = ".csv"); writeLines(c("Date,Amount", "2024-01-01,1.00"), f)
+  victim <- file.path(d, "victim.yaml"); writeLines("original: settings", victim)
+
+  for (nm in c("../victim.yaml", "..\\victim.yaml", "../../victim.yaml",
+               "a/b/victim.yaml", "..", ".", "")) {
+    id <- record_upload(f, name = nm, dir = d)
+    stored <- setdiff(list.files(file.path(d, id)), "record.json")
+    expect_equal(length(stored), 1L, info = nm)
+    # one plain path segment, inside this upload's own folder, always
+    expect_false(grepl("[/\\\\]", stored), info = nm)
+    expect_false(stored %in% c(".", ".."), info = nm)
+    expect_true(file.exists(file.path(d, id, stored)), info = nm)
+  }
+  # nothing outside the per-upload folders was touched
+  expect_identical(readLines(victim, warn = FALSE), "original: settings")
+
+  # ...and an ordinary name is still stored verbatim, so Admin and the re-audit
+  # still open the file people recognise.
+  id <- record_upload(f, name = "J Smith BNZ Jan.csv", dir = d)
+  expect_true(file.exists(file.path(d, id, "J Smith BNZ Jan.csv")))
+  expect_identical(basename(upload_file_path(id, d)), "J Smith BNZ Jan.csv")
+  # the record keeps the name as SENT -- it is evidence about what arrived
+  rec <- jsonlite::fromJSON(file.path(d, id, "record.json"), simplifyVector = FALSE)
+  expect_identical(rec$file, "J Smith BNZ Jan.csv")
+})

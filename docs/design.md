@@ -746,16 +746,34 @@ it. Bump both in the same change.
 
 ### Roll back
 
-Keep the previous `StatementStudio-offline` folder. To go back: restore it and run
-its `RUN-ME.bat`. `config\`, `dictionaries\`, `templates_user\`, `logs\`,
-`uploads\` and `feed\` are untouched by either direction, because none of them is
-in the bundle. No internet is needed, and nothing has to be uninstalled — the
-private R lives inside whichever folder you are running.
+Keep the previous **bundle** — `StatementStudio-offline` as it came off the
+internet PC, not a copy of the live server folder; the two look alike and only one
+of them is safe to put back. Copy it over the app folder the same way an update
+goes on, **Replace the files in the destination**. `config\`, `dictionaries\`,
+`templates_user\`, `logs\`, `uploads\` and `feed\` are untouched in either
+direction, because none of them is in the bundle. No internet is needed, and
+nothing has to be uninstalled — the private R lives inside whichever folder you
+are running.
+
+Restoring a *snapshot of the live folder* instead reverts all of that live state
+to the day the snapshot was taken, which throws away every template built and
+every word taught since — and `RUN-ME.bat` then refreshes its
+`%LOCALAPPDATA%\StatementStudio` copy from the stale files, taking the fallback
+with it.
 
 The one thing a rollback cannot undo is a **template** edited or promoted since
 the update, because `templates\` *is* in the bundle. If that is what you are
 rolling back, take the template out of `templates_user\` first, or you will
 restore the old one over it.
+
+**And it does not undo what already reached Qlik.** `feed\` is live state: the
+rows the bad build published are still in `feed\transactions\`, and once Qlik has
+reloaded they are on the dashboards. Feed files are keyed by the statement's
+content hash, so re-converting a statement overwrites its row in place — that is
+the fix. Anything that cannot be re-converted has to be withdrawn, by rating the
+run *Wrong* (which calls `retract_feed()` in `R/feed.R`) or by hand on the two
+files that hold it. The whole procedure, including what to tell the analysts:
+[`docs/operational/rolling-back.md`](operational/rolling-back.md) §4.
 
 ---
 

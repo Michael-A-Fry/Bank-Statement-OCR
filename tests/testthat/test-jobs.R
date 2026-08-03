@@ -61,6 +61,45 @@ test_that("a site can set the cap, and a setting that is not a number is refused
   expect_gte(job_max_concurrent(), 2L)
 })
 
+# THE SHAPES AN OPERATOR ACTUALLY TYPES. Every one of these was accepted in
+# silence, and the first two are the ones that take a server down: the cap is a
+# count of whole R PROCESSES, each of which then shells out to tesseract.
+test_that("a cap an operator could not have meant is refused, and the tool keeps working", {
+  on.exit(.jobs_reset())
+  .jobs_reset()
+  auto <- job_max_concurrent()                     # what the hardware says
+  bad <- function(v) {
+    expect_warning(job_set_max_concurrent(v), "max_concurrent_jobs",
+                   info = paste("accepted in silence:", paste(format(v), collapse = " ")))
+    # refused means REFUSED -- back to the worked-out value, never the typed one
+    expect_identical(job_max_concurrent(), auto,
+                     info = paste("not refused:", paste(format(v), collapse = " ")))
+  }
+  bad(500)          # a stray zero: 500 R processes, ~50 GB of them
+  bad(1e9)
+  bad(JOB_CAP_HARD_MAX + 1L)
+  bad(2.7)          # silently truncated to 2, which the file claimed it refused
+  bad(TRUE)         # YAML reads "max_concurrent_jobs: yes" as TRUE -> a silent 1
+  bad(FALSE)
+  bad(c(3, 4))      # a YAML list: the rest used to be dropped without a word
+  bad(0); bad(-1); bad("three")
+
+  # ...and a number a site could have meant is still honoured, typed either way
+  expect_identical(job_set_max_concurrent(1L), 1L)
+  expect_identical(job_set_max_concurrent("6"), 6L)
+  expect_identical(job_set_max_concurrent(JOB_CAP_HARD_MAX), JOB_CAP_HARD_MAX)
+
+  # THE FIGURE IN THE REFUSAL IS THE FIGURE IT THEN USES. This line is what
+  # docs/operational/go-live-checklist.md has the operator read off the console;
+  # it used to name the cap that was in force BEFORE the bad value, which the app
+  # then did not use.
+  job_set_max_concurrent(5L)
+  msg <- tryCatch(job_set_max_concurrent("three"), warning = conditionMessage)
+  expect_match(msg, sprintf("using %d instead", auto), fixed = TRUE)
+  expect_false(grepl("using 5 instead", msg, fixed = TRUE))
+  expect_identical(job_max_concurrent(), auto)
+})
+
 # ---------------------------------------------------------------------------
 # THE QUEUE IS HONEST. This is the whole reason job_poll has a fourth answer: a
 # job that has not started is not running, and the screen can only say "2 ahead of
@@ -512,9 +551,85 @@ test_that("the child writes its answer under a temporary name and renames it", {
   # ...and the cache is on disk BEFORE the result, because the result is the
   # signal the parent acts on.
   expect_lt(grep("saveRDS\\(job_input_cache", src)[1],
-            grep('saveRDS\\(res, file.path\\(.jd, "result.part"', src)[1])
+            grep('saveRDS\\(.answer, file.path\\(.jd, "result.part"', src)[1])
   # a child that leaves neither must not read as a hang
   expect_match(joined, "ended without producing a result", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# WHOSE FAULT WAS IT -- THE STATEMENT, OR THIS SERVER?
+#
+# app.R spends this one field and nothing else: `error` gets FRIENDLY_READ_ERROR
+# ("it may be password-protected, an image-only scan, or not a statement"), every
+# other kind gets CONVERT_STOPPED. Every failure inside the child used to arrive
+# as `error`, so a broken SERVER was read out to the analyst as a broken FILE --
+# sending her back to her bank to re-download a statement that was never the
+# problem, while nothing anywhere said the server was in trouble.
+test_that("a server fault is never reported as a fault in the analyst's file", {
+  on.exit(.jobs_reset())
+  .jobs_reset()
+  # (a) the app folder is unreachable -- a share that blipped, a half-copied
+  #     update. The child cannot even load the engine.
+  bad <- tempfile("badroot_"); dir.create(file.path(bad, "R"), recursive = TRUE)
+  writeLines('stop("cannot open URL: app folder unavailable")', file.path(bad, "R", "zz.R"))
+  od <- tempfile("tjob_"); dir.create(od)
+  h <- job_start(.csv_fixture(), od, task = "convert", root = bad)
+  expect_identical(.await(list(h), 120), "failed")
+  f <- job_failure(h)
+  expect_identical(f$kind, "broken")           # NOT "error": nothing read the file
+  expect_false(identical(f$kind, "error"))
+  expect_match(f$detail, "app folder unavailable")   # the cause, for the maintainer
+  expect_false(grepl("password|scan|bank", f$reason))
+  job_reap(h)
+
+  # (b) the job's OWN arguments file is damaged -- a torn write on a full disk.
+  od2 <- tempfile("tjob_"); dir.create(od2)
+  h2 <- job_start(.csv_fixture(), od2, task = "convert", root = engine_root(),
+                  templates_dir = file.path(engine_root(), "templates"), logdir = .tlog())
+  writeLines("not an rds at all", file.path(h2$dir, "args.rds"))
+  expect_identical(.await(list(h2), 120), "failed")
+  expect_identical(job_failure(h2)$kind, "broken")
+  job_reap(h2)
+})
+
+test_that("an exit file this parent cannot read blames the server, not the file", {
+  # Fail-safe direction: guessing "engine" on no evidence would put "your file may
+  # be password-protected" on screen about a file nothing ever looked at.
+  jd <- tempfile("tjd_"); dir.create(jd)
+  j <- new.env(parent = emptyenv()); j$dir <- jd; j$timeout <- JOB_TIMEOUT_SECS
+  ef <- file.path(jd, "exit")
+  writeLines(c("something else entirely", "a message"), ef)
+  .job_exit_reason(j, ef)
+  expect_identical(j$reason_kind, "broken")
+  expect_match(j$detail, "a message")          # nothing is lost from the log
+  writeLines(character(0), ef)
+  .job_exit_reason(j, ef)
+  expect_identical(j$reason_kind, "broken")
+  # ...and the two kinds the child really writes are read as themselves
+  writeLines(c("engine", "could not parse page 3"), ef)
+  .job_exit_reason(j, ef)
+  expect_identical(j$reason_kind, "error")
+  expect_identical(j$detail, "could not parse page 3")
+  writeLines(c("host", "no space left on device"), ef)
+  .job_exit_reason(j, ef)
+  expect_identical(j$reason_kind, "broken")
+  expect_identical(j$detail, "no space left on device")
+  expect_false(grepl("password|bank", j$reason))
+})
+
+test_that("a job whose folder cannot be created says so, in words a maintainer can act on", {
+  # A full disk, or a TEMP the service account may not write. R's own answer is
+  # "cannot open the connection", which names neither the folder nor the reason --
+  # and app.R puts THIS text in logs/errors.log.
+  on.exit(.jobs_reset())
+  blocker <- tempfile("notadir_"); writeLines("x", blocker)   # a FILE where a folder must go
+  od <- tempfile("tjob_"); dir.create(od)
+  err <- tryCatch({ job_start(.csv_fixture(), od, jobs_dir = file.path(blocker, "jobs")); NULL },
+                  error = conditionMessage)
+  expect_false(is.null(err))
+  expect_match(err, "could not create the folder this conversion needs")
+  expect_match(err, "disk may be full")
+  expect_false(grepl("cannot open the connection", err, fixed = TRUE))
 })
 
 test_that("liveness cannot mistake 'this host cannot tell' for 'it died'", {

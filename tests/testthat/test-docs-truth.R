@@ -426,6 +426,135 @@ test_that("the published suite baseline is one this tree could have produced", {
     expect_false(grepl(stale, txt, fixed = TRUE), info = paste("stale figure:", stale))
 })
 
+# ------------------------------------------------- the go-live day and back ---
+#
+# Two procedures a maintainer follows once, under pressure, with no second try:
+# turning it on, and putting it back. Both make claims about files that ship and
+# about what the engine does with them, so both are checked against the tree
+# rather than read.
+
+# .dt_slurp(rel) -- a page as one string, or "" when it is not there. Absence is
+# asserted separately, as a FAILURE: reading a missing file errors, and an error
+# aborts the rest of the test, hiding every other claim it was going to check.
+.dt_slurp <- function(rel) {
+  p <- file.path(.dt_root(), rel)
+  if (!file.exists(p)) "" else paste(readLines(p, warn = FALSE), collapse = " ")
+}
+
+# .dt_sample_tokens(rel) -- every samples/... path a page names, in prose or in a
+# fenced block, written either way round. A command block is exactly where one of
+# these lives, so unlike the docs/ scan above this one does NOT skip fences.
+.dt_sample_tokens <- function(rel) {
+  txt <- readLines(file.path(.dt_root(), rel), warn = FALSE)
+  toks <- unlist(regmatches(txt, gregexpr("samples[\\\\/][A-Za-z0-9._\\\\/-]+", txt)))
+  toks <- sub("[.,;:)`'\"]+$", "", toks)
+  unique(gsub("\\\\", "/", toks[grepl("\\.[A-Za-z0-9]+$", toks)]))
+}
+
+test_that("a page that tells the operator to convert a named specimen names one that ships", {
+  # The go-live procedure and the rollback procedure both say "convert THIS file"
+  # -- it is how an operator proves the install before touching a client
+  # statement. The file therefore has to be in the bundle. Nothing else checks
+  # that: test-deployment-docs.R follows only tokens ending in ".md", so a
+  # renamed or dropped specimen leaves the instruction pointing at nothing and
+  # surfaces on the one morning nobody has time for it.
+  #
+  # samples/_private_staging/ is excluded for the reason test-deployment-docs.R
+  # gives: it is gitignored real statements, present on one box and not the next,
+  # so a guard that read it would pass or fail by accident.
+  broken <- character(0)
+  seen <- 0L
+  for (rel in .dt_doc_files()) {
+    for (t in .dt_sample_tokens(rel)) {
+      if (startsWith(t, "samples/_private_staging")) next
+      seen <- seen + 1L
+      if (!file.exists(file.path(.dt_root(), t)))
+        broken <- c(broken, paste0(rel, " -> ", t))
+    }
+  }
+  expect_gt(seen, 0L)                        # the scan itself must not go quiet
+  expect_identical(broken, character(0),
+                   info = paste("a page names a specimen that does not ship:",
+                                paste(broken, collapse = "; ")))
+})
+
+test_that("the go-live smoke test quotes the row count the engine really produces", {
+  # A number an operator is told to expect is a claim about the engine. It was
+  # counted from the golden snapshot the suite already holds the template to, so
+  # the page and the parser cannot drift apart: change the fixture or the
+  # template and this fails here rather than at 9am on the server, where the
+  # honest reading of a mismatch is "the install is wrong" and it would be a lie.
+  golden <- file.path(.dt_root(), "tests", "testthat", "expected",
+                      "anz_everyday_csv.csv")
+  expect_true(file.exists(golden))
+  n <- nrow(utils::read.csv(golden, stringsAsFactors = FALSE))
+  rel <- "docs/operational/go-live-checklist.md"
+  expect_true(file.exists(file.path(.dt_root(), rel)))
+  txt <- .dt_slurp(rel)
+  expect_true(grepl("anz_transaction_export_01.csv", txt, fixed = TRUE))
+  expect_true(grepl(paste0("\\*\\*", n, " transactions\\*\\*"), txt),
+              info = paste("the checklist does not say the specimen reads as", n,
+                           "transactions"))
+})
+
+test_that("the setup pages name the value engine_version takes when VERSION is absent", {
+  # engine_version() falls back to a literal when the VERSION file is not beside
+  # the app (R/convert.R). On the air-gapped server that word then lands in every
+  # run log, every JSON download and every row of the Qlik feed manifest, and it
+  # is silent: nothing fails, and "which build produced this figure?" stops being
+  # answerable for good. The pages that stand a maintainer in front of that value
+  # have to name it and say what it means -- read the literal out of the engine
+  # so a rename cannot leave the pages quietly describing something else.
+  eng <- paste(readLines(file.path(.dt_root(), "R", "convert.R"), warn = FALSE),
+               collapse = "\n")
+  m <- regmatches(eng, regexpr('is\\.na\\(v\\)\\) "[a-z]+"', eng))
+  expect_length(m, 1L)
+  word <- sub('^.*"([a-z]+)"$', "\\1", m)
+  expect_true(nzchar(word))
+  for (rel in c("docs/operational/go-live-checklist.md",
+                "docs/operational/first-time-setup.md",
+                "docs/operational/investigating-a-wrong-conversion.md")) {
+    txt <- .dt_slurp(rel)
+    expect_true(grepl(word, txt, fixed = TRUE),
+                info = paste(rel, "never names the build stamp's fallback value"))
+    expect_true(grepl("VERSION", txt, fixed = TRUE),
+                info = paste(rel, "names the fallback but not the file that causes it"))
+  }
+})
+
+test_that("the rollback procedure answers what happens to rows already in Qlik", {
+  # Rolling the app folder back does not touch feed/, so the bad build's rows are
+  # still published and nothing withdraws them on anybody's behalf. The page has
+  # to name every folder a withdrawal really touches -- read out of R/feed.R,
+  # because a page naming the wrong folder is worse than one naming none -- and
+  # it has to say that Qlik shows the old rows until it reloads.
+  eng <- readLines(file.path(.dt_root(), "R", "feed.R"), warn = FALSE)
+  subdirs <- unique(unlist(regmatches(eng,
+    gregexpr('file\\.path\\(fdir, "[a-z]+"\\)', eng))))
+  subdirs <- unique(sub('^.*"([a-z]+)"\\)$', "\\1", subdirs))
+  expect_true(all(c("transactions", "runs", "review") %in% subdirs))
+
+  rel <- "docs/operational/rolling-back.md"
+  expect_true(file.exists(file.path(.dt_root(), rel)))
+  txt <- .dt_slurp(rel)
+  # "feed." rather than the literal separator: the pages write Windows paths
+  # (feed\runs) and this file stays ASCII, so match the separator loosely.
+  for (d in subdirs)
+    expect_true(grepl(paste0("feed.", d), txt),
+                info = paste("the rollback page never names the feed's", d, "folder"))
+  # The three things that make the answer usable rather than merely honest.
+  expect_true(grepl("retract", txt, ignore.case = TRUE),
+              info = "the page does not name the withdrawal the app performs")
+  expect_true(grepl("reload", txt, ignore.case = TRUE),
+              info = "the page does not say Qlik shows the old rows until it reloads")
+  expect_true(grepl("engine_version", txt, fixed = TRUE),
+              info = "the page does not say how to find one build's rows")
+  # ...and the page an operator is actually holding has to route to it.
+  expect_true(grepl("rolling-back.md", .dt_slurp("docs/operational/updating.md"),
+                    fixed = TRUE),
+              info = "updating.md does not point at the reverse procedure")
+})
+
 test_that("the incident procedure says which release made engine_version a build id", {
   # Its headline test is "same engine_version and same template_sha256, so any
   # difference is a finding". True from 1.4.0 on, and NOT true of the records

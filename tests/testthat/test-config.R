@@ -146,3 +146,65 @@ test_that("upload retention is a config key with a finite default", {
   writeLines(c("retention:", "  uploads_keep_days: 7"), p)
   expect_equal(load_config(p)$retention$uploads_keep_days, 7)
 })
+
+# ---------------------------------------------------------------------------
+# Every yes/no setting is read with isTRUE(), so anything that is not a real
+# logical reads as FALSE -- and in YAML `'true'`, `"yes"` and `1` are a string or
+# a number. Quoting a value is the most ordinary thing a person editing YAML in
+# Notepad does, and it silently moved the deployment to the WEAKER reading:
+# feed.require_status_ok off publishes unreconciled figures, feed.enabled off
+# stops the dashboards gaining data at all. Neither said anything.
+# ---------------------------------------------------------------------------
+
+test_that("yes/no settings survive being quoted, and never fail to the weaker reading", {
+  p <- file.path(tempdir(), "cfg_flags.yaml")
+  writeLines(c("feed:", "  enabled: 'true'", "  require_status_ok: \"yes\"",
+               "  include_review_feed: 1", "app:", "  user_templates_default: 'on'"), p)
+  cfg <- load_config(p, refresh = TRUE)
+  for (v in list(cfg$feed$enabled, cfg$feed$require_status_ok,
+                 cfg$feed$include_review_feed, cfg$app$user_templates_default)) {
+    expect_true(is.logical(v))
+    expect_true(isTRUE(v))
+  }
+  expect_null(config_error(cfg))       # these are readable, so nothing to shout about
+})
+
+test_that("a real off is still off, in every spelling", {
+  p <- file.path(tempdir(), "cfg_flags_off.yaml")
+  writeLines(c("feed:", "  enabled: false", "  require_status_ok: 'no'",
+               "  include_review_feed: 0"), p)
+  cfg <- load_config(p, refresh = TRUE)
+  expect_false(cfg$feed$enabled)
+  expect_false(cfg$feed$require_status_ok)
+  expect_false(cfg$feed$include_review_feed)
+  expect_null(config_error(cfg))
+})
+
+test_that("a yes/no setting that is neither keeps the default AND says so", {
+  p <- file.path(tempdir(), "cfg_flags_junk.yaml")
+  writeLines(c("feed:", "  require_status_ok: maybe"), p)
+  cfg <- load_config(p, refresh = TRUE)
+  # the built-in default is TRUE, and the SAFE reading is the one that keeps the
+  # gate on -- guessing "off" would publish unreconciled figures on a typo.
+  expect_true(cfg$feed$require_status_ok)
+  err <- config_error(cfg)
+  expect_false(is.null(err))
+  expect_match(err, "feed.require_status_ok")
+  expect_match(err, "not yes or no")
+})
+
+test_that("a settings SECTION of the wrong shape does not stop the app starting", {
+  p <- file.path(tempdir(), "cfg_shape.yaml")
+  # one mis-indented line is enough to turn a whole block into a bare value. The
+  # first cfg$app$admin_password then died with "$ operator is invalid for atomic
+  # vectors" -- the app would not start at all, which on go-live morning is the
+  # worst outcome available.
+  for (body in list("app: hello", "feed: 3", c("app:", "  - 1", "  - 2"))) {
+    writeLines(body, p)
+    cfg <- expect_no_error(load_config(p, refresh = TRUE))
+    expect_true(is.list(cfg$app)); expect_true(is.list(cfg$feed))
+    expect_identical(cfg$app$admin_password, .DEFAULT_ADMIN_PASSWORD)
+    expect_true(cfg$feed$require_status_ok)          # governance back at its default
+    expect_match(config_error(cfg) %||% "", "not a group of settings")
+  }
+})

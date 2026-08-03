@@ -184,6 +184,37 @@ test_that("uploads and scratch folders are actually reclaimed (#6/#7)", {
   expect_match(joined, "CONFIG\\$retention\\$uploads_keep_days")
 })
 
+# A DESTRUCTIVE TIDY-UP RUNS ON THE SITE'S OWN NUMBER OR IT DOES NOT RUN.
+#
+# UPLOADS_KEEP_DAYS is read from config/config.yaml. When that file cannot be
+# parsed the app starts on BUILT-IN DEFAULTS, so the number driving an
+# irreversible delete is one this deployment never chose. REPRODUCED end to end:
+# a site that had set `uploads_keep_days: 0` (keep indefinitely -- what a unit
+# holding evidence sets, and what the example config offers in those words) took
+# one stray tab in config.yaml, which is precisely what the docs warn about
+# because they tell a non-technical analyst to edit it in Notepad. On the next
+# restart the default 90 applied and every stored client statement older than 90
+# days was deleted and stamped `purged`, while the console warning saying the
+# settings had not loaded scrolled past above it.
+test_that("the startup purge does not delete client statements on a settings file that did not load", {
+  src <- .app_src()
+  i <- grep("safe\\(purge_uploads\\(UPLOADS_DIR", src)
+  expect_length(i, 1L)
+  # the startup call is inside the "settings loaded" branch...
+  guard <- paste(src[max(1L, i - 6L):i], collapse = " ")
+  expect_match(guard, "if \\(is\\.null\\(CONFIG_ERROR\\)\\)")
+  # ...and the operator is told that nothing was deleted, so a folder that did not
+  # shrink is explained rather than mysterious
+  after <- paste(src[i:min(i + 10L, length(src))], collapse = " ")
+  expect_match(after, "Nothing has been deleted", fixed = TRUE)
+  expect_match(after, "warning\\(")
+  # the deliberate, asked-for purge on the Admin button is NOT gated on this: it
+  # states its own number and is confirmed, and a maintainer who has just fixed
+  # the settings file must still be able to run it
+  expect_match(.app_block(src, 'observeEvent\\(input\\$adm_purge_confirm', 6L),
+               "purge_uploads\\(UPLOADS_DIR, keep_days = UPLOADS_KEEP_DAYS\\)")
+})
+
 # ---------------------------------------------------------------------------
 # #60 -- a settings file that does not parse must not silently weaken the install.
 test_that("a broken settings file is announced at startup and on screen (#60)", {

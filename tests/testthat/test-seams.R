@@ -268,6 +268,23 @@ test_that("the feed note says accepted, held back, and 'the write failed' differ
   wf <- L$plain_feed(list(reason = "accepted", gate_result = "accepted:write_failed"))
   expect_false(wf$ok)
   expect_match(wf$why, "could not be written")
+  # THE HEADLINE, which this test used to leave alone. `line` is what the screen
+  # prints in bold and first; `why` is the grey line under it. Asserting only `ok`
+  # and `why` passed happily while the screen's headline read "Sent to the
+  # dashboards." over a run that was never sent - loudly wrong on the one line
+  # that says where the figures went. Every post-verdict failure is checked here.
+  expect_false(grepl("^Sent to the dashboards", wf$line))
+  expect_match(wf$line, "NOT sent", fixed = TRUE)
+  for (g in c("accepted:no_rows", "accepted:stale_row_kept")) {
+    r <- L$plain_feed(list(reason = "accepted", gate_result = g))
+    expect_false(r$ok, info = g)
+    expect_false(identical(r$line, "Sent to the dashboards."), info = g)
+  }
+  # and the plain accepted case is untouched - the fix must not make a good run
+  # look doubtful
+  expect_identical(L$plain_feed(list(reason = "accepted",
+                                     gate_result = "accepted"))$line,
+                   "Sent to the dashboards.")
   expect_null(L$plain_feed(NULL))                       # feed off -> say nothing
   # An unknown reason still renders, and still reads as "held back" (fail closed).
   unk <- L$plain_feed(list(reason = "withheld:something_new", gate_result = "withheld:something_new"))
@@ -530,4 +547,48 @@ test_that("a fault listed as a diagnostic is not listed again as a check", {
   # PROVES, which beside a failure and with no pass/fail column says the opposite)
   expect_match(paste(src, collapse = "\n"), 'sprintf\\("Failed: %s", plain_check')
   expect_match(.ui_labels()$plain_failing_check("check:dates_readable"), "^Failed: ")
+})
+
+# ---------------------------------------------------------------------------
+# WHOSE FAULT WAS IT. The registry (R/jobs.R) decides which KIND of ending a
+# conversion had; app.R turns that one field into one of two sentences, and they
+# say opposite things about whose problem it is:
+#   FRIENDLY_READ_ERROR -- "it may be password-protected ... try a PDF or CSV
+#                           export from your bank"   -> about HER FILE
+#   CONVERT_STOPPED     -- "this conversion stopped before it finished"
+#                                                    -> about THIS SERVER
+# Only `error` means the engine read the statement and refused it. Every other
+# kind is the server's, and a new kind added to R/jobs.R must land on the server
+# half by default -- telling somebody her statement may be damaged when the truth
+# is that the box ran out of room is a confident wrong answer, which is the one
+# thing this tool may not give (ui_labels.R says so where CONVERT_STOPPED is
+# defined).
+test_that("only an engine failure is answered with a sentence about the file", {
+  jobs <- .src("R/jobs.R")
+  app  <- paste(.src("app.R"), collapse = "\n")
+
+  # every kind .job_fail can produce, read off its own switch()
+  i <- grep("^\\.job_fail <- function", jobs)
+  expect_length(i, 1L)
+  blk <- jobs[i:min(i + 20L, length(jobs))]
+  kinds <- sub("^\\s*([a-z]+)\\s*=.*$", "\\1",
+               grep("^\\s*[a-z]+\\s*=", blk[grep("j\\$reason <- switch", blk):length(blk)], value = TRUE))
+  kinds <- unique(kinds[nzchar(kinds)])
+  expect_true(all(c("error", "broken", "stopped", "timeout", "nostart") %in% kinds))
+
+  # app.R spends it exactly once, and `error` is the ONLY branch that may reach
+  # the sentence about her file
+  expect_match(app, 'if \\(identical\\(f\\$kind, "error"\\)\\) FRIENDLY_READ_ERROR else CONVERT_STOPPED')
+  expect_length(grep("FRIENDLY_READ_ERROR", .src("app.R")), 1L)
+
+  # ...and the registry only ever reaches "error" from what the CHILD called an
+  # engine failure -- never from "an exit file exists", which is also what a
+  # server that could not load the app or write its answer leaves behind.
+  j <- grep("^\\.job_exit_reason <- function", jobs)
+  expect_length(j, 1L)
+  ex <- paste(jobs[j:min(j + 12L, length(jobs))], collapse = " ")
+  expect_match(ex, 'identical\\(kind, "engine"\\)')
+  expect_match(ex, '"broken"')                      # anything unrecognised is the server's
+  expect_match(paste(jobs, collapse = "\n"), '\\.say\\("host", conditionMessage\\(e\\)\\)')
+  expect_match(paste(jobs, collapse = "\n"), '\\.say\\("engine", conditionMessage\\(e\\)\\)')
 })

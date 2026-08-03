@@ -3,9 +3,18 @@
 Two double-clicks: build a package on a PC with internet, copy one folder to the
 server, run it. Nothing needs to be pre-installed on the server — not even R.
 
-You need a Windows PC **with internet and R installed** (any recent version, from
-`cran.r-project.org`) to build the package, the app folder on that PC, the
-air-gapped Windows server, and an approved way to copy a folder between them.
+You need four things:
+
+1. a Windows PC **with internet and R installed** — any recent version, from
+   `cran.r-project.org`. R's own installer does not put it on the `PATH`, and it
+   does not need to be: `make-bundle.bat` looks under `Program Files\R\` too.
+2. **the app folder on that PC** — the source folder for this tool, holding
+   `make-bundle.bat`, `app.R`, `R\`, `templates\` and `VERSION`. However it
+   reaches you (a copy, a zip, a checkout), unpack it somewhere you can write to
+   and work from there. It is not the same thing as the package you build in
+   step 1.
+3. the air-gapped Windows server;
+4. an approved way to copy a folder between them.
 
 Whatever R or RStudio the server already has is ignored and left untouched — the
 package brings its own and installs it inside its own folder.
@@ -71,6 +80,16 @@ the analytics feed, so it stays shut. The app prints
 Set it here, or set the `BSO_ADMIN_PASSWORD` environment variable (which wins),
 then **restart the app**.
 
+**Then check the lock actually moved.** Admin is reached by adding `?admin` to
+the address — `http://localhost:8100/?admin` — and it is not offered as a tab
+otherwise. Before you set a password that page says *"Admin is closed - no admin
+password has been set"* and offers **no password box at all**; after you set one
+and restart it says *"Admin - password required"* with a box. Type your password
+and get in. A mis-indented line in `config.yaml` silently reverts the whole file
+to built-in defaults, which puts the lock straight back on, so this is worth the
+thirty seconds. Day-to-day use of Admin:
+[admin-and-maintenance.md](admin-and-maintenance.md).
+
 ## 5 — Open the firewall port
 
 On the server itself, browse to `http://localhost:8100`. It works.
@@ -90,12 +109,30 @@ Then browse to `http://<server-name>:8100` from another machine. Still nothing?
 Ask your network team — a separate network firewall between the users and the
 server can block it too, and that one is not yours to change.
 
+## 6 — Check the build stamp before anybody converts anything real
+
+Convert `samples\raw\anz\anz_transaction_export_01.csv` — a synthetic specimen
+that ships with the tool, with no client data in it — and open the **JSON**
+download. Its third line is `build.engine_version`, and it must read the version
+you shipped: the same value as `app_version` in `offline\manifest.txt`.
+
+That one value is stamped into every run log, every JSON download and every row
+of the Qlik feed manifest, and it is the whole of the answer to *"which build
+produced this figure?"* years later. **If it reads `unknown`, the `VERSION` file
+did not reach the server.** Copy `VERSION` from the source folder (the one you
+built the package from) into the app folder by hand, restart, and check again.
+
 ---
 
 ## Next
 
+- **Turning it on for the unit today?** → [go-live-checklist.md](go-live-checklist.md),
+  which picks up from here: retention, the concurrency cap, proving a row reaches
+  Qlik, and what "it is working" looks like an hour later.
 - Keep it running after reboots → [running-and-keeping-it-up.md](running-and-keeping-it-up.md)
 - Convert your first statement → [converting-statements.md](converting-statements.md)
+  (it asks each analyst once per session for a **QID**, and Convert does nothing
+  until that is filled in — that is the audit trail, not a fault)
 - Wire up the Qlik dashboards → [connecting-qlik.md](connecting-qlik.md)
 - Get the irreplaceable folders off the box → [backup-and-restore.md](backup-and-restore.md)
 - Inherited this tool? → [maintaining-the-engine.md](maintaining-the-engine.md)
@@ -109,4 +146,5 @@ server can block it too, and that one is not yours to change.
 | Works on the server, times out from everywhere else | The firewall port is not open — step 5. |
 | Scanned PDFs do not read | Check `offline\manifest.txt`. `MISSING` → the build PC never downloaded Poppler/Tesseract; rebuild and re-copy. `included` → delete `offline\.installed` and run `RUN-ME.bat` again to redo the OCR install. Text PDFs, CSV and Excel keep working either way. |
 | Admin will not open with the right password | The password is still `changeme` or blank. Step 4, then restart. |
+| `build.engine_version` in a conversion says `unknown` | The `VERSION` file did not reach the server. Step 6. |
 | Which version is on this server? | `offline\manifest.txt` — app version, the exact R, and every bundled package version. |

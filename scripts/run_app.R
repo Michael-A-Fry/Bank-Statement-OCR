@@ -48,7 +48,7 @@ cfg_port <- tryCatch(as.integer(.cfg$app$port), error = function(e) NA_integer_)
 if (length(cfg_port) != 1 || is.na(cfg_port)) cfg_port <- 8100L
 port <- suppressWarnings(as.integer(Sys.getenv("BSO_PORT", as.character(cfg_port))))
 if (is.na(port)) port <- cfg_port
-cat(sprintf("Statement Studio — starting on port %d (from %s). Open http://<this-vm>:%d\n",
+cat(sprintf("Statement Studio - starting on port %d (from %s). Open http://<this-vm>:%d\n",
             port, app_dir, port))
 # How many statements this server will convert at once. Say it HERE, where the
 # operator is looking: each conversion is its own R process now, so this number

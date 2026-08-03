@@ -809,6 +809,25 @@ test_that("a tab closed mid-conversion takes its process with it", {
   expect_match(paste(.ui_src(), collapse = "\n"), "onStop\\(function\\(\\) safe\\(job_reap_all\\(\\)\\)\\)")
 })
 
+test_that("a conversion that cannot even be started does not take the page down with it", {
+  # job_start() writes the job's folder and its arguments to disk BEFORE anything
+  # runs, so a full disk or a TEMP the service account cannot write makes it
+  # throw. Thrown from inside this observer that ends the whole Shiny session --
+  # the analyst's page greys out mid-click and takes the result she was reading
+  # with it, and on a box with no room left it does that to everybody, every time.
+  blk <- .ui_block(.ui_src(), "slot\\$start <- function", 22L)
+  expect_match(blk, "tryCatch\\(do\\.call\\(job_start")
+  expect_match(blk, 'inherits\\(h, "condition"\\)')
+  # the cause goes to the maintainer's log...
+  expect_match(blk, "errors\\.log")
+  # ...and the analyst gets the sentence for a conversion that did not come back,
+  # never one about her file
+  expect_match(blk, "CONVERT_STOPPED")
+  expect_false(grepl("FRIENDLY_READ_ERROR", blk, fixed = TRUE))
+  # and the app carries on: no Progress bar left open, no handle registered
+  expect_match(blk, "return\\(invisible\\(NULL\\)\\)")
+})
+
 test_that("the cap is a deployment setting, read once, and named in the example config", {
   expect_match(paste(.ui_src(), collapse = "\n"),
                "job_set_max_concurrent\\(CONFIG\\$app\\$max_concurrent_jobs\\)")
