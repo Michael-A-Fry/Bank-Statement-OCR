@@ -34,6 +34,64 @@ the PC's internet was blocked or proxied — fix that and run it again. A bundle
 missing Poppler/Tesseract installs and runs fine and then cannot read a single
 scanned PDF, which is the failure you least want to discover on the server.
 
+### If the window flashes and disappears
+
+**Every failure in that script ends by waiting for a keypress, so the window
+cannot close on its own.** A flash therefore means the script never ran at all —
+your PC's policy stopped it. Two ways to tell for certain:
+
+1. Look for **`make-bundle.log`** beside `make-bundle.bat`. Writing it is the
+   first thing the script does. **No log = it was blocked**, not broken.
+2. Open **Command Prompt** first, then run it by typing the path — the window is
+   yours, so nothing can vanish and you will see the actual message:
+   ```
+   cd /d C:\path\to\the\app
+   make-bundle.bat
+   ```
+
+If it is blocked — often reported as *"blocked by your system administrator"* when
+you use **Run as administrator** — that is AppLocker or a Software Restriction
+Policy on a managed build. **No change to the file can get around it**, and on a
+locked-down build *every* `.bat` is blocked, not just this one. Test it with any
+throwaway `.bat` you like: if that flashes too, it is the policy, not this app.
+
+> **Do not "Run as administrator" to get past this.** Building the package needs
+> no special rights, and elevation does not lift a policy block — it just changes
+> the error you get. Worth knowing before you ask IT for anything.
+
+Use **`make-bundle.ps1`** instead. It does exactly the same build; PowerShell is
+usually still permitted where `.bat` is not.
+
+**Make a shortcut to it** (this is the part that gets past the policy):
+
+1. Right-click in the app folder → **New** → **Shortcut**.
+2. For the location, paste this, with your own path in place of `C:\path\to\app`:
+   ```
+   powershell.exe -ExecutionPolicy Bypass -NoProfile -File "C:\path\to\app\make-bundle.ps1"
+   ```
+3. Name it *Build the offline package*, and double-click it.
+
+`-ExecutionPolicy Bypass` lifts PowerShell's **own** script policy for that one
+launch. It is not an administrator action, needs no rights, and changes nothing
+on the machine.
+
+**If even that is blocked**, you can run the build with no script file at all —
+open Command Prompt (or PowerShell) and type one line:
+
+```
+"C:\Program Files\R\R-4.4.1\bin\x64\Rscript.exe" scripts\bundle-offline.R
+```
+
+Adjust the R version folder to the one you have. That runs R *with an argument*
+rather than executing a script, so script policy has nothing to act on. It
+produces the identical `StatementStudio-offline` folder — the `.bat`, the `.ps1`
+and this line all do the same one thing.
+
+If you would rather have the exception than the workaround, what to ask IT for is
+permission to run `make-bundle.bat` (build PC) and `RUN-ME.bat` (server) from
+their folders. That is a one-off setup step on two machines, not something every
+analyst needs.
+
 ## 2 — Copy it to the server
 
 Copy the whole `StatementStudio-offline` folder across, e.g. to
