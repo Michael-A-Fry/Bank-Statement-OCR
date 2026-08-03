@@ -107,24 +107,56 @@ if (length(miss)) cat("  MISSING:", paste(miss, collapse = ", "),
   sprintf("%s.%s.\n", R.version$major, sub("\\..*", "", R.version$minor)))
 
 ## 2. Poppler -> USER PATH (for scanned-PDF OCR) ----------------------------
-if (nzchar(prereq) && length(Sys.glob(file.path(prereq, "poppler*.zip")))) {
-  zip <- Sys.glob(file.path(prereq, "poppler*.zip"))[1]
-  dest <- file.path(here, "poppler")
-  tryCatch({
+# FOUND BY WHAT IT CONTAINS, NOT BY WHAT IT IS CALLED. This used to glob
+# `poppler*.zip`, which the builder satisfies because it renames its download --
+# but the file a person downloads by hand from the project's releases page is
+# called `Release-24.08.0-0.zip`, matches nothing, and the only sign was one line
+# saying Poppler was "not in the bundle". The whole point of dropping it in by
+# hand is that the automatic download failed, so that is exactly the moment the
+# lookup has to be forgiving. Any zip here that carries pdftoppm.exe is Poppler,
+# whatever it is named -- and an ALREADY-EXTRACTED copy is accepted too, because
+# unzipping it first is the obvious thing to do and used to silently not work.
+.poppler_bin <- function(prereq, here) {
+  if (!nzchar(prereq)) return(NULL)
+  # (a) already extracted, anywhere under prereqs/
+  loose <- list.files(prereq, pattern = "^pdftoppm\\.exe$", recursive = TRUE,
+                      full.names = TRUE, ignore.case = TRUE)
+  if (length(loose)) return(list(bin = dirname(loose[1]), from = "an extracted copy"))
+  # (b) any zip whose listing contains pdftoppm.exe
+  for (z in Sys.glob(file.path(prereq, "*.zip"))) {
+    inside <- tryCatch(utils::unzip(z, list = TRUE)$Name, error = function(e) character(0))
+    if (!any(grepl("(^|/)pdftoppm\\.exe$", inside, ignore.case = TRUE))) next
+    dest <- file.path(here, "poppler")
     unlink(dest, recursive = TRUE); dir.create(dest, showWarnings = FALSE)
-    utils::unzip(zip, exdir = dest)
-    bin <- dirname(list.files(dest, pattern = "^pdftoppm\\.exe$",
-                              recursive = TRUE, full.names = TRUE))
-    if (length(bin)) {
-      cat("\n")
-      .add_to_user_path(normalizePath(bin[1]), "Poppler")
-    } else cat("\nPoppler: unzipped to", dest, "-- add its bin\\ folder to PATH manually.\n")
-  }, error = function(e) cat("\nPoppler: could not auto-configure --", conditionMessage(e),
-                             "\n  Unzip", zip, "and add its bin\\ folder to PATH.\n"))
-} else cat("\nPoppler: not in the bundle -- only needed for scanned-PDF OCR.\n")
+    utils::unzip(z, exdir = dest)
+    bin <- dirname(list.files(dest, pattern = "^pdftoppm\\.exe$", recursive = TRUE,
+                              full.names = TRUE, ignore.case = TRUE))
+    if (length(bin)) return(list(bin = bin[1], from = basename(z)))
+  }
+  NULL
+}
+pop <- tryCatch(.poppler_bin(prereq, here), error = function(e) NULL)
+if (!is.null(pop)) {
+  cat("\nPoppler: found in", pop$from, "\n")
+  .add_to_user_path(normalizePath(pop$bin), "Poppler")
+} else {
+  cat("\nPoppler: not found -- scanned PDFs will not be readable.\n")
+  cat("  Looked in:", if (nzchar(prereq)) prereq else "(no prereqs folder)", "\n")
+  cat("  Put the Poppler release ZIP there (any name), or an extracted copy -\n")
+  cat("  anything containing pdftoppm.exe. Then run this again.\n")
+  cat("  github.com/oschwartz10612/poppler-windows/releases\n")
+}
 
 ## 3. Tesseract -> silent install + PATH (for scanned-PDF OCR) --------------
-tess <- if (nzchar(prereq)) Sys.glob(file.path(prereq, "tesseract*setup*.exe")) else character(0)
+# Same forgiveness as Poppler above. The builder's download is
+# `tesseract-ocr-w64-setup-<version>.exe`, but a hand-downloaded copy may be named
+# anything, so any .exe here with "tesseract" in the name is taken as the
+# installer -- narrow enough not to run something unrelated, wide enough to accept
+# what a person actually ends up with.
+tess <- if (nzchar(prereq))
+          c(Sys.glob(file.path(prereq, "tesseract*setup*.exe")),
+            Sys.glob(file.path(prereq, "*tesseract*.exe"))) else character(0)
+tess <- unique(tess)
 on_path <- nzchar(Sys.which("tesseract"))
 if (on_path) {
   cat("\nTesseract: already on PATH.\n")
