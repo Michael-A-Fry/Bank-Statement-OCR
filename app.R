@@ -2363,7 +2363,18 @@ server <- function(input, output, session) {
   # empty: a value that did not match is the whole reason to look at this preview.
   output$fb_prev_status <- renderUI({
     f <- fb_preview()
-    if (is.null(f)) return(p(class = "muted", "Nothing previewed yet."))
+    # TWO DIFFERENT EMPTIES, TWO DIFFERENT ANSWERS. This said "Nothing previewed
+    # yet." whichever was true, which is a fact about the screen rather than an
+    # instruction: with no document loaded there is nothing to preview and no way
+    # to make one, so the person is left looking for a button that cannot work.
+    # Ask what is actually missing and say that.
+    if (is.null(f)) {
+      if (is.null(fb_doc()))
+        return(p(class = "muted",
+                 "Upload the document at the top of this page to see a preview."))
+      return(p(class = "muted",
+               "Draw a box round a value and say what it is, then Preview."))
+    }
     got <- sum(f$matched %in% TRUE); miss <- nrow(f) - got
     missing <- if (miss > 0) paste(f$field[!(f$matched %in% TRUE)], collapse = ", ") else ""
     div(class = if (miss > 0) "verdict verdict-medium" else "verdict verdict-high",
