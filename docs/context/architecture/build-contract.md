@@ -29,6 +29,9 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   extract_metadata.R    generic statement metadata + multi-statement detection
   extract_fields.R      key-value ("mode: fields") extraction (IRD/forms)
   forms.R               orchestrator for the fields paradigm
+  tables.R              a REPORT's tables: locate by wording, read, measure the fill
+  tables_detect.R       propose the tables + label/value pairs on a report
+  doc_extract.R         orchestrator for the document paradigm (many tables)
   split.R               opt-in deterministic auto-split of a bundled upload
   reconcile.R           reconciliation KPIs + deterministic trust mapping
   diagnose.R            fail-loud diagnostics (where / why / how bad / who fixes)
