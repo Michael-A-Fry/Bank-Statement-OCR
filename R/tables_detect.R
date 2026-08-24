@@ -91,17 +91,74 @@
   pitch <- .doc_pitch(w$y); if (is.na(pitch)) pitch <- stats::median(w$height) * 1.6
   if (!is.finite(pitch) || pitch <= 0) pitch <- 12
 
-  tabular <- ncell >= .DOC_MIN_CELLS
-  # A run is consecutive tabular lines that are also vertically adjacent: a
+  # Printed rules are TRANSPARENT here: they neither start a run, nor end one,
+  # nor contribute a column band. A bordered table is a table.
+  is_rule <- vapply(lines, .doc_is_rule, logical(1))
+  tabular <- ncell >= .DOC_MIN_CELLS & !is_rule
+
+  # .runs(min_cells, min_rows) -- maximal stretches of consecutive, vertically
+  # adjacent lines that each break into at least `min_cells` cells. A
   # tabular-looking line half a page below the last one is a different table.
-  runs <- list(); cur <- integer(0)
-  for (i in seq_along(lines)) {
-    adjacent <- length(cur) == 0L || (tops[i] - tops[cur[length(cur)]]) <= pitch * 2.2
-    if (tabular[i] && adjacent) { cur <- c(cur, i); next }
-    if (length(cur) >= .DOC_MIN_TABLE_ROWS) runs[[length(runs) + 1L]] <- cur
-    cur <- if (tabular[i]) i else integer(0)
+  .runs <- function(min_cells, min_rows) {
+    tabular <- ncell >= min_cells & !is_rule
+    out <- list(); cur <- integer(0)
+    for (i in seq_along(lines)) {
+      if (is_rule[i]) next                       # a border is not a break
+      last <- if (length(cur)) cur[length(cur)] else NA_integer_
+      adjacent <- length(cur) == 0L || (tops[i] - tops[last]) <= pitch * 2.2
+      if (tabular[i] && adjacent) { cur <- c(cur, i); next }
+      # A WRAPPED CELL is transparent too. It is one cell, indented past where the
+      # rows of this run begin, one line below the last of them -- so it is the
+      # tail of that row, not the end of the table. Without this a description too
+      # long for its column ends the table at the row it wrapped on.
+      if (!is.na(last) && ncell[i] <= 1L &&
+          .doc_is_wrap(lines[[i]], min(lines[[last]]$x), tops[i] - tops[last],
+                       pitch, ncell[i])) next
+      if (length(cur) >= min_rows) out[[length(out) + 1L]] <- cur
+      cur <- if (tabular[i]) i else integer(0)
+    }
+    if (length(cur) >= min_rows) out[[length(out) + 1L]] <- cur
+    out
   }
-  if (length(cur) >= .DOC_MIN_TABLE_ROWS) runs[[length(runs) + 1L]] <- cur
+  runs <- .runs(.DOC_MIN_CELLS, .DOC_MIN_TABLE_ROWS)
+
+  # A TWO-COLUMN TABLE IS A TABLE. The three-cell rule is what keeps a pair of
+  # labelled values from being proposed as one, so two columns are allowed only
+  # on a LONGER run -- four consecutive rows in the same two bands is a schedule,
+  # not a coincidence. (Measured: a valuation of item and amount, five rows, was
+  # proposed as nothing at all.) Any two-cell run overlapping a three-cell one is
+  # dropped: the wider reading of the same ink wins.
+  taken <- unlist(runs)
+  for (r2 in .runs(2L, .DOC_MIN_TABLE_ROWS + 1L))
+    if (!any(r2 %in% taken)) { runs[[length(runs) + 1L]] <- r2; taken <- c(taken, r2) }
+  if (length(runs) > 1L)
+    runs <- runs[order(vapply(runs, function(z) z[1], integer(1)))]
+
+  # THE TOTAL ROW UNDER THE RULE. A schedule sets its total apart: a blank line,
+  # an underline, then a row with only two cells filled. Every one of those breaks
+  # the run -- so the row somebody actually came for was the one row left out.
+  # Each run therefore reaches DOWN for a few more lines, taking any that land in
+  # at least two of the bands it has already established, skipping rules, and
+  # stopping at the first line that does not. Bounded to three lines and to five
+  # times the pitch, so this can reach a total and cannot reach the next table.
+  runs <- lapply(runs, function(ix) {
+    core <- do.call(rbind, lapply(lines[ix], function(d) d[, c("x", "width")]))
+    b0 <- .doc_bands(core, gap)
+    if (length(b0) < 2L) return(ix)
+    last <- ix[length(ix)]
+    extra <- integer(0)
+    for (i in seq_along(lines)) {
+      if (i <= last) next
+      if (length(extra) >= 3L) break
+      if (tops[i] - tops[ix[length(ix)]] > pitch * 5) break
+      if (is_rule[i]) next
+      hit <- vapply(b0, function(b) any(lines[[i]]$cx >= b$x_min & lines[[i]]$cx <= b$x_max),
+                    logical(1))
+      if (sum(hit) < 2L) break
+      extra <- c(extra, i); ix <- c(ix, i)
+    }
+    ix
+  })
 
   lapply(runs, function(ix) {
     body <- do.call(rbind, lapply(lines[ix], function(d) d[, c("x", "width", "y", "height", "text")]))
@@ -125,8 +182,11 @@
     has_header <- !.doc_has_money(first) &&
       any(vapply(lines[ix[-1]], .doc_has_money, logical(1)))
     hdr_cells <- if (has_header)
-      vapply(.doc_cells(first, gap), function(cell) paste(cell$text, collapse = " "),
-             character(1))
+      vapply(.doc_cells(first, gap), function(cell) {
+        # A condensed table separates its columns with "|", which lands inside the
+        # header cell beside it -- so the column would be called "Amount |".
+        trimws(gsub("^[|+:_-]+|[|+:_-]+$", "", trimws(paste(cell$text, collapse = " "))))
+      }, character(1))
       else character(0)
     # The name is the nearest line ABOVE the run that is not itself tabular and is
     # short enough to be a heading. That is where these documents print it.
@@ -134,15 +194,20 @@
     above <- which(seq_along(lines) < ix[1])
     for (i in rev(above)) {
       if (tops[ix[1]] - tops[i] > pitch * 3.5) break
-      if (tabular[i]) next
+      if (tabular[i] || is_rule[i]) next
       t <- trimws(.doc_line_text(lines[[i]]))
       if (nzchar(t) && length(strsplit(t, "\\s+")[[1]]) <= 8L) { nm <- t; break }
     }
-    cols <- lapply(seq_along(bands), function(j) {
-      list(name = if (j <= length(hdr_cells) && nzchar(trimws(hdr_cells[j])))
-                    trimws(hdr_cells[j]) else sprintf("column_%d", j),
-           x_min = bands[[j]]$x_min, x_max = bands[[j]]$x_max, type = "auto")
-    })
+    # The names are made unique HERE, not left to the reader. Two tables printed
+    # side by side both head a column "Code", and a proposal that shows two
+    # columns of the same name while the output silently renames one of them is
+    # two different answers to the same question.
+    cnm <- make.unique(vapply(seq_along(bands), function(j)
+      if (j <= length(hdr_cells) && nzchar(trimws(hdr_cells[j]))) trimws(hdr_cells[j])
+      else sprintf("column_%d", j), character(1)), sep = "_")
+    cols <- lapply(seq_along(bands), function(j)
+      list(name = cnm[j], x_min = bands[[j]]$x_min, x_max = bands[[j]]$x_max,
+           type = "auto"))
     body_ix <- if (has_header) ix[-1] else ix
     list(name = if (is.na(nm)) sprintf("Table on page %d", page) else nm,
          start = list(page = as.integer(page), y = round(tops[ix[1]] - 1, 1)),
@@ -156,7 +221,7 @@
                          cl <- .doc_cells(d, gap)
                          if (!length(cl)) "" else trimws(paste(cl[[1]]$text, collapse = " "))
                        }, character(1)), 3L))),
-         n_rows = length(body_ix),
+         n_rows = length(body_ix), .own_heading = !is.na(nm),
          .bands = bands, .page = as.integer(page),
          .bottom = tops[ix[length(ix)]], .page_last_line = identical(ix[length(ix)], length(lines)))
   })
@@ -172,11 +237,39 @@
   all(abs(ca - cb) <= tol)
 }
 
-# .doc_same_header(a, b) -- the same header wording, normalised.
+# .doc_header_key(a) -- a candidate's header wording, normalised, or "".
+.doc_header_key <- function(a)
+  .doc_norm(paste(unlist(a$anchor$header_text %||% character(0)), collapse = " "))
+
+# .doc_same_header(a, b) -- b repeats a's header. Not equality: a continuation
+# page routinely prints "(continued)" after the same column names, and demanding
+# a byte-for-byte match left an eighteen-row schedule split into two tables of
+# eight and ten. One being a prefix of the other is the rule -- which still
+# refuses a page that prints the SAME column names in a DIFFERENT order, because
+# that is a different table that happens to share a vocabulary.
 .doc_same_header <- function(a, b) {
-  ha <- .doc_norm(paste(unlist(a$anchor$header_text %||% character(0)), collapse = " "))
-  hb <- .doc_norm(paste(unlist(b$anchor$header_text %||% character(0)), collapse = " "))
-  nzchar(ha) && identical(ha, hb)
+  ha <- .doc_header_key(a); hb <- .doc_header_key(b)
+  nzchar(ha) && nzchar(hb) &&
+    (identical(ha, hb) || startsWith(hb, ha) || startsWith(ha, hb))
+}
+
+# .doc_continues(prev, cd) -- may `cd` be more of `prev`, printed on the next page?
+#
+# TWO REFUSALS, both learned from a document that got this wrong.
+#
+#  * A candidate that carries its OWN HEADING is a new table. A genuine
+#    continuation page opens with the repeated column names at the top and
+#    nothing above them; a page headed "Account two" is a second schedule, and
+#    joining it to the first put twelve rows under one account's name with no
+#    sign on screen that six of them belonged to another. This is the decisive
+#    test, because the two tables are otherwise identical in every measurable way.
+#  * Where BOTH pages print a header, the headers must match. Geometry alone is
+#    allowed only when the second page has no header at all to compare -- two
+#    tables can share a column layout exactly and mean different things.
+.doc_continues <- function(prev, cd) {
+  if (isTRUE(cd$.own_heading)) return(FALSE)
+  if (nzchar(.doc_header_key(cd))) return(.doc_same_header(prev, cd))
+  .doc_same_shape(prev, cd)
 }
 
 # propose_tables(input, tmpl, pages, max_tables) -> a list of table specs, in
@@ -205,7 +298,7 @@ propose_tables <- function(input, tmpl = NULL, pages = NULL, max_tables = 40L) {
       prev <- merged[[length(merged)]]
       last_page <- as.integer(prev$end$page)
       if (identical(cd$.page, last_page + 1L) && isTRUE(prev$.page_last_line) &&
-          (.doc_same_header(prev, cd) || .doc_same_shape(prev, cd))) {
+          .doc_continues(prev, cd)) {
         prev$end <- cd$end
         prev$n_rows <- prev$n_rows + cd$n_rows
         prev$.page_last_line <- cd$.page_last_line

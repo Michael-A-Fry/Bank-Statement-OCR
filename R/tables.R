@@ -78,7 +78,15 @@
     w <- .words_to_band_frame(w, .doc_frame(tmpl), pw, ph)
   }
   w$text <- as.character(w$text)
-  w <- w[!is.na(w$text) & nzchar(trimws(w$text)), , drop = FALSE]
+  # A LONE VERTICAL BAR IS A BORDER, not a value. A condensed table prints one
+  # between every pair of columns, and it arrives as an ordinary word box: it ends
+  # up inside the cell beside it ("| 1,240.55" was measured), and it fills the
+  # gutter that would otherwise separate the two columns. Dropping it here, at the
+  # one point both the proposer and the reader come through, does both jobs at
+  # once -- the columns separate on real whitespace and the cells hold only what
+  # the document says. Only a bar ON ITS OWN: "A|B" is data.
+  w <- w[!is.na(w$text) & nzchar(trimws(w$text)) &
+           !grepl("^\\|+$", trimws(w$text)), , drop = FALSE]
   if (!nrow(w)) return(NULL)
   w$cx <- w$x + w$width / 2
   w$cy <- w$y + w$height / 2
@@ -108,7 +116,7 @@
 # gap between the row tops that produces, and take a fraction of that as the real
 # tolerance. The measurement is per table, because that is the scope over which
 # the pitch is actually constant.
-.doc_pitch <- function(ys) {
+.doc_pitch <- function(ys, q = 0.5) {
   ys <- sort(ys[is.finite(ys)])
   if (length(ys) < 3L) return(NA_real_)
   g <- .group_rows(ys, PARAM_PDF_ROW_TOL)
@@ -116,14 +124,59 @@
   dif <- diff(sort(tops))
   dif <- dif[is.finite(dif) & dif > 0]
   if (!length(dif)) return(NA_real_)
-  p <- stats::median(dif)
+  p <- as.numeric(stats::quantile(dif, probs = q, names = FALSE, type = 7))
   if (!is.finite(p) || p <= 0) NA_real_ else p
+}
+
+# .doc_is_wrap(d, prev_left, gap, pitch) -- is this line the TAIL of the row above
+# it rather than a row of its own?
+#
+# A description too long for its column wraps onto a second physical line, and
+# that line has no date, no reference and no amount -- just more words, indented
+# under the column it belongs to. Three facts identify it and all three are
+# needed: it starts to the RIGHT of where the rows start, it sits within about one
+# line of the row above, and it fills only one column. A genuinely sparse row (a
+# sub-item, a continuation of a schedule with its own amount) fills two or more,
+# so it is emitted as the row it is.
+#
+# Getting this wrong in the other direction is what a tighter row tolerance costs:
+# once the wrap is correctly a separate LINE, a reader with no fold turns a
+# four-row table into no table at all, because the one-cell line breaks the run.
+.doc_is_wrap <- function(d, prev_left, gap, pitch, n_filled = 1L) {
+  is.finite(prev_left) && is.finite(gap) && is.finite(pitch) &&
+    n_filled <= 1L && gap > 0 && gap <= pitch * 1.4 && min(d$x) > prev_left + 4
+}
+
+# .doc_is_rule(d) -- is this line a printed RULE rather than a row of data?
+#
+# Plenty of reports draw their table borders with CHARACTERS rather than vector
+# strokes: "+--------+--------+", a row of underscores under a total, a line of
+# dots leading to a page number. Those arrive from pdf_data() as ordinary word
+# boxes, and they do two kinds of damage: a rule spanning the full width merges
+# every column band into one (measured: a bordered table proposed ZERO columns),
+# and a rule between rows breaks the run of lines that identifies a table.
+#
+# A rule is a line whose text, with the spaces taken out, is made ONLY of the
+# characters used to draw one, and is long enough not to be a stray dash in a
+# cell. Anything with a letter or a digit in it is data.
+.doc_is_rule <- function(d) {
+  t <- gsub("[[:space:]]", "", paste(as.character(d$text), collapse = ""))
+  nchar(t) >= 3L && !grepl("[^-=_+|~.]", t)
 }
 
 .doc_row_tol <- function(ys, declared = NULL) {
   d <- .doc_num(declared)
   if (!is.na(d) && d > 0) return(d)
-  pitch <- .doc_pitch(ys)
+  # THE LOWER QUARTILE, NOT THE MEDIAN, and this is the whole point of the
+  # function. A table whose row heights alternate -- 10pt, 26pt, 10pt, 26pt, which
+  # is what a schedule with a blank line between pairs looks like -- has a median
+  # gap of 26. Six tenths of that is 15.6, which SWALLOWS every 10pt gap: measured
+  # on the uneven-rows fixture, six rows came back as four, with "R2 R3" and
+  # "20.00 30.00" in single cells. Two rows silently merged is the worst thing
+  # this engine can do. The lower quartile tracks the TIGHTEST spacing the table
+  # actually uses, so the tolerance is safe for every row rather than for the
+  # average one, and on an evenly-set table the two are the same number.
+  pitch <- .doc_pitch(ys, q = 0.25)
   if (is.na(pitch)) return(as.numeric(PARAM_PDF_ROW_TOL))
   # 0.6 of the pitch: comfortably more than the baseline jitter within one row,
   # comfortably less than the distance to the next one. Floored at the statement
@@ -296,9 +349,15 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
         skip <- n_header_rows
       }
     } else if (!is.null(h)) header_tops[[as.character(p)]] <- h$top
+    # OPEN-ENDED means "we do not actually know where this stops": the window runs
+    # to the bottom of the page because the table carries on past it, not because
+    # anyone said it ends there. Those are the windows doc_table_rows() has to
+    # stop by watching the rows themselves (see the row-run rule); a window with a
+    # real declared end is exact and is left alone.
     windows[[length(windows) + 1L]] <- list(page = as.integer(p),
                                             y_min = y_min, y_max = y_max,
-                                            skip = as.integer(skip))
+                                            skip = as.integer(skip),
+                                            open_end = (p != p1) || y_max >= band_bot - 1)
   }
 
   # FOLLOW: the same table, longer on this copy than on the example.
@@ -319,7 +378,8 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
       if (is.null(hp)) break
       windows[[length(windows) + 1L]] <- list(page = as.integer(p),
                                               y_min = hp$top, y_max = band_bot,
-                                              skip = as.integer(n_header_rows))
+                                              skip = as.integer(n_header_rows),
+                                              open_end = TRUE)
       header_tops[[as.character(p)]] <- hp$top
       extended_to <- as.integer(p)
       p <- p + 1L
@@ -454,11 +514,14 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   }
   spilled <- data.frame(page = integer(0), y = numeric(0), x = numeric(0),
                         text = character(0), stringsAsFactors = FALSE)
+  # Where an open-ended window decided the table had ended. Reported, because
+  # "it stopped here" and "there was nothing more" are different facts.
+  stops <- data.frame(page = integer(0), y = numeric(0), stringsAsFactors = FALSE)
 
   if (!length(cols)) {
     return(list(rows = empty_rows(),
                 report = .doc_col_report(cnames, ctypes, integer(0), 0L, tab),
-                spilled = spilled, row_fill = numeric(0), n_rows = 0L,
+                spilled = spilled, stops = stops, row_fill = numeric(0), n_rows = 0L,
                 n_header = 0L, anchor = loc$anchor, confidence = loc$confidence,
                 detail = "this table has no columns drawn on it yet"))
   }
@@ -477,6 +540,25 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
 
     lines <- .doc_lines(w, tab$row_tol)
     skip <- max(0L, .doc_int(win$skip, 0L))
+    # THE ROW RUN, for a window with no real end (see doc_locate_table).
+    #
+    # A table followed to the bottom of the page swallows whatever is printed
+    # under it. Measured on the fixture: a schedule followed onto page 5 came back
+    # with 93 rows instead of 83 -- the fee table and the contact table read as ten
+    # more transactions, each with an amount in the wrong column and a date that
+    # was not a date. Nothing about that looks wrong in a spreadsheet.
+    #
+    # So an open-ended window stops where the ROWS stop: a vertical gap much
+    # bigger than the ones this table has been using AND a line that fills fewer
+    # of its columns than its rows have been filling. Both halves are needed --
+    # the gap alone would cut a table at the whitespace before its own total row,
+    # which is a shape these documents genuinely use, and the column count alone
+    # would cut it at any sparse row. Where it stops is recorded, never silent.
+    open_end <- isTRUE(win$open_end)
+    max_gap <- .doc_num(tab$max_gap, 2.2)
+    kept_top <- numeric(0); kept_fill <- integer(0)
+    win_pitch <- .doc_pitch(w$y, q = 0.25)
+    prev_left <- NA_real_; prev_i <- 0L
     for (li in seq_along(lines)) {
       d <- lines[[li]]
       # THE HEADER, TWO WAYS. Positionally: the leading lines of a window that
@@ -490,8 +572,55 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
          !any(vapply(d$text, function(t) !is.na(.value_from_line(t, "money")),
                      logical(1))))
       if (is_header) { n_header <- n_header + 1L; next }
+      # A printed border is not a row. Skipped without disturbing anything: it
+      # does not count as an unclaimed word, does not end an open window, and
+      # does not enter the row-spacing the stop rule is measured against.
+      if (.doc_is_rule(d)) next
 
       j <- .doc_col_of(d$cx, cols)
+      cells <- rep(NA_character_, length(cols))
+      for (k in which(!is.na(j))) {
+        add <- trimws(d$text[k])
+        cells[j[k]] <- if (is.na(cells[j[k]])) add else paste(cells[j[k]], add)
+      }
+      n_filled <- sum(!is.na(cells) & nzchar(cells))
+
+      # A WRAPPED CELL belongs to the row above it, not to a row of its own.
+      # Folded before the stop rule looks at it, so a wrap never ends a table and
+      # never counts as a row that filled one column.
+      if (prev_i > 0L && n_filled >= 1L &&
+          .doc_is_wrap(d, prev_left, as.numeric(attr(d, "top")) - kept_top[length(kept_top)],
+                       win_pitch, n_filled)) {
+        for (i in seq_along(cells)) if (!is.na(cells[i]) && nzchar(cells[i])) {
+          was <- out[[prev_i]][[cnames[i]]]
+          out[[prev_i]][[cnames[i]]] <-
+            if (is.na(was) || !nzchar(was)) cells[i] else paste(was, cells[i])
+          if (!identical(ctypes[i], "auto"))
+            out[[prev_i]][[paste0(cnames[i], "__value")]] <-
+              .doc_cell_value(out[[prev_i]][[cnames[i]]], ctypes[i])
+        }
+        next
+      }
+
+      # Does the table stop here? Decided BEFORE anything about this line is
+      # recorded, so a line that ends the table contributes neither a row nor an
+      # unclaimed word. Two kept rows are needed first, because the gap this table
+      # uses has to be measured before an unusual one can be recognised.
+      if (open_end && length(kept_top) >= 2L) {
+        gaps <- diff(kept_top); gaps <- gaps[is.finite(gaps) & gaps > 0]
+        pitch_k <- if (length(gaps)) stats::median(gaps) else NA_real_
+        this_top <- as.numeric(attr(d, "top"))
+        gap <- this_top - kept_top[length(kept_top)]
+        typical <- stats::median(kept_fill)
+        if (is.finite(pitch_k) && pitch_k > 0 && is.finite(gap) &&
+            gap > pitch_k * max_gap && n_filled < max(2, ceiling(typical / 2))) {
+          stops <- rbind(stops, data.frame(page = as.integer(win$page),
+                                           y = this_top,
+                                           stringsAsFactors = FALSE))
+          break
+        }
+      }
+
       # Words inside the table's boundary that NO column claimed. Recorded, never
       # silently dropped: a column band drawn a few points too narrow loses a
       # whole column of figures and every remaining row still looks perfect, so
@@ -501,19 +630,16 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         spilled <- rbind(spilled, data.frame(page = s$page, y = s$y, x = s$x,
                                              text = s$text, stringsAsFactors = FALSE))
       }
-      if (all(is.na(j))) next
-      cells <- rep(NA_character_, length(cols))
-      for (k in which(!is.na(j))) {
-        add <- trimws(d$text[k])
-        cells[j[k]] <- if (is.na(cells[j[k]])) add else paste(cells[j[k]], add)
-      }
-      if (!any(!is.na(cells) & nzchar(cells))) next
+      if (all(is.na(j)) || n_filled == 0L) next
+      kept_top <- c(kept_top, as.numeric(attr(d, "top")))
+      kept_fill <- c(kept_fill, n_filled)
       rowno <- rowno + 1L
       rec <- list(page = as.integer(win$page), row = as.integer(rowno))
       for (i in seq_along(cnames)) rec[[cnames[i]]] <- cells[i]
       for (i in seq_along(cnames)) if (!identical(ctypes[i], "auto"))
         rec[[paste0(cnames[i], "__value")]] <- .doc_cell_value(cells[i], ctypes[i])
       out[[length(out) + 1L]] <- rec
+      prev_i <- length(out); prev_left <- min(d$x)
       fills <- c(fills, mean(!is.na(cells) & nzchar(cells)))
     }
   }
@@ -533,9 +659,12 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
 
   list(rows = rows,
        report = .doc_col_report(cnames, ctypes, filled, nrow(rows), tab),
-       spilled = spilled, row_fill = fills, n_rows = nrow(rows),
+       spilled = spilled, stops = stops, row_fill = fills, n_rows = nrow(rows),
        n_header = n_header, anchor = loc$anchor, confidence = loc$confidence,
-       detail = loc$detail, extended_to = loc$extended_to,
+       detail = if (nrow(stops)) paste0(loc$detail, sprintf(
+                  "; it stops on page %d, where the rows stop fitting it",
+                  stops$page[nrow(stops)])) else loc$detail,
+       extended_to = loc$extended_to,
        pages = loc$pages, header_rows = n_header_rows)
 }
 

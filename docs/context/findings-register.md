@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 213 findings, 207 fixed, 3 open, 1 wont-fix, 2 not-a-defect.** The three open are **N15**, **N16** and **N151**. N15 and N16 are blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N151 is open in the harmless direction and is pinned by a test that says so; see the end of this file. N47 is wont-fix with reasons, at the end.
+**Where it stands: 222 findings, 216 fixed, 3 open, 1 wont-fix, 2 not-a-defect.** The three open are **N15**, **N16** and **N151**. N15 and N16 are blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N151 is open in the harmless direction and is pinned by a test that says so; see the end of this file. N47 is wont-fix with reasons, at the end.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -964,4 +964,88 @@ a real row with nothing on screen to notice. Pinned by *"a table with no figures
 anywhere keeps its heading line as a row, visibly"*. It would take font weight or
 size from `pdf_data(font_info = TRUE)` to do better, which is not available on every
 pdftools build this ships against.
+
+## What sixteen awkward documents found (N152-N160)
+
+Not review and not a sweep: sixteen fixtures were built for the shapes a printed
+report actually uses (`tests/testthat/helper-doc-hard.R`) and run against the
+report extractor. **Nine of them broke it.** Every finding below is a
+measurement, and every one is now a test in `tests/testthat/test-doc_hard.R` that
+records the number it started from.
+
+They were measured under WebR -- R 4.6.0 compiled to WebAssembly, run from Node
+with this repository mounted -- because the machine doing the work had no R and
+no way to install one. See [`../../tools/webr/README.md`](../../tools/webr/README.md).
+The report extractor is base-R only by design, which is what made that possible.
+
+**N152 (rows merged by an uneven row height) - fixed. The worst of them.** A
+table with 10pt and 26pt rows alternating has a median gap of 26; six tenths of
+that swallowed every 10pt gap. Six rows came back as **four**, with `R2 R3` in one
+cell and `20.00 30.00` in another. Two rows merged is the silent corruption this
+project exists to prevent, there is no reconciliation here to catch it, and
+nothing about the output looks wrong. The tolerance now follows the **lower
+quartile** of the gaps -- the tightest spacing the table actually uses -- so it is
+right for every row rather than for the average one. On an evenly-set table the
+two numbers are identical, so nothing else moved.
+
+**N153 (a followed table swallowed the tables under it) - fixed.** A schedule
+followed onto page 5 returned **93 rows instead of 83**: a fee table and a contact
+table read as ten more transactions. An open-ended window now stops where the
+rows stop -- a gap much bigger than the ones this table has been using AND a line
+filling fewer of its columns -- and where it stopped is reported. Both halves are
+needed: the gap alone would cut a schedule at the whitespace before its own total
+row, which is N156.
+
+**N154 (two schedules joined into one) - fixed.** Two different accounts'
+schedules, consecutive pages, identical headers, identical geometry: read as
+**one table of twelve rows** under the first account's name. Nothing measurable
+separated them except that page two carried its own heading. That is now the
+deciding test -- a genuine continuation page opens with the repeated column names
+and nothing above them.
+
+**N155 (a continuation header that said "(continued)") - fixed.** An 18-row
+schedule came back as two tables of eight and ten, because the header on page 2
+was not identical to page 1's. A repeated header now matches on prefix -- and
+still refuses the same column names in a **different order**, which is a
+different table that happens to share a vocabulary.
+
+**N156 (the total row left out) - fixed.** A schedule sets its total apart with a
+blank line, an underline and a row with two cells filled. Every one of those ends
+a run of tabular lines, so the row somebody actually came for was the row left
+behind. A run now reaches down past the break for up to three lines that still
+land in at least two of its own bands, skipping printed rules. The same fix
+recovers a total indented past the first column.
+
+**N157 (a bordered table proposed no columns) - fixed.** `+--------+-------+`
+rules drawn as characters span the full width and merge every column band into
+one, so a bordered table looked like nothing at all: **zero tables proposed**.
+Printed rules are now transparent -- they neither start a run, nor end one, nor
+contribute a band, nor become a row.
+
+**N158 (a condensed table read as one cell per row) - fixed.** 2pt gutters with a
+`|` glyph in them, narrower than any word space. A lone vertical bar is a border,
+not a value: dropped at the one point both the proposer and the reader come
+through, which separates the columns on real whitespace AND stops a cell coming
+out as `| 1,240.55`.
+
+**N159 (a two-column table was not a table) - fixed.** A valuation of item and
+amount, five rows: **proposed as nothing**. Two columns are now allowed on a
+longer run -- four consecutive rows in the same two bands. The front matter of an
+ordinary report still proposes no tables, which is what the three-cell rule was
+protecting.
+
+**N160 (a wrapped description ended its table) - fixed, and caused by N152's
+fix.** Once the tighter tolerance correctly made a wrapped line its own line, the
+one-cell line broke the run and the table was **not proposed at all**. A wrap --
+indented past where the rows start, within a line of the row above, filling one
+column -- is folded into that row. Worth recording as a pair: the first fix was
+right and made the second one necessary, which is the argument for building the
+fixtures before changing the rule.
+
+**Still limitations, and asserted as tests.** Two tables printed side by side
+read as one of six columns (the ink is identical to a genuine six-column table);
+a spanning header cell becomes the proposed table name; a table with no figures
+anywhere keeps its heading line as a row (N151). Each has a test asserting the
+CURRENT behaviour, because a limitation nobody wrote down cannot be told apart
+from a bug nobody noticed.
 
