@@ -116,6 +116,11 @@ UPLOADS_DIR        <- CONFIG$paths$uploads         # every uploaded statement + 
 REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell our team" raises (local-only)
 FIELDS_DIR         <- CONFIG$paths$fields          # curated mode:fields (IRD/form) templates
 USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the app
+# mode:document templates -- a report carrying many tables of different shapes.
+# %||% so a settings file written before this existed still starts: an absent path
+# is a missing folder, which both loaders treat as "no templates", not an error.
+DOC_DIR            <- CONFIG$paths$docs %||% "doc_templates"
+USER_DOC_DIR       <- CONFIG$paths$user_docs %||% "doc_templates_user"
 DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
 LEXICON_PATH       <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexicon.yaml")  # recognition vocabularies
 # The bundled specimen statement (public, synthetic, ships with the app) that "Try
@@ -207,6 +212,19 @@ PALETTE <- list(ok = "#0f7a37", bad = "#b3261e", warn = "#b7791f", meta = "#a15c
 # thing with its own alpha. Kept as a helper so a fill is visibly the SAME colour
 # as its outline rather than a second literal that has to be remembered.
 pal_fill <- function(name, alpha) paste0(PALETTE[[name]], alpha)
+
+# .is_txn_result(res) -- is this a TRANSACTION statement, as opposed to one of the
+# two document kinds that carry no transactions at all (a form of labelled values,
+# or a report of many tables)?
+#
+# THE WHOLE CONVERT PAGE HANGS OFF THIS ONE QUESTION. Money-in/money-out cards, the
+# balance proof, the transactions table, the trust headline, "not the right bank?"
+# -- every one of them reads a transaction frame that a form or a report simply
+# does not have. Each of those outputs used to ask `!identical(res$kind, "form")`
+# for itself, which was correct while "form" was the only exception; adding a
+# second one that way would mean six places that each have to remember the list.
+# Asking it in one place is the only version of this that stays right.
+.is_txn_result <- function(res) !isTRUE((res$kind %||% "") %in% c("form", "tables"))
 
 APP_CSS <- file.path("www", "app.css")
 if (!file.exists(APP_CSS))
@@ -444,10 +462,17 @@ ui <- fluidPage(
           uiOutput("cv_rematch"),
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
+          # Report result -- many tables, no transactions (kind == "tables").
+          uiOutput("cv_tables"),
           # Before any conversion, a clear empty state rather than bare headers.
           conditionalPanel("output.cv_has_result != true && output.cv_has_batch != true",
                            uiOutput("cv_empty")),
-          conditionalPanel("output.cv_has_result == true && output.cv_is_form != true",
+          # The transaction half of the page: figures, the balance proof, the rows.
+          # A form and a report have none of those, and each is rendered by its own
+          # output above -- so both are excluded here, not just the form.
+          conditionalPanel(paste("output.cv_has_result == true &&",
+                                 "output.cv_is_form != true &&",
+                                 "output.cv_is_tables != true"),
             # Figures + transactions render only when the parse produced rows: an
             # unsupported or failed result must never show zero-money cards and an
             # empty graph under its honest verdict.
@@ -564,7 +589,8 @@ ui <- fluidPage(
                   accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
         radioButtons("ts_doctype", "What kind of document is this?",
           c("A bank or card statement - a table of transactions" = "statement",
-            "Something else - labelled values (an IRD form, an account summary, a letter)" = "other"),
+            "Something else - labelled values (an IRD form, an account summary, a letter)" = "other",
+            "A report - several tables of different shapes on the same document" = "report"),
           selected = "statement"),
         conditionalPanel("input.ts_doctype == 'statement'",
           actionButton("ts_go", "Open the toolkit", class = "btn-primary btn-lg"),
@@ -576,7 +602,16 @@ ui <- fluidPage(
           div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
             strong("An 'Other' document is read differently"),
             p(style = "margin:6px 0 0;color:#555",
-              "No transaction table, no running balance - so the completeness checks don't apply. You point at the values you want and check each one yourself.")))),
+              "No transaction table, no running balance - so the completeness checks don't apply. You point at the values you want and check each one yourself."))),
+        conditionalPanel("input.ts_doctype == 'report'",
+          div(style = "padding:10px 12px;background:#fffbe9;border:1px solid #f0c36d;border-radius:8px;margin-top:4px",
+            strong("A report is read differently again"),
+            p(style = "margin:6px 0 0;color:#555",
+              paste("Many tables, different shapes, several to a page - so there is no",
+                    "one table to check and no running balance behind it. The tool finds",
+                    "the tables and shows you what it found; you name them, correct any",
+                    "it got wrong, and check the result yourself. The output is a file to",
+                    "download - a report never goes to the dashboards."))))),
       # One flow: the toolkit above is THE way to add a statement template (its
       # Advanced tab covers field-by-field / YAML editing, so there is no separate
       # "build by hand" path). 'Other' documents (labelled values) are set up with
@@ -648,6 +683,84 @@ ui <- fluidPage(
         tags$summary(class = "muted", style = "cursor:pointer",
                      "The template file this will save"),
         div(class = "mono", verbatimTextOutput("fb_yaml")))
+    ),
+    # ---- The REPORT builder: many tables on one document ---------------------
+    #
+    # THE DOCUMENT LEADS, and here that matters more than anywhere else in the
+    # app. A forty-page report carries thirty-odd tables, and asking someone to
+    # draw thirty tables by hand is asking for a template that is never finished
+    # -- which is worse than none, because a half-drawn one produces confident
+    # output with a column missing. So the first thing this page does is FIND
+    # them, and the person's job is to confirm, name and correct. Every table it
+    # found is drawn on the page in front of her, and the list down the right is
+    # the way round a document too long to scroll.
+    conditionalPanel("input.ts_doctype == 'report'",
+    br(),
+    conditionalPanel("output.rb_has_doc != true",
+      p(class = "muted", "Upload the report at the top of this page first (a PDF).")),
+    conditionalPanel("output.rb_has_doc == true",
+    fluidRow(
+      column(7,
+        div(style = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px",
+          numericInput("rb_page", "Page", 1, min = 1, step = 1, width = "120px"),
+          actionButton("rb_prev_page", "\u2190", class = "btn-default btn-sm"),
+          actionButton("rb_next_page", "\u2192", class = "btn-default btn-sm"),
+          uiOutput("rb_click_note")),
+        # Click sets a point (a start or an end); drag draws a box (a new table,
+        # or one side of a label/value pair). Both, on the same picture, because
+        # both are things you do to the same document.
+        plotOutput("rb_plot", height = "700px", click = "rb_click",
+          brush = brushOpts("rb_brush", direction = "xy", delay = 1500,
+                            delayType = "debounce"))),
+      column(5,
+        strong("1. Find what is on it"),
+        div(style = "margin:6px 0 10px",
+          actionButton("rb_scan", "Find the tables", class = "btn-primary"),
+          actionButton("rb_clear", "Start again", class = "btn-default")),
+        uiOutput("rb_scan_note"),
+        tags$hr(style = "margin:12px 0 10px"),
+        strong("2. Everything found"),
+        p(class = "muted", style = "margin:2px 0 8px",
+          "Click one to go to it and correct it."),
+        div(style = "max-height:320px;overflow-y:auto;border:1px solid #e3e3e3;border-radius:6px;padding:6px",
+            uiOutput("rb_nav")),
+        tags$hr(style = "margin:12px 0 10px"),
+        strong("3. The one you picked"),
+        uiOutput("rb_edit"),
+        tags$hr(style = "margin:12px 0 10px"),
+        strong("4. Add one it missed"),
+        p(class = "muted", style = "margin:2px 0 6px",
+          "Drag a box round the whole table (or round one value), then:"),
+        div(style = "display:flex;gap:6px;flex-wrap:wrap",
+          actionButton("rb_add_table", "Add as a table", class = "btn-default"),
+          actionButton("rb_set_label", "This box is a label", class = "btn-default"),
+          actionButton("rb_add_pair", "...and this box is its value", class = "btn-default")),
+        uiOutput("rb_pair_note"),
+        tags$hr(style = "margin:12px 0 10px"),
+        strong("5. Check what comes out"),
+        div(style = "margin:6px 0", actionButton("rb_preview", "Read the whole document")),
+        tags$hr(style = "margin:12px 0 10px"),
+        strong("6. Name it and save"),
+        fluidRow(
+          column(6, textInput("rb_bank", "Issuer", "NewIssuer")),
+          column(6, textInput("rb_type", "Kind of report", "report"))),
+        textInput("rb_id", "Saves under this name", "new_report", width = "100%"),
+        textAreaInput("rb_fp", "A phrase printed on it (one per line)",
+                      rows = 2, width = "100%", value = ""),
+        helpText(class = "muted",
+                 "Recognised by these - all must appear, and they must not be words every report carries."),
+        actionButton("rb_save", "Save template", class = "btn-primary"),
+        uiOutput("rb_msg"))),
+    h4("What will be pulled out"), uiOutput("rb_prev_status"),
+    # The rows shown are the table PICKED in the list above, which is also the one
+    # outlined on the page: one selection, three views of it, never three tables.
+    uiOutput("rb_prev_head"), DTOutput("rb_prev_tbl"),
+    h5(style = "margin-top:16px", "Every table on this report"),
+    tableOutput("rb_prev_summary"),
+    tags$details(style = "margin-top:14px",
+      tags$summary(class = "muted", style = "cursor:pointer",
+                   "The template file this will save"),
+      div(class = "mono", verbatimTextOutput("rb_yaml"))))
     )
     ),
     # ---- Admin (insights + batch intake) ------------------------------
@@ -2409,6 +2522,616 @@ server <- function(input, output, session) {
       else span(class = "bad", "Couldn't save - check the fields."))
   })
 
+  # ---- The REPORT builder: a document that is many tables --------------------
+  #
+  # The state is one place on purpose. A report template is a LIST of tables and
+  # a LIST of values, both of which the person adds to, renames, corrects and
+  # deletes; scattering that across a dozen reactiveVals is how one of them ends
+  # up out of step with the picture on the page.
+  rb <- reactiveValues(tables = list(), pairs = list(), sel = NULL,
+                       click = NULL, label_box = NULL, scanned = FALSE,
+                       preview = NULL, outputs = character(0))
+
+  rb_doc <- reactive({
+    f <- input$ts_file
+    if (!is.null(f) && identical(tolower(tools::file_ext(f$name %||% "")), "pdf"))
+      return(f$datapath)
+    NULL
+  })
+  output$rb_has_doc <- reactive({ !is.null(rb_doc()) })
+  outputOptions(output, "rb_has_doc", suspendWhenHidden = FALSE)
+
+  rb_input <- reactive({
+    p <- rb_doc(); req(p)
+    tryCatch(read_input(p), error = function(e) NULL)
+  })
+  rb_n_pages <- reactive({
+    i <- rb_input(); if (is.null(i)) return(NA_integer_)
+    n <- suppressWarnings(as.integer(i$page_count %||% length(i$words %||% list())))
+    if (is.na(n) || n < 1L) NA_integer_ else n
+  })
+  # THE FRAME IS THE DOCUMENT'S OWN PAGE SIZE, not A4. The picture on screen is
+  # drawn in the page's point space (render_page_view returns pdf_pagesize), and
+  # every box stored here comes off that picture -- so making the template's frame
+  # the same thing means the number drawn and the number saved are one number.
+  # Anything else is an invisible offset that only shows up as a column band
+  # sitting slightly wrong on a page nobody re-checked.
+  rb_frame <- reactive({
+    i <- rb_input()
+    w <- suppressWarnings(as.numeric((i$page_width %||% NA_real_)[1]))
+    h <- suppressWarnings(as.numeric((i$page_height %||% NA_real_)[1]))
+    list(ref_width  = if (is.na(w) || w <= 0) .A4_W else w,
+         ref_height = if (is.na(h) || h <= 0) .A4_H else h)
+  })
+
+  observe({
+    n <- rb_n_pages(); if (is.na(n)) return()
+    updateNumericInput(session, "rb_page", max = n,
+      label = if (n == 1L) "Page (1 page)" else sprintf("Page (1 to %d)", n))
+  })
+  observeEvent(input$rb_prev_page, updateNumericInput(session, "rb_page",
+    value = max(1L, .clamp_page(input$rb_page, rb_n_pages()) - 1L)))
+  observeEvent(input$rb_next_page, {
+    n <- rb_n_pages(); if (is.na(n)) return()
+    updateNumericInput(session, "rb_page",
+      value = min(n, .clamp_page(input$rb_page, n) + 1L))
+  })
+
+  # ---- 1. Find what is on it ------------------------------------------------
+  observeEvent(input$rb_scan, {
+    i <- rb_input()
+    if (is.null(i)) { showNotification("Couldn't read that file.", type = "error"); return() }
+    fr <- rb_frame()
+    withProgress(message = "Reading the document\u2026", value = 0.05, {
+      incProgress(0.15, detail = "finding tables")
+      tabs <- tryCatch(propose_tables(i, fr), error = function(e) list())
+      incProgress(0.6, detail = "finding values")
+      prs <- tryCatch(propose_pairs(i, fr, 1L), error = function(e) list())
+      incProgress(0.2)
+      rb$tables <- tabs
+      rb$pairs <- lapply(prs, function(p) { p$name <- doc_suggest_name(p$label_text); p })
+      rb$scanned <- TRUE
+      rb$preview <- NULL; rb$outputs <- character(0)
+      rb$sel <- if (length(tabs)) "t1" else if (length(prs)) "p1" else NULL
+      if (length(tabs)) updateNumericInput(session, "rb_page",
+                                           value = as.integer(tabs[[1]]$start$page))
+    })
+    # Offer a fingerprint only where the box is still empty: a phrase already
+    # typed is a decision, and overwriting one silently is how a template ends up
+    # recognising something nobody chose.
+    if (!nzchar(trimws(input$rb_fp %||% ""))) {
+      # The first lines of PAGE ONE -- the report's own title block, which is what
+      # identifies the layout. Offered only if the phrase would actually be
+      # ACCEPTED: the same gate the save runs (distinctive enough to identify a
+      # layout, and naming no person), so the box is never pre-filled with
+      # something that is then refused, and never with a customer's name.
+      ph <- safe(fingerprint_phrases((i$pages %||% "")[1]), character(0))
+      ph <- as.character(ph); ph <- ph[!is.na(ph) & nchar(ph) >= 12L]
+      ph <- Filter(function(x)
+        !length(safe(.fp_fingerprint_problems(x, min_score = 1L, fmt = "pdf"),
+                     "unavailable")), utils::head(ph, 6L))
+      if (length(ph)) updateTextAreaInput(session, "rb_fp",
+                                          value = paste(utils::head(ph, 1L), collapse = "\n"))
+    }
+  })
+
+  observeEvent(input$rb_clear, {
+    rb$tables <- list(); rb$pairs <- list(); rb$sel <- NULL
+    rb$click <- NULL; rb$label_box <- NULL; rb$scanned <- FALSE
+    rb$preview <- NULL; rb$outputs <- character(0)
+  })
+
+  output$rb_scan_note <- renderUI({
+    if (!isTRUE(rb$scanned)) return(p(class = "muted", style = "margin:2px 0",
+      "Nothing read yet. This reads every page, so a long report takes a moment."))
+    n <- length(rb$tables); v <- length(rb$pairs)
+    if (!n && !v) return(div(class = "note", style = "margin:2px 0",
+      paste("No tables found. A table here is three or more lines that each break",
+            "into three or more columns at the same places - if this document sets",
+            "its tables some other way, draw them by hand at step 4.")))
+    p(class = "muted", style = "margin:2px 0",
+      sprintf("Found %d table%s and %d value%s. Check each one against the page.",
+              n, if (n == 1L) "" else "s", v, if (v == 1L) "" else "s"))
+  })
+
+  # ---- 2. The navigator -----------------------------------------------------
+  #
+  # Down the right, because a forty-page report cannot be navigated by scrolling
+  # it. Each row says the thing that decides whether to look at it: how it will be
+  # found on the NEXT copy of this document.
+  output$rb_nav <- renderUI({
+    if (!length(rb$tables) && !length(rb$pairs))
+      return(p(class = "muted", style = "margin:4px",
+               "Nothing yet - press \u201cFind the tables\u201d, or draw one at step 4."))
+    row <- function(id, title, sub, colour, selected) div(
+      style = paste0("padding:5px 7px;border-left:3px solid ", colour,
+                     ";margin-bottom:3px;border-radius:0 4px 4px 0;background:",
+                     if (selected) "#eef4ff" else "transparent"),
+      actionLink(id, title, style = "font-weight:600"),
+      div(class = "muted", style = "font-size:12px", sub))
+    tabs <- lapply(seq_along(rb$tables), function(i) {
+      tb <- rb$tables[[i]]
+      p0 <- as.integer(tb$start$page); p1 <- as.integer(tb$end$page %||% p0)
+      row(paste0("rb_pick_t", i), tb$name %||% sprintf("Table %d", i),
+          sprintf("%s \u00b7 %d column%s%s",
+                  if (p1 > p0) sprintf("pages %d-%d", p0, p1) else sprintf("page %d", p0),
+                  length(.doc_columns(tb)),
+                  if (length(.doc_columns(tb)) == 1L) "" else "s",
+                  if (!is.null(tb$n_rows)) sprintf(" \u00b7 about %d rows", tb$n_rows) else ""),
+          PALETTE$ok, identical(rb$sel, paste0("t", i)))
+    })
+    vals <- lapply(seq_along(rb$pairs), function(i) {
+      pr <- rb$pairs[[i]]
+      row(paste0("rb_pick_p", i), pr$label_text %||% pr$name %||% sprintf("Value %d", i),
+          sprintf("page %d \u00b7 reads \u201c%s\u201d",
+                  as.integer(pr$value$page %||% 1L),
+                  substr(pr$read %||% "", 1, 40)),
+          PALETTE$warn, identical(rb$sel, paste0("p", i)))
+    })
+    tagList(
+      if (length(tabs)) tagList(strong(style = "font-size:12px", "TABLES"), tabs),
+      if (length(vals)) tagList(tags$hr(style = "margin:8px 0"),
+                                strong(style = "font-size:12px", "VALUES"), vals))
+  })
+
+  # One observer per possible row, created ONCE. A Shiny observer cannot attach to
+  # a control that does not exist yet, and re-creating them inside the renderUI
+  # would stack another observer on every row each time the list redrew -- so a
+  # single click would eventually fire dozens of times.
+  .RB_MAX_ROWS <- 80L
+  lapply(seq_len(.RB_MAX_ROWS), function(i) {
+    observeEvent(input[[paste0("rb_pick_t", i)]], {
+      if (i > length(rb$tables)) return()
+      rb$sel <- paste0("t", i)
+      updateNumericInput(session, "rb_page",
+                         value = as.integer(rb$tables[[i]]$start$page))
+    }, ignoreInit = TRUE)
+    observeEvent(input[[paste0("rb_pick_p", i)]], {
+      if (i > length(rb$pairs)) return()
+      rb$sel <- paste0("p", i)
+      updateNumericInput(session, "rb_page",
+                         value = as.integer(rb$pairs[[i]]$value$page %||% 1L))
+    }, ignoreInit = TRUE)
+  })
+
+  # .rb_sel_kind() / .rb_sel_i() -- which thing is selected, if any.
+  .rb_sel_kind <- reactive({ s <- rb$sel; if (is.null(s)) NULL else substr(s, 1, 1) })
+  .rb_sel_i <- reactive({
+    s <- rb$sel; if (is.null(s)) return(NA_integer_)
+    suppressWarnings(as.integer(substr(s, 2, nchar(s))))
+  })
+
+  # ---- 3. Correcting the one that is picked ---------------------------------
+  output$rb_edit <- renderUI({
+    k <- .rb_sel_kind(); i <- .rb_sel_i()
+    if (is.null(k) || is.na(i)) return(p(class = "muted", style = "margin:2px 0",
+      "Nothing picked. Click one in the list above."))
+    if (identical(k, "t")) {
+      if (i > length(rb$tables)) return(NULL)
+      tb <- rb$tables[[i]]
+      cn <- .doc_column_names(tb)
+      tagList(
+        textInput("rb_name", "Call this table", tb$name %||% "", width = "100%"),
+        div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px",
+          actionButton("rb_set_start", "Starts where I clicked", class = "btn-default btn-sm"),
+          actionButton("rb_set_end", "Ends where I clicked", class = "btn-default btn-sm")),
+        p(class = "muted", style = "margin:0 0 8px;font-size:12px",
+          sprintf("Now: page %d at %.0f down, to page %d at %.0f down.",
+                  as.integer(tb$start$page), .doc_num(tb$start$y, 0),
+                  as.integer(tb$end$page %||% tb$start$page), .doc_num(tb$end$y, 0))),
+        fluidRow(
+          column(6, numericInput("rb_hdr", "Header lines", .doc_int(tb$header_rows, 1L),
+                                 min = 0, max = 4, step = 1)),
+          column(6, numericInput("rb_fill", "Expect this full", .doc_num(tb$min_fill, 0.5),
+                                 min = 0, max = 1, step = 0.05))),
+        checkboxInput("rb_follow", "Keep going if it runs longer here than on this example",
+                      isTRUE(tb$follow)),
+        selectInput("rb_col_pick", "Column", choices = stats::setNames(seq_along(cn), cn),
+                    width = "100%"),
+        fluidRow(
+          column(7, textInput("rb_col_name", "Call it", "", width = "100%")),
+          column(5, selectInput("rb_col_type", "Kind",
+                                c("auto", "text", "money", "date", "number")))),
+        checkboxInput("rb_col_blank", "This column may legitimately be empty", FALSE),
+        div(style = "display:flex;gap:6px;flex-wrap:wrap",
+          actionButton("rb_col_apply", "Apply to this column", class = "btn-default btn-sm"),
+          actionButton("rb_apply", "Apply the settings above", class = "btn-primary btn-sm"),
+          actionButton("rb_drop", "Remove this table", class = "btn-default btn-sm")))
+    } else {
+      if (i > length(rb$pairs)) return(NULL)
+      pr <- rb$pairs[[i]]
+      tagList(
+        textInput("rb_pname", "Call this value", pr$name %||% "", width = "100%"),
+        p(class = "muted", style = "margin:0 0 8px;font-size:12px",
+          sprintf("Its wording: \u201c%s\u201d. It reads: \u201c%s\u201d.",
+                  pr$label_text %||% "(none)", pr$read %||% "")),
+        selectInput("rb_ptype", "Kind of value", c("text", "money", "date", "date_range"),
+                    selected = pr$type %||% "text"),
+        div(style = "display:flex;gap:6px",
+          actionButton("rb_papply", "Apply", class = "btn-primary btn-sm"),
+          actionButton("rb_pdrop", "Remove this value", class = "btn-default btn-sm")))
+    }
+  })
+
+  # Filling the column controls from the column that was picked. Without this the
+  # boxes keep the LAST column's settings and Apply writes them onto this one.
+  observeEvent(input$rb_col_pick, {
+    k <- .rb_sel_kind(); i <- .rb_sel_i()
+    if (!identical(k, "t") || is.na(i) || i > length(rb$tables)) return()
+    j <- suppressWarnings(as.integer(input$rb_col_pick)); if (is.na(j)) return()
+    cols <- .doc_columns(rb$tables[[i]]); if (j > length(cols)) return()
+    updateTextInput(session, "rb_col_name", value = as.character(cols[[j]]$name %||% ""))
+    updateSelectInput(session, "rb_col_type",
+                      selected = as.character(cols[[j]]$type %||% "auto"))
+    updateCheckboxInput(session, "rb_col_blank", value = isTRUE(cols[[j]]$may_be_blank))
+  })
+
+  observeEvent(input$rb_col_apply, {
+    i <- .rb_sel_i(); if (!identical(.rb_sel_kind(), "t") || is.na(i)) return()
+    j <- suppressWarnings(as.integer(input$rb_col_pick)); if (is.na(j)) return()
+    tb <- rb$tables[[i]]; cols <- .doc_columns(tb); if (j > length(cols)) return()
+    nm <- trimws(input$rb_col_name %||% "")
+    if (nzchar(nm)) cols[[j]]$name <- nm
+    cols[[j]]$type <- input$rb_col_type %||% "auto"
+    cols[[j]]$may_be_blank <- isTRUE(input$rb_col_blank)
+    tb$columns <- cols
+    rb$tables[[i]] <- tb
+    showNotification(sprintf("Column '%s' updated.", cols[[j]]$name), type = "message")
+  })
+
+  observeEvent(input$rb_apply, {
+    i <- .rb_sel_i(); if (!identical(.rb_sel_kind(), "t") || is.na(i)) return()
+    tb <- rb$tables[[i]]
+    nm <- trimws(input$rb_name %||% "")
+    if (nzchar(nm)) tb$name <- nm
+    tb$header_rows <- max(0L, .doc_int(input$rb_hdr, 1L))
+    mf <- .doc_num(input$rb_fill, 0.5)
+    tb$min_fill <- if (is.na(mf)) 0.5 else max(0, min(1, mf))
+    tb$follow <- isTRUE(input$rb_follow)
+    rb$tables[[i]] <- tb
+    showNotification("Saved to this table.", type = "message")
+  })
+
+  observeEvent(input$rb_drop, {
+    i <- .rb_sel_i(); if (!identical(.rb_sel_kind(), "t") || is.na(i)) return()
+    rb$tables <- rb$tables[-i]
+    rb$sel <- if (length(rb$tables)) "t1" else NULL
+  })
+
+  observeEvent(input$rb_papply, {
+    i <- .rb_sel_i(); if (!identical(.rb_sel_kind(), "p") || is.na(i)) return()
+    pr <- rb$pairs[[i]]
+    nm <- doc_suggest_name(input$rb_pname %||% "")
+    if (nzchar(nm)) pr$name <- nm
+    pr$type <- input$rb_ptype %||% "text"
+    rb$pairs[[i]] <- pr
+    showNotification("Saved to this value.", type = "message")
+  })
+
+  observeEvent(input$rb_pdrop, {
+    i <- .rb_sel_i(); if (!identical(.rb_sel_kind(), "p") || is.na(i)) return()
+    rb$pairs <- rb$pairs[-i]
+    rb$sel <- if (length(rb$pairs)) "p1" else NULL
+  })
+
+  # ---- Clicking the page: a start, or an end --------------------------------
+  observeEvent(input$rb_click, {
+    cl <- input$rb_click; if (is.null(cl)) return()
+    rb$click <- list(page = .clamp_page(input$rb_page, rb_n_pages()),
+                     x = as.numeric(cl$x), y = as.numeric(cl$y))
+  })
+  output$rb_click_note <- renderUI({
+    cl <- rb$click
+    if (is.null(cl)) return(span(class = "muted", style = "font-size:12px",
+      "Click the page to mark a line; drag to draw a box."))
+    span(class = "muted", style = "font-size:12px",
+         sprintf("Marked: page %d, %.0f down the page.", cl$page, cl$y))
+  })
+  .rb_set_edge <- function(which_edge) {
+    i <- .rb_sel_i()
+    if (!identical(.rb_sel_kind(), "t") || is.na(i)) {
+      showNotification("Pick a table in the list first.", type = "warning"); return()
+    }
+    cl <- rb$click
+    if (is.null(cl)) {
+      showNotification("Click the page where it should start or end first.",
+                       type = "warning"); return()
+    }
+    tb <- rb$tables[[i]]
+    if (identical(which_edge, "start")) tb$start <- list(page = as.integer(cl$page), y = round(cl$y, 1))
+    else                                tb$end   <- list(page = as.integer(cl$page), y = round(cl$y, 1))
+    # An end before the start can never contain anything, and is easier to fix
+    # here than to explain when the table comes out empty.
+    p0 <- as.integer(tb$start$page); p1 <- as.integer(tb$end$page %||% p0)
+    if (p1 < p0 || (p1 == p0 && .doc_num(tb$end$y, 0) <= .doc_num(tb$start$y, 0))) {
+      showNotification("That would end the table before it starts - not applied.",
+                       type = "warning", duration = 6)
+      return()
+    }
+    rb$tables[[i]] <- tb
+  }
+  observeEvent(input$rb_set_start, .rb_set_edge("start"))
+  observeEvent(input$rb_set_end, .rb_set_edge("end"))
+
+  # ---- 4. Adding one it missed ----------------------------------------------
+  observeEvent(input$rb_add_table, {
+    br <- input$rb_brush; i <- rb_input()
+    if (is.null(br) || is.null(i)) {
+      showNotification("Drag a box round the whole table first.", type = "warning"); return()
+    }
+    pg <- .clamp_page(input$rb_page, rb_n_pages())
+    w <- .doc_page_words(i, pg, rb_frame())
+    sel <- if (is.null(w)) NULL else
+      w[w$cx >= br$xmin & w$cx <= br$xmax & w$cy >= br$ymin & w$cy <= br$ymax, , drop = FALSE]
+    if (is.null(sel) || !nrow(sel)) {
+      showNotification("Nothing readable in that box.", type = "warning"); return()
+    }
+    gap <- .doc_gap_for(sel)
+    bands <- .doc_bands(sel, gap)
+    lines <- .doc_lines(sel)
+    hdr <- if (length(lines))
+      vapply(.doc_cells(lines[[1]], gap), function(cell) paste(cell$text, collapse = " "),
+             character(1)) else character(0)
+    cols <- lapply(seq_along(bands), function(j) list(
+      name = if (j <= length(hdr) && nzchar(trimws(hdr[j]))) trimws(hdr[j])
+             else sprintf("column_%d", j),
+      x_min = bands[[j]]$x_min, x_max = bands[[j]]$x_max, type = "auto"))
+    rb$tables <- c(rb$tables, list(list(
+      name = sprintf("Table on page %d", pg),
+      start = list(page = as.integer(pg), y = round(br$ymin, 1)),
+      end   = list(page = as.integer(pg), y = round(br$ymax, 1)),
+      header_rows = 1L, follow = FALSE, min_fill = 0.5,
+      anchor = list(header_text = as.list(hdr), first_column = list()),
+      columns = cols, n_rows = max(0L, length(lines) - 1L))))
+    rb$sel <- paste0("t", length(rb$tables))
+    session$resetBrush("rb_brush")
+    showNotification(sprintf("Added a table with %d column(s) - name it above.",
+                             length(cols)), type = "message", duration = 6)
+  })
+
+  .rb_box_text <- function(pg, box) {
+    w <- .doc_page_words(rb_input(), pg, rb_frame())
+    if (is.null(w)) return("")
+    trimws(paste(.doc_box_words(w, box)$text, collapse = " "))
+  }
+  .rb_brush_box <- function(br, pg) list(page = as.integer(pg),
+    x_min = round(br$xmin, 1), x_max = round(br$xmax, 1),
+    y_min = round(br$ymin, 1), y_max = round(br$ymax, 1))
+
+  observeEvent(input$rb_set_label, {
+    br <- input$rb_brush
+    if (is.null(br)) { showNotification("Drag a box round the label first.", type = "warning"); return() }
+    pg <- .clamp_page(input$rb_page, rb_n_pages())
+    box <- .rb_brush_box(br, pg)
+    txt <- .rb_box_text(pg, box)
+    if (!nzchar(txt)) {
+      showNotification("Nothing readable in that box - a label has to be words on the page.",
+                       type = "warning", duration = 6); return()
+    }
+    rb$label_box <- list(box = box, text = txt)
+    session$resetBrush("rb_brush")
+  })
+  output$rb_pair_note <- renderUI({
+    lb <- rb$label_box
+    if (is.null(lb)) return(NULL)
+    div(class = "note", style = "margin:6px 0",
+        sprintf("Label marked: \u201c%s\u201d. Now drag a box round its value and press the button beside it.",
+                lb$text))
+  })
+  observeEvent(input$rb_add_pair, {
+    lb <- rb$label_box
+    if (is.null(lb)) { showNotification("Mark the label box first.", type = "warning"); return() }
+    br <- input$rb_brush
+    if (is.null(br)) { showNotification("Drag a box round the value.", type = "warning"); return() }
+    pg <- .clamp_page(input$rb_page, rb_n_pages())
+    vbox <- .rb_brush_box(br, pg)
+    vtxt <- .rb_box_text(pg, vbox)
+    kind <- if (!is.na(.value_from_line(vtxt, "money"))) "money"
+            else if (!is.na(.value_from_line(vtxt, "date"))) "date" else "text"
+    rb$pairs <- c(rb$pairs, list(list(
+      name = doc_suggest_name(lb$text), label_text = lb$text,
+      label = lb$box, value = vbox, type = kind, read = vtxt)))
+    rb$label_box <- NULL
+    rb$sel <- paste0("p", length(rb$pairs))
+    session$resetBrush("rb_brush")
+    showNotification(sprintf("Added \u201c%s\u201d - it reads \u201c%s\u201d.", lb$text, vtxt),
+                     type = "message", duration = 6)
+  })
+
+  # ---- The picture ----------------------------------------------------------
+  rb_render <- reactive({
+    p <- rb_doc(); req(p)
+    render_page_view(p, .clamp_page(input$rb_page, rb_n_pages()), 110)
+  })
+  output$rb_plot <- renderPlot({
+    r <- rb_render()
+    if (is.null(r)) {
+      plot.new()
+      text(0.5, 0.5, "This page could not be drawn.\nThe tables can still be read from it.",
+           cex = 1.1, col = "#666")
+      return(invisible(NULL))
+    }
+    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+         xlab = "", ylab = "", axes = FALSE)
+    rasterImage(r$ras, 0, r$h, r$w, 0)
+    pg <- as.integer(r$pg)
+    for (i in seq_along(rb$tables)) {
+      tb <- rb$tables[[i]]
+      p0 <- as.integer(tb$start$page); p1 <- as.integer(tb$end$page %||% p0)
+      if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) next
+      y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
+      y1 <- if (pg == p1) .doc_num(tb$end$y, r$h) else r$h
+      picked <- identical(rb$sel, paste0("t", i))
+      key <- if (picked) "meta" else "ok"
+      cols <- .doc_columns(tb)
+      for (cc in cols)
+        rect(.doc_num(cc$x_min, 0), y0, .doc_num(cc$x_max, 0), y1,
+             border = PALETTE[[key]], lwd = if (picked) 2 else 1,
+             col = pal_fill(key, if (picked) "22" else "12"))
+      abline(h = c(y0, y1), col = PALETTE[[key]], lty = 3,
+             lwd = if (picked) 2 else 1)
+      if (length(cols))
+        text(.doc_num(cols[[1]]$x_min, 0) + 2, y0 - 2, tb$name %||% "",
+             col = PALETTE[[key]], font = 2, cex = 0.8, adj = c(0, 1))
+    }
+    for (i in seq_along(rb$pairs)) {
+      pr <- rb$pairs[[i]]
+      picked <- identical(rb$sel, paste0("p", i))
+      key <- if (picked) "meta" else "warn"
+      if (identical(as.integer(pr$value$page %||% 1L), pg))
+        rect(.doc_num(pr$value$x_min, 0), .doc_num(pr$value$y_max, 0),
+             .doc_num(pr$value$x_max, 0), .doc_num(pr$value$y_min, 0),
+             border = PALETTE[[key]], lwd = 2)
+      if (!is.null(pr$label) && identical(as.integer(pr$label$page %||% 1L), pg))
+        rect(.doc_num(pr$label$x_min, 0), .doc_num(pr$label$y_max, 0),
+             .doc_num(pr$label$x_max, 0), .doc_num(pr$label$y_min, 0),
+             border = PALETTE[[key]], lty = 2)
+    }
+    lb <- rb$label_box
+    if (!is.null(lb) && identical(as.integer(lb$box$page), pg))
+      rect(lb$box$x_min, lb$box$y_max, lb$box$x_max, lb$box$y_min,
+           border = PALETTE$bad, lwd = 2, lty = 2)
+    cl <- rb$click
+    if (!is.null(cl) && identical(as.integer(cl$page), pg))
+      abline(h = cl$y, col = PALETTE$bad, lwd = 2)
+  })
+
+  # ---- 5. Read the whole document -------------------------------------------
+  rb_template <- reactive({
+    ph <- trimws(strsplit(input$rb_fp %||% "", "\n")[[1]]); ph <- ph[nzchar(ph)]
+    fr <- rb_frame()
+    t <- document_template_from_proposal(
+      id = input$rb_id %||% "new_report", bank = input$rb_bank %||% "NewIssuer",
+      statement_type = input$rb_type %||% "report", phrases = ph,
+      tables = rb$tables, pairs = rb$pairs, doc_pages = rb_n_pages())
+    t$ref_width <- fr$ref_width; t$ref_height <- fr$ref_height
+    t
+  })
+  output$rb_yaml <- renderText({ t <- rb_template(); t$origin <- NULL; yaml::as.yaml(t) })
+
+  observeEvent(input$rb_preview, {
+    i <- rb_input()
+    if (is.null(i)) { showNotification("Upload the report at the top of this page first.",
+                                       type = "warning", duration = 6); return() }
+    if (!length(rb$tables) && !length(rb$pairs)) {
+      showNotification("Nothing to read yet - press \u201cFind the tables\u201d.",
+                       type = "warning", duration = 6); return()
+    }
+    withProgress(message = "Reading the whole document\u2026", value = 0.3, {
+      ext <- tryCatch(extract_document(i, rb_template()), error = function(e) NULL)
+      incProgress(0.5)
+      rb$preview <- ext
+      rb$outputs <- if (is.null(ext)) character(0) else {
+        outdir <- file.path(tempdir(), paste0("rbprev-", session$token))
+        unlink(outdir, recursive = TRUE)
+        base <- tools::file_path_sans_ext(basename(input$ts_file$name %||% "report"))
+        tryCatch(write_document_outputs(ext, outdir, base), error = function(e) character(0))
+      }
+    })
+    if (is.null(rb$preview))
+      showNotification("Couldn't read the document with these tables.", type = "error")
+  })
+
+  output$rb_prev_status <- renderUI({
+    ext <- rb$preview
+    if (is.null(ext)) {
+      if (is.null(rb_doc()))
+        return(p(class = "muted", "Upload the report at the top of this page to see a preview."))
+      if (!length(rb$tables) && !length(rb$pairs))
+        return(p(class = "muted",
+                 "Press \u201cFind the tables\u201d, then \u201cRead the whole document\u201d."))
+      return(p(class = "muted", "Press \u201cRead the whole document\u201d to see what comes out."))
+    }
+    s <- ext$summary
+    weak <- sum(!(s$found_by %in% "its heading"))
+    thin <- sum(as.integer(s$thin_columns))
+    lost <- sum(as.integer(s$unclaimed_words))
+    empty <- sum(as.integer(s$rows) < 1L)
+    bad <- weak + thin + lost + empty
+    tagList(
+      div(class = if (bad) "verdict verdict-medium" else "verdict verdict-high",
+          style = "margin:2px 0 12px",
+        div(class = "verdict-ico", if (bad) "!" else "\u2713"),
+        div(style = "flex:1;min-width:0",
+          div(class = "verdict-title",
+              sprintf("%d table%s, %d row%s, %d value%s",
+                      nrow(s), if (nrow(s) == 1L) "" else "s",
+                      sum(s$rows), if (sum(s$rows) == 1L) "" else "s",
+                      nrow(ext$pairs), if (nrow(ext$pairs) == 1L) "" else "s")),
+          p(class = "verdict-body", style = "margin:0", paste(c(
+            if (empty) sprintf("%d table(s) came out empty.", empty),
+            if (weak) sprintf("%d found by position rather than by a heading.", weak),
+            if (thin) sprintf("%d column(s) came out mostly empty - check the column edges.", thin),
+            if (lost) sprintf("%d word(s) inside a table were claimed by no column.", lost),
+            if (!bad) "Every table was found by its own heading and every column filled."),
+            collapse = " ")))),
+      if (length(rb$outputs)) div(style = "margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap",
+        downloadButton("rb_dl_xlsx", "Download the workbook", class = "btn-default"),
+        downloadButton("rb_dl_csv", "Download one long CSV", class = "btn-default")))
+  })
+
+  .rb_out <- function(pattern) {
+    p <- rb$outputs[grepl(pattern, rb$outputs)]
+    if (length(p) && file.exists(p[1])) p[1] else NA_character_
+  }
+  output$rb_dl_xlsx <- downloadHandler(
+    filename = function() { p <- .rb_out("\\.xlsx$")
+      if (is.na(p)) "nothing-to-download.txt" else basename(p) },
+    content = function(file) { p <- .rb_out("\\.xlsx$")
+      if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
+      file.copy(p, file, overwrite = TRUE) })
+  output$rb_dl_csv <- downloadHandler(
+    filename = function() { p <- .rb_out("tables-long\\.csv$")
+      if (is.na(p)) "nothing-to-download.txt" else basename(p) },
+    content = function(file) { p <- .rb_out("tables-long\\.csv$")
+      if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
+      file.copy(p, file, overwrite = TRUE) })
+
+  # The preview shows the table that is PICKED, the same one that is highlighted
+  # on the page -- so the list, the picture and the rows are always the same table.
+  output$rb_prev_head <- renderUI({
+    ext <- rb$preview; if (is.null(ext) || !length(ext$tables)) return(NULL)
+    i <- .rb_sel_i()
+    k <- if (identical(.rb_sel_kind(), "t") && !is.na(i) && i <= length(ext$tables))
+           names(ext$tables)[i] else names(ext$tables)[1]
+    t <- ext$tables[[k]]
+    tagList(h5(style = "margin:12px 0 4px", t$name %||% k),
+            p(class = "muted", style = "margin:0 0 6px", t$detail %||% ""))
+  })
+  output$rb_prev_tbl <- renderDT({
+    ext <- rb$preview; req(!is.null(ext)); req(length(ext$tables) > 0L)
+    i <- .rb_sel_i()
+    k <- if (identical(.rb_sel_kind(), "t") && !is.na(i) && i <= length(ext$tables))
+           names(ext$tables)[i] else names(ext$tables)[1]
+    d <- ext$tables[[k]]$rows
+    d <- d[, !grepl("__value$", names(d)), drop = FALSE]
+    datatable(d, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+  })
+  output$rb_prev_summary <- renderTable({
+    ext <- rb$preview; if (is.null(ext)) return(NULL)
+    ext$summary[, c("name", "pages", "rows", "columns", "thin_columns",
+                    "unclaimed_words", "found_by"), drop = FALSE]
+  })
+
+  # ---- 6. Save ---------------------------------------------------------------
+  observeEvent(input$rb_save, {
+    t <- rb_template()
+    probs <- validate_document_template(t)
+    if (length(probs)) {
+      output$rb_msg <- renderUI(span(class = "bad",
+        paste("Not valid:", paste(probs, collapse = "; ")))); return()
+    }
+    ok <- tryCatch({ save_document_template(t, USER_DOC_DIR); TRUE }, error = function(e) FALSE)
+    output$rb_msg <- renderUI(if (isTRUE(ok))
+      span(class = "ok", sprintf(paste("Saved '%s'. On Convert it is used when no",
+                                       "statement and no form template reads the document.",
+                                       "A report is a download - it never goes to the dashboards."),
+                                 t$id))
+      else span(class = "bad",
+                sprintf("Couldn't save - check folder permissions on %s.", USER_DOC_DIR)))
+  })
+
   # ---- X-ray, shown inline on the Convert tab (no separate upload/section).
   # Derived from the conversion result: read the converted file with its matched
   # template and lay out exactly what the engine selected on the page.
@@ -2918,6 +3641,7 @@ server <- function(input, output, session) {
          templates_dir = TEMPLATES_DIR,
          user_templates_dir = if (use_user) USER_TEMPLATES_DIR else NULL,
          fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
+         doc_dir = DOC_DIR, user_doc_dir = USER_DOC_DIR,
          requested_by = who_now(), logdir = LOGDIR,
          force_template = force_tpl %||% tpl_choice(), force_rows = forced_rows)
   }
@@ -3244,6 +3968,7 @@ server <- function(input, output, session) {
       args = list(templates_dir = TEMPLATES_DIR,
         user_templates_dir = if (USE_USER_TEMPLATES) USER_TEMPLATES_DIR else NULL,
         fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
+        doc_dir = DOC_DIR, user_doc_dir = USER_DOC_DIR,
         requested_by = who, logdir = LOGDIR,
         bank = bank_choice(), force_template = tpl_choice()),
       finish = function(b) {
@@ -3473,7 +4198,7 @@ server <- function(input, output, session) {
   output$cv_has_txns <- reactive({
     res <- cv_res()
     isTRUE((res$status %||% "") %in% c("ok", "needs_review")) &&
-      !identical(res$kind, "form") && length(res$outputs %||% character(0)) > 0
+      .is_txn_result(res) && length(res$outputs %||% character(0)) > 0
   })
   outputOptions(output, "cv_has_txns", suspendWhenHidden = FALSE)
 
@@ -3513,7 +4238,7 @@ server <- function(input, output, session) {
 
   output$cv_more_toggle <- renderUI({
     res <- cv_res(); req(res)
-    if (identical(res$kind, "form")) return(NULL)
+    if (!.is_txn_result(res)) return(NULL)
     open <- isTRUE(cv_detail_open())
     # Named for what is BEHIND it, not for the mechanism. "Advanced" would make an
     # accountant feel it is not for her; "how it read this" is a question she may
@@ -3563,7 +4288,7 @@ server <- function(input, output, session) {
     # convert cleanly, so failures still explain themselves up top. It is the SAME
     # verdict card as the success headline -- one visual language for "how did it
     # go", rather than a second, hand-coloured one for bad news.
-    if (isTRUE(res$status == "ok") && !identical(res$kind, "form")) return(NULL)
+    if (isTRUE(res$status == "ok") && .is_txn_result(res)) return(NULL)
     st <- res$status %||% "failed"
     lvl <- switch(st, ok = "high", needs_review = , unsupported = "medium", "low")
     # THE TIE HEADLINE, ONLY WHERE THERE IS A PICK TO MAKE. An ordinary tie
@@ -3985,7 +4710,7 @@ server <- function(input, output, session) {
     "missed needs a line count of the file itself, which only a CSV or TSV export",
     "has. That is the normal ceiling for this format, not something to chase.")
   output$cv_headline <- renderUI({
-    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    res <- cv_res(); req(res); req(.is_txn_result(res))
     if (!isTRUE(res$status == "ok")) return(NULL)   # failures are shown by cv_status
     d <- cv_data(); n <- if (is.null(d)) NA_integer_ else nrow(d)   # reuse the shared read
     pt <- plain_trust(res$trust %||% list())
@@ -4110,7 +4835,7 @@ server <- function(input, output, session) {
   }
 
   output$cv_summary <- renderUI({
-    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    res <- cv_res(); req(res); req(.is_txn_result(res))
     d <- cv_data(); h <- res$header %||% list(); cur <- cur_symbol(h)
     n   <- if (!is.null(d)) nrow(d) else (h$row_count %||% NA)
     amt <- if (!is.null(d)) d$.amt[!is.na(d$.amt)] else numeric(0)
@@ -4270,6 +4995,146 @@ server <- function(input, output, session) {
       p(class = "muted", style = "margin:8px 0 12px; max-width:760px",
         "A labelled-value document, not a transaction statement: no transaction table and no running balance, so the completeness checks don't apply. Check each value below against the document."),
       h4("Values found"), DTOutput("cv_fields"))
+  })
+
+  # ---- A REPORT: many tables, no transactions (kind == "tables") -------------
+  #
+  # WHAT THIS SCREEN HAS TO SAY THAT THE OTHERS DO NOT. There is no balance to
+  # check a report against, so "it converted" is not on its own worth anything.
+  # The two things a reviewer can actually act on are HOW each table was found
+  # (by its heading, or by where it sat on the example -- the second is the one
+  # that goes wrong when a document changes) and WHAT CAME OUT THIN (a column
+  # mostly empty, or words inside a table that no column claimed). So those are
+  # the headline, and the tables themselves come after them.
+  output$cv_is_tables <- reactive({ isTRUE((cv_res()$kind %||% "") == "tables") })
+  outputOptions(output, "cv_is_tables", suspendWhenHidden = FALSE)
+
+  # Which table is being shown. The navigator down the right sets it; it survives
+  # a re-render, and resets whenever a new document is converted.
+  cv_tbl_pick <- reactiveVal(NULL)
+  observeEvent(cv_res(), cv_tbl_pick(NULL))
+
+  .cv_ext <- reactive({ res <- cv_res(); if (is.null(res)) NULL else res$extract })
+
+  output$cv_tables <- renderUI({
+    res <- cv_res(); req(res); req(identical(res$kind, "tables"))
+    ext <- res$extract
+    if (is.null(ext) || !length(ext$tables))
+      return(p(class = "muted", "This report template found no tables on the document."))
+    s <- ext$summary
+    weak <- sum(!(s$found_by %in% "its heading"))
+    thin <- sum(as.integer(s$thin_columns %||% 0L))
+    lost <- sum(as.integer(s$unclaimed_words %||% 0L))
+    tagList(
+      p(class = "muted", style = "margin:8px 0 12px; max-width:820px",
+        paste("A report, not a transaction statement: no running balance, so the",
+              "completeness checks don't apply. What is checkable is below - how",
+              "each table was found, and anything that came out thin.")),
+      div(class = if (weak || thin || lost) "verdict verdict-medium" else "verdict verdict-high",
+          style = "margin:2px 0 14px",
+        div(class = "verdict-ico", if (weak || thin || lost) "!" else "\u2713"),
+        div(style = "flex:1;min-width:0",
+          div(class = "verdict-title", sprintf("%d table%s, %d row%s",
+              nrow(s), if (nrow(s) == 1L) "" else "s",
+              sum(s$rows), if (sum(s$rows) == 1L) "" else "s")),
+          p(class = "verdict-body", style = "margin:0",
+            paste(c(
+              if (weak) sprintf("%d found by position rather than by a heading - check those against the document.", weak),
+              if (thin) sprintf("%d column(s) came out mostly empty - check the column edges.", thin),
+              if (lost) sprintf("%d word(s) inside a table were not claimed by any column.", lost),
+              if (!weak && !thin && !lost) "Every table was found by its own heading and every column filled."),
+              collapse = " ")))),
+      fluidRow(
+        column(8,
+          uiOutput("cv_tbl_title"),
+          DTOutput("cv_tbl_rows")),
+        column(4,
+          strong("What is on this report"),
+          p(class = "muted", style = "margin:2px 0 8px", "Click one to see it."),
+          uiOutput("cv_tbl_nav"))),
+      tags$details(style = "margin-top:16px",
+        tags$summary(class = "muted", style = "cursor:pointer",
+                     "How each table was found, and how full it came out"),
+        h5("Tables"), tableOutput("cv_tbl_summary"),
+        h5("Columns"), tableOutput("cv_tbl_report")))
+  })
+
+  # The navigator: every table and every value, with the thing a reviewer needs to
+  # see at a glance -- how it was found -- said beside each one rather than hidden
+  # in a report nobody opens.
+  output$cv_tbl_nav <- renderUI({
+    ext <- .cv_ext(); req(!is.null(ext))
+    s <- ext$summary
+    cur <- cv_tbl_pick() %||% (if (nrow(s)) s$table[1] else NULL)
+    items <- lapply(seq_len(nrow(s)), function(i) {
+      k <- s$table[i]
+      byhead <- identical(s$found_by[i], "its heading")
+      div(style = paste0("padding:6px 8px;border-left:3px solid ",
+                         if (byhead) PALETTE$ok else PALETTE$warn,
+                         ";margin-bottom:4px;background:",
+                         if (identical(k, cur)) "#eef4ff" else "transparent"),
+        actionLink(paste0("cv_tblpick_", i), s$name[i], style = "font-weight:600"),
+        div(class = "muted", style = "font-size:12px",
+            sprintf("page %s \u00b7 %d row%s \u00b7 found by %s", s$pages[i], s$rows[i],
+                    if (s$rows[i] == 1L) "" else "s", s$found_by[i])))
+    })
+    pr <- ext$pairs
+    vals <- if (is.null(pr) || !nrow(pr)) NULL else tagList(
+      tags$hr(style = "margin:10px 0"),
+      strong("Values"),
+      tags$ul(style = "margin:6px 0 0;padding-left:18px",
+        lapply(seq_len(nrow(pr)), function(i) tags$li(
+          HTML(sprintf("%s: <b>%s</b>", htmltools::htmlEscape(pr$label[i]),
+                       htmltools::htmlEscape(if (nzchar(pr$value[i])) pr$value[i] else "not found"))),
+          div(class = "muted", style = "font-size:12px",
+              sprintf("page %d \u00b7 found by %s", pr$page[i], pr$found_by[i]))))))
+    tagList(items, vals)
+  })
+
+  # One observer per navigator row. They are created once, for as many rows as any
+  # report is ever likely to have, because a Shiny observer cannot be attached to a
+  # control that does not exist yet -- and re-creating them on every render would
+  # stack a new observer on each row every time the page redrew.
+  lapply(seq_len(60L), function(i) observeEvent(input[[paste0("cv_tblpick_", i)]], {
+    ext <- .cv_ext(); req(!is.null(ext))
+    s <- ext$summary
+    if (i <= nrow(s)) cv_tbl_pick(s$table[i])
+  }, ignoreInit = TRUE))
+
+  .cv_tbl_cur <- reactive({
+    ext <- .cv_ext(); if (is.null(ext) || !length(ext$tables)) return(NULL)
+    k <- cv_tbl_pick()
+    if (is.null(k) || is.null(ext$tables[[k]])) k <- names(ext$tables)[1]
+    ext$tables[[k]]
+  })
+
+  output$cv_tbl_title <- renderUI({
+    t <- .cv_tbl_cur(); req(!is.null(t))
+    tagList(h4(style = "margin-top:0", t$name %||% t$key),
+            p(class = "muted", style = "margin:0 0 8px", t$detail %||% ""))
+  })
+
+  output$cv_tbl_rows <- renderDT({
+    t <- .cv_tbl_cur(); req(!is.null(t))
+    d <- t$rows
+    # The parsed companions are for the file, not the screen: a reviewer checking
+    # against the page wants the page's own words, once.
+    d <- d[, !grepl("__value$", names(d)), drop = FALSE]
+    datatable(d, rownames = FALSE,
+              options = list(pageLength = 25, scrollX = TRUE))
+  })
+
+  output$cv_tbl_summary <- renderTable({
+    ext <- .cv_ext(); req(!is.null(ext))
+    ext$summary[, c("name", "pages", "rows", "columns", "thin_columns",
+                    "unclaimed_words", "found_by"), drop = FALSE]
+  })
+  output$cv_tbl_report <- renderTable({
+    ext <- .cv_ext(); req(!is.null(ext))
+    r <- ext$report
+    if (is.null(r) || !nrow(r)) return(NULL)
+    r[, c("table", "column", "type", "filled", "rows", "fill_rate", "low_fill"),
+      drop = FALSE]
   })
   # THE ONE TABLE ON CONVERT THAT WENT STRAIGHT TO datatable(). Every other table
   # on this page maps what it shows; this one handed the engine's frame over
@@ -4588,7 +5453,7 @@ server <- function(input, output, session) {
     isTRUE(d$thin) || isTRUE(d$ambiguous) || length(d$tied %||% character(0)) >= 2L
   }
   output$cv_rematch <- renderUI({
-    res <- cv_res(); req(res); req(!identical(res$kind, "form"))
+    res <- cv_res(); req(res); req(.is_txn_result(res))
     st <- res$status %||% "failed"
     if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
     tid <- (res$template_id %||% NA_character_)[1]
@@ -5404,6 +6269,13 @@ server <- function(input, output, session) {
         span(class = "muted", "Change or add values? "),
         actionLink("cv_goto_templates", "Open the PDF form builder \u2192")))
     }
+    if (identical(res$kind, "tables")) {
+      # Likewise a report: its tables are drawn on the report builder, and this is
+      # the only route back to them from a result someone is looking at.
+      return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
+        span(class = "muted", "A table missing, or reading the wrong columns? "),
+        actionLink("cv_goto_report", "Open the report builder \u2192")))
+    }
     if (identical(st, "unsupported")) {
       # "Unsupported" covers two opposite situations. If two or more templates fit
       # this statement EQUALLY well, the tool refuses to guess which -- but telling
@@ -5501,6 +6373,14 @@ server <- function(input, output, session) {
   # not reached the browser yet when this conversion starts.
   observeEvent(input$cv_goto_templates,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
+  # Its own id, not a second use of the one above: two links on mutually exclusive
+  # branches still have to be two ids, or the "no id used twice" scan cannot tell a
+  # deliberate pair from the accident it exists to catch. This one also SETS the
+  # kind of document, so the report builder is already open when the tab arrives.
+  observeEvent(input$cv_goto_report, {
+    updateRadioButtons(session, "ts_doctype", selected = "report")
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+  })
   observeEvent(input$cv_empty_to_tmpl,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
   observeEvent(input$ab_go_convert,

@@ -13,6 +13,100 @@ finding id.
 
 ---
 
+## 1.5.0
+
+A third kind of document: a **report** — forty pages carrying thirty-odd tables
+of completely different shapes, several to a page, some beginning half-way down
+one page and finishing half-way down the page after next.
+
+**Why it is a separate engine and not a wider statement parser**
+
+The statement parser reads ONE table whose columns run the full height of every
+page, and it judges what it read against a running balance. All three of those
+facts are false for a report. Widening it would have put the least checkable case
+inside the code path every real conversion runs through, so a report is read by
+`R/tables.R` / `R/tables_detect.R` / `R/doc_extract.R` under its own template mode
+(`mode: document`), and the statement path is untouched.
+
+**Download only, enforced rather than assumed**
+
+- `write_feed()` refuses `kind = "tables"` outright, beside the same refusal for
+  forms. There is no reconciliation behind a report — nothing here can tell a
+  right figure from a wrong one — so nothing from one reaches a dashboard.
+
+**Found by its wording, not by its coordinates**
+
+- A table declares a START `(page, y)` and an END `(page, y)` — positions on a
+  page, not whole pages — with columns as x-bands meaningful only between them.
+  That is what lets several tables share one page.
+- It is located by its **heading wording** first, then by **the rows it starts
+  with**, and only last by **where it sat on the example**. Which of the three was
+  used is reported with every table, and the last two send a conversion to review:
+  reading from a stale position on a page where the table has moved does not fail
+  loudly, it quietly picks up a title line as if it were data.
+
+**What it does instead of checking, because it cannot check**
+
+- The **fill rate** of every column and every row is measured and reported. A
+  column below the table's threshold is flagged, never dropped; a column marked
+  `may_be_blank` — the middle cells of a totals row — is exempt.
+- **Every word inside a table's boundary that no column claimed** is listed. A
+  band drawn four points too narrow loses a whole column of figures and leaves
+  every remaining row looking perfect; that list is the only thing standing
+  between that and a wrong answer.
+- **Overlapping column bands are refused at save time.** A word can land in only
+  one column and the earlier band wins, so an overlap does not duplicate a value —
+  it deletes it from the second column, invisibly.
+
+**Truncation, which is invisible when it happens**
+
+- A table drawn on a copy that ran to page 5 is **followed** while the pages after
+  its declared end keep repeating its header, and the extension is reported. Every
+  row that did come out of a truncated read looks right, which is why this cannot
+  be left to be noticed.
+
+**The line pitch is learned, not assumed**
+
+- Per table, from the page's own line spacing. A tolerance too large merges two
+  rows into one — the silent corruption the whole project exists to prevent — and
+  one too small splits a row whose cells sit on different baselines. Capped at 14
+  points so a widely-leaded title block cannot swallow the value printed under its
+  label.
+
+**Label/value pairs are two boxes, not one**
+
+- What is stored is the label's wording plus the **offset** to the value, so the
+  value can sit to the right of its label, under it, or *before* it without any of
+  those being a special case. On the next copy the label is found wherever it has
+  moved to and the same offset applied; the drawn box is the fallback, and which
+  one was used is reported.
+
+**Setting one up is confirming, not drawing**
+
+- **Add a template → "A report"** reads the document and proposes the tables it
+  found, drawn on the page with a list down the right to navigate them. Thirty
+  tables drawn by hand is a template that never gets finished, and a half-drawn
+  one is worse than none: it produces confident output with a column missing.
+- A continuation across pages is joined into one table only on a repeated header
+  or identical column bands. Interleaving two different tables is the worse of the
+  two mistakes.
+
+**Output**
+
+- A workbook with a sheet per table, plus one **long** CSV (`table`,
+  `table_name`, `page`, `row`, `column`, `value`) — the only honest single-file
+  shape for tables of thirty different widths — plus the fill report. Where
+  `openxlsx` is absent, a CSV per table instead: nothing is dropped for want of a
+  package.
+
+**Paths**
+
+- `doc_templates/` (curated) and `doc_templates_user/` (built in the app), settable
+  as `paths.docs` / `paths.user_docs`. A settings file written before this release
+  still starts.
+
+---
+
 ## 1.4.0
 
 Two rounds in one release: the one that let a squad use the tool at the same

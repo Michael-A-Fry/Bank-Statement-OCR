@@ -36,6 +36,11 @@
     user_templates = "templates_user",    # analyst drafts (Shiny only, NEVER Qlik)
     fields         = "fields_templates",
     user_fields    = "fields_templates_user",
+    # mode:document templates -- a report carrying many tables (R/doc_extract.R).
+    # Their own folders, like the other two modes, so a report template can never
+    # join statement detection and a statement template can never be read as one.
+    docs           = "doc_templates",
+    user_docs      = "doc_templates_user",
     dictionary     = "dictionaries/labels.yaml",
     lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",

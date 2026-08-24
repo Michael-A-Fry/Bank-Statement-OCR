@@ -96,7 +96,8 @@ options(timeout = 600)
 # perfectly and looks completely unstyled, which is the kind of break nobody finds
 # until it is in front of someone. test-deployment-docs.R pins it.
 app_items <- c("R", "templates", "templates_user", "templates_seed",
-               "fields_templates", "config", "scripts", "www",
+               "fields_templates", "doc_templates", "doc_templates_user",
+               "config", "scripts", "www",
                "tests", "samples", "docs",
                "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat",
                "VERSION")

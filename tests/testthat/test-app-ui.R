@@ -214,7 +214,10 @@ test_that("page numbers are clamped to the document, in one place", {
   expect_false(grepl("max\\(1L, as\\.integer\\(input\\$[A-Za-z_]*page", joined))
   # every page box says how many pages there are
   expect_match(joined, "Page \\(1 to %d\\)")
-  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 3L)
+  # Four page boxes now: the toolkit, the X-ray, the form builder and the report
+  # builder. The count is the inventory - a new page box that does not say how
+  # many pages there are is exactly what this catches.
+  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 4L)
 })
 
 # ---------------------------------------------------------------------------
@@ -1293,7 +1296,7 @@ test_that("the band editor draws and stores in the template's band frame", {
 # correctness fix wearing a usability costume.
 test_that("a drawn box commits on release, not on every mouse move", {
   src <- paste(.ui_src(), collapse = " ")
-  for (id in c("g_pdf_brush", "fb_brush")) {
+  for (id in c("g_pdf_brush", "fb_brush", "rb_brush")) {
     blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
     expect_match(blk, "delay = 1500")
     expect_match(blk, 'delayType = "debounce"')

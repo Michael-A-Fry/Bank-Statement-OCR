@@ -234,6 +234,7 @@ save_fields_template <- function(tmpl, dir = "fields_templates_user") {
 convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
                              templates_dir = "templates", user_templates_dir = "templates_user",
                              fields_dir = "fields_templates", user_fields_dir = NULL,
+                             doc_dir = "doc_templates", user_doc_dir = NULL,
                              requested_by = NULL, formats = c("xlsx", "csv", "json"),
                              logdir = "logs", force_template = NULL, force_rows = NULL) {
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
@@ -280,6 +281,51 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
         kpi_fail_count    = 0L,
         message           = paste(fr$messages, collapse = " | ")))
       res <- fr
+    }
+  }
+  # THIRD AND LAST: a REPORT carrying many tables (mode:document, R/doc_extract.R).
+  # Reached only when neither a transaction template nor a form template read the
+  # document, so it can never take work away from either. It stays last because it
+  # is the least checkable of the three -- no reconciliation, no labelled values,
+  # just tables read off the page -- and the honest place for the least checkable
+  # answer is after every better one has been tried and failed.
+  if (is.null(force_template) && identical(res$status, "unsupported")) {
+    tr <- tryCatch(convert_tables(path, doc_dir = doc_dir, user_doc_dir = user_doc_dir,
+                                  outdir = outdir,
+                                  formats = intersect(formats, c("xlsx", "csv"))),
+                   error = function(e) NULL)
+    if (!is.null(tr) && (tr$status %in% c("ok", "needs_review"))) {
+      tr$kind <- "tables"
+      tr$run_id <- res$run_id
+      tr$run_log <- utils::modifyList(res$run_log %||% list(), list(
+        kind              = "tables",
+        status            = tr$status,
+        detected_template = tr$template_id %||% NA_character_,
+        template_origin   = "document",
+        template_version  = tr$template_version %||% NA,
+        template_sha256   = NA_character_,
+        trust_level       = NA_character_,
+        # A report has TABLES, not transactions. row_count is the transaction
+        # count every dashboard and every drift report reads, and putting a
+        # hundred table rows in it would inflate figures nothing here belongs in.
+        row_count         = 0L,
+        n_tables          = as.integer(tr$n_tables %||% NA_integer_),
+        n_table_rows      = as.integer(tr$n_rows %||% NA_integer_),
+        kpi_fail_count    = 0L,
+        message           = paste(tr$messages, collapse = " | ")))
+      res <- tr
+    } else if (!is.null(tr) && identical(tr$status, "unsupported") &&
+               !is.na(tr$template_id %||% NA) && (tr$n_tables %||% 0L) > 0L &&
+               # ...unless the FORM pass already claimed this document. Two
+               # templates that both matched and both read nothing is one
+               # message, and the earlier, more checkable paradigm keeps it
+               # rather than being silently overwritten by the later one.
+               is.null(res$form_matched_empty)) {
+      # Matched this report but read nothing from it -- the same distinction the
+      # statement and form paths make, and the same reason: "the template exists
+      # and did not fit" needs the opposite advice from "there is no template".
+      res$messages <- tr$messages
+      res$doc_matched_empty <- tr$template_id
     }
   }
   safe(log_run(logdir, res))
