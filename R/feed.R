@@ -235,7 +235,17 @@ FEED_CORE_COLUMNS <- c(
 write_feed <- function(result, config = load_config(), ts = NULL,
                        proven_ids = NULL, logdir = NULL) {
   if (!isTRUE(config$feed$enabled)) return(invisible(NULL))
-  if (identical(result$kind, "form")) return(invisible(NULL))     # statements only
+  # STATEMENTS ONLY, AND THIS IS THE GATE THAT MAKES THAT TRUE.
+  # "form" (labelled values) and "tables" (the multi-table document extractor,
+  # R/doc_extract.R) both produce figures with NO reconciliation behind them --
+  # nothing that could tell a right number from a wrong one. They are download-only
+  # by design, and this line is where that design is actually enforced, ahead of
+  # every other consideration in this function.
+  #
+  # isTRUE(), not a bare %in%: a statement result carries no `kind` at all, and
+  # `NULL %in% c(...)` is logical(0), which `if` rejects outright -- that would
+  # have thrown on every ordinary conversion instead of on none.
+  if (isTRUE(result$kind %in% c("form", "tables"))) return(invisible(NULL))
   logdir <- logdir %||% (config$paths$logs %||% "logs")
   h <- result$header %||% list()
   sha <- h$source_sha256 %||% NA_character_
