@@ -99,6 +99,59 @@ inside the code path every real conversion runs through, so a report is read by
   `openxlsx` is absent, a CSV per table instead: nothing is dropped for want of a
   package.
 
+**What sixteen awkward documents found**
+
+The shapes above were built as fixtures (`tests/testthat/helper-doc-hard.R`) and
+run against the engine. Nine of them broke it. Every one of these was measured,
+not reasoned about:
+
+- **A table whose row heights alternate lost half its rows.** 10pt and 26pt
+  rows, a median gap of 26, and every 10pt gap swallowed: six rows came back as
+  four with `R2 R3` in one cell and `20.00 30.00` in another. The row tolerance
+  now follows the **lower quartile** of the gaps -- the tightest spacing the table
+  actually uses -- so it is safe for every row rather than for the average one.
+- **A table followed onto the next page swallowed the two tables under it**: 93
+  rows instead of 83, ten of them with an amount in the wrong column and a date
+  that was not a date. An open-ended window now stops where the rows stop: a gap
+  much bigger than the ones this table has been using AND a line that fills fewer
+  of its columns. Both halves are needed -- the gap alone cuts a schedule at the
+  whitespace before its own total.
+- **Two different schedules with the same header became one table** of twelve
+  rows under the first one's name. A page that carries its **own heading** is a
+  new table; a real continuation opens with the repeated column names and nothing
+  above them.
+- **A header repeating as "... (continued)" split an 18-row schedule into two.**
+  A repeated header now matches on prefix -- while still refusing the same column
+  names in a different order, which is a different table sharing a vocabulary.
+- **A bordered table proposed no columns at all.** `+----+----+` rules span the
+  full width and merge every band into one. Printed rules are now transparent:
+  they neither start a run, nor end one, nor contribute a band, nor become a row.
+- **A condensed table read as one cell per row.** 2pt gutters with a `|` in them
+  -- narrower than any word space. A lone vertical bar is a border, dropped where
+  both the proposer and the reader come through, so the columns separate on real
+  whitespace and no cell comes out as `| 1,240.55`.
+- **A total set apart by an underline and 45pt of white was left out** -- the one
+  row somebody came for. A run now reaches down past a break for up to three lines
+  that still land in at least two of its own bands.
+- **A two-column table was not a table.** A valuation of item and amount, five
+  rows, proposed as nothing. Two columns are allowed on a longer run: four
+  consecutive rows in the same two bands is a schedule, not a coincidence.
+- **A description that wrapped ended the table it was in.** Once the tighter
+  tolerance correctly made the wrap its own line, the one-cell line broke the run.
+  A wrap -- indented past where the rows start, within a line of the row above,
+  filling one column -- is folded into that row instead.
+
+**Still limitations, and asserted as tests so they are decisions**
+
+- Two tables printed side by side read as one of six columns. The ink is
+  identical to a genuine six-column table; it is drawn as one on the builder,
+  which is where it gets split into two.
+- A spanning header cell ("Balance" over "Opening"/"Closing") is offered as the
+  table's name. Wrong, harmless, one text box fixes it.
+- A table with no figures anywhere keeps its heading line as a row: with no font
+  information there is no header signal, and the rule fails toward keeping a row
+  rather than deleting one.
+
 **Paths**
 
 - `doc_templates/` (curated) and `doc_templates_user/` (built in the app), settable

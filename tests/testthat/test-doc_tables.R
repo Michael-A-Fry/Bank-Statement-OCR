@@ -192,9 +192,43 @@ test_that("a table longer on THIS document than on the example is followed, and 
   expect_true(grepl("carries on to page 5", loc$detail))
   r <- doc_table_rows(inp, tab, tm, loc)
   expect_equal(r$n_rows, 83L)
+  # ...AND IT STOPS. Following to the bottom of page 5 swallowed the fee table and
+  # the contact table: 93 rows, ten of them with an amount in the wrong column and
+  # a date that was not a date, and nothing about that looks wrong afterwards.
+  expect_equal(nrow(r$stops), 1L)
+  expect_equal(r$stops$page, 5L)
+  expect_true(grepl("stops on page 5", r$detail))
+  expect_false(any(grepl("per month|Telephone", unlist(r$rows))))
   # follow: false is the opposite promise, and it is kept.
   tab$follow <- FALSE
   expect_equal(doc_locate_table(inp, tab, tm)$pages, 3L)
+})
+
+test_that("a big gap INSIDE a table does not end it when the row still fits", {
+  # The stop rule needs both halves. A schedule that leaves whitespace before its
+  # own total row is a shape these documents genuinely use, and cutting there
+  # would drop the one row somebody is looking for.
+  pages <- doc_fixture_pages()
+  extra <- doc_page(doc_L(40, 700, "31/12/2025"), doc_L(110, 700, "TOTAL"),
+                    doc_R(400, 700, "1,234.56"), doc_R(500, 700, "9,876.54"))
+  pages[[5]] <- rbind(pages[[5]], extra)      # 700 is 460pt below the last row
+  inp <- doc_input(pages)
+  tm <- doc_fixture_template()
+  tab <- tm$tables$transactions
+  tab$end <- list(page = 5, y = 841.89)       # open-ended: the stop rule applies
+  loc <- doc_locate_table(inp, tab, tm)
+  r <- doc_table_rows(inp, tab, tm, loc)
+  # It stops at "Fees charged" (one filled column, after a big gap) and NOT at the
+  # total row, which fills all four despite the much bigger gap before it.
+  expect_equal(nrow(r$stops), 1L)
+  expect_false(any(r$rows$Description %in% "TOTAL"))   # stopped before reaching it
+  # ...and with the fee/contact tables out of the way it IS kept.
+  p5 <- pages[[5]]
+  p5 <- p5[p5$y <= 240 | p5$y == 700, , drop = FALSE]
+  pages[[5]] <- p5
+  r2 <- doc_table_rows(doc_input(pages), tab, tm)
+  expect_true(any(r2$rows$Description %in% "TOTAL"))
+  expect_equal(nrow(r2$stops), 0L)
 })
 
 # ---------------------------------------------------------------------------
@@ -276,15 +310,19 @@ test_that("proposed column bands sit between the columns, not on top of them", {
   expect_equal(nrow(r$spilled), 0L)
 })
 
-test_that("a sparse total row ends an auto-proposed table, which is why the end is editable", {
+test_that("a sparse total row is reached for, not left behind", {
   inp <- context_input()
   props <- propose_tables(inp, pages = 6L)
   expect_equal(length(props), 1L)
-  # Five full rows: the closing row has two cells, not three, so the run stops
-  # above it. The proposal is a starting point -- the drawn template extends the
-  # end past it, and the reader then keeps it (see the blanks test above).
-  expect_equal(props[[1]]$n_rows, 5L)
+  # The closing row has two cells where the rows above have seven, so it breaks
+  # the run of tabular lines -- and it is the row somebody came for. The proposal
+  # reaches down past the break for a line that still lands in the table's own
+  # bands, so all six come out. (This used to stop at five and say so.)
+  expect_equal(props[[1]]$n_rows, 6L)
   expect_equal(length(props[[1]]$columns), 7L)
+  r <- doc_table_rows(inp, props[[1]], NULL)
+  expect_equal(r$n_rows, 6L)
+  expect_true("ClosingBalance" %in% r$rows$Item)   # the first COLUMN, not page/row
 })
 
 test_that("prose is not proposed as a table", {

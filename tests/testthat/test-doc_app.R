@@ -177,6 +177,9 @@ test_that("a report converts through the front door as kind 'tables', and the ru
 })
 
 test_that("with no report templates installed nothing about the front door changes", {
+  # The statement pass has to actually run for "unsupported" to mean anything, and
+  # that needs the template loader.
+  skip_if_not(requireNamespace("yaml", quietly = TRUE), "yaml not installed")
   tdir <- file.path(tempdir(), paste0("docapp-none-", as.integer(Sys.time())))
   on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
   dir.create(tdir, recursive = TRUE, showWarnings = FALSE)
