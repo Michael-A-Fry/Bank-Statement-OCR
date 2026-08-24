@@ -108,8 +108,20 @@
     bands <- .doc_bands(body, gap)
     first <- lines[[ix[1]]]
     # A header row is a first line with no figures on it, above lines that have
-    # them. Where the first line already carries figures the table simply has no
-    # header, and one is not invented.
+    # them. That is the only signal available without font information, and it
+    # fails in one direction ON PURPOSE:
+    #
+    #   * first line carries figures -> no header, and one is NOT invented. A
+    #     table whose first row is data must not lose that row.
+    #   * NOTHING in the run carries figures (a table of names, addresses, dates
+    #     with no amounts) -> also no header, so its heading line comes out as a
+    #     first row of data.
+    #
+    # The second is visible the moment the proposal is drawn -- the row is right
+    # there in the preview reading "Channel / Detail / Hours" -- and "Header
+    # lines" on the builder fixes it in one click. The opposite mistake, guessing
+    # a header where there is none, silently deletes a real row and leaves
+    # nothing on screen to notice.
     has_header <- !.doc_has_money(first) &&
       any(vapply(lines[ix[-1]], .doc_has_money, logical(1)))
     hdr_cells <- if (has_header)

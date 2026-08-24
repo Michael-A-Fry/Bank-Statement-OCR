@@ -292,6 +292,25 @@ test_that("prose is not proposed as a table", {
   expect_equal(length(propose_tables(inp, pages = 1L)), 0L)
 })
 
+test_that("a table with no figures anywhere keeps its heading line as a row, visibly", {
+  # There is no font information to go on, so "the first line has no figures and
+  # the ones below do" is the only header signal there is -- and a table of names
+  # and addresses satisfies neither half of it. The rule fails toward keeping the
+  # row rather than deleting one, and the row is visible in the preview. "Header
+  # lines" on the builder is what fixes it.
+  inp <- context_input()
+  props <- propose_tables(inp, pages = 5L)
+  contacts <- Filter(function(p) identical(p$name, "Contact details"), props)
+  expect_equal(length(contacts), 1L)
+  expect_equal(contacts[[1]]$header_rows, 0L)
+  expect_equal(contacts[[1]]$n_rows, 4L)          # the heading line is one of them
+  # ...and setting header_rows to 1 takes it out again, with nothing else moved.
+  tab <- contacts[[1]]; tab$header_rows <- 1L
+  r <- doc_table_rows(inp, tab, NULL)
+  expect_equal(r$n_rows, 3L)
+  expect_false(any(vapply(r$rows, function(v) any(v %in% "Channel"), logical(1))))
+})
+
 test_that("label/value pairs are proposed, including the value-before-its-label one", {
   inp <- context_input()
   pr <- propose_pairs(inp, page = 1L)

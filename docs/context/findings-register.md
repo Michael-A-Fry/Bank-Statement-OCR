@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 206 findings, 201 fixed, 2 open, 1 wont-fix, 2 not-a-defect.** The two open are **N15** and **N16**, both blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N47 is wont-fix with reasons, at the end.
+**Where it stands: 213 findings, 207 fixed, 3 open, 1 wont-fix, 2 not-a-defect.** The three open are **N15**, **N16** and **N151**. N15 and N16 are blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N151 is open in the harmless direction and is pinned by a test that says so; see the end of this file. N47 is wont-fix with reasons, at the end.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -24,7 +24,7 @@ two statements this repo ships proven templates for). Neither was reachable by r
 against its own comments; both needed the code run against a real statement and the result
 read as a stranger would read it. That is worth remembering when choosing the next sweep.
 
-_Last updated: 2026-08-03._
+_Last updated: 2026-08-24._
 
 
 ## Correctness
@@ -905,3 +905,63 @@ COUNT of offending rows under **Actual** - "Expected 2025-08-13..2025-09-01, Act
 two different kinds of thing under two headings that promise a comparison. Actual is now
 the span the rows really cover, which is comparable to the period; the count was never
 lost, it is the detail sentence and the discrepancy.
+
+## The report paradigm (N145-N151) - new capability, its own risks
+
+Not a sweep: these are the defects that were **designed out** while building the
+multi-table document extractor (1.5.0), recorded here because each is a way this
+feature could silently produce a wrong figure, and the reason it cannot is a
+specific decision that a later change could undo.
+
+**N145 (silent truncation) - closed by design.** A template drawn on a copy of a
+report whose schedule ran to page 5 reads the same schedule on a copy that runs to
+page 7 and **stops at 5**. Every row that does come out is correct, so nothing on
+screen looks wrong. `doc_locate_table()` follows a table past its declared end while
+the pages after it keep repeating its header, and the extension is reported in the
+result and on screen. Test: *"a table longer on THIS document than on the example
+is followed, and it is recorded"*.
+
+**N146 (a column deleted by an overlap) - closed at save time.** A word can land in
+only one column band and the earlier band wins, so two bands that overlap do not
+duplicate a value - they **delete it** from the second column, and every row still
+looks complete. `validate_document_template()` refuses overlapping bands before the
+template is written, naming both columns.
+
+**N147 (a band drawn slightly too narrow) - closed by measurement.** A right-aligned
+money column whose band stops four points short loses every figure in it, and the
+remaining columns still read perfectly. Every word inside a table's boundary that no
+column claimed is recorded and counted on the result screen (`unclaimed_words`), and
+the column's fill rate comes back 0 and flagged. Test: *"a column band drawn too
+narrow shows up as unclaimed words, not as a clean read"*.
+
+**N148 (two rows read as one) - closed by learning the pitch.** A fixed row tolerance
+is right for one page shape only; across thirty tables in one report the line pitch
+runs from about 10pt to 24pt. Too large **merges two rows into one**, which is the
+silent corruption the project exists to prevent. The tolerance is learned per table
+from the page's own line spacing, floored at the proven statement tolerance and
+capped at 14 so a widely-leaded title block cannot swallow the value printed under
+its label.
+
+**N149 (a stale position that still reads something) - closed by reporting it.**
+Reading a table from where it sat on the example, on a document where it has moved,
+does not fail: it quietly picks up the title line and the header row as if they were
+data. So a table is located by its **heading wording** first and its coordinates
+last, which of the two was used is reported per table, and a position-only match
+sends the whole conversion to *needs review*. Test: *"with no heading to go on it
+falls back to position, and says THAT"* asserts the three junk rows explicitly.
+
+**N150 (a report reaching the dashboards) - closed in one line.** There is no
+reconciliation behind a report, so nothing here can tell a right figure from a wrong
+one. `write_feed()` refuses `kind = "tables"` outright, beside the same refusal for
+forms - enforced in code rather than left to the fact that no screen offers it.
+
+**N151 (a text-only table losing its heading row) - open, and deliberately the
+harmless direction.** Auto-detection calls the first line a header when it carries no
+figures and the lines below do. A table of names and addresses satisfies neither
+half, so its heading line is proposed as a first row of data. That row is visible in
+the preview and *Header lines* fixes it in one click; the opposite guess would delete
+a real row with nothing on screen to notice. Pinned by *"a table with no figures
+anywhere keeps its heading line as a row, visibly"*. It would take font weight or
+size from `pdf_data(font_info = TRUE)` to do better, which is not available on every
+pdftools build this ships against.
+
