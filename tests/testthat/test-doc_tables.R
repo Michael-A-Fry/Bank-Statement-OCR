@@ -527,3 +527,95 @@ test_that("a tables result can never reach the Qlik feed", {
   expect_null(write_feed(res, cfg))
   expect_false(dir.exists(cfg$feed$feed_dir))
 })
+
+# ---------------------------------------------------------------------------
+# Columns as EDGES -- what the builder manipulates
+# ---------------------------------------------------------------------------
+
+test_that("a table's columns are its edges, and the edges rebuild the columns", {
+  tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  e <- doc_column_edges(tab)
+  expect_equal(e, c(30, 199, 325, 430, 510))
+  cols <- doc_columns_from_edges(e, old = .doc_columns(tab))
+  expect_equal(length(cols), 4L)
+  # a column whose two edges did not move keeps everything it was given: its
+  # name, its kind, and whether it may be blank
+  expect_identical(vapply(cols, function(cc) cc$name, character(1)),
+                   c("Account", "Type", "Opening", "Closing"))
+  expect_identical(cols[[3]]$type, "money")
+  # ...and the round trip is exact
+  expect_equal(doc_column_edges(list(columns = cols)), e)
+})
+
+test_that("one click on the page means exactly one thing, four ways", {
+  e <- c(30, 199, 325, 430, 510)
+  # between two columns -> split
+  expect_equal(doc_edge_click(e, 250), c(30, 199, 250, 325, 430, 510))
+  # on a divider -> remove it, so the two columns become one
+  expect_equal(doc_edge_click(e, 199), c(30, 325, 430, 510))
+  expect_equal(doc_edge_click(e, 327), c(30, 199, 430, 510))   # within tolerance
+  # outside the table -> the nearer outer edge comes out to meet the click
+  expect_equal(doc_edge_click(e, 12), c(12, 199, 325, 430, 510))
+  expect_equal(doc_edge_click(e, 560), c(30, 199, 325, 430, 560))
+  # ON an outer edge -> move it, rather than making a three-point column beside it
+  expect_equal(doc_edge_click(e, 33), c(33, 199, 325, 430, 510))
+  expect_equal(doc_edge_click(e, 508), c(30, 199, 325, 430, 508))
+  # nothing sensible to do -> nothing happens
+  expect_equal(doc_edge_click(e, NA), e)
+  expect_equal(doc_edge_click(c(40), 100), c(40))
+})
+
+test_that("splitting a column names both halves from the document's own header", {
+  inp <- context_input(); tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  expect_identical(doc_header_names(inp, tab, tm),
+                   c("Account", "Type", "Opening", "Closing"))
+  # merge Type into Account, and the surviving column is named from BOTH header
+  # cells that now sit in it -- which is what the page says it is
+  e <- doc_edge_click(doc_column_edges(tab), 199)
+  expect_identical(doc_header_names(inp, tab, tm, e)[1], "Account Type")
+})
+
+test_that("the columns can be worked out from whatever is inside the table now", {
+  inp <- context_input(); tm <- doc_fixture_template()
+  bare <- tm$tables$account_summary
+  bare$columns <- list()                       # no columns at all
+  fit <- doc_fit_columns(inp, bare, tm)
+  expect_equal(length(fit), 4L)
+  expect_identical(vapply(fit, function(cc) cc$name, character(1)),
+                   c("Account", "Type", "Opening", "Closing"))
+  # the bands meet exactly, so a gap or an overlap is not expressible
+  x0 <- vapply(fit, function(cc) cc$x_min, numeric(1))
+  x1 <- vapply(fit, function(cc) cc$x_max, numeric(1))
+  expect_equal(x1[-length(x1)], x0[-1])
+  # and reading through them gives back what is on the page
+  tab <- bare; tab$columns <- fit
+  r <- doc_table_rows(inp, tab, tm)
+  expect_equal(r$n_rows, 4L)
+  expect_equal(nrow(r$spilled), 0L)
+  expect_identical(r$rows$Closing[4], "-410.05")
+  # a printed rule spans the whole width and would merge every band into one
+  expect_equal(length(doc_fit_columns(hard_ruled(), propose_tables(hard_ruled())[[1]], NULL)), 3L)
+})
+
+test_that("a value with wording and no box at all is read, and does not crash the rest", {
+  # `sp$label` PARTIAL-MATCHES `label_text` in R, so a pair described only by its
+  # wording returned a character vector where a box was expected and took the
+  # whole extraction down with "$ operator is invalid for atomic vectors". Every
+  # typed value is exactly that shape.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$pairs <- list(prepared_for = list(label_text = "Prepared for", type = "text"),
+                   generated = list(label_text = "Generated", type = "date"))
+  p <- doc_pairs(inp, tm)
+  expect_equal(nrow(p), 2L)
+  expect_identical(p$value[p$pair == "prepared_for"], "Ambrose Family Trust")
+  expect_identical(p$value[p$pair == "generated"], "07/04/2025")
+  expect_true(all(p$found_by == "its wording"))
+  expect_equal(validate_document_template(tm), character(0))
+  # ...but a value with NEITHER a box nor wording can never be found, and saying
+  # so at save time is the only chance to say it.
+  tm$pairs$nothing <- list(type = "money")
+  expect_true(any(grepl("neither a box nor any wording",
+                        validate_document_template(tm))))
+})

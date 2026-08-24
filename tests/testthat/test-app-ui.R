@@ -214,24 +214,25 @@ test_that("page numbers are clamped to the document, in one place", {
   expect_false(grepl("max\\(1L, as\\.integer\\(input\\$[A-Za-z_]*page", joined))
   # every page box says how many pages there are
   expect_match(joined, "Page \\(1 to %d\\)")
-  # Four page boxes now: the toolkit, the X-ray, the form builder and the report
-  # builder. The count is the inventory - a new page box that does not say how
-  # many pages there are is exactly what this catches.
-  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 4L)
+  # Three page boxes: the toolkit, the X-ray and the one builder for everything
+  # that is not a statement. The count is the inventory - a new page box that does
+  # not say how many pages there are is exactly what this catches.
+  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 3L)
 })
 
 # ---------------------------------------------------------------------------
 # The 'Other document' builder asked for the file a second time, so the picker at
 # the top of the page did nothing at all on that path and nothing said so.
-test_that("the form builder uses the document already uploaded", {
+test_that("the builder uses the document already uploaded, and never asks twice", {
   src <- .ui_src()
   joined <- paste(src, collapse = "\n")
-  expect_match(joined, "fb_doc <- reactive")
-  expect_match(.ui_block(src, "fb_doc <- reactive", 8L), "input\\$ts_file")
-  # the render and the preview both go through it, not the second picker
-  expect_false(grepl("read_input(input$fb_sample$datapath)", joined, fixed = TRUE))
-  expect_false(grepl("render_page_view(input$fb_sample$datapath", joined, fixed = TRUE))
-  expect_match(.ui_block(src, "output\\$fb_has_sample <- reactive", 2L), "fb_doc\\(\\)")
+  expect_match(joined, "rb_doc <- reactive")
+  expect_match(.ui_block(src, "rb_doc <- reactive", 8L), "input\\$ts_file")
+  # There is no second file picker on this page at all any more. The builder used
+  # to carry its own ("draw on a different PDF instead"), which meant the picker
+  # at the top of the page did nothing on that path and nothing said so.
+  expect_false(any(grepl('fileInput\\("(fb|rb)_sample"', src)))
+  expect_match(.ui_block(src, "output\\$rb_has_doc <- reactive", 2L), "rb_doc\\(\\)")
 })
 
 # ---------------------------------------------------------------------------
@@ -1296,7 +1297,7 @@ test_that("the band editor draws and stores in the template's band frame", {
 # correctness fix wearing a usability costume.
 test_that("a drawn box commits on release, not on every mouse move", {
   src <- paste(.ui_src(), collapse = " ")
-  for (id in c("g_pdf_brush", "fb_brush", "rb_brush")) {
+  for (id in c("g_pdf_brush", "rb_brush")) {
     blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
     expect_match(blk, "delay = 1500")
     expect_match(blk, 'delayType = "debounce"')
@@ -1346,22 +1347,18 @@ test_that("the way out is on Simple and outside the settings disclosure", {
 # N31. The form builder opened with the ABSTRACT step - a blank box headed "the
 # values to pull out" - and put the one concrete thing a person can do, point at
 # a number, last and marked optional. The page now leads with the document.
-test_that("the form builder leads with the document, not a blank list", {
+test_that("the builder leads with the document, not a blank list", {
   src <- .ui_src()
-  draw <- grep("1\\. Draw a box round a value you want", src)
-  what <- grep("2\\. What is this\\?", src)
-  save <- grep("5\\. Name it and save", src)
-  typed <- grep('textAreaInput\\("fb_fields"', src)
-  expect_length(draw, 1L); expect_length(what, 1L); expect_length(save, 1L)
-  expect_true(draw < what && what < save)          # the concrete step is first
-  expect_true(typed > draw)                        # the typed list is no longer the door
-  # and it is behind the disclosure, not in front of it
-  det <- grep("Know the wording\\? Type them instead", src)
+  drag <- grep("Drag a box round the value", src)
+  typed <- grep('textAreaInput\\("rb_val_typed"', src)
+  expect_true(length(drag) >= 1L); expect_length(typed, 1L)
+  expect_true(min(drag) < typed)                   # the concrete step is first
+  # and the typed list is behind the disclosure, not in front of it
+  det <- grep("Know the wording already\\? Type them instead", src)
   expect_length(det, 1L)
   expect_true(det < typed && typed - det < 4L)
-  # nothing is deleted: the shortcut still parses to the same fields{} block
-  expect_true(any(grepl("parse_fields_spec\\(input\\$fb_fields\\)", src)))
-  # the old edge-case section is gone as a section
+  # nothing is deleted: the shortcut still parses through the same helper
+  expect_true(any(grepl("parse_fields_spec\\(input\\$rb_val_typed\\)", src)))
   expect_false(any(grepl("Value printed away from its wording", src, fixed = TRUE)))
 })
 
@@ -1369,7 +1366,7 @@ test_that("the form builder leads with the document, not a blank list", {
 # wording printed beside it. A box drawn just PAST its value used to be named
 # after the value it missed, which could never match the next document.
 test_that("the builder reads the box and the wording beside it", {
-  f <- .ui_fun(".fb_read_box", also = ".fb_wording")
+  f <- .ui_fun(".rb_read_box", also = ".rb_wording")
   w <- data.frame(
     text   = c("Opening", "balance", "$875.20", "Closing", "balance", "$2,477.80"),
     x      = c(145, 190, 355, 145, 190, 355),
@@ -1392,7 +1389,7 @@ test_that("the builder reads the box and the wording beside it", {
 # The kind of value is read, not asked - with the SAME matchers the extractor
 # uses, so whatever is offered is what the extraction would really do.
 test_that("the builder reads what kind of value it is", {
-  k <- .ui_fun(".fb_kind")
+  k <- .ui_fun(".rb_kind")
   expect_identical(k("$875.20"), "money")
   expect_identical(k("-$577.80"), "money")
   expect_identical(k("31 Mar 2026"), "date")
@@ -1405,19 +1402,25 @@ test_that("the builder reads what kind of value it is", {
 # a box does not. So the wording is preferred - but only when it actually finds
 # the value she boxed. That is a question the tool can answer, which is why
 # "the value is printed away from its wording" is no longer a question it asks.
-test_that("wording is only trusted when it reaches the value she boxed", {
-  same <- .ui_fun(".fb_same")
-  expect_true(same("$875.20", "875.20"))
-  expect_true(same(" 875.20 ", "$875.20"))
-  expect_false(same("875.20", "2477.80"))
-  expect_false(same("", ""))          # nothing read proves nothing
-  expect_false(same(NA, "875.20"))
-  blk <- .ui_block(.ui_src(), "observeEvent\\(input\\$fb_rf_set", 22L)
-  expect_match(blk, "byword <- \\.fb_same\\(fb_by_wording\\(")
-  # and the template really emits one or the other
-  tpl <- .ui_block(.ui_src(), "fb_template <- reactive", 22L)
-  expect_match(tpl, "any_of = list\\(b\\$label\\)")
-  expect_match(tpl, "region = list\\(page = b\\$page")
+test_that("one drag gives a value BOTH its wording and its box", {
+  # The old builder asked the user to choose: read this by its wording, or from
+  # this spot? It answered the question itself by checking whether the wording
+  # reached the value -- which was the right instinct and the wrong shape, because
+  # a value that moves relative to its label defeats both readings.
+  #
+  # A pair now stores the label's WORDING and the OFFSET from the label to the
+  # value, so the next document is read by finding the label wherever it went and
+  # applying the same offset. One drag produces both: the value box is the box she
+  # drew, and the label box is found on the page from the wording beside it.
+  blk <- .ui_block(.ui_src(), "observeEvent\\(input\\$rb_val_add", 30L)
+  expect_match(blk, "\\.doc_find_phrase\\(")        # the label's own box, from the page
+  expect_match(blk, "label_text = ")
+  expect_match(blk, "value = b\\$box")
+  # ...and where there is no wording at all, the box alone is stored and the
+  # screen says so rather than implying a wording it did not find.
+  read <- .ui_block(.ui_src(), "output\\$rb_val_read <- renderUI", 12L)
+  expect_match(read, "found by that wording")
+  expect_match(read, "read from this spot")
 })
 
 # ---- N34: the preview's row count is a PARTIAL read, and must say so ---------
@@ -1446,11 +1449,11 @@ test_that("the toolkit offers a way back to the other builder, carrying the file
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
   expect_match(joined, 'actionLink("g_not_statement"', fixed = TRUE)
   blk <- .ui_block(src, "observeEvent\\(input\\$g_not_statement", 12L)
-  expect_match(blk, "fb_handoff\\(g\\$path\\)")                 # the file goes with it
+  expect_match(blk, "rb_handoff\\(g\\$path\\)")                 # the file goes with it
   expect_match(blk, "ts_doctype", fixed = TRUE)                # ...and the answer changes
   expect_match(blk, "removeModal\\(\\)")
-  # the form builder must actually READ the handoff, or the link is theatre
-  expect_match(.ui_block(src, "fb_doc <- reactive", 8L), "fb_handoff\\(\\)")
+  # the builder must actually READ the handoff, or the link is theatre
+  expect_match(.ui_block(src, "rb_doc <- reactive", 8L), "rb_handoff\\(\\)")
 })
 
 test_that("no on-screen text points at a control that is off screen", {

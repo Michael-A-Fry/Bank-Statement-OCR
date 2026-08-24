@@ -115,11 +115,22 @@ validate_document_template <- function(t) {
   for (k in names(prs)) {
     sp <- prs[[k]]
     if (!is.list(sp)) { p <- c(p, sprintf("value '%s' is not a mapping", k)); next }
-    p <- c(p, .doc_box_problems(sp$value, sprintf("value '%s'", k)))
-    # The label box is optional -- a value with no wording beside it is read from
-    # its position, which is exactly what a box on its own means.
-    if (!is.null(sp$label)) p <- c(p, .doc_box_problems(sp$label, sprintf("value '%s' label", k)))
-    ty <- as.character(sp$type %||% "text")[1]
+    # THREE WAYS TO FIND A VALUE, and a template may use any of them:
+    #   a value box + a label box   read by wording, placed by the offset between
+    #   a value box alone           read from that spot on the page
+    #   a label wording alone       read by the label matcher, no coordinates
+    # So a missing value box is only a fault when there is no wording either --
+    # that is a value the template can never find, which is the thing worth
+    # refusing.
+    vbox <- .doc_key(sp, "value"); lbox <- .doc_key(sp, "label")
+    has_box <- is.list(vbox) && !is.na(.doc_num(.doc_key(vbox, "x_min")))
+    has_word <- nzchar(trimws(as.character(.doc_key(sp, "label_text") %||% "")))
+    if (!has_box && !has_word)
+      p <- c(p, sprintf(paste("value '%s' has neither a box nor any wording to find",
+                              "it by, so it can never be read"), k))
+    if (has_box) p <- c(p, .doc_box_problems(vbox, sprintf("value '%s'", k)))
+    if (!is.null(lbox)) p <- c(p, .doc_box_problems(lbox, sprintf("value '%s' label", k)))
+    ty <- as.character(.doc_key(sp, "type") %||% "text")[1]
     if (!(ty %in% c("text", "money", "date", "date_range")))
       p <- c(p, sprintf("value '%s' has kind '%s', which is not one of text/money/date/date_range", k, ty))
   }

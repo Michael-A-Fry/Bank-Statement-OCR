@@ -76,17 +76,13 @@ test_that("the report panel leads with how each table was found and what came ou
   expect_match(blk, "running balance")
 })
 
-test_that("the report builder is a third answer to the first question, not a hidden mode", {
-  joined <- .da_joined()
-  expect_match(joined, "= \"report\")", fixed = TRUE)          # the radio choice
-  expect_match(joined, "input.ts_doctype == 'report'", fixed = TRUE)
-  # download only, said on the screen where the template is saved
-  expect_match(joined, "never goes to the dashboards", fixed = TRUE)
+test_that("download only is said on the screen where the template is saved", {
+  expect_match(.da_joined(), "never goes to the", fixed = TRUE)
 })
 
 test_that("the builder finds the tables before it asks anyone to draw one", {
   src <- .da_src()
-  blk <- .da_block(src, "observeEvent\\(input\\$rb_scan", 20L)
+  blk <- .da_block(src, "observeEvent\\(input\\$rb_scan", 22L)
   expect_match(blk, "propose_tables\\(")
   expect_match(blk, "propose_pairs\\(")
   # every page, not a sample: a table on page 31 is the whole point
@@ -108,18 +104,57 @@ test_that("the navigator's click handlers exist once, not once per redraw", {
   src <- .da_src()
   # Created in a fixed lapply OUTSIDE the renderUI. Inside it, every redraw would
   # stack another observer on every row, so one click would fire many times.
-  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 16L)
-  expect_match(blk, "observeEvent\\(input\\[\\[paste0\\(\"rb_pick_t\"")
-  expect_match(blk, "observeEvent\\(input\\[\\[paste0\\(\"rb_pick_p\"")
-  nav <- .da_block(src, "output\\$rb_nav <- renderUI", 33L)
+  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 10L)
+  expect_match(blk, "observeEvent\\(input\\[\\[paste0\\(\"rb_pick_\"")
+  nav <- .da_block(src, "output\\$rb_nav <- renderUI", 22L)
   expect_false(grepl("observeEvent", nav, fixed = TRUE))
 })
 
-test_that("an end before the start is refused in the builder, not saved and explained later", {
+test_that("a click means exactly one thing, and the screen says which", {
   src <- .da_src()
-  blk <- .da_block(src, "\\.rb_set_edge <- function", 24L)
+  # ONE control decides what a click does, and it is under the picture it
+  # controls. A drag always means the same thing on a given tab. Between them
+  # there are two gestures to keep straight instead of one gesture with three
+  # meanings and a follow-up question.
+  tools <- .da_block(src, "output\\$rb_tools <- renderUI", 12L)
+  expect_match(tools, 'radioButtons\\("rb_mode"')
+  for (m in c('"col"', '"start"', '"end"', '"off"')) expect_match(tools, m, fixed = TRUE)
+  # every mode has a sentence saying what clicking will do
+  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 24L)
+  expect_match(hint, "Click <b>between</b> two columns", fixed = TRUE)
+  expect_match(hint, "where this table STARTS", fixed = TRUE)
+  expect_match(hint, "where this table ENDS", fixed = TRUE)
+  # an end before the start is refused where it happens, not explained later
+  blk <- .da_block(src, "observeEvent\\(input\\$rb_click", 34L)
   expect_match(blk, "end the table before it starts")
-  expect_match(blk, "return\\(\\)")
+})
+
+test_that("columns are DIVIDERS, so a gap or an overlap cannot be drawn at all", {
+  src <- .da_src()
+  blk <- .da_block(src, "observeEvent\\(input\\$rb_click", 34L)
+  expect_match(blk, "doc_column_edges\\(tb\\)")
+  expect_match(blk, "doc_edge_click\\(edges")
+  # ...and the names follow the columns instead of being typed
+  set <- .da_block(src, "\\.rb_set_edges <- function", 10L)
+  expect_match(set, "doc_header_names\\(")
+  expect_match(set, "doc_columns_from_edges\\(")
+})
+
+test_that("one builder covers a form and a report, and it says so", {
+  joined <- .da_joined()
+  # Two answers to the first question, not three -- and nothing anywhere selects a
+  # third that no longer exists. (It did: the link from a Convert result set
+  # ts_doctype to "report", which after the merge selects nothing at all, so the
+  # page arrived showing the statement toolkit instead of the builder.)
+  expect_match(joined, '= "statement",', fixed = TRUE)
+  expect_match(joined, '= "other"),', fixed = TRUE)
+  sel <- unlist(regmatches(joined, gregexpr(
+    'updateRadioButtons\\(session, "ts_doctype", selected = "[a-z]+"', joined)))
+  expect_true(length(sel) > 0L)
+  expect_true(all(grepl('"other"$', sel)))
+  # and the two things it can pull out are the two tabs
+  expect_match(joined, 'tabPanel("Tables", value = "tables"', fixed = TRUE)
+  expect_match(joined, 'tabPanel("Values", value = "values"', fixed = TRUE)
 })
 
 # ---------------------------------------------------------------------------
