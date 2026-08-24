@@ -99,6 +99,52 @@ inside the code path every real conversion runs through, so a report is read by
   `openxlsx` is absent, a CSV per table instead: nothing is dropped for want of a
   package.
 
+**ONE builder, and columns you click rather than draw**
+
+The first version of this asked the wrong question first ("a form, or a
+report?") and then made the commonest job the hardest one. Rebuilt around what a
+person actually does:
+
+- **One document type.** "A bank or card statement" or "anything else". There is
+  no longer a form builder and a report builder: that split was the engine's, and
+  a person with a PDF in front of her cannot answer it. Inside, two tabs -- Tables
+  and Values -- which are about what she is doing at that moment.
+- **Columns are DIVIDERS, not boxes.** A table's columns tile its width, so the
+  real choice is the N-1 lines between them. Click between two columns to split,
+  click on a divider to remove it, click outside the table to widen it. Six clicks
+  instead of seven drags -- and a gap or an overlap becomes impossible to draw,
+  which retires the whole class of "a column band a few points wrong" by
+  construction.
+- **The names come from the document.** Split a column and both halves are named
+  from the two header cells that were in it. Nobody types a column name unless
+  they want a different one.
+- **"Work out the columns"** derives them from whatever is inside the table's
+  boundary right now -- so the loop is: set the start, set the end, press it.
+- **One control says what a click does** (columns / where it starts / where it
+  ends / nothing), and it sits under the picture it controls. A drag always means
+  one thing on a given tab. Two gestures, never a follow-up question.
+- **A value takes ONE drag.** The tool reads the wording beside the box and calls
+  the value that, finding the label's own box on the page so the pair still
+  travels by wording-plus-offset. A second box is only needed when the label is
+  somewhere the tool cannot see.
+- **Typed values survive the merge.** A value described only by its wording,
+  with no box at all, is read by the label matcher anywhere on the document -- the
+  most portable of the three ways, and now expressible in the same template as a
+  drawn table.
+
+**Three defects the rebuild turned up**
+
+- **`sp$label` partial-matched `label_text`.** R's `$` partial-matches on lists,
+  so a value described by wording alone returned a character vector where a box
+  was expected and took the WHOLE extraction down with "$ operator is invalid for
+  atomic vectors". Every typed value is exactly that shape. Spec fields are now
+  read by exact name.
+- **The Convert page's link to the builder selected a document type that no
+  longer existed**, so it arrived showing the statement toolkit instead.
+- **`col = "#666"`** in the "this page could not be drawn" fallback:
+  `col2rgb("#666")` is an error, so the branch that exists to survive an
+  un-renderable page would itself have crashed.
+
 **What sixteen awkward documents found**
 
 The shapes above were built as fixtures (`tests/testthat/helper-doc-hard.R`) and

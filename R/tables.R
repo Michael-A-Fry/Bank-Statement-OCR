@@ -94,6 +94,20 @@
   w
 }
 
+# .doc_key(x, k) -- x[[k]], and ONLY x[[k]].
+#
+# R's `$` partial-matches on lists. A pair spec carries `label_text`, so `sp$label`
+# on a pair that has no label BOX silently returns the label's WORDING -- a
+# character vector -- and the next line, `lb$page`, dies with "$ operator is
+# invalid for atomic vectors". That is the whole extraction gone, on a template
+# whose only sin was describing a value by its wording instead of by two boxes.
+#
+# It is not hypothetical and it is not confined to this pair: every one of these
+# structures comes out of YAML, where a key can be added at any time, and the day
+# somebody adds `page_hint` beside `page` the same trap opens under `$page`. So
+# the fields of a spec are read by exact name, here, once.
+.doc_key <- function(x, k) if (is.list(x) && k %in% names(x)) x[[k]] else NULL
+
 # .doc_norm(s) -- the comparison form of a piece of wording: lowercase, letters
 # and digits only. Every text anchor in this file is compared this way, so a
 # heading that gained a colon, a stray space or a different case still matches.
@@ -451,6 +465,149 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
 }
 
 # ---------------------------------------------------------------------------
+# Columns as EDGES -- what the builder actually manipulates
+# ---------------------------------------------------------------------------
+#
+# A table's columns tile its width: they meet, they do not overlap, and there is
+# no space between them. So the thing a person is really choosing is not N boxes
+# but the N-1 DIVIDERS between them, plus the outer edge on each side.
+#
+# That reframing is worth more than it looks. Dragging seven boxes to define a
+# seven-column table is seven drags, each of which can be a few points wrong in
+# two directions -- and a gap loses a column of figures while an overlap deletes
+# one (see .doc_table_problems). Clicking six dividers is six clicks, each of
+# which cannot produce either fault, because the edges are shared by construction.
+#
+# doc_column_edges(tab)        columns   -> edges
+# doc_columns_from_edges(...)  edges     -> columns
+# doc_edge_click(edges, x)     one click -> the edges it should produce
+
+# doc_column_edges(tab) -> the sorted edge positions of a table's columns:
+# left edge, every divider, right edge. NULL when it has no columns yet.
+doc_column_edges <- function(tab) {
+  cols <- .doc_columns(tab)
+  if (!length(cols)) return(NULL)
+  lo <- vapply(cols, function(cc) .doc_num(cc$x_min, NA_real_), numeric(1))
+  hi <- vapply(cols, function(cc) .doc_num(cc$x_max, NA_real_), numeric(1))
+  if (any(is.na(lo)) || any(is.na(hi))) return(NULL)
+  o <- order(lo)
+  sort(unique(round(c(lo[o], hi[o[length(o)]]), 2)))
+}
+
+# doc_columns_from_edges(edges, old, names) -> the column list those edges make.
+#
+# EVERY COLUMN THAT DID NOT MOVE KEEPS WHAT IT WAS GIVEN. Rebuilding the whole
+# list from scratch on every click would throw away the name and the kind a person
+# had already set on the six columns they were happy with, which makes correcting
+# the seventh feel like starting again. A column whose two edges are unchanged is
+# the same column; anything else is new and takes its name from the header row.
+doc_columns_from_edges <- function(edges, old = list(), names = character(0)) {
+  edges <- sort(unique(round(as.numeric(edges), 2)))
+  edges <- edges[is.finite(edges)]
+  if (length(edges) < 2L) return(list())
+  same <- function(a, b) is.finite(a) && is.finite(b) && abs(a - b) < 0.5
+  lapply(seq_len(length(edges) - 1L), function(j) {
+    lo <- edges[j]; hi <- edges[j + 1L]
+    keep <- NULL
+    for (cc in old)
+      if (same(.doc_num(cc$x_min), lo) && same(.doc_num(cc$x_max), hi)) { keep <- cc; break }
+    if (!is.null(keep)) { keep$x_min <- lo; keep$x_max <- hi; return(keep) }
+    nm <- if (j <= length(names) && nzchar(trimws(names[j]))) trimws(names[j])
+          else sprintf("column_%d", j)
+    list(name = nm, x_min = lo, x_max = hi, type = "auto", may_be_blank = FALSE)
+  })
+}
+
+# doc_edge_click(edges, x, tol) -> the edges after clicking the page at x.
+#
+# ONE GESTURE, FOUR MEANINGS, none of them ambiguous:
+#   on a divider          remove it        (the two columns become one)
+#   on an outer edge      move it there    (the table gets wider or narrower)
+#   outside the table     move the nearer outer edge out to the click
+#   anywhere else inside  add a divider    (one column becomes two)
+#
+# "On" means within `tol` points, which is what makes removing a divider possible
+# with a mouse at all. Removing takes priority over adding, so a click that is
+# nearly on a divider never quietly creates a three-point column beside it.
+doc_edge_click <- function(edges, x, tol = 6) {
+  x <- .doc_num(x)
+  if (is.na(x)) return(edges)
+  edges <- sort(unique(round(as.numeric(edges), 2)))
+  edges <- edges[is.finite(edges)]
+  if (length(edges) < 2L) return(edges)
+  n <- length(edges)
+  inner <- if (n > 2L) 2:(n - 1L) else integer(0)
+  if (length(inner)) {
+    d <- abs(edges[inner] - x)
+    if (min(d) <= tol) return(edges[-inner[which.min(d)]])
+  }
+  if (abs(x - edges[1]) <= tol) { edges[1] <- x; return(sort(edges)) }
+  if (abs(x - edges[n]) <= tol) { edges[n] <- x; return(sort(edges)) }
+  if (x < edges[1]) { edges[1] <- x; return(edges) }
+  if (x > edges[n]) { edges[n] <- x; return(edges) }
+  sort(c(edges, x))
+}
+
+# doc_header_names(input, tab, tmpl) -> a name for each column, read from the
+# table's own header row. Called after every edge change, so the names follow the
+# columns instead of having to be typed: split a column and the two halves are
+# named from the two header cells that were in it.
+doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL) {
+  edges <- edges %||% doc_column_edges(tab)
+  if (is.null(edges) || length(edges) < 2L) return(character(0))
+  n <- length(edges) - 1L
+  out <- rep("", n)
+  loc <- tryCatch(doc_locate_table(input, tab, tmpl), error = function(e) NULL)
+  if (is.null(loc) || !length(loc$windows)) return(out)
+  win <- loc$windows[[1]]
+  w <- .doc_page_words(input, win$page, tmpl)
+  if (is.null(w)) return(out)
+  w <- w[w$cy >= win$y_min & w$cy <= win$y_max, , drop = FALSE]
+  lines <- .doc_lines(w, tab$row_tol)
+  nh <- max(1L, .doc_int(win$skip, .doc_int(tab$header_rows, 1L)))
+  if (!length(lines)) return(out)
+  hdr <- lines[seq_len(min(nh, length(lines)))]
+  d <- do.call(rbind, hdr)
+  for (j in seq_len(n)) {
+    sel <- d[d$cx >= edges[j] & d$cx < edges[j + 1L], , drop = FALSE]
+    if (nrow(sel)) {
+      sel <- sel[order(sel$y, sel$x), , drop = FALSE]
+      out[j] <- trimws(gsub("\\s+", " ", paste(sel$text, collapse = " ")))
+    }
+  }
+  out
+}
+
+# doc_fit_columns(input, tab, tmpl) -> columns derived from the words actually
+# inside this table's current extent, by the same empty-gutter rule the proposer
+# uses. This is the one-click answer to "I have set where it starts and stops --
+# now work the columns out for me", and it is what makes correcting a table's
+# boundary cheap: move the edge, press it again.
+doc_fit_columns <- function(input, tab, tmpl = NULL) {
+  loc <- tryCatch(doc_locate_table(input, tab, tmpl), error = function(e) NULL)
+  if (is.null(loc) || !length(loc$windows)) return(list())
+  parts <- list()
+  for (win in loc$windows) {
+    w <- .doc_page_words(input, win$page, tmpl)
+    if (is.null(w)) next
+    w <- w[w$cy >= win$y_min & w$cy <= win$y_max, , drop = FALSE]
+    if (!nrow(w)) next
+    # A printed rule spans the whole width and would merge every band into one.
+    for (d in .doc_lines(w, tab$row_tol)) if (!.doc_is_rule(d)) parts[[length(parts) + 1L]] <- d
+  }
+  if (!length(parts)) return(list())
+  body <- do.call(rbind, parts)
+  bands <- .doc_bands(body, .doc_gap_for(body))
+  if (length(bands) < 1L) return(list())
+  edges <- c(vapply(bands, function(b) b$x_min, numeric(1)),
+             bands[[length(bands)]]$x_max)
+  cols <- doc_columns_from_edges(edges, old = .doc_columns(tab))
+  tab2 <- tab; tab2$columns <- cols
+  nm <- doc_header_names(input, tab2, tmpl, edges)
+  doc_columns_from_edges(edges, old = .doc_columns(tab), names = nm)
+}
+
+# ---------------------------------------------------------------------------
 # Cell values
 # ---------------------------------------------------------------------------
 
@@ -779,10 +936,33 @@ doc_pairs <- function(input, tmpl) {
   npg <- length(input$words %||% list())
   rows <- lapply(names(specs), function(nm) {
     sp <- specs[[nm]]
-    lb <- sp$label %||% list(); vb <- sp$value %||% list()
-    vtype <- as.character(sp$type %||% "text")[1]
-    label_text <- as.character(sp$label_text %||% "")[1]
-    pg <- .doc_int(vb$page %||% lb$page, 1L); if (is.na(pg) || pg < 1L) pg <- 1L
+    lb <- .doc_key(sp, "label"); if (!is.list(lb)) lb <- list()
+    vb <- .doc_key(sp, "value"); if (!is.list(vb)) vb <- list()
+    vtype <- as.character(.doc_key(sp, "type") %||% "text")[1]
+    label_text <- trimws(as.character(.doc_key(sp, "label_text") %||% "")[1])
+    if (is.na(label_text)) label_text <- ""
+    pg <- .doc_int(.doc_key(vb, "page") %||% .doc_key(lb, "page"), 1L)
+    if (is.na(pg) || pg < 1L) pg <- 1L
+
+    # NO BOX AT ALL, JUST WORDING. This is the "I already know what the fields
+    # are called, let me type them" shortcut, and it is the oldest and most
+    # portable way to read a form: the label matcher finds the wording anywhere on
+    # any page and takes the value beside it, so nothing depends on where the
+    # value sat when the template was made. Keeping it here is what lets ONE
+    # builder cover a form and a report -- the two used to be separate screens
+    # because the two engines were separate, which was never a reason a person
+    # holding a document would recognise.
+    if (!is.list(vb) || is.na(.doc_num(vb$x_min))) {
+      m <- if (nzchar(label_text))
+        tryCatch(match_label(list(any_of = list(label_text), value = vtype),
+                             input$pages %||% character(0)), error = function(e) NULL)
+        else NULL
+      got <- if (!is.null(m) && isTRUE(m$matched)) trimws(m$value %||% "") else ""
+      return(data.frame(pair = nm, label = if (nzchar(label_text)) label_text else nm,
+                        value = got, raw = if (is.null(m)) "" else trimws(m$raw %||% ""),
+                        page = NA_integer_, found_by = "its wording",
+                        matched = nzchar(got), stringsAsFactors = FALSE))
+    }
 
     box <- NULL; found_by <- "its place on the page"; use_page <- pg
     if (nzchar(label_text)) {

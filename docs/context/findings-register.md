@@ -14,7 +14,7 @@ re-proved afterwards by an agent that had not made the change.
 
 Status values: `open` · `fixed` · `not-a-defect` · `wont-fix` (with a reason).
 
-**Where it stands: 222 findings, 216 fixed, 3 open, 1 wont-fix, 2 not-a-defect.** The three open are **N15**, **N16** and **N151**. N15 and N16 are blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N151 is open in the harmless direction and is pinned by a test that says so; see the end of this file. N47 is wont-fix with reasons, at the end.
+**Where it stands: 225 findings, 219 fixed, 3 open, 1 wont-fix, 2 not-a-defect.** The three open are **N15**, **N16** and **N151**. N15 and N16 are blocked on **evidence we do not have** rather than on effort: each fails closed and loudly today, so neither can put a wrong figure on screen, and what would unblock them - three or four more real forms, and one scan keyed in by hand as a golden - is set out at the bottom of this file. N151 is open in the harmless direction and is pinned by a test that says so; see the end of this file. N47 is wont-fix with reasons, at the end.
 
 N48-N79 came from a later sweep that asked a different question - not *is this code correct?*
 but *does the code do what it says, and does anything on a screen tell a lie?* That sweep
@@ -1048,4 +1048,43 @@ a spanning header cell becomes the proposed table name; a table with no figures
 anywhere keeps its heading line as a row (N151). Each has a test asserting the
 CURRENT behaviour, because a limitation nobody wrote down cannot be told apart
 from a bug nobody noticed.
+
+## What rebuilding the builder turned up (N161-N163)
+
+The report builder's first version worked and was awkward to use: setting a
+table's columns meant dragging one box per column, the drag also meant two other
+things, and the start and the end shared a control with the columns. Rebuilding
+it around *dividers* -- the N-1 lines between columns rather than the N boxes --
+turned up three defects, one of them serious.
+
+**N161 (a value described by wording alone crashed the whole extraction) -
+fixed.** R's `$` PARTIAL-MATCHES on lists. A pair spec carries `label_text`, so
+`sp$label` on a pair with no label BOX returned the label's WORDING -- a character
+vector -- and the next line, `lb$page`, died with *"$ operator is invalid for
+atomic vectors"*. Not one value: `doc_pairs()` throws, so **every table and every
+value on that document** comes back as nothing. Every typed value has exactly
+that shape, and so does every pair saved without a label box. Spec fields are now
+read by exact name through `.doc_key()`. The tests missed it because the fixture
+template always supplied both boxes -- which is the argument for a fixture that
+uses the SPARSEST legal shape, not the fullest.
+
+**N162 (the route back to the builder went to the wrong screen) - fixed.** The
+"Open the report builder" link on a Convert result set the document type to
+`report`, which the merge into one builder had removed. Selecting a radio value
+that does not exist selects nothing, so the page arrived showing the statement
+toolkit. Caught by a test asserting that no code anywhere selects a third answer
+to a two-answer question.
+
+**N163 (a three-digit hex in chart code) - fixed.** `col = "#666"` in the "this
+page could not be drawn" fallback. `grDevices::col2rgb("#666")` is an ERROR, so
+the one branch whose entire job is to survive a page the renderer could not draw
+would have crashed on its own colour. The repo already had the rule and the test;
+the new code broke it.
+
+**Not a defect, worth recording.** Making columns dividers removes two of the
+faults in the register by construction rather than by validation: a gap between
+bands (which loses a column of figures) and an overlap (which deletes one) are no
+longer expressible, because adjacent columns share an edge. `.doc_table_problems`
+still refuses both -- a template can still be hand-edited -- but nothing the
+builder produces can contain either.
 

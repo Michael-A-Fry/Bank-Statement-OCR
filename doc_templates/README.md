@@ -5,11 +5,19 @@ shapes rather than one table of transactions: a position report, a schedule of
 holdings, a valuation, a consolidated statement. One template per **kind of
 report**, matched by the phrases printed on it.
 
-Built on the app's **Add a template** tab: pick *"A report — several tables of
-different shapes on the same document"*, upload one example, press **Find the
-tables**, then confirm, name and correct what it found. Templates saved there
-land in `../doc_templates_user/`; a good one is promoted by moving its `.yaml`
-here.
+Built on the app's **Add a template** tab: pick *"Anything else"*, upload one
+example, press **Find the tables**, then confirm, name and correct what it found.
+The same builder covers a form: its **Values** tab draws label/value pairs, and
+one template holds both. Templates saved there land in `../doc_templates_user/`;
+a good one is promoted by moving its `.yaml` here.
+
+**Columns are dividers.** A table's columns tile its width, so what you set is
+the lines *between* them: click between two columns to split, on a divider to
+remove it, outside the table to widen it. The names are read from the document's
+own header row, so splitting a column names both halves without anybody typing.
+A gap or an overlap between bands cannot be drawn at all — adjacent columns share
+an edge — which is why the two faults that lose or delete a column of figures are
+not reachable from this screen.
 
 ## How a report template differs from the other two kinds
 
