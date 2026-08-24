@@ -615,6 +615,15 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         acc <- paste0(acc, toks[k])
         if (grepl(key, acc, fixed = TRUE)) {
           sel <- d[i:k, , drop = FALSE]
+          # Trim to the SMALLEST run of words that still carries the phrase. The
+          # outer loop already stops at the earliest start and the shortest end,
+          # but a phrase can begin part-way into the first word it swept up
+          # ("for" found inside "Prepared for"), and the box returned here is the
+          # anchor the value's offset is measured from -- a box one word too wide
+          # moves the value box by exactly that word.
+          while (nrow(sel) > 1L &&
+                 grepl(key, paste(.doc_norm(sel$text[-1]), collapse = ""), fixed = TRUE))
+            sel <- sel[-1, , drop = FALSE]
           return(list(x_min = min(sel$x), x_max = max(sel$x + sel$width),
                       y_min = min(sel$y), y_max = max(sel$y + sel$height),
                       page = sel$page[1]))
