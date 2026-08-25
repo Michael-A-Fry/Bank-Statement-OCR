@@ -2574,11 +2574,26 @@ server <- function(input, output, session) {
       .rb_push_where(d)
       updateRadioButtons(session, "rb_hdr", selected = "head")
       updateNumericInput(session, "rb_hdrn", value = .doc_int(d$header_rows, 1L))
-      showNotification(sprintf(paste("%d column%s, ending on page %d. Everything below can",
-                                     "be changed - names, edges, where it starts and stops."),
-                               length(cols), if (length(cols) == 1L) "" else "s",
-                               .doc_int(d$end$page, pg)),
-                       type = "message", duration = 7)
+      # ONE COLUMN IS ALMOST NEVER WHAT A DRAG ROUND "THE COLUMN NAMES" MEANT.
+      #
+      # A box with one unbroken run of words in it -- a sentence, the table's
+      # title, a wrapped heading -- has one gutter-free band in it, so it makes
+      # one column, and every row then arrives with the whole row in a single
+      # cell. That is correct and it is also, nine times in ten, a box drawn
+      # round the wrong thing. It cost five of fifteen documents in a run over
+      # somebody else's PDFs, and nothing on screen said why.
+      if (length(cols) == 1L) {
+        showNotification(paste("That box holds one unbroken run of words, so this table has",
+                               "ONE column and each row arrives whole in it. If you meant a",
+                               "row of column headings, drag round the headings themselves.",
+                               "If you did mean one column, carry on."),
+                         type = "warning", duration = 12)
+      } else {
+        showNotification(sprintf(paste("%d columns, ending on page %d. Everything below can",
+                                       "be changed - names, edges, where it starts and stops."),
+                                 length(cols), .doc_int(d$end$page, pg)),
+                         type = "message", duration = 7)
+      }
       return()
     }
 
@@ -3174,10 +3189,18 @@ server <- function(input, output, session) {
     col <- PALETTE[[key]]
     if ("tables" %in% lay) {
       if (!is.null(edges) && length(edges) >= 2L) {
+        # EVERY COLUMN IS TINTED. It used to tint only the odd-numbered ones,
+        # meaning to show where one ends and the next begins -- but on screen
+        # that reads as "these three are selected and these three are not", and
+        # the list beside it says six. A stripe is still there, it is just the
+        # difference between two shades of the SAME thing rather than between a
+        # thing and nothing. The one column being edited is the one with a
+        # thick outline round it, and it is the only one.
+        pale <- if (lwd > 1) "16" else "0d"
+        dark <- if (lwd > 1) "2a" else "1a"
         for (j in seq_len(length(edges) - 1L))
-          if (j %% 2L == 1L)
-            rect(edges[j], y0, edges[j + 1L], y1, border = NA,
-                 col = pal_fill(key, if (lwd > 1) "22" else "12"))
+          rect(edges[j], y0, edges[j + 1L], y1, border = NA,
+               col = pal_fill(key, if (j %% 2L == 1L) dark else pale))
       } else {
         rect(0, y0, r$w, y1, border = col, lty = 3, lwd = lwd)
       }
@@ -3398,6 +3421,7 @@ server <- function(input, output, session) {
     thin <- sum(as.integer(s$thin_columns))
     lost <- sum(as.integer(s$unclaimed_words))
     empty <- sum(as.integer(s$rows) < 1L)
+    one_col <- sum(as.integer(s$columns) == 1L)
     bad <- weak + thin + lost + empty
     tagList(
       div(class = if (bad) "verdict verdict-medium" else "verdict verdict-high",
@@ -3411,10 +3435,16 @@ server <- function(input, output, session) {
                       nrow(ext$pairs), if (nrow(ext$pairs) == 1L) "" else "s")),
           p(class = "verdict-body", style = "margin:0", paste(c(
             if (empty) sprintf("%d table(s) came out empty.", empty),
+            # A one-column table cannot have an unclaimed word or a thin column,
+            # so it passes every check there is while telling you nothing. Said
+            # out loud, because "every column filled" reads like a result.
+            if (one_col) sprintf(paste("%d table(s) have a single column, so each",
+                                       "row arrives whole in one cell."), one_col),
             if (weak) sprintf("%d found by position rather than by a heading.", weak),
             if (thin) sprintf("%d column(s) came out mostly empty - check the column edges.", thin),
             if (lost) sprintf("%d word(s) inside a table were claimed by no column.", lost),
-            if (!bad) "Every table was found by its own heading and every column filled."),
+            if (!bad && !one_col)
+              "Every table was found by its own heading and every column filled."),
             collapse = " ")))),
       if (length(rb$outputs)) div(style = "margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap",
         downloadButton("rb_dl_xlsx", "Download the workbook", class = "btn-default"),
