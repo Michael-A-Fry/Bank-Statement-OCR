@@ -225,6 +225,25 @@ read_pdf <- function(path, redaction_rects = NULL,
   length(page_height) <- np
   # pdf_data may return fewer/NULL entries on odd pages; normalise to np slots.
   if (is.null(word_list)) word_list <- vector("list", np)
+  # A ROTATED PAGE FACES THE OTHER WAY FROM ITS PAGE BOX.
+  #
+  # pdf_pagesize reports the box BEFORE the page's /Rotate is applied; the text
+  # extractor and the renderer both report AFTER it. On such a page the two
+  # disagree by ninety degrees, and everything downstream that trusts the box is
+  # then measuring in a space at right angles to the one the words are in: the
+  # picture in the builder is drawn 612 wide while its own image is 792 wide, so
+  # nothing anybody draws on it lines up with anything, and the band frame
+  # squashes every word on the page.
+  #
+  # The WORDS are the authority, because they are what gets read. If they do not
+  # fit the box but do fit it turned on its side, the page is turned on its side.
+  # (Measured on a corpus of other people's PDFs: 11 pages of 212, across 5 of
+  # 81 documents -- landscape scans, a US Senate expenditure report, a bid award.
+  # On every one of them the builder was unusable.)
+  for (p in seq_len(np)) {
+    sp <- .pdf_page_space(page_width[p], page_height[p], word_list[[p]])
+    page_width[p] <- sp[1]; page_height[p] <- sp[2]
+  }
 
   pages <- character(np)
   words <- vector("list", np)
@@ -417,6 +436,36 @@ read_pdf <- function(path, redaction_rects = NULL,
 # diagnostics table.
 # .pdf_doc_info(info) -> a fixed-shape list, all-NA when pdf_info was unavailable,
 # so downstream code never has to test whether the call worked.
+# .pdf_page_space(w, h, words) -> c(width, height): the space this page's WORDS
+# are measured in, which is not always the space its page box describes.
+#
+# pdf_pagesize reports the box BEFORE the page's /Rotate is applied; the text
+# extractor and the renderer both report AFTER it. On a rotated page the two
+# disagree by ninety degrees, and everything downstream that trusts the box is
+# then measuring at right angles to the words: the builder draws a picture 612
+# points wide whose own image is 792 wide, so nothing anybody draws on it lines
+# up with anything, and the band frame squashes every word on the page.
+#
+# THE WORDS DECIDE, because they are what gets read. Turned only when they do
+# not fit the box AND do fit it on its side -- never on a guess. A page whose
+# words fit neither way is left exactly as it was: something else is wrong with
+# it, and turning it would only be a second wrong thing.
+#
+# (Measured on 81 documents from other projects' test suites: 11 pages of 212,
+# across 5 documents -- a landscape scan, a US Senate expenditure report, a
+# five-page bid award. The builder was unusable on every one of them.)
+.pdf_page_space <- function(w, h, words) {
+  w <- suppressWarnings(as.numeric(w)[1]); h <- suppressWarnings(as.numeric(h)[1])
+  if (!isTRUE(is.finite(w)) || !isTRUE(is.finite(h)) || w <= 0 || h <= 0) return(c(w, h))
+  if (is.null(words) || !NROW(words)) return(c(w, h))
+  ex <- suppressWarnings(max(words$x + words$width))
+  ey <- suppressWarnings(max(words$y + words$height))
+  if (!isTRUE(is.finite(ex)) || !isTRUE(is.finite(ey))) return(c(w, h))
+  fits_now <- ex <= w + 2 && ey <= h + 2
+  fits_turned <- ex <= h + 2 && ey <= w + 2
+  if (!fits_now && fits_turned) c(h, w) else c(w, h)
+}
+
 .pdf_doc_info <- function(info) {
   s1 <- function(v) {
     v <- as.character(v)

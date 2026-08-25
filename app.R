@@ -702,9 +702,18 @@ ui <- fluidPage(
                       c("name the columns, and are not read as data" = "head",
                         "are data, like every other row" = "data"), selected = "head")),
                   conditionalPanel("input.rb_hdr == 'head'",
-                    div(style = "width:150px;padding-bottom:10px",
-                      numericInput("rb_hdrn", "How many rows", 1, min = 1, max = 8,
+                    # "How many rows", sitting under a table, reads as "how many
+                    # rows has this table" -- which is not a question anybody is
+                    # ever asked here. The number of DATA rows is worked out by
+                    # reading between the start and the end; this is only how
+                    # tall the heading is.
+                    div(style = "width:170px;padding-bottom:10px",
+                      numericInput("rb_hdrn", "Heading rows", 1, min = 1, max = 8,
                                    step = 1, width = "100%")))),
+                helpText(class = "muted", style = "margin:-6px 0 8px",
+                         paste("How many printed lines the heading takes up.",
+                               "You never say how many rows of DATA there are -",
+                               "that is read from the page, between the start and the end.")),
                 div(style = paste("display:flex;justify-content:space-between;",
                                   "align-items:center;margin:12px 0 4px"),
                   strong(textOutput("rb_ncols", inline = TRUE)),

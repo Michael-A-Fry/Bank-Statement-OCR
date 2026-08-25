@@ -233,7 +233,18 @@ render_page_view <- function(path, page = 1L, dpi = 100L) {
     tryCatch(suppressWarnings(as.raster(magick::image_read(
       pdftools::pdf_render_page(path, page = page, dpi = dpi)))), error = function(e) NULL))
   if (is.null(ras)) return(NULL)
-  out <- list(ras = ras, w = sz$width[page], h = sz$height[page], pg = page)
+  # THE PICTURE IS THE AUTHORITY ON WHICH WAY THE PAGE FACES.
+  #
+  # pdf_pagesize reports the page box before its /Rotate is applied; poppler
+  # renders after it. On a rotated page the raster comes back landscape while
+  # the box says portrait -- and the caller then draws that landscape image into
+  # a portrait coordinate system, so the page is stretched one way, squashed the
+  # other, and every box anybody draws on it lands somewhere else entirely.
+  # The raster cannot be wrong about its own shape, so it decides.
+  w <- as.numeric(sz$width[page]); h <- as.numeric(sz$height[page])
+  if (is.finite(w) && is.finite(h) &&
+      xor(ncol(ras) > nrow(ras), w > h)) { tmp <- w; w <- h; h <- tmp }
+  out <- list(ras = ras, w = w, h = h, pg = page)
   if (length(ls(.PAGE_RASTER_CACHE)) >= 8L) rm(list = ls(.PAGE_RASTER_CACHE), envir = .PAGE_RASTER_CACHE)
   assign(key, out, envir = .PAGE_RASTER_CACHE)
   out
