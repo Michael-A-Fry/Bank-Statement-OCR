@@ -13,6 +13,81 @@ finding id.
 
 ---
 
+## 1.7.0
+
+Seven things reported from the screen in one go. Two were crashes or losses, four
+were the tool arguing with the person about what they could see, and one was a
+question that turned out to be a design mistake.
+
+**"Invalid 'type' (character) of argument" when you read a document with no
+tables on it.** A template made entirely of label/value pairs — which is what a
+form is — fell over at the last step, after all the work, on the screen that
+shows what came out. A zero-row summary was ten `character(0)` columns, and
+`sum()` over one of those is an error, not a zero. The empty frame now carries the
+same column types as a full one, and the screen forces every count to a number
+besides (N187).
+
+**Columns may now have whitespace between them.** Asked directly: *"do columns
+have to be joined? can there be white space between two column definitions?"*
+They had to, and it was costing something on every screen — adding a column
+either widened its neighbour over a column of figures or invented a column in the
+gap. A report has real whitespace between its columns, and the tool insisting
+otherwise was the tool arguing about what is printed on the page.
+
+- **Overlaps are still impossible.** A gap is visible and counted (*unclaimed
+  words*); an overlap silently reads a figure into one column and loses it from
+  the other. A move or an insert that would overlap is trimmed at the neighbour
+  and the screen says so.
+- **Adding a column adds one column, exactly where you drew it.** Nothing else
+  moves.
+- **Moving a column moves that column.** Neighbours are no longer absorbed.
+- **Deleting one leaves its space empty** rather than handing it to the column
+  beside it (N188).
+
+**Where it starts and where it stops are now steps, not settings.** Reported:
+*"start and end also need to define where the table ends, there's lots of text at
+the bottom of some pages which is not the table, but the table still spans
+multiple pages."* The same sentence-at-a-time guide that gets the columns now gets
+these: columns → starts → ends → **and, when the table runs over pages, the bottom
+edge of the pages in between.**
+
+That last one is the fact nobody was ever asked for. *Where it ends* is a place on
+one page — the last one. On every page between, the table ran to the bottom of the
+paper, so a footnote, a source line or a page footer under it was read in as rows
+on every page but the last, and the person who set the end correctly had no way to
+see why. Every step is skippable, and the guide stops the moment you steer
+yourself (N189).
+
+Building the step turned up a second fault behind it: **the setting was being
+dropped on the way to the reader.** `document_template_from_proposal()` did not
+carry the table's `band`, so the bottom edge was set on the draft, drawn on the
+page, written in the panel — and never reached the engine. A control that changes
+nothing is worse than no control: the question gets answered and stays answered
+wrongly. Driven end to end in a browser on a three-page table with a footer: **40
+rows with the footer in it before, 36 rows and a clean tick after** (N193).
+
+**The values were half the builder and you could not see them.** Two reports, one
+gap: *"the read whole doc should have the tables AND label value pair"* and
+*"where do the value label pairs come out in the CSV long? I can only see it on
+workbook"*. The pairs are now shown in the preview beside the tables, the verdict
+counts them, and the values CSV — which was always written — has a download button
+on both the builder and Convert. The long CSV is the tables stacked *page, row,
+column, value*; a pair is none of those, which is why it needs its own file
+(N190).
+
+**A value's name is the key it comes out under**, so it is lower case with
+underscores: type *IRD Number*, get `ird_number`. The line under the box says what
+it will become while you type; the box is set to it on save. Never while you are
+typing — rewriting a box under somebody's caret is the one thing this screen must
+not do (N191).
+
+**"Nothing was waiting for that drag" now names the button you needed.** Reported:
+*"when I click edit, and drag where I actually want the column, it says nothing
+was waiting."* True, and useless — the button was named nowhere in the sentence.
+It now names the column and the button (N192).
+
+---
+
 ## 1.6.1
 
 **"+ Add a column" was stretching the first column over everything instead of

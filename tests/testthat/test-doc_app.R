@@ -90,21 +90,22 @@ test_that("download only is said on the screen where the template is saved", {
 test_that("one armed intent at a time, named on screen, and nothing armed by default", {
   src <- .da_src(); joined <- .da_joined()
   # every mode has a sentence, and the sentence names the gesture in capitals
-  ask <- .da_block(src, "\\.RB_ASK <- list\\(", 22L)
-  for (m in c("title", "cols", "addcol", "colpos", "start", "end", "label", "value"))
+  ask <- .da_block(src, "\\.RB_ASK <- list\\(", 36L)
+  for (m in c("title", "cols", "addcol", "colpos", "start", "end", "bottom",
+              "label", "value"))
     expect_match(ask, sprintf("\\n\\s*%s\\s*=", m))
   for (t in c("TITLE", "ROW OF COLUMN NAMES", "NEW COLUMN", "STARTS", "ENDS",
-              "LABEL", "VALUE"))
+              "CARRIES ON", "LABEL", "VALUE"))
     expect_match(ask, t, fixed = TRUE)
   # the banner across the top reads its sentence out of that one list...
-  arm <- .da_block(src, "output\\$rb_arm <- renderUI", 20L)
+  arm <- .da_block(src, "output\\$rb_arm <- renderUI", 34L)
   expect_match(arm, "\\.RB_ASK\\[\\[rb\\$mode")
   expect_match(arm, "Nothing is waiting for a drag")
   # ...and so does the hint under the picture, so they can never disagree
   hint <- .da_block(src, "output\\$rb_hint <- renderUI", 8L)
   expect_match(hint, "\\.RB_ASK\\[\\[rb\\$mode")
   # THE RULE ITSELF: a drag with nothing armed changes nothing and says so.
-  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 190L)
+  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 200L)
   expect_match(brush, "if \\(!nzchar\\(m\\)\\)")
   expect_match(brush, "Nothing was waiting for that drag, so nothing changed")
   # and it dispatches on the mode alone -- not on which tab happens to be open
@@ -151,7 +152,7 @@ test_that("the per-row handlers exist once, not once per redraw", {
 # undocumented click on the picture and a sentence in a hint.
 test_that("the start and the end are on the screen in words, and easy to move", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "output\\$rb_where <- renderUI", 26L)
+  blk <- .da_block(src, "output\\$rb_where <- renderUI", 44L)
   expect_match(blk, "Starts", fixed = TRUE)
   expect_match(blk, "Ends", fixed = TRUE)
   expect_match(blk, "down the page", fixed = TRUE)        # said as a place, not a number
@@ -161,8 +162,8 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   for (b in c("rb_endauto", "rb_endpage", "rb_endlast"))
     expect_match(blk, sprintf('"%s"', b))
   # a click only ever moves one of those two, and only when it was asked for
-  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 32L)
-  expect_match(cl, 'if \\(!\\(m %in% c\\("start", "end"\\)\\)\\) return\\(\\)')
+  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 42L)
+  expect_match(cl, 'if \\(!\\(m %in% c\\("start", "end", "bottom"\\)\\)\\) return\\(\\)')
   # an end before the start, or a start after the end, is refused where it
   # happens rather than explained later
   expect_match(cl, "past where the table ends")
@@ -173,29 +174,46 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   expect_match(plot, '"END"')
 })
 
-test_that("the columns come from the header row, and stay a tiling of the width", {
+test_that("the columns come from the header row, and only the one you touch moves", {
   src <- .da_src()
   # One drag round the row of column names, and every header cell becomes a
   # column named after it -- and the end is worked out from there.
   blk <- .da_block(src, 'if \\(m == "cols"\\)', 46L)
   expect_match(blk, "doc_columns_from_box\\(")
   expect_match(blk, "doc_auto_end\\(")
-  # Adding one afterwards moves EDGES, so the columns still tile the width and a
-  # gap or an overlap is not expressible.
-  add <- .da_block(src, 'if \\(m == "addcol"\\)', 30L)
-  expect_match(add, "doc_column_edges\\(d\\)")
-  expect_match(add, "doc_columns_from_edges\\(")
-  # ADDING A COLUMN IS A DRAG, NOT TWO CLICKS. It used to feed the drag's two
-  # sides through doc_edge_click() one after the other, and a click outside the
-  # table MOVES the outer edge out to it -- so dragging over the second column of
-  # a table that only had its first column carved gave one column stretched over
-  # both, holding every heading and figure in it.
-  expect_match(add, "doc_add_column\\(e, box\\$x_min, box\\$x_max\\)")
+  # ADDING A COLUMN IS A DRAG, NOT TWO CLICKS AND NOT AN EDGE MOVE. Fed through
+  # doc_edge_click() twice, a drag beside the table moved the outer edge out to
+  # it twice and gave one column stretched over everything the drag crossed.
+  # Rewritten to keep every edge, it gave the new column PLUS an invented one in
+  # the gap. The column list is the answer: what was drawn, where it was drawn.
+  add <- .da_block(src, 'if \\(m == "addcol"\\)', 32L)
+  expect_match(add, "doc_add_column\\(\\.doc_columns\\(d\\), box\\$x_min, box\\$x_max")
   expect_false(grepl("doc_edge_click\\(", add))
-  # ...and removing one re-reads the names, or a merged column is called column_2
-  # where the page says "Type Opening".
-  rm <- .da_block(src, "\\.rb_drop_col <- function", 16L)
-  expect_match(rm, "doc_header_names\\(")
+  expect_false(grepl("doc_columns_from_edges\\(", add))
+  # moving one moves ONE, through the same function whether dragged or typed
+  mv <- .da_block(src, 'if \\(m == "colpos"\\)', 30L)
+  expect_match(mv, "doc_set_column_band\\(old, j, box\\$x_min, box\\$x_max\\)")
+  expect_match(.da_joined(), "doc_set_column_band\\(cols, j, x0, x1\\)")
+  # ...and deleting one leaves its space empty rather than handing it to a
+  # neighbour, because whitespace between columns is now expressible.
+  rm <- .da_block(src, "\\.rb_drop_col <- function", 14L)
+  expect_match(rm, "cols\\[-j\\]")
+  expect_false(grepl("doc_column_edges", rm))
+})
+
+# WHITESPACE BETWEEN COLUMNS IS ALLOWED. AN OVERLAP IS NOT.
+#
+# Reported: "do columns have to be joined? can there be white space between two
+# column definitions?" They did, and the cost was visible -- adding a column
+# either widened its neighbour or invented a column in the gap, on a report whose
+# columns really do have space between them.
+test_that("columns may have gaps, may never overlap, and the screen says which happened", {
+  joined <- .da_joined()
+  # the clamp is what makes an overlap unreachable, and it is SAID, not silent
+  expect_match(joined, 'attr\\(cols, "clamped"\\)')
+  expect_match(joined, "cannot overlap", fixed = TRUE)
+  # a drag with nowhere to go is refused with a reason, not silently ignored
+  expect_match(joined, "no room for a new one", fixed = TRUE)
 })
 
 # THE SENTENCE SAYING WHAT THE NEXT DRAG DOES HAS TO BE ON SCREEN WHEN YOU DRAG.
@@ -245,10 +263,10 @@ test_that("every column can be renamed, retyped, repositioned and deleted", {
   expect_match(joined, "rb_cx_d <- debounce\\(")
   expect_match(joined, "rb_name_d <- debounce\\(")
   # a band typed and a band dragged are the SAME request, through one function
-  expect_match(joined, "doc_set_column_band\\(e, j, x0, x1\\)")
-  expect_match(joined, "doc_set_column_band\\(e, j, box\\$x_min, box\\$x_max\\)")
+  expect_match(joined, "doc_set_column_band\\(cols, j, x0, x1\\)")
+  expect_match(joined, "doc_set_column_band\\(old, j, box\\$x_min, box\\$x_max\\)")
   # and moving a column does not rename it back to whatever is printed above it
-  mv <- .da_block(src, 'if \\(m == "colpos"\\)', 22L)
+  mv <- .da_block(src, 'if \\(m == "colpos"\\)', 30L)
   expect_match(mv, "keep_nm")
   # ...and the one being edited is picked out on the picture
   expect_match(joined, "PALETTE\\$warn, lwd = 3\\)")
@@ -515,12 +533,12 @@ test_that("one column out of a header drag is said out loud, twice", {
   expect_match(blk, 'type = "warning"')
   # ...and again on the verdict card, so it is not only said at the moment of
   # the drag and then forgotten
-  v <- .da_block(src, "output\\$rb_prev_status <- renderUI", 40L)
-  expect_match(v, "one_col <- sum\\(as\\.integer\\(s\\$columns\\) == 1L\\)")
+  v <- .da_block(src, "output\\$rb_prev_status <- renderUI", 60L)
+  expect_match(v, "one_col <- sum\\(num\\(s\\$columns\\) == 1L\\)")
   expect_match(v, "each", fixed = TRUE)
   expect_match(v, "row arrives whole in one cell", fixed = TRUE)
   # and the clean tick is withheld while any table has one column
-  expect_match(v, "if \\(!bad && !one_col\\)")
+  expect_match(v, "if \\(!bad && n_tab && !one_col\\)")
 })
 
 # ---------------------------------------------------------------------------
@@ -592,4 +610,121 @@ test_that("every box that feeds a redrawn list is debounced, and built once", {
                  info = paste(out, "puts a textInput inside a redrawn list"))
     expect_false(grepl("numericInput(", blk, fixed = TRUE))
   }
+})
+
+# ---------------------------------------------------------------------------
+# WHAT CAME OUT: BOTH HALVES, AND A BUTTON FOR EACH
+#
+# Reported, in one breath: "the read whole doc should have the tables AND label
+# value pair", and "where do the value label pairs come out in the CSV long? I
+# can only see it on workbook". Two symptoms of one gap -- the pairs were
+# extracted, written and reported nowhere a person looks.
+# ---------------------------------------------------------------------------
+
+test_that("the preview shows the values as well as the tables", {
+  joined <- .da_joined()
+  expect_match(joined, 'uiOutput\\("rb_prev_values_head"\\)')
+  expect_match(joined, 'tableOutput\\("rb_prev_values"\\)')
+  expect_match(joined, 'output\\$rb_prev_values <- renderTable')
+  # and the count is in the verdict line, so a values-only template is not
+  # reported as "0 tables" and nothing else
+  v <- .da_block(.da_src(), "output\\$rb_prev_status <- renderUI", 60L)
+  expect_match(v, "n_val <- NROW\\(ext\\$pairs\\)")
+  expect_match(v, "reads labelled values only", fixed = TRUE)
+})
+
+test_that("the values CSV has a button on both screens that produce one", {
+  joined <- .da_joined()
+  # the builder's preview
+  expect_match(joined, 'downloadButton\\("rb_dl_values"')
+  expect_match(joined, 'output\\$rb_dl_values <- downloadHandler')
+  # and Convert, where a saved report template lands
+  expect_match(joined, 'downloadButton\\("dl_values"')
+  # resolved by the FULL suffix: ".csv" alone matches the long CSV first
+  expect_match(joined, 'output\\$dl_values <- mk_dl\\("values\\\\\\\\.csv"\\)')
+})
+
+# ---------------------------------------------------------------------------
+# A TEMPLATE WITH NO TABLES IS NOT AN ERROR
+# ---------------------------------------------------------------------------
+
+test_that("every count on the verdict card is forced to a number", {
+  # Reported: "when I don't define any tables, I'm getting error: invalid 'type'
+  # character of argument when I click read the whole document". A zero-row
+  # summary used to be ten character(0) columns, and sum() over one is an error.
+  # Fixed at the source (R/doc_extract.R types the empty frame); this is the
+  # second lock, because the screen must not be the thing that falls over.
+  v <- .da_block(.da_src(), "output\\$rb_prev_status <- renderUI", 60L)
+  expect_match(v, "num <- function\\(v\\)")
+  expect_false(grepl("sum\\(s\\$rows\\)", v))          # the exact line that threw
+  for (f in c("num(s$thin_columns)", "num(s$unclaimed_words)", "num(s$rows)"))
+    expect_match(v, f, fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# WHERE IT STARTS AND WHERE IT STOPS ARE STEPS, NOT SETTINGS
+#
+# Reported: "start and end also need to define where the table ends, there's lots
+# of text at the bottom of some pages which is not the table, but the table still
+# spans multiple pages. Make it part of the steps the header guides you through."
+# ---------------------------------------------------------------------------
+
+test_that("the guide walks columns, start, end, and the bottom edge of the pages between", {
+  src <- .da_src(); joined <- .da_joined()
+  step <- .da_block(src, "\\.rb_next_step <- function", 14L)
+  expect_match(step, 'identical\\(done, "cols"\\)')
+  expect_match(step, '"start"'); expect_match(step, '"end"'); expect_match(step, '"bottom"')
+  # the bottom step is offered ONLY when there are pages in between
+  expect_match(step, "p1 > p0")
+  # armed by the guide, not by a drag: a table starts the walk, and each step
+  # hands on to the next
+  expect_match(joined, "rb\\$guide <- TRUE")
+  expect_match(joined, 'rb\\$mode <- \\.rb_next_step\\("cols", d\\)')
+  expect_match(joined, "rb\\$mode <- \\.rb_next_step\\(m, d\\)")
+  # ...and it stops the moment somebody steers: Cancel, or Move it by hand
+  for (b in c("rb_disarm", "rb_setstart", "rb_setend")) {
+    blk <- .da_block(src, sprintf("observeEvent\\(input\\$%s,", b), 2L)
+    expect_match(blk, "rb\\$guide <- FALSE", info = b)
+  }
+  # every armed step can be skipped, keeping what the tool worked out
+  expect_match(joined, 'actionButton\\("rb_skip_step"')
+  expect_match(joined, "observeEvent\\(input\\$rb_skip_step")
+})
+
+test_that("the bottom edge is stored where the reader actually uses it", {
+  # doc_locate_table() closes a CONTINUATION page's window at band$y_max
+  # (R/tables.R). Anywhere else and the setting would be a control that changes
+  # nothing -- which is worse than not having one.
+  cl <- .da_block(.da_src(), "observeEvent\\(input\\$rb_click", 42L)
+  expect_match(cl, "b <- d\\$band")
+  expect_match(cl, "b\\$y_max <- y")
+  expect_match(cl, "above the top of the table", fixed = TRUE)
+  # and it is on the screen in words, with a way to put it back
+  w <- .da_block(.da_src(), "output\\$rb_where <- renderUI", 44L)
+  expect_match(w, "Bottom edge on the pages in between", fixed = TRUE)
+  expect_match(w, '"rb_setbottom"')
+  expect_match(w, '"rb_clearbottom"')
+  expect_match(w, "footer", fixed = TRUE)
+})
+
+test_that("a value's name says what it will come out as, without rewriting the box", {
+  joined <- .da_joined()
+  expect_match(joined, 'textOutput\\("rb_vname_key"')
+  expect_match(joined, 'output\\$rb_vname_key <- renderText')
+  expect_match(joined, "Comes out as", fixed = TRUE)
+  # normalised on SAVE, never while somebody is typing into it
+  save <- .da_block(.da_src(), "observeEvent\\(input\\$rb_vsave", 24L)
+  expect_match(save, 'updateTextInput\\(session, "rb_vname", value = v\\$name\\)')
+  key <- .da_block(.da_src(), "output\\$rb_vname_key <- renderText", 6L)
+  expect_match(key, "rb_vname_d\\(\\)")
+  expect_false(grepl("updateTextInput", key))
+})
+
+test_that("a drag that changed nothing names the column somebody was moving", {
+  # Reported: "when I click edit, and drag where I actually want the column, it
+  # says nothing was waiting". True, and useless: the button they still had to
+  # press was named nowhere in the sentence.
+  brush <- .da_block(.da_src(), "observeEvent\\(input\\$rb_brush", 200L)
+  expect_match(brush, "Drag its width on the page", fixed = TRUE)
+  expect_match(brush, "rb\\$colsel")
 })

@@ -1454,3 +1454,129 @@ The way back out of that one line says "Change the document, **or what kind it
 is**", because the kind-of-document radio folds away with the panel -- a fold that
 hides the only control for changing your mind is a trap, and the label is what
 stops it being one. Asserted in `test-doc_app.R` rather than remembered.
+
+---
+
+## Seven from one screen
+
+One person, one session with the builder, seven findings. Worth keeping together
+because of what the shape of them says: two were a crash or a loss, four were the
+tool arguing with somebody about what they could see on the page in front of
+them, and one was a question -- "do columns have to be joined?" -- whose honest
+answer was "no, and it was a mistake that they did".
+
+**N187 (a template with no tables could not be read) - fixed.** Reported:
+"invalid 'type' character of argument when I click read the whole document". A
+template made entirely of label/value pairs is a form, and a form is a whole
+template with no table on it. `document_summary()` returned ten `character(0)`
+columns for a zero-table document, and `sum(character(0))` is an ERROR, not a
+zero. So the failure landed at the last step -- after the extraction, on the
+screen that says what came out -- and read as a crash in the reader.
+
+The lesson is not "guard the sum". **A zero-row data frame is a shape, and a
+shape that changes with the row count is not one.** The empty frame now carries
+the same column types as a full one, which fixes every caller at once instead of
+the one that happened to be reported; the screen forces its counts to numbers as
+well, because the screen is the thing that must not fall over.
+
+**N188 (columns had to touch, and it cost something on every screen) - fixed.**
+Asked, not reported: "do columns have to be joined? or is that an artifact of the
+issue I'm running into, can there be white space between two column definitions?"
+
+They had to, and the reason was good: columns DERIVED from a header row should
+tile, because a value a little wider on row 40 than it was in the heading still
+has to land somewhere, and a tiling set is tolerant where a set of exact bands is
+not. That reasoning was then applied to columns a person DRAWS, where it is
+wrong. "This band is a column" is exact. Forcing it to touch its neighbour means
+either the neighbour moves or a column is invented in the gap -- and both were
+shipped, in turn, and both were reported (N185, then the fix for it).
+
+A report has real whitespace between its columns. The tool insisting otherwise
+was the tool arguing with the person about what is printed on the page.
+
+So gaps are allowed and are exactly what was drawn; the auto-derivation still
+tiles, because there the tolerance is worth having. **Overlaps stay impossible**,
+and the asymmetry is the whole point: a gap is visible and counted (unclaimed
+words, per table, on the verdict card), while an overlap silently reads a figure
+into one column and loses it from the other. A move or an insert that would
+overlap is CLAMPED at the neighbour rather than refused, so the gesture always
+does something and can never do the one thing that loses a figure.
+
+Three behaviours follow, and each was its own complaint: adding a column adds one
+column exactly where it was drawn; moving one moves that one; deleting one leaves
+its space empty instead of handing it to the column beside it.
+
+**N189 (nobody was ever asked where a multi-page table stops on the pages in
+between) - fixed.** Reported: "start and end also need to define where the table
+ends, there's lots of text at the bottom of some pages which is not the table,
+but the table still spans multiple pages."
+
+Two faults in one sentence. The first: start and end were SETTINGS -- worked out
+by the tool, shown in a panel a person had to notice and press "Move it" on --
+while the columns got a guide that asked for them a sentence at a time. They
+decide every row that comes out; they are steps now.
+
+The second is the one that had never been named. **"Where it ends" is a place on
+ONE page: the last one.** On every page in between, `doc_locate_table()` closes
+the window at `band$y_max`, which is the bottom of the paper unless somebody says
+otherwise -- so a footnote, a source line or a page footer under the table is read
+in as rows on every page but the last. The person who set the end correctly then
+has a table with junk rows and nothing on screen connects the two. The guide now
+asks for that edge, but only when the table actually spans pages, because on a
+one-page table there are no pages in between and the question is noise.
+
+Every step is skippable and the guide stops the moment somebody steers themselves
+-- Cancel, or "Move it" by hand. A guide you cannot leave is a wizard.
+
+**N193 (the bottom edge never reached the reader) - fixed.** Found by driving the
+new step in a browser rather than by reading the diff. The click set
+`band$y_max`, the page drew it, the panel wrote it in words -- and the rows came
+back with the footer in them anyway. `document_template_from_proposal()` builds
+the template the reader is given, and it did not carry `band`. Everything a
+person could see agreed; the one thing they could not see disagreed.
+
+This is the worse half of N189, not a detail of it. **A control that changes
+nothing is worse than no control** -- without it the operator knows the tool
+cannot do this and works around it; with it they answer the question, watch the
+screen agree, and ship a template that reads a page footer as data. It is also
+the reason the browser run mattered: the structural tests passed on the version
+that dropped it, because every one of them was true.
+
+Measured on a three-page table with a source line and a page number under it:
+**40 rows with the footer in them before, 36 rows and a clean verdict after.**
+Both halves are pinned now -- that the band survives
+`document_template_from_proposal()`, and that a document read through the whole
+round trip comes back without the footer.
+
+**N190 (the label/value pairs were half the builder and invisible) - fixed.** Two
+reports, one gap: "the read whole doc should have the tables AND label value
+pair", and "where do the value label pairs come out in the CSV long? I can only
+see it on workbook".
+
+The pairs were extracted correctly, written correctly, and reported nowhere a
+person looks. `write_document_outputs()` has always written `<name>.values.csv` --
+**nothing offered it.** The Convert screen's CSV button resolves the first path
+ending `.csv`, which is the tables stacked long (page, row, column, value), and a
+label/value pair is none of those. So a document read for its labelled figures
+downloaded as a file with none of them in it, and the only place they appeared was
+a sheet inside the workbook.
+
+Worth recording as a class: **a file nothing offers is a file that does not
+exist.** The preview now shows the pairs beside the tables, the verdict counts
+them, and the values CSV has a button on both screens that produce one.
+
+**N191 (the name on screen was not the name in the file) - fixed.** Asked: "for
+the values, can it just be lower case with _ between the label? ird_number". The
+stored key always was `doc_suggest_name()`'d -- the BOX kept whatever was typed,
+so the screen said "IRD Number" and the output column said `ird_number`, and
+nothing on screen connected them. Normalising as somebody types would rewrite the
+box under their caret, which is the one thing this screen must not do (N182), so:
+a line under the box says what it will become, live, off the debounced value; the
+box is set to it on save, when nobody is typing into it.
+
+**N192 (a true message that helped nobody) - fixed.** Reported: "when I click
+edit, and drag where I actually want the column, it says nothing was waiting."
+"Nothing was waiting for that drag" is exactly true and useless here -- the button
+they still had to press was named nowhere in it. It now names the column they had
+selected and the button that arms the drag. The armed-intent model is not the
+fault and did not change; the sentence it fails with was.

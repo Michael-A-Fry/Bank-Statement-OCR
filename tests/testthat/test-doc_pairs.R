@@ -184,102 +184,114 @@ test_that("the side is written into the template the builder saves", {
 })
 
 # ---------------------------------------------------------------------------
-# Adding a column
+# Adding and moving columns: gaps allowed, overlaps impossible
+#
+# The model is the COLUMN LIST, not a set of shared edges. Two goes at this were
+# wrong in ways a real person hit within minutes, so both are pinned below as
+# counter-examples: fed through doc_edge_click() twice a drag beside the table
+# widened the last column over everything it crossed; rewritten to keep every
+# edge it invented a column in the gap. What is drawn is what you get.
 # ---------------------------------------------------------------------------
 
-test_that("adding a column beyond the table makes a COLUMN, not a wider last one", {
-  # THE REPORTED FAULT, in one line. The table has one column carved out of it and
-  # somebody drags over the second printed column, which lies to the right of it.
-  # Feeding the drag's two sides through doc_edge_click() moved the outer edge out
-  # to the first, then out to the second, and the answer was ONE column spanning
-  # both -- every heading and every figure of the second column swallowed into the
-  # first, and the first no longer where it was put.
-  e <- c(50, 120)
-  expect_equal(doc_edge_click(doc_edge_click(e, 150, tol = 3), 260, tol = 3),
-               c(50, 260))                                    # what it used to do
-  expect_equal(doc_add_column(e, 150, 260), c(50, 120, 150, 260))
-  # ...which is three columns: the original, the ground between, and the new one.
-  cols <- doc_columns_from_edges(c(50, 120, 150, 260))
-  expect_equal(length(cols), 3L)
-  expect_equal(vapply(cols, function(cc) cc$x_min, numeric(1)), c(50, 120, 150))
+.cb <- function(...) lapply(list(...), function(v)
+  list(name = sprintf("c%g", v[1]), x_min = v[1], x_max = v[2], type = "auto"))
+.spans <- function(cols) t(vapply(cols, function(cc)
+  c(.doc_num(cc$x_min), .doc_num(cc$x_max)), numeric(2)))
+
+test_that("adding a column beyond the table adds ONE column, exactly where it was drawn", {
+  # THE REPORTED FAULT. One column is carved out and somebody drags over the
+  # second printed column, which lies to the right of it.
+  cols <- .cb(c(50, 120))
+  # what the two-clicks version did: one column stretched over both
+  expect_equal(doc_edge_click(doc_edge_click(c(50, 120), 150, tol = 3), 260, tol = 3),
+               c(50, 260))
+  out <- doc_add_column(cols, 150, 260)
+  expect_equal(length(out), 2L)                       # not three: no invented gap column
+  expect_equal(.spans(out), rbind(c(50, 120), c(150, 260)))
+  expect_false(isTRUE(attr(out, "clamped")))
+  # and the first column is exactly where it was put
+  expect_equal(.doc_num(out[[1]]$x_min), 50)
+  expect_equal(.doc_num(out[[1]]$x_max), 120)
 })
 
-test_that("adding a column keeps every edge outside it and absorbs every one inside", {
-  e <- c(50, 120, 300, 420, 500)
-  # inside, across two dividers: the whole band is ONE column, as drawn
-  expect_equal(doc_add_column(e, 130, 410), c(50, 120, 130, 410, 420, 500))
-  # clear of the left-hand end
-  expect_equal(doc_add_column(e, 10, 40), c(10, 40, 50, 120, 300, 420, 500))
-  # starting inside the last column and finishing past the table
-  expect_equal(doc_add_column(e, 450, 560), c(50, 120, 300, 420, 450, 560))
+test_that("a new column is clamped off its neighbours rather than overlapping them", {
+  cols <- .cb(c(50, 120), c(300, 420))
+  # runs into the left neighbour: trimmed to its right-hand side
+  out <- doc_add_column(cols, 100, 200)
+  expect_equal(.spans(out), rbind(c(50, 120), c(120, 200), c(300, 420)))
+  expect_true(isTRUE(attr(out, "clamped")))
+  # between two, touching neither: exactly as drawn
+  out <- doc_add_column(cols, 150, 260)
+  expect_equal(.spans(out), rbind(c(50, 120), c(150, 260), c(300, 420)))
+  expect_false(isTRUE(attr(out, "clamped")))
   # drawn backwards is the same request
-  expect_equal(doc_add_column(e, 260, 130), doc_add_column(e, 130, 260))
-  # an existing edge inside the tolerance is not duplicated into a sliver
-  expect_equal(doc_add_column(e, 120, 300), c(50, 120, 300, 420, 500))
+  expect_equal(.spans(doc_add_column(cols, 260, 150)), .spans(out))
+  # sorted left to right however it arrives
+  expect_equal(.spans(doc_add_column(cols, 10, 40))[1, ], c(10, 40))
 })
 
-test_that("a band that could not be a column adds nothing", {
-  e <- c(50, 120, 300)
-  expect_equal(doc_add_column(e, 200, 200), e)      # no width
-  expect_equal(doc_add_column(e, NA, 300), e)
-  expect_equal(doc_add_column(e, 200, Inf), e)
-  # nothing carved yet: the drag is the whole table
-  expect_equal(doc_add_column(NULL, 150, 260), c(150, 260))
-  expect_equal(doc_add_column(c(50), 150, 260), c(150, 260))
+test_that("a drag that could not be a column adds nothing, and says nothing changed", {
+  cols <- .cb(c(50, 120), c(300, 420))
+  expect_equal(length(doc_add_column(cols, 200, 200)), 2L)     # no width
+  expect_equal(length(doc_add_column(cols, NA, 300)), 2L)
+  expect_equal(length(doc_add_column(cols, 200, Inf)), 2L)
+  # ENTIRELY INSIDE a column that is already there: there is no room, so nothing
+  # is added -- the caller shows a sentence saying why rather than silently
+  # doing nothing.
+  expect_equal(length(doc_add_column(cols, 60, 100)), 2L)
+  # nothing carved yet: the drag is the first column
+  expect_equal(.spans(doc_add_column(list(), 150, 260)), rbind(c(150, 260)))
 })
 
-test_that("however a column is added, the columns still tile the width", {
-  # The invariant the whole edge model exists for: no gap, no overlap, no column
-  # of zero or negative width, whatever is dragged and wherever.
-  e <- c(50, 120, 300, 420, 500)
-  for (x0 in c(10, 55, 130, 299, 430, 505))
+test_that("moving a column moves that column and no other", {
+  cols <- .cb(c(50, 120), c(300, 420), c(430, 500))
+  out <- doc_set_column_band(cols, 2, 280, 400)
+  expect_equal(.spans(out), rbind(c(50, 120), c(280, 400), c(430, 500)))
+  expect_false(isTRUE(attr(out, "clamped")))
+  # widened into a neighbour: clamped at it, and the neighbour does not move --
+  # absorbing a column of figures because a drag was wide of the mark was the
+  # behaviour before, and it cannot be undone without redrawing both.
+  out <- doc_set_column_band(cols, 2, 280, 480)
+  expect_equal(.spans(out), rbind(c(50, 120), c(280, 430), c(430, 500)))
+  expect_true(isTRUE(attr(out, "clamped")))
+  # drawn backwards is the same request
+  expect_equal(.spans(doc_set_column_band(cols, 2, 400, 280)),
+               .spans(doc_set_column_band(cols, 2, 280, 400)))
+})
+
+test_that("a move that could not be a column is refused rather than applied", {
+  cols <- .cb(c(50, 120), c(300, 420))
+  expect_equal(.spans(doc_set_column_band(cols, 1, 200, 200)), .spans(cols))
+  expect_equal(.spans(doc_set_column_band(cols, 9, 10, 20)), .spans(cols))
+  expect_equal(.spans(doc_set_column_band(cols, 0, 10, 20)), .spans(cols))
+  expect_equal(.spans(doc_set_column_band(cols, 1, NA, 300)), .spans(cols))
+  # dragged entirely inside the other column: nowhere to go, nothing changes
+  expect_equal(.spans(doc_set_column_band(cols, 1, 320, 400)), .spans(cols))
+})
+
+test_that("however columns are added and moved, none of them ever overlaps", {
+  # THE ONE INVARIANT LEFT. A gap is visible and counted (unclaimed words); an
+  # overlap silently reads a figure into one column and loses it from the other.
+  cols <- .cb(c(50, 120), c(300, 420), c(430, 500))
+  for (x0 in c(10, 55, 130, 299, 425, 505))
     for (w in c(2, 45, 200, 400)) {
-      e2 <- doc_add_column(e, x0, x0 + w)
-      expect_false(is.unsorted(e2, strictly = TRUE),
-                   info = paste("x0", x0, "w", w))
-      cols <- doc_columns_from_edges(e2)
-      lo <- vapply(cols, function(cc) cc$x_min, numeric(1))
-      hi <- vapply(cols, function(cc) cc$x_max, numeric(1))
-      expect_true(all(hi > lo))
-      expect_equal(lo[-1], hi[-length(hi)])       # every edge shared: no gaps
-      # and the band asked for is somewhere in the result
-      expect_true(any(abs(lo - min(x0, x0 + w)) < 0.01))
+      for (out in list(doc_add_column(cols, x0, x0 + w),
+                       doc_set_column_band(cols, 2, x0, x0 + w))) {
+        sp <- .spans(out)
+        expect_true(all(sp[, 2] > sp[, 1]), info = paste("x0", x0, "w", w))
+        expect_false(is.unsorted(sp[, 1]), info = paste("x0", x0, "w", w))
+        if (nrow(sp) > 1L)
+          expect_true(all(sp[-1, 1] >= sp[-nrow(sp), 2] - 1e-9),
+                      info = paste("overlap at x0", x0, "w", w))
+      }
     }
 })
 
-# ---------------------------------------------------------------------------
-# Moving ONE column's band
-# ---------------------------------------------------------------------------
-
-test_that("putting a column somewhere moves its two edges and its neighbours give way", {
-  e <- c(50, 120, 300, 420, 500)
-  expect_equal(doc_set_column_band(e, 2, 110, 310), c(50, 110, 310, 420, 500))
-  # widened until it steps clean over the divider beside it: that divider goes
-  expect_equal(doc_set_column_band(e, 1, 40, 310), c(40, 310, 420, 500))
-  # the last column, taking the right edge with it
-  expect_equal(doc_set_column_band(e, 4, 430, 560), c(50, 120, 300, 430, 560))
-  # drawn backwards is the same request
-  expect_equal(doc_set_column_band(e, 2, 310, 110), c(50, 110, 310, 420, 500))
-})
-
-test_that("a band that could not be a column is refused rather than applied", {
-  e <- c(50, 120, 300, 420, 500)
-  expect_equal(doc_set_column_band(e, 2, 200, 200), e)   # no width
-  expect_equal(doc_set_column_band(e, 9, 10, 20), e)     # no such column
-  expect_equal(doc_set_column_band(e, 0, 10, 20), e)
-  expect_equal(doc_set_column_band(e, 2, NA, 300), e)
-  expect_equal(doc_set_column_band(c(50), 1, 10, 20), 50)
-})
-
-test_that("however a band is moved, the columns still tile the width", {
-  e <- c(50, 120, 300, 420, 500)
-  for (j in 1:4) for (x0 in c(30, 90, 250)) {
-    e2 <- doc_set_column_band(e, j, x0, x0 + 140)
-    cols <- doc_columns_from_edges(e2)
-    expect_true(all(diff(e2) > 0))                       # sorted, no zero width
-    for (k in seq_len(length(cols) - 1L))                # meeting, never overlapping
-      expect_equal(.doc_num(cols[[k]]$x_max), .doc_num(cols[[k + 1L]]$x_min))
-  }
+test_that("whether the columns touch is a question the screen can ask", {
+  expect_true(doc_columns_touch(.cb(c(50, 120), c(120, 300))))
+  expect_false(doc_columns_touch(.cb(c(50, 120), c(150, 300))))
+  expect_true(doc_columns_touch(.cb(c(50, 120))))
+  expect_true(doc_columns_touch(list()))
 })
 
 # ---------------------------------------------------------------------------
@@ -306,4 +318,90 @@ test_that("re-reading a column's name off the page never picks up a figure", {
   nm <- doc_header_names(i, tab, NULL, doc_column_edges(tab))
   expect_false(any(grepl("[0-9],[0-9]", nm)), info = paste(nm, collapse = " | "))
   expect_match(nm[2], "Revenue")
+})
+
+# ---------------------------------------------------------------------------
+# A TEMPLATE MADE ENTIRELY OF VALUES
+#
+# Reported: "when I don't define any tables, I'm getting error: invalid 'type'
+# character of argument when I click read the whole document". A form is a whole
+# template with no table on it at all, and it fell over at the last step -- after
+# the work, on the screen that shows what came out.
+# ---------------------------------------------------------------------------
+
+test_that("an empty summary has the same column types as a full one", {
+  # THE CAUSE, in one line. Ten character(0) columns reads as harmless; every
+  # caller that adds up a number then meets sum(character(0)), which is an ERROR,
+  # not a zero. A zero-row frame is a shape, and a shape that changes with the
+  # row count is not one.
+  s <- document_summary(list())
+  expect_equal(nrow(s), 0L)
+  for (k in c("rows", "columns", "thin_columns", "unclaimed_words"))
+    expect_true(is.integer(s[[k]]), info = k)
+  expect_true(is.numeric(s$confidence))
+  # ...and the arithmetic every caller does is arithmetic, not an error
+  expect_equal(sum(s$rows), 0L)
+  expect_equal(sum(as.integer(s$thin_columns)), 0L)
+  expect_equal(sum(!(s$found_by %in% "its heading")), 0L)
+})
+
+test_that("reading a document that is all values and no tables works end to end", {
+  inp <- .pv_input(.pv_page(
+    doc_L(40, 100, "IRD number"), doc_L(140, 100, "123-456-789"),
+    doc_L(40, 130, "Consolidated position report")))
+  lb <- list(page = 1L, x_min = 39, x_max = 100, y_min = 99, y_max = 110)
+  vb <- list(page = 1L, x_min = 139, x_max = 210, y_min = 99, y_max = 110)
+  tmpl <- .pv_tmpl(list(ird_number = list(
+    label_text = "IRD number", label = lb, value = vb, type = "text",
+    where = .doc_pair_rel(lb, vb))))
+  ext <- extract_document(inp, tmpl)
+  expect_equal(nrow(ext$summary), 0L)
+  expect_equal(nrow(ext$pairs), 1L)
+  expect_identical(ext$pairs$value[1], "123-456-789")
+  # the sums the screen does over that summary
+  expect_equal(sum(ext$summary$rows), 0L)
+})
+
+test_that("the values CSV is written once, and something offers it", {
+  # Reported: "where do the value label pairs come out in the CSV long? I can
+  # only see it on workbook". The file was never the problem -- write_document_
+  # outputs() has always written <name>.values.csv. NOTHING OFFERED IT. The
+  # Convert screen's CSV button resolves the first path ending .csv, which is the
+  # tables stacked long, and a label/value pair is none of page/row/column/value.
+  # So a document read for its labelled figures downloaded as a file with none of
+  # them in it. Pinned here so the file keeps existing, and in test-doc_app.R so
+  # a button keeps pointing at it.
+  inp <- .pv_input(.pv_page(
+    doc_L(40, 100, "IRD number"), doc_L(140, 100, "123-456-789"),
+    doc_L(40, 130, "Consolidated position report")))
+  lb <- list(page = 1L, x_min = 39, x_max = 100, y_min = 99, y_max = 110)
+  vb <- list(page = 1L, x_min = 139, x_max = 210, y_min = 99, y_max = 110)
+  ext <- extract_document(inp, .pv_tmpl(list(ird_number = list(
+    label_text = "IRD number", label = lb, value = vb, type = "text",
+    where = .doc_pair_rel(lb, vb)))))
+  od <- file.path(tempdir(), paste0("vcsv", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(od, recursive = TRUE), add = TRUE)
+  paths <- write_document_outputs(ext, od, "doc")
+  v <- paths[grepl("\\.values\\.csv$", paths)]
+  expect_length(v, 1L)                       # ONCE. Written twice it is a bug too.
+  expect_true(file.exists(v))
+  back <- utils::read.csv(v, stringsAsFactors = FALSE)
+  expect_equal(nrow(back), 1L)
+  expect_identical(as.character(back$value[1]), "123-456-789")
+  # the long CSV is still the tables, and is still what ".csv" resolves to first
+  expect_match(basename(paths[grepl("\\.csv$", paths)][1]), "tables-long")
+  # and a template with no pairs writes no empty file pretending there were some
+  ext0 <- ext; ext0$pairs <- ext$pairs[0, , drop = FALSE]
+  od2 <- file.path(tempdir(), paste0("vcsv0", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(od2, recursive = TRUE), add = TRUE)
+  expect_length(Filter(function(q) grepl("\\.values\\.csv$", q),
+                       write_document_outputs(ext0, od2, "doc")), 0L)
+})
+
+test_that("a value's name is the key it comes out under: lower case, underscores", {
+  # Reported: "can it just be lower case with _ between the label? ird_number".
+  expect_identical(doc_suggest_name("IRD Number"), "ird_number")
+  expect_identical(doc_suggest_name("Total paid (GST incl.)"), "total_paid_gst_incl")
+  expect_identical(doc_suggest_name("  Closing   Balance  "), "closing_balance")
+  expect_identical(doc_suggest_name("2012-13"), "2012_13")
 })

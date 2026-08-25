@@ -434,3 +434,110 @@ test_that("the picture and the page size cannot disagree about which way it face
   expect_match(blk, "out <- list\\(ras = ras, w = w, h = h")
   expect_false(grepl("w = sz\\$width\\[page\\]", blk))
 })
+
+# ---------------------------------------------------------------------------
+# THE BOTTOM EDGE OF THE PAGES IN BETWEEN
+#
+# Reported: "there's lots of text at the bottom of some pages which is not the
+# table, but the table still spans multiple pages". "Where it ends" is a place on
+# ONE page -- the last one. On every page between, doc_locate_table() closes the
+# window at band$y_max, which is the bottom of the paper unless somebody says
+# otherwise, so a footer under the table is read in as rows on every page but the
+# last. The guide asks for that edge now; this is the proof that answering it
+# does something.
+# ---------------------------------------------------------------------------
+
+# .bt_doc() -- three pages. Same table on each: a heading, four rows of figures,
+# and then a page footer 120pt lower down that is not part of it.
+.bt_doc <- function() {
+  pg <- function(n) doc_page(
+    doc_L(60, 90, "Region"), doc_L(300, 90, "Amount"),
+    doc_L(60, 130, paste0("North", n)),  doc_R(360, 130, "1,000.00"),
+    doc_L(60, 155, paste0("South", n)),  doc_R(360, 155, "2,000.00"),
+    doc_L(60, 180, paste0("East", n)),   doc_R(360, 180, "3,000.00"),
+    doc_L(60, 205, paste0("West", n)),   doc_R(360, 205, "4,000.00"),
+    # THE FOOTER. Set at the pitch of the rows above it, which is the case that
+    # matters: a footer with a wide gap above it is stopped by the row-run rule
+    # already, so the only footers that reach the output are the ones printed
+    # close enough to look like the next row. A source line and a page number
+    # under a government table are exactly that.
+    doc_L(60, 232, "Source: Ministry of Finance"),
+    doc_R(400, 232, paste0("Page ", n, " of 3")),
+    doc_L(60, 257, "(1) Revised estimates"),
+    doc_L(60, 282, "(2) Excludes capital transfers"))
+  doc_input(list(pg(1), pg(2), pg(3)))
+}
+
+.bt_table <- function(band_bot = NULL) {
+  band <- list(x_min = 55, x_max = 420, y_min = 85)
+  if (!is.null(band_bot)) band$y_max <- band_bot
+  list(name = "regions", band = band,
+       columns = list(
+         list(name = "region", x_min = 55, x_max = 200, type = "text"),
+         list(name = "amount", x_min = 290, x_max = 420, type = "money")),
+       header_rows = 1L,
+       anchor = list(header_text = list("Region", "Amount")),
+       start = list(page = 1L, y = 85),
+       end   = list(page = 3L, y = 215))
+}
+
+test_that("without a bottom edge, a footer under a multi-page table is read as rows", {
+  # NOT a wish: this is what the reader does, and it is why the step exists.
+  r <- doc_table_rows(.bt_doc(), .bt_table(), NULL)
+  txt <- paste(unlist(lapply(r$rows, as.character)), collapse = " ")
+  expect_true(grepl("Ministry of Finance", txt, fixed = TRUE))
+})
+
+test_that("a bottom edge keeps the footer out of every page but the last", {
+  r <- doc_table_rows(.bt_doc(), .bt_table(band_bot = 230), NULL)
+  txt <- paste(unlist(lapply(r$rows, as.character)), collapse = " ")
+  expect_false(grepl("Ministry of Finance", txt, fixed = TRUE))
+  expect_false(grepl("Page 1 of 3", txt, fixed = TRUE))
+  # and the real rows all survive -- four a page, three pages
+  expect_equal(nrow(r$rows), 12L)
+  for (n in 1:3) expect_true(grepl(paste0("North", n), txt, fixed = TRUE))
+})
+
+test_that("the bottom edge does not truncate the LAST page, where the end rules", {
+  # The last page is closed by `end`, not by the band. A bottom edge ABOVE the
+  # declared end must not quietly shorten it.
+  r <- doc_table_rows(.bt_doc(), .bt_table(band_bot = 230), NULL)
+  txt <- paste(unlist(lapply(r$rows, as.character)), collapse = " ")
+  expect_true(grepl("West3", txt, fixed = TRUE))
+})
+
+test_that("the bottom edge survives the trip from the screen into the template", {
+  # THE FAULT THAT MADE THE STEP POINTLESS. The builder set band$y_max on the
+  # draft, drew it on the page and wrote it in the "where it starts and stops"
+  # panel -- and document_template_from_proposal() dropped it, so the reader
+  # never saw it and the footer came back in the rows anyway. A control that
+  # changes nothing is worse than no control: the question gets answered and
+  # stays answered wrongly.
+  drafted <- .bt_table(band_bot = 230)
+  t <- document_template_from_proposal(
+    id = "bt", bank = "Ministry", statement_type = "outlay",
+    phrases = "Region", tables = list(drafted), pairs = list(), doc_pages = 3L)
+  tab <- t$tables[[1]]
+  expect_equal(.doc_num(tab$band$y_max), 230)
+  # ...and it is the FULL trip that matters, not the one field
+  t$ref_width <- DOC_W; t$ref_height <- DOC_H
+  ext <- extract_document(.bt_doc(), t)
+  txt <- paste(unlist(lapply(ext$tables[[1]]$rows, as.character)), collapse = " ")
+  expect_false(grepl("Ministry of Finance", txt, fixed = TRUE))
+  expect_equal(nrow(ext$tables[[1]]$rows), 12L)
+
+  # ...and with no bottom edge SET, none is invented onto the template. An absent
+  # y_max means "to the bottom of the page", which is a different statement from
+  # "to 0" -- so only the numbers somebody actually set are written.
+  plain <- document_template_from_proposal(
+    id = "bt", bank = "Ministry", statement_type = "outlay",
+    phrases = "Region", tables = list(.bt_table()), pairs = list(), doc_pages = 3L)
+  expect_null(plain$tables[[1]]$band$y_max)
+  expect_equal(.doc_num(plain$tables[[1]]$band$y_min), 85)   # what WAS set, kept
+  # a table with no band at all carries none
+  bare <- .bt_table(); bare$band <- NULL
+  none <- document_template_from_proposal(
+    id = "bt", bank = "Ministry", statement_type = "outlay",
+    phrases = "Region", tables = list(bare), pairs = list(), doc_pages = 3L)
+  expect_null(none$tables[[1]]$band)
+})

@@ -65,20 +65,44 @@ Include the whole heading block. If the heading is printed over three lines —
 *Revenue* over *Medical &* over *Welfare* — box all three. The tool counts the
 lines and fills in **Heading rows** for you.
 
-That drag gives you, all at once:
-
-- **the columns**, named from the headings you boxed
-- **where the table starts** — just under those headings
-- **where it ends** — worked out by reading down until the rows stop looking like
-  rows
-
-All three are now on the right, in words, each with a button to change it.
+That drag gives you the **columns**, named from the headings you boxed — and a
+first guess at where the table starts and ends.
 
 > **If you get one column**, the box had one unbroken run of words in it — a
 > sentence, or the table's title — rather than a row of separate headings. The
 > tool says so. Drag round the headings themselves.
 
-### 5 · Check it, fix anything, save
+### 5 · Click where it starts
+
+> **Click the page where the table STARTS.**
+
+Just under the column names. Skip it and the tool's own guess stands.
+
+### 6 · Click where it ends
+
+> **Click the page where the table ENDS.**
+
+Turn the page first if the table carries on past this one — the page box and the
+**Next page →** button are above the picture, and the bar keeps waiting.
+
+### 7 · If it runs over pages: the bottom edge of the ones in between
+
+> **Click the lowest line the table reaches on a page it CARRIES ON past.**
+
+This step only appears when the table spans more than one page, and it is the one
+worth understanding. *Where it ends* is a place on **one** page — the last one. On
+every page in between, the table runs down to whatever bottom the reader is
+given, and that is the bottom of the paper unless you say otherwise. **A footnote,
+a source line or a page footer under the table is then read in as rows, on every
+page but the last.**
+
+Click just below the last real row and everything under it is footer, not table.
+Skip it if the table really does run to the bottom of the page.
+
+You can change it later: it is the **Bottom edge on the pages in between** line on
+the right, with **Run to the bottom of every page** to undo it.
+
+### 8 · Check it, fix anything, save
 
 Look at the picture. Every column is tinted; the lines between them are the
 column edges. The green **START** line and the red **END** line are where the
@@ -86,10 +110,11 @@ table begins and ends.
 
 Fix whatever is wrong (next section), then **Save this table**.
 
-### 6 · Next table, or read it
+### 9 · Next table, or read it
 
 Press **+ Add a table** again for the next one, or **Read the whole document** to
-see what actually comes out.
+see what actually comes out — the tables **and** the label/value pairs, with a
+download for each.
 
 ---
 
@@ -112,16 +137,18 @@ what is in it.
 | Delete one | the **×** on its row |
 | Start the columns again from scratch | **Work the columns out again** |
 
-**Columns always meet.** Move one and its neighbour gives way — there is no way
-to leave a gap between two columns (which loses a column of figures) or to
-overlap them (which deletes one). You cannot express either mistake.
+**Columns may have space between them. They can never overlap.** A report has
+real whitespace between its columns, so you can draw them where they actually
+are. What you cannot draw is an overlap — a column trying to run into its
+neighbour is trimmed at it, and the tool says so — because anything inside an
+overlap is read into one column and lost from the other.
 
-> **Adding a column can give you two.** Because columns always meet, dragging a
-> new column that does not touch the one before it leaves ground in between, and
-> that ground has to belong to a column too — so it becomes one, named from the
-> heading above it. Usually that is the column you were about to draw next. If it
-> is not, click the line between them to remove it. The tool says so when it
-> happens.
+Nothing falls silently into the space between: every word inside the table that
+no column claimed is counted and reported as **unclaimed words** when you read the
+document. A gap is visible. A lost column would not be.
+
+> **Only the column you touch moves.** Add one and you get one, exactly where you
+> drew it. Move one and its neighbours stay where they are.
 
 > **"Work the columns out again"** is the one to reach for when the columns look
 > nearly right but the figures are not landing in them. It ignores the headings
@@ -138,6 +165,11 @@ Both are stated in words — *Starts page 2, 14% down the page* — with:
 - **Work the end out for me** — reads down and finds where the rows stop
 - **End at the bottom of its page** / **End at the bottom of the last page**
 - **Type the exact positions instead** — for when you want it exactly on a number
+
+On a table that runs over pages there is a third line: **Bottom edge on the pages
+in between**, which is step 7 above. Until you set it, the table runs to the
+bottom of the paper on every page but the last, and a footer under it is read in
+as rows.
 
 ### The heading
 
@@ -183,6 +215,11 @@ still reads.
 You can override the side from the dropdown — *to the right of / to the left of /
 under / above* — before or after saving. Every saved value has **Edit**.
 
+**The name is a column heading in a file**, so it comes out lower case with
+underscores: type *IRD Number* and it is saved as `ird_number`. The line under the
+box says what it will become while you type, and the box is set to it when you
+save. Type it however reads best to you.
+
 > Already know the wording and do not want to drag? **"Know the wording already?
 > Type them instead"** takes a list. Those are found by wording anywhere on the
 > document, with no coordinates at all — the most portable option of the lot when
@@ -196,8 +233,23 @@ under / above* — before or after saving. Every saved value has **Edit**.
 
 - a verdict card — how many tables, how many rows, how many values
 - the rows themselves
+- **the values**, each with what was found beside its label
 - a line per table: pages, rows, columns, **thin columns**, **unclaimed words**,
   and how each table was found
+
+A template can be **all values and no table at all** — that is what a form is —
+and reading one works exactly the same way.
+
+### What you can download
+
+| | What is in it |
+|---|---|
+| **the workbook** | a sheet per table, a **Values** sheet, and a report sheet |
+| **one long CSV** | every table stacked: page, row, column, value |
+| **the values CSV** | one row per label/value pair — the pairs are **not** in the long CSV, because a pair is not a page/row/column/value |
+
+The same three appear on the **Convert** screen when somebody runs a document
+through a saved template.
 
 Two numbers are worth understanding, because they are how the tool tells you it
 went wrong rather than pretending it did not:

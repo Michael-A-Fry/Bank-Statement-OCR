@@ -406,12 +406,25 @@ Four things in there are load-bearing and easy to undo by accident:
 1. **A table is a `(page, y)` START and a `(page, y)` END**, not a set of pages.
    Reports put two tables on one page and run a third over three; whole-page
    boundaries cannot express either.
-2. **Columns are EDGES, not boxes.** `doc_column_edges()` / `doc_columns_from_edges()`
-   turn N columns into N+1 shared dividers, so a **gap** between bands (which
-   loses a column of figures) and an **overlap** (which deletes one) are not
-   expressible. `doc_set_column_band()` moves one column and the neighbours give
-   way, preserving the tiling. `.doc_table_problems()` still refuses both, because
-   a template can be hand-edited.
+   **`band.y_max` is a third fact, and it is not the end.** The end is a place on
+   the LAST page; `band.y_max` is where the window closes on every page in
+   between (`doc_locate_table()`). Absent, it is the bottom of the paper — so a
+   footer printed close under the table is read in as rows on every page but the
+   last. The builder asks for it as a step, but only when the table spans pages.
+2. **Columns are BANDS. Gaps are allowed; overlaps are not.** The asymmetry is
+   the design. A gap is visible and counted — every word inside the table that no
+   column claimed is reported as *unclaimed words* — while an overlap silently
+   reads a figure into the first column and loses it from the second. So
+   `doc_add_column()` and `doc_set_column_band()` work on the column list, move
+   only what they were asked to move, and CLAMP off a neighbour rather than
+   through it. `.doc_table_problems()` still refuses an overlap, because a
+   template can be hand-edited.
+   The edge view (`doc_column_edges()` / `doc_columns_from_edges()`) survives for
+   one job: columns DERIVED from a header row tile, deliberately, because a value
+   wider on row 40 than it was in the heading still has to land somewhere.
+   Applying that tolerance to a column somebody DRAWS was the mistake — it made
+   the tool either widen a neighbour over a column of figures or invent a column
+   in the gap, and both shipped before the distinction was seen (N185, N188).
 3. **A pair stores the SIDE, not an offset.** `where.where` is
    `right`/`left`/`above`/`below`; on the next document the label is found by its
    wording and the search runs in that direction (`.doc_pair_window()`,

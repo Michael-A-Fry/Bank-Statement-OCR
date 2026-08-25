@@ -802,7 +802,15 @@ ui <- fluidPage(
               conditionalPanel("output.rb_has_vdraft == true",
                 uiOutput("rb_vstep"),
                 fluidRow(
-                  column(7, textInput("rb_vname", "Call this value", "", width = "100%")),
+                  # THE NAME IS A COLUMN HEADING IN A FILE, so it is lower case
+                  # with underscores -- ird_number, not "IRD Number". Type it
+                  # however you like; the line under the box shows the name it
+                  # will actually carry, and the box is set to that on save.
+                  # Normalising while somebody types would rewrite the box under
+                  # their caret, which is the one thing this screen must not do.
+                  column(7, textInput("rb_vname", "Call this value", "", width = "100%"),
+                    div(style = "margin:-8px 0 8px;font-size:12px;color:#666666",
+                        textOutput("rb_vname_key", inline = TRUE))),
                   column(5, selectInput("rb_vtype", "What it is",
                     c("text" = "text", "money" = "money", "date" = "date",
                       "date range" = "date_range"),
@@ -849,7 +857,12 @@ ui <- fluidPage(
                    "Recognised by these - all must appear, and they must not be words every document carries."),
           actionButton("rb_save", "Save template", class = "btn-primary"),
           uiOutput("rb_msg"))),
+      # WHAT CAME OUT: the tables AND the label/value pairs. A template can be all
+      # pairs and no table at all -- a form -- and a preview that shows only
+      # tables tells that person nothing about the only thing they built.
       uiOutput("rb_prev_head"), DTOutput("rb_prev_tbl"),
+      uiOutput("rb_prev_values_head"),
+      tableOutput("rb_prev_values"),
       uiOutput("rb_prev_summary_head"),
       tableOutput("rb_prev_summary"),
       tags$details(style = "margin-top:14px",
@@ -2389,6 +2402,15 @@ server <- function(input, output, session) {
                "Click just under its column names. Turn the page first if you need to."),
     end    = c("Click the page where the table ENDS.",
                "Turn the page first if it carries on past this one."),
+    # THE BOTTOM OF A CARRYING-ON PAGE IS A THIRD FACT, and it is the one nobody
+    # was asked for. "Where it ends" is a place on ONE page -- the last one. On
+    # every page in between, the table runs to whatever bottom the reader is
+    # given, which is the bottom of the paper unless somebody says otherwise. A
+    # report with a footnote, a source line or a page footer under the table then
+    # reads those in as rows, on every page but the last, and the person who set
+    # the end correctly has no way to see why.
+    bottom = c("Click the lowest line the table reaches on a page it CARRIES ON past.",
+               "The bottom edge for every page except the last. Below it is footer, not table."),
     label  = c("Drag a box round the LABEL.",
                "The words that name the value - not the value itself."),
     value  = c("Drag a box round the VALUE.",
@@ -2399,6 +2421,12 @@ server <- function(input, output, session) {
     draft = NULL,                        # the table being worked on
     vdraft = NULL,                       # the value being worked on
     mode = "",                           # what the next gesture means
+    # TRUE while the screen is WALKING somebody through building a table --
+    # title, columns, starts, ends, and the bottom edge if it runs over pages.
+    # Off the moment they steer themselves (press "Move it", or Cancel), because
+    # a guide that keeps arming the next step after you have taken the wheel is a
+    # screen that will not stop asking questions.
+    guide = FALSE,
     colsel = NA_integer_, colver = 0L,   # which column the edit panel holds
     preview = NULL, outputs = character(0))
 
@@ -2492,6 +2520,37 @@ server <- function(input, output, session) {
       x >= .doc_num(cc$x_min, -Inf) && x <= .doc_num(cc$x_max, Inf), logical(1)))
     if (length(hit)) as.integer(hit[1]) else NA_integer_
   }
+  # The name for ONE band, read from the table's own header row -- so a column
+  # somebody adds by hand arrives called what the page calls it, the same way the
+  # derived ones do. Two edges is a one-column table as far as the reader of the
+  # header row is concerned, so this is doc_header_names() asked a narrow
+  # question.
+  .rb_name_for_band <- function(i, d, fr, x0, x1) {
+    nm <- doc_header_names(i, d, fr, c(min(x0, x1), max(x0, x1)))
+    if (length(nm) && nzchar(trimws(nm[1]))) trimws(nm[1]) else ""
+  }
+
+  # .rb_next_step(done, d) -- the step after `done`, or "" to stop.
+  #
+  # WHERE IT STARTS AND WHERE IT STOPS ARE STEPS, NOT SETTINGS. They decide every
+  # row that comes out, and they were worked out by the tool and shown in a panel
+  # a person had to notice, then press "Move it" on. So a table with a footer or a
+  # source line under it read those in as rows, and the screen never once asked
+  # about it. Now the same sentence-at-a-time guide that gets the columns gets
+  # these: columns -> starts -> ends -> (if it runs over pages) the bottom edge of
+  # the pages in between. Each one skippable, because the tool's guess is usually
+  # right and a guide you cannot leave is a wizard.
+  .rb_next_step <- function(done, d) {
+    if (!isTRUE(rb$guide)) return("")
+    if (identical(done, "cols")) return("start")
+    if (identical(done, "start")) return("end")
+    if (identical(done, "end")) {
+      p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+      if (!is.na(p0) && !is.na(p1) && p1 > p0) return("bottom")
+    }
+    rb$guide <- FALSE
+    ""
+  }
 
   # ---- The banner: the one thing the screen is waiting for -------------------
   output$rb_arm <- renderUI({
@@ -2508,11 +2567,27 @@ server <- function(input, output, session) {
       div(style = "flex:1;min-width:0",
         div(style = "font-size:16px;font-weight:700;color:#7a4f00", a[1]),
         div(style = "font-size:12px;color:#8a6a2a;margin-top:2px", a[2])),
+      # A step you cannot leave is a wizard. Every step the guide arms by itself
+      # has the answer the tool already worked out sitting behind one button.
       actionButton("rb_disarm", "Cancel", class = "btn-default btn-sm"),
-      if (identical(rb$mode, "title"))
-        actionButton("rb_skip_title", "Skip - it has no title", class = "btn-default btn-sm"))
+      switch(as.character(rb$mode %||% ""),
+        title  = actionButton("rb_skip_title", "Skip - it has no title",
+                              class = "btn-default btn-sm"),
+        start  = actionButton("rb_skip_step", "Skip - it starts under the headings",
+                              class = "btn-default btn-sm"),
+        end    = actionButton("rb_skip_step", "Skip - use the end it worked out",
+                              class = "btn-default btn-sm"),
+        bottom = actionButton("rb_skip_step", "Skip - it runs to the bottom of the page",
+                              class = "btn-default btn-sm"),
+        NULL))
   })
-  observeEvent(input$rb_disarm, { rb$mode <- "" })
+  # Cancel leaves the guide as well as the step: somebody who cancels is steering.
+  observeEvent(input$rb_disarm, { rb$guide <- FALSE; rb$mode <- "" })
+  # Skip keeps what the tool worked out and moves on to the next step.
+  observeEvent(input$rb_skip_step, {
+    m <- as.character(rb$mode %||% "")
+    rb$mode <- .rb_next_step(m, rb$draft)
+  })
 
   # ---- Loading a draft: the ONLY place the static inputs are filled in -------
   # Filling them from an observer on the draft would fight the person typing into
@@ -2552,6 +2627,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$rb_addtable, {
     if (is.null(rb_input())) return()
+    rb$guide <- TRUE
     rb$mode <- "title"
   })
   observeEvent(input$rb_addval, {
@@ -2584,9 +2660,23 @@ server <- function(input, output, session) {
     # way of answering a question, and when nothing has asked one it is a way of
     # looking at the page.
     if (!nzchar(m)) {
-      showNotification(paste("Nothing was waiting for that drag, so nothing changed.",
-        "Press \u201c+ Add a table\u201d or \u201c+ Add a value\u201d first."),
-        type = "message", duration = 6)
+      # SAY WHAT THEY WERE PROBABLY TRYING TO DO. "Nothing was waiting" is true
+      # and useless to somebody who has just pressed Edit on a column and dragged
+      # where they want it: the button they still have to press is named nowhere
+      # in that sentence. Reported as "I click edit, and drag where I actually
+      # want the column, and it says nothing was waiting".
+      d <- rb$draft; j <- rb$colsel
+      cols <- .doc_columns(d)
+      sel <- if (!is.null(d) && !is.na(j) && j <= length(cols))
+               as.character(cols[[j]]$name %||% sprintf("column %d", j))[1] else ""
+      showNotification(
+        if (nzchar(sel))
+          sprintf(paste("Nothing was waiting for that drag, so nothing changed. To put",
+                        "\u201c%s\u201d there, press \u201cDrag its width on the page\u201d",
+                        "first - then drag."), sel)
+        else paste("Nothing was waiting for that drag, so nothing changed.",
+                   "Press \u201c+ Add a table\u201d or \u201c+ Add a value\u201d first."),
+        type = "message", duration = 9)
       return()
     }
     if (box$x_max - box$x_min < 2 || box$y_max - box$y_min < 2) {
@@ -2643,8 +2733,8 @@ server <- function(input, output, session) {
       d$anchor$header_text <- as.list(vapply(cols, function(cc) cc$name, character(1)))
       d$end <- tryCatch(doc_auto_end(i, d, fr), error = function(e) d$end)
       rb$draft <- d
-      rb$mode <- ""
       .rb_push_where(d)
+      rb$mode <- .rb_next_step("cols", d)
       updateRadioButtons(session, "rb_hdr", selected = "head")
       updateNumericInput(session, "rb_hdrn", value = .doc_int(d$header_rows, 1L))
       # ONE COLUMN IS ALMOST NEVER WHAT A DRAG ROUND "THE COLUMN NAMES" MEANT.
@@ -2672,53 +2762,58 @@ server <- function(input, output, session) {
 
     if (m == "addcol") {
       d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
-      e <- doc_column_edges(d)
-      before <- if (is.null(e)) 0L else max(0L, length(e) - 1L)
-      # doc_add_column, NOT two doc_edge_clicks. A click outside the table moves
-      # the outer edge out to it, so feeding a drag through two of them stretched
-      # the last column over everything the drag crossed instead of making a new
-      # one. R/tables.R carries the full reasoning.
-      e <- if (is.null(e) || length(e) < 2L) c(box$x_min, box$x_max)
-           else doc_add_column(e, box$x_min, box$x_max)
-      nm <- tryCatch(doc_header_names(i, d, fr, e), error = function(e2) character(0))
-      d$columns <- doc_columns_from_edges(e, old = .doc_columns(d), names = nm)
+      before <- length(.doc_columns(d))
+      # ONE NEW COLUMN, EXACTLY WHERE IT WAS DRAWN, and nothing else touched.
+      # Columns may have whitespace between them; only an overlap is impossible.
+      # R/tables.R carries the reasoning and the two things this used to do
+      # instead.
+      nm <- tryCatch(.rb_name_for_band(i, d, fr, box$x_min, box$x_max),
+                     error = function(e2) "")
+      cols <- doc_add_column(.doc_columns(d), box$x_min, box$x_max, names = nm)
+      clamped <- isTRUE(attr(cols, "clamped"))
+      if (length(cols) == before) {
+        showNotification(paste("That box is inside a column that is already there, so there is",
+                               "no room for a new one. Drag over open space, or press Edit on",
+                               "that column and move it first."),
+                         type = "warning", duration = 9)
+        rb$mode <- ""; return()
+      }
+      d$columns <- cols
       rb$draft <- d
       rb$mode <- ""
       # Select what the drag just made, so naming it is the obvious next thing.
       rb$colsel <- .rb_col_at(d, (box$x_min + box$x_max) / 2)
       rb$colver <- rb$colver + 1L
-      # A drag that lands clear of the table leaves the ground between as its own
-      # column. Say so, because two new columns when one was asked for is
-      # surprising -- and say how to get rid of the one that is not wanted.
-      after <- length(.doc_columns(d))
-      if (after - before >= 2L)
-        showNotification(paste("The new column is in. The gap between it and the column before it",
-                               "became a column too, because columns sit side by side with nothing",
-                               "in between. If you do not want it, click on the line between them",
-                               "to remove it."),
-                         type = "message", duration = 10)
+      if (clamped)
+        showNotification(paste("The new column is in. It was trimmed where it ran into the column",
+                               "beside it - two columns cannot overlap, because anything in the",
+                               "overlap is read into one and lost from the other."),
+                         type = "message", duration = 9)
       return()
     }
 
     if (m == "colpos") {
       d <- rb$draft; j <- rb$colsel
       if (is.null(d) || is.na(j)) { rb$mode <- ""; return() }
-      e <- doc_column_edges(d); if (is.null(e)) { rb$mode <- ""; return() }
       old <- .doc_columns(d)
-      keep_nm <- if (j <= length(old)) as.character(old[[j]]$name %||% "")[1] else ""
-      keep_ty <- if (j <= length(old)) as.character(old[[j]]$type %||% "auto")[1] else "auto"
-      e2 <- doc_set_column_band(e, j, box$x_min, box$x_max)
-      nm <- tryCatch(doc_header_names(i, d, fr, e2), error = function(e3) character(0))
-      cols <- doc_columns_from_edges(e2, old = old, names = nm)
-      # THE NAME IS THE PERSON'S, NOT THE HEADER ROW'S. Moving a column is not a
-      # request to rename it back to whatever is printed above its new position.
-      jj <- .rb_col_at(list(columns = cols), (box$x_min + box$x_max) / 2)
-      if (!is.na(jj) && nzchar(keep_nm)) { cols[[jj]]$name <- keep_nm; cols[[jj]]$type <- keep_ty }
+      if (!length(old) || j > length(old)) { rb$mode <- ""; return() }
+      # ONLY THIS COLUMN MOVES. The name is the person's, not the header row's:
+      # moving a column is not a request to rename it back to whatever is printed
+      # above its new position.
+      keep_nm <- as.character(old[[j]]$name %||% "")[1]
+      cols <- doc_set_column_band(old, j, box$x_min, box$x_max)
+      clamped <- isTRUE(attr(cols, "clamped"))
       d$columns <- cols
       rb$draft <- d
-      rb$colsel <- jj
+      jj <- .rb_col_at(list(columns = cols), (box$x_min + box$x_max) / 2)
+      rb$colsel <- if (is.na(jj)) j else jj
       rb$colver <- rb$colver + 1L
       rb$mode <- ""
+      if (clamped)
+        showNotification(paste("Moved, and trimmed where it ran into the column beside it.",
+                               "Two columns cannot overlap. Move the neighbour first if you",
+                               "need the space."),
+                         type = "message", duration = 9)
       return()
     }
 
@@ -2765,7 +2860,7 @@ server <- function(input, output, session) {
   observeEvent(input$rb_click, {
     cl <- input$rb_click; if (is.null(cl)) return()
     m <- as.character(rb$mode %||% "")
-    if (!(m %in% c("start", "end"))) return()
+    if (!(m %in% c("start", "end", "bottom"))) return()
     d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
     pg <- .rb_pg(); y <- round(max(as.numeric(cl$y), 0), 1)
     if (m == "start") {
@@ -2775,17 +2870,29 @@ server <- function(input, output, session) {
                          type = "warning", duration = 6); return()
       }
       d$start <- list(page = as.integer(pg), y = y)
-    } else {
+    } else if (m == "end") {
       p0 <- .doc_int(d$start$page, pg)
       if (pg < p0 || (pg == p0 && y <= .doc_num(d$start$y, 0))) {
         showNotification("That is at or above where the table starts - not applied.",
                          type = "warning", duration = 6); return()
       }
       d$end <- list(page = as.integer(pg), y = y)
+    } else {
+      # THE BOTTOM EDGE OF EVERY PAGE BUT THE LAST. Stored on the table's band,
+      # which is what doc_locate_table() uses to close a continuation page's
+      # window (R/tables.R). Refused above the top of the band, because a bottom
+      # above the top is not a table.
+      b <- d$band %||% list()
+      top <- .doc_num(b$y_min, 0)
+      if (y <= top + 2) {
+        showNotification("That is at or above the top of the table - not applied.",
+                         type = "warning", duration = 6); return()
+      }
+      b$y_max <- y; d$band <- b
     }
     rb$draft <- d
-    rb$mode <- ""
     .rb_push_where(d)
+    rb$mode <- .rb_next_step(m, d)
   })
 
   # ---- The table being worked on --------------------------------------------
@@ -2818,17 +2925,39 @@ server <- function(input, output, session) {
         strong(what), sprintf(" page %d, %s", pg, down(y))),
       actionButton(goid, "Show me", class = "btn-default btn-sm"),
       actionButton(setid, "Move it", class = "btn-primary btn-sm"))
+    ymax <- .doc_num((d$band %||% list())$y_max, NA_real_)
     div(class = "note", style = "margin:0 0 10px;padding:8px 10px",
       row("\u25b2", PALETTE$ok, "Starts", p0, d$start$y, "rb_setstart", "rb_gostart"),
       row("\u25bc", PALETTE$bad, "Ends", p1, d$end$y, "rb_setend", "rb_goend"),
+      # THE THIRD FACT, and only when it can matter. On a one-page table there
+      # are no pages in between, so asking about them is noise.
+      if (p1 > p0) div(
+        style = "display:flex;align-items:center;gap:8px;margin:0 0 4px",
+        span(style = sprintf("color:%s;font-size:15px;line-height:1", PALETTE$warn), "\u2504"),
+        div(style = "flex:1;min-width:0;font-size:13px",
+          strong("Bottom edge on the pages in between"),
+          if (is.finite(ymax)) sprintf(" %s", down(ymax))
+          else " the bottom of the page (so a footer under it would be read as rows)"),
+        actionButton("rb_setbottom", "Move it", class = "btn-primary btn-sm")),
       div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px",
         actionButton("rb_endauto", "Work the end out for me", class = "btn-default btn-sm"),
         actionButton("rb_endpage", "End at the bottom of its page", class = "btn-default btn-sm"),
         actionButton("rb_endlast", "End at the bottom of the last page",
-                     class = "btn-default btn-sm")))
+                     class = "btn-default btn-sm"),
+        if (p1 > p0 && is.finite(ymax))
+          actionButton("rb_clearbottom", "Run to the bottom of every page",
+                       class = "btn-default btn-sm")))
   })
-  observeEvent(input$rb_setstart, { if (!is.null(rb$draft)) rb$mode <- "start" })
-  observeEvent(input$rb_setend,   { if (!is.null(rb$draft)) rb$mode <- "end" })
+  observeEvent(input$rb_clearbottom, {
+    d <- rb$draft; if (is.null(d)) return()
+    b <- d$band %||% list(); b$y_max <- NULL; d$band <- b
+    rb$draft <- d
+  })
+  # Pressing one of these by hand is somebody steering, so the guide stops
+  # arming the next step behind them.
+  observeEvent(input$rb_setstart, { if (!is.null(rb$draft)) { rb$guide <- FALSE; rb$mode <- "start" } })
+  observeEvent(input$rb_setend,   { if (!is.null(rb$draft)) { rb$guide <- FALSE; rb$mode <- "end" } })
+  observeEvent(input$rb_setbottom, { if (!is.null(rb$draft)) { rb$guide <- FALSE; rb$mode <- "bottom" } })
   observeEvent(input$rb_gostart, {
     d <- rb$draft; if (is.null(d)) return()
     updateNumericInput(session, "rb_page", value = .doc_int(d$start$page, 1L))
@@ -2951,16 +3080,13 @@ server <- function(input, output, session) {
   # would stack another on every column each time the list redrew.
   .rb_drop_col <- function(j) {
     d <- rb$draft; if (is.null(d)) return()
-    e <- doc_column_edges(d); if (is.null(e) || length(e) < 3L) return()
-    if (j >= length(e)) return()
-    # Removing a column means removing the divider on its right, so the column to
-    # its left grows into the space. Removing the LAST one takes the right edge
-    # back instead.
-    k <- if (j == length(e) - 1L) length(e) - 1L else j + 1L
-    e2 <- e[-k]
-    nm <- tryCatch(doc_header_names(rb_input(), d, rb_frame(), e2),
-                   error = function(e3) character(0))
-    d$columns <- doc_columns_from_edges(e2, old = .doc_columns(d), names = nm)
+    cols <- .doc_columns(d)
+    if (!length(cols) || j > length(cols)) return()
+    # DELETING A COLUMN LEAVES ITS SPACE EMPTY, it does not hand it to a
+    # neighbour. Columns may have whitespace between them, so there is nothing to
+    # decide here any more -- and growing the column beside it was a change
+    # nobody asked for, on a column they had already got right.
+    d$columns <- cols[-j]
     rb$draft <- d
     rb$colsel <- NA_integer_
   }
@@ -3009,7 +3135,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # TYPING THE EDGES IS THE SAME REQUEST AS DRAGGING THEM, so it goes through the
-  # same function: the neighbours give way and the tiling holds.
+  # same function: only this column moves, and it is clamped off its neighbours.
   rb_cx_d <- debounce(reactive(c(input$rb_cx0, input$rb_cx1)), 700)
   observeEvent(rb_cx_d(), {
     d <- rb$draft; j <- rb$colsel
@@ -3019,15 +3145,8 @@ server <- function(input, output, session) {
     if (is.na(x0) || is.na(x1) || x1 - x0 < 1) return()
     if (abs(.doc_num(cols[[j]]$x_min, 0) - x0) < 0.5 &&
         abs(.doc_num(cols[[j]]$x_max, 0) - x1) < 0.5) return()
-    e <- doc_column_edges(d); if (is.null(e)) return()
-    keep_nm <- as.character(cols[[j]]$name %||% "")[1]
-    keep_ty <- as.character(cols[[j]]$type %||% "auto")[1]
-    e2 <- doc_set_column_band(e, j, x0, x1)
-    nm <- tryCatch(doc_header_names(rb_input(), d, rb_frame(), e2),
-                   error = function(e3) character(0))
-    cols2 <- doc_columns_from_edges(e2, old = cols, names = nm)
+    cols2 <- doc_set_column_band(cols, j, x0, x1)
     jj <- .rb_col_at(list(columns = cols2), (x0 + x1) / 2)
-    if (!is.na(jj) && nzchar(keep_nm)) { cols2[[jj]]$name <- keep_nm; cols2[[jj]]$type <- keep_ty }
     d$columns <- cols2; rb$draft <- d
     # DO NOT RE-SELECT THE COLUMN IT ALREADY IS.
     #
@@ -3142,6 +3261,13 @@ server <- function(input, output, session) {
   observeEvent(input$rb_vcancel, { rb$vdraft <- NULL; rb$mode <- "" })
 
   rb_vname_d <- debounce(reactive(input$rb_vname), 500)
+  # What the box will actually become, live under the box. Reads the DEBOUNCED
+  # value, not the raw one, so it does not chase every keystroke.
+  output$rb_vname_key <- renderText({
+    typed <- trimws(as.character(rb_vname_d() %||% ""))
+    if (!nzchar(typed)) "Lower case with underscores - ird_number, total_paid."
+    else sprintf("Comes out as  %s", doc_suggest_name(typed))
+  })
   observeEvent(rb_vname_d(), {
     v <- rb$vdraft; if (is.null(v)) return()
     nm <- doc_suggest_name(rb_vname_d() %||% "")
@@ -3177,6 +3303,9 @@ server <- function(input, output, session) {
     v$type <- input$rb_vtype %||% v$type %||% "text"
     v$name <- doc_suggest_name(input$rb_vname %||% v$name)
     if (!nzchar(v$name)) v$name <- sprintf("value_%d", length(rb$pairs) + 1L)
+    # Show the person the name it really got. Safe here and nowhere else: the
+    # draft is finished, so nobody is typing into the box this rewrites.
+    updateTextInput(session, "rb_vname", value = v$name)
     rel <- .doc_key(v, "where")
     if (!is.list(rel)) rel <- .doc_pair_rel(v$label, v$value)
     rel$where <- input$rb_vwhere %||% rel$where %||% "right"
@@ -3514,13 +3643,24 @@ server <- function(input, output, session) {
         return(p(class = "muted", "Save a table or a value first."))
       return(p(class = "muted", "Press \u201cRead the whole document\u201d to see what comes out."))
     }
+    # EVERY COUNT IS FORCED TO A NUMBER. A template with values and no tables
+    # gives a zero-ROW summary, and sum() over a column of the wrong type is an
+    # error, not a zero -- which is how "Read the whole document" came back
+    # "invalid 'type' (character) of argument" for anyone who had drawn only
+    # label/value pairs. R/doc_extract.R now types the empty frame; this is the
+    # second lock on the same door.
     s <- ext$summary
-    weak <- sum(!(s$found_by %in% "its heading"))
-    thin <- sum(as.integer(s$thin_columns))
-    lost <- sum(as.integer(s$unclaimed_words))
-    empty <- sum(as.integer(s$rows) < 1L)
-    one_col <- sum(as.integer(s$columns) == 1L)
-    bad <- weak + thin + lost + empty
+    n_tab <- NROW(s)
+    num <- function(v) { x <- suppressWarnings(as.numeric(v)); x[is.na(x)] <- 0; x }
+    weak <- if (n_tab) sum(!(as.character(s$found_by) %in% "its heading")) else 0L
+    thin <- sum(num(s$thin_columns)); lost <- sum(num(s$unclaimed_words))
+    n_rows <- sum(num(s$rows))
+    empty <- sum(num(s$rows) < 1L); one_col <- sum(num(s$columns) == 1L)
+    n_val <- NROW(ext$pairs)
+    blank_val <- if (n_val && !is.null(ext$pairs$value))
+                   sum(!nzchar(trimws(as.character(ext$pairs$value)))) else 0L
+    bad <- weak + thin + lost + empty + blank_val
+    plural <- function(n) if (n == 1L) "" else "s"
     tagList(
       div(class = if (bad) "verdict verdict-medium" else "verdict verdict-high",
           style = "margin:2px 0 12px",
@@ -3528,9 +3668,8 @@ server <- function(input, output, session) {
         div(style = "flex:1;min-width:0",
           div(class = "verdict-title",
               sprintf("%d table%s, %d row%s, %d value%s",
-                      nrow(s), if (nrow(s) == 1L) "" else "s",
-                      sum(s$rows), if (sum(s$rows) == 1L) "" else "s",
-                      nrow(ext$pairs), if (nrow(ext$pairs) == 1L) "" else "s")),
+                      n_tab, plural(n_tab), n_rows, plural(n_rows),
+                      n_val, plural(n_val))),
           p(class = "verdict-body", style = "margin:0", paste(c(
             if (empty) sprintf("%d table(s) came out empty.", empty),
             # A one-column table cannot have an unclaimed word or a thin column,
@@ -3541,12 +3680,21 @@ server <- function(input, output, session) {
             if (weak) sprintf("%d found by position rather than by a heading.", weak),
             if (thin) sprintf("%d column(s) came out mostly empty - check the column edges.", thin),
             if (lost) sprintf("%d word(s) inside a table were claimed by no column.", lost),
-            if (!bad && !one_col)
+            if (blank_val) sprintf(paste("%d value(s) came back empty - the label was found and",
+                                         "nothing was beside it."), blank_val),
+            if (!n_tab && n_val)
+              "No tables on this template - it reads labelled values only, which is a whole template on a form.",
+            if (!bad && n_tab && !one_col)
               "Every table was found by its own heading and every column filled."),
             collapse = " ")))),
       if (length(rb$outputs)) div(style = "margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap",
         downloadButton("rb_dl_xlsx", "Download the workbook", class = "btn-default"),
-        downloadButton("rb_dl_csv", "Download one long CSV", class = "btn-default")))
+        downloadButton("rb_dl_csv", "Download one long CSV", class = "btn-default"),
+        # Offered only when there is something in it. A download button that
+        # hands back a file saying "nothing to download" is a button that lies
+        # about what the template made.
+        if (n_val) downloadButton("rb_dl_values", "Download the values CSV",
+                                  class = "btn-default")))
   })
 
   .rb_out <- function(pattern) {
@@ -3563,6 +3711,12 @@ server <- function(input, output, session) {
     filename = function() { p <- .rb_out("tables-long\\.csv$")
       if (is.na(p)) "nothing-to-download.txt" else basename(p) },
     content = function(file) { p <- .rb_out("tables-long\\.csv$")
+      if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
+      file.copy(p, file, overwrite = TRUE) })
+  output$rb_dl_values <- downloadHandler(
+    filename = function() { p <- .rb_out("\\.values\\.csv$")
+      if (is.na(p)) "nothing-to-download.txt" else basename(p) },
+    content = function(file) { p <- .rb_out("\\.values\\.csv$")
       if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
       file.copy(p, file, overwrite = TRUE) })
 
@@ -3582,6 +3736,24 @@ server <- function(input, output, session) {
     d <- d[, !grepl("__value$", names(d)), drop = FALSE]
     datatable(d, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
   })
+  # The label/value pairs, shown next to the tables rather than only inside the
+  # workbook. They are half of what this builder makes and were the half you
+  # could not see without downloading a file.
+  output$rb_prev_values_head <- renderUI({
+    ext <- rb$preview; if (is.null(ext)) return(NULL)
+    n <- NROW(ext$pairs)
+    tagList(h5(style = "margin-top:16px",
+               sprintf("Values (%d)", n)),
+            if (!n) p(class = "muted", style = "margin:0 0 6px",
+                      "None on this template yet. The Values tab draws them.")
+            else p(class = "muted", style = "margin:0 0 6px",
+                   "Each of these is one label and the thing printed beside it."))
+  })
+  output$rb_prev_values <- renderTable({
+    ext <- rb$preview; if (is.null(ext) || !NROW(ext$pairs)) return(NULL)
+    ext$pairs
+  }, striped = TRUE, spacing = "xs", width = "100%", na = "")
+
   output$rb_prev_summary_head <- renderUI({
     if (is.null(rb$preview)) return(NULL)
     h5(style = "margin-top:16px", "Every table on this document")
@@ -5879,6 +6051,14 @@ server <- function(input, output, session) {
     res <- cv_res(); if (is.null(res)) return(NULL)
     btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv"))
     has_json <- any(grepl("\\.json$", res$outputs %||% character(0)))
+    # THE VALUES ARE A SECOND CSV AND HAD NO BUTTON. On a report the CSV button
+    # gives the TABLES stacked long -- page, row, column, value -- and a
+    # label/value pair is none of those, so a document read for its labelled
+    # figures downloaded as a file with none of them in it, and the only place
+    # they appeared was a sheet inside the workbook. The file was always written
+    # (R/doc_extract.R); nothing offered it.
+    has_val <- any(grepl("\\.values\\.csv$", res$outputs %||% character(0)))
+    if (has_val) btns <- c(btns, list(downloadButton("dl_values", "\u2b73 Values CSV")))
     if (!length(btns) && !has_json) return(NULL)
     # Prominent bar right under the verdict: the download is the point of the page,
     # so it's the most visible thing, not a quiet box tucked into the sidebar.
@@ -5983,6 +6163,8 @@ server <- function(input, output, session) {
       file.copy(p, file, overwrite = TRUE)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
+  # "values.csv", not "csv": the extension alone would match the long CSV first.
+  output$dl_values <- mk_dl("values\\.csv")
 
   # ---- Feedback (every conversion can be rated; one file per logs/feedback/) ----
   #

@@ -629,64 +629,130 @@ doc_edge_click <- function(edges, x, tol = 6) {
   sort(c(edges, x))
 }
 
-# doc_set_column_band(edges, j, x0, x1) -> the edges after column j is told to
-# run from x0 to x1.
+# ---------------------------------------------------------------------------
+# COLUMNS MAY HAVE WHITESPACE BETWEEN THEM. THEY MAY NEVER OVERLAP.
 #
-# This is "put this column HERE", which is a different request from clicking a
-# divider and has to behave differently. Because the columns tile the width, the
-# two edges that bound column j are shared with its neighbours, so moving them
-# moves the neighbours' outer edges too -- that is the point, not a side effect:
-# somebody saying "Amount runs from 380 to 452" is not also asking for a gap to
-# open up beside it. Any divider the move steps clean over is absorbed, so the
-# result is still sorted, still tiling, and can never hold a column of zero or
-# negative width.
-doc_set_column_band <- function(edges, j, x0, x1) {
-  edges <- sort(unique(round(as.numeric(edges), 2)))
-  edges <- edges[is.finite(edges)]
-  if (length(edges) < 2L) return(edges)
-  j <- .doc_int(j)
-  if (is.na(j) || j < 1L || j > length(edges) - 1L) return(edges)
-  lo <- min(x0, x1); hi <- max(x0, x1)
-  if (!is.finite(lo) || !is.finite(hi) || hi - lo < 1) return(edges)
-  keep <- edges[-c(j, j + 1L)]
-  keep <- keep[keep <= lo - 1 | keep >= hi + 1]
-  sort(unique(round(c(keep, lo, hi), 2)))
+# The two operations below work on the COLUMN LIST, not on the shared-edge view
+# above, and that distinction is the whole design.
+#
+# The edge view exists because columns DERIVED from a header row should tile: a
+# value that is a little wider on row 40 than it was in the heading still has to
+# land somewhere, and a tiling set of columns is tolerant of that where a set of
+# exact bands is not. doc_columns_from_box() therefore fills the gutters into the
+# columns either side, deliberately.
+#
+# But a column somebody DRAWS is a different statement. "This band is a column"
+# is exact, and forcing it to touch its neighbour means the neighbour has to
+# move, or a column has to be invented in the gap. Both were tried and both are
+# wrong: a report has real whitespace between its columns, and the tool inventing
+# a column there -- or silently widening the one before it -- is the tool
+# arguing with the person about what they can see.
+#
+# So: gaps are allowed and are exactly what was drawn. **Overlaps are still
+# impossible**, because an overlap genuinely destroys data (R/doc_extract.R:
+# whatever falls in the overlap is read into the first column and lost from the
+# second). A move or an insert that would overlap is CLAMPED to the free space
+# beside its neighbour rather than refused, so the gesture always does something,
+# and it can never do the one thing that loses a figure.
+#
+# Nothing falls silently into a gap: doc_table_rows() counts every word inside
+# the table that no column claimed, the reader reports it per table, and the
+# screen says so. A gap is visible; a lost column is not.
+# ---------------------------------------------------------------------------
+
+# .doc_col_bands(cols) -> a 2-column matrix of (lo, hi), in column order, with
+# unusable columns dropped. One place to get this right.
+.doc_col_bands <- function(cols) {
+  cols <- if (is.list(cols) && !is.null(cols$columns)) .doc_columns(cols) else cols
+  if (!length(cols)) return(matrix(numeric(0), ncol = 2))
+  lo <- vapply(cols, function(cc) .doc_num(cc$x_min, NA_real_), numeric(1))
+  hi <- vapply(cols, function(cc) .doc_num(cc$x_max, NA_real_), numeric(1))
+  ok <- is.finite(lo) & is.finite(hi) & hi > lo
+  cbind(lo, hi)[ok, , drop = FALSE]
 }
 
-# doc_add_column(edges, x0, x1) -> the edges after "there is ANOTHER column, and
-# it runs from x0 to x1".
+# .doc_clamp_band(bands, skip, lo, hi) -> (lo, hi) trimmed so it touches no other
+# band. `skip` is the row index in `bands` that is allowed to be ignored (the
+# column being moved); NA when inserting a new one. NULL when nothing is left.
+.doc_clamp_band <- function(bands, skip, lo, hi) {
+  if (NROW(bands)) {
+    keep <- if (is.na(skip)) seq_len(nrow(bands)) else setdiff(seq_len(nrow(bands)), skip)
+    for (k in keep) {
+      a <- bands[k, 1]; b <- bands[k, 2]
+      if (b <= lo || a >= hi) next                 # clear of it
+      if (a <= lo && b >= hi) return(NULL)         # entirely inside a column
+      if (a <= lo) lo <- b else hi <- a            # trim to its near side
+    }
+  }
+  if (!is.finite(lo) || !is.finite(hi) || hi - lo < 1) return(NULL)
+  c(lo, hi)
+}
+
+# doc_add_column(cols, x0, x1, names) -> the column list after "there is ANOTHER
+# column, and it runs from x0 to x1". Returns `cols` unchanged when the drag
+# cannot be a column at all; attr(x, "clamped") is TRUE when it had to be trimmed
+# to keep clear of a neighbour, so the screen can say so.
 #
-# THIS IS NOT TWO CLICKS. It used to be -- the drag's two sides were fed through
-# doc_edge_click() one after the other -- and that is wrong for the commonest use
-# there is. doc_edge_click() means "click": a click OUTSIDE the table moves the
-# nearer outer edge out to it, because that is what widening a table by clicking
-# beside it has to do. So dragging over the second column of a table that only has
-# its first column carved out moved the right-hand outer edge twice, and the
-# result was ONE column stretched over both, holding every heading and every
-# figure in the rows below. The first column was not extended by accident; it was
-# extended twice, exactly as asked, by a function answering a different question.
-#
-# A drag says: this band is a column of its own. So:
-#   * both sides of the drag become edges;
-#   * any divider strictly inside the band is absorbed -- the person said the WHOLE
-#     band is one column;
-#   * every other edge is KEPT, including the outer ones. That is the difference.
-#     An outer edge the new column lands beyond becomes an ordinary divider, so the
-#     ground between the old table and the new column becomes its own column rather
-#     than being swallowed into the neighbour.
-#
-# That last rule is deliberately the cautious one. Somebody adding columns left to
-# right is usually about to carve the in-between region anyway, and a column that
-# should not be there is removed with one click on its divider. Swallowing a
-# region into the column beside it cannot be undone without redrawing both.
-doc_add_column <- function(edges, x0, x1) {
-  lo <- min(x0, x1); hi <- max(x0, x1)
-  if (!is.finite(lo) || !is.finite(hi) || hi - lo < 1) return(edges)
-  edges <- sort(unique(round(as.numeric(edges), 2)))
-  edges <- edges[is.finite(edges)]
-  if (length(edges) < 2L) return(c(round(lo, 2), round(hi, 2)))
-  keep <- edges[edges <= lo - 1 | edges >= hi + 1]
-  sort(unique(round(c(keep, lo, hi), 2)))
+# THIS IS NOT TWO CLICKS, AND IT IS NOT AN EDGE MOVE. It was both, in turn. Fed
+# through doc_edge_click() twice, a drag beside the table moved the outer edge out
+# to it -- twice -- and the answer was one column stretched over everything the
+# drag crossed. Rewritten to keep every edge, the answer was the new column plus
+# an invented one in the gap. The column list, and only the new band, is the
+# answer: what was drawn, where it was drawn, and nothing else touched.
+doc_add_column <- function(cols, x0, x1, names = character(0)) {
+  # COLUMNS IN, COLUMNS OUT, ON EVERY PATH -- including the paths that change
+  # nothing. Handing back whatever was passed in meant "nothing happened" and
+  # "here are your columns" had different shapes, and the caller comparing
+  # lengths to decide what to say would compare a table with a list.
+  old <- if (is.list(cols) && !is.null(cols$columns)) .doc_columns(cols) else (cols %||% list())
+  lo <- suppressWarnings(min(x0, x1)); hi <- suppressWarnings(max(x0, x1))
+  if (!isTRUE(is.finite(lo)) || !isTRUE(is.finite(hi)) || hi - lo < 1) return(old)
+  b <- .doc_clamp_band(.doc_col_bands(old), NA_integer_, lo, hi)
+  if (is.null(b)) return(old)
+  nm <- if (length(names) && nzchar(trimws(names[1]))) trimws(names[1]) else
+          sprintf("column_%d", length(old) + 1L)
+  new <- list(name = nm, x_min = round(b[1], 2), x_max = round(b[2], 2),
+              type = "auto", may_be_blank = FALSE)
+  out <- .doc_sort_columns(c(old, list(new)))
+  attr(out, "clamped") <- !isTRUE(all.equal(c(lo, hi), b, tolerance = 1e-6))
+  out
+}
+
+# doc_set_column_band(cols, j, x0, x1) -> the columns after column j is told to
+# run from x0 to x1. Only column j moves. Clamped off its neighbours, never
+# through them: absorbing a neighbour used to be the behaviour, on the reasoning
+# that "Amount runs 380 to 452" is not also a request for a gap. It is now, and
+# absorbing a column of figures because a drag was 3pt wide of the mark is the
+# expensive half of that trade.
+doc_set_column_band <- function(cols, j, x0, x1) {
+  old <- if (is.list(cols) && !is.null(cols$columns)) .doc_columns(cols) else (cols %||% list())
+  j <- .doc_int(j)
+  if (is.na(j) || j < 1L || j > length(old)) return(old)
+  lo <- suppressWarnings(min(x0, x1)); hi <- suppressWarnings(max(x0, x1))
+  if (!isTRUE(is.finite(lo)) || !isTRUE(is.finite(hi)) || hi - lo < 1) return(old)
+  b <- .doc_clamp_band(.doc_col_bands(old), j, lo, hi)
+  if (is.null(b)) return(old)
+  old[[j]]$x_min <- round(b[1], 2); old[[j]]$x_max <- round(b[2], 2)
+  out <- .doc_sort_columns(old)
+  attr(out, "clamped") <- !isTRUE(all.equal(c(lo, hi), b, tolerance = 1e-6))
+  out
+}
+
+# .doc_sort_columns(cols) -- left to right, because everything downstream (the
+# output's column order, the on-screen list, the numbering a person refers to)
+# reads them in order.
+.doc_sort_columns <- function(cols) {
+  if (length(cols) < 2L) return(cols)
+  lo <- vapply(cols, function(cc) .doc_num(cc$x_min, Inf), numeric(1))
+  cols[order(lo)]
+}
+
+# doc_columns_touch(cols) -> TRUE when every column meets the next one, i.e. the
+# columns tile with no whitespace. Used only to describe the table on screen.
+doc_columns_touch <- function(cols) {
+  b <- .doc_col_bands(cols)
+  if (nrow(b) < 2L) return(TRUE)
+  all(abs(b[-1, 1] - b[-nrow(b), 2]) < 0.5)
 }
 
 # doc_header_names(input, tab, tmpl) -> a name for each column, read from the

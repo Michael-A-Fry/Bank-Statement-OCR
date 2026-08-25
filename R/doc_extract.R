@@ -274,13 +274,21 @@ extract_document <- function(input, tmpl) {
 
 # document_summary(tables) -> the one-row-per-table picture described above.
 document_summary <- function(tables) {
-  cols <- c("table", "name", "pages", "rows", "columns", "thin_columns",
-            "unclaimed_words", "found_by", "confidence", "note")
-  if (!length(tables)) {
-    d <- as.data.frame(setNames(rep(list(character(0)), length(cols)), cols),
-                       stringsAsFactors = FALSE)
-    return(d)
-  }
+  # AN EMPTY SUMMARY HAS TO HAVE THE SAME COLUMN TYPES AS A FULL ONE.
+  #
+  # It used to be ten character(0) columns, which reads as harmless and is not: a
+  # template with values on it and no tables is a real thing to build (a form),
+  # and every caller that adds up a number then meets sum(character(0)) --
+  # "invalid 'type' (character) of argument". That is what "Read the whole
+  # document" answered with when somebody had drawn only label/value pairs. A
+  # zero-row frame is a shape, and a shape that changes with the row count is not
+  # one.
+  proto <- list(table = character(0), name = character(0), pages = character(0),
+                rows = integer(0), columns = integer(0), thin_columns = integer(0),
+                unclaimed_words = integer(0), found_by = character(0),
+                confidence = numeric(0), note = character(0))
+  if (!length(tables))
+    return(as.data.frame(proto, stringsAsFactors = FALSE))
   found_words <- c(header = "its heading", first_column = "the rows it starts with",
                    position_same_page = "where it sat on the example",
                    position_other_page = "where it sat on the example (different length document)")
@@ -533,6 +541,21 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
 # Building a template from what was proposed
 # ---------------------------------------------------------------------------
 
+# .doc_band_of(tb) -- a table's band, or NULL. Only the numbers that are actually
+# set are written, so a template does not carry four keys where one was meant:
+# an absent y_max means "to the bottom of the page", which is a different
+# statement from "to 0".
+.doc_band_of <- function(tb) {
+  b <- tb$band
+  if (!is.list(b) || !length(b)) return(NULL)
+  out <- list()
+  for (k in c("x_min", "x_max", "y_min", "y_max")) {
+    v <- .doc_num(b[[k]], NA_real_)
+    if (isTRUE(is.finite(v))) out[[k]] <- v
+  }
+  if (length(out)) out else NULL
+}
+
 # document_template_from_proposal(id, bank, type, phrases, tables, pairs, input)
 # -> a mode:document template. This is what the confirm-and-name screen saves:
 # the proposals (see R/tables_detect.R) with the names a person gave them.
@@ -550,6 +573,15 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
       start = list(page = .doc_int(tb$start$page, 1L), y = .doc_num(tb$start$y, 0)),
       end   = list(page = .doc_int(tb$end$page, .doc_int(tb$start$page, 1L)),
                    y = .doc_num(tb$end$y, 0)),
+      # THE BAND IS CARRIED, and it was not. `end` is a place on the LAST page;
+      # `band$y_max` is where the window closes on every page in between
+      # (doc_locate_table), which is the whole reason the builder asks for it. It
+      # was set on the draft, drawn on the screen, written in the "where it
+      # starts and stops" panel -- and then dropped here, so the reader never saw
+      # it and the footer came back in the rows anyway. A control that changes
+      # nothing is worse than no control: it answers the question and the
+      # question stays answered wrongly.
+      band = .doc_band_of(tb),
       header_rows = .doc_int(tb$header_rows, 1L),
       follow = isTRUE(tb$follow),
       min_fill = .doc_num(tb$min_fill, 0.5),
