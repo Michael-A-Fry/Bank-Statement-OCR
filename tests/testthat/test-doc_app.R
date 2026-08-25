@@ -168,7 +168,7 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   expect_match(cl, "past where the table ends")
   expect_match(cl, "above where the table starts")
   # and both markers are drawn on the page, named
-  plot <- .da_block(src, "\\.rb_draw_table <- function", 40L)
+  plot <- .da_block(src, "\\.rb_draw_table <- function", 52L)
   expect_match(plot, '"START')
   expect_match(plot, '"END"')
 })
@@ -238,6 +238,26 @@ test_that("the tool's own labels float above the page, and each layer switches o
   for (l in c('"tables" %in% lay', '"edges" %in% lay', '"ends" %in% lay',
               '"names" %in% lay', '"values" %in% lay'))
     expect_match(joined, l, fixed = TRUE)
+})
+
+# EVERY COLUMN IS A COLUMN. The picture used to tint only the odd-numbered
+# bands, meaning to show where one ends and the next begins -- but on screen
+# that reads as "three of these are selected and three are not", while the list
+# beside it says six. A stripe is fine; a stripe made of a thing and NOTHING is
+# not. The one column with a thick outline round it is the one being edited, and
+# it is the only thing on the picture that means "selected".
+test_that("every column band is tinted, and only the edited one is outlined", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, "\\.rb_draw_table <- function", 34L)
+  # the fill is unconditional -- the alternation decides which SHADE, not whether
+  expect_match(blk, "if (j %% 2L == 1L) dark else pale", fixed = TRUE)
+  expect_match(blk, "pale <- if (lwd > 1)", fixed = TRUE)
+  expect_match(blk, "dark <- if (lwd > 1)", fixed = TRUE)
+  # the band's own rect is not guarded by which band it is
+  expect_false(grepl("if (j %% 2L == 1L)\n            rect(", blk, fixed = TRUE))
+  # and exactly one thing draws a thick outline round a single band
+  sel <- grep("border = PALETTE\\$warn, lwd = 3\\)", src)
+  expect_length(sel, 1L)
 })
 
 test_that("the builder starts blank and takes one table at a time", {
@@ -437,4 +457,32 @@ test_that("every position is both draggable and typeable", {
   blk <- .da_block(src, "rb_where_d <- debounce", 22L)
   expect_match(blk, "ep < sp \\|\\| \\(ep == sp && ey <= sy\\)")
   expect_match(blk, "end the table at or before it starts")
+})
+
+# ---------------------------------------------------------------------------
+# ONE COLUMN IS ALMOST NEVER WHAT THE DRAG MEANT
+#
+# A box holding one unbroken run of words -- a sentence, the table's title, a
+# wrapped heading -- has no gutter in it, so it makes ONE column and every row
+# then arrives whole in a single cell. That is arithmetically correct and, nine
+# times in ten, a box drawn round the wrong thing. Worse, a one-column table
+# cannot have an unclaimed word or a mostly-empty column, so it sails through
+# every check the verdict card makes and reports "every column filled".
+# Measured: five of fifteen documents in a run over other people's PDFs.
+# ---------------------------------------------------------------------------
+
+test_that("one column out of a header drag is said out loud, twice", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, 'if \\(m == "cols"\\)', 52L)
+  expect_match(blk, "if \\(length\\(cols\\) == 1L\\)")
+  expect_match(blk, "ONE column and each row arrives whole in it", fixed = TRUE)
+  expect_match(blk, 'type = "warning"')
+  # ...and again on the verdict card, so it is not only said at the moment of
+  # the drag and then forgotten
+  v <- .da_block(src, "output\\$rb_prev_status <- renderUI", 40L)
+  expect_match(v, "one_col <- sum\\(as\\.integer\\(s\\$columns\\) == 1L\\)")
+  expect_match(v, "each", fixed = TRUE)
+  expect_match(v, "row arrives whole in one cell", fixed = TRUE)
+  # and the clean tick is withheld while any table has one column
+  expect_match(v, "if \\(!bad && !one_col\\)")
 })
