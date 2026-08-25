@@ -279,38 +279,35 @@ Then **reboot the server** and check the same four. That is the only test of
 **`http://qlikserver:8100/`** — put that in the team's bookmarks and in
 `app.shiny_url` so the Qlik tile opens it too.
 
-If you would rather it did not say `qlikserver`, add a **DNS CNAME** — no change
-on the server at all:
+**Who can get in is the network, exactly as it is for Qlik.** There is no sign-in
+screen. The firewall rule from step 6 is the control: anyone who can reach the
+Qlik server can reach Statement Studio, and nobody else can. That is deliberate —
+it is the same boundary your Qlik installation already has, administered in the
+same place, rather than a second set of accounts for somebody to keep in step.
+
+Where the app cannot work out who someone is, the Convert tab asks once per
+session for a **QID** and refuses to convert without one, so no conversion is ever
+recorded against nobody.
+
+### A friendlier name, if you want one
+
+One **CNAME** in your internal DNS, and nothing changes on the server:
 
 ```
-statements.yourdomain.local.   CNAME   qlikserver.yourdomain.local.
+statementstudio.yourdomain.local.   CNAME   qlikserver.yourdomain.local.
 ```
 
-giving **`http://statements:8100/`**. That is the whole job: one DNS record, and
-the app needs to know nothing about it.
+giving **`http://statementstudio:8100/`**. That is the whole job — a CNAME is
+resolved before the browser ever connects, so the request arrives at the same
+machine on the same port and the app needs to know nothing about it.
 
-### Why you cannot have `http://qlikserver/statement-studio`
+Update `app.shiny_url` to match and tell the team the new address.
 
-A URL with no port number means **port 80**, and on that machine port 80 belongs
+### Why the address keeps its `:8100`
+
+A URL with no port number means **port 80**, and on this machine port 80 belongs
 to the Qlik Sense proxy. Two services cannot share it, and taking it from Qlik is
-not a trade worth making.
-
-If dropping the `:8100` really matters, the supported way is a reverse proxy —
-IIS with **URL Rewrite + Application Request Routing**, on a *second IP address*
-bound to the server, forwarding to `http://127.0.0.1:8100/`. Two things to know
-before you start:
-
-- **It must forward WebSocket upgrades.** Statement Studio is a live app; without
-  `Upgrade` and `Connection` headers passed through, pages load and then freeze
-  greyed-out. In ARR this is *Enable WebSocket* on the site plus the
-  `Application Request Routing Cache` proxy setting.
-- **Uploads are big.** Raise the IIS request limit above your
-  `app.max_upload_mb` (200 MB by default) or scanned statements are rejected at
-  the proxy before the app ever sees them.
-
-It is a real option and it works. It is also three more things that can break at
-2am, for the sake of five characters in a bookmark. The port URL is the
-recommendation.
+not a trade worth making for five characters in a bookmark.
 
 ---
 
@@ -358,6 +355,6 @@ More: [when-something-goes-wrong.md](when-something-goes-wrong.md) ·
     + restart on failure + "stop after 3 days" UNTICKED)
 [ ] task Run once: 0x41301, startup.log fresh, port listening
 [ ] SERVER REBOOTED and all four checks still pass
-[ ] app.shiny_url set to http://qlikserver:8100 so the Qlik tile matches
+[ ] app.shiny_url set to the address people type, so the Qlik tile matches
 [ ] address given to the team
 ```
