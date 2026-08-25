@@ -133,6 +133,11 @@ validate_document_template <- function(t) {
     ty <- as.character(.doc_key(sp, "type") %||% "text")[1]
     if (!(ty %in% c("text", "money", "date", "date_range")))
       p <- c(p, sprintf("value '%s' has kind '%s', which is not one of text/money/date/date_range", k, ty))
+    wr <- .doc_key(sp, "where"); wr <- if (is.list(wr)) .doc_key(wr, "where") else wr
+    wr <- as.character(wr %||% "")[1]
+    if (nzchar(wr) && !(wr %in% c("right", "left", "above", "below")))
+      p <- c(p, sprintf(paste("value '%s' says the value sits '%s' of the label,",
+                              "which is not one of right/left/above/below"), k, wr))
   }
   # Worksheet names come from the table names, and two tables that differ only in
   # punctuation would collide there. Caught here, where it can be renamed.
@@ -562,8 +567,17 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
     k <- doc_suggest_name(pr$name %||% pr$label_text %||% "value")
     k <- make.unique(c(pused, k), sep = "_")[length(pused) + 1L]
     pused <- c(pused, k)
+    # WHERE, spelled out on the template. The two boxes already imply it, but a
+    # person editing this file -- or the screen that lets them change it from
+    # "to the right of it" to "under it" -- should not have to do coordinate
+    # arithmetic to find out which side the tool will look on.
+    rel <- if (is.list(pr$label) && is.list(pr$value))
+             .doc_pair_rel(pr$label, pr$value) else NULL
+    if (is.list(pr$where)) rel <- utils::modifyList(rel %||% list(), pr$where)
+    else if (is.character(pr$where) && nzchar(pr$where[1]) && !is.null(rel))
+      rel$where <- pr$where[1]
     pkeyed[[k]] <- list(label_text = as.character(pr$label_text %||% "")[1],
-                        label = pr$label, value = pr$value,
+                        label = pr$label, value = pr$value, where = rel,
                         type = as.character(pr$type %||% "text")[1])
   }
   ph <- trimws(as.character(unlist(phrases %||% character(0))))
@@ -575,5 +589,10 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
        doc_pages = .doc_int(doc_pages),
        ref_width = .A4_W, ref_height = .A4_H,
        fingerprint = list(page_contains_all = as.list(ph)),
-       pairs = pkeyed, tables = keyed, currency = "NZD")
+       # NO CURRENCY. A document template has no reconciliation behind it and
+       # nothing in this mode ever reads one -- so stamping "NZD" on a report of
+       # rupees or euros would be a false statement in a saved file, made by a
+       # converter that never looks at it. A statement template declares its
+       # currency because the balance proof spends it; this one does not.
+       pairs = pkeyed, tables = keyed)
 }

@@ -80,16 +80,43 @@ test_that("download only is said on the screen where the template is saved", {
   expect_match(.da_joined(), "never goes to the", fixed = TRUE)
 })
 
-test_that("one gesture means one thing, and the hint under the picture says which", {
-  src <- .da_src()
-  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 14L)
-  for (t in c("TITLE", "ROW OF COLUMN NAMES", "ENDS", "LABEL"))
-    expect_match(hint, t, fixed = TRUE)
-  # the drag is dispatched on the STEP, so it cannot mean two things at once
-  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 130L)
-  for (t in c("rb$step == 1L", "rb$step == 2L", "rb$step == 3L",
-              "rb$vstep == 1L", "rb$vstep == 2L"))
+# ---------------------------------------------------------------------------
+# NOTHING HAPPENS UNTIL IT IS ASKED FOR.
+#
+# The version before this treated a drag as a request to make a table, so a
+# mis-drag made one, a second look at the page made one, and correcting one made
+# another. A gesture that always means "make me a new thing" cannot also mean
+# "fix the thing I am looking at" -- and fixing is most of the work.
+test_that("one armed intent at a time, named on screen, and nothing armed by default", {
+  src <- .da_src(); joined <- .da_joined()
+  # every mode has a sentence, and the sentence names the gesture in capitals
+  ask <- .da_block(src, "\\.RB_ASK <- list\\(", 22L)
+  for (m in c("title", "cols", "addcol", "colpos", "start", "end", "label", "value"))
+    expect_match(ask, sprintf("\\n\\s*%s\\s*=", m))
+  for (t in c("TITLE", "ROW OF COLUMN NAMES", "NEW COLUMN", "STARTS", "ENDS",
+              "LABEL", "VALUE"))
+    expect_match(ask, t, fixed = TRUE)
+  # the banner across the top reads its sentence out of that one list...
+  arm <- .da_block(src, "output\\$rb_arm <- renderUI", 20L)
+  expect_match(arm, "\\.RB_ASK\\[\\[rb\\$mode")
+  expect_match(arm, "Nothing is waiting for a drag")
+  # ...and so does the hint under the picture, so they can never disagree
+  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 8L)
+  expect_match(hint, "\\.RB_ASK\\[\\[rb\\$mode")
+  # THE RULE ITSELF: a drag with nothing armed changes nothing and says so.
+  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 190L)
+  expect_match(brush, "if \\(!nzchar\\(m\\)\\)")
+  expect_match(brush, "Nothing was waiting for that drag, so nothing changed")
+  # and it dispatches on the mode alone -- not on which tab happens to be open
+  for (t in c('m == "title"', 'm == "cols"', 'm == "addcol"', 'm == "colpos"',
+              'm == "label"', 'm == "value"'))
     expect_match(brush, t, fixed = TRUE)
+  expect_false(grepl("on_tables", brush, fixed = TRUE))
+  # nothing is armed unless a button armed it
+  expect_match(joined, 'rb\\$mode <- "title"')
+  expect_match(joined, 'actionButton\\("rb_addtable"')
+  expect_match(joined, 'actionButton\\("rb_addval"')
+  expect_match(joined, 'mode = "",')
 })
 
 test_that("the builder draws in the document's own point space, so what is drawn is what is saved", {
@@ -107,11 +134,11 @@ test_that("the per-row handlers exist once, not once per redraw", {
   src <- .da_src()
   # Created in fixed lapplys OUTSIDE the renderUI. Inside one, every redraw would
   # stack another observer on every row, so one click would fire many times.
-  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 22L)
-  for (id in c("rb_rm_", "rb_ed_", "rb_vrm_"))
+  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 40L)
+  for (id in c("rb_rm_", "rb_ed_", "rb_vrm_", "rb_ved_"))
     expect_match(blk, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id))
   cols <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_COLS\\)", 22L)
-  for (id in c("rb_cx_", "rb_ck_"))
+  for (id in c("rb_cx_", "rb_cs_"))
     expect_match(cols, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id))
   for (out in c("rb_saved", "rb_vsaved", "rb_cols")) {
     blk2 <- .da_block(src, sprintf("output\\$%s <- renderUI", out), 20L)
@@ -119,42 +146,98 @@ test_that("the per-row handlers exist once, not once per redraw", {
   }
 })
 
-test_that("a click means exactly one thing, and the screen says which", {
-  src <- .da_src()
-  # ONE control decides what a click does, and it is under the picture it
-  # controls. A drag always means the same thing on a given tab. Between them
-  # there are two gestures to keep straight instead of one gesture with three
-  # meanings and a follow-up question.
-  tools <- .da_block(src, "output\\$rb_tools <- renderUI", 12L)
-  expect_match(tools, 'radioButtons\\("rb_mode"')
-  for (m in c('"col"', '"start"', '"end"', '"off"')) expect_match(tools, m, fixed = TRUE)
-  # every mode has a sentence saying what clicking will do
-  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 24L)
-  expect_match(hint, "Click <b>between</b> two columns", fixed = TRUE)
-  expect_match(hint, "where this table STARTS", fixed = TRUE)
-  expect_match(hint, "where this table ENDS", fixed = TRUE)
-  # an end before the start is refused where it happens, not explained later
-  blk <- .da_block(src, "observeEvent\\(input\\$rb_click", 34L)
-  expect_match(blk, "end the table before it starts")
+# WHERE IT STARTS AND WHERE IT STOPS decide every row that comes out, so they are
+# written on the screen in words with a button beside each -- not left as an
+# undocumented click on the picture and a sentence in a hint.
+test_that("the start and the end are on the screen in words, and easy to move", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, "output\\$rb_where <- renderUI", 26L)
+  expect_match(blk, "Starts", fixed = TRUE)
+  expect_match(blk, "Ends", fixed = TRUE)
+  expect_match(blk, "down the page", fixed = TRUE)        # said as a place, not a number
+  expect_match(blk, '"rb_setstart"'); expect_match(blk, '"rb_setend"')
+  expect_match(blk, '"rb_gostart"'); expect_match(blk, '"rb_goend"')
+  # and the three answers people actually want, as one press each
+  for (b in c("rb_endauto", "rb_endpage", "rb_endlast"))
+    expect_match(blk, sprintf('"%s"', b))
+  # a click only ever moves one of those two, and only when it was asked for
+  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 32L)
+  expect_match(cl, 'if \\(!\\(m %in% c\\("start", "end"\\)\\)\\) return\\(\\)')
+  # an end before the start, or a start after the end, is refused where it
+  # happens rather than explained later
+  expect_match(cl, "past where the table ends")
+  expect_match(cl, "above where the table starts")
+  # and both markers are drawn on the page, named
+  plot <- .da_block(src, "\\.rb_draw_table <- function", 40L)
+  expect_match(plot, '"START')
+  expect_match(plot, '"END"')
 })
 
 test_that("the columns come from the header row, and stay a tiling of the width", {
   src <- .da_src()
-  # Step 2 IS the columns: one drag round the row of column names, and every
-  # header cell becomes a column named after it.
-  blk <- .da_block(src, "if \\(on_tables && rb\\$step == 2L\\)", 22L)
+  # One drag round the row of column names, and every header cell becomes a
+  # column named after it -- and the end is worked out from there.
+  blk <- .da_block(src, 'if \\(m == "cols"\\)', 46L)
   expect_match(blk, "doc_columns_from_box\\(")
-  expect_match(blk, "doc_auto_end\\(")               # ...and the end is worked out
+  expect_match(blk, "doc_auto_end\\(")
   # Adding one afterwards moves EDGES, so the columns still tile the width and a
   # gap or an overlap is not expressible.
-  add <- .da_block(src, "if \\(on_tables && rb\\$step == 3L\\)", 14L)
+  add <- .da_block(src, 'if \\(m == "addcol"\\)', 16L)
   expect_match(add, "doc_column_edges\\(d\\)")
   expect_match(add, "doc_edge_click\\(")
   expect_match(add, "doc_columns_from_edges\\(")
   # ...and removing one re-reads the names, or a merged column is called column_2
   # where the page says "Type Opening".
-  rm <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_cx_\"", 16L)
+  rm <- .da_block(src, "\\.rb_drop_col <- function", 16L)
   expect_match(rm, "doc_header_names\\(")
+})
+
+# EVERYTHING THE TOOL WORKED OUT FOR ITSELF CAN BE CHANGED. That is the whole
+# point of showing it: a column band, a column name, what is in it, and the
+# order the tool put them in are all guesses until somebody has looked.
+test_that("every column can be renamed, retyped, repositioned and deleted", {
+  src <- .da_src(); joined <- .da_joined()
+  # ONE panel edits ONE column, and it is built once -- an input rebuilt inside a
+  # renderUI is destroyed on every keystroke that changes what it edits.
+  for (id in c("rb_cname", "rb_ckind", "rb_cx0", "rb_cx1"))
+    expect_match(joined, sprintf('"%s"', id))
+  fill <- .da_block(src, "observeEvent\\(list\\(rb\\$colsel, rb\\$colver\\)", 14L)
+  for (u in c("updateTextInput", "updateSelectInput", "updateNumericInput"))
+    expect_match(fill, u, fixed = TRUE)
+  # typing is debounced before it reaches the draft the list is drawn from
+  expect_match(joined, "rb_cname_d <- debounce\\(")
+  expect_match(joined, "rb_cx_d <- debounce\\(")
+  expect_match(joined, "rb_name_d <- debounce\\(")
+  # a band typed and a band dragged are the SAME request, through one function
+  expect_match(joined, "doc_set_column_band\\(e, j, x0, x1\\)")
+  expect_match(joined, "doc_set_column_band\\(e, j, box\\$x_min, box\\$x_max\\)")
+  # and moving a column does not rename it back to whatever is printed above it
+  mv <- .da_block(src, 'if \\(m == "colpos"\\)', 22L)
+  expect_match(mv, "keep_nm")
+  # ...and the one being edited is picked out on the picture
+  expect_match(joined, "PALETTE\\$warn, lwd = 3\\)")
+})
+
+# The tool draws over a document somebody may need to READ. The column names it
+# worked out are checked against the column names printed on the page -- so they
+# float above the paper instead of sitting on it, and every layer switches off.
+test_that("the tool's own labels float above the page, and each layer switches off", {
+  src <- .da_src(); joined <- .da_joined()
+  ui <- .da_block(src, 'checkboxGroupInput\\("rb_layers"', 8L)
+  for (v in c("tables", "edges", "names", "values", "ends"))
+    expect_match(ui, sprintf('= "%s"', v))
+  # a strip of white ABOVE the paper, and the names drawn in it
+  expect_match(joined, "\\.RB_GUTTER <- ")
+  plot <- .da_block(src, "output\\$rb_plot <- renderPlot", 40L)
+  expect_match(plot, "ylim = c\\(r\\$h, -\\.RB_GUTTER\\)")
+  expect_match(plot, "input\\$rb_layers")
+  nm <- .da_block(src, "\\.rb_draw_names <- function", 22L)
+  expect_match(nm, "-\\.RB_GUTTER \\+")                # the names live in the strip
+  expect_match(nm, "\\.rb_fit\\(")                     # trimmed to the width they have
+  # every layer is actually consulted before anything is drawn
+  for (l in c('"tables" %in% lay', '"edges" %in% lay', '"ends" %in% lay',
+              '"names" %in% lay', '"values" %in% lay'))
+    expect_match(joined, l, fixed = TRUE)
 })
 
 test_that("the builder starts blank and takes one table at a time", {
@@ -163,13 +246,20 @@ test_that("the builder starts blank and takes one table at a time", {
   # right tables is the most expensive state to hand somebody.
   expect_false(grepl("Find the tables", joined, fixed = TRUE))
   expect_false(grepl("rb_scan", joined, fixed = TRUE))
-  # Three steps, each one gesture, each said on the card.
-  card <- .da_block(src, "output\\$rb_step <- renderUI", 60L)
-  for (t in c("Step 1 of 3", "Step 2 of 3", "Step 3 of 3")) expect_match(card, t, fixed = TRUE)
-  expect_match(card, "round the table's ", fixed = TRUE)
-  expect_match(card, "row of column names", fixed = TRUE)
-  # and the header is stated, not merely offered as a switch
-  expect_match(card, "is <b>not</b> read as data", fixed = TRUE)
+  # It opens with one button and a sentence saying what a table is.
+  expect_match(joined, "A table is rows and columns", fixed = TRUE)
+  expect_match(joined, "A value is one figure or one word, with a label", fixed = TRUE)
+  expect_match(joined, "created until you press it", fixed = TRUE)
+  # the header is STATED as a choice between two sentences, not offered as a
+  # switch whose off position has to be guessed at
+  ui <- .da_block(src, 'radioButtons\\("rb_hdr"', 5L)
+  expect_match(ui, "name the columns, and are not read as data", fixed = TRUE)
+  expect_match(ui, "are data, like every other row", fixed = TRUE)
+  # and every saved table can be taken back out and edited
+  expect_match(joined, 'paste0\\("rb_ed_", i\\), "Edit"')
+  ed <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"", 14L)
+  expect_match(ed, "\\.rb_load_draft\\(d\\)")
+  expect_match(ed, "rb\\$tables <- rb\\$tables\\[-i\\]")
 })
 
 test_that("one builder covers a form and a report, and it says so", {
@@ -189,18 +279,42 @@ test_that("one builder covers a form and a report, and it says so", {
   expect_match(joined, 'tabPanel("Values", value = "values"', fixed = TRUE)
 })
 
-test_that("a table and a value are each saved, then the next one starts", {
+test_that("a table and a value are each saved, and the screen goes back to idle", {
   src <- .da_src()
-  tb <- .da_block(src, "observeEvent\\(input\\$rb_savetab", 12L)
+  tb <- .da_block(src, "observeEvent\\(input\\$rb_savetab", 14L)
   expect_match(tb, "rb\\$tables <- c\\(rb\\$tables, list\\(d\\)\\)")
-  expect_match(tb, "rb\\$step <- 1L")               # ...and it resets for the next
-  vl <- .da_block(src, "observeEvent\\(input\\$rb_vsave", 12L)
+  expect_match(tb, "rb\\$draft <- NULL")
+  expect_match(tb, 'rb\\$mode <- ""')            # nothing armed after a save
+  vl <- .da_block(src, "observeEvent\\(input\\$rb_vsave", 24L)
   expect_match(vl, "rb\\$pairs <- c\\(rb\\$pairs, list\\(v\\)\\)")
-  expect_match(vl, "rb\\$vstep <- 1L")
+  expect_match(vl, "rb\\$vdraft <- NULL")
+  expect_match(vl, 'rb\\$mode <- ""')
+  # ...and the side is stored on the way in, whether it was worked out or chosen
+  expect_match(vl, "\\.doc_pair_rel\\(v\\$label, v\\$value\\)")
+  expect_match(vl, "input\\$rb_vwhere")
   # Editing takes it back OUT of the list, so Save always means the same thing.
-  ed <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"", 12L)
-  expect_match(ed, "rb\\$tables <- rb\\$tables\\[-i\\]")
-  expect_match(ed, "rb\\$step <- 3L")
+  for (id in c("rb_ed_", "rb_ved_")) {
+    ed <- .da_block(src, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id), 14L)
+    expect_match(ed, "rb\\$(tables|pairs) <- rb\\$(tables|pairs)\\[-i\\]")
+    expect_match(ed, "\\.rb_load_(draft|vdraft)\\(")
+    expect_match(ed, "updateNumericInput\\(session, \"rb_page\"")
+  }
+})
+
+# A HEADING CAN BE MORE THAN ONE LINE. "Revenue" over "Medical & Family" over
+# "Welfare" is three printed lines and one heading; calling only the first of
+# them a heading puts the other two into the table as rows of figures that are
+# not figures. (Seen on a real government report.)
+test_that("a heading is as tall as the box drawn round it", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, 'if \\(m == "cols"\\)', 46L)
+  expect_match(blk, "\\.doc_lines\\(below, d\\$row_tol\\)")
+  expect_match(blk, "d\\$header_rows <- max\\(1L, min\\(8L")
+  expect_match(joined, 'numericInput\\("rb_hdrn"')
+  # the choice and the count are ONE setting, read together
+  ob <- .da_block(src, "observeEvent\\(list\\(input\\$rb_hdr, input\\$rb_hdrn\\)", 10L)
+  expect_match(ob, 'identical\\(input\\$rb_hdr, "data"\\)')
+  expect_match(ob, "input\\$rb_hdrn")
 })
 
 # ---------------------------------------------------------------------------
@@ -274,4 +388,53 @@ test_that("with no report templates installed nothing about the front door chang
                           logdir = file.path(tdir, "logs"))
   expect_identical(res$status, "unsupported")
   expect_identical(res$kind, "statement")
+})
+
+# ---------------------------------------------------------------------------
+# JUST AS EASY AS A BANK STATEMENT
+#
+# Measured, in a browser, on the two paths: a statement took 4 decisions (say
+# what it is, choose the file, open the toolkit, Save) and a document took 10 --
+# because the document builder asked by hand for the three things the statement
+# toolkit fills in for you. It now fills the same three in the same way, and a
+# document takes 7: the extra three are the irreducible ones, "+ Add a table"
+# and the two drags that say WHICH table.
+# ---------------------------------------------------------------------------
+
+test_that("the document builder fills in the same three boxes the statement toolkit does", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, "rb_id_auto <- reactiveVal", 44L)
+  # the issuer, guessed from the filename the same way open_guided guesses it
+  expect_match(blk, "tools::toTitleCase")
+  expect_match(blk, 'updateTextInput\\(session, "rb_bank"')
+  # the phrases the document prints about itself, found by the SAME helper the
+  # statement drafter uses -- retyping a fingerprint by hand is where it goes wrong
+  expect_match(blk, "header_phrases\\(rb_input\\(\\)\\)")
+  expect_match(blk, 'updateTextAreaInput\\(session, "rb_fp"')
+  # the save name, composed from the two, through the one shared function
+  expect_match(blk, "\\.compose_id\\(input\\$rb_bank, input\\$rb_type")
+  # ...and it stops following the moment she names it herself
+  expect_match(blk, "rb_id_auto\\(\\)")
+  expect_match(blk, "# hers now")
+  # a table's TITLE beats its column names as a fingerprint, and the builder has
+  # one as soon as a table is saved
+  ttl <- .da_block(src, "observeEvent\\(rb\\$tables, \\{", 12L)
+  expect_match(ttl, "rb_fp_auto\\(")
+  expect_match(ttl, 'updateTextAreaInput\\(session, "rb_fp"')
+  # neither ever overwrites something a person typed
+  expect_match(ttl, "!identical\\(cur, trimws\\(rb_fp_auto\\(\\)")
+})
+
+test_that("every position is both draggable and typeable", {
+  src <- .da_src(); joined <- .da_joined()
+  for (id in c("rb_sp", "rb_sy", "rb_ep", "rb_ey"))
+    expect_match(joined, sprintf('numericInput\\("%s"', id))
+  # filled from the draft when a draft arrives and after every gesture that moves
+  # a boundary -- never on a timer, because they are typed into
+  expect_match(joined, "\\.rb_push_where <- function")
+  expect_gte(length(grep("\\.rb_push_where\\(", src)), 5L)
+  # typed positions are debounced and refused where a click would be refused
+  blk <- .da_block(src, "rb_where_d <- debounce", 22L)
+  expect_match(blk, "ep < sp \\|\\| \\(ep == sp && ey <= sy\\)")
+  expect_match(blk, "end the table at or before it starts")
 })

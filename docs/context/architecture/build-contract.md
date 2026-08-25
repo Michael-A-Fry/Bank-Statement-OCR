@@ -78,6 +78,11 @@ tests/testthat/         golden-file + unit tests
 app.R  ui_content.R  ui_labels.R   the Shiny app
 run.R                   thin CLI entrypoint
 scripts/                bundle / install / audit command-line entry points
+tools/corpus/           survey the document engine against real third-party PDFs
+                        (fetch-corpus.py collects them; run-corpus.R measures.
+                        The PDFs themselves are never committed - other people's
+                        files under other people's licences)
+tools/webr/             run the suite under WebR when no system R is available
 docs/                   operational how-tos + context (charter, this contract, …)
 ```
 

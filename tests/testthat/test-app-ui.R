@@ -1367,27 +1367,45 @@ test_that("the builder leads with the document, not a blank list", {
   expect_false(any(grepl("Value printed away from its wording", src, fixed = TRUE)))
 })
 
-# THE BUILDER ANSWERS "what is this?" ITSELF -- and the way it does that changed.
+# A PAIR IS TWO DRAGS, AND NEITHER OF THEM IS A GUESS.
 #
-# It used to ask for a box round the VALUE and then hunt for wording beside it,
-# which meant a heuristic ("the words to its left, else the line above") and a
-# second question whenever the heuristic was unsure. The wizard asks for the
-# LABEL first, because that is the thing a person can point at without thinking,
-# and then moves to the value itself: the next thing along the same line, or the
-# line under it. One drag, no question, and the pair is stored the way it travels
-# -- the label's wording plus the offset to the value.
-test_that("one drag on a label finds its value, on the same line or under it", {
-  src <- .ui_src()
-  blk <- .ui_block(src, "if \\(!on_tables && rb\\$vstep == 1L\\)", 34L)
-  expect_match(blk, "right <- w\\[w\\$cx > box\\$x_max")   # the same line, to the right
-  expect_match(blk, "below <- w\\[w\\$cy > box\\$y_max")   # or the line under it
-  expect_match(blk, "label_text = txt")                    # the wording is kept
-  expect_match(blk, "rb\\$vstep <- 2L")
-  # ...and step 2 shows BOTH, so what it found is checked before it is saved
-  card <- .ui_block(src, "output\\$rb_vstep <- renderUI", 26L)
-  expect_match(card, "Label: <b>%s</b>", fixed = TRUE)
-  expect_match(card, "Value: <b>%s</b>", fixed = TRUE)
-  expect_match(card, "not found - drag a box round it")
+# The version before this asked for the label and then GUESSED the value -- the
+# next thing along the same line, else the line under it. A guess that is right
+# nine times in ten is a habit of not checking, and the tenth is wrong in a file
+# nobody re-reads. It also only ever looked right and down, so a value printed to
+# the LEFT of its label, or above it, could not be expressed at all.
+#
+# So: two drags, both asked for out loud, and what is stored is the label's
+# wording plus WHICH SIDE the value was on. On the next document the label is
+# found by its wording and the search runs in that direction -- which survives a
+# longer figure and a wider label, where a fixed offset does not.
+test_that("a value is two explicit drags, and the side is stored, not guessed", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  brush <- .ui_block(src, "observeEvent\\(input\\$rb_brush", 190L)
+  # the label drag stores the wording and then ASKS for the value
+  lab <- .ui_block(src, 'if \\(m == "label"\\)', 26L)
+  expect_match(lab, "label_text <- txt", fixed = TRUE)
+  expect_match(lab, 'rb\\$mode <- "value"')
+  # nothing hunts for the value beside the label any more
+  expect_false(grepl("right <- w\\[w\\$cx > box\\$x_max", joined))
+  expect_false(grepl("below <- w\\[w\\$cy > box\\$y_max", joined))
+  # the value drag works out the side from the two boxes
+  val <- .ui_block(src, 'if \\(m == "value"\\)', 16L)
+  expect_match(val, "\\.doc_pair_rel\\(v\\$label, box\\)")
+  # ...which is SHOWN, in words, before it is saved...
+  card <- .ui_block(src, "output\\$rb_vstep <- renderUI", 20L)
+  expect_match(card, "\\.doc_pair_where_text\\(rel\\)")
+  expect_match(card, "not drawn yet")
+  # ...and can be overridden, before AND after saving
+  expect_match(joined, 'selectInput\\("rb_vwhere"')
+  for (w in c('"right"', '"left"', '"below"', '"above"'))
+    expect_match(joined, sprintf("= %s,?", w))
+  expect_match(joined, 'observeEvent\\(input\\$rb_vwhere')
+  expect_match(joined, 'paste0\\("rb_ved_", i\\), "Edit"')
+  # saving refuses a half-drawn pair rather than storing one box
+  sv <- .ui_block(src, "observeEvent\\(input\\$rb_vsave", 24L)
+  expect_match(sv, "Drag a box round the label first")
+  expect_match(sv, "Drag a box round the value first")
 })
 
 test_that("a value can be removed, and so can a table and a column", {

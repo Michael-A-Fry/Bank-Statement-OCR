@@ -92,7 +92,24 @@
   if (!is.null(tmpl)) {
     pw <- (input$page_width  %||% rep(NA_real_, length(wl)))[page]
     ph <- (input$page_height %||% rep(NA_real_, length(wl)))[page]
-    w <- .words_to_band_frame(w, .doc_frame(tmpl), pw, ph)
+    fr <- .doc_frame(tmpl)
+    # AN ORIENTATION IS NOT A SIZE DIFFERENCE.
+    #
+    # The frame exists so a template drawn on an A4 page still reads a Letter
+    # one: the same page, slightly bigger, scaled to fit. A LANDSCAPE page in a
+    # portrait frame is not that. Scaling it stretches every word sideways and
+    # squashes it vertically, so every column band on that page claims the wrong
+    # words -- and a report with a landscape appendix in it, or a portrait cover
+    # on a landscape report, is an ordinary thing, not an exotic one. (Found on a
+    # corpus of other people's PDFs: three of eighty-one mixed the two, and every
+    # table on the odd page out read differently from the way it was proposed.)
+    #
+    # Such a page is read in its own space and left alone. It is the only honest
+    # answer available: the boxes were drawn on a page shaped the other way, so
+    # there is no scale that maps one onto the other.
+    same_way <- !is.finite(pw) || !is.finite(ph) ||
+      identical(pw >= ph, .doc_num(fr$width, 1) >= .doc_num(fr$height, 1))
+    if (same_way) w <- .words_to_band_frame(w, fr, pw, ph)
   }
   w$text <- as.character(w$text)
   # A LONE VERTICAL BAR IS A BORDER, not a value. A condensed table prints one
@@ -129,11 +146,11 @@
 #
 # THE MATCH HAS TO BE THE WHOLE VALUE. Both matchers find a pattern ANYWHERE in a
 # string, which is right when pulling a figure off a line ("Closing balance
-# $875.20") and wrong when deciding what a value IS. A client reference of
-# "NW-99-9999-9999" contains "99-9999-9999", which is date-shaped -- so it was
-# typed as a date, and the extractor then returned the date-shaped fragment and
-# dropped the "NW-". A reference silently two characters short is exactly the kind
-# of wrong answer that looks right.
+# $875.20") and wrong when deciding what a value IS. A reference number with a
+# date-shaped run inside it gets typed as a date, and the extractor then returns
+# the date-shaped fragment and drops the rest of the reference. A reference
+# silently two characters short is exactly the kind of wrong answer that looks
+# right.
 .doc_value_kind <- function(v) {
   v <- trimws(as.character(v %||% ""))
   if (!nzchar(v)) return("text")
@@ -142,6 +159,21 @@
   d <- .value_from_line(v, "date")
   if (!is.na(d) && identical(trimws(d), v)) return("date")
   "text"
+}
+
+# .doc_looks_amount(t) -- is this word a FIGURE rather than a word?
+#
+# Deliberately narrower than the money matcher, because it is used to throw
+# things away. A thousands separator or exactly two decimal places is an amount
+# in any locale that prints either; a bare run of digits is not, because "2012"
+# is a perfectly good column heading on a position report and "0" is a perfectly
+# good cell. Getting that wrong the other way renames a column after nothing.
+.doc_looks_amount <- function(t) {
+  t <- trimws(as.character(t %||% ""))
+  if (!nzchar(t)) return(FALSE)
+  grepl("^[-+(]?[0-9]{1,3}([,. ][0-9]{3})+([.,][0-9]+)?[)]?$", t) ||
+    grepl("^[-+(]?[0-9]+[.,][0-9]{2}[)]?$", t) ||
+    !is.na(.value_from_line(t, "money"))
 }
 
 # .doc_norm(s) -- the comparison form of a piece of wording: lowercase, letters
@@ -343,7 +375,21 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
 
   band <- tab$band %||% list()
   band_top <- .doc_num(band$y_min, 0)
-  band_bot <- .doc_num(band$y_max, .doc_frame(tmpl)$height)
+  # THE BOTTOM OF THE PAGE IS THE DOCUMENT'S, NOT A4's.
+  #
+  # band_bot decides two things that change the answer: whether a window is
+  # OPEN-ENDED (and so has to be stopped by watching the rows) and whether a
+  # table is a candidate to FOLLOW onto the next page. Falling back to A4 when no
+  # frame is declared made both of those wrong for every page that is not A4: a
+  # table ending 741pt down a 612pt-tall landscape page was read as ending
+  # comfortably short of an 842pt bottom, so its window was treated as exact and
+  # the row-run rule never ran. The document knows its own page size; ask it.
+  page_h <- suppressWarnings(as.numeric(
+    (input$page_height %||% NA_real_)[min(p0, length(input$page_height %||% 1))]))
+  if (!is.finite(page_h) || page_h <= 0) page_h <- NA_real_
+  band_bot <- .doc_num(band$y_max,
+    .doc_num(.doc_key(tmpl, "ref_height"), page_h %||% .A4_H))
+  if (is.na(band_bot)) band_bot <- if (is.na(page_h)) .A4_H else page_h
   y_start_declared <- .doc_num(tab$start$y, band_top)
   y_end_declared   <- .doc_num(tab$end$y, band_bot)
 
@@ -583,6 +629,30 @@ doc_edge_click <- function(edges, x, tol = 6) {
   sort(c(edges, x))
 }
 
+# doc_set_column_band(edges, j, x0, x1) -> the edges after column j is told to
+# run from x0 to x1.
+#
+# This is "put this column HERE", which is a different request from clicking a
+# divider and has to behave differently. Because the columns tile the width, the
+# two edges that bound column j are shared with its neighbours, so moving them
+# moves the neighbours' outer edges too -- that is the point, not a side effect:
+# somebody saying "Amount runs from 380 to 452" is not also asking for a gap to
+# open up beside it. Any divider the move steps clean over is absorbed, so the
+# result is still sorted, still tiling, and can never hold a column of zero or
+# negative width.
+doc_set_column_band <- function(edges, j, x0, x1) {
+  edges <- sort(unique(round(as.numeric(edges), 2)))
+  edges <- edges[is.finite(edges)]
+  if (length(edges) < 2L) return(edges)
+  j <- .doc_int(j)
+  if (is.na(j) || j < 1L || j > length(edges) - 1L) return(edges)
+  lo <- min(x0, x1); hi <- max(x0, x1)
+  if (!is.finite(lo) || !is.finite(hi) || hi - lo < 1) return(edges)
+  keep <- edges[-c(j, j + 1L)]
+  keep <- keep[keep <= lo - 1 | keep >= hi + 1]
+  sort(unique(round(c(keep, lo, hi), 2)))
+}
+
 # doc_header_names(input, tab, tmpl) -> a name for each column, read from the
 # table's own header row. Called after every edge change, so the names follow the
 # columns instead of having to be typed: split a column and the two halves are
@@ -607,7 +677,17 @@ doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL) {
     sel <- d[d$cx >= edges[j] & d$cx < edges[j + 1L], , drop = FALSE]
     if (nrow(sel)) {
       sel <- sel[order(sel$y, sel$x), , drop = FALSE]
-      out[j] <- trimws(gsub("\\s+", " ", paste(sel$text, collapse = " ")))
+      # A COLUMN HEADING IS NOT AN AMOUNT. If the header row count is one line
+      # too generous -- and on a heading printed over several baselines it can
+      # be -- what comes back otherwise is a column called
+      # "Revenue Medical & Public Health 47,824,589 2,241,609". A name like that
+      # is not merely ugly: it becomes a worksheet column heading and a key in
+      # the long output. Figures are dropped, and if that leaves nothing the
+      # column keeps whatever name it already had.
+      keep <- !vapply(as.character(sel$text), .doc_looks_amount, logical(1))
+      if (any(keep)) sel <- sel[keep, , drop = FALSE]
+      nm <- trimws(gsub("\\s+", " ", paste(sel$text, collapse = " ")))
+      if (any(keep)) out[j] <- nm
     }
   }
   out
@@ -893,8 +973,17 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         # heading carries nothing. So: after a big gap, a line with no figure at
         # all ends a table whose rows normally have one. Tables with no figures
         # anywhere fall back to the column count, which is all there is.
+        #
+        # THE FLOOR CANNOT BE HIGHER THAN THE TABLE IS WIDE. A floor of two
+        # filled columns is unreachable in a one-column table, so every line of
+        # one looked wrong and the first paragraph gap ended it -- the proposer
+        # counted twenty-one lines and the reader kept fifteen, which is the
+        # template on screen not being the template that makes the file. (Found
+        # on a corpus of other people's PDFs; a one-column table is a block of
+        # prose or a list, and they are common.)
         rows_have_money <- length(kept_money) && mean(kept_money) >= 0.5
-        looks_wrong <- n_filled < max(2, ceiling(typical / 2)) ||
+        floor_filled <- min(length(cols), max(2, ceiling(typical / 2)))
+        looks_wrong <- n_filled < floor_filled ||
                        (rows_have_money && !has_money)
         if (is.finite(pitch_k) && pitch_k > 0 && is.finite(gap) &&
             gap > pitch_k * max_gap && looks_wrong) {
@@ -1051,10 +1140,118 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   NULL
 }
 
+# WHICH SIDE THE VALUE IS ON.
+#
+# An offset alone carries the direction, but only rigidly: "38pt right and 0
+# down" misses the amount as soon as the label is a word longer or the figure is
+# a digit wider, which on a re-print it usually is. What survives is the SIDE --
+# the value is the next thing to the RIGHT of "Closing balance", or the thing
+# UNDER "Prepared for" -- so that is what is stored, worked out from the two
+# boxes the person drew, and on the next document the search runs in that
+# direction from wherever the wording turned up.
+#
+# .doc_pair_rel(lb, vb) -> list(where, gap, cross, width, height)
+#   where  right | left | below | above
+#   gap    the clear distance between the two boxes along that direction
+#   cross  how far the value is offset across it (kept for the report, not used
+#          to search -- searching across the direction is what made it brittle)
+.doc_pair_rel <- function(lb, vb) {
+  n <- function(v, d) { x <- .doc_num(v, d); if (is.na(x)) d else x }
+  lx0 <- n(lb$x_min, 0); lx1 <- n(lb$x_max, 0)
+  ly0 <- n(lb$y_min, 0); ly1 <- n(lb$y_max, 0)
+  vx0 <- n(vb$x_min, 0); vx1 <- n(vb$x_max, 0)
+  vy0 <- n(vb$y_min, 0); vy1 <- n(vb$y_max, 0)
+  # How far apart on each axis, counting an overlap as zero.
+  dx_r <- vx0 - lx1; dx_l <- lx0 - vx1
+  dy_b <- vy0 - ly1; dy_a <- ly0 - vy1
+  # The axis they are genuinely separated on wins. When the boxes share a line
+  # (they overlap vertically) that is side by side; when they share a column it
+  # is one above the other. When both or neither, the bigger separation decides.
+  same_line <- min(ly1, vy1) - max(ly0, vy0) > 0
+  side <- if (dx_r >= 0) "right" else if (dx_l >= 0) "left" else NA_character_
+  updown <- if (dy_b >= 0) "below" else if (dy_a >= 0) "above" else NA_character_
+  where <- if (!is.na(side) && (same_line || is.na(updown))) side
+           else if (!is.na(updown)) updown
+           else if (!is.na(side)) side
+           else if (abs(vx0 - lx0) >= abs(vy0 - ly0)) "right" else "below"
+  gap <- switch(where, right = dx_r, left = dx_l, below = dy_b, above = dy_a, 0)
+  cross <- switch(where,
+    right = , left  = (vy0 + vy1) / 2 - (ly0 + ly1) / 2,
+    below = , above = (vx0 + vx1) / 2 - (lx0 + lx1) / 2, 0)
+  list(where = where, gap = round(max(gap, 0), 1), cross = round(cross, 1),
+       width = round(max(vx1 - vx0, 0), 1), height = round(max(vy1 - vy0, 0), 1))
+}
+
+# .doc_pair_where_text(rel) -- the relation in the words a person would use.
+.doc_pair_where_text <- function(rel) {
+  w <- as.character(.doc_key(rel, "where") %||% "")[1]
+  switch(w, right = "to the right of it", left = "to the left of it",
+         below = "under it", above = "above it", "beside it")
+}
+
+# .doc_pair_window(hb, rel) -- where to look, given the label was found at `hb`.
+# Generous ALONG the direction the value sits in and tight ACROSS it: that is
+# what lets the figure be longer, or the label wider, without ever drifting onto
+# the line above or the field next door.
+.doc_pair_window <- function(hb, rel) {
+  gap <- max(.doc_num(.doc_key(rel, "gap"), 0), 0, na.rm = TRUE)
+  wdt <- max(.doc_num(.doc_key(rel, "width"), 0), 8, na.rm = TRUE)
+  hgt <- max(.doc_num(.doc_key(rel, "height"), 0), 6, na.rm = TRUE)
+  lh <- max(.doc_num(hb$y_max, 0) - .doc_num(hb$y_min, 0), hgt, 6)
+  reach_x <- gap + wdt * 2 + 90
+  reach_y <- gap + hgt * 2 + 26
+  switch(as.character(.doc_key(rel, "where") %||% "right"),
+    right = list(x_min = hb$x_max - 1, x_max = hb$x_max + reach_x,
+                 y_min = hb$y_min - lh * 0.6, y_max = hb$y_max + lh * 0.6),
+    left  = list(x_min = hb$x_min - reach_x, x_max = hb$x_min + 1,
+                 y_min = hb$y_min - lh * 0.6, y_max = hb$y_max + lh * 0.6),
+    below = list(x_min = hb$x_min - wdt * 0.6 - 24, x_max = hb$x_max + wdt + 70,
+                 y_min = hb$y_max - 1, y_max = hb$y_max + reach_y),
+    above = list(x_min = hb$x_min - wdt * 0.6 - 24, x_max = hb$x_max + wdt + 70,
+                 y_min = hb$y_min - reach_y, y_max = hb$y_min + 1),
+    NULL)
+}
+
+# .doc_pair_pick(w, win, where) -- the NEAREST run of words in the window: the
+# nearest line to the label, and on it, the words up to the first real gap. A
+# window wide enough to survive a longer figure is also wide enough to reach the
+# next field along, and this is what stops there.
+.doc_pair_pick <- function(w, win, where) {
+  d <- .doc_box_words(w, win)
+  if (is.null(d) || !nrow(d)) return(NULL)
+  where <- as.character(where %||% "right")[1]
+  d <- d[order(switch(where, right = d$x, left = -d$x, above = -d$y, d$y)), , drop = FALSE]
+  seed <- d[1, , drop = FALSE]
+  lh <- max(as.numeric(seed$height), 6)
+  # THE WHOLE LINE THE SEED SITS ON, not only the part inside the window. The
+  # window says where to LOOK; it must not also decide how long the answer may
+  # be, or a value gets cut in half for the crime of being set two words longer
+  # than the copy the template was drawn on.
+  line <- w[abs(w$cy - as.numeric(seed$cy)) <= lh * 0.6, , drop = FALSE]
+  # ...but never back across the label itself.
+  line <- switch(where,
+    right = line[line$x + line$width > .doc_num(win$x_min, -Inf), , drop = FALSE],
+    left  = line[line$x < .doc_num(win$x_max, Inf), , drop = FALSE],
+    line)
+  if (!nrow(line)) line <- seed
+  line <- line[order(line$x), , drop = FALSE]
+  k <- which.min(abs(line$x - as.numeric(seed$x)))
+  lim <- max(lh * 1.4, 8)
+  lo <- k
+  while (lo > 1L && line$x[lo] - (line$x[lo - 1L] + line$width[lo - 1L]) <= lim) lo <- lo - 1L
+  hi <- k
+  while (hi < nrow(line) &&
+         line$x[hi + 1L] - (line$x[hi] + line$width[hi]) <= lim) hi <- hi + 1L
+  d <- line[lo:hi, , drop = FALSE]
+  list(x_min = min(d$x), x_max = max(d$x + d$width),
+       y_min = min(d$y), y_max = max(d$y + d$height))
+}
+
 # doc_pairs(input, tmpl) -> data.frame(pair, label, value, raw, page, found_by,
 #                                      matched)
-# `found_by` is "its wording" (the label was located and the offset applied) or
-# "its place on the page" (the wording was not found and the drawn box was read).
+# `found_by` is "its wording" (the label was located and the value taken from the
+# side it was on) or "its place on the page" (the wording was not found and the
+# drawn box was read).
 doc_pairs <- function(input, tmpl) {
   specs <- tmpl$pairs %||% list()
   cols <- c("pair", "label", "value", "raw", "page", "found_by", "matched")
@@ -1094,6 +1291,14 @@ doc_pairs <- function(input, tmpl) {
                         matched = nzchar(got), stringsAsFactors = FALSE))
     }
 
+    # The side the value was on when the pair was drawn. Stored on the template
+    # so it can be READ and CHANGED; worked out from the boxes when it is not.
+    rel <- .doc_key(sp, "where")
+    rel <- if (is.list(rel)) rel
+           else if (is.character(rel) && nzchar(rel[1]))
+             utils::modifyList(.doc_pair_rel(lb, vb), list(where = rel[1]))
+           else .doc_pair_rel(lb, vb)
+
     box <- NULL; found_by <- "its place on the page"; use_page <- pg
     if (nzchar(label_text)) {
       # Search the declared page first, then every other page: the front matter of
@@ -1104,15 +1309,22 @@ doc_pairs <- function(input, tmpl) {
         if (is.null(w)) next
         hitbox <- .doc_find_phrase(.doc_lines(w), label_text)
         if (is.null(hitbox)) next
-        # The offset between the two DRAWN boxes, applied from where the label
-        # actually is. Direction is carried by the sign, so "value above label"
-        # needs no special case.
-        dx <- .doc_num(vb$x_min, 0) - .doc_num(lb$x_min, 0)
-        dy <- .doc_num(vb$y_min, 0) - .doc_num(lb$y_min, 0)
-        wdt <- .doc_num(vb$x_max, 0) - .doc_num(vb$x_min, 0)
-        hgt <- .doc_num(vb$y_max, 0) - .doc_num(vb$y_min, 0)
-        box <- list(x_min = hitbox$x_min + dx, x_max = hitbox$x_min + dx + wdt,
-                    y_min = hitbox$y_min + dy, y_max = hitbox$y_min + dy + hgt)
+        # LOOK ON THE SIDE IT WAS ON, not at a fixed distance. The distance is
+        # only how far to reach; what is being asked is "the next thing to the
+        # right of this wording", which is the thing that stays true when the
+        # figure gets longer or the label gets wider.
+        win <- .doc_pair_window(hitbox, rel)
+        box <- if (is.null(win)) NULL else .doc_pair_pick(w, win, rel$where)
+        if (is.null(box)) {
+          # Nothing on that side here. Fall back to the offset between the two
+          # drawn boxes, applied from where the label actually is.
+          dx <- .doc_num(vb$x_min, 0) - .doc_num(lb$x_min, 0)
+          dy <- .doc_num(vb$y_min, 0) - .doc_num(lb$y_min, 0)
+          wdt <- .doc_num(vb$x_max, 0) - .doc_num(vb$x_min, 0)
+          hgt <- .doc_num(vb$y_max, 0) - .doc_num(vb$y_min, 0)
+          box <- list(x_min = hitbox$x_min + dx, x_max = hitbox$x_min + dx + wdt,
+                      y_min = hitbox$y_min + dy, y_max = hitbox$y_min + dy + hgt)
+        }
         found_by <- "its wording"; use_page <- p
         break
       }
