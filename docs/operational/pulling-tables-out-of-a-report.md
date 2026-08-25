@@ -108,13 +108,20 @@ what is in it.
 | Rename one | **Edit** on that row, type the name |
 | Say what is in it (money, date, text…) | **Edit**, then **What is in it** |
 | Move its edges | **Edit**, then either type **Left edge** / **Right edge**, or press **Drag its width on the page** and drag it |
-| Split one column into two | **+ Add a column**, then drag over where the new one goes |
+| Add one, or split one in two | **+ Add a column**, then drag over the column you want |
 | Delete one | the **×** on its row |
 | Start the columns again from scratch | **Work the columns out again** |
 
 **Columns always meet.** Move one and its neighbour gives way — there is no way
 to leave a gap between two columns (which loses a column of figures) or to
 overlap them (which deletes one). You cannot express either mistake.
+
+> **Adding a column can give you two.** Because columns always meet, dragging a
+> new column that does not touch the one before it leaves ground in between, and
+> that ground has to belong to a column too — so it becomes one, named from the
+> heading above it. Usually that is the column you were about to draw next. If it
+> is not, click the line between them to remove it. The tool says so when it
+> happens.
 
 > **"Work the columns out again"** is the one to reach for when the columns look
 > nearly right but the figures are not landing in them. It ignores the headings

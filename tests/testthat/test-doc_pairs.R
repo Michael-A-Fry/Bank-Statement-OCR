@@ -184,6 +184,70 @@ test_that("the side is written into the template the builder saves", {
 })
 
 # ---------------------------------------------------------------------------
+# Adding a column
+# ---------------------------------------------------------------------------
+
+test_that("adding a column beyond the table makes a COLUMN, not a wider last one", {
+  # THE REPORTED FAULT, in one line. The table has one column carved out of it and
+  # somebody drags over the second printed column, which lies to the right of it.
+  # Feeding the drag's two sides through doc_edge_click() moved the outer edge out
+  # to the first, then out to the second, and the answer was ONE column spanning
+  # both -- every heading and every figure of the second column swallowed into the
+  # first, and the first no longer where it was put.
+  e <- c(50, 120)
+  expect_equal(doc_edge_click(doc_edge_click(e, 150, tol = 3), 260, tol = 3),
+               c(50, 260))                                    # what it used to do
+  expect_equal(doc_add_column(e, 150, 260), c(50, 120, 150, 260))
+  # ...which is three columns: the original, the ground between, and the new one.
+  cols <- doc_columns_from_edges(c(50, 120, 150, 260))
+  expect_equal(length(cols), 3L)
+  expect_equal(vapply(cols, function(cc) cc$x_min, numeric(1)), c(50, 120, 150))
+})
+
+test_that("adding a column keeps every edge outside it and absorbs every one inside", {
+  e <- c(50, 120, 300, 420, 500)
+  # inside, across two dividers: the whole band is ONE column, as drawn
+  expect_equal(doc_add_column(e, 130, 410), c(50, 120, 130, 410, 420, 500))
+  # clear of the left-hand end
+  expect_equal(doc_add_column(e, 10, 40), c(10, 40, 50, 120, 300, 420, 500))
+  # starting inside the last column and finishing past the table
+  expect_equal(doc_add_column(e, 450, 560), c(50, 120, 300, 420, 450, 560))
+  # drawn backwards is the same request
+  expect_equal(doc_add_column(e, 260, 130), doc_add_column(e, 130, 260))
+  # an existing edge inside the tolerance is not duplicated into a sliver
+  expect_equal(doc_add_column(e, 120, 300), c(50, 120, 300, 420, 500))
+})
+
+test_that("a band that could not be a column adds nothing", {
+  e <- c(50, 120, 300)
+  expect_equal(doc_add_column(e, 200, 200), e)      # no width
+  expect_equal(doc_add_column(e, NA, 300), e)
+  expect_equal(doc_add_column(e, 200, Inf), e)
+  # nothing carved yet: the drag is the whole table
+  expect_equal(doc_add_column(NULL, 150, 260), c(150, 260))
+  expect_equal(doc_add_column(c(50), 150, 260), c(150, 260))
+})
+
+test_that("however a column is added, the columns still tile the width", {
+  # The invariant the whole edge model exists for: no gap, no overlap, no column
+  # of zero or negative width, whatever is dragged and wherever.
+  e <- c(50, 120, 300, 420, 500)
+  for (x0 in c(10, 55, 130, 299, 430, 505))
+    for (w in c(2, 45, 200, 400)) {
+      e2 <- doc_add_column(e, x0, x0 + w)
+      expect_false(is.unsorted(e2, strictly = TRUE),
+                   info = paste("x0", x0, "w", w))
+      cols <- doc_columns_from_edges(e2)
+      lo <- vapply(cols, function(cc) cc$x_min, numeric(1))
+      hi <- vapply(cols, function(cc) cc$x_max, numeric(1))
+      expect_true(all(hi > lo))
+      expect_equal(lo[-1], hi[-length(hi)])       # every edge shared: no gaps
+      # and the band asked for is somewhere in the result
+      expect_true(any(abs(lo - min(x0, x0 + w)) < 0.01))
+    }
+})
+
+# ---------------------------------------------------------------------------
 # Moving ONE column's band
 # ---------------------------------------------------------------------------
 

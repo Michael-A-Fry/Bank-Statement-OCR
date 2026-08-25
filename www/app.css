@@ -303,3 +303,10 @@ a.hub-card-quiet{background:var(--bg)}
 .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
 .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
 .hub-card-go{color:var(--brand)}
+/* The builder's one-sentence instruction, pinned to the top of the WINDOW.
+   The document image is 840px tall and the panel beside it is longer, so the
+   work is done scrolled down -- and a sentence at the top of the page is then
+   off screen, which is the same as not being written at all. */
+.rb-sticky{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0 0;
+  margin:0 0 2px}
+.rb-sticky > div{box-shadow:var(--sh-2)}

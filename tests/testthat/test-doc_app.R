@@ -182,14 +182,50 @@ test_that("the columns come from the header row, and stay a tiling of the width"
   expect_match(blk, "doc_auto_end\\(")
   # Adding one afterwards moves EDGES, so the columns still tile the width and a
   # gap or an overlap is not expressible.
-  add <- .da_block(src, 'if \\(m == "addcol"\\)', 16L)
+  add <- .da_block(src, 'if \\(m == "addcol"\\)', 30L)
   expect_match(add, "doc_column_edges\\(d\\)")
-  expect_match(add, "doc_edge_click\\(")
   expect_match(add, "doc_columns_from_edges\\(")
+  # ADDING A COLUMN IS A DRAG, NOT TWO CLICKS. It used to feed the drag's two
+  # sides through doc_edge_click() one after the other, and a click outside the
+  # table MOVES the outer edge out to it -- so dragging over the second column of
+  # a table that only had its first column carved gave one column stretched over
+  # both, holding every heading and figure in it.
+  expect_match(add, "doc_add_column\\(e, box\\$x_min, box\\$x_max\\)")
+  expect_false(grepl("doc_edge_click\\(", add))
   # ...and removing one re-reads the names, or a merged column is called column_2
   # where the page says "Type Opening".
   rm <- .da_block(src, "\\.rb_drop_col <- function", 16L)
   expect_match(rm, "doc_header_names\\(")
+})
+
+# THE SENTENCE SAYING WHAT THE NEXT DRAG DOES HAS TO BE ON SCREEN WHEN YOU DRAG.
+#
+# It was written at the top of the page, which is not the top of the screen: the
+# document image is 840px tall and the panel beside it is longer, so any real work
+# happens scrolled down, and the instruction was then above the window. A rule
+# nobody can read while doing the thing it governs is not a rule.
+test_that("the instruction sticks to the top of the window, and the upload folds away", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, 'div\\(class = "rb-sticky", uiOutput\\("rb_arm"\\)\\)')
+  css <- paste(readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE),
+               collapse = "\n")
+  expect_match(css, ".rb-sticky", fixed = TRUE)
+  expect_match(css, "position:sticky", fixed = TRUE)
+
+  # Once a document is loaded the upload panel is four inches of answered
+  # questions between the reader and the work, so it swaps for one line.
+  expect_match(joined, "output.rb_has_doc == true && output.rb_up_open != true",
+               fixed = TRUE)
+  expect_match(joined, 'actionButton\\("rb_change_doc"')
+  expect_match(joined, 'output\\$rb_docname <- renderText')
+  # ...and the way back must be reachable: the kind-of-document radio folds away
+  # with the panel, so the button that reopens it has to say so.
+  btn <- sub('.*actionButton\\("rb_change_doc", "([^"]*)".*', "\\1",
+             gsub("\n", " ", joined))
+  expect_match(btn, "kind", fixed = TRUE)
+  # every conditionalPanel flag it depends on survives being hidden
+  for (o in c("rb_has_doc", "rb_up_open", "rb_docname"))
+    expect_match(joined, sprintf('outputOptions\\(output, "%s", suspendWhenHidden = FALSE\\)', o))
 })
 
 # EVERYTHING THE TOOL WORKED OUT FOR ITSELF CAN BE CHANGED. That is the whole

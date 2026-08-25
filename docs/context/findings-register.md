@@ -1396,3 +1396,61 @@ eighth template folder ever appears at the root, if a configured template path
 ever points outside `templates/`, or if a `.yaml` is ever committed into one of
 the three `_user\` folders -- that last one being the entire reason a
 folder-replace update cannot overwrite a template somebody built.
+
+---
+
+## Reported from the screen
+
+**N185 (a drag is not two clicks, and "+ Add a column" was answering the wrong
+question) - fixed.** Reported: press **+ Add a column**, drag over the second
+printed column of a table whose first column is already carved, and the result is
+ONE column stretched over both -- every heading and every figure of the second
+column swallowed into the first, and the first no longer where it was put.
+
+The handler fed the drag's two sides through `doc_edge_click()` one after the
+other. `doc_edge_click()` is the CLICK vocabulary, and one of its four meanings is
+*a click outside the table moves the nearer outer edge out to it* -- which is
+correct, and is what widening a table by clicking beside it has to do. Both sides
+of the drag were outside the table, so the right-hand outer edge was moved out
+twice. Nothing malfunctioned. A gesture meaning "there is another column here"
+was being expressed in a vocabulary that has no word for it, and the nearest word
+it does have is "make this one wider".
+
+`doc_add_column(edges, x0, x1)` is that word. Both sides of the drag become
+edges; any divider strictly inside the band is absorbed, because the person said
+the whole band is one column; and **every other edge is kept, including the outer
+ones** -- which is the line between this and `doc_set_column_band()`, where the
+outer edges deliberately give way.
+
+**The consequence worth arguing about** is what happens to the ground between the
+new column and the one before it. Columns tile the width, so it has to belong to
+something: either it becomes its own column, or it is swallowed into the
+neighbour. Swallowing is what the bug did, and it cannot be undone without
+redrawing both columns. A column that should not be there goes away with one click
+on its divider. So the cautious one is right, and it is usually also the correct
+one -- somebody adding columns left to right is generally about to carve that
+region next, which is exactly what happened on the fixture: the in-between column
+came back named *Capital Medical & Public Health*, read from the page's own
+heading. The screen says a second column appeared and how to remove it.
+
+**N186 (the instruction was at the top of the page, not the top of the screen) -
+fixed.** Reported alongside N185: the header saying what the next drag does is
+hard to see depending on where you have scrolled. It was written once, above the
+picture -- and the picture is 840px tall with a longer panel beside it, so every
+real drag happens scrolled down and the sentence was above the window whenever it
+mattered. **A rule nobody can read while doing the thing it governs is not a
+rule**, and the whole armed-intent model rests on that sentence being readable.
+It is now pinned to the top of the window for as long as the builder is open.
+
+The same report named the cause of the scrolling: the upload panel. A heading, a
+sentence, a file picker, two radio buttons and a note -- every one of them
+answered the moment a document is on screen, and four inches of it between the
+reader and the work. Uploading now swaps the screen for a single line naming the
+document. The builder starts above the fold, which is measured, not asserted:
+the document bar, the instruction, the page and **+ Add a table** are all on a
+1000px-tall window without scrolling.
+
+The way back out of that one line says "Change the document, **or what kind it
+is**", because the kind-of-document radio folds away with the panel -- a fold that
+hides the only control for changing your mind is a trap, and the label is what
+stops it being one. Asserted in `test-doc_app.R` rather than remembered.

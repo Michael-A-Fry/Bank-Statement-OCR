@@ -587,6 +587,27 @@ ui <- fluidPage(
     tabPanel(
       "Add a template",
       br(),
+      # ONCE THERE IS A DOCUMENT, THE UPLOAD IS NOT THE SCREEN ANY MORE.
+      #
+      # This panel is four inches of chrome -- a heading, a sentence, a file
+      # picker, a pair of radio buttons and a yellow note -- and every one of them
+      # is answered the moment the document is on screen. Left where it was it
+      # pushed the builder below the fold, so the instruction telling you what the
+      # next drag does started the session already scrolled off. Uploading now
+      # SWAPS the screen: one line saying which document is open, and a way back.
+      conditionalPanel("input.ts_doctype == 'other' && output.rb_has_doc == true && output.rb_up_open != true",
+        div(style = paste("display:flex;align-items:center;gap:12px;flex-wrap:wrap;",
+                          "padding:8px 14px;margin:0 0 10px;border-radius:8px;",
+                          "background:#eef4ef;border:1px solid #cfe0d4"),
+          div(style = "font-size:16px;line-height:1", "\U0001F4C4"),
+          div(style = "flex:1;min-width:0;font-size:13px;color:#2f4f3a",
+            strong("Building a template from "), textOutput("rb_docname", inline = TRUE)),
+          # The kind-of-document radio folds away with the panel, so the way back
+          # has to say so -- otherwise somebody who picked "anything else" by
+          # mistake has no visible way to change their mind.
+          actionButton("rb_change_doc", "Change the document, or what kind it is",
+                       class = "btn-default btn-sm"))),
+      conditionalPanel("!(input.ts_doctype == 'other' && output.rb_has_doc == true) || output.rb_up_open == true",
       wellPanel(
         h4(style = "margin-top:0", "Teach the tool a new layout"),
         # No "about two minutes". Re-measured on the same two real bank PDFs the
@@ -619,7 +640,7 @@ ui <- fluidPage(
                     "a label. A document can have both, and one template holds both. No",
                     "running balance sits behind any of it, so the completeness checks",
                     "do not apply - you check what comes out. The output is a file to",
-                    "download; none of this reaches the dashboards."))))),
+                    "download; none of this reaches the dashboards.")))))),
       # ONE BUILDER. IT STARTS BLANK, AND NOTHING HAPPENS UNTIL YOU ASK FOR IT.
       #
       # The version before this one treated a drag as a request: drag anywhere and
@@ -642,7 +663,14 @@ ui <- fluidPage(
             "Upload the document at the top of this page first. It has to be a PDF.")),
       conditionalPanel("output.rb_has_doc == true",
       # WHAT THE SCREEN IS WAITING FOR, in one sentence, at the top, always.
-      uiOutput("rb_arm"),
+      #
+      # "At the top" has to mean the top of the SCREEN, not the top of the page.
+      # The document image is 840px tall and the panel beside it is longer, so any
+      # real work is done scrolled down -- and the sentence saying what the next
+      # drag will do was then somewhere above the window, which is the same as not
+      # being written at all. It sticks to the top of the window instead, over the
+      # page image, for as long as the builder is open.
+      div(class = "rb-sticky", uiOutput("rb_arm")),
       fluidRow(
         column(7,
           div(style = "display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 6px",
@@ -2386,6 +2414,29 @@ server <- function(input, output, session) {
   })
   output$rb_has_doc <- reactive({ !is.null(rb_doc()) })
   outputOptions(output, "rb_has_doc", suspendWhenHidden = FALSE)
+
+  # THE UPLOAD PANEL FOLDS AWAY ONCE THERE IS A DOCUMENT, and comes back when
+  # somebody asks for it. Not a preference and not remembered: a document is
+  # loaded, so the picker has been used, so it is in the way. "Use a different
+  # document" is the only way back and it puts the real picker on screen -- a
+  # fileInput cannot be cleared from the server, so pretending otherwise (a
+  # button that "resets" it) would be a control that lies.
+  rb_up_open <- reactiveVal(FALSE)
+  output$rb_up_open <- reactive({ isTRUE(rb_up_open()) })
+  outputOptions(output, "rb_up_open", suspendWhenHidden = FALSE)
+  observeEvent(input$rb_change_doc, { rb_up_open(TRUE) })
+  # A new file answers the question the panel was reopened to ask.
+  observeEvent(input$ts_file, { rb_up_open(FALSE) }, ignoreInit = TRUE)
+  observeEvent(rb_handoff(), { rb_up_open(FALSE) }, ignoreInit = TRUE, ignoreNULL = TRUE)
+
+  # Which document is open, said in the one line that replaces the panel. The
+  # handoff path has no fileInput behind it, so fall back to the file's own name.
+  output$rb_docname <- renderText({
+    h <- rb_handoff()
+    if (!is.null(h) && file.exists(h)) return(basename(h))
+    as.character(input$ts_file$name %||% "the uploaded document")[1]
+  })
+  outputOptions(output, "rb_docname", suspendWhenHidden = FALSE)
   output$rb_has_draft <- reactive({ !is.null(rb$draft) })
   outputOptions(output, "rb_has_draft", suspendWhenHidden = FALSE)
   output$rb_has_vdraft <- reactive({ !is.null(rb$vdraft) })
@@ -2622,8 +2673,13 @@ server <- function(input, output, session) {
     if (m == "addcol") {
       d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
       e <- doc_column_edges(d)
+      before <- if (is.null(e)) 0L else max(0L, length(e) - 1L)
+      # doc_add_column, NOT two doc_edge_clicks. A click outside the table moves
+      # the outer edge out to it, so feeding a drag through two of them stretched
+      # the last column over everything the drag crossed instead of making a new
+      # one. R/tables.R carries the full reasoning.
       e <- if (is.null(e) || length(e) < 2L) c(box$x_min, box$x_max)
-           else doc_edge_click(doc_edge_click(e, box$x_min, tol = 3), box$x_max, tol = 3)
+           else doc_add_column(e, box$x_min, box$x_max)
       nm <- tryCatch(doc_header_names(i, d, fr, e), error = function(e2) character(0))
       d$columns <- doc_columns_from_edges(e, old = .doc_columns(d), names = nm)
       rb$draft <- d
@@ -2631,6 +2687,16 @@ server <- function(input, output, session) {
       # Select what the drag just made, so naming it is the obvious next thing.
       rb$colsel <- .rb_col_at(d, (box$x_min + box$x_max) / 2)
       rb$colver <- rb$colver + 1L
+      # A drag that lands clear of the table leaves the ground between as its own
+      # column. Say so, because two new columns when one was asked for is
+      # surprising -- and say how to get rid of the one that is not wanted.
+      after <- length(.doc_columns(d))
+      if (after - before >= 2L)
+        showNotification(paste("The new column is in. The gap between it and the column before it",
+                               "became a column too, because columns sit side by side with nothing",
+                               "in between. If you do not want it, click on the line between them",
+                               "to remove it."),
+                         type = "message", duration = 10)
       return()
     }
 

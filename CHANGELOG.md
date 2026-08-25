@@ -13,6 +13,42 @@ finding id.
 
 ---
 
+## 1.6.1
+
+**"+ Add a column" was stretching the first column over everything instead of
+adding one.** Drag over the second printed column of a table whose first column
+is already carved, and the answer was ONE column spanning both — every heading
+and every figure of the second column swallowed into the first, and the first no
+longer where it had been put (N185).
+
+The drag's two sides were being fed through `doc_edge_click()` one after the
+other, and a click **outside** the table means "move the outer edge out to here",
+because that is what widening a table by clicking beside it has to do. So the
+right-hand edge was moved out twice, exactly as asked, by a function answering a
+different question. A drag is not two clicks: `doc_add_column()` now says *this
+band is a column of its own* — both sides become edges, dividers strictly inside
+the band are absorbed, and **every other edge is kept**, including the outer ones.
+
+Ground between the new column and the one before it therefore becomes a column
+too, rather than being swallowed into its neighbour. That is the cautious
+choice on purpose: an unwanted column goes away with one click on its divider,
+whereas a swallowed region cannot be recovered without redrawing both. The
+screen says so when it happens.
+
+**The instruction now sticks to the top of the window.** The one sentence saying
+what the next drag will do was written at the top of the *page* — and with an
+840px document image and a longer panel beside it, every real drag happens
+scrolled down, so the sentence was above the window whenever it mattered. It is
+pinned to the top of the screen for as long as the builder is open.
+
+**Uploading swaps the screen.** The upload panel is a heading, a sentence, a file
+picker, two radio buttons and a note — all of them answered the moment the
+document is on screen, and four inches of it between the reader and the work. It
+now folds down to one line naming the document, with a way back that says it also
+changes the kind of document. The builder starts above the fold.
+
+---
+
 ## 1.6.0
 
 **Every template lives in one folder now.** There were seven at the root of the

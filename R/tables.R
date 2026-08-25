@@ -653,6 +653,42 @@ doc_set_column_band <- function(edges, j, x0, x1) {
   sort(unique(round(c(keep, lo, hi), 2)))
 }
 
+# doc_add_column(edges, x0, x1) -> the edges after "there is ANOTHER column, and
+# it runs from x0 to x1".
+#
+# THIS IS NOT TWO CLICKS. It used to be -- the drag's two sides were fed through
+# doc_edge_click() one after the other -- and that is wrong for the commonest use
+# there is. doc_edge_click() means "click": a click OUTSIDE the table moves the
+# nearer outer edge out to it, because that is what widening a table by clicking
+# beside it has to do. So dragging over the second column of a table that only has
+# its first column carved out moved the right-hand outer edge twice, and the
+# result was ONE column stretched over both, holding every heading and every
+# figure in the rows below. The first column was not extended by accident; it was
+# extended twice, exactly as asked, by a function answering a different question.
+#
+# A drag says: this band is a column of its own. So:
+#   * both sides of the drag become edges;
+#   * any divider strictly inside the band is absorbed -- the person said the WHOLE
+#     band is one column;
+#   * every other edge is KEPT, including the outer ones. That is the difference.
+#     An outer edge the new column lands beyond becomes an ordinary divider, so the
+#     ground between the old table and the new column becomes its own column rather
+#     than being swallowed into the neighbour.
+#
+# That last rule is deliberately the cautious one. Somebody adding columns left to
+# right is usually about to carve the in-between region anyway, and a column that
+# should not be there is removed with one click on its divider. Swallowing a
+# region into the column beside it cannot be undone without redrawing both.
+doc_add_column <- function(edges, x0, x1) {
+  lo <- min(x0, x1); hi <- max(x0, x1)
+  if (!is.finite(lo) || !is.finite(hi) || hi - lo < 1) return(edges)
+  edges <- sort(unique(round(as.numeric(edges), 2)))
+  edges <- edges[is.finite(edges)]
+  if (length(edges) < 2L) return(c(round(lo, 2), round(hi, 2)))
+  keep <- edges[edges <= lo - 1 | edges >= hi + 1]
+  sort(unique(round(c(keep, lo, hi), 2)))
+}
+
 # doc_header_names(input, tab, tmpl) -> a name for each column, read from the
 # table's own header row. Called after every edge change, so the names follow the
 # columns instead of having to be typed: split a column and the two halves are
