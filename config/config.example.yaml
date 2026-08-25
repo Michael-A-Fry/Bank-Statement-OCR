@@ -48,7 +48,7 @@ paths:
   user_templates: templates_user       # analyst-made drafts (Shiny only, NEVER Qlik)
   fields: fields_templates
   user_fields: fields_templates_user
-  docs: doc_templates                  # reports carrying many tables (Add a template -> "A report")
+  docs: doc_templates                  # many-table documents (Add a template -> "Anything else")
   user_docs: doc_templates_user
   dictionary: dictionaries/labels.yaml  # label wordings (Admin -> Templates -> Label dictionary)
   lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Data capture -> "Words the tool knows to look for")

@@ -570,7 +570,8 @@ ui <- fluidPage(
         )
       )
     ),
-    # ---- Add a template (one toolkit for statements + a form builder) --
+    # ---- Add a template (the statement toolkit, and one builder for
+    #      everything that is not a statement) ------------------------------
     tabPanel(
       "Add a template",
       br(),
@@ -1214,7 +1215,7 @@ server <- function(input, output, session) {
   observeEvent(input$ts_help, show_tutorial())
 
   # .clamp_page(v, n) -- keep a typed page number inside the document. All three
-  # screens with a page box (the X-ray, the template toolkit, the form builder)
+  # screens with a page box (the X-ray, the statement toolkit, the builder)
   # share it: typing a page the document doesn't have used to leave a blank panel
   # with nothing to explain it. n = NA means "we couldn't count the pages", in
   # which case the number is left exactly as typed.
@@ -6651,18 +6652,23 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res)
     if (is.null(cv_src())) return(NULL)
     st <- res$status %||% "failed"
+    # NAME THE SCREEN SHE WILL LAND ON, not one that no longer exists.
+    #
+    # These two links used to offer "the PDF form builder" and "the report
+    # builder" -- two screens that were merged into one, months apart from the
+    # copy that names them. Following either lands on Add a template with
+    # "Anything else" already chosen, so that is what they say. Both do the same
+    # thing because there is only one thing to do; the sentence in front of the
+    # link is what differs, because the two results prompt different questions.
     if (identical(res$kind, "form")) {
-      # A form result is set up in the PDF form builder, not the statement toolkit.
       return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", "Change or add values? "),
-        actionLink("cv_goto_templates", "Open the PDF form builder \u2192")))
+        span(class = "muted", "A value missing, or reading the wrong thing? "),
+        actionLink("cv_goto_templates", "Set it up on Add a template \u2192")))
     }
     if (identical(res$kind, "tables")) {
-      # Likewise a report: its tables are drawn on the report builder, and this is
-      # the only route back to them from a result someone is looking at.
       return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
         span(class = "muted", "A table missing, or reading the wrong columns? "),
-        actionLink("cv_goto_report", "Open the report builder \u2192")))
+        actionLink("cv_goto_report", "Set it up on Add a template \u2192")))
     }
     if (identical(st, "unsupported")) {
       # "Unsupported" covers two opposite situations. If two or more templates fit
@@ -6764,7 +6770,7 @@ server <- function(input, output, session) {
   # Its own id, not a second use of the one above: two links on mutually exclusive
   # branches still have to be two ids, or the "no id used twice" scan cannot tell a
   # deliberate pair from the accident it exists to catch. This one also SETS the
-  # kind of document, so the report builder is already open when the tab arrives.
+  # kind of document, so the builder is already open when the tab arrives.
   observeEvent(input$cv_goto_report, {
     updateRadioButtons(session, "ts_doctype", selected = "other")
     updateTabsetPanel(session, "main_tabs", selected = "Add a template")

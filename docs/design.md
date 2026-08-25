@@ -74,7 +74,9 @@ are named instead, and every measured figure carries the date it was taken.
    logs/runs/     <----------+                              templates_user/    (built in the app)
    logs/feedback/ <----------+                              templates_seed/    (unfinished starts)
    logs/metadata/ <----------+                              fields_templates/  (mode: fields)
-   requests/      <----------+                              dictionaries/      (labels, lexicon)
+   requests/      <----------+                              doc_templates/     (mode: document)
+   logs/startup.log <--------+                              doc_templates_user/
+                             |                              dictionaries/      (labels, lexicon)
                              |                              config/config.yaml
                              v
                      feed/transactions/   ---> Qlik folder connection
@@ -127,10 +129,18 @@ drift with every release.
 
 ## 3. The path a statement takes
 
-Front door: **`convert_document(path, ...)`** in `R/forms.R`. It runs the
-statement pipeline, and only if that returns `unsupported` **and** no template
-was forced does it try the labelled-value (form) pipeline. It writes the run log
-exactly once, after the final outcome is known.
+Front door: **`convert_document(path, ...)`** in `R/forms.R`. It tries three
+pipelines **in this order**, and only moves on when the one before returns
+`unsupported` and no template was forced:
+
+1. the **statement** pipeline (`convert_statement()`),
+2. the **form** pipeline (labelled values by wording, `convert_form()`),
+3. the **document** pipeline (many tables, `convert_tables()` in `R/doc_extract.R`).
+
+The order is the point: the most checkable case is tried first, and the least
+checkable last. It writes the run log exactly once, after the final outcome is
+known, and stamps `kind` (`statement` / `form` / `tables`) — which is what
+`write_feed()` reads to refuse the last two.
 
 The statement pipeline is **`convert_statement()`** in `R/convert.R`, top to
 bottom:
@@ -324,6 +334,96 @@ Read it before adding a key. Three rules matter more than the rest:
    `as.Date()` recycles a format vector element-wise: row 1 as `%Y/%m/%d`, row 2
    as `%d/%m/%Y`, a whole column of plausible wrong dates.
 
+### `mode: document` — the third template kind
+
+Everything above is a **statement**: one table of transactions, columns running
+the full height of every page, judged against a running balance. There are two
+other modes, and they exist because all three of those facts are false for other
+documents.
+
+| mode | Engine | What it reads | Checked against | Where it goes |
+|---|---|---|---|---|
+| *(absent)* / statement | `R/parse_pdf_table.R` | one transaction table | a running balance | Excel/CSV/JSON **and the Qlik feed** |
+| `fields` | `R/forms.R`, `R/extract_fields.R` | labelled values, found by **wording only**, no coordinates | nothing | download only |
+| `document` | `R/tables.R`, `R/tables_detect.R`, `R/doc_extract.R` | **many tables of different shapes**, plus label/value pairs | nothing | download only |
+
+**Why `document` is a separate engine and not a wider statement parser.**
+Widening the statement parser would have put the least checkable case inside the
+code path every real conversion runs through. The statement path is not
+destabilised by report work; that is the whole reason for the split.
+
+**Download only, enforced rather than assumed.** `write_feed()` refuses
+`kind = "tables"` outright — one line, with a test. There is no reconciliation
+behind a report and nothing that could tell a wrong figure from a right one, so
+publishing one as if there were would be the worst thing this tool could do.
+
+The schema, in the shape the builder saves it:
+
+```yaml
+id: acme_valuation_report
+mode: document                 # the discriminator; is_document_template() reads it
+format: pdf
+ref_width: 595.28              # the page size the boxes were drawn in
+ref_height: 841.89
+fingerprint:
+  page_contains_all:           # same gate as the other two modes, same reasons
+    - Consolidated position report
+tables:
+  schedule_of_transactions:
+    name: Schedule of transactions
+    start: {page: 3, y: 148.0}   # a POSITION on a page, not a whole page
+    end:   {page: 5, y: 700.9}
+    header_rows: 2               # how many lines the heading takes; NOT a row count
+    follow: true                 # keep going if the next page repeats the header
+    min_fill: 0.5
+    anchor:
+      header_text: [Date, Description, Amount, Balance]
+      first_column: []
+    columns:                     # bands that TILE the width: they meet, never overlap
+      - {name: Date,        x_min: 40,  x_max: 110, type: auto}
+      - {name: Description, x_min: 110, x_max: 360, type: auto}
+pairs:
+  prepared_for:
+    label_text: Prepared for     # found by WORDING on the next document
+    label: {page: 1, x_min: 39, x_max: 100, y_min: 99, y_max: 110}
+    value: {page: 1, x_min: 149, x_max: 214, y_min: 99, y_max: 110}
+    where: {where: right, gap: 49, cross: 0, width: 65, height: 11}
+    type: text
+```
+
+Four things in there are load-bearing and easy to undo by accident:
+
+1. **A table is a `(page, y)` START and a `(page, y)` END**, not a set of pages.
+   Reports put two tables on one page and run a third over three; whole-page
+   boundaries cannot express either.
+2. **Columns are EDGES, not boxes.** `doc_column_edges()` / `doc_columns_from_edges()`
+   turn N columns into N+1 shared dividers, so a **gap** between bands (which
+   loses a column of figures) and an **overlap** (which deletes one) are not
+   expressible. `doc_set_column_band()` moves one column and the neighbours give
+   way, preserving the tiling. `.doc_table_problems()` still refuses both, because
+   a template can be hand-edited.
+3. **A pair stores the SIDE, not an offset.** `where.where` is
+   `right`/`left`/`above`/`below`; on the next document the label is found by its
+   wording and the search runs in that direction (`.doc_pair_window()`,
+   `.doc_pair_pick()`). A fixed offset misses as soon as the figure is a digit
+   longer, which on a re-print it usually is. A template with two boxes and no
+   `where` still reads — the relation is worked out from the boxes.
+4. **`header_rows` is how tall the heading is, never a row count.** The number of
+   data rows is read from the page, between the start and the end.
+
+**The reader tells you where it is unsure, and never silently drops anything.**
+Two numbers travel with every table: **unclaimed words** (inside the boundary,
+claimed by no column — a band drawn a few points too narrow loses a column of
+figures and every remaining row still looks perfect) and **thin columns** (mostly
+empty). A one-column table can have neither, so it is called out separately.
+
+**Nothing in these three files is specific to any document.** No fixture wording,
+bank name or column name appears in `R/tables.R`, `R/tables_detect.R` or
+`R/doc_extract.R`; the default column kind is `auto`, which means the page's own
+words stand uncoerced; and a document template carries no `currency`, because
+nothing in this mode reads one. `tools/corpus/` exists to keep that honest — it
+surveys the engine against a folder of real PDFs nobody here wrote.
+
 ### The two ways variability is absorbed — read before adding a synonym
 
 - **Transaction tables**: rows have no per-row labels, they live in columns.
@@ -441,6 +541,23 @@ therefore still both write `sess/statement.xlsx`, and both rows' download button
 still point at the same workbook. This function is the only thing standing between
 a 30-file case and one statement's figures downloading as another's. The "(2)"
 suffix is visible in the table and in the filename, so the clash is stated.
+
+**A hidden Shiny output keeps `.recalculating` for ever, and it is not a bug.**
+Shiny stamps `.recalculating` on an output when it asks the server for a value
+and clears it when one arrives. An output inside a `conditionalPanel` that is
+false is **suspended**: no value is ever sent, so the class never clears. Half a
+dozen Convert-tab outputs sit in exactly that state whenever Add a template is
+open. No person ever sees it — the elements are hidden. But it means **"wait
+until the page is quiet" is not a usable readiness check**, and anything driving
+this UI has to count only *visible* busy elements:
+
+```js
+Array.from(document.querySelectorAll('.recalculating, .shiny-busy'))
+  .filter(e => e.offsetParent !== null).length
+```
+
+Measured, on a browser harness that got this wrong: five minutes a document
+instead of thirty seconds, every step burning its whole timeout.
 
 **The feed reads `result$feed_rows`, not the output CSV.** It used to re-read the
 CSV, and `utils::read.csv`'s type inference silently mangled it: a leading-zero
