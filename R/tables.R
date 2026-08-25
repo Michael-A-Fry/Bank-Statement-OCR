@@ -59,8 +59,25 @@
 # mean anything. Defaults to A4, which is what every drawn box will be unless the
 # template says otherwise.
 .doc_frame <- function(tmpl) {
-  list(width  = .doc_num(tmpl$ref_width,  .A4_W),
-       height = .doc_num(tmpl$ref_height, .A4_H))
+  # .doc_key, not $: `tmpl` is an optional argument that several callers pass
+  # positionally, and propose_pairs(input, 1L) -- which reads as "page 1" and is
+  # not -- put a bare integer here. `1L$ref_width` is an ERROR, so a caller's slip
+  # became a crash in the middle of an extraction instead of a default frame.
+  list(width  = .doc_num(.doc_key(tmpl, "ref_width"),  .A4_W),
+       height = .doc_num(.doc_key(tmpl, "ref_height"), .A4_H))
+}
+
+# .doc_npages(input) -- how many pages this document has.
+#
+# read_pdf() puts the count at input$page_count; read_input(), which is what the
+# app and the front door actually call, moves it to input$meta$page_count and
+# leaves the top level empty. Reading only one of them means the count is right
+# in the tests and NULL in production, which is the worst way round.
+.doc_npages <- function(input) {
+  n <- .doc_int(.doc_key(input, "page_count"))
+  if (is.na(n)) n <- .doc_int(.doc_key(.doc_key(input, "meta"), "page_count"))
+  if (is.na(n) || n < 1L) n <- length(.doc_key(input, "words") %||% list())
+  as.integer(n)
 }
 
 # .doc_page_words(input, page, tmpl) -- one page's word boxes, mapped into the
@@ -107,6 +124,25 @@
 # somebody adds `page_hint` beside `page` the same trap opens under `$page`. So
 # the fields of a spec are read by exact name, here, once.
 .doc_key <- function(x, k) if (is.list(x) && k %in% names(x)) x[[k]] else NULL
+
+# .doc_value_kind(v) -- money, date or text, decided by READING the value.
+#
+# THE MATCH HAS TO BE THE WHOLE VALUE. Both matchers find a pattern ANYWHERE in a
+# string, which is right when pulling a figure off a line ("Closing balance
+# $875.20") and wrong when deciding what a value IS. A client reference of
+# "NW-99-9999-9999" contains "99-9999-9999", which is date-shaped -- so it was
+# typed as a date, and the extractor then returned the date-shaped fragment and
+# dropped the "NW-". A reference silently two characters short is exactly the kind
+# of wrong answer that looks right.
+.doc_value_kind <- function(v) {
+  v <- trimws(as.character(v %||% ""))
+  if (!nzchar(v)) return("text")
+  m <- .value_from_line(v, "money")
+  if (!is.na(m) && identical(trimws(m), v)) return("money")
+  d <- .value_from_line(v, "date")
+  if (!is.na(d) && identical(trimws(d), v)) return("date")
+  "text"
+}
 
 # .doc_norm(s) -- the comparison form of a piece of wording: lowercase, letters
 # and digits only. Every text anchor in this file is compared this way, so a
@@ -300,8 +336,7 @@
 # in the template's frame. Rows are only ever read inside these windows, which is
 # what makes "several tables on one page" work at all.
 doc_locate_table <- function(input, tab, tmpl = NULL) {
-  npg <- .doc_int(input$page_count, length(input$words %||% list()))
-  if (is.na(npg) || npg < 1L) npg <- length(input$words %||% list())
+  npg <- .doc_npages(input)
   p0 <- .doc_int(tab$start$page, 1L); if (is.na(p0) || p0 < 1L) p0 <- 1L
   p1 <- .doc_int(tab$end$page, p0);   if (is.na(p1) || p1 < p0) p1 <- p0
   p0 <- min(p0, max(npg, 1L)); p1 <- min(p1, max(npg, 1L))

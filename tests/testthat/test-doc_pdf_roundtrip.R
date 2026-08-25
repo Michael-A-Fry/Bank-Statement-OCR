@@ -31,7 +31,7 @@ test_that("a real seven-page PDF proposes the tables that are on it", {
   path <- doc_pdf_fixture()
   expect_true(file.exists(path))
   inp <- read_input(path)
-  expect_equal(inp$page_count, 7L)
+  expect_equal(.doc_npages(inp), 7L)
 
   props <- propose_tables(inp)
   # Six: the account summary, the schedule (pages 3-5 as ONE), fees, contacts,
@@ -61,7 +61,7 @@ test_that("what was proposed is what gets read back out", {
   tmpl <- document_template_from_proposal(
     id = "northwind_position", bank = "Northwind", statement_type = "position report",
     phrases = "Consolidated position report",
-    tables = props, pairs = propose_pairs(inp, 1L), doc_pages = inp$page_count)
+    tables = props, pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
   expect_equal(validate_document_template(tmpl), character(0))
 
   ext <- extract_document(inp, tmpl)
@@ -84,7 +84,7 @@ test_that("what was proposed is what gets read back out", {
 test_that("the label/value pairs survive the PDF round trip", {
   skip_if_no_pdf()
   inp <- read_input(doc_pdf_fixture())
-  pr <- propose_pairs(inp, 1L)
+  pr <- propose_pairs(inp, page = 1L)
   lab <- vapply(pr, function(p) as.character(p$label_text)[1], character(1))
   expect_true("Prepared for" %in% lab)
   expect_true("Client reference" %in% lab)
@@ -93,7 +93,7 @@ test_that("the label/value pairs survive the PDF round trip", {
   tmpl <- document_template_from_proposal(
     id = "northwind_position", bank = "Northwind", statement_type = "position report",
     phrases = "Consolidated position report", tables = list(), pairs = pr,
-    doc_pages = inp$page_count)
+    doc_pages = .doc_npages(inp))
   got <- doc_pairs(inp, tmpl)
   v <- function(k) got$value[got$pair == k]
   expect_identical(v("prepared_for"), "Ambrose Family Trust")
@@ -113,7 +113,7 @@ test_that("converting the PDF writes downloadable files and never touches the fe
   tmpl <- document_template_from_proposal(
     id = "northwind_position", bank = "Northwind", statement_type = "position report",
     phrases = "Consolidated position report", tables = propose_tables(inp),
-    pairs = propose_pairs(inp, 1L), doc_pages = inp$page_count)
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
   save_document_template(tmpl, tpl_dir)
 
   res <- convert_tables(doc_pdf_fixture(), doc_dir = tpl_dir, outdir = out_dir)

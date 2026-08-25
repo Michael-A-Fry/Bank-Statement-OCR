@@ -71,9 +71,21 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **72 files, 947 tests, 4,912 passing assertions, 0
-failed, 0 errors, 0 skipped** — taken on the build tree on 2026-08-02, at
-`VERSION` 1.4.0. Treat it as a floor to compare against, not a target to match.
+The last full run measured **76 files, 1,025 tests, 5,231 passing assertions** —
+taken on 2026-08-25, at `VERSION` 1.5.0, on R 4.4.3. Treat it as a floor to
+compare against, not a target to match.
+
+That run was **not** clean, and the three that failed are worth knowing before
+you chase them:
+
+| What failed | Why |
+|---|---|
+| `no chart colour is three-digit hex` | its second assertion expects `col2rgb("#fff")` to error. Newer R accepts three-digit hex, so the assertion is stale, not the code. The first half of the test — no three-digit hex in `app.R` — still holds and still matters. |
+| `the ANZ bundle splits into its statements with every KPI passing` | needs the OCR tools (tesseract / poppler-rasterising magick) |
+| `the tutorial sample reconciles` | same |
+
+18 tests skipped, all of them OCR. On a box **with** the OCR tools installed the
+last two should pass; if they do not, that is a real finding.
 
 **Check the `files` figure first.** If it is not the number of
 `tests\testthat\test-*.R` files on your box, this line was written against a

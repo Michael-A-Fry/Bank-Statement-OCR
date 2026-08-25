@@ -185,7 +185,7 @@ test_that("a report converts through the front door as kind 'tables', and the ru
   tmpl <- document_template_from_proposal(
     id = "northwind_position", bank = "Northwind", statement_type = "position report",
     phrases = "Consolidated position report", tables = propose_tables(inp),
-    pairs = propose_pairs(inp, 1L), doc_pages = inp$page_count)
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
   save_document_template(tmpl, file.path(tdir, "doc_templates"))
 
   res <- convert_document(pdf_path, outdir = file.path(tdir, "out"),
