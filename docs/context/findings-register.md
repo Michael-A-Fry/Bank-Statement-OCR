@@ -1088,3 +1088,112 @@ longer expressible, because adjacent columns share an edge. `.doc_table_problems
 still refuses both -- a template can still be hand-edited -- but nothing the
 builder produces can contain either.
 
+
+---
+
+## The builder rebuilt around one armed intent, and what 81 other people's PDFs found
+
+**N164 (a drag always made a new table) - fixed.** The gesture that meant "make me
+a table" was the only gesture there was, so a mis-drag made a table, a second look
+at the page made a table, and correcting a table made another one. A gesture
+cannot mean both "create" and "fix", and fixing is most of the work. The screen
+now holds ONE armed intent at a time (`rb$mode`), written across the top in a
+sentence from a single list (`.RB_ASK`) that both the banner and the hint under
+the picture read from, so they cannot disagree. Nothing is armed unless a button
+armed it, and a drag with nothing armed changes nothing and says so.
+
+**N165 (a value/label pair could only be "next to") - fixed.** A pair stored the
+label's wording plus the OFFSET between the two boxes, and the builder guessed
+the value's box for you -- looking only to the right and below. Two faults in one:
+an arrangement the tool could not express (a value printed to the LEFT of its
+label, or above it), and a rigid offset that misses as soon as the label is a word
+longer or the figure a digit wider, which on a re-print it usually is. A pair is
+now TWO explicit drags and what is stored is the SIDE (`right`/`left`/`above`/
+`below`) plus the gap. On the next document the label is found by its wording and
+the search runs in that direction: generous along it, tight across it, and it
+takes the whole contiguous run rather than a fixed-width box, so a longer figure
+still comes out whole and the field next door still does not. The side is shown
+in words, is editable before and after saving, and is written into the template
+where it can be read and changed by hand. `validate_document_template` refuses a
+side that is not one of the four.
+
+**N166 (nothing the tool worked out could be changed) - fixed.** Column bands,
+names and kinds were derived and then frozen; the start and the end were an
+undocumented click on the picture and a sentence in a hint. Every one of them is
+now on the screen with a control beside it: a column is renamed, retyped,
+repositioned (by dragging its width or by typing its two edges -- both go through
+`doc_set_column_band`, so the neighbours give way and the tiling holds) or
+deleted; the start and the end are stated in words with "Show me" and "Move it"
+beside each, plus one-press answers for the three ends people actually want.
+Every saved table and every saved value goes back into the same draft to be
+edited, so "Save" always means the same thing.
+
+**N167 (the tool's labels covered the words they described) - fixed.** The column
+names the tool worked out are checked against the column names printed on the
+page, and they were drawn on top of them -- so the one comparison the screen
+exists for was the one thing it obscured. The plot now extends above the paper by
+a fixed strip (`.RB_GUTTER`) and every label the tool writes goes up there, joined
+to what it names by a hairline; the START and END markers are short filled chips
+rather than captions. Five layers -- tables, column lines, names, values, start
+and end -- switch off independently, the way the X-ray's do.
+
+**N168 (typing in the builder fought the screen) - fixed.** A `textInput` rebuilt
+inside a `renderUI` is destroyed on every keystroke that changes what it edits.
+The draft's inputs are now built once and filled in only when a draft ARRIVES
+(`.rb_load_draft`, `.rb_load_vdraft`), and the three that feed a list drawn from
+the draft are debounced (`rb_name_d`, `rb_cname_d`, `rb_cx_d`) so the list settles
+after typing stops instead of redrawing on every letter.
+
+### Found by running the engine over 81 PDFs nobody here wrote
+
+`tools/corpus/run-corpus.R` points the document engine at a folder of real
+documents -- the test suites of camelot, pdfplumber, tabula-java and tabula-py,
+which are exactly the documents that broke somebody else's extractor. It is a
+SURVEY, not a test: nobody has said what the right tables are on somebody else's
+PDF. It reports crashes, what was proposed, and whether what was proposed reads
+back out consistently. **No document crashed it, before or after.** Three
+defects, all of them invisible on any fixture written here:
+
+**N169 (the proposer's row count was not the reader's) - fixed.** The two count
+differently and both are right about their own job: the proposer counts LINES in
+a run of tabular text, the reader folds a wrapped cell into the row above it and
+skips a printed rule. Measured: **40 of 81 documents disagreed**, one of them by
+21 against 15. A count shown beside a proposal that is not the count in the file
+it produces is worse than no count, so `propose_tables()` now asks the reader,
+once, and its answer is the answer.
+
+**N170 (a one-column table ended at the first paragraph gap) - fixed.** The stop
+rule's floor was "at least two filled columns after a big gap", which a
+one-column table can never reach -- so every line of one looked wrong and the
+first paragraph break ended it. A block of prose or a list IS a one-column table
+and they are everywhere. The floor is now `min(number of columns, ...)`.
+
+**N171 (a landscape page squashed into a portrait frame) - fixed.** The reference
+frame exists so a template drawn on A4 still reads Letter: the same page,
+slightly bigger. A LANDSCAPE page in a portrait frame is not that -- the scale is
+non-uniform, so the words stretch sideways and squash vertically and every column
+band on that page claims the wrong words. Three of the 81 mixed the two (a
+landscape report with a portrait note page, and the reverse), and every table on
+the odd page out read differently from the way it was proposed; on one, 133 words
+fell out of every column. Such a page is now read in its own space and left
+alone, which is the only honest answer available: the boxes were drawn on a page
+shaped the other way, so no scale maps one onto the other.
+
+**N172 (the bottom of the page was A4's) - fixed.** With no frame declared,
+`band_bot` fell back to A4. It decides whether a window is OPEN-ENDED -- and an
+open window is the one the row-run rule has to stop by watching the rows -- so a
+table ending 741pt down a 612pt-tall landscape page looked like it stopped
+comfortably short of an 842pt bottom, its window was treated as exact, and the
+stop rule never ran (99 rows read where 4 were proposed). The document knows its
+own page size; it is now asked.
+
+**Generalisability, checked rather than assumed.** `document_template_from_proposal`
+no longer stamps `currency: NZD` on a document template: nothing in this mode ever
+reads it, and a report of rupees or euros should not carry a false statement made
+by a converter that never looks at it. The default column kind is `auto`, which
+means the page's own words stand uncoerced; the money and date parsers run only
+on a kind somebody chose, and even then the raw text stays in the column with the
+parsed value beside it in `<column>__value`, so a figure the parser does not
+recognise is never lost. No fixture wording, bank name or column name from this
+repository appears anywhere in `R/tables.R`, `R/tables_detect.R` or
+`R/doc_extract.R`.

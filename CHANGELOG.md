@@ -13,6 +13,90 @@ finding id.
 
 ---
 
+## 1.5.1
+
+The document builder rebuilt around one idea: **nothing happens until you ask for
+it**, and everything the tool works out for itself is on the screen with a control
+beside it to change it.
+
+**One armed intent, named across the top**
+
+- A drag used to mean "make me a table", which is also what it meant when you
+  were trying to fix one. Now the screen holds exactly one armed intent at a
+  time, written across the top in a sentence — *"Drag a box round the table's
+  TITLE"*, *"Click the page where the table ENDS"* — and nothing is armed until a
+  button armed it. A drag with nothing armed changes nothing and says so.
+- The banner and the hint under the picture read the same sentence out of one
+  list, so they cannot disagree about what a gesture will do.
+
+**A value is two drags, and the tool remembers which SIDE**
+
+- The label, then the value. Nothing is guessed. What is stored is the label's
+  wording plus which side the value sits on — right, left, above or below — and
+  on the next document the label is found by its wording and the search runs in
+  that direction. A figure printed two digits longer, or a label a word wider,
+  still reads; a fixed offset did not.
+- The side is shown in words, editable before and after saving, and written into
+  the template file where it can be read and changed by hand.
+
+**Everything auto-derived is editable**
+
+- Columns: rename, retype, reposition (drag the width on the page or type the two
+  edges — both give way at the neighbours and keep the tiling) and delete.
+- Start and end: stated in words with *Show me* and *Move it* beside each, plus
+  one press each for *work it out for me*, *the bottom of its page* and *the
+  bottom of the last page*.
+- Every saved table and every saved value goes back into the same draft to be
+  edited, so **Save** always means the same thing.
+
+**The tool's labels no longer cover the words they describe**
+
+- Column names float in a strip above the paper, joined to their columns by a
+  hairline. START and END are short filled chips, not captions.
+- Five layers — tables, column lines, names, values, start and end — switch off
+  independently, the way the X-ray's do.
+
+**Three engine defects, found by running it over 81 PDFs nobody here wrote**
+
+`tools/corpus/` collects a folder of real documents from the test suites of
+camelot, pdfplumber, tabula-java and tabula-py, and `run-corpus.R` surveys what
+the engine does with each. No document crashed it. Measured before and after:
+**40 documents where the proposed row count was not the count the reader
+produced → 0**.
+
+- The proposer counted lines; the reader folds wrapped cells and skips printed
+  rules. The proposer now asks the reader (N169).
+- A one-column table — a block of prose, a list — was ended by the first
+  paragraph gap, because the stop rule's floor of two filled columns is
+  unreachable in a table one column wide (N170).
+- A landscape page scaled into a portrait frame stretches sideways and squashes
+  vertically, so every column band on it claimed the wrong words. Three of the 81
+  mixed orientations; one lost 133 words out of every column. Such a page is now
+  read in its own space (N171). The bottom of the page is the document's own, not
+  A4's (N172).
+
+**Just as easy as a bank statement — measured, in a browser**
+
+Driving both paths end to end: a bank statement took **4 decisions** (say what it
+is, choose the file, open the toolkit, Save) and a document took **10**, because
+the document builder asked by hand for the three things the statement toolkit
+fills in for you. It now fills the same three the same way — the issuer guessed
+from the filename, the identifying phrases found on the document (a saved
+table's own title, which beats its column names), and the save name composed
+from the two — and a document takes **7**. The remaining three are the
+irreducible ones: *+ Add a table*, and the two drags that say **which** table.
+
+**Generalisability**
+
+- A document template no longer carries `currency: NZD`. Nothing in this mode
+  reads it, and a report of rupees should not carry a false statement made by a
+  converter that never looks at it.
+- The default column kind stays `auto`: the page's own words, uncoerced. A
+  declared kind puts the parsed value in `<column>__value` and leaves the raw
+  text in the column, so a figure the parser does not recognise is never lost.
+
+---
+
 ## 1.5.0
 
 A third kind of document: a **report** — forty pages carrying thirty-odd tables

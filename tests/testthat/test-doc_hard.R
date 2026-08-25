@@ -289,3 +289,104 @@ test_that("a spanning header cell becomes the table's proposed name", {
   # on the builder fixes it -- the alternative is offering no name at all.
   expect_identical(.hard_one(hard_two_row_header())$name, "Balance")
 })
+
+# ---------------------------------------------------------------------------
+# PAGE GEOMETRY -- both of these were found by running the engine over 81 PDFs
+# from other people's test suites (tools/corpus). Neither is exotic: a report
+# with a landscape appendix, and a page that is simply not A4.
+# ---------------------------------------------------------------------------
+
+# .mixed_input(...) -- pages of DIFFERENT sizes in one document, which is the
+# case a single reference frame cannot describe.
+.mixed_input <- function() {
+  land <- doc_page(
+    doc_L(40, 60, "Regional summary"),
+    doc_L(40, 90, "Region"), doc_L(300, 90, "Units"), doc_L(500, 90, "Value"),
+    doc_L(40, 110, "North"), doc_R(340, 110, "12"), doc_R(560, 110, "1,000.00"),
+    doc_L(40, 130, "South"), doc_R(340, 130, "34"), doc_R(560, 130, "2,000.00"),
+    doc_L(40, 150, "East"),  doc_R(340, 150, "56"), doc_R(560, 150, "3,000.00"))
+  port <- doc_page(
+    doc_L(40, 60, "Notes to the summary"),
+    doc_L(40, 90, "Note"), doc_L(300, 90, "Detail"),
+    doc_L(40, 110, "1"), doc_L(300, 110, "Provisional"),
+    doc_L(40, 130, "2"), doc_L(300, 130, "Restated"),
+    doc_L(40, 150, "3"), doc_L(300, 150, "Rounded"),
+    doc_L(40, 170, "4"), doc_L(300, 170, "Estimated"),
+    doc_L(40, 190, "5"), doc_L(300, 190, "Audited"))
+  i <- doc_input(list(land, port))
+  i$page_width  <- c(DOC_H, DOC_W)          # page 1 landscape, page 2 portrait
+  i$page_height <- c(DOC_W, DOC_H)
+  i
+}
+
+test_that("a landscape page is not squashed into a portrait frame", {
+  i <- .mixed_input()
+  # The frame is page 1's shape. Page 2 is the other way round, so scaling it
+  # into that frame would stretch every word sideways and squash it vertically --
+  # and every column band on that page would then claim the wrong words.
+  tmpl <- list(ref_width = DOC_H, ref_height = DOC_W)
+  native <- .doc_page_words(i, 2L, NULL)
+  framed <- .doc_page_words(i, 2L, tmpl)
+  expect_equal(framed$x, native$x)
+  expect_equal(framed$y, native$y)
+  # ...while a page the SAME way round as the frame is still mapped into it,
+  # which is the thing the frame exists for.
+  wide <- list(ref_width = DOC_H * 1.1, ref_height = DOC_W * 1.1)
+  expect_gt(max(.doc_page_words(i, 1L, wide)$x), max(.doc_page_words(i, 1L, NULL)$x))
+})
+
+test_that("what is proposed on a mixed-orientation document is what is read back", {
+  i <- .mixed_input()
+  props <- propose_tables(i)
+  expect_gte(length(props), 2L)
+  tmpl <- document_template_from_proposal(
+    id = "mixed", bank = "B", statement_type = "r",
+    phrases = "Regional summary", tables = props, pairs = list(),
+    doc_pages = .doc_npages(i))
+  tmpl$ref_width <- DOC_H; tmpl$ref_height <- DOC_W      # page 1's shape
+  ext <- extract_document(i, tmpl)
+  for (k in seq_along(props))
+    expect_equal(as.integer(ext$summary$rows[k]), as.integer(props[[k]]$n_rows),
+                 info = sprintf("table '%s'", props[[k]]$name))
+  expect_equal(sum(as.integer(ext$summary$unclaimed_words)), 0L)
+})
+
+test_that("the bottom of the page is the document's own, not A4's", {
+  # band_bot decides whether a window is OPEN-ENDED, and an open window is the
+  # one the row-run rule has to stop by watching the rows. Falling back to A4
+  # made a table ending 741pt down a 612pt-tall landscape page look like it
+  # stopped comfortably short of the bottom, so its end was treated as exact and
+  # the stop rule never ran.
+  i <- .mixed_input()
+  tab <- list(name = "Regional summary",
+              start = list(page = 1L, y = 80), end = list(page = 1L, y = DOC_W),
+              header_rows = 1L, follow = FALSE,
+              columns = list(list(name = "Region", x_min = 30, x_max = 280),
+                             list(name = "Units", x_min = 280, x_max = 400),
+                             list(name = "Value", x_min = 400, x_max = 580)))
+  loc <- doc_locate_table(i, tab, NULL)
+  expect_true(isTRUE(loc$windows[[1]]$open_end))
+  # and a table that genuinely stops short of the bottom is still exact
+  tab$end$y <- 200
+  expect_false(isTRUE(doc_locate_table(i, tab, NULL)$windows[[1]]$open_end))
+})
+
+test_that("a one-column table is not ended by the first paragraph gap", {
+  # The stop rule's floor was "at least two filled columns", which a one-column
+  # table can never reach -- so every line of one looked wrong and the first gap
+  # ended it. A block of prose or a list IS a one-column table, and they are
+  # everywhere.
+  parts <- list(doc_L(40, 60, "Improved operation scenario"))
+  y <- 90
+  for (k in 1:8) { parts <- c(parts, list(doc_L(40, y, sprintf("line %d of the first paragraph", k)))); y <- y + 14 }
+  y <- y + 34                                    # a paragraph break: a big gap
+  for (k in 1:6) { parts <- c(parts, list(doc_L(40, y, sprintf("line %d of the second paragraph", k)))); y <- y + 14 }
+  i <- doc_input(list(do.call(doc_page, parts)))
+  tab <- list(name = "Improved operation scenario",
+              start = list(page = 1L, y = 80), end = list(page = 1L, y = DOC_H),
+              header_rows = 0L, follow = FALSE,
+              columns = list(list(name = "text", x_min = 0, x_max = DOC_W)))
+  r <- doc_table_rows(i, tab, NULL)
+  expect_equal(nrow(r$stops), 0L)
+  expect_equal(r$n_rows, 14L)
+})

@@ -607,49 +607,168 @@ ui <- fluidPage(
                     "running balance sits behind any of it, so the completeness checks",
                     "do not apply - you check what comes out. The output is a file to",
                     "download; none of this reaches the dashboards."))))),
-      # ONE BUILDER, AND IT STARTS BLANK.
+      # ONE BUILDER. IT STARTS BLANK, AND NOTHING HAPPENS UNTIL YOU ASK FOR IT.
       #
-      # It used to open by reading the whole document and offering thirty tables
-      # to correct, which sounds helpful and is not: most of them are nearly
-      # right, "nearly right" is the most expensive state to be in, and there is
-      # no order to work through them in. It now starts with nothing and takes
-      # ONE table at a time, in two gestures and a check:
+      # The version before this one treated a drag as a request: drag anywhere and
+      # a table appeared. Which meant a mis-drag made a table, a second look at
+      # the page made a table, and correcting a table made another table. A
+      # gesture that always means "make me a new thing" cannot also mean "fix the
+      # thing I am looking at", and fixing is most of the work.
       #
-      #   1  drag a box round the table's TITLE      -> that is its name
-      #   2  drag a box round its COLUMN NAMES       -> those are its columns
-      #   3  the end is worked out and drawn; check, adjust, save. Next table.
-      #
-      # At every moment exactly one gesture means exactly one thing, and the step
-      # card says which. Values work the same way: label, then value, save, next.
+      # So the screen has ONE armed intent at a time, and it is always written
+      # across the top: "DRAG a box round the table's TITLE", "CLICK where it
+      # ENDS", "DRAG a box over the new column". Nothing is armed until a button
+      # is pressed, and a drag with nothing armed does nothing at all except say
+      # so. Every button that arms something is a plain sentence, and every thing
+      # the tool works out for itself -- the columns, the end, which side a value
+      # sits on -- is shown on screen with a control beside it to change it.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
       conditionalPanel("output.rb_has_doc != true",
         div(class = "note", style = "max-width:820px",
             "Upload the document at the top of this page first. It has to be a PDF.")),
       conditionalPanel("output.rb_has_doc == true",
+      # WHAT THE SCREEN IS WAITING FOR, in one sentence, at the top, always.
+      uiOutput("rb_arm"),
       fluidRow(
         column(7,
-          div(style = "display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:4px",
-            numericInput("rb_page", "Page", 1, min = 1, step = 1, width = "130px"),
-            div(style = "padding-bottom:14px",
-              actionButton("rb_prev_page", "\u2190", class = "btn-default btn-sm"),
-              actionButton("rb_next_page", "\u2192", class = "btn-default btn-sm"))),
-          plotOutput("rb_plot", height = "760px", click = "rb_click",
+          div(style = "display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 6px",
+            numericInput("rb_page", "Page", 1, min = 1, step = 1, width = "150px"),
+            div(style = "padding-bottom:14px;display:flex;gap:6px",
+              actionButton("rb_prev_page", "\u2190 Back a page", class = "btn-default btn-sm"),
+              actionButton("rb_next_page", "Next page \u2192", class = "btn-default btn-sm"))),
+          # SHOW ME LESS. Everything the tool draws sits on top of what the page
+          # says -- and the column names printed on the page are the very thing
+          # being checked against the column names the tool worked out. So the
+          # tool's own names float in a strip ABOVE the page rather than over the
+          # header row, and every layer switches off on its own, the way the X-ray
+          # does.
+          div(style = "margin:0 0 4px",
+            checkboxGroupInput("rb_layers", NULL, inline = TRUE,
+              choices = c("Tables" = "tables", "Column lines" = "edges",
+                          "Names" = "names", "Values" = "values",
+                          "Start and end" = "ends"),
+              selected = c("tables", "edges", "names", "values", "ends"))),
+          plotOutput("rb_plot", height = "840px", click = "rb_click",
             brush = brushOpts("rb_brush", direction = "xy", delay = 900,
                               delayType = "debounce")),
           uiOutput("rb_hint")),
         column(5,
           tabsetPanel(id = "rb_tab", type = "tabs",
+            # ---- TABLES ------------------------------------------------------
             tabPanel("Tables", value = "tables",
               br(),
-              uiOutput("rb_step"),
-              tags$hr(style = "margin:12px 0"),
+              conditionalPanel("output.rb_has_draft != true",
+                div(class = "note", style = "margin:0 0 10px",
+                  p(style = "margin:0", strong("A table is rows and columns.")),
+                  p(class = "muted", style = "margin:6px 0 0;font-size:12px",
+                    paste("Press the button, then drag a box round the table's title.",
+                          "You will be asked for its column names next. Nothing is",
+                          "created until you press it."))),
+                actionButton("rb_addtable", "+ Add a table", class = "btn-primary")),
+              # The table being worked on. These inputs are built ONCE and filled
+              # in as the draft changes: an input rebuilt by a renderUI is
+              # destroyed on every keystroke that changes what it edits, which is
+              # what made naming a table feel like the box was eating the typing.
+              conditionalPanel("output.rb_has_draft == true",
+                uiOutput("rb_step"),
+                textInput("rb_name", "Call this table", "", width = "100%"),
+                uiOutput("rb_where"),
+                # EVERY POSITION IS BOTH DRAGGABLE AND TYPEABLE. Pointing at the
+                # page is the easy way and the one that suits the job; typing the
+                # number is the exact way, and somebody correcting a boundary by
+                # four points should not have to hit it with a mouse. Same rule
+                # as the column edges, and the same static inputs so typing in
+                # them never rebuilds the box being typed into.
+                tags$details(style = "margin:-4px 0 10px",
+                  tags$summary(class = "muted", style = "cursor:pointer;font-size:12px",
+                               "Type the exact positions instead"),
+                  fluidRow(style = "margin-top:4px",
+                    column(3, numericInput("rb_sp", "Starts page", 1, min = 1, step = 1, width = "100%")),
+                    column(3, numericInput("rb_sy", "at", 0, step = 1, width = "100%")),
+                    column(3, numericInput("rb_ep", "Ends page", 1, min = 1, step = 1, width = "100%")),
+                    column(3, numericInput("rb_ey", "at", 0, step = 1, width = "100%"))),
+                  helpText(class = "muted", style = "margin-top:-8px",
+                           "Measured in points from the top of the page.")),
+                # HOW MANY ROWS ARE THE HEADING, not just whether there is one.
+                # A real report prints "Revenue" over "Medical & Family" over
+                # "Welfare" -- three lines, one heading -- and calling only the
+                # first of them a heading puts the other two in the table as
+                # rows of data. The count is taken from the box that was drawn
+                # round the column names, and can be corrected here.
+                div(style = "display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap",
+                  div(style = "flex:1;min-width:220px",
+                    radioButtons("rb_hdr", "Its top rows",
+                      c("name the columns, and are not read as data" = "head",
+                        "are data, like every other row" = "data"), selected = "head")),
+                  conditionalPanel("input.rb_hdr == 'head'",
+                    div(style = "width:150px;padding-bottom:10px",
+                      numericInput("rb_hdrn", "How many rows", 1, min = 1, max = 8,
+                                   step = 1, width = "100%")))),
+                div(style = paste("display:flex;justify-content:space-between;",
+                                  "align-items:center;margin:12px 0 4px"),
+                  strong(textOutput("rb_ncols", inline = TRUE)),
+                  actionButton("rb_addcol", "+ Add a column", class = "btn-default btn-sm")),
+                uiOutput("rb_cols"),
+                # One column at a time, edited in a panel that never moves. The
+                # alternative -- a name box on every row -- rebuilds the whole
+                # list on every letter typed into any of them.
+                conditionalPanel("output.rb_col_sel == true",
+                  div(class = "note", style = "margin:8px 0",
+                    uiOutput("rb_col_head"),
+                    fluidRow(
+                      column(7, textInput("rb_cname", "Its name", "", width = "100%")),
+                      column(5, selectInput("rb_ckind", "What is in it",
+                        c("work it out" = "auto", "text" = "text", "money" = "money",
+                          "date" = "date", "number" = "number"),
+                        selected = "auto", width = "100%", selectize = FALSE))),
+                    fluidRow(
+                      column(6, numericInput("rb_cx0", "Left edge", 0, step = 1, width = "100%")),
+                      column(6, numericInput("rb_cx1", "Right edge", 0, step = 1, width = "100%"))),
+                    div(style = "display:flex;gap:6px;flex-wrap:wrap",
+                      actionButton("rb_cdrag", "Drag its width on the page",
+                                   class = "btn-default btn-sm"),
+                      actionButton("rb_cdel", "Delete this column", class = "btn-default btn-sm"),
+                      actionButton("rb_cdone", "Done with this column",
+                                   class = "btn-default btn-sm")))),
+                div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:12px",
+                  actionButton("rb_savetab", "Save this table", class = "btn-primary"),
+                  actionButton("rb_refit", "Work the columns out again", class = "btn-default"),
+                  actionButton("rb_cancel", "Throw it away", class = "btn-default"))),
+              tags$hr(style = "margin:14px 0 8px"),
               strong("Tables on this template"),
               uiOutput("rb_saved")),
+            # ---- VALUES ------------------------------------------------------
             tabPanel("Values", value = "values",
               br(),
-              uiOutput("rb_vstep"),
-              tags$hr(style = "margin:12px 0"),
+              conditionalPanel("output.rb_has_vdraft != true",
+                div(class = "note", style = "margin:0 0 10px",
+                  p(style = "margin:0", strong("A value is one figure or one word, with a label.")),
+                  p(class = "muted", style = "margin:6px 0 0;font-size:12px",
+                    paste("Two drags: the label, then the value. The tool works out",
+                          "which side the value sits on and looks there next time --",
+                          "and you can change that, and both boxes, whenever you like."))),
+                actionButton("rb_addval", "+ Add a value", class = "btn-primary")),
+              conditionalPanel("output.rb_has_vdraft == true",
+                uiOutput("rb_vstep"),
+                fluidRow(
+                  column(7, textInput("rb_vname", "Call this value", "", width = "100%")),
+                  column(5, selectInput("rb_vtype", "What it is",
+                    c("text" = "text", "money" = "money", "date" = "date",
+                      "date range" = "date_range"),
+                    selected = "text", width = "100%", selectize = FALSE))),
+                selectInput("rb_vwhere", "On the next document, look for the value",
+                  c("to the right of the label" = "right",
+                    "to the left of the label"  = "left",
+                    "under the label"           = "below",
+                    "above the label"           = "above"),
+                  selected = "right", width = "100%", selectize = FALSE),
+                div(style = "display:flex;gap:6px;flex-wrap:wrap",
+                  actionButton("rb_vsave", "Save this value", class = "btn-primary"),
+                  actionButton("rb_vlabel", "Re-drag the label", class = "btn-default btn-sm"),
+                  actionButton("rb_vvalue", "Re-drag the value", class = "btn-default btn-sm"),
+                  actionButton("rb_vcancel", "Throw it away", class = "btn-default btn-sm"))),
+              tags$hr(style = "margin:14px 0 8px"),
               strong("Values on this template"),
               uiOutput("rb_vsaved"),
               tags$details(style = "margin-top:12px",
@@ -2200,10 +2319,37 @@ server <- function(input, output, session) {
   # extractor uses, so what the picker offers is what the extraction would do.
   .rb_kind <- function(v) .doc_value_kind(v)
 
+  # ONE ARMED INTENT AT A TIME.
+  #
+  # `mode` is the whole interaction model: it names the single thing the next
+  # gesture will do, it is written across the top of the screen in a sentence,
+  # and it is empty unless a button put something there. A drag with nothing
+  # armed changes nothing and says so -- which is the difference between a tool
+  # you can look around in and one where every mis-drag leaves a table behind.
+  .RB_ASK <- list(
+    title  = c("Drag a box round the table's TITLE.",
+               "Its wording becomes the table's name. No title? Press Skip."),
+    cols   = c("Drag a box round the ROW OF COLUMN NAMES.",
+               "Only the header row - not the rows of data under it."),
+    addcol = c("Drag a box over the NEW COLUMN.",
+               "Anywhere down its width; the top and bottom of the box are ignored."),
+    colpos = c("Drag a box over WHERE THIS COLUMN SHOULD BE.",
+               "Only the left and right edges of the box are used."),
+    start  = c("Click the page where the table STARTS.",
+               "Click just under its column names. Turn the page first if you need to."),
+    end    = c("Click the page where the table ENDS.",
+               "Turn the page first if it carries on past this one."),
+    label  = c("Drag a box round the LABEL.",
+               "The words that name the value - not the value itself."),
+    value  = c("Drag a box round the VALUE.",
+               "The figure or the words that the label is naming."))
+
   rb <- reactiveValues(
     tables = list(), pairs = list(),
-    step = 1L,  draft = NULL,            # the table being built
-    vstep = 1L, vdraft = NULL,           # the value being built
+    draft = NULL,                        # the table being worked on
+    vdraft = NULL,                       # the value being worked on
+    mode = "",                           # what the next gesture means
+    colsel = NA_integer_, colver = 0L,   # which column the edit panel holds
     preview = NULL, outputs = character(0))
 
   # A document handed over from the statement toolkit ("Not a transaction
@@ -2218,6 +2364,12 @@ server <- function(input, output, session) {
   })
   output$rb_has_doc <- reactive({ !is.null(rb_doc()) })
   outputOptions(output, "rb_has_doc", suspendWhenHidden = FALSE)
+  output$rb_has_draft <- reactive({ !is.null(rb$draft) })
+  outputOptions(output, "rb_has_draft", suspendWhenHidden = FALSE)
+  output$rb_has_vdraft <- reactive({ !is.null(rb$vdraft) })
+  outputOptions(output, "rb_has_vdraft", suspendWhenHidden = FALSE)
+  output$rb_col_sel <- reactive({ !is.na(rb$colsel) && !is.null(rb$draft) })
+  outputOptions(output, "rb_col_sel", suspendWhenHidden = FALSE)
 
   rb_input <- reactive({
     p <- rb_doc(); req(p)
@@ -2254,206 +2406,392 @@ server <- function(input, output, session) {
   .rb_pg <- reactive(.clamp_page(input$rb_page, rb_n_pages()))
   .rb_box <- function(br, pg) list(page = as.integer(pg),
     x_min = round(br$xmin, 1), x_max = round(br$xmax, 1),
-    y_min = round(br$ymin, 1), y_max = round(br$ymax, 1))
+    y_min = round(max(br$ymin, 0), 1), y_max = round(max(br$ymax, 0), 1))
   .rb_read <- function(box) {
     w <- .doc_page_words(rb_input(), box$page, rb_frame())
     if (is.null(w)) return("")
     trimws(gsub("\\s+", " ", paste(.doc_box_words(w, box)$text, collapse = " ")))
   }
+  .rb_col_at <- function(tab, x) {
+    cols <- .doc_columns(tab)
+    if (!length(cols) || !is.finite(x)) return(NA_integer_)
+    hit <- which(vapply(cols, function(cc)
+      x >= .doc_num(cc$x_min, -Inf) && x <= .doc_num(cc$x_max, Inf), logical(1)))
+    if (length(hit)) as.integer(hit[1]) else NA_integer_
+  }
 
-  # ---- The drag: whatever the current step is waiting for --------------------
+  # ---- The banner: the one thing the screen is waiting for -------------------
+  output$rb_arm <- renderUI({
+    a <- .RB_ASK[[rb$mode %||% ""]]
+    if (is.null(a)) return(div(style = paste(
+      "display:flex;align-items:center;gap:10px;padding:8px 12px;margin:0 0 10px;",
+      "border-radius:6px;background:#f2f2f2;border-left:4px solid #cccccc"),
+      div(style = "flex:1;font-size:13px;color:#555555",
+        "Nothing is waiting for a drag. Nothing you drag on the page will change anything.")))
+    div(style = paste(
+      "display:flex;align-items:center;gap:12px;padding:10px 14px;margin:0 0 10px;",
+      "border-radius:6px;background:#fff4d6;border-left:5px solid #b7791f"),
+      div(style = "font-size:20px;line-height:1", "\u270e"),
+      div(style = "flex:1;min-width:0",
+        div(style = "font-size:16px;font-weight:700;color:#7a4f00", a[1]),
+        div(style = "font-size:12px;color:#8a6a2a;margin-top:2px", a[2])),
+      actionButton("rb_disarm", "Cancel", class = "btn-default btn-sm"),
+      if (identical(rb$mode, "title"))
+        actionButton("rb_skip_title", "Skip - it has no title", class = "btn-default btn-sm"))
+  })
+  observeEvent(input$rb_disarm, { rb$mode <- "" })
+
+  # ---- Loading a draft: the ONLY place the static inputs are filled in -------
+  # Filling them from an observer on the draft would fight the person typing into
+  # them; filling them here means they are set when a draft ARRIVES and left alone
+  # while it is being edited.
+  .rb_load_draft <- function(d) {
+    rb$draft <- d
+    rb$colsel <- NA_integer_
+    updateTextInput(session, "rb_name", value = as.character(d$name %||% ""))
+    updateRadioButtons(session, "rb_hdr",
+      selected = if (.doc_int(d$header_rows, 1L) == 0L) "data" else "head")
+    updateNumericInput(session, "rb_hdrn", value = max(1L, .doc_int(d$header_rows, 1L)))
+    .rb_push_where(d)
+    invisible(NULL)
+  }
+  # .rb_push_where(d) -- the four position boxes, filled from the draft. Called
+  # when a draft arrives and after every gesture that moves a boundary, never on
+  # a timer: the boxes are what a person types into.
+  .rb_push_where <- function(d) {
+    if (is.null(d)) return(invisible(NULL))
+    updateNumericInput(session, "rb_sp", value = .doc_int(d$start$page, 1L))
+    updateNumericInput(session, "rb_sy", value = round(.doc_num(d$start$y, 0), 1))
+    updateNumericInput(session, "rb_ep", value = .doc_int(d$end$page, .doc_int(d$start$page, 1L)))
+    updateNumericInput(session, "rb_ey", value = round(.doc_num(d$end$y, 0), 1))
+    invisible(NULL)
+  }
+  .rb_load_vdraft <- function(v) {
+    rb$vdraft <- v
+    updateTextInput(session, "rb_vname", value = as.character(v$name %||% ""))
+    updateSelectInput(session, "rb_vtype", selected = as.character(v$type %||% "text"))
+    rel <- .doc_key(v, "where")
+    wh <- if (is.list(rel)) as.character(rel$where %||% "right")[1]
+          else if (is.character(rel) && nzchar(rel[1])) rel[1] else "right"
+    updateSelectInput(session, "rb_vwhere", selected = wh)
+    invisible(NULL)
+  }
+
+  observeEvent(input$rb_addtable, {
+    if (is.null(rb_input())) return()
+    rb$mode <- "title"
+  })
+  observeEvent(input$rb_addval, {
+    if (is.null(rb_input())) return()
+    .rb_load_vdraft(list(name = "", label_text = "", label = NULL, value = NULL,
+                         read = "", type = "text"))
+    rb$mode <- "label"
+  })
+  observeEvent(input$rb_skip_title, {
+    fr <- rb_frame(); pg <- .rb_pg()
+    .rb_load_draft(list(name = sprintf("Table on page %d", pg), title = NULL,
+                        start = list(page = as.integer(pg), y = 0),
+                        end = list(page = as.integer(pg), y = fr$ref_height),
+                        header_rows = 1L, follow = FALSE, min_fill = 0.5,
+                        columns = list(),
+                        anchor = list(header_text = list(), first_column = list())))
+    rb$mode <- "cols"
+  })
+
+  # ---- The drag: whatever is armed, and nothing otherwise --------------------
   observeEvent(input$rb_brush, {
     br <- input$rb_brush; if (is.null(br)) return()
     i <- rb_input(); if (is.null(i)) return()
+    m <- as.character(rb$mode %||% "")
     pg <- .rb_pg(); fr <- rb_frame()
     box <- .rb_box(br, pg)
-    txt <- .rb_read(box)
-    on_tables <- identical(input$rb_tab %||% "tables", "tables")
+    session$resetBrush("rb_brush")
 
-    if (on_tables && rb$step == 1L) {                       # ---- the TITLE
+    # THE FIX FOR "every time I drag it just creates a new table". A drag is a
+    # way of answering a question, and when nothing has asked one it is a way of
+    # looking at the page.
+    if (!nzchar(m)) {
+      showNotification(paste("Nothing was waiting for that drag, so nothing changed.",
+        "Press \u201c+ Add a table\u201d or \u201c+ Add a value\u201d first."),
+        type = "message", duration = 6)
+      return()
+    }
+    if (box$x_max - box$x_min < 2 || box$y_max - box$y_min < 2) {
+      showNotification("That box was too small to read anything from.",
+                       type = "warning", duration = 5)
+      return()
+    }
+
+    if (m == "title") {
+      txt <- .rb_read(box)
       if (!nzchar(txt)) {
         showNotification("Nothing readable in that box - drag round the table's heading.",
                          type = "warning", duration = 6); return()
       }
-      rb$draft <- list(name = txt, title = box,
-                       start = list(page = as.integer(pg), y = box$y_max),
-                       end = list(page = as.integer(pg), y = fr$ref_height),
-                       header_rows = 1L, follow = FALSE, min_fill = 0.5,
-                       columns = list(),
-                       anchor = list(header_text = list(), first_column = list()))
-      rb$step <- 2L
-      session$resetBrush("rb_brush")
+      .rb_load_draft(list(name = txt, title = box,
+                          start = list(page = as.integer(pg), y = box$y_max),
+                          end = list(page = as.integer(pg), y = fr$ref_height),
+                          header_rows = 1L, follow = FALSE, min_fill = 0.5,
+                          columns = list(),
+                          anchor = list(header_text = list(), first_column = list())))
+      rb$mode <- "cols"
       return()
     }
 
-    if (on_tables && rb$step == 2L) {                       # ---- the COLUMN NAMES
+    if (m == "cols") {
+      d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
       cols <- tryCatch(doc_columns_from_box(i, box, fr), error = function(e) list())
       if (length(cols) < 1L) {
         showNotification("No column names readable in that box - drag round the row of headings.",
                          type = "warning", duration = 7); return()
       }
-      d <- rb$draft
       d$columns <- cols
       d$start <- list(page = as.integer(pg), y = box$y_min)
-      d$header_rows <- 1L
+      # THE HEADING IS AS TALL AS THE BOX THAT WAS DRAWN ROUND IT. A person
+      # dragging round a three-line block of column names has said the block is
+      # the heading; skipping only its first line puts the other two in the
+      # table as data. (Seen on a real report: "Medical &" and "Public Health"
+      # arrived as rows 1 and 2 of the figures.)
+      #
+      # COUNTED IN THE READER'S OWN LINE GROUPING, not the drag box's. The reader
+      # learns its row spacing from the whole table, where the data rows are
+      # further apart than the heading's baselines are -- so six printed lines of
+      # heading can be three rows to it. A count measured any other way is a
+      # count of something the reader never sees, and skipping six of ITS rows
+      # eats the first three rows of figures.
+      wpg <- .doc_page_words(i, pg, fr)
+      nlines <- if (is.null(wpg)) 1L else {
+        below <- wpg[wpg$cy >= box$y_min, , drop = FALSE]
+        lns <- .doc_lines(below, d$row_tol)
+        sum(vapply(lns, function(l)
+          as.numeric(attr(l, "top")) <= box$y_max + 1, logical(1)))
+      }
+      d$header_rows <- max(1L, min(8L, as.integer(nlines)))
       d$anchor$header_text <- as.list(vapply(cols, function(cc) cc$name, character(1)))
       d$end <- tryCatch(doc_auto_end(i, d, fr), error = function(e) d$end)
       rb$draft <- d
-      rb$step <- 3L
-      session$resetBrush("rb_brush")
-      showNotification(sprintf("%d column%s, and it ends on page %d. Check it below.",
+      rb$mode <- ""
+      .rb_push_where(d)
+      updateRadioButtons(session, "rb_hdr", selected = "head")
+      updateNumericInput(session, "rb_hdrn", value = .doc_int(d$header_rows, 1L))
+      showNotification(sprintf(paste("%d column%s, ending on page %d. Everything below can",
+                                     "be changed - names, edges, where it starts and stops."),
                                length(cols), if (length(cols) == 1L) "" else "s",
-                               as.integer(d$end$page)), type = "message", duration = 6)
+                               .doc_int(d$end$page, pg)),
+                       type = "message", duration = 7)
       return()
     }
 
-    if (on_tables && rb$step == 3L) {                       # ---- ADD one column band
-      d <- rb$draft; if (is.null(d)) return()
+    if (m == "addcol") {
+      d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
       e <- doc_column_edges(d)
       e <- if (is.null(e) || length(e) < 2L) c(box$x_min, box$x_max)
-           else doc_edge_click(doc_edge_click(e, box$x_min, tol = 3),
-                               box$x_max, tol = 3)
+           else doc_edge_click(doc_edge_click(e, box$x_min, tol = 3), box$x_max, tol = 3)
       nm <- tryCatch(doc_header_names(i, d, fr, e), error = function(e2) character(0))
       d$columns <- doc_columns_from_edges(e, old = .doc_columns(d), names = nm)
       rb$draft <- d
-      session$resetBrush("rb_brush")
+      rb$mode <- ""
+      # Select what the drag just made, so naming it is the obvious next thing.
+      rb$colsel <- .rb_col_at(d, (box$x_min + box$x_max) / 2)
+      rb$colver <- rb$colver + 1L
       return()
     }
 
-    if (!on_tables && rb$vstep == 1L) {                     # ---- the LABEL
+    if (m == "colpos") {
+      d <- rb$draft; j <- rb$colsel
+      if (is.null(d) || is.na(j)) { rb$mode <- ""; return() }
+      e <- doc_column_edges(d); if (is.null(e)) { rb$mode <- ""; return() }
+      old <- .doc_columns(d)
+      keep_nm <- if (j <= length(old)) as.character(old[[j]]$name %||% "")[1] else ""
+      keep_ty <- if (j <= length(old)) as.character(old[[j]]$type %||% "auto")[1] else "auto"
+      e2 <- doc_set_column_band(e, j, box$x_min, box$x_max)
+      nm <- tryCatch(doc_header_names(i, d, fr, e2), error = function(e3) character(0))
+      cols <- doc_columns_from_edges(e2, old = old, names = nm)
+      # THE NAME IS THE PERSON'S, NOT THE HEADER ROW'S. Moving a column is not a
+      # request to rename it back to whatever is printed above its new position.
+      jj <- .rb_col_at(list(columns = cols), (box$x_min + box$x_max) / 2)
+      if (!is.na(jj) && nzchar(keep_nm)) { cols[[jj]]$name <- keep_nm; cols[[jj]]$type <- keep_ty }
+      d$columns <- cols
+      rb$draft <- d
+      rb$colsel <- jj
+      rb$colver <- rb$colver + 1L
+      rb$mode <- ""
+      return()
+    }
+
+    if (m == "label") {
+      txt <- .rb_read(box)
       if (!nzchar(txt)) {
-        showNotification("Nothing readable in that box - drag round the label.",
+        showNotification("Nothing readable in that box - drag round the label's words.",
                          type = "warning", duration = 6); return()
       }
-      # AUTO-MOVE TO THE VALUE. The value is nearly always the next thing along the
-      # same line, or the line under it -- so offer that rather than asking for a
-      # second drag that will land in the same place.
-      w <- .doc_page_words(i, pg, fr)
-      guess <- NULL
-      if (!is.null(w)) {
-        right <- w[w$cx > box$x_max & w$cy >= box$y_min & w$cy <= box$y_max, , drop = FALSE]
-        below <- w[w$cy > box$y_max & w$cy <= box$y_max + 30 &
-                   w$cx >= box$x_min - 6 & w$cx <= box$x_max + 160, , drop = FALSE]
-        pick <- if (nrow(right)) right else below
-        if (nrow(pick)) {
-          pick <- pick[order(pick$y, pick$x), , drop = FALSE]
-          keep <- pick$y <= min(pick$y) + 4
-          pick <- pick[keep, , drop = FALSE]
-          guess <- list(page = as.integer(pg),
-                        x_min = round(min(pick$x) - 2, 1),
-                        x_max = round(max(pick$x + pick$width) + 2, 1),
-                        y_min = round(min(pick$y) - 2, 1),
-                        y_max = round(max(pick$y + pick$height) + 2, 1))
-        }
+      v <- rb$vdraft %||% list(name = "", type = "text", read = "")
+      v$label <- box
+      v$label_text <- txt
+      if (!nzchar(trimws(as.character(v$name %||% "")))) v$name <- doc_suggest_name(txt)
+      # NO GUESSING AT THE VALUE. A guess that is right nine times in ten is a
+      # habit of not checking, and the tenth is wrong in a file nobody re-reads.
+      # The second drag is asked for, out loud.
+      if (is.list(v$value)) {
+        v$where <- .doc_pair_rel(v$label, v$value)
+        .rb_load_vdraft(v); rb$mode <- ""
+      } else {
+        .rb_load_vdraft(v); rb$mode <- "value"
       }
-      rb$vdraft <- list(name = doc_suggest_name(txt), label_text = txt, label = box,
-                        value = guess, read = if (is.null(guess)) "" else .rb_read(guess))
-      rb$vstep <- 2L
-      session$resetBrush("rb_brush")
       return()
     }
 
-    if (!on_tables && rb$vstep == 2L) {                     # ---- the VALUE
-      v <- rb$vdraft; if (is.null(v)) return()
-      v$value <- box; v$read <- txt
-      rb$vdraft <- v
-      session$resetBrush("rb_brush")
+    if (m == "value") {
+      v <- rb$vdraft; if (is.null(v)) { rb$mode <- ""; return() }
+      txt <- .rb_read(box)
+      if (!nzchar(txt)) {
+        showNotification("Nothing readable in that box - drag round the value itself.",
+                         type = "warning", duration = 6); return()
+      }
+      v$value <- box
+      v$read <- txt
+      v$type <- .doc_value_kind(txt)
+      if (is.list(v$label)) v$where <- .doc_pair_rel(v$label, box)
+      .rb_load_vdraft(v)
+      rb$mode <- ""
       return()
     }
   })
 
-  # ---- The click: at step 3 it moves where the table ENDS --------------------
+  # ---- The click: only ever moves the start or the end ----------------------
   observeEvent(input$rb_click, {
     cl <- input$rb_click; if (is.null(cl)) return()
-    if (!identical(input$rb_tab %||% "tables", "tables") || rb$step != 3L) return()
-    d <- rb$draft; if (is.null(d)) return()
-    pg <- .rb_pg(); y <- round(as.numeric(cl$y), 1)
-    p0 <- as.integer(d$start$page)
-    if (pg < p0 || (pg == p0 && y <= .doc_num(d$start$y, 0))) {
-      showNotification("That is above where the table starts - not applied.",
-                       type = "warning", duration = 6); return()
+    m <- as.character(rb$mode %||% "")
+    if (!(m %in% c("start", "end"))) return()
+    d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
+    pg <- .rb_pg(); y <- round(max(as.numeric(cl$y), 0), 1)
+    if (m == "start") {
+      p1 <- .doc_int(d$end$page, pg)
+      if (pg > p1 || (pg == p1 && y >= .doc_num(d$end$y, Inf))) {
+        showNotification("That is at or past where the table ends - not applied.",
+                         type = "warning", duration = 6); return()
+      }
+      d$start <- list(page = as.integer(pg), y = y)
+    } else {
+      p0 <- .doc_int(d$start$page, pg)
+      if (pg < p0 || (pg == p0 && y <= .doc_num(d$start$y, 0))) {
+        showNotification("That is at or above where the table starts - not applied.",
+                         type = "warning", duration = 6); return()
+      }
+      d$end <- list(page = as.integer(pg), y = y)
     }
-    d$end <- list(page = as.integer(pg), y = y)
     rb$draft <- d
+    rb$mode <- ""
+    .rb_push_where(d)
   })
 
-  # ---- The step card, Tables -------------------------------------------------
+  # ---- The table being worked on --------------------------------------------
   output$rb_step <- renderUI({
-    n_saved <- length(rb$tables)
-    if (rb$step == 1L) return(tagList(
-      div(class = "note", style = "margin:0 0 10px",
-        strong(sprintf("Step 1 of 3 %s Name it", "\u00b7")),
-        p(style = "margin:6px 0 0",
-          "Drag a box round the table's ", strong("title"), " on the page."),
-        p(class = "muted", style = "margin:6px 0 0;font-size:12px",
-          "No title? Drag a box round its column names instead and rename it after.")),
-      if (n_saved) actionButton("rb_skip_title", "This table has no title",
-                                class = "btn-default btn-sm")
-      else actionButton("rb_skip_title", "This table has no title",
-                        class = "btn-default btn-sm")))
-    d <- rb$draft
-    if (rb$step == 2L) return(div(class = "note", style = "margin:0 0 10px",
-      strong(sprintf("Step 2 of 3 %s Its columns", "\u00b7")),
-      p(style = "margin:6px 0 0", "Drag a box round the ",
-        strong("row of column names"), " - the header row."),
-      p(class = "muted", style = "margin:6px 0 0;font-size:12px",
-        sprintf("Naming it: %s", d$name %||% "")),
-      div(style = "margin-top:8px",
-          actionButton("rb_back1", "Back", class = "btn-default btn-sm"))))
-    # step 3
-    cols <- .doc_columns(d)
-    tagList(
-      div(class = "note", style = "margin:0 0 10px",
-        strong(sprintf("Step 3 of 3 %s Check it", "\u00b7")),
-        p(style = "margin:6px 0 0", sprintf(
-          "%s: page %d to page %d. %d column%s.", d$name %||% "This table",
-          as.integer(d$start$page), as.integer(d$end$page %||% d$start$page),
-          length(cols), if (length(cols) == 1L) "" else "s")),
-        p(class = "muted", style = "margin:6px 0 0;font-size:12px",
-          "Click the page to move where it ENDS. Drag a box to add a column it missed.")),
-      textInput("rb_name", "Call it", d$name %||% "", width = "100%"),
-      # SAY WHICH WAY IT IS, not just offer the switch. "Include the header?" is
-      # a question about a word; "the top row is a heading and is NOT read as
-      # data" is a statement about this table that can be checked against the
-      # picture beside it.
-      div(class = if (.doc_int(d$header_rows, 1L) == 0L) "note" else "",
-          style = "margin:0 0 8px",
-        div(style = "font-size:13px", if (.doc_int(d$header_rows, 1L) == 0L)
-          HTML("Every row inside the boundary is read as <b>data</b>, including the top one.")
-          else HTML("The top row is a <b>heading</b>. It names the columns and is <b>not</b> read as data.")),
-        checkboxInput("rb_hdr_in", "That top row is data, not a heading",
-                      .doc_int(d$header_rows, 1L) == 0L)),
-      strong("Columns"),
-      uiOutput("rb_cols"),
-      div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:10px",
-        actionButton("rb_savetab", "Save this table", class = "btn-primary"),
-        actionButton("rb_refit", "Work them out again", class = "btn-default"),
-        actionButton("rb_cancel", "Throw it away", class = "btn-default")))
+    d <- rb$draft; if (is.null(d)) return(NULL)
+    p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+    div(style = "margin:0 0 8px;font-size:13px;color:#555555",
+      strong(if (p1 > p0) sprintf("Pages %d to %d", p0, p1) else sprintf("Page %d", p0)),
+      sprintf(" \u00b7 %d column%s \u00b7 not saved yet",
+              length(.doc_columns(d)), if (length(.doc_columns(d)) == 1L) "" else "s"))
+  })
+  output$rb_ncols <- renderText({
+    n <- length(.doc_columns(rb$draft))
+    if (n == 1L) "Columns (1)" else sprintf("Columns (%d)", n)
   })
 
-  observeEvent(input$rb_skip_title, {
-    fr <- rb_frame(); pg <- .rb_pg()
-    rb$draft <- list(name = sprintf("Table on page %d", pg), title = NULL,
-                     start = list(page = as.integer(pg), y = 0),
-                     end = list(page = as.integer(pg), y = fr$ref_height),
-                     header_rows = 1L, follow = FALSE, min_fill = 0.5,
-                     columns = list(),
-                     anchor = list(header_text = list(), first_column = list()))
-    rb$step <- 2L
+  # WHERE IT STARTS AND WHERE IT STOPS, in words, with a button beside each.
+  # These two numbers decide every row that comes out, and they used to be a
+  # sentence in a hint and an undocumented click on the picture.
+  output$rb_where <- renderUI({
+    d <- rb$draft; if (is.null(d)) return(NULL)
+    fr <- rb_frame()
+    p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+    down <- function(y) sprintf("%.0f%% down the page",
+      100 * min(max(.doc_num(y, 0) / max(fr$ref_height, 1), 0), 1))
+    row <- function(dot, colr, what, pg, y, setid, goid) div(
+      style = "display:flex;align-items:center;gap:8px;margin:0 0 4px",
+      span(style = sprintf("color:%s;font-size:15px;line-height:1", colr), dot),
+      div(style = "flex:1;min-width:0;font-size:13px",
+        strong(what), sprintf(" page %d, %s", pg, down(y))),
+      actionButton(goid, "Show me", class = "btn-default btn-sm"),
+      actionButton(setid, "Move it", class = "btn-primary btn-sm"))
+    div(class = "note", style = "margin:0 0 10px;padding:8px 10px",
+      row("\u25b2", PALETTE$ok, "Starts", p0, d$start$y, "rb_setstart", "rb_gostart"),
+      row("\u25bc", PALETTE$bad, "Ends", p1, d$end$y, "rb_setend", "rb_goend"),
+      div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px",
+        actionButton("rb_endauto", "Work the end out for me", class = "btn-default btn-sm"),
+        actionButton("rb_endpage", "End at the bottom of its page", class = "btn-default btn-sm"),
+        actionButton("rb_endlast", "End at the bottom of the last page",
+                     class = "btn-default btn-sm")))
   })
-  observeEvent(input$rb_back1, { rb$step <- 1L; rb$draft <- NULL })
-  observeEvent(input$rb_cancel, { rb$step <- 1L; rb$draft <- NULL })
-
-  observeEvent(input$rb_name, {
+  observeEvent(input$rb_setstart, { if (!is.null(rb$draft)) rb$mode <- "start" })
+  observeEvent(input$rb_setend,   { if (!is.null(rb$draft)) rb$mode <- "end" })
+  observeEvent(input$rb_gostart, {
     d <- rb$draft; if (is.null(d)) return()
-    nm <- trimws(input$rb_name %||% "")
+    updateNumericInput(session, "rb_page", value = .doc_int(d$start$page, 1L))
+  })
+  observeEvent(input$rb_goend, {
+    d <- rb$draft; if (is.null(d)) return()
+    updateNumericInput(session, "rb_page", value = .doc_int(d$end$page, 1L))
+  })
+  observeEvent(input$rb_endauto, {
+    d <- rb$draft; if (is.null(d)) return()
+    e <- tryCatch(doc_auto_end(rb_input(), d, rb_frame()), error = function(x) NULL)
+    if (is.null(e)) { showNotification("Couldn't work out where it ends - move it by hand.",
+                                       type = "warning", duration = 6); return() }
+    d$end <- e; rb$draft <- d; .rb_push_where(d)
+  })
+  observeEvent(input$rb_endpage, {
+    d <- rb$draft; if (is.null(d)) return()
+    d$end <- list(page = .doc_int(d$start$page, 1L), y = rb_frame()$ref_height)
+    rb$draft <- d; .rb_push_where(d)
+  })
+  observeEvent(input$rb_endlast, {
+    d <- rb$draft; if (is.null(d)) return()
+    n <- rb_n_pages(); if (is.na(n)) return()
+    d$end <- list(page = as.integer(n), y = rb_frame()$ref_height)
+    rb$draft <- d; .rb_push_where(d)
+  })
+
+  observeEvent(input$rb_cancel, { rb$draft <- NULL; rb$colsel <- NA_integer_; rb$mode <- "" })
+
+  # Typing is debounced before it reaches the draft: the list beside the box is
+  # drawn from the draft, and redrawing it on every letter is what "it updates
+  # and glitches while I type" was.
+  rb_name_d <- debounce(reactive(input$rb_name), 500)
+  observeEvent(rb_name_d(), {
+    d <- rb$draft; if (is.null(d)) return()
+    nm <- trimws(rb_name_d() %||% "")
     if (nzchar(nm) && !identical(nm, d$name)) { d$name <- nm; rb$draft <- d }
   }, ignoreInit = TRUE)
 
-  observeEvent(input$rb_hdr_in, {
+  # The choice and the count are ONE setting, so they are read together: "data"
+  # means zero heading rows, "head" means however many the box said.
+  observeEvent(list(input$rb_hdr, input$rb_hdrn), {
     d <- rb$draft; if (is.null(d)) return()
-    want <- if (isTRUE(input$rb_hdr_in)) 0L else 1L
+    want <- if (identical(input$rb_hdr, "data")) 0L
+            else max(1L, min(8L, .doc_int(input$rb_hdrn, 1L)))
+    if (is.na(want)) return()
     if (!identical(.doc_int(d$header_rows, 1L), want)) { d$header_rows <- want; rb$draft <- d }
+  }, ignoreInit = TRUE)
+
+  # Typed positions, debounced, and refused where a click would be refused: an
+  # end before its start is not a boundary, it is a table with no rows.
+  rb_where_d <- debounce(reactive(c(input$rb_sp, input$rb_sy, input$rb_ep, input$rb_ey)), 700)
+  observeEvent(rb_where_d(), {
+    d <- rb$draft; if (is.null(d)) return()
+    sp <- .doc_int(input$rb_sp); sy <- .doc_num(input$rb_sy)
+    ep <- .doc_int(input$rb_ep); ey <- .doc_num(input$rb_ey)
+    if (any(is.na(c(sp, sy, ep, ey))) || sp < 1L || ep < 1L || sy < 0 || ey < 0) return()
+    if (ep < sp || (ep == sp && ey <= sy)) {
+      showNotification("That would end the table at or before it starts - not applied.",
+                       type = "warning", duration = 6); return()
+    }
+    if (identical(.doc_int(d$start$page, 1L), sp) && abs(.doc_num(d$start$y, 0) - sy) < 0.05 &&
+        identical(.doc_int(d$end$page, 1L), ep) && abs(.doc_num(d$end$y, 0) - ey) < 0.05) return()
+    d$start <- list(page = sp, y = round(sy, 1))
+    d$end <- list(page = ep, y = round(ey, 1))
+    rb$draft <- d
   }, ignoreInit = TRUE)
 
   observeEvent(input$rb_refit, {
@@ -2462,91 +2800,165 @@ server <- function(input, output, session) {
     if (!length(fit)) { showNotification("Nothing readable between the start and the end.",
                                          type = "warning", duration = 6); return() }
     d$columns <- fit; rb$draft <- d
+    rb$colsel <- NA_integer_
+  })
+  observeEvent(input$rb_addcol, {
+    if (is.null(rb$draft)) return()
+    rb$mode <- "addcol"
   })
 
-  # The columns, each with its own kind and its own remove. A list you can act on
-  # beats a picker that makes you select before you can do anything.
+  # ---- The columns: a list you read, and one panel that edits ---------------
   .RB_MAX_COLS <- 24L
   output$rb_cols <- renderUI({
     d <- rb$draft; cols <- .doc_columns(d)
     if (!length(cols)) return(div(class = "note", style = "margin:6px 0",
-      "No columns yet. Drag a box round the row of column names."))
-    nm <- .doc_column_names(d)
+      paste("No columns yet. Drag a box round the row of column names, or press",
+            "\u201c+ Add a column\u201d and drag one at a time.")))
+    nm <- .doc_column_names(d); sel <- rb$colsel
     lapply(seq_along(cols), function(j) {
       if (j > .RB_MAX_COLS) return(NULL)
-      fluidRow(style = "margin:0 0 2px",
-        column(6, div(style = "padding-top:6px", strong(nm[j]),
-                      span(class = "muted", style = "font-size:11px",
-                           sprintf(" %.0f-%.0f", .doc_num(cols[[j]]$x_min, 0),
-                                   .doc_num(cols[[j]]$x_max, 0))))),
-        # selectize = FALSE: a five-item list does not need a search box, and a
-        # selectize widget HIDES the real <select> behind a div -- which is a lot
-        # of DOM for twenty-four rows and unreachable by anything driving the page.
-        column(4, selectInput(paste0("rb_ck_", j), NULL,
-                              c("auto", "text", "money", "date", "number"),
-                              selected = as.character(cols[[j]]$type %||% "auto"),
-                              width = "100%", selectize = FALSE)),
-        column(2, actionButton(paste0("rb_cx_", j), "\u00d7",
-                               class = "btn-default btn-sm", title = "remove this column")))
+      on <- !is.na(sel) && sel == j
+      div(style = sprintf(paste("display:flex;align-items:center;gap:6px;padding:3px 6px;",
+                                "margin:0 0 2px;border-radius:0 4px 4px 0;background:%s;",
+                                "border-left:3px solid %s"),
+                          if (on) "#fff4d6" else "#f7f7f7", if (on) "#b7791f" else "#dddddd"),
+        span(class = "muted", style = "font-size:11px;width:14px", j),
+        span(style = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+             strong(nm[j])),
+        span(class = "muted", style = "font-size:11px;white-space:nowrap",
+             sprintf("%.0f\u2013%.0f", .doc_num(cols[[j]]$x_min, 0), .doc_num(cols[[j]]$x_max, 0))),
+        span(class = "muted", style = "font-size:11px",
+             as.character(cols[[j]]$type %||% "auto")),
+        actionButton(paste0("rb_cs_", j), "Edit", class = "btn-default btn-sm"),
+        actionButton(paste0("rb_cx_", j), "\u00d7", class = "btn-default btn-sm",
+                     title = "delete this column"))
     })
+  })
+  output$rb_col_head <- renderUI({
+    d <- rb$draft; j <- rb$colsel
+    cols <- .doc_columns(d)
+    if (is.null(d) || is.na(j) || j > length(cols)) return(NULL)
+    div(style = "font-size:13px;margin:0 0 6px",
+      strong(sprintf("Column %d of %d", j, length(cols))),
+      span(class = "muted", " \u00b7 everything about it can be changed"))
   })
 
   # One observer per possible column, created ONCE: a Shiny observer cannot attach
   # to a control that does not exist yet, and creating them inside the renderUI
   # would stack another on every column each time the list redrew.
+  .rb_drop_col <- function(j) {
+    d <- rb$draft; if (is.null(d)) return()
+    e <- doc_column_edges(d); if (is.null(e) || length(e) < 3L) return()
+    if (j >= length(e)) return()
+    # Removing a column means removing the divider on its right, so the column to
+    # its left grows into the space. Removing the LAST one takes the right edge
+    # back instead.
+    k <- if (j == length(e) - 1L) length(e) - 1L else j + 1L
+    e2 <- e[-k]
+    nm <- tryCatch(doc_header_names(rb_input(), d, rb_frame(), e2),
+                   error = function(e3) character(0))
+    d$columns <- doc_columns_from_edges(e2, old = .doc_columns(d), names = nm)
+    rb$draft <- d
+    rb$colsel <- NA_integer_
+  }
   lapply(seq_len(.RB_MAX_COLS), function(j) {
-    observeEvent(input[[paste0("rb_cx_", j)]], {
-      d <- rb$draft; if (is.null(d)) return()
-      e <- doc_column_edges(d); if (is.null(e) || length(e) < 3L) return()
-      if (j >= length(e)) return()
-      # Removing a column means removing the divider on its right, so the column
-      # to its left grows into the space. Removing the LAST one takes the right
-      # edge back instead.
-      k <- if (j == length(e) - 1L) length(e) - 1L else j + 1L
-      e2 <- e[-k]
-      # Re-read the names from the header row: the surviving column now covers two
-      # header cells, and "column_2" is nobody's column name when the page says
-      # "Type Opening".
-      nm <- tryCatch(doc_header_names(rb_input(), d, rb_frame(), e2),
-                     error = function(e3) character(0))
-      d$columns <- doc_columns_from_edges(e2, old = .doc_columns(d), names = nm)
-      rb$draft <- d
-    }, ignoreInit = TRUE)
-    observeEvent(input[[paste0("rb_ck_", j)]], {
-      d <- rb$draft; if (is.null(d)) return()
-      cols <- .doc_columns(d); if (j > length(cols)) return()
-      v <- input[[paste0("rb_ck_", j)]] %||% "auto"
-      if (!identical(as.character(cols[[j]]$type %||% "auto"), v)) {
-        cols[[j]]$type <- v; d$columns <- cols; rb$draft <- d
-      }
+    observeEvent(input[[paste0("rb_cx_", j)]], .rb_drop_col(j), ignoreInit = TRUE)
+    observeEvent(input[[paste0("rb_cs_", j)]], {
+      if (j > length(.doc_columns(rb$draft))) return()
+      rb$colsel <- j
+      rb$colver <- rb$colver + 1L
     }, ignoreInit = TRUE)
   })
+
+  # Filling the edit panel: on selection only, never while it is being typed in.
+  observeEvent(list(rb$colsel, rb$colver), {
+    j <- rb$colsel; d <- rb$draft
+    if (is.na(j) || is.null(d)) return()
+    cols <- .doc_columns(d)
+    if (j > length(cols)) { rb$colsel <- NA_integer_; return() }
+    cc <- cols[[j]]
+    updateTextInput(session, "rb_cname", value = .doc_column_names(d)[j])
+    updateSelectInput(session, "rb_ckind", selected = as.character(cc$type %||% "auto"))
+    updateNumericInput(session, "rb_cx0", value = round(.doc_num(cc$x_min, 0), 1))
+    updateNumericInput(session, "rb_cx1", value = round(.doc_num(cc$x_max, 0), 1))
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$rb_cdone, { rb$colsel <- NA_integer_; if (identical(rb$mode, "colpos")) rb$mode <- "" })
+  observeEvent(input$rb_cdel,  { j <- rb$colsel; if (!is.na(j)) .rb_drop_col(j) })
+  observeEvent(input$rb_cdrag, { if (!is.na(rb$colsel)) rb$mode <- "colpos" })
+
+  rb_cname_d <- debounce(reactive(input$rb_cname), 500)
+  observeEvent(rb_cname_d(), {
+    d <- rb$draft; j <- rb$colsel
+    if (is.null(d) || is.na(j)) return()
+    cols <- .doc_columns(d); if (j > length(cols)) return()
+    nm <- trimws(rb_cname_d() %||% "")
+    if (!nzchar(nm) || identical(nm, as.character(cols[[j]]$name %||% ""))) return()
+    cols[[j]]$name <- nm; d$columns <- cols; rb$draft <- d
+  }, ignoreInit = TRUE)
+  observeEvent(input$rb_ckind, {
+    d <- rb$draft; j <- rb$colsel
+    if (is.null(d) || is.na(j)) return()
+    cols <- .doc_columns(d); if (j > length(cols)) return()
+    v <- input$rb_ckind %||% "auto"
+    if (identical(as.character(cols[[j]]$type %||% "auto"), v)) return()
+    cols[[j]]$type <- v; d$columns <- cols; rb$draft <- d
+  }, ignoreInit = TRUE)
+
+  # TYPING THE EDGES IS THE SAME REQUEST AS DRAGGING THEM, so it goes through the
+  # same function: the neighbours give way and the tiling holds.
+  rb_cx_d <- debounce(reactive(c(input$rb_cx0, input$rb_cx1)), 700)
+  observeEvent(rb_cx_d(), {
+    d <- rb$draft; j <- rb$colsel
+    if (is.null(d) || is.na(j)) return()
+    cols <- .doc_columns(d); if (j > length(cols)) return()
+    x0 <- .doc_num(input$rb_cx0); x1 <- .doc_num(input$rb_cx1)
+    if (is.na(x0) || is.na(x1) || x1 - x0 < 1) return()
+    if (abs(.doc_num(cols[[j]]$x_min, 0) - x0) < 0.5 &&
+        abs(.doc_num(cols[[j]]$x_max, 0) - x1) < 0.5) return()
+    e <- doc_column_edges(d); if (is.null(e)) return()
+    keep_nm <- as.character(cols[[j]]$name %||% "")[1]
+    keep_ty <- as.character(cols[[j]]$type %||% "auto")[1]
+    e2 <- doc_set_column_band(e, j, x0, x1)
+    nm <- tryCatch(doc_header_names(rb_input(), d, rb_frame(), e2),
+                   error = function(e3) character(0))
+    cols2 <- doc_columns_from_edges(e2, old = cols, names = nm)
+    jj <- .rb_col_at(list(columns = cols2), (x0 + x1) / 2)
+    if (!is.na(jj) && nzchar(keep_nm)) { cols2[[jj]]$name <- keep_nm; cols2[[jj]]$type <- keep_ty }
+    d$columns <- cols2; rb$draft <- d
+    rb$colsel <- jj
+  }, ignoreInit = TRUE)
 
   observeEvent(input$rb_savetab, {
     d <- rb$draft; if (is.null(d)) return()
     if (length(.doc_columns(d)) < 1L) {
       showNotification("This table has no columns yet.", type = "warning"); return()
     }
+    d$name <- trimws(as.character(input$rb_name %||% d$name %||% ""))
+    if (!nzchar(d$name)) d$name <- sprintf("Table %d", length(rb$tables) + 1L)
     d$anchor$first_column <- list()
     rb$tables <- c(rb$tables, list(d))
-    rb$draft <- NULL; rb$step <- 1L
-    showNotification(sprintf("Saved \u201c%s\u201d. Now the next table.", d$name %||% ""),
-                     type = "message", duration = 5)
+    rb$draft <- NULL; rb$colsel <- NA_integer_; rb$mode <- ""
+    showNotification(sprintf("Saved \u201c%s\u201d. It can be edited again from the list below.",
+                             d$name), type = "message", duration = 5)
   })
 
   output$rb_saved <- renderUI({
     if (!length(rb$tables)) return(p(class = "muted", style = "margin:6px 0",
-      "None yet. Every table you save appears here."))
+      "None yet. Every table you save appears here, and every one can be edited again."))
     lapply(seq_along(rb$tables), function(i) {
       tb <- rb$tables[[i]]
-      p0 <- as.integer(tb$start$page); p1 <- as.integer(tb$end$page %||% p0)
-      div(style = "padding:5px 7px;border-left:3px solid #0f7a37;margin-bottom:3px;background:#f7f7f7;border-radius:0 4px 4px 0",
+      p0 <- .doc_int(tb$start$page, 1L); p1 <- .doc_int(tb$end$page, p0)
+      nm <- .doc_column_names(tb)
+      div(style = paste("padding:5px 7px;border-left:3px solid #0f7a37;margin-bottom:3px;",
+                        "background:#f7f7f7;border-radius:0 4px 4px 0"),
         div(style = "display:flex;justify-content:space-between;align-items:center;gap:8px",
-          div(strong(tb$name %||% sprintf("Table %d", i)),
-              div(class = "muted", style = "font-size:12px",
-                  sprintf("%s \u00b7 %d columns",
-                          if (p1 > p0) sprintf("pages %d-%d", p0, p1) else sprintf("page %d", p0),
-                          length(.doc_columns(tb))))),
+          div(style = "min-width:0",
+            strong(tb$name %||% sprintf("Table %d", i)),
+            div(class = "muted", style = "font-size:12px",
+                sprintf("%s \u00b7 %s",
+                        if (p1 > p0) sprintf("pages %d-%d", p0, p1) else sprintf("page %d", p0),
+                        if (length(nm)) paste(nm, collapse = ", ") else "no columns"))),
           div(style = "white-space:nowrap",
             actionButton(paste0("rb_ed_", i), "Edit", class = "btn-default btn-sm"),
             actionButton(paste0("rb_rm_", i), "Remove", class = "btn-default btn-sm"))))
@@ -2563,79 +2975,126 @@ server <- function(input, output, session) {
       if (i > length(rb$tables)) return()
       # Editing takes it back OUT of the list and into the draft, so there is one
       # code path for "the table being worked on" and Save always means the same.
-      rb$draft <- rb$tables[[i]]
+      d <- rb$tables[[i]]
       rb$tables <- rb$tables[-i]
-      rb$step <- 3L
-      updateNumericInput(session, "rb_page", value = as.integer(rb$draft$start$page))
+      .rb_load_draft(d)
+      rb$mode <- ""
+      updateNumericInput(session, "rb_page", value = .doc_int(d$start$page, 1L))
+      updateTabsetPanel(session, "rb_tab", selected = "tables")
     }, ignoreInit = TRUE)
     observeEvent(input[[paste0("rb_vrm_", i)]], {
       if (i > length(rb$pairs)) return()
       rb$pairs <- rb$pairs[-i]
     }, ignoreInit = TRUE)
+    observeEvent(input[[paste0("rb_ved_", i)]], {
+      if (i > length(rb$pairs)) return()
+      v <- rb$pairs[[i]]
+      rb$pairs <- rb$pairs[-i]
+      .rb_load_vdraft(v)
+      rb$mode <- ""
+      lb <- .doc_key(v, "label"); vb <- .doc_key(v, "value")
+      pg <- .doc_int(.doc_key(vb, "page") %||% .doc_key(lb, "page"), 1L)
+      updateNumericInput(session, "rb_page", value = pg)
+      updateTabsetPanel(session, "rb_tab", selected = "values")
+    }, ignoreInit = TRUE)
   })
 
-  # ---- The step card, Values -------------------------------------------------
+  # ---- The value being worked on --------------------------------------------
   output$rb_vstep <- renderUI({
-    if (rb$vstep == 1L) return(div(class = "note", style = "margin:0 0 10px",
-      strong(sprintf("Step 1 of 2 %s The label", "\u00b7")),
-      p(style = "margin:6px 0 0", "Drag a box round the value's ",
-        strong("label"), " - the words that name it."),
-      p(class = "muted", style = "margin:6px 0 0;font-size:12px",
-        "The tool then looks beside it for the value and offers what it finds.")))
-    v <- rb$vdraft
-    tagList(
-      div(class = "note", style = "margin:0 0 10px",
-        strong(sprintf("Step 2 of 2 %s Its value", "\u00b7")),
-        p(style = "margin:6px 0 0",
-          HTML(sprintf("Label: <b>%s</b>", htmltools::htmlEscape(v$label_text %||% "")))),
-        p(style = "margin:4px 0 0",
-          HTML(sprintf("Value: <b>%s</b>",
-            htmltools::htmlEscape(if (nzchar(v$read %||% "")) v$read else "(not found - drag a box round it)")))),
-        p(class = "muted", style = "margin:6px 0 0;font-size:12px",
-          "Wrong one? Drag a box round the right value and it replaces it.")),
-      fluidRow(
-        column(7, textInput("rb_vname", "Call it", v$name %||% "", width = "100%")),
-        column(5, selectInput("rb_vtype", "Kind",
-                              c("money", "date", "date_range", "text"),
-                              selected = .rb_kind(v$read %||% "")))),
-      div(style = "display:flex;gap:6px;flex-wrap:wrap",
-        actionButton("rb_vsave", "Save this value", class = "btn-primary"),
-        actionButton("rb_vback", "Back", class = "btn-default")))
+    v <- rb$vdraft; if (is.null(v)) return(NULL)
+    lb <- .doc_key(v, "label"); vb <- .doc_key(v, "value")
+    line <- function(what, got, have, colr) div(
+      style = "display:flex;align-items:baseline;gap:8px;margin:0 0 3px",
+      span(style = sprintf("width:46px;font-size:12px;font-weight:700;color:%s", colr), what),
+      div(style = "flex:1;min-width:0",
+        if (have) strong(got) else span(class = "muted", "not drawn yet")))
+    rel <- if (is.list(lb) && is.list(vb)) .doc_pair_rel(lb, vb) else NULL
+    div(class = "note", style = "margin:0 0 10px;padding:8px 10px",
+      line("Label", v$label_text %||% "", is.list(lb), PALETTE$bad),
+      line("Value", v$read %||% "", is.list(vb), PALETTE$ok),
+      if (!is.null(rel)) p(class = "muted", style = "margin:6px 0 0;font-size:12px",
+        # "about 0 points away" is what a person reads when the two boxes touch,
+        # and it says nothing. Under a few points, the honest word is "right".
+        if (.doc_num(rel$gap, 0) < 3)
+          sprintf("On this page the value sits immediately %s. That is what will be looked for next time.",
+                  .doc_pair_where_text(rel))
+        else sprintf("On this page the value sits %s, about %.0f points away. That is what will be looked for next time.",
+                     .doc_pair_where_text(rel), .doc_num(rel$gap, 0)))
+      else p(class = "muted", style = "margin:6px 0 0;font-size:12px",
+             "Both boxes are needed: the label names it, the value is what comes out."))
   })
 
-  observeEvent(input$rb_vback, { rb$vstep <- 1L; rb$vdraft <- NULL })
-  observeEvent(input$rb_vname, {
+  observeEvent(input$rb_vlabel,  { if (!is.null(rb$vdraft)) rb$mode <- "label" })
+  observeEvent(input$rb_vvalue,  { if (!is.null(rb$vdraft)) rb$mode <- "value" })
+  observeEvent(input$rb_vcancel, { rb$vdraft <- NULL; rb$mode <- "" })
+
+  rb_vname_d <- debounce(reactive(input$rb_vname), 500)
+  observeEvent(rb_vname_d(), {
     v <- rb$vdraft; if (is.null(v)) return()
-    nm <- doc_suggest_name(input$rb_vname %||% "")
+    nm <- doc_suggest_name(rb_vname_d() %||% "")
     if (nzchar(nm) && !identical(nm, v$name)) { v$name <- nm; rb$vdraft <- v }
+  }, ignoreInit = TRUE)
+  observeEvent(input$rb_vtype, {
+    v <- rb$vdraft; if (is.null(v)) return()
+    ty <- input$rb_vtype %||% "text"
+    if (!identical(as.character(v$type %||% "text"), ty)) { v$type <- ty; rb$vdraft <- v }
+  }, ignoreInit = TRUE)
+  # OVERRIDE THE SIDE. The tool works it out from the two boxes; a person who
+  # knows the next copy prints the figure underneath rather than beside can say so.
+  observeEvent(input$rb_vwhere, {
+    v <- rb$vdraft; if (is.null(v)) return()
+    w <- input$rb_vwhere %||% "right"
+    rel <- .doc_key(v, "where")
+    if (!is.list(rel)) rel <- if (is.list(v$label) && is.list(v$value))
+      .doc_pair_rel(v$label, v$value) else list(where = w, gap = 0, cross = 0,
+                                                width = 0, height = 0)
+    if (identical(as.character(rel$where %||% ""), w)) return()
+    rel$where <- w
+    v$where <- rel; rb$vdraft <- v
   }, ignoreInit = TRUE)
 
   observeEvent(input$rb_vsave, {
     v <- rb$vdraft; if (is.null(v)) return()
-    if (is.null(v$value)) {
+    if (!is.list(.doc_key(v, "label"))) {
+      showNotification("Drag a box round the label first.", type = "warning"); return()
+    }
+    if (!is.list(.doc_key(v, "value"))) {
       showNotification("Drag a box round the value first.", type = "warning"); return()
     }
-    v$type <- input$rb_vtype %||% "text"
+    v$type <- input$rb_vtype %||% v$type %||% "text"
     v$name <- doc_suggest_name(input$rb_vname %||% v$name)
+    if (!nzchar(v$name)) v$name <- sprintf("value_%d", length(rb$pairs) + 1L)
+    rel <- .doc_key(v, "where")
+    if (!is.list(rel)) rel <- .doc_pair_rel(v$label, v$value)
+    rel$where <- input$rb_vwhere %||% rel$where %||% "right"
+    v$where <- rel
     rb$pairs <- c(rb$pairs, list(v))
-    rb$vdraft <- NULL; rb$vstep <- 1L
-    showNotification(sprintf("Saved \u201c%s\u201d. Now the next value.", v$name),
-                     type = "message", duration = 5)
+    rb$vdraft <- NULL; rb$mode <- ""
+    showNotification(sprintf("Saved \u201c%s\u201d. It can be edited again from the list below.",
+                             v$name), type = "message", duration = 5)
   })
 
   output$rb_vsaved <- renderUI({
     if (!length(rb$pairs)) return(p(class = "muted", style = "margin:6px 0",
-      "None yet. Every value you save appears here."))
+      "None yet. Every value you save appears here, and every one can be edited again."))
     lapply(seq_along(rb$pairs), function(i) {
       pr <- rb$pairs[[i]]
-      div(style = "padding:5px 7px;border-left:3px solid #b7791f;margin-bottom:3px;background:#f7f7f7;border-radius:0 4px 4px 0",
+      rel <- .doc_key(pr, "where")
+      if (!is.list(rel) && is.list(.doc_key(pr, "label")) && is.list(.doc_key(pr, "value")))
+        rel <- .doc_pair_rel(pr$label, pr$value)
+      div(style = paste("padding:5px 7px;border-left:3px solid #b7791f;margin-bottom:3px;",
+                        "background:#f7f7f7;border-radius:0 4px 4px 0"),
         div(style = "display:flex;justify-content:space-between;align-items:center;gap:8px",
-          div(strong(pr$name %||% sprintf("Value %d", i)),
-              div(class = "muted", style = "font-size:12px",
-                  sprintf("\u201c%s\u201d \u00b7 reads %s",
-                          substr(pr$label_text %||% "", 1, 26),
-                          substr(pr$read %||% "", 1, 22)))),
-          actionButton(paste0("rb_vrm_", i), "Remove", class = "btn-default btn-sm")))
+          div(style = "min-width:0",
+            strong(pr$name %||% sprintf("Value %d", i)),
+            div(class = "muted", style = "font-size:12px",
+                sprintf("\u201c%s\u201d \u2192 %s%s",
+                        substr(pr$label_text %||% "", 1, 24),
+                        substr(pr$read %||% "", 1, 20),
+                        if (is.list(rel)) sprintf(" \u00b7 %s", .doc_pair_where_text(rel)) else ""))),
+          div(style = "white-space:nowrap",
+            actionButton(paste0("rb_ved_", i), "Edit", class = "btn-default btn-sm"),
+            actionButton(paste0("rb_vrm_", i), "Remove", class = "btn-default btn-sm"))))
     })
   })
 
@@ -2658,15 +3117,11 @@ server <- function(input, output, session) {
   })
 
   # ---- What a gesture does, said under the picture --------------------------
+  # ---- What a gesture does, repeated under the picture where the mouse is ----
   output$rb_hint <- renderUI({
-    on_tables <- identical(input$rb_tab %||% "tables", "tables")
-    msg <- if (!on_tables) {
-      if (rb$vstep == 1L) "Drag a box round a value's LABEL."
-      else "Drag a box round the VALUE, if the one offered is wrong."
-    } else if (rb$step == 1L) "Drag a box round a table's TITLE."
-      else if (rb$step == 2L) "Drag a box round its ROW OF COLUMN NAMES."
-      else "Click to move where the table ENDS. Drag a box to add a column."
-    p(class = "muted", style = "margin:6px 0", msg)
+    a <- .RB_ASK[[rb$mode %||% ""]]
+    p(class = "muted", style = "margin:6px 0",
+      if (is.null(a)) "Nothing is armed - a drag here will not change anything." else a[1])
   })
 
   # ---- The picture -----------------------------------------------------------
@@ -2674,27 +3129,125 @@ server <- function(input, output, session) {
     p <- rb_doc(); req(p)
     render_page_view(p, .rb_pg(), 110)
   })
-  .rb_draw_table <- function(tb, r, pg, key, lwd) {
-    p0 <- as.integer(tb$start$page); p1 <- as.integer(tb$end$page %||% p0)
+
+  # A STRIP OF WHITE ABOVE THE PAGE for the tool's own labels.
+  #
+  # The column names the tool worked out have to be read against the column names
+  # printed on the page, and until now they were drawn ON them -- so the one
+  # comparison the screen exists to let you make was the one thing it covered up.
+  # The plot's y range is extended above the paper and every label the tool writes
+  # goes up there, joined to what it names by a hairline. Nothing the tool draws
+  # sits over anything the document says.
+  .RB_GUTTER <- 38
+
+  # .rb_tag(x, y, s, col, above) -- a small filled label. Readable over anything,
+  # because it brings its own background.
+  .rb_tag <- function(x, y, s, col, above = TRUE, cex = 0.7) {
+    if (!nzchar(s)) return(invisible(NULL))
+    w <- graphics::strwidth(s, cex = cex, font = 2) + 6
+    h <- graphics::strheight(s, cex = cex, font = 2) + 6
+    yc <- if (above) y - h / 2 - 1 else y + h / 2 + 1
+    rect(x, yc - h / 2, x + w, yc + h / 2, col = col, border = NA)
+    text(x + w / 2, yc, s, col = "#ffffff", font = 2, cex = cex, adj = c(0.5, 0.5))
+    invisible(NULL)
+  }
+  # .rb_fit(s, w, cex) -- the label trimmed until it fits the width it has.
+  .rb_fit <- function(s, w, cex = 0.68) {
+    s <- as.character(s %||% "")
+    if (!nzchar(s) || graphics::strwidth(s, cex = cex, font = 2) <= w) return(s)
+    while (nchar(s) > 2L &&
+           graphics::strwidth(paste0(s, "\u2026"), cex = cex, font = 2) > w)
+      s <- substr(s, 1, nchar(s) - 1L)
+    paste0(s, "\u2026")
+  }
+
+  # .rb_draw_table -- one table on one page, layer by layer. Every layer is a
+  # thing a person can switch off, because every layer is drawn over a document
+  # they may need to read.
+  .rb_draw_table <- function(tb, r, pg, key, lwd, lay) {
+    p0 <- .doc_int(tb$start$page, NA_integer_)
+    p1 <- .doc_int(tb$end$page, p0)
     if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(invisible(NULL))
     y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
     y1 <- if (pg == p1) .doc_num(tb$end$y, r$h) else r$h
     edges <- doc_column_edges(tb)
-    if (!is.null(edges) && length(edges) >= 2L) {
-      for (j in seq_len(length(edges) - 1L))
-        if (j %% 2L == 1L)
-          rect(edges[j], y0, edges[j + 1L], y1, border = NA,
-               col = pal_fill(key, if (lwd > 1) "22" else "12"))
-      for (e in edges) lines(c(e, e), c(y0, y1), col = PALETTE[[key]], lwd = lwd)
-    } else {
-      rect(0, y0, r$w, y1, border = PALETTE[[key]], lty = 3, lwd = lwd)
+    col <- PALETTE[[key]]
+    if ("tables" %in% lay) {
+      if (!is.null(edges) && length(edges) >= 2L) {
+        for (j in seq_len(length(edges) - 1L))
+          if (j %% 2L == 1L)
+            rect(edges[j], y0, edges[j + 1L], y1, border = NA,
+                 col = pal_fill(key, if (lwd > 1) "22" else "12"))
+      } else {
+        rect(0, y0, r$w, y1, border = col, lty = 3, lwd = lwd)
+      }
     }
-    lines(c(0, r$w), c(y0, y0), col = PALETTE[[key]], lty = 3, lwd = lwd)
-    lines(c(0, r$w), c(y1, y1), col = PALETTE[[key]], lty = 3, lwd = lwd)
-    text(if (!is.null(edges)) edges[1] + 2 else 4, y0 - 2, tb$name %||% "",
-         col = PALETTE[[key]], font = 2, cex = 0.8, adj = c(0, 1))
+    if ("edges" %in% lay && !is.null(edges) && length(edges) >= 2L)
+      for (e in edges) lines(c(e, e), c(y0, y1), col = col, lwd = lwd)
+    if ("ends" %in% lay) {
+      # WHERE IT STARTS AND WHERE IT STOPS, named on the page in the same words
+      # the panel beside it uses. Only on the page the boundary is actually on --
+      # a table running over four pages has one start and one end, not four.
+      if (pg == p0) {
+        lines(c(0, r$w), c(y0, y0), col = PALETTE$ok, lwd = lwd + 0.5)
+        # A CHIP, NOT A CAPTION. The table's full name is in the box beside the
+        # picture; what the picture has to say is "the table starts here", and a
+        # long title printed over the document's own title says it worse.
+        .rb_tag(2, y0, paste0("START \u00b7 ", .rb_fit(tb$name %||% "", r$w * 0.22)),
+                PALETTE$ok, above = TRUE)
+      } else lines(c(0, r$w), c(y0, y0), col = col, lty = 3, lwd = lwd)
+      if (pg == p1) {
+        lines(c(0, r$w), c(y1, y1), col = PALETTE$bad, lwd = lwd + 0.5)
+        .rb_tag(2, y1, "END", PALETTE$bad, above = FALSE)
+      } else lines(c(0, r$w), c(y1, y1), col = col, lty = 3, lwd = lwd)
+    }
     invisible(NULL)
   }
+
+  # .rb_draw_names -- the column names, FLOATED into the strip above the page.
+  # Two rows, staggered, so a narrow column beside a wide one still gets its name
+  # in full; a dotted leader joins each name to the divider on its left.
+  .rb_draw_names <- function(tb, r, pg, key) {
+    p0 <- .doc_int(tb$start$page, NA_integer_)
+    p1 <- .doc_int(tb$end$page, p0)
+    if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(invisible(NULL))
+    edges <- doc_column_edges(tb)
+    if (is.null(edges) || length(edges) < 2L) return(invisible(NULL))
+    nm <- .doc_column_names(tb)
+    col <- PALETTE[[key]]
+    y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
+    for (j in seq_len(length(edges) - 1L)) {
+      cx <- (edges[j] + edges[j + 1L]) / 2
+      row <- if (j %% 2L == 1L) 1L else 2L
+      ty <- if (row == 1L) -.RB_GUTTER + 9 else -.RB_GUTTER + 24
+      lines(c(cx, cx), c(ty + 5, y0), col = col, lwd = 0.7, lty = 3)
+      # Two rows, so each name may borrow its neighbour's width.
+      lab <- .rb_fit(nm[j], (edges[j + 1L] - edges[j]) * 1.85)
+      text(cx, ty, lab, col = col, font = 2, cex = 0.68, adj = c(0.5, 0.5))
+    }
+    invisible(NULL)
+  }
+
+  # .rb_draw_pair -- a label box and a value box, joined, and named in the strip.
+  .rb_draw_pair <- function(pr, r, pg, lab_col, val_col, lwd, lay, nm = "") {
+    lb <- .doc_key(pr, "label"); vb <- .doc_key(pr, "value")
+    on_l <- is.list(lb) && identical(.doc_int(lb$page, 1L), pg)
+    on_v <- is.list(vb) && identical(.doc_int(vb$page, 1L), pg)
+    if (!on_l && !on_v) return(invisible(NULL))
+    if (on_l) rect(lb$x_min, lb$y_max, lb$x_max, lb$y_min,
+                   border = lab_col, lwd = lwd, lty = 2)
+    if (on_v) rect(vb$x_min, vb$y_max, vb$x_max, vb$y_min, border = val_col, lwd = lwd)
+    if (on_l && on_v) {
+      # The arrow IS the relationship the template stores. Drawn, it is checkable.
+      lines(c((lb$x_min + lb$x_max) / 2, (vb$x_min + vb$x_max) / 2),
+            c((lb$y_min + lb$y_max) / 2, (vb$y_min + vb$y_max) / 2),
+            col = val_col, lwd = 1, lty = 3)
+    }
+    if ("names" %in% lay && on_l && nzchar(nm))
+      .rb_tag(lb$x_min, lb$y_min, .rb_fit(nm, r$w * 0.35, 0.7), lab_col, above = TRUE)
+    invisible(NULL)
+  }
+
   output$rb_plot <- renderPlot({
     r <- rb_render()
     if (is.null(r)) {
@@ -2703,31 +3256,99 @@ server <- function(input, output, session) {
            cex = 1.1, col = "#666666")
       return(invisible(NULL))
     }
+    lay <- input$rb_layers %||% c("tables", "edges", "names", "values", "ends")
     op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
-    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, -.RB_GUTTER), xaxs = "i", yaxs = "i",
          xlab = "", ylab = "", axes = FALSE)
     rasterImage(r$ras, 0, r$h, r$w, 0)
+    # a hairline where the paper really starts, so the strip above it reads as the
+    # tool's margin and not as part of the document
+    lines(c(0, r$w), c(0, 0), col = "#cccccc", lwd = 1)
     pg <- as.integer(r$pg)
-    for (tb in rb$tables) .rb_draw_table(tb, r, pg, "ok", 1)
-    if (!is.null(rb$draft)) .rb_draw_table(rb$draft, r, pg, "meta", 2)
-    for (pr in rb$pairs) {
-      vb <- .doc_key(pr, "value")
-      if (is.list(vb) && identical(as.integer(vb$page %||% 1L), pg))
-        rect(vb$x_min, vb$y_max, vb$x_max, vb$y_min, border = PALETTE$warn, lwd = 2)
-      lbx <- .doc_key(pr, "label")
-      if (is.list(lbx) && identical(as.integer(lbx$page %||% 1L), pg))
-        rect(lbx$x_min, lbx$y_max, lbx$x_max, lbx$y_min, border = PALETTE$warn, lty = 2)
+    for (tb in rb$tables) .rb_draw_table(tb, r, pg, "ok", 1, lay)
+    if (!is.null(rb$draft)) .rb_draw_table(rb$draft, r, pg, "meta", 2, lay)
+    if ("names" %in% lay) {
+      for (tb in rb$tables) .rb_draw_names(tb, r, pg, "ok")
+      if (!is.null(rb$draft)) .rb_draw_names(rb$draft, r, pg, "meta")
     }
-    v <- rb$vdraft
-    if (!is.null(v)) {
-      lb <- .doc_key(v, "label")
-      if (is.list(lb) && identical(as.integer(lb$page %||% 1L), pg))
-        rect(lb$x_min, lb$y_max, lb$x_max, lb$y_min, border = PALETTE$bad, lwd = 2, lty = 2)
-      vb <- .doc_key(v, "value")
-      if (is.list(vb) && identical(as.integer(vb$page %||% 1L), pg))
-        rect(vb$x_min, vb$y_max, vb$x_max, vb$y_min, border = PALETTE$bad, lwd = 2)
+    # THE COLUMN BEING EDITED, picked out from the rest of them.
+    d <- rb$draft; j <- rb$colsel
+    if (!is.null(d) && !is.na(j) && "edges" %in% lay) {
+      cols <- .doc_columns(d)
+      p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+      if (j <= length(cols) && pg >= p0 && pg <= p1) {
+        y0 <- if (pg == p0) .doc_num(d$start$y, 0) else 0
+        y1 <- if (pg == p1) .doc_num(d$end$y, r$h) else r$h
+        rect(.doc_num(cols[[j]]$x_min, 0), y0, .doc_num(cols[[j]]$x_max, 0), y1,
+             border = PALETTE$warn, lwd = 3)
+      }
+    }
+    if ("values" %in% lay) {
+      for (i in seq_along(rb$pairs))
+        .rb_draw_pair(rb$pairs[[i]], r, pg, PALETTE$warn, PALETTE$warn, 2, lay,
+                      as.character(rb$pairs[[i]]$name %||% ""))
+      if (!is.null(rb$vdraft))
+        .rb_draw_pair(rb$vdraft, r, pg, PALETTE$bad, PALETTE$ok, 2.5, lay,
+                      as.character(rb$vdraft$name %||% ""))
     }
   })
+
+  # ---- THE ADMIN HALF IS FILLED IN FOR YOU, exactly as it is for a statement
+  #
+  # The statement toolkit guesses the bank from the filename, offers the phrases
+  # it found printed on the page, and composes the save name from the two -- so
+  # the three boxes at the bottom cost nothing. The document builder asked for all
+  # three by hand, which made setting up a document look harder than setting up a
+  # statement when the only genuine difference is "which table did you mean?".
+  # Measured end to end on a real document: ten decisions became seven.
+  rb_id_auto <- reactiveVal(NA_character_)
+  rb_fp_auto <- reactiveVal(NA_character_)
+  rb_seeded <- reactiveVal(NA_character_)
+  observe({
+    p <- rb_doc(); if (is.null(p)) return()
+    nm <- input$ts_file$name %||% basename(p)
+    if (identical(rb_seeded(), nm)) return()
+    rb_seeded(nm)
+    guess <- trimws(tools::toTitleCase(gsub("[^A-Za-z]+", " ",
+                                            tools::file_path_sans_ext(nm))))
+    if (nzchar(guess)) updateTextInput(session, "rb_bank", value = guess)
+    # The phrases the document prints about ITSELF, found the same way the
+    # statement drafter finds them. They still have to be looked at -- a
+    # fingerprint of words every document carries is the one fault that turns a
+    # correct "unsupported" into a silently-wrong read -- but retyping one by
+    # hand, character for character, is where that goes wrong.
+    ph <- tryCatch(header_phrases(rb_input()), error = function(e) character(0))
+    ph <- ph[!is.na(ph) & nzchar(ph)]
+    if (length(ph)) {
+      v <- paste(utils::head(ph, 2), collapse = "\n")
+      rb_fp_auto(v)
+      updateTextAreaInput(session, "rb_fp", value = v)
+    }
+  })
+
+  # A TABLE'S TITLE IS A BETTER FINGERPRINT THAN ITS COLUMN NAMES, and the
+  # builder has one the moment a table is saved. "Public Health Outlay 2012-13"
+  # is printed on this document and on no other; "Date Description Amount" is
+  # printed on thousands. Only replaces what was suggested, never what was typed.
+  observeEvent(rb$tables, {
+    if (!length(rb$tables)) return()
+    nm <- trimws(as.character(rb$tables[[1]]$name %||% ""))
+    if (!nzchar(nm) || length(strsplit(nm, "\\s+")[[1]]) < 2L) return()
+    cur <- trimws(input$rb_fp %||% "")
+    if (nzchar(cur) && !identical(cur, trimws(rb_fp_auto() %||% ""))) return()
+    rb_fp_auto(nm)
+    updateTextAreaInput(session, "rb_fp", value = nm)
+  }, ignoreInit = TRUE)
+  observeEvent(list(input$rb_bank, input$rb_type), {
+    if (is.null(rb_doc())) return()
+    cur <- trimws(input$rb_id %||% "")
+    if (nzchar(cur) && !identical(cur, rb_id_auto()) &&
+        !identical(cur, "new_report")) return()          # hers now
+    new <- .compose_id(input$rb_bank, input$rb_type, "pdf",
+                       tools::file_path_sans_ext(input$ts_file$name %||% ""))
+    rb_id_auto(new)
+    updateTextInput(session, "rb_id", value = new)
+  }, ignoreInit = TRUE)
 
   # ---- The template, the preview and the save -------------------------------
   rb_template <- reactive({

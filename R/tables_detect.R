@@ -318,6 +318,20 @@ propose_tables <- function(input, tmpl = NULL, pages = NULL, max_tables = 40L) {
   # Names must be unique: they become worksheet names and the `table_name` column.
   nms <- make.unique(vapply(merged, function(m) as.character(m$name)[1], character(1)), sep = " ")
   for (i in seq_along(merged)) merged[[i]]$name <- nms[i]
+  # THE ROW COUNT IS THE READER'S, NOT THE PROPOSER'S.
+  #
+  # The two count differently, and both are right about their own job: the
+  # proposer counts LINES in a run of tabular-looking text, while the reader folds
+  # a wrapped cell into the row above it and skips a printed rule. On a document
+  # with wrapped descriptions that is twenty-one against fifteen -- and a count
+  # shown beside a proposal that is not the count in the file it produces is worse
+  # than no count. So the reader is asked, once, and its answer is the answer.
+  # (Measured across 81 third-party PDFs: 40 of them disagreed before this.)
+  for (i in seq_along(merged)) {
+    n <- tryCatch(.doc_int(doc_table_rows(input, merged[[i]], tmpl)$n_rows, NA_integer_),
+                  error = function(e) NA_integer_)
+    if (!is.na(n)) merged[[i]]$n_rows <- n
+  }
   merged
 }
 
