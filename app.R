@@ -2277,13 +2277,9 @@ server <- function(input, output, session) {
   }
   # .rb_kind(v) -- money, date or text, decided by reading the value rather than
   # asking. The same two matchers the extractor itself uses.
-  .rb_kind <- function(v) {
-    v <- trimws(as.character(v %||% ""))
-    if (!nzchar(v)) return("text")
-    if (!is.na(.value_from_line(v, "money"))) return("money")
-    if (!is.na(.value_from_line(v, "date")))  return("date")
-    "text"
-  }
+  # One rule for "what kind of value is this?", shared with the proposer, so what
+  # the picker offers is what the extraction would really do (R/tables.R).
+  .rb_kind <- function(v) .doc_value_kind(v)
 
   # One place for the state: a list of tables and a list of values, both of which
   # get added to, renamed, corrected and deleted.
@@ -2310,7 +2306,7 @@ server <- function(input, output, session) {
   })
   rb_n_pages <- reactive({
     i <- rb_input(); if (is.null(i)) return(NA_integer_)
-    n <- suppressWarnings(as.integer(i$page_count %||% length(i$words %||% list())))
+    n <- .doc_npages(i)          # read_input hides the count under meta$
     if (is.na(n) || n < 1L) NA_integer_ else n
   })
   # THE FRAME IS THE DOCUMENT'S OWN PAGE SIZE, not A4. The picture is drawn in the

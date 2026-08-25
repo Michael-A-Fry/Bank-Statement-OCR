@@ -282,7 +282,7 @@
 # bands -- and never otherwise, because joining two DIFFERENT tables is the worse
 # mistake of the two: it silently interleaves them.
 propose_tables <- function(input, tmpl = NULL, pages = NULL, max_tables = 40L) {
-  npg <- length(input$words %||% list())
+  npg <- .doc_npages(input)
   if (npg < 1L) return(list())
   pages <- pages %||% seq_len(npg)
   pages <- sort(unique(pages[pages >= 1L & pages <= npg]))
@@ -349,8 +349,7 @@ propose_pairs <- function(input, tmpl = NULL, page = 1L) {
                            y_min = round(min(d$y), 1),
                            y_max = round(max(d$y + d$height), 1))
   txt <- function(d) trimws(paste(d$text, collapse = " "))
-  kind <- function(s) if (!is.na(.value_from_line(s, "money"))) "money"
-                      else if (!is.na(.value_from_line(s, "date"))) "date" else "text"
+  kind <- .doc_value_kind
 
   out <- list()
   cells_of <- lapply(lines, .doc_cells, gap = gap)

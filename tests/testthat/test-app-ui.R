@@ -2119,7 +2119,10 @@ test_that("the match is only called into question when detection left a question
 # encrypted, or not a PDF at all", and directly under it an offer to open the
 # template toolkit and "save an improved template". There is no page to draw on.
 test_that("the template toolkit is not offered for a file that was never read", {
-  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 105L)
+  # 120, not 105: cv_teach grew a branch for report results above these two, and
+  # the window has to reach the end of the function or the test passes by not
+  # looking. The ORDER is the promise, not the line number.
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 120L)
   i <- regexpr('if (identical(st, "failed")) return(NULL)', blk, fixed = TRUE)
   expect_gt(i, 0L)
   j <- regexpr('actionButton("cv_teach_go_fix"', blk, fixed = TRUE)
