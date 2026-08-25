@@ -396,7 +396,13 @@ ui <- fluidPage(
           # template list showing ANZ's templates only. One control, one answer.
           selectInput("cv_bank_quick", "Bank",
                       choices = c("Detect automatically" = ""), width = "100%"),
-          actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"),
+          # OFF UNTIL IT CAN WORK, with the reason under it. It was a full-width
+          # green button from the moment the page loaded, and pressing it with no
+          # QID typed produced a message that fades. So the most prominent
+          # control on the screen did nothing, twice, and by the third press the
+          # person is looking for what is broken rather than for the empty box
+          # eight inches above it.
+          uiOutput("cv_go_btn"),
           helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
@@ -619,12 +625,24 @@ ui <- fluidPage(
         # of both.
         p(class = "muted", style = "max-width:820px",
           "Upload one example. The tool reads what it can; you confirm it against a live preview and save."),
-        fileInput("ts_file", "One example of the document (.csv / .tsv / .tdv / .pdf / .xlsx)",
-                  accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
+        # THE KIND FIRST, THEN THE FILE. It was the other way round, and the file
+        # picker said ".csv / .tsv / .tdv / .pdf / .xlsx" while the panel below it
+        # said "It has to be a PDF" -- both true, of different halves, and read
+        # together they are a contradiction on the first screen of the job.
+        # Answering "what kind" first means the picker can then say which files
+        # THIS job takes, and only that.
         radioButtons("ts_doctype", "What kind of document is this?",
           c("A bank or card statement - a table of transactions" = "statement",
             "Anything else - a report, a form, a summary, a letter" = "other"),
           selected = "statement"),
+        fileInput("ts_file", "One example of the document",
+                  accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
+        conditionalPanel("input.ts_doctype == 'statement'",
+          p(class = "muted", style = "margin:-10px 0 12px;font-size:12.5px",
+            "A PDF, CSV, TSV or Excel file.")),
+        conditionalPanel("input.ts_doctype == 'other'",
+          p(class = "muted", style = "margin:-10px 0 12px;font-size:12.5px",
+            "It has to be a PDF: you build this one by pointing at the page.")),
         conditionalPanel("input.ts_doctype == 'statement'",
           actionButton("ts_go", "Open the toolkit", class = "btn-primary btn-lg"),
           # The guide sits AFTER the action it explains, so the thing to click is
@@ -658,9 +676,11 @@ ui <- fluidPage(
       # sits on -- is shown on screen with a control beside it to change it.
       conditionalPanel("input.ts_doctype == 'other'",
       br(),
+      # THE ONE THING TO DO NEXT, said once and where the eye is. It used to sit
+      # in a note four inches under the panel that carries the file picker, so
+      # the screen's answer to "what now?" was below the thing it was about.
       conditionalPanel("output.rb_has_doc != true",
-        div(class = "note", style = "max-width:820px",
-            "Upload the document at the top of this page first. It has to be a PDF.")),
+        uiOutput("rb_need_doc")),
       conditionalPanel("output.rb_has_doc == true",
       # WHAT THE SCREEN IS WAITING FOR, in one sentence, at the top, always.
       #
@@ -842,8 +862,12 @@ ui <- fluidPage(
       fluidRow(
         column(7,
           h4(style = "margin-top:0", "Check what comes out"),
-          div(style = "margin:6px 0",
-            actionButton("rb_preview", "Read the whole document", class = "btn-primary")),
+          # A GREEN BUTTON THAT REFUSES IS FRICTION. It looked ready from the
+          # moment the page loaded and answered "nothing to read yet" -- so the
+          # most prominent control on the lower half of the screen was, for the
+          # whole of the work, a thing that does not work. Off until there is
+          # something to read, with the reason beside it.
+          div(style = "margin:6px 0", uiOutput("rb_preview_btn")),
           uiOutput("rb_prev_status")),
         column(5,
           h4(style = "margin-top:0", "Name it and save"),
@@ -860,7 +884,9 @@ ui <- fluidPage(
       # WHAT CAME OUT: the tables AND the label/value pairs. A template can be all
       # pairs and no table at all -- a form -- and a preview that shows only
       # tables tells that person nothing about the only thing they built.
-      uiOutput("rb_prev_head"), DTOutput("rb_prev_tbl"),
+      # One block per table, built inside rb_prev_head -- the DT outputs behind
+      # them are declared once in the server, not here.
+      uiOutput("rb_prev_head"),
       uiOutput("rb_prev_values_head"),
       tableOutput("rb_prev_values"),
       uiOutput("rb_prev_summary_head"),
@@ -2443,6 +2469,30 @@ server <- function(input, output, session) {
   output$rb_has_doc <- reactive({ !is.null(rb_doc()) })
   outputOptions(output, "rb_has_doc", suspendWhenHidden = FALSE)
 
+  # WHAT TO DO NEXT, AND WHY NOTHING HAPPENED. Choosing "anything else" and
+  # uploading a spreadsheet used to do nothing at all: the picker accepts one
+  # because the STATEMENT half of this screen reads spreadsheets, the builder
+  # needs a PDF because it works by pointing at the page, and the screen said
+  # neither. A dead end with no message is the worst thing a first screen can do.
+  output$rb_need_doc <- renderUI({
+    f <- input$ts_file
+    ext <- tolower(tools::file_ext(as.character(f$name %||% "")))
+    if (!is.null(f) && nzchar(ext) && !identical(ext, "pdf"))
+      return(div(class = "note", style = "max-width:820px;border-left:4px solid #b7791f",
+        strong(sprintf("%s is a .%s file.", f$name, ext)),
+        p(style = "margin:6px 0 0",
+          paste0("Building a template for a report means pointing at the page, so ",
+                 "this half needs a PDF. A .", ext, " file has no page to point at."),
+          br(),
+          "If it is a bank statement, choose ",
+          strong("A bank or card statement"), " above and it will read this file.")))
+    div(class = "note", style = "max-width:820px",
+        strong("Upload the document above to start."),
+        p(class = "muted", style = "margin:6px 0 0",
+          "One example PDF. Nothing is created until you press a button on it."))
+  })
+  outputOptions(output, "rb_need_doc", suspendWhenHidden = FALSE)
+
   # THE UPLOAD PANEL FOLDS AWAY ONCE THERE IS A DOCUMENT, and comes back when
   # somebody asks for it. Not a preference and not remembered: a document is
   # loaded, so the picker has been used, so it is in the way. "Use a different
@@ -2552,6 +2602,28 @@ server <- function(input, output, session) {
     ""
   }
 
+  # .rb_subject() -- WHICH THING the armed gesture is about, in the words on the
+  # screen. Pressing Edit on a column arms the drag that moves it, so the banner
+  # has to say WHICH column, or "drag a box over where this column should be" is
+  # a sentence about a column the reader has to guess at. The picture picks the
+  # same one out in the same colour; this is the half you can read.
+  .rb_subject <- function() {
+    m <- as.character(rb$mode %||% "")
+    if (m %in% c("colpos", "addcol")) {
+      cols <- .doc_columns(rb$draft); j <- rb$colsel
+      if (m == "colpos" && !is.na(j) && length(cols) && j <= length(cols))
+        return(trimws(as.character(cols[[j]]$name %||% sprintf("column %d", j))[1]))
+      return("")
+    }
+    if (m %in% c("label", "value")) {
+      v <- rb$vdraft
+      nm <- trimws(as.character(v$name %||% "")[1])
+      if (nzchar(nm)) return(nm)
+      return(trimws(as.character(v$label_text %||% "")[1]))
+    }
+    ""
+  }
+
   # ---- The banner: the one thing the screen is waiting for -------------------
   output$rb_arm <- renderUI({
     a <- .RB_ASK[[rb$mode %||% ""]]
@@ -2560,17 +2632,21 @@ server <- function(input, output, session) {
       "border-radius:6px;background:#f2f2f2;border-left:4px solid #cccccc"),
       div(style = "flex:1;font-size:13px;color:#555555",
         "Nothing is waiting for a drag. Nothing you drag on the page will change anything.")))
+    m <- as.character(rb$mode %||% "")
+    subj <- .rb_subject()
     div(style = paste(
       "display:flex;align-items:center;gap:12px;padding:10px 14px;margin:0 0 10px;",
       "border-radius:6px;background:#fff4d6;border-left:5px solid #b7791f"),
       div(style = "font-size:20px;line-height:1", "\u270e"),
       div(style = "flex:1;min-width:0",
         div(style = "font-size:16px;font-weight:700;color:#7a4f00", a[1]),
-        div(style = "font-size:12px;color:#8a6a2a;margin-top:2px", a[2])),
+        div(style = "font-size:12px;color:#8a6a2a;margin-top:2px", a[2]),
+        if (nzchar(subj)) div(style = "font-size:13px;color:#7a4f00;margin-top:4px",
+          "You are editing ", strong(subj), " - it is outlined on the page.")),
       # A step you cannot leave is a wizard. Every step the guide arms by itself
       # has the answer the tool already worked out sitting behind one button.
       actionButton("rb_disarm", "Cancel", class = "btn-default btn-sm"),
-      switch(as.character(rb$mode %||% ""),
+      switch(m,
         title  = actionButton("rb_skip_title", "Skip - it has no title",
                               class = "btn-default btn-sm"),
         start  = actionButton("rb_skip_step", "Skip - it starts under the headings",
@@ -2579,8 +2655,17 @@ server <- function(input, output, session) {
                               class = "btn-default btn-sm"),
         bottom = actionButton("rb_skip_step", "Skip - it runs to the bottom of the page",
                               class = "btn-default btn-sm"),
+        # Editing a value: one drag re-draws the figure, the other the wording.
+        # Both are one press away from each other, because which one is wrong is
+        # not something the screen can know.
+        value  = actionButton("rb_arm_label", "Re-draw the LABEL instead",
+                              class = "btn-default btn-sm"),
+        label  = actionButton("rb_arm_value", "Re-draw the VALUE instead",
+                              class = "btn-default btn-sm"),
         NULL))
   })
+  observeEvent(input$rb_arm_label, { if (!is.null(rb$vdraft)) rb$mode <- "label" })
+  observeEvent(input$rb_arm_value, { if (!is.null(rb$vdraft)) rb$mode <- "value" })
   # Cancel leaves the guide as well as the step: somebody who cancels is steering.
   observeEvent(input$rb_disarm, { rb$guide <- FALSE; rb$mode <- "" })
   # Skip keeps what the tool worked out and moves on to the next step.
@@ -2933,7 +3018,8 @@ server <- function(input, output, session) {
       # are no pages in between, so asking about them is noise.
       if (p1 > p0) div(
         style = "display:flex;align-items:center;gap:8px;margin:0 0 4px",
-        span(style = sprintf("color:%s;font-size:15px;line-height:1", PALETTE$warn), "\u2504"),
+        span(style = sprintf("color:%s;font-size:15px;line-height:1;letter-spacing:-1px",
+                             PALETTE$warn), "\u2013\u2013"),
         div(style = "flex:1;min-width:0;font-size:13px",
           strong("Bottom edge on the pages in between"),
           if (is.finite(ymax)) sprintf(" %s", down(ymax))
@@ -3096,6 +3182,16 @@ server <- function(input, output, session) {
       if (j > length(.doc_columns(rb$draft))) return()
       rb$colsel <- j
       rb$colver <- rb$colver + 1L
+      # EDIT ARMS THE DRAG. Pressing Edit on a column is a person saying "this
+      # one is wrong", and moving it is what they are nearly always about to do
+      # -- so the next drag does it, instead of answering "nothing was waiting"
+      # and naming a second button they have to find first. It is not a silent
+      # arming: the banner turns amber, names the column, and says it is
+      # outlined on the page, and Cancel is in the banner. The other four things
+      # the panel offers (rename, retype, type the edges, delete) are all still
+      # one click away and none of them is a drag.
+      rb$guide <- FALSE
+      rb$mode <- "colpos"
     }, ignoreInit = TRUE)
   })
 
@@ -3223,11 +3319,16 @@ server <- function(input, output, session) {
       v <- rb$pairs[[i]]
       rb$pairs <- rb$pairs[-i]
       .rb_load_vdraft(v)
-      rb$mode <- ""
       lb <- .doc_key(v, "label"); vb <- .doc_key(v, "value")
       pg <- .doc_int(.doc_key(vb, "page") %||% .doc_key(lb, "page"), 1L)
       updateNumericInput(session, "rb_page", value = pg)
       updateTabsetPanel(session, "rb_tab", selected = "values")
+      # Edit arms the drag here too. THE VALUE, not the label: a pair that reads
+      # the wrong thing is nearly always the figure moving, not the wording, and
+      # the wording is the half that is found again by matching rather than by
+      # position. "Re-draw the LABEL instead" is one press, in the banner.
+      rb$guide <- FALSE
+      rb$mode <- "value"
     }, ignoreInit = TRUE)
   })
 
@@ -3360,10 +3461,15 @@ server <- function(input, output, session) {
 
   # ---- What a gesture does, said under the picture --------------------------
   # ---- What a gesture does, repeated under the picture where the mouse is ----
+  # UNDER THE PICTURE: the same sentence as the banner, but ONLY while something
+  # is armed. The banner is pinned to the top of the window now, so when nothing
+  # is waiting this line said, a second time and two inches lower, exactly what
+  # the grey bar above already said. Repeating the instruction at the point of
+  # the action is worth the words; repeating "nothing is happening" is not.
   output$rb_hint <- renderUI({
     a <- .RB_ASK[[rb$mode %||% ""]]
-    p(class = "muted", style = "margin:6px 0",
-      if (is.null(a)) "Nothing is armed - a drag here will not change anything." else a[1])
+    if (is.null(a)) return(NULL)
+    p(class = "muted", style = "margin:6px 0", a[1])
   })
 
   # ---- The picture -----------------------------------------------------------
@@ -3457,23 +3563,67 @@ server <- function(input, output, session) {
   # .rb_draw_names -- the column names, FLOATED into the strip above the page.
   # Two rows, staggered, so a narrow column beside a wide one still gets its name
   # in full; a dotted leader joins each name to the divider on its left.
-  .rb_draw_names <- function(tb, r, pg, key) {
+  # .rb_name_items(tb, pg, key) -- what this table wants written in the strip on
+  # this page: one item per column, with where it points and how wide it is.
+  # PLACING them is a separate job (.rb_place_names), because it cannot be done
+  # one table at a time.
+  .rb_name_items <- function(tb, pg, key) {
     p0 <- .doc_int(tb$start$page, NA_integer_)
     p1 <- .doc_int(tb$end$page, p0)
-    if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(invisible(NULL))
-    edges <- doc_column_edges(tb)
-    if (is.null(edges) || length(edges) < 2L) return(invisible(NULL))
+    if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(list())
+    cols <- .doc_columns(tb)
+    if (!length(cols)) return(list())
     nm <- .doc_column_names(tb)
-    col <- PALETTE[[key]]
     y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
-    for (j in seq_len(length(edges) - 1L)) {
-      cx <- (edges[j] + edges[j + 1L]) / 2
-      row <- if (j %% 2L == 1L) 1L else 2L
-      ty <- if (row == 1L) -.RB_GUTTER + 9 else -.RB_GUTTER + 24
-      lines(c(cx, cx), c(ty + 5, y0), col = col, lwd = 0.7, lty = 3)
-      # Two rows, so each name may borrow its neighbour's width.
-      lab <- .rb_fit(nm[j], (edges[j + 1L] - edges[j]) * 1.85)
-      text(cx, ty, lab, col = col, font = 2, cex = 0.68, adj = c(0.5, 0.5))
+    Filter(Negate(is.null), lapply(seq_along(cols), function(j) {
+      lo <- .doc_num(cols[[j]]$x_min, NA_real_); hi <- .doc_num(cols[[j]]$x_max, NA_real_)
+      if (!is.finite(lo) || !is.finite(hi)) return(NULL)
+      list(cx = (lo + hi) / 2, w = hi - lo, y0 = y0,
+           text = if (j <= length(nm)) nm[j] else "", col = PALETTE[[key]])
+    }))
+  }
+
+  # .rb_place_names(items, r) -- write every column name in the strip above the
+  # page, on as many rows as it takes for none of them to touch.
+  #
+  # IT USED TO BE TWO ROWS, ODD COLUMNS ON ONE AND EVEN ON THE OTHER, PER TABLE.
+  # That is fine for one table and wrong the moment there are two on a page:
+  # every table started again at row one, so the second table's names were
+  # written straight over the first's -- and a report with three tables side by
+  # side is exactly the document this builder exists for. The names were moved
+  # off the page to stop them covering the headings underneath, and then covered
+  # each other instead.
+  #
+  # So placement is a PAGE-level decision. Every label from every table goes into
+  # one list, sorted left to right, and each takes the first row where it clears
+  # what is already there. A label is never dropped and never truncated to
+  # nothing: the strip grows downwards instead, and the page raster starts below
+  # it, so more tables means a taller margin rather than a worse one.
+  .RB_NAME_ROW_H <- 15          # points per row of labels
+  .rb_name_rows <- function(items) {
+    if (!length(items)) return(1L)
+    # the same greedy pass the drawing does, run for its answer only
+    ends <- numeric(0)
+    for (it in items[order(vapply(items, function(x) x$cx, numeric(1)))]) {
+      half <- max(9, min(it$w * 0.95, 90)) / 2
+      k <- which(ends <= it$cx - half - 3)[1]
+      if (is.na(k)) { k <- length(ends) + 1L }
+      ends[k] <- it$cx + half + 3
+    }
+    max(1L, length(ends))
+  }
+  .rb_place_names <- function(items, gutter) {
+    if (!length(items)) return(invisible(NULL))
+    ends <- numeric(0)
+    for (it in items[order(vapply(items, function(x) x$cx, numeric(1)))]) {
+      half <- max(9, min(it$w * 0.95, 90)) / 2
+      k <- which(ends <= it$cx - half - 3)[1]
+      if (is.na(k)) k <- length(ends) + 1L
+      ends[k] <- it$cx + half + 3
+      ty <- -gutter + 9 + (k - 1L) * .RB_NAME_ROW_H
+      lines(c(it$cx, it$cx), c(ty + 5, it$y0), col = it$col, lwd = 0.7, lty = 3)
+      text(it$cx, ty, .rb_fit(it$text, half * 2), col = it$col, font = 2,
+           cex = 0.68, adj = c(0.5, 0.5))
     }
     invisible(NULL)
   }
@@ -3507,8 +3657,16 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
     lay <- input$rb_layers %||% c("tables", "edges", "names", "values", "ends")
+    pg0 <- as.integer(r$pg)
+    # THE STRIP IS AS TALL AS THE NAMES NEED, and no taller. Worked out before the
+    # plot window is opened, because the window's top edge IS the strip.
+    items <- if ("names" %in% lay)
+      c(unlist(lapply(rb$tables, function(tb) .rb_name_items(tb, pg0, "ok")), recursive = FALSE),
+        if (!is.null(rb$draft)) .rb_name_items(rb$draft, pg0, "meta") else list())
+      else list()
+    gutter <- max(.RB_GUTTER, 9 + .rb_name_rows(items) * .RB_NAME_ROW_H + 6)
     op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
-    plot(NA, xlim = c(0, r$w), ylim = c(r$h, -.RB_GUTTER), xaxs = "i", yaxs = "i",
+    plot(NA, xlim = c(0, r$w), ylim = c(r$h, -gutter), xaxs = "i", yaxs = "i",
          xlab = "", ylab = "", axes = FALSE)
     rasterImage(r$ras, 0, r$h, r$w, 0)
     # a hairline where the paper really starts, so the strip above it reads as the
@@ -3517,10 +3675,7 @@ server <- function(input, output, session) {
     pg <- as.integer(r$pg)
     for (tb in rb$tables) .rb_draw_table(tb, r, pg, "ok", 1, lay)
     if (!is.null(rb$draft)) .rb_draw_table(rb$draft, r, pg, "meta", 2, lay)
-    if ("names" %in% lay) {
-      for (tb in rb$tables) .rb_draw_names(tb, r, pg, "ok")
-      if (!is.null(rb$draft)) .rb_draw_names(rb$draft, r, pg, "meta")
-    }
+    .rb_place_names(items, gutter)
     # THE COLUMN BEING EDITED, picked out from the rest of them.
     d <- rb$draft; j <- rb$colsel
     if (!is.null(d) && !is.na(j) && "edges" %in% lay) {
@@ -3612,6 +3767,17 @@ server <- function(input, output, session) {
     t
   })
   output$rb_yaml <- renderText({ t <- rb_template(); t$origin <- NULL; yaml::as.yaml(t) })
+
+  output$rb_preview_btn <- renderUI({
+    ready <- length(rb$tables) > 0L || length(.rb_all_pairs()) > 0L
+    if (ready) return(actionButton("rb_preview", "Read the whole document",
+                                   class = "btn-primary"))
+    div(style = "display:flex;align-items:center;gap:10px;flex-wrap:wrap",
+      actionButton("rb_preview", "Read the whole document",
+                   class = "btn-primary disabled", `aria-disabled` = "true"),
+      span(class = "muted", style = "font-size:12.5px",
+           "Save a table or a value first."))
+  })
 
   observeEvent(input$rb_preview, {
     i <- rb_input()
@@ -3720,21 +3886,58 @@ server <- function(input, output, session) {
       if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
       file.copy(p, file, overwrite = TRUE) })
 
-  .rb_prev_key <- reactive({
-    ext <- rb$preview; if (is.null(ext) || !length(ext$tables)) return(NULL)
-    names(ext$tables)[1]
+  # EVERY TABLE, NOT THE FIRST ONE.
+  #
+  # This showed the rows of `names(ext$tables)[1]` and nothing else, under a
+  # summary line that faithfully listed all six tables on the document -- so the
+  # screen said "6 tables, 412 rows" and then showed you 38 of them, with no
+  # control anywhere to see the rest. The workbook has a sheet per table; this is
+  # that, on screen, in the same order.
+  #
+  # The outputs are declared ONCE, up to a fixed maximum, because a DT rendered
+  # inside a renderUI has no server-side render behind it and comes up blank.
+  .RB_MAX_PREV <- 12L
+  .rb_prev_keys <- reactive({
+    ext <- rb$preview; if (is.null(ext) || !length(ext$tables)) return(character(0))
+    utils::head(names(ext$tables), .RB_MAX_PREV)
   })
   output$rb_prev_head <- renderUI({
-    k <- .rb_prev_key(); if (is.null(k)) return(NULL)
-    t <- rb$preview$tables[[k]]
-    tagList(h4(style = "margin:14px 0 4px", t$name %||% k),
-            p(class = "muted", style = "margin:0 0 6px", t$detail %||% ""))
+    ks <- .rb_prev_keys(); if (!length(ks)) return(NULL)
+    ext <- rb$preview
+    n_all <- length(ext$tables)
+    tagList(
+      h5(style = "margin:16px 0 2px",
+         sprintf("What came out (%d table%s)", n_all, if (n_all == 1L) "" else "s")),
+      lapply(seq_along(ks), function(i) {
+        t <- ext$tables[[ks[i]]]
+        n <- NROW(t$rows)
+        tagList(
+          div(style = "margin:14px 0 2px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap",
+            strong(style = "font-size:15px", t$name %||% ks[i]),
+            span(class = "muted", style = "font-size:12.5px",
+                 sprintf("%d row%s", n, if (n == 1L) "" else "s")),
+            if (!n) span(class = "chip chip-warn", "came out empty")),
+          if (nzchar(as.character(t$detail %||% "")))
+            p(class = "muted", style = "margin:0 0 4px;font-size:12.5px", t$detail),
+          DTOutput(paste0("rb_prev_tbl_", i)))
+      }),
+      # NO SILENT CAP. Twelve is a lot of tables and more than any report seen so
+      # far, but a screen that quietly stops at twelve reads as "that is all of
+      # them".
+      if (n_all > .RB_MAX_PREV)
+        p(class = "muted", style = "margin:10px 0 0",
+          sprintf(paste("%d more table(s) are in the workbook and the long CSV but not",
+                        "shown here."), n_all - .RB_MAX_PREV)))
   })
-  output$rb_prev_tbl <- renderDT({
-    k <- .rb_prev_key(); req(!is.null(k))
-    d <- rb$preview$tables[[k]]$rows
-    d <- d[, !grepl("__value$", names(d)), drop = FALSE]
-    datatable(d, rownames = FALSE, options = list(pageLength = 15, scrollX = TRUE))
+  lapply(seq_len(.RB_MAX_PREV), function(i) {
+    output[[paste0("rb_prev_tbl_", i)]] <- renderDT({
+      ks <- .rb_prev_keys(); req(length(ks) >= i)
+      d <- rb$preview$tables[[ks[i]]]$rows
+      req(!is.null(d))
+      d <- d[, !grepl("__value$", names(d)), drop = FALSE]
+      datatable(d, rownames = FALSE,
+                options = list(pageLength = 10, scrollX = TRUE, lengthChange = FALSE))
+    })
   })
   # The label/value pairs, shown next to the tables rather than only inside the
   # workbook. They are half of what this builder makes and were the half you
@@ -4803,6 +5006,25 @@ server <- function(input, output, session) {
                 type = "warning", duration = 8)
     FALSE
   }
+  # WHY THE CONVERT BUTTON IS OFF, said where the button is. The two reasons are
+  # different jobs -- one is a file, one is a name -- so they are never merged
+  # into "you cannot do this yet".
+  output$cv_go_btn <- renderUI({
+    who <- .identity_is_personal(detected_identity_info()) || !is.na(cv_qid())
+    got <- !is.null(input$cv_file) && NROW(input$cv_file)
+    if (who && got)
+      return(actionButton("cv_go", "Convert", class = "btn-primary btn-lg btn-block"))
+    tagList(
+      actionButton("cv_go", "Convert",
+                   class = "btn-primary btn-lg btn-block disabled",
+                   `aria-disabled` = "true"),
+      p(class = "muted", style = "margin:6px 0 0;font-size:12.5px",
+        if (!got && !who) "Choose a statement above, and enter your QID."
+        else if (!got) "Choose a statement above."
+        else "Enter your QID above - it records who ran this conversion."))
+  })
+  outputOptions(output, "cv_go_btn", suspendWhenHidden = FALSE)
+
   observeEvent(input$cv_go, {
     f <- input$cv_file
     if (is.null(f) || !nrow(f)) {

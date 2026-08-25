@@ -541,3 +541,66 @@ test_that("the bottom edge survives the trip from the screen into the template",
     phrases = "Region", tables = list(bare), pairs = list(), doc_pages = 3L)
   expect_null(none$tables[[1]]$band)
 })
+
+# ---------------------------------------------------------------------------
+# A ROW BROKEN ACROSS TWO LINES, INSIDE ONE WORD
+#
+# Reported: an email wrapped by the PDF came out "xys@ gmail.com". A space is
+# right nearly always -- a wrapped description is two words -- and wrong exactly
+# when the break falls inside one token.
+# ---------------------------------------------------------------------------
+
+test_that("a wrapped cell joins with a space, except where the token was broken", {
+  expect_identical(.doc_join_wrapped("xys@", "gmail.com"), "xys@gmail.com")
+  expect_identical(.doc_join_wrapped("firstname.last", "@co.nz"), "firstname.last@co.nz")
+  expect_identical(.doc_join_wrapped("www.example", ".com"), "www.example.com")
+  expect_identical(.doc_join_wrapped("NW-99-", "9999"), "NW-99-9999")
+  expect_identical(.doc_join_wrapped("consoli-", "dated"), "consoli-dated")
+  expect_identical(.doc_join_wrapped("C:\\Users", "\\beth"), "C:\\Users\\beth")
+  # ...and the ordinary case is still a space
+  expect_identical(.doc_join_wrapped("Payment to", "Acme Ltd"), "Payment to Acme Ltd")
+  expect_identical(.doc_join_wrapped("Direct debit", "01 Feb"), "Direct debit 01 Feb")
+  # A TRAILING FULL STOP IS DELIBERATELY NOT A JOIN. "Acme Ltd." followed by a
+  # new sentence is far commoner than a token broken after a dot, and gluing
+  # those is the worse mistake of the two.
+  expect_identical(.doc_join_wrapped("Acme Ltd.", "Payment received"),
+                   "Acme Ltd. Payment received")
+  # nothing to join
+  expect_identical(.doc_join_wrapped("", "gmail.com"), "gmail.com")
+  expect_identical(.doc_join_wrapped("xys@", ""), "xys@")
+})
+
+test_that("the wrapped email survives the reader, not just the helper", {
+  # The reported shape: a two-column table whose second row wraps its address.
+  inp <- doc_input(list(doc_page(
+    doc_L(60, 90, "Name"), doc_L(240, 90, "Contact"),
+    doc_L(60, 130, "Beth Adams"), doc_L(240, 130, "beth.adams@"),
+    doc_L(248, 146, "example.co.nz"),
+    doc_L(60, 180, "Sam Okafor"), doc_L(240, 180, "sam@example.co.nz"))))
+  tab <- list(name = "contacts",
+    columns = list(list(name = "name", x_min = 55, x_max = 220, type = "text"),
+                   list(name = "contact", x_min = 230, x_max = 420, type = "text")),
+    header_rows = 1L, anchor = list(header_text = list("Name", "Contact")),
+    start = list(page = 1L, y = 85), end = list(page = 1L, y = 200))
+  r <- doc_table_rows(inp, tab, NULL)
+  expect_equal(nrow(r$rows), 2L)
+  expect_identical(r$rows$contact[1], "beth.adams@example.co.nz")
+  expect_identical(r$rows$contact[2], "sam@example.co.nz")
+  expect_identical(r$rows$name[1], "Beth Adams")
+})
+
+test_that("a value box drawn round a wrapped email reads it whole", {
+  inp <- doc_input(list(doc_page(
+    doc_L(40, 100, "Email"), doc_L(120, 100, "beth.adams@"),
+    doc_L(128, 116, "example.co.nz"),
+    doc_L(40, 160, "Consolidated position report"))))
+  lb <- list(page = 1L, x_min = 39, x_max = 80, y_min = 99, y_max = 110)
+  vb <- list(page = 1L, x_min = 118, x_max = 230, y_min = 96, y_max = 124)
+  tmpl <- list(id = "e", mode = "document", format = "pdf", version = 1,
+    ref_width = DOC_W, ref_height = DOC_H,
+    fingerprint = list(page_contains_all = list("Consolidated position report")),
+    tables = list(),
+    pairs = list(email = list(label_text = "Email", label = lb, value = vb,
+                              type = "text", where = .doc_pair_rel(lb, vb))))
+  expect_identical(doc_pairs(inp, tmpl)$value[1], "beth.adams@example.co.nz")
+})

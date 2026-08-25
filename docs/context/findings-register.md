@@ -1548,6 +1548,87 @@ Both halves are pinned now -- that the band survives
 `document_template_from_proposal()`, and that a document read through the whole
 round trip comes back without the footer.
 
+---
+
+## The screen, walked
+
+**N194 (a space inside a word) - fixed.** Reported: an email the PDF wrapped came
+out `xys@ gmail.com`. The wrap fold joins the tail of a row to the row above with
+`paste(was, cells[i])`, and a space is right nearly always -- a wrapped
+description is two words. It is wrong exactly when the break falls inside ONE
+token, which is what a PDF does to an email address, a URL, a long reference or a
+hyphenated word.
+
+`.doc_join_wrapped()` closes a line break without a space when the first fragment
+ends on a joining character attached to a word (`@ / \ _ = + -`) or the second
+opens with one. **A trailing full stop is deliberately not on that list**: "Acme
+Ltd." followed by a new sentence is far commoner than a token broken after a dot,
+and gluing those is the worse mistake of the two. The asymmetry is the whole
+design of the rule -- it is allowed to leave a wrong space in, never to remove a
+right one.
+
+The same break reaches a label/value pair two ways, and both are covered: a value
+box drawn round a wrapped address is read line by line rather than word by word,
+and `.doc_pair_pick()` reaches down ONE line when the run it picked ends on a
+joining character -- narrow on purpose, because a greedy reach would swallow the
+next field.
+
+**N195 (the preview showed one table out of six) - fixed.** It rendered
+`names(ext$tables)[1]` and stopped, under a summary that faithfully listed every
+table on the document. So the screen said "6 tables, 412 rows", showed 38 of them,
+and offered no control anywhere to see the rest -- the reader's own eyes were the
+thing telling them the tool had lost something it had not lost. One block per
+table now, with its name and row count, in the order the workbook has them; the
+DT outputs are declared once up to a fixed maximum, because a DT built inside a
+`renderUI` has no server-side render behind it and comes up blank. A document past
+that maximum says how many are not shown.
+
+**N196 (the floating column names collided with each other) - fixed.** The names
+were moved off the page in the first place because they covered the printed
+headings they exist to be checked against (the X-ray rule). They were then laid
+out **two rows per table**, odd columns on one and even on the other -- fine for
+one table, and wrong the moment a page carries two, because every table started
+again at row one and wrote over the one before it. A report with three tables side
+by side is exactly the document this builder is for.
+
+Placement is a PAGE-level decision now: every label from every table goes into one
+list, sorted left to right, and each takes the first row where it clears what is
+already there. The strip grows downwards, so more tables means a taller margin
+rather than a worse one, and no label is dropped or truncated to nothing.
+
+**N197 (Edit did not arm the drag) - fixed.** Reported twice: "when I click edit,
+and drag where I actually want the column, it says nothing was waiting". The first
+answer was to improve the message (N192). That was the smaller half. **Pressing
+Edit on a specific thing is a statement of intent about that thing**, which is
+precisely what the armed-intent model asks for -- so it arms the gesture that acts
+on it, and nothing about the model changes: still one thing at a time, still
+written across the top, still cancellable from the banner.
+
+What the model does require is that the screen say WHICH thing, and it did not.
+The banner now names it and says it is outlined on the page, which the picture has
+been doing in the same colour all along. On a value, Edit arms the FIGURE, because
+a pair that reads the wrong thing is nearly always the figure moving rather than
+the wording -- the wording is the half found again by matching. "Re-draw the LABEL
+instead" is one press, in the banner.
+
+**Found by walking the screens rather than by a report:**
+
+* The first screen contradicted itself. The file picker said
+  ".csv / .tsv / .tdv / .pdf / .xlsx" and the panel below it said "It has to be a
+  PDF" -- both true, of different halves of the same screen. The kind of document
+  is asked first now, and the picker says what THAT job takes. Uploading a
+  spreadsheet for a report did nothing at all, silently; a dead end with no
+  message is the worst thing a first screen can do.
+* "Read the whole document" was a green primary button that answered "nothing to
+  read yet" -- the most prominent control on the lower half of the screen was,
+  for the whole of the work, a thing that does not work.
+* The line under the picture repeated "nothing is armed" two inches below the bar
+  that already said it. Repeating an instruction at the point of the action is
+  worth the words; repeating "nothing is happening" is not.
+* Notifications were in the bottom-right corner. On a screen whose work is a
+  document on the left and a panel on the right, that is the one place nobody is
+  looking, so every warning the builder raises was said into empty space.
+
 **N190 (the label/value pairs were half the builder and invisible) - fixed.** Two
 reports, one gap: "the read whole doc should have the tables AND label value
 pair", and "where do the value label pairs come out in the CSV long? I can only

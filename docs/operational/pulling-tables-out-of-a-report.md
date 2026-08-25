@@ -132,7 +132,7 @@ what is in it.
 |---|---|
 | Rename one | **Edit** on that row, type the name |
 | Say what is in it (money, date, text…) | **Edit**, then **What is in it** |
-| Move its edges | **Edit**, then either type **Left edge** / **Right edge**, or press **Drag its width on the page** and drag it |
+| Move its edges | **Edit**, then just drag where it should go — pressing Edit arms the drag and the bar names the column. Or type **Left edge** / **Right edge**. |
 | Add one, or split one in two | **+ Add a column**, then drag over the column you want |
 | Delete one | the **×** on its row |
 | Start the columns again from scratch | **Work the columns out again** |
@@ -213,7 +213,9 @@ is taken from that side. A figure two digits longer, or a label a word wider,
 still reads.
 
 You can override the side from the dropdown — *to the right of / to the left of /
-under / above* — before or after saving. Every saved value has **Edit**.
+under / above* — before or after saving. Every saved value has **Edit**, and
+pressing it arms the drag for the **value**; **Re-draw the LABEL instead** is one
+press in the bar.
 
 **The name is a column heading in a file**, so it comes out lower case with
 underscores: type *IRD Number* and it is saved as `ird_number`. The line under the
@@ -232,7 +234,7 @@ save. Type it however reads best to you.
 **Read the whole document** runs the real extraction and shows you:
 
 - a verdict card — how many tables, how many rows, how many values
-- the rows themselves
+- **every table**, each with its name, its row count and its rows
 - **the values**, each with what was found beside its label
 - a line per table: pages, rows, columns, **thin columns**, **unclaimed words**,
   and how each table was found

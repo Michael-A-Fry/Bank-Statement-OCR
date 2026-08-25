@@ -293,6 +293,44 @@
 # .doc_line_text(d) -- a line's words as one string, in reading order.
 .doc_line_text <- function(d) paste(d$text, collapse = " ")
 
+# .doc_join_wrapped(a, b) -- close a LINE BREAK between two fragments of the same
+# cell.
+#
+# A space is right nearly always: a description wrapped onto a second line is two
+# words, and "Payment to" + "Acme Ltd" is "Payment to Acme Ltd". It is wrong when
+# the break falls inside ONE token, which is what a PDF does to an email address,
+# a URL, a long reference or a hyphenated word:
+#
+#     xys@            ->  "xys@ gmail.com"   the reported fault
+#     gmail.com           "xys@gmail.com"    what is printed
+#
+# So: no space when the last character of the first fragment is a joining
+# character ATTACHED TO A WORD (`@ / \ _ = + -`), or when the second fragment
+# OPENS with one (`@ . / \`) followed by a word character. Everything else keeps
+# its space, which is why a trailing full stop is deliberately not on the list --
+# "Acme Ltd." + "Payment received" is a sentence boundary far more often than it
+# is a broken token, and joining those is the worse mistake.
+.doc_join_wrapped <- function(a, b) {
+  a <- as.character(a)[1]; b <- as.character(b)[1]
+  if (is.na(a) || !nzchar(a)) return(b)
+  if (is.na(b) || !nzchar(b)) return(a)
+  if (grepl("[A-Za-z0-9][@/\\\\_=+-]$", a) || grepl("^[@./\\\\][A-Za-z0-9]", b))
+    return(paste0(a, b))
+  paste(a, b)
+}
+
+# .doc_join_lines(words) -- the text of a set of word boxes that may span several
+# lines: words within a line joined by spaces, LINES joined by the rule above.
+# Used wherever a box is read whole, so a value box drawn round a wrapped email
+# reads the same as a wrapped cell does.
+.doc_join_lines <- function(w, tol = NULL) {
+  if (is.null(w) || !NROW(w)) return("")
+  lns <- .doc_lines(w, tol)
+  if (!length(lns)) return("")
+  txt <- vapply(lns, function(d) paste(as.character(d$text), collapse = " "), character(1))
+  Reduce(.doc_join_wrapped, txt)
+}
+
 # ---------------------------------------------------------------------------
 # Anchoring: find the table by its WORDING, fall back to its POSITION
 # ---------------------------------------------------------------------------
@@ -1043,7 +1081,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         for (i in seq_along(cells)) if (!is.na(cells[i]) && nzchar(cells[i])) {
           was <- out[[prev_i]][[cnames[i]]]
           out[[prev_i]][[cnames[i]]] <-
-            if (is.na(was) || !nzchar(was)) cells[i] else paste(was, cells[i])
+            if (is.na(was) || !nzchar(was)) cells[i] else .doc_join_wrapped(was, cells[i])
           if (!identical(ctypes[i], "auto"))
             out[[prev_i]][[paste0(cnames[i], "__value")]] <-
               .doc_cell_value(out[[prev_i]][[cnames[i]]], ctypes[i])
@@ -1345,8 +1383,36 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   while (hi < nrow(line) &&
          line$x[hi + 1L] - (line$x[hi] + line$width[hi]) <= lim) hi <- hi + 1L
   d <- line[lo:hi, , drop = FALSE]
-  list(x_min = min(d$x), x_max = max(d$x + d$width),
-       y_min = min(d$y), y_max = max(d$y + d$height))
+  box <- list(x_min = min(d$x), x_max = max(d$x + d$width),
+              y_min = min(d$y), y_max = max(d$y + d$height))
+
+  # A VALUE BROKEN ACROSS TWO LINES, INSIDE ONE WORD. The run above is one line
+  # of words, which is right for a figure and wrong for the address a PDF wrapped
+  # -- "beth.adams@" on one line and "example.co.nz" on the next is one value.
+  #
+  # Narrow on purpose: it reaches down ONE line, only when the run ends on a
+  # character a word is broken after (`@ / \ _ = + -`), and only for words that
+  # start underneath what has already been taken. A wrapped description ending in
+  # an ordinary word is left alone, because there the space is correct and a
+  # greedy reach would swallow the next field.
+  last <- as.character(d$text[nrow(d)])
+  if (isTRUE(grepl("[A-Za-z0-9][@/\\\\_=+-]$", last))) {
+    nxt <- w[w$cy > box$y_max & w$cy <= box$y_max + lh * 1.8 &
+             w$x + w$width > box$x_min - lh * 0.5 &
+             w$x < box$x_max + lh * 2, , drop = FALSE]
+    if (NROW(nxt)) {
+      nxt <- nxt[order(nxt$x), , drop = FALSE]
+      # only the unbroken run at the start of that line
+      keep <- 1L
+      while (keep < nrow(nxt) &&
+             nxt$x[keep + 1L] - (nxt$x[keep] + nxt$width[keep]) <= lim) keep <- keep + 1L
+      nxt <- nxt[seq_len(keep), , drop = FALSE]
+      box$x_min <- min(box$x_min, min(nxt$x))
+      box$x_max <- max(box$x_max, max(nxt$x + nxt$width))
+      box$y_max <- max(box$y_max, max(nxt$y + nxt$height))
+    }
+  }
+  box
 }
 
 # doc_pairs(input, tmpl) -> data.frame(pair, label, value, raw, page, found_by,
@@ -1436,7 +1502,10 @@ doc_pairs <- function(input, tmpl) {
                                   y_min = .doc_num(vb$y_min, -Inf),
                                   y_max = .doc_num(vb$y_max, Inf))
     w <- .doc_page_words(input, use_page, tmpl)
-    raw <- if (is.null(w)) "" else paste(.doc_box_words(w, box)$text, collapse = " ")
+    # Read the box LINE BY LINE, not word by word: a value drawn round an email
+    # that the PDF wrapped is one token broken in two, and a plain space between
+    # every word turns xys@ / gmail.com into "xys@ gmail.com".
+    raw <- if (is.null(w)) "" else .doc_join_lines(.doc_box_words(w, box))
     raw <- trimws(raw)
     val <- if (identical(vtype, "text") || !nzchar(raw)) raw
            else { v <- .value_from_line(raw, vtype); if (is.na(v)) "" else v }

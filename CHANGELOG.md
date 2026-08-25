@@ -13,6 +13,61 @@ finding id.
 
 ---
 
+## 1.7.1
+
+A UI pass over the whole builder, walked screen by screen, plus four things
+reported from using it.
+
+**A row broken mid-word came out with a space in it.** An email the PDF wrapped
+read `xys@ gmail.com`. A space is right nearly always — a wrapped description is
+two words — and wrong exactly when the break falls inside one token. Line breaks
+now close without a space when the first fragment ends on a joining character
+attached to a word (`@ / \ _ = + -`) or the second opens with one. A trailing full
+stop is deliberately *not* on that list: "Acme Ltd." followed by a new sentence is
+far commoner than a token broken after a dot. The same rule applies to a value box
+drawn round a wrapped address, and the picker reaches down one line to find the
+rest of it (N194).
+
+**The preview showed the first table and nothing else.** Under a summary that
+faithfully listed all of them — so the screen said "6 tables, 412 rows" and then
+showed you 38 of them, with no control anywhere to see the rest. Every table now
+has its own block with its name, its row count, and its rows, in the order the
+workbook has them (N195).
+
+**Column names stopped colliding at the top of the page.** They were laid out two
+rows per *table*, so a second table on the same page started again at row one and
+wrote over the first. Placement is a page-level pass now: every label from every
+table takes the first row where it clears what is already there, and the strip
+grows downwards rather than overlapping (N196).
+
+**Edit re-arms the drag**, on a column and on a value, because pressing Edit on a
+specific thing *is* a statement of intent about that thing. The armed-intent model
+is unchanged — one thing at a time, written across the top, cancellable — and the
+banner now names what you are editing and says it is outlined on the page. On a
+value, Edit arms the figure; "Re-draw the LABEL instead" is one press in the
+banner (N197).
+
+**Notifications are centred near the top**, not in the bottom-right corner. On a
+screen whose work is a document on the left and a panel on the right, the corner
+is the one place nobody is looking — so "that box holds one unbroken run of words"
+was said, correctly, into empty space.
+
+From the walkthrough itself:
+
+- **The first screen contradicted itself.** The file picker said
+  ".csv / .tsv / .tdv / .pdf / .xlsx" and the panel below it said "It has to be a
+  PDF" — both true, of different halves. The kind of document is asked *first*
+  now, and the picker then says which files that job takes. Uploading a
+  spreadsheet for a report used to do nothing at all with no message; it now says
+  what happened and offers the statement path.
+- **"Read the whole document" is off until there is something to read**, with the
+  reason beside it. A green button that answers "nothing to read yet" was the most
+  prominent control on the lower half of the screen for the whole of the work.
+- The instruction under the picture no longer repeats "nothing is armed" — the
+  banner above it already says so, and it is pinned to the top of the window.
+
+---
+
 ## 1.7.0
 
 Seven things reported from the screen in one go. Two were crashes or losses, four

@@ -310,3 +310,34 @@ a.hub-card-quiet{background:var(--bg)}
 .rb-sticky{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0 0;
   margin:0 0 2px}
 .rb-sticky > div{box-shadow:var(--sh-2)}
+
+/* WHERE THE TOOL TELLS YOU SOMETHING.
+   Shiny puts notifications in the bottom-right corner, which on a screen whose
+   work is a document on the left and a panel on the right is the one place
+   nobody is looking -- so "that box holds one unbroken run of words" was said,
+   correctly, into empty space. Centred near the top, where the instruction bar
+   already is, and wide enough to read in one go. */
+#shiny-notification-panel{
+  position:fixed; top:96px; left:50%; transform:translateX(-50%);
+  right:auto; bottom:auto; width:min(680px, calc(100vw - 32px));
+  max-width:none; z-index:1200; pointer-events:none;
+}
+#shiny-notification-panel .shiny-notification{
+  pointer-events:auto; opacity:1; font-size:14.5px; line-height:1.5;
+  padding:14px 44px 14px 16px; border-radius:10px; margin-bottom:8px;
+  border:1px solid var(--line-2); box-shadow:var(--sh-2);
+  background:var(--surface); color:var(--ink);
+}
+#shiny-notification-panel .shiny-notification-message{
+  background:var(--brand-tint); border-color:var(--brand-line);
+}
+#shiny-notification-panel .shiny-notification-warning{
+  background:var(--warn-bg); border-color:var(--warn-line); color:var(--warn-ink);
+}
+#shiny-notification-panel .shiny-notification-error{
+  background:var(--bad-bg); border-color:var(--bad-line);
+}
+#shiny-notification-panel .shiny-notification-close{
+  font-size:20px; opacity:.55; top:8px; right:12px;
+}
+#shiny-notification-panel .shiny-notification-close:hover{opacity:1}

@@ -283,11 +283,19 @@ test_that("the tool's own labels float above the page, and each layer switches o
   # a strip of white ABOVE the paper, and the names drawn in it
   expect_match(joined, "\\.RB_GUTTER <- ")
   plot <- .da_block(src, "output\\$rb_plot <- renderPlot", 40L)
-  expect_match(plot, "ylim = c\\(r\\$h, -\\.RB_GUTTER\\)")
+  expect_match(plot, "ylim = c\\(r\\$h, -gutter\\)")
   expect_match(plot, "input\\$rb_layers")
-  nm <- .da_block(src, "\\.rb_draw_names <- function", 22L)
-  expect_match(nm, "-\\.RB_GUTTER \\+")                # the names live in the strip
+  # THE STRIP IS AS TALL AS THE NAMES NEED. Two rows per TABLE was fine for one
+  # table and wrong the moment a page carries two: every table started again at
+  # row one and wrote over the one before it. Placement is a page-level pass now,
+  # and the window's top edge is worked out before the window is opened.
+  expect_match(plot, "gutter <- max\\(\\.RB_GUTTER,")
+  expect_match(plot, "\\.rb_name_rows\\(items\\)")
+  expect_match(plot, "\\.rb_place_names\\(items, gutter\\)")
+  nm <- .da_block(src, "\\.rb_place_names <- function", 16L)
+  expect_match(nm, "-gutter \\+ 9")                    # the names live in the strip
   expect_match(nm, "\\.rb_fit\\(")                     # trimmed to the width they have
+  expect_match(nm, "ends\\[k\\] <-")                    # and never over each other
   # every layer is actually consulted before anything is drawn
   for (l in c('"tables" %in% lay', '"edges" %in% lay', '"ends" %in% lay',
               '"names" %in% lay', '"values" %in% lay'))
@@ -727,4 +735,125 @@ test_that("a drag that changed nothing names the column somebody was moving", {
   brush <- .da_block(.da_src(), "observeEvent\\(input\\$rb_brush", 200L)
   expect_match(brush, "Drag its width on the page", fixed = TRUE)
   expect_match(brush, "rb\\$colsel")
+})
+
+# ---------------------------------------------------------------------------
+# EDIT ARMS THE DRAG, AND THE SCREEN SAYS WHAT YOU ARE EDITING
+#
+# Asked for after "when I click edit, and drag where I actually want the column,
+# it says nothing was waiting" -- twice. The armed-intent model is kept: it is
+# still one thing at a time, still written across the top, still cancellable. The
+# change is that pressing Edit on a specific thing IS a statement of intent about
+# that thing, so it arms the gesture that acts on it.
+# ---------------------------------------------------------------------------
+
+test_that("Edit on a column arms the drag that moves it", {
+  src <- .da_src()
+  blk <- .da_block(src, 'observeEvent\\(input\\[\\[paste0\\("rb_cs_", j\\)\\]\\]', 20L)
+  expect_match(blk, "rb\\$colsel <- j")
+  expect_match(blk, 'rb\\$mode <- "colpos"')
+  expect_match(blk, "rb\\$guide <- FALSE")     # pressing Edit is steering
+})
+
+test_that("Edit on a value arms the drag, and the other half is one press away", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, 'observeEvent\\(input\\[\\[paste0\\("rb_ved_", i\\)\\]\\]', 20L)
+  expect_match(blk, 'rb\\$mode <- "value"')
+  expect_match(joined, 'actionButton\\("rb_arm_label"')
+  expect_match(joined, 'actionButton\\("rb_arm_value"')
+  expect_match(joined, "observeEvent\\(input\\$rb_arm_label")
+  expect_match(joined, "observeEvent\\(input\\$rb_arm_value")
+})
+
+test_that("the banner names the thing being edited, and the page outlines it", {
+  src <- .da_src(); joined <- .da_joined()
+  subj <- .da_block(src, "\\.rb_subject <- function", 18L)
+  expect_match(subj, '"colpos"')
+  expect_match(subj, "rb\\$vdraft")
+  arm <- .da_block(src, "output\\$rb_arm <- renderUI", 40L)
+  expect_match(arm, "\\.rb_subject\\(\\)")
+  expect_match(arm, "You are editing", fixed = TRUE)
+  expect_match(arm, "outlined on the page", fixed = TRUE)
+  # ...and that outline is really drawn
+  expect_match(joined, "PALETTE\\$warn, lwd = 3\\)")
+})
+
+# ---------------------------------------------------------------------------
+# EVERY TABLE ON SCREEN, NOT THE FIRST ONE
+# ---------------------------------------------------------------------------
+
+test_that("the preview shows every table's rows, and says so when it cannot", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, "\\.RB_MAX_PREV <- ")
+  expect_match(joined, "\\.rb_prev_keys <- reactive")
+  # one DT per table, DECLARED ONCE -- a DT built inside a renderUI has no
+  # server-side render behind it and comes up blank
+  expect_match(joined, 'lapply\\(seq_len\\(\\.RB_MAX_PREV\\), function\\(i\\) \\{')
+  expect_match(joined, 'output\\[\\[paste0\\("rb_prev_tbl_", i\\)\\]\\] <- renderDT')
+  expect_match(joined, 'DTOutput\\(paste0\\("rb_prev_tbl_", i\\)\\)')
+  # and no silent cap: a screen that quietly stops reads as "that is all of them"
+  head <- .da_block(src, "output\\$rb_prev_head <- renderUI", 40L)
+  expect_match(head, "more table\\(s\\) are in the workbook")
+  expect_match(head, "came out empty", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# WHERE THE TOOL TELLS YOU SOMETHING
+# ---------------------------------------------------------------------------
+
+test_that("notifications are centred, not tucked in the corner nobody watches", {
+  css <- paste(readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE),
+               collapse = "\n")
+  expect_match(css, "#shiny-notification-panel", fixed = TRUE)
+  expect_match(css, "left:50%", fixed = TRUE)
+  expect_match(css, "translateX(-50%)", fixed = TRUE)
+  # readable at a glance rather than a corner toast
+  expect_match(css, "font-size:14.5px", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# NO CONTROL THAT CANNOT WORK
+#
+# Found by walking the screens rather than from a report. Both of these were
+# full-width, primary-coloured, and answered a fading toast when pressed -- so
+# the most prominent control on the screen did nothing, and by the third press
+# the person is looking for what is broken rather than for the empty box above.
+# ---------------------------------------------------------------------------
+
+test_that("Convert is off until there is a file and a QID, with the reason under it", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, 'uiOutput\\("cv_go_btn"\\)')
+  blk <- .da_block(src, "output\\$cv_go_btn <- renderUI", 18L)
+  expect_match(blk, "cv_qid\\(\\)")
+  expect_match(blk, "input\\$cv_file")
+  expect_match(blk, "disabled")
+  # the two reasons are DIFFERENT JOBS and are never merged into "you cannot"
+  expect_match(blk, "Choose a statement above", fixed = TRUE)
+  expect_match(blk, "Enter your QID above", fixed = TRUE)
+})
+
+test_that("Read the whole document is off until there is something to read", {
+  src <- .da_src()
+  blk <- .da_block(src, "output\\$rb_preview_btn <- renderUI", 12L)
+  expect_match(blk, "length\\(rb\\$tables\\)")
+  expect_match(blk, "\\.rb_all_pairs\\(\\)")
+  expect_match(blk, "disabled")
+  expect_match(blk, "Save a table or a value first", fixed = TRUE)
+})
+
+test_that("the first screen does not contradict itself about which files it takes", {
+  src <- .da_src(); joined <- .da_joined()
+  # the KIND is asked before the file, so the picker can say what that job takes
+  i_kind <- grep('radioButtons\\("ts_doctype"', src)[1]
+  i_file <- grep('fileInput\\("ts_file"', src)[1]
+  expect_true(i_kind < i_file)
+  # ...and the picker's own label no longer lists formats the report half refuses
+  expect_false(grepl('fileInput\\("ts_file", "One example of the document \\(', joined))
+  expect_match(joined, "It has to be a PDF: you build this one by pointing at the page.",
+               fixed = TRUE)
+  # a spreadsheet chosen for a report is a DEAD END unless it is explained
+  blk <- .da_block(src, "output\\$rb_need_doc <- renderUI", 22L)
+  expect_match(blk, "file_ext")
+  expect_match(blk, "has no page to point at", fixed = TRUE)
+  expect_match(blk, "A bank or card statement", fixed = TRUE)
 })

@@ -599,8 +599,11 @@ test_that("a batch is more files in the same picker, not a second screen", {
   i_file <- grep('fileInput\\("cv_file"', src)
   expect_length(i_file, 1L)
   expect_match(paste(src[i_file:(i_file + 3)], collapse = " "), "multiple = TRUE", fixed = TRUE)
-  # ONE Convert button, on the Convert tab -- no separate batch tab or trigger
-  expect_length(grep('actionButton\\("cv_go"', src), 1L)
+  # ONE Convert button, on the Convert tab -- no separate batch tab or trigger.
+  # It is rendered server-side (one uiOutput, two branches: on, and off with the
+  # reason under it), so the UI carries exactly one PLACE for it.
+  expect_length(grep('uiOutput\\("cv_go_btn"\\)', src), 1L)
+  expect_length(grep('output\\$cv_go_btn <- renderUI', src), 1L)
   expect_false(grepl('tabPanel\\("Batch"', joined))
   # the batch panel is rendered on Convert, above the result it opens
   i_batch <- grep('DTOutput\\("cv_batch"\\)', src)
