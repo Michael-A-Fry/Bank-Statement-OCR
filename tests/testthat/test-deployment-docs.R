@@ -164,6 +164,27 @@ test_that("updating.md tells the truth about what a folder-replace keeps", {
   expect_match(txt, "params.R", fixed = TRUE)              # overwritten -- must be re-applied
 })
 
+test_that("updating.md warns about the hand copy that overwrites taught words", {
+  # The bundle is safe: bundle-offline.R renames dictionaries/*.yaml to
+  # *.example.yaml so a folder-replace cannot touch the server's Admin-taught
+  # words. A HAND copy out of the source folder skips that rename -- and the
+  # source folder carries those two files under the LIVE names. Nothing errors;
+  # statements that reconciled last week quietly stop reconciling. The trap is
+  # real only because of the two facts asserted below, so assert both, and the
+  # warning with them.
+  expect_true(file.exists(file.path(.dep_root(), "dictionaries", "labels.yaml")))
+  expect_true(file.exists(file.path(.dep_root(), "dictionaries", "lexicon.yaml")))
+  expect_match(.dep_read("scripts/bundle-offline.R"), ".example.\\\\1", fixed = TRUE)
+
+  txt <- .dep_read("docs/operational/updating.md")
+  expect_match(txt, "copy individual files by hand", fixed = TRUE)
+  expect_match(txt, "Never copy `dictionaries\\labels.yaml`", fixed = TRUE)
+  # and the other live state a sweep would take with it
+  for (p in c("config.yaml", "templates_user", "doc_templates_user", "uploads",
+              "R-runtime", "params.R"))
+    expect_match(txt, p, fixed = TRUE)
+})
+
 test_that("a backup-and-restore procedure exists and names every irreplaceable path", {
   # templates_user/, fields_templates_user/, doc_templates_user/, dictionaries/
   # and logs/metadata/ are the accumulated value of the tool and exist nowhere

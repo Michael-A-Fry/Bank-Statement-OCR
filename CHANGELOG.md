@@ -34,6 +34,19 @@ and every taught word and none of the document templates (N183).
 - `test-deployment-docs.R` now fails if the backup page stops naming any of the
   three `*_user\` folders
 
+**And the hand copy nobody had written down.** `updating.md` covered the
+supported route — build a package, replace the folder — which is safe because
+`bundle-offline.R` renames `dictionaries\*.yaml` to `*.example.yaml` before it
+ships. Copying a few files straight out of the **source** folder skips that
+rename, and the source folder carries those two files under the live names. The
+result is silent: every wording and marker Admin has taught the tool is replaced,
+nothing errors, and statements that reconciled last week quietly stop
+reconciling. New section — *If you copy individual files by hand* — with that
+warning, the other four things a sweep would take with it (`config.yaml`, the
+three `*_user\` folders, `logs\`/`uploads\`/`feed\`, the private R), and
+`R\params.R`, which must be re-applied by hand rather than dragged. Both facts
+the warning depends on are now asserted, not just described.
+
 ---
 
 ## 1.5.5
