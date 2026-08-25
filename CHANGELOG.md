@@ -13,6 +13,32 @@ finding id.
 
 ---
 
+## 1.5.2
+
+**A rotated page can be pointed at.** `pdf_pagesize` reports the page box before
+`/Rotate` is applied; the renderer and the text extractor both report after it.
+Where they disagreed the builder drew a picture 612 points wide whose own image
+was 792 wide, so the page was stretched one way and squashed the other and
+nothing anybody drew on it landed where they put it. The words decide now, and
+only when they do not fit the box and do fit it on its side. Measured on 81
+third-party documents: 11 pages of 212, across 5 documents, every one of them
+previously unusable in the builder. A US Senate expenditure report now reads its
+six columns from two drags.
+
+**Every column band is tinted.** It used to tint alternate ones, which reads as
+"three of these are selected and three are not" while the list says six.
+
+**One column is said out loud.** A drag round "the column names" that lands on a
+sentence makes one column and every row then arrives whole in one cell — and a
+one-column table cannot have an unclaimed word or a thin column, so it passed
+every check and reported "every column filled". Now said at the drag, repeated
+on the card, and the clean tick is withheld.
+
+**"How many rows" renamed "Heading rows."** Under a picture of a table it read
+as "how many rows has this table" — a question nobody is ever asked here.
+
+---
+
 ## 1.5.1
 
 The document builder rebuilt around one idea: **nothing happens until you ask for

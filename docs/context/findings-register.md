@@ -1197,3 +1197,24 @@ parsed value beside it in `<column>__value`, so a figure the parser does not
 recognise is never lost. No fixture wording, bank name or column name from this
 repository appears anywhere in `R/tables.R`, `R/tables_detect.R` or
 `R/doc_extract.R`.
+
+**N173 (a rotated page could not be pointed at, at all) - fixed.** `pdf_pagesize`
+reports the page box BEFORE the page's `/Rotate` is applied; the text extractor
+and the renderer both report AFTER it. Where they disagree the builder drew a
+picture 612 points wide whose own image was 792 wide, so the page was stretched
+one way and squashed the other and NOTHING anybody drew on it landed where they
+put it -- and the band frame squashed every word on the page for the reader too.
+The words decide now (`.pdf_page_space`), and only when they do not fit the box
+and do fit it on its side; a page that fits neither way is left alone, because
+turning it would only be a second wrong thing. `render_page_view` takes its
+width and height from the raster's own shape for the same reason: the image
+cannot be wrong about which way it faces. Measured: 11 pages of 212 across 5 of
+81 third-party documents. Afterwards, a US Senate expenditure report that had
+been unusable reads its six columns -- DOCUMENT NO., DATE, PAYEE NAME,
+OBLIGATION/SERVICE, DESCRIPTION, AMOUNT -- from two drags.
+
+**N174 ("How many rows" asked a question nobody is asked) - fixed.** The box
+beside "Its top rows" was labelled *How many rows* and sat directly under a
+picture of a table, which reads as "how many rows has this table". Nothing here
+ever asks that: the number of data rows is read from the page between the start
+and the end. Renamed *Heading rows*, with a line under it saying so.

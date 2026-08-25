@@ -486,3 +486,20 @@ test_that("one column out of a header drag is said out loud, twice", {
   # and the clean tick is withheld while any table has one column
   expect_match(v, "if \\(!bad && !one_col\\)")
 })
+
+# ---------------------------------------------------------------------------
+# NOBODY EVER SAYS HOW MANY ROWS A TABLE HAS
+#
+# The box beside "Its top rows" was labelled "How many rows", sitting directly
+# under a table -- which reads as "how many rows has this table", a question
+# that is never asked here and could not be answered by looking. The number of
+# DATA rows is read from the page between the start and the end. This is only
+# how tall the heading is, and the screen now says so.
+# ---------------------------------------------------------------------------
+
+test_that("the heading-height box cannot be read as a row count", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, 'numericInput\\("rb_hdrn", "Heading rows"')
+  expect_false(grepl('numericInput("rb_hdrn", "How many rows"', joined, fixed = TRUE))
+  expect_match(joined, "You never say how many rows of DATA there are", fixed = TRUE)
+})

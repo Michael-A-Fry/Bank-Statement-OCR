@@ -390,3 +390,47 @@ test_that("a one-column table is not ended by the first paragraph gap", {
   expect_equal(nrow(r$stops), 0L)
   expect_equal(r$n_rows, 14L)
 })
+
+# ---------------------------------------------------------------------------
+# A ROTATED PAGE FACES THE OTHER WAY FROM ITS PAGE BOX
+#
+# pdf_pagesize reports the page box before /Rotate is applied; the text
+# extractor and the renderer both report after it. Where they disagree,
+# everything that trusts the box is measuring at right angles to the words --
+# the builder draws a 612-wide picture whose own image is 792 wide, so nothing
+# drawn on it lines up, and the band frame squashes every word on the page.
+# Found on 11 pages of 212 across a corpus of other people's PDFs.
+# ---------------------------------------------------------------------------
+
+test_that("the page's space is the one its words are measured in", {
+  wf <- function(x, y) data.frame(x = 0, y = 0, width = x, height = y)
+  # ordinary portrait page, words inside it: left alone
+  expect_equal(.pdf_page_space(612, 792, wf(500, 700)), c(612, 792))
+  # words that do not fit the box but fit it on its side: turned
+  expect_equal(.pdf_page_space(612, 792, wf(745, 501)), c(792, 612))
+  expect_equal(.pdf_page_space(1008, 612, wf(586, 973)), c(612, 1008))
+  # right on the boundary, within the two-point slack: still left alone
+  expect_equal(.pdf_page_space(612, 792, wf(613, 792)), c(612, 792))
+  # FITS NEITHER WAY -- something else is wrong with the page, and turning it
+  # would only be a second wrong thing. Left exactly as it was.
+  expect_equal(.pdf_page_space(612, 792, wf(900, 900)), c(612, 792))
+  # nothing to go on: left alone
+  expect_equal(.pdf_page_space(612, 792, NULL), c(612, 792))
+  expect_equal(.pdf_page_space(612, 792, wf(10, 10)[0, ]), c(612, 792))
+  # a page size that is not a page size is not repaired here
+  expect_true(all(is.na(.pdf_page_space(NA, NA, wf(10, 10)))))
+})
+
+test_that("the picture and the page size cannot disagree about which way it faces", {
+  # render_page_view takes its w/h from pdf_pagesize but its IMAGE from poppler,
+  # which applies the rotation. The raster cannot be wrong about its own shape,
+  # so it decides -- otherwise the caller draws a landscape image into a portrait
+  # coordinate system and every box lands somewhere else.
+  src <- readLines(file.path(engine_root(), "R", "read_input.R"), warn = FALSE)
+  i <- grep("^render_page_view <- function", src)[1]
+  skip_if(is.na(i), "render_page_view not found")
+  blk <- paste(src[i:min(length(src), i + 40L)], collapse = "\n")
+  expect_match(blk, "xor\\(ncol\\(ras\\) > nrow\\(ras\\), w > h\\)")
+  expect_match(blk, "out <- list\\(ras = ras, w = w, h = h")
+  expect_false(grepl("w = sz\\$width\\[page\\]", blk))
+})
