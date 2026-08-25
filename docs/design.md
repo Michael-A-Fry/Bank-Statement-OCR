@@ -795,11 +795,13 @@ no deploy pipeline, there is a folder you carry across.
 ```
 StatementStudio-offline\
   R\  app.R  ui_labels.R  ui_content.R  run.R  scripts\  www\  RUN-ME.bat
-  templates\  templates_seed\  fields_templates\  tests\  samples\  docs\   <- product
+  templates\  templates_seed\  fields_templates\  doc_templates\             <- product
+  tests\  samples\  docs\                                                    <- product
   config\config.yaml                    <- LIVE: port, admin password, feed policy
   dictionaries\labels.yaml  lexicon.yaml <- LIVE: every wording Admin has taught it
   templates_user\<id>.yaml              <- LIVE: every template built in the app
   fields_templates_user\                <- LIVE: form templates built in the app
+  doc_templates_user\                   <- LIVE: report pullers built in the app
   logs\runs\  logs\feedback\  logs\metadata\  <- LIVE: the audit trail, kept forever
   uploads\<id>\                         <- LIVE: real client statements
   feed\                                 <- LIVE: what Qlik reads
@@ -807,9 +809,10 @@ StatementStudio-offline\
 ```
 
 **Everything in the second group is server state that exists nowhere else**, and
-an update must not touch any of it. Two of them are irreplaceable in the strict
-sense — `templates_user\` and `dictionaries\` are the accumulated work of the team
-and cannot be rebuilt from the repo — which is why
+an update must not touch any of it. Some of it is irreplaceable in the strict
+sense — `templates_user\`, `fields_templates_user\`, `doc_templates_user\` and
+`dictionaries\` are the accumulated work of the team and cannot be rebuilt from
+the repo — which is why
 `docs/operational/backup-and-restore.md` exists and why it is the first thing in
 the update procedure, not the last.
 

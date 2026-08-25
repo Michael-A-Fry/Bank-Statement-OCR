@@ -1321,3 +1321,27 @@ drawing a box causes ZERO plot redraws while the mouse is held down, and a whole
 typed phrase costs one or two plot recalculations rather than one per letter. The
 debounce on the edge boxes was confirmed at the server: three keystrokes, one
 commit.
+
+---
+
+## The round after: what a new folder is owed
+
+**N183 (a folder full of irreplaceable work that nobody was told to back up) -
+fixed.** `mode: document` added `doc_templates_user\` -- where every report
+puller a person builds by hand is saved. The bundler carries the folder, so an
+update does not destroy it, and that is the failure everybody checks for. But the
+folder was in **none** of the five places that enumerate what a person has to
+protect: `backup-and-restore.md` ("four folders cannot be rebuilt"),
+`updating.md`'s survives/replaced table, `rolling-back.md` twice,
+`running-and-keeping-it-up.md`'s folder map, and the install picture in
+`design.md`. A server rebuilt from a documented backup would have come back with
+every bank template and every taught word, and with none of the document
+templates -- and nothing would have said so, because the restore check tells you
+to look at **Admin -> Templates**, which does not list them.
+
+The lesson is not "remember to update the docs". It is that **a folder of live
+state is not finished when the code writes to it** -- it is finished when the
+backup procedure names it, and the only reliable way to make that true is to
+assert it. `test-deployment-docs.R` now fails if `backup-and-restore.md` stops
+naming any of the three `*_user\` folders, the same way it already failed if the
+page stopped naming `dictionaries\`.

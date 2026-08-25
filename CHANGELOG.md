@@ -13,6 +13,29 @@ finding id.
 
 ---
 
+## 1.5.6
+
+**A folder of irreplaceable work that no backup procedure named.**
+`doc_templates_user\` — where every report puller somebody builds by hand is
+saved — was carried by the bundle, so an update could not destroy it. But it was
+in none of the five pages that tell a person what to protect: the backup page
+still said "four folders cannot be rebuilt", and the restore, rollback and folder
+maps all listed the other two `*_user\` folders and not this one. A server
+rebuilt from a documented backup would have come back with every bank template
+and every taught word and none of the document templates (N183).
+
+- `backup-and-restore.md` — the fifth folder, in the table, the `robocopy` block,
+  the "check it worked" step and the restore list
+- a restore check of its own, because **Admin → Templates does not list document
+  templates** — they are matched at the front door, so the only way to see one is
+  to upload the report and watch it be recognised
+- `updating.md`, `rolling-back.md`, `running-and-keeping-it-up.md`, `design.md` —
+  the same folder, in every place the others are named
+- `test-deployment-docs.R` now fails if the backup page stops naming any of the
+  three `*_user\` folders
+
+---
+
 ## 1.5.5
 
 **Measured what had only been claimed: is it actually nice to type in?** Driven in

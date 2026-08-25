@@ -165,12 +165,14 @@ test_that("updating.md tells the truth about what a folder-replace keeps", {
 })
 
 test_that("a backup-and-restore procedure exists and names every irreplaceable path", {
-  # templates_user/, dictionaries/, fields_templates_user/ and logs/metadata/ are
-  # the accumulated value of the tool and exist nowhere else; the only documented
-  # backup used to be config.yaml, to the SAME machine.
+  # templates_user/, fields_templates_user/, doc_templates_user/, dictionaries/
+  # and logs/metadata/ are the accumulated value of the tool and exist nowhere
+  # else; the only documented backup used to be config.yaml, to the SAME machine.
+  # doc_templates_user/ arrived with mode: document and was missed here once --
+  # a folder that is not in this list is a folder nobody is told to copy.
   txt <- .dep_read("docs/operational/backup-and-restore.md")
-  for (p in c("templates_user", "fields_templates_user", "dictionaries",
-              "logs\\metadata", "config.yaml"))
+  for (p in c("templates_user", "fields_templates_user", "doc_templates_user",
+              "dictionaries", "logs\\metadata", "config.yaml"))
     expect_match(txt, p, fixed = TRUE)
   expect_match(txt, "Restoring", fixed = TRUE)
   expect_match(.dep_read("docs/operational/README.md"), "backup-and-restore.md", fixed = TRUE)

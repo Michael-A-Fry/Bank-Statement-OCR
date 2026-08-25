@@ -201,7 +201,7 @@ The full annotated list is `config\config.example.yaml`.
 |---|---|
 | `config\` | your settings (`config.yaml`) |
 | `templates\` | the shipped, tested bank templates |
-| `templates_user\`, `fields_templates_user\` | templates your team made in the app — **irreplaceable** |
+| `templates_user\`, `fields_templates_user\`, `doc_templates_user\` | templates your team made in the app — bank layouts, form fields, report pullers — **irreplaceable** |
 | `dictionaries\` | the wordings and markers Admin has taught it — **irreplaceable** |
 | `logs\` | one small file per conversion; `logs\startup.log` says why it did or did not start; `logs\metadata\` is kept forever — **irreplaceable** |
 | `feed\` | what the Qlik dashboards load ([connecting-qlik.md](connecting-qlik.md)) |

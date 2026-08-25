@@ -1,7 +1,7 @@
 # Backup and restore
 
 Most of the app folder can be rebuilt in ten minutes from the package on the
-internet PC. **Four folders cannot.** They are your team's accumulated work, they
+internet PC. **Five folders cannot.** They are your team's accumulated work, they
 exist nowhere else, and nobody has another copy.
 
 Five minutes, once a week, and before every update. It is a folder copy.
@@ -12,6 +12,7 @@ Five minutes, once a week, and before every update. It is a folder copy.
 |---|---|
 | `templates_user\` | Every layout your team taught the tool. Rebuilding one means finding the original statement again and redoing the whole toolkit session. **This is the accumulated value of the tool.** |
 | `fields_templates_user\` | The same, for form / IRD labelled-value templates. |
+| `doc_templates_user\` | The same, for the report / document pullers built on **Add a template → anything else** — the tables and figures somebody drew out of a report by hand. |
 | `dictionaries\` | `labels.yaml` + `lexicon.yaml` — every wording and marker taught in Admin. Losing these crashes nothing: statements that reconciled last week quietly stop reconciling, which is worse. |
 | `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Insights, drift detection and the layout-gap queue are computed from it. Once gone it cannot be recreated. |
 
@@ -36,6 +37,7 @@ set "APP=D:\StatementStudio-offline"
 set "DEST=\\backup-share\StatementStudio\%DATE:~-4%-%DATE:~3,2%-%DATE:~0,2%"
 robocopy "%APP%\templates_user"        "%DEST%\templates_user"        /E
 robocopy "%APP%\fields_templates_user" "%DEST%\fields_templates_user" /E
+robocopy "%APP%\doc_templates_user"    "%DEST%\doc_templates_user"    /E
 robocopy "%APP%\dictionaries"          "%DEST%\dictionaries"          /E
 robocopy "%APP%\logs\metadata"         "%DEST%\logs\metadata"         /E
 robocopy "%APP%\config"                "%DEST%\config" config.yaml
@@ -47,8 +49,9 @@ Anything **8 or above** is a real failure; read the message.
 Keep at least the last four weekly copies plus one from before each update.
 
 **Check it worked.** Open the newest dated folder: `templates_user\` should hold
-a `.yaml` for each template your team has made, and `dictionaries\labels.yaml`
-should be there. A backup nobody has ever opened is not a backup.
+a `.yaml` for each bank layout your team has made, `doc_templates_user\` one for
+each report puller, and `dictionaries\labels.yaml` should be there. A backup
+nobody has ever opened is not a backup.
 
 ## Restoring
 
@@ -57,12 +60,18 @@ the app starts), so the private R and packages are in place.
 
 1. **Stop the app** — `Ctrl-C`, or end the scheduled task.
 2. Copy back **over** the app folder, replacing what is there:
-   `templates_user\`, `fields_templates_user\`, `dictionaries\`, `logs\metadata\`,
-   `config\config.yaml`.
+   `templates_user\`, `fields_templates_user\`, `doc_templates_user\`,
+   `dictionaries\`, `logs\metadata\`, `config\config.yaml`.
 3. **Start the app.**
 4. Check: **Admin → Templates** lists your user templates and the **Label
    dictionary** shows your own wordings. Convert one statement you know
    reconciles and confirm it still does.
+5. Check the **document** templates separately, because **Admin → Templates does
+   not list them** — they are matched at the front door, not chosen from a list.
+   Upload a report you have built a puller for and confirm the tool recognises it
+   instead of asking you to build one
+   ([pulling-tables-out-of-a-report.md](pulling-tables-out-of-a-report.md)). If it
+   asks, `doc_templates_user\` did not come back.
 
 ### Rebuilding a lost server from nothing
 

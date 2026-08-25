@@ -39,17 +39,17 @@ that the package does not carry it — not anything clever in the copy.
 |---|---|
 | `config\config.yaml` | `R\` — **including `R\params.R`** |
 | `dictionaries\labels.yaml`, `dictionaries\lexicon.yaml` | `app.R`, `ui_content.R`, `ui_labels.R`, `run.R` |
-| your `templates_user\<id>.yaml` files, and all of `fields_templates_user\` | `templates\`, `templates_seed\`, `fields_templates\` |
+| your `templates_user\<id>.yaml` files, and all of `fields_templates_user\` and `doc_templates_user\` | `templates\`, `templates_seed\`, `fields_templates\`, `doc_templates\` |
 | `logs\`, `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
 | `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml` |
 
 One detail worth knowing, because it is the one that could bite: the package
-*does* contain a `templates_user\` folder, but the only file in it is that
-folder's own `README.md`. Your saved templates survive because nothing in the
-package shares their filenames — so if a `.yaml` is ever added to
-`templates_user\` in the source, a server template of the same name would be
-replaced by it. Your backup is what makes that recoverable
-([backup-and-restore.md](backup-and-restore.md)).
+*does* contain `templates_user\`, `fields_templates_user\` and
+`doc_templates_user\` folders, but the only file in each is that folder's own
+`README.md`. Your saved templates survive because nothing in the package shares
+their filenames — so if a `.yaml` is ever added to one of them in the source, a
+server template of the same name would be replaced by it. Your backup is what
+makes that recoverable ([backup-and-restore.md](backup-and-restore.md)).
 
 The package ships only `labels.example.yaml` / `lexicon.example.yaml`, which seed
 a brand-new install and are ignored once your own files exist. `RUN-ME.bat` also
