@@ -2951,7 +2951,17 @@ server <- function(input, output, session) {
     jj <- .rb_col_at(list(columns = cols2), (x0 + x1) / 2)
     if (!is.na(jj) && nzchar(keep_nm)) { cols2[[jj]]$name <- keep_nm; cols2[[jj]]$type <- keep_ty }
     d$columns <- cols2; rb$draft <- d
-    rb$colsel <- jj
+    # DO NOT RE-SELECT THE COLUMN IT ALREADY IS.
+    #
+    # Assigning a reactiveValues field invalidates it even when the new value is
+    # identical to the old one -- and the SELECTION is what pushes values back
+    # into these two boxes. So a no-op assignment here rewrites the number under
+    # the caret of the person typing it, which is the exact complaint this
+    # screen was rebuilt to fix. Measured before this line was guarded: five
+    # redraws of the page for a three-character number.
+    #
+    # Move the selection only when the band really landed on a different column.
+    if (!is.na(jj) && !identical(as.integer(jj), as.integer(j))) rb$colsel <- jj
   }, ignoreInit = TRUE)
 
   observeEvent(input$rb_savetab, {

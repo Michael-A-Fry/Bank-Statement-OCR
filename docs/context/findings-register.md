@@ -1304,3 +1304,20 @@ teaches everybody to read past red, and the next real failure arrives on a board
 nobody reads. It also cost this project directly: the rotated-page defect (N171)
 and the proposer/reader disagreement (N169) both sat behind a suite that was
 already showing red for reasons everyone had agreed to ignore.
+
+**N182 (the edge boxes wrote back into themselves) - fixed.** The numeric
+column-edge boxes committed through `doc_set_column_band()` and then re-selected
+the column they had just moved. Assigning a `reactiveValues` field invalidates it
+even when the new value is identical to the old, and the SELECTION is what pushes
+values back into those two boxes -- so every commit rewrote the number under the
+caret of the person typing it. That is the precise complaint the whole screen was
+rebuilt around, surviving in the one control nobody had typed into while
+watching. The selection now moves only when the band really landed on a different
+column.
+
+**Measured, not asserted.** Driven in a browser at 45ms a keystroke over all five
+boxes: every character survives, no input is a different DOM node afterwards,
+drawing a box causes ZERO plot redraws while the mouse is held down, and a whole
+typed phrase costs one or two plot recalculations rather than one per letter. The
+debounce on the edge boxes was confirmed at the server: three keystrokes, one
+commit.

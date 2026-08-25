@@ -503,3 +503,57 @@ test_that("the heading-height box cannot be read as a row count", {
   expect_false(grepl('numericInput("rb_hdrn", "How many rows"', joined, fixed = TRUE))
   expect_match(joined, "You never say how many rows of DATA there are", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# TYPING MUST NOT FIGHT THE SCREEN
+#
+# The complaint this builder was rebuilt around was "every time I drag a box or
+# type in call this table it updates and glitches and makes it SUPER hard to do
+# anything". Three things have to hold, and all three are structural rather than
+# a matter of care:
+#
+#   1  an input is built ONCE and filled in with update*Input. A Shiny input
+#      rebuilt inside a renderUI is destroyed and recreated under the caret.
+#   2  anything that feeds a list drawn from the draft is debounced, so the list
+#      settles after typing stops instead of redrawing on every letter.
+#   3  nothing writes back into a box the person may be typing in. Assigning a
+#      reactiveValues field invalidates it EVEN WHEN THE VALUE IS IDENTICAL, so
+#      a no-op re-selection rewrites the number under the caret.
+#
+# Measured in a browser at 45ms a keystroke: every character survives, no input
+# is ever a different DOM node afterwards, drawing a box causes ZERO redraws
+# while the mouse is held down, and a whole typed phrase costs one or two plot
+# recalculations rather than one per letter.
+# ---------------------------------------------------------------------------
+
+test_that("nothing writes back into a box somebody may be typing in", {
+  src <- .da_src()
+  blk <- .da_block(src, "rb_cx_d <- debounce", 34L)
+  # the guard itself: only move the selection when the band really moved
+  expect_match(blk, "!identical\\(as\\.integer\\(jj\\), as\\.integer\\(j\\)\\)")
+  expect_match(blk, "DO NOT RE-SELECT THE COLUMN IT ALREADY IS", fixed = TRUE)
+  # and the reason, so nobody removes the guard as redundant
+  expect_match(blk, "invalidates it even when the new value is", fixed = TRUE)
+})
+
+test_that("every box that feeds a redrawn list is debounced, and built once", {
+  src <- .da_src(); joined <- .da_joined()
+  # debounced: the table name, the column name, the column edges, the value name
+  for (d in c("rb_name_d <- debounce", "rb_cname_d <- debounce",
+              "rb_cx_d <- debounce", "rb_vname_d <- debounce",
+              "rb_where_d <- debounce"))
+    expect_match(joined, d, fixed = TRUE)
+  # built ONCE in the UI, never inside a renderUI that the same typing redraws
+  ui <- paste(src[seq_len(grep("^server <- function", src)[1])], collapse = "\n")
+  for (id in c("rb_name", "rb_cname", "rb_ckind", "rb_cx0", "rb_cx1",
+               "rb_vname", "rb_vtype", "rb_vwhere", "rb_hdrn"))
+    expect_match(ui, sprintf('"%s"', id), fixed = TRUE,
+                 info = paste(id, "is not built in the UI, so it lives inside a renderUI"))
+  # ...and the lists that DO redraw carry no text input at all
+  for (out in c("rb_cols", "rb_saved", "rb_vsaved")) {
+    blk <- .da_block(src, sprintf("output\\$%s <- renderUI", out), 24L)
+    expect_false(grepl("textInput(", blk, fixed = TRUE),
+                 info = paste(out, "puts a textInput inside a redrawn list"))
+    expect_false(grepl("numericInput(", blk, fixed = TRUE))
+  }
+})

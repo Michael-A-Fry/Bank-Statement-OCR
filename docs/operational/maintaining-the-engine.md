@@ -71,8 +71,8 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **77 files, 1,058 tests, 5,549 passing assertions,
-0 failed, 0 errors** — taken on 2026-08-25, at `VERSION` 1.5.4, on R 4.4.3.
+The last full run measured **77 files, 1,060 tests, 5,572 passing assertions,
+0 failed, 0 errors** — taken on 2026-08-25, at `VERSION` 1.5.5, on R 4.4.3.
 Treat it as a floor to compare against, not a target to match.
 
 **That run was clean, and it is the first one that was.** For a long time the

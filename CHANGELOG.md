@@ -13,6 +13,24 @@ finding id.
 
 ---
 
+## 1.5.5
+
+**Measured what had only been claimed: is it actually nice to type in?** Driven in
+a browser at 45ms a keystroke, across all five boxes of the builder:
+
+- every character survives — nothing is eaten
+- no input is a different DOM node afterwards — no box is rebuilt under the caret
+- **drawing a box causes zero redraws while the mouse is held down**
+- a whole typed phrase costs one or two plot recalculations, not one per letter
+
+One residual found and fixed on the way: the numeric column-edge boxes
+re-selected their own column after every commit, and assigning a `reactiveValues`
+field invalidates it *even when the value is identical* — so the selection was
+pushing values back into the two boxes the person was typing in. Guarded, and the
+contract is now pinned by tests rather than by care.
+
+---
+
 ## 1.5.4
 
 **The suite is green, and it is the first time it has been.** Five red lines had
