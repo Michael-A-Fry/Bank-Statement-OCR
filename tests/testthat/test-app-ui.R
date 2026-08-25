@@ -1299,8 +1299,13 @@ test_that("a drawn box commits on release, not on every mouse move", {
   src <- paste(.ui_src(), collapse = " ")
   for (id in c("g_pdf_brush", "rb_brush")) {
     blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
-    expect_match(blk, "delay = 1500")
+    # A debounce of ANY length is the promise -- one commit when the mouse stops,
+    # not one per mouse-move. The builder runs a shorter one than the toolkit
+    # because a drag there is a step in a wizard and waiting a second and a half
+    # to be told it worked is its own kind of broken.
     expect_match(blk, 'delayType = "debounce"')
+    ms <- as.integer(sub(".*delay = ([0-9]+).*", "\\1", blk))
+    expect_gte(ms, 500L)
   }
 })
 
@@ -1349,10 +1354,10 @@ test_that("the way out is on Simple and outside the settings disclosure", {
 # a number, last and marked optional. The page now leads with the document.
 test_that("the builder leads with the document, not a blank list", {
   src <- .ui_src()
-  drag <- grep("Drag a box round the value", src)
+  step <- grep('uiOutput\\("rb_vstep"\\)', src)
   typed <- grep('textAreaInput\\("rb_val_typed"', src)
-  expect_true(length(drag) >= 1L); expect_length(typed, 1L)
-  expect_true(min(drag) < typed)                   # the concrete step is first
+  expect_length(step, 1L); expect_length(typed, 1L)
+  expect_true(step < typed)                        # the concrete step is first
   # and the typed list is behind the disclosure, not in front of it
   det <- grep("Know the wording already\\? Type them instead", src)
   expect_length(det, 1L)
@@ -1362,65 +1367,38 @@ test_that("the builder leads with the document, not a blank list", {
   expect_false(any(grepl("Value printed away from its wording", src, fixed = TRUE)))
 })
 
-# The builder answers "what is this?" itself: what the box contains, and the
-# wording printed beside it. A box drawn just PAST its value used to be named
-# after the value it missed, which could never match the next document.
-test_that("the builder reads the box and the wording beside it", {
-  f <- .ui_fun(".rb_read_box", also = ".rb_wording")
-  w <- data.frame(
-    text   = c("Opening", "balance", "$875.20", "Closing", "balance", "$2,477.80"),
-    x      = c(145, 190, 355, 145, 190, 355),
-    y      = c(100, 100, 100, 112, 112, 112),
-    width  = c(40, 35, 45, 38, 35, 55),
-    height = rep(8, 6), stringsAsFactors = FALSE)
-  on_value <- f(w, list(x_min = 350, x_max = 405, y_min = 96, y_max = 110))
-  expect_identical(on_value$value, "$875.20")
-  expect_identical(on_value$label, "Opening balance")
-  # a box drawn PAST the value: nothing in it, and the label is still the wording
-  past <- f(w, list(x_min = 420, x_max = 500, y_min = 96, y_max = 110))
-  expect_identical(past$value, "")
-  expect_identical(past$label, "Opening balance")   # not "Opening balance $875.20"
-  # the row below is a different value with its own wording
-  below <- f(w, list(x_min = 350, x_max = 415, y_min = 108, y_max = 122))
-  expect_identical(below$label, "Closing balance")
-  expect_identical(f(NULL, list(x_min = 0, x_max = 1, y_min = 0, y_max = 1))$label, "")
+# THE BUILDER ANSWERS "what is this?" ITSELF -- and the way it does that changed.
+#
+# It used to ask for a box round the VALUE and then hunt for wording beside it,
+# which meant a heuristic ("the words to its left, else the line above") and a
+# second question whenever the heuristic was unsure. The wizard asks for the
+# LABEL first, because that is the thing a person can point at without thinking,
+# and then moves to the value itself: the next thing along the same line, or the
+# line under it. One drag, no question, and the pair is stored the way it travels
+# -- the label's wording plus the offset to the value.
+test_that("one drag on a label finds its value, on the same line or under it", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "if \\(!on_tables && rb\\$vstep == 1L\\)", 34L)
+  expect_match(blk, "right <- w\\[w\\$cx > box\\$x_max")   # the same line, to the right
+  expect_match(blk, "below <- w\\[w\\$cy > box\\$y_max")   # or the line under it
+  expect_match(blk, "label_text = txt")                    # the wording is kept
+  expect_match(blk, "rb\\$vstep <- 2L")
+  # ...and step 2 shows BOTH, so what it found is checked before it is saved
+  card <- .ui_block(src, "output\\$rb_vstep <- renderUI", 26L)
+  expect_match(card, "Label: <b>%s</b>", fixed = TRUE)
+  expect_match(card, "Value: <b>%s</b>", fixed = TRUE)
+  expect_match(card, "not found - drag a box round it")
 })
 
-# The kind of value is read, not asked - with the SAME matchers the extractor
-# uses, so whatever is offered is what the extraction would really do.
-test_that("the builder reads what kind of value it is", {
-  k <- .ui_fun(".rb_kind")
-  expect_identical(k("$875.20"), "money")
-  expect_identical(k("-$577.80"), "money")
-  expect_identical(k("31 Mar 2026"), "date")
-  expect_identical(k("Sam Okafor"), "text")
-  expect_identical(k(""), "text")
-  expect_identical(k(NULL), "text")
-})
-
-# Reading by WORDING survives the value moving on the next document; reading from
-# a box does not. So the wording is preferred - but only when it actually finds
-# the value she boxed. That is a question the tool can answer, which is why
-# "the value is printed away from its wording" is no longer a question it asks.
-test_that("one drag gives a value BOTH its wording and its box", {
-  # The old builder asked the user to choose: read this by its wording, or from
-  # this spot? It answered the question itself by checking whether the wording
-  # reached the value -- which was the right instinct and the wrong shape, because
-  # a value that moves relative to its label defeats both readings.
-  #
-  # A pair now stores the label's WORDING and the OFFSET from the label to the
-  # value, so the next document is read by finding the label wherever it went and
-  # applying the same offset. One drag produces both: the value box is the box she
-  # drew, and the label box is found on the page from the wording beside it.
-  blk <- .ui_block(.ui_src(), "observeEvent\\(input\\$rb_val_add", 30L)
-  expect_match(blk, "\\.doc_find_phrase\\(")        # the label's own box, from the page
-  expect_match(blk, "label_text = ")
-  expect_match(blk, "value = b\\$box")
-  # ...and where there is no wording at all, the box alone is stored and the
-  # screen says so rather than implying a wording it did not find.
-  read <- .ui_block(.ui_src(), "output\\$rb_val_read <- renderUI", 12L)
-  expect_match(read, "found by that wording")
-  expect_match(read, "read from this spot")
+test_that("a value can be removed, and so can a table and a column", {
+  # Nothing built by hand is worth building if it cannot be taken back.
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'paste0("rb_vrm_", i), "Remove"', fixed = TRUE)   # a value
+  expect_match(joined, 'paste0("rb_rm_", i), "Remove"', fixed = TRUE)    # a table
+  expect_match(joined, 'paste0("rb_cx_", j)', fixed = TRUE)              # a column
+  for (id in c("rb_vrm_", "rb_rm_", "rb_cx_"))
+    expect_match(joined, sprintf('observeEvent\\(input\\[\\[paste0\\("%s", [ij]\\)\\]\\]', id))
 })
 
 # ---- N34: the preview's row count is a PARTIAL read, and must say so ---------

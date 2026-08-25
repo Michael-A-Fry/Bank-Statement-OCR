@@ -80,13 +80,16 @@ test_that("download only is said on the screen where the template is saved", {
   expect_match(.da_joined(), "never goes to the", fixed = TRUE)
 })
 
-test_that("the builder finds the tables before it asks anyone to draw one", {
+test_that("one gesture means one thing, and the hint under the picture says which", {
   src <- .da_src()
-  blk <- .da_block(src, "observeEvent\\(input\\$rb_scan", 22L)
-  expect_match(blk, "propose_tables\\(")
-  expect_match(blk, "propose_pairs\\(")
-  # every page, not a sample: a table on page 31 is the whole point
-  expect_false(grepl("pages = 1", blk, fixed = TRUE))
+  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 14L)
+  for (t in c("TITLE", "ROW OF COLUMN NAMES", "ENDS", "LABEL"))
+    expect_match(hint, t, fixed = TRUE)
+  # the drag is dispatched on the STEP, so it cannot mean two things at once
+  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 130L)
+  for (t in c("rb$step == 1L", "rb$step == 2L", "rb$step == 3L",
+              "rb$vstep == 1L", "rb$vstep == 2L"))
+    expect_match(brush, t, fixed = TRUE)
 })
 
 test_that("the builder draws in the document's own point space, so what is drawn is what is saved", {
@@ -100,14 +103,20 @@ test_that("the builder draws in the document's own point space, so what is drawn
   expect_match(tpl, "ref_height")
 })
 
-test_that("the navigator's click handlers exist once, not once per redraw", {
+test_that("the per-row handlers exist once, not once per redraw", {
   src <- .da_src()
-  # Created in a fixed lapply OUTSIDE the renderUI. Inside it, every redraw would
+  # Created in fixed lapplys OUTSIDE the renderUI. Inside one, every redraw would
   # stack another observer on every row, so one click would fire many times.
-  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 10L)
-  expect_match(blk, "observeEvent\\(input\\[\\[paste0\\(\"rb_pick_\"")
-  nav <- .da_block(src, "output\\$rb_nav <- renderUI", 22L)
-  expect_false(grepl("observeEvent", nav, fixed = TRUE))
+  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 22L)
+  for (id in c("rb_rm_", "rb_ed_", "rb_vrm_"))
+    expect_match(blk, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id))
+  cols <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_COLS\\)", 22L)
+  for (id in c("rb_cx_", "rb_ck_"))
+    expect_match(cols, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id))
+  for (out in c("rb_saved", "rb_vsaved", "rb_cols")) {
+    blk2 <- .da_block(src, sprintf("output\\$%s <- renderUI", out), 20L)
+    expect_false(grepl("observeEvent", blk2, fixed = TRUE))
+  }
 })
 
 test_that("a click means exactly one thing, and the screen says which", {
@@ -129,15 +138,38 @@ test_that("a click means exactly one thing, and the screen says which", {
   expect_match(blk, "end the table before it starts")
 })
 
-test_that("columns are DIVIDERS, so a gap or an overlap cannot be drawn at all", {
+test_that("the columns come from the header row, and stay a tiling of the width", {
   src <- .da_src()
-  blk <- .da_block(src, "observeEvent\\(input\\$rb_click", 34L)
-  expect_match(blk, "doc_column_edges\\(tb\\)")
-  expect_match(blk, "doc_edge_click\\(edges")
-  # ...and the names follow the columns instead of being typed
-  set <- .da_block(src, "\\.rb_set_edges <- function", 10L)
-  expect_match(set, "doc_header_names\\(")
-  expect_match(set, "doc_columns_from_edges\\(")
+  # Step 2 IS the columns: one drag round the row of column names, and every
+  # header cell becomes a column named after it.
+  blk <- .da_block(src, "if \\(on_tables && rb\\$step == 2L\\)", 22L)
+  expect_match(blk, "doc_columns_from_box\\(")
+  expect_match(blk, "doc_auto_end\\(")               # ...and the end is worked out
+  # Adding one afterwards moves EDGES, so the columns still tile the width and a
+  # gap or an overlap is not expressible.
+  add <- .da_block(src, "if \\(on_tables && rb\\$step == 3L\\)", 14L)
+  expect_match(add, "doc_column_edges\\(d\\)")
+  expect_match(add, "doc_edge_click\\(")
+  expect_match(add, "doc_columns_from_edges\\(")
+  # ...and removing one re-reads the names, or a merged column is called column_2
+  # where the page says "Type Opening".
+  rm <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_cx_\"", 16L)
+  expect_match(rm, "doc_header_names\\(")
+})
+
+test_that("the builder starts blank and takes one table at a time", {
+  src <- .da_src(); joined <- .da_joined()
+  # No "find the tables". Reading the whole document and offering thirty nearly
+  # right tables is the most expensive state to hand somebody.
+  expect_false(grepl("Find the tables", joined, fixed = TRUE))
+  expect_false(grepl("rb_scan", joined, fixed = TRUE))
+  # Three steps, each one gesture, each said on the card.
+  card <- .da_block(src, "output\\$rb_step <- renderUI", 60L)
+  for (t in c("Step 1 of 3", "Step 2 of 3", "Step 3 of 3")) expect_match(card, t, fixed = TRUE)
+  expect_match(card, "round the table's ", fixed = TRUE)
+  expect_match(card, "row of column names", fixed = TRUE)
+  # and the header is stated, not merely offered as a switch
+  expect_match(card, "is <b>not</b> read as data", fixed = TRUE)
 })
 
 test_that("one builder covers a form and a report, and it says so", {
@@ -155,6 +187,20 @@ test_that("one builder covers a form and a report, and it says so", {
   # and the two things it can pull out are the two tabs
   expect_match(joined, 'tabPanel("Tables", value = "tables"', fixed = TRUE)
   expect_match(joined, 'tabPanel("Values", value = "values"', fixed = TRUE)
+})
+
+test_that("a table and a value are each saved, then the next one starts", {
+  src <- .da_src()
+  tb <- .da_block(src, "observeEvent\\(input\\$rb_savetab", 12L)
+  expect_match(tb, "rb\\$tables <- c\\(rb\\$tables, list\\(d\\)\\)")
+  expect_match(tb, "rb\\$step <- 1L")               # ...and it resets for the next
+  vl <- .da_block(src, "observeEvent\\(input\\$rb_vsave", 12L)
+  expect_match(vl, "rb\\$pairs <- c\\(rb\\$pairs, list\\(v\\)\\)")
+  expect_match(vl, "rb\\$vstep <- 1L")
+  # Editing takes it back OUT of the list, so Save always means the same thing.
+  ed <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"", 12L)
+  expect_match(ed, "rb\\$tables <- rb\\$tables\\[-i\\]")
+  expect_match(ed, "rb\\$step <- 3L")
 })
 
 # ---------------------------------------------------------------------------

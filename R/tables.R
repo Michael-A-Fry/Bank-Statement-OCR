@@ -613,6 +613,74 @@ doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL) {
   out
 }
 
+# doc_auto_end(input, tab, tmpl) -> list(page, y): where this table stops, worked
+# out by READING it rather than by a second guess.
+#
+# Somebody who has just said where a table starts and what its columns are should
+# not then have to hunt for where it ends -- that is the tool's job, and the tool
+# already knows: it opens the table's end right up, reads it, and reports the
+# bottom of the last row it kept. The stop rule that ends an open-ended window
+# (see doc_table_rows) is what decides, so the end offered here is exactly the end
+# the extraction would use. It is a PROPOSAL: it can be wrong, it is drawn on the
+# page, and one click moves it.
+doc_auto_end <- function(input, tab, tmpl = NULL) {
+  probe <- tab
+  # OPEN THE END OF THE START PAGE, AND FOLLOW -- do not simply point the end at
+  # the last page of the document. Measured: pointing it at page 7 read pages 6
+  # and 7 as well, because a middle window covers its whole page whether or not
+  # the table is on it, so a four-row summary came back with 103 rows. Following
+  # asks the right question one page at a time: does the NEXT page repeat this
+  # table's header? The stop rule ends it within a page; the follow rule ends it
+  # between pages.
+  probe$follow <- TRUE
+  probe$end <- list(page = .doc_int(tab$start$page, 1L),
+                    y = .doc_frame(tmpl)$height)
+  r <- tryCatch(doc_table_rows(input, probe, tmpl), error = function(e) NULL)
+  if (is.null(r) || is.na(r$last_page) || is.na(r$last_y)) return(tab$end)
+  list(page = as.integer(r$last_page), y = round(as.numeric(r$last_y) + 2, 1))
+}
+
+# doc_columns_from_box(input, box, tmpl) -> the columns a HEADER ROW implies.
+#
+# The header row is the one line on a table that says where its columns are, and
+# a person can point at it in one gesture. Every cell of it becomes a column, and
+# the boundary between two columns is the middle of the white space between two
+# header cells -- which is where it belongs, and is what the eye would pick too.
+doc_columns_from_box <- function(input, box, tmpl = NULL) {
+  pg <- .doc_int(.doc_key(box, "page"), 1L)
+  w <- .doc_page_words(input, pg, tmpl)
+  if (is.null(w)) return(list())
+  sel <- w[w$cx >= .doc_num(box$x_min, -Inf) & w$cx <= .doc_num(box$x_max, Inf) &
+           w$cy >= .doc_num(box$y_min, -Inf) & w$cy <= .doc_num(box$y_max, Inf), ,
+           drop = FALSE]
+  if (!nrow(sel)) return(list())
+  gap <- .doc_gap_for(sel)
+  # THE NAMES COME FROM THE TOP LINE, the BANDS from everything in the box.
+  # A box drawn round a header row is drawn by hand and will catch the first row
+  # of data as often as not -- and it should, because the data is what the bands
+  # have to fit. But a column called "Account Everyday 99-9999-9999999-99" is
+  # nobody's column name, so the naming only ever reads the first line.
+  lines <- .doc_lines(sel)
+  top <- if (length(lines)) lines[[1]] else sel
+  cells <- .doc_cells(top[order(top$x), , drop = FALSE], gap)
+  if (!length(cells)) return(list())
+  bands <- .doc_bands(sel, gap)
+  if (!length(bands)) return(list())
+  edges <- c(vapply(bands, function(b) b$x_min, numeric(1)),
+             bands[[length(bands)]]$x_max)
+  nm <- make.unique(vapply(seq_along(bands), function(j) {
+    hit <- Filter(function(cl) {
+      cx <- mean(cl$x + cl$width / 2)
+      cx >= bands[[j]]$x_min && cx <= bands[[j]]$x_max
+    }, cells)
+    if (!length(hit)) sprintf("column_%d", j)
+    else trimws(gsub("^[|+:_-]+|[|+:_-]+$", "",
+                     trimws(paste(unlist(lapply(hit, function(cl) cl$text)), collapse = " "))))
+  }, character(1)), sep = "_")
+  nm[!nzchar(nm)] <- sprintf("column_%d", which(!nzchar(nm)))
+  doc_columns_from_edges(edges, names = nm)
+}
+
 # doc_fit_columns(input, tab, tmpl) -> columns derived from the words actually
 # inside this table's current extent, by the same empty-gutter rule the proposer
 # uses. This is the one-click answer to "I have set where it starts and stops --
@@ -714,6 +782,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     return(list(rows = empty_rows(),
                 report = .doc_col_report(cnames, ctypes, integer(0), 0L, tab),
                 spilled = spilled, stops = stops, row_fill = numeric(0), n_rows = 0L,
+                last_page = NA_integer_, last_y = NA_real_,
                 n_header = 0L, anchor = loc$anchor, confidence = loc$confidence,
                 detail = "this table has no columns drawn on it yet"))
   }
@@ -721,6 +790,10 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   hdr_need <- tab$anchor$header_text %||% cnames
   n_header_rows <- max(0L, .doc_int(tab$header_rows, 1L))
   out <- list(); fills <- numeric(0); n_header <- 0L; rowno <- 0L
+  # Where the last row this table actually kept came to an end. That is the
+  # answer to "where does it stop?", and it is the reader's answer rather than a
+  # second guess made somewhere else -- see doc_auto_end().
+  last_pg <- NA_integer_; last_y <- NA_real_
 
   for (win in loc$windows) {
     w <- .doc_page_words(input, win$page, tmpl)
@@ -748,7 +821,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     # would cut it at any sparse row. Where it stops is recorded, never silent.
     open_end <- isTRUE(win$open_end)
     max_gap <- .doc_num(tab$max_gap, 2.2)
-    kept_top <- numeric(0); kept_fill <- integer(0)
+    kept_top <- numeric(0); kept_fill <- integer(0); kept_money <- logical(0)
     win_pitch <- .doc_pitch(w$y, q = 0.25)
     prev_left <- NA_real_; prev_i <- 0L
     for (li in seq_along(lines)) {
@@ -776,6 +849,8 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         cells[j[k]] <- if (is.na(cells[j[k]])) add else paste(cells[j[k]], add)
       }
       n_filled <- sum(!is.na(cells) & nzchar(cells))
+      has_money <- any(vapply(d$text, function(t)
+        !is.na(.value_from_line(t, "money")), logical(1)))
 
       # A WRAPPED CELL belongs to the row above it, not to a row of its own.
       # Folded before the stop rule looks at it, so a wrap never ends a table and
@@ -804,8 +879,25 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         this_top <- as.numeric(attr(d, "top"))
         gap <- this_top - kept_top[length(kept_top)]
         typical <- stats::median(kept_fill)
+        # WHAT MAKES A LINE AFTER THE GAP "NOT ONE OF THESE ROWS".
+        #
+        # Two signals, and it took a real document to find the second. Column
+        # count alone let a heading through: "Fees charged", printed under a
+        # schedule, lands in the first two of four narrow columns, so it filled
+        # two where two was the floor -- and ten rows of a fee table and a
+        # contact table were read as transactions with a date that was not a
+        # date. (Measured: 93 rows where the schedule has 83.)
+        #
+        # The signal that separates a heading from a genuine sparse row is a
+        # FIGURE. A total set apart by whitespace still carries its total; a
+        # heading carries nothing. So: after a big gap, a line with no figure at
+        # all ends a table whose rows normally have one. Tables with no figures
+        # anywhere fall back to the column count, which is all there is.
+        rows_have_money <- length(kept_money) && mean(kept_money) >= 0.5
+        looks_wrong <- n_filled < max(2, ceiling(typical / 2)) ||
+                       (rows_have_money && !has_money)
         if (is.finite(pitch_k) && pitch_k > 0 && is.finite(gap) &&
-            gap > pitch_k * max_gap && n_filled < max(2, ceiling(typical / 2))) {
+            gap > pitch_k * max_gap && looks_wrong) {
           stops <- rbind(stops, data.frame(page = as.integer(win$page),
                                            y = this_top,
                                            stringsAsFactors = FALSE))
@@ -825,6 +917,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       if (all(is.na(j)) || n_filled == 0L) next
       kept_top <- c(kept_top, as.numeric(attr(d, "top")))
       kept_fill <- c(kept_fill, n_filled)
+      kept_money <- c(kept_money, has_money)
       rowno <- rowno + 1L
       rec <- list(page = as.integer(win$page), row = as.integer(rowno))
       for (i in seq_along(cnames)) rec[[cnames[i]]] <- cells[i]
@@ -832,6 +925,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         rec[[paste0(cnames[i], "__value")]] <- .doc_cell_value(cells[i], ctypes[i])
       out[[length(out) + 1L]] <- rec
       prev_i <- length(out); prev_left <- min(d$x)
+      last_pg <- as.integer(win$page); last_y <- max(d$y + d$height)
       fills <- c(fills, mean(!is.na(cells) & nzchar(cells)))
     }
   }
@@ -853,6 +947,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
        report = .doc_col_report(cnames, ctypes, filled, nrow(rows), tab),
        spilled = spilled, stops = stops, row_fill = fills, n_rows = nrow(rows),
        n_header = n_header, anchor = loc$anchor, confidence = loc$confidence,
+       last_page = last_pg, last_y = last_y,
        detail = if (nrow(stops)) paste0(loc$detail, sprintf(
                   "; it stops on page %d, where the rows stop fitting it",
                   stops$page[nrow(stops)])) else loc$detail,
