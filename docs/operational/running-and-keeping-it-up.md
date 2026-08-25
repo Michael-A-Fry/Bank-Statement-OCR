@@ -2,22 +2,60 @@
 
 Start it, keep it running after reboots, change its settings.
 
+> **Setting it up on the server for the first time?** Follow
+> **[deploy-on-the-qlik-server.md](deploy-on-the-qlik-server.md)** instead — one
+> page, start to finish, including the service account and the three rights it
+> needs, claiming the port so nothing else can take it, and proving each step
+> before you move on. This page is the reference for afterwards.
+
 ## Start / stop
 
 - **Start:** double-click **`RUN-ME.bat`** in the app folder. Leave the window
   open.
 - **Stop:** `Ctrl-C` in that window, or close it.
 
-**It does not print an address you can click.** Its startup line names the port
-and the folder it is running from, and then says `Open http://<this-vm>:8100` —
-where `<this-vm>` is printed exactly like that. It is a placeholder the app does
-not fill in, because it does not know what name your network calls this box.
-Shiny then prints `Listening on http://0.0.0.0:8100`, which means "every network
-card", not an address either.
+**It prints the address, with this machine's own name in it:**
 
-Substitute the server's own name or IP yourself: `http://<server-name>:8100`.
-What those two lines *do* prove is the port it actually came up on, which is the
-thing worth reading when you have changed `app.port`.
+```
+Statement Studio - starting on port 8100 (from D:\StatementStudio).
+  Open  http://QLIKSERVER:8100/   (or http://<this-server-name-or-ip>:8100/)
+Listening on http://0.0.0.0:8100
+```
+
+Shiny's own `0.0.0.0` line means "every network card", not an address. The line
+above it is the one to copy. The fallback in brackets is there for the case where
+the machine's name is not what your network resolves it by.
+
+### It also writes `logs\startup.log`
+
+One line per start — version, folder, account, port, address, upload ceiling —
+and a line for anything that stopped it. **This is the only evidence you get once
+it is starting at boot with no window**, and it is written before anything that
+can fail, so there is always something in it:
+
+```
+2026-08-25 09:53:48  ---- starting Statement Studio 1.5.2 ----
+2026-08-25 09:53:48  folder  D:\StatementStudio
+2026-08-25 09:53:48  account DOMAIN\svc_statementstudio   R 4.4.3
+2026-08-25 09:53:48  settings config\config.yaml read
+2026-08-25 09:53:48  port    8100   address http://QLIKSERVER:8100/
+2026-08-25 09:53:48  uploads up to 200 MB
+2026-08-25 09:53:48  listening on every network card - the firewall rule decides who gets in
+```
+
+**A port already taken is named, not guessed at.** The app checks before it tries
+to listen, and refuses with a sentence rather than a socket error nobody can act
+on:
+
+```
+*** PORT 8100 IS ALREADY IN USE on this machine, so Statement Studio cannot
+start. Either another copy of it is already running (check Task Manager for
+Rscript.exe), or another program has taken the port. Find out which with:
+netstat -ano | findstr :8100 ... ***
+```
+
+It exits non-zero when that happens, so a scheduled task with restart-on-failure
+does the right thing instead of reporting success.
 
 `RUN-ME.bat` is the Windows server's way in, and it does more than start the app:
 it installs the private R the first time, seeds `config\config.yaml` from the
@@ -165,7 +203,7 @@ The full annotated list is `config\config.example.yaml`.
 | `templates\` | the shipped, tested bank templates |
 | `templates_user\`, `fields_templates_user\` | templates your team made in the app — **irreplaceable** |
 | `dictionaries\` | the wordings and markers Admin has taught it — **irreplaceable** |
-| `logs\` | one small file per conversion; `logs\metadata\` is kept forever — **irreplaceable** |
+| `logs\` | one small file per conversion; `logs\startup.log` says why it did or did not start; `logs\metadata\` is kept forever — **irreplaceable** |
 | `feed\` | what the Qlik dashboards load ([connecting-qlik.md](connecting-qlik.md)) |
 | `uploads\` | copies of uploaded statements, deleted after `uploads_keep_days` |
 | `R-runtime\`, `R-lib\`, `offline\` | the private R, its packages, the installer bundle — leave alone |
@@ -184,6 +222,7 @@ Copy the irreplaceable rows off the box regularly —
 | Window closes instantly, nothing happens | Setup did not finish. Run `RUN-ME.bat` by double-click (not the task) and read the message; it retries the install by itself. |
 | Everything works except scanned PDFs | Poppler/Tesseract not installed — check `offline\manifest.txt`; if `MISSING`, rebuild the package on the internet PC. |
 | Task says it ran and finished, nothing is listening | The task is missing the `/service` argument, so it stopped at a pause. |
+| Nothing comes up and you cannot see why | Read `logs\startup.log` — it names the reason, and it is written even when there is no console. |
 | Admin will not open with the right password | `app.admin_password` is still `changeme` or blank. Change it and restart. |
 
 More: [when-something-goes-wrong.md](when-something-goes-wrong.md) ·

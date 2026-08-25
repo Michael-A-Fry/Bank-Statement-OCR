@@ -1218,3 +1218,47 @@ beside "Its top rows" was labelled *How many rows* and sat directly under a
 picture of a table, which reads as "how many rows has this table". Nothing here
 ever asks that: the number of data rows is read from the page between the start
 and the end. Renamed *Heading rows*, with a line under it saying so.
+
+---
+
+## Deployment, and the sweep that went with it
+
+**N175 (a boot-time start left no evidence at all) - fixed.** On the server the
+app is started by Task Scheduler at boot, as a service account, with no console
+attached to anything -- so every line it printed went nowhere. "The task says it
+ran and nothing is listening" then has nothing behind it, and the operator is
+guessing between a missing firewall rule, a taken port, a settings file that did
+not parse and an R library that lost a package. `scripts/run_app.R` now writes
+`logs\startup.log`: one appended line per start carrying the version, the folder,
+the account, the port, the address and the upload ceiling, plus a line for
+anything that stopped it. It is set up FIRST, before anything that can fail, so a
+failure has somewhere to be written down, and it self-trims at 500 KB so a
+flapping service cannot fill the disk.
+
+**N176 (a port already in use died with a socket error) - fixed.** Shiny's
+failure to bind names no port and suggests no remedy, and at boot it happens
+invisibly. The port is now checked before `runApp`, and a refusal is a sentence:
+which port, what probably has it, the command that names the process, and the two
+ways out. It exits non-zero, so a task with restart-on-failure behaves.
+
+**N177 (the address printed a placeholder to somebody who did not know the
+answer) - fixed.** The startup line said `Open http://<this-vm>:8100` -- printed
+verbatim, to a person who has just installed the thing and does not yet know what
+the network calls the box. The machine knows its own name; it prints
+`http://QLIKSERVER:8100/` now, with the placeholder kept beside it for the case
+where that name is not what the network resolves.
+
+**N178 (two links named screens that no longer exist) - fixed.** A form result
+offered "Open the PDF form builder" and a report result "Open the report
+builder". Those two screens were merged into one months earlier, and both links
+land on the same place: Add a template with "Anything else" already chosen. Both
+now say "Set it up on Add a template", which is the screen she arrives at. The
+sentence in front of each still differs, because the two results prompt different
+questions.
+
+**Not a defect, worth writing down.** A Shiny output inside a false
+`conditionalPanel` is suspended, so it keeps its `.recalculating` class for ever
+and the page is never "quiet". Invisible to a person; fatal to any browser
+automation that waits on it. Recorded in `docs/design.md` §7 with the one-line
+fix (count only visible elements), after a harness that got it wrong took five
+minutes a document instead of thirty seconds.

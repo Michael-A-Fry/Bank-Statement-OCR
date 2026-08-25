@@ -477,3 +477,91 @@ test_that("no non-ASCII byte survives in any deployment script", {
   expect_identical(offenders, character(0),
                    info = paste("non-ASCII:", paste(offenders, collapse = " | ")))
 })
+
+# ---------------------------------------------------------------------------
+# STARTING AT BOOT, WITH NOBODY WATCHING
+#
+# On the server this is started by Task Scheduler at boot, as a service account,
+# with no console attached to anything. Everything the launcher prints then goes
+# nowhere -- so "the task says it ran and nothing is listening" has no evidence
+# behind it, and the operator is left guessing between a firewall rule, a taken
+# port, a settings file that did not parse and a missing R package.
+# ---------------------------------------------------------------------------
+
+.dep_runapp <- function() {
+  p <- file.path(engine_root(), "scripts", "run_app.R")
+  skip_if_not(file.exists(p), "scripts/run_app.R missing")
+  readLines(p, warn = FALSE)
+}
+
+test_that("every start writes a line to a file that survives the window closing", {
+  src <- .dep_runapp(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'file.path(app_dir, "logs", "startup.log")', fixed = TRUE)
+  # set up BEFORE anything that can fail, or a failure has nowhere to be written
+  i_log <- grep("\\.log_path <- ", src)[1]
+  i_cfg <- grep("load_config\\(\\)", src)[1]
+  expect_false(is.na(i_log))
+  expect_true(is.na(i_cfg) || i_log < i_cfg)
+  # what a person needs to see in it
+  for (what in c("starting Statement Studio", "folder  ", "account ", "port    ",
+                 "uploads up to", "listening on every network card"))
+    expect_match(joined, what, fixed = TRUE)
+  # and it cannot fill the disk when a service flaps
+  expect_match(joined, "file.info(.log_path)$size > 512000", fixed = TRUE)
+  # writing the log must never be the thing that stops the app starting
+  blk <- paste(src[grep("^\\.boot <- function", src)[1] + 0:5], collapse = "\n")
+  expect_match(blk, "try\\(")
+})
+
+test_that("a port already in use is named, not left as a socket error", {
+  src <- .dep_runapp(); joined <- paste(src, collapse = "\n")
+  # asked BEFORE runApp, so the answer is a sentence rather than a stack trace
+  i_chk <- grep("\\.port_free\\(port\\)", src)[1]
+  i_run <- grep("shiny::runApp", src)[1]
+  expect_false(is.na(i_chk)); expect_false(is.na(i_run))
+  expect_lt(i_chk, i_run)
+  expect_match(joined, "IS ALREADY IN USE", fixed = TRUE)
+  expect_match(joined, "netstat -ano", fixed = TRUE)     # how to find what has it
+  expect_match(joined, "app.port", fixed = TRUE)         # and the way out
+  # NON-ZERO on the way out, or a task with restart-on-failure is told it worked
+  expect_match(joined, "quit(status = 2L", fixed = TRUE)
+  expect_match(joined, "quit(status = 3L", fixed = TRUE) # ...and if runApp itself dies
+  # the check really does open and shut a socket rather than guessing
+  expect_match(joined, "serverSocket(p)", fixed = TRUE)
+  expect_match(joined, "close(s)", fixed = TRUE)
+})
+
+test_that("the address it prints has this machine's own name in it", {
+  src <- .dep_runapp(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'Sys.info()[["nodename"]]', fixed = TRUE)
+  expect_match(joined, "Open  http://%s:%d/", fixed = TRUE)
+  # the placeholder survives only as the FALLBACK, never as the whole answer
+  expect_match(joined, "<this-server>", fixed = TRUE)
+  expect_false(any(grepl("Open http://<this-vm>", src, fixed = TRUE)))
+})
+
+test_that("the one-page deployment guide says the things that actually stop it", {
+  p <- file.path(engine_root(), "docs", "operational", "deploy-on-the-qlik-server.md")
+  expect_true(file.exists(p))
+  txt <- paste(readLines(p, warn = FALSE), collapse = "\n")
+  # the three service-account rights, each of which fails differently
+  expect_match(txt, "Log on as a batch job", fixed = TRUE)
+  expect_match(txt, "icacls", fixed = TRUE)
+  expect_match(txt, "Password never expires", fixed = TRUE)
+  # the port: free, and RESERVED so nothing can take it before boot
+  expect_match(txt, "netstat -ano | findstr :8100", fixed = TRUE)
+  expect_match(txt, "netsh int ipv4 add excludedportrange", fixed = TRUE)
+  # the three scheduled-task settings that silently break it
+  expect_match(txt, "/service", fixed = TRUE)
+  expect_match(txt, "Start in", fixed = TRUE)
+  expect_match(txt, "Stop the task if it runs longer than", fixed = TRUE)
+  # the firewall, and the address
+  expect_match(txt, "New-NetFirewallRule", fixed = TRUE)
+  expect_match(txt, "Test-NetConnection", fixed = TRUE)
+  expect_match(txt, "logs\\\\startup.log")
+  # and it is reachable from the front door and the operational index
+  for (f in c("README.md", file.path("docs", "operational", "README.md")))
+    expect_match(paste(readLines(file.path(engine_root(), f), warn = FALSE), collapse = "\n"),
+                 "deploy-on-the-qlik-server.md", fixed = TRUE,
+                 info = paste(f, "does not link the deployment guide"))
+})

@@ -158,7 +158,7 @@ test_that("every docs/ path named in prose is a file or folder that exists", {
 test_that("the analyst's own pages are reachable from the folder she is handed", {
   # Whichever folder her pages physically live in, the name she is given has to
   # land somewhere that routes her onward. This asserts the landing, not the
-  # layout: the front door exists, and it names each of her four pages.
+  # layout: the front door exists, and it names each of her pages.
   idx <- file.path(.dt_root(), "docs", "for-analysts", "README.md")
   # A missing index is a FAILURE, not an error: an error aborts the rest of the
   # test, so the report would name the absent folder and hide which pages the
@@ -166,6 +166,7 @@ test_that("the analyst's own pages are reachable from the folder she is handed",
   expect_true(file.exists(idx))
   txt <- if (file.exists(idx)) paste(readLines(idx, warn = FALSE), collapse = "\n") else ""
   for (page in c("converting-statements.md", "adding-a-bank-template.md",
+                 "pulling-tables-out-of-a-report.md",
                  "when-something-goes-wrong.md", "survey-a-statement-with-ai.md"))
     expect_true(grepl(page, txt, fixed = TRUE),
                 info = paste("the analyst's index does not name", page))

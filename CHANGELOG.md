@@ -13,6 +13,46 @@ finding id.
 
 ---
 
+## 1.5.3
+
+**Putting it on the server is one page now.**
+[deploy-on-the-qlik-server.md](docs/operational/deploy-on-the-qlik-server.md) —
+the service account and the three rights it needs (each of which fails
+differently), claiming port 8100 so Windows cannot hand it to anything else, the
+scheduled task that brings it back after every reboot, the firewall rule, and the
+address people type. Every step says how to prove it worked before you move on,
+and it ends in a checklist.
+
+**A start at boot leaves evidence.** Started by Task Scheduler as a service
+account there is no console, so everything the launcher printed went nowhere —
+and "the task ran and nothing is listening" had nothing behind it. It writes
+`logs\startup.log` now: a line per start with the version, folder, account, port,
+address and upload ceiling, plus a line for anything that stopped it. Set up
+before anything that can fail, and self-trimming so a flapping service cannot
+fill the disk.
+
+**A port already in use is a sentence, not a socket error.** Checked before the
+app tries to listen: which port, what probably has it, the command that names the
+process, and the two ways out. It exits non-zero, so restart-on-failure behaves.
+
+**The address it prints has the machine's own name in it** instead of the
+placeholder `<this-vm>`, which was being printed to somebody who had just
+installed the thing and did not yet know what the network called the box.
+
+**Documentation caught up with the last three releases.** `design.md` now
+describes the third template mode (`mode: document`) — the schema, why it is a
+separate engine, the four load-bearing decisions inside it, and the one line that
+keeps it out of the dashboards. A new analyst page,
+[pulling-tables-out-of-a-report.md](docs/operational/pulling-tables-out-of-a-report.md),
+covers the builder end to end including what it still cannot do. The analyst
+folder is five pages, not four.
+
+**Two links named screens that no longer exist.** "Open the PDF form builder" and
+"Open the report builder" were merged into one screen months earlier; both now
+say "Set it up on Add a template", which is where they land.
+
+---
+
 ## 1.5.2
 
 **A rotated page can be pointed at.** `pdf_pagesize` reports the page box before

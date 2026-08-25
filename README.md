@@ -24,10 +24,11 @@ Three pages read straight through, for whoever needs the whole thing at once:
 
 Then one page per job:
 
-- **[For analysts](docs/for-analysts/README.md)** — the four pages a forensic
+- **[For analysts](docs/for-analysts/README.md)** — the five pages a forensic
   accountant needs and nothing else: convert a statement, teach it a new bank,
-  work out what to do when something looks wrong, describe a layout safely. This
-  is the folder to hand to somebody new.
+  pull tables out of a report that is not a statement, work out what to do when
+  something looks wrong, describe a layout safely. This is the folder to hand to
+  somebody new.
 - **[Operational](docs/operational/README.md)** — how to *do* things: the four
   above, plus set it up, run it, back it up, update it, admin, and wire up Qlik.
 - **[Context](docs/context/README.md)** — how it works and why: the charter, the
@@ -36,6 +37,13 @@ Then one page per job:
 
 **New here?** [first-time-setup.md](docs/operational/first-time-setup.md) — two
 double-clicks, then set the admin password and open the firewall port.
+
+**Putting it on the server for the whole team?**
+[deploy-on-the-qlik-server.md](docs/operational/deploy-on-the-qlik-server.md) —
+one page, start to finish: the service account and the three rights it needs,
+claiming the port so nothing else can take it, the scheduled task that brings it
+back after every reboot, the firewall rule, and the address people type. Every
+step says how to prove it worked before you move on.
 
 **Turning it on for a unit today?**
 [go-live-checklist.md](docs/operational/go-live-checklist.md) — the numbered

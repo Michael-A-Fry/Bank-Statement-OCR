@@ -15,6 +15,7 @@ box.
 |---|---|
 | Convert a statement and download the result | [converting-statements.md](converting-statements.md) |
 | Teach it a new bank layout, no code | [adding-a-bank-template.md](adding-a-bank-template.md) |
+| Pull tables and figures out of anything that is **not** a statement | [pulling-tables-out-of-a-report.md](pulling-tables-out-of-a-report.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
 | Describe a tricky layout with no client information in it | [survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) |
 
@@ -23,6 +24,7 @@ box.
 | I want to… | Page |
 |---|---|
 | Set it up for the first time (air-gapped) | [first-time-setup.md](first-time-setup.md) |
+| **Put it on the Qlik server: service account, boot start, firewall, the address** | [deploy-on-the-qlik-server.md](deploy-on-the-qlik-server.md) |
 | **Turn it on for real — the checklist for the day** | [go-live-checklist.md](go-live-checklist.md) |
 | Start it, keep it running after reboots, open the firewall port, change a setting | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
 | Back up the four irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |

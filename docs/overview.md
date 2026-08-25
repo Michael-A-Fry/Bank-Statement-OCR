@@ -54,11 +54,20 @@ conversions from tested templates feed the Qlik dashboards automatically.
   credit card, ASB, BNZ, Kiwibank, Westpac, plus a cross-bank Xero-standard
   import), 5 PDF and one generic Excel. Twelve take part in detection; the
   thirteenth is a tutorial specimen, deliberately excluded so a demo's wording can
-  never match a real statement. On top of that there is a separate key-value mode
-  for labelled-value documents such as KiwiSaver and IRD-style summaries.
+  never match a real statement. On top of that there are two modes for documents
+  that are **not** transaction statements: a key-value mode for labelled-value
+  documents such as KiwiSaver and IRD-style summaries, and a **document** mode for
+  reports — many tables of different shapes on one document, plus figures with
+  labels beside them. Neither reaches the dashboards; see the next bullet.
+- **Anything that is not a statement is a download, never a dashboard.** A
+  statement is checked against its own running balance; a report has no running
+  balance, so there is nothing behind those figures that could tell a right one
+  from a wrong one. The engine therefore refuses to publish them — it is one
+  line of code with a test on it, not a matter of anybody remembering.
 - **Adding a layout is a template, not code.** An analyst uploads one example,
   confirms what the tool detected against a live preview of the real statement,
-  and saves. It is YAML underneath, written by the tool.
+  and saves. For a report it is two drags per table: one round its title, one
+  round its column names. It is YAML underneath, written by the tool.
 - **Outputs per statement:** a six-sheet workbook (Transactions, Summary, Checks,
   Provenance, Diagnostics, Metadata), a CSV of the transactions, and a JSON
   holding everything including the build stamp.
