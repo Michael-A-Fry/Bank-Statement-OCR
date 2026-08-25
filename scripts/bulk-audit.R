@@ -28,7 +28,8 @@ paths <- list.files(folder, recursive = TRUE, full.names = TRUE,
 if (!length(paths)) { cat("no statements found under", folder, "\n"); quit(status = 1) }
 cat(sprintf("Auditing %d file(s) under %s ...\n", length(paths), folder))
 
-tmpls <- load_template_set(file.path(root, "templates"), file.path(root, "templates_user"))
+tmpls <- load_template_set(file.path(root, "templates", "statements"),
+                           file.path(root, "templates", "statements_user"))
 b <- batch_audit(paths, templates = tmpls)
 writeLines(format_batch_audit(b), out)
 

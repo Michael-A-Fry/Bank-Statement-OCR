@@ -95,8 +95,13 @@ options(timeout = 600)
 # this list does not fail the build or the tests -- it ships an install that runs
 # perfectly and looks completely unstyled, which is the kind of break nobody finds
 # until it is in front of someone. test-deployment-docs.R pins it.
-app_items <- c("R", "templates", "templates_user", "templates_seed",
-               "fields_templates", "doc_templates", "doc_templates_user",
+# "templates" is now ONE folder holding all seven (statements, statements_user,
+# statements_seed, fields, fields_user, documents, documents_user), so copying it
+# carries every kind. The `_user` folders inside it hold nothing but a README in
+# the source -- which is exactly what makes an update safe: the package shares no
+# filename with a template built on the server, so a folder-replace cannot touch
+# one. See templates/README.md and docs/operational/updating-a-version.md.
+app_items <- c("R", "templates",
                "config", "scripts", "www",
                "tests", "samples", "docs",
                "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat",

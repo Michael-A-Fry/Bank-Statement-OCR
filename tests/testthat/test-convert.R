@@ -254,7 +254,7 @@ test_that("the front door never throws, whatever it is handed", {
                   file.path(tempdir(), "nope.csv"), "", TRUE)
   for (i in seq_along(hostile)) {
     r <- convert_document(hostile[[i]], outdir = out, templates_dir = templates_dir(),
-                          fields_dir = file.path(engine_root(), "fields_templates"),
+                          fields_dir = fields_templates_dir(),
                           logdir = out)
     expect_identical(r$status, "failed", info = paste("input", i))
     expect_true(nzchar(paste(r$messages, collapse = " ")), info = paste("input", i))

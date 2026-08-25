@@ -36,10 +36,10 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
                         fields_templates = NULL) {
   root <- Sys.getenv("ENGINE_ROOT", ".")
   if (is.null(templates))
-    templates <- safe(load_template_set(file.path(root, "templates"),
-                                        file.path(root, "templates_user")), list())
+    templates <- safe(load_template_set(file.path(root, "templates", "statements"),
+                                        file.path(root, "templates", "statements_user")), list())
   if (is.null(fields_templates))
-    fields_templates <- safe(load_fields_templates(file.path(root, "fields_templates")), list())
+    fields_templates <- safe(load_fields_templates(file.path(root, "templates", "fields")), list())
   dict <- safe(default_label_dict(), list())
   paths <- as.character(paths)
   rows <- vector("list", length(paths))

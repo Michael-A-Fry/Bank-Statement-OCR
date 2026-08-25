@@ -13,6 +13,55 @@ finding id.
 
 ---
 
+## 1.6.0
+
+**Every template lives in one folder now.** There were seven at the root of the
+app — `templates`, `templates_user`, `templates_seed`, `fields_templates`,
+`fields_templates_user`, `doc_templates`, `doc_templates_user` — and telling them
+apart meant already knowing the naming convention. They are now one folder with a
+`README.md` that is the map:
+
+```
+templates\
+  statements\  statements_user\  statements_seed\
+  fields\      fields_user\
+  documents\   documents_user\
+```
+
+A folder name is the template's `mode:`, so a template cannot be read as the
+wrong kind — that is the same fact twice rather than two facts that can drift.
+**The separations are untouched**: curated vs `_user` is still the Qlik
+governance gate, and one folder per mode is still what keeps a report template out
+of statement detection.
+
+- **An existing install moves itself, once, and says so.** On the first start
+  after the update the old folders are moved into place and each move is written
+  to `logs\startup.log`. It moves files, never copies-and-deletes and never
+  deletes; a destination file that already exists is never overwritten — the
+  source is left alone and reported, every run, until a person deals with it; an
+  emptied folder keeps a `MOVED.txt` so somebody who goes looking finds a sentence
+  rather than nothing. Running it twice does nothing (N184).
+- **A settings file naming the old folders is read as naming the new ones.** A
+  `config.yaml` wins over the defaults — that is the point of it, and here it
+  would have been a trap: the folders move, so a config still saying
+  `templates_user` would point at an empty one and every template the team built
+  would vanish from the app with nothing said. Only exact legacy names are
+  rewritten; a path somebody chose on purpose is left alone.
+- **New page: [updating a version](docs/operational/updating-a-version.md)** —
+  merging a dev folder into the live one by hand. What must never be copied, what
+  to copy deliberately, seven steps, and five checks that each prove a different
+  folder came back.
+- Templates built in the app can no longer be committed by accident: the three
+  `templates\*_user\` folders carry nothing but a `README.md`, which is the entire
+  reason a folder-replace update cannot overwrite somebody's template. Enforced by
+  `.gitignore` **and** asserted in `test-deployment.R`, because a rule only a
+  `.gitignore` knows is a rule nothing checks.
+- Test helpers ask `templates_dir()` / `user_templates_dir()` / `fields_templates_dir()`
+  / `document_templates_dir()` instead of spelling the path out, so the next move
+  touches one file rather than forty.
+
+---
+
 ## 1.5.6
 
 **A folder of irreplaceable work that no backup procedure named.**

@@ -146,15 +146,16 @@ defaults — send it back to whoever builds the package.
 
 ## 3. Promote a template to proven
 
-**Proven is a gate, not a label.** Only templates in `templates\` feed the Qlik
+**Proven is a gate, not a label.** Only templates in `templates\statements\` feed the Qlik
 dashboards ([connecting-qlik.md](connecting-qlik.md)), and only a template with a
 golden test can prove it still parses what it claims to. A template dropped into
-`templates\` **without** a golden test fails the suite's guard test on purpose —
+`templates\statements\` **without** a golden test fails the suite's guard test on purpose —
 that guard is what stops an untested layout reaching the dashboards.
 
 So promotion is two moves, never one:
 
-1. **Move the YAML** from `templates_user\<id>.yaml` to `templates\<id>.yaml`.
+1. **Move the YAML** from `templates\statements_user\<id>.yaml` to
+   `templates\statements\<id>.yaml`.
 2. **Give it a fixture and a golden snapshot**, and run the suite.
 
 | Step | Delimited (CSV/TSV) or Excel | PDF |

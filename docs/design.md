@@ -70,12 +70,12 @@ are named instead, and every measured figure carries the date it was taken.
                              |                              |
    reads / writes            |                              | reads
    -------------             |                              --------------
-   uploads/<id>/  <----------+                              templates/         (shipped, tested)
-   logs/runs/     <----------+                              templates_user/    (built in the app)
-   logs/feedback/ <----------+                              templates_seed/    (unfinished starts)
-   logs/metadata/ <----------+                              fields_templates/  (mode: fields)
-   requests/      <----------+                              doc_templates/     (mode: document)
-   logs/startup.log <--------+                              doc_templates_user/
+   uploads/<id>/  <----------+                              templates/
+   logs/runs/     <----------+                                statements/      (shipped, tested)
+   logs/feedback/ <----------+                                statements_user/ (built in the app)
+   logs/metadata/ <----------+                                statements_seed/ (unfinished starts)
+   requests/      <----------+                                fields/  fields_user/     (mode: fields)
+   logs/startup.log <--------+                                documents/  documents_user/ (mode: document)
                              |                              dictionaries/      (labels, lexicon)
                              |                              config/config.yaml
                              v
@@ -209,11 +209,21 @@ the format the charter calls dominant. Do not "fix" it by making the check pass.
 The charter rule is **"a new bank is a YAML template, never new code."** If a
 change would make adding a bank require an edit in `R/`, the change is wrong.
 
-Templates live in three places: `templates/` (shipped, `origin = "default"`,
-each with a golden test), `templates_user/` (built in the app, `origin = "user"`),
-`templates_seed/` (unfinished starting points, marked `draft: true`).
-`fields_templates/` is a separate world for labelled-value documents — it does not
-take part in transaction detection at all.
+**Every template lives under `templates/`**, one folder per kind, with a
+`templates/README.md` that is the map. A folder name is the template's `mode:`,
+so a template cannot be read as the wrong kind — that is the same fact twice
+rather than two facts that can drift.
+
+Statement templates live in three of them: `templates/statements/` (shipped,
+`origin = "default"`, each with a golden test), `templates/statements_user/`
+(built in the app, `origin = "user"`), `templates/statements_seed/` (unfinished
+starting points, marked `draft: true`, never loaded). `templates/fields/` and
+`templates/documents/` are separate worlds for labelled-value documents and for
+reports — neither takes part in transaction detection at all.
+
+The `_user` / curated split is the **governance gate**, not tidiness: only
+curated statement templates may reach Qlik (`R/feed.R`). Consolidating the
+folders deliberately did not touch it.
 
 Today: **13 template files ship, 12 take part in detection** (`tutorial_everyday_pdf`
 carries `sample: true` and is excluded).
@@ -795,13 +805,13 @@ no deploy pipeline, there is a folder you carry across.
 ```
 StatementStudio-offline\
   R\  app.R  ui_labels.R  ui_content.R  run.R  scripts\  www\  RUN-ME.bat
-  templates\  templates_seed\  fields_templates\  doc_templates\             <- product
   tests\  samples\  docs\                                                    <- product
+  templates\statements\  statements_seed\  fields\  documents\             <- product
   config\config.yaml                    <- LIVE: port, admin password, feed policy
   dictionaries\labels.yaml  lexicon.yaml <- LIVE: every wording Admin has taught it
-  templates_user\<id>.yaml              <- LIVE: every template built in the app
-  fields_templates_user\                <- LIVE: form templates built in the app
-  doc_templates_user\                   <- LIVE: report pullers built in the app
+  templates\statements_user\<id>.yaml   <- LIVE: every template built in the app
+  templates\fields_user\                <- LIVE: form templates built in the app
+  templates\documents_user\             <- LIVE: report pullers built in the app
   logs\runs\  logs\feedback\  logs\metadata\  <- LIVE: the audit trail, kept forever
   uploads\<id>\                         <- LIVE: real client statements
   feed\                                 <- LIVE: what Qlik reads
@@ -810,7 +820,8 @@ StatementStudio-offline\
 
 **Everything in the second group is server state that exists nowhere else**, and
 an update must not touch any of it. Some of it is irreplaceable in the strict
-sense — `templates_user\`, `fields_templates_user\`, `doc_templates_user\` and
+sense — `templates\statements_user\`, `templates\fields_user\`,
+`templates\documents_user\` and
 `dictionaries\` are the accumulated work of the team and cannot be rebuilt from
 the repo — which is why
 `docs/operational/backup-and-restore.md` exists and why it is the first thing in
@@ -870,7 +881,7 @@ Keep the previous **bundle** — `StatementStudio-offline` as it came off the
 internet PC, not a copy of the live server folder; the two look alike and only one
 of them is safe to put back. Copy it over the app folder the same way an update
 goes on, **Replace the files in the destination**. `config\`, `dictionaries\`,
-`templates_user\`, `logs\`, `uploads\` and `feed\` are untouched in either
+`templates\statements_user\`, `logs\`, `uploads\` and `feed\` are untouched in either
 direction, because none of them is in the bundle. No internet is needed, and
 nothing has to be uninstalled — the private R lives inside whichever folder you
 are running.
@@ -882,8 +893,8 @@ every word taught since — and `RUN-ME.bat` then refreshes its
 with it.
 
 The one thing a rollback cannot undo is a **template** edited or promoted since
-the update, because `templates\` *is* in the bundle. If that is what you are
-rolling back, take the template out of `templates_user\` first, or you will
+the update, because `templates\statements\` *is* in the bundle. If that is what you are
+rolling back, take the template out of `templates\statements_user\` first, or you will
 restore the old one over it.
 
 **And it does not undo what already reached Qlik.** `feed\` is live state: the

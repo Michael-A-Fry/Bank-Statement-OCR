@@ -562,7 +562,7 @@ test_that("a real PDF with a wrong date band really does produce actionable skip
   # PARSER produces it on a real file, so the defence cannot die while the suite
   # stays green -- which is exactly how a prose-matching version of it would have.
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  b <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  b <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
   b <- b[!grepl("^sample: true", b)]
   # Move ONLY the date band off its column. Every row then has a real amount and
   # an unreadable date -> date_unparsed, the actionable case. (Moving every band

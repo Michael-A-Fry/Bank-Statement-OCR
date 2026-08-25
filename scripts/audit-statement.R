@@ -22,7 +22,8 @@ path <- args[1]
 if (!file.exists(path)) { cat("file not found:", path, "\n"); quit(status = 1) }
 out <- if (length(args) >= 2) args[2] else paste0(tools::file_path_sans_ext(basename(path)), ".audit.md")
 
-tmpls <- load_template_set(file.path(root, "templates"), file.path(root, "templates_user"))
+tmpls <- load_template_set(file.path(root, "templates", "statements"),
+                           file.path(root, "templates", "statements_user"))
 writeLines(format_audit(statement_audit(path, templates = tmpls)), out)
 cat("Wrote safe audit ->", normalizePath(out), "\n")
 cat("It contains NO PII (shapes only). Read it, then share it.\n")

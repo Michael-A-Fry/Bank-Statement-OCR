@@ -55,7 +55,7 @@ test_that("the combined report leaks no PII", {
 # ---------------------------------------------------------------------------
 
 test_that("a form-template match is reported as its own kind, not as a gap", {
-  ftpls <- load_fields_templates(fixture("fields_templates"))
+  ftpls <- load_fields_templates(fields_templates_dir())
   skip_if_not(length(ftpls) > 0)
   form_src <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
   skip_if_not(file.exists(form_src))
@@ -104,7 +104,7 @@ test_that("form detection never changes a statement's verdict", {
   paths <- list.files(dir, full.names = TRUE)
   none <- batch_audit(paths, templates = tmpls, fields_templates = list())
   some <- batch_audit(paths, templates = tmpls,
-                      fields_templates = load_fields_templates(fixture("fields_templates")))
+                      fields_templates = load_fields_templates(fields_templates_dir()))
   expect_identical(none$per_file$status, some$per_file$status)
   expect_equal(some$feature_gaps$forms, 0L)
 })

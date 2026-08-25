@@ -50,7 +50,7 @@ local({
 
   res <- convert_statement(
     path = file, bank = bank, outdir = outdir,
-    templates_dir = file.path(root, "templates"),
+    templates_dir = file.path(root, "templates", "statements"),
     requested_by = "cli",
     logdir = file.path(root, "logs")
   )

@@ -39,17 +39,17 @@ last two bundles for exactly this. If all you have is a copy of the live folder,
 read the warning at the end of this section before you touch anything.
 
 1. **Stop the app.** `Ctrl-C`, or end the scheduled task.
-2. **Rescue anything promoted since the update.** `templates\` **is** in the
-   bundle, so it is replaced by the rollback. If a template was promoted to
-   proven since the update, copy `templates\<id>.yaml` somewhere safe now — and
-   its golden test with it if you added one.
+2. **Rescue anything promoted since the update.** `templates\statements\` **is**
+   in the bundle, so it is replaced by the rollback. If a template was promoted to
+   proven since the update, copy `templates\statements\<id>.yaml` somewhere safe
+   now — and its golden test with it if you added one.
 3. **Do not delete the current folder.** Its `logs\` are the evidence of what the
    bad version did, and section 4 needs them.
 4. **Copy the old bundle over the app folder** and choose **Replace the files in
    the destination** — exactly the update procedure
    ([updating.md](updating.md) §2), with an older bundle. Only the files the
-   bundle carries are replaced; `config\`, `dictionaries\`, `templates_user\`,
-   `fields_templates_user\`, `doc_templates_user\`, `logs\`, `uploads\` and
+   bundle carries are replaced; `config\`, `dictionaries\`, `templates\statements_user\`,
+   `templates\fields_user\`, `templates\documents_user\`, `logs\`, `uploads\` and
    `feed\` are not in it and are not touched.
 5. **Re-apply your `R\params.R` values by hand** if you had any. `R\` is in the
    bundle, so the rollback overwrote them just as the update did
@@ -69,14 +69,14 @@ and convert one statement you know reconciles.
 
 > **If all you kept is a copy of the whole live folder, do not restore it
 > wholesale.** That copy contains its own snapshot of `dictionaries\`,
-> `templates_user\` and `config\config.yaml` as they were on the day you took it.
+> `templates\statements_user\` and `config\config.yaml` as they were on the day you took it.
 > Putting it back reverts every word Admin has taught the tool and every template
 > your team has built since — the two things
 > [backup-and-restore.md](backup-and-restore.md) calls irreplaceable — and
 > `RUN-ME.bat` will then overwrite its own `%LOCALAPPDATA%\StatementStudio`
 > backup with the stale copies, taking the safety net with it. Instead: copy the
-> current `dictionaries\`, `templates_user\`, `fields_templates_user\`,
-> `doc_templates_user\` and `config\config.yaml` out of the live folder first,
+> current `dictionaries\`, `templates\statements_user\`, `templates\fields_user\`,
+> `templates\documents_user\` and `config\config.yaml` out of the live folder first,
 > restore, and put them back before you start the app.
 
 ## 3. What the rollback costs you
@@ -84,8 +84,8 @@ and convert one statement you know reconciles.
 | Kept — none of this is in the bundle | Lost — all of this is |
 |---|---|
 | `config\config.yaml` — your settings | every fix and change in the newer version |
-| `dictionaries\` — every wording and marker taught in Admin | any template **promoted** into `templates\` since the update (step 2 rescues it) |
-| `templates_user\`, `fields_templates_user\`, `doc_templates_user\` — every template built in the app | any `R\params.R` value you re-applied after the update (step 5) |
+| `dictionaries\` — every wording and marker taught in Admin | any template **promoted** into `templates\statements\` since the update (step 2 rescues it) |
+| `templates\statements_user\`, `templates\fields_user\`, `templates\documents_user\` — every template built in the app | any `R\params.R` value you re-applied after the update (step 5) |
 | `logs\` — the whole audit trail, including `logs\metadata\` | |
 | `uploads\` — the kept copies of the statements | |
 | `feed\` — **including the rows the bad version published** | |

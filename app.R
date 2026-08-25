@@ -52,6 +52,18 @@ shiny::registerInputHandler("shiny.date", force = TRUE, .decode_shiny_date)
 # Load the engine (all pure-R modules) into the session.
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
 
+# EVERY TEMPLATE NOW LIVES UNDER templates\. A deployment updated from an older
+# version still has the old folders at the root, holding work that exists nowhere
+# else, so move them once -- here, before anything reads a template, and not by
+# asking a person to do it on an air-gapped box. It moves files, never deletes
+# them, never overwrites, and with nothing to move it says nothing.
+#
+# Here as well as in scripts/run_app.R because the server is not the only way in:
+# a maintainer running the app from an R console gets the same migration, and
+# running it twice is a no-op. R/config.R holds the rules.
+for (.m in tryCatch(migrate_template_layout("."), error = function(e) character(0)))
+  message("Statement Studio: ", .m)
+
 # All deployment settings live in ONE place: config/config.yaml (copy it from
 # config/config.example.yaml). Any absent key falls back to the built-in default,
 # so with no config file the app behaves exactly as before.
@@ -119,8 +131,8 @@ USER_FIELDS_DIR    <- CONFIG$paths$user_fields     # form templates built in the
 # mode:document templates -- a report carrying many tables of different shapes.
 # %||% so a settings file written before this existed still starts: an absent path
 # is a missing folder, which both loaders treat as "no templates", not an error.
-DOC_DIR            <- CONFIG$paths$docs %||% "doc_templates"
-USER_DOC_DIR       <- CONFIG$paths$user_docs %||% "doc_templates_user"
+DOC_DIR            <- CONFIG$paths$docs %||% file.path("templates", "documents")
+USER_DOC_DIR       <- CONFIG$paths$user_docs %||% file.path("templates", "documents_user")
 DICT_PATH          <- CONFIG$paths$dictionary      # the shared label dictionary
 LEXICON_PATH       <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexicon.yaml")  # recognition vocabularies
 # The bundled specimen statement (public, synthetic, ships with the app) that "Try

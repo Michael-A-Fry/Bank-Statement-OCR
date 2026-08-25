@@ -193,8 +193,8 @@ log_run <- function(logdir, result) {
 # writing it, so a caller that may still change the outcome (convert_document's
 # form fallback) can write exactly one, final record itself.
 convert_statement <- function(path, bank = NULL, statement_type = NULL,
-                              outdir = "out", templates_dir = "templates",
-                              user_templates_dir = "templates_user",
+                              outdir = "out", templates_dir = "templates/statements",
+                              user_templates_dir = "templates/statements_user",
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL,

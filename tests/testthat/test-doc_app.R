@@ -366,13 +366,13 @@ test_that("a report converts through the front door as kind 'tables', and the ru
     id = "northwind_position", bank = "Northwind", statement_type = "position report",
     phrases = "Consolidated position report", tables = propose_tables(inp),
     pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
-  save_document_template(tmpl, file.path(tdir, "doc_templates"))
+  save_document_template(tmpl, file.path(tdir, "documents"))
 
   res <- convert_document(pdf_path, outdir = file.path(tdir, "out"),
-                          templates_dir = file.path(engine_root(), "templates"),
+                          templates_dir = templates_dir(),
                           user_templates_dir = NULL,
-                          fields_dir = file.path(engine_root(), "fields_templates"),
-                          doc_dir = file.path(tdir, "doc_templates"),
+                          fields_dir = fields_templates_dir(),
+                          doc_dir = file.path(tdir, "documents"),
                           logdir = file.path(tdir, "logs"))
   expect_identical(res$kind, "tables")
   expect_true(res$status %in% c("ok", "needs_review"))
@@ -401,9 +401,9 @@ test_that("with no report templates installed nothing about the front door chang
   p <- file.path(tdir, "not-a-statement.csv")
   writeLines(c("alpha,beta", "1,2"), p)
   res <- convert_document(p, outdir = file.path(tdir, "out"),
-                          templates_dir = file.path(engine_root(), "templates"),
+                          templates_dir = templates_dir(),
                           user_templates_dir = NULL,
-                          fields_dir = file.path(engine_root(), "fields_templates"),
+                          fields_dir = fields_templates_dir(),
                           doc_dir = file.path(tdir, "no-such-folder"),
                           logdir = file.path(tdir, "logs"))
   expect_identical(res$status, "unsupported")

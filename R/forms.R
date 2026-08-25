@@ -4,7 +4,8 @@
 # into a full pipeline (load templates -> detect by fingerprint -> extract ->
 # write outputs), kept deliberately separate from the transaction pipeline so the
 # core stays unchanged. A fields template is a normal YAML with `mode: fields`
-# and a `fields:` block; they live in fields_templates/ (curated) and a user dir.
+# and a `fields:` block; they live in templates/fields/ (curated) and
+# templates/fields_user/ (built on the box).
 
 # is_fields_template(t) -- TRUE for a mode:fields template.
 is_fields_template <- function(t) identical(t$mode %||% "", "fields") && !is.null(t$fields)
@@ -15,7 +16,7 @@ is_fields_template <- function(t) identical(t$mode %||% "", "fields") && !is.nul
 # SILENT: the skip reasons come back on attr(x, "load_errors"), exactly as
 # load_templates() does for statement templates, so the app can say which form
 # template vanished and why.
-load_fields_templates <- function(dir = "fields_templates", user_dir = NULL) {
+load_fields_templates <- function(dir = "templates/fields", user_dir = NULL) {
   out <- list()
   errors <- character(0)
   dirs <- c(dir, user_dir)
@@ -142,7 +143,7 @@ write_form_outputs <- function(fields, outdir, basename,
 
 # convert_form(path, ...) -> result list. Never throws: any failure is a `failed`
 # result with an actionable message, mirroring convert_statement's contract.
-convert_form <- function(path, fields_dir = "fields_templates",
+convert_form <- function(path, fields_dir = "templates/fields",
                          user_fields_dir = NULL, outdir = "out",
                          formats = c("xlsx", "csv", "json"),
                          dict = NULL, template_id = NULL) {
@@ -209,7 +210,7 @@ convert_form <- function(path, fields_dir = "fields_templates",
 }
 
 # save_fields_template(tmpl, dir) -> path. Validates then writes <dir>/<id>.yaml.
-save_fields_template <- function(tmpl, dir = "fields_templates_user") {
+save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   probs <- validate_fields_template(tmpl)
   if (length(probs)) stop("fields template is not valid: ", paste(probs, collapse = "; "))
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
@@ -232,9 +233,10 @@ save_fields_template <- function(tmpl, dir = "fields_templates_user") {
 # statement pass now only BUILDS the record (res$run_log); this function writes it
 # after the final outcome is known. Nothing is ever rewritten.
 convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
-                             templates_dir = "templates", user_templates_dir = "templates_user",
-                             fields_dir = "fields_templates", user_fields_dir = NULL,
-                             doc_dir = "doc_templates", user_doc_dir = NULL,
+                             templates_dir = "templates/statements",
+                             user_templates_dir = "templates/statements_user",
+                             fields_dir = "templates/fields", user_fields_dir = NULL,
+                             doc_dir = "templates/documents", user_doc_dir = NULL,
                              requested_by = NULL, formats = c("xlsx", "csv", "json"),
                              logdir = "logs", force_template = NULL, force_rows = NULL) {
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,

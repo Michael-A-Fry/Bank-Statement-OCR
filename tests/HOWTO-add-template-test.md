@@ -1,8 +1,8 @@
 # How to add a template and its golden test
 
-Every bank template in `templates/` ships with a golden-file test so parsing stays
+Every bank template in `templates/statements/` ships with a golden-file test so parsing stays
 reproducible — and that is enforced: the guard test in
-`tests/testthat/test-pdf_template_goldens.R` fails if any template in `templates/`
+`tests/testthat/test-pdf_template_goldens.R` fails if any template in `templates/statements/`
 has no snapshot under `tests/testthat/expected/`. A template without a test cannot
 join the **proven** set, and only the proven set feeds Qlik.
 
@@ -16,7 +16,7 @@ delimited and PDF differ.
 | Test file | a new `tests/testthat/test-<id>.R` | one entry in `PDF_GOLDENS` in `tests/testthat/test-pdf_template_goldens.R` |
 
 ## 1. Add the template
-Create `templates/<id>.yaml` following the spec in
+Create `templates/statements/<id>.yaml` following the spec in
 `docs/context/architecture/build-contract.md` (section 5). Set a unique `id`, the
 `fingerprint.header_contains_all` tokens, the `delimiter`, the canonical
 `columns` map, and the `amount_sign` handler

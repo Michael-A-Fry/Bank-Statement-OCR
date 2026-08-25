@@ -1,8 +1,8 @@
-# User report templates
+# documents_user\ — report templates built on the box
 
 Report templates (`mode: document`) saved from the app's **Add a template** tab
-land here as `<id>.yaml`. See `../doc_templates/README.md` for what a report
-template is and what it does instead of reconciliation.
+land here as `<id>.yaml`. See `..\documents\README.md` for what a report template
+is and what it does instead of reconciliation.
 
 - **Forgiving load:** an invalid template here is skipped rather than breaking the
   others — but never silently. The reason comes back on the load result and the
@@ -13,6 +13,11 @@ template is and what it does instead of reconciliation.
   with no width, and a fingerprint made of words every report carries are all
   refused there.
 - **Download only:** nothing from a report template reaches the Qlik feed, from
-  this folder or from `../doc_templates/`. See `../R/feed.R`.
+  this folder or from `..\documents\`. See `..\..\R\feed.R`.
 
-Promoting one to a curated template = move its `.yaml` into `../doc_templates/`.
+**This folder is irreplaceable** — every report puller somebody drew by hand is
+in it, and **Admin → Templates does not list them** (document templates are
+matched at the front door, not chosen from a list), so a missing one is not
+obvious. Back it up (`..\..\docs\operational\backup-and-restore.md`).
+
+Promoting one to a curated template = move its `.yaml` into `..\documents\`.

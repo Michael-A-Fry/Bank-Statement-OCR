@@ -158,7 +158,7 @@ validate_document_template <- function(t) {
 # load_document_templates(dir, user_dir) -> named list<template>, keyed by id.
 # Lenient like the form loader (one bad template never breaks the others) and,
 # like it, never SILENT: the skip reasons come back on attr(x, "load_errors").
-load_document_templates <- function(dir = "doc_templates", user_dir = NULL) {
+load_document_templates <- function(dir = "templates/documents", user_dir = NULL) {
   out <- list(); errors <- character(0)
   for (d in c(dir, user_dir)) {
     if (is.null(d) || !dir.exists(d)) next
@@ -179,7 +179,7 @@ load_document_templates <- function(dir = "doc_templates", user_dir = NULL) {
 
 # save_document_template(t, dir) -> path. Validates first: an invalid template is
 # never written, so the loader's leniency never has to cover for this screen.
-save_document_template <- function(t, dir = "doc_templates_user") {
+save_document_template <- function(t, dir = "templates/documents_user") {
   t$origin <- NULL
   probs <- validate_document_template(t)
   if (length(probs)) stop("document template is not valid: ", paste(probs, collapse = "; "))
@@ -191,7 +191,7 @@ save_document_template <- function(t, dir = "doc_templates_user") {
 
 # document_template_ids(dir) / delete_document_template(id, dir) -- the same
 # read/remove pair the other two modes have, so Admin can manage these too.
-document_template_ids <- function(dir = "doc_templates_user") {
+document_template_ids <- function(dir = "templates/documents_user") {
   if (!dir.exists(dir)) return(character(0))
   ids <- vapply(list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE), function(f) {
     t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
@@ -200,7 +200,7 @@ document_template_ids <- function(dir = "doc_templates_user") {
   unname(ids[!is.na(ids)])
 }
 
-delete_document_template <- function(id, dir = "doc_templates_user") {
+delete_document_template <- function(id, dir = "templates/documents_user") {
   if (!dir.exists(dir) || is.null(id) || !nzchar(id)) return(invisible(FALSE))
   hit <- FALSE
   for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
@@ -461,7 +461,7 @@ write_document_outputs <- function(ext, outdir, basename,
 # table and why. A template that matched but found NO rows at all is `unsupported`,
 # because that is the same answer as having no template: this document is not the
 # one the template was drawn on.
-convert_tables <- function(path, doc_dir = "doc_templates", user_doc_dir = NULL,
+convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir = NULL,
                            outdir = "out", formats = c("xlsx", "csv"),
                            template_id = NULL) {
   base <- tools::file_path_sans_ext(basename(path %||% "input"))

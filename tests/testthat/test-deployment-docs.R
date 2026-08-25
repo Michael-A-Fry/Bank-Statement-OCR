@@ -164,36 +164,47 @@ test_that("updating.md tells the truth about what a folder-replace keeps", {
   expect_match(txt, "params.R", fixed = TRUE)              # overwritten -- must be re-applied
 })
 
-test_that("updating.md warns about the hand copy that overwrites taught words", {
+# THE THREE LIVE-STATE FOLDERS, in one place. A page that stops naming one of
+# these is a page that stops telling somebody to protect it, and the failure is
+# silent in the way that matters: the update works, the app starts, and a year of
+# somebody's work is gone. Named here once so the assertions below cannot drift
+# apart from each other.
+.DEP_USER_DIRS <- c("templates\\statements_user", "templates\\fields_user",
+                    "templates\\documents_user")
+
+test_that("the hand-copy page warns about the copy that overwrites taught words", {
   # The bundle is safe: bundle-offline.R renames dictionaries/*.yaml to
   # *.example.yaml so a folder-replace cannot touch the server's Admin-taught
-  # words. A HAND copy out of the source folder skips that rename -- and the
-  # source folder carries those two files under the LIVE names. Nothing errors;
-  # statements that reconciled last week quietly stop reconciling. The trap is
-  # real only because of the two facts asserted below, so assert both, and the
-  # warning with them.
+  # words. A HAND copy out of a dev folder skips that rename -- and a dev folder
+  # carries those two files under the LIVE names. Nothing errors; statements that
+  # reconciled last week quietly stop reconciling. The trap is real only because
+  # of the two facts asserted below, so assert both, and the warning with them.
   expect_true(file.exists(file.path(.dep_root(), "dictionaries", "labels.yaml")))
   expect_true(file.exists(file.path(.dep_root(), "dictionaries", "lexicon.yaml")))
   expect_match(.dep_read("scripts/bundle-offline.R"), ".example.\\\\1", fixed = TRUE)
 
-  txt <- .dep_read("docs/operational/updating.md")
-  expect_match(txt, "copy individual files by hand", fixed = TRUE)
-  expect_match(txt, "Never copy `dictionaries\\labels.yaml`", fixed = TRUE)
+  txt <- .dep_read("docs/operational/updating-a-version.md")
+  expect_match(txt, "dictionaries\\labels.yaml", fixed = TRUE)
+  expect_match(txt, "dictionaries\\lexicon.yaml", fixed = TRUE)
   # and the other live state a sweep would take with it
-  for (p in c("config.yaml", "templates_user", "doc_templates_user", "uploads",
-              "R-runtime", "params.R"))
+  for (p in c(.DEP_USER_DIRS, "config.yaml", "uploads", "R-runtime", "params.R",
+              "VERSION"))
     expect_match(txt, p, fixed = TRUE)
+  # reachable, and reached from the page it replaces half of
+  expect_match(.dep_read("docs/operational/README.md"),
+               "updating-a-version.md", fixed = TRUE)
+  expect_match(.dep_read("docs/operational/updating.md"),
+               "updating-a-version.md", fixed = TRUE)
 })
 
 test_that("a backup-and-restore procedure exists and names every irreplaceable path", {
-  # templates_user/, fields_templates_user/, doc_templates_user/, dictionaries/
-  # and logs/metadata/ are the accumulated value of the tool and exist nowhere
-  # else; the only documented backup used to be config.yaml, to the SAME machine.
-  # doc_templates_user/ arrived with mode: document and was missed here once --
-  # a folder that is not in this list is a folder nobody is told to copy.
+  # The three *_user folders, dictionaries/ and logs/metadata/ are the accumulated
+  # value of the tool and exist nowhere else; the only documented backup used to
+  # be config.yaml, to the SAME machine. documents_user/ arrived with
+  # mode: document and was missed here once -- a folder that is not in this list
+  # is a folder nobody is told to copy.
   txt <- .dep_read("docs/operational/backup-and-restore.md")
-  for (p in c("templates_user", "fields_templates_user", "doc_templates_user",
-              "dictionaries", "logs\\metadata", "config.yaml"))
+  for (p in c(.DEP_USER_DIRS, "dictionaries", "logs\\metadata", "config.yaml"))
     expect_match(txt, p, fixed = TRUE)
   expect_match(txt, "Restoring", fixed = TRUE)
   expect_match(.dep_read("docs/operational/README.md"), "backup-and-restore.md", fixed = TRUE)
@@ -372,7 +383,7 @@ test_that("the changelog points at documents that exist", {
 # link, a backticked path in a README, an R comment, or an href: the file moves
 # and the reader is sent nowhere. Scanning only docs/ left three whole classes
 # unguarded -- R/ engine comments, the two template-folder READMEs, and the test
-# HOWTOs -- and templates_user/README.md sat pointing at a deleted page for the
+# HOWTOs -- and the user-templates README sat pointing at a deleted page for the
 # one decision it exists to explain (how a user template becomes a curated one).
 .dep_ref_files <- function() {
   root <- .dep_root()
@@ -382,7 +393,7 @@ test_that("the changelog points at documents that exist", {
                    recursive = recursive, full.names = TRUE))
   out <- c(.dep_md_files(),
            "app.R", "ui_content.R", "ui_labels.R", "run.R",
-           "templates_user/README.md", "templates_seed/README.md",
+           rel("templates", "README\\.md$", recursive = TRUE),
            rel("R", "\\.R$"), rel("scripts", "\\.R$"),
            rel("tests", "\\.(R|md)$", recursive = TRUE),
            rel("www", "\\.(html|css|js)$"))

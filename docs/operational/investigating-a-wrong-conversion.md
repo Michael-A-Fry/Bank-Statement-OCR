@@ -114,7 +114,7 @@ investigation leaves a trail too — but it means Admin's Insights and coverage
 tables will show your check runs alongside the analyst's. They are the ones with
 `cli` as the requester.
 
-Run it **from the app folder**, not from anywhere else: `templates_user\` is
+Run it **from the app folder**, not from anywhere else: `templates\statements_user\` is
 resolved relative to the working directory, and a run started somewhere else
 would silently leave out every template built in the app — including, quite
 possibly, the one that produced the figure you are chasing.

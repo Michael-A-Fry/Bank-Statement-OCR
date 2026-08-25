@@ -8,7 +8,7 @@ report**, matched by the phrases printed on it.
 Built on the app's **Add a template** tab: pick *"Anything else"*, upload one
 example, press **Find the tables**, then confirm, name and correct what it found.
 The same builder covers a form: its **Values** tab draws label/value pairs, and
-one template holds both. Templates saved there land in `../doc_templates_user/`;
+one template holds both. Templates saved there land in `..\documents_user\`;
 a good one is promoted by moving its `.yaml` here.
 
 **Columns are dividers.** A table's columns tile its width, so what you set is
@@ -21,7 +21,7 @@ not reachable from this screen.
 
 ## How a report template differs from the other two kinds
 
-| | `templates/` (statement) | `fields_templates/` (form) | `doc_templates/` (report) |
+| | `..\statements\` | `..\fields\` | `..\documents\` (here) |
 |---|---|---|---|
 | What it reads | one table of transactions | labelled values | many tables + labelled values |
 | How it finds them | column x-bands, full page height | the label's **wording** | heading wording first, position last |
@@ -32,7 +32,7 @@ not reachable from this screen.
 
 There is no reconciliation behind a report. Nothing in the tool can tell a right
 figure from a wrong one here, so nothing from a report reaches a dashboard —
-`write_feed()` (`../R/feed.R`) refuses `kind = "tables"` outright, next to the
+`write_feed()` (`..\..\R\feed.R`) refuses `kind = "tables"` outright, next to the
 same refusal for forms. That is enforced in code, not left to convention.
 
 ## What it does instead of checking

@@ -63,6 +63,16 @@ suppressWarnings(tryCatch({
   source(file.path(app_dir, "R", "config.R"))
   source(file.path(app_dir, "R", "jobs.R"))     # for the concurrency line printed below
 }, error = function(e) NULL))
+# Templates all live under templates\ now. An install updated from an older
+# version still has the old folders at the root of the app, holding every layout
+# and every report puller the team built -- so move them once, before anything
+# reads a template, and RECORD IT: a folder full of somebody's work changing place
+# is exactly the kind of thing that must not happen quietly on a box nobody logs
+# into. Moves only, never deletes, never overwrites; silent when there is nothing
+# to do. Rules and reasoning in R/config.R.
+for (.m in tryCatch(migrate_template_layout(app_dir), error = function(e) character(0)))
+  .boot("templates ", .m)
+
 .cfg <- tryCatch(load_config(), error = function(e) NULL)
 # A config.yaml that does not parse reverts to built-in defaults -- including the
 # placeholder admin password and the default Qlik feed folder. This script is how

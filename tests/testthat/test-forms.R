@@ -1,13 +1,13 @@
 # Tests for the mode:fields orchestration (R/forms.R): load, detect, convert.
 
 test_that("load_fields_templates returns only mode:fields templates", {
-  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"), NULL)
+  ft <- load_fields_templates(fields_templates_dir(), NULL)
   expect_true("anz_kiwisaver_fields" %in% names(ft))
   expect_true(all(vapply(ft, is_fields_template, logical(1))))
 })
 
 test_that("detect_form matches on identifying phrases, else unsupported", {
-  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"), NULL)
+  ft <- load_fields_templates(fields_templates_dir(), NULL)
   hit <- list(pages = "ANZ KiwiSaver Scheme\nOpening balance $1.00\nClosing balance $2.00")
   d <- detect_form(hit, ft)
   expect_true(d$matched)
@@ -43,7 +43,7 @@ test_that("detect_form reports UNMATCHED on an equal-specificity tie (never gues
 })
 
 test_that("extract + write_form_outputs produce the labelled values", {
-  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"), NULL)
+  ft <- load_fields_templates(fields_templates_dir(), NULL)
   input <- list(pages = paste(
     "ANZ KiwiSaver Scheme",
     "Opening balance   $51,904.55",
@@ -120,15 +120,15 @@ test_that("load_fields_templates skips an invalid template and SAYS which (never
 })
 
 test_that("the shipped form template still passes the gate", {
-  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"), NULL)
+  ft <- load_fields_templates(fields_templates_dir(), NULL)
   expect_length(attr(ft, "load_errors"), 0)
   expect_true("anz_kiwisaver_fields" %in% names(ft))
 })
 
 test_that("convert_document routes a statement vs a form through one front door", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  fdir <- file.path(engine_root(), "fields_templates")
-  tdir <- file.path(engine_root(), "templates")
+  fdir <- fields_templates_dir()
+  tdir <- templates_dir()
   od <- tempfile(); ld <- tempfile("dl_")   # own logdir: never write into the repo
   on.exit(unlink(c(od, ld), recursive = TRUE), add = TRUE)
 
@@ -163,9 +163,9 @@ test_that("a converted form is logged ONCE, as a form, not as an unsupported sta
   od <- tempfile("fo_"); ld <- tempfile("fl_")
   on.exit(unlink(c(od, ld), recursive = TRUE), add = TRUE)
 
-  fr <- convert_document(fpdf, outdir = od, templates_dir = file.path(engine_root(), "templates"),
+  fr <- convert_document(fpdf, outdir = od, templates_dir = templates_dir(),
                          user_templates_dir = NULL,
-                         fields_dir = file.path(engine_root(), "fields_templates"),
+                         fields_dir = fields_templates_dir(),
                          logdir = ld)
   expect_equal(fr$kind, "form")
   expect_true(fr$status %in% c("ok", "needs_review"))
@@ -184,9 +184,9 @@ test_that("a document nothing can read is still logged once, as unsupported", {
   od <- tempfile("fo_"); ld <- tempfile("fl_")
   on.exit(unlink(c(od, ld), recursive = TRUE), add = TRUE)
   bad <- tempfile(fileext = ".csv"); writeLines(c("a,b", "1,2"), bad)
-  r <- convert_document(bad, outdir = od, templates_dir = file.path(engine_root(), "templates"),
+  r <- convert_document(bad, outdir = od, templates_dir = templates_dir(),
                         user_templates_dir = NULL,
-                        fields_dir = file.path(engine_root(), "fields_templates"),
+                        fields_dir = fields_templates_dir(),
                         logdir = ld)
   expect_equal(r$status, "unsupported")
   rec <- read_runs(ld)
@@ -211,7 +211,7 @@ test_that("convert_form on the sample PDF extracts fields (skips if absent)", {
   pdf <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
   skip_if_not(file.exists(pdf))
   od <- tempfile(); on.exit(unlink(od, recursive = TRUE), add = TRUE)
-  res <- convert_form(pdf, fields_dir = file.path(engine_root(), "fields_templates"),
+  res <- convert_form(pdf, fields_dir = fields_templates_dir(),
                       outdir = od, formats = c("csv"))
   # This guide document prints three of its labels twice with different values,
   # so the honest outcome is needs_review with the conflicts named.

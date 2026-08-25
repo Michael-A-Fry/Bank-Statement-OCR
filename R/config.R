@@ -31,16 +31,23 @@
     # false only if your team wants to opt in to its own templates each time.
     user_templates_default = TRUE
   ),
+  # EVERY TEMPLATE LIVES UNDER templates/. Seven folders used to sit at the root
+  # of the app (templates, templates_user, templates_seed, fields_templates,
+  # fields_templates_user, doc_templates, doc_templates_user) and a person had to
+  # already know the naming convention to tell which was which. They are now one
+  # folder with a README that is the map. The SEPARATION is unchanged and load
+  # bearing -- curated vs user is the Qlik governance gate, and one folder per
+  # mode is what stops a report template joining statement detection.
+  #
+  # A folder name is the template's `mode:`. See templates/README.md.
   paths = list(
-    templates      = "templates",         # PROVEN / curated templates
-    user_templates = "templates_user",    # analyst drafts (Shiny only, NEVER Qlik)
-    fields         = "fields_templates",
-    user_fields    = "fields_templates_user",
+    templates      = "templates/statements",       # PROVEN / curated statements
+    user_templates = "templates/statements_user",  # analyst drafts (Shiny only, NEVER Qlik)
+    fields         = "templates/fields",
+    user_fields    = "templates/fields_user",
     # mode:document templates -- a report carrying many tables (R/doc_extract.R).
-    # Their own folders, like the other two modes, so a report template can never
-    # join statement detection and a statement template can never be read as one.
-    docs           = "doc_templates",
-    user_docs      = "doc_templates_user",
+    docs           = "templates/documents",
+    user_docs      = "templates/documents_user",
     dictionary     = "dictionaries/labels.yaml",
     lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",
@@ -103,6 +110,35 @@
 # is still the admin password. The app uses this to REFUSE the Admin tab rather
 # than serve template deletion, the shared dictionary and the analytics-feed
 # settings behind a password that is printed in the example file and the docs.
+# .modernise_template_paths(cfg) -- a settings file written before the templates
+# were consolidated names the OLD folders, and the file WINS over the defaults.
+# That is the point of a settings file, and here it would be a trap: the folders
+# are moved on start, so a config still pointing at templates_user\ points at an
+# empty folder, and every template the team built disappears from the app with
+# nothing said. It is settings, so nothing errors -- the app just has no
+# templates.
+#
+# Only EXACT legacy names are rewritten. A site that set a genuinely custom path
+# (D:\shared\templates) has made a decision, and nothing here overrides it.
+.LEGACY_TEMPLATE_PATHS <- list(
+  templates      = c("templates",             "templates/statements"),
+  user_templates = c("templates_user",        "templates/statements_user"),
+  fields         = c("fields_templates",      "templates/fields"),
+  user_fields    = c("fields_templates_user", "templates/fields_user"),
+  docs           = c("doc_templates",         "templates/documents"),
+  user_docs      = c("doc_templates_user",    "templates/documents_user")
+)
+.modernise_template_paths <- function(cfg) {
+  for (k in names(.LEGACY_TEMPLATE_PATHS)) {
+    v <- cfg$paths[[k]]
+    if (!length(v) || !is.character(v)) next
+    old <- .LEGACY_TEMPLATE_PATHS[[k]][1]
+    if (identical(gsub("\\\\", "/", trimws(v[1])), old))
+      cfg$paths[[k]] <- .LEGACY_TEMPLATE_PATHS[[k]][2]
+  }
+  cfg
+}
+
 admin_password_is_default <- function(cfg = load_config()) {
   pw <- trimws(as.character(cfg$app$admin_password %||% .DEFAULT_ADMIN_PASSWORD)[1])
   is.na(pw) || !nzchar(pw) || identical(pw, .DEFAULT_ADMIN_PASSWORD)
@@ -253,7 +289,7 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
         attr(c0, "config_error") <- sprintf("%s could not be read: %s", path,
                                             conditionMessage(fromfile))
       } else if (is.list(fromfile)) {
-        c0 <- .coerce_flags(.deep_merge(c0, fromfile))
+        c0 <- .modernise_template_paths(.coerce_flags(.deep_merge(c0, fromfile)))
         fe <- attr(c0, "flag_error", exact = TRUE)
         if (!is.null(fe)) {
           attr(c0, "flag_error") <- NULL
@@ -277,4 +313,107 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
   envpw <- Sys.getenv("BSO_ADMIN_PASSWORD", "")
   if (nzchar(envpw)) cfg$app$admin_password <- envpw
   cfg
+}
+
+# ---------------------------------------------------------------------------
+# THE OLD TEMPLATE LAYOUT, MOVED ONCE, ON A SERVER NOBODY CAN LOG INTO EASILY
+#
+# Templates used to live in seven folders at the root of the app. They now live
+# in one, templates/, with a folder per kind. Renaming folders in a repository is
+# free; renaming them under a running deployment is not, because two of those
+# folders hold work that exists nowhere else -- every bank layout and every
+# report puller somebody built on the box.
+#
+# So the code does the move rather than a person, once, on the first start after
+# an update, and says so in logs\startup.log. The alternative -- reading both the
+# old and the new location forever -- keeps working but never converges: two
+# places to look, two places to back up, and a folder that quietly stops being
+# read the day somebody tidies it.
+#
+# RULES, because this touches irreplaceable files:
+#   * it MOVES, it never copies-and-deletes and never deletes;
+#   * a destination file that already exists is NEVER overwritten -- the source
+#     is left alone and reported, so a clash is visible rather than resolved;
+#   * an emptied folder is left on disk with a MOVED.txt in it, so somebody who
+#     goes looking for templates_user\ finds a sentence instead of nothing;
+#   * it is idempotent: with nothing to move it does nothing and says nothing.
+# ---------------------------------------------------------------------------
+
+# Old root folder -> new home. The old flat `templates/` is handled separately
+# below, because after the move `templates/` still exists -- it is the parent.
+.TEMPLATE_LAYOUT_MOVES <- list(
+  c("templates_user",        "templates/statements_user"),
+  c("templates_seed",        "templates/statements_seed"),
+  c("fields_templates",      "templates/fields"),
+  c("fields_templates_user", "templates/fields_user"),
+  c("doc_templates",         "templates/documents"),
+  c("doc_templates_user",    "templates/documents_user")
+)
+
+# migrate_template_layout(root) -> character vector of sentences about what
+# happened (empty when there was nothing to do). Caller decides where they go.
+migrate_template_layout <- function(root = ".") {
+  said <- character(0)
+  .yamls <- function(d) list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)
+
+  .move_files <- function(from, to, what) {
+    src <- .yamls(from)
+    if (!length(src)) return(invisible(NULL))
+    dir.create(to, recursive = TRUE, showWarnings = FALSE)
+    moved <- 0L; clashed <- character(0)
+    for (f in src) {
+      dest <- file.path(to, basename(f))
+      if (file.exists(dest)) { clashed <- c(clashed, basename(f)); next }
+      if (isTRUE(suppressWarnings(file.rename(f, dest)))) moved <- moved + 1L
+      else clashed <- c(clashed, basename(f))
+    }
+    if (moved)
+      said <<- c(said, sprintf("moved %d %s%s from %s to %s", moved, what,
+                               if (moved == 1L) "" else "s", .rel(from), .rel(to)))
+    if (length(clashed))
+      said <<- c(said, sprintf(
+        "LEFT IN PLACE in %s (a file of the same name is already in %s): %s",
+        .rel(from), .rel(to), paste(clashed, collapse = ", ")))
+    invisible(NULL)
+  }
+
+  # Say it the way the person reading logs\startup.log sees it: relative to the
+  # app folder. Plain prefix removal, not a regex -- root is a real path and can
+  # hold anything a Windows folder name can.
+  .rel <- function(p) {
+    pre <- paste0(root, "/")
+    p <- if (startsWith(p, pre)) substring(p, nchar(pre) + 1L) else p
+    paste0(gsub("/", "\\\\", p), "\\")
+  }
+
+  .breadcrumb <- function(from, to) {
+    if (!dir.exists(from) || length(.yamls(from))) return(invisible(NULL))
+    note <- file.path(from, "MOVED.txt")
+    if (file.exists(note)) return(invisible(NULL))
+    try(writeLines(c(
+      "This folder has moved.",
+      "",
+      paste0("Everything that was here is now in  ", .rel(to)),
+      "",
+      "Every template now lives under templates\\, one folder per kind, with a",
+      "README.md in templates\\ that says which is which. This folder is empty and",
+      "can be deleted; it is left behind only so that looking for it finds this",
+      "note rather than nothing."), note), silent = TRUE)
+    invisible(NULL)
+  }
+
+  # 1. The old flat templates\ -- .yaml files sitting directly in it. After the
+  #    move there are none, so this cannot run twice.
+  flat <- file.path(root, "templates")
+  if (dir.exists(flat) && length(.yamls(flat)))
+    .move_files(flat, file.path(root, "templates", "statements"), "statement template")
+
+  # 2. The six folders that moved wholesale.
+  for (m in .TEMPLATE_LAYOUT_MOVES) {
+    from <- file.path(root, m[1]); to <- file.path(root, m[2])
+    if (!dir.exists(from)) next
+    .move_files(from, to, "template")
+    .breadcrumb(from, to)
+  }
+  said
 }

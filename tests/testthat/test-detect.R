@@ -255,7 +255,7 @@ test_that("a genuinely unknown layout is NOT reported as a tie", {
 
 test_that("an unambiguous match is never called ambiguous", {
   det <- detect_statement(read_input(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv")),
-                          load_templates(fixture("templates"), strict = FALSE))
+                          load_templates(templates_dir(), strict = FALSE))
   expect_true(det$matched)
   expect_identical(det$tied, character(0))
 })
@@ -363,7 +363,7 @@ test_that("a shipped template beats a hand-built one on an equal score", {
   # reach a dashboard; the one with a golden test wins.
   dflt <- tempfile("tpl_d_"); dir.create(dflt)
   usr  <- tempfile("tpl_u_"); dir.create(usr)
-  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
   base <- base[!grepl("^sample: true", base)]
   writeLines(sub("^id: .*", "id: zzz_shipped_pdf", base), file.path(dflt, "z.yaml"))
   writeLines(sub("^id: .*", "id: aaa_handbuilt_pdf", base), file.path(usr, "a.yaml"))
@@ -382,7 +382,7 @@ test_that("a shipped template beats a hand-built one on an equal score", {
 # stapled to an empty workbook.
 .empty_tpl_dir <- function() {
   d <- tempfile("tpl_empty_"); dir.create(d)
-  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
   base <- base[!grepl("^sample: true", base)]
   base <- sub("^id: .*", "id: badbands_pdf", base)
   # right wording, columns squeezed into the left margin: a mis-drawn band
@@ -422,7 +422,7 @@ test_that("matched the wording but read no transactions is NOT 'needs review'", 
 test_that("a template that reads nothing says so instead of being swapped out", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   good <- tempfile("tpl_good_"); dir.create(good)
-  base <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  base <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
   base <- base[!grepl("^sample: true", base)]
   writeLines(sub("^id: .*", "id: zzz_working_pdf", base), file.path(good, "z.yaml"))
   out <- tempfile("noswap_"); dir.create(out)
@@ -450,7 +450,7 @@ test_that("a template that reads nothing says so instead of being swapped out", 
 # mechanisms producing an outcome none of them intended.
 .refine_dirs <- function(refines = TRUE) {
   d <- tempfile("shipped_"); dir.create(d); u <- tempfile("hand_"); dir.create(u)
-  b <- readLines(fixture("templates/tutorial_everyday_pdf.yaml"))
+  b <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
   b <- b[!grepl("^sample: true", b)]
   writeLines(b, file.path(d, "t.yaml"))
   w <- sub("^id: tutorial_everyday_pdf", "id: tutorial_everyday_pdf_custom", b)

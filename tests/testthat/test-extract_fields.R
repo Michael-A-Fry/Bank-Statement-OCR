@@ -5,7 +5,7 @@ IF_KS_PDF <- "samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf"
 test_that("labelled values are extracted from a KiwiSaver summary", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   skip_if_not(file.exists(fixture(IF_KS_PDF)))
-  tmpl <- yaml::read_yaml(file.path(engine_root(), "fields_templates",
+  tmpl <- yaml::read_yaml(file.path(fields_templates_dir(),
                                     "anz_kiwisaver_fields.yaml"))
   fields <- extract_fields(read_input(fixture(IF_KS_PDF)), tmpl)
   expect_true(is.data.frame(fields))
@@ -89,9 +89,9 @@ test_that("the shipped form template reads its own sample with the right signs",
   p <- fixture("samples/raw/anz/anz_kiwisaver_statement_guide_sample.pdf")
   skip_if_not(file.exists(p))
   out <- tempfile("formout_"); dir.create(out)
-  r <- convert_document(p, outdir = out, templates_dir = fixture("templates"),
+  r <- convert_document(p, outdir = out, templates_dir = templates_dir(),
                         user_templates_dir = NULL,
-                        fields_dir = fixture("fields_templates"), user_fields_dir = NULL,
+                        fields_dir = fields_templates_dir(), user_fields_dir = NULL,
                         logdir = out)
   expect_identical(r$kind, "form")
   # needs_review, not ok: this guide document prints Contributions, Tax and Fees

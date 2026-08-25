@@ -1558,8 +1558,8 @@ test_that("the sample button converts with a template that is actually loaded", 
   expect_length(p, 1L)
   f <- eval(parse(text = sub("^SAMPLE_STATEMENT <- ", "", p)))
   skip_if_not(file.exists(file.path(engine_root(), f)))
-  tset <- load_template_set(file.path(engine_root(), "templates"),
-                            file.path(engine_root(), "templates_user"))
+  tset <- load_template_set(templates_dir(),
+                            user_templates_dir())
   det <- detect_statement(read_input(file.path(engine_root(), f)), tset)
   expect_true(isTRUE(det$matched),
               info = "the 'Try it on a sample' file is not recognised by any loaded template")
@@ -2071,7 +2071,7 @@ test_that("a form template is named, not printed as its id", {
                "all_field_templates\\(\\)\\[\\[tid\\]\\]")
   # the shipped form template really does carry the two fields the name is built
   # from, so this is wired to a fact and not to a hope
-  ft <- load_fields_templates(file.path(engine_root(), "fields_templates"))
+  ft <- load_fields_templates(fields_templates_dir())
   t <- ft[["anz_kiwisaver_fields"]]
   expect_false(is.null(t))
   expect_identical(.ui_fun(".tpl_label")(t$bank, t$statement_type), "ANZ kiwisaver statement")

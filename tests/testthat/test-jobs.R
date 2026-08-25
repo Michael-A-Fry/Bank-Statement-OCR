@@ -112,7 +112,7 @@ test_that("over the cap, jobs QUEUE and say how many are in front", {
   hs <- lapply(1:5, function(i) {
     od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = file.path(engine_root(), "templates"),
+              templates_dir = templates_dir(),
               logdir = .tlog(), requested_by = "TSTJOB")
   })
   states <- vapply(hs, function(h) h$state, character(1))
@@ -139,7 +139,7 @@ test_that("polling ANY job moves the queue on, not just the busy ones", {
   job_set_max_concurrent(1L)
   mk <- function() { od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = file.path(engine_root(), "templates"),
+              templates_dir = templates_dir(),
               logdir = .tlog(), requested_by = "TSTJOB") }
   a <- mk(); b <- mk()
   expect_identical(c(a$state, b$state), c("running", "queued"))
@@ -162,7 +162,7 @@ test_that("a child that dies saying nothing comes back FAILED, with a readable r
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   # wait for a real process, then kill it the way the OOM killer would
   t0 <- Sys.time()
@@ -215,7 +215,7 @@ test_that("a child that runs cleanly leaves no output of its own", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   st <- .await(list(h), 240)
   expect_identical(unname(st), "done")            # a clean CSV converts
@@ -306,7 +306,7 @@ test_that("stopping a conversion stops the OCR binary it started", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(scan, od, task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   comm <- function(p) safe(suppressWarnings(
     readLines(file.path("/proc", as.character(p), "comm"), warn = FALSE)[1]), NA_character_)
@@ -366,7 +366,7 @@ test_that("reaping a job stops its process and forgets it", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   d <- h$dir
   expect_true(dir.exists(d))
@@ -392,7 +392,7 @@ test_that("the child hands its reader cache back, so the app does not re-read th
   expect_length(ls(.INPUT_CACHE), 0L)
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   expect_identical(.await(list(h), 240), "done")
   expect_length(ls(.INPUT_CACHE), 0L)            # nothing yet -- the child has it
@@ -421,7 +421,7 @@ test_that("N simultaneous jobs on one statement produce identical output files",
   hs <- lapply(seq_len(n), function(i) {
     od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = file.path(engine_root(), "templates"),
+              templates_dir = templates_dir(),
               logdir = ld, requested_by = "TSTJOB")
   })
   expect_true(all(vapply(hs, function(h) identical(h$state, "running"), logical(1))))
@@ -482,14 +482,14 @@ test_that("a non-ASCII description survives the process boundary, byte for byte"
   close(con)
 
   h <- job_start(p, file.path(d, "viajob"), task = "convert", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   expect_identical(.await(list(h), 240), "done")
   # Collecting the result must not even WARN: the warning readRDS raised printed
   # the transaction lines of the statement onto the server console to do it.
   expect_silent(res <- job_result(h))
   here <- convert_document(p, outdir = file.path(d, "inprocess"),
-                           templates_dir = file.path(engine_root(), "templates"),
+                           templates_dir = templates_dir(),
                            logdir = .tlog(),
                            requested_by = "TSTJOB")
   expect_identical(res$status, "ok")
@@ -513,7 +513,7 @@ test_that("a batch job reports per-file progress the screen can read", {
   paths <- file.path(sess, sprintf("case_%d.csv", 1:3))
   for (p in paths) file.copy(.csv_fixture(), p)
   h <- job_start(paths, sess, task = "batch", root = engine_root(),
-                 templates_dir = file.path(engine_root(), "templates"),
+                 templates_dir = templates_dir(),
                  logdir = .tlog(), requested_by = "TSTJOB")
   seen <- list()
   t0 <- Sys.time()
@@ -585,7 +585,7 @@ test_that("a server fault is never reported as a fault in the analyst's file", {
   # (b) the job's OWN arguments file is damaged -- a torn write on a full disk.
   od2 <- tempfile("tjob_"); dir.create(od2)
   h2 <- job_start(.csv_fixture(), od2, task = "convert", root = engine_root(),
-                  templates_dir = file.path(engine_root(), "templates"), logdir = .tlog())
+                  templates_dir = templates_dir(), logdir = .tlog())
   writeLines("not an rds at all", file.path(h2$dir, "args.rds"))
   expect_identical(.await(list(h2), 120), "failed")
   expect_identical(job_failure(h2)$kind, "broken")

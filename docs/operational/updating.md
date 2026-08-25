@@ -39,13 +39,13 @@ that the package does not carry it — not anything clever in the copy.
 |---|---|
 | `config\config.yaml` | `R\` — **including `R\params.R`** |
 | `dictionaries\labels.yaml`, `dictionaries\lexicon.yaml` | `app.R`, `ui_content.R`, `ui_labels.R`, `run.R` |
-| your `templates_user\<id>.yaml` files, and all of `fields_templates_user\` and `doc_templates_user\` | `templates\`, `templates_seed\`, `fields_templates\`, `doc_templates\` |
+| everything in the three `templates\*_user\` folders | `templates\statements\`, `templates\statements_seed\`, `templates\fields\`, `templates\documents\` |
 | `logs\`, `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
 | `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml` |
 
 One detail worth knowing, because it is the one that could bite: the package
-*does* contain `templates_user\`, `fields_templates_user\` and
-`doc_templates_user\` folders, but the only file in each is that folder's own
+*does* contain `templates\statements_user\`, `templates\fields_user\` and
+`templates\documents_user\` folders, but the only file in each is that folder's own
 `README.md`. Your saved templates survive because nothing in the package shares
 their filenames — so if a `.yaml` is ever added to one of them in the source, a
 server template of the same name would be replaced by it. Your backup is what
@@ -62,48 +62,16 @@ That copy is **on the same machine** and does not survive losing the server. For
 that, and for your templates and metadata, use
 [backup-and-restore.md](backup-and-restore.md).
 
-## If you copy individual files by hand
+## If you are merging two folders by hand instead
 
-Sometimes a change is three files and building a whole package feels like
-overkill. It is still the safer route — but if you are dragging files out of the
-**source folder** instead, know that the source folder is not the package, and
-the difference is exactly the thing that protects your live state.
+Copying a handful of files out of a **dev folder** into the running one is a
+different job with a different trap, and it has its own short page:
+**[updating-a-version.md](updating-a-version.md)** — the files that must never be
+copied, and the seven steps.
 
-**The one that will bite you:**
-
-> **Never copy `dictionaries\labels.yaml` or `dictionaries\lexicon.yaml` out of
-> the source folder onto a running server.**
-
-The source folder holds those two files under **those exact names** — they are the
-shipped starting vocabularies. On the server the same two names are Admin-edited
-live state: every wording and marker your team has taught the tool. The package
-build is what renames them to `labels.example.yaml` / `lexicon.example.yaml` so an
-update cannot touch them. A hand copy skips that step and silently replaces the
-lot. Nothing errors. Statements that reconciled last week quietly stop
-reconciling, and the cause is a week old by the time anybody notices. Recovery is
-`dictionaries\labels.yaml.bak` if you catch it before the next Admin save, and
-your backup after that.
-
-**Also never carry across:**
-
-| Do not copy | Why |
-|---|---|
-| `config\config.yaml` | Your settings — port, admin password, feed folder. The source folder does not contain one (deliberately), so the only way to move one is from another machine, and then you have moved that machine's admin password and feed path onto your server. |
-| `templates_user\`, `fields_templates_user\`, `doc_templates_user\` | Every template your team built. The source folder has only a `README.md` in each, so copying the *folder* is harmless — but never delete-and-replace one. |
-| `logs\`, `uploads\`, `feed\`, `requests\` | The audit trail, the kept statements, and what Qlik reads. The source folder may hold a developer's own `logs\` — it is not yours. |
-| `R-runtime\`, `R-lib\`, `offline\.installed` | The private R that `RUN-ME.bat` installed **on that box**. Not in the source folder at all. Deleting `.installed` forces a full re-install on next start. |
-
-**And one to copy deliberately, never in a sweep:**
-
-`R\params.R` holds the engine's numeric thresholds and is the one code file a
-maintainer is expected to edit. It lives in `R\`, so dragging the whole `R\`
-folder across reverts every value you set. If a release does not change it, do not
-copy it. If it does, open the two side by side and re-apply your values by hand —
-[maintaining-the-engine.md](maintaining-the-engine.md) §2.
-
-Take a backup before any hand copy ([backup-and-restore.md](backup-and-restore.md)).
-It is five minutes, and it is the difference between "that was the wrong file" and
-"we have lost a year of taught words".
+The short version: a dev folder is not a package. The package build is what
+renames `dictionaries\*.yaml` to `*.example.yaml`, and that rename is the only
+reason a folder-replace cannot wipe your taught words. A hand copy skips it.
 
 ### If a dictionary does get clobbered
 

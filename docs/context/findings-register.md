@@ -1345,3 +1345,54 @@ backup procedure names it, and the only reliable way to make that true is to
 assert it. `test-deployment-docs.R` now fails if `backup-and-restore.md` stops
 naming any of the three `*_user\` folders, the same way it already failed if the
 page stopped naming `dictionaries\`.
+
+**N184 (seven template folders at the root, and the move that had to be safe) -
+fixed.** N183 was the third time in one round that a list of template folders had
+to be found and corrected, which is the symptom rather than the fault. The fault
+was that there were seven of them at the root of the app -- `templates`,
+`templates_user`, `templates_seed`, `fields_templates`, `fields_templates_user`,
+`doc_templates`, `doc_templates_user` -- and nothing on screen or on disk said
+which was which. Telling them apart required already knowing the naming
+convention, which is the definition of a layout that only works for the person
+who wrote it.
+
+They are now one `templates\` folder, one sub-folder per kind, with a `README.md`
+that is the map. **A folder name is the template's `mode:`** -- the same fact
+twice rather than two facts that can drift. The separations underneath are
+untouched, and deliberately so: curated vs `_user` is the Qlik governance gate,
+not tidiness, and one folder per mode is what stops a report template joining
+statement detection.
+
+**What made this worth recording is the move, not the rename.** Renaming folders
+in a repository is free. Renaming them under a deployment is not: two of them hold
+every bank layout and every report puller somebody built on the box, and those
+exist nowhere else. Three ways to do it, and only one is right:
+
+* *Read both the old and the new location forever.* Keeps working and never
+  converges -- two places to look, two to back up, and a folder that quietly stops
+  being read the day somebody tidies it.
+* *Tell the operator to move them.* A documented manual step on an air-gapped box,
+  performed once, by whoever happens to do the update. It will be missed.
+* *Move them in code, once, and record it.* Chosen.
+
+The rules follow from what is being moved. It **moves**, never copies-and-deletes
+and never deletes. A destination file that already exists is **never**
+overwritten -- the source is left where it is and reported, on every run, until a
+person deals with it, because overwriting somebody's template to finish a tidy-up
+is the one outcome nothing can undo. An emptied folder keeps a `MOVED.txt`, so
+somebody who goes looking for `templates_user\` finds a sentence rather than
+nothing. It is idempotent, and it says nothing when there is nothing to do.
+
+**And the trap that nearly went with it.** A `config.yaml` written before the move
+names the old folders, and a settings file WINS over the defaults -- that is the
+point of a settings file. So the folders would move and the config would keep
+pointing at the empty ones, and every template the team had built would disappear
+from the app with nothing said: no error, no missing file, just a tool that has
+forgotten. Exact legacy names are now rewritten on load; a path somebody chose on
+purpose (`D:\shared\templates`) is left alone.
+
+The layout is asserted rather than remembered: `test-deployment.R` fails if an
+eighth template folder ever appears at the root, if a configured template path
+ever points outside `templates/`, or if a `.yaml` is ever committed into one of
+the three `_user\` folders -- that last one being the entire reason a
+folder-replace update cannot overwrite a template somebody built.

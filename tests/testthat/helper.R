@@ -5,7 +5,7 @@
 # to a golden CSV snapshot stored under tests/testthat/expected/.
 #
 # Pattern for adding a new template test (see tests/HOWTO-add-template-test.md):
-#   1. Add templates/<id>.yaml and a fixture under samples/raw/<bank>/.
+#   1. Add templates/statements/<id>.yaml and a fixture under samples/raw/<bank>/.
 #   2. Generate the golden CSV from the engine's own parse, eyeball it.
 #   3. Save it to tests/testthat/expected/<id>.csv.
 #   4. test-<id>.R: expect_statement_ok("<fixture>", "<expected>", "<id>", "<BANK>").
@@ -19,7 +19,16 @@ engine_root <- function() {
 
 fixture <- function(rel) file.path(engine_root(), rel)
 
-templates_dir <- function() file.path(engine_root(), "templates")
+# WHERE THE TEMPLATES ARE, in one place. Every template lives under templates/,
+# one folder per kind (see templates/README.md). Tests ask these functions rather
+# than spelling the path out, so the next time the layout moves it moves here and
+# nowhere else -- which is the whole reason the last move touched forty files.
+.templates_root <- function() file.path(engine_root(), "templates")
+templates_dir      <- function() file.path(.templates_root(), "statements")
+user_templates_dir <- function() file.path(.templates_root(), "statements_user")
+seed_templates_dir <- function() file.path(.templates_root(), "statements_seed")
+fields_templates_dir   <- function() file.path(.templates_root(), "fields")
+document_templates_dir <- function() file.path(.templates_root(), "documents")
 
 # read_core_csv -- read a golden/core CSV back with the exact core column types
 # so comparisons are type-stable.

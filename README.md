@@ -71,7 +71,7 @@ reproduced from the command line, and template bug vs bad scan.
 
 - **Reads CSV, TSV, Excel (`.xlsx`) and PDF.** Digital PDFs are read from their
   text layer; scanned pages are OCR'd and flagged as such.
-- **13 shipped, golden-tested templates** in `templates/` — 7 delimited (ANZ
+- **13 shipped, golden-tested templates** in `templates/statements/` — 7 delimited (ANZ
   everyday, ANZ credit card, ASB, BNZ, Kiwibank, Westpac, plus a cross-bank
   Xero-standard import), 5 PDF (`anz_everyday_pdf`, `anz_investmentfunds_pdf`,
   `asb_everyday_pdf`, `tutorial_everyday_pdf`, `westpac_everyday_pdf`) and one

@@ -357,9 +357,10 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
                                   basename(f), conditionMessage(t)))
       next
     }
-    # AN UNFINISHED SEED IS NOT A TEMPLATE. templates_seed/ ships starting points
-    # whose bands are placeholders marked "# TODO draw" - and YAML drops comments,
-    # so once one is copied into templates_user/ nothing the loader can see says it
+    # AN UNFINISHED SEED IS NOT A TEMPLATE. templates/statements_seed/ ships
+    # starting points whose bands are placeholders marked "# TODO draw" - and YAML
+    # drops comments, so once one is copied into templates/statements_user/
+    # nothing the loader can see says it
     # is unfinished. Six of the ten shipped seeds validate as-is, so a half-drawn
     # one would join detection with placeholder coordinates. It would fail loudly
     # (garbage rows break reconciliation; no rows reports "matched, read nothing"),
@@ -405,7 +406,8 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
 # it stops taking part in detection/conversion without being deleted (a cluttered
 # pile of near-duplicate drafts can be parked, not lost). include_hidden = TRUE
 # returns them too, for the Admin management view that can un-hide them.
-load_template_set <- function(default_dir = "templates", user_dir = "templates_user",
+load_template_set <- function(default_dir = "templates/statements",
+                              user_dir = "templates/statements_user",
                               include_hidden = FALSE) {
   d <- load_templates(default_dir, origin = "default", strict = TRUE)
   # Carry the skip reasons across the merge. Subsetting a list (`u[...]`, the
@@ -513,7 +515,7 @@ duplicate_template_groups <- function(tset, user_only = TRUE) {
 
 # save_user_template(template, dir) -> path. Validates first (fail loud), writes
 # <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
-save_user_template <- function(template, dir = "templates_user") {
+save_user_template <- function(template, dir = "templates/statements_user") {
   template$origin <- NULL   # origin is assigned at load time, not stored
   probs <- validate_template(template)
   if (length(probs)) stop("template is not valid: ", paste(probs, collapse = "; "))
@@ -539,7 +541,7 @@ save_user_template <- function(template, dir = "templates_user") {
 
 # user_template_ids(dir) -> ids of templates that live in the user dir (the only
 # ones the app may delete / rename -- shipped "tested" templates are read-only).
-user_template_ids <- function(dir = "templates_user") {
+user_template_ids <- function(dir = "templates/statements_user") {
   if (!dir.exists(dir)) return(character(0))
   ids <- vapply(list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE), function(f) {
     t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL); t$id %||% NA_character_
@@ -549,7 +551,7 @@ user_template_ids <- function(dir = "templates_user") {
 
 # delete_user_template(id, dir) -> TRUE if a user template file was removed. Only
 # ever touches the user dir; shipped templates cannot be deleted from the app.
-delete_user_template <- function(id, dir = "templates_user") {
+delete_user_template <- function(id, dir = "templates/statements_user") {
   if (!dir.exists(dir) || is.null(id) || !nzchar(id)) return(invisible(FALSE))
   safe_id <- gsub("[^A-Za-z0-9_]+", "_", id)
   hit <- FALSE
@@ -567,7 +569,7 @@ delete_user_template <- function(id, dir = "templates_user") {
 # Hidden templates drop out of detection/conversion (load_template_set default)
 # but stay on disk and in the Admin management view, so they can be un-hidden or
 # merged later. Only user templates -- shipped ones are read-only.
-set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates_user") {
+set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates/statements_user") {
   if (!(id %in% user_template_ids(dir))) stop("only user-created templates can be hidden")
   for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
     t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)

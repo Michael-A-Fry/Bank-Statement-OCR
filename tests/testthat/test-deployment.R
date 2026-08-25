@@ -52,7 +52,8 @@
 # genuine bank statements that live there on a maintainer's machine.
 .bo_fake_repo <- function(private = character(0)) {
   root <- tempfile("fakerepo"); dir.create(root)
-  for (d in c("R", "templates", "templates_user", "templates_seed", "fields_templates",
+  for (d in c("R", "templates/statements", "templates/statements_user",
+              "templates/statements_seed", "templates/fields", "templates/documents",
               "config", "scripts", "www", "tests/testthat/logs", "docs",
               "samples/raw/anz", "samples/_private_staging", "dictionaries"))
     dir.create(file.path(root, d), recursive = TRUE, showWarnings = FALSE)
@@ -564,4 +565,44 @@ test_that("the one-page deployment guide says the things that actually stop it",
     expect_match(paste(readLines(file.path(engine_root(), f), warn = FALSE), collapse = "\n"),
                  "deploy-on-the-qlik-server.md", fixed = TRUE,
                  info = paste(f, "does not link the deployment guide"))
+})
+
+# ---------------------------------------------------------------------------
+# THE PROMISE AN UPDATE RESTS ON
+#
+# docs/operational/updating.md tells the operator that copying a new package over
+# the app folder cannot touch a template their team built. That is not a property
+# of the copy -- "replace the files in the destination" replaces whatever names
+# match. It is true only because the package ships the three templates/*_user/
+# folders holding NOTHING BUT a README.md, so no filename can collide.
+#
+# One .yaml committed into any of them breaks that for every deployment at once,
+# silently, at the next update. .gitignore blocks it; this asserts it, because a
+# rule only a .gitignore knows is a rule nothing checks -- and `git add -f` and a
+# fresh clone with a stale ignore file both walk straight past one.
+# ---------------------------------------------------------------------------
+test_that("no template is committed into a folder the server owns", {
+  root <- engine_root()
+  for (d in c("statements_user", "fields_user", "documents_user")) {
+    p <- file.path(root, "templates", d)
+    expect_true(dir.exists(p), info = paste("missing folder:", d))
+    stray <- setdiff(list.files(p), "README.md")
+    expect_identical(stray, character(0),
+      info = paste0("templates/", d, "/ must hold only README.md -- ",
+                    "anything else is replaced onto a server's own templates at ",
+                    "the next update. Found: ", paste(stray, collapse = ", ")))
+  }
+})
+
+test_that("every kind of template lives under templates/, and nowhere else", {
+  # The consolidation is only worth anything while it holds. A new mode that
+  # quietly adds an eighth folder at the root puts the layout back where it was:
+  # a person having to know the naming convention to find their own work.
+  root <- engine_root()
+  at_root <- list.dirs(root, recursive = FALSE, full.names = FALSE)
+  expect_identical(grep("template", at_root, value = TRUE), "templates")
+  # and every configured template path points inside it
+  cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
+  for (k in c("templates", "user_templates", "fields", "user_fields", "docs", "user_docs"))
+    expect_match(cfg$paths[[k]], "^templates/", info = k)
 })

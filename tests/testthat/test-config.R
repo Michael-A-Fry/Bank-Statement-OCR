@@ -4,8 +4,8 @@ test_that("load_config returns complete defaults when no file is present", {
   old <- Sys.getenv("BSO_ADMIN_PASSWORD"); Sys.unsetenv("BSO_ADMIN_PASSWORD")
   on.exit(if (nzchar(old)) Sys.setenv(BSO_ADMIN_PASSWORD = old))
   cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  expect_equal(cfg$paths$templates, "templates")
-  expect_equal(cfg$paths$user_templates, "templates_user")
+  expect_equal(cfg$paths$templates, "templates/statements")
+  expect_equal(cfg$paths$user_templates, "templates/statements_user")
   expect_equal(cfg$app$admin_password, "changeme")
   expect_true(isTRUE(cfg$feed$enabled))          # feed on by default
 })
@@ -38,7 +38,7 @@ test_that("the bundled example config is valid YAML and parses", {
   ex <- fixture("config/config.example.yaml")
   skip_if_not(file.exists(ex))
   cfg <- load_config(ex)
-  expect_equal(cfg$paths$templates, "templates")
+  expect_equal(cfg$paths$templates, "templates/statements")
   expect_equal(cfg$app$port, 8100)
 })
 
@@ -207,4 +207,111 @@ test_that("a settings SECTION of the wrong shape does not stop the app starting"
     expect_true(cfg$feed$require_status_ok)          # governance back at its default
     expect_match(config_error(cfg) %||% "", "not a group of settings")
   }
+})
+
+# ---------------------------------------------------------------------------
+# MOVING SEVEN FOLDERS ON A SERVER NOBODY LOGS INTO
+#
+# The consolidation is free in a repository and not free under a deployment: two
+# of the folders hold every bank layout and every report puller somebody built on
+# the box, and they exist nowhere else. The code does the move so a person does
+# not have to, which means the code has to be the careful one.
+# ---------------------------------------------------------------------------
+
+.mig_fake <- function() {
+  root <- tempfile("mig"); dir.create(root)
+  for (d in c("templates", "templates_user", "templates_seed", "fields_templates",
+              "fields_templates_user", "doc_templates", "doc_templates_user"))
+    dir.create(file.path(root, d), recursive = TRUE)
+  w <- function(rel, txt = "id: x") writeLines(txt, file.path(root, rel))
+  w("templates/anz.yaml"); w("templates/asb.yaml")
+  w("templates_user/beth_bank.yaml")
+  w("templates_seed/anz_loan.yaml")
+  w("fields_templates/ird.yaml")
+  w("fields_templates_user/beth_form.yaml")
+  w("doc_templates/report.yaml")
+  w("doc_templates_user/beth_report.yaml")
+  root
+}
+
+test_that("every old template folder is moved under templates/", {
+  root <- .mig_fake()
+  said <- migrate_template_layout(root)
+  expect_gt(length(said), 0)
+  for (p in c("templates/statements/anz.yaml", "templates/statements/asb.yaml",
+              "templates/statements_user/beth_bank.yaml",
+              "templates/statements_seed/anz_loan.yaml",
+              "templates/fields/ird.yaml",
+              "templates/fields_user/beth_form.yaml",
+              "templates/documents/report.yaml",
+              "templates/documents_user/beth_report.yaml"))
+    expect_true(file.exists(file.path(root, p)), info = p)
+  # and nothing is left in the old places
+  for (p in c("templates_user/beth_bank.yaml", "doc_templates_user/beth_report.yaml"))
+    expect_false(file.exists(file.path(root, p)), info = p)
+})
+
+test_that("running it again does nothing and says nothing", {
+  root <- .mig_fake()
+  migrate_template_layout(root)
+  expect_identical(migrate_template_layout(root), character(0))
+  # a folder that never had the old layout is silent from the start
+  fresh <- tempfile("fresh"); dir.create(file.path(fresh, "templates", "statements"),
+                                         recursive = TRUE)
+  expect_identical(migrate_template_layout(fresh), character(0))
+})
+
+test_that("a name clash is left alone and SAID, never resolved silently", {
+  # The destination file is somebody's work too. Overwriting it to finish a tidy-up
+  # is the one outcome nothing can undo, so the move refuses and reports instead --
+  # every time it runs, until a person deals with it.
+  root <- .mig_fake()
+  dir.create(file.path(root, "templates", "statements_user"), recursive = TRUE)
+  writeLines("id: already here", file.path(root, "templates", "statements_user",
+                                           "beth_bank.yaml"))
+  said <- migrate_template_layout(root)
+  expect_true(any(grepl("LEFT IN PLACE", said, fixed = TRUE)))
+  expect_true(any(grepl("beth_bank.yaml", said, fixed = TRUE)))
+  expect_equal(readLines(file.path(root, "templates", "statements_user",
+                                   "beth_bank.yaml")), "id: already here")
+  expect_true(file.exists(file.path(root, "templates_user", "beth_bank.yaml")))
+  expect_true(any(grepl("LEFT IN PLACE", migrate_template_layout(root), fixed = TRUE)))
+})
+
+test_that("an emptied folder is left with a note in it, not deleted", {
+  # Somebody will go looking for templates_user\. Finding nothing reads as "my
+  # templates are gone"; finding a sentence reads as "they moved".
+  root <- .mig_fake()
+  migrate_template_layout(root)
+  note <- file.path(root, "templates_user", "MOVED.txt")
+  expect_true(file.exists(note))
+  expect_match(paste(readLines(note), collapse = "\n"),
+               "templates\\statements_user\\", fixed = TRUE)
+  expect_true(dir.exists(file.path(root, "doc_templates_user")))
+})
+
+test_that("a settings file naming the old folders is read as naming the new ones", {
+  # The file WINS over the defaults -- that is the point of a settings file, and
+  # here it would be a trap: the folders have moved, so a config still saying
+  # templates_user would point at an empty one and every template the team built
+  # would vanish from the app with nothing said.
+  d <- tempfile("cfg"); dir.create(d)
+  p <- file.path(d, "config.yaml")
+  writeLines(c("paths:", "  templates: templates", "  user_templates: templates_user",
+               "  fields: fields_templates", "  user_fields: fields_templates_user",
+               "  docs: doc_templates", "  user_docs: doc_templates_user"), p)
+  cfg <- load_config(p)
+  expect_equal(cfg$paths$templates, "templates/statements")
+  expect_equal(cfg$paths$user_templates, "templates/statements_user")
+  expect_equal(cfg$paths$fields, "templates/fields")
+  expect_equal(cfg$paths$user_fields, "templates/fields_user")
+  expect_equal(cfg$paths$docs, "templates/documents")
+  expect_equal(cfg$paths$user_docs, "templates/documents_user")
+})
+
+test_that("a path somebody chose on purpose is never rewritten", {
+  d <- tempfile("cfg2"); dir.create(d)
+  p <- file.path(d, "config.yaml")
+  writeLines(c("paths:", "  user_templates: D:\\shared\\team_templates"), p)
+  expect_equal(load_config(p)$paths$user_templates, "D:\\shared\\team_templates")
 })

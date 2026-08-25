@@ -61,8 +61,8 @@ mask_text <- function(x) {
 statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
   root <- Sys.getenv("ENGINE_ROOT", ".")
   if (is.null(templates))
-    templates <- safe(load_template_set(file.path(root, "templates"),
-                                        file.path(root, "templates_user")), list())
+    templates <- safe(load_template_set(file.path(root, "templates", "statements"),
+                                        file.path(root, "templates", "statements_user")), list())
   input <- safe(read_input(path, redaction_rects = redaction_rects), NULL)
   if (is.null(input)) return(list(error = "could not read the file"))
   meta <- safe(extract_metadata(input), list())

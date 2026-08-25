@@ -82,3 +82,17 @@ package-lock.json
 # Qlik feed folder (holds REAL statements) - never commit.
 /feed/
 make-bundle.log
+
+# Templates built in the app live in the three templates/*_user/ folders. They are
+# SERVER state, not product: the package ships those folders holding nothing but a
+# README, and that is the entire reason a folder-replace update cannot overwrite a
+# template somebody built -- the package shares no filename with one. A .yaml
+# committed here would silently break that promise for every deployment at once,
+# so it cannot be committed by accident. (test-deployment.R asserts the same
+# thing, because a rule only a .gitignore knows is a rule nothing checks.)
+/templates/statements_user/*
+/templates/fields_user/*
+/templates/documents_user/*
+!/templates/statements_user/README.md
+!/templates/fields_user/README.md
+!/templates/documents_user/README.md

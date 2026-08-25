@@ -28,7 +28,8 @@ box.
 | **Turn it on for real — the checklist for the day** | [go-live-checklist.md](go-live-checklist.md) |
 | Start it, keep it running after reboots, open the firewall port, change a setting | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
 | Back up the four irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
-| Update to a new version | [updating.md](updating.md) |
+| Update to a new version (build a package, replace the folder) | [updating.md](updating.md) |
+| **Merge a dev folder into the live one by hand — and what must never be copied** | [updating-a-version.md](updating-a-version.md) |
 | **Put a bad version back, and deal with what it already sent to Qlik** | [rolling-back.md](rolling-back.md) |
 | Do admin: password, requests, dictionaries, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |

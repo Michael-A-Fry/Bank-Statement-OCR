@@ -10,9 +10,9 @@ Five minutes, once a week, and before every update. It is a folder copy.
 
 | Path (inside the app folder) | What you lose without it |
 |---|---|
-| `templates_user\` | Every layout your team taught the tool. Rebuilding one means finding the original statement again and redoing the whole toolkit session. **This is the accumulated value of the tool.** |
-| `fields_templates_user\` | The same, for form / IRD labelled-value templates. |
-| `doc_templates_user\` | The same, for the report / document pullers built on **Add a template → anything else** — the tables and figures somebody drew out of a report by hand. |
+| `templates\statements_user\` | Every layout your team taught the tool. Rebuilding one means finding the original statement again and redoing the whole toolkit session. **This is the accumulated value of the tool.** |
+| `templates\fields_user\` | The same, for form / IRD labelled-value templates. |
+| `templates\documents_user\` | The same, for the report / document pullers built on **Add a template → anything else** — the tables and figures somebody drew out of a report by hand. |
 | `dictionaries\` | `labels.yaml` + `lexicon.yaml` — every wording and marker taught in Admin. Losing these crashes nothing: statements that reconciled last week quietly stop reconciling, which is worse. |
 | `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Insights, drift detection and the layout-gap queue are computed from it. Once gone it cannot be recreated. |
 
@@ -35,12 +35,12 @@ are a liability, not an asset.
 ```
 set "APP=D:\StatementStudio-offline"
 set "DEST=\\backup-share\StatementStudio\%DATE:~-4%-%DATE:~3,2%-%DATE:~0,2%"
-robocopy "%APP%\templates_user"        "%DEST%\templates_user"        /E
-robocopy "%APP%\fields_templates_user" "%DEST%\fields_templates_user" /E
-robocopy "%APP%\doc_templates_user"    "%DEST%\doc_templates_user"    /E
-robocopy "%APP%\dictionaries"          "%DEST%\dictionaries"          /E
-robocopy "%APP%\logs\metadata"         "%DEST%\logs\metadata"         /E
-robocopy "%APP%\config"                "%DEST%\config" config.yaml
+robocopy "%APP%\templates\statements_user" "%DEST%\templates\statements_user" /E
+robocopy "%APP%\templates\fields_user"     "%DEST%\templates\fields_user"     /E
+robocopy "%APP%\templates\documents_user"  "%DEST%\templates\documents_user"  /E
+robocopy "%APP%\dictionaries"               "%DEST%\dictionaries"               /E
+robocopy "%APP%\logs\metadata"              "%DEST%\logs\metadata"              /E
+robocopy "%APP%\config"                     "%DEST%\config" config.yaml
 ```
 
 `robocopy` exits **1** for "files were copied" — that is success, not an error.
@@ -48,10 +48,11 @@ Anything **8 or above** is a real failure; read the message.
 
 Keep at least the last four weekly copies plus one from before each update.
 
-**Check it worked.** Open the newest dated folder: `templates_user\` should hold
-a `.yaml` for each bank layout your team has made, `doc_templates_user\` one for
-each report puller, and `dictionaries\labels.yaml` should be there. A backup
-nobody has ever opened is not a backup.
+**Check it worked.** Open the newest dated folder: `templates\statements_user\`
+should hold a `.yaml` for each bank layout your team has made,
+`templates\documents_user\` one for each report puller, and
+`dictionaries\labels.yaml` should be there. A backup nobody has ever opened is
+not a backup.
 
 ## Restoring
 
@@ -60,7 +61,7 @@ the app starts), so the private R and packages are in place.
 
 1. **Stop the app** — `Ctrl-C`, or end the scheduled task.
 2. Copy back **over** the app folder, replacing what is there:
-   `templates_user\`, `fields_templates_user\`, `doc_templates_user\`,
+   `templates\statements_user\`, `templates\fields_user\`, `templates\documents_user\`,
    `dictionaries\`, `logs\metadata\`, `config\config.yaml`.
 3. **Start the app.**
 4. Check: **Admin → Templates** lists your user templates and the **Label
@@ -71,7 +72,7 @@ the app starts), so the private R and packages are in place.
    Upload a report you have built a puller for and confirm the tool recognises it
    instead of asking you to build one
    ([pulling-tables-out-of-a-report.md](pulling-tables-out-of-a-report.md)). If it
-   asks, `doc_templates_user\` did not come back.
+   asks, `templates\documents_user\` did not come back.
 
 ### Rebuilding a lost server from nothing
 

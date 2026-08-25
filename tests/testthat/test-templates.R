@@ -309,7 +309,7 @@ test_that("an empty delimiter entry is rejected at load", {
 # the ten shipped seeds validate as-is, so a half-drawn one would take part in
 # detection with placeholder coordinates.
 test_that("every shipped seed template is marked draft", {
-  dir <- file.path(engine_root(), "templates_seed")
+  dir <- seed_templates_dir()
   skip_if_not(dir.exists(dir))
   files <- list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)
   expect_gt(length(files), 0)

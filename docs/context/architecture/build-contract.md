@@ -66,12 +66,14 @@ R/   -- operations, evidence and governance
   requests.R            the "none of these fits -- tell our team" escape hatch
   retention.R           what is left on disk, and when it goes away
 
-templates/              proven per-bank YAML templates (feed the Qlik gate)
-templates_user/         analyst-made templates (Shiny only, never Qlik)
-templates_seed/         starting points offered by the wizard
+templates/              EVERY template, one folder per kind (templates/README.md)
+  statements/           proven per-bank YAML templates (feed the Qlik gate)
+  statements_user/      analyst-made templates (Shiny only, never Qlik)
+  statements_seed/      starting points offered by the wizard (never loaded)
+  fields/  fields_user/         key-value templates (fields mode)
+  documents/  documents_user/   many-table reports (document mode)
 dictionaries/labels.yaml   synonym dictionary for labelled values (Admin-edited)
 dictionaries/lexicon.yaml  recognition vocabularies (Admin-edited)
-fields_templates/       key-value templates (fields mode)
 config/                 config.example.yaml (config.yaml is per-deployment state)
 samples/                specimen corpus (already present)
 tests/testthat/         golden-file + unit tests
@@ -263,7 +265,7 @@ is rejected by `validate_template` on any other format or with an unknown `on` v
   per event, never an append** (§10). It never overwrites: a clashing id gets a
   `~2` suffix. There is deliberately no `log_event()` / JSONL appender — a shared
   append is the one write that can interleave over SMB.
-- `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates", user_templates_dir="templates_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", redaction_rects=NULL, force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`.
+- `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates/statements", user_templates_dir="templates/statements_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", redaction_rects=NULL, force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`.
 - `convert_document(path, ...)` is the **front door**: it runs `convert_statement()`
   and falls back to the form/labelled-value pipeline (`R/forms.R`) only when the
   statement path returns `unsupported` and no template was forced.
