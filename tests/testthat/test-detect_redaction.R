@@ -21,7 +21,24 @@
 .make_vector_redacted_pdf <- function() {
   tf <- tempfile(fileext = ".pdf")
   grDevices::pdf(tf, width = 8.27, height = 11.69)
-  op <- graphics::par(mar = c(0, 0, 0, 0)); on.exit(graphics::par(op), add = TRUE)
+  # THE DEVICE IS THE THING TO CLEAN UP, NOT `par`.
+  #
+  # This used to save par and restore it on.exit -- which runs AFTER dev.off(),
+  # when no device is open at all. `par()` with no device OPENS one: in a
+  # non-interactive session that is `Rplots.pdf`, written into the app folder and
+  # left open for the rest of the process. Every later test that drew then drew
+  # into THAT instead of into its own device, which is how three
+  # detect_dark_regions assertions failed on a machine where the function is
+  # provably correct -- and why the suite has carried three red lines that
+  # everybody, including the documentation, wrote off as "needs a rasterising
+  # magick". magick was installed the whole time.
+  #
+  # There is nothing to restore: the device is closed a few lines down and its
+  # par settings die with it. What is worth guaranteeing is that the device
+  # cannot outlive this function, however it exits.
+  dev_no <- grDevices::dev.cur()
+  on.exit(if (dev_no %in% grDevices::dev.list()) grDevices::dev.off(dev_no), add = TRUE)
+  graphics::par(mar = c(0, 0, 0, 0))
   graphics::plot.new(); graphics::plot.window(xlim = c(0, 100), ylim = c(0, 100))
   graphics::text(5,  50, "01/06/2025", pos = 4, cex = 1.5)
   graphics::text(30, 50, "123.45",     pos = 4, cex = 1.5)
@@ -132,17 +149,51 @@ test_that("inject is a no-op when there are no rects", {
   expect_identical(inject_redaction_tokens(words, .empty_rects()), words)
 })
 
-test_that("detect_dark_regions finds a solid black rectangle (skips a logo/text)", {
-  skip_if_not_installed("magick")
-  # white page, one solid black rectangle in the middle, plus sparse 'text'.
-  img <- magick::image_blank(400, 600, "white")
-  d <- magick::image_draw(img)
+# THE PICTURE IS BUILT THROUGH A PNG FILE, NOT THROUGH `magick::image_draw`.
+#
+# image_draw hands back an image that is still attached to a live graphics
+# device, and what a later magick call sees depends on when that device was
+# flushed and on what else has touched magick since. Measured: the identical
+# drawing gave this function 0 regions or 1 depending only on what ran before it
+# in the same session -- so the assertion below was testing magick's device
+# bookkeeping, not detect_dark_regions.
+#
+# That is worse than a flaky test. It failed on every run of the suite, and the
+# failure was written off -- in this file's history, in the maintainer's guide,
+# and by more than one person since -- as "needs a rasterising magick". magick
+# was installed the whole time and the function was right the whole time. Three
+# permanently red lines in a suite whose pass condition is `failed: 0` teach
+# everybody to read past red, which is the one thing a forensic tool's suite
+# must never teach.
+#
+# Rendered to a PNG and read back, it is the same picture with no live device
+# anywhere near it, and the answer is the same on every run.
+.dr_black_box_png <- function() {
+  tf <- tempfile(fileext = ".png")
+  grDevices::png(tf, width = 400, height = 600)
+  dn <- grDevices::dev.cur()
+  on.exit(if (dn %in% grDevices::dev.list()) grDevices::dev.off(dn), add = TRUE)
+  graphics::par(mar = c(0, 0, 0, 0))
+  graphics::plot.new()
+  graphics::plot.window(xlim = c(0, 400), ylim = c(600, 0), xaxs = "i", yaxs = "i")
   graphics::rect(120, 180, 300, 260, col = "black", border = "black")   # redaction box
   graphics::text(60, 60, "a bit of text", col = "black")                # sparse -> ignored
   grDevices::dev.off()
+  magick::image_read(tf)
+}
+
+test_that("detect_dark_regions finds a solid black rectangle (skips a logo/text)", {
+  skip_if_not_installed("magick")
+  d <- .dr_black_box_png()
   rects <- detect_dark_regions(d, scale = 1)                 # scale 1 -> points == pixels
   expect_equal(nrow(rects), 1L)                              # exactly the box, not the text
   # roughly matches the drawn rectangle (generous tolerance for downsampling)
   expect_true(rects$x0 <= 140 && rects$x1 >= 280)
   expect_true(rects$y0 <= 200 && rects$y1 >= 240)
+  # THE SAME ANSWER EVERY TIME, whatever else has touched magick. This is the
+  # assertion that would have caught the original fixture: it is not enough for
+  # the answer to be right once.
+  again <- detect_dark_regions(.dr_black_box_png(), scale = 1)
+  expect_identical(nrow(again), nrow(rects))
+  expect_equal(again$x0, rects$x0); expect_equal(again$x1, rects$x1)
 })

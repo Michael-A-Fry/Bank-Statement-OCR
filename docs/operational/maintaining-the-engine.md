@@ -71,22 +71,33 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **77 files, 1,058 tests, 5,536 passing assertions** —
-taken on 2026-08-25, at `VERSION` 1.5.1, on R 4.4.3. Treat it as a floor to
-compare against, not a target to match.
+The last full run measured **77 files, 1,058 tests, 5,549 passing assertions,
+0 failed, 0 errors** — taken on 2026-08-25, at `VERSION` 1.5.4, on R 4.4.3.
+Treat it as a floor to compare against, not a target to match.
 
-That run was **not** clean, and the failures are worth knowing before you chase
-them — all of them are the environment, not the code:
+**That run was clean, and it is the first one that was.** For a long time the
+board carried five red lines, explained here and elsewhere as "the environment,
+not the code". That explanation was wrong, and wrong in the worst available way:
+four of the five were **test bugs**, the engine was correct throughout, and a
+permanently red board teaches everybody to read past red. What they actually
+were:
 
-| What failed | Why |
+| What it looked like | What it was |
 |---|---|
-| `no chart colour is three-digit hex` | its second assertion expects `col2rgb("#fff")` to error. Newer R accepts three-digit hex, so the assertion is stale, not the code. The first half of the test — no three-digit hex in `app.R` — still holds and still matters. |
-| `detect_dark_regions finds a solid black box` (3 assertions) | needs a rasterising `magick` — without one there is no image to look at |
-| `the skew estimator recovers a known rotation` and `deskew straightens the page` | same |
+| `detect_dark_regions finds a solid black box` (3) | the test built its picture with `magick::image_draw`, which hands back an image still attached to a live graphics device — so the answer depended on what else had touched magick first. Rendered to a PNG and read back, it is right every time. |
+| `the skew estimator` and `deskew straightens the page` (2) | the same mistake in the same way, in another file. |
+| `no chart colour is three-digit hex` | asserted `col2rgb("#fff")` errors. It did on the R this shipped on; newer R accepts it. The rule it protects — no three-digit hex in `app.R` — is asserted separately and still passes. |
 
-10 tests skipped, all of them OCR or a missing sample. On a box **with** the OCR
-tools installed everything below the first row should pass; if it does not, that
-is a real finding.
+The same fixture also leaked a graphics device, which is why an `Rplots.pdf`
+used to appear in the app folder after every suite run. It no longer does.
+
+**So the pass condition means what it says: `failed: 0`, `errors: 0`.** A red
+line is a finding. Do not inherit an explanation for one from anybody, including
+this page.
+
+10 tests skipped, all of them needing tesseract/poppler. On a box **with** the
+OCR tools installed they should pass too; if they do not, that is a real finding.
+
 
 **Check the `files` figure first.** If it is not the number of
 `tests\testthat\test-*.R` files on your box, this line was written against a

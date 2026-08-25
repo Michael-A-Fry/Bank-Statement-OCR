@@ -46,12 +46,34 @@ test_that("OCR still reads real text after pre-processing", {
   expect_match(toupper(paste(res$text, collapse = " ")), "CARD SUMMARY", fixed = TRUE)
 })
 
+# A PAGE OF RULED LINES, BUILT THROUGH A PNG FILE.
+#
+# These two tests used to draw with `magick::image_draw`, which hands back an
+# image still attached to a live graphics device: what a later magick call sees
+# then depends on when that device was flushed and on what else has touched
+# magick since. The identical drawing gave different answers depending only on
+# what had run before it in the same session, so both tests failed on every run
+# of the suite and both were written off as "magick not available". magick was
+# installed the whole time. Rendered to a PNG and read back, there is no live
+# device anywhere near it and the answer is the same every time.
+# (The same mistake, and the same fix, as in test-detect_redaction.R.)
+.pp_ruled_png <- function() {
+  tf <- tempfile(fileext = ".png")
+  grDevices::png(tf, width = 800, height = 1100)
+  dn <- grDevices::dev.cur()
+  on.exit(if (dn %in% grDevices::dev.list()) grDevices::dev.off(dn), add = TRUE)
+  graphics::par(mar = c(0, 0, 0, 0))
+  graphics::plot.new()
+  graphics::plot.window(xlim = c(0, 800), ylim = c(1100, 0), xaxs = "i", yaxs = "i")
+  for (yy in seq(100, 1000, by = 60))
+    graphics::rect(100, yy, 700, yy + 4, col = "black", border = NA)
+  grDevices::dev.off()
+  magick::image_read(tf)
+}
+
 test_that("the skew estimator recovers a known rotation and leaves straight pages alone", {
   skip_if_not(ocr_preprocess_available(), "magick not available")
-  img <- magick::image_blank(800, 1100, "white")
-  img <- magick::image_draw(img)
-  for (yy in seq(100, 1000, by = 60)) rect(100, yy, 700, yy + 4, col = "black", border = NA)
-  dev.off()
+  img <- .pp_ruled_png()
   rot <- magick::image_background(magick::image_rotate(img, 2), "white", flatten = TRUE)
   expect_lt(abs(.detect_skew_angle(rot) - 2), 0.2)   # finds the 2 degree tilt
   expect_lt(abs(.detect_skew_angle(img)), 0.3)       # a straight page measures straight
@@ -59,10 +81,7 @@ test_that("the skew estimator recovers a known rotation and leaves straight page
 
 test_that("deskew straightens the page without changing the canvas", {
   skip_if_not(ocr_preprocess_available(), "magick not available")
-  img <- magick::image_blank(800, 1100, "white")
-  img <- magick::image_draw(img)
-  for (yy in seq(100, 1000, by = 60)) rect(100, yy, 700, yy + 4, col = "black", border = NA)
-  dev.off()
+  img <- .pp_ruled_png()
   rot <- magick::image_background(magick::image_rotate(img, 2), "white", flatten = TRUE)
   fixed <- .deskew_image(rot)
   ri <- magick::image_info(rot); fi <- magick::image_info(fixed)

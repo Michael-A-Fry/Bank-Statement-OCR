@@ -1262,3 +1262,45 @@ and the page is never "quiet". Invisible to a person; fatal to any browser
 automation that waits on it. Recorded in `docs/design.md` §7 with the one-line
 fix (count only visible elements), after a harness that got it wrong took five
 minutes a document instead of thirty seconds.
+
+---
+
+## The suite was red for a reason nobody had checked
+
+**N179 (four "environmental" test failures were test bugs) - fixed.** The board
+carried five red lines for a long time, written off -- in the maintainer's guide,
+in this register, and by more than one person since -- as "needs a rasterising
+magick". magick was installed the whole time and the engine was correct the whole
+time.
+
+`test-detect_redaction.R` and `test-ocr_preprocess.R` both built their input
+images with `magick::image_draw`, which hands back an image still attached to a
+LIVE graphics device. What a later magick call then sees depends on when that
+device was flushed and on what else has touched magick since. Measured: the
+identical drawing gave `detect_dark_regions` 0 regions or 1 depending only on
+what had run before it in the same session. Rendered to a PNG file and read back
+-- the same picture, no live device anywhere near it -- the answer is the same on
+every run, six times out of six, and it is the right one.
+
+**N180 (a fixture leaked a graphics device into the app folder) - fixed.**
+`.make_vector_redacted_pdf()` did `op <- par(...); on.exit(par(op))` around a
+`pdf()` device it closed itself. `on.exit` runs AFTER `dev.off()`, and `par()`
+with no device open OPENS one -- `Rplots.pdf`, written into the app folder in a
+non-interactive session and left open for the rest of the process. That is why a
+stray `Rplots.pdf` appeared after every suite run, and it was gitignored rather
+than fixed. The same mistake was in `fixtures/make_document_fixture.R`, added
+this month. Both now close the device they opened and restore nothing, because a
+device that is about to be destroyed has no settings worth restoring.
+
+**N181 (a stale assertion pinned the R version, not the code) - fixed.**
+`expect_error(col2rgb("#fff"))` was true on the R this shipped on and is false on
+newer R. The rule it exists to protect -- no three-digit hex anywhere in `app.R`
+-- is asserted separately and passes; the palette itself is now read out of the
+source and every entry checked to be six-digit.
+
+**Why this one matters more than the four defects it did not find.** The pass
+condition on this suite is `failed: 0`. A board that is permanently red at five
+teaches everybody to read past red, and the next real failure arrives on a board
+nobody reads. It also cost this project directly: the rotated-page defect (N171)
+and the proposer/reader disagreement (N169) both sat behind a suite that was
+already showing red for reasons everyone had agreed to ignore.

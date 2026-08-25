@@ -32,9 +32,14 @@ make_document_fixture <- function(path) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   if (capabilities("cairo")) cairo_pdf(path, width = 8.27, height = 11.69, onefile = TRUE)
   else pdf(path, width = 8.27, height = 11.69, onefile = TRUE)
-  on.exit(invisible(grDevices::dev.off()), add = TRUE)
-  op <- par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
-  on.exit(par(op), add = TRUE)
+  # Close the device we opened, and NOTHING ELSE. Restoring `par` on exit runs
+  # after dev.off(), and par() with no device open silently opens one
+  # (Rplots.pdf) that then leaks into everything after it -- see the note in
+  # test-detect_redaction.R, where exactly this cost three false failures. The
+  # device is temporary; its par settings die with it and need no restoring.
+  dev_no <- grDevices::dev.cur()
+  on.exit(if (dev_no %in% grDevices::dev.list()) grDevices::dev.off(dev_no), add = TRUE)
+  par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
 
   # Points, y measured DOWN from the top of the page -- the same convention
   # pdftools::pdf_data() reports word boxes in, so a coordinate written here is

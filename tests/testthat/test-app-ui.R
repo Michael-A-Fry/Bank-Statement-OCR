@@ -548,9 +548,26 @@ test_that("no chart colour is three-digit hex", {
   hits <- grep('"#[0-9a-fA-F]{3}"', src, perl = TRUE, value = TRUE)
   hits <- hits[!grepl("^\\s*#", hits)]          # comments explain the rule
   expect_identical(hits, character(0))
-  # and the thing itself: this is what the app used to hand grDevices
-  expect_error(grDevices::col2rgb("#fff"), "invalid RGB")
+  # WHY THIS NO LONGER ASSERTS AN ERROR.
+  #
+  # `col2rgb("#666")` WAS an error on the R this shipped on, which is how the
+  # "this page could not be drawn" fallback managed to crash on its own colour.
+  # Newer R accepts three-digit hex, so asserting the error pins a fact about
+  # whichever R happens to be installed rather than about this code -- and it
+  # failed on every run here, which is exactly the kind of permanently red line
+  # that teaches people to read past red.
+  #
+  # The RULE stands either way, and it is the line above that enforces it: the
+  # app is read by whatever R the offline bundle installs on the day, and
+  # six-digit is the form every version of R has always accepted. Assert the
+  # form we use, not the failure of the form we do not.
   expect_silent(grDevices::col2rgb("#ffffff"))
+  # ...and the palette the app really hands grDevices is six-digit, every entry.
+  pal_line <- grep("^PALETTE <- list\\(", src, value = TRUE)[1]
+  expect_false(is.na(pal_line))
+  pal <- eval(parse(text = pal_line))
+  expect_true(all(grepl("^#[0-9a-fA-F]{6}$", unlist(pal))))
+  for (col in unlist(pal)) expect_silent(grDevices::col2rgb(col))
 })
 
 test_that("the proof strip carries the check that catches the commonest error", {

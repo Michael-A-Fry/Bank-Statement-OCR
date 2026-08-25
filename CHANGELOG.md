@@ -13,6 +13,31 @@ finding id.
 
 ---
 
+## 1.5.4
+
+**The suite is green, and it is the first time it has been.** Five red lines had
+been carried for a long time and explained — in the maintainer's guide and by
+more than one person — as "the environment, not the code". That was wrong. Four
+of the five were **test bugs**; the engine was right throughout.
+
+- Two test files built their input images with `magick::image_draw`, which hands
+  back an image still attached to a live graphics device. The same drawing gave
+  `detect_dark_regions` 0 regions or 1 depending only on what had run before it.
+  Built through a PNG file instead, the answer is the same every time — and
+  correct (N179).
+- A fixture leaked a graphics device by restoring `par` *after* `dev.off()`,
+  which silently opens `Rplots.pdf` in the app folder and leaves it open for the
+  rest of the process. That stray file no longer appears after a suite run
+  (N180).
+- One assertion pinned the R version rather than the code. The rule it protects
+  is asserted separately and passes (N181).
+
+A board that is permanently red at five teaches everybody to read past red, and
+the next real failure then arrives on a board nobody reads. **`failed: 0`,
+`errors: 0` means what it says now.**
+
+---
+
 ## 1.5.3
 
 **Putting it on the server is one page now.**
