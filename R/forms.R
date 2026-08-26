@@ -284,17 +284,35 @@ write_form_outputs <- function(fields, outdir, basename,
                                "page", "found_by", "matched", "required",
                                "flagged", "conflict", "n"), names(fields)),
                  drop = FALSE]
+  # A CELL READING "=1+1" MUST NOT REACH THE FILE LIVE. Excel evaluates it on
+  # open, so the reviewer sees 2 where the document printed =1+1 -- a wrong figure
+  # that looks right, delivered by the tool's own output. The statement path
+  # guards a fixed list of text columns and the report path guards every
+  # character column; a form has a fixed schema but its VALUES come off the page,
+  # so it is guarded the same way. Nothing is stripped: a leading quote is added
+  # and Excel shows the literal text. The JSON stays verbatim -- it is never
+  # executed -- exactly as on the other two routes.
+  safe_tidy <- .doc_csv_safe(tidy)
   if ("csv" %in% formats) {
     p <- file.path(outdir, paste0(basename, ".fields.csv"))
-    utils::write.csv(tidy, p, row.names = FALSE, na = "")
+    utils::write.csv(safe_tidy, p, row.names = FALSE, na = "")
     paths <- c(paths, p)
   }
   if ("xlsx" %in% formats && requireNamespace("openxlsx", quietly = TRUE)) {
     p <- file.path(outdir, paste0(basename, ".fields.xlsx"))
     wb <- openxlsx::createWorkbook(); openxlsx::addWorksheet(wb, "Fields")
-    openxlsx::writeData(wb, "Fields", tidy)
-    tryCatch({ openxlsx::saveWorkbook(wb, p, overwrite = TRUE); paths <- c(paths, p) },
-             error = function(e) NULL)
+    openxlsx::writeData(wb, "Fields", safe_tidy)
+    # ...AND THE SAME FILE TWICE MUST BE THE SAME FILE. openxlsx stamps the wall
+    # clock into docProps/core.xml and the ZIP's own mod-times, so a form workbook
+    # differed byte for byte between two runs of one document while the statement
+    # one did not -- which breaks "re-run it and show it produces the same file",
+    # the check a maintainer runs to prove nothing has drifted.
+    tryCatch({
+      wb$core <- .deterministic_core(wb$core)
+      openxlsx::saveWorkbook(wb, p, overwrite = TRUE)
+      safe(.normalize_zip_timestamps(p))
+      paths <- c(paths, p)
+    }, error = function(e) NULL)
   }
   if ("json" %in% formats) {
     p <- file.path(outdir, paste0(basename, ".fields.json"))
@@ -414,7 +432,12 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   id <- gsub("[^A-Za-z0-9_]+", "_", tmpl$id)
   path <- file.path(dir, paste0(id, ".yaml"))
-  yaml::write_yaml(tmpl, path)
+  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
+  # A template is months of somebody's work that exists nowhere else on an offline
+  # box, and a bare write_yaml truncates the target before it writes. See
+  # save_yaml_safely() in R/util.R.
+  ok <- save_yaml_safely(tmpl, path)
+  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
   invisible(path)
 }
 
@@ -507,6 +530,22 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
 # instead of a shrug.
 .record_and_return <- function(logdir, res, notice = character(0)) {
   if (length(notice)) res$messages <- c(notice, res$messages)
+  # L7. THE METADATA RECORD IS WRITTEN BY THE STATEMENT PASS AND KEPT FOREVER.
+  #
+  # capture_metadata() runs inside convert_statement(), which on this route is the
+  # attempt that FAILED before the form or the report read the document. So the
+  # one record that is exempt from every rollup and never deleted said
+  # status "unsupported", template_id null, and carried no kind at all -- for a
+  # conversion that produced six tables and a hundred rows. The corpus
+  # R/suggestions.R mines for "build these next" therefore could not tell a layout
+  # nobody can read from a report that read perfectly, and every such run inflated
+  # the gap list.
+  #
+  # This is the single choke point both exits pass through, and by here `res` is
+  # the final answer with its true kind - so it is the only honest place to
+  # correct it. Best effort: a metadata record that cannot be amended must never
+  # cost somebody their conversion.
+  safe(amend_metadata_record(logdir, res))
   out <- tryCatch(log_run(logdir, res), error = function(e) conditionMessage(e))
   p <- if (is.list(out)) as.character(out$path %||% NA_character_)[1]
        else if (is.character(out) && length(out)) as.character(out)[1]

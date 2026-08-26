@@ -2168,3 +2168,99 @@ test_that("the brush reports before the click it began with is allowed to act", 
   # the drag would be read as a click and the gesture lost - which is the bug.
   expect_lt(num(i_bw), num(i_cw))
 })
+
+# ---------------------------------------------------------------------------
+# THE FOUR THAT FELL BETWEEN TWO AGENTS, plus a key nothing implements.
+#
+# Each was written by an agent who could not reach its call site, so the
+# mechanism existed, was tested, and was never wired to anything. Dead code that
+# looks done is worse than absent code, because the register reads as green.
+# ---------------------------------------------------------------------------
+
+.fin_tmpl <- function() list(
+  id = "fin_x", mode = "document",
+  fingerprint = list(page_contains_all = list("Quarterly Portfolio Report")),
+  tables = list(a = list(
+    name = "A", start = list(page = 1, y = 10), end = list(page = 1, y = 90),
+    columns = list(list(name = "C1", x_min = 10, x_max = 90),
+                   list(name = "C2", x_min = 100, x_max = 180)))))
+
+test_that("a key nothing implements is refused, not carried", {
+  # occurrence: all means "read this wherever it appears". The reader for it does
+  # not exist - but .doc_table_optional() already reads the SAME key to mean the
+  # table's absence is expected and must not be reported. Between them a template
+  # using it would lose tables and say nothing, which is this product's cardinal
+  # failure wearing a feature's name.
+  skip_if_not(exists("validate_document_template", mode = "function"))
+  t <- .fin_tmpl(); t$tables$a$occurrence <- "all"
+  expect_match(paste(validate_document_template(t), collapse = " "),
+               "wherever it appears")
+  # ...and it names the function whose absence is the reason, so whoever builds
+  # it knows which line to delete
+  expect_match(paste(validate_document_template(t), collapse = " "),
+               "doc_locate_repeats")
+  # anything unrecognised is refused rather than silently meaning "once"
+  t$tables$a$occurrence <- "sometimes"
+  expect_match(paste(validate_document_template(t), collapse = " "), "occurrence must be")
+  # and the ordinary template is untouched
+  t$tables$a$occurrence <- NULL
+  expect_identical(validate_document_template(t), character(0))
+})
+
+test_that("a person's name is refused everywhere page text is captured, not just the fingerprint", {
+  # The builder's FIRST gesture is "drag a box round the table's TITLE", and those
+  # words become the table's name in a file that gets copied off the box. The gate
+  # guarded one field; "Prepared for Mr John Smith" was refused as a fingerprint
+  # phrase and accepted without comment as a table name.
+  skip_if_not(exists(".fp_has_pii", mode = "function"))
+  t <- .fin_tmpl(); t$tables$a$name <- "Prepared for Mr John Smith"
+  expect_match(paste(validate_document_template(t), collapse = " "), "names a PERSON")
+  t <- .fin_tmpl()
+  t$pairs <- list(v = list(label_text = "Prepared for Mr John Smith",
+                           value = list(x_min = 1, x_max = 2, y_min = 1, y_max = 2)))
+  expect_match(paste(validate_document_template(t), collapse = " "), "names a PERSON")
+})
+
+test_that("saving a template keeps the version it replaced", {
+  # A report template can be forty tables grown over months and it exists nowhere
+  # else on an offline box. A bare write_yaml truncates the target before it
+  # writes: one error part-way through and both the new file and the old one are
+  # gone.
+  d <- file.path(tempdir(), paste0("fin-save-", as.integer(Sys.time())))
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  save_document_template(.fin_tmpl(), d)
+  t2 <- .fin_tmpl(); t2$tables$a$name <- "Second"
+  p2 <- save_document_template(t2, d)
+  expect_true(file.exists(paste0(p2, ".bak")))
+  expect_identical(yaml::read_yaml(paste0(p2, ".bak"))$tables$a$name, "A")
+  # the temp file is renamed, never left lying about where a loader could see it
+  expect_length(list.files(d, pattern = "\\.part$"), 0L)
+})
+
+test_that("a form output does not carry a live formula, and is the same file twice", {
+  # Excel evaluates =1+1 on open, so the reviewer sees 2 where the document
+  # printed =1+1 - a wrong figure that looks right, delivered by our own output.
+  # The other two routes guard this; the form route did not.
+  fr <- data.frame(field = "a", label = "L", value = "=1+1", raw = "=1+1",
+                   page = 1L, found_by = "x", matched = TRUE, required = FALSE,
+                   flagged = FALSE, conflict = FALSE, n = 1L,
+                   stringsAsFactors = FALSE)
+  od <- file.path(tempdir(), paste0("fin-form-", as.integer(Sys.time())))
+  on.exit(unlink(od, recursive = TRUE), add = TRUE)
+  p <- write_form_outputs(fr, od, "z", formats = "csv")
+  expect_match(paste(readLines(p[1]), collapse = " "), "'=1+1", fixed = TRUE)
+})
+
+test_that("the metadata record is corrected to the route that actually happened", {
+  # capture_metadata runs inside the STATEMENT pass, which on the other routes is
+  # the attempt that failed. So the one record exempt from every rollup and never
+  # deleted said unsupported / template_id null for a conversion that read six
+  # tables - and the corpus mined for "build these next" could not tell a layout
+  # nobody can read from a report that read perfectly.
+  f <- paste(deparse(convert_document), collapse = " ")
+  g <- paste(deparse(.record_and_return), collapse = " ")
+  expect_true(grepl("amend_metadata_record", g, fixed = TRUE))
+  # it is at the ONE choke point both exits pass through, so neither can miss it
+  expect_true(grepl(".record_and_return", f, fixed = TRUE))
+})

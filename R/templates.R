@@ -691,7 +691,12 @@ save_user_template <- function(template, dir = "templates/statements_user") {
     slug <- paste0(base_slug, "_", k); k <- k + 1L
   }
   path <- file.path(dir, paste0(slug, ".yaml"))
-  yaml::write_yaml(template, path)
+  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
+  # A template is months of somebody's work that exists nowhere else on an offline
+  # box, and a bare write_yaml truncates the target before it writes. See
+  # save_yaml_safely() in R/util.R.
+  ok <- save_yaml_safely(template, path)
+  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
   invisible(path)
 }
 
@@ -732,7 +737,10 @@ set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates/stateme
     if (identical(t$id %||% "", id)) {
       t$origin <- NULL
       if (isTRUE(hidden)) t$hidden <- TRUE else t$hidden <- NULL
-      yaml::write_yaml(t, f)
+      # Hiding rewrites the template in place, so it gets the same protection as
+      # saving one: parking a template must never be a way to lose it.
+      ok <- save_yaml_safely(t, f)
+      if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
       return(invisible(isTRUE(hidden)))
     }
   }

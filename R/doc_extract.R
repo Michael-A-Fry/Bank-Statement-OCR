@@ -97,7 +97,63 @@ is_document_template <- function(t) {
     if (is.na(dp) || dp < 1L)
       p <- c(p, w("doc_pages must be the number of pages the example had"))
   }
+  # A KEY NOTHING IMPLEMENTS IS A SILENT LOSS, NOT A FUTURE FEATURE.
+  #
+  # `occurrence: all` is meant to say "read this table wherever it appears, however
+  # many times", and the design for it is settled (register A2). The reader for it
+  # is NOT built: there is no doc_locate_repeats in R/tables.R, so a table carrying
+  # the key is located exactly once, at the coordinates it was drawn at - while
+  # .doc_table_optional() reads the same key to mean its absence is expected and
+  # must not be reported. Between them, a template that used the key would lose
+  # tables and say nothing, which is the cardinal failure of this product wearing
+  # a feature's name.
+  #
+  # So it is refused at the door until the reader exists. The refusal names the
+  # reader, so whoever builds it knows exactly which line to delete. Anything other
+  # than `once`/`first` is refused too, rather than silently meaning `once`.
+  occ <- as.character(.doc_key(tab, "occurrence") %||% "")[1]
+  if (nzchar(occ)) {
+    if (identical(occ, "all")) {
+      if (!exists("doc_locate_repeats", mode = "function"))
+        p <- c(p, w(paste("is set to be read wherever it appears, and the reader for",
+                          "that is not built yet - it would be read once, where it was",
+                          "drawn, and its absence anywhere else would go unreported.",
+                          "Remove 'occurrence: all' until doc_locate_repeats() exists.")))
+    } else if (!(occ %in% c("once", "first"))) {
+      p <- c(p, w("occurrence must be 'once' or 'first' (or 'all' once that is built), not '%s'", occ))
+    }
+  }
   p
+}
+
+# .doc_pii_problems(tabs, prs) -- THE SAME PII GATE THE FINGERPRINT PASSES,
+# applied to the two other places this mode captures page text VERBATIM.
+#
+# WHY IT MATTERS MORE HERE THAN ANYWHERE. The builder's FIRST gesture is "drag a
+# box round the table's TITLE", and whatever words are in that box become the
+# table's name. A pair's label_text is captured the same way. Both are written
+# into templates/documents_user/, which is exactly what gets copied off the box
+# when somebody backs the library up or hands it to a colleague.
+#
+# Measured before this existed: "Prepared for Mr John Smith" was REFUSED as a
+# fingerprint phrase and accepted without a word as a table name. One rule, one
+# wording, three places - so there is one thing to learn and not three.
+.doc_pii_problems <- function(tabs, prs) {
+  if (!exists(".fp_has_pii", mode = "function")) return(character(0))
+  txt <- c(
+    vapply(tabs %||% list(), function(tb)
+      as.character(.doc_key(tb, "name") %||% "")[1], character(1)),
+    names(tabs) %||% character(0),
+    vapply(prs %||% list(), function(pr)
+      as.character(.doc_key(pr, "label_text") %||% "")[1], character(1)))
+  txt <- trimws(txt[!is.na(txt) & nzchar(trimws(txt))])
+  if (!length(txt)) return(character(0))
+  hit <- safe(.fp_has_pii(txt), rep(FALSE, length(txt)))
+  if (!any(hit)) return(character(0))
+  sprintf(paste0(
+    "%s names a PERSON -- a template must describe the LAYOUT, never a customer. ",
+    "Use the heading printed on the page instead."),
+    paste(sprintf("'%s'", unique(txt[hit])), collapse = ", "))
 }
 
 # validate_document_template(t) -> character() of problems (empty = valid).
@@ -118,6 +174,8 @@ validate_document_template <- function(t) {
     p <- c(p, paste0("fingerprint.page_contains_all is required: without identifying ",
                      "phrases this template can never be matched"))
   else p <- c(p, .fp_fingerprint_problems(fp, min_score = length(fp), fmt = "pdf"))
+
+  p <- c(p, .doc_pii_problems(tabs, prs))
 
   keys <- names(tabs)
   if (length(tabs) && (is.null(keys) || any(!nzchar(keys))))
@@ -207,7 +265,12 @@ save_document_template <- function(t, dir = "templates/documents_user") {
   if (length(probs)) stop("document template is not valid: ", paste(probs, collapse = "; "))
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   path <- file.path(dir, paste0(gsub("[^A-Za-z0-9_]+", "_", t$id), ".yaml"))
-  yaml::write_yaml(t, path)
+  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
+  # A report template can be forty tables grown over months, and it exists nowhere
+  # else on an offline box; a bare write_yaml truncates the target before it
+  # writes. See save_yaml_safely() in R/util.R.
+  ok <- save_yaml_safely(t, path)
+  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
   invisible(path)
 }
 

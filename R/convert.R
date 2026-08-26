@@ -384,10 +384,35 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # rather than "this did not work". It is the same outcome as having no
       # template at all: the wording matched, the layout did not. So say that, and
       # route it where a new/fixed template gets built.
+      # A BADLY OCR'd PAGE CANNOT COME BACK "ok".
+      #
+      # For a police deployment this is the most important clause in this
+      # function, because a large share of what arrives is a scan of a photocopy.
+      # Every part of it already existed and none of it decided anything:
+      # Tesseract's per-word confidence is carried the whole way to the table
+      # parser (R/ocr.R), PARAM_OCR_PAGE_MIN_CONF has been 70 for a long time, and
+      # `low_ocr_confidence` is raised at severity HIGH by build_diagnostics -- but
+      # the status gate below looked only at rows, KPIs, trust, bundles and ties.
+      # So a statement read off a page that scored 40 came back ok, with a green
+      # card and a clean download, and the caveat lived in a panel most people
+      # never open. A misread 8 for a 3 in an amount is exactly the wrong figure
+      # that looks right, and reconciliation only catches it if it happens to
+      # break the balance.
+      #
+      # `ocr_pages > 0` is the gate, not `ocr_min_conf` alone: a page the reader
+      # could not measure at all (conf NA) is not evidence of a good read, so it
+      # is treated the same as a poor one.
+      ocr_pages <- suppressWarnings(as.integer(input$meta$ocr_pages %||% 0L))
+      if (is.na(ocr_pages)) ocr_pages <- 0L
+      ocr_conf  <- suppressWarnings(as.numeric(input$meta$ocr_min_conf %||% NA_real_))
+      ocr_poor  <- ocr_pages > 0L &&
+        (!is.finite(ocr_conf) || ocr_conf < PARAM_OCR_PAGE_MIN_CONF)
+
       status <- if (row_count == 0L) {
         "unsupported"
       } else if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
-                 isTRUE(multi_resolved$likely_multiple) || thin_match || ambiguous) {
+                 isTRUE(multi_resolved$likely_multiple) || thin_match || ambiguous ||
+                 ocr_poor) {
         "needs_review"
       } else {
         "ok"
