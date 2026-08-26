@@ -114,6 +114,105 @@ sheet. That falls out of the rule for free: no title, no table.
 do now, and tick *"this document has more tables like this one"*. Nothing else
 changes. Page numbers stop being part of the template at all for these.
 
+### A2b. Title first, then header - and ALL the variants of each
+
+Clarified further by the user:
+
+> "It should be finding a table by the title AND header wording. If no title it
+> should search for headers. If it matches an entire header row then it's a
+> pretty good chance it's the same. I want to be able to specify all possible
+> title/header and header variants so that tables can automatically be found."
+
+**Yes, and the scoring for it already exists.** `.doc_header_hit(d, need)`
+(R/tables.R:371) scores a line as the FRACTION of the remembered wordings that
+appear on it, after `.doc_norm()` strips case, spacing and punctuation
+(`"Unit price"` -> `unitprice`), so it is already robust to how the wording is
+set. `.doc_find_header()` takes the best-scoring line and requires 0.6, and
+`.doc_anchor_confidence()` (R/tables.R:422) already returns **the hit fraction
+itself** as the table's confidence - so "an entire header row matched" already
+means 1.0 and a partial match already scores lower and says so.
+
+Three changes, all small:
+
+1. **Variants.** `need` is one flat set of words today, and `unlist()` would
+   flatten a nested list into one set - which would score every variant together
+   and match none of them. So `.doc_header_hit()` must branch on the structure:
+   a list of character vectors means *variants*, and the score is the **max**
+   over them. A flat vector behaves exactly as it does now, so every template
+   already saved is untouched.
+
+2. **Titles.** There is no title matching at all - `tb$name` is only a label.
+   Add `.doc_find_title(lines, any_of)`: the first line carrying any of the
+   remembered title phrases, matched through `.doc_norm` like everything else.
+
+3. **The order.** `doc_locate_table()` tries header -> first_column -> position.
+   It becomes title -> header -> first_column -> position, because a title says
+   WHICH table this is and a header only says what SHAPE it is.
+
+The template shape (all of `find:` optional, so nothing already saved changes):
+
+```yaml
+tables:
+  holdings:
+    name: Holdings
+    find:
+      title_any:
+        - "Portfolio holdings"
+        - "Investments held"
+        - "Holdings at period end"
+      header_any:                       # each entry is one whole header row
+        - ["Code", "Units", "Price", "Value"]
+        - ["Security", "Units", "Unit price", "Market value"]
+      repeats: true                     # see A2 - as many as the document has
+```
+
+**THE TRAP, and it is the wrong-figure-that-looks-right kind.** A header alone
+says what shape a table is, never which one it is. So a template carrying two
+table entries with no titles and overlapping header wording cannot tell their
+occurrences apart, and would assign rows to whichever entry scored first -
+silently. That must be refused at save time by `validate_document_template()`,
+with the reason, not discovered later in a spreadsheet. Two entries may share
+header wording ONLY if both carry titles.
+
+**AND THE THRESHOLD IS TOO LOOSE TODAY - measured, not suspected.** Matching is
+`grepl(fixed = TRUE)` of each normalised wording against the whole normalised
+line, so one header's words are found inside another's. Run against the real
+`.doc_header_hit()` on the line `"Security Units Unit price Market value"`:
+
+| what was remembered                          | score |
+|----------------------------------------------|-------|
+| `Security, Units, Unit price, Market value`   | 1.00  |
+| `Code, Units, Price, Value`  (a DIFFERENT table) | **0.75** |
+
+0.75 clears `min_hit = 0.6`, so the wrong header already matches - `units`
+appears, `price` is inside `unitprice`, and `value` is inside `marketvalue`.
+On a document with forty similarly-shaped tables that is not a corner case, it
+is the normal case.
+
+Two consequences for the design:
+
+* Variants make this BETTER, not worse: with both wordings listed, the max is
+  1.00 for the right one against 0.75 for the wrong one, so the correct entry
+  wins outright. That is an argument for listing variants rather than relying on
+  a loose threshold to cover them.
+* But the bar has to rise with it. Once the true wordings are listed, a match
+  should need to be at or very near 1.0, and a whole-word match (not a
+  substring) - `Price` should not be found inside `Unit price`. Both changes are
+  in `.doc_header_hit()`, and both need the existing shipped templates run
+  against them before they land, because they tighten a rule those templates
+  currently pass under.
+
+**In the builder**, variants are collected the way the fingerprint now is: a box
+per table for "other wordings this can have", one per line, and **draggable off
+the page** so a variant met on a second example is captured word for word rather
+than retyped. Retyping is what breaks exact matching, which is the whole reason
+the fingerprint got a drag.
+
+A later refinement worth noting but not building yet: when a table is found on a
+partial header hit (0.6-0.99), the tool KNOWS it has met a new wording. It could
+offer "this document called it X - remember that too?" and learn the variant
+instead of being told it.
+
 Still open, and worth confirming with the user when it is built: what happens
 when two occurrences carry the SAME title (numbered `_1`, `_2`, presumably), and
 whether the output should be one sheet per table or one long sheet with a
