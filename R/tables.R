@@ -424,6 +424,78 @@
        hit = as.numeric(hits[best]))
 }
 
+# ---------------------------------------------------------------------------
+# THE HEADING AS **THIS** DOCUMENT PRINTS IT.
+#
+# Reported: "sometimes there's headers on the next x pages that are being pulled
+# as rows."
+#
+# On a continuation page exactly ONE thing used to close the top of the reading
+# window: a >=0.6 wording match of the template's remembered anchor$header_text
+# against a single printed line. There was no second answer. When that one test
+# missed, the window fell back to band$y_min - which nothing in the product ever
+# writes, so it is 0, the very top of the paper - and `skip` was hard-coded to 0
+# for every page after the first. The window became "the whole page", and every
+# line printed above the data, the reprinted heading included, was read as a row.
+#
+# The commonest way to miss it needs no bad luck at all: a table with no figures
+# in it is marked has_header = FALSE by the proposer, which writes header_rows: 0
+# and anchor.header_text: [] (R/tables_detect.R), so the wording test has nothing
+# to match and can never fire.
+#
+# So stop asking the TEMPLATE what the heading says and ask the DOCUMENT. On the
+# table's own first page the tool already knows which lines are the heading -
+# they are the `skip` lines at the top of that window. Their text is the
+# heading's signature for THIS copy. It is learned at read time, so it is right
+# even when the template was drawn on a different copy, and it needs nothing on
+# screen to answer.
+#
+# Two guards stop it ever deleting a real row:
+#   * the signature is REFUSED if any learned heading line carries a figure - a
+#     line with money in it is data, and a signature made of data would match
+#     data;
+#   * the match is WHOLE-LINE, not a fraction, so a data row cannot contain the
+#     entire heading string by accident.
+
+# .doc_header_printed(lines, y_from, n) -> the normalised text of the n heading
+# lines at or below y_from, or character(0) when they cannot be trusted as one.
+.doc_header_printed <- function(lines, y_from, n) {
+  n <- .doc_int(n, 0L)
+  if (!length(lines) || is.na(n) || n < 1L) return(character(0))
+  tops <- vapply(lines, function(d) .doc_num(attr(d, "top"), NA_real_), numeric(1))
+  ix <- which(is.finite(tops) & tops >= .doc_num(y_from, -Inf) - 1)
+  if (!length(ix)) return(character(0))
+  ix <- utils::head(ix[order(tops[ix])], n)
+  for (i in ix) if (.doc_has_money(lines[[i]])) return(character(0))
+  sig <- vapply(ix, function(i) .doc_norm(.doc_line_text(lines[[i]])), character(1))
+  # A signature of two or three characters would match half the page.
+  sig <- sig[nchar(sig) >= 6L]
+  if (!length(sig)) character(0) else sig
+}
+
+# .doc_find_printed_header(lines, sig) -> list(index, top, n_lines) for the first
+# run of lines whose whole normalised text matches the signature, or NULL. Only
+# ever consulted after the wording test has already returned NULL.
+.doc_find_printed_header <- function(lines, sig) {
+  if (!length(lines) || !length(sig)) return(NULL)
+  norm <- vapply(lines, function(d) .doc_norm(.doc_line_text(d)), character(1))
+  for (i in seq_along(lines)) {
+    if (!nzchar(norm[i])) next
+    # How many of the signature's lines are reprinted here, in order. A page that
+    # reprints only the first line of a two-line heading must skip ONE line, not
+    # two, or a data row is lost.
+    k <- 0L
+    while (k < length(sig) && (i + k) <= length(lines) &&
+           nzchar(norm[i + k]) &&
+           (identical(norm[i + k], sig[k + 1L]) ||
+            grepl(sig[k + 1L], norm[i + k], fixed = TRUE))) k <- k + 1L
+    if (k >= 1L)
+      return(list(index = as.integer(i), top = attr(lines[[i]], "top"),
+                  n_lines = as.integer(k), hit = 1))
+  }
+  NULL
+}
+
 # .doc_find_first_column(lines, need, col) -> the top of the first line whose
 # FIRST-COLUMN band carries one of the remembered row labels, or NULL. This is
 # the second anchor: a table whose header wording changed (or was never printed)

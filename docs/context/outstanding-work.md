@@ -683,3 +683,379 @@ messy document before anything is called done.
 * The identifying phrase can be dragged off the page.
 * A drag that Shiny also reports as a click no longer acts twice.
 * The sticky instruction banner no longer swallows drags.
+
+---
+
+# G. Evidence and provenance
+
+Everything below was measured against the running engine, not inferred. This
+section is about what survives into the FILE and the RECORD, because a screen
+gets closed and a court date is two years later.
+
+## G1. An "other" output names nothing that produced it, and its template is always version 1
+
+A report converts in March, the workbook goes in the bundle, and in September the
+defence asks how row 14 was derived. The file contains sheet names, values and a
+Report sheet of counts. No template id, no template version, no engine version,
+no source filename, no source hash, no run id, no date.
+
+The statement workbook carries all of it (Summary sheet: `template_id`,
+`template_version`, `source_file`, `source_sha256`, `page_count`, `row_count`;
+JSON `build` block: `engine_version`, `template_sha256`). The report and form
+writers carry none.
+
+And there is nothing to look it up in. `template_sha256` is `NA_character_` on
+both other routes (R/forms.R:323, :352) - and the fallback is dead too:
+`document_template_from_proposal()` hardcodes `version = 1`
+(R/doc_extract.R:678) and `rb_save` writes that object every time, so **every
+report template is version 1 forever, including after "Save replaces it"**.
+Today's template and last month's are indistinguishable in every record kept.
+
+The file has no handle either: the download name is the source filename, so two
+conversions either side of a template edit produce two identically-named files.
+
+**Severity: blocks-work.** It does not make a figure wrong; it makes a right
+figure indefensible, which here costs the same.
+
+**Fix:** `template_sha256()` (R/convert.R:48) already works on any template -
+call it and stop writing NA. Give both writers the `build` argument
+`write_outputs()` already takes (R/outputs.R:154, 203-205): one sheet, one CSV
+header block, carrying engine version, template id/version/hash, source
+file/hash, run id, UTC timestamp. Bump `version` on a save over an existing id.
+
+## G2. The form output drops `conflict` - the only signal a form has
+
+Measured on the shipped sample and template: `extract_fields()` returns
+`conflict = TRUE` for three values (contributions, tax, fees) - labels printed
+more than once with different values, of which the tool silently took the first.
+The screen says so. The downloaded `.fields.csv` shows those rows as
+`matched TRUE, flagged FALSE` with **no `conflict` column at all**, because
+`write_form_outputs()` selects a fixed seven columns (R/forms.R:135-136) and
+`conflict` - produced at R/extract_fields.R:60, counted at R/forms.R:204, and
+used to DECIDE THE STATUS at R/forms.R:206 - is not among them. The JSON is built
+from the same frame and drops it too.
+
+There is no reconciliation behind a form. `conflict` is the entire quality
+signal, and it exists only on a screen that gets closed.
+
+Also: a form value carries **no page number**. `match_label()` flattens every
+page into one string. The report route's pairs already carry `page` and
+`found_by` - so this is a parity gap inside one product, not a hard problem.
+
+**Severity: wrong-figure.**
+
+**Fix:** add `conflict` and `n` to the tidy column list and mark a conflicting
+value visibly, not just as a boolean. Carry the page through `match_label()` the
+way `doc_pairs()` does.
+
+## G3. A report read into the wrong columns comes out `ok`, and the evidence never leaves memory
+
+Re-running the shipped fixture with page 2 shifted 120pt (the crux, section 0):
+
+| | |
+|---|---|
+| status from the gate (R/doc_extract.R:521-523) | **`ok`** - not needs_review |
+| confidence | 1.00 |
+| `Opening` column (declared `money`) | `Transaction`, `Savings`, `TermDeposit`, `CreditCard` |
+| `Closing` column | the OPENING balances |
+
+Three things the engine already knows and does not use:
+
+1. **`unclaimed_words` does not gate the status.** It was 4. The gate looks only
+   at empty/thin/weak. The *screen* does colour the verdict on it (app.R:6339),
+   so the analyst gets a warning the record and the file never receive.
+2. **The unclaimed words themselves are computed and thrown away.** `spilled` is
+   built at R/tables.R:1187 and returned carrying `page, y, x, text` - in this
+   run, exactly the four real closing balances. The only reader anywhere is
+   `nrow()` at R/doc_extract.R:316. **That frame is the single best piece of
+   evidence this route can produce and it never leaves memory.**
+3. **A typed column that parsed nothing is not counted.** `Opening__value` was NA
+   for 4 of 4 rows because "Transaction" is not money, yet that column reports
+   `fill_rate 1.0, low_fill FALSE` - `.doc_col_report()` measures fill on the raw
+   text and never looks at the `__value` companions. A free, already-computed
+   signal that catches wrong-column reads, A3's swallow, and any band drift.
+
+And where evidence does exist it reaches one sheet of one optional file:
+`found_by`, `confidence`, `unclaimed_words` and `pages` are written **only** into
+the xlsx Report sheet (R/doc_extract.R:443-445). On a box without openxlsx the
+code takes the CSV-per-table path and **the summary is written nowhere at all** -
+measured. The comment at R/doc_extract.R:413-414 says "nothing is dropped for
+want of a package"; the one thing unique to this route is. That sheet is also
+unreadable as an exhibit: two frames of different widths are stacked into one.
+
+One more: `.doc_page_words()` reads a page whose orientation differs from the
+template's frame **unscaled** (R/tables.R:110-112). That is the right call, and
+it is silent - `same_way` has no reader anywhere. A page read under a different
+geometry rule from the rest of its own document carries no mark anywhere.
+
+**Severity: wrong-figure.**
+
+**Fix:** put `unclaimed_words` and a typed-column parse-failure rate in the status
+gate. Write `spilled` as a fourth output (`.unclaimed.csv`) - it is already a
+data.frame and costs one `write.csv`. Move the per-table summary into
+`.report.csv` so it survives a missing package. Note when a page was read
+unscaled.
+
+## G4. Report and form workbooks change bytes on every run; statements do not
+
+Same input, two writes three seconds apart:
+
+```
+STATEMENT   xlsx SAME        csv SAME   json SAME
+FORM        xlsx DIFFERENT   csv SAME   json SAME
+REPORT      xlsx DIFFERENT   (the CSVs SAME)
+```
+
+`docProps/core.xml` inside the report workbook carries the wall clock.
+`write_outputs()` pins it and normalises the ZIP mod-times before saving
+(R/outputs.R:186-188); `write_document_outputs()` (R/doc_extract.R:446) and
+`write_form_outputs()` (R/forms.R:146) call `saveWorkbook` raw. The suite's
+byte-reproducibility test exercises `write_outputs()` only, and
+`docs/design.md:478` records the guarantee as "yes".
+
+So "re-run it and show it produces the same file" - the check a maintainer would
+run to prove the tool has not drifted - fails on both other routes for a reason
+that has nothing to do with the figures. That is the worst kind of false alarm.
+
+**Severity: blocks-work.**
+
+**Fix:** route both writers through the same two lines the statement writer uses,
+and extend the reproducibility test to all three so it cannot regress again.
+
+## G5. Two unversioned files decide what every figure parses to
+
+`.value_from_line()` - the money/date parser behind every `__value` column and
+every money/date field on every form - takes its patterns from the lexicon AT RUN
+TIME (R/labels.R:118). `dictionaries/lexicon.yaml` is Admin-editable and a
+`regex` category REPLACES the built-in (R/lexicon.R:31-33). Separately
+`convert_form()` passes `default_label_dict()` from `dictionaries/labels.yaml`,
+also Admin-editable, which decides which labels a field matches at all.
+
+Grep for `lexicon_sha|dict_sha|dictionary_sha|lexicon_version` across `R/` and
+`app.R`: **nothing**. `template_sha256` proves which TEMPLATE ran; nothing proves
+which VOCABULARY ran. Add a wording in June and the same PDF re-run in September
+extracts different values, with `engine_version` and `template_sha256` both
+unchanged and both saying the run is identical.
+
+**Severity: wrong-figure.**
+
+**Fix:** hash both files at load (`.text_sha256()` exists, R/convert.R:35), cache
+beside `.VERSION_CACHE`, stamp `lexicon_sha256` and `dictionary_sha256` into the
+run log and the `build` block next to `template_sha256`.
+
+## G6. The other routes' CSVs are not formula-guarded
+
+Measured: a cell reading `=1+1` reaches `doc.tables-long.csv` verbatim; a pair
+value reading `=HYPERLINK(...)` reaches `doc.values.csv` verbatim; same for
+`.fields.csv`. Excel evaluates all of them on open. The statement path
+neutralises exactly this (`.neutralize_formula` / `.spreadsheet_safe`,
+R/outputs.R:105-115, applied at :161 and :173). Neither other writer calls it.
+
+The point for this lens is not the injection - it is that **the reviewer's screen
+shows `2` where the document printed `=1+1`**. A wrong figure that looks right,
+delivered by the tool's own output. (The xlsx is safe; the exposure is the CSVs,
+which is what people open.)
+
+**Severity: wrong-figure.**
+
+**Fix:** one call each, on the CSV writers only, applied to every character
+column since a report has no fixed schema. Leave the JSON verbatim, as the
+statement path does.
+
+## G7. Redactions are honoured on both other routes; the ACCOUNTING is statement-only
+
+Good news first, and worth not re-investigating: the guard is inside the reader,
+not the statement pipeline. `read_input()` -> `read_pdf()` applies the marker
+sweep, the vector-occlusion scan (R/read_pdf.R:353-375) and the OCR dark-box
+detector (:329-347), and both other routes call `read_input()` (R/forms.R:171,
+R/doc_extract.R:492). Measured: `Account XXXXXXXXXX` -> `Account [REDACTED]`,
+`redacted_words = 1`. **A report does not leak a redacted name through the text
+layer.**
+
+What is statement-only is the accounting. `input$meta` carries six forensic facts
+- `redactions`, `redaction_scan_incomplete`, `ocr_pages`, `ocr_min_conf`,
+`scanned_no_ocr`, `pdf_doc` (R/read_input.R:176-193). Grep for any of them in
+R/forms.R, R/doc_extract.R, R/tables.R: **not one hit**. So a page that could not
+be rasterised FAILS a statement's KPI (R/reconcile.R:546-553, "text hidden under
+a redaction box may have been read and emitted") but on a report produces an R
+`warning()` to a console nobody reads, status stays `ok`, and no file mentions
+it. A report where the redaction scan could not run is indistinguishable from one
+where it ran clean.
+
+(Smaller: `convert_document()` has no `redaction_rects` parameter at all
+(R/forms.R:266-273) and app.R never passes one, so the manual-rectangle channel
+is unreachable from the GUI on all three routes.)
+
+**Severity: wrong-figure** - an unverified redaction that reads clean is a
+disclosure incident.
+
+**Fix:** the six `input$meta` facts want a route-independent "how this file read"
+block, computed once and written by all three writers and into all three records.
+`redaction_scan_incomplete > 0` then demotes any route's status.
+
+## G8. A form or report run record is the statement pass's verdict plus two counts
+
+| field | statement | form | report |
+|---|---|---|---|
+| `template_sha256` | real hash | **NA** | **NA** |
+| `template_version` | template's | template's | **always 1** (G1) |
+| `trust_level` | ok/medium/low | **NA** | **NA** |
+| `row_count` | rows | **literal 0** | **literal 0** |
+| `kpi_fail_count` | real | **literal 0** | **literal 0** |
+| `closest_template` / `detect_detail` | the verdict | *carried over from the failed statement pass* | *carried over* |
+| `period_start` / `period_end` | real | *carried over* - measured "1 April 2025" off a form | *carried over* |
+| `n_values`, `n_conflicts`, `required_missing` | - | **absent** | - |
+| min `confidence`, `empty/thin/weak_tables`, `unclaimed_words` | - | - | **absent** |
+| the output files written | absent | absent | absent |
+
+Two consequences that generalise. `kpi_fail_count = 0` and `row_count = 0` are
+LITERALS, not NA, so every report and form run is counted in Admin's per-template
+reports as a clean zero-failure conversion alongside statements that genuinely
+reconciled. And the numbers that decide the other routes' status are computed and
+discarded - a table found by position at confidence 0.40 reaches the record only
+as prose inside a truncated message string.
+
+`logs/metadata/<run_id>.json` - kept **forever** (R/config.R:94) - describes the
+FAILED STATEMENT ATTEMPT for these runs: `status: "unsupported"`,
+`template_id: null`, no `kind` field at all. So the forever-corpus that
+`R/suggestions.R` mines for "build these next" cannot tell a genuinely
+unsupported layout from a report that converted perfectly. The same bug was fixed
+for the run log (findings-register #15) and left standing here.
+
+**And it answers the open question in 0b:** `batch_audit()` takes `templates` and
+`fields_templates` only (R/batch_audit.R:35-36) - no document-template argument,
+no `mode:document` branch. A folder of reports fully covered by report templates
+comes back "unsupported" and inflates the gap count. So Batch & audit **cannot**
+serve the library check as it stands.
+
+**Severity: blocks-work.**
+
+**Fix:** give each route's own numbers named fields rather than prose; write NA,
+not 0, where a measure does not apply; add `kind` to the metadata record and
+clear the carried-over detection fields when the route changes; record the output
+filenames so a file and a record tie together in either direction.
+
+## G9. The PII gate guards one field; verbatim page text leaves by two others
+
+`.fp_has_pii()` (R/wizard_auto.R:87) is called from exactly one place,
+`.fp_fingerprint_problems()` (R/templates.R:54). Measured on one string:
+
+```
+as a fingerprint phrase : REFUSED - "'Prepared for Mr John Smith' names a PERSON"
+as a table title        : (no problems - the template saves)
+as a pair label_text    : (no problems - the template saves)
+```
+
+The builder's FIRST gesture is "drag a box round the table's TITLE", and A2b is
+about to make those titles the primary search key with variant lists dragged off
+the page - which multiplies this surface rather than shrinking it. Saved report
+templates live in `templates/documents_user/` and are what gets copied off the
+box.
+
+The larger exit is `layout_signature()`. When no line matches >=2 header keywords
+it falls back to **the twelve most frequent 4+-letter non-stopword words on the
+page** (R/layout.R:52-57). Measured on a page whose commonest words are two
+surnames: `layout_hint` came back as **`ambrose | whitcombe`**. That is written to
+`logs/runs/<run_id>.json` (rolled into an archive nothing ever deletes) AND to
+`logs/metadata/<run_id>.json`, whose own module header states as rule 2 "NO RAW
+CONTENT / PII-CONSCIOUS... Descriptions, payees, references and raw amounts are
+NEVER stored".
+
+This bites the OTHER routes specifically: a bank statement hits the
+header-keyword branch and yields `amount | balance | date | description`. A
+document that reaches the form or report route is by definition one with no
+transaction header - so it is exactly the class that takes the fallback.
+
+On retention: `purge_uploads()` deletes the file and keeps `record.json`
+(R/retention.R:74-83), which keeps `file`, the filename AS SENT - routinely
+"SURNAME, First - Bank - period.pdf". The run record keeps `source_file`,
+`period_start`, `period_end` and `layout_hint` forever.
+`uploads_retention_note()` tells the uploader the file is deleted after N days
+and says nothing about any of that.
+
+**Severity: blocks-work** - a disclosure question, not an arithmetic one, but the
+kind that ends a case.
+
+**Fix:** run the same `.fp_has_pii()` gate over table names and `label_text` at
+save time. Restrict the `layout_hint` fallback to words in the lexicon's
+`header_keywords`, or drop the hint for non-statement runs - it exists to cluster
+layouts and a surname clusters nothing. Extend the retention note to say what the
+record keeps after the file is gone.
+
+## G10. One instant, three clocks
+
+Measured under `TZ=Pacific/Auckland`, all from the same second:
+
+```
+upload folder id (R/uploads.R:46,  local) : 20260826193118
+run_id           (R/convert.R:226, UTC  ) : 20260826073118
+record.json ts   (R/uploads.R:52,  %z   ) : 2026-08-26T19:31:18+1200
+```
+
+The two primary handles a reviewer uses to tie an upload to a conversion carry
+timestamps **twelve hours apart**, and nothing on either says which zone it is
+in. Anyone matching them by eye - which the Admin Uploads table invites - pairs
+the wrong rows across the overnight boundary.
+
+And the PDF's own forensic timestamps are rendered in the server's local zone
+with no marker (`.pdf_doc_info()`, R/read_pdf.R:477). Same file, three zones:
+`04:12:49` / `16:12:49` / `00:12:49`. "The PDF says it was last modified at
+16:12" does not survive the question "where?".
+
+The run log, feedback, uploads and requests use local time with `%z`; the feed
+and metadata capture use UTC with `Z`. Both are defensible; having both in one
+evidence trail is not - and a string sort of `ts` misorders the one hour a year
+when the clocks go back.
+
+**Severity: blocks-work.**
+
+**Fix:** one rule - every timestamp WRITTEN is UTC with a `Z`, every timestamp
+SHOWN is local with the zone named. The upload id and the run id then agree by
+construction. Append the zone to the two `.pdf_doc_info` timestamps.
+
+## Already fine - do not re-investigate
+
+* **Statement outputs ARE byte-reproducible.** Measured: xlsx, csv, json all
+  identical across runs. R/outputs.R:186-188.
+* **The statement workbook carries its own provenance**, including per-row
+  `source_ref` (`csv:line=2`, R/parse.R:245; `pdf:p%d`, R/parse_pdf_table.R:1243).
+* **Redactions ARE honoured on both other routes** - see G7.
+* **The feed cannot be reached by a form or a report.** R/feed.R:248, the first
+  substantive line of `write_feed`.
+* **The builder never persists example cell values.** `d$anchor$first_column <-
+  list()` on save (app.R:3656).
+* **The report route's pairs already carry their evidence to the file** -
+  `values.csv` has `pair,label,value,raw,page,found_by,matched`.
+* **Metadata capture stores no raw transaction content** - accounts hashed,
+  amounts bucketed, descriptions reduced to length statistics
+  (R/metadata_capture.R:44-79). `layout.hint` is the exception, see G9.
+* **Every Convert records an upload regardless of route**, and `purge_uploads`
+  keeps the record stamped `purged`.
+* **The upload path is hardened** against traversal (R/uploads.R:26-31, :119-121).
+* **`run_id` is reproducible across hosts and collision-safe**
+  (R/convert.R:224-227).
+* **The log rollup loses nothing** (R/retention.R:24-37, :133-150).
+
+## Questions only the owner can answer
+
+1. **Should a report or form output be downloadable while its template has no
+   content hash?** (a) always write it and stamp "not recorded"; (b) refuse until
+   the hash is written; (c) write it and mark the file unverifiable.
+   **Recommend (a)** - refusing takes work away from Beth for a defect she did
+   not cause, and once G1 lands the case disappears.
+2. **How long should `logs/archive/` and `logs/metadata/` keep a record naming
+   the client's file, period and page words?** Uploads are purged after
+   `uploads_keep_days`; these two are forever. (a) forever; (b) same as uploads;
+   (c) a separate stated retention. **Recommend (c)**, defaulted long but STATED
+   in `uploads_retention_note()`, so what is promised at upload is what happens.
+3. **Should unclaimed words demote a report to `needs_review`?** (a) any word;
+   (b) a deployment-settable threshold; (c) leave the status, add a column.
+   **Recommend (b)**, defaulting to "more than one" - measured 4 on the
+   wrong-column case and 0 on both correct reads, so a low bar is not noisy.
+4. **What should `layout_hint` say for a non-statement?** (a) the raw twelve
+   words; (b) only words in `header_keywords`; (c) drop it, keep the signature
+   hash. **Recommend (b)**.
+5. **Should the download name carry the run id?** (a) leave it; (b) append the
+   run id; (c) append a short hash. **Recommend (b)** - it is the only handle
+   tying a file in a bundle back to a record, and it is the question asked two
+   years later.
