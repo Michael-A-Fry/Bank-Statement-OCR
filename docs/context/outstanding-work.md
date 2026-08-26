@@ -19,6 +19,14 @@ The two routes are equal. Every item is judged against both:
 
 ## 0. THE CRUX: a table is found by its heading, but its COLUMNS are still pinned to the page
 
+> **DONE - commit 34ede16.** `.doc_band_shift()` measures how far this copy prints
+> the table off the heading line the locator already holds, and `.doc_shift_cols()`
+> moves the bands. Four refusals (fewer than two columns matched, columns
+> disagreeing, no heading found, everything already inside its band). Said out
+> loud in `loc$detail`. Pinned 0-200pt. **Note I2: this fixes a uniform
+> TRANSLATION; a table that gains or loses a column is a different fault and is
+> still open.**
+
 Everything in section A2 - one template finding however many tables a document
 has, anywhere in it - rests on this, and it does not hold today.
 
@@ -286,6 +294,13 @@ bottom edge) and half of D2 from new controls into no controls.
 ## A. The engine - what comes out wrong
 
 ### A1. Repeated headers on continuation pages come back as rows
+
+> **DONE - commit 051daae.** The heading is learned off the table's own first
+> page (`.doc_header_printed`) and matched whole-line on later pages
+> (`.doc_find_printed_header`), as a fallback only. Refused if a learned line
+> carries a figure. Reported in `loc$detail`. **The in-between TOP EDGE
+> (`band$y_min`, the mirror of the bottom edge) is still not asked for or drawn -
+> that half is open.**
 > "Need an in-between pages start and end - sometimes there's headers on the
 > next x pages that are being pulled as rows. Again this needs to be as simple
 > as humanly possible."
@@ -541,6 +556,11 @@ A defined column band is a fact about the template. It must not be re-derived,
 narrowed or merged because the first data row happens not to fill it.
 
 ### A4. One row printed over three lines comes back as three rows
+
+> **DONE - commit 5e20df1.** The leading is read off the two lines' type heights
+> instead of a page-wide quartile that a tighter footnote block could poison.
+> Net deletion of `win_pitch`. **See I1 for the mirror image, still open: an
+> unlabelled total folded INTO the row above it.**
 > "One row with data on 3 different lines coming back as 3 rows. This edge case
 > is where it's only two columns, where the first column's first row and only
 > row data is [on the first line]."
@@ -1059,3 +1079,432 @@ construction. Append the zone to the two `.pdf_doc_info` timestamps.
    run id; (c) append a short hash. **Recommend (b)** - it is the only handle
    tying a file in a bundle back to a record, and it is the question asked two
    years later.
+
+---
+
+# H. Building and maintaining ONE template across many documents
+
+The admin mode: a template holding 40 tables that never all appear in one copy,
+grown from many examples over months. Everything below was measured.
+
+**The headline: a table that is NOT in this document does not come back empty -
+it comes back full of the table next to it.** A 35-table family template run on a
+document containing one table returned 34 copies of that table's row, each under
+a different table's name and columns, in 34 worksheets, with `empty` counting
+zero and the workbook looking complete.
+
+### H1. An absent table is fabricated from whatever sits at its old coordinates
+`doc_locate_table()` has no "not found" outcome. Its ladder is header ->
+first_column -> **position**, and the last rung always succeeds: `p0` is clamped
+into range (R/tables.R:443) and a window opens regardless (R/tables.R:484-491).
+`empty` was 0, so `convert_tables` reported nothing wrong.
+**wrong-figure.** *Fix:* a fifth outcome, `anchor = "not_found"`, returned when
+no title/header/first-column evidence exists anywhere; a table found ONLY by
+position refused outright in family mode; and "expected but missing" separated
+from "optional and absent".
+
+### H2. A declared page the document does not have clamps to the last page
+`p0 <- min(p0, max(npg, 1L))`. A template built on a 12-page example, run on a
+2-page document, reads every table off page 2 - **including tables that ARE
+present on page 1 and would have matched by heading**.
+**wrong-figure.** *Fix:* a declared page past the end aborts that table and says
+so, rather than silently substituting the last page.
+
+### H3. The "different length document" safeguard is dead code
+`doc_locate_table` grades a positional match 0.4 or 0.2 on
+`identical(npg, .doc_int(tab$doc_pages, npg))` (R/tables.R:486) - reading
+`doc_pages` off the TABLE. `document_template_from_proposal` writes it at the
+template ROOT (R/doc_extract.R:679). So `tab$doc_pages` is always NULL, the
+comparison is always TRUE, and the 0.2 tier can never be reached.
+**wrong-figure.** *Fix:* read it from the template with a per-table override, and
+test that the 0.2 tier is reachable. Worth sweeping for other write-here/read-
+there pairs - the same class already bit `band`.
+
+### H4. Loading a second example re-stamps the template's reference page size
+`rb_frame()` reads page 1 of whatever is open and `rb_template()` overwrites
+`ref_width`/`ref_height` with it (app.R:4193). Open an A4 template, upload a US
+Letter example to add table 41, Save: the file says 612x792 while every band is
+still in 595x842 space and was never converted. Measured: a word at x=400,y=700
+then moves 11pt across and 41pt up.
+**wrong-figure.** *Fix:* the frame is part of the template - restore it on open,
+do not overwrite it while editing, and convert bands rather than relabelling them.
+
+### H5. There is no "add tables from a second example"
+`observeEvent(input$ts_file, { rb_editing(NA_character_) })` (app.R:2746) clears
+the editing flag the moment a second document is uploaded, which un-blocks the
+seeding observers: the issuer is overwritten from the new FILENAME and the
+fingerprint box is overwritten wholesale.
+**blocks-work.** *Fix:* make "another example of the same template" a first-class
+action distinct from "a new document". A new upload changes only the PAGE.
+
+### H6. Every open-and-save round trip loses parts of the template
+The register lists this under "Done today" as identical. **It is not.**
+`document_proposal_from_template` -> `document_template_from_proposal` keeps only
+a whitelist, so a template opened and saved loses `hidden: true` (a parked
+template silently returns to live detection), `notes`, `version` (7 becomes 1 -
+hardcoded at R/doc_extract.R:678), and per-table `row_tol` and `max_gap`.
+**wrong-figure.** *Fix:* round-trip by MODIFYING the loaded template rather than
+rebuilding it; keep the original list, replace only tables/pairs/fingerprint,
+bump version. Test that an arbitrary template survives unchanged.
+
+### H7. A template cannot be tested against a folder of examples
+`batch_audit(paths, templates, max_recommendations, fields_templates)` -
+R/batch_audit.R:35. No document-template parameter, `detect_document_template`
+never called. The Admin job passes even less (R/jobs.R:430-432).
+**blocks-work.** *Fix:* one admin action - pick a template, pick a folder, get a
+grid of document x table showing rows and how each was found.
+
+### H8. A table titled "Report" or "Values" destroys the whole workbook
+`write_document_outputs` adds its own sheets with those names after the table
+sheets (R/doc_extract.R:434-441). A table called either - or two differing only
+in case - makes openxlsx refuse, the `tryCatch` returns FALSE, and the path is
+silently never added. The CSV fallback is gated on `!have_xlsx` so it does not
+run either.
+**wrong-figure.** *Fix:* reserve the reader's own sheet names, make uniqueness
+case-insensitive, and say so when the workbook fails.
+
+### H9. Two admins, one server: last save wins, blindly
+`save_document_template` is `yaml::write_yaml(t, path)` (R/doc_extract.R:199) -
+no lock, no compare-against-disk, no copy kept. All three savers are the same
+shape. The app knows how to do this properly elsewhere (R/logging.R:24-38).
+**blocks-work.** *Fix:* keep the previous file, stamp who and when, bump version,
+and compare the on-disk version against the one that was opened.
+
+### H10. When two templates both match, NEITHER is used
+`detect_document_template` picks the most phrases; a tie returns
+`matched = FALSE`. Two good one-phrase templates that both match means
+"unsupported" on a document the library can read. Nothing checks for it at save
+time.
+**blocks-work.** *Fix:* break ties by evidence - prefer the rarest phrases - and
+when genuinely ambiguous ASK. Check the fingerprint against the whole library at
+save time.
+
+### H11. Admin reports every report template as a duplicate of every other
+`.template_shape` builds its signature from statement keys only, so every
+document template collapses to `pdf~~~~~~` and `duplicate_template_groups` puts
+them all in one group.
+**harder-screen.** *Fix:* a branch per kind. (Partly mitigated already - the
+dupes panel now says "bank statement templates" - but the grouping is still wrong.)
+
+### H12. A 40-table template re-reads every page from scratch for every table
+No cache anywhere. Measured on 30 pages: 2 tables 0.75s, 10 tables 1.37s, 40
+tables 5.6s - tolerable only because each table looks at ONE page. A2's sweep
+projects to 13.2s.
+**blocks-work.** *Fix:* cache page lines per (page, frame, row_tol) for one
+`extract_document` call. **Do this BEFORE A2 lands, not after.**
+
+### H13. "Edit" removes a saved table, and the button beside it says "Throw it away"
+Edit runs `rb$tables <- rb$tables[-i]` (app.R:3694-3696); the only other button is
+`rb_cancel`, labelled "Throw it away" (app.R:854), which nulls the draft. One
+click, no confirmation, no undo - table 27 gone from a template that took months.
+Also `.RB_MAX_ROWS <- 60L` caps how many Edit/Remove observers exist while the
+list renders one pair per table with no cap.
+**blocks-work.** *Fix:* Edit COPIES into the draft and leaves the saved table in
+place; cancel says "Cancel - keep the saved table"; removing needs a confirm.
+
+### H14. A template cannot say where any of its 40 tables came from
+No provenance in the saved shape. `origin` is only "default"/"user" and is
+stripped on save.
+**blocks-work.** *Fix:* two stamps per table, written by the builder and
+preserved by the round trip - `drawn_from` (example filename + date) and
+`last_seen` (updated whenever a conversion finds it by title or header).
+
+---
+
+# I. Document shapes the engine cannot represent
+
+> "The reader can never say *this is not here* and never say *this is not it* -
+> both ends of the pipe are open, and every silent wrong figure comes through one
+> of them."
+
+### I1. An unlabelled total is folded into the row above and REPLACES its value
+`.doc_is_wrap()`'s indented branch has no guards: a right-aligned figure alone on
+a line is "indented" by construction. Measured: a 3-row schedule with an
+unlabelled total of 6,000.00 came back with 3 rows and `Value` =
+`"3,000.00 6,000.00"` - and `.value_from_line` takes the FIRST match, so the
+parsed value is the row's, not the total's. **The exact mirror of A4.**
+**wrong-figure.** *Fix:* give the indented branch the same guards the un-indented
+one has, plus: a wrap NEVER contributes to a money/number/date column that already
+has a value.
+
+### I2. A comparative table that gains a period column shifts every figure across
+A table right-anchored to the page (Q1..Q4, Total) that gains Q5 pushes every
+older column left. Measured: `Q1` held Q2's figure, `Total` held Q5's. **Every
+signal said perfect** - rows 4, unclaimed 0, low_fill FALSE on all six,
+anchor header, confidence 1.00, status ok. Not fixed by section 0's shift, which
+is a uniform translation; this is a change of column COUNT.
+**wrong-figure.** *Fix:* call the existing `doc_header_names()` on THIS document
+and compare to the template's names through `.doc_norm()`. Any position that
+disagrees is a band no longer over the column it was drawn for.
+
+### I3. No cell is ever checked against its column's declared kind
+`fill_rate` asks only whether a cell has ANY text. Measured: a `money` column
+whose band landed 60pt left held "Legal fees", "Court filing", "Disbursements" -
+reported `filled 3, fill_rate 1.00, low_fill FALSE`, unclaimed 0, confidence
+1.00, status ok. Yet `Amount__value` was NA in all three rows: **the engine
+already knows not one cell parsed as money and discards it.**
+**wrong-figure.** *Fix:* two columns on `.doc_col_report` for any typed column -
+`parsed` and `multi_token`. A money column at parse rate 0.00 is a band failure,
+not a thin column. **This one guard catches A3, section 0, band overflow, a
+column drawn over the wrong ink, and OCR damage.**
+
+### I4. A real row is deleted whenever it echoes the header wording and carries no figure
+The reader drops any line scoring >= 0.6 on the header wordings with no money
+token (R/tables.R:1091-1095). Measured: a fee schedule with a genuine row
+"Fee | basis under review" was deleted - rows 3 where the document prints 4,
+fill_rate 1.00, confidence 1.00, `document_summary()` shows nothing. Bites
+hardest on tables with no decimals, because `.MONEY_RX` needs two decimal places
+or a `$`.
+**wrong-figure.** *Fix:* restrict the mid-table wording rule to a repeated header
+at the TOP of a continuation window, not anywhere in the body. And surface
+`n_header` - a table that dropped more header lines than `header_rows * pages`
+has deleted something.
+
+### I5. `__value` is not actually parsed - `parse_amount()` is never called
+`.doc_cell_value()` runs `.value_from_line()`, which returns the matched
+SUBSTRING verbatim. Measured: `(1,234.56)` -> `(1,234.56)`; `987.65-` ->
+`987.65-`; `55.00 CR` -> `55.00 CR`; `12.34 DR` -> `12.34 DR` - **no sign is
+resolved**, so a bracketed negative is indistinguishable from a positive. Two
+currencies collapse: `A$2,000.00` and `US$4,000.00` both -> `$...`.
+**wrong-figure.** *Fix:* call `parse_amount()` - the correct parser is one file
+away and already carries the statement route. Record an undeclared currency
+marker rather than stripping it; `currency: mixed` forces needs_review.
+
+### I6. Date columns have no format, no ISO support and no year bound
+`.DATE_RX` cannot start at a 4-digit year. Measured: `2025-04-07` -> `25-04-07`,
+which reads as 25 April 2007 or 1925 depending on who opens it. `Apr 2025` -> NA
+with no message.
+**wrong-figure.** *Fix:* the statement route has all the guards already
+(`date_format`, `.date_strict`'s round-trip and year bound) - use them.
+
+### I7. A merged header spanning two columns cannot be described
+**wrong-figure.** *Fix:* needs a template shape for it, or an explicit refusal.
+
+### I8. A page break MID-ROW always produces an orphan and truncates the row it broke
+**wrong-figure.**
+
+### I9. Two tables side by side on one page cannot be described as two
+Their title and header anchors are the same LINE. **blocks-work.**
+
+### I10. A table continuing in a second column of the SAME page reads as one wide table with half the rows
+**blocks-work.**
+
+### I11. A table with no header row at all is permanently `needs_review`
+...and `validate` accepts a table with no way to find itself. **blocks-work.**
+
+---
+
+# J. Beth on a bad day - driven in a real browser
+
+### J1. A hidden "force this exact template" silently overrides "this is not a statement"
+Browser-proven. Beth opens "It picked the wrong bank?", picks a template, then
+ticks "Something else". The disclosure is hidden by `conditionalPanel` (app.R:444)
+- **but hiding does not clear**, the selection survives, `tpl_choice()` still
+reads it, and `convert_document` turns a forced template into `kind = "statement"`
+outright.
+**blocks-work.** *Fix:* clear `cv_template` and `cv_bank_quick` when `cv_kind`
+becomes "other". A forced statement template plus an explicit "not a statement"
+is a contradiction that should be said out loud.
+
+### J2. A template that fails validation vanishes and NOTHING says so
+All three loaders collect skip reasons on `attr(x, "load_errors")` and the
+comments promise it is "never SILENT". **`app.R` never reads the attribute once.**
+Proven end to end: a report template failing the fingerprint gate produced
+"unsupported" with no hint the file existed.
+**blocks-work.** *Fix:* render it at the top of Admin -> Templates and write a
+census line into `startup.log`. The data is already computed and thrown away.
+
+### J3. "Why didn't my template fire?" has no answer on the other route
+`detect_document_template` returns three details and never names the near-miss,
+never names which phrase was missing, and never distinguishes zero templates from
+zero MATCHING templates. Hiding the one report template reports "no document
+templates are installed".
+**blocks-work.** *Fix:* score every template the way the statement detector does
+and carry the best near-miss back in `detail`.
+
+### J4. There is no route from a converted report back to the template that read it
+`cv_teach` contains a branch written for exactly this (app.R:7610-7613) - but
+`uiOutput("cv_teach")` sits inside a conditionalPanel requiring
+`output.cv_is_tables != true` (app.R:527-529). **Dead code on the route it was
+written for.**
+**blocks-work.** *Fix:* move `cv_teach` out of the statement-only panel - it
+already branches on kind internally.
+
+### J5. Half a template exists only in browser memory
+`rb` is a plain `reactiveValues`. No `saveRDS`, no bookmarking, no autosave
+anywhere. `session$onSessionEnded` deletes the scratch folder holding the PDF too.
+And Save is all-or-nothing - `validate_document_template` refuses a partial.
+**blocks-work.** *Fix:* a saved DRAFT that is allowed to be invalid; validation
+gates PUBLISHING, not writing anything down.
+
+### J6. A case folder: every converted report reads "0 rows, no bank, no confidence"
+`.rows_of()` (R/batch.R:68-72) special-cases forms but sends everything else to
+`run_log$row_count`, which `convert_document` deliberately sets to 0 for a report.
+A report that read 83 rows looks identical to one that read nothing.
+**harder-screen.** *Fix:* a kind-aware "how much came out" and "what to check".
+
+### J7. Thirty files, three failed: no way to re-run just those three
+`cv_batch` is `selection = "single"` and `cv_batch_open` renders only a heading.
+No batch downloadHandler exists. The deliverable for a 30-file case is 30
+row-clicks and 30 separate downloads.
+**blocks-work.** *Fix:* multi-select plus "Convert these again" and "Download
+everything". The re-run path already exists.
+
+### J8. The engine's own high-severity diagnosis never reaches the headline
+Driven with no tesseract and an image-only PDF: the card says "no template for
+this layout", the primary green button says "Set it up as a report", and the
+diagnostics table further down says correctly "this machine has no OCR software
+installed... building a template will NOT help until that is done."
+**blocks-work.** *Fix:* a `severity == "high"`, `fix_owner == "file"` diagnostic
+takes the headline and REPLACES the primary action.
+
+### J9. The OTHER route ships empty
+`templates/documents/` contains one file - README.md. Zero report templates ship,
+so on a fresh install the route cannot be demonstrated, learned or smoke-tested.
+The sample button is a single ANZ CSV, and `cv_empty` only ever describes
+statements.
+**harder-screen.** *Fix:* ship one synthetic report and a template for it, wire a
+"Try it on a sample report" button, and branch `cv_empty` on `cv_kind`.
+
+---
+
+# K. Running it offline for years
+
+**The register contained NOTHING about deployment, updates, backups, concurrency,
+disk, health or time.** All of this is beside it, not in it.
+
+### K1. The Qlik feed stamps UTC while every other clock is local
+Measured in Pacific/Auckland: one conversion at 09:30 NZST appears as
+`startup.log` "09:30:00" (no offset), `logs/runs` "09:30:00+1200", and feed
+`converted_ts` "2026-08-25T21:30:00Z" - **the day before**.
+**wrong-figure.** *Fix:* one timestamp helper in R/util.R used by every writer.
+Rename the feed column `converted_ts_utc` if it stays UTC.
+
+### K2. Nothing can tell you an update changed what a template READS
+Golden snapshots exist only for the six SHIPPED statement templates. There is no
+golden for any user-built, form or report template. "Run the suite after every
+update" proves the repo's six layouts, not the forty the team built.
+**wrong-figure.** *Fix:* keep the example's sha256 and a small snapshot of what it
+produced beside each template; one button re-runs every template against its own
+recorded example.
+
+### K3. A one-letter typo in the feed config stops the dashboards, reported in green
+Config validation covers five BOOLEANS only. `.trust_ok('medium','meduim')` is
+FALSE and `allowed_template_origins: [Default]` (capital D) returns
+`withheld:not_proven`. Both fail closed - correct - but silently, and Admin marks
+the run 'handled as intended'.
+**wrong-figure.** *Fix:* extend config coercion to enums the way it handles
+booleans; an unrecognised value keeps the default and is reported.
+
+### K4. Templates are saved with a bare `write_yaml` - no backup, no atomic write
+All three savers. The DICTIONARIES get a `.bak` on every save; templates - which
+`backup-and-restore.md` calls "the accumulated value of the tool" - get nothing.
+**blocks-work.** *Fix:* one `save_yaml_safely()` in R/util.R (copy to `.bak`, then
+write-temp-then-rename) used by all three savers, plus "Undo the last save".
+
+### K5. There is no health check an operator can run after an update
+Nothing on the box answers, in one command: did config.yaml parse; is the admin
+password still the placeholder; how many templates loaded and how many did not.
+**blocks-work.** *Fix:* `scripts/health-check.R` - pure R, PASS/FAIL, non-zero
+exit. Same code behind an Admin "Check this server" button.
+
+### K6. The builders read and OCR documents in the one Shiny process
+R/jobs.R exists because "the engine call inside the Convert observer froze EVERY
+other analyst's browser - measured at 65 seconds of a dead page". Convert was
+moved to child processes. **The builders were not** (app.R:7512, 7553-7565,
+2803-2806).
+**blocks-work.** *Fix:* a third job task ("read") through the existing
+`job_slot()`/`job_seed_input_cache()` pair - the hand-back is already built.
+
+### K7. Admin/Insights does unbounded synchronous work in the one process
+`read_runs_all()` parses every line of every archive file with `fromJSON` one at a
+time, automatically, the moment an admin opens the tab. Measured: 20,000 archived
+rows took 10.5 seconds - 13 months at 50 conversions a day.
+**blocks-work.** *Fix:* roll up "feed" too, read the archive pre-summarised or
+bounded, and run `load_admin` through the existing job slot.
+
+### K8. Two of four scratch prefixes are never swept
+`sweep_temp_dirs` defaults to `c("cv_", "ts_")`. The app makes four kinds:
+`cv_`, `ts_`, **`cvb_`** (the 50-file CASE folder, the biggest) and **`ba_`** (the
+Admin bulk audit). `cvb_*` does not match `cv_*`. Real client statements pile up
+in `%TEMP%` for the life of the server, and nothing reclaims a dead process's
+folder.
+**blocks-work.** *Fix:* one named constant used by both `tempfile()` and the
+sweep; sweep the PARENT of `tempdir()` at startup.
+
+### K9. A run log that cannot be written is swallowed
+`log_run` wraps `write_log_record` in `safe()` and both callers wrap it again.
+Proven with an uncreatable logdir: no file, nothing propagated. On a full disk or
+a vanished UNC path, **every conversion still succeeds and produces a complete
+workbook with no audit record, and nobody is told.**
+**wrong-figure.** *Fix:* `log_run` returns the path or a reason; Convert says
+"this conversion was NOT recorded in the audit log - <reason>".
+
+### K10. `feed\`, `logs\feed\` and `logs\errors.log` grow without bound
+One file per statement, never removed. Qlik loads with a wildcard, so at 50/day
+the reload walks ~18,000 CSVs after a year and ~55,000 after three. No
+operational doc mentions disk at all.
+**harder-screen.** *Fix:* add "feed" to the rollup, trim `errors.log`, give
+`feed\` a stated archive rule and say it in `connecting-qlik.md`.
+
+### K11. Two operational pages document a screen behaviour that is no longer true
+`updating-a-version.md:80` and `backup-and-restore.md` both tell the operator to
+check document templates by uploading a report "because Admin -> Templates does
+not list them". **Admin now lists all three kinds.** Also
+`templates\statements\` - where promotion writes - is in no backup list.
+**harder-screen.** *Fix:* fix the three sentences, add the folder to the
+irreplaceable list, and assert both in `test-deployment-docs.R`.
+
+---
+
+# L. Statement / other parity
+
+### L1. A form or report template cannot be forced, anywhere in the product
+`convert_form(template_id=)` and `convert_tables(template_id=)` both exist and
+**nothing in the app ever passes them.** `convert_document`'s only override turns
+into `kind = "statement"` outright.
+**wrong-figure.** *Fix:* one `template_id` that travels the whole way.
+
+### L2. Two report templates that both fit = NOTHING converts, and nobody is told which two
+Measured with two valid templates over one fixture, both phrases genuinely
+printed. Status "unsupported"; it does not name either template.
+**blocks-work.** *Fix:* give `detect_form`/`detect_document_template` the same
+return shape `detect_statement` has (candidates, tied, margin, runner_up) and the
+same resolution - pick the best, convert, mark needs_review, name the tie.
+
+### L3. A template that ALMOST matched says nothing at all
+The statement route says "closest anz_everyday_pdf score 1/3 (missing
+'Transaction type and details', 'Deposits')". The other route says "no document
+template's identifying phrases were all found" - no candidates, no detail_plain.
+**blocks-work.** *Fix:* score fractionally, keep all-must-hit as the eligibility
+gate, and return the same frame. The wording generator already exists.
+
+### L4. Admin's batch audit reports a perfectly-converting report as a gap
+Measured: the fixture converts as ok, 6 tables, 102 rows. `batch_audit()` on the
+SAME file returns `detected=FALSE, template=anz_everyday_pdf,
+status="unsupported", n_rows=0` - clustered as a layout gap, consuming one of the
+eight draft recommendations, **and the draft it produces is a STATEMENT draft for
+a document that is not a statement.**
+**wrong-figure.** *Fix:* add `doc_templates` beside `fields_templates`, with a
+"report" status beside the existing "form" one.
+
+### L5. Saving a report template neither clears the pickup queue nor guards against shadowing
+`g_save` calls `set_upload_status(..., "wizard_saved")`, which is what clears
+`needs_pickup`. `rb_save` does none of it, so every document taught as a report
+stays on Admin's pickup list for ever.
+**blocks-work.** *Fix:* `rb_save` gains the same three lines `g_save` has.
+
+### L6. Admin's drift and usage tables are statement-shaped
+`template_drift` defines health as `st == "ok" & kf == 0 & tr != "low"`. For a
+report `trust_level` is NA, so `healthy` is all-NA, both percentages are NA, and
+the selection returns an all-NA row. **Measured: `adm_drift` renders one row of
+`<NA> NA NA NA NA <NA>` for any other-route template with six or more runs.**
+**harder-screen.** *Fix:* define health per kind - reconciliation for statements,
+"every table found by heading and no unclaimed words" for reports.
+
+### L7. Metadata capture files every successful form and report as an unsupported statement
+The run log correctly says kind tables, status ok, 6 tables, 102 rows.
+`logs/metadata/<run_id>.json` for that same run says `status: unsupported,
+template_id: null` - and it is kept **forever**.
+**harder-screen.** *Fix:* give `capture_metadata` a kind and let
+`convert_document` overwrite it the way it overwrites the run log.
