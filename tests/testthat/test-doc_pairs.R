@@ -562,3 +562,93 @@ test_that("nothing at all comes back as nothing, not an error", {
   expect_identical(document_proposal_from_template(NULL),
                    list(tables = list(), pairs = list()))
 })
+
+# ---------------------------------------------------------------------------
+# H6. EVERY OPEN-AND-SAVE ROUND TRIP LOST PART OF THE TEMPLATE
+#
+# The register listed this under "done today" as identical. It was not.
+# document_proposal_from_template -> document_template_from_proposal REBUILT the
+# template from a whitelist, so opening a template and saving it again threw away
+# everything the builder does not ask about -- including `hidden: true`, which
+# means a PARKED template silently came back to life and could start claiming
+# documents again, and `version`, a hardcoded literal 1, which is why every report
+# template was version 1 for ever and today's copy was indistinguishable from last
+# month's in every record kept.
+# ---------------------------------------------------------------------------
+
+test_that("an opened-and-saved template keeps everything the builder never asked about", {
+  # Start from a template the BUILDER made, so nothing here is about the builder's
+  # own normalising (may_be_blank made explicit, `where` derived from the boxes).
+  t <- document_template_from_proposal(
+    "rep1", "ACME", "report", c("Quarterly Holdings Report"),
+    tables = list(list(
+      name = "Holdings", start = list(page = 1, y = 100), end = list(page = 2, y = 700),
+      band = list(y_min = 90, y_max = 720), header_rows = 2L, follow = TRUE,
+      columns = list(list(name = "Code", x_min = 40, x_max = 100, type = "text"),
+                     list(name = "Units", x_min = 110, x_max = 180, type = "number")))),
+    pairs = list(list(name = "ird_number", label_text = "IRD number",
+      label = list(x_min = 40, x_max = 120, y_min = 50, y_max = 62, page = 1),
+      value = list(x_min = 130, x_max = 220, y_min = 50, y_max = 62, page = 1),
+      type = "text")),
+    doc_pages = 2L)
+  # ...then everything a real template accumulates and the builder cannot see.
+  t$hidden <- TRUE
+  t$notes <- "parked while the new format is checked"
+  t$version <- 7
+  t$refines <- "rep0"
+  t$tables$holdings$row_tol <- 4.5
+  t$tables$holdings$max_gap <- 12
+  t$tables$holdings$optional <- TRUE
+  t$tables$holdings$doc_pages <- 9L
+  t$ref_width <- 612; t$ref_height <- 792      # a Letter-sized example, not A4
+
+  p <- document_proposal_from_template(t)
+  back <- document_template_from_proposal(
+    t$id, t$bank, t$statement_type, unlist(t$fingerprint$page_contains_all),
+    p$tables, p$pairs, t$doc_pages, base = t)
+
+  expect_true(isTRUE(back$hidden))            # a PARKED template stays parked
+  expect_identical(back$notes, t$notes)
+  expect_identical(back$refines, t$refines)
+  expect_equal(back$tables$holdings$row_tol, 4.5)
+  expect_equal(back$tables$holdings$max_gap, 12)
+  expect_true(isTRUE(back$tables$holdings$optional))
+  expect_equal(back$tables$holdings$doc_pages, 9L)
+  expect_equal(back$ref_width, 612)           # the frame is part of the template
+  expect_equal(back$ref_height, 792)
+  # the version goes UP, it does not go back to 1
+  expect_equal(back$version, 8)
+  # ...and NOTHING ELSE moved: the whole template is unchanged bar the version.
+  # Compared with every named list sorted, because the ORDER keys sit in is not
+  # part of what a template says.
+  srt <- function(x) if (is.list(x) && !is.null(names(x)))
+                       lapply(x[order(names(x))], srt) else x
+  was <- t; was$version <- 8
+  expect_identical(srt(back), srt(was))
+  # it is still a valid template after the round trip
+  expect_identical(validate_document_template(back), character(0))
+  # and with no base -- a template drawn for the first time -- nothing changes at
+  # all: the version is 1 and the result is what it always was
+  fresh <- document_template_from_proposal(
+    t$id, t$bank, t$statement_type, unlist(t$fingerprint$page_contains_all),
+    p$tables, p$pairs, t$doc_pages)
+  expect_equal(fresh$version, 1)
+  expect_null(fresh$hidden)
+})
+
+test_that("a value is never proposed under a label that names a person", {
+  # G9b. label_text is captured verbatim off the page, stored in the template and
+  # used as the wording the reader searches for. A pair proposed off the awkward
+  # value-first arrangement "Mr John Smith  1,240.55" would write a customer's
+  # name into templates/documents_user/, and would only ever match that one
+  # customer's document anyway. Same gate as the fingerprint.
+  p <- doc_page(
+    doc_L(40, 60, "Prepared for"),    doc_L(200, 60, "Ambrose Family Trust"),
+    doc_L(40, 100, "Mr John Smith"),  doc_L(200, 100, "1,240.55"),
+    doc_L(40, 140, "Total contributions"), doc_L(200, 140, "4,000.00"))
+  prs <- propose_pairs(doc_input(list(p)), page = 1L)
+  labs <- vapply(prs, function(z) z$label_text, character(1))
+  expect_false("Mr John Smith" %in% labs)
+  expect_true("Prepared for" %in% labs)
+  expect_true("Total contributions" %in% labs)
+})

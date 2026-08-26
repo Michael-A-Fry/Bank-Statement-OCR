@@ -106,3 +106,94 @@ test_that("the shipped form template reads its own sample with the right signs",
   expect_false(grepl("^-", v[["opening_balance"]]))
   expect_false(grepl("^-", v[["closing_balance"]]))
 })
+
+# --- G2/G2b: A FORM VALUE MUST CARRY ITS OWN EVIDENCE -------------------------
+# A form has no reconciliation behind it, so the only things standing between a
+# figure and a reviewer are: was this label printed more than once, what were the
+# other readings, and where on the document did this one come from. All three
+# were computed and thrown away - `conflict` reached a screen that gets closed,
+# and the page and the "how" were never worked out at all, while the report
+# route's pairs have carried page and found_by all along.
+
+test_that("a value carries the page it was read from and how it was found", {
+  input <- list(pages = c(
+    "Kowhai Scheme annual statement\nOpening balance   $1,000.00",
+    "Continued\nsome prose here\nClosing balance   $2,500.00"))
+  tmpl <- list(fields = list(
+    opening_balance = list(any_of = "Opening balance", value = "money"),
+    closing_balance = list(any_of = "Closing balance", value = "money")))
+  f <- extract_fields(input, tmpl, dict = list())
+  expect_true(all(c("page", "found_by") %in% names(f)))
+  expect_identical(f$page[f$field == "opening_balance"], 1L)
+  # THE POINT OF THE TEST: page 2, not page 1 and not NA. match_label flattens
+  # every page into one string, so before this the page was simply not knowable.
+  expect_identical(f$page[f$field == "closing_balance"], 2L)
+  # ...in the report route's own words, so one product does not have two
+  # vocabularies for the same fact.
+  expect_true(all(f$found_by == "its wording"))
+})
+
+test_that("a positional field says it was found by its place, on its own page", {
+  mkw <- function(text, x, y, wd = 20, ht = 8)
+    data.frame(text = text, x = x, y = y, width = wd, height = ht,
+               stringsAsFactors = FALSE)
+  p1 <- mkw("nothing", 40, 40)
+  p2 <- do.call(rbind, list(mkw("$1,234.56", 400, 320)))
+  input <- list(words = list(p1, p2), pages = c("nothing", "$1,234.56"))
+  f <- extract_fields(input, list(fields = list(
+    gst = list(region = list(page = 2, x_min = 380, x_max = 460,
+                             y_min = 310, y_max = 330), value = "money"))),
+    dict = list())
+  expect_true(f$matched)
+  expect_identical(f$page, 2L)
+  expect_identical(f$found_by, "its place on the page")
+})
+
+test_that("a label printed twice reports HOW MANY and WHAT IT DID NOT TAKE", {
+  input <- list(pages = paste(
+    "Fund A", "Opening balance   $1,000.00",
+    "Fund B", "Opening balance   $2,000.00", sep = "\n"))
+  tmpl <- list(fields = list(
+    opening_balance = list(any_of = "Opening balance", value = "money")))
+  f <- extract_fields(input, tmpl, dict = list())
+  expect_true(f$conflict)
+  expect_identical(f$value, "$1,000.00")      # the first, as it always was
+  expect_identical(f$n, 2L)                   # ...but it says there were two
+  # ...and it says what the other one WAS. A boolean tells a reviewer a figure is
+  # disputed without telling her what disputes it, and the disputing figure is
+  # the one thing she can check against the document in five seconds.
+  expect_identical(f$other_values, "$2,000.00")
+})
+
+test_that("a clean field carries no alternatives and counts one reading", {
+  input <- list(pages = "Opening balance   $1,000.00")
+  f <- extract_fields(input, list(fields = list(
+    opening_balance = list(any_of = "Opening balance", value = "money"))),
+    dict = list())
+  expect_false(f$conflict)
+  expect_identical(f$other_values, "")
+  expect_identical(f$n, 1L)
+})
+
+test_that("occurrence: all keeps every reading in the value and repeats none beside it", {
+  input <- list(pages = paste("Opening balance   $1,000.00",
+                              "Opening balance   $2,000.00", sep = "\n"))
+  f <- extract_fields(input, list(fields = list(
+    opening_balance = list(any_of = "Opening balance", value = "money",
+                           occurrence = "all"))), dict = list())
+  expect_match(f$value, "1,000.00", fixed = TRUE)
+  expect_match(f$value, "2,000.00", fixed = TRUE)
+  expect_identical(f$other_values, "")   # already in the value; saying it twice
+})                                       # would read as a disagreement
+
+test_that(".field_scope_pages answers exactly what .pages_in_scope does", {
+  # Two functions, one rule: one returns the page TEXT, the other the page
+  # NUMBERS, and the page a value is credited to is wrong the moment they differ.
+  pages <- c("one", "two", "three")
+  for (w in list(NULL, "any", "page1", "last_page", 2, 9, "nonsense")) {
+    idx <- .field_scope_pages(length(pages), w)
+    expect_identical(pages[idx], .pages_in_scope(pages, w),
+                     info = paste("where =", paste(w, collapse = ",")))
+  }
+  expect_identical(.field_scope_pages(0L, "any"), integer(0))
+})

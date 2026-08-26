@@ -69,7 +69,17 @@
     min_trust                = "medium",
     allowed_template_origins = list("default"),  # 'default' = curated/proven; add 'user' to include drafts
     template_allowlist       = list(),     # optional: restrict to specific template ids
-    include_review_feed      = TRUE        # also write withheld runs to feed/review (separate table)
+    include_review_feed      = TRUE,       # also write withheld runs to feed/review (separate table)
+    # HOW LONG A ROW STAYS LOADABLE. One CSV per statement is written here and
+    # nothing ever removed one, while Qlik loads the folder with a wildcard -- so
+    # at 50 conversions a day the reload walks about 18,000 files after a year and
+    # 55,000 after three, and every reload gets slower for ever. archive_feed()
+    # (R/feed.R) MOVES rows older than this into feed/archive/, which the wildcard
+    # does not reach: nothing is deleted, and a row is one folder away if it is
+    # ever wanted again. 400 days by default so a dashboard can always compare
+    # this month with the same month last year. 0 (or less) means never archive --
+    # a real choice, and feed_retention_note() then says so out loud.
+    keep_days                = 400
   ),
   metadata = list(
     # LOCAL-ONLY structural + quality capture about every conversion -- the raw
@@ -187,7 +197,8 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 }
 
 # .coerce_flags(cfg, defaults) -> cfg with every .FLAG_SETTINGS value a real
-# logical, carrying attr "flag_error" naming anything that could not be read.
+# logical and every .ENUM_SETTINGS value one of its allowed words, carrying attr
+# "flag_error" naming anything that could not be read.
 #
 # It also repairs a SECTION of the wrong shape (`feed: 3`, `app: hello` -- a
 # mis-indented line is enough to produce one). That replaced the whole settings
@@ -215,8 +226,68 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
                             paste(as.character(v), collapse = " ")))
     } else cfg[[k]] <- f
   }
+  cfg <- .coerce_enums(cfg, defaults)
+  bad <- c(bad, attr(cfg, "enum_error", exact = TRUE) %||% character(0))
+  attr(cfg, "enum_error") <- NULL
   if (length(bad)) attr(cfg, "flag_error") <- paste(bad, collapse = "; ")
   cfg
+}
+
+# ---- settings that are one of a SHORT LIST of words -------------------------
+# The same defect as the yes/no settings above, and the same cure. Validation
+# covered five booleans; the two settings that decide what reaches the Qlik
+# dashboards were never checked at all, and BOTH fail closed and SILENTLY:
+#
+#   feed.min_trust: meduim            -> .trust_ok() falls through its switch() to
+#                                        the "high only" branch, so every clean
+#                                        medium statement is withheld and the
+#                                        dashboards stop gaining data
+#   allowed_template_origins: [Default] -> the gate compares against the lowercase
+#                                        "default" it stamps itself, so every
+#                                        conversion returns withheld:not_proven
+#
+# Failing closed is right. Failing closed silently is not: Admin reported both as
+# "handled as intended" in green while the dashboards went flat. So a value that
+# is only in the wrong CASE is simply read (nobody meant anything else by
+# `Default`), and a value that is not in the list at all keeps the built-in
+# default -- never a weaker one -- and is reported through the same banner the
+# yes/no settings already use.
+.ENUM_SETTINGS <- list(
+  list(key = c("feed", "min_trust"),                values = c("high", "medium", "any")),
+  list(key = c("feed", "allowed_template_origins"), values = c("default", "user"), many = TRUE),
+  list(key = c("metadata", "level"),                values = c("off", "standard", "full")))
+
+# .coerce_enums(cfg, defaults) -> cfg, carrying attr "enum_error". Shaped exactly
+# like .coerce_flags so that .coerce_flags stays the ONE place that assembles the
+# banner, rather than there being two of them saying it two ways.
+.coerce_enums <- function(cfg, defaults) {
+  bad <- character(0)
+  for (e in .ENUM_SETTINGS) {
+    k <- e$key
+    if (!is.list(cfg[[k[1]]])) next
+    v <- cfg[[k]]
+    if (is.null(v)) next
+    w <- tolower(trimws(as.character(unlist(v))))
+    if (!length(w) || anyNA(w) || !all(w %in% e$values)) {
+      cfg[[k]] <- defaults[[k]]
+      bad <- c(bad, sprintf("%s is '%s', which is not %s", paste(k, collapse = "."),
+                            paste(as.character(unlist(v)), collapse = " "),
+                            .or_list(e$values)))
+      next
+    }
+    # In the list, but perhaps not in the case the gate compares in. Put it back
+    # in the shape it came in (a list stays a list) so nothing downstream moves.
+    cfg[[k]] <- if (isTRUE(e$many) && is.list(v)) as.list(w) else w
+  }
+  if (length(bad)) attr(cfg, "enum_error") <- bad
+  cfg
+}
+
+# .or_list(x) -- "high, medium or any". Said the way a person would say it,
+# because this sentence is read by whoever has to fix the file.
+.or_list <- function(x) {
+  if (length(x) < 2L) return(paste(x, collapse = ""))
+  paste(paste(utils::head(x, -1L), collapse = ", "), "or", utils::tail(x, 1L))
 }
 
 # .deep_merge(base, over) -- override wins; sub-lists merge key-by-key, scalars

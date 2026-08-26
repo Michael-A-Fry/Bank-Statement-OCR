@@ -96,6 +96,32 @@
   }, logical(1), USE.NAMES = FALSE)
 }
 
+# .fp_pii_problems(x, what) -- the SAME rule, over any other text a template
+# captured verbatim off the page. One sentence back, or nothing.
+#
+# WHY IT HAD TO EXIST. The rule above guarded exactly one field: the fingerprint
+# phrase. Measured on one string, "Prepared for Mr John Smith" was REFUSED as a
+# fingerprint phrase and accepted without comment as a table TITLE and as a
+# value's label wording -- and the builder's very first gesture is "drag a box
+# round the table's title", off the page, word for word. Those templates are
+# written to templates/documents_user/ and templates/fields_user/, which is what
+# gets copied off the box. So the gate has to be reachable wherever page text
+# becomes template text, and there must be one rule rather than three copies of
+# it.
+#
+# `what` is the thing being named on screen ("table title", "label"), so the
+# sentence reads as an instruction rather than as a category.
+.fp_pii_problems <- function(x, what = "phrase") {
+  v <- trimws(as.character(unlist(x %||% character(0))))
+  v <- v[!is.na(v) & nzchar(v)]
+  if (!length(v)) return(character(0))
+  hit <- .fp_has_pii(v)
+  if (!any(hit)) return(character(0))
+  sprintf(paste0("the %s %s names a person, and a template describes a layout ",
+                 "and never a customer -- use the wording without the name"),
+          what, paste(sprintf("'%s'", unique(v[hit])), collapse = ", "))
+}
+
 # A line names a CUSTOMER (PII, and a per-person not per-layout fingerprint) when it
 # carries a personal title anywhere, or is a bare <=5 word name with NO branding.
 # (<=5, not <=4: a full name with middle names -- "John Michael Smith Jones" -- ran

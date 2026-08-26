@@ -415,3 +415,95 @@ test_that("an empty library is an empty frame with the right columns, not an err
   expect_identical(names(ov),
     c("kind", "name", "id", "reads", "origin", "hidden", "version"))
 })
+
+# ---------------------------------------------------------------------------
+# H11: the duplicate grouper, once there is more than one kind of template
+# ---------------------------------------------------------------------------
+
+test_that("a report template is not a duplicate of every other report template", {
+  # H11. .template_shape() built its signature out of the STATEMENT keys only --
+  # format, amount_sign, date_format and the transaction column mapping -- none
+  # of which a report or a form has. So every one of them collapsed to the same
+  # string and duplicate_template_groups() put the whole library in ONE group.
+  # Three unrelated templates already tripped it; at forty it is one enormous
+  # false alarm on the screen a maintainer opens to prune.
+  a <- .lib_doc("rep_a"); a$origin <- "user"
+  a$fingerprint <- list(page_contains_all = list("Consolidated position report"))
+  a$tables <- list(holdings = list(name = "Holdings", columns = list(
+    list(name = "Code", x_min = 30, x_max = 100),
+    list(name = "Units", x_min = 100, x_max = 200))))
+  b <- .lib_doc("rep_b"); b$origin <- "user"
+  b$fingerprint <- list(page_contains_all = list("Annual fee schedule"))
+  b$tables <- list(fees = list(name = "Fees charged", columns = list(
+    list(name = "Fee", x_min = 40, x_max = 240),
+    list(name = "Amount", x_min = 240, x_max = 500))))
+  f <- .lib_fields("form_c"); f$origin <- "user"
+  f$fields <- list(opening = list(any_of = list("Opening balance")))
+  g <- .lib_fields("form_d"); g$origin <- "user"
+  g$fields <- list(tax = list(any_of = list("Tax deducted")))
+
+  sig <- vapply(list(a, b, f, g), .template_shape, character(1))
+  expect_equal(length(unique(sig)), 4L)
+  expect_length(duplicate_template_groups(list(rep_a = a, rep_b = b,
+                                               form_c = f, form_d = g)), 0L)
+})
+
+test_that("two drafts of ONE report, and of one form, are still found", {
+  # The grouper has to keep doing its job: a signature that never collides is as
+  # useless as one that always does.
+  a <- .lib_doc("rep_a"); a$origin <- "user"; a$bank <- "Northwind"
+  a$fingerprint <- list(page_contains_all = list("Consolidated position report"))
+  a$tables <- list(holdings = list(name = "Holdings", columns = list(
+    list(name = "Code", x_min = 30, x_max = 100))))
+  b <- a; b$id <- "rep_b"; b$bank <- "Northwind Trustee Services"
+  # ...and the table KEYS may differ while the titles and bands agree, because a
+  # key is a maintainer's handle and the title is what is printed on the page.
+  names(b$tables) <- "hold"
+  f <- .lib_fields("f1"); f$origin <- "user"
+  f$fields <- list(opening = list(any_of = list("Opening balance", "Balance b/f")))
+  g <- f; g$id <- "f2"; g$bank <- "IRD NZ"
+  names(g$fields) <- "opening_balance"
+
+  grp <- duplicate_template_groups(list(rep_a = a, rep_b = b, f1 = f, f2 = g))
+  expect_length(grp, 2L)
+  expect_true(any(vapply(grp, function(z) setequal(z, c("rep_a", "rep_b")), logical(1))))
+  expect_true(any(vapply(grp, function(z) setequal(z, c("f1", "f2")), logical(1))))
+})
+
+test_that("a report whose TABLES differ is not a duplicate of one whose bands do", {
+  a <- .lib_doc("rep_a"); a$origin <- "user"
+  a$fingerprint <- list(page_contains_all = list("Position report"))
+  a$tables <- list(h = list(name = "Holdings", columns = list(
+    list(name = "Code", x_min = 30, x_max = 100))))
+  b <- a; b$id <- "rep_b"
+  b$tables$h$columns[[1]]$x_max <- 140          # the same table drawn differently
+  expect_false(identical(.template_shape(a), .template_shape(b)))
+  c2 <- a; c2$id <- "rep_c"
+  c2$tables <- list(h = list(name = "Fees charged", columns = a$tables$h$columns))
+  expect_false(identical(.template_shape(a), .template_shape(c2)))
+})
+
+test_that("the PII gate is reachable for any text a template captured off the page", {
+  # G9b. .fp_has_pii() guarded exactly ONE field, the fingerprint phrase.
+  # Measured on one string: "Prepared for Mr John Smith" was REFUSED as a
+  # fingerprint phrase and accepted without comment as a table TITLE and as a
+  # value's label wording -- and the builder's first gesture is "drag a box round
+  # the table's title", off the page, word for word, into a file that gets copied
+  # off the box. So the same rule is available to every validator, with one
+  # signature, and it is pinned here because a validator in another file calls it
+  # by name.
+  expect_true(exists(".fp_pii_problems", mode = "function"))
+  expect_identical(names(formals(.fp_pii_problems)), c("x", "what"))
+
+  p <- .fp_pii_problems("Prepared for Mr John Smith", "table title")
+  expect_length(p, 1L)
+  expect_match(p, "table title")
+  expect_match(p, "names a person")
+  expect_false(grepl("[0-9]", p))                     # no ids, no scores
+
+  # ...and it says nothing about the wordings a real template is made of
+  expect_length(.fp_pii_problems(c("Holdings at period end", "Opening balance")), 0L)
+  expect_length(.fp_pii_problems(NULL), 0L)
+  expect_length(.fp_pii_problems(character(0)), 0L)
+  expect_length(.fp_pii_problems("Master Account"), 0L)   # a title with no name after it
+})

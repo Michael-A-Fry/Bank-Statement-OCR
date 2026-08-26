@@ -574,11 +574,27 @@ template_display_name <- function(t) {
 # load-time `origin` marker stripped so it round-trips cleanly.
 template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
 
-# .template_shape(t) -- a structural signature: format + amount_sign + date_format
-# + the (sorted) column mapping. Two templates with the same shape read a
-# statement identically, differing only in id / bank label / fingerprint -- i.e.
-# they are the same layout drafted more than once.
+# .template_shape(t) -- a structural signature: two templates that share one are
+# the same layout drafted more than once.
+#
+# ONE BRANCH PER KIND, and it has to be. The signature used to be built from the
+# STATEMENT keys only -- format, amount_sign, date_format and the transaction
+# column mapping -- none of which a form or a report template has. So every one
+# of them collapsed to the same string ("pdf~~~~~~") and the duplicate grouper
+# put the whole lot in one group: three unrelated report templates already
+# reported each other as duplicates, and at forty that is one enormous false
+# alarm on the very screen a maintainer opens to prune the library.
+#
+# What makes each kind the same layout twice:
+#   statement  the columns it reads, and how it reads them (unchanged)
+#   report     the phrases that pick it, its table titles and their column bands
+#   form       the label wordings it looks for
+.tpl_key <- function(x) gsub("[^a-z0-9]+", "", tolower(as.character(x %||% "")))
+
 .template_shape <- function(t) {
+  kind <- template_kind(t)
+  if (identical(kind, "document")) return(.template_shape_document(t))
+  if (identical(kind, "fields"))   return(.template_shape_fields(t))
   is_pdf <- identical(t$format %||% "delimited", "pdf")
   cols   <- if (is_pdf) t$table$columns else t$columns
   sign   <- if (is_pdf) t$table$amount_sign else t$amount_sign
@@ -592,6 +608,52 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
     else sprintf("%s:%s", k, (if (is.list(c)) c$source else c) %||% "")
   }, character(1))), collapse = "|")
   paste(t$format %||% "delimited", sign %||% "", dfmt %||% "", colsig, sep = "~~")
+}
+
+# .template_fp_sig(t) -- the identifying phrases, normalised and sorted. Two
+# report templates drafted off the same page capture the same phrases, so this
+# separates two DIFFERENT families rather than two drafts of one.
+.template_fp_sig <- function(t) {
+  ph <- unlist(t$fingerprint$page_contains_all %||%
+               t$fingerprint$header_contains_all %||% character(0))
+  paste(sort(unique(.tpl_key(ph))), collapse = "+")
+}
+
+# .template_shape_document(t) -- a report template's shape: its phrases, then
+# every table as its title and the bands it reads, sorted so the order the tables
+# happen to be listed in does not make two identical templates look different.
+.template_shape_document <- function(t) {
+  tabs <- t$tables %||% list()
+  nms <- names(tabs) %||% rep("", length(tabs))
+  tsig <- if (!length(tabs)) character(0) else vapply(seq_along(tabs), function(i) {
+    tb <- tabs[[i]]
+    cols <- tb$columns %||% list()
+    band <- if (!length(cols)) "" else paste(vapply(seq_along(cols), function(j) {
+      cc <- cols[[j]]
+      sprintf("%s-%s", cc$x_min %||% "", cc$x_max %||% "")
+    }, character(1)), collapse = ",")
+    title <- .tpl_key(tb$name %||% nms[i])
+    if (!nzchar(title)) title <- .tpl_key(nms[i])
+    paste0(title, "[", band, "]")
+  }, character(1))
+  prs <- .tpl_key(names(t$pairs %||% list()) %||% character(0))
+  paste("document", .template_fp_sig(t), paste(sort(tsig), collapse = "|"),
+        paste(sort(prs), collapse = ","), sep = "~~")
+}
+
+# .template_shape_fields(t) -- a form template's shape: the wordings it looks
+# for. A form has no columns and no bands; the labels ARE the layout.
+.template_shape_fields <- function(t) {
+  flds <- t$fields %||% list()
+  nms <- names(flds) %||% rep("", length(flds))
+  wl <- if (!length(flds)) character(0) else vapply(seq_along(flds), function(i) {
+    spec <- flds[[i]]
+    if (is.character(spec)) spec <- list(any_of = spec)
+    w <- if (is.list(spec)) unlist(spec$any_of %||% spec$label %||% character(0)) else character(0)
+    if (!length(w)) w <- nms[i]
+    paste(sort(unique(.tpl_key(w))), collapse = "/")
+  }, character(1))
+  paste("fields", paste(sort(wl), collapse = "|"), sep = "~~")
 }
 
 # duplicate_template_groups(tset, user_only) -> list of id-vectors, one per group

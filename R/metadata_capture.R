@@ -47,6 +47,53 @@ metadata_levels <- function() c("off", "standard", "full")
   substr(.str_hash(paste(sort(unique(trimws(x))), collapse = "|")), 1, 16)
 }
 
+# .layout_hint_safe(hint, kind) -- the layout hint with anything that is not a
+# structural word removed.
+#
+# G9. layout_signature() (R/layout.R) keys a PDF's hint off the line carrying the
+# most transaction-header keywords -- and when NO line carries two of them it
+# falls back to THE TWELVE COMMONEST LONG WORDS ON THE PAGE. Measured on a page
+# whose commonest words were two surnames, the hint came back as
+# "ambrose | whitcombe", and that string is written into logs/runs and into
+# logs/metadata, which is kept FOREVER and whose rule 2 at the top of this file
+# says descriptions, payees, references and names are NEVER stored. It also
+# reaches the bulk audit's report, which is headed "safe to share - no PII".
+#
+# IT BITES THE OTHER ROUTES SPECIFICALLY. A bank statement has a transaction
+# header, so it takes the keyword branch and yields "amount | balance | date |
+# description". A document that reaches the form or the report route is BY
+# DEFINITION one with no transaction header -- so it is exactly the class that
+# takes the fallback.
+#
+# The hint exists to CLUSTER layouts, and a surname clusters nothing: it belongs
+# to one person, so it can only ever split a cluster that should have been one.
+# So a PDF's hint is kept only where it is made of the structural words it is
+# supposed to be made of. A delimited or excel file's hint is its HEADER ROW --
+# column names, structure by construction, and there is no frequency fallback on
+# that branch at all -- so it is passed through untouched rather than filtered
+# down to nothing.
+#
+# Nothing else moves. What actually clusters is the SIGNATURE, a hash of the
+# whole token set, and it is not touched here: every cluster this tool has ever
+# formed still forms, with a hint that names nobody.
+#
+# R/layout.R HAS SINCE FIXED ITS OWN HALF -- its fallback now keeps only header
+# keywords too, so on today's engine this filter changes nothing. It stays
+# anyway, and only here, at the two places these files WRITE a hint down: this
+# module's records are kept forever and its own rule 2 above promises no names
+# are in them, and a promise a module makes about its own files should not
+# depend on a fallback in a different module staying as it is. It is a lock on a
+# door, not a second way to do something.
+.layout_hint_safe <- function(hint, kind = "pdf") {
+  h <- as.character(hint %||% "")[1]
+  if (is.na(h) || !nzchar(h)) return("")
+  if (!identical(as.character(kind %||% "")[1], "pdf")) return(h)
+  toks <- trimws(unlist(strsplit(h, "|", fixed = TRUE)))
+  keys <- tolower(as.character(safe(lex("header_keywords"), character(0))))
+  keep <- toks[nzchar(toks) & tolower(toks) %in% keys]
+  paste(keep, collapse = " | ")
+}
+
 # .flag_histogram(flags) -- count each flag token across the rows (no content).
 .flag_histogram <- function(flags) {
   toks <- unlist(strsplit(as.character(flags %||% character(0)), ",", fixed = TRUE))
@@ -124,6 +171,15 @@ capture_metadata <- function(ctx, config = load_config()) {
     schema        = 1L,
     run_id        = ctx$run_id %||% NA_character_,
     ts            = ctx$ts %||% format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    # WHICH ROUTE THIS RECORD DESCRIBES. Every record used to describe the
+    # STATEMENT attempt and say nothing about being one, so a report that
+    # converted perfectly was filed here as `status: unsupported,
+    # template_id: null` -- and this folder is kept forever and is what
+    # R/suggestions.R mines for "build these next". A genuinely unsupported
+    # layout and a report that read 102 rows out of 6 tables were the same
+    # record. This field is what separates them; amend_metadata_record() below
+    # is what corrects the rest once the route is known.
+    kind          = as.character(ctx$kind %||% "statement")[1],
     level         = level,
     requested_by  = ctx$requested_by %||% NA_character_,
     source_sha256 = ctx$sha %||% NA_character_,
@@ -149,7 +205,9 @@ capture_metadata <- function(ctx, config = load_config()) {
       n_columns = if (identical(ctx$input$kind, "excel")) ncol(ctx$input$table %||% data.frame())
                   else if (identical(ctx$input$kind, "delimited")) length(strsplit(
                     (ctx$input$lines %||% "")[1], "[,\t;|]")[[1]]) else NA_integer_)
-    if (.meta_at_least(level, "full")) rec$layout$hint <- sig$hint %||% NA_character_
+    # G9: the hint, and only the part of it this file is allowed to keep forever.
+    if (.meta_at_least(level, "full"))
+      rec$layout$hint <- .layout_hint_safe(sig$hint, ctx$input$kind)
   }
 
   # ---- detection ----
@@ -310,4 +368,114 @@ capture_metadata <- function(ctx, config = load_config()) {
 write_metadata_record <- function(logdir, run_id, record) {
   if (is.null(record) || is.null(run_id) || is.na(run_id)) return(invisible(NULL))
   safe(write_log_record(logdir, "metadata", run_id, record))
+}
+
+# ---------------------------------------------------------------------------
+# WHEN A FORM OR A REPORT WINS, THE RECORD HAS TO SAY SO
+# ---------------------------------------------------------------------------
+#
+# L7. convert_document() tries the statement pipeline first and only then the
+# form and the report ones -- and the metadata record is written by the statement
+# pass, before either of the others has run. So a report that converted perfectly
+# left a record describing the abandoned statement attempt: `status:
+# "unsupported"`, `template_id: null`, no kind. Measured against the seven-page
+# fixture, where the run log for the SAME run correctly said kind tables, status
+# ok, 6 tables, 102 rows.
+#
+# That record is kept FOREVER and is exempt from the rollup, and R/suggestions.R
+# mines exactly this folder for "build these next". So the corpus could not tell
+# a genuinely unsupported layout -- a real gap, worth a template -- from a report
+# that read 102 rows. It would recommend building what already exists, which is
+# the same fault L4 fixed in the bulk audit, one folder along.
+#
+# THE STATEMENT ATTEMPT IS NOT DELETED. It is moved under its own name. The
+# statement pipeline really did find no match, and that is a signal worth keeping
+# (it is what a future model would learn "this is not a statement" from); what it
+# may not do is masquerade as the verdict on the run. So the top of the record
+# tells the truth about the run and `statement_attempt` holds what the first pass
+# thought, labelled.
+
+# route_metadata(res) -- the fields a form or report result corrects on the
+# statement attempt's record, plus that route's own structure. Numbers and
+# counts only, exactly as rule 2 at the top of this file requires: no label
+# text, no table names, no values.
+route_metadata <- function(res) {
+  k <- as.character(res$kind %||% "statement")[1]
+  if (!k %in% c("form", "tables")) return(list())
+  int <- function(x) { v <- suppressWarnings(as.integer(x %||% NA)[1]); v }
+  n <- function(x) length(as.character(x %||% character(0)))
+  out <- list(
+    kind             = k,
+    status           = as.character(res$status %||% NA_character_)[1],
+    template_id      = as.character(res$template_id %||% NA_character_)[1],
+    template_origin  = if (identical(k, "form")) "fields" else "document",
+    template_version = res$template_version %||% NA,
+    template_sha256  = as.character(res$template_sha256 %||% NA_character_)[1],
+    forced_template  = isTRUE(res$forced_template),
+    ambiguous        = isTRUE(res$ambiguous))
+  if (identical(k, "form"))
+    out$form <- list(n_fields = int(res$n_fields), n_values = int(res$n_values),
+                     n_conflicts = int(res$n_conflicts),
+                     required_missing = int(res$required_missing))
+  else
+    out$report <- list(n_tables = int(res$n_tables), n_table_rows = int(res$n_rows),
+                       unclaimed_words = int(res$unclaimed_words),
+                       empty_tables = n(res$empty_tables),
+                       thin_tables = n(res$thin_tables),
+                       weak_tables = n(res$weak_tables),
+                       absent_tables = n(res$absent_tables),
+                       parse_fail_tables = n(res$parse_fail_tables))
+  out
+}
+
+# .metadata_record_path(logdir, run_id) -- the file the statement pass just wrote
+# for THIS run. write_log_record() never overwrites, so a run id that clashed
+# with an earlier one is filed as "<id>~2.json"; the record for this run is the
+# most recently written of that set, never simply "<id>.json". Getting that wrong
+# would correct one run's record with another run's answer, which is worse than
+# the fault being fixed.
+.metadata_record_path <- function(logdir, run_id) {
+  id <- as.character(run_id %||% NA_character_)[1]
+  if (is.na(id) || !nzchar(id)) return(NA_character_)
+  dir <- file.path(logdir, "metadata")
+  if (!dir.exists(dir)) return(NA_character_)
+  base <- safe(.safe_name(id), id)
+  # .safe_name() has already reduced the id to [A-Za-z0-9_.-], so the only
+  # character left that a regular expression would read as anything but itself
+  # is the dot.
+  rx <- paste0("^", gsub(".", "\\.", base, fixed = TRUE), "(~[0-9]+)?\\.json$")
+  hits <- list.files(dir, pattern = rx, full.names = TRUE)
+  if (!length(hits)) return(NA_character_)
+  hits[order(file.mtime(hits), hits, decreasing = TRUE)][1]
+}
+
+# amend_metadata_record(logdir, res) -- correct this run's metadata record once
+# the route is known. No-op when there is no record (capture level `off`, or a
+# statement run, which the record already describes correctly). Never throws.
+#
+# In place, on the file this run wrote: a second file would leave the forever
+# corpus holding two records for one conversion, one of them the wrong answer --
+# which is the fault this fixes, doubled.
+amend_metadata_record <- function(logdir, res) {
+  delta <- safe(route_metadata(res), list())
+  if (!length(delta)) return(invisible(NULL))
+  path <- safe(.metadata_record_path(logdir, res$run_id %||% res$run_log$run_id), NA_character_)
+  if (is.na(path) || !nzchar(path)) return(invisible(NULL))
+  old <- safe(jsonlite::fromJSON(paste(safe_readlines(path), collapse = "\n"),
+                                 simplifyVector = FALSE), NULL)
+  if (is.null(old)) return(invisible(NULL))
+  keep <- c("status", "template_id", "template_origin", "template_version")
+  # NULL -> NA, because a NULL element of a list serialises as `{}` -- an empty
+  # OBJECT where the record said null. "template_id": {} is a worse answer than
+  # the one being corrected: it reads as a value that is there and is empty.
+  old$statement_attempt <- lapply(old[intersect(keep, names(old))],
+                                  function(v) if (is.null(v)) NA else v)
+  rec <- utils::modifyList(old, delta)
+  safe({
+    txt <- jsonlite::toJSON(rec, auto_unbox = TRUE, na = "null", pretty = TRUE)
+    con <- file(path, open = "w", encoding = "UTF-8")
+    on.exit(close(con))
+    writeLines(txt, con)
+  })
+  invisible(path)
 }

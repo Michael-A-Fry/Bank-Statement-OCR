@@ -940,3 +940,398 @@ test_that("a table read from where it sat on the example is left alone", {
   expect_false(identical(loc$anchor, "header"))
   expect_equal(loc$band_shift, 0)
 })
+
+# ---------------------------------------------------------------------------
+# AN UNLABELLED TOTAL FOLDED INTO THE ROW ABOVE IT (register I1)
+#
+# The exact mirror of the three-line row above. A right-aligned figure alone on a
+# line is "indented" by construction, and the indented branch of the wrap rule
+# had no guards at all, so the total was appended to the last row's amount -- and
+# the parsed companion then took the TOTAL, so the row lost its own figure and
+# the total lost its row. Two wrong figures from one fold.
+# ---------------------------------------------------------------------------
+
+hard_unlabelled_total <- function() doc_input(list(doc_page(
+  doc_L(40, 60, "Item"), doc_R(500, 60, "Value"),
+  doc_L(40, 80, "Alpha"),  doc_R(500, 80, "1,000.00"),
+  doc_L(40, 98, "Beta"),   doc_R(500, 98, "2,000.00"),
+  doc_L(40, 116, "Gamma"), doc_R(500, 116, "3,000.00"),
+  doc_R(500, 134, "6,000.00"))))
+
+hard_total_tab <- function() list(
+  name = "Schedule", start = list(page = 1, y = 58), end = list(page = 1, y = 160),
+  header_rows = 1L, follow = FALSE,
+  anchor = list(header_text = list("Item", "Value")),
+  columns = list(list(name = "Item",  x_min = 30,  x_max = 380, type = "text"),
+                 list(name = "Value", x_min = 380, x_max = 520, type = "money")))
+
+test_that("an unlabelled total under the last row is its own row, not part of it", {
+  # MEASURED BEFORE THE FIX: 3 rows, the last one holding
+  # Value = "3,000.00 6,000.00", and Value__value = the TOTAL.
+  tab <- hard_total_tab()
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(s = tab))
+  r <- doc_table_rows(hard_unlabelled_total(), tab, tm)
+  expect_equal(r$n_rows, 4L)
+  expect_identical(r$rows$Value, c("1,000.00", "2,000.00", "3,000.00", "6,000.00"))
+  expect_identical(r$rows$Value__value, c(1000, 2000, 3000, 6000))
+  expect_true(is.na(r$rows$Item[4]))          # it has no label, and none is invented
+})
+
+test_that("the indented shape carries the same structural guards as the flat one", {
+  d_in <- data.frame(x = 90, text = "more words", height = 9, stringsAsFactors = FALSE)
+  # a one-column table has no cell that can overflow, indented or not
+  expect_false(.doc_is_wrap(d_in, 60, 18, 1L, 1L, 2L, 9))
+  # ...nor can a line be the overflow of a row that filled only one column
+  expect_false(.doc_is_wrap(d_in, 60, 18, 1L, 2L, 1L, 9))
+  # and with both satisfied it still folds exactly as it did
+  expect_true(.doc_is_wrap(d_in, 60, 18, 1L, 2L, 2L, 9))
+})
+
+test_that("a wrapped description still joins, because words are not figures", {
+  # The guard is about a figure landing on a figure. A text column that runs on
+  # is untouched by it.
+  inp <- doc_input(list(doc_page(
+    doc_L(40, 60, "Item"), doc_L(200, 60, "Detail"), doc_R(500, 60, "Value"),
+    doc_L(40, 80, "Alpha"), doc_L(200, 80, "a long description that"),
+    doc_R(500, 80, "1,000.00"),
+    doc_L(200, 92, "runs onto a second line"),
+    doc_L(40, 112, "Beta"), doc_L(200, 112, "short"), doc_R(500, 112, "2,000.00"))))
+  tab <- list(name = "S", start = list(page = 1, y = 58), end = list(page = 1, y = 160),
+              header_rows = 1L, follow = FALSE,
+              anchor = list(header_text = list("Item", "Detail", "Value")),
+              columns = list(list(name = "Item",   x_min = 30,  x_max = 190, type = "text"),
+                             list(name = "Detail", x_min = 190, x_max = 380, type = "text"),
+                             list(name = "Value",  x_min = 380, x_max = 520, type = "money")))
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(s = tab))
+  r <- doc_table_rows(inp, tab, tm)
+  expect_equal(r$n_rows, 2L)
+  expect_identical(r$rows$Detail[1], "a long description that runs onto a second line")
+  expect_identical(r$rows$Value__value, c(1000, 2000))
+})
+
+# ---------------------------------------------------------------------------
+# A REAL ROW THAT ECHOES THE HEADER WORDING (register I4)
+# ---------------------------------------------------------------------------
+
+hard_echo_header <- function() doc_input(list(doc_page(
+  doc_L(40, 60, "Fee"), doc_L(240, 60, "Basis"),
+  doc_L(40, 80, "AccountKeeping"), doc_L(240, 80, "per month"),
+  doc_L(40, 98, "Transaction"),    doc_L(240, 98, "per item"),
+  doc_L(40, 116, "Fee"),           doc_L(240, 116, "basis under review"),
+  doc_L(40, 134, "Overdraft"),     doc_L(240, 134, "per day"))))
+
+hard_echo_tab <- function() list(
+  name = "Fees", start = list(page = 1, y = 58), end = list(page = 1, y = 160),
+  header_rows = 1L, follow = FALSE,
+  anchor = list(header_text = list("Fee", "Basis")),
+  columns = list(list(name = "Fee",   x_min = 30,  x_max = 230, type = "text"),
+                 list(name = "Basis", x_min = 230, x_max = 520, type = "text")))
+
+test_that("a genuine row that echoes the header wording is not deleted", {
+  # MEASURED BEFORE THE FIX: 3 rows where the document prints 4, n_header 2,
+  # fill_rate 1.00, confidence 1.00, and nothing anywhere said a row had gone.
+  # The line scores 0.6 on "Fee"/"Basis" and carries no money token, because the
+  # column has no decimals in it -- which is the ordinary case, not an exotic one.
+  tab <- hard_echo_tab()
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(f = tab))
+  r <- doc_table_rows(hard_echo_header(), tab, tm)
+  expect_equal(r$n_rows, 4L)
+  expect_identical(r$rows$Fee, c("AccountKeeping", "Transaction", "Fee", "Overdraft"))
+  expect_identical(r$rows$Basis[3], "basis under review")
+  expect_equal(r$n_header, 1L)                 # the one real heading, and only it
+})
+
+test_that("a heading reprinted at the top of a continuation window is still dropped", {
+  # The restriction is to the TOP of a window, which is the only place a
+  # reprinted heading is ever printed. The fixture's three-page schedule proves
+  # it end to end: one heading per page, none of them read as rows.
+  inp <- doc_fixture_input(); tm <- doc_fixture_template()
+  r <- doc_table_rows(inp, tm$tables$transactions, tm)
+  expect_equal(r$n_rows, 83L)
+  expect_equal(r$n_header, 3L)
+  expect_false(any(r$rows$Description %in% "Description"))
+})
+
+test_that("more lines skipped as a heading than the table can spend is said out loud", {
+  # n_header was counted and read by nothing. A table that dropped more heading
+  # lines than it has pages has deleted something, and that is the only place it
+  # would ever show.
+  # The heading is printed twice at the top of this table and header_rows says
+  # one, so the wording rule takes the second line as well.
+  inp <- doc_input(list(doc_page(
+    doc_L(40, 60, "Fee"), doc_L(240, 60, "Basis"),
+    doc_L(40, 78, "Fee"), doc_L(240, 78, "Basis"),
+    doc_L(40, 98, "AccountKeeping"), doc_L(240, 98, "per month"),
+    doc_L(40, 116, "Transaction"), doc_L(240, 116, "per item"))))
+  tab <- hard_echo_tab()
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(f = tab))
+  r <- doc_table_rows(inp, tab, tm)
+  expect_equal(r$n_rows, 2L)
+  expect_equal(r$n_header, 2L)                 # one more than it can spend
+  expect_match(r$detail, "skipped as its heading", fixed = TRUE)
+  # ...and an ordinary read says nothing at all.
+  r2 <- doc_table_rows(hard_echo_header(), tab, tm)
+  expect_false(grepl("skipped as its heading", r2$detail, fixed = TRUE))
+})
+
+# ---------------------------------------------------------------------------
+# A COMPARATIVE TABLE THAT GAINED A PERIOD COLUMN (register I2)
+#
+# Not the same fault as a table printed further across the page: that is a
+# uniform translation and .doc_band_shift moves the bands to match. This is a
+# change of column COUNT on a right-anchored table, and it shifts every figure
+# one place across with every existing signal reading perfect.
+# ---------------------------------------------------------------------------
+
+hard_comparative <- function(cols) {
+  xs <- seq(560 - (length(cols) - 1L) * 70, 560, by = 70)
+  parts <- list(doc_L(40, 60, "Item"))
+  for (j in seq_along(cols)) parts <- c(parts, list(doc_R(xs[j], 60, cols[j])))
+  y <- 82
+  for (r in list(c("Revenue", 100, 200, 300, 400, 500, 600),
+                 c("Costs", 10, 20, 30, 40, 50, 60))) {
+    parts <- c(parts, list(doc_L(40, y, r[1])))
+    for (j in seq_along(cols))
+      parts <- c(parts, list(doc_R(xs[j], y, sprintf("%s.00", r[1 + j]))))
+    y <- y + 18
+  }
+  doc_input(list(do.call(doc_page, parts)))
+}
+
+hard_comparative_tab <- function() {
+  cols <- c("Q1", "Q2", "Q3", "Q4", "Total")
+  xs <- seq(560 - 4 * 70, 560, by = 70)
+  list(name = "Comparative", start = list(page = 1, y = 58),
+       end = list(page = 1, y = 140), header_rows = 1L, follow = FALSE,
+       anchor = list(header_text = as.list(c("Item", cols))),
+       columns = c(list(list(name = "Item", x_min = 30, x_max = xs[1] - 60,
+                             type = "text")),
+                   lapply(seq_along(cols), function(j)
+                     list(name = cols[j], x_min = xs[j] - 60, x_max = xs[j] + 8,
+                          type = "money"))))
+}
+
+test_that("a table that gained a column says so, instead of reading perfectly", {
+  # MEASURED BEFORE THE FIX on this exact document: Q1 held Q2's figure, and
+  # rows 2, unclaimed 0, low_fill FALSE on all six, found by its heading,
+  # confidence 1.00. Not one number in the result was different from a correct
+  # read of the copy the template was drawn on.
+  tab <- hard_comparative_tab()
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(c = tab))
+  r <- doc_table_rows(hard_comparative(c("Q1", "Q2", "Q3", "Q4", "Q5", "Total")),
+                      tab, tm)
+  # the figures ARE still shifted -- nothing is repaired, because a remapping
+  # guessed off a header row is the tool inventing which quarter is which
+  expect_identical(r$rows$Q1[1], "200.00")
+  # ...and every one of the old signals still says nothing, which is the point
+  expect_false(any(r$report$low_fill))
+  expect_equal(nrow(r$spilled), 0L)
+  expect_equal(r$confidence, 1)
+  # the new one does
+  expect_true(r$report$wrong_column[r$report$column == "Q1"])
+  expect_identical(r$report$heading[r$report$column == "Q1"], "Q2")
+  expect_identical(r$report$heading[r$report$column == "Q3"], "Q4")
+  # Q4 now sits under "Q5", a heading this template has no column for, so it is
+  # NOT reported: the rule only fires on a heading that provably belongs to
+  # another of this table's own columns, which is what keeps a renamed column
+  # (the fixture's M1..M5 over printed dates) from being flagged every time.
+  expect_false(r$report$wrong_column[r$report$column == "Q4"])
+  expect_match(r$detail, "gained or lost a column", fixed = TRUE)
+})
+
+test_that("the copy the template was drawn on reports no disagreement at all", {
+  tab <- hard_comparative_tab()
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(c = tab))
+  r <- doc_table_rows(hard_comparative(c("Q1", "Q2", "Q3", "Q4", "Total")), tab, tm)
+  expect_identical(r$rows$Q1, c("100.00", "10.00"))
+  expect_false(any(r$report$wrong_column))
+  expect_true(all(!nzchar(r$report$heading)))
+  expect_false(grepl("gained or lost", r$detail, fixed = TRUE))
+})
+
+test_that("a table read from where it sat reports no column disagreement", {
+  # There is no heading in hand to compare against, so every column would look
+  # like a disagreement about nothing.
+  tab <- hard_comparative_tab()
+  tab$anchor <- NULL
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(c = tab))
+  inp <- hard_comparative(c("Q1", "Q2", "Q3", "Q4", "Q5", "Total"))
+  loc <- doc_locate_table(inp, tab, tm)
+  r <- doc_table_rows(inp, tab, tm, loc)
+  if (!identical(loc$anchor, "header")) expect_false(any(r$report$wrong_column))
+  expect_true(is.logical(r$report$wrong_column))
+})
+
+test_that("the whole fixture reports no column disagreement and no wrong kind", {
+  # The regression guard: six real tables read correctly must light up none of
+  # the new signals, or they are noise rather than evidence.
+  ext <- extract_document(doc_fixture_input(), doc_fixture_template())
+  expect_false(any(ext$report$wrong_column))
+  expect_false(any(ext$report$wrong_kind))
+  expect_false(any(grepl("gained or lost", ext$summary$note, fixed = TRUE)))
+  expect_false(any(grepl("reads as the kind", ext$summary$note, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# A2 / A2b: however many tables the document has -- the proposer's half, and the
+# matching rules the locator reads a repeating table by
+# ---------------------------------------------------------------------------
+
+.fund_pack <- function(letters_ = LETTERS[1:7]) {
+  one <- function(letter) {
+    parts <- list(doc_L(40, 60, sprintf("Fund %s holdings", letter)),
+                  doc_L(40, 100, "Security"), doc_R(330, 100, "Units"),
+                  doc_R(430, 100, "Unit price"), doc_R(530, 100, "Market value"))
+    y <- 124
+    for (i in 1:6) {
+      parts <- c(parts, list(doc_L(40, y, sprintf("SEC-%s%02d", letter, i)),
+                             doc_R(330, y, .doc_money(100 * i)),
+                             doc_R(430, y, .doc_money(1.25 * i)),
+                             doc_R(530, y, .doc_money(125 * i))))
+      y <- y + 18
+    }
+    do.call(doc_page, parts)
+  }
+  doc_input(lapply(letters_, one))
+}
+
+test_that("seven near-identical proposals fold into ONE that says where it repeats", {
+  # A2. A holdings table per fund proposed seven entries -- "Fund A holdings",
+  # "Fund A holdings 1", ... -- seven things to read, name and confirm where
+  # there is one thing to teach. They are the same table by the two tests this
+  # file already owns, so they fold into one carrying `occurrence: all` and
+  # remembering every place. It REMOVES six things from the screen.
+  inp <- .fund_pack()
+  cands <- list()
+  for (p in 1:7) for (cd in .doc_page_candidates(inp, p)) cands[[length(cands) + 1L]] <- cd
+  expect_equal(length(cands), 7L)
+
+  f <- .doc_fold_repeats(cands)
+  expect_equal(length(f), 1L)
+  expect_identical(f[[1]]$occurrence, "all")
+  expect_equal(length(f[[1]]$.places), 7L)
+  expect_equal(vapply(f[[1]]$.places, function(q) as.integer(q$start$page), integer(1)), 1:7)
+  expect_equal(f[[1]]$n_rows, 42L)             # every place's rows, added up
+})
+
+test_that("the fold refuses what geometry alone cannot vouch for", {
+  # Two tables with NO header wording can never be folded: geometry says they are
+  # the same SHAPE and never that they mean the same thing. And a table seen once
+  # keeps exactly the shape it has always had -- no occurrence key, no places.
+  none <- list(anchor = list(header_text = list()), n_rows = 3L,
+               .bands = list(list(x_min = 30, x_max = 100), list(x_min = 100, x_max = 200)),
+               start = list(page = 1, y = 10), end = list(page = 1, y = 90))
+  b <- none; b$start$page <- 2; b$end$page <- 2
+  expect_equal(length(.doc_fold_repeats(list(none, b))), 2L)
+
+  one <- list(anchor = list(header_text = list("Ref", "Item")), n_rows = 4L,
+              .bands = none$.bands, start = list(page = 1, y = 10),
+              end = list(page = 1, y = 90))
+  kept <- .doc_fold_repeats(list(one))
+  expect_null(kept[[1]]$occurrence)
+  expect_null(kept[[1]]$.places)
+
+  # ...and a table whose bands sit somewhere else is a different table
+  far <- one
+  far$.bands <- list(list(x_min = 300, x_max = 400), list(x_min = 400, x_max = 500))
+  expect_equal(length(.doc_fold_repeats(list(one, far))), 2L)
+})
+
+test_that("the fold waits for the half of the reader that can find every occurrence", {
+  # Folding seven entries into one is right only if the reader then reads all
+  # seven. While it reads one place per entry, folding would delete six tables
+  # from the template with nothing on screen to say so -- the silent loss this
+  # register exists to stop, arriving through the fix for it.
+  expect_identical(.DOC_FOLD_READER, "doc_locate_repeats")
+  expect_identical(.doc_fold_available(), exists("doc_locate_repeats", mode = "function"))
+  # whichever half of that is true today, what is proposed is what gets read
+  inp <- .fund_pack(LETTERS[1:3])
+  props <- propose_tables(inp)
+  for (p in props) {
+    got <- if (length(p$.places %||% list()) > 1L)
+      sum(vapply(p$.places, function(q) {
+        m <- p; m$start <- q$start; m$end <- q$end
+        as.integer(doc_table_rows(inp, m, NULL)$n_rows)
+      }, integer(1)))
+      else as.integer(doc_table_rows(inp, p, NULL)$n_rows)
+    expect_equal(as.integer(p$n_rows), got)
+  }
+})
+
+test_that("a header wording is matched WHOLE, so another table's header cannot win", {
+  # A2b, measured. Matching was a substring of the whole normalised LINE, so one
+  # header's words were found inside another's: against the line "Security Units
+  # Unit price Market value", a DIFFERENT table's header "Code, Units, Price,
+  # Value" scored 0.75 and cleared the 0.6 bar -- `price` inside `unitprice`,
+  # `value` inside `marketvalue`. On a pack of forty similarly-shaped tables that
+  # is the normal case, and the table found is confidently the wrong one.
+  d <- .doc_lines(doc_page(doc_L(40, 100, "Security"), doc_R(330, 100, "Units"),
+                           doc_R(430, 100, "Unit price"),
+                           doc_R(530, 100, "Market value")))[[1]]
+  expect_equal(.doc_header_score(d, list("Security", "Units", "Unit price", "Market value")), 1)
+  expect_lt(.doc_header_score(d, list("Code", "Units", "Price", "Value")), 0.6)
+  # ...and the tolerance worth keeping is kept: a wording still matches a heading
+  # that carries MORE words after it.
+  e <- .doc_lines(doc_page(doc_L(40, 100, "Opening balance"),
+                           doc_R(400, 100, "Closing balance")))[[1]]
+  expect_equal(.doc_header_score(e, list("Opening", "Closing")), 1)
+})
+
+test_that("variants are scored as the BEST of them, and a flat set is unchanged", {
+  # A2b. `need` is one flat set today and unlist() would flatten a nested list
+  # into one set -- scoring every variant together and matching none of them. So
+  # the score branches on the STRUCTURE.
+  d <- .doc_lines(doc_page(doc_L(40, 100, "Security"), doc_R(330, 100, "Units"),
+                           doc_R(430, 100, "Unit price"),
+                           doc_R(530, 100, "Market value")))[[1]]
+  vars <- list(c("Code", "Units", "Price", "Value"),
+               c("Security", "Units", "Unit price", "Market value"))
+  expect_equal(.doc_header_score(d, vars), 1)
+  expect_lt(.doc_header_score(d, as.list(unlist(vars))), 1)   # flattened: matches none
+  expect_length(.doc_header_variants(list("Code", "Units")), 1L)   # a flat set stays flat
+  expect_length(.doc_header_variants(vars), 2L)
+  expect_equal(.doc_header_score(d, list("Security", "Units", "Unit price", "Market value")), 1)
+})
+
+test_that("a title is found however it was typed, and NULL when it is not there", {
+  # A2b. A title says WHICH table this is; a header only says what SHAPE it is.
+  lines <- .doc_lines(doc_page(doc_L(40, 60, "Portfolio  HOLDINGS, at period end"),
+                               doc_L(40, 100, "Security"), doc_R(500, 100, "Value")))
+  hit <- .doc_find_title(lines, list("Investments held", "portfolio holdings"))
+  expect_false(is.null(hit))
+  expect_equal(hit$index, 1L)
+  expect_match(hit$text, "HOLDINGS")
+  expect_null(.doc_find_title(lines, list("Fee schedule")))
+  expect_null(.doc_find_title(lines, list()))
+})
+
+test_that("prose that merely NAMES the columns is not an occurrence of the table", {
+  # A2. Three tests, all three required, and the third is the one that kills
+  # prose: a sentence runs straight across every band as ONE cell. Measured
+  # without it: a line scoring 1.00 on the wording and landing in two bands was
+  # accepted as another copy of the table.
+  bands <- list(list(x_min = 30, x_max = 240), list(x_min = 240, x_max = 400),
+                list(x_min = 400, x_max = 520), list(x_min = 520, x_max = 600))
+  hdr <- .doc_lines(doc_page(doc_L(40, 100, "Item"), doc_R(390, 100, "Q1"),
+                             doc_R(510, 100, "Q2"), doc_R(590, 100, "Total")))[[1]]
+  expect_true(.doc_is_occurrence(hdr, list("Item", "Total"), bands))
+
+  prose <- .doc_lines(doc_page(doc_L(40, 300,
+    "Total figures for the year are set out in the schedule below")))[[1]]
+  expect_equal(.doc_header_score(prose, list("Total")), 1)   # the wording is there
+  expect_equal(length(.doc_cells(prose, .doc_gap_for(prose))), 1L)  # ...as one cell
+  expect_false(.doc_is_occurrence(prose, list("Total"), bands))
+
+  # a different table's header does not clear the bar at all
+  expect_false(.doc_is_occurrence(hdr, list("Code", "Units", "Price", "Value"), bands))
+  # and a line printed nowhere near the declared bands is not one either
+  away <- .doc_lines(doc_page(doc_L(40, 400, "Item"), doc_L(90, 400, "Total")))[[1]]
+  expect_false(.doc_is_occurrence(away, list("Item", "Total"), bands))
+})

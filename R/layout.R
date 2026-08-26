@@ -10,6 +10,9 @@
 # short hash (opaque) plus a short human hint of the top structural tokens; no
 # amounts, dates, names or account numbers go into it.
 
+# Kept as the lexicon's default `layout_stopwords` (R/lexicon.R). The signature
+# itself no longer needs it: both branches below now key off the header keywords,
+# so a word that is not layout vocabulary never reaches the hint to be stopped.
 .LAYOUT_STOP <- c("the","and","for","you","your","from","with","this","that","are",
                   "was","been","will","have","has","not","all","any","per","was",
                   "our","their","them","these","those","which","into","only")
@@ -40,7 +43,7 @@ layout_signature <- function(input) {
     lines <- tolower(unlist(strsplit(txt, "\n", fixed = TRUE)))
     # the line matching the most header keywords is the table header -> its keys
     # are a stable, customer-independent signature.
-    hdr_keys <- lex("header_keywords"); stop_words <- lex("layout_stopwords")
+    hdr_keys <- lex("header_keywords")
     key_hits <- lapply(lines, function(ln) {
       w <- unlist(regmatches(ln, gregexpr("[a-z]+", ln)))
       sort(unique(w[w %in% hdr_keys]))
@@ -49,9 +52,26 @@ layout_signature <- function(input) {
     if (length(best) && length(key_hits[[best]]) >= 2) {
       toks <- key_hits[[best]]
     } else {
-      # fallback: recurring structural words (multi-page headers repeat)
-      words <- tolower(unlist(regmatches(txt, gregexpr("[A-Za-z]{4,}", txt))))
-      words <- words[!words %in% stop_words]
+      # THE FALLBACK IS STILL ONLY LAYOUT VOCABULARY.
+      #
+      # It used to be the twelve commonest four-letter-plus words on the page,
+      # minus a stop list -- and on a document with no transaction header, which
+      # is exactly the class of document that reaches this branch, the commonest
+      # words on the page are the people named on it. Measured on one: the hint
+      # came back "ambrose | whitcombe", and that string is written to
+      # logs/runs/<run_id>.json AND to logs/metadata/<run_id>.json, both kept
+      # after the uploaded file itself is purged, and the metadata module's own
+      # header states that names are never stored.
+      #
+      # So the same vocabulary that keys the branch above keys this one: the
+      # header keywords printed ANYWHERE on the page, commonest first. It costs
+      # nothing that matters -- the hint exists to CLUSTER layouts, and a surname
+      # clusters nothing; two documents of one family share their layout words,
+      # not their customers. A page carrying none of them yields no hint at all,
+      # which is the honest answer and is the one this function already gives for
+      # a page it could read nothing off.
+      words <- tolower(unlist(regmatches(txt, gregexpr("[A-Za-z]{3,}", txt))))
+      words <- words[words %in% hdr_keys]
       if (length(words)) {
         tab <- sort(table(words), decreasing = TRUE)
         toks <- names(utils::head(tab, 12))

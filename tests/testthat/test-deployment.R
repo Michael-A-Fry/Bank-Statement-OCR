@@ -606,3 +606,107 @@ test_that("every kind of template lives under templates/, and nowhere else", {
   for (k in c("templates", "user_templates", "fields", "user_fields", "docs", "user_docs"))
     expect_match(cfg$paths[[k]], "^templates/", info = k)
 })
+
+# ---------------------------------------------------------------------------
+# K5: THERE WAS NO HEALTH CHECK AN OPERATOR COULD RUN AFTER AN UPDATE.
+#
+# Nothing on the box answered, in one command: did the settings file parse; is the
+# admin password still the shipped placeholder; how many templates of each kind
+# loaded AND HOW MANY WERE REFUSED and why; can the app write to its folders; is
+# the scan-reading software installed. Each had its own answer somewhere -- a
+# console warning at boot, a banner inside Admin, an R warning nobody sees -- and
+# two of them could only be found by opening a browser on a server nobody logs
+# into.
+#
+# It is run here for real, in a child R process, because the one thing that
+# matters about it is the EXIT CODE: a scheduled task watches this without
+# anybody reading it.
+.hc_run <- function(config_lines = NULL) {
+  root <- .dep2_root()
+  cfg <- tempfile(fileext = ".yaml")
+  writeLines(config_lines %||% c("app:", "  admin_password: a-real-password"), cfg)
+  # Sys.setenv + inherit, NOT system2(env=): system2's `env` is ignored on
+  # Windows, which is the platform this actually deploys on, and the test would
+  # then quietly read the real config and prove nothing.
+  before <- Sys.getenv("BSO_CONFIG", unset = NA_character_)
+  Sys.setenv(BSO_CONFIG = cfg)
+  on.exit(if (is.na(before)) Sys.unsetenv("BSO_CONFIG") else Sys.setenv(BSO_CONFIG = before),
+          add = TRUE)
+  out <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+    c(shQuote(file.path(root, "scripts", "health-check.R"))),
+    stdout = TRUE, stderr = TRUE))
+  list(text = paste(out, collapse = "\n"),
+       status = as.integer(attr(out, "status") %||% 0L))
+}
+
+test_that("the health check answers all five questions and exits non-zero on a failure", {
+  r <- .hc_run()
+  # every question an operator has after an update, each on its own line
+  for (area in c("Settings", "Admin", "Templates", "Folders", "Scans"))
+    expect_match(r$text, area, fixed = TRUE, info = area)
+  expect_match(r$text, "PASS", fixed = TRUE)
+  # PASS/FAIL and nothing else -- a third state is one nobody knows what to do with
+  expect_false(grepl("WARN", r$text, fixed = TRUE))
+  # and the verdict is a number a scheduled task can act on
+  expect_true(r$status %in% c(0L, 1L))
+  if (grepl("\nFAIL", r$text)) expect_equal(r$status, 1L) else expect_equal(r$status, 0L)
+})
+
+test_that("the health check FAILS, and says which, on the shipped placeholder password", {
+  r <- .hc_run(c("app:", paste0("  admin_password: ", .DEFAULT_ADMIN_PASSWORD)))
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "FAIL  Admin")
+  expect_match(r$text, "placeholder")
+  # said in words, with no setting key or code in the sentence an operator reads
+  expect_false(grepl("changeme", r$text, fixed = TRUE))
+})
+
+test_that("the health check FAILS, and names the reason, on a settings file it cannot use", {
+  r <- .hc_run(c("app:", "  admin_password: a-real-password",
+                 "feed:", "  min_trust: meduim"))
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "FAIL  Settings")
+  expect_match(r$text, "min_trust", fixed = TRUE)
+})
+
+# K-loaderrors: attr(x, "load_errors") was computed by all three template loaders
+# and read by NOTHING, so a template that stopped validating after an update
+# simply vanished -- gone from Admin, gone from detection, no message anywhere,
+# and the statements it used to read quietly became "no template for this
+# statement yet". This is the one place on the box that reads it.
+test_that("the health check names every template that was refused, and why", {
+  # Its own folder, pointed at through the settings file, so this never writes
+  # into the running copy's template library -- the suite shares this tree.
+  d <- tempfile("hcdoc_"); dir.create(d)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  cfg <- c("app:", "  admin_password: a-real-password",
+           "paths:", paste0("  user_docs: ", d))
+  expect_match(.hc_run(cfg)$text, "none were refused")          # nothing wrong yet
+
+  writeLines(c("id: zz_health_check_probe", "mode: document",
+               "name: Probe", "tables:", "  holdings:", "    name: Holdings"),
+             file.path(d, "zz_health_check_probe.yaml"))
+  r <- .hc_run(cfg)
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "refused and NOT in use")
+  expect_match(r$text, "zz_health_check_probe", fixed = TRUE)   # WHICH one
+  expect_match(r$text, "columns")                               # and WHY
+})
+
+test_that("the health check changes nothing on the server it is checking", {
+  root <- .dep2_root()
+  before <- list.files(root, recursive = FALSE)
+  r <- .hc_run()
+  expect_setequal(list.files(root, recursive = FALSE), before)
+  # its own probe file never survives it
+  expect_equal(length(Sys.glob(file.path(root, "logs", ".healthcheck.*"))), 0L)
+})
+
+# The deployment scripts are read by cmd.exe and by R on a Windows server whose
+# code page is not UTF-8, and this one is read under pressure on a console.
+test_that("no non-ASCII byte survives in the health check", {
+  f <- file.path(.dep2_root(), "scripts", "health-check.R")
+  expect_true(file.exists(f))
+  raw <- readBin(f, "raw", file.info(f)$size)
+  expect_equal(sum(as.integer(raw) > 127L), 0L)
+})

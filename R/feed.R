@@ -38,8 +38,16 @@
 # and must stay identifiable, never collapsed into extra_1..n. Qlik concatenates
 # the fixed part cleanly and a per-bank extra simply arrives as a mostly-null
 # field, which is exactly what it is.
+#
+# converted_ts_utc IS NAMED FOR ITS ZONE, and that is the whole reason for the
+# name. It has always been written in UTC (below) while the run log, the uploads
+# and the feedback were written in the server's local time, so on a New Zealand
+# box a 09:30 conversion arrived on the dashboard stamped 21:30 the PREVIOUS DAY
+# -- and a Qlik expression grouping by date had no way of knowing. Every writer
+# now stamps UTC (R/util.R), and this column says so in its own name so that a
+# dashboard cannot mistake it for the analyst's wall clock.
 FEED_CONTEXT_COLUMNS <- c(
-  "run_id", "converted_ts", "source_file", "source_sha256", "bank",
+  "run_id", "converted_ts_utc", "source_file", "source_sha256", "bank",
   "statement_type", "template_id", "template_version", "template_origin",
   "trust_level", "gate_result", "period_start", "period_end", "account_number",
   "statement_index")
@@ -251,9 +259,10 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   sha <- h$source_sha256 %||% NA_character_
   key <- .feed_key(sha)
   run_id <- result$run_id %||% NA_character_
-  # UTC + explicit zone, so the feed's converted_ts is reproducible across hosts
-  # (the workbook/CSV/JSON outputs already are); the "Z" marks it unambiguously.
-  if (is.null(ts)) ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+  # UTC + explicit zone, so the feed's converted_ts_utc is reproducible across
+  # hosts (the workbook/CSV/JSON outputs already are); the "Z" marks it
+  # unambiguously. One helper, used by every writer in the tool -- see R/util.R.
+  if (is.null(ts)) ts <- utc_stamp()
   if (is.na(key)) {
     # Nothing to key the feed on. Refusing is right; refusing SILENTLY is not.
     .log_feed_outcome(logdir, if (is.na(run_id)) "na" else run_id,
@@ -311,7 +320,7 @@ write_feed <- function(result, config = load_config(), ts = NULL,
         account      <- .split_stamp("account_number", sts, si, account)
       }
       ctx <- data.frame(
-        run_id = run_id, converted_ts = ts,
+        run_id = run_id, converted_ts_utc = ts,
         source_file = h$source_file %||% NA_character_, source_sha256 = sha,
         bank = h$bank %||% NA_character_, statement_type = h$statement_type %||% NA_character_,
         template_id = tid, template_version = as.character(h$template_version %||% NA),
@@ -397,7 +406,7 @@ write_feed <- function(result, config = load_config(), ts = NULL,
 
   # --- the manifest: one row per run (accepted AND withheld) -> the Qlik QA table --
   manifest <- data.frame(
-    run_id = run_id, converted_ts = ts,
+    run_id = run_id, converted_ts_utc = ts,
     source_file = h$source_file %||% NA_character_, source_sha256 = sha,
     bank = h$bank %||% NA_character_, template_id = tid,
     template_origin = gate$origin, status = result$status %||% "failed",
@@ -431,6 +440,62 @@ write_feed <- function(result, config = load_config(), ts = NULL,
   gate$feed_file <- tx_written
   gate$manifest_written <- isTRUE(man_ok)
   invisible(gate)
+}
+
+# ---- the feed folder's own retention -----------------------------------------
+# archive_feed(config, keep_days, now) -> list(archived, kept).
+#
+# WHY: write_feed() writes one CSV per statement and NOTHING ever removed one,
+# while docs/operational/connecting-qlik.md has Qlik load each folder with a
+# wildcard. At 50 conversions a day that is about 18,000 files walked on every
+# reload after a year and 55,000 after three -- a reload that gets slower every
+# day, on a box nobody logs into, with no setting anywhere admitting the folder
+# grows. It is the same fault as the uploads folder and it gets the same answer:
+# a stated rule, generated from the setting that enforces it.
+#
+# IT MOVES, IT NEVER DELETES. Rows go to feed/archive/<folder>/, which the
+# wildcard load does not reach, so the reload gets its year back and not one
+# figure is lost -- a row wanted again is one folder away. That matters more here
+# than anywhere: these are the figures a dashboard was built on, and this is
+# evidence.
+#
+# Age comes from the file's own mtime, exactly as purge_uploads() takes it, and
+# `now` is injectable for the same reason. Safe to run repeatedly.
+archive_feed <- function(config = load_config(), keep_days = NULL,
+                         now = as.numeric(Sys.time())) {
+  out <- list(archived = 0L, kept = 0L)
+  fdir <- config$feed$feed_dir %||% "feed"
+  kd <- suppressWarnings(as.numeric(keep_days %||% config$feed$keep_days %||% NA)[1])
+  if (!is.finite(kd) || kd <= 0 || !dir.exists(fdir)) return(out)
+  cutoff <- now - kd * 86400
+  for (sub in c("transactions", "review", "runs", "extras")) {
+    d <- file.path(fdir, sub)
+    if (!dir.exists(d)) next
+    for (f in list.files(d, pattern = "\\.csv$", full.names = TRUE)) {
+      mt <- suppressWarnings(as.numeric(file.info(f)$mtime))
+      if (!is.finite(mt) || mt >= cutoff) { out$kept <- out$kept + 1L; next }
+      adir <- file.path(fdir, "archive", sub)
+      if (!dir.exists(adir)) dir.create(adir, recursive = TRUE, showWarnings = FALSE)
+      # A rename that fails leaves the row exactly where it is, still loaded --
+      # visibly wrong rather than silently gone, which is the right way round.
+      if (isTRUE(safe(file.rename(f, file.path(adir, basename(f))), FALSE)))
+        out$archived <- out$archived + 1L
+      else out$kept <- out$kept + 1L
+    }
+  }
+  out
+}
+
+# feed_retention_note(keep_days) -- the ONE honest line about the feed folder,
+# generated from the SAME setting archive_feed() enforces so the two can never
+# drift, exactly as uploads_retention_note() does for saved statements.
+feed_retention_note <- function(keep_days) {
+  kd <- suppressWarnings(as.numeric(keep_days %||% NA)[1])
+  if (!is.finite(kd) || kd <= 0)
+    return("Every converted statement stays in the dashboard feed folder for good, so the reload gets slower as it fills.")
+  sprintf(paste("Rows stay in the dashboard feed folder for %d day%s, then move to",
+                "feed\\archive\\, where they are kept but no longer loaded."),
+          as.integer(kd), if (as.integer(kd) == 1L) "" else "s")
 }
 
 # ---- retraction --------------------------------------------------------------
@@ -514,7 +579,7 @@ retract_feed <- function(run_id, config = load_config(), logdir = NULL,
   }
   if (out$files > 0L || length(stuck))
     .log_feed_outcome(logdir, paste0(run_id, "__retracted"), list(
-      ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+      ts = utc_stamp(),
       run_id = run_id,
       gate_result = if (length(stuck)) paste0(reason, ":stale_row_kept") else reason,
       feed_written = FALSE,

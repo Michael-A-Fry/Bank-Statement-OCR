@@ -64,8 +64,13 @@ test_that("one row per file, in the order given, with the promised columns", {
   b <- .b_run(paths)
 
   expect_true(is.data.frame(b))
+  # `rows_of` says what `rows` COUNTS on that file -- see J6 and the appended
+  # block at the end of this file. The promise is the number AND its unit,
+  # because the number alone means transactions on one row and table rows on
+  # the next.
   expect_identical(names(b), c("file", "status", "bank", "template_id", "rows",
-                               "trust", "failing_check", "message", "result"))
+                               "rows_of", "trust", "failing_check",
+                               "message", "result"))
   expect_identical(b$file, paths)          # order kept, duplicate kept
   expect_equal(nrow(b), 3L)
   expect_true(is.integer(b$rows))          # a screen sorts this numerically
@@ -311,7 +316,8 @@ test_that("no files gives an empty frame, not an error", {
   b <- convert_batch(character(0))
   expect_equal(nrow(b), 0L)
   expect_identical(names(b), c("file", "status", "bank", "template_id", "rows",
-                               "trust", "failing_check", "message", "result"))
+                               "rows_of", "trust", "failing_check",
+                               "message", "result"))
   expect_equal(sum(batch_summary(b)$n), 0L)
 })
 
@@ -341,4 +347,108 @@ test_that("batch_summary appends an unexpected status rather than dropping it", 
   expect_equal(sum(s$n), 3L)
   expect_equal(s$n[s$status == "something_new"], 1L)
   expect_equal(s$n[s$status == "?"], 1L)           # an NA status is still counted
+})
+
+# ---------------------------------------------------------------------------
+# J6. A CASE FOLDER OF REPORTS AND FORMS.
+#
+# Every converted report in a case folder read "0 rows, no bank, no confidence":
+# a report that read 83 rows looked identical to one that read nothing. The row
+# counter special-cased forms and sent everything else to the run log's
+# `row_count`, which convert_document deliberately leaves alone for a report --
+# rightly, since row_count is the TRANSACTION count the dashboards read -- while
+# the real number sits on the result. And "What to check" printed the status back
+# at itself, in the column whose whole job is to say what to look AT.
+# ---------------------------------------------------------------------------
+
+test_that("how much came out is counted per route, and says which", {
+  # statement: transactions, off the run-log record just written
+  expect_equal(.how_much(list(kind = "statement", run_log = list(row_count = 12L))),
+               list(n = 12L, of = "transactions"))
+  # form: the values actually read, not the fields its template declares
+  expect_equal(.how_much(list(kind = "form", n_values = 3L, n_fields = 9L,
+                              run_log = list(row_count = 0L))),
+               list(n = 3L, of = "values"))
+  # report: its own table rows. row_count is NA here on purpose, which is what
+  # used to make an 83-row report read as an empty one.
+  expect_equal(.how_much(list(kind = "tables", n_rows = 83L, n_tables = 6L,
+                              run_log = list(row_count = NA_integer_))),
+               list(n = 83L, of = "table rows"))
+  # a route this file has never heard of arrives as "items", not as a silent zero
+  expect_identical(.how_much(list(kind = "somethingnew"))$of, "items")
+  expect_equal(.how_much(list(status = "failed")), list(n = 0L, of = "transactions"))
+})
+
+test_that("what to check on a report names the fault, not the status", {
+  # The order is convert_tables()'s own, so this column and the message beside it
+  # can never point at different faults on one row.
+  r <- function(...) .failing_check(utils::modifyList(
+    list(status = "needs_review", kind = "tables"), list(...)))
+  expect_identical(r(weak_tables = c("a", "b")),
+                   "2 table(s) were found by position rather than by their heading")
+  expect_identical(r(unclaimed_words = 4L), "4 word(s) inside a table were not in any column")
+  expect_identical(r(empty_tables = "a"), "1 table(s) came out empty")
+  expect_identical(r(thin_tables = "a"), "1 table(s) have a column that came out mostly empty")
+  expect_identical(r(parse_fail_tables = "a"),
+                   "a column of figures came out holding no figures at all")
+  # the sharpest signal outranks the softer ones
+  expect_identical(r(unclaimed_words = 4L, thin_tables = "a", weak_tables = "b"),
+                   "4 word(s) inside a table were not in any column")
+  # a clean report says nothing, and a needs_review with nothing named still
+  # falls through to the verdict rather than leaving the cell empty
+  expect_true(is.na(.failing_check(list(status = "ok", kind = "tables"))))
+  expect_identical(.failing_check(list(status = "needs_review", kind = "tables")),
+                   "status:needs_review")
+})
+
+test_that("what to check on a form names the fault, not the status", {
+  expect_identical(.failing_check(list(status = "needs_review", kind = "form",
+                                       n_conflicts = 3L)),
+                   "3 label(s) appear more than once with different values")
+  expect_identical(.failing_check(list(status = "needs_review", kind = "form",
+                                       required_missing = 2L)),
+                   "2 required value(s) were not found")
+  expect_identical(.failing_check(list(status = "needs_review", kind = "form",
+                                       ambiguous = TRUE)),
+                   "more than one template fits this document")
+})
+
+test_that("the other routes' phrase reaches the screen as words, never as a code", {
+  # The three tiers below carry the engine's own code with the map that words it
+  # ("check:", "diag:", "status:") because the screen holds those maps. There is
+  # no map for these two routes, and plain_failing_check falls an unrecognised
+  # entry back to ITSELF -- so what is put here has to BE the words.
+  p <- .failing_check(list(status = "needs_review", kind = "tables",
+                           weak_tables = c("a", "b")))
+  expect_false(grepl("^(check|diag|status):", p))
+  expect_false(grepl("_", p, fixed = TRUE))        # no snake_case code in it
+})
+
+test_that("a statement's answer is untouched by any of it", {
+  # The two routes above must never change what a statement says: the tier-0
+  # branch is entered on `kind` alone and a statement never has one of those.
+  kpis <- data.frame(name = "balance_reconciliation", status = "fail",
+                     stringsAsFactors = FALSE)
+  expect_identical(.failing_check(list(status = "needs_review", kind = "statement",
+                                       kpis = kpis)),
+                   "check:balance_reconciliation")
+  expect_identical(.failing_check(list(status = "needs_review", kpis = kpis)),
+                   "check:balance_reconciliation")
+})
+
+test_that("a count that was never recorded is not a count of nothing", {
+  # `if (NA > 0)` is an error, not FALSE. A result from an older engine, or one
+  # where a measure genuinely does not apply, must leave the case folder saying
+  # nothing about it -- never stop the run at file 4 of thirty.
+  expect_true(is.na(.failing_check(list(status = "needs_review", kind = "form",
+                                        n_conflicts = NA_integer_,
+                                        required_missing = NA_integer_))) ||
+              grepl("^status:", .failing_check(list(status = "needs_review",
+                kind = "form", n_conflicts = NA_integer_,
+                required_missing = NA_integer_))))
+  expect_identical(.failing_check(list(status = "needs_review", kind = "tables",
+                                       unclaimed_words = NA_integer_)),
+                   "status:needs_review")
+  expect_equal(.how_much(list(kind = "tables", n_rows = NA_integer_)),
+               list(n = 0L, of = "table rows"))
 })

@@ -109,7 +109,11 @@ test_that("a declared column type adds a parsed value WITHOUT replacing the text
   r <- doc_table_rows(inp, tm$tables$account_summary, tm)
   expect_true("Opening__value" %in% names(r$rows))
   expect_identical(r$rows$Opening[1], "1,240.55")       # what the page says
-  expect_identical(r$rows$Opening__value[1], "1,240.55")
+  # WAS: expect_identical(r$rows$Opening__value[1], "1,240.55") -- the companion
+  # was the matched SUBSTRING, not a value, so "(1,234.56)" stayed "(1,234.56)"
+  # and no sign was ever resolved (register I5). It is a signed number now.
+  expect_identical(r$rows$Opening__value[1], 1240.55)
+  expect_identical(r$rows$Closing__value[4], -410.05)   # printed "-410.05"
   # An "auto" column has no companion: nothing is inferred from a column whose
   # kind nobody declared.
   tab <- tm$tables$account_summary
@@ -723,4 +727,624 @@ test_that("a table with nothing declared to look for still reads from where it w
   loc <- doc_locate_table(inp, tab, tm)
   expect_true(loc$anchor %in% c("header", "position_same_page", "position_other_page"))
   expect_gt(length(loc$windows), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# WHAT LANDED IN THE COLUMN, NOT JUST WHETHER ANYTHING DID (register I3)
+# ---------------------------------------------------------------------------
+
+# fee_doc(amount_lo, amount_hi) -- a three-column fee schedule, with the Amount
+# band drawn wherever the test wants it.
+fee_doc <- function() doc_input(list(doc_page(
+  doc_L(40, 60, "Fee"), doc_L(200, 60, "Basis"), doc_R(500, 60, "Amount"),
+  doc_L(40, 80, "Legal"),   doc_L(310, 80, "fees"),          doc_R(500, 80, "1,200.00"),
+  doc_L(40, 98, "Court"),   doc_L(310, 98, "filing"),        doc_R(500, 98, "330.00"),
+  doc_L(40, 116, "Postage"), doc_L(310, 116, "disbursements"), doc_R(500, 116, "18.50"))))
+
+fee_tab <- function(amount = c(440, 520)) list(
+  name = "Fees", start = list(page = 1, y = 58), end = list(page = 1, y = 140),
+  header_rows = 1L, follow = FALSE,
+  anchor = list(header_text = list("Fee", "Basis", "Amount")),
+  columns = list(
+    list(name = "Fee",    x_min = 30,  x_max = 190, type = "text"),
+    list(name = "Basis",  x_min = 190, x_max = 300, type = "text"),
+    list(name = "Amount", x_min = amount[1], x_max = amount[2], type = "money")))
+
+fee_tmpl <- function(tab) list(mode = "document", ref_width = DOC_W,
+                               ref_height = DOC_H, tables = list(fees = tab))
+
+test_that("a money column full of words is reported as a band failure, not as a full column", {
+  # MEASURED BEFORE THE FIX: Amount reported filled 3, rows 3, fill_rate 1.00,
+  # low_fill FALSE -- a perfectly full, perfectly clean column holding "fees",
+  # "filing" and "disbursements", while Amount__value was NA in all three rows.
+  # The engine had already computed the answer and thrown it away.
+  tab <- fee_tab(c(300, 380))            # the band sits over the Basis words
+  r <- doc_table_rows(fee_doc(), tab, fee_tmpl(tab))
+  amt <- r$report[r$report$column == "Amount", , drop = FALSE]
+  expect_equal(amt$filled, 3L)
+  expect_equal(amt$fill_rate, 1)         # unchanged: it IS full
+  expect_false(amt$low_fill)             # ...and it is NOT a thin column
+  expect_equal(amt$parsed, 0L)           # the new fact
+  expect_equal(amt$parse_rate, 0)
+  expect_true(amt$wrong_kind)
+  # NOTHING SILENT: it says so where the screen already prints a line.
+  expect_match(r$detail, "nothing in Amount reads as", fixed = TRUE)
+})
+
+test_that("a column reading what it was told to hold is not flagged", {
+  tab <- fee_tab()
+  r <- doc_table_rows(fee_doc(), tab, fee_tmpl(tab))
+  amt <- r$report[r$report$column == "Amount", , drop = FALSE]
+  expect_equal(amt$parsed, 3L)
+  expect_equal(amt$parse_rate, 1)
+  expect_false(amt$wrong_kind)
+  expect_false(grepl("reads as", r$detail, fixed = TRUE))
+})
+
+test_that("a cell holding two things is counted, and a column that declared nothing is not judged", {
+  tab <- fee_tab()
+  r <- doc_table_rows(fee_doc(), tab, fee_tmpl(tab))
+  # "and courier" style cells: Basis holds one token per row here, Fee holds one.
+  expect_equal(r$report$multi_token[r$report$column == "Fee"], 0L)
+  tab2 <- tab
+  tab2$columns[[3]]$type <- "auto"
+  r2 <- doc_table_rows(fee_doc(), tab2, fee_tmpl(tab2))
+  amt <- r2$report[r2$report$column == "Amount", , drop = FALSE]
+  expect_true(is.na(amt$parsed))         # nothing was declared, so nothing failed
+  expect_true(is.na(amt$multi_token))
+  expect_false(amt$wrong_kind)
+})
+
+test_that("a swallowed neighbour shows up as two things in one cell", {
+  # The A3 shape from the reader's side: one band covering two columns' ink.
+  tab <- fee_tab()
+  tab$columns <- list(list(name = "Fee", x_min = 30, x_max = 440, type = "text"),
+                      list(name = "Amount", x_min = 440, x_max = 520, type = "money"))
+  r <- doc_table_rows(fee_doc(), tab, fee_tmpl(tab))
+  fee <- r$report[r$report$column == "Fee", , drop = FALSE]
+  expect_equal(fee$filled, 3L)
+  expect_equal(fee$fill_rate, 1)
+  expect_false(fee$low_fill)             # nothing in the old report said a word
+  expect_equal(fee$multi_token, 3L)      # ...and every cell holds two
+})
+
+# ---------------------------------------------------------------------------
+# THE COMPANION IS A VALUE, NOT A SUBSTRING (register I5, I6)
+# ---------------------------------------------------------------------------
+
+test_that("every way a report prints a negative comes back negative", {
+  # MEASURED BEFORE THE FIX, all four verbatim: "(1,234.56)", "987.65-",
+  # "55.00 CR", "12.34 DR" -- no sign resolved anywhere, so a bracketed negative
+  # was indistinguishable from a positive to anything that read the column.
+  expect_identical(.doc_cell_value("(1,234.56)", "money"), -1234.56)
+  expect_identical(.doc_cell_value("987.65-", "money"), -987.65)
+  expect_identical(.doc_cell_value("55.00 CR", "money"), 55)
+  expect_identical(.doc_cell_value("12.34 DR", "money"), -12.34)
+  expect_identical(.doc_cell_value("1,240.55", "money"), 1240.55)
+  # A cell that is not a figure is still not a figure: the shape test is intact.
+  expect_true(is.na(.doc_cell_value("Legal fees", "money")))
+  expect_true(is.na(.doc_cell_value("", "money")))
+  # and a plain number in brackets is negative too
+  expect_identical(.doc_cell_value("(1,234)", "number"), -1234)
+  expect_identical(.doc_cell_value("42", "number"), 42)
+})
+
+test_that("a date can start at a four-digit year, and an impossible one is refused", {
+  # MEASURED BEFORE THE FIX: "2025-04-07" came back "25-04-07", which opens as
+  # 2007 in one reader and 1925 in another. Nothing was ever validated.
+  expect_identical(.doc_cell_value("2025-04-07", "date"), "2025-04-07")
+  expect_identical(.doc_cell_value("07/04/2025", "date"), "2025-04-07")
+  expect_identical(.doc_cell_value("1 Apr 2025", "date"), "2025-04-01")
+  # the statement route's own guards, now used here: 31 February is not a date,
+  # and a year outside the trusted window is not one either.
+  expect_true(is.na(.doc_cell_value("31/02/2025", "date")))
+  expect_true(is.na(.doc_cell_value("07/04/1066", "date")))
+  # a declared format is the only one tried, so an American column reads American
+  expect_identical(.doc_cell_value("07/04/2025", "date", "%m/%d/%Y"), "2025-07-04")
+  expect_identical(.doc_cell_value("07/04/2025", "date", "%d/%m/%Y"), "2025-04-07")
+})
+
+test_that("the reader emits the parsed value and keeps the page's own words beside it", {
+  inp <- context_input(); tm <- doc_fixture_template()
+  r <- doc_table_rows(inp, tm$tables$transactions, tm)
+  expect_identical(r$rows$Date[1], "01/04/2025")            # verbatim
+  expect_identical(r$rows$Date__value[1], "2025-04-01")     # and parsed
+  expect_true(is.numeric(r$rows$Amount__value))
+  expect_identical(r$rows$Amount[1], "-382.50")
+  expect_identical(r$rows$Amount__value[1], -382.5)
+  # the empty prototype has to agree with the full frame or the two cannot rbind
+  tab <- tm$tables$transactions; tab$start$page <- 1L; tab$end$page <- 1L
+  tab$anchor <- list(header_text = list("NothingLikeThis"))
+  e <- doc_table_rows(inp, tab, tm)
+  expect_equal(nrow(e$rows), 0L)
+  expect_true(is.numeric(e$rows$Amount__value))
+  expect_true(is.character(e$rows$Date__value))
+})
+
+test_that("a money column carrying two currencies says so instead of collapsing them", {
+  # MEASURED BEFORE THE FIX: A$2,000.00 and US$4,000.00 both came back "$..." --
+  # the marker was stripped and which money it was could not be recovered.
+  p <- doc_page(doc_L(40, 60, "Fund"), doc_R(500, 60, "Value"),
+                doc_L(40, 80, "Alpha"), doc_R(500, 80, "A$2,000.00"),
+                doc_L(40, 98, "Beta"),  doc_R(500, 98, "US$4,000.00"),
+                doc_L(40, 116, "Gamma"), doc_R(500, 116, "A$1,500.00"))
+  tab <- list(name = "Funds", start = list(page = 1, y = 58),
+              end = list(page = 1, y = 140), header_rows = 1L, follow = FALSE,
+              anchor = list(header_text = list("Fund", "Value")),
+              columns = list(list(name = "Fund", x_min = 30, x_max = 380, type = "text"),
+                             list(name = "Value", x_min = 380, x_max = 520, type = "money")))
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(f = tab))
+  r <- doc_table_rows(doc_input(list(p)), tab, tm)
+  expect_identical(r$rows$Value__value, c(2000, 4000, 1500))
+  expect_identical(r$report$currency[r$report$column == "Value"], "A$, US$")
+  expect_match(r$detail, "more than one currency", fixed = TRUE)
+  # one currency throughout is recorded and said nothing about
+  p1 <- doc_page(doc_L(40, 60, "Fund"), doc_R(500, 60, "Value"),
+                 doc_L(40, 80, "Alpha"), doc_R(500, 80, "A$2,000.00"),
+                 doc_L(40, 98, "Beta"),  doc_R(500, 98, "A$4,000.00"))
+  r1 <- doc_table_rows(doc_input(list(p1)), tab, tm)
+  expect_identical(r1$report$currency[r1$report$column == "Value"], "A$")
+  expect_false(grepl("more than one currency", r1$detail, fixed = TRUE))
+})
+
+# ---------------------------------------------------------------------------
+# THE FILE THAT LEAVES THE BUILDING
+#
+# Everything below is about what survives into the download and the record. A
+# screen gets closed; a court date is two years later.
+# ---------------------------------------------------------------------------
+
+test_that("a table called Report does not silently destroy the whole workbook", {
+  skip_if_not(requireNamespace("openxlsx", quietly = TRUE), "openxlsx not installed")
+  # H8. write_document_outputs adds its own Report/Values sheets AFTER the table
+  # sheets, so a table called either -- or two differing only in case -- made
+  # openxlsx refuse, the tryCatch returned FALSE and the workbook was never
+  # mentioned again. Measured before the fix: two roll-up CSVs, no xlsx, no error.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$tables$position$name <- "Report"
+  tm$tables$account_summary$name <- "report"       # ...and the same name in another case
+  ext <- extract_document(inp, tm)
+  dir <- file.path(tempdir(), paste0("h8-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- write_document_outputs(ext, dir, "doc")
+  x <- paths[grepl("\\.tables\\.xlsx$", paths)]
+  expect_length(x, 1L)
+  expect_true(file.exists(x))
+  sheets <- openxlsx::getSheetNames(x)
+  # the reader's own sheets are reserved, and every sheet is unique IGNORING CASE
+  expect_true(all(c("Report", "Values") %in% sheets))
+  expect_equal(length(unique(tolower(sheets))), length(sheets))
+  expect_equal(length(sheets), length(ext$tables) + 2L)
+})
+
+test_that("a workbook that cannot be written says so, and every table is written anyway", {
+  skip_if_not(requireNamespace("openxlsx", quietly = TRUE), "openxlsx not installed")
+  # The other half of H8: the per-table CSV fallback was gated on "openxlsx is not
+  # installed", so a workbook openxlsx REFUSED left the tables written nowhere at
+  # all -- and nothing said a word about it.
+  inp <- context_input()
+  ext <- extract_document(inp, doc_fixture_template())
+  dir <- file.path(tempdir(), paste0("h8b-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  dir.create(dir, recursive = TRUE)
+  dir.create(file.path(dir, "doc.tables.xlsx"))     # the workbook's path is taken
+  paths <- suppressWarnings(write_document_outputs(ext, dir, "doc"))
+  expect_false(any(grepl("\\.tables\\.xlsx$", paths)))
+  expect_true(any(grepl("account_summary\\.csv$", paths)))
+  expect_true(any(grepl("transactions\\.csv$", paths)))
+  expect_match(attr(paths, "notes"), "workbook could not be written")
+})
+
+test_that("an other output names what produced it, and is the same bytes every run", {
+  skip_if_not(requireNamespace("openxlsx", quietly = TRUE), "openxlsx not installed")
+  # G1 + G4. The workbook used to carry no template id, no version, no engine
+  # version, no source file and no hash -- and it changed bytes on every run,
+  # because openxlsx stamps the wall clock and the ZIP stamps each entry, while
+  # the statement writer pins both.
+  inp <- context_input(); tm <- doc_fixture_template()
+  ext <- extract_document(inp, tm)
+  build <- list(engine_version = "9.9.9", template_id = tm$id,
+                template_version = "1", template_sha256 = template_sha256(tm),
+                source_file = "sample.pdf", source_sha256 = "0123456789",
+                page_count = "7")
+  d1 <- file.path(tempdir(), paste0("g1a-", as.integer(runif(1, 1, 1e6))))
+  d2 <- file.path(tempdir(), paste0("g1b-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(c(d1, d2), recursive = TRUE), add = TRUE)
+  p1 <- write_document_outputs(ext, d1, "doc", build = build)
+  p2 <- write_document_outputs(ext, d2, "doc", build = build)
+  x1 <- p1[grepl("\\.xlsx$", p1)][1]; x2 <- p2[grepl("\\.xlsx$", p2)][1]
+  expect_true("Build" %in% openxlsx::getSheetNames(x1))
+  bs <- openxlsx::read.xlsx(x1, sheet = "Build")
+  expect_true(all(c("engine_version", "template_id", "template_sha256",
+                    "source_file", "source_sha256") %in% bs$field))
+  expect_identical(bs$value[bs$field == "template_id"], tm$id)
+  # ...and the same input written twice is the same file, byte for byte
+  expect_identical(readBin(x1, "raw", file.info(x1)$size),
+                   readBin(x2, "raw", file.info(x2)$size))
+  # the CSV that can be read without opening the workbook carries it too
+  rp <- paste(readLines(p1[grepl("\\.report\\.csv$", p1)][1]), collapse = "\n")
+  expect_match(rp, "What produced this file", fixed = TRUE)
+  expect_match(rp, tm$id, fixed = TRUE)
+})
+
+test_that("the per-table summary is in the report CSV, not only in the workbook", {
+  # G3. found_by / confidence / unclaimed_words / pages reached ONE sheet of one
+  # optional file: on a box with no openxlsx the summary was written nowhere at
+  # all, while the comment here claimed nothing was dropped for want of a package.
+  inp <- context_input()
+  ext <- extract_document(inp, doc_fixture_template())
+  dir <- file.path(tempdir(), paste0("g3r-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- write_document_outputs(ext, dir, "doc", formats = "csv")
+  rp <- paste(readLines(paths[grepl("\\.report\\.csv$", paths)][1]), collapse = "\n")
+  expect_match(rp, "Every table on this document", fixed = TRUE)
+  expect_match(rp, "its heading", fixed = TRUE)          # how each table was found
+  expect_match(rp, "unclaimed_words", fixed = TRUE)
+  expect_match(rp, "Every column of every table", fixed = TRUE)
+})
+
+test_that("the words no column claimed are written out, not just counted", {
+  # G3. `spilled` is the single best piece of evidence this route produces -- the
+  # actual words and where they were printed -- and the only reader anywhere was
+  # an nrow() for the count. Narrow a money band and the figures it loses must
+  # come out in a file, not vanish.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$tables$account_summary$columns[[4]]$x_min <- 470
+  tm$tables$account_summary$columns[[4]]$x_max <- 480
+  ext <- extract_document(inp, tm)
+  expect_gt(nrow(ext$unclaimed), 0L)
+  expect_identical(names(ext$unclaimed), c("table", "page", "x", "y", "text"))
+  dir <- file.path(tempdir(), paste0("g3u-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- write_document_outputs(ext, dir, "doc", formats = "csv")
+  u <- paths[grepl("\\.unclaimed\\.csv$", paths)]
+  expect_length(u, 1L)
+  back <- utils::read.csv(u, stringsAsFactors = FALSE, colClasses = "character")
+  expect_true("1,810.20" %in% back$text)      # a real closing balance, recovered
+  # a clean read writes no such file: its existence is the signal
+  clean <- extract_document(inp, doc_fixture_template())
+  d2 <- file.path(tempdir(), paste0("g3v-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(d2, recursive = TRUE), add = TRUE)
+  expect_length(Filter(function(q) grepl("\\.unclaimed\\.csv$", q),
+                       write_document_outputs(clean, d2, "doc", formats = "csv")), 0L)
+})
+
+test_that("a cell that reads as a formula reaches the CSV as text", {
+  # G6. "=1+1" reached doc.tables-long.csv verbatim and Excel evaluated it, so the
+  # reviewer saw 2 where the document printed =1+1 -- a wrong figure that looks
+  # right, delivered by the tool's own output. A report has no fixed schema, so
+  # every character column is guarded.
+  p <- doc_page(doc_L(40, 60, "Item"), doc_L(240, 60, "Note"),
+                doc_L(40, 80, "=1+1"), doc_L(240, 80, "=HYPERLINK(0)"))
+  tab <- list(name = "Funds", start = list(page = 1, y = 58),
+              end = list(page = 1, y = 140), header_rows = 1L, follow = FALSE,
+              anchor = list(header_text = list("Item", "Note")),
+              columns = list(list(name = "Item", x_min = 30, x_max = 200, type = "text"),
+                             list(name = "Note", x_min = 200, x_max = 400, type = "text")))
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(f = tab))
+  ext <- extract_document(doc_input(list(p)), tm)
+  dir <- file.path(tempdir(), paste0("g6-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- write_document_outputs(ext, dir, "doc", formats = "csv")
+  back <- utils::read.csv(paths[grepl("tables-long", paths)][1],
+                          stringsAsFactors = FALSE, colClasses = "character")
+  expect_true(all(grepl("^'=", back$value)))          # neutralised, not stripped
+  expect_true(any(back$value == "'=1+1"))
+})
+
+# ---------------------------------------------------------------------------
+# WHICH TEMPLATE READS THIS
+# ---------------------------------------------------------------------------
+
+test_that("an identifying phrase matches however it was typed", {
+  # A2c, measured: a page printing QUARTERLY PORTFOLIO REPORT was NOT matched by
+  # the phrase typed as "Quarterly Portfolio Report", and nothing on screen said
+  # why. This is very likely "I put a phrase printed on it, bang smack on front
+  # page, still used another template".
+  inp <- doc_input(list(doc_page(doc_L(40, 60, "QUARTERLY PORTFOLIO REPORT"),
+                                 doc_L(40, 90, "Prepared for: A Client"))))
+  mk <- function(...) list(q = list(id = "q", mode = "document", format = "pdf",
+    fingerprint = list(page_contains_all = list(...)),
+    tables = list(x = list(name = "x"))))
+  for (ph in c("QUARTERLY PORTFOLIO REPORT", "Quarterly Portfolio Report",
+               "Quarterly  Portfolio Report", "quarterly portfolio report."))
+    expect_true(detect_document_template(inp, mk(ph))$matched, info = ph)
+  # punctuation between the words stops mattering too -- but a phrase that is not
+  # printed here still does not match, which is the half that must not loosen
+  expect_true(detect_document_template(inp, mk("Prepared for A Client"))$matched)
+  expect_false(detect_document_template(inp, mk("Annual holdings statement"))$matched)
+  # ...and a phrase is still not allowed to match ACROSS a line break
+  expect_false(detect_document_template(inp, mk("REPORT Prepared"))$matched)
+})
+
+test_that("two templates that both fit are reported, not discarded", {
+  # H10 / L2. A tie returned matched = FALSE and named neither template, so a
+  # document the library reads perfectly came back "unsupported". The statement
+  # route has never done that: same return shape, same resolution.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm2 <- tm; tm2$id <- "other_report"
+  d <- detect_document_template(inp, list(a = tm, b = tm2))
+  expect_false(d$matched)
+  expect_identical(sort(d$tied), c("a", "b"))
+  expect_identical(d$template_id, "a")            # the best by a stated order
+  expect_match(d$detail, "equally specific")
+  expect_match(d$detail_plain, "equally well")
+  expect_false(grepl("[0-9a-f]{16}", d$detail_plain))   # no ids, no hashes
+  # the same fields the statement detector returns
+  expect_true(all(c("candidates", "eligible_ids", "tied", "margin", "runner_up",
+                    "detail", "detail_plain") %in% names(d)))
+  # a MORE specific template beats a less specific one outright: no tie at all
+  tm3 <- tm; tm3$id <- "sharper"
+  tm3$fingerprint$page_contains_all <- list("Consolidated position report",
+                                            "NORTHWIND TRUSTEE SERVICES")
+  d2 <- detect_document_template(inp, list(a = tm, c = tm3))
+  expect_true(d2$matched)
+  expect_identical(d2$template_id, "c")
+  expect_identical(d2$tied, character(0))
+})
+
+test_that("a template that almost matched says which wording was missing", {
+  # L3. The statement route says "closest anz_everyday_pdf score 1/3 (missing
+  # 'Deposits')". This route said "no document template's identifying phrases were
+  # all found" -- no candidate, no wording, nothing to act on.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$fingerprint$page_contains_all <- list("Consolidated position report",
+                                           "Schedule of derivatives")
+  d <- detect_document_template(inp, list(northwind_position = tm))
+  expect_false(d$matched)
+  expect_identical(d$tied, character(0))
+  expect_match(d$detail, "closest northwind_position score 1/2")
+  expect_match(d$detail, "Schedule of derivatives", fixed = TRUE)
+  # ...and the same fact in words, with no id and no fraction in it
+  expect_match(d$detail_plain, "Schedule of derivatives", fixed = TRUE)
+  expect_false(grepl("northwind_position", d$detail_plain, fixed = TRUE))
+  expect_equal(nrow(d$candidates), 1L)
+  # having no templates at all is still a different answer from none matching
+  expect_match(detect_document_template(inp, list())$detail, "no document templates")
+})
+
+# ---------------------------------------------------------------------------
+# ABSENT IS NOT EMPTY
+# ---------------------------------------------------------------------------
+
+test_that("a table that is not on this document is absent, and is said to be", {
+  # H1. A table the document does not carry came back full of whatever sat at its
+  # old coordinates. It now has no entry, no sheet, no long rows and no column
+  # report -- and one row in the summary saying so.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$tables$position$start$page <- 2L; tm$tables$position$end$page <- 2L
+  ext <- extract_document(inp, tm)
+  expect_identical(ext$misses, "position")
+  expect_false("position" %in% names(ext$tables))
+  expect_equal(sum(ext$long$table == "position"), 0L)
+  expect_equal(sum(ext$report$table == "position"), 0L)
+  # STATED, not silent: one row in the summary, and it is the last one
+  s <- ext$summary
+  expect_true("position" %in% s$table)
+  expect_identical(s$found_by[s$table == "position"], "not on this document")
+  expect_equal(s$rows[s$table == "position"], 0L)
+  expect_true(is.na(s$confidence[s$table == "position"]))
+  expect_match(s$note[s$table == "position"], "not on this copy")
+  # and the summary keeps ONE shape: the same columns whether or not any is missing
+  expect_identical(names(s), names(extract_document(inp, doc_fixture_template())$summary))
+})
+
+test_that("a table set to be read wherever it appears may be absent without fault", {
+  # An absence is only a fault for a table PINNED here. Three-this-month and
+  # seven-next means absence is the ordinary case, and a permanent needs_review is
+  # a warning nobody reads.
+  tm <- doc_fixture_template()
+  expect_false(.doc_table_optional(tm$tables$position))
+  expect_true(.doc_table_optional(utils::modifyList(tm$tables$position,
+                                                    list(optional = TRUE))))
+  expect_true(.doc_table_optional(utils::modifyList(tm$tables$position,
+                                                    list(occurrence = "all"))))
+  expect_false(.doc_table_optional(utils::modifyList(tm$tables$position,
+                                                     list(occurrence = "once"))))
+})
+
+test_that("a typed column that parsed nothing is what decides the verdict", {
+  # G3 / I3. A money column whose band landed on words reports itself completely
+  # full -- fill asks only whether a cell has any text -- while the engine already
+  # knows not one cell of it parsed as money and threw that away.
+  rep <- data.frame(table = c("a", "a", "b"), column = c("Amount", "Name", "Date"),
+                    type = c("money", "text", "date"), filled = c(3L, 3L, 3L),
+                    rows = c(3L, 3L, 3L), parse_rate = c(0, 1, 1),
+                    wrong_kind = c(TRUE, FALSE, FALSE), stringsAsFactors = FALSE)
+  expect_identical(.doc_parse_failures(rep), "a")
+  # ...and it degrades to doing nothing on a report frame that has neither column
+  expect_identical(.doc_parse_failures(rep[, c("table", "column", "type")]),
+                   character(0))
+  expect_identical(.doc_parse_failures(NULL), character(0))
+})
+
+test_that("a per-table doc_pages is accepted and a nonsense one is refused", {
+  # H3. doc_pages is written at the template ROOT and read with a per-table
+  # override, so the override has to be a page count or be refused at save time.
+  tm <- doc_fixture_template()
+  tm$tables$account_summary$doc_pages <- 12L
+  expect_identical(validate_document_template(tm), character(0))
+  tm$tables$account_summary$doc_pages <- 0L
+  expect_match(paste(validate_document_template(tm), collapse = " "),
+               "number of pages the example had")
+})
+
+# ---------------------------------------------------------------------------
+# A COLUMN WHOSE BAND WAS MERGED INTO ITS NEIGHBOUR (register A3)
+# ---------------------------------------------------------------------------
+
+a3_doc <- function() doc_input(list(doc_page(
+  doc_L(40, 60, "Item"), doc_L(300, 60, "Note"), doc_R(560, 60, "Amount"),
+  # the first data row runs on past the Note gutter, and Note is BLANK on it
+  doc_L(40, 80, "A very long description indeed that runs on and on past the gutter"),
+  doc_R(560, 80, "1,000.00"),
+  doc_L(40, 98, "Beta"), doc_L(300, 98, "seen"), doc_R(560, 98, "2,000.00"))))
+
+test_that("a band any one line breaks in two is two columns", {
+  # MEASURED BEFORE THE FIX: two columns, the first called "Item Note" running
+  # 37-421 -- so every Note value on every other row was read into the Item cell,
+  # silently, because a tiled band claims every word and nothing is unclaimed.
+  box <- list(page = 1, x_min = 30, x_max = 580, y_min = 55, y_max = 88)
+  cols <- doc_columns_from_box(a3_doc(), box)
+  expect_equal(length(cols), 3L)
+  expect_identical(vapply(cols, function(cc) cc$name, character(1)),
+                   c("Item", "Note", "Amount"))
+  # the divisions still tile, so nothing can fall between two columns
+  x0 <- vapply(cols, function(cc) cc$x_min, numeric(1))
+  x1 <- vapply(cols, function(cc) cc$x_max, numeric(1))
+  expect_equal(x1[-length(x1)], x0[-1])
+})
+
+test_that("a box nobody disagrees about is derived exactly as it was", {
+  inp <- context_input()
+  box <- list(page = 2, x_min = 30, x_max = 520, y_min = 95, y_max = 125)
+  cols <- doc_columns_from_box(inp, box)
+  expect_equal(length(cols), 4L)
+  expect_identical(vapply(cols, function(cc) cc$name, character(1)),
+                   c("Account", "Type", "Opening", "Closing"))
+})
+
+test_that("fitting the columns never takes a drawn column away", {
+  # MEASURED BEFORE THE FIX: two columns came back. `Note` -- drawn, named, typed
+  # -- was deleted because this month's copy prints nothing in it, and its
+  # territory went to the neighbours that tile beside it.
+  tab <- list(name = "T", start = list(page = 1, y = 58), end = list(page = 1, y = 120),
+              header_rows = 1L, follow = FALSE,
+              anchor = list(header_text = list("Item", "Amount")),
+              columns = list(
+                list(name = "Item",   x_min = 30,  x_max = 230, type = "text"),
+                list(name = "Note",   x_min = 230, x_max = 380, type = "text"),
+                list(name = "Amount", x_min = 380, x_max = 580, type = "money")))
+  inp <- doc_input(list(doc_page(
+    doc_L(40, 60, "Item"), doc_R(560, 60, "Amount"),
+    doc_L(40, 80, "Alpha"), doc_R(560, 80, "1,000.00"),
+    doc_L(40, 98, "Beta"),  doc_R(560, 98, "2,000.00"))))
+  tm <- list(mode = "document", ref_width = DOC_W, ref_height = DOC_H,
+             tables = list(t = tab))
+  fit <- doc_fit_columns(inp, tab, tm)
+  expect_equal(length(fit), 3L)
+  expect_identical(vapply(fit, function(cc) as.character(cc$name), character(1))[2], "Note")
+  # ...and it is kept EXACTLY as drawn, in one piece, with its type
+  expect_equal(fit[[2]]$x_min, 230)
+  expect_equal(fit[[2]]$x_max, 380)
+  expect_identical(fit[[2]]$type, "text")
+})
+
+test_that("fitting the columns can never return fewer than the table already has", {
+  inp <- context_input(); tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  fit <- doc_fit_columns(inp, tab, tm)
+  expect_gte(length(fit), length(tab$columns))
+  # a table it cannot even locate hands back exactly what was drawn
+  gone <- tab
+  gone$start$page <- 99L; gone$end$page <- 99L
+  expect_equal(length(doc_fit_columns(inp, gone, tm)), length(tab$columns))
+})
+
+test_that("the words no column claimed come back as a frame anybody can write out", {
+  # Its only reader anywhere was nrow(). On the measured wrong-column read it
+  # held the four real closing balances -- the figures the table lost.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  tab$columns[[4]]$x_min <- 505              # the Closing band misses every figure
+  r <- doc_table_rows(inp, tab, tm)
+  expect_identical(names(r$spilled), c("page", "y", "x", "text"))
+  expect_identical(vapply(r$spilled, class, character(1)),
+                   c(page = "integer", y = "numeric", x = "numeric", text = "character"))
+  expect_equal(nrow(r$spilled), 4L)
+  expect_identical(r$spilled$text,
+                   c("1,810.20", "15,420.75", "50,000.00", "-410.05"))
+  expect_identical(rownames(r$spilled), as.character(seq_len(4)))
+  expect_false(is.unsorted(r$spilled$y))     # reading order
+  # and a clean read hands back the same shape with no rows in it
+  clean <- doc_table_rows(inp, tm$tables$account_summary, tm)
+  expect_equal(nrow(clean$spilled), 0L)
+  expect_identical(names(clean$spilled), c("page", "y", "x", "text"))
+})
+
+# ---------------------------------------------------------------------------
+# A3 (the proposer's half): the divisions come from all the ink in the table
+# ---------------------------------------------------------------------------
+
+test_that("a column blank on the table's first page is still a column", {
+  # A3. propose_tables() kept only the FIRST page's bands when it joined a
+  # continuation, so a column that prints nothing until page 2 was drawn off its
+  # heading word alone. Measured before this: the Ref band came out 415.0-446.5,
+  # all ten reference values on page 2 fell outside it and were UNCLAIMED, and
+  # every Ref cell in the file read blank -- a column of nothing, with the rows
+  # around it looking perfect.
+  hdr <- function(y) list(doc_L(40, y, "Date"), doc_L(120, y, "Description"),
+                          doc_R(400, y, "Amount"), doc_L(430, y, "Ref"))
+  row1 <- function(y, i) list(doc_L(40, y, sprintf("%02d/04/2025", i)),
+                              doc_L(120, y, sprintf("PAYMENT-%03d", i)),
+                              doc_R(400, y, .doc_money(100 + i)))
+  row2 <- function(y, i) c(row1(y, i), list(doc_L(430, y, sprintf("REFERENCE-%03d", i))))
+  p1 <- do.call(doc_page, c(list(doc_L(40, 60, "Payments schedule")), hdr(100),
+          unlist(lapply(1:20, function(i) row1(100 + 18 * i, i)), recursive = FALSE)))
+  p2 <- do.call(doc_page, c(hdr(60),
+          unlist(lapply(1:10, function(i) row2(60 + 18 * i, i + 20)), recursive = FALSE)))
+  inp <- doc_input(list(p1, p2))
+
+  props <- propose_tables(inp)
+  expect_equal(length(props), 1L)
+  ref <- Filter(function(cc) identical(cc$name, "Ref"), props[[1]]$columns)
+  expect_length(ref, 1L)                       # it kept the name the heading gave
+  r <- doc_table_rows(inp, props[[1]], NULL)
+  expect_equal(nrow(r$spilled), 0L)            # nothing left outside a column
+  got <- r$rows[["Ref"]][r$rows$page == 2L]
+  expect_true(all(nzchar(got)))                # ...and every value is IN it
+  expect_true(any(grepl("^REFERENCE-", got)))
+})
+
+test_that("a heading names the band it is printed over, not the band with its number", {
+  # A3. The name map was by INDEX, so the moment the band count and the header
+  # cell count differed every name moved one column left. Measured on a schedule
+  # whose rows print a code the heading row has nothing over: the code band was
+  # called "Basis", the basis band "Amount", and the money band "column_4".
+  p <- do.call(doc_page, c(
+    list(doc_L(40, 60, "Fee schedule"),
+         doc_L(40, 100, "Item"), doc_L(240, 100, "Basis"), doc_R(500, 100, "Amount")),
+    unlist(lapply(1:6, function(i) list(
+      doc_L(40, 100 + 18 * i, sprintf("ITEM%02d", i)),
+      doc_L(150, 100 + 18 * i, sprintf("AB%02d", i)),
+      doc_L(240, 100 + 18 * i, "per month"),
+      doc_R(500, 100 + 18 * i, .doc_money(5 * i)))), recursive = FALSE)))
+  props <- propose_tables(doc_input(list(p)))
+  expect_equal(length(props), 1L)
+  cols <- props[[1]]$columns
+  band_of <- function(nm) {
+    hit <- Filter(function(cc) identical(cc$name, nm), cols)
+    if (!length(hit)) NULL else hit[[1]]
+  }
+  inside <- function(nm, x) {
+    b <- band_of(nm); !is.null(b) && x >= b$x_min && x <= b$x_max
+  }
+  expect_true(inside("Item", 50))              # ITEM01
+  expect_true(inside("Basis", 260))            # "per month"
+  expect_true(inside("Amount", 490))           # the figure
+  expect_false(inside("Basis", 160))           # ...and NOT the unheaded code band
+  r <- doc_table_rows(doc_input(list(p)), props[[1]], NULL)
+  expect_true(all(grepl("^per month", r$rows[["Basis"]])))
+  expect_true(all(grepl("^[0-9]", r$rows[["Amount"]])))
+})
+
+test_that("a table is never proposed under a heading that names a person", {
+  # G9b. The proposed title is stored in the template verbatim and A2b makes it
+  # the search key, so "Prepared for Mr John Smith" would put a customer's name
+  # into a file that gets copied off the box. The drafter already refuses one as
+  # a fingerprint phrase; the search simply carries on up the page.
+  p <- do.call(doc_page, c(
+    list(doc_L(40, 40, "Holdings at period end"),
+         doc_L(40, 70, "Prepared for Mr John Smith"),
+         doc_L(40, 100, "Code"), doc_L(240, 100, "Units"), doc_R(500, 100, "Value")),
+    unlist(lapply(1:5, function(i) list(
+      doc_L(40, 100 + 18 * i, sprintf("SEC%02d", i)),
+      doc_L(240, 100 + 18 * i, sprintf("%d", 10 * i)),
+      doc_R(500, 100 + 18 * i, .doc_money(25 * i)))), recursive = FALSE)))
+  props <- propose_tables(doc_input(list(p)))
+  expect_equal(length(props), 1L)
+  expect_false(grepl("John Smith", props[[1]]$name, fixed = TRUE))
+  expect_identical(props[[1]]$name, "Holdings at period end")
 })

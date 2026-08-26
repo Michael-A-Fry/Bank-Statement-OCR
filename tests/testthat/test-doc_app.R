@@ -61,7 +61,14 @@ test_that("no output asks the form question for itself any more", {
   # and its own conditionals -- everything about transactions goes through the
   # shared predicate, or a third kind of document has to be remembered in six
   # places and will not be.
-  for (out in c("cv_headline", "cv_summary", "cv_rematch")) {
+  # WAS: c("cv_headline", "cv_summary", "cv_rematch"). Register B2 / B1 take
+  # cv_rematch off this list on purpose: it is cv_edit now and it renders on ALL
+  # THREE kinds, because a report has no reconciliation behind it and "open what
+  # read this and adjust it" is the only correction that route has. The rule this
+  # test holds -- everything about TRANSACTIONS goes through the one predicate --
+  # is unchanged, and cv_edit still asks .is_txn_result before it says anything
+  # about a bank.
+  for (out in c("cv_headline", "cv_summary")) {
     blk <- regmatches(joined, regexpr(sprintf("(?s)output\\$%s <- render.{0,160}", out),
                                       joined, perl = TRUE))
     expect_match(blk, ".is_txn_result(res)", fixed = TRUE)
@@ -152,7 +159,10 @@ test_that("the per-row handlers exist once, not once per redraw", {
   src <- .da_src()
   # Created in fixed lapplys OUTSIDE the renderUI. Inside one, every redraw would
   # stack another observer on every row, so one click would fire many times.
-  blk <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)", 40L)
+  # .da_whole, not a line count: the Remove handler grew a confirmation (H13) and
+  # a 40-line window then stopped short of the two value handlers and passed by
+  # not looking at them.
+  blk <- .da_whole(src, "lapply\\(seq_len\\(\\.RB_MAX_ROWS\\)")
   for (id in c("rb_rm_", "rb_ed_", "rb_vrm_", "rb_ved_"))
     expect_match(blk, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id))
   cols <- .da_block(src, "lapply\\(seq_len\\(\\.RB_MAX_COLS\\)", 22L)
@@ -169,7 +179,7 @@ test_that("the per-row handlers exist once, not once per redraw", {
 # undocumented click on the picture and a sentence in a hint.
 test_that("the start and the end are on the screen in words, and easy to move", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "output\\$rb_where <- renderUI", 44L)
+  blk <- .da_whole(src, "output\\$rb_where <- renderUI")
   expect_match(blk, "Starts", fixed = TRUE)
   expect_match(blk, "Ends", fixed = TRUE)
   expect_match(blk, "down the page", fixed = TRUE)        # said as a place, not a number
@@ -207,10 +217,17 @@ test_that("the columns come from the header row, and only the one you touch move
   expect_match(add, "doc_add_column\\(\\.doc_columns\\(d\\), box\\$x_min, box\\$x_max")
   expect_false(grepl("doc_edge_click\\(", add))
   expect_false(grepl("doc_columns_from_edges\\(", add))
-  # moving one moves ONE, through the same function whether dragged or typed
+  # A COLUMN IN THE MIDDLE MOVES THE ONES BESIDE IT, through the same function
+  # whether dragged or typed.
+  # WAS: expect_match(mv, "doc_set_column_band\\(old, j, box\\$x_min, box\\$x_max\\)")
+  #      expect_match(.da_joined(), "doc_set_column_band\\(cols, j, x0, x1\\)")
+  # Register D5 names that setter's behaviour as the fault - "the band setter
+  # clamps and the screen says 'move the neighbour first', which is the control
+  # refusing to do the obvious thing" - so the two assertions pinned the bug.
+  # .rb_move_band is the same one-function rule with the neighbours pushed along.
   mv <- .da_block(src, 'if \\(m == "colpos"\\)', 30L)
-  expect_match(mv, "doc_set_column_band\\(old, j, box\\$x_min, box\\$x_max\\)")
-  expect_match(.da_joined(), "doc_set_column_band\\(cols, j, x0, x1\\)")
+  expect_match(mv, "\\.rb_move_band\\(old, j, box\\$x_min, box\\$x_max")
+  expect_match(.da_joined(), "\\.rb_move_band\\(cols, j, x0, x1")
   # ...and deleting one leaves its space empty rather than handing it to a
   # neighbour, because whitespace between columns is now expressible.
   rm <- .da_block(src, "\\.rb_drop_col <- function", 14L)
@@ -280,8 +297,10 @@ test_that("every column can be renamed, retyped, repositioned and deleted", {
   expect_match(joined, "rb_cx_d <- debounce\\(")
   expect_match(joined, "rb_name_d <- debounce\\(")
   # a band typed and a band dragged are the SAME request, through one function
-  expect_match(joined, "doc_set_column_band\\(cols, j, x0, x1\\)")
-  expect_match(joined, "doc_set_column_band\\(old, j, box\\$x_min, box\\$x_max\\)")
+  # WAS: doc_set_column_band(...) in both places - see register D5 and the
+  # rewrite above; the request is now .rb_move_band, which pushes.
+  expect_match(joined, "\\.rb_move_band\\(cols, j, x0, x1")
+  expect_match(joined, "\\.rb_move_band\\(old, j, box\\$x_min, box\\$x_max")
   # and moving a column does not rename it back to whatever is printed above it
   mv <- .da_block(src, 'if \\(m == "colpos"\\)', 30L)
   expect_match(mv, "keep_nm")
@@ -365,7 +384,14 @@ test_that("the builder starts blank and takes one table at a time", {
   expect_match(joined, 'paste0\\("rb_ed_", i\\), "Edit"')
   ed <- .da_block(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"", 14L)
   expect_match(ed, "\\.rb_load_draft\\(d\\)")
-  expect_match(ed, "rb\\$tables <- rb\\$tables\\[-i\\]")
+  # WAS: expect_match(ed, "rb\\$tables <- rb\\$tables\\[-i\\]")
+  # Register H13 names exactly that line as the fault: "Edit takes a saved table
+  # OUT of the template ... one click, no confirmation, no undo, and table 27 is
+  # gone from a template that took months. Edit must COPY into the draft and
+  # leave the saved table in place". So the draft is a copy, and where it goes
+  # back to is remembered instead.
+  expect_false(grepl("rb$tables <- rb$tables[-i]", ed, fixed = TRUE))
+  expect_match(ed, "rb\\$edit_idx <- as\\.integer\\(i\\)")
 })
 
 test_that("one builder covers a form and a report, and it says so", {
@@ -387,7 +413,7 @@ test_that("one builder covers a form and a report, and it says so", {
 
 test_that("a table and a value are each saved, and the screen goes back to idle", {
   src <- .da_src()
-  tb <- .da_block(src, "observeEvent\\(input\\$rb_savetab", 14L)
+  tb <- .da_whole(src, "observeEvent\\(input\\$rb_savetab")
   expect_match(tb, "rb\\$tables <- c\\(rb\\$tables, list\\(d\\)\\)")
   expect_match(tb, "rb\\$draft <- NULL")
   expect_match(tb, 'rb\\$mode <- ""')            # nothing armed after a save
@@ -398,13 +424,19 @@ test_that("a table and a value are each saved, and the screen goes back to idle"
   # ...and the side is stored on the way in, whether it was worked out or chosen
   expect_match(vl, "\\.doc_pair_rel\\(v\\$label, v\\$value\\)")
   expect_match(vl, "input\\$rb_vwhere")
-  # Editing takes it back OUT of the list, so Save always means the same thing.
-  for (id in c("rb_ed_", "rb_ved_")) {
-    ed <- .da_block(src, sprintf("observeEvent\\(input\\[\\[paste0\\(\"%s\"", id), 14L)
-    expect_match(ed, "rb\\$(tables|pairs) <- rb\\$(tables|pairs)\\[-i\\]")
-    expect_match(ed, "\\.rb_load_(draft|vdraft)\\(")
-    expect_match(ed, "updateNumericInput\\(session, \"rb_page\"")
-  }
+  # Editing loads a draft and takes you to the page it is on.
+  # WAS: expect_match(ed, "rb$(tables|pairs) <- rb$(tables|pairs)[-i]") for BOTH.
+  # Register H13: a table must be COPIED into the draft, not cut out of the
+  # template. A value pair is not named by H13 and still cuts, so the two are
+  # asserted separately rather than by one regex that hides the difference.
+  ed <- .da_whole(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"")
+  expect_false(grepl("rb$tables <- rb$tables[-i]", ed, fixed = TRUE))
+  expect_match(ed, "\\.rb_load_draft\\(")
+  expect_match(ed, "updateNumericInput\\(session, \"rb_page\"")
+  ved <- .da_whole(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ved_\"")
+  expect_match(ved, "rb\\$pairs <- rb\\$pairs\\[-i\\]")
+  expect_match(ved, "\\.rb_load_vdraft\\(")
+  expect_match(ved, "updateNumericInput\\(session, \"rb_page\"")
 })
 
 # A HEADING CAN BE MORE THAN ONE LINE. "Revenue" over "Medical & Family" over
@@ -467,7 +499,14 @@ test_that("a report converts through the front door as kind 'tables', and the ru
   # A REPORT HAS TABLES, NOT TRANSACTIONS. row_count is the field every dashboard
   # and every drift report counts; a hundred table rows in it would inflate
   # figures a report has no business being part of.
-  expect_identical(res$run_log$row_count, 0L)
+  #
+  # AND IT IS NA, NOT A LITERAL ZERO (register G8). A zero is a MEASUREMENT -- it
+  # says this run reconciled nothing wrong -- so every report and form run was
+  # being counted in Admin as a clean zero-failure conversion beside statements
+  # that genuinely reconciled. "No transactions to count" and "counted, none
+  # failed" are different facts and a spreadsheet cannot tell them apart.
+  expect_true(is.na(res$run_log$row_count))
+  expect_true(is.na(res$run_log$kpi_fail_count))
   expect_gt(res$run_log$n_table_rows, 90L)
   expect_true(length(res$outputs) > 0L)
 
@@ -568,7 +607,7 @@ test_that("with no report templates installed nothing about the front door chang
 
 test_that("the document builder fills in the same three boxes the statement toolkit does", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "rb_id_auto <- reactiveVal", 52L)
+  blk <- .da_block(src, "rb_id_auto <- reactiveVal", 72L)
   # the issuer, guessed from the filename the same way open_guided guesses it
   expect_match(blk, "tools::toTitleCase")
   expect_match(blk, 'updateTextInput\\(session, "rb_bank"')
@@ -618,7 +657,7 @@ test_that("every position is both draggable and typeable", {
 
 test_that("one column out of a header drag is said out loud, twice", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, 'if \\(m == "cols"\\)', 52L)
+  blk <- .da_whole(src, 'if \\(m == "cols"\\)')
   expect_match(blk, "if \\(length\\(cols\\) == 1L\\)")
   expect_match(blk, "ONE column and each row arrives whole in it", fixed = TRUE)
   expect_match(blk, 'type = "warning"')
@@ -791,7 +830,7 @@ test_that("the bottom edge is stored where the reader actually uses it", {
   expect_match(cl, "b\\$y_max <- y")
   expect_match(cl, "above the top of the table", fixed = TRUE)
   # and it is on the screen in words, with a way to put it back
-  w <- .da_block(.da_src(), "output\\$rb_where <- renderUI", 44L)
+  w <- .da_whole(.da_src(), "output\\$rb_where <- renderUI")
   expect_match(w, "Bottom edge on the pages in between", fixed = TRUE)
   expect_match(w, '"rb_setbottom"')
   expect_match(w, '"rb_clearbottom"')
@@ -816,7 +855,13 @@ test_that("a drag that changed nothing names the column somebody was moving", {
   # says nothing was waiting". True, and useless: the button they still had to
   # press was named nowhere in the sentence.
   brush <- .da_whole(.da_src(), "observeEvent\\(input\\$rb_brush")
-  expect_match(brush, "Drag its width on the page", fixed = TRUE)
+  # WAS: expect_match(brush, "Drag its width on the page", fixed = TRUE)
+  # That button was one of two ways to arm the same drag - pressing Edit beside
+  # the column already arms it - and register D2 ("There are LOTS of buttons...
+  # it NEEDS to be even more simple") is what took it off the screen. The rule
+  # this test exists for is unchanged: the sentence must NAME the thing that is
+  # still to be pressed.
+  expect_match(brush, "press Edit beside it in the column list", fixed = TRUE)
   expect_match(brush, "rb\\$colsel")
 })
 
@@ -954,7 +999,7 @@ test_that("the first screen does not contradict itself about which files it take
 # are making one, and the only difference between the two is a shade of green.
 test_that("when the tool can tell, it decides, and the other answer is one link", {
   src <- .da_src()
-  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 240L)
   # it SAYS what it decided, in a sentence about the document
   expect_match(blk, "This looks like a report, not a bank statement.", fixed = TRUE)
   expect_match(blk, "This looks like a bank statement, but no template reads it yet.",
@@ -979,7 +1024,7 @@ test_that("when the tool cannot tell, it says so and asks", {
   # Two equal buttons are honest HERE and nowhere else -- dressing a coin toss as
   # a decision is the thing this card exists to stop.
   src <- .da_src()
-  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 240L)
   expect_match(blk, "The tool cannot tell what kind of document this is.", fixed = TRUE)
   expect_match(blk, "Which is it?", fixed = TRUE)
   expect_match(blk, 'actionButton\\("cv_teach_go", "A bank or card statement"')
@@ -997,7 +1042,7 @@ test_that("the two ids are never rendered at the same time", {
   # and its observer would never fire -- a dead control, invisible from R. They
   # are safe only because the branches return.
   src <- .da_src()
-  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 240L)
   for (b in c('identical\\(looks, "report"\\)', 'identical\\(looks, "statement"\\)'))
     expect_match(blk, paste0("if \\(", b, "\\)\\n\\s*return\\(box\\("))
 })
@@ -1136,10 +1181,14 @@ test_that("the swallow window is short enough not to eat a real drag", {
 
 test_that("the Admin list is the whole library, not the statement half", {
   joined <- .da_joined()
-  ov <- .da_block(.da_src(), "output\\$adm_tpl_overview <- renderDT", 4L)
-  expect_match(ov, "library_overview\\(")
-  expect_match(ov, "all_field_templates_admin\\(\\)")
-  expect_match(ov, "all_doc_templates_admin\\(\\)")
+  # WAS: all three of these were asserted inside output$adm_tpl_overview. The frame
+  # is built once in adm_ov() now, because the row-click handler needs the SAME
+  # frame to turn a row index into an id (register C1, which splits this table into
+  # two headed bands). What is asserted is unchanged: one library, all three kinds.
+  expect_match(.da_whole(.da_src(), "adm_ov <- reactive"), "library_overview\\(")
+  expect_match(.da_whole(.da_src(), "adm_ov <- reactive"), "all_field_templates_admin\\(\\)")
+  expect_match(.da_whole(.da_src(), "adm_ov <- reactive"), "all_doc_templates_admin\\(\\)")
+  expect_match(.da_whole(.da_src(), "output\\$adm_tpl_overview <- renderDT"), "adm_ov\\(\\)")
   # hidden ones included, or the view that un-hides them cannot show them
   for (r in c("all_field_templates_admin <- reactive", "all_doc_templates_admin <- reactive")) {
     blk <- .da_block(.da_src(), r, 4L)
@@ -1203,8 +1252,18 @@ test_that("opening a saved template stops the builder guessing over it", {
   # ...and it lands on the right tab with the right half of it open
   expect_match(blk, 'updateRadioButtons\\(session, "ts_doctype", selected = "other"\\)')
   expect_match(blk, 'selected = "Add a template"')
-  # a new document is a new template
-  expect_match(joined, "observeEvent\\(input\\$ts_file, \\{ rb_editing\\(NA_character_\\) \\}")
+  # WAS: expect_match(joined,
+  #        "observeEvent\\(input\\$ts_file, \\{ rb_editing\\(NA_character_\\) \\}")
+  # ...which pinned register H5 exactly as it was reported: "the editing flag is
+  # cleared the moment a second document is uploaded, which un-blocks the seeding
+  # observers: the issuer is overwritten from the new FILENAME and the
+  # fingerprint is overwritten wholesale", making "add tables from a second
+  # example" impossible. A new document is a new template only when there is no
+  # work on screen to be another example OF.
+  expect_match(joined, "\\.rb_has_work <- function")
+  up <- .da_whole(src, "observeEvent\\(input\\$ts_file, \\{$")
+  expect_match(up, "if \\(!\\.rb_has_work\\(\\)\\) \\{ rb_editing\\(NA_character_\\)")
+  expect_match(up, "another example", fixed = TRUE)
 })
 
 test_that("the builder says when Save will REPLACE a saved template", {
@@ -1234,11 +1293,20 @@ test_that("Convert asks what the document is, and the engine is told", {
 
 test_that("nothing bank-shaped is shown once she has said it is not a statement", {
   joined <- .da_joined()
-  # the bank picker and the exact-template override both fold away
+  # the bank picker folds away
   expect_match(joined, "conditionalPanel\\(\"input\\.cv_kind != 'other'\",\\s*\\n\\s*selectInput\\(\"cv_bank_quick\"")
-  expect_match(joined, "conditionalPanel\\(\"input\\.cv_kind != 'other'\",\\s*\\n\\s*tags\\$details\\(class = \"adv-bank\"")
-  # ...and something says why they are gone
+  # ...and something says why it is gone
   expect_match(joined, "No bank templates will be tried", fixed = TRUE)
+  # WAS: the exact-template override folded away with it. Register L1 names that
+  # as the fault -- "a form or report template cannot be forced, anywhere in the
+  # product ... it only ever lists statement templates and is hidden the moment
+  # she says something else" -- so the panel STAYS and its list follows the kind.
+  # What must not survive is a BANK-shaped word on it.
+  expect_false(grepl("conditionalPanel(\"input.cv_kind != 'other'\",\n          tags$details(class = \"adv-bank\"",
+                     joined, fixed = TRUE))
+  expect_match(joined, 'tags\\$summary\\("It picked the wrong template\\?"\\)')
+  # and the list really is rebuilt off the kind, not off the bank alone
+  expect_match(joined, 'other <- identical\\(kind_choice\\(\\), "other"\\)')
 })
 
 test_that("the teach card does not re-ask a question she already answered", {
@@ -1283,4 +1351,761 @@ test_that("the identifying phrase can be dragged, like everything else here", {
   # a single short word is the fault that turns "no template" into a wrong read,
   # and the loader refuses it at save time -- said now, not two screens later
   expect_match(brush, "n_words >= 2L \\|\\| nchar\\(txt\\) >= 10L")
+})
+
+# ---------------------------------------------------------------------------
+# L1. "A form or report template cannot be forced, anywhere in the product."
+# convert_form(template_id=) and convert_tables(template_id=) both existed and
+# NOTHING in the app ever passed one -- the picker listed statement templates and
+# was hidden the moment she said "something else".
+# ---------------------------------------------------------------------------
+
+test_that("the template picker offers the templates that fit the answer she gave", {
+  src <- .da_src(); joined <- .da_joined()
+  # it is no longer inside the statement-only panel
+  i_sum <- grep('tags\\$summary\\("It picked the wrong template\\?"\\)', src)
+  expect_length(i_sum, 1L)
+  expect_false(grepl("input.cv_kind != 'other'", src[i_sum - 1L], fixed = TRUE))
+  # ...and its list is built per kind, off the two other-route libraries
+  expect_match(joined, 'other <- identical\\(kind_choice\\(\\), "other"\\)')
+  expect_match(joined, "ts <- c\\(all_doc_templates\\(\\), all_field_templates\\(\\)\\)")
+  # the id travels: one force_template, honoured whatever kind it turns out to be
+  expect_match(joined, "force_template = force_tpl %\\|\\|% tpl_choice\\(\\)")
+  # and the ENGINE really takes a template of any kind and routes on it
+  fr <- readLines(file.path(engine_root(), "R", "forms.R"), warn = FALSE)
+  expect_true(any(grepl("template_id = NULL\\)", fr)))
+  expect_true(any(grepl("\\.forced_template_kind\\(want", fr)))
+  # never a raw id on the picker: the other-route list goes through the same
+  # name-maker every other picker on this page uses
+  expect_match(joined, "if \\(length\\(ids\\)\\) ch <- c\\(ch, tpl_choices\\(ids\\)\\)")
+})
+
+test_that("a report template's name reaches the screen instead of its id", {
+  # friendly_tpl fell through to the RAW ID for a report template -- it looked in
+  # the statement set and the form set and nowhere else -- so a converted report's
+  # "Read as:" chip printed an engine handle on a customer-facing screen.
+  blk <- .da_block(.da_src(), "friendly_tpl <- function", 45L)
+  expect_match(blk, "all_doc_templates\\(\\)\\[\\[tid\\]\\]")
+  # and NOT through .tpl_label, which would name a trustee report "... statement"
+  i_doc <- regexpr("all_doc_templates()[[tid]]", blk, fixed = TRUE)
+  expect_gt(i_doc, 0L)
+  expect_false(grepl(".tpl_label", substr(blk, i_doc, i_doc + 260L), fixed = TRUE))
+})
+
+# ---------------------------------------------------------------------------
+# J1. Browser-proven: she opens "It picked the wrong bank?", picks a template,
+# then ticks "Something else". The disclosure is HIDDEN by a conditionalPanel --
+# but hiding does not clear, the selection survives, and the engine turned a
+# forced statement template into kind "statement" outright.
+# ---------------------------------------------------------------------------
+
+test_that("saying it is not a statement clears the bank and the forced template", {
+  src <- .da_src(); joined <- .da_joined()
+  # the bank picker is cleared OUT LOUD when the kind becomes "other"
+  blk <- .da_whole(src, 'observeEvent\\(kind_choice\\(\\), \\{')
+  expect_match(blk, 'identical\\(kind_choice\\(\\), "other"\\)')
+  expect_match(blk, 'updateSelectInput\\(session, "cv_bank_quick", selected = ""\\)')
+  # ...and the template selection cannot survive, because the choices it was in
+  # are no longer the choices: the list is rebuilt on the kind and a selection
+  # that is not among them is dropped
+  expect_match(joined, 'selected = if \\(keep %in% ch\\) keep else ""')
+  # the engine half is landed too: an answer she can SEE beats a template she
+  # cannot, and it says so
+  fr <- readLines(file.path(engine_root(), "R", "forms.R"), warn = FALSE)
+  expect_true(any(grepl("contradiction <- TRUE", fr, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# J4. "There is no route from a converted report back to the template that read
+# it - and the route that WAS written is dead code." cv_teach's report branch sat
+# inside a conditionalPanel requiring the result NOT to be a tables result.
+# ---------------------------------------------------------------------------
+
+test_that("a converted report has a live route back to the template that read it", {
+  src <- .da_src(); joined <- .da_joined()
+  # the dead branches are gone from the panel that could never render them...
+  blk <- .da_whole(src, "output\\$cv_teach <- renderUI")
+  expect_false(grepl('identical(res$kind, "tables")', blk, fixed = TRUE))
+  expect_false(grepl('identical(res$kind, "form")', blk, fixed = TRUE))
+  # ...and the live door is OUTSIDE that panel, above the transactions half
+  i_edit <- grep('uiOutput\\("cv_edit"\\)', src)
+  i_panel <- grep("output.cv_is_tables != true", src)
+  expect_length(i_edit, 1L)
+  expect_true(all(i_edit < i_panel))
+  # it opens the SAVED report template on the document, which is the whole point:
+  # switching tab without either is what the deleted links did
+  expect_match(joined, "rb_open_template\\(t, src\\$path\\)")
+  # rb_open_template really carries the document under the boxes
+  expect_match(.da_whole(src, "rb_open_template <- function"), "rb_handoff\\(path\\)")
+})
+
+# ---------------------------------------------------------------------------
+# H13. "Edit takes a saved table OUT of the template and the button beside it
+# says Throw it away. One click, no confirmation, no undo, and table 27 is gone
+# from a template that took months."
+# ---------------------------------------------------------------------------
+
+test_that("editing a saved table copies it, and saving puts it back where it was", {
+  src <- .da_src(); joined <- .da_joined()
+  ed <- .da_whole(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_ed_\"")
+  # the saved table is NOT taken out of the list...
+  expect_false(grepl("rb$tables <- rb$tables[-i]", ed, fixed = TRUE))
+  # ...and where it goes back to is remembered
+  expect_match(ed, "rb\\$edit_idx <- as\\.integer\\(i\\)")
+  # Save REPLACES at that index rather than appending, or one edit would leave
+  # two copies of the table on the template.
+  tb <- .da_whole(src, "observeEvent\\(input\\$rb_savetab")
+  expect_match(tb, "rb\\$tables\\[\\[idx\\]\\] <- d")
+  expect_match(tb, "idx <- \\.doc_int\\(rb\\$edit_idx")
+  expect_match(tb, "rb\\$edit_idx <- NA_integer_")
+  # A draft that arrived any other way can never overwrite a saved table.
+  ld <- .da_whole(src, "\\.rb_load_draft <- function")
+  expect_match(ld, "rb\\$edit_idx <- NA_integer_")
+})
+
+test_that("cancel keeps the saved table, and says which of the two it did", {
+  src <- .da_src(); joined <- .da_joined()
+  # the button's words are rendered, because they are not the same words in the
+  # two cases it covers
+  expect_match(joined, 'uiOutput\\("rb_cancel_btn"')
+  btn <- .da_whole(src, "output\\$rb_cancel_btn <- renderUI")
+  expect_match(btn, "Cancel - keep the saved table", fixed = TRUE)
+  expect_match(btn, "Throw it away", fixed = TRUE)
+  # and cancelling an edit does not touch rb$tables
+  cn <- .da_whole(src, "observeEvent\\(input\\$rb_cancel")
+  expect_false(grepl("rb$tables <-", cn, fixed = TRUE))
+  expect_match(cn, "rb\\$edit_idx <- NA_integer_")
+  expect_match(cn, "as it was saved", fixed = TRUE)
+})
+
+test_that("removing a saved table has to be meant twice, and is said both times", {
+  src <- .da_src()
+  rm <- .da_whole(src, "observeEvent\\(input\\[\\[paste0\\(\"rb_rm_\"")
+  # the first press ARMS and says so; only a second press on the SAME table
+  # removes it
+  expect_match(rm, "rb\\$rm_armed <- list\\(i = as\\.integer\\(i\\)")
+  expect_match(rm, "Press Remove again", fixed = TRUE)
+  expect_match(rm, "rb\\$tables <- rb\\$tables\\[-i\\]")
+  # ...and the arming is compared against the table's NAME as well as its index,
+  # so a list that has shifted under the person cannot remove the wrong one
+  expect_match(rm, 'identical\\(as\\.character\\(a\\$name')
+  # an index above the one removed is not left pointing at a different table
+  expect_match(rm, "if \\(idx > i\\) idx - 1L else idx")
+})
+
+test_that("the saved-table list stops where its handlers stop, and says so", {
+  # .RB_MAX_ROWS observers exist; the list used to render a pair of buttons for
+  # every table with no cap, so on a 61-table template the last Edit did nothing
+  # at all when pressed and nothing said why.
+  src <- .da_src()
+  blk <- .da_whole(src, "output\\$rb_saved <- renderUI")
+  expect_match(blk, "min\\(length\\(rb\\$tables\\), \\.RB_MAX_ROWS\\)")
+  expect_match(blk, "length\\(rb\\$tables\\) > \\.RB_MAX_ROWS")
+  expect_match(blk, "cannot be edited here", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# D5. "If I need to expand or contract a column in the middle of others... the
+# other columns NEED to adapt to it rather than just do nothing."
+# ---------------------------------------------------------------------------
+
+test_that("a column moved into its neighbour pushes it along, with a floor and a wall", {
+  src <- .da_src()
+  i <- grep("^  \\.rb_move_band <- function", src)[1]
+  skip_if(is.na(i), ".rb_move_band not found")
+  # the floor comes from the source too, so this tests the rule and not a number
+  # copied out of it
+  eval(parse(text = grep("^  \\.RB_MIN_COL <- ", src, value = TRUE)[1]))
+  f <- eval(parse(text = .da_whole(src, "^  \\.rb_move_band <- function")))
+  cols <- list(list(name = "a", x_min = 10, x_max = 50),
+               list(name = "b", x_min = 50, x_max = 90),
+               list(name = "c", x_min = 90, x_max = 130))
+  xs <- function(z) vapply(z, function(cc) c(cc$x_min, cc$x_max), numeric(2))
+  # widening the MIDDLE column to the right moves the third one along, keeping
+  # its width - it does not stop dead at 90, which is the reported fault
+  out <- f(cols, 2L, 50, 110, 400)
+  expect_equal(as.numeric(xs(out)[, 2]), c(50, 110))
+  expect_equal(as.numeric(xs(out)[, 3]), c(110, 150))
+  expect_equal(as.numeric(xs(out)[, 1]), c(10, 50))     # nothing behind it moved
+  expect_identical(attr(out, "pushed"), 1L)
+  expect_identical(attr(out, "narrowed"), 0L)
+  # ...and to the left it pushes the first one the other way
+  out2 <- f(cols, 2L, 30, 90, 400)
+  expect_equal(as.numeric(xs(out2)[, 1]), c(0, 30))
+  expect_identical(attr(out2, "pushed"), 1L)
+  # THE WALL. The page edge is a wall: what cannot keep its width is narrowed to
+  # the floor rather than pushed off the paper, and that is reported.
+  out3 <- f(cols, 2L, 50, 380, 400)
+  expect_true(as.numeric(xs(out3)[2, 3]) <= 400)
+  expect_gte(as.numeric(xs(out3)[2, 3]) - as.numeric(xs(out3)[1, 3]), .RB_MIN_COL)
+  expect_identical(attr(out3, "narrowed"), 1L)
+  # and a request that cannot fit even at the floor is trimmed to what fits,
+  # never applied off the page
+  out4 <- f(cols, 2L, 50, 460, 400)
+  expect_true(all(as.numeric(xs(out4)[2, ]) <= 400))
+  expect_true(isTRUE(attr(out4, "trimmed")))
+  # a column that does not reach its neighbour moves alone
+  out5 <- f(cols, 1L, 10, 40, 400)
+  expect_identical(attr(out5, "pushed"), 0L)
+  expect_equal(as.numeric(xs(out5)[, 2]), c(50, 90))
+  # nonsense in, the columns back out unchanged
+  expect_identical(f(cols, 9L, 10, 20, 400), cols)
+  expect_identical(f(cols, 2L, 50, 51, 400)[[2]]$x_max, 90)
+})
+
+test_that("what the push did to the other columns is said, once, in plain words", {
+  src <- .da_src()
+  msg <- eval(parse(text = .da_whole(src, "^  \\.rb_push_msg <- function")))
+  n <- function(p, nw = 0L, tr = FALSE) {
+    x <- list(); attr(x, "pushed") <- p; attr(x, "narrowed") <- nw
+    attr(x, "trimmed") <- tr; x
+  }
+  expect_identical(msg(n(0L)), "")                       # nothing moved, nothing said
+  expect_match(msg(n(1L)), "1 column beside it moved along", fixed = TRUE)
+  expect_match(msg(n(3L, 2L)), "2 had to be narrowed", fixed = TRUE)
+  expect_match(msg(n(2L, 0L, TRUE)), "as far as the page allows", fixed = TRUE)
+  # no ids, no numbers a person cannot act on, one sentence
+  expect_false(grepl("x_min|attr|NA", msg(n(2L, 1L))))
+  expect_length(gregexpr("\\.", msg(n(2L, 1L)))[[1]], 2L)
+  # both ways of moving a band go through it
+  joined <- .da_joined()
+  expect_gte(length(grep("\\.rb_push_msg\\(", src)), 3L)
+})
+
+# ---------------------------------------------------------------------------
+# D4. "The bottom edge on pages in between needs to default show up. Shouldn't
+# need to work out end for me."
+# ---------------------------------------------------------------------------
+
+test_that("the bottom edge of the pages in between is set, drawn and correctable", {
+  src <- .da_src(); joined <- .da_joined()
+  fn <- .da_whole(src, "\\.rb_default_bottom <- function")
+  # a one-page table has no pages in between, so it is left alone
+  expect_match(fn, "if \\(is\\.na\\(p0\\) \\|\\| is\\.na\\(p1\\) \\|\\| p1 <= p0\\) return\\(d\\)")
+  # a bottom edge somebody has already set is NEVER overwritten
+  expect_match(fn, "if \\(is\\.finite\\(\\.doc_num\\(b\\$y_max, NA_real_\\)\\)\\) return\\(d\\)")
+  # the answer is MEASURED with the reader's own stop rule on the table's own
+  # start page, not guessed
+  expect_match(fn, "probe\\$follow <- FALSE")
+  expect_match(fn, "doc_table_rows\\(i, probe, fr\\)")
+  expect_match(fn, "b\\$y_max <- round\\(y \\+ 2, 1\\)")
+  # ...and every way of setting the end goes through it
+  expect_gte(length(grep("\\.rb_default_bottom\\(d\\)", src)), 4L)
+  # DRAWN, or it is the same silent assumption in a different place
+  plot <- .da_whole(src, "\\.rb_draw_table <- function")
+  expect_match(plot, 'ymax <- \\.doc_num\\(\\(tb\\$band')
+  expect_match(plot, '"BOTTOM"')
+  # and the panel says it in words, with the one control that moves it
+  w <- .da_whole(src, "output\\$rb_where <- renderUI")
+  expect_match(w, "worked out by reading this document", fixed = TRUE)
+  expect_match(w, '"rb_setbottom"')
+})
+
+# ---------------------------------------------------------------------------
+# A3 (findings). The drag box round the column names is a SAMPLE; a column that
+# prints nothing inside it yields no band, and because the surviving bands tile,
+# its territory goes to a neighbour - silently.
+# ---------------------------------------------------------------------------
+
+test_that("the columns are re-derived once over the whole table, and the gain is said", {
+  src <- .da_src()
+  blk <- .da_whole(src, 'if \\(m == "cols"\\)')
+  # the end is known first, so there is a whole table to derive from
+  i_end <- regexpr("doc_auto_end\\(", blk)
+  i_fit <- regexpr("doc_fit_columns\\(i, d, fr\\)", blk)
+  expect_gt(i_end, 0L); expect_gt(i_fit, i_end)
+  # it may only ever ADD - never fewer columns than the box just named
+  expect_match(blk, "if \\(length\\(fit\\) >= length\\(cols\\)\\)")
+  # the remembered heading wording follows the columns it actually has
+  expect_match(blk, "d\\$anchor\\$header_text <- as\\.list\\(vapply\\(cols")
+  # NOTHING SILENT: a correction to what was just drawn is said, once
+  expect_match(blk, "gained > 0L")
+  expect_match(blk, "found by reading the whole table", fixed = TRUE)
+  # ...and it runs ONCE, at the moment the columns are first derived: a band
+  # somebody has since drawn or moved must never be re-derived under them
+  expect_length(grep("doc_fit_columns\\(", src), 2L)   # here, and "work them out again"
+})
+
+# ---------------------------------------------------------------------------
+# H4. "Loading a second example re-stamps the template's reference page size...
+# the file says 612x792 while every band is still in 595x842 space."
+# ---------------------------------------------------------------------------
+
+test_that("an open template keeps the page size its boxes were drawn in", {
+  src <- .da_src()
+  fr <- .da_whole(src, "rb_frame <- reactive")
+  # the template's own frame wins over whatever document is open
+  expect_match(fr, "f <- rb\\$frame")
+  expect_match(fr, "return\\(f\\)")
+  # ...and it still falls back to the document's page size for a new template
+  expect_match(fr, "page_width"); expect_match(fr, "page_height")
+  op <- .da_whole(src, "rb_open_template <- function")
+  expect_match(op, "t\\$ref_width")
+  expect_match(op, "t\\$ref_height")
+  expect_match(op, "rb\\$frame <- if")
+  # a template being drawn for the first time has no frame of its own until the
+  # first box is drawn - and then it pins one, or a second example of a different
+  # page size moves every box already on screen
+  expect_match(.da_joined(), "rb\\$frame <- NULL")
+  pin <- .da_whole(src, "\\.rb_pin_frame <- function")
+  expect_match(pin, "if \\(!is\\.null\\(rb\\$frame\\)\\) return")
+  expect_match(pin, "rb\\$frame <- f")
+  # and it can never be the reason a table failed to open
+  expect_match(pin, "tryCatch\\(rb_frame\\(\\)")
+  for (fn in c("\\.rb_load_draft <- function", "\\.rb_load_vdraft <- function"))
+    expect_match(.da_whole(src, fn), "\\.rb_pin_frame\\(\\)", info = fn)
+  # ...and a second example never re-stamps it
+  up <- .da_whole(src, "observeEvent\\(input\\$ts_file, \\{$")
+  expect_false(grepl("rb$frame <- rb_frame()", up, fixed = TRUE))
+  # NOT SILENT: a page of a different size is read scaled, and that is said
+  nt <- .da_whole(src, "output\\$rb_frame_note <- renderText")
+  expect_match(nt, "a different size", fixed = TRUE)
+  expect_match(.da_joined(), 'textOutput\\("rb_frame_note"')
+})
+
+# ---------------------------------------------------------------------------
+# H5. "There is no add tables from a second example - and it is the mode the
+# owner described."
+# ---------------------------------------------------------------------------
+
+test_that("a second example changes only the page, and the seeders stand down", {
+  src <- .da_src(); joined <- .da_joined()
+  up <- .da_whole(src, "observeEvent\\(input\\$ts_file, \\{$")
+  # identity, tables and values all stand: the observer touches none of them
+  for (bad in c("rb$tables <- list()", "rb$pairs <- list()",
+                'updateTextInput(session, "rb_bank"',
+                'updateTextAreaInput(session, "rb_fp"'))
+    expect_false(grepl(bad, up, fixed = TRUE), info = bad)
+  # the file just chosen IS the document: rb_doc() prefers a handed-over path,
+  # so without this the picker did nothing after a template was opened
+  expect_match(up, "rb_handoff\\(NULL\\)")
+  # ...and it is not silent
+  expect_match(up, "another example", fixed = TRUE)
+  # the three seeding observers stand down while there is work on screen, or the
+  # issuer is overwritten from the new filename and the phrases wholesale
+  seed <- .da_block(src, "rb_id_auto <- reactiveVal", 72L)
+  expect_match(seed, "if \\(length\\(rb\\$tables\\) \\|\\| length\\(rb\\$pairs\\)\\) return\\(\\)")
+  # there IS a way back, and it is the only thing that empties the screen
+  expect_match(joined, 'actionLink\\("rb_fresh"')
+  fresh <- .da_whole(src, "observeEvent\\(input\\$rb_fresh")
+  expect_match(fresh, "rb\\$tables <- list\\(\\)")
+  expect_match(fresh, "rb_editing\\(NA_character_\\)")
+  expect_match(fresh, "Nothing was saved to the library", fixed = TRUE)
+})
+
+# ---------------------------------------------------------------------------
+# L5. "Saving a report template neither clears the pickup queue nor guards
+# against being silently shadowed."
+# ---------------------------------------------------------------------------
+
+test_that("saving a report template clears the pickup queue and cannot be shadowed", {
+  src <- .da_src()
+  blk <- .da_whole(src, "observeEvent\\(input\\$rb_save, \\{")
+  # the same status word the statement toolkit writes, which is what takes the
+  # document off Admin's "needs pickup" list
+  expect_match(blk, 'set_upload_status\\(cv_upload_id\\(\\), "wizard_saved"')
+  # ...but only for the upload this template was actually taught FROM
+  expect_match(blk, "identical\\(as\\.character\\(h\\)\\[1\\], as\\.character\\(sc\\$path\\)\\[1\\]\\)")
+  # a save under a curated id would be loaded from the curated folder first and
+  # never used, so it is renamed and SAID rather than silently shadowed
+  expect_match(blk, 'identical\\(as\\.character\\(cur\\$origin')
+  expect_match(blk, 'paste0\\(t\\$id, "_custom"\\)')
+  expect_match(blk, "would never have been used", fixed = TRUE)
+  # and the library is reloaded, so the template is usable without a restart
+  expect_match(blk, "tpl_bump\\(")
+})
+
+# ---------------------------------------------------------------------------
+# D2, D3, D6. "There are LOTS of buttons, lots of things to interact with. It
+# NEEDS to be even more simple." / "Save - this needs to be more prominent." /
+# "Clear distinction between when I'm editing columns, tables etc."
+# ---------------------------------------------------------------------------
+
+test_that("the builder does not offer two controls for one job", {
+  joined <- .da_joined()
+  # "Drag its width on the page" armed the drag pressing Edit already arms, and
+  # "Delete this column" did what the x on the column's own row does.
+  expect_false(grepl('actionButton("rb_cdrag"', joined, fixed = TRUE))
+  expect_false(grepl('actionButton("rb_cdel"', joined, fixed = TRUE))
+  expect_false(grepl("input$rb_cdrag", joined, fixed = TRUE))
+  expect_false(grepl("input$rb_cdel", joined, fixed = TRUE))
+  # ...and the two things they did are still one press away
+  expect_match(joined, 'observeEvent\\(input\\[\\[paste0\\("rb_cs_", j\\)\\]\\]')
+  expect_match(joined, 'paste0\\("rb_cx_", j\\)')
+})
+
+test_that("the answer the tool worked out is on screen even when the control is folded away", {
+  src <- .da_src(); joined <- .da_joined()
+  # "It's top row" is collapsed, as asked -- but the ANSWER is printed in the
+  # line above it, or folding the control away would hide a fact.
+  i_sum <- grep("Change what the top rows are", src)[1]
+  i_hdr <- grep('radioButtons\\("rb_hdr"', src)[1]
+  expect_false(is.na(i_sum)); expect_true(i_sum < i_hdr)
+  step <- .da_whole(src, "output\\$rb_step <- renderUI")
+  expect_match(step, "its top row names the columns", fixed = TRUE)
+  expect_match(step, "its top row is data", fixed = TRUE)
+  # the save name is composed, so its box is folded away -- and printed
+  expect_match(joined, 'textOutput\\("rb_id_note"')
+  expect_match(.da_whole(src, "output\\$rb_id_note <- renderText"), "Saves as %s", fixed = TRUE)
+})
+
+test_that("Save pulls the eye, and says what it will do", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, 'actionButton\\("rb_save", "Save template",\\s*\\n?\\s*class = "btn-primary btn-lg rb-save"\\)')
+  css <- readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE)
+  expect_true(any(grepl("^\\.rb-save\\{", css)))
+  note <- .da_whole(src, "output\\$rb_save_note <- renderText")
+  expect_match(note, "Nothing to save yet", fixed = TRUE)
+  expect_match(note, "Replaces the saved template", fixed = TRUE)
+  expect_match(note, "Adds %s to the library", fixed = TRUE)
+  expect_match(joined, 'textOutput\\("rb_save_note"')
+})
+
+test_that("the banner always says which of the four things the next gesture is about", {
+  src <- .da_src()
+  about <- eval(parse(text = .da_whole(src, "^  \\.rb_about <- function")))
+  expect_identical(about("title"), "TABLE")
+  expect_identical(about("cols"), "TABLE")
+  expect_identical(about("bottom"), "TABLE")
+  expect_identical(about("addcol"), "COLUMN")
+  expect_identical(about("colpos"), "COLUMN")
+  expect_identical(about("label"), "VALUE")
+  expect_identical(about("value"), "VALUE")
+  expect_identical(about("phrase"), "DOCUMENT")
+  expect_identical(about(""), "")
+  expect_identical(about(NULL), "")
+  # every mode the screen can be in has an answer
+  ask <- .da_block(src, "\\.RB_ASK <- list\\(", 40L)
+  for (m in c("title", "cols", "addcol", "colpos", "start", "end", "bottom",
+              "label", "value", "phrase"))
+    expect_true(nzchar(about(m)), info = m)
+  # and it is written in the banner
+  expect_match(.da_block(src, "output\\$rb_arm <- renderUI", 40L), "\\.rb_about\\(m\\)")
+})
+
+test_that("a column list written out of order still pushes the right neighbours", {
+  # Everything that builds a column list sorts it, but a template written by
+  # hand need not have - and "the one beside it" is meaningless on an unsorted
+  # list, so the wrong columns would move.
+  src <- .da_src()
+  eval(parse(text = grep("^  \\.RB_MIN_COL <- ", src, value = TRUE)[1]))
+  f <- eval(parse(text = .da_whole(src, "^  \\.rb_move_band <- function")))
+  jumbled <- list(list(name = "c", x_min = 90, x_max = 130),
+                  list(name = "a", x_min = 10, x_max = 50),
+                  list(name = "b", x_min = 50, x_max = 90))
+  out <- f(jumbled, 3L, 50, 110, 400)          # "b" is the middle one
+  nm <- vapply(out, function(cc) cc$name, character(1))
+  expect_identical(nm, c("a", "b", "c"))       # answered left to right
+  expect_equal(out[[1]]$x_max, 50)             # "a" did not move
+  expect_equal(c(out[[3]]$x_min, out[[3]]$x_max), c(110, 150))
+})
+
+test_that("the ways to say where it ends are folded, and the direct corrections are not", {
+  # "There should be CLEAR distinctions between what's needed info wise NOW and
+  # report level." The end and the bottom edge are worked out; the four
+  # shortcuts are how to answer faster when one of them is wrong, so they fold.
+  src <- .da_src()
+  w <- .da_whole(src, "output\\$rb_where <- renderUI")
+  i_sum <- regexpr("Other ways to say where it ends", w, fixed = TRUE)
+  expect_gt(i_sum, 0L)
+  for (b in c("rb_endauto", "rb_endpage", "rb_endlast", "rb_clearbottom"))
+    expect_gt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
+  # the two that correct a boundary directly stay on the line they belong to
+  for (b in c("rb_setstart", "rb_setend", "rb_gostart", "rb_goend", "rb_setbottom"))
+    expect_lt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
+})
+
+# ---------------------------------------------------------------------------
+# ADMIN: THE LIBRARY AND WHAT IT IS SAYING
+#
+# "All templates are accessible, but broken down by statement and other... All
+# templates should also be viewable in admin, but split by statement and other."
+# "All feedback accessible in admin in same area, but ensure it can be traced to
+# the statement and template."
+# ---------------------------------------------------------------------------
+
+# .ad_fun(name, also, consts) -- app.R's pure Admin helpers, lifted and CALLED.
+# Same trick as test-app-ui.R's .ui_fun: read forward from the definition until it
+# parses, evaluate it in an environment whose parent is globalenv (which carries
+# the engine). A grep would only prove the source mentions a join; this proves the
+# join puts the document name in the row.
+.ad_fun <- function(name, also = character(0), consts = character(0)) {
+  src <- .da_src()
+  env <- new.env(parent = globalenv())
+  for (nm in consts) {
+    i <- grep(sprintf("^\\s*\\Q%s\\E <- ", nm), src, perl = TRUE)
+    expect_length(i, 1L)
+    assign(nm, eval(parse(text = src[i[1]])[[1]], envir = env), envir = env)
+  }
+  for (nm in unique(c(also, name))) {
+    i <- grep(sprintf("^\\s*\\Q%s\\E <- function", nm), src, perl = TRUE)
+    expect_length(i, 1L)
+    got <- FALSE
+    for (j in seq(i[1], min(i[1] + 250L, length(src)))) {
+      f <- tryCatch(eval(parse(text = paste(src[i[1]:j], collapse = "\n"))[[1]], envir = env),
+                    error = function(e) NULL)
+      if (is.function(f)) { assign(nm, f, envir = env); got <- TRUE; break }
+    }
+    expect_true(got, info = paste("could not lift", nm, "out of app.R"))
+  }
+  get(name, envir = env)
+}
+
+test_that("C1: every kind of template lands in one of exactly two bands", {
+  route <- .ad_fun(".adm_route", consts = ".ADM_ROUTES")
+  expect_identical(route("statement"), "Bank statement")
+  expect_identical(route("fields"),    "Other")
+  expect_identical(route("document"),  "Other")
+  # the run log's words for the same two kinds, so a rating on a form or a report
+  # cannot fall out of the Other band just because the record spells it differently
+  expect_identical(route("form"),   "Other")
+  expect_identical(route("tables"), "Other")
+  # and a kind nobody recognises is NEVER folded into a route it might not be
+  expect_identical(route(NA), "Route not recorded")
+  expect_identical(route(NULL), "Route not recorded")
+  expect_identical(route("something_new"), "Route not recorded")
+  # ...and it sorts AFTER the two bands the split is about, because the table is
+  # grouped alphabetically on this column and the odd band must not land between
+  # them
+  bands <- c(route("statement"), route("fields"), route(NA))
+  expect_identical(sort(bands), bands)
+})
+
+test_that("C1: the library is ONE table split into headed bands, not one list", {
+  src <- .da_src()
+  blk <- .da_whole(src, "output\\$adm_tpl_overview <- renderDT")
+  # a real leading column carrying the route...
+  expect_match(blk, "route =")
+  expect_match(blk, "\\.adm_rowgroup\\(")
+  grp <- .da_whole(src, "\\.adm_rowgroup <- function")
+  # ...drawn as the band heading by DT, and HIDDEN, so the split costs no second
+  # table, no second observer and no control
+  expect_match(grp, "rowGroup")
+  expect_match(grp, "dataSrc = 0L")
+  expect_match(grp, "visible = FALSE")
+  expect_match(grp, 'extensions = "RowGroup"')
+  # the row-click handler must read the SAME frame the table was drawn from, or a
+  # row index picks the wrong template the moment the two are built differently
+  sel <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_overview_rows_selected")
+  expect_match(sel, "adm_ov\\(\\)")
+  expect_match(sel, "ov\\$id\\[i\\]")
+})
+
+test_that("C2: a rating carries the document it was left on and the template that read it", {
+  fbo <- .ad_fun(".adm_feedback_overview", also = ".adm_route", consts = ".ADM_ROUTES")
+  fb <- data.frame(
+    ts = c("2026-08-20T01:00:00Z", "2026-08-21T01:00:00Z", "2026-08-22T01:00:00Z"),
+    run_id = c("r1", "r2", "r3"),
+    verdict = c("correct", "wrong", "minor"),
+    flagged = c(FALSE, TRUE, TRUE),
+    comment = c(NA, "the closing balance is wrong", ""),
+    requested_by = c("beth", "beth", "sam"),
+    template_id = c("anz_pdf", "acme_report", "gone_tpl"),
+    stringsAsFactors = FALSE)
+  runs <- data.frame(
+    run_id = c("r1", "r2"),
+    source_file = c("/tmp/uploads/SMITH - ANZ - March.pdf", "/tmp/uploads/quarterly.pdf"),
+    kind = c("statement", "tables"), stringsAsFactors = FALSE)
+  lib <- list(
+    anz_pdf     = list(id = "anz_pdf", mode = "statement", bank = "ANZ", statement_type = "everyday"),
+    acme_report = list(id = "acme_report", mode = "document", bank = "ACME"))
+
+  out <- fbo(fb, runs, lib)
+  # EVERY rating, not just the flagged ones -- a form has no reconciliation behind
+  # it, so a "correct" is evidence too
+  expect_equal(nrow(out), 3L)
+  expect_true(all(c("route", "when", "document", "template", "verdict", "comment",
+                    "who", "template_id", "run_id") %in% names(out)))
+  # the statement band first, then Other, then anything whose route is unknown
+  expect_identical(out$route, c("Bank statement", "Other", "Route not recorded"))
+  # the document name comes off the RUN log -- the feedback record has never held it
+  expect_identical(out$document[out$run_id == "r1"], "SMITH - ANZ - March.pdf")
+  # the template is NAMED, never a bare id, and the id survives as its own column
+  expect_identical(out$template[out$run_id == "r2"], "ACME")
+  expect_identical(out$template_id[out$run_id == "r2"], "acme_report")
+  # a template that has since been deleted does not silently take a route with it
+  expect_identical(out$route[out$run_id == "r3"], "Route not recorded")
+  # and neither a missing run record nor a blank comment prints as an empty cell
+  expect_identical(out$document[out$run_id == "r3"], "not recorded")
+  expect_identical(out$comment[out$run_id == "r3"], "not recorded")
+  expect_identical(out$comment[out$run_id == "r1"], "not recorded")
+
+  # A DELETED TEMPLATE falls back to the RUN's own kind rather than to nothing.
+  runs2 <- rbind(runs, data.frame(run_id = "r3", source_file = "/tmp/f.pdf",
+                                  kind = "form", stringsAsFactors = FALSE))
+  expect_identical(fbo(fb, runs2, lib)$route[fbo(fb, runs2, lib)$run_id == "r3"], "Other")
+  # nothing at all is an empty frame with the promised columns, not an error
+  expect_equal(nrow(fbo(NULL, NULL, list())), 0L)
+  expect_equal(nrow(fbo(data.frame(), NULL, list())), 0L)
+})
+
+test_that("C2: the feedback table sits beside the templates and leads back to one", {
+  src <- .da_src(); joined <- .da_joined()
+  # rendered on the Templates tab, split the same way as the library above it
+  expect_match(joined, 'DTOutput\\("adm_tpl_feedback"\\)')
+  expect_match(.da_whole(src, "output\\$adm_tpl_feedback <- renderDT"), "\\.adm_rowgroup\\(")
+  # traceable means a ROUTE to the template, not a printed id
+  clk <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_feedback_rows_selected")
+  expect_match(clk, 'updateSelectInput\\(session, "adm_tpl_pick"')
+  # ...and it says so when that template is no longer in the library, rather than
+  # selecting nothing and looking broken
+  expect_match(clk, "no longer in the library")
+  # the old flagged-only table on a different tab is GONE, not a second copy
+  expect_false(grepl("output$adm_feedback <- renderDT", joined, fixed = TRUE))
+})
+
+test_that("J2: a template that would not load is NAMED on screen, not silently absent", {
+  src <- .da_src()
+  blk <- .da_whole(src, "output\\$adm_tpl_load_errors <- renderUI")
+  # all three loaders collect the reasons; all three are read
+  for (r in c("all_templates\\(\\)", "all_field_templates_admin\\(\\)",
+              "all_doc_templates_admin\\(\\)"))
+    expect_match(blk, sprintf('attr\\(%s, "load_errors"\\)', r))
+  # it says the consequence, not just the count -- a template that did not load is
+  # not in use, which is the fact that explains "my template stopped working"
+  expect_match(blk, "not in use")
+  # and it is at the TOP of the tab, above the library it is about
+  ui <- grep('uiOutput\\("adm_tpl_load_errors"\\)', src)[1]
+  tbl <- grep('DTOutput\\("adm_tpl_overview"\\)', src)[1]
+  expect_true(!is.na(ui) && !is.na(tbl) && ui < tbl)
+
+  # END TO END: a report template the loader refuses really does come back with a
+  # reason attached, which is the thing app.R now reads.
+  d <- tempfile("j2_"); dir.create(d)
+  yaml::write_yaml(list(id = "broken_rep", mode = "document",
+                        fingerprint = list(page_contains_all = list("x")),
+                        tables = list()), file.path(d, "broken.yaml"))
+  got <- load_document_templates(d, NULL, include_hidden = TRUE)
+  expect_length(got, 0L)
+  why <- as.character(attr(got, "load_errors") %||% character(0))
+  expect_true(length(why) >= 1L)
+  expect_match(why[1], "broken_rep")
+})
+
+test_that("H7: one button asks whether the rest of the template still reads", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(joined, 'actionButton\\("adm_tpl_check"')
+  blk <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_check")
+  expect_match(blk, "req\\(admin_ok\\(\\)\\)")
+  expect_match(blk, "template_check\\(t, paths")
+  # THE EXAMPLES ARE WORKED OUT, NOT ASKED FOR: no folder picker, no second
+  # template chooser -- it uses the template already selected and the documents
+  # this box has already read with it.
+  expect_match(blk, "\\.tpl_examples\\(id\\)")
+  expect_match(blk, "adm_lib\\(\\)\\[\\[id\\]\\]")
+  ex <- .da_whole(src, "\\.tpl_examples <- function")
+  expect_match(ex, "read_uploads\\(UPLOADS_DIR\\)")
+  expect_match(ex, "u\\$template == tid")
+  expect_match(ex, "!u\\$purged")           # a purged upload has no file to read
+  expect_match(ex, "utils::head\\(ps, n\\)")   # bounded: it blocks the one process
+  # a stale grid over a template that has since been changed is the wrong figure
+  # that looks right, one screen along
+  expect_match(joined, "adm_check\\(NULL\\)")
+  # and it never adds a control of its own for the folder
+  expect_false(grepl('fileInput("adm_tpl_check', joined, fixed = TRUE))
+})
+
+test_that("H9: a template saved by somebody else is not silently overwritten", {
+  src <- .da_src()
+  save <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_save")
+  # what was OPENED, compared with what is on disk NOW -- not with the app's cache
+  expect_match(save, "\\.adm_on_disk\\(kind, tid\\)")
+  expect_match(save, "adm_tpl_opened\\(\\)")
+  expect_match(save, "template_sha256")
+  # it refuses ONCE and says so; the next press means it (the pattern Remove uses
+  # in the builder), so no new control is needed to confirm
+  expect_match(save, "adm_tpl_forced")
+  expect_match(save, "Somebody else on this server saved this template")
+  expect_match(save, "press Save once more")
+  # the box is stamped when it is FILLED, or there is nothing to compare against
+  pick <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_pick,")
+  expect_match(pick, "adm_tpl_opened\\(list\\(")
+  # and it reads the USER folders, which are the only ones a save can write to
+  disk <- .da_whole(src, "\\.adm_on_disk <- function")
+  expect_match(disk, "USER_FIELDS_DIR")
+  expect_match(disk, "USER_DOC_DIR")
+  expect_match(disk, "USER_TEMPLATES_DIR")
+})
+
+test_that("K7: Admin reads a bounded slice of the history and says which slice", {
+  hist <- .ad_fun(".adm_history", consts = ".ADM_HISTORY_MAX")
+  d <- tempfile("k7_"); dir.create(file.path(d, "runs"), recursive = TRUE)
+  dir.create(file.path(d, "archive"), recursive = TRUE)
+  for (i in 1:5)
+    writeLines(jsonlite::toJSON(list(run_id = paste0("live", i), status = "ok"),
+                                auto_unbox = TRUE),
+               file.path(d, "runs", sprintf("live%02d.json", i)))
+  writeLines(vapply(1:40, function(i)
+    as.character(jsonlite::toJSON(list(run_id = paste0("arch", i), status = "ok"),
+                                  auto_unbox = TRUE)), character(1)),
+    file.path(d, "archive", "runs-2025.jsonl"))
+
+  # UNBOUNDED IS WHAT FROZE EVERY BROWSER: 20,000 archived rows took 10.5s in the
+  # one process the team shares. Given a budget it reads that many and no more.
+  small <- hist(d, "runs", budget = 7L)
+  expect_equal(nrow(small), 7L)
+  expect_identical(unname(attr(small, "kept_of")[["total"]]), 45L)
+  expect_identical(unname(attr(small, "kept_of")[["read"]]), 7L)
+  # the LIVE folder first -- it is what has not been archived yet, so it is newest
+  expect_true(all(grepl("^live", small$run_id[1:5])))
+  # ...and with room for everything, everything is read and nothing is claimed to
+  # be missing
+  whole <- hist(d, "runs", budget = 500L)
+  expect_equal(nrow(whole), 45L)
+  expect_identical(unname(attr(whole, "kept_of")[["total"]]), 45L)
+  # an empty folder is an empty frame, not an error
+  e <- tempfile("k7e_"); dir.create(e)
+  expect_equal(nrow(hist(e, "runs")), 0L)
+
+  # and the screen is wired to it -- for the RATINGS too, which used to read only
+  # the live folder, so every rating older than the rollup had already vanished
+  # from the one screen that is meant to hold all of them
+  la <- .da_whole(.da_src(), "load_admin <- function")
+  expect_match(la, '\\.adm_history\\(LOGDIR, "runs"\\)')
+  expect_match(la, '\\.adm_history\\(LOGDIR, "feedback"\\)')
+  expect_false(grepl("read_runs_all", la, fixed = TRUE))
+  # a partial picture that does not admit it is partial is what the charter forbids
+  note <- .da_whole(.da_src(), "output\\$adm_history_note <- renderUI")
+  expect_match(note, "kept_of")
+  expect_match(note, "logs/archive/")
+})
+
+test_that("L6: the drift table says which route each failing template belongs to", {
+  blk <- .da_whole(.da_src(), "output\\$adm_drift <- renderDT")
+  expect_match(blk, "\\.adm_route\\(")
+  expect_match(blk, "template_drift\\(d\\$runs\\)")
+  # the engine defines health per kind now; a report that is not reconciling is
+  # not a fact, so the wording above the table must not promise one
+  ui <- .da_block(.da_src(), 'h4\\("Templates that started failing recently"\\)', 12L)
+  expect_false(grepl("stop adding up", ui, fixed = TRUE))
+  expect_match(ui, "whichever kind it is")
+})
+
+test_that("1c: Admin is two tabs, and the control count did not go up", {
+  src <- .da_src()
+  # the Admin sub-tabs -- the only tabPanel( at this indent in the file
+  i <- grep("^        tabPanel\\($", src)
+  names_ <- trimws(gsub('[",]', "", src[i + 1L]))
+  expect_identical(names_, c("Templates", "Health"))
+  # nothing was DELETED to get there -- every control that did something is still
+  # somewhere on one of the two
+  joined <- .da_joined()
+  for (id in c("adm_meta_level", "adm_meta_save", "adm_lex_save", "adm_word_add",
+               "adm_sugg_approve", "adm_ba_run", "adm_dict_add", "adm_rollup",
+               "adm_purge_uploads", "adm_up_wizard", "adm_inbox_wizard"))
+    expect_match(joined, sprintf('"%s"', id), fixed = TRUE)
+  # THE BUDGET. One control was added (the template check) and two removed (the
+  # metadata category list, which repeated the level above it, and the
+  # single-statement audit picker, a third route to an export two other controls
+  # already offer). It must never drift back up.
+  pat <- paste0("(actionButton|actionLink|textInput|textAreaInput|numericInput|",
+                "selectInput|selectizeInput|checkboxInput|checkboxGroupInput|",
+                "radioButtons|fileInput|sliderInput|downloadButton|downloadLink)",
+                "[(][\"][a-zA-Z0-9_]+")
+  ids <- sub('.*"', "", unlist(regmatches(src, gregexpr(pat, src))))
+  expect_lte(sum(startsWith(ids, "adm_")), 44L)
+  expect_lte(length(ids), 180L)
+  expect_false("adm_meta_cats" %in% ids)
+  expect_false("adm_audit_one" %in% ids)
+  expect_true("adm_tpl_check" %in% ids)
 })

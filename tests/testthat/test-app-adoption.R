@@ -166,7 +166,10 @@ test_that("the retention note comes from the setting, and sits where it is acted
   expect_false(grepl("UPLOADS_NOTE", .app_block(src, 'fileInput\\("cv_file"', 8L), fixed = TRUE))
   # ...but still directly above the button that does the deleting, so the sentence
   # and the button can only ever quote the same number
-  expect_match(.app_block(src, 'h4\\("Saved statements - retention"\\)', 3L),
+  # WAS: h4. Retention now sits under one "Housekeeping" heading on the Health tab
+  # (register 1c), so it is a level down; the rule -- the sentence directly above
+  # the button that does the deleting -- is what this pins and is unchanged.
+  expect_match(.app_block(src, 'h5\\("Saved statements - retention"\\)', 3L),
                "UPLOADS_NOTE", fixed = TRUE)
 })
 

@@ -102,6 +102,18 @@ MAX_UPLOAD_MB <- suppressWarnings(as.numeric(CONFIG$app$max_upload_mb %||% 200))
 # Governance is unaffected: what reaches the dashboards is gated separately, on
 # template origin (feed.allowed_template_origins).
 USE_USER_TEMPLATES <- isTRUE(CONFIG$app$user_templates_default %||% TRUE)
+# WHEN THE EDITOR OPENS BY ITSELF. A deployment setting with a stated default,
+# not a number buried in the code, and the SAME three words feed.min_trust uses so
+# nobody has to learn a second vocabulary:
+#   high   - a statement whose confidence is medium or low opens the toolkit
+#   medium - only a `low` statement opens it (the default)
+#   any    - a statement never opens it by itself
+# A report or a form has no confidence to measure - nothing about either is
+# proven, because neither reconciles - so the editor always opens on those, and
+# this setting cannot switch that off. The door is on screen either way.
+EDITOR_MIN_TRUST <- tolower(as.character(
+  CONFIG$convert$open_editor_below_trust %||% "medium")[1])
+if (!(EDITOR_MIN_TRUST %in% c("high", "medium", "any"))) EDITOR_MIN_TRUST <- "medium"
 if (!is.finite(MAX_UPLOAD_MB) || MAX_UPLOAD_MB <= 0) MAX_UPLOAD_MB <- 200
 options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2)
 # HOW MANY CONVERSIONS MAY RUN AT ONCE. Every conversion now runs in its own
@@ -237,6 +249,220 @@ pal_fill <- function(name, alpha) paste0(PALETTE[[name]], alpha)
 # second one that way would mean six places that each have to remember the list.
 # Asking it in one place is the only version of this that stays right.
 .is_txn_result <- function(res) !isTRUE((res$kind %||% "") %in% c("form", "tables"))
+
+# .needs_editor(res, min_trust) -- should the editor open BY ITSELF on this
+# result?
+#
+# "For Other statements the likelihood that something will need to change on
+# every convert - it shouldn't just auto process, it should process and open up
+# the editor. For statements I want a threshold where it does and where it
+# doesn't, but ensure there is an option even if it's confident."
+#
+# ONE LINE COVERS BOTH ROUTES, and it is honest about why. A report or a form
+# carries NO trust at all -- there is no reconciliation behind either, so nothing
+# about the figures is proven -- and .trust_ok() coalesces an absent level to the
+# lowest, so the OTHER half falls out of the same expression for free: it always
+# opens. The !.is_txn_result clause stays EXPLICIT so that setting the threshold
+# to "any" cannot switch the other route off; the threshold was asked for on
+# statements only.
+#
+# The status clause is load-bearing. An `unsupported` statement is trust `low`
+# and must NOT auto-open the toolkit: the card on that result is still asking
+# "is this a statement or something else?", and opening the statement toolkit
+# over it would answer, for her, the one question the card exists to put.
+.needs_editor <- function(res, min_trust) {
+  isTRUE((res$status %||% "") %in% c("ok", "needs_review")) &&
+    (!.is_txn_result(res) || !.trust_ok(res$trust$level, min_trust))
+}
+
+# .blocking_diag(res) -- the diagnosis that OUTRANKS "no template for this
+# layout", or NULL.
+#
+# Driven with no OCR software and an image-only PDF: the card said "No template
+# for this layout yet", the green button said "Set it up as a report", and the
+# diagnostics table further down said correctly that this machine has no OCR
+# software installed and that building a template will NOT help until that is
+# done. Three answers on one screen, and the biggest button was the wrong one.
+#
+# The engine already grades this: `severity` high with `fix_owner` naming who can
+# actually fix it. "input" is the file itself (rescan it, re-export it, split it)
+# and "escalate" is an engine or install gap -- neither is mended by drawing boxes
+# on a page, so neither may be offered a template button as its primary action.
+# "template" IS mended that way and is deliberately not in the list.
+.blocking_diag <- function(res) {
+  d <- res$diagnostics
+  if (!is.data.frame(d) || !nrow(d)) return(NULL)
+  if (!all(c("category", "severity", "detail", "how_to_fix", "fix_owner") %in% names(d)))
+    return(NULL)
+  hit <- d$severity %in% "high" & d$fix_owner %in% c("input", "escalate") &
+    !(d$category %in% "none")
+  if (!any(hit)) return(NULL)
+  d[which(hit)[1], , drop = FALSE]
+}
+
+# .scan_note(ocr_pages, low_conf) -- ONE SENTENCE saying this came off a scan,
+# for the line beside the download.
+#
+# "A badly OCR'd page can come back ok." The per-word confidence is carried the
+# whole way through the reader and every doubtful figure already earns a row
+# flag, but the caveat lived in a diagnostics panel behind "Show me how it read
+# this" -- a panel most people never open -- while the verdict above it was
+# green. For a unit where a large share of what arrives is a scan of a
+# photocopy, that is the wrong way round: it belongs above the fold, next to the
+# download, where the person is looking.
+#
+# NULL when nothing was machine-read, so an ordinary text PDF and every CSV are
+# untouched.
+.scan_note <- function(ocr_pages, low_conf) {
+  p <- suppressWarnings(as.integer(ocr_pages %||% NA_integer_)[1])
+  if (is.na(p) || p < 1L) return(NULL)
+  n <- suppressWarnings(as.integer(low_conf %||% NA_integer_)[1])
+  if (is.na(n)) n <- 0L
+  if (n > 0L)
+    sprintf("This was read from a scan, and %d figure%s came out too faint to be sure of - check %s against the page before you rely on %s.",
+            n, if (n == 1L) "" else "s", if (n == 1L) "it" else "them",
+            if (n == 1L) "it" else "them")
+  else
+    "This was read from a scan, so check the figures against the page before you rely on them."
+}
+
+# ---- ADMIN: THE ROUTE LABEL, AND THE TWO TABLES SPLIT BY IT ----------------
+#
+# "All templates are accessible, but broken down by statement and other... All
+# templates should also be viewable in admin, but split by statement and other."
+# "All feedback accessible in admin in same area, but ensure it can be traced to
+# the statement and template."
+#
+# Both faults are one missing thing: Admin was organised by DATA SOURCE (the
+# template library on one tab, the feedback log on another) and no single ROUTE
+# label existed anywhere in the product. So the library was one un-partitioned
+# list and the feedback log was one un-joined frame, and neither said which half
+# of the app it belonged to.
+#
+# .adm_route(kind) is that label, derived once and used by both tables, so the
+# two read as one screen split the same way.
+# The third value exists so a rating whose route genuinely cannot be established
+# is never folded into one it might not belong to. It is worded so that it also
+# SORTS after the other two: the table is grouped by this column and DataTables
+# orders it alphabetically, and "Not recorded" would have put the odd band
+# between the two bands the split is actually about.
+.ADM_ROUTES <- c("Bank statement", "Other", "Route not recorded")
+.adm_route <- function(kind) {
+  k <- as.character(kind %||% "")[1]
+  if (identical(k, "statement")) return(.ADM_ROUTES[1])
+  if (k %in% c("fields", "document", "form", "tables")) return(.ADM_ROUTES[2])
+  .ADM_ROUTES[3]
+}
+
+# .adm_feedback_overview(feedback, runs, templates) -- ONE ROW PER RATING, with
+# the document it was left on and the template that read it.
+#
+# A rating carries a run_id and a template_id and nothing else; the document name
+# lives only in the run log, and which ROUTE the rating is about lives only on the
+# template. Neither join was ever made, so "traced to the statement and template"
+# was two ids on a screen in a different tab from the library.
+#
+# Three deliberate refusals, all of them the honest answer rather than a guess:
+#   * the route comes from the TEMPLATE's kind; if that template has since been
+#     deleted it falls back to the RUN's own kind; if neither is on the box it is
+#     "Not recorded" and gets its own band -- never folded into a route it might
+#     not belong to.
+#   * the document is the run's own source_file, printed as "not recorded" when
+#     the run record has been archived away, which is the rule the gaps table
+#     already applies.
+#   * `asked_kind` (what the person told Convert the file was) is deliberately not
+#     used: it is what she said, not what read it.
+#
+# Pure, so it can be lifted out of app.R and called in a test. It belongs beside
+# template_drift() in R/analytics.R and should move there whole.
+.adm_feedback_overview <- function(feedback, runs = NULL, templates = list()) {
+  cols <- c("route", "when", "document", "template", "verdict", "comment",
+            "who", "template_id", "run_id")
+  empty <- stats::setNames(
+    data.frame(matrix(character(0), 0, length(cols)), stringsAsFactors = FALSE), cols)
+  if (is.null(feedback) || !is.data.frame(feedback) || !nrow(feedback)) return(empty)
+  col <- function(df, name) {
+    if (is.null(df) || !is.data.frame(df) || !(name %in% names(df)))
+      return(rep(NA_character_, if (is.data.frame(df)) nrow(df) else 0L))
+    as.character(df[[name]])
+  }
+  said <- function(v) { v <- as.character(v); v[is.na(v) | !nzchar(trimws(v))] <- "not recorded"; v }
+  fb_run <- col(feedback, "run_id"); fb_tpl <- col(feedback, "template_id")
+  r_id <- col(runs, "run_id")
+  i <- match(fb_run, r_id)
+  r_file <- col(runs, "source_file")[i]
+  r_kind <- col(runs, "kind")[i]
+  # The template as it is NAMED on screen, never a bare id -- the id is kept as
+  # its own column so a maintainer can still act on it.
+  tk <- vapply(fb_tpl, function(id) {
+    t <- if (!is.na(id) && nzchar(id)) templates[[id]] else NULL
+    if (is.null(t)) NA_character_ else safe(template_kind(t), NA_character_)
+  }, character(1), USE.NAMES = FALSE)
+  tn <- vapply(fb_tpl, function(id) {
+    t <- if (!is.na(id) && nzchar(id)) templates[[id]] else NULL
+    if (is.null(t)) NA_character_ else as.character(safe(template_library_name(t), NA_character_))[1]
+  }, character(1), USE.NAMES = FALSE)
+  route <- vapply(seq_along(fb_run), function(j)
+    .adm_route(if (!is.na(tk[j])) tk[j] else r_kind[j]), character(1))
+  out <- data.frame(
+    route    = route,
+    when     = said(safe(local_time_text(col(feedback, "ts")), col(feedback, "ts"))),
+    document = said(basename(ifelse(is.na(r_file), "", r_file))),
+    template = ifelse(is.na(tn) | !nzchar(tn), said(fb_tpl), tn),
+    verdict  = said(col(feedback, "verdict")),
+    comment  = said(col(feedback, "comment")),
+    who      = said(col(feedback, "requested_by")),
+    template_id = said(fb_tpl),
+    run_id      = said(fb_run),
+    stringsAsFactors = FALSE)
+  # Newest first, on the record's own stamp rather than the words shown.
+  o <- order(col(feedback, "ts"), decreasing = TRUE)
+  out <- out[o, , drop = FALSE]
+  # Statement band, then Other, then anything whose route is genuinely unknown.
+  out <- out[order(match(out$route, .ADM_ROUTES)), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+# .ADM_HISTORY_MAX / .adm_history(logdir, subdir, budget) -- the newest slice of
+# a log folder, and how much of it was left behind.
+#
+# Admin used to parse EVERY line of every archive file, one record at a time,
+# automatically, the moment the tab was opened. Measured: 20,000 archived rows
+# took 10.5 seconds -- thirteen months at fifty conversions a day -- and it
+# happens in the one Shiny process the whole team shares, so every other
+# analyst's browser is frozen for it. Worse, it gets slower every week, so the
+# tab a maintainer opens during an incident is the slowest thing on the box.
+#
+# The picture Admin draws does not need every record ever written; it needs the
+# recent ones. So this reads the LIVE folder first (what has not been archived
+# yet, and therefore the newest) and tops up from the yearly archive, newest year
+# first, up to a budget -- and it counts what it did not read so the screen can
+# say so. Nothing is deleted or hidden: the archive is intact on disk, and
+# `Tidy up logs` is still what moves records into it.
+.ADM_HISTORY_MAX <- 2500L
+.adm_history <- function(logdir, subdir, budget = .ADM_HISTORY_MAX) {
+  live_dir <- file.path(logdir, subdir)
+  files <- if (dir.exists(live_dir))
+    list.files(live_dir, pattern = "\\.json$", full.names = TRUE) else character(0)
+  if (length(files) > 1L)
+    files <- files[order(file.mtime(files), decreasing = TRUE)]
+  arch <- sort(Sys.glob(file.path(logdir, "archive", paste0(subdir, "-*.jsonl"))),
+               decreasing = TRUE)
+  lines <- unlist(lapply(arch, function(a) rev(safe(safe_readlines(a), character(0)))),
+                  use.names = FALSE)
+  lines <- lines[nzchar(trimws(lines %||% character(0)))]
+  total <- length(files) + length(lines)
+  take_f <- utils::head(files, budget)
+  take_l <- utils::head(lines, max(0L, budget - length(take_f)))
+  recs <- c(lapply(take_f, function(f)
+              safe(jsonlite::fromJSON(paste(safe_readlines(f), collapse = "\n")), NULL)),
+            lapply(take_l, function(l) safe(jsonlite::fromJSON(l), NULL)))
+  recs <- Filter(Negate(is.null), recs)
+  out <- if (length(recs)) .rows_bind(recs) else data.frame()
+  attr(out, "kept_of") <- c(read = nrow(out), total = total)
+  out
+}
 
 APP_CSS <- file.path("www", "app.css")
 if (!file.exists(APP_CSS))
@@ -427,10 +653,13 @@ ui <- fluidPage(
           conditionalPanel("input.cv_kind != 'other'",
             selectInput("cv_bank_quick", "Bank",
                         choices = c("Detect automatically" = ""), width = "100%")),
+          # ONE SENTENCE. The second half ("it is read by a form or report
+          # template, or you set one up") named two kinds of template nobody
+          # outside Admin distinguishes, and said what the empty state four
+          # inches to the right already says in her own words.
           conditionalPanel("input.cv_kind == 'other'",
             div(class = "note", style = "margin:0 0 14px;font-size:12.5px",
-              strong("No bank templates will be tried."),
-              " It is read by a form or report template, or you set one up.")),
+              strong("No bank templates will be tried."))),
           # OFF UNTIL IT CAN WORK, with the reason under it. It was a full-width
           # green button from the moment the page loaded, and pressing it with no
           # QID typed produced a message that fades. So the most prominent
@@ -441,9 +670,21 @@ ui <- fluidPage(
           helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
-          conditionalPanel("input.cv_kind != 'other'",
+          #
+          # AND IT IS NOT A BANK-ONLY PANEL ANY MORE. It was hidden the moment
+          # somebody said "something else", and its list only ever held bank
+          # templates -- so a form or report template could not be forced from
+          # anywhere in the product, on the one route where forcing one is most
+          # often what is wanted (a report family whose fingerprint is a hair too
+          # tight reads as "no template for this layout" and there was no way to
+          # say "no, use that one"). The engine has taken a template of any kind
+          # for a while (convert_document(template_id=), which carries the kind
+          # with it); nothing ever passed one. The list below now follows the
+          # answer to "What is this?" -- bank templates, or form and report
+          # templates -- so the panel is one control that means one thing on both
+          # routes, and the summary says so without naming a bank.
           tags$details(class = "adv-bank",
-            tags$summary("It picked the wrong bank?"),
+            tags$summary("It picked the wrong template?"),
             # NO "include templates built here" tick-box. Whether a colleague's
             # template counts is not a per-conversion decision an accountant should
             # be making -- a template someone here built for this bank either works
@@ -462,7 +703,7 @@ ui <- fluidPage(
             # the screen explaining itself.
             div(style = "padding-top:10px",
               selectInput("cv_template", "Template (optional)",
-                          choices = c("(auto-detect)" = ""), width = "100%"))))
+                          choices = c("(auto-detect)" = ""), width = "100%")))
         ),
         mainPanel(
           width = 8,
@@ -507,13 +748,23 @@ ui <- fluidPage(
           # on a case folder (open the row, then open the panel), and the answer
           # was filed under a heading that does not cover it.
           # ...and the one question a CLEAN result still has to answer: is this
-          # the right bank? A statement read end to end by the wrong template is
-          # the exact failure this tool exists to prevent, and it looks perfect on
-          # screen -- so the way to correct it belongs above the fold, not behind
-          # the evidence toggle. (Nothing rendered this output at all, while
-          # cv_teach stayed silent on a clean result BECAUSE of it: between them
-          # there was no route back anywhere on the page.)
-          uiOutput("cv_rematch"),
+          # read the way I want it? A statement read end to end by the wrong
+          # template is the exact failure this tool exists to prevent, and it
+          # looks perfect on screen -- so the way to correct it belongs above the
+          # fold, not behind the evidence toggle. (Nothing rendered this output at
+          # all, while cv_teach stayed silent on a clean result BECAUSE of it:
+          # between them there was no route back anywhere on the page.)
+          #
+          # ONE DOOR, ALL THREE KINDS. It was cv_rematch and it was guarded on
+          # .is_txn_result, so a converted report or form had no route back to the
+          # template that read it anywhere on this page -- while the two links
+          # written for exactly that landed on an empty "Add a template" screen
+          # and threw the document away. The guard is gone and the widened control
+          # is the one door: for a report or a form it OPENS the template that
+          # read it with the document already under it, and for a statement it
+          # still offers the toolkit. Position unchanged, directly under the
+          # downloads, so the door sits beside the payoff on every route.
+          uiOutput("cv_edit"),
           # Form / labelled-value PDF result (renders only when kind == "form").
           uiOutput("cv_form"),
           # Report result -- many tables, no transactions (kind == "tables").
@@ -649,12 +900,22 @@ ui <- fluidPage(
             # fresh. The line says which of the two is happening. ONE output per
             # id: rb_docname appears once, and only the words around it change.
             uiOutput("rb_editing_note", inline = TRUE),
-            textOutput("rb_docname", inline = TRUE)),
+            textOutput("rb_docname", inline = TRUE),
+            # A page of a different size from the one the boxes were drawn on is
+            # read scaled into their space. Said here, because it is the reason
+            # the boxes sit where they do. (Register H4.)
+            div(style = "font-size:12px;color:#5a6b5f;margin-top:2px",
+                textOutput("rb_frame_note", inline = TRUE))),
           # The kind-of-document radio folds away with the panel, so the way back
           # has to say so -- otherwise somebody who picked "anything else" by
           # mistake has no visible way to change their mind.
           actionButton("rb_change_doc", "Change the document, or what kind it is",
-                       class = "btn-default btn-sm"))),
+                       class = "btn-default btn-sm"),
+          # THE ONLY WAY TO EMPTY THIS SCREEN, and it is one link because it is
+          # the rarer of the two things a second upload can mean. A new document
+          # on top of work in progress is another EXAMPLE of that template; this
+          # says "no, a different template altogether". (Register H5.)
+          actionLink("rb_fresh", "Start a new template", class = "muted"))),
       conditionalPanel("!(input.ts_doctype == 'other' && output.rb_has_doc == true) || output.rb_up_open == true",
       wellPanel(
         h4(style = "margin-top:0", "Teach the tool a new layout"),
@@ -735,11 +996,12 @@ ui <- fluidPage(
       div(class = "rb-sticky", uiOutput("rb_arm")),
       fluidRow(
         column(7,
+          # ONE CONTROL FOR ONE FACT. "Back a page" and "Next page" were two more
+          # buttons doing what this box's own arrows already do, on the screen the
+          # owner called "LOTS of buttons"; the box is labelled with how many pages
+          # there are and is bounded to them, so it cannot be stepped off the end.
           div(style = "display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:0 0 6px",
-            numericInput("rb_page", "Page", 1, min = 1, step = 1, width = "150px"),
-            div(style = "padding-bottom:14px;display:flex;gap:6px",
-              actionButton("rb_prev_page", "\u2190 Back a page", class = "btn-default btn-sm"),
-              actionButton("rb_next_page", "Next page \u2192", class = "btn-default btn-sm"))),
+            numericInput("rb_page", "Page", 1, min = 1, step = 1, width = "150px")),
           # SHOW ME LESS. Everything the tool draws sits on top of what the page
           # says -- and the column names printed on the page are the very thing
           # being checked against the column names the tool worked out. So the
@@ -804,24 +1066,34 @@ ui <- fluidPage(
                 # first of them a heading puts the other two in the table as
                 # rows of data. The count is taken from the box that was drawn
                 # round the column names, and can be corrected here.
-                div(style = "display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap",
-                  div(style = "flex:1;min-width:220px",
-                    radioButtons("rb_hdr", "Its top rows",
-                      c("name the columns, and are not read as data" = "head",
-                        "are data, like every other row" = "data"), selected = "head")),
-                  conditionalPanel("input.rb_hdr == 'head'",
-                    # "How many rows", sitting under a table, reads as "how many
-                    # rows has this table" -- which is not a question anybody is
-                    # ever asked here. The number of DATA rows is worked out by
-                    # reading between the start and the end; this is only how
-                    # tall the heading is.
-                    div(style = "width:170px;padding-bottom:10px",
-                      numericInput("rb_hdrn", "Heading rows", 1, min = 1, max = 8,
-                                   step = 1, width = "100%")))),
-                helpText(class = "muted", style = "margin:-6px 0 8px",
-                         paste("How many printed lines the heading takes up.",
-                               "You never say how many rows of DATA there are -",
-                               "that is read from the page, between the start and the end.")),
+                # "IT'S THE TOP ROW" IS ANSWERED, NOT ASKED. Named by the owner:
+                # "'It's top row' - does that need to be prominent? Or can it be
+                # collapsed?" It can. The answer is worked out from the box drawn
+                # round the column names and printed in the line above (rb_step),
+                # so the two controls that CHANGE it are behind a disclosure -
+                # there when the guess is wrong, out of the way when it is right.
+                tags$details(style = "margin:2px 0 10px",
+                  tags$summary(class = "muted", style = "cursor:pointer;font-size:12px",
+                               "Change what the top rows are"),
+                  div(style = paste("display:flex;align-items:flex-end;gap:10px;",
+                                    "flex-wrap:wrap;margin-top:6px"),
+                    div(style = "flex:1;min-width:220px",
+                      radioButtons("rb_hdr", "Its top rows",
+                        c("name the columns, and are not read as data" = "head",
+                          "are data, like every other row" = "data"), selected = "head")),
+                    conditionalPanel("input.rb_hdr == 'head'",
+                      # "How many rows", sitting under a table, reads as "how many
+                      # rows has this table" -- which is not a question anybody is
+                      # ever asked here. The number of DATA rows is worked out by
+                      # reading between the start and the end; this is only how
+                      # tall the heading is.
+                      div(style = "width:170px;padding-bottom:10px",
+                        numericInput("rb_hdrn", "Heading rows", 1, min = 1, max = 8,
+                                     step = 1, width = "100%")))),
+                  helpText(class = "muted", style = "margin:-6px 0 8px",
+                           paste("How many printed lines the heading takes up.",
+                                 "You never say how many rows of DATA there are -",
+                                 "that is read from the page, between the start and the end."))),
                 div(style = paste("display:flex;justify-content:space-between;",
                                   "align-items:center;margin:12px 0 4px"),
                   strong(textOutput("rb_ncols", inline = TRUE)),
@@ -842,16 +1114,24 @@ ui <- fluidPage(
                     fluidRow(
                       column(6, numericInput("rb_cx0", "Left edge", 0, step = 1, width = "100%")),
                       column(6, numericInput("rb_cx1", "Right edge", 0, step = 1, width = "100%"))),
+                    # TWO CONTROLS FOR ONE JOB, TWICE OVER. "Drag its width on the
+                    # page" armed the drag that pressing Edit on the column has
+                    # already armed - the banner turns amber and names the column
+                    # the moment Edit is pressed - and "Delete this column" did
+                    # what the x on the column's own row does, a finger away. Both
+                    # are gone. A second way to do a thing is a second thing to
+                    # read before you can do it once.
                     div(style = "display:flex;gap:6px;flex-wrap:wrap",
-                      actionButton("rb_cdrag", "Drag its width on the page",
-                                   class = "btn-default btn-sm"),
-                      actionButton("rb_cdel", "Delete this column", class = "btn-default btn-sm"),
                       actionButton("rb_cdone", "Done with this column",
                                    class = "btn-default btn-sm")))),
                 div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:12px",
                   actionButton("rb_savetab", "Save this table", class = "btn-primary"),
                   actionButton("rb_refit", "Work the columns out again", class = "btn-default"),
-                  actionButton("rb_cancel", "Throw it away", class = "btn-default"))),
+                  # CANCEL MEANS TWO DIFFERENT THINGS AND MUST SAY WHICH. On a new
+                  # table it throws the drawing away; on a saved one it leaves the
+                  # saved table exactly as it is. Rendered, so the words are the
+                  # true ones. (Register H13.)
+                  uiOutput("rb_cancel_btn", inline = TRUE))),
               tags$hr(style = "margin:14px 0 8px"),
               strong("Tables on this template"),
               uiOutput("rb_saved")),
@@ -918,10 +1198,24 @@ ui <- fluidPage(
           uiOutput("rb_prev_status")),
         column(5,
           h4(style = "margin-top:0", "Name it and save"),
-          fluidRow(
-            column(6, textInput("rb_bank", "Issuer", "NewIssuer")),
-            column(6, textInput("rb_type", "Kind of document", "report"))),
-          textInput("rb_id", "Saves under this name", "new_report", width = "100%"),
+          # THE SAVE NAME IS WORKED OUT, SO IT IS NOT A QUESTION. It is composed
+          # from the issuer and the kind of document, both of which are filled in
+          # for you, and it only ever has to be touched when two templates would
+          # otherwise share it. Behind a disclosure, with the name it will use
+          # printed above so nothing is hidden - only folded. (Register D2.)
+          # THE SAME QUESTION AS THE TOOLKIT'S, IN THE SAME WORDS. The statement
+          # side asks "Which bank is this statement from?"; this asked for an
+          # "Issuer", which is the field's name in the file rather than anything
+          # a person would say. One question, asked one way, on both routes.
+          textInput("rb_bank", "Who produced this document?", "NewIssuer", width = "100%"),
+          div(style = "margin:-8px 0 6px;font-size:12px;color:#666666",
+              textOutput("rb_id_note", inline = TRUE)),
+          tags$details(style = "margin:-6px 0 10px",
+            tags$summary(class = "muted", style = "cursor:pointer;font-size:12px",
+                         "Change the kind of document, or the name it saves under"),
+            div(style = "margin-top:6px",
+              textInput("rb_type", "Kind of document", "report", width = "100%"),
+              textInput("rb_id", "Saves under this name", "new_report", width = "100%"))),
           textAreaInput("rb_fp", "A phrase printed on it (one per line)",
                         rows = 2, width = "100%", value = ""),
           # DRAG IT OFF THE PAGE, like everything else here.
@@ -937,8 +1231,20 @@ ui <- fluidPage(
             actionButton("rb_arm_phrase", "Drag it off the page instead",
                          class = "btn-default btn-sm")),
           helpText(class = "muted",
-                   "Recognised by these - all must appear, and they must not be words every document carries."),
-          actionButton("rb_save", "Save template", class = "btn-primary"),
+                   "One phrase per line - all must appear, and they must not be words every document carries or anything naming a person."),
+          # SAVE IS THE THING TO DO NEXT AND IT HAS TO LOOK LIKE IT.
+          #
+          # "Save - this needs to be more prominent / draw in the user to know
+          # what to do next." It was a standard-sized button the same colour and
+          # size as the six others on the screen, at the bottom of the third
+          # column, under a help sentence. It is now the widest, tallest thing in
+          # its column and the only large button in the builder, and the line
+          # under it says what saving DOES - which is the half of "what do I do
+          # next" a button label cannot carry.
+          actionButton("rb_save", "Save template",
+                       class = "btn-primary btn-lg rb-save"),
+          div(class = "muted", style = "margin:6px 0 0;font-size:12px",
+              textOutput("rb_save_note", inline = TRUE)),
           uiOutput("rb_msg"))),
       # WHAT CAME OUT: the tables AND the label/value pairs. A template can be all
       # pairs and no table at all -- a form -- and a preview that shows only
@@ -971,12 +1277,271 @@ ui <- fluidPage(
       conditionalPanel("output.admin_authed",
       div(style = "text-align:right;margin-bottom:6px",
           actionButton("adm_signout", "Sign out of Admin", class = "btn-default btn-sm")),
+      # ---- ADMIN IS TWO TABS, BECAUSE AN ADMIN HAS TWO QUESTIONS ---------------
+      #
+      # It was four - Insights, Templates, Data capture, Batch & audit - and the
+      # questions behind them are only ever: WHAT IS IN THE LIBRARY AND IS IT
+      # RIGHT, and WHAT IS FAILING. "Insights" and "Batch & audit" both answered
+      # the second one, in two places, so the same gap was reported twice under
+      # two headings; "Data capture" was a whole tab of on-box analytics settings
+      # that nobody in a police unit comes here to change.
+      #
+      # Nothing was deleted. Every control that did something is still here, and
+      # the two that only ever repeated something else are gone (see below). The
+      # settings nobody changes are behind a disclosure, one click away, where a
+      # setting nobody changes belongs.
+      #
+      # The two vocabularies sit together on Templates now, not one tab apart:
+      # dictionaries\labels.yaml and dictionaries\lexicon.yaml both mean "words
+      # the tool looks for", and they were on two different screens.
       tabsetPanel(
         tabPanel(
-          "Insights",
+          "Templates",
+          br(),
+          # A TEMPLATE THAT FAILED VALIDATION USED TO JUST VANISH. All three
+          # loaders collect the reason on attr(x, "load_errors") and the comments
+          # beside them promise it is "never SILENT" -- and nothing in the app
+          # read the attribute once, so a report template that failed the
+          # fingerprint gate produced "unsupported" on every document with no hint
+          # anywhere that the file existed. It is the first thing on this tab
+          # because it is the first thing that explains a template that "stopped
+          # working" after an update.
+          uiOutput("adm_tpl_load_errors"),
+          # The two bands are on the screen, headed; saying they are there is the
+          # screen describing itself. What is left is the one thing that is not
+          # obvious from looking - what the two origins mean, and that a row is
+          # clickable.
+          helpText(HTML(paste0(
+            "<b>tested</b> = shipped and checked, <b>user</b> = built here. ",
+            "Click a row to view and edit it."))),
+          DTOutput("adm_tpl_overview"),
+          br(),
+          # FEEDBACK BESIDE THE TEMPLATES IT IS ABOUT, split the same way, so the
+          # two tables read as one screen. Every rating names the document it came
+          # from and the template that read it; clicking a row picks that template
+          # below, because "traceable to the template" means a route to it, not a
+          # printed id.
+          h4("What the team said about these conversions"),
+          helpText("Every rating left on a conversion, newest first - click a row to pick that template below."),
+          DTOutput("adm_tpl_feedback"),
+          br(),
+          fluidRow(
+            column(5,
+              selectizeInput("adm_tpl_pick", "Preview / edit a template", choices = NULL,
+                             options = list(placeholder = "Type to search, or click a row above")),
+              uiOutput("adm_tpl_origin"),
+              # THE WAY BACK TO THE BANDS. Editing a template here meant editing its
+              # YAML as text -- fine for a threshold, useless for "the credit column
+              # has moved 4pt left", which is what actually goes wrong. The visual
+              # editor could only ever be reached by converting a statement first,
+              # so there was no route from "this template is wrong" to the picture
+              # of it. It needs a page to draw on, and the saved statements know
+              # which template read them, so the page comes from there.
+              # The label follows the KIND of template selected -- see
+              # output$adm_tpl_bands_btn. A statement's columns are redrawn on a
+              # page; a report is reopened in the builder it was drawn in; a form
+              # has no picture at all.
+              uiOutput("adm_tpl_bands_btn"),
+              uiOutput("adm_tpl_bands_msg"),
+              br(),
+              # SAVE IS NOT HERE. It writes what is in the YAML box, so it lives
+              # under the YAML box -- two green buttons in one column, one of them
+              # about the picture and one about the text beside it, is the screen
+              # asking which without saying so.
+              actionButton("adm_tpl_dup", "Duplicate (new id)"),
+              actionButton("adm_tpl_validate", "Check it's valid"),
+              actionButton("adm_tpl_hide", "Hide / un-hide"),
+              actionButton("adm_tpl_delete", "Delete", class = "btn-danger"),
+              br(), br(), uiOutput("adm_tpl_msg"),
+              # THE ONE THING THAT MAKES A FORTY-TABLE TEMPLATE MAINTAINABLE.
+              # After adding table 41, the question is whether the other forty
+              # still read - and there was no way to ask it. There is no folder
+              # picker beside this button on purpose: the examples are the
+              # documents this template has already read on this box, and the tool
+              # knows which those are, so it does not ask.
+              tags$hr(),
+              uiOutput("adm_tpl_check_btn"),
+              uiOutput("adm_tpl_check_msg"),
+              tags$details(
+                tags$summary(class = "muted", style = "cursor:pointer;font-size:12.5px", "How these actions work"),
+                helpText("Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id, saving, then deleting the old one. Hide parks a template out of detection without deleting it. Hide and Delete only work on templates built HERE; shipped 'tested' ones are read-only and win on an id clash, so a copy needs its own id. Save writes the text on the right into the folder for that kind of template - change its 'mode' and it moves."))),
+            column(7,
+              h4("Template YAML"),
+              textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"),
+              actionButton("adm_tpl_save", "Save this text as a user template",
+                           class = "btn-primary"))
+          ),
+          uiOutput("adm_tpl_check_head"),
+          DTOutput("adm_tpl_check_grid"),
+          tags$hr(),
+          h4("Near-duplicate bank statement templates - consolidate the pile"),
+          helpText("Bank statement templates that read a statement identically (same format, amounts, dates and columns) but were drafted more than once. Keep the best one and Hide or Delete the rest - pick any id above to act on it. (Forms and reports are not compared this way: two of them can read the same document and still be two different jobs.)"),
+          uiOutput("adm_tpl_dupes"),
+          tags$hr(),
+          # THE WORDS, BOTH SETS, IN ONE PLACE. The label dictionary (which value
+          # a wording means) and the recognition vocabulary (which words mean
+          # money out, money in, a heading, a brand) were on two different Admin
+          # tabs. They are the same question asked twice.
+          h4("Words the tool looks for"),
+          helpText(HTML(paste0(
+            "The usual reason a value comes up <b>blank</b> is that the statement prints a wording ",
+            "the tool has not met - it says <i>\"Balance at start\"</i> where the tool knows ",
+            "<i>\"Opening balance\"</i>. Add the exact wording and Save; it applies from the next ",
+            "conversion."))),
+          # The common case first, in plain English: pick the value, type the exact
+          # wording, add it. It writes through dictionary_append() (R/labels.R),
+          # which INSERTS one line and leaves the rest of the file -- comments and
+          # all -- untouched. The whole-file editor is kept one click below for the
+          # rare edit a wording cannot express (a pattern, a page rule, a new value).
+          fluidRow(
+            column(5,
+              uiOutput("adm_dict_field_ui"),
+              textInput("adm_dict_phrase", "The wording this statement prints",
+                        placeholder = "balance at start"),
+              actionButton("adm_dict_add", "Teach it this wording", class = "btn-primary"),
+              br(), br(), uiOutput("adm_dict_add_msg")),
+            column(7,
+              helpText(HTML(paste0(
+                "Type it as the statement prints it - case doesn't matter, and part of the ",
+                "wording is enough (<i>\"balance at start\"</i> matches <i>\"Balance at start ",
+                "of period\"</i>). It applies from the next conversion, everywhere the tool ",
+                "looks for that value. A backup of the file is kept each time."))))),
+          br(),
+          # NB the WORDING is a navigation anchor: docs/, config.example.yaml and
+          # dictionaries/lexicon.yaml all send the reader to "Words the tool knows
+          # to look for". It moved tabs (this used to be under "Data capture");
+          # the phrase they point at is deliberately unchanged.
+          h5("Words the tool knows to look for"),
+          helpText(HTML(paste0(
+            "And when a statement writes something the tool has never met - <code>cow</code> for money ",
+            "out, say - it cannot tell which way that money went. Teach it the word here and every ",
+            "conversion from then on knows it, everywhere. Nothing is ever added automatically: ",
+            "you decide."))),
+          fluidRow(
+            column(5, selectInput("adm_word_kind", "This word means\u2026",
+              c("money OUT - a debit marker (D, DR, Paid...)"    = "debit_markers",
+                "money IN - a credit marker (C, CR, Recd...)"    = "credit_markers",
+                "the heading of a money-OUT column"            = "amount_style_debit_headers",
+                "the heading of a money-IN column"             = "amount_style_credit_headers",
+                "the balance is overdrawn"                     = "overdrawn_markers",
+                "a value has been redacted / blacked out"      = "redaction_markers",
+                "a word that appears in a table's heading row" = "header_keywords",
+                "a bank or brand name, not a customer's name"  = "fingerprint_brand_words"))),
+            column(4, textInput("adm_word_text", "The word, exactly as the statement prints it", "")),
+            column(3, br(), actionButton("adm_word_add", "Teach it this word", class = "btn-primary"))),
+          uiOutput("adm_word_msg"),
+          br(),
+          h5("Words your statements used that the tool didn't recognise"),
+          # Rendered, not fixed: the instructions ("pick one, say which way the
+          # money goes, and Approve") stood over an EMPTY table with nothing in the
+          # picker - 249 conversion records scanned here, not one unrecognised
+          # marker among them - which reads as a control that has stopped working.
+          # It has not: a word only lands here when a statement uses a debit/credit
+          # INDICATOR COLUMN whose value the vocabulary has never met, and no
+          # template in use does. So when there is nothing, the line says that,
+          # rather than instructing the reader to use a picker with no options.
+          uiOutput("adm_sugg_help"),
+          uiOutput("adm_sugg_scope"),
+          fluidRow(
+            column(6,
+              tableOutput("adm_sugg_tokens"),
+              fluidRow(
+                column(5, selectInput("adm_sugg_tok", "Word", choices = character(0))),
+                column(4, radioButtons("adm_sugg_dir", "Means", inline = TRUE,
+                                       choices = c("money out (debit)" = "debit_markers",
+                                                   "money in (credit)" = "credit_markers"))),
+                column(3, br(), actionButton("adm_sugg_approve", "Approve", class = "btn-primary"))),
+              uiOutput("adm_sugg_msg")),
+            column(6,
+              strong("Columns in your statements that no template uses"),
+              tableOutput("adm_sugg_cols"),
+              # Says where the odd entries come from. This list is harvested from
+              # EVERY conversion, including the ones where nothing was recognised,
+              # so a letter or a file that is not a statement contributes its first
+              # line as if it were a column heading ("Dear Sir", "a", "b", "c").
+              # Left in rather than filtered out - what a file offered as headings
+              # is a fact about that file - but no longer presented as though every
+              # row were a field somebody should go and map.
+              helpText(HTML(paste0(
+                "A column that keeps turning up unused is usually a field worth mapping in that bank's ",
+                "template. Rows that read as prose came from files nothing could read - the first line ",
+                "of a letter or a non-statement is offered here as if it were a heading."))))),
+          br(),
+          tags$details(
+            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
+              "Edit the whole vocabulary file or the whole dictionary file - for a pattern, a page rule, or a value that isn't listed yet"),
+            div(style = "padding-top:10px",
+              helpText(HTML(paste0(
+                "Each value in the label dictionary has an <code>any_of:</code> list of wordings; add a ",
+                "line under it, indented the same as the lines already there, wording in quotes:<br>",
+                "<span class='mono' style='font-size:12px'>opening_balance:<br>",
+                "&nbsp;&nbsp;any_of:<br>",
+                "&nbsp;&nbsp;&nbsp;&nbsp;- \"opening balance\"<br>",
+                "&nbsp;&nbsp;&nbsp;&nbsp;- \"balance at start\"&nbsp;&nbsp; &lt;- your new line</span><br>",
+                "Save refuses anything that isn't laid out properly, and keeps a backup, so it ",
+                "is safe to try."))),
+              fluidRow(
+                column(5,
+                  actionButton("adm_dict_reload", "Reload from file"),
+                  actionButton("adm_dict_save", "Save dictionary", class = "btn-primary"),
+                  br(), br(), uiOutput("adm_dict_msg")),
+                column(7,
+                  textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px"))),
+              tags$hr(),
+              helpText(HTML(paste0(
+                "Beyond single words the recognition vocabulary also holds the money / date / account ",
+                "<b>patterns</b> and the date formats to try. Word lists ADD to the built-ins; a pattern ",
+                "REPLACES one (and is refused if it won't work). Leave a category out to keep its ",
+                "default. <b>Show built-in defaults</b> prints a complete, valid starting point to ",
+                "copy from."))),
+              fluidRow(
+                column(5,
+                  actionButton("adm_lex_reload", "Reload from file"),
+                  actionButton("adm_lex_defaults", "Show built-in defaults"),
+                  actionButton("adm_lex_save", "Save vocabulary", class = "btn-primary"),
+                  br(), br(), uiOutput("adm_lex_msg")),
+                column(7,
+                  textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))))
+        ),
+        tabPanel(
+          "Health",
           br(),
           actionButton("adm_refresh", "Refresh from logs", class = "btn-primary"),
           helpText("A live picture from every conversion the team has run and every rating left."),
+          # HOW MUCH OF THE HISTORY THIS PICTURE IS MADE OF. Reading every archived
+          # conversion one record at a time took 10.5 seconds on 20,000 rows, in the
+          # one process the whole team shares - so it reads the newest slice and
+          # says which slice, rather than freezing everybody's browser to be
+          # complete. Nothing is lost: the archive is still on disk in full.
+          uiOutput("adm_history_note"),
+          tags$hr(),
+          fluidRow(
+            column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
+                   DTOutput("adm_overview")),
+            column(7,
+              h4("Templates that started failing recently"),
+              # HEALTH IS DEFINED PER ROUTE, and this table used to render a row of
+              # NAs for anything that was not a bank statement: it asked whether a
+              # report RECONCILED, which a report never does. A statement is healthy
+              # when it adds up; a report when every table was found and no word fell
+              # outside a column; a form when nothing was disputed or missing.
+              helpText("A layout can change slightly - a field moves, a heading gets renamed - and stop reading properly. Any template that is suddenly producing more conversions worth a check shows here, whichever kind it is. Empty is good."),
+              DTOutput("adm_drift"))),
+          h4("Layouts the tool can't read yet - the gaps to fill"),
+          helpText("Each row is one layout no template recognises yet (identical layouts are grouped). The biggest count is the one to build a template for first - it unblocks the most documents."),
+          DTOutput("adm_gaps"),
+          # SPLIT OUT, because a template does not fix these and this list used to
+          # mix them in: a run that never reached a template at all arrived in the
+          # gaps table with a blank layout and a blank closest-template, and one
+          # unreadable moment (a file that had gone by the time it was opened) put
+          # a statement that converts cleanly every day on the "can't read yet"
+          # list for good.
+          h5("Files that could not be opened at all"),
+          helpText("Not a missing layout: these runs never got as far as a template - a damaged or password-protected file, a file that had gone by the time it was read, or something that isn't a statement. Building a template will not change them."),
+          DTOutput("adm_unreadable"),
+          h4("Template usage"),
+          DTOutput("adm_usage"),
+          tags$hr(),
           # THE HEADING DESCRIBED THE PICKUP QUEUE; THE TABLE IS THE WHOLE LOG.
           # read_uploads() returns EVERY upload record, newest first, with no
           # filter -- which is exactly what the incident procedure sends a
@@ -990,7 +1555,7 @@ ui <- fluidPage(
           # The pickup queue is still here -- it is the `needs_pickup` column, and
           # the picker beside the table still offers only those -- so nothing is
           # lost by naming the table after what it holds.
-          h4("Uploads - every statement converted here, newest first"),
+          h4("Uploads - every document converted here, newest first"),
           helpText(paste("One row per upload, whatever became of it - the route in when you know the file",
                          "or roughly when it was converted. `needs_pickup` marks a new format the tool",
                          "couldn't read that nobody has set up yet; the picker on the right offers those:",
@@ -1049,282 +1614,22 @@ ui <- fluidPage(
           h4("Analytics feed"),
           uiOutput("adm_feed_health"),
           tags$hr(),
-          fluidRow(
-            column(5, h4("Conversions by status"), plotOutput("adm_status_plot", height = "210px"),
-                   DTOutput("adm_overview")),
-            column(7, h4("Feedback flagged as wrong / minor issues"), DTOutput("adm_feedback"))),
-          h4("Statements the tool can't read yet - the gaps to fill"),
-          helpText("Each row is one layout no template recognises yet (identical layouts are grouped). The biggest count is the one to build a template for first - it unblocks the most statements."),
-          DTOutput("adm_gaps"),
-          # SPLIT OUT, because a template does not fix these and this list used to
-          # mix them in: a run that never reached a template at all arrived in the
-          # gaps table with a blank layout and a blank closest-template, and one
-          # unreadable moment (a file that had gone by the time it was opened) put
-          # a statement that converts cleanly every day on the "can't read yet"
-          # list for good.
-          h5("Files that could not be opened at all"),
-          helpText("Not a missing layout: these runs never got as far as a template - a damaged or password-protected file, a file that had gone by the time it was read, or something that isn't a statement. Building a template will not change them."),
-          DTOutput("adm_unreadable"),
-          h4("Templates that started failing recently"),
-          helpText("A statement's layout can change slightly - a field moves or gets renamed - and stop adding up. When that happens the tool flags the conversion for a check, and any template that's suddenly getting more of those shows here. Empty is good."),
-          DTOutput("adm_drift"),
-          h4("Template usage"),
-          DTOutput("adm_usage"),
-          br(),
-          actionButton("adm_rollup", sprintf("Tidy up logs (archive runs older than %d days)", LOG_KEEP_DAYS)),
-          uiOutput("adm_rollup_msg"),
-          br(),
-          # Retention of the SAVED STATEMENTS themselves -- real client data, and
-          # until now nothing ever deleted it. Runs at startup too; this is the
-          # "do it now" button, and it says what it will do before you press it.
-          h4("Saved statements - retention"),
-          helpText(UPLOADS_NOTE),
-          actionButton("adm_purge_uploads",
-                       if (UPLOADS_KEEP_DAYS > 0)
-                         sprintf("Delete saved statements older than %d days now", as.integer(UPLOADS_KEEP_DAYS))
-                       else "Delete old saved statements now (retention is set to 'keep indefinitely')",
-                       class = "btn-danger"),
-          uiOutput("adm_purge_msg")
-        ),
-        tabPanel(
-          "Templates",
-          br(),
-          helpText(HTML(paste0(
-            "Every layout the tool can read, of <b>every kind</b> - bank statements ",
-            "and everything else. <b>tested</b> = shipped and checked, <b>user</b> = ",
-            "built here. Click a row to view and edit it."))),
-          DTOutput("adm_tpl_overview"),
-          br(),
-          fluidRow(
-            column(5,
-              selectizeInput("adm_tpl_pick", "Preview / edit a template", choices = NULL,
-                             options = list(placeholder = "Type to search, or click a row above")),
-              uiOutput("adm_tpl_origin"),
-              # THE WAY BACK TO THE BANDS. Editing a template here meant editing its
-              # YAML as text -- fine for a threshold, useless for "the credit column
-              # has moved 4pt left", which is what actually goes wrong. The visual
-              # editor could only ever be reached by converting a statement first,
-              # so there was no route from "this template is wrong" to the picture
-              # of it. It needs a page to draw on, and the saved statements know
-              # which template read them, so the page comes from there.
-              # The label follows the KIND of template selected -- see
-              # output$adm_tpl_bands_btn. A statement's columns are redrawn on a
-              # page; a report is reopened in the builder it was drawn in; a form
-              # has no picture at all.
-              uiOutput("adm_tpl_bands_btn"),
-              uiOutput("adm_tpl_bands_msg"),
-              br(),
-              # SAVE IS NOT HERE. It writes what is in the YAML box, so it lives
-              # under the YAML box -- two green buttons in one column, one of them
-              # about the picture and one about the text beside it, is the screen
-              # asking which without saying so.
-              actionButton("adm_tpl_dup", "Duplicate (new id)"),
-              actionButton("adm_tpl_validate", "Check it's valid"),
-              actionButton("adm_tpl_hide", "Hide / un-hide"),
-              actionButton("adm_tpl_delete", "Delete", class = "btn-danger"),
-              br(), br(), uiOutput("adm_tpl_msg"),
-              tags$details(
-                tags$summary(class = "muted", style = "cursor:pointer;font-size:12.5px", "How these actions work"),
-                helpText("Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id, saving, then deleting the old one. Hide parks a template out of detection without deleting it. Hide and Delete only work on templates built HERE; shipped 'tested' ones are read-only and win on an id clash, so a copy needs its own id. Save writes the text on the right into the folder for that kind of template - change its 'mode' and it moves."))),
-            column(7,
-              h4("Template YAML"),
-              textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"),
-              actionButton("adm_tpl_save", "Save this text as a user template",
-                           class = "btn-primary"))
-          ),
-          tags$hr(),
-          h4("Near-duplicate bank statement templates - consolidate the pile"),
-          helpText("Bank statement templates that read a statement identically (same format, amounts, dates and columns) but were drafted more than once. Keep the best one and Hide or Delete the rest - pick any id above to act on it. (Forms and reports are not compared this way: two of them can read the same document and still be two different jobs.)"),
-          uiOutput("adm_tpl_dupes"),
-          tags$hr(),
-          h4("Label dictionary - the wordings the tool looks for"),
-          helpText(HTML(paste0(
-            "The usual reason a value comes up <b>blank</b> is that the statement prints a wording ",
-            "the tool has not met - it says <i>\"Balance at start\"</i> where the tool knows ",
-            "<i>\"Opening balance\"</i>. Add the exact wording and Save; it applies from the next ",
-            "conversion."))),
-          # The common case first, in plain English: pick the value, type the exact
-          # wording, add it. It writes through dictionary_append() (R/labels.R),
-          # which INSERTS one line and leaves the rest of the file -- comments and
-          # all -- untouched. The whole-file editor is kept one click below for the
-          # rare edit a wording cannot express (a pattern, a page rule, a new value).
-          fluidRow(
-            column(5,
-              uiOutput("adm_dict_field_ui"),
-              textInput("adm_dict_phrase", "The wording this statement prints",
-                        placeholder = "balance at start"),
-              actionButton("adm_dict_add", "Teach it this wording", class = "btn-primary"),
-              br(), br(), uiOutput("adm_dict_add_msg")),
-            column(7,
-              helpText(HTML(paste0(
-                "Type it as the statement prints it - case doesn't matter, and part of the ",
-                "wording is enough (<i>\"balance at start\"</i> matches <i>\"Balance at start ",
-                "of period\"</i>). It applies from the next conversion, everywhere the tool ",
-                "looks for that value. A backup of the file is kept each time."))))),
-          tags$details(style = "margin-top:6px",
-            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
-              "Edit the whole dictionary file - for a pattern, a page rule, or a value that isn't listed yet"),
-            div(style = "padding-top:10px",
-              helpText(HTML(paste0(
-                "Each value has an <code>any_of:</code> list of wordings; add a line under it, ",
-                "indented the same as the lines already there, wording in quotes:<br>",
-                "<span class='mono' style='font-size:12px'>opening_balance:<br>",
-                "&nbsp;&nbsp;any_of:<br>",
-                "&nbsp;&nbsp;&nbsp;&nbsp;- \"opening balance\"<br>",
-                "&nbsp;&nbsp;&nbsp;&nbsp;- \"balance at start\"&nbsp;&nbsp; &lt;- your new line</span><br>",
-                "Save refuses anything that isn't laid out properly, and keeps a backup, so it ",
-                "is safe to try."))),
-              fluidRow(
-                column(5,
-                  actionButton("adm_dict_reload", "Reload from file"),
-                  actionButton("adm_dict_save", "Save dictionary", class = "btn-primary"),
-                  br(), br(), uiOutput("adm_dict_msg")),
-                column(7,
-                  textAreaInput("adm_dict_edit", NULL, value = "", width = "100%", height = "360px")))))
-        ),
-        tabPanel(
-          # NB the tab NAME is a navigation anchor: docs/, config.example.yaml and
-          # dictionaries/lexicon.yaml all send the reader to "Admin -> Data capture".
-          # Rename it only together with those.
-          "Data capture",
-          br(),
-          h4("Local metadata capture - the raw material for on-box analysis"),
-          helpText(HTML(paste0(
-            "Every conversion can save a rich, structured record of <b>how it went</b> ",
-            "(the layout it matched, how cleanly it parsed, detection scores, ",
-            "reconciliation outcomes, OCR / redaction signals). It is stored on <b>this ",
-            "machine only</b> under <code>logs/metadata/</code>, kept forever, and ",
-            "<b>never enters the Qlik feed</b>. <b>No statement content is stored</b> - ",
-            "only structure, counts and quality signals; any account number is stored ",
-            "only as a one-way hash. Turn the detail up or down, or switch off ",
-            "categories you don't want captured."))),
-          fluidRow(
-            column(5,
-              radioButtons("adm_meta_level", "How much to capture",
-                choices = c("Full - everything (recommended)" = "full",
-                            "Standard - the essentials" = "standard",
-                            "Off - capture nothing" = "off"),
-                selected = CONFIG$metadata$level %||% "full"),
-              checkboxGroupInput("adm_meta_cats", "Categories to capture",
-                choices = c("Layout (shape / signature)" = "layout",
-                            "Parse quality (rows / flags / misses / shapes)" = "parse_quality",
-                            "Detection (scores / candidates)" = "detection",
-                            "Reconciliation (KPIs / balances)" = "reconciliation",
-                            "Multi-statement (# statements / periods / accounts)" = "multi_statement",
-                            "Novelty (unmapped columns / unrecognised tokens)" = "novelty",
-                            "Template hints (column profiles / suggested mapping)" = "template_hints",
-                            "OCR (pages / confidence)" = "ocr",
-                            "Redaction (counts / coverage)" = "redaction"),
-                selected = names(Filter(isTRUE, CONFIG$metadata$capture %||% list()))),
-              actionButton("adm_meta_save", "Save capture settings", class = "btn-primary"),
-              br(), br(), uiOutput("adm_meta_msg")),
-            column(7,
-              tags$div(class = "muted", style = "font-size:12px",
-                HTML(paste0(
-                  "<b>What each level records (PII notes):</b><br>",
-                  "<b>Off</b> - nothing beyond the normal run log.<br>",
-                  "<b>Standard</b> - layout signature, format, detection score/match, ",
-                  "row count, trust level, KPI pass/fail counts. No per-row detail.<br>",
-                  "<b>Full</b> - adds flag histograms, per-field fill ratios, candidate ",
-                  "scores, per-KPI outcomes, balance anchors and net amount, OCR / ",
-                  "redaction detail, and timing.<br><br>",
-                  "Balances and the statement period are financial metadata (not ",
-                  "personal identifiers) and never leave this machine. Descriptions, ",
-                  "payees and references are <b>never</b> stored. Account numbers are ",
-                  "stored only as a hash, so the same account links across runs without ",
-                  "the number being readable."))))
-          ),
-          tags$hr(),
-          # The recognition vocabulary, fronted by the thing an admin actually comes
-          # here to do: teach it one word. The whole-file editor is kept, one click
-          # away, for the rare edit a word list cannot express (a pattern, a list of
-          # date formats). Everything below writes through the SAME engine function,
-          # so there is one way a word gets in.
-          h4("Words the tool knows to look for"),
-          helpText(HTML(paste0(
-            "When a statement writes something the tool has never met - <code>cow</code> for money ",
-            "out, say - it cannot tell which way that money went. Teach it the word here and every ",
-            "conversion from then on knows it, everywhere. Nothing is ever added automatically: ",
-            "you decide."))),
-          fluidRow(
-            column(5, selectInput("adm_word_kind", "This word means\u2026",
-              c("money OUT - a debit marker (D, DR, Paid...)"    = "debit_markers",
-                "money IN - a credit marker (C, CR, Recd...)"    = "credit_markers",
-                "the heading of a money-OUT column"            = "amount_style_debit_headers",
-                "the heading of a money-IN column"             = "amount_style_credit_headers",
-                "the balance is overdrawn"                     = "overdrawn_markers",
-                "a value has been redacted / blacked out"      = "redaction_markers",
-                "a word that appears in a table's heading row" = "header_keywords",
-                "a bank or brand name, not a customer's name"  = "fingerprint_brand_words"))),
-            column(4, textInput("adm_word_text", "The word, exactly as the statement prints it", "")),
-            column(3, br(), actionButton("adm_word_add", "Teach it this word", class = "btn-primary"))),
-          uiOutput("adm_word_msg"),
-          br(),
-          h4("Words your statements used that the tool didn't recognise"),
-          # Rendered, not fixed: the instructions ("pick one, say which way the
-          # money goes, and Approve") stood over an EMPTY table with nothing in the
-          # picker - 249 conversion records scanned here, not one unrecognised
-          # marker among them - which reads as a control that has stopped working.
-          # It has not: a word only lands here when a statement uses a debit/credit
-          # INDICATOR COLUMN whose value the vocabulary has never met, and no
-          # template in use does. So when there is nothing, the line says that,
-          # rather than instructing the reader to use a picker with no options.
-          uiOutput("adm_sugg_help"),
-          uiOutput("adm_sugg_scope"),
-          fluidRow(
-            column(6,
-              tableOutput("adm_sugg_tokens"),
-              fluidRow(
-                column(5, selectInput("adm_sugg_tok", "Word", choices = character(0))),
-                column(4, radioButtons("adm_sugg_dir", "Means", inline = TRUE,
-                                       choices = c("money out (debit)" = "debit_markers",
-                                                   "money in (credit)" = "credit_markers"))),
-                column(3, br(), actionButton("adm_sugg_approve", "Approve", class = "btn-primary"))),
-              uiOutput("adm_sugg_msg")),
-            column(6,
-              strong("Columns in your statements that no template uses"),
-              tableOutput("adm_sugg_cols"),
-              # Says where the odd entries come from. This list is harvested from
-              # EVERY conversion, including the ones where nothing was recognised,
-              # so a letter or a file that is not a statement contributes its first
-              # line as if it were a column heading ("Dear Sir", "a", "b", "c").
-              # Left in rather than filtered out - what a file offered as headings
-              # is a fact about that file - but no longer presented as though every
-              # row were a field somebody should go and map.
-              helpText(HTML(paste0(
-                "A column that keeps turning up unused is usually a field worth mapping in that bank's ",
-                "template. Rows that read as prose came from files nothing could read - the first line ",
-                "of a letter or a non-statement is offered here as if it were a heading."))))),
-          br(),
-          tags$details(
-            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
-                         "Edit the whole vocabulary file - for a pattern or a list of date formats"),
-            div(style = "padding:8px 2px",
-              helpText(HTML(paste0(
-                "Beyond single words this file also holds the money / date / account <b>patterns</b> ",
-                "and the date formats to try. Word lists ADD to the built-ins; a pattern REPLACES ",
-                "one (and is refused if it won't work). Leave a category out to keep its default. ",
-                "<b>Show built-in defaults</b> prints a complete, valid starting point to copy from."))),
-              fluidRow(
-                column(5,
-                  actionButton("adm_lex_reload", "Reload from file"),
-                  actionButton("adm_lex_defaults", "Show built-in defaults"),
-                  actionButton("adm_lex_save", "Save vocabulary", class = "btn-primary"),
-                  br(), br(), uiOutput("adm_lex_msg")),
-                column(7,
-                  textAreaInput("adm_lex_edit", NULL, value = "", width = "100%", height = "320px")))))
-        ),
-        tabPanel(
-          "Batch & audit",
-          br(),
-          helpText(HTML("Drop in a pile of statements and get one picture: what converts, the gap layouts <b>biggest-first</b>, and <b>ready-to-edit draft templates</b> for them. Safe to share - only shapes and counts, never contents. Tick <b>convert &amp; save</b> to also produce real outputs and feed Insights.")),
+          # THE BULK AUDIT, which used to be a tab of its own answering the same
+          # question as the gaps table above: what is not converting. It is a
+          # SOURCE of that answer, not a second answer, so it sits under it.
+          # IT AUDITS; IT DOES NOT CONVERT. A tick-box here also converted and
+          # saved the whole pile -- which is what Convert's own picker does when
+          # you hand it thirty files, on the screen an analyst already knows, with
+          # a result page per file and one download for the lot. A second door
+          # into the same engine call is a door nobody exercises weekly, and this
+          # one wrote real outputs and log records from an Admin tab whose whole
+          # subject is what is FAILING. (Register 1b.)
+          h4("Check a pile of files at once"),
+          helpText(HTML("Drop in a pile of statements and get one picture: what converts, the gap layouts <b>biggest-first</b>, and <b>ready-to-edit draft templates</b> for them. Nothing is converted or saved - only shapes and counts, so it is safe to share.")),
           fluidRow(
             column(4,
               fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE,
                         accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
-              checkboxInput("adm_ba_convert",
-                            "Also convert & save outputs (writes files, logs runs, feeds Insights)",
-                            value = FALSE),
               actionButton("adm_ba_run", "Run", class = "btn-primary"),
               br(), br(),
               uiOutput("adm_ba_report_ui"),
@@ -1334,16 +1639,81 @@ ui <- fluidPage(
               helpText("Also available headless: Rscript scripts/bulk-audit.R <folder>")),
             column(8,
               uiOutput("adm_ba_summary"),
-              h4("Gaps - layouts the tool can't read yet, biggest first"), DTOutput("adm_ba_clusters"),
-              h4("Per file - shapes only, no personal data"), DTOutput("adm_ba_files_tbl"))),
-          h4("Recommended draft templates (editable - copy into the Templates tab to save)"),
+              h5("Gaps in this pile - biggest first"), DTOutput("adm_ba_clusters"),
+              h5("Per file - shapes only, no personal data"), DTOutput("adm_ba_files_tbl"))),
+          h5("Recommended draft templates (editable - copy into the Templates tab to save)"),
           uiOutput("adm_ba_recs"),
+          # (A SECOND file picker stood here, "Single statement - safe summary",
+          # doing what the picker above already does with one file - and a saved
+          # upload's summary is a third route to the same export. Every extra
+          # route into one function is a route that rots because nobody exercises
+          # it weekly, so it is gone rather than kept working.)
           tags$hr(),
-          h4("Single statement - safe summary"),
-          helpText("Upload one statement to download its shapes-only summary (no personal data) for sharing."),
-          fileInput("adm_audit_one", "Statement", multiple = FALSE,
-                    accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
-          uiOutput("adm_audit_dl_ui")
+          h4("Housekeeping"),
+          actionButton("adm_rollup", sprintf("Tidy up logs (archive runs older than %d days)", LOG_KEEP_DAYS)),
+          uiOutput("adm_rollup_msg"),
+          # WHAT HAPPENS TO THE FEED FOLDER, from the setting that decides it, so
+          # the promise on the screen and the rule on disk cannot drift apart.
+          uiOutput("adm_feed_retention"),
+          br(),
+          # Retention of the SAVED STATEMENTS themselves -- real client data, and
+          # until now nothing ever deleted it. Runs at startup too; this is the
+          # "do it now" button, and it says what it will do before you press it.
+          h5("Saved statements - retention"),
+          helpText(UPLOADS_NOTE),
+          actionButton("adm_purge_uploads",
+                       if (UPLOADS_KEEP_DAYS > 0)
+                         sprintf("Delete saved statements older than %d days now", as.integer(UPLOADS_KEEP_DAYS))
+                       else "Delete old saved statements now (retention is set to 'keep indefinitely')",
+                       class = "btn-danger"),
+          uiOutput("adm_purge_msg"),
+          br(),
+          # NB "Data capture" was a tab; docs/, config.example.yaml and
+          # dictionaries/lexicon.yaml send the reader to "Admin -> Data capture",
+          # so the words stay as the summary of this disclosure.
+          tags$details(
+            tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
+                         "Data capture - what this server records about its own conversions"),
+            div(style = "padding:8px 2px",
+              helpText(HTML(paste0(
+                "Every conversion can save a rich, structured record of <b>how it went</b> ",
+                "(the layout it matched, how cleanly it parsed, detection scores, ",
+                "reconciliation outcomes, OCR / redaction signals). It is stored on <b>this ",
+                "machine only</b> under <code>logs/metadata/</code>, kept forever, and ",
+                "<b>never enters the Qlik feed</b>. <b>No statement content is stored</b> - ",
+                "only structure, counts and quality signals; any account number is stored ",
+                "only as a one-way hash."))),
+              fluidRow(
+                column(5,
+                  # ONE QUESTION, NOT TWO. There used to be a nine-box category
+                  # list beside this, and "Full - everything" already answers it:
+                  # a switch that repeats what the setting above it just said is a
+                  # control the tool could have worked out for itself. The level
+                  # decides, every category is captured within it, and the line
+                  # below says so before Save is pressed.
+                  radioButtons("adm_meta_level", "How much to capture",
+                    choices = c("Full - everything (recommended)" = "full",
+                                "Standard - the essentials" = "standard",
+                                "Off - capture nothing" = "off"),
+                    selected = CONFIG$metadata$level %||% "full"),
+                  actionButton("adm_meta_save", "Save capture settings", class = "btn-primary"),
+                  br(), br(), uiOutput("adm_meta_msg")),
+                column(7,
+                  tags$div(class = "muted", style = "font-size:12px",
+                    HTML(paste0(
+                      "<b>What each level records (PII notes):</b><br>",
+                      "<b>Off</b> - nothing beyond the normal run log.<br>",
+                      "<b>Standard</b> - layout signature, format, detection score/match, ",
+                      "row count, trust level, KPI pass/fail counts. No per-row detail.<br>",
+                      "<b>Full</b> - adds flag histograms, per-field fill ratios, candidate ",
+                      "scores, per-KPI outcomes, balance anchors and net amount, OCR / ",
+                      "redaction detail, and timing.<br><br>",
+                      "Balances and the statement period are financial metadata (not ",
+                      "personal identifiers) and never leave this machine. Descriptions, ",
+                      "payees and references are <b>never</b> stored. Account numbers are ",
+                      "stored only as a hash, so the same account links across runs without ",
+                      "the number being readable."))))))
+          )
         )
       )
       )
@@ -1632,28 +2002,133 @@ server <- function(input, output, session) {
   # A template already picked survives a bank change when it still belongs to that
   # bank; otherwise it clears, because leaving a hidden, out-of-scope template
   # selected is how a statement gets read by a template nobody chose on purpose.
+  #
+  # ...AND IT FOLLOWS "WHAT IS THIS?" FIRST. The list only ever held bank
+  # templates, and the panel holding it was hidden the moment somebody answered
+  # "something else" -- so a form or a report template could not be forced from
+  # anywhere in the product, though both engine calls have taken one all along.
+  # Say "something else" and the list becomes the form and report templates; say
+  # anything else and it is the bank templates it always was.
+  #
+  # THIS IS ALSO WHERE THE HIDDEN CONTRADICTION DIES. Hiding a control does not
+  # clear it: she opened the panel, picked a bank template, then ticked
+  # "Something else", and the selection survived underneath and beat the answer
+  # she could see. Rebuilding the list on the kind means the statement template
+  # is no longer among the choices, so it cannot stay selected -- and the bank
+  # picker is cleared beside it, for the same reason and in the same breath.
   observe({
-    ts <- cv_pick_templates()
-    bank <- bank_choice()
-    ov <- template_overview(ts)
-    if (!is.null(bank) && nrow(ov)) ov <- ov[ov$bank %in% bank, , drop = FALSE]
-    # Labelled "Bank (middot) type - id" so you can force an EXACT audited
-    # template, not just a bank, when you need to be specific.
+    other <- identical(kind_choice(), "other")
     ch <- c("(auto-detect)" = "")
-    if (nrow(ov)) ch <- c(ch, stats::setNames(ov$id, sprintf("%s \u00b7 %s - %s", ov$bank, ov$type, ov$id)))
+    if (other) {
+      # Every template that reads something which is NOT a statement, named the
+      # way the rest of the screen names one -- never a raw id, and never a
+      # library the person has to know the name of.
+      ts <- c(all_doc_templates(), all_field_templates())
+      ids <- sort(names(ts))
+      if (length(ids)) ch <- c(ch, tpl_choices(ids))
+    } else {
+      ts <- cv_pick_templates()
+      bank <- bank_choice()
+      ov <- template_overview(ts)
+      if (!is.null(bank) && nrow(ov)) ov <- ov[ov$bank %in% bank, , drop = FALSE]
+      # Labelled "Bank (middot) type - id" so you can force an EXACT audited
+      # template, not just a bank, when you need to be specific.
+      if (nrow(ov)) ch <- c(ch, stats::setNames(ov$id, sprintf("%s \u00b7 %s - %s", ov$bank, ov$type, ov$id)))
+    }
     keep <- isolate(input$cv_template) %||% ""
     updateSelectInput(session, "cv_template", choices = ch,
                       selected = if (keep %in% ch) keep else "")
   })
+  # A BANK PICKED, THEN "SOMETHING ELSE": the bank goes too. It is hidden at that
+  # point, and a hidden control that still decides which templates are tried is
+  # the same fault as the one above, one control along.
+  observeEvent(kind_choice(), {
+    if (identical(kind_choice(), "other"))
+      updateSelectInput(session, "cv_bank_quick", selected = "")
+  }, ignoreInit = TRUE)
 
 
   # ---- Admin: template overview / preview / edit ----
   # The management view shows ALL templates, hidden ones included, so a parked
   # draft can be found and un-hidden.
   # ...and ALL THREE KINDS, with `kind` in front. See adm_lib() for why.
-  output$adm_tpl_overview <- renderDT(
-    library_overview(all_templates(), all_field_templates_admin(), all_doc_templates_admin()),
-    options = list(pageLength = 25, dom = "tip"), rownames = FALSE, selection = "single")
+  adm_ov <- reactive(library_overview(all_templates(), all_field_templates_admin(),
+                                      all_doc_templates_admin()))
+
+  # A REFUSED TEMPLATE IS NAMED, NOT LOST. All three loaders already gather the
+  # reason each skipped file was skipped on attr(x, "load_errors") -- and the app
+  # read it nowhere, so a template that stopped validating after an update simply
+  # disappeared from the library and every document it used to read came back
+  # "unsupported" with nothing on any screen saying the file was still there.
+  # Same wording as scripts/health-check.R, deliberately, so the operator running
+  # the check after an update and the admin reading this screen see one sentence.
+  output$adm_tpl_load_errors <- renderUI({
+    req(admin_ok())
+    why <- c(as.character(attr(all_templates(), "load_errors") %||% character(0)),
+             as.character(attr(all_field_templates_admin(), "load_errors") %||% character(0)),
+             as.character(attr(all_doc_templates_admin(), "load_errors") %||% character(0)))
+    why <- why[nzchar(trimws(why))]
+    if (!length(why)) return(NULL)
+    div(class = "note-bad", style = "margin-bottom:10px",
+      p(strong(sprintf("%d template file%s could not be loaded, so %s not in use.",
+                       length(why), if (length(why) == 1L) "" else "s",
+                       if (length(why) == 1L) "it is" else "they are"))),
+      tags$ul(lapply(why, function(w) tags$li(w))),
+      p(class = "muted", style = "font-size:12px",
+        "Fix the file in the templates folder, or open it here and save it again."))
+  })
+
+  # C1: TWO HEADED BANDS, "Bank statement" and "Other", both on screen at once.
+  # The route is a real leading column, HIDDEN, with DT's RowGroup drawing it as
+  # the band heading -- so the split costs no second table, no second observer and
+  # no control, and (proven in a browser) rows_selected is still the data-frame
+  # row index, which is what the row-click handler below reads.
+  .adm_rowgroup <- function(df, page = 25L, none = "Nothing here yet.") {
+    datatable(df, rownames = FALSE, selection = "single",
+              extensions = "RowGroup",
+              options = dt_none_opts(none,
+                pageLength = page, dom = "tip", scrollX = TRUE,
+                rowGroup = list(dataSrc = 0L),
+                orderFixed = list(list(0L, "asc")),
+                columnDefs = list(list(visible = FALSE, targets = 0L))))
+  }
+  output$adm_tpl_overview <- renderDT({
+    ov <- adm_ov()
+    ov <- cbind(route = vapply(ov$kind, function(k)
+      if (identical(k, unname(.TEMPLATE_KIND_LABEL[["statement"]]))) .ADM_ROUTES[1]
+      else .ADM_ROUTES[2], character(1), USE.NAMES = FALSE), ov)
+    .adm_rowgroup(ov, page = 25L, none = "No templates are installed.")
+  })
+
+  # C2: THE FEEDBACK, BESIDE THE TEMPLATES, SPLIT THE SAME WAY. One row per
+  # rating, carrying the document it was left on and the template that read it --
+  # neither of which the feedback record holds, so both are joined on here (see
+  # .adm_feedback_overview). It replaces the old "flagged as wrong" table, which
+  # showed a subset of the ratings, none of their documents, and sat on a
+  # different tab from the templates it was about.
+  adm_fb_ov <- reactive({
+    d <- adm_data()
+    .adm_feedback_overview(d$fb, d$runs, adm_lib())
+  })
+  output$adm_tpl_feedback <- renderDT({
+    req(adm_data())
+    .adm_rowgroup(adm_fb_ov(), page = 8L,
+                  none = "Nobody has rated a conversion yet.")
+  })
+  # TRACEABLE MEANS A ROUTE TO THE TEMPLATE, not a printed id: click the rating
+  # and the template it is about is selected in the picker below it.
+  observeEvent(input$adm_tpl_feedback_rows_selected, {
+    req(admin_ok())
+    fb <- adm_fb_ov(); i <- input$adm_tpl_feedback_rows_selected
+    if (!length(i) || i > nrow(fb)) return()
+    id <- as.character(fb$template_id[i])
+    if (!id %in% names(adm_lib())) {
+      output$adm_tpl_msg <- renderUI(span(class = "muted",
+        "That conversion's template is no longer in the library, so there is nothing to open."))
+      return()
+    }
+    updateSelectInput(session, "adm_tpl_pick", selected = id)
+  })
 
   # Rebuilding the choices used to DROP the selection: selectize falls back to the
   # first option, the picker's own observer below then blanks adm_tpl_msg, and the
@@ -1687,8 +2162,7 @@ server <- function(input, output, session) {
   # re-verifies the admin session here and fail-closes (silent no-op) without one.
   observeEvent(input$adm_tpl_overview_rows_selected, {
     req(admin_ok())
-    ov <- library_overview(all_templates(), all_field_templates_admin(),
-                           all_doc_templates_admin())
+    ov <- adm_ov()
     i <- input$adm_tpl_overview_rows_selected
     if (length(i) && i <= nrow(ov)) updateSelectInput(session, "adm_tpl_pick", selected = ov$id[i])
   })
@@ -1698,6 +2172,12 @@ server <- function(input, output, session) {
     t <- adm_lib()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
+    # WHAT THIS BOX WAS FILLED FROM. Save compares it against the folder before
+    # overwriting, so two admins on one server cannot silently overwrite each
+    # other -- see the H9 block above the Save handler.
+    adm_tpl_opened(list(id = as.character(t$id %||% "")[1],
+                        sha = safe(template_sha256(t), NA_character_)))
+    adm_tpl_forced("")
   })
 
   # Show whether the selected template is a read-only shipped one or a deletable
@@ -1883,6 +2363,41 @@ server <- function(input, output, session) {
       else .tpl_note(paste("Problems:<br>", paste(probs, collapse = "<br>")), FALSE)
   })
 
+  # ---- H9: TWO ADMINS, ONE SERVER. Last save used to win, blindly ------------
+  #
+  # There is no lock, no version compare and no author stamp anywhere in this
+  # product, so two maintainers editing one template on one server meant whoever
+  # pressed Save second silently threw the other's work away -- on a forty-table
+  # template that is months of somebody's work gone with no message.
+  #
+  # A lock is the wrong answer here (it needs an identity the app does not have,
+  # and a stale lock on a shared box blocks the very person who can clear it). The
+  # right answer is the one the builder already uses for Remove: notice, SAY it,
+  # and make the second press mean it. So Save compares what is on disk NOW with
+  # what was loaded into the box, and if it has moved it refuses ONCE, names when
+  # it changed, and lets the next press through. Nothing new on the screen.
+  adm_tpl_opened <- reactiveVal(NULL)   # list(id, sha) -- what was put in the box
+  adm_tpl_forced <- reactiveVal("")     # the id whose overwrite has been agreed
+  # The template as the FOLDER holds it this second, not as the app cached it.
+  .adm_on_disk <- function(kind, id) {
+    id <- as.character(id %||% "")[1]
+    if (!nzchar(id)) return(NULL)
+    ts <- switch(as.character(kind)[1],
+      fields   = safe(load_fields_templates(USER_FIELDS_DIR, NULL, include_hidden = TRUE), list()),
+      document = safe(load_document_templates(USER_DOC_DIR, NULL, include_hidden = TRUE), list()),
+      safe(load_templates(USER_TEMPLATES_DIR, origin = "user", strict = FALSE), list()))
+    ts[[id]]
+  }
+  .adm_when_changed <- function(kind, id) {
+    d <- .adm_user_dir(kind)
+    fs <- list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)
+    hit <- fs[vapply(fs, function(f)
+      identical(as.character(safe(yaml::read_yaml(f)$id, "")[1]), as.character(id)[1]),
+      logical(1))]
+    if (!length(hit)) return(NA_character_)
+    safe(local_time_text(utc_stamp(file.mtime(hit[1]))), NA_character_)
+  }
+
   # SAVED WHERE ITS OWN KIND LIVES. Everything here used to go through
   # save_user_template() into the statement folder -- so editing a report template
   # in Admin and pressing Save either refused it outright (it has no columns) or
@@ -1894,9 +2409,26 @@ server <- function(input, output, session) {
     t <- .tpl_from_editor()
     if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
     kind <- .adm_kind_of(t)
+    tid <- as.character(t$id %||% "")[1]
+    opened <- adm_tpl_opened()
+    now <- safe(template_sha256(.adm_on_disk(kind, tid)), NA_character_)
+    moved <- !is.null(opened) && identical(opened$id, tid) &&
+      !is.na(now) && !is.na(opened$sha %||% NA_character_) && !identical(now, opened$sha)
+    if (moved && !identical(adm_tpl_forced(), tid)) {
+      adm_tpl_forced(tid)
+      when <- .adm_when_changed(kind, tid)
+      output$adm_tpl_msg <- .tpl_note(sprintf(
+        "Somebody else on this server saved this template%s - open it again to see theirs, or press Save once more to replace it.",
+        if (is.na(when)) "" else paste(" at", when)), FALSE)
+      return()
+    }
+    adm_tpl_forced("")
     path <- tryCatch(.adm_save(kind, t), error = function(e) conditionMessage(e))
     if (is.character(path) && file.exists(path)) {
       tpl_bump(tpl_bump() + 1)
+      # What is in the box IS what is on disk again, so the next Save has nothing
+      # to warn about until somebody else moves it.
+      adm_tpl_opened(list(id = tid, sha = safe(template_sha256(t), NA_character_)))
       # Shadowing is a statement-template rule (a shipped id wins over a user one);
       # the other two loaders take the first file they find in folder order, which
       # is the curated folder, so the same warning is true for them.
@@ -1955,9 +2487,8 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text()))
   observeEvent(input$adm_dict_reload, { req(admin_ok())
     updateTextAreaInput(session, "adm_dict_edit", value = .load_dict_text())
-    output$adm_dict_msg <- renderUI(span(class = "ok", sprintf(
-      "Reloaded %s into the editor. Any unsaved edits in the box are gone; the file itself is unchanged.",
-      DICT_PATH))) })
+    output$adm_dict_msg <- renderUI(span(class = "ok",
+      "Reloaded from the file - any unsaved edits in the box are gone.")) })
   observeEvent(input$adm_dict_save, {
     req(admin_ok())
     txt <- input$adm_dict_edit %||% ""
@@ -1968,18 +2499,23 @@ server <- function(input, output, session) {
     safe(file.copy(DICT_PATH, paste0(DICT_PATH, ".bak"), overwrite = TRUE))
     okw <- isTRUE(tryCatch({ writeLines(txt, DICT_PATH); TRUE }, error = function(e) FALSE))
     output$adm_dict_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
-      if (okw) "Saved (backup at labels.yaml.bak). New wordings apply to the next conversion."
+      if (okw) "Saved, with a backup kept - new wordings apply from the next conversion."
       else YAML_WRITE_MSG))
   })
 
   # ---- Admin: local metadata-capture settings (level + category switches) ----
+  # ONE QUESTION, NOT TWO. There used to be a nine-box "categories to capture"
+  # list beside the level, and the level already answered it: "Full - everything"
+  # and a tick-list of everything are the same fact said twice, and the pair could
+  # be left contradicting each other (Full, with six categories switched off) with
+  # nothing on screen resolving it. The level decides; every category is captured
+  # within it, which is exactly what the built-in default has always been.
+  .ADM_META_CATS <- c("layout", "parse_quality", "detection", "reconciliation",
+                      "multi_statement", "novelty", "template_hints", "ocr", "redaction")
   observeEvent(input$adm_meta_save, {
     req(admin_ok())
     lvl <- input$adm_meta_level %||% "full"
-    cats <- input$adm_meta_cats %||% character(0)
-    all_cats <- c("layout", "parse_quality", "detection", "reconciliation",
-                  "multi_statement", "novelty", "template_hints", "ocr", "redaction")
-    capture <- stats::setNames(as.list(all_cats %in% cats), all_cats)
+    capture <- stats::setNames(as.list(rep(TRUE, length(.ADM_META_CATS))), .ADM_META_CATS)
     okw <- save_metadata_config(lvl, capture)
     if (okw) { CONFIG$metadata$level <<- lvl; CONFIG$metadata$capture <<- capture }
     # A refusal carries its REASON (e.g. "the file is there but doesn't parse, so
@@ -1987,7 +2523,7 @@ server <- function(input, output, session) {
     # "check folder permissions" would send the admin hunting the wrong problem.
     why <- attr(okw, "reason")
     output$adm_meta_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
-      if (okw) "Saved. Applies to the next conversion. Capture is local only and never enters the Qlik feed."
+      if (okw) "Saved - it applies from the next conversion."
       else if (!is.null(why)) paste("Not saved:", why)
       else "Could not write config/config.yaml - check folder permissions."))
   })
@@ -2002,15 +2538,12 @@ server <- function(input, output, session) {
   # is said out loud.
   observeEvent(input$adm_lex_reload, { req(admin_ok())
     updateTextAreaInput(session, "adm_lex_edit", value = .load_lex_text())
-    output$adm_lex_msg <- renderUI(span(class = "ok", sprintf(
-      "Reloaded %s into the editor. Any unsaved edits in the box are gone; the file itself is unchanged.",
-      LEXICON_PATH))) })
+    output$adm_lex_msg <- renderUI(span(class = "ok",
+      "Reloaded from the file - any unsaved edits in the box are gone.")) })
   observeEvent(input$adm_lex_defaults, { req(admin_ok())
     updateTextAreaInput(session, "adm_lex_edit", value = safe(lexicon_defaults_yaml(), ""))
-    output$adm_lex_msg <- renderUI(span(class = "ok", paste(
-      "The editor now holds the BUILT-IN defaults, not your file - copy what you need.",
-      "Nothing is saved until you click Save vocabulary, and saving this as it stands",
-      "would replace your file with the defaults."))) })
+    output$adm_lex_msg <- renderUI(span(class = "ok",
+      "The box now holds the built-in defaults, not your file - saving it as it stands would replace your file with them.")) })
   observeEvent(input$adm_lex_save, {
     req(admin_ok())
     txt <- input$adm_lex_edit %||% ""
@@ -2029,7 +2562,7 @@ server <- function(input, output, session) {
       writeLines(txt, LEXICON_PATH); TRUE }, error = function(e) FALSE))
     if (okw) clear_lexicon_cache()   # the next conversion re-reads the vocabulary
     output$adm_lex_msg <- renderUI(div(style = sprintf("color:%s", if (okw) PALETTE$ok else PALETTE$bad),
-      if (okw) "Saved (backup at lexicon.yaml.bak). Applies to the next conversion, everywhere."
+      if (okw) "Saved, with a backup kept - it applies from the next conversion, everywhere."
       else YAML_WRITE_MSG))
   })
 
@@ -2139,7 +2672,7 @@ server <- function(input, output, session) {
     adm_slot$start("audit", paths, sess,
       message = "Auditing statements (scanned pages are OCR'd)",
       args = list(templates_dir = TEMPLATES_DIR, user_templates_dir = USER_TEMPLATES_DIR,
-                  logdir = LOGDIR, convert = isTRUE(input$adm_ba_convert),
+                  logdir = LOGDIR, convert = FALSE,
                   names = as.character(fs$name)),
       finish = function(res) {
         if (is.null(res$audit)) {
@@ -2216,7 +2749,6 @@ server <- function(input, output, session) {
   }
   BA_REPORT_WHY <- "Upload statements above and click Run - there is no audit report yet."
   BA_CSV_WHY    <- "Tick \"Also convert & save\" before Run - the converted report is only produced on that pass."
-  AUDIT_ONE_WHY <- "Upload a statement above first."
   UP_AUDIT_WHY  <- "Pick a saved upload above first."
   INBOX_WHY     <- "Pick a failed file above first."
 
@@ -2224,8 +2756,6 @@ server <- function(input, output, session) {
     dl_when("adm_ba_report", "Safe audit report (.md)", !is.null(adm_ba()), BA_REPORT_WHY) })
   output$adm_ba_csv_ui <- renderUI({ req(admin_ok())
     dl_when("adm_ba_csv", "Converted report (.csv)", !is.null(adm_ba_conv()), BA_CSV_WHY) })
-  output$adm_audit_dl_ui <- renderUI({ req(admin_ok())
-    dl_when("adm_audit_dl", "Download safe audit (.md)", !is.null(input$adm_audit_one), AUDIT_ONE_WHY) })
   output$adm_up_audit_ui <- renderUI({ req(admin_ok())
     dl_when("adm_up_audit", "Download its safe summary (no personal data)",
             nzchar(input$adm_up_pick %||% ""), UP_AUDIT_WHY) })
@@ -2249,16 +2779,6 @@ server <- function(input, output, session) {
       if (is.null(conv)) { notify_once("adm_ba_csv", BA_CSV_WHY, duration = 8)
                            return(.dl_note(file, BA_CSV_WHY)) }
       utils::write.csv(conv, file, row.names = FALSE) })
-  output$adm_audit_dl <- downloadHandler(
-    filename = function() "statement.audit.md",
-    content = function(file) {
-      req(admin_ok())        # admin-only export
-      if (is.null(input$adm_audit_one)) { notify_once("adm_audit_dl", AUDIT_ONE_WHY, duration = 6)
-                                          return(.dl_note(file, AUDIT_ONE_WHY)) }
-      a <- tryCatch(format_audit(statement_audit(input$adm_audit_one$datapath, templates = templates())),
-                    error = function(e) NULL)
-      if (is.null(a)) return(.dl_note(file, "That file could not be read, so there is no summary to give. The file itself is the problem, not the audit."))
-      writeLines(a, file) })
 
   # adm_tpl_bands -- open the SELECTED template in the visual editor, on a real
   # statement it has actually read.
@@ -2342,6 +2862,104 @@ server <- function(input, output, session) {
            else "Redraw its columns on a real statement"
     actionButton("adm_tpl_bands", lab,
                  class = if (identical(kind, "fields")) "btn-default" else "btn-primary")
+  })
+
+  # ---- H7: "I have just added table 41 - do the other 40 still read?" --------
+  #
+  # A forty-table template grown over months is unmaintainable without this. Every
+  # edit is a change whose blast radius nobody can see, because there was no way
+  # to ask one template the one question that matters after an edit: does anything
+  # that used to read stop reading?
+  #
+  # THERE IS NO FOLDER PICKER, ON PURPOSE. The examples are the documents this
+  # template has ALREADY READ on this box -- the saved uploads record which
+  # template read them -- so the tool knows which files the question is about and
+  # does not ask. .tpl_sample() above takes the newest one for the band editor;
+  # this takes the newest few for the check, and .ADM_CHECK_MAX bounds it because
+  # every one of them is read (and OCR'd) in this process, which the whole team
+  # shares.
+  .ADM_CHECK_MAX <- 6L
+  .tpl_examples <- function(tid, n = .ADM_CHECK_MAX) {
+    u <- safe(read_uploads(UPLOADS_DIR), NULL)
+    if (is.null(u) || !nrow(u) || !"template" %in% names(u)) return(character(0))
+    ok <- !is.na(u$template) & u$template == tid & !u$purged
+    if (!any(ok)) return(character(0))
+    u <- u[ok, , drop = FALSE]          # read_uploads() is already newest-first
+    ps <- vapply(u$id, function(i) safe(upload_file_path(i, UPLOADS_DIR), NA_character_),
+                 character(1), USE.NAMES = FALSE)
+    ps <- ps[!is.na(ps) & file.exists(ps)]
+    utils::head(ps, n)
+  }
+  adm_check <- reactiveVal(NULL)     # list(id, grid, message, n)
+  output$adm_tpl_check_btn <- renderUI({
+    id <- input$adm_tpl_pick
+    if (is.null(id) || !nzchar(id)) return(NULL)
+    n <- length(.tpl_examples(id))
+    tagList(
+      actionButton("adm_tpl_check", "Check it still reads the examples on this box"),
+      div(class = "muted", style = "font-size:12px;margin-top:4px",
+          if (n == 0L)
+            "There are no saved documents on this box that this template has read, so there is nothing to check it against yet."
+          else sprintf("It will re-read the %d most recent document%s this template has read here.",
+                       n, if (n == 1L) "" else "s")))
+  })
+  observeEvent(input$adm_tpl_check, {
+    req(admin_ok())
+    id <- input$adm_tpl_pick
+    t <- if (is.null(id) || !nzchar(id)) NULL else adm_lib()[[id]]
+    if (is.null(t)) {
+      adm_check(list(id = "", grid = NULL, n = 0L, ok = FALSE,
+                     note = "Pick a template first."))
+      return()
+    }
+    paths <- .tpl_examples(id)
+    # THIS BLOCKS THE PROCESS while it reads and OCRs each example, which is why it
+    # is bounded to a handful and why the wait is SHOWN. It cannot go through the
+    # job slot as things stand: job_run_task (R/jobs.R) has no task for it.
+    r <- withProgress(message = "Re-reading this template's examples", value = 0.1,
+      tryCatch(template_check(t, paths,
+                              progress = function(i, n, f)
+                                setProgress(value = i / max(1, n), detail = basename(f))),
+               error = function(e) NULL))
+    if (is.null(r)) {
+      adm_check(list(id = id, grid = NULL, n = length(paths), ok = FALSE,
+                     note = "The check stopped before it finished, so there is nothing to show."))
+      return()
+    }
+    # ONE SENTENCE, in template_check's own words with the machine code taken off
+    # it the way every other verdict on this app has, so the screen and the engine
+    # can never say two different things about the same check.
+    msg <- as.character(r$message)[1]
+    said <- plain_messages(msg)
+    adm_check(list(id = id, grid = r$grid, n = length(paths),
+                   ok = grepl("^ok:", msg),
+                   note = .sentence(if (length(said)) said[1] else msg)))
+  })
+  output$adm_tpl_check_msg <- renderUI({
+    ch <- adm_check(); if (is.null(ch)) return(NULL)
+    div(style = "margin-top:6px", span(class = if (isTRUE(ch$ok)) "ok" else "bad", ch$note))
+  })
+  # The grid is wide, so it sits under the two columns rather than inside one.
+  output$adm_tpl_check_head <- renderUI({
+    ch <- adm_check(); if (is.null(ch) || is.null(ch$grid) || !nrow(ch$grid)) return(NULL)
+    tagList(tags$hr(),
+      h4(sprintf("How this template read %d example%s", ch$n, if (ch$n == 1L) "" else "s")),
+      helpText("One row per table (or value) per example. A count of 0 rows on every example is what an edit has broken; a word count above 0 means the column edges do not fit that document."))
+  })
+  output$adm_tpl_check_grid <- renderDT({
+    ch <- adm_check(); req(ch); g <- ch$grid; req(g)
+    if (nrow(g) && "file" %in% names(g)) g$file <- basename(as.character(g$file))
+    datatable(g, rownames = FALSE,
+              options = dt_none_opts("Nothing to show yet.", pageLength = 15,
+                                     dom = "tip", scrollX = TRUE))
+  })
+  # A template that is edited is a different template, so the last check stops
+  # standing for it -- a stale green grid over a template that has since changed
+  # is exactly the wrong figure that looks right, one screen along.
+  observeEvent(input$adm_tpl_pick, {
+    req(admin_ok())
+    ch <- adm_check()
+    if (!is.null(ch) && !identical(ch$id, input$adm_tpl_pick)) adm_check(NULL)
   })
 
   # adm_feed_health -- did the analytics feed actually receive what it should have?
@@ -2682,6 +3300,22 @@ server <- function(input, output, session) {
     # screen that will not stop asking questions.
     guide = FALSE,
     colsel = NA_integer_, colver = 0L,   # which column the edit panel holds
+    # WHICH SAVED TABLE THE DRAFT IS A COPY OF, or NA for a new one.
+    #
+    # Editing used to CUT the table out of the template and put it in the draft,
+    # so a mis-click on Edit followed by Cancel destroyed it - one click, no
+    # confirmation, no undo, on a template that can hold forty tables built over
+    # months. The draft is a COPY now and Save puts it back at this index.
+    edit_idx = NA_integer_,
+    # A remove asked for once. Removing a saved table is the only gesture here
+    # that destroys work, so it is the only one that has to be meant twice.
+    rm_armed = NULL,
+    # THE PAGE SIZE THE TEMPLATE'S BOXES WERE DRAWN IN, when a saved template is
+    # open. Every band is a number in that space; reading it back over a document
+    # of a different size and re-stamping the size is how every box on the
+    # template silently moves. NULL means "this document's own page size", which
+    # is right for a template being drawn for the first time.
+    frame = NULL,
     # Where and when a click last set a boundary. Shiny sends a plot click on
     # MOUSEDOWN, so a drag sends one too -- this is how the brush that follows is
     # recognised as the tail of that same gesture rather than a new instruction.
@@ -2729,6 +3363,16 @@ server <- function(input, output, session) {
     rb$pairs  <- prop$pairs
     rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
     rb$guide <- FALSE; rb$preview <- NULL; rb$click_at <- NULL
+    rb$edit_idx <- NA_integer_; rb$rm_armed <- NULL
+    # THE FRAME COMES BACK WITH THE TEMPLATE. Its bands are points in the page
+    # size it was drawn on; opening it over a US Letter copy and re-stamping the
+    # size left every band in the old space with a new label on it -- measured at
+    # 11pt across and 41pt up for one word. Restored here and never overwritten
+    # while it is open. (Register H4.)
+    fw <- suppressWarnings(as.numeric((t$ref_width  %||% NA_real_)[1]))
+    fh <- suppressWarnings(as.numeric((t$ref_height %||% NA_real_)[1]))
+    rb$frame <- if (is.finite(fw) && fw > 0 && is.finite(fh) && fh > 0)
+      list(ref_width = fw, ref_height = fh) else NULL
     updateTextInput(session, "rb_bank", value = as.character(t$bank %||% "")[1])
     updateTextInput(session, "rb_type",
                     value = as.character(t$statement_type %||% "report")[1])
@@ -2742,10 +3386,52 @@ server <- function(input, output, session) {
     updateRadioButtons(session, "ts_doctype", selected = "other")
     updateTabsetPanel(session, "main_tabs", selected = "Add a template")
   }
-  # A DIFFERENT DOCUMENT IS A DIFFERENT TEMPLATE. Uploading one while a saved
-  # template is open would otherwise leave its name and its boxes on screen over a
-  # page they were never drawn on.
-  observeEvent(input$ts_file, { rb_editing(NA_character_) }, ignoreInit = TRUE)
+  # ANOTHER EXAMPLE OF THE SAME TEMPLATE, OR A NEW ONE - AND THE TOOL WORKS OUT
+  # WHICH.
+  #
+  # "A number of these reports will NOT have consistent page numbers... sometimes
+  # there may only be 2 tables and others 40" - which is a template built from
+  # several examples, and it was impossible. Uploading a second document cleared
+  # the editing flag, which un-blocked the three seeding observers: the issuer was
+  # overwritten from the new FILENAME and the identifying phrases wholesale. Half
+  # a template, and the half you cannot see, gone.
+  #
+  # There is nothing to ask. If there is work on this screen - a saved template
+  # open, or one table or value drawn - a second document is ANOTHER EXAMPLE of
+  # it, and the only thing that changes is the page. Nothing else can be true:
+  # the boxes are still on screen, so they are still the answer. If there is no
+  # work, a new document is a new template, which is what it always was.
+  # It is not silent, and the way back is one link. (Register H5.)
+  .rb_has_work <- function() !is.na(rb_editing()) ||
+    length(rb$tables) > 0L || length(rb$pairs) > 0L
+  observeEvent(input$ts_file, {
+    # THE FILE JUST CHOSEN IS THE DOCUMENT. rb_doc() prefers a handed-over path
+    # when there is one, so without this the picker did nothing at all after a
+    # template had been opened from Convert - which is the one route into "add
+    # tables from a second example" that anybody would try first.
+    rb_handoff(NULL)
+    if (!.rb_has_work()) { rb_editing(NA_character_); rb$frame <- NULL; return() }
+    rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
+    rb$edit_idx <- NA_integer_; rb$rm_armed <- NULL; rb$preview <- NULL
+    updateNumericInput(session, "rb_page", value = 1)
+    # ONE SENTENCE. The second half told her to use "Start a new template" -- a
+    # link sitting two inches above this message, on screen, saying exactly that.
+    showNotification("Read as another example of this template - only the page changed.",
+                     type = "message", duration = 9)
+  }, ignoreInit = TRUE)
+  # THE WAY BACK, and the only thing on screen that empties it.
+  observeEvent(input$rb_fresh, {
+    rb$tables <- list(); rb$pairs <- list()
+    rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
+    rb$edit_idx <- NA_integer_; rb$rm_armed <- NULL; rb$preview <- NULL
+    rb$frame <- NULL
+    rb_editing(NA_character_); rb_seeded(NA_character_)
+    rb_id_auto(NA_character_); rb_fp_auto(NA_character_)
+    updateTextInput(session, "rb_id", value = "new_report")
+    updateTextAreaInput(session, "rb_fp", value = "")
+    showNotification("Started again. Nothing was saved to the library.",
+                     type = "message", duration = 6)
+  })
 
   # WHAT TO DO NEXT, AND WHY NOTHING HAPPENED. Choosing "anything else" and
   # uploading a spreadsheet used to do nothing at all: the picker accepts one
@@ -2812,24 +3498,42 @@ server <- function(input, output, session) {
   # THE FRAME IS THE DOCUMENT'S OWN PAGE SIZE, not A4: the picture is drawn in the
   # page's point space and every box comes off that picture, so the number drawn
   # and the number saved are one number.
+  # ...AND A SAVED TEMPLATE BRINGS ITS OWN. A template's bands are points in the
+  # page size it was DRAWN on. Reading page 1 of whatever is open and stamping
+  # that size onto the template left every band in the old space under a new
+  # label, so opening an A4 template on a US Letter example to add table 41 moved
+  # every box on the other forty by 11pt across and 41pt up - and nothing said so.
+  # While a template is open its own frame is the frame, and the page is drawn
+  # scaled into it, which is exactly what the reader does at conversion time.
   rb_frame <- reactive({
+    f <- rb$frame
+    if (is.list(f) && is.finite(.doc_num(f$ref_width, NA_real_)) &&
+        is.finite(.doc_num(f$ref_height, NA_real_))) return(f)
     i <- rb_input()
     w <- suppressWarnings(as.numeric((i$page_width  %||% NA_real_)[1]))
     h <- suppressWarnings(as.numeric((i$page_height %||% NA_real_)[1]))
     list(ref_width  = if (is.na(w) || w <= 0) .A4_W else w,
          ref_height = if (is.na(h) || h <= 0) .A4_H else h)
   })
+  # NOTHING SILENT. A document whose pages are a different size from the one the
+  # template was drawn on is read scaled into the template's space - which is
+  # right, and invisible, and exactly the thing somebody needs to be told before
+  # they start nudging boxes that are not where they expect.
+  output$rb_frame_note <- renderText({
+    f <- rb$frame; if (!is.list(f)) return("")
+    i <- rb_input(); if (is.null(i)) return("")
+    w <- suppressWarnings(as.numeric((i$page_width  %||% NA_real_)[1]))
+    h <- suppressWarnings(as.numeric((i$page_height %||% NA_real_)[1]))
+    if (!is.finite(w) || !is.finite(h)) return("")
+    if (abs(w - .doc_num(f$ref_width, w)) < PARAM_DOC_SAME_PAGE_PT &&
+        abs(h - .doc_num(f$ref_height, h)) < PARAM_DOC_SAME_PAGE_PT) return("")
+    "This document's pages are a different size from the one this template was drawn on, so the page is shown scaled to fit its boxes - the same way it will be read."
+  })
 
   observe({
     n <- rb_n_pages(); if (is.na(n)) return()
     updateNumericInput(session, "rb_page", max = n,
       label = if (n == 1L) "Page (1 page)" else sprintf("Page (1 to %d)", n))
-  })
-  observeEvent(input$rb_prev_page, updateNumericInput(session, "rb_page",
-    value = max(1L, .clamp_page(input$rb_page, rb_n_pages()) - 1L)))
-  observeEvent(input$rb_next_page, {
-    n <- rb_n_pages(); if (is.na(n)) return()
-    updateNumericInput(session, "rb_page", value = min(n, .clamp_page(input$rb_page, n) + 1L))
   })
 
   .rb_pg <- reactive(.clamp_page(input$rb_page, rb_n_pages()))
@@ -2848,6 +3552,106 @@ server <- function(input, output, session) {
       x >= .doc_num(cc$x_min, -Inf) && x <= .doc_num(cc$x_max, Inf), logical(1)))
     if (length(hit)) as.integer(hit[1]) else NA_integer_
   }
+  # ---- A COLUMN IN THE MIDDLE MOVES THE ONES BESIDE IT ----------------------
+  #
+  # "If I need to expand or contract a column in the middle of others, that
+  # clashes where the auto boundaries are, the other columns NEED to adapt to it
+  # rather than just do nothing. The auto column widths are sometimes too big and
+  # or too small for the data, and quickly resizing the column that needs to be
+  # bigger is SUPER hard - I've got to first collapse the larger one."
+  #
+  # That is exactly what it did: doc_set_column_band() clamps the moved column off
+  # its neighbours and tells the person to "move the neighbour first", which on a
+  # table of eight columns means seven moves to make one. A control that refuses
+  # the obvious thing is worse than no control.
+  #
+  # THE RULE: the column goes where it was put, and everything in its way slides
+  # along - recursively, keeping its width where there is room, down to a floor
+  # where there is not, and never off the page (the wall). If the chain cannot
+  # fit even at the floor, the request itself is trimmed to what the page can
+  # hold. Nothing is ever silent: the count of columns that moved, the count that
+  # had to be narrowed, and whether the request was trimmed all come back on the
+  # answer.
+  #
+  # THE FLOOR ITSELF IS NOT A NUMBER IN THIS FILE. It decides where a figure
+  # lands on a page, which makes it engine tuning, so the value lives in
+  # R/params.R beside every other such decision and this is only the handle.
+  .RB_MIN_COL <- PARAM_DOC_MIN_COL_PT
+  #
+  # THE ENGINE HALF IS NOT MINE. doc_set_column_band() in R/tables.R is still the
+  # clamping setter and is still what every other caller uses; this is the same
+  # decision made where the page width is known. See notes_for_next.
+  .rb_move_band <- function(cols, j, x0, x1, page_w = NA_real_) {
+    old <- if (is.list(cols) && !is.null(cols$columns)) .doc_columns(cols) else (cols %||% list())
+    j <- .doc_int(j)
+    n <- length(old)
+    if (is.na(j) || j < 1L || j > n) return(old)
+    W <- .doc_num(page_w, NA_real_)
+    if (!is.finite(W) || W <= 0) W <- Inf
+    lo <- suppressWarnings(min(x0, x1)); hi <- suppressWarnings(max(x0, x1))
+    if (!isTRUE(is.finite(lo)) || !isTRUE(is.finite(hi))) return(old)
+    lo <- max(0, lo); hi <- min(W, hi)
+    # LEFT TO RIGHT, or "the one beside it" means nothing. Everything that builds
+    # a column list sorts it, but a template written by hand need not have, and
+    # pushing along an unsorted list would move the wrong neighbours.
+    ord <- order(vapply(old, function(cc) .doc_num(cc$x_min, Inf), numeric(1)))
+    if (!identical(as.integer(ord), seq_len(n))) {
+      old <- old[ord]; j <- match(j, ord)
+      if (is.na(j)) return(cols)
+    }
+    # Room the neighbours must keep on each side, at the floor.
+    need_r <- (n - j) * .RB_MIN_COL
+    need_l <- (j - 1L) * .RB_MIN_COL
+    trimmed <- FALSE
+    if (is.finite(W) && hi > W - need_r) { hi <- W - need_r; trimmed <- TRUE }
+    if (lo < need_l) { lo <- need_l; trimmed <- TRUE }
+    if (hi - lo < .RB_MIN_COL) return(old)
+    b <- cbind(vapply(old, function(cc) .doc_num(cc$x_min, NA_real_), numeric(1)),
+               vapply(old, function(cc) .doc_num(cc$x_max, NA_real_), numeric(1)))
+    if (anyNA(b)) return(old)
+    b[j, ] <- c(lo, hi)
+    pushed <- 0L; narrowed <- 0L
+    if (n > j) for (k in (j + 1L):n) {
+      if (b[k, 1] >= b[k - 1L, 2] - 1e-9) break     # the chain stops at the first gap
+      w <- b[k, 2] - b[k, 1]
+      nlo <- b[k - 1L, 2]
+      nhi <- min(nlo + w, if (is.finite(W)) W - (n - k) * .RB_MIN_COL else nlo + w)
+      if (nhi - nlo < .RB_MIN_COL) nhi <- nlo + .RB_MIN_COL
+      if (nhi - nlo < w - 1e-9) narrowed <- narrowed + 1L
+      b[k, ] <- c(nlo, nhi); pushed <- pushed + 1L
+    }
+    if (j > 1L) for (k in (j - 1L):1L) {
+      if (b[k, 2] <= b[k + 1L, 1] + 1e-9) break
+      w <- b[k, 2] - b[k, 1]
+      nhi <- b[k + 1L, 1]
+      nlo <- max(nhi - w, (k - 1L) * .RB_MIN_COL)
+      if (nhi - nlo < .RB_MIN_COL) nlo <- max(0, nhi - .RB_MIN_COL)
+      if (nhi - nlo < w - 1e-9) narrowed <- narrowed + 1L
+      b[k, ] <- c(nlo, nhi); pushed <- pushed + 1L
+    }
+    for (k in seq_len(n)) {
+      old[[k]]$x_min <- round(b[k, 1], 2); old[[k]]$x_max <- round(b[k, 2], 2)
+    }
+    attr(old, "pushed") <- pushed
+    attr(old, "narrowed") <- narrowed
+    attr(old, "trimmed") <- trimmed
+    old
+  }
+  # .rb_push_msg(cols) -- one sentence about what moving a column did to the ones
+  # beside it, or "" when it touched nothing. Rule: if the tool moved something
+  # nobody pointed at, it says so.
+  .rb_push_msg <- function(cols) {
+    p <- .doc_int(attr(cols, "pushed"), 0L)
+    nw <- .doc_int(attr(cols, "narrowed"), 0L)
+    if (isTRUE(attr(cols, "trimmed")))
+      return(paste("Moved as far as the page allows - the columns beside it were",
+                   "already down to their narrowest."))
+    if (p < 1L) return("")
+    sprintf("Moved. %d column%s beside it moved along%s.",
+            p, if (p == 1L) "" else "s",
+            if (nw > 0L) sprintf(", and %d had to be narrowed to fit", nw) else "")
+  }
+
   # The name for ONE band, read from the table's own header row -- so a column
   # somebody adds by hand arrives called what the page calls it, the same way the
   # derived ones do. Two edges is a one-column table as far as the reader of the
@@ -2856,6 +3660,44 @@ server <- function(input, output, session) {
   .rb_name_for_band <- function(i, d, fr, x0, x1) {
     nm <- doc_header_names(i, d, fr, c(min(x0, x1), max(x0, x1)))
     if (length(nm) && nzchar(trimws(nm[1]))) trimws(nm[1]) else ""
+  }
+
+  # .rb_default_bottom(d) -- THE BOTTOM EDGE OF THE PAGES IN BETWEEN, ANSWERED
+  # RATHER THAN ASKED.
+  #
+  # "The bottom edge on pages in between needs to default show up. Shouldn't need
+  # to work out end for me." It did not show up: band$y_max was never written by
+  # anything, so on every page but the last the reader ran the table to the
+  # bottom of the paper and read the footer, the source line and the page number
+  # in as rows. The person who set the END correctly had no way to see why.
+  #
+  # The tool already knows the answer and it does not need a new rule to find it:
+  # open the table's own start page right to the bottom and ask the READER where
+  # its last row is, with the same stop rule doc_auto_end uses between pages. So
+  # the default is not a guess about this document, it is a measurement of it -
+  # and it is drawn on the page and moved with one click, because a default that
+  # cannot be seen is the same silent assumption in a different place.
+  #
+  # It only ever FILLS IN a blank. A bottom edge somebody has set is never
+  # touched, and a one-page table has no pages in between to have one.
+  # (Register D4.)
+  .rb_default_bottom <- function(d) {
+    if (is.null(d)) return(d)
+    p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+    if (is.na(p0) || is.na(p1) || p1 <= p0) return(d)
+    b <- d$band %||% list()
+    if (is.finite(.doc_num(b$y_max, NA_real_))) return(d)
+    i <- rb_input(); if (is.null(i)) return(d)
+    fr <- rb_frame()
+    probe <- d
+    probe$follow <- FALSE
+    probe$end <- list(page = as.integer(p0), y = fr$ref_height)
+    r <- tryCatch(doc_table_rows(i, probe, fr), error = function(e) NULL)
+    y <- if (is.null(r)) NA_real_ else suppressWarnings(as.numeric(r$last_y))
+    if (!isTRUE(is.finite(y)) || y <= .doc_num(d$start$y, 0)) return(d)
+    b$y_max <- round(y + 2, 1)
+    d$band <- b
+    d
   }
 
   # .rb_next_step(done, d) -- the step after `done`, or "" to stop.
@@ -2902,6 +3744,20 @@ server <- function(input, output, session) {
     ""
   }
 
+  # .rb_about() -- TABLE, COLUMN, VALUE or DOCUMENT: which of the four things on
+  # this screen the armed gesture is about.
+  #
+  # "Clear distinction between when I'm editing columns, tables etc." Every
+  # sentence in .RB_ASK names the thing in capitals, but they are nine different
+  # sentences and the distinction has to be read out of the wording each time.
+  # This is the same fact as one word, in the same place, every time. (Register D6.)
+  .rb_about <- function(m) switch(as.character(m %||% ""),
+    title = , cols = , start = , end = , bottom = "TABLE",
+    addcol = , colpos = "COLUMN",
+    label = , value = "VALUE",
+    phrase = "DOCUMENT",
+    "")
+
   # ---- The banner: the one thing the screen is waiting for -------------------
   output$rb_arm <- renderUI({
     a <- .RB_ASK[[rb$mode %||% ""]]
@@ -2917,6 +3773,10 @@ server <- function(input, output, session) {
       "border-radius:6px;background:#fff4d6;border-left:5px solid #b7791f"),
       div(style = "font-size:20px;line-height:1", "\u270e"),
       div(style = "flex:1;min-width:0",
+        # WHICH OF THE FOUR THINGS THIS IS ABOUT, first, always.
+        if (nzchar(.rb_about(m))) div(style = paste(
+          "font-size:11px;font-weight:700;letter-spacing:1px;color:#8a6a2a;",
+          "margin-bottom:2px"), .rb_about(m)),
         div(style = "font-size:16px;font-weight:700;color:#7a4f00", a[1]),
         div(style = "font-size:12px;color:#8a6a2a;margin-top:2px", a[2]),
         if (nzchar(subj)) div(style = "font-size:13px;color:#7a4f00;margin-top:4px",
@@ -2970,9 +3830,29 @@ server <- function(input, output, session) {
   # Filling them from an observer on the draft would fight the person typing into
   # them; filling them here means they are set when a draft ARRIVES and left alone
   # while it is being edited.
+  # .rb_pin_frame() -- THE SPACE THE BOXES LIVE IN, FIXED THE MOMENT THE FIRST
+  # ONE IS DRAWN. A template that has been saved brings its frame back with it
+  # (rb_open_template); one being drawn for the first time has to pin its own, or
+  # loading a second example of a different page size moves every box already on
+  # screen into a space it was never drawn in - H4 again, on the half of the job
+  # that has not been saved yet. No-op once it is set.
+  .rb_pin_frame <- function() {
+    if (!is.null(rb$frame)) return(invisible(NULL))
+    # rb_frame() reaches rb_input(), which req()s a document - and a req() inside
+    # an observer aborts the whole observer, silently. Pinning the frame must
+    # never be the reason a table failed to open.
+    f <- tryCatch(rb_frame(), error = function(e) NULL)
+    if (is.list(f)) rb$frame <- f
+    invisible(NULL)
+  }
   .rb_load_draft <- function(d) {
+    .rb_pin_frame()
     rb$draft <- d
     rb$colsel <- NA_integer_
+    # A DRAFT IS A NEW TABLE UNLESS THE CALLER SAYS OTHERWISE. Only the Edit
+    # handler sets rb$edit_idx, and it sets it AFTER this call - so a draft that
+    # arrives any other way can never overwrite a saved table on Save.
+    rb$edit_idx <- NA_integer_
     updateTextInput(session, "rb_name", value = as.character(d$name %||% ""))
     updateRadioButtons(session, "rb_hdr",
       selected = if (.doc_int(d$header_rows, 1L) == 0L) "data" else "head")
@@ -2992,6 +3872,7 @@ server <- function(input, output, session) {
     invisible(NULL)
   }
   .rb_load_vdraft <- function(v) {
+    .rb_pin_frame()
     rb$vdraft <- v
     updateTextInput(session, "rb_vname", value = as.character(v$name %||% ""))
     updateSelectInput(session, "rb_vtype", selected = as.character(v$type %||% "text"))
@@ -3085,7 +3966,7 @@ server <- function(input, output, session) {
       showNotification(
         if (nzchar(sel))
           sprintf(paste("Nothing was waiting for that drag, so nothing changed. To put",
-                        "\u201c%s\u201d there, press \u201cDrag its width on the page\u201d",
+                        "\u201c%s\u201d there, press Edit beside it in the column list",
                         "first - then drag."), sel)
         else paste("Nothing was waiting for that drag, so nothing changed.",
                    "Press \u201c+ Add a table\u201d or \u201c+ Add a value\u201d first."),
@@ -3145,6 +4026,33 @@ server <- function(input, output, session) {
       d$header_rows <- max(1L, min(8L, as.integer(nlines)))
       d$anchor$header_text <- as.list(vapply(cols, function(cc) cc$name, character(1)))
       d$end <- tryCatch(doc_auto_end(i, d, fr), error = function(e) d$end)
+      # THE DIVISIONS COME FROM ALL THE INK IN THE TABLE, NOT FROM THE BOX THAT
+      # WAS DRAWN ROUND THE HEADINGS.
+      #
+      # Reported: "when I define columns, but one of the columns doesn't have a
+      # first row of data, it pulls all info in the last column into the second
+      # to last column". The drag box names the columns and says where the
+      # heading is; a column that prints nothing inside that sample yields no
+      # band, and because the surviving bands tile, its whole territory belongs
+      # to a neighbour - silently, because a tiled column claims every word and
+      # nothing is left unclaimed to complain about.
+      #
+      # Now the end is known, so the whole table is available to derive from.
+      # doc_fit_columns can only ever ADD a column and keeps a drawn column with
+      # no ink in it exactly as drawn (R/tables.R), which is what makes this safe
+      # to run over a set somebody has just named. It runs ONCE, here, at the
+      # moment the columns are first derived - never again, so a band that has
+      # since been drawn or moved by hand is never re-derived. (Findings A3.)
+      fit <- tryCatch(doc_fit_columns(i, d, fr), error = function(e) list())
+      gained <- max(0L, length(fit) - length(cols))
+      if (length(fit) >= length(cols)) {
+        d$columns <- fit; cols <- fit
+        d$anchor$header_text <- as.list(vapply(cols, function(cc)
+          as.character(cc$name %||% "")[1], character(1)))
+      }
+      # The bottom edge of the pages in between, measured after the columns are
+      # settled - the reader uses them to decide what is a row. (Register D4.)
+      d <- .rb_default_bottom(d)
       rb$draft <- d
       .rb_push_where(d)
       rb$mode <- .rb_next_step("cols", d)
@@ -3165,10 +4073,21 @@ server <- function(input, output, session) {
                                "If you did mean one column, carry on."),
                          type = "warning", duration = 12)
       } else {
-        showNotification(sprintf(paste("%d columns, ending on page %d. Everything below can",
-                                       "be changed - names, edges, where it starts and stops."),
-                                 length(cols), .doc_int(d$end$page, pg)),
-                         type = "message", duration = 7)
+        # NOTHING SILENT. Reading the whole table can find a column the heading
+        # row alone did not show - one that prints nothing until page 2, or one
+        # whose first row is blank. That is a correction to what was just drawn,
+        # so it is said, once, here.
+        # What it found, and the correction if it made one. The old third clause
+        # ("Everything below can be changed - names, edges, where it starts and
+        # stops") described the panel it is printed over.
+        showNotification(sprintf("%d columns, ending on page %d.%s",
+                                 length(cols), .doc_int(d$end$page, pg),
+                                 if (gained > 0L)
+                                   sprintf(paste(" %d of them %s found by reading the whole table,",
+                                                 "not the heading row."),
+                                           gained, if (gained == 1L) "was" else "were")
+                                 else ""),
+                         type = "message", duration = 8)
       }
       return()
     }
@@ -3210,23 +4129,21 @@ server <- function(input, output, session) {
       if (is.null(d) || is.na(j)) { rb$mode <- ""; return() }
       old <- .doc_columns(d)
       if (!length(old) || j > length(old)) { rb$mode <- ""; return() }
-      # ONLY THIS COLUMN MOVES. The name is the person's, not the header row's:
-      # moving a column is not a request to rename it back to whatever is printed
-      # above its new position.
+      # THIS COLUMN GOES WHERE IT WAS PUT, AND WHAT IS IN THE WAY MOVES ALONG.
+      # WAS: doc_set_column_band(), which clamped it at its neighbour and said
+      # "move the neighbour first" - the refusal register D5 is about. The name
+      # is still the person's, not the header row's: moving a column is not a
+      # request to rename it back to whatever is printed above its new position.
       keep_nm <- as.character(old[[j]]$name %||% "")[1]
-      cols <- doc_set_column_band(old, j, box$x_min, box$x_max)
-      clamped <- isTRUE(attr(cols, "clamped"))
+      cols <- .rb_move_band(old, j, box$x_min, box$x_max, fr$ref_width)
+      note <- .rb_push_msg(cols)
       d$columns <- cols
       rb$draft <- d
       jj <- .rb_col_at(list(columns = cols), (box$x_min + box$x_max) / 2)
       rb$colsel <- if (is.na(jj)) j else jj
       rb$colver <- rb$colver + 1L
       rb$mode <- ""
-      if (clamped)
-        showNotification(paste("Moved, and trimmed where it ran into the column beside it.",
-                               "Two columns cannot overlap. Move the neighbour first if you",
-                               "need the space."),
-                         type = "message", duration = 9)
+      if (nzchar(note)) showNotification(note, type = "message", duration = 8)
       return()
     }
 
@@ -3334,6 +4251,9 @@ server <- function(input, output, session) {
                          type = "warning", duration = 6); return()
       }
       d$end <- list(page = as.integer(pg), y = y)
+      # An end on a later page means there are now pages in between, and they
+      # need a bottom edge. Filled in, never asked for. (Register D4.)
+      d <- .rb_default_bottom(d)
     } else {
       # THE BOTTOM EDGE OF EVERY PAGE BUT THE LAST. Stored on the table's band,
       # which is what doc_locate_table() uses to close a continuation page's
@@ -3370,13 +4290,34 @@ server <- function(input, output, session) {
   })
 
   # ---- The table being worked on --------------------------------------------
+  # WHAT THIS PANEL IS ABOUT, in one line, at the top of it: which table, whether
+  # it is new or a copy of a saved one, and the two answers the tool worked out
+  # for itself (how tall the heading is, and how many columns). The heading count
+  # is here because the controls that change it are now folded away, and an
+  # answer you cannot see is an answer you cannot check. (Register D2 and D6.)
   output$rb_step <- renderUI({
     d <- rb$draft; if (is.null(d)) return(NULL)
     p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
+    nc <- length(.doc_columns(d))
+    hr <- .doc_int(d$header_rows, 1L)
+    idx <- .doc_int(rb$edit_idx, NA_integer_)
+    editing <- !is.na(idx) && idx >= 1L && idx <= length(rb$tables)
     div(style = "margin:0 0 8px;font-size:13px;color:#555555",
+      div(style = "font-size:11px;letter-spacing:.6px;color:#7a4f00;font-weight:700",
+          "THIS TABLE"),
       strong(if (p1 > p0) sprintf("Pages %d to %d", p0, p1) else sprintf("Page %d", p0)),
-      sprintf(" \u00b7 %d column%s \u00b7 not saved yet",
-              length(.doc_columns(d)), if (length(.doc_columns(d)) == 1L) "" else "s"))
+      sprintf(" \u00b7 %d column%s \u00b7 %s",
+              nc, if (nc == 1L) "" else "s",
+              if (hr < 1L) "its top row is data"
+              else if (hr == 1L) "its top row names the columns"
+              else sprintf("its top %d rows name the columns", hr)),
+      div(class = "muted", style = "font-size:12px",
+          if (editing)
+            # Cancel's own button says what Cancel does, a few inches below and
+            # rendered with the true words for the case in hand.
+            sprintf("A copy of the saved table \u201c%s\u201d \u00b7 Save puts it back.",
+                    as.character(rb$tables[[idx]]$name %||% "")[1])
+          else "Not saved yet."))
   })
   output$rb_ncols <- renderText({
     n <- length(.doc_columns(rb$draft))
@@ -3411,17 +4352,31 @@ server <- function(input, output, session) {
                              PALETTE$warn), "\u2013\u2013"),
         div(style = "flex:1;min-width:0;font-size:13px",
           strong("Bottom edge on the pages in between"),
-          if (is.finite(ymax)) sprintf(" %s", down(ymax))
+          # SET, DRAWN, AND SAID. It is worked out by reading the table's own
+          # first page, so the screen says that rather than presenting a number
+          # out of the air. (Register D4.)
+          if (is.finite(ymax)) sprintf(" %s, worked out by reading this document", down(ymax))
           else " the bottom of the page (so a footer under it would be read as rows)"),
         actionButton("rb_setbottom", "Move it", class = "btn-primary btn-sm")),
-      div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px",
-        actionButton("rb_endauto", "Work the end out for me", class = "btn-default btn-sm"),
-        actionButton("rb_endpage", "End at the bottom of its page", class = "btn-default btn-sm"),
-        actionButton("rb_endlast", "End at the bottom of the last page",
-                     class = "btn-default btn-sm"),
-        if (p1 > p0 && is.finite(ymax))
-          actionButton("rb_clearbottom", "Run to the bottom of every page",
-                       class = "btn-default btn-sm")))
+      # FOUR SHORTCUTS TO AN ANSWER THE TOOL HAS ALREADY GIVEN.
+      #
+      # The end is worked out the moment the columns are drawn and the bottom
+      # edge is worked out with it, so these four are how to answer FASTER when
+      # one of them is wrong - not what to do next. They were five buttons in a
+      # row under the three that matter, on a screen the owner called "LOTS of
+      # buttons". Folded, with the two direct corrections ("Show me", "Move it")
+      # left on the lines they belong to. (Register D2.)
+      tags$details(style = "margin-top:6px",
+        tags$summary(class = "muted", style = "cursor:pointer;font-size:12px",
+                     "Other ways to say where it ends"),
+        div(style = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px",
+          actionButton("rb_endauto", "Work the end out for me", class = "btn-default btn-sm"),
+          actionButton("rb_endpage", "End at the bottom of its page", class = "btn-default btn-sm"),
+          actionButton("rb_endlast", "End at the bottom of the last page",
+                       class = "btn-default btn-sm"),
+          if (p1 > p0 && is.finite(ymax))
+            actionButton("rb_clearbottom", "Run to the bottom of every page",
+                         class = "btn-default btn-sm"))))
   })
   observeEvent(input$rb_clearbottom, {
     d <- rb$draft; if (is.null(d)) return()
@@ -3441,12 +4396,15 @@ server <- function(input, output, session) {
     d <- rb$draft; if (is.null(d)) return()
     updateNumericInput(session, "rb_page", value = .doc_int(d$end$page, 1L))
   })
+  # EVERY WAY OF SETTING THE END GOES THROUGH THE SAME LINE, so a table that has
+  # just become a multi-page table gets its bottom edge filled in whichever of
+  # the four ways the end was set. (Register D4.)
   observeEvent(input$rb_endauto, {
     d <- rb$draft; if (is.null(d)) return()
     e <- tryCatch(doc_auto_end(rb_input(), d, rb_frame()), error = function(x) NULL)
     if (is.null(e)) { showNotification("Couldn't work out where it ends - move it by hand.",
                                        type = "warning", duration = 6); return() }
-    d$end <- e; rb$draft <- d; .rb_push_where(d)
+    d$end <- e; d <- .rb_default_bottom(d); rb$draft <- d; .rb_push_where(d)
   })
   observeEvent(input$rb_endpage, {
     d <- rb$draft; if (is.null(d)) return()
@@ -3457,10 +4415,29 @@ server <- function(input, output, session) {
     d <- rb$draft; if (is.null(d)) return()
     n <- rb_n_pages(); if (is.na(n)) return()
     d$end <- list(page = as.integer(n), y = rb_frame()$ref_height)
+    d <- .rb_default_bottom(d)
     rb$draft <- d; .rb_push_where(d)
   })
 
-  observeEvent(input$rb_cancel, { rb$draft <- NULL; rb$colsel <- NA_integer_; rb$mode <- "" })
+  # CANCEL SAYS WHICH OF THE TWO THINGS IT DOES. On a new table it throws the
+  # drawing away; on a copy of a saved one it leaves the saved table untouched -
+  # and a button labelled "Throw it away" over a table that took an afternoon to
+  # get right is a button nobody dares press. (Register H13.)
+  output$rb_cancel_btn <- renderUI({
+    editing <- !is.na(.doc_int(rb$edit_idx, NA_integer_))
+    actionButton("rb_cancel",
+                 if (editing) "Cancel - keep the saved table" else "Throw it away",
+                 class = "btn-default")
+  })
+  observeEvent(input$rb_cancel, {
+    idx <- .doc_int(rb$edit_idx, NA_integer_)
+    rb$draft <- NULL; rb$colsel <- NA_integer_; rb$mode <- ""
+    rb$edit_idx <- NA_integer_
+    if (!is.na(idx) && idx >= 1L && idx <= length(rb$tables))
+      showNotification(sprintf("Left \u201c%s\u201d as it was saved.",
+                               as.character(rb$tables[[idx]]$name %||% "that table")[1]),
+                       type = "message", duration = 5)
+  })
 
   # Typing is debounced before it reaches the draft: the list beside the box is
   # drawn from the draft, and redrawing it on every letter is what "it updates
@@ -3498,6 +4475,7 @@ server <- function(input, output, session) {
         identical(.doc_int(d$end$page, 1L), ep) && abs(.doc_num(d$end$y, 0) - ey) < 0.05) return()
     d$start <- list(page = sp, y = round(sy, 1))
     d$end <- list(page = ep, y = round(ey, 1))
+    d <- .rb_default_bottom(d)
     rb$draft <- d
   }, ignoreInit = TRUE)
 
@@ -3598,8 +4576,6 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   observeEvent(input$rb_cdone, { rb$colsel <- NA_integer_; if (identical(rb$mode, "colpos")) rb$mode <- "" })
-  observeEvent(input$rb_cdel,  { j <- rb$colsel; if (!is.na(j)) .rb_drop_col(j) })
-  observeEvent(input$rb_cdrag, { if (!is.na(rb$colsel)) rb$mode <- "colpos" })
 
   rb_cname_d <- debounce(reactive(input$rb_cname), 500)
   observeEvent(rb_cname_d(), {
@@ -3620,7 +4596,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # TYPING THE EDGES IS THE SAME REQUEST AS DRAGGING THEM, so it goes through the
-  # same function: only this column moves, and it is clamped off its neighbours.
+  # same function: this column goes where it is put and its neighbours move along.
   rb_cx_d <- debounce(reactive(c(input$rb_cx0, input$rb_cx1)), 700)
   observeEvent(rb_cx_d(), {
     d <- rb$draft; j <- rb$colsel
@@ -3630,9 +4606,13 @@ server <- function(input, output, session) {
     if (is.na(x0) || is.na(x1) || x1 - x0 < 1) return()
     if (abs(.doc_num(cols[[j]]$x_min, 0) - x0) < 0.5 &&
         abs(.doc_num(cols[[j]]$x_max, 0) - x1) < 0.5) return()
-    cols2 <- doc_set_column_band(cols, j, x0, x1)
+    cols2 <- .rb_move_band(cols, j, x0, x1, rb_frame()$ref_width)
     jj <- .rb_col_at(list(columns = cols2), (x0 + x1) / 2)
     d$columns <- cols2; rb$draft <- d
+    # The same sentence a drag gets. Typing a number that shoves three columns
+    # along must not be quieter than dragging one.
+    nt <- .rb_push_msg(cols2)
+    if (nzchar(nt)) showNotification(nt, type = "message", duration = 8)
     # DO NOT RE-SELECT THE COLUMN IT ALREADY IS.
     #
     # Assigning a reactiveValues field invalidates it even when the new value is
@@ -3654,47 +4634,119 @@ server <- function(input, output, session) {
     d$name <- trimws(as.character(input$rb_name %||% d$name %||% ""))
     if (!nzchar(d$name)) d$name <- sprintf("Table %d", length(rb$tables) + 1L)
     d$anchor$first_column <- list()
-    rb$tables <- c(rb$tables, list(d))
+    # A DRAFT THAT CAME FROM A SAVED TABLE GOES BACK WHERE IT CAME FROM.
+    # Editing copies rather than cuts (register H13), so saving is a REPLACE at
+    # that index, not an append - otherwise one edit would leave two of it.
+    idx <- .doc_int(rb$edit_idx, NA_integer_)
+    if (!is.na(idx) && idx >= 1L && idx <= length(rb$tables)) {
+      rb$tables[[idx]] <- d
+      showNotification(sprintf("Replaced \u201c%s\u201d in this template.", d$name),
+                       type = "message", duration = 5)
+    } else {
+      rb$tables <- c(rb$tables, list(d))
+      showNotification(sprintf("Saved \u201c%s\u201d. It can be edited again from the list below.",
+                               d$name), type = "message", duration = 5)
+    }
     rb$draft <- NULL; rb$colsel <- NA_integer_; rb$mode <- ""
-    showNotification(sprintf("Saved \u201c%s\u201d. It can be edited again from the list below.",
-                             d$name), type = "message", duration = 5)
+    rb$edit_idx <- NA_integer_
   })
 
+  # .RB_MAX_ROWS -- how many saved tables (or values) carry a working Edit and
+  # Remove. The observers are created ONCE, outside the renderUI, so there is a
+  # fixed number of them; the list used to render a pair of buttons for every
+  # table with no cap at all, so on a 61-table template the last button did
+  # nothing when pressed and said nothing about why. The list stops where the
+  # observers stop and says so. (Register H13.)
+  .RB_MAX_ROWS <- 60L
   output$rb_saved <- renderUI({
     if (!length(rb$tables)) return(p(class = "muted", style = "margin:6px 0",
-      "None yet. Every table you save appears here, and every one can be edited again."))
-    lapply(seq_along(rb$tables), function(i) {
-      tb <- rb$tables[[i]]
-      p0 <- .doc_int(tb$start$page, 1L); p1 <- .doc_int(tb$end$page, p0)
-      nm <- .doc_column_names(tb)
-      div(style = paste("padding:5px 7px;border-left:3px solid #0f7a37;margin-bottom:3px;",
-                        "background:#f7f7f7;border-radius:0 4px 4px 0"),
-        div(style = "display:flex;justify-content:space-between;align-items:center;gap:8px",
-          div(style = "min-width:0",
-            strong(tb$name %||% sprintf("Table %d", i)),
-            div(class = "muted", style = "font-size:12px",
-                sprintf("%s \u00b7 %s",
-                        if (p1 > p0) sprintf("pages %d-%d", p0, p1) else sprintf("page %d", p0),
-                        if (length(nm)) paste(nm, collapse = ", ") else "no columns"))),
-          div(style = "white-space:nowrap",
-            actionButton(paste0("rb_ed_", i), "Edit", class = "btn-default btn-sm"),
-            actionButton(paste0("rb_rm_", i), "Remove", class = "btn-default btn-sm"))))
-    })
+      "None yet - every table you save appears here."))
+    shown <- seq_len(min(length(rb$tables), .RB_MAX_ROWS))
+    arm <- rb$rm_armed
+    tagList(
+      lapply(shown, function(i) {
+        tb <- rb$tables[[i]]
+        p0 <- .doc_int(tb$start$page, 1L); p1 <- .doc_int(tb$end$page, p0)
+        nm <- .doc_column_names(tb)
+        on <- identical(.doc_int(rb$edit_idx, NA_integer_), as.integer(i))
+        armed <- is.list(arm) && identical(.doc_int(arm$i, NA_integer_), as.integer(i))
+        # A TABLE READ WHEREVER IT APPEARS DOES NOT HAVE A PAGE NUMBER, and
+        # printing one for it would be the template saying something it does not
+        # mean. `occurrence` and `.places` are set by the proposer when it folds
+        # near-identical tables into one (R/tables_detect.R). (Register A2.)
+        pp <- vapply(tb$.places %||% list(),
+                     function(pl) .doc_int(.doc_key(.doc_key(pl, "start"), "page"), NA_integer_),
+                     integer(1))
+        pp <- pp[!is.na(pp)]
+        where <- if (identical(as.character(tb$occurrence %||% "once")[1], "all"))
+            sprintf("wherever it appears%s", if (length(pp))
+              sprintf(" \u00b7 %d places, pages %s%s", length(pp),
+                      paste(utils::head(pp, 6), collapse = ", "),
+                      if (length(pp) > 6L) "..." else "") else "")
+          else if (p1 > p0) sprintf("pages %d-%d", p0, p1) else sprintf("page %d", p0)
+        div(style = sprintf(paste("padding:5px 7px;border-left:3px solid %s;margin-bottom:3px;",
+                                  "background:%s;border-radius:0 4px 4px 0"),
+                            if (on) "#b7791f" else "#0f7a37",
+                            if (on) "#fff4d6" else "#f7f7f7"),
+          div(style = "display:flex;justify-content:space-between;align-items:center;gap:8px",
+            div(style = "min-width:0",
+              strong(tb$name %||% sprintf("Table %d", i)),
+              if (on) span(class = "muted", style = "font-size:12px",
+                           " \u00b7 open above"),
+              div(class = "muted", style = "font-size:12px",
+                  sprintf("%s \u00b7 %s", where,
+                          if (length(nm)) paste(nm, collapse = ", ") else "no columns"))),
+            div(style = "white-space:nowrap",
+              actionButton(paste0("rb_ed_", i), "Edit", class = "btn-default btn-sm"),
+              actionButton(paste0("rb_rm_", i), "Remove",
+                           class = if (armed) "btn-warning btn-sm" else "btn-default btn-sm"),
+              if (armed) span(class = "muted", style = "font-size:11px;margin-left:4px",
+                              "press again"))))
+      }),
+      if (length(rb$tables) > .RB_MAX_ROWS)
+        p(class = "muted", style = "margin:6px 0 0",
+          sprintf(paste("%d more table(s) are on this template and will be saved,",
+                        "but cannot be edited here. Edit them one at a time by",
+                        "removing tables above, or in the template file."),
+                  length(rb$tables) - .RB_MAX_ROWS)))
   })
 
-  .RB_MAX_ROWS <- 60L
   lapply(seq_len(.RB_MAX_ROWS), function(i) {
     observeEvent(input[[paste0("rb_rm_", i)]], {
       if (i > length(rb$tables)) return()
-      rb$tables <- rb$tables[-i]
+      # REMOVING IS THE ONLY GESTURE HERE THAT DESTROYS WORK, so it is the only
+      # one that has to be meant twice. It used to take the table out on the
+      # first press, with no confirmation and no undo, beside a button labelled
+      # "Throw it away" - one mis-click and table 27 was gone from a template
+      # that took months. (Register H13.)
+      nm <- as.character(rb$tables[[i]]$name %||% sprintf("Table %d", i))[1]
+      a <- rb$rm_armed
+      if (is.list(a) && identical(.doc_int(a$i, NA_integer_), as.integer(i)) &&
+          identical(as.character(a$name %||% ""), nm)) {
+        rb$tables <- rb$tables[-i]
+        rb$rm_armed <- NULL
+        # An index above the one removed now points at a different table.
+        idx <- .doc_int(rb$edit_idx, NA_integer_)
+        if (!is.na(idx)) rb$edit_idx <- if (idx == i) NA_integer_ else
+          if (idx > i) idx - 1L else idx
+        showNotification(sprintf("Removed \u201c%s\u201d from this template.", nm),
+                         type = "message", duration = 6)
+        return()
+      }
+      rb$rm_armed <- list(i = as.integer(i), name = nm)
+      showNotification(sprintf("Press Remove again to take \u201c%s\u201d out of this template.", nm),
+                       type = "warning", duration = 8)
     }, ignoreInit = TRUE)
     observeEvent(input[[paste0("rb_ed_", i)]], {
       if (i > length(rb$tables)) return()
-      # Editing takes it back OUT of the list and into the draft, so there is one
-      # code path for "the table being worked on" and Save always means the same.
+      # EDITING COPIES. It used to CUT the table out of the list and into the
+      # draft - so Cancel, or a second thought, destroyed it. The draft is a copy
+      # and rb$edit_idx remembers where it goes back to, so Save replaces it and
+      # Cancel leaves the saved table exactly as it was. (Register H13.)
       d <- rb$tables[[i]]
-      rb$tables <- rb$tables[-i]
+      rb$rm_armed <- NULL
       .rb_load_draft(d)
+      rb$edit_idx <- as.integer(i)
       rb$mode <- ""
       updateNumericInput(session, "rb_page", value = .doc_int(d$start$page, 1L))
       updateTabsetPanel(session, "rb_tab", selected = "tables")
@@ -3916,7 +4968,14 @@ server <- function(input, output, session) {
     p1 <- .doc_int(tb$end$page, p0)
     if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(invisible(NULL))
     y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
-    y1 <- if (pg == p1) .doc_num(tb$end$y, r$h) else r$h
+    # THE BOTTOM EDGE OF A PAGE THE TABLE CARRIES ON PAST IS A REAL EDGE, so it
+    # is drawn where it really is. It used to be drawn at the bottom of the paper
+    # on every page but the last, because that is what the reader assumed - and
+    # an assumption drawn as if it were an answer is the reason a footer got read
+    # in as rows with nothing on screen to explain it. (Register D4.)
+    ymax <- .doc_num((tb$band %||% list())$y_max, NA_real_)
+    y1 <- if (pg == p1) .doc_num(tb$end$y, r$h)
+          else if (is.finite(ymax)) min(ymax, r$h) else r$h
     # DRAW THE COLUMNS, NOT THE EDGE VIEW.
     #
     # This drew from doc_column_edges(), which is a LOSSY projection: it collects
@@ -3975,6 +5034,9 @@ server <- function(input, output, session) {
       if (pg == p1) {
         lines(c(0, r$w), c(y1, y1), col = PALETTE$bad, lwd = lwd + 0.5)
         .rb_tag(2, y1, "END", PALETTE$bad, above = FALSE)
+      } else if (is.finite(ymax)) {
+        lines(c(0, r$w), c(y1, y1), col = PALETTE$warn, lwd = lwd + 0.5, lty = 2)
+        .rb_tag(2, y1, "BOTTOM", PALETTE$warn, above = FALSE)
       } else lines(c(0, r$w), c(y1, y1), col = col, lty = 3, lwd = lwd)
     }
     invisible(NULL)
@@ -4102,8 +5164,10 @@ server <- function(input, output, session) {
       cols <- .doc_columns(d)
       p0 <- .doc_int(d$start$page, 1L); p1 <- .doc_int(d$end$page, p0)
       if (j <= length(cols) && pg >= p0 && pg <= p1) {
+        ym <- .doc_num((d$band %||% list())$y_max, NA_real_)
         y0 <- if (pg == p0) .doc_num(d$start$y, 0) else 0
-        y1 <- if (pg == p1) .doc_num(d$end$y, r$h) else r$h
+        y1 <- if (pg == p1) .doc_num(d$end$y, r$h)
+              else if (is.finite(ym)) min(ym, r$h) else r$h
         rect(.doc_num(cols[[j]]$x_min, 0), y0, .doc_num(cols[[j]]$x_max, 0), y1,
              border = PALETTE$warn, lwd = 3)
       }
@@ -4135,6 +5199,12 @@ server <- function(input, output, session) {
     # are somebody's answers, not the tool's guesses, and overwriting them with a
     # guess drawn from the filename is how an edit turns into a second template.
     if (!is.na(rb_editing())) return()
+    # ...OR ANY WORK AT ALL IS ON SCREEN. A second example loaded under tables
+    # that are already drawn is another example of THAT template, so the issuer
+    # and the phrases on screen are answers too, whether or not it has been saved
+    # yet. Without this H5's other half stands: the issuer is overwritten from
+    # the new filename and the fingerprint wholesale.
+    if (length(rb$tables) || length(rb$pairs)) return()
     nm <- input$ts_file$name %||% basename(p)
     if (identical(rb_seeded(), nm)) return()
     rb_seeded(nm)
@@ -4192,6 +5262,32 @@ server <- function(input, output, session) {
     t
   })
   output$rb_yaml <- renderText({ t <- rb_template(); t$origin <- NULL; yaml::as.yaml(t) })
+
+  # THE NAME IT WILL SAVE UNDER, printed where the boxes that compose it are - so
+  # folding those two boxes away hides a control, not a fact. (Register D2.)
+  output$rb_id_note <- renderText({
+    id <- trimws(as.character(input$rb_id %||% "")[1])
+    if (!nzchar(id)) return("")
+    sprintf("Saves as %s", id)
+  })
+  # WHAT SAVING DOES, beside the button that does it. Half of "what do I do next"
+  # is what happens when you do. (Register D3.)
+  output$rb_save_note <- renderText({
+    n_t <- length(rb$tables); n_v <- length(.rb_all_pairs())
+    e <- rb_editing()
+    if (!n_t && !n_v)
+      return("Nothing to save yet - draw a table or a value first.")
+    what <- sprintf("%d table%s and %d value%s",
+                    n_t, if (n_t == 1L) "" else "s",
+                    n_v, if (n_v == 1L) "" else "s")
+    # NO ID HERE. The header bar above already names the template being edited;
+    # printing its id again turns a fact into a second question, and an id is not
+    # something a forensic accountant can check against anything.
+    if (!is.na(e) && nzchar(e))
+      sprintf("Replaces the saved template with %s.", what)
+    else sprintf("Adds %s to the library, ready to be used on the next document like this one.",
+                 what)
+  })
 
   output$rb_preview_btn <- renderUI({
     ready <- length(rb$tables) > 0L || length(.rb_all_pairs()) > 0L
@@ -4278,9 +5374,13 @@ server <- function(input, output, session) {
             if (!bad && n_tab && !one_col)
               "Every table was found by its own heading and every column filled."),
             collapse = " ")))),
+      # THE WORKBOOK, AND THE VALUES WHEN THERE ARE ANY. "Download one long CSV"
+      # stood beside these: the same rows the workbook already holds, in a second
+      # file shape, on a screen whose job is teaching a layout rather than
+      # producing a deliverable - and Convert offers that exact file the moment
+      # the template is saved.
       if (length(rb$outputs)) div(style = "margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap",
         downloadButton("rb_dl_xlsx", "Download the workbook", class = "btn-default"),
-        downloadButton("rb_dl_csv", "Download one long CSV", class = "btn-default"),
         # Offered only when there is something in it. A download button that
         # hands back a file saying "nothing to download" is a button that lies
         # about what the template made.
@@ -4296,12 +5396,6 @@ server <- function(input, output, session) {
     filename = function() { p <- .rb_out("\\.xlsx$")
       if (is.na(p)) "nothing-to-download.txt" else basename(p) },
     content = function(file) { p <- .rb_out("\\.xlsx$")
-      if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
-      file.copy(p, file, overwrite = TRUE) })
-  output$rb_dl_csv <- downloadHandler(
-    filename = function() { p <- .rb_out("tables-long\\.csv$")
-      if (is.na(p)) "nothing-to-download.txt" else basename(p) },
-    content = function(file) { p <- .rb_out("tables-long\\.csv$")
       if (is.na(p)) return(.dl_note(file, NOTHING_TO_DL))
       file.copy(p, file, overwrite = TRUE) })
   output$rb_dl_values <- downloadHandler(
@@ -4351,8 +5445,8 @@ server <- function(input, output, session) {
       # them".
       if (n_all > .RB_MAX_PREV)
         p(class = "muted", style = "margin:10px 0 0",
-          sprintf(paste("%d more table(s) are in the workbook and the long CSV but not",
-                        "shown here."), n_all - .RB_MAX_PREV)))
+          sprintf("%d more table(s) are in the workbook but not shown here.",
+                  n_all - .RB_MAX_PREV)))
   })
   lapply(seq_len(.RB_MAX_PREV), function(i) {
     output[[paste0("rb_prev_tbl_", i)]] <- renderDT({
@@ -4399,12 +5493,59 @@ server <- function(input, output, session) {
       output$rb_msg <- renderUI(span(class = "bad",
         paste("Not valid:", paste(probs, collapse = "; ")))); return()
     }
+    # A SAVE THAT CANNOT TAKE EFFECT IS WORSE THAN A REFUSED ONE.
+    #
+    # load_document_templates() keeps the FIRST template it finds for an id and
+    # reads the curated folder first, so saving a user copy under a curated id
+    # writes a file that is never loaded, never used and never mentioned - the
+    # correction is simply outvoted, silently, by the very template it corrects.
+    # The statement toolkit has met this before and answers it the same way: give
+    # the copy its own name and say so. (Register L5.)
+    shadowed <- {
+      have <- tryCatch(all_doc_templates(), error = function(e) list())
+      cur <- have[[as.character(t$id %||% "")[1]]]
+      isTRUE(identical(as.character(cur$origin %||% "")[1], "default"))
+    }
+    renamed <- NA_character_
+    if (shadowed) {
+      renamed <- paste0(t$id, "_custom")
+      t$refines <- t$id
+      t$id <- renamed
+    }
     ok <- tryCatch({ save_document_template(t, USER_DOC_DIR); TRUE }, error = function(e) FALSE)
+    if (isTRUE(ok)) {
+      # THE DOCUMENT THIS WAS TAUGHT FROM IS NOW TAUGHT. The statement toolkit
+      # marks its upload the moment it saves, which is what takes the file off
+      # Admin's "needs pickup" list; the report builder did none of it, so every
+      # document ever taught as a report stayed on that list for ever and the
+      # queue grew instead of shrinking. Same three lines, same status word.
+      # (Register L5.)
+      # ...and only for the upload this template was actually taught FROM. The
+      # tracked upload is whatever was converted last, so marking it blind would
+      # take an unrelated file off the queue - which is the same fault as leaving
+      # this one on it, pointing the other way.
+      taught <- {
+        h <- rb_handoff(); sc <- cv_src()
+        !is.na(cv_upload_id()) && !is.null(h) && !is.null(sc) &&
+          identical(as.character(h)[1], as.character(sc$path)[1])
+      }
+      if (isTRUE(taught))
+        safe(set_upload_status(cv_upload_id(), "wizard_saved",
+                               template = t$id %||% NA_character_, dir = UPLOADS_DIR))
+      tpl_bump(isolate(tpl_bump()) + 1)
+      rb_editing(as.character(t$id %||% "")[1])
+      if (!is.na(renamed)) updateTextInput(session, "rb_id", value = renamed)
+    }
     output$rb_msg <- renderUI(if (isTRUE(ok))
-      span(class = "ok", sprintf(paste("Saved '%s'. On Convert it is used when no",
-                                       "statement template reads the document. What it",
-                                       "produces is a download - it never goes to the",
-                                       "dashboards."), t$id))
+      tagList(
+        span(class = "ok", sprintf(paste("Saved '%s'. On Convert it is used when no",
+                                         "statement template reads the document. What it",
+                                         "produces is a download - it never goes to the",
+                                         "dashboards."), t$id)),
+        if (!is.na(renamed)) div(class = "muted", style = "margin-top:4px",
+          sprintf(paste("It was saved under a new name because '%s' is one of the",
+                        "templates that shipped with the tool, and a copy under that",
+                        "name would never have been used."), t$refines)))
       else span(class = "bad",
                 sprintf("Couldn't save - check folder permissions on %s.", USER_DOC_DIR)))
   })
@@ -5116,6 +6257,32 @@ server <- function(input, output, session) {
         # ...and this is what the governed feed did with it (the last word on
         # cv_recorded / cv_feed_gate, which show_result has just cleared).
         publish_result(res, record)
+        # "For Other statements... it shouldn't just auto process, it should
+        # process and open up the editor. For statements I want a threshold where
+        # it does and where it doesn't."
+        #
+        # `record` IS THE GATE, and it is the one flag that already means "a person
+        # just handed the tool a file". The three re-runs that must stay silent all
+        # pass record = FALSE: the bundled sample, convert_with_template's forced
+        # re-convert, and the re-convert after the toolkit saves a template --
+        # without it, saving a template that still reads at low confidence would
+        # re-open the toolkit she has just closed, forever. A case folder never
+        # auto-opens anything either: run_batch does not come through here, and
+        # opening a batch row is browsing, not converting.
+        #
+        # The report route is a tab switch, not a modal, so cv_res / cv_src /
+        # res$outputs are untouched and clicking back to Convert restores this
+        # result with its Download buttons live. The statement route is the only
+        # one that puts a modal up, and by default only a `low` one does -- the
+        # case where the download is the wrong thing to want.
+        if (isTRUE(record) && .needs_editor(res, EDITOR_MIN_TRUST)) {
+          .edit_now()
+          showNotification(if (.is_txn_result(res))
+              "This one needs checking, so the template toolkit is open - your download is still on Convert."
+            else
+              "Opened the template that read this, so you can adjust it - your download is still on Convert.",
+            type = "message", duration = 9)
+        }
       })
   }
 
@@ -5318,9 +6485,14 @@ server <- function(input, output, session) {
     cv_batch_row(as.integer(i))
     invisible(TRUE)
   }
-  observeEvent(input$cv_batch_rows_selected, {
-    sel <- input$cv_batch_rows_selected
-    if (length(sel)) open_batch_row(as.integer(sel[1]))
+  # WHICH ROW IS OPEN, AND WHICH ROWS ARE TICKED, ARE TWO DIFFERENT QUESTIONS.
+  # The table is multi-select now (see cv_batch), so "the selection" is a set --
+  # but opening a file's result is still one click on one row, and DT's own
+  # _row_last_clicked is exactly that click. Reading the selection instead would
+  # leave the first file of a tick-list open while the person ticks the tenth.
+  observeEvent(input$cv_batch_row_last_clicked, {
+    i <- suppressWarnings(as.integer(input$cv_batch_row_last_clicked)[1])
+    if (!is.na(i)) open_batch_row(i)
   })
 
   # The one line above the table: what came out of the whole case. Counted from
@@ -5400,7 +6572,13 @@ server <- function(input, output, session) {
     # every index below it, and a hard-coded 5 would have hidden the wrong column
     # and sorted the table on the wrong key with nothing to notice it.
     at <- function(nm) which(names(disp) == nm) - 1L
-    datatable(disp, rownames = FALSE, selection = "single",
+    # MULTI-SELECT, because the job a thirty-file case ends in is "three of these
+    # failed, fix the template, run those three again". Single-select made that
+    # thirty row-clicks and thirty separate downloads; the re-run path itself has
+    # existed all along (run_batch takes any list of files). Clicking one row still
+    # opens it -- that is _row_last_clicked, above -- so nothing anybody already
+    # does changes; ticking several now also means something.
+    datatable(disp, rownames = FALSE, selection = "multiple",
       options = list(
         # No scrollX: it makes DataTables clone the header into the scroll body,
         # and the clone's sort arrows render as a stack of triangles over the last
@@ -5420,15 +6598,107 @@ server <- function(input, output, session) {
                                      c(PALETTE$ok, "#8a6d00", PALETTE$bad)))
   })
 
+  # WHAT A CASE FOLDER IS ACTUALLY FOR, ONCE THE TABLE HAS BEEN READ.
+  #
+  # "Thirty files, three failed: no way to re-run just those three and no way to
+  # download the other twenty-seven." The deliverable for a 30-file case was 30
+  # row-clicks and 30 separate downloads, and after building the template the
+  # three failures needed, the only way to use it was to upload the whole case
+  # again. Both answers were already sitting there -- run_batch takes any list of
+  # files, and every converted file's outputs are on disk in one folder -- so this
+  # is two actions over what exists, not a new pipeline.
+  #
+  # THEY ONLY APPEAR WITH SOMETHING TO ACT ON: the re-run needs ticked rows and
+  # says so where the ticking happens, and the download needs a file that was
+  # actually written. A control that cannot do anything is worse than no control.
+  .batch_outputs <- function(b) {
+    if (is.null(b)) return(character(0))
+    p <- unlist(lapply(b$result, function(r) as.character(r$outputs %||% character(0))))
+    p <- unique(p[nzchar(p)])
+    p[file.exists(p)]
+  }
   output$cv_batch_open <- renderUI({
     b <- cv_batch(); req(b)
+    sel <- as.integer(input$cv_batch_rows_selected %||% integer(0))
+    sel <- sel[!is.na(sel) & sel >= 1L & sel <= nrow(b)]
+    outs <- .batch_outputs(b)
+    actions <- div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0 0",
+      if (length(sel))
+        actionButton("cv_batch_again",
+                     sprintf("Convert %s again", if (length(sel) == 1L) "this file"
+                             else sprintf("these %d files", length(sel))),
+                     class = "btn-default")
+      else span(class = "muted", style = "font-size:13px",
+                "Tick the files you want to convert again."),
+      if (length(outs))
+        downloadButton("cv_batch_dl", "\u2b73 Download everything", class = "btn-primary"))
     i <- cv_batch_row()
     if (is.na(i))
-      return(p(class = "muted", style = "margin:8px 0 0",
-               "Click a row for that file's full result."))
-    div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
-      h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i]))))
+      return(tagList(p(class = "muted", style = "margin:8px 0 0",
+                       "Click a row for that file's full result."), actions))
+    tagList(actions,
+      div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
+        h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i])))))
   })
+  # THE SAME ENGINE CALL, ON FEWER FILES. run_batch copies the paths it is given
+  # into a fresh scratch folder, so handing it the ticked rows' files is exactly
+  # what dropping those files into the picker would have done -- one code path, and
+  # a re-run and a first run of the same file can never disagree.
+  observeEvent(input$cv_batch_again, {
+    b <- cv_batch(); req(b)
+    if (!.identity_ok()) return()
+    sel <- as.integer(input$cv_batch_rows_selected %||% integer(0))
+    sel <- sel[!is.na(sel) & sel >= 1L & sel <= nrow(b)]
+    if (!length(sel)) {
+      notify_once("cv_batch_again", "Tick the files you want to convert again first.",
+                  type = "warning", duration = 6)
+      return()
+    }
+    clear_notice("cv_batch_again")
+    paths <- as.character(b$file[sel])
+    keep <- file.exists(paths)
+    if (!any(keep)) {
+      showNotification("Those files are no longer on this server - upload them again.",
+                       type = "error", duration = 10)
+      return()
+    }
+    # SAID, NEVER SILENT: a case whose scratch folder has been reclaimed under it
+    # would otherwise re-run fewer files than were ticked with nothing to show it.
+    if (!all(keep))
+      showNotification(sprintf("%d of those files are no longer on this server, so only the rest are being converted again.",
+                               sum(!keep)), type = "warning", duration = 10)
+    run_batch(data.frame(name = basename(paths[keep]), datapath = paths[keep],
+                         stringsAsFactors = FALSE))
+  })
+  # ONE FILE HOLDING THE WHOLE CASE. The zip is built from the outputs already on
+  # disk, so it carries exactly what the per-file buttons carry, and its name is
+  # the case's own scratch handle rather than "download.zip".
+  output$cv_batch_dl <- downloadHandler(
+    filename = function() sprintf("converted-case-%s.zip", format(Sys.Date(), "%Y%m%d")),
+    content = function(file) {
+      outs <- .batch_outputs(cv_batch())
+      if (!length(outs)) {
+        notify_once("dl", NOTHING_TO_DL, duration = 6)
+        return(.dl_note(file, NOTHING_TO_DL))
+      }
+      # zip::zip is what openxlsx already brings, so it is on every box this runs
+      # on and needs no external tool -- which matters on a machine with no
+      # internet and no Rtools. utils::zip is the fallback and needs one, so a
+      # host with neither says so in a file that opens rather than handing back a
+      # zip that does not.
+      root <- unique(dirname(outs))
+      ok <- tryCatch({
+        if (requireNamespace("zip", quietly = TRUE) && length(root) == 1L)
+          zip::zip(file, files = basename(outs), root = root)
+        else utils::zip(file, outs, flags = "-j9Xq")
+        file.exists(file) && file.info(file)$size > 0
+      }, error = function(e) FALSE)
+      if (!isTRUE(ok)) {
+        msg <- "The case could not be packed into one file - download the files you need one at a time."
+        notify_once("dl", msg, duration = 10)
+        .dl_note(file, msg)
+      }
+    })
 
   # No sign-in and no QID means the run would be recorded against the account the
   # SERVER process runs as -- identical for the whole department, identifying
@@ -5568,26 +6838,65 @@ server <- function(input, output, session) {
   # Empty state: shown before the first conversion. Tells a brand-new user what
   # this page is for and exactly what they'll get back, so the screen is never a
   # mystery or a wall of empty headers.
+  #
+  # ...AND IT PROMISES WHAT THE ANSWER SHE GAVE CAN DELIVER. It described a bank
+  # statement whatever "What is this?" said - every transaction read verbatim,
+  # whether it reconciles - three inches under a radio button reading "Something
+  # else - a report, a form, a letter". A report has no transactions and nothing
+  # to reconcile, so every line of that was a promise the other route cannot
+  # keep, made to the person who had just said which route she was on. The
+  # sample offer goes with it: the bundled specimen IS a bank statement, so on
+  # the other route it is not offered, because offering it would be the fourth
+  # promise of the same kind.
   output$cv_empty <- renderUI({
+    other <- identical(kind_choice(), "other")
+    # ONE link element, written once and used by both, because two literal
+    # actionLinks with one id is exactly the accident the "no id used twice" scan
+    # exists to catch -- and it cannot tell a deliberate pair from a mistake.
+    to_tmpl <- actionLink("cv_empty_to_tmpl", "Add a template")
     div(style = "max-width:560px;color:#444;line-height:1.6",
-      h4(style = "margin-top:4px", "Convert a bank statement"),
-      p("Upload a statement on the left - a ", tags$b("PDF"), ", ", tags$b("CSV"),
-        " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
+      h4(style = "margin-top:4px",
+         if (other) "Convert a report, a form or a letter" else "Convert a bank statement"),
+      if (other)
+        p("Upload it on the left - a ", tags$b("PDF"), " - and click ", tags$b("Convert"), ".")
+      else
+        p("Upload a statement on the left - a ", tags$b("PDF"), ", ", tags$b("CSV"),
+          " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
       p(class = "muted", style = "margin-bottom:6px", "You'll get back:"),
-      tags$ul(style = "color:#444",
-        tags$li(tags$b("Every transaction"), ", read verbatim - date, description, amount, balance."),
-        # NOT "proof nothing's missing". On four of the six statements this was
-        # measured against, balance_reconciliation could not run at all -- no
-        # printed opening or closing and no running-balance column to derive one
-        # from -- so the page promised a proof it then did not give. What it always
-        # does give is the answer either way.
-        tags$li(tags$b("Whether it reconciles"), " - the balance proof, or plainly why it couldn't run."),
-        tags$li(tags$b("Your download"), " - Excel or CSV.")),
-      p(class = "muted", "Your bank is detected automatically. A layout the tool hasn't seen points you to ",
-        actionLink("cv_empty_to_tmpl", "Add a template"), "."),
+      if (other)
+        tags$ul(style = "color:#444",
+          tags$li(tags$b("The tables and figures a template points at"), ", read verbatim off the page."),
+          # NOT "whether it reconciles". There is no reconciliation on this route
+          # and there cannot be - nothing on a report adds up to anything the tool
+          # can check - so promising one here would be the screen making a promise
+          # the engine has no way to keep. What it does give is where every figure
+          # came from, which is the honest half of the same assurance.
+          tags$li(tags$b("Where each one came from"), " - the page it was on, and how it was found."),
+          tags$li(tags$b("Your download"), " - Excel or CSV. These never reach the dashboards."))
+      else
+        tags$ul(style = "color:#444",
+          tags$li(tags$b("Every transaction"), ", read verbatim - date, description, amount, balance."),
+          # NOT "proof nothing's missing". On four of the six statements this was
+          # measured against, balance_reconciliation could not run at all -- no
+          # printed opening or closing and no running-balance column to derive one
+          # from -- so the page promised a proof it then did not give. What it always
+          # does give is the answer either way.
+          tags$li(tags$b("Whether it reconciles"), " - the balance proof, or plainly why it couldn't run."),
+          tags$li(tags$b("Your download"), " - Excel or CSV.")),
+      if (other)
+        p(class = "muted", "It is read by a form or report template. If none of them fits this layout yet, you set one up on ",
+          to_tmpl, " by pointing at what you want.")
+      else
+        p(class = "muted", "Your bank is detected automatically. A layout the tool hasn't seen points you to ",
+          to_tmpl, "."),
       # First visit, nothing to upload yet? One click shows the whole payoff on
       # a bundled specimen statement (public, synthetic - not anyone's real data).
-      if (file.exists(SAMPLE_STATEMENT))
+      # NOT OFFERED ON THE OTHER ROUTE: the bundled specimen is a bank statement,
+      # so a "try it on a sample" button under "Something else" would convert a
+      # statement to demonstrate a route that does not read statements. Nothing
+      # ships that this route can be shown on yet - see the register's J9 - and a
+      # button that quietly answers a different question is worse than no button.
+      if (!other && file.exists(SAMPLE_STATEMENT))
         div(style = "margin-top:14px;padding:12px 14px;background:#f8faf9;border:1px dashed #bfe0c8;border-radius:10px",
           actionButton("cv_try_sample", "Try it on a sample statement", class = "btn-default"),
           div(class = "muted", style = "margin-top:6px", "No file needed.")))
@@ -5614,6 +6923,17 @@ server <- function(input, output, session) {
     # nothing, which is the one case where there genuinely is a choice to make.
     ambig <- isTRUE(res$detect$ambiguous) && identical(st, "unsupported")
     headline <- if (ambig) STATUS_PLAIN_AMBIGUOUS else plain_status(st)
+    # ...AND A HIGH-SEVERITY DIAGNOSIS NOBODY CAN FIX WITH A TEMPLATE OUTRANKS
+    # BOTH. On an `unsupported` run the engine's message is always the same
+    # sentence -- "we don't have a template for this layout yet" -- whatever the
+    # real reason was, so an image-only PDF on a machine with no OCR software got
+    # a headline about templates while the engine's own diagnostics, at severity
+    # high, said there was no text on the page to read and that a template would
+    # not help. R/diagnose.R calls that generic message "actively misleading" in
+    # its own words. The diagnosis takes the title; the template sentence stays
+    # underneath as the secondary fact it is, because nothing is dropped.
+    bdx <- if (st %in% c("unsupported", "failed")) .blocking_diag(res) else NULL
+    if (!is.null(bdx)) headline <- .sentence(bdx$detail[1])
     # No confidence grade on a run that produced nothing: there is no work to be
     # confident about, and "confidence: low" beside "no template yet" reads as a
     # warning about the file rather than a plain statement of where we are. The
@@ -5927,6 +7247,16 @@ server <- function(input, output, session) {
     tpl_bump()
     tryCatch(load_fields_templates(FIELDS_DIR, USER_FIELDS_DIR), error = function(e) list())
   })
+  # Report (mode: document) templates, the same way. The only set that existed was
+  # the ADMIN one (include_hidden = TRUE), which is the wrong set for anything on
+  # the Convert page: a template somebody deliberately parked must not be handed
+  # back on a result, and must not be offered as one to force. Same loader
+  # convert_document uses, so what this lists and what a conversion could use are
+  # the same templates.
+  all_doc_templates <- reactive({
+    tpl_bump()
+    tryCatch(load_document_templates(DOC_DIR, USER_DOC_DIR), error = function(e) list())
+  })
   # friendly_tpl -- turn a template id (e.g. "bnz_everyday_csv") into a name Beth
   # reads ("BNZ everyday statement"). Falls back to the id if we can't resolve it.
   friendly_tpl <- function(tid) {
@@ -5942,10 +7272,25 @@ server <- function(input, output, session) {
     # The form template carries `bank: ANZ` and `statement_type: kiwisaver`, so the
     # name is derivable from the same two fields as any other template's; ask the
     # set it really lives in before giving up.
+    #
+    # ...AND A REPORT TEMPLATE IS IN NEITHER SET, so a converted report's chip read
+    # its raw id too -- the same breach, on the route with the least else to go on.
+    # It does NOT go through .tpl_label: that helper appends the word "statement"
+    # to anything that does not already end in it, which would name a trustee
+    # report "Acme quarterly report statement". A report is named by what it is.
     if (!(tid %in% names(all_templates()))) {
       ft <- tryCatch(all_field_templates()[[tid]], error = function(e) NULL)
-      lab <- if (is.null(ft)) NA_character_ else .tpl_label(ft$bank, ft$statement_type)
-      return(if (is.na(lab)) tid else lab)
+      if (!is.null(ft)) {
+        lab <- .tpl_label(ft$bank, ft$statement_type)
+        return(if (is.na(lab)) tid else lab)
+      }
+      dt <- tryCatch(all_doc_templates()[[tid]], error = function(e) NULL)
+      if (!is.null(dt)) {
+        one <- function(v) { s <- trimws(as.character(v %||% "")[1]); if (is.na(s)) "" else s }
+        lab <- trimws(paste(one(dt$bank), one(dt$statement_type %||% "report")))
+        return(if (nzchar(lab)) lab else tid)
+      }
+      return(tid)
     }
     # Build the overview for JUST this template, not the whole set: friendly_tpl
     # runs on every successful convert and only needs this id's bank + type, and
@@ -6723,12 +8068,29 @@ server <- function(input, output, session) {
     has_val <- any(grepl("\\.values\\.csv$", res$outputs %||% character(0)))
     if (has_val) btns <- c(btns, list(downloadButton("dl_values", "\u2b73 Values CSV")))
     if (!length(btns) && !has_json) return(NULL)
+    # THIS CAME OFF A SCAN, SAID WHERE THE FILE IS COLLECTED.
+    #
+    # A large share of what arrives at a police unit is a scan of a photocopy, and
+    # a page the OCR read badly can still come back green: the per-word confidence
+    # is carried the whole way through the reader and every doubtful figure earns
+    # a row flag, but the caveat lived in a diagnostics panel behind "Show me how
+    # it read this", which most people never open. A misread 8 for a 3 in an
+    # amount is the exact wrong-figure-that-looks-right this tool exists to stop,
+    # and reconciliation only catches it if it happens to break the balance.
+    # So it is said here, once, beside the button she came for.
+    d <- cv_data()
+    n_low <- if (is.null(d) || !("flags" %in% names(d))) NA_integer_
+             else sum(grepl("ocr_low_conf", d$flags %||% ""), na.rm = TRUE)
+    scan <- .scan_note(res$header$ocr_pages, n_low)
     # Prominent bar right under the verdict: the download is the point of the page,
     # so it's the most visible thing, not a quiet box tucked into the sidebar.
-    div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns,
-      if (has_json)
-        span(class = "muted", style = "font-size:12.5px;margin-left:2px",
-             downloadLink("dl_json", "JSON", class = "muted")))
+    tagList(
+      div(class = "dl-hero", span(class = "dl-hero-label", "Download your converted data:"), btns,
+        if (has_json)
+          span(class = "muted", style = "font-size:12.5px;margin-left:2px",
+               downloadLink("dl_json", "JSON", class = "muted"))),
+      if (!is.null(scan))
+        p(class = "muted", style = "margin:-6px 0 12px;font-size:13px", scan))
   })
 
   # THE FEED LINE IS NOT ON THIS SCREEN, DELIBERATELY.
@@ -6746,10 +8108,23 @@ server <- function(input, output, session) {
   # write that FAILS is an operational fault for whoever runs the server, so it
   # is raised in Admin (adm_feed_health, below) where that person can act on it,
   # instead of on the screen of an analyst who can only be puzzled by it.
-  # cv_rematch -- an escape hatch for a WRONG match: a bank that matched the wrong
-  # template (or the wrong bank) needs a one-click "no, set up the right template
-  # for this" without hunting. Drafts a fresh template from THIS file (never seeded
-  # from the wrong match).
+  # cv_edit -- THE ONE DOOR BACK INTO HOW THIS WAS READ, on all three routes.
+  #
+  # It began as cv_rematch, an escape hatch for a WRONG match on a statement, and
+  # it was guarded on .is_txn_result -- so on the two routes that need it MOST it
+  # did not render at all. A report has no reconciliation behind it: nothing
+  # arithmetic can catch a wrong read, so "open the template that read this and
+  # move the box" is the only correction there is, and there was no way to ask for
+  # it. (The two links written for that job -- cv_teach's form and report branches
+  # -- switched tab and threw the document away, landing on "Upload the document
+  # above to start". They are gone; this is what replaces them, and it is one
+  # control where there were three.)
+  #
+  # TWO BRANCHES, KEPT AS THEY WERE. The quiet line is the ordinary door and it
+  # now opens the template that DID the reading, seeded, with the document under
+  # it. The loud one still fires only where detection left a real doubt, and still
+  # drafts fresh, because there the question is which template, not where a box
+  # sits.
   #
   # ON SCREEN NOW, directly under the downloads (see the UI). It was rendered by
   # nothing at all, so its two buttons and every word in it were unreachable --
@@ -6772,19 +8147,26 @@ server <- function(input, output, session) {
     if (is.null(d)) return(FALSE)
     isTRUE(d$thin) || isTRUE(d$ambiguous) || length(d$tied %||% character(0)) >= 2L
   }
-  output$cv_rematch <- renderUI({
-    res <- cv_res(); req(res); req(.is_txn_result(res))
+  output$cv_edit <- renderUI({
+    res <- cv_res(); req(res)
     st <- res$status %||% "failed"
     if (!(st %in% c("ok", "needs_review"))) return(NULL)   # unsupported/failed already prompt setup
     tid <- (res$template_id %||% NA_character_)[1]
     nice <- if (!is.na(tid) && nzchar(tid)) friendly_tpl(tid) else NA_character_
+    # THE QUESTION IN FRONT OF THE LINK IS THE ONE THAT ROUTE ACTUALLY HAS. A
+    # statement's doubt is which bank; a form's is a value that read the wrong
+    # thing; a report's is a table that came out of the wrong columns. Same door,
+    # same words for the door, and the question named for the document in hand.
+    ask <- if (identical(res$kind, "tables")) "A table missing, or reading the wrong columns?"
+           else if (identical(res$kind, "form")) "A value missing, or reading the wrong thing?"
+           else "Not the right bank?"
     quiet <- div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
-      span("Not the right bank?"),
-      actionLink("cv_rematch_go", "Set up the right template for this statement"))
+      span(ask),
+      actionLink("cv_edit_go", "Adjust how this was read"))
     # Happy path: one quiet line, and it does NOT re-state which template read
     # the statement -- the "Read as" chip on the verdict card two inches above
     # says that already, and saying it twice makes a question out of a fact.
-    if (identical(st, "ok")) return(quiet)
+    if (identical(st, "ok") || !.is_txn_result(res)) return(quiet)
     # needs_review. The route back is always here, but it only ANNOUNCES ITSELF as
     # a doubt about the match when detection left one. The remedy for whatever
     # actually went wrong is on the verdict card, beside the diagnosis it belongs
@@ -6803,8 +8185,64 @@ server <- function(input, output, session) {
     # Fresh draft from the file itself, never seeded from the wrong match.
     open_guided(src$path, src$name, seed_tmpl = NULL, upload_id = cv_upload_id())
   }
-  observeEvent(input$cv_rematch_go,    .rematch_now())
   observeEvent(input$cv_rematch_go_rv, .rematch_now())
+  # .edit_now() -- OPEN WHAT READ THIS DOCUMENT, with the document still under it.
+  #
+  # One function dispatching on what the result IS, which is the dispatch Admin's
+  # editor already uses and has proven. It is also the whole of B1's automatic
+  # half: run_conversion's finish callback calls this, so "process and open the
+  # editor" and "the door is on screen even on a confident result" are one code
+  # path and cannot drift apart.
+  #
+  #   report  -- the saved template, reopened on this document. Every box where it
+  #              was drawn, the header already saying "Editing the saved template
+  #              X - Save replaces it". If the id is not in the library (a curated
+  #              template that has since been parked, say) it falls back to the
+  #              document with no boxes, which is the honest answer rather than a
+  #              silent nothing.
+  #   form    -- there is no editor for a mode:fields template: it has no
+  #              coordinates to draw. The builder's label/value pairs are the
+  #              pointing-based successor, so the document opens there and the
+  #              notification SAYS that is what will be built. Never silent about
+  #              taking her somewhere other than where she asked.
+  #   statement -- the toolkit, seeded from the template that matched, exactly as
+  #              .teach_now() seeds it on an ok / needs_review result.
+  .edit_now <- function() {
+    res <- cv_res(); src <- cv_src()
+    if (is.null(res) || is.null(src) || !file.exists(src$path %||% "")) return(invisible(FALSE))
+    tid <- (res$template_id %||% NA_character_)[1]
+    if (identical(res$kind, "tables")) {
+      t <- if (!is.na(tid) && nzchar(tid)) tryCatch(all_doc_templates()[[tid]], error = function(e) NULL)
+           else NULL
+      if (!is.null(t)) rb_open_template(t, src$path)
+      else {
+        rb_handoff(src$path)
+        updateRadioButtons(session, "ts_doctype", selected = "other")
+        updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+        showNotification("The template that read this is no longer in the library, so this opens as a new one.",
+                         type = "warning", duration = 8)
+      }
+      return(invisible(TRUE))
+    }
+    if (identical(res$kind, "form")) {
+      rb_handoff(src$path)
+      updateRadioButtons(session, "ts_doctype", selected = "other")
+      updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+      # The tail ("...which is what replaces a form one") named a distinction only
+      # a maintainer can act on; what she needs is what to do and what it does.
+      showNotification("Point at the values you want and save - that makes a report template, which replaces the one that read this.",
+                       type = "message", duration = 9)
+      return(invisible(TRUE))
+    }
+    seed <- NULL
+    if (!is.na(tid) && nzchar(tid)) {
+      tset <- tryCatch(templates(), error = function(e) list())
+      if (!is.null(tset[[tid]])) seed <- tset[[tid]]
+    }
+    open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
+    invisible(TRUE)
+  }
+  observeEvent(input$cv_edit_go, .edit_now())
   # The file is NAMED for what is in it. With no output to send, the old handler
   # aborted and the browser showed an HTTP 500 page; naming the download
   # "download.xlsx" and putting an explanation in it would be worse still -- a
@@ -6837,6 +8275,16 @@ server <- function(input, output, session) {
   # that does anything (Wrong) withdraws rows from the dashboards that were never
   # published. The run is still logged; there is simply nothing here for a reviewer
   # to have an opinion about.
+  #
+  # ...AND IT IS ASKED ON ALL THREE ROUTES, WHICH IS NOT A DETAIL. A statement has
+  # reconciliation behind it: the arithmetic catches a wrong figure without anybody
+  # saying so. A report and a form have NOTHING of the kind -- no total to prove,
+  # no balance to carry forward -- so a human saying "this is wrong" is the only
+  # quality signal those routes have, and it matters MORE there, not less. This
+  # output is deliberately outside the transaction-only panel and carries no kind
+  # guard; the one thing that changes with the route is the sentence saying why
+  # the answer is worth giving, because the statement wording ("it reconciles")
+  # would be a promise no report can keep.
   output$cv_feedback <- renderUI({
     res <- cv_res(); if (is.null(res) || is.null(res$run_id)) return(NULL)
     if (!isTRUE((res$status %||% "") %in% c("ok", "needs_review"))) return(NULL)
@@ -6845,6 +8293,9 @@ server <- function(input, output, session) {
         "Thanks - your feedback was recorded."), cv_fb_note()))
     div(style = "margin-top:16px;padding:12px;border:1px solid #ddd;border-radius:6px",
         h4("Was this conversion correct?"),
+        if (!.is_txn_result(res))
+          p(class = "muted", style = "margin:0 0 8px",
+            "Nothing here adds up to a balance the tool can check, so your reading of it against the page is the only check there is."),
         # NO TICK, NO CROSS. These three used to be drawn with the SAME glyphs the
         # proof-strip key twenty lines above defines as "checked and passed" and
         # "a problem" -- so one screen used one mark for two different things: what
@@ -7362,14 +8813,17 @@ server <- function(input, output, session) {
             strong("A distinctive phrase printed on this statement"),
             # No "avoid single common words like Balance": the box below says so
             # live, by name, against the same rule the save uses (g_fp_msg).
+            # THE SAME SENTENCE THE OTHER BUILDER USES. This was three sentences
+            # saying what the report builder says in one, and the two screens ask
+            # for the same thing - a phrase printed on the page that identifies
+            # the layout. One question, one wording, both routes.
             p(class = "muted", style = "margin:4px 0 6px",
-              HTML(paste0("How the tool recognises this bank next time. Something printed on the page that other banks do <b>not</b> print - the statement heading, or the bank's own name; never a customer's name. ",
-                          "One phrase per line; all must appear."))),
-            if (length(g$fp_candidates)) fluidRow(
-              column(9, selectInput("g_fp_pick", "Phrases found on your statement",
-                                    choices = c("(choose one to add)" = "", g$fp_candidates),
-                                    width = "100%")),
-              column(3, br(), actionButton("g_fp_add", "Add it"))),
+              HTML(paste0("One phrase per line - all must appear, and they must not be words every ",
+                          "statement carries or anything naming a customer."))),
+            if (length(g$fp_candidates))
+              selectInput("g_fp_pick", "Phrases found on your statement",
+                          choices = c("(choose one to add it below)" = "", g$fp_candidates),
+                          width = "100%"),
             textAreaInput("g_fp", NULL, width = "100%", rows = 3,
                           value = paste(unlist(tmpl$fingerprint$page_contains_all %||% list()),
                                         collapse = "\n")),
@@ -7593,24 +9047,15 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res)
     if (is.null(cv_src())) return(NULL)
     st <- res$status %||% "failed"
-    # NAME THE SCREEN SHE WILL LAND ON, not one that no longer exists.
-    #
-    # These two links used to offer "the PDF form builder" and "the report
-    # builder" -- two screens that were merged into one, months apart from the
-    # copy that names them. Following either lands on Add a template with
-    # "Anything else" already chosen, so that is what they say. Both do the same
-    # thing because there is only one thing to do; the sentence in front of the
-    # link is what differs, because the two results prompt different questions.
-    if (identical(res$kind, "form")) {
-      return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", "A value missing, or reading the wrong thing? "),
-        actionLink("cv_goto_templates", "Set it up on Add a template \u2192")))
-    }
-    if (identical(res$kind, "tables")) {
-      return(div(style = "margin:12px 0;padding:10px 12px;border:1px solid #d9d9d9;background:#fafafa;border-radius:8px",
-        span(class = "muted", "A table missing, or reading the wrong columns? "),
-        actionLink("cv_goto_report", "Set it up on Add a template \u2192")))
-    }
+    # NO FORM OR REPORT BRANCH HERE ANY MORE. Two links used to sit at the top of
+    # this renderer offering "Set it up on Add a template" for those two kinds --
+    # and they were DEAD CODE on the very route they were written for, because
+    # this output is rendered inside a panel that requires the result NOT to be a
+    # form and NOT to be a report. Worse, they only switched tab: the document and
+    # the template that had just read it were both thrown away, so following one
+    # landed on "Upload the document above to start". cv_edit is that door now,
+    # it renders on all three kinds, and it carries both. Two half-working
+    # controls removed, one working one kept.
     if (identical(st, "unsupported")) {
       # "Unsupported" covers two opposite situations. If two or more templates fit
       # this statement EQUALLY well, the tool refuses to guess which -- but telling
@@ -7713,6 +9158,31 @@ server <- function(input, output, session) {
         span(class = "muted", question, " "),
         actionLink(id, answer, style = "font-weight:700"))
 
+      # THE DIAGNOSIS THAT OUTRANKS EVERY CARD BELOW, AND IT TAKES THE HEADLINE.
+      #
+      # Driven with no OCR software and an image-only PDF: this card said "This
+      # looks like a report", the primary green button said "Set it up as a
+      # report", and the engine's own diagnostics table further down the page
+      # said, correctly and at severity HIGH, that this machine has no OCR
+      # software installed and that building a template will NOT help until that
+      # is done. Three answers on one screen, and the biggest button was the one
+      # that cannot work -- so somebody spends twenty minutes drawing boxes on a
+      # page the tool could not read a word of.
+      #
+      # The engine already grades who can fix a thing (.blocking_diag reads it).
+      # Where the answer is not "a template", the diagnosis IS the headline, the
+      # engine's own remedy is the action, and setting a template up drops to the
+      # quiet override underneath -- the same shape every other branch of this
+      # card uses for the answer it thinks is wrong.
+      bd <- .blocking_diag(res)
+      if (!is.null(bd))
+        return(div(style = "margin:12px 0;padding:14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px",
+          strong(style = "font-size:15px", .sentence(bd$detail[1])),
+          if (nzchar(bd$how_to_fix[1] %||% ""))
+            p(class = "muted", style = "margin:6px 0 0", bd$how_to_fix[1]),
+          other("Sure a template is what this needs?", "Set it up anyway",
+                "cv_teach_go_report")))
+
       # SHE ALREADY ANSWERED THIS. When "What is this?" on the left was set, the
       # kind is not in doubt and asking again is the tool ignoring what it was
       # told. The card goes straight to the door she chose, with the override
@@ -7799,18 +9269,10 @@ server <- function(input, output, session) {
         actionButton("cv_teach_go_fix", "Open the template toolkit", class = "btn-default"))
     }
   })
-  # Tick the box AND re-run in one click. include_user = TRUE because the tick has
-  # not reached the browser yet when this conversion starts.
-  observeEvent(input$cv_goto_templates,
-    updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
-  # Its own id, not a second use of the one above: two links on mutually exclusive
-  # branches still have to be two ids, or the "no id used twice" scan cannot tell a
-  # deliberate pair from the accident it exists to catch. This one also SETS the
-  # kind of document, so the builder is already open when the tab arrives.
-  observeEvent(input$cv_goto_report, {
-    updateRadioButtons(session, "ts_doctype", selected = "other")
-    updateTabsetPanel(session, "main_tabs", selected = "Add a template")
-  })
+  # (The two "Set it up on Add a template" observers were here, one per other-route
+  # kind. Both switched tab and nothing else, so the document and the template that
+  # had just read it were dropped on the floor; cv_edit carries both and is the one
+  # door. Deleted with the two links that drove them.)
   observeEvent(input$cv_empty_to_tmpl,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
   observeEvent(input$ab_go_convert,
@@ -7935,21 +9397,16 @@ server <- function(input, output, session) {
       # "Try the other one" must BE one click, not a trip to the toolkit. Opening
       # the toolkit is a heavy action (a form full of settings, a template to name
       # and save) for what is really the question "did it pick the right variant?".
-      # So converting with the other template is the primary button and the toolkit
-      # is the secondary link, for when the answer is "neither of these is right".
+      #
+      # AND IT IS THE ONLY ACTION HERE NOW. "or open the toolkit with it" sat
+      # beside this button as a second door into the same room: converting with
+      # the other template and then pressing "Adjust how this was read" under the
+      # downloads reaches the toolkit seeded with exactly that template, which is
+      # where the link went. One door, and it is the one on every route.
       if (length(others)) tagList(
         selectInput("cv_cand_pick", "Wrong one? Try a different template:",
                     choices = tpl_choices(others), width = "100%"),
-        actionButton("cv_cand_convert", "Convert with this one instead", class = "btn-primary"),
-        span(style = "margin-left:10px", class = "muted", "or "),
-        actionLink("cv_cand_go", "open the toolkit with it"))))
-  })
-  observeEvent(input$cv_cand_go, {
-    src <- cv_src(); req(src); tid <- input$cv_cand_pick; req(tid, nzchar(tid))
-    tset <- tryCatch(templates(), error = function(e) list())
-    seed <- tset[[tid]]
-    if (is.null(seed)) { showNotification("That template isn't available.", type = "error"); return() }
-    open_guided(src$path, src$name, seed_tmpl = seed, upload_id = cv_upload_id())
+        actionButton("cv_cand_convert", "Convert with this one instead", class = "btn-primary"))))
   })
 
   # convert_with_template(tid) -- re-run THIS statement against one exact template.
@@ -8046,18 +9503,19 @@ server <- function(input, output, session) {
     updateTextInput(session, "g_id", value = new)
   }, ignoreInit = TRUE)
 
-  # "Add it" -- append a phrase the drafter found on the page to the box, rather
-  # than making the user retype it exactly (a fingerprint must match the page text
-  # character for character, so retyping is where this goes wrong).
-  observeEvent(input$g_fp_add, {
+  # CHOOSING THE PHRASE ADDS IT. There was an "Add it" button beside this picker,
+  # and a picker that changes nothing until a second control is pressed is two
+  # things to do for one decision -- so the choice IS the action. (The box below
+  # is still typed into and edited freely; this only saves retyping a phrase the
+  # drafter already found, which is where an exact-match fingerprint goes wrong.)
+  observeEvent(input$g_fp_pick, {
     pick <- trimws(input$g_fp_pick %||% "")
-    if (!nzchar(pick)) {
-      showNotification("Choose one of the phrases found on your statement first.", type = "warning"); return() }
+    if (!nzchar(pick)) return()
     cur <- fingerprint_phrases(input$g_fp)
-    if (pick %in% cur) {
-      showNotification("That phrase is already in the box.", type = "message"); return() }
-    updateTextAreaInput(session, "g_fp", value = paste(c(cur, pick), collapse = "\n"))
-  })
+    if (!(pick %in% cur))
+      updateTextAreaInput(session, "g_fp", value = paste(c(cur, pick), collapse = "\n"))
+    updateSelectInput(session, "g_fp_pick", selected = "")
+  }, ignoreInit = TRUE)
   # Live verdict on the phrase(s), in the same place they are typed: the SAME rule
   # the save uses (validate_template), so "Save" can no longer be the first time a
   # too-generic fingerprint is mentioned.
@@ -8645,17 +10103,46 @@ server <- function(input, output, session) {
     }
   })
 
-  # ---- Admin: insights from the logs -------------------------------
+  # ---- Admin: the health picture, from the logs -----------------------------
+  #
+  # BOUNDED, AND IT SAYS SO. This used to be read_runs_all(), which parses every
+  # line of every archive file one record at a time -- 10.5 seconds on 20,000
+  # archived rows, measured, in the single Shiny process the whole team shares, so
+  # opening this tab froze everybody's browser, and got slower every week. It also
+  # read only the LIVE feedback folder, so every rating older than the rollup
+  # window had already vanished from the one screen that is supposed to hold all
+  # of them.
+  #
+  # .adm_history() fixes both: newest-first across the live folder AND the
+  # archive, capped, with the count of what it did not read carried on the frame
+  # so adm_history_note can say it out loud. Nothing is deleted or hidden.
   adm_data <- reactiveVal(NULL)
   load_admin <- function() adm_data(list(
-    runs = tryCatch(read_runs_all(LOGDIR), error = function(e) data.frame()),  # live + archived
-    fb   = tryCatch(read_feedback(LOGDIR), error = function(e) data.frame())))
+    runs = tryCatch(.adm_history(LOGDIR, "runs"), error = function(e) data.frame()),
+    fb   = tryCatch(.adm_history(LOGDIR, "feedback"), error = function(e) data.frame())))
   # Admin dashboard data (run logs, feedback) is loaded ONLY for an authenticated
   # admin session, so a non-admin client can never pull it by marking a hidden
   # output visible -- every admin output does req(adm_data()), which stays NULL
   # (and therefore blank) without a load.
   observeEvent(input$adm_refresh, { req(admin_ok()); load_admin() })
   observe({ req(admin_ok()); if (is.null(adm_data())) load_admin() })
+  # A PARTIAL PICTURE THAT DOES NOT ADMIT IT IS PARTIAL IS THE THING THE CHARTER
+  # FORBIDS. Silent when everything was read, which is the ordinary case.
+  output$adm_history_note <- renderUI({
+    d <- adm_data(); req(d)
+    n <- function(x) { k <- attr(x, "kept_of"); if (is.null(k)) c(read = 0L, total = 0L) else k }
+    r <- n(d$runs); f <- n(d$fb)
+    short <- c(if (r[["total"]] > r[["read"]])
+                 sprintf("the newest %s conversions of %s", format(r[["read"]], big.mark = ","),
+                         format(r[["total"]], big.mark = ",")),
+               if (f[["total"]] > f[["read"]])
+                 sprintf("the newest %s ratings of %s", format(f[["read"]], big.mark = ","),
+                         format(f[["total"]], big.mark = ",")))
+    if (!length(short)) return(NULL)
+    p(class = "muted", style = "font-size:12px",
+      sprintf("Drawn from %s - the older records are all still kept in logs/archive/, they are just too slow to read on every visit.",
+              paste(short, collapse = " and ")))
+  })
 
   output$adm_overview <- renderDT({
     d <- adm_data(); req(d)
@@ -8710,22 +10197,44 @@ server <- function(input, output, session) {
               options = dt_none_opts("No conversion has matched a template yet.",
                                      dom = "t", pageLength = 20))
   })
+  # HEALTH IS DEFINED PER ROUTE NOW (run_healthy(), R/analytics.R), so this table
+  # no longer renders a row of NAs for any template that is not a bank statement.
+  # The screen's half of that is saying WHICH route each row is about: a drop from
+  # 100% to 40% means "it stopped reconciling" on one row and "its tables stopped
+  # being found" on the next, and those are different jobs for the maintainer.
   output$adm_drift <- renderDT({
     d <- adm_data(); req(d)
     dr <- template_drift(d$runs)
+    if (nrow(dr)) {
+      lib <- adm_lib()
+      dr <- cbind(route = vapply(as.character(dr$template), function(id) {
+        t <- lib[[id]]
+        .adm_route(if (is.null(t)) NA_character_ else safe(template_kind(t), NA_character_))
+      }, character(1), USE.NAMES = FALSE), dr)
+    }
     tbl <- datatable(dr, rownames = FALSE,
                      options = dt_none_opts("No template has started failing - good.", dom = "t"))
     if (nrow(dr)) tbl <- formatStyle(tbl, "drop", fontWeight = "bold", color = PALETTE$bad)
     tbl
   })
+  # ONE CALL TIDIES THE THREE FOLDERS THAT GROW. rollup_logs() defaults to every
+  # one of them (LOG_ROLLUP_SUBDIRS) and trims logs\errors.log while it is there;
+  # this used to name "runs" and "feedback" by hand, so logs\feed\ -- which gains a
+  # file for EVERY conversion, at exactly the rate logs\runs\ does -- was never
+  # archived at all. archive_feed() beside it MOVES feed rows older than the
+  # stated period out of the folder Qlik's wildcard reads. Neither deletes
+  # anything, and the message says everything that happened, including the trim.
   observeEvent(input$adm_rollup, {
     req(admin_ok())
-    r <- tryCatch(rollup_logs(LOGDIR, "runs", keep_days = LOG_KEEP_DAYS), error = function(e) NULL)
-    r2 <- tryCatch(rollup_logs(LOGDIR, "feedback", keep_days = LOG_KEEP_DAYS), error = function(e) NULL)
+    r <- tryCatch(rollup_logs(LOGDIR, keep_days = LOG_KEEP_DAYS), error = function(e) NULL)
+    a <- tryCatch(archive_feed(CONFIG, keep_days = CONFIG$feed$keep_days), error = function(e) NULL)
     load_admin()
-    output$adm_rollup_msg <- renderUI(span(class = "ok",
-      sprintf("Archived %d old run file(s); %d kept. History is preserved in logs/archive/.",
-              (r$archived %||% 0) + (r2$archived %||% 0), (r$kept %||% 0))))
+    output$adm_rollup_msg <- renderUI(span(class = "ok", paste(
+      sprintf("Archived %d old log file(s); %d kept.", r$archived %||% 0, r$kept %||% 0),
+      if (isTRUE(r$trimmed)) "The error log was trimmed back to its recent lines." else "",
+      if (!is.null(a) && (a$archived %||% 0) > 0)
+        sprintf("Moved %d old feed file(s) out of the folder the dashboards read.", a$archived) else "",
+      "Nothing was deleted - it is all in logs/archive/.")))
   })
   # WHAT WILL BE DELETED, COUNTED BEFORE IT IS. purge_uploads() has no dry-run, so
   # the count is taken exactly the way it takes it: the saved statement's own
@@ -8777,16 +10286,20 @@ server <- function(input, output, session) {
       "Deleted %d saved statement file(s); %d still within the %d-day period. The record of each upload is kept - only the statement itself is gone.",
       p$purged, p$kept, as.integer(UPLOADS_KEEP_DAYS))))
   })
-  output$adm_feedback <- renderDT({
-    d <- adm_data(); req(d); fb <- d$fb
-    cols <- c("ts", "verdict", "comment", "template_id", "run_id")
-    none <- if (is.null(fb) || !nrow(fb)) "Nobody has rated a conversion yet."
-            else "Nothing has been rated wrong or minor-issues."
-    if (is.null(fb) || !nrow(fb) || !("flagged" %in% names(fb)))
-      fl <- stats::setNames(data.frame(matrix(character(0), 0, length(cols))), cols)
-    else fl <- fb[as.logical(fb$flagged) %in% TRUE, intersect(cols, names(fb)), drop = FALSE]
-    datatable(fl, rownames = FALSE,
-              options = dt_none_opts(none, pageLength = 8, scrollX = TRUE))
+  # (The old "Feedback flagged as wrong / minor issues" table stood here. It has
+  # been REPLACED, not moved: adm_tpl_feedback on the Templates tab shows every
+  # rating -- not just the flagged ones -- with the document it was left on and
+  # the template that read it, beside the templates it is about, which is what C2
+  # asked for. Two tables of the same log on two tabs was the fault, not the fix.)
+
+  # WHAT HAPPENS TO THE FEED FOLDER, said in the same breath as what happens to
+  # the saved statements. Generated from the setting itself (feed.keep_days) so
+  # the promise on the screen and the rule on disk cannot drift apart.
+  output$adm_feed_retention <- renderUI({
+    req(admin_ok())
+    note <- safe(feed_retention_note(CONFIG$feed$keep_days), NULL)
+    if (is.null(note) || !nzchar(note)) return(NULL)
+    helpText(note)
   })
 }
 

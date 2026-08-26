@@ -198,6 +198,128 @@ yaml_append_phrase <- function(path, key, value, under = NULL) {
   append(lines, paste0(sub("^([[:space:]]*).*$", "\\1", hdr), "  - ", item), after = k)
 }
 
+# ---------------------------------------------------------------------------
+# ONE CLOCK. Every timestamp WRITTEN is UTC and says so with a Z; every timestamp
+# SHOWN is local and names its zone.
+#
+# WHY: measured in Pacific/Auckland from the same second, the two handles a
+# reviewer uses to tie an upload to a conversion were TWELVE HOURS apart --
+# uploads/<id> was stamped 20260826193118 (local, no marker), the run_id
+# 20260826073118 (UTC, no marker), and record.json 2026-08-26T19:31:18+1200. The
+# Admin uploads table lists them side by side and invites matching them by eye, so
+# across the overnight boundary a reviewer pairs the wrong rows and nothing on
+# either handle says which zone it is in. The feed's converted_ts was UTC while
+# every other record was local, so an NZ morning conversion was dated the day
+# before on the dashboards.
+#
+# A second, quieter reason for UTC on the written side: local stamps do not SORT.
+# One hour a year the clocks go back, and 02:30+1300 written before 02:30+1200
+# sorts after it, so a plain string sort of `ts` -- which is what the log readers
+# and the uploads table do -- puts an hour of that night in reverse.
+#
+# So there are exactly two helpers and every writer uses one of them.
+# ---------------------------------------------------------------------------
+
+# utc_stamp(t) -- the timestamp to WRITE: "2026-08-26T07:31:18Z".
+utc_stamp <- function(t = Sys.time()) {
+  t <- safe(as.POSIXct(t), NA)
+  if (length(t) != 1L || is.na(t)) return(NA_character_)
+  format(t, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+}
+
+# utc_id(t) -- the same instant as an id fragment: "20260826073118". This is what
+# makes an upload id and a run_id agree by construction rather than by luck.
+utc_id <- function(t = Sys.time()) {
+  t <- safe(as.POSIXct(t), NA)
+  if (length(t) != 1L || is.na(t)) return(NA_character_)
+  format(t, "%Y%m%d%H%M%S", tz = "UTC")
+}
+
+# .parse_stamp(x) -- a written stamp back to an instant. Accepts the Z form this
+# tool writes now and the "+1200" form it wrote before, so records already on the
+# box still read and still sort. NA for anything else -- never a guess, because a
+# stamp read in the wrong zone is a wrong figure that looks right.
+.parse_stamp <- function(x) {
+  s <- trimws(as.character(x))
+  s[is.na(s) | !nzchar(s)] <- NA_character_
+  s <- sub("Z$", "+0000", s)
+  s <- sub("([+-][0-9]{2}):([0-9]{2})$", "\\1\\2", s)
+  as.POSIXct(s, format = "%Y-%m-%dT%H:%M:%S%z", tz = "UTC")
+}
+
+# local_time_text(x) -- the timestamp to SHOW: "26 Aug 2026 19:31 NZST", in this
+# server's own zone, with the zone named so nobody has to ask "where?". Anything
+# unparseable comes back exactly as it was given, never as a blank or a guess.
+local_time_text <- function(x) {
+  t <- .parse_stamp(x)
+  raw <- as.character(x)
+  # tz = "" is THIS SERVER's zone. Without it the stamp formats in the zone it was
+  # parsed in (UTC), which would show a New Zealand morning as the previous
+  # evening -- the very fault this helper exists to end.
+  out <- format(t, "%d %b %Y %H:%M %Z", tz = "")
+  # %Z is empty on a few R builds; the zone name must never be missing, since the
+  # whole point of showing local time is that it says which local.
+  zone <- safe(Sys.timezone(), NA_character_)
+  blank <- !is.na(t) & (is.na(out) | !grepl("[A-Za-z]{2,}$", out))
+  if (any(blank))
+    out[blank] <- paste(format(t[blank], "%d %b %Y %H:%M"),
+                        if (is.na(zone) || !nzchar(zone)) "local time" else zone)
+  out[is.na(t)] <- raw[is.na(t)]
+  out
+}
+
+# ---------------------------------------------------------------------------
+# save_yaml_safely(x, path) -- write a YAML file so that ONE bad save cannot cost
+# the accumulated value of the tool.
+#
+# WHY: the dictionaries have had a .bak on every save for a long time (see
+# yaml_append_phrase above). The TEMPLATES -- which backup-and-restore.md calls
+# "the accumulated value of the tool", months of somebody's work that exists
+# nowhere else on an offline box -- were written with a bare yaml::write_yaml.
+# That is one call with two ways to lose a template: it truncates the target
+# before it writes, so an error or a full disk part-way through leaves a file that
+# no longer parses AND no copy of what it used to say; and there is no way back
+# from a save that wrote perfectly valid YAML the person did not mean.
+#
+# Three steps, in this order, and each one is why the next is safe:
+#   1. copy the existing file to <path>.bak         -- one save's worth of undo
+#   2. write a temp file in the SAME folder         -- a failure never touches <path>
+#   3. rename the temp over <path>                  -- atomic on a same-volume move
+# A reader (a conversion loading templates) therefore sees the old file or the new
+# one, never a half-written one.
+#
+# Returns TRUE/FALSE with attr "reason" -- one plain sentence a screen can show as
+# it stands, so the engine and the screen cannot disagree about why a save failed.
+save_yaml_safely <- function(x, path) {
+  path <- as.character(path %||% "")[1]
+  if (is.na(path) || !nzchar(path))
+    return(structure(FALSE, reason = "no file name was given to save to"))
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  if (file.exists(path) && !isTRUE(safe(file.copy(path, paste0(path, ".bak"),
+                                                  overwrite = TRUE), FALSE)))
+    return(structure(FALSE, reason = "could not keep a copy of the previous version, so nothing was changed"))
+  # The temp and the backup both end in something no template loader looks for
+  # (they all list "*.yaml"/"*.yml"), so neither can ever be loaded as a template.
+  tmp <- paste0(path, ".", Sys.getpid(), ".part")
+  # Warnings are caught as well as errors, for the reason .atomic_write_csv gives
+  # in R/feed.R: on a read-only share file() WARNS and the write returns normally,
+  # so an error-only guard reports a failed save as a success.
+  warned <- FALSE
+  ok <- isTRUE(withCallingHandlers(
+    tryCatch({ yaml::write_yaml(x, tmp); TRUE }, error = function(e) FALSE),
+    warning = function(w) { warned <<- TRUE; invokeRestart("muffleWarning") }))
+  if (warned) ok <- FALSE                 # a warned-about write did not happen
+  if (!ok || !file.exists(tmp)) {
+    safe(unlink(tmp))
+    return(structure(FALSE, reason = "could not write the file - check the folder permissions"))
+  }
+  if (!isTRUE(safe(file.rename(tmp, path), FALSE))) {
+    safe(unlink(tmp))
+    return(structure(FALSE, reason = "could not put the new version in place, so the previous one is still there"))
+  }
+  structure(TRUE, reason = "saved")
+}
+
 # status_message(status, why, needs) -- build an actionable status message
 # ("why" + "what it needs"), per build-contract section 7.
 status_message <- function(status, why, needs = NULL) {

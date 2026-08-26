@@ -42,6 +42,18 @@ PARAM_OCR_RENDER_DPI    <- 300L   # dpi a scanned page is rasterised at before O
 # override per-bank with table$row_tol; this is the engine default everywhere.
 PARAM_PDF_ROW_TOL <- 3L
 
+# ---- drawn column bands (the report builder) -------------------------------
+# The narrowest a column band may be squeezed to when a widened neighbour pushes
+# the ones beside it along. Below about this a band holds no whole figure at any
+# ordinary type size, so a chain that can only fit at the floor is reported as
+# narrowed rather than accepted quietly.
+PARAM_DOC_MIN_COL_PT <- 8
+# Two page sizes within this many points of each other are the SAME size. Real
+# page dimensions are whole points; the slack absorbs a rounding difference
+# between the reader and the template, and nothing wider, so a genuinely
+# different paper size is always said out loud and drawn scaled.
+PARAM_DOC_SAME_PAGE_PT <- 2
+
 # ---- plausibility bounds ---------------------------------------------------
 # A statement's stated transaction count above this is almost certainly a mis-read
 # (a figure grabbed from the wrong line), so it's dropped rather than trusted -- the

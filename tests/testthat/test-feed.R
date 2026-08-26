@@ -520,3 +520,64 @@ test_that("a template's extra columns cannot change the feed's field set", {
   # ...and an ordinary statement writes no extras file at all
   expect_null(.feed_extras_frame(plain))
 })
+
+# ---------------------------------------------------------------------------
+# K1 (the feed's half): the feed stamped UTC while every other clock in the tool
+# was local, so a 09:30 NZST conversion arrived on the dashboard dated 21:30 the
+# PREVIOUS DAY -- and a Qlik expression grouping by date had no way of knowing.
+# Every writer now stamps UTC, and this column is NAMED for its zone so a
+# dashboard cannot mistake it for the analyst's wall clock.
+test_that("the feed's timestamp column names the zone it is in", {
+  expect_true("converted_ts_utc" %in% FEED_CONTEXT_COLUMNS)
+  expect_false("converted_ts" %in% FEED_CONTEXT_COLUMNS)
+  expect_identical(utc_stamp(as.POSIXct("2026-08-25 21:30:00", tz = "UTC")),
+                   "2026-08-25T21:30:00Z")
+})
+
+# ---------------------------------------------------------------------------
+# K10: feed\ grew without bound. One CSV per statement, never removed, and Qlik
+# loads the folder with a wildcard -- so at 50 conversions a day the reload walks
+# about 18,000 files after a year and 55,000 after three, getting slower every
+# day, on a box nobody logs into, with no setting anywhere admitting it.
+test_that("old feed rows move out of the wildcard's way and are never deleted", {
+  fdir <- tempfile("feedret_")
+  on.exit(unlink(fdir, recursive = TRUE), add = TRUE)
+  cfg <- load_config(); cfg$feed$feed_dir <- fdir
+  old <- as.numeric(Sys.time()) - 500 * 86400
+  for (s in c("transactions", "runs", "review")) {
+    dir.create(file.path(fdir, s), recursive = TRUE)
+    for (i in 1:3) {
+      p <- file.path(fdir, s, sprintf("key%d.csv", i))
+      utils::write.csv(data.frame(run_id = i), p, row.names = FALSE)
+      if (i < 3) Sys.setFileTime(p, old)
+    }
+  }
+  a <- archive_feed(cfg, keep_days = 400)
+  expect_equal(a$archived, 6L)
+  expect_equal(a$kept, 3L)
+  # Qlik's wildcard is now walking one file per folder...
+  expect_equal(length(Sys.glob(file.path(fdir, "transactions", "*.csv"))), 1L)
+  # ...and NOT ONE ROW WAS DELETED. These are the figures a dashboard was built
+  # on; they are one folder away, where the wildcard cannot reach them.
+  expect_equal(length(Sys.glob(file.path(fdir, "archive", "*", "*.csv"))), 6L)
+  # safe to run again, and it does nothing the second time
+  expect_equal(archive_feed(cfg, keep_days = 400)$archived, 0L)
+})
+
+test_that("a site that turns the feed's archive rule off is told so, not left guessing", {
+  fdir <- tempfile("feedret2_")
+  on.exit(unlink(fdir, recursive = TRUE), add = TRUE)
+  dir.create(file.path(fdir, "transactions"), recursive = TRUE)
+  p <- file.path(fdir, "transactions", "k.csv")
+  utils::write.csv(data.frame(run_id = 1), p, row.names = FALSE)
+  Sys.setFileTime(p, as.numeric(Sys.time()) - 5000 * 86400)
+  cfg <- load_config(); cfg$feed$feed_dir <- fdir; cfg$feed$keep_days <- 0
+  expect_equal(archive_feed(cfg)$archived, 0L)         # honoured
+  expect_true(file.exists(p))
+  # ...and the note is generated from the SAME setting, so the two cannot drift
+  expect_match(feed_retention_note(0), "for good")
+  expect_match(feed_retention_note(400), "400 days")
+  expect_match(feed_retention_note(1), " 1 day,")
+  # the shipped default is stated, not buried
+  expect_equal(.config_defaults()$feed$keep_days, 400)
+})

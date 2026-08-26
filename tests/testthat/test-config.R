@@ -315,3 +315,122 @@ test_that("a path somebody chose on purpose is never rewritten", {
   writeLines(c("paths:", "  user_templates: D:\\shared\\team_templates"), p)
   expect_equal(load_config(p)$paths$user_templates, "D:\\shared\\team_templates")
 })
+
+# ---------------------------------------------------------------------------
+# K3: THE TWO SETTINGS THAT DECIDE WHAT REACHES QLIK WERE NEVER VALIDATED.
+#
+# Coercion covered five booleans. feed.min_trust and feed.allowed_template_origins
+# had no check at all, and both fail closed -- which is right -- SILENTLY, which is
+# not. Measured before the fix: `min_trust: meduim` fell through .trust_ok()'s
+# switch() to its high-only branch, so every clean medium statement was withheld
+# and the dashboards went flat; `allowed_template_origins: [Default]` returned
+# withheld:not_proven on every conversion because the gate compares against the
+# lowercase "default" it stamps itself. Nothing said either. Admin reported the
+# runs in green as handled as intended.
+test_that("a misspelt feed setting keeps the built-in default AND is reported", {
+  p <- tempfile(fileext = ".yaml")
+  writeLines(c("feed:", "  min_trust: meduim"), p)
+  cfg <- load_config(p)
+  # the built-in default is in force -- never the weaker reading
+  expect_identical(cfg$feed$min_trust, "medium")
+  expect_true(.trust_ok("medium", cfg$feed$min_trust))
+  # ...and it is SAID, in the banner the startup warning and Admin already shout
+  err <- config_error(cfg)
+  expect_false(is.null(err))
+  expect_match(err, "feed.min_trust", fixed = TRUE)
+  expect_match(err, "high, medium or any", fixed = TRUE)
+  # a proven, clean, medium statement reaches the dashboard again
+  g <- .feed_gate(list(status = "ok", trust = list(level = "medium"), template_id = "t"),
+                  cfg, proven = TRUE)
+  expect_identical(g$reason, "accepted")
+})
+
+test_that("an unrecognised template origin keeps the default and is reported", {
+  p <- tempfile(fileext = ".yaml")
+  writeLines(c("feed:", "  allowed_template_origins: [defualt]"), p)
+  cfg <- load_config(p)
+  expect_identical(unlist(cfg$feed$allowed_template_origins), "default")
+  expect_match(config_error(cfg), "allowed_template_origins", fixed = TRUE)
+})
+
+# A value that is only in the wrong CASE is not a mistake anybody needs telling
+# about -- nobody meant anything else by `Default` -- so it is simply read, and
+# the banner stays quiet.
+test_that("an origin typed in the wrong case is read, not refused, and stays silent", {
+  p <- tempfile(fileext = ".yaml")
+  writeLines(c("feed:", "  min_trust: HIGH", "  allowed_template_origins: [Default, User]"), p)
+  cfg <- load_config(p)
+  expect_identical(cfg$feed$min_trust, "high")
+  expect_setequal(unlist(cfg$feed$allowed_template_origins), c("default", "user"))
+  expect_null(config_error(cfg))
+  g <- .feed_gate(list(status = "ok", trust = list(level = "high"), template_id = "t"),
+                  cfg, proven = TRUE)
+  expect_identical(g$reason, "accepted")
+})
+
+test_that("a settings file with nothing wrong in it says nothing at all", {
+  p <- tempfile(fileext = ".yaml")
+  writeLines(c("feed:", "  min_trust: any", "  enabled: true",
+               "metadata:", "  level: standard"), p)
+  cfg <- load_config(p)
+  expect_null(config_error(cfg))
+  expect_identical(cfg$feed$min_trust, "any")
+  expect_identical(cfg$metadata$level, "standard")
+})
+
+# The boolean and the enum faults are reported TOGETHER, in one banner, because
+# an operator fixing a settings file wants every reason at once.
+test_that("bad yes/no values and bad word values are reported in the one sentence", {
+  p <- tempfile(fileext = ".yaml")
+  writeLines(c("feed:", "  enabled: 'sometimes'", "  min_trust: meduim"), p)
+  cfg <- load_config(p)
+  err <- config_error(cfg)
+  expect_match(err, "feed.enabled", fixed = TRUE)
+  expect_match(err, "feed.min_trust", fixed = TRUE)
+  expect_true(isTRUE(cfg$feed$enabled))          # both back to the built-in default
+  expect_identical(cfg$feed$min_trust, "medium")
+})
+
+# ---------------------------------------------------------------------------
+# K4: ALL THREE TEMPLATE SAVERS DID A BARE write_yaml -- no backup, no atomic
+# write, no way back from one bad save. The DICTIONARIES have had a .bak on every
+# save for a long time; templates, which backup-and-restore.md calls "the
+# accumulated value of the tool" and which exist nowhere else on an offline box,
+# got nothing.
+test_that("save_yaml_safely keeps the previous version and never leaves a part file", {
+  d <- tempfile("sv_"); dir.create(d)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  p <- file.path(d, "acme.yaml")
+
+  expect_true(isTRUE(save_yaml_safely(list(id = "acme", version = 1L), p)))
+  expect_false(file.exists(paste0(p, ".bak")))       # nothing to back up on the first save
+  expect_true(isTRUE(save_yaml_safely(list(id = "acme", version = 2L), p)))
+
+  expect_equal(yaml::read_yaml(p)$version, 2L)
+  expect_equal(yaml::read_yaml(paste0(p, ".bak"))$version, 1L)   # one save's worth of undo
+  expect_equal(length(list.files(d, pattern = "part")), 0L)
+})
+
+# The backup and the temp file must be invisible to every template loader, or a
+# save would double the library and a half-written file could be read as a
+# template. All three loaders list "*.yaml"/"*.yml".
+test_that("neither the backup nor the temp file can ever be loaded as a template", {
+  d <- tempfile("sv2_"); dir.create(d)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  p <- file.path(d, "acme.yaml")
+  save_yaml_safely(list(id = "acme"), p); save_yaml_safely(list(id = "acme"), p)
+  file.create(file.path(d, "acme.yaml.999.part"))
+  expect_identical(list.files(d, pattern = "\\.ya?ml$"), "acme.yaml")
+})
+
+test_that("a save that cannot be written changes nothing and says why in one sentence", {
+  d <- tempfile("sv3_"); dir.create(d)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  p <- file.path(d, "acme.yaml")
+  save_yaml_safely(list(id = "acme", version = 1L), p)
+  r <- save_yaml_safely(list(id = "acme"), file.path("/proc", "no", "such", "acme.yaml"))
+  expect_false(isTRUE(r))
+  expect_match(attr(r, "reason"), "^[^A-Z]*[a-z]")        # a sentence, not a code
+  expect_false(grepl("Error|error in", attr(r, "reason")))
+  expect_equal(yaml::read_yaml(p)$version, 1L)            # the good file is untouched
+})

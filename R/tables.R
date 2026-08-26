@@ -235,9 +235,19 @@
 #
 # So indentation is one of TWO sufficient shapes, not a requirement:
 #   indented past the row's left edge  -> a generous gap is still a wrap
-#   at the SAME left edge              -> a wrap only under three extra guards
+#   at the SAME left edge              -> a wrap only under a tighter gap
 #
-# The three guards on the un-indented shape, and each one is load bearing:
+# BOTH SHAPES CARRY THE SAME TWO STRUCTURAL GUARDS, and for a while only one did.
+# The indented branch had NO guards at all, which is a bigger hole than it looks:
+# a right-aligned figure printed alone on a line is "indented" BY CONSTRUCTION,
+# so an unlabelled total under the last row of a schedule was folded into that
+# row. Measured on a three-row schedule with a total of 6,000.00 under it: three
+# rows came back, the last one holding "3,000.00 6,000.00" in its Value cell -
+# and the parsed companion took the total, so the row's own figure was gone and
+# the total had vanished as a row. Two wrong figures from one fold, both looking
+# perfectly ordinary. That is the exact mirror of the fault above it.
+#
+# The guards, and each one is load bearing:
 #
 #  1. TIGHT GAP. No further apart than one line of type. A genuine sparse row (a
 #     sub-heading, a total set apart) is printed with MORE air above it, not less.
@@ -285,8 +295,9 @@
   if (!is.finite(ph)) ph <- h
   if (!is.finite(h) || !is.finite(ph) || h <= 0) return(FALSE)
   span <- h + ph
+  if (n_cols < 2L || prev_filled < 2L) return(FALSE)
   if (min(d$x) > prev_left + 4) return(gap <= span * 1.4)
-  gap <= span * 1.15 && n_cols >= 2L && prev_filled >= 2L
+  gap <= span * 1.15
 }
 
 # .doc_is_rule(d) -- is this line a printed RULE rather than a row of data?
@@ -582,6 +593,71 @@
   if (max(abs(diffs - m)) > 12) return(0)
   if (abs(m) < 2) return(0)
   as.numeric(m)
+}
+
+# ---------------------------------------------------------------------------
+# A COLUMN THE DOCUMENT GAINED OR LOST, WHICH IS NOT A SHIFT.
+#
+# .doc_band_shift above moves every band by the SAME amount, which is what a
+# table printed further across the page needs. A comparative table that gains a
+# period column is a different animal entirely: it is right-anchored to the page,
+# so a new Q5 pushes Q1..Q4 and Total one place LEFT and the bands stay where
+# they are. Measured on a four-quarter table given a fifth:
+#
+#   Q1 held Q2's figure ... Total held Q5's, and every signal said perfect --
+#   rows 2, unclaimed 0, low_fill FALSE on all six, found by its heading,
+#   confidence 1.00, status ok.
+#
+# Nothing arithmetic can catch that on this route. But the evidence is sitting
+# right there: the tool is holding the heading LINE of this copy, and
+# doc_header_names already says which heading word falls inside which band. Read
+# them and compare, name by name, with the names the template gave the columns.
+# A band whose heading is not the heading it was drawn for is not over that
+# column any more.
+#
+# IT IS REPORTED, NOT REPAIRED. A remapping guessed from a header row would be
+# the tool inventing which quarter is which, and getting that wrong produces
+# exactly the failure it was meant to prevent. So what comes back is the
+# disagreement itself: which column, and what its band is actually sitting under.
+#
+# Only ever asked of a table found BY ITS HEADING - a table read from where it
+# sat has no heading in hand to compare against, and would report every column as
+# a disagreement on nothing.
+
+# .doc_heading_disagreements(input, tab, tmpl, cols, loc) -> a two-column frame of
+# (column, heading) for every band now sitting under a different heading.
+.doc_heading_disagreements <- function(input, tab, tmpl, cols, loc) {
+  none <- data.frame(column = character(0), heading = character(0),
+                     stringsAsFactors = FALSE)
+  if (!identical(loc$anchor, "header") || !length(loc$windows)) return(none)
+  want <- .doc_column_names(tab)
+  if (length(want) < 2L || length(cols) != length(want)) return(none)
+  tab2 <- tab; tab2$columns <- cols
+  edges <- doc_column_edges(tab2)
+  if (is.null(edges) || length(edges) - 1L != length(want)) return(none)
+  got <- tryCatch(doc_header_names(input, tab2, tmpl, edges, loc),
+                  error = function(e) character(0))
+  if (length(got) != length(want)) return(none)
+  same <- function(a, b) {
+    a <- .doc_norm(a); b <- .doc_norm(b)
+    nzchar(a) && nzchar(b) && (grepl(a, b, fixed = TRUE) || grepl(b, a, fixed = TRUE))
+  }
+  # A COLUMN MAY BE CALLED WHATEVER ITS AUTHOR CALLED IT. "the heading here is not
+  # this column's name" is NOT evidence of a moved band - a person naming five
+  # date columns M1..M5, which the shipped fixture does, is naming them, not
+  # mis-drawing them, and reporting that as a fault on every ordinary read is how
+  # a signal becomes noise nobody looks at.
+  #
+  # What IS evidence, and is not deniable, is a band sitting under a heading that
+  # belongs to ANOTHER of this table's columns. That is the shifted-by-one shape
+  # exactly, and nothing else produces it.
+  bad <- vapply(seq_along(want), function(j) {
+    if (!nzchar(trimws(got[j])) || same(want[j], got[j])) return(FALSE)
+    any(vapply(want[-j], function(o) same(o, got[j]), logical(1)))
+  }, logical(1))
+  if (!any(bad)) return(none)
+  data.frame(column = want[bad], heading = trimws(got[bad]),
+             stringsAsFactors = FALSE)
 }
 
 # .doc_shift_cols(cols, dx) -> the same columns, moved.
@@ -1133,12 +1209,14 @@ doc_columns_touch <- function(cols) {
 # table's own header row. Called after every edge change, so the names follow the
 # columns instead of having to be typed: split a column and the two halves are
 # named from the two header cells that were in it.
-doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL) {
+doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL, loc = NULL) {
   edges <- edges %||% doc_column_edges(tab)
   if (is.null(edges) || length(edges) < 2L) return(character(0))
   n <- length(edges) - 1L
   out <- rep("", n)
-  loc <- tryCatch(doc_locate_table(input, tab, tmpl), error = function(e) NULL)
+  # `loc` is optional and is only ever a saving: a caller that has just located
+  # this table hands its answer in rather than paying for the search twice.
+  loc <- loc %||% tryCatch(doc_locate_table(input, tab, tmpl), error = function(e) NULL)
   if (is.null(loc) || !length(loc$windows)) return(out)
   win <- loc$windows[[1]]
   w <- .doc_page_words(input, win$page, tmpl)
@@ -1196,6 +1274,56 @@ doc_auto_end <- function(input, tab, tmpl = NULL) {
   list(page = as.integer(r$last_page), y = round(as.numeric(r$last_y) + 2, 1))
 }
 
+# ---------------------------------------------------------------------------
+# A DIVISION ANY ONE LINE SHOWS IS A DIVISION.
+#
+# .doc_bands projects EVERY word in the sample onto the x axis and merges the
+# intervals that touch. That is right for finding where the columns are and wrong
+# for finding how many there are, because one long value reaching under its
+# neighbour's heading joins the two intervals for good - and the bands TILE, so
+# the merged band then claims the whole of both columns' territory and every
+# figure in the second one is read into the first. Reported as "when I define
+# columns, but one of the columns doesn't have a first row of data, it pulls all
+# info in the last column into the second-to-last column".
+#
+# The evidence against the merge is already on the page: the header line, and
+# every other line, breaks into CELLS at gutters wider than `gap`. If any single
+# line puts two cells inside one band, that band is two columns, whatever the
+# projection of everything else says. So the band is split between them.
+#
+# It can only ever ADD a division, never move or remove one, so a band nobody
+# disagrees with comes back exactly as it was.
+.doc_split_bands_by_cells <- function(bands, lines, gap) {
+  if (length(bands) < 1L || !length(lines)) return(bands)
+  spans <- lapply(lines, function(d) {
+    if (is.null(d) || !NROW(d)) return(list())
+    lapply(.doc_cells(d[order(d$x), , drop = FALSE], gap), function(z) {
+      lo <- min(z$x); hi <- max(z$x + z$width)
+      c(lo = lo, hi = hi, cx = (lo + hi) / 2)
+    })
+  })
+  out <- list()
+  for (b in bands) {
+    lo <- .doc_num(b$x_min, NA_real_); hi <- .doc_num(b$x_max, NA_real_)
+    if (!is.finite(lo) || !is.finite(hi)) { out[[length(out) + 1L]] <- b; next }
+    # The line that shows the MOST divisions inside this band is the one that
+    # knows most about it.
+    best <- list()
+    for (cs in spans) {
+      inside <- Filter(function(z) z[["cx"]] >= lo && z[["cx"]] <= hi, cs)
+      if (length(inside) > length(best)) best <- inside
+    }
+    if (length(best) < 2L) { out[[length(out) + 1L]] <- b; next }
+    best <- best[order(vapply(best, function(z) z[["lo"]], numeric(1)))]
+    cuts <- vapply(seq_len(length(best) - 1L), function(k)
+      (best[[k]][["hi"]] + best[[k + 1L]][["lo"]]) / 2, numeric(1))
+    e <- sort(unique(round(c(lo, cuts[cuts > lo & cuts < hi], hi), 1)))
+    for (k in seq_len(length(e) - 1L))
+      out[[length(out) + 1L]] <- list(x_min = e[k], x_max = e[k + 1L])
+  }
+  out
+}
+
 # doc_columns_from_box(input, box, tmpl) -> the columns a HEADER ROW implies.
 #
 # The header row is the one line on a table that says where its columns are, and
@@ -1222,6 +1350,11 @@ doc_columns_from_box <- function(input, box, tmpl = NULL) {
   if (!length(cells)) return(list())
   bands <- .doc_bands(sel, gap)
   if (!length(bands)) return(list())
+  # ...and a band that any ONE line of the box breaks into two cells is two
+  # columns, whatever the projection of all the ink together says. See
+  # .doc_split_bands_by_cells: this is what stops a long value reaching under its
+  # neighbour's heading from merging two columns into one for good.
+  bands <- .doc_split_bands_by_cells(bands, lines, gap)
   edges <- c(vapply(bands, function(b) b$x_min, numeric(1)),
              bands[[length(bands)]]$x_max)
   nm <- make.unique(vapply(seq_along(bands), function(j) {
@@ -1242,9 +1375,21 @@ doc_columns_from_box <- function(input, box, tmpl = NULL) {
 # uses. This is the one-click answer to "I have set where it starts and stops --
 # now work the columns out for me", and it is what makes correcting a table's
 # boundary cheap: move the edge, press it again.
+#
+# IT MAY NEVER TAKE A COLUMN AWAY. A defined column is a fact about the template
+# and this function is a convenience; a convenience that quietly deletes a column
+# because the ink under it happens to be sparse this month is how a whole column
+# of figures goes missing without a mark anywhere. So two rules, both of them
+# refusals:
+#
+#   * a column already drawn on the table whose band holds NO ink in the table's
+#     extent is KEPT exactly as drawn - an empty column is a column;
+#   * the answer can never have fewer columns than the table already has. If the
+#     ink says otherwise the ink is wrong about this, and what was drawn stands.
 doc_fit_columns <- function(input, tab, tmpl = NULL) {
+  old <- .doc_columns(tab)
   loc <- tryCatch(doc_locate_table(input, tab, tmpl), error = function(e) NULL)
-  if (is.null(loc) || !length(loc$windows)) return(list())
+  if (is.null(loc) || !length(loc$windows)) return(if (length(old)) old else list())
   parts <- list()
   for (win in loc$windows) {
     w <- .doc_page_words(input, win$page, tmpl)
@@ -1254,16 +1399,33 @@ doc_fit_columns <- function(input, tab, tmpl = NULL) {
     # A printed rule spans the whole width and would merge every band into one.
     for (d in .doc_lines(w, tab$row_tol)) if (!.doc_is_rule(d)) parts[[length(parts) + 1L]] <- d
   }
-  if (!length(parts)) return(list())
+  if (!length(parts)) return(if (length(old)) old else list())
   body <- do.call(rbind, parts)
-  bands <- .doc_bands(body, .doc_gap_for(body))
-  if (length(bands) < 1L) return(list())
+  gap <- .doc_gap_for(body)
+  bands <- .doc_bands(body, gap)
+  if (length(bands) < 1L) return(if (length(old)) old else list())
+  bands <- .doc_split_bands_by_cells(bands, parts, gap)
   edges <- c(vapply(bands, function(b) b$x_min, numeric(1)),
              bands[[length(bands)]]$x_max)
-  cols <- doc_columns_from_edges(edges, old = .doc_columns(tab))
+  # A DRAWN COLUMN WITH NOTHING IN IT KEEPS ITS TERRITORY. Its two edges are put
+  # back into the set, which takes its space out of whichever neighbour's band
+  # had swallowed it.
+  for (cc in old) {
+    lo <- .doc_num(cc$x_min, NA_real_); hi <- .doc_num(cc$x_max, NA_real_)
+    if (!is.finite(lo) || !is.finite(hi) || hi <= lo) next
+    if (any(body$cx >= lo & body$cx < hi)) next
+    # Its two edges go back in, and any derived edge INSIDE it comes out: there
+    # is no ink in there to argue for a division, and leaving one would hand the
+    # column back in two halves under invented names.
+    edges <- c(edges[edges <= lo | edges >= hi], lo, hi)
+  }
+  edges <- sort(unique(round(edges, 2)))
+  cols <- doc_columns_from_edges(edges, old = old)
+  if (length(cols) < length(old)) return(old)
   tab2 <- tab; tab2$columns <- cols
-  nm <- doc_header_names(input, tab2, tmpl, edges)
-  doc_columns_from_edges(edges, old = .doc_columns(tab), names = nm)
+  nm <- doc_header_names(input, tab2, tmpl, edges, loc)
+  out <- doc_columns_from_edges(edges, old = old, names = nm)
+  if (length(out) < length(old)) old else out
 }
 
 # ---------------------------------------------------------------------------
@@ -1272,26 +1434,193 @@ doc_fit_columns <- function(input, tab, tmpl = NULL) {
 
 .DOC_TYPES <- c("auto", "text", "money", "number", "date")
 
-# .doc_cell_value(txt, type) -> the machine-readable form of a cell, or NA.
+# ---------------------------------------------------------------------------
+# THE COMPANION VALUE IS A VALUE, NOT A SUBSTRING.
+#
+# `.doc_cell_value` used to hand the cell to `.value_from_line`, which returns
+# the matched SUBSTRING verbatim. Measured on the four shapes a report prints a
+# negative in:
+#
+#   printed        __value was      what it means
+#   (1,234.56)     "(1,234.56)"     minus 1,234.56 -- and nothing said so
+#   987.65-        "987.65-"        minus 987.65
+#   55.00 CR       "55.00 CR"       plus 55.00
+#   12.34 DR       "12.34 DR"       minus 12.34
+#
+# NO SIGN WAS EVER RESOLVED, so a bracketed negative was indistinguishable from a
+# positive to anything reading the column - a total in a spreadsheet, a sort, a
+# chart. That is the cardinal failure with the document's own ink as the alibi.
+#
+# `parse_amount()` in R/normalise.R is the correct parser. It is proven, it
+# carries the whole statement route, it resolves all four shapes above and the
+# European decimal comma besides - and it was never called from here. It is now.
+#
+# The SHAPE test stays where it was: .value_from_line still decides whether the
+# cell holds a figure at all, so a cell reading "Legal fees" is still NA rather
+# than being coerced to a number by a parser that strips letters. Only what
+# happens to a cell that IS a figure has changed.
+#
+# THE TEXT COLUMN IS UNTOUCHED. Every cell still carries exactly what the page
+# printed, beside the parsed companion. Nothing is repaired in place.
+
+# A WHOLE COLUMN AT A TIME. parse_amount and .date_strict are both vectorised,
+# and calling either once per cell costs five times what calling it once per
+# column does - measured at 0.5ms a cell on the money path, which on a
+# forty-table pack is seconds of nothing. So the extraction (which is per cell,
+# because the matchers are) and the PARSE (which is not) are separated, and the
+# companion columns are computed once, after the rows are assembled.
+
+# .doc_money_values(txt) -> the signed numbers a money column holds, NA per cell
+# that holds no figure.
+.doc_money_values <- function(txt) {
+  m <- vapply(as.character(txt), function(t) {
+    t <- trimws(as.character(t))
+    if (is.na(t) || !nzchar(t)) return(NA_character_)
+    v <- .value_from_line(t, "money")
+    if (is.na(v) || !nzchar(trimws(v))) NA_character_ else v
+  }, character(1), USE.NAMES = FALSE)
+  out <- rep(NA_real_, length(m))
+  ok <- !is.na(m)
+  if (any(ok)) out[ok] <- as.numeric(parse_amount(m[ok], "signed")$value)
+  out
+}
+
+# .DOC_NUM_RX -- a plain number, INCLUDING the two ways a report writes a
+# negative one without a minus in front of it. The old pattern started at
+# [-+]?[0-9], so "(1,234)" matched as "1,234" and came back positive.
+.DOC_NUM_RX <- "\\(?[-+]?[0-9][0-9,]*(?:\\.[0-9]+)?\\)?-?"
+
+.doc_number_values <- function(txt) {
+  m <- vapply(as.character(txt), function(t) {
+    t <- trimws(as.character(t))
+    if (is.na(t) || !nzchar(t)) return(NA_character_)
+    v <- regmatches(t, regexpr(.DOC_NUM_RX, t, perl = TRUE))
+    if (!length(v) || !nzchar(v)) NA_character_ else v[1]
+  }, character(1), USE.NAMES = FALSE)
+  out <- rep(NA_real_, length(m))
+  ok <- !is.na(m)
+  if (any(ok)) out[ok] <- as.numeric(parse_amount(m[ok], "signed")$value)
+  out
+}
+
+# ---------------------------------------------------------------------------
+# A DATE THAT CANNOT START AT A YEAR IS NOT A DATE PARSER.
+#
+# The date branch ran .DATE_RX, which is "[0-9]{1,2}[/ .-]...". Measured:
+# "2025-04-07" matched from the THIRD character and came back "25-04-07", which
+# opens as 2007 in one reader and 1925 in another. "Apr 2025" came back NA with
+# nothing said. And nothing was ever validated: the substring was handed on as
+# though it were a date.
+#
+# The statement route has had the guards for a long time and they are one file
+# away. `.date_strict` (R/normalise.R) reformats the parsed date back through the
+# same format and requires it to match, and bounds the year - the pair that stops
+# "13/08/2025" being read as 2020 under "%d/%m/%y". Both are used here now, and
+# what comes out is ISO or nothing.
+#
+# WHICH FORMAT. A column may declare one (`format:` or `date_format:` on the
+# column, exactly as a statement template declares its bank's), and a declared
+# format is the only one tried - that is what "declared" means. With none
+# declared the candidates below are tried in order, and they are DAY FIRST,
+# because this tool reads New Zealand documents. A value that no candidate can
+# parse trustworthily comes back NA and the cell's own text stands beside it
+# unaltered, so nothing is hidden and nothing is invented.
+.DOC_DATE_ISO_RX <- "[0-9]{4}[-/.][0-9]{1,2}[-/.][0-9]{1,2}"
+# Commonest first, because each candidate costs a parse and a round-trip. The
+# order cannot change an ANSWER - a format that does not consume the whole string
+# fails the round-trip and a two-digit year read under %Y fails the year bound -
+# so it is only ever how quickly the right one is reached.
+.DOC_DATE_FORMATS <- c("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d %b %Y",
+                       "%d.%m.%Y", "%Y/%m/%d", "%Y.%m.%d", "%d %B %Y",
+                       "%d/%m/%y", "%d-%m-%y", "%d.%m.%y", "%d %b %y")
+
+# .doc_date_values(txt, fmt) -> ISO dates for a whole column, NA per cell that
+# holds nothing a candidate format can parse trustworthily.
+.doc_date_values <- function(txt, fmt = NULL) {
+  raw <- vapply(as.character(txt), function(t) {
+    t <- trimws(as.character(t))
+    if (is.na(t) || !nzchar(t)) return(NA_character_)
+    iso <- regmatches(t, regexpr(.DOC_DATE_ISO_RX, t, perl = TRUE))
+    v <- if (length(iso) && nzchar(iso)) iso[1] else .value_from_line(t, "date")
+    if (is.na(v) || !nzchar(trimws(v))) NA_character_ else v
+  }, character(1), USE.NAMES = FALSE)
+  out <- rep(NA_character_, length(raw))
+  ok <- which(!is.na(raw))
+  if (!length(ok)) return(out)
+  fmts <- as.character(fmt %||% character(0))
+  fmts <- fmts[!is.na(fmts) & nzchar(trimws(fmts))]
+  if (!length(fmts)) fmts <- .DOC_DATE_FORMATS
+  s <- .normalise_date_str(raw[ok])
+  todo <- seq_along(ok)
+  for (f in fmts) {
+    if (!length(todo)) break
+    v <- suppressWarnings(.date_strict(s[todo], f))
+    hit <- which(!is.na(v))
+    if (length(hit)) {
+      out[ok[todo[hit]]] <- as.character(v[hit])
+      todo <- todo[-hit]
+    }
+  }
+  out
+}
+
+# .doc_value_proto(type) -- the CLASS a declared column's companion holds. A
+# money column's companion is a number; the empty-table prototype has to agree
+# with the full one or the two cannot be rbound.
+.doc_value_proto <- function(type)
+  if (type %in% c("money", "number")) numeric(0) else character(0)
+
+# .doc_cell_values(txt, type, fmt) -> the machine-readable form of a whole
+# column, one value per cell, NA where the cell holds nothing of that kind.
 # ONLY ever called for a column whose type the person DECLARED: an undeclared
 # ("auto") column keeps exactly what the page says and nothing is inferred from
 # it, because a guess that lands in a spreadsheet column headed "amount" is
 # indistinguishable from a fact.
-.doc_cell_value <- function(txt, type) {
-  txt <- trimws(as.character(txt %||% ""))
-  if (!nzchar(txt)) return(NA_character_)
+.doc_cell_values <- function(txt, type, fmt = NULL) {
+  txt <- as.character(txt %||% character(0))
+  num <- type %in% c("money", "number")
+  if (!length(txt)) return(.doc_value_proto(type))
   v <- switch(type,
-    money  = .value_from_line(txt, "money"),
-    date   = .value_from_line(txt, "date"),
-    number = { m <- regmatches(txt, regexpr("[-+]?[0-9][0-9,]*(\\.[0-9]+)?",
-                                            txt, perl = TRUE))
-               if (length(m) && nzchar(m)) m[1] else NA_character_ },
-    text   = txt,
-    txt)                 # any other declared type: the page's own words stand
+    money  = .doc_money_values(txt),
+    number = .doc_number_values(txt),
+    date   = .doc_date_values(txt, fmt),
+    text   = trimws(txt),
+    trimws(txt))         # any other declared type: the page's own words stand
   # switch() with no matching branch returns NULL, and a NULL assigned into the
-  # row list would DELETE that field -- leaving one record narrower than the rest
-  # and breaking the rbind that assembles them. Always a length-1 character.
-  if (is.null(v) || !length(v)) NA_character_ else as.character(v)[1]
+  # rows frame would DELETE that column. Always the length and the class this
+  # column's companion is declared to hold.
+  if (is.null(v) || length(v) != length(txt))
+    v <- rep(if (num) NA_real_ else NA_character_, length(txt))
+  if (num) as.numeric(v) else {
+    v <- as.character(v); v[!is.na(v) & !nzchar(v)] <- NA_character_; v
+  }
+}
+
+# .doc_cell_value(txt, type, fmt) -- one cell, for a caller that has one.
+.doc_cell_value <- function(txt, type, fmt = NULL)
+  .doc_cell_values(as.character(txt %||% "")[1], type, fmt)[1]
+
+# .doc_currency_mark(txt) -- the currency marker a figure was printed with, or "".
+#
+# `A$2,000.00` and `US$4,000.00` both parse to a number and both lose the thing
+# that says WHICH money they are. The marker cannot go into the number, so it is
+# recorded per column instead: a column that carries one marker says which, and a
+# column that carries two is saying something a reviewer has to know before
+# adding it up.
+#
+# AN ALTERNATION, MATCHED AS BYTES -- never a bracket expression. R/labels.R
+# carries the full account of why: in a C locale a multibyte character inside
+# `[...]` is read one byte at a time, and the leading byte of the value beside it
+# is eaten. Every symbol below is its own branch for that reason.
+.DOC_CCY_RX <- paste0("[A-Za-z]{0,3}[$]",
+                      "|[A-Za-z]{0,3}\u00a3", "|[A-Za-z]{0,3}\u20ac",
+                      "|[A-Za-z]{0,3}\u00a5",
+                      "|(?<![A-Za-z])[A-Z]{3}(?![A-Za-z])")
+.doc_currency_mark <- function(txt) {
+  t <- trimws(as.character(txt %||% ""))
+  if (!nzchar(t)) return("")
+  m <- regmatches(t, regexpr(.DOC_CCY_RX, t, perl = TRUE, useBytes = TRUE))
+  if (!length(m) || !nzchar(m)) "" else toupper(trimws(m[1]))
 }
 
 # ---------------------------------------------------------------------------
@@ -1316,8 +1645,16 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   cols <- .doc_columns(tab)
   cnames <- .doc_column_names(tab)
   ctypes <- vapply(seq_along(cols), function(i) {
-    t <- as.character(cols[[i]]$type %||% "auto")[1]
-    if (!(t %in% .DOC_TYPES)) "auto" else t
+    t <- as.character(.doc_key(cols[[i]], "type") %||% "auto")[1]
+    if (is.na(t) || !(t %in% .DOC_TYPES)) "auto" else t
+  }, character(1))
+  # A date column may say what shape its dates are printed in, exactly as a
+  # statement template does. Read by exact name (see .doc_key): `$format` would
+  # partial-match a `format_note` the day somebody adds one.
+  cfmts <- vapply(seq_along(cols), function(i) {
+    f <- as.character(.doc_key(cols[[i]], "format") %||%
+                      .doc_key(cols[[i]], "date_format") %||% "")[1]
+    if (is.na(f)) "" else trimws(f)
   }, character(1))
   loc <- loc %||% doc_locate_table(input, tab, tmpl)
   # ...MOVED TO WHERE THIS COPY PRINTS THEM. Measured off the heading the locator
@@ -1330,7 +1667,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     d <- data.frame(page = integer(0), row = integer(0), stringsAsFactors = FALSE)
     for (i in seq_along(cnames)) d[[cnames[i]]] <- character(0)
     for (i in seq_along(cnames)) if (!identical(ctypes[i], "auto"))
-      d[[paste0(cnames[i], "__value")]] <- character(0)
+      d[[paste0(cnames[i], "__value")]] <- .doc_value_proto(ctypes[i])
     d
   }
   spilled <- data.frame(page = integer(0), y = numeric(0), x = numeric(0),
@@ -1411,8 +1748,20 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # belt-and-braces for a heading reprinted at a y the window did not open at.
       # All three sit inside the same no-money guard, which is what stops a totals
       # row that echoes the column names from being swallowed.
+      #
+      # AND THE LAST TWO ONLY APPLY AT THE TOP OF A WINDOW, which is where a
+      # reprinted heading is. They used to apply ANYWHERE in the body, and they
+      # DELETE the line they fire on - so a genuine row of a fee schedule reading
+      # "Fee | basis under review" scored 0.6 on the wordings "Fee" and "Basis",
+      # carried no money token (the column has no decimals in it), and was
+      # deleted. Measured: three rows where the document prints four, fill_rate
+      # 1.00, confidence 1.00, and nothing anywhere said a row had gone. A
+      # reprinted heading is printed BEFORE the rows, never between them, so
+      # asking only until the first row is kept costs nothing and closes it.
+      at_window_top <- !length(kept_top)
       is_header <- li <= skip ||
-        ((.doc_header_hit(d, hdr_need) >= 0.6 ||
+        (at_window_top &&
+         (.doc_header_hit(d, hdr_need) >= 0.6 ||
           (length(loc$header_sig) &&
              !is.null(.doc_find_printed_header(list(d), loc$header_sig)))) &&
          !any(vapply(d$text, function(t) !is.na(.value_from_line(t, "money")),
@@ -1441,7 +1790,21 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # measured from the row grows with every fold and the third line stops
       # looking like a wrap. `last_top` is the previous PHYSICAL line -- folded or
       # kept -- which is what the leading is actually a distance between.
-      if (prev_i > 0L && n_filled >= 1L &&
+      # A WRAP NEVER OVERWRITES A FIGURE. A description that runs on adds words to
+      # a cell of words; a line that would put a second figure into a money,
+      # number or date cell that ALREADY HOLDS ONE is not a continuation of that
+      # row at all - it is the next thing the document printed, and it is emitted
+      # as the row it is. Without this, an unlabelled total was appended to the
+      # last row's amount and the parsed companion then took the TOTAL, so the
+      # row lost its own figure and the total lost its row.
+      clash <- prev_i > 0L && any(vapply(seq_along(cells), function(i) {
+        if (is.na(cells[i]) || !nzchar(cells[i])) return(FALSE)
+        if (!(ctypes[i] %in% c("money", "number", "date"))) return(FALSE)
+        was <- out[[prev_i]][[cnames[i]]]
+        !is.null(was) && !is.na(was) && nzchar(was)
+      }, logical(1)))
+
+      if (prev_i > 0L && n_filled >= 1L && !clash &&
           .doc_is_wrap(d, prev_left,
                        as.numeric(attr(d, "top")) -
                          (if (is.finite(last_top)) last_top else kept_top[length(kept_top)]),
@@ -1450,9 +1813,6 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
           was <- out[[prev_i]][[cnames[i]]]
           out[[prev_i]][[cnames[i]]] <-
             if (is.na(was) || !nzchar(was)) cells[i] else .doc_join_wrapped(was, cells[i])
-          if (!identical(ctypes[i], "auto"))
-            out[[prev_i]][[paste0(cnames[i], "__value")]] <-
-              .doc_cell_value(out[[prev_i]][[cnames[i]]], ctypes[i])
         }
         last_top <- as.numeric(attr(d, "top"))
         last_h <- suppressWarnings(max(as.numeric(d$height), na.rm = TRUE))
@@ -1510,8 +1870,9 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # this list is the only thing standing between that and a wrong answer.
       if (any(is.na(j))) {
         s <- d[is.na(j), , drop = FALSE]
-        spilled <- rbind(spilled, data.frame(page = s$page, y = s$y, x = s$x,
-                                             text = s$text, stringsAsFactors = FALSE))
+        spilled <- rbind(spilled, data.frame(
+          page = as.integer(s$page), y = as.numeric(s$y), x = as.numeric(s$x),
+          text = as.character(s$text), stringsAsFactors = FALSE))
       }
       if (all(is.na(j)) || n_filled == 0L) next
       kept_top <- c(kept_top, as.numeric(attr(d, "top")))
@@ -1520,8 +1881,6 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       rowno <- rowno + 1L
       rec <- list(page = as.integer(win$page), row = as.integer(rowno))
       for (i in seq_along(cnames)) rec[[cnames[i]]] <- cells[i]
-      for (i in seq_along(cnames)) if (!identical(ctypes[i], "auto"))
-        rec[[paste0(cnames[i], "__value")]] <- .doc_cell_value(cells[i], ctypes[i])
       out[[length(out) + 1L]] <- rec
       prev_i <- length(out); prev_left <- min(d$x)
       last_top <- as.numeric(attr(d, "top")); prev_filled <- as.integer(n_filled)
@@ -1534,10 +1893,27 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   # The FIRST header row is expected and is not evidence of anything; extra ones
   # are the continuations, which is worth saying out loud.
   n_header <- max(0L, n_header)
+  # THE SINGLE BEST PIECE OF EVIDENCE THIS ROUTE CAN PRODUCE, and until now its
+  # only reader anywhere was nrow(). On the measured wrong-column read it held
+  # the four real closing balances - the figures the table lost, with the page
+  # and the position they were printed at. So it comes back as a frame anybody
+  # can write straight out: reading order, fixed column types, no stray row
+  # names from the rbind that built it.
+  if (nrow(spilled)) {
+    spilled <- spilled[order(spilled$page, spilled$y, spilled$x), , drop = FALSE]
+    rownames(spilled) <- NULL
+  }
   rows <- if (!length(out)) empty_rows() else {
     df <- do.call(rbind, lapply(out, function(r)
       as.data.frame(r, stringsAsFactors = FALSE, check.names = FALSE)))
     rownames(df) <- NULL
+    # THE COMPANION COLUMNS, ONCE, AFTER THE ROWS ARE WHOLE. Parsing per cell as
+    # the rows were built meant a wrapped cell had to be re-parsed the moment it
+    # grew, and it cost five times what one call a column costs. Doing it here is
+    # both cheaper and one fewer place that can disagree with itself.
+    for (i in seq_along(cnames)) if (!identical(ctypes[i], "auto"))
+      df[[paste0(cnames[i], "__value")]] <-
+        .doc_cell_values(df[[cnames[i]]], ctypes[i], cfmts[i])
     df
   }
   filled <- if (!nrow(rows)) integer(0) else vapply(cnames, function(n) {
@@ -1557,8 +1933,28 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     v <- trimws(as.character(rows[[cnames[i]]]))
     sum(!is.na(v) & nzchar(v) & grepl("[[:space:]]", v))
   }, integer(1))
+  # THE MARKER THE NUMBER CANNOT CARRY. A$2,000.00 and US$4,000.00 both become a
+  # number, and the number has no room for which money it is. Recorded per column
+  # off the cells that actually parsed, so a text cell in a money column cannot
+  # invent one. See .doc_currency_mark.
+  ccy <- rep("", length(cnames))
+  if (nrow(rows)) for (i in seq_along(cnames)) {
+    if (!identical(ctypes[i], "money")) next
+    v <- rows[[paste0(cnames[i], "__value")]]
+    txt <- as.character(rows[[cnames[i]]])
+    seen <- unique(vapply(txt[!is.na(v)], .doc_currency_mark, character(1),
+                          USE.NAMES = FALSE))
+    seen <- sort(seen[nzchar(seen)])
+    ccy[i] <- paste(seen, collapse = ", ")
+  }
+  # ...and whether each band is still over the heading it was drawn for. See
+  # .doc_heading_disagreements: a column the document GAINED or LOST shifts every
+  # figure one across with every other signal reading perfect.
+  dis <- .doc_heading_disagreements(input, tab, tmpl, cols, loc)
+  heading <- rep("", length(cnames))
+  heading[match(dis$column, cnames)] <- dis$heading
   report <- .doc_col_report(cnames, ctypes, filled, nrow(rows), tab,
-                            parsed, multi_token)
+                            parsed, multi_token, ccy, heading)
 
   detail <- if (nrow(stops)) paste0(loc$detail, sprintf(
               "; it stops on page %d, where the rows stop fitting it",
@@ -1566,13 +1962,40 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   # NOTHING SILENT. A column told what it holds, holding words that are not it,
   # is not a thin column and does not read as one - so it says so itself, once,
   # in the line the screen already prints under the table's name.
-  bad <- report$column[report$wrong_kind %in% TRUE]
-  if (length(bad))
+  bad <- which(report$wrong_kind %in% TRUE)
+  if (length(bad) == 1L)
     detail <- paste0(detail, sprintf(
-      "; nothing in %s reads as %s, so that column is over the wrong part of the page",
-      .doc_and_list(bad),
-      if (length(bad) == 1L) "the kind of value it was set to hold"
-      else "the kind of value they were set to hold"))
+      "; nothing in %s reads as %s, so check that column against the page",
+      report$column[bad], .doc_kind_word(report$type[bad])))
+  else if (length(bad) > 1L)
+    detail <- paste0(detail, sprintf(
+      "; nothing in %s reads as the kind of value it was set to hold, so check those columns against the page",
+      .doc_and_list(report$column[bad])))
+  # A BAND NO LONGER OVER THE COLUMN IT WAS DRAWN FOR. Said, never guessed at:
+  # which column, and what this copy prints above it.
+  # ONE FACT, THE FIRST ONE. A shifted table disagrees in every column at once,
+  # and a sentence listing six of them is a sentence nobody finishes; the rest are
+  # in the per-column report, which is where a list belongs.
+  if (nrow(dis))
+    detail <- paste0(detail, sprintf(
+      "; on this copy the %s column sits under the heading %s, so this table has gained or lost a column",
+      dis$column[1], dis$heading[1]))
+  # HOW MANY LINES WERE TREATED AS A HEADING, which was counted and read by
+  # nothing. One per page is what a table with a repeated heading spends; more
+  # than that means a line was deleted for looking like a heading when it was a
+  # row, and a deleted row is invisible in every other number here.
+  header_budget <- max(n_header_rows, 1L) * max(length(loc$windows), 1L)
+  if (n_header > header_budget)
+    detail <- paste0(detail, sprintf(
+      "; %d lines were skipped as its heading where %d were expected, so check nothing was dropped",
+      n_header, header_budget))
+  # ...and a money column carrying two different currencies is a column nobody
+  # can add up, which is worth one sentence before anybody tries.
+  mixed <- report$column[grepl(",", report$currency %||% "", fixed = TRUE)]
+  if (length(mixed))
+    detail <- paste0(detail, sprintf(
+      "; %s carr%s figures in more than one currency",
+      .doc_and_list(mixed), if (length(mixed) == 1L) "ies" else "y"))
 
   list(rows = rows, report = report,
        spilled = spilled, stops = stops, row_fill = fills, n_rows = nrow(rows),
@@ -1582,6 +2005,12 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
        extended_to = loc$extended_to,
        pages = loc$pages, header_rows = n_header_rows)
 }
+
+# .doc_kind_word(type) -- a column's declared kind in the words a person uses for
+# it. "money" is what the template calls it; "an amount" is what Beth calls it.
+.doc_kind_word <- function(type) switch(as.character(type)[1],
+  money = "an amount", number = "a number", date = "a date",
+  "the kind of value it was set to hold")
 
 # .doc_and_list(x) -- "Amount", "Amount and Balance", "Date, Amount and Balance".
 # A message a person reads, not a vector printed at them.
@@ -1627,7 +2056,8 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
 # column shifted sideways, a column whose neighbour was swallowed (A3), band
 # overflow, and OCR damage.
 .doc_col_report <- function(cnames, ctypes, filled, n, tab,
-                            parsed = NULL, multi_token = NULL) {
+                            parsed = NULL, multi_token = NULL, currency = NULL,
+                            heading = NULL) {
   min_fill <- .doc_num(tab$min_fill, 0.5)
   cols <- .doc_columns(tab)
   blank_ok <- vapply(seq_along(cnames), function(i)
@@ -1636,15 +2066,22 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     return(data.frame(column = character(0), type = character(0),
                       filled = integer(0), rows = integer(0), fill_rate = numeric(0),
                       parsed = integer(0), parse_rate = numeric(0),
-                      multi_token = integer(0),
+                      multi_token = integer(0), currency = character(0),
+                      heading = character(0),
                       may_be_blank = logical(0), low_fill = logical(0),
-                      wrong_kind = logical(0),
+                      wrong_kind = logical(0), wrong_column = logical(0),
                       stringsAsFactors = FALSE))
   filled <- if (length(filled) == length(cnames)) as.integer(filled)
             else rep(0L, length(cnames))
   fit <- function(v) if (length(v) == length(cnames)) as.integer(v)
                      else rep(NA_integer_, length(cnames))
   parsed <- fit(parsed); multi_token <- fit(multi_token)
+  currency <- if (length(currency) == length(cnames)) as.character(currency)
+              else rep("", length(cnames))
+  currency[is.na(currency)] <- ""
+  heading <- if (length(heading) == length(cnames)) as.character(heading)
+             else rep("", length(cnames))
+  heading[is.na(heading)] <- ""
   typed <- !(ctypes %in% "auto")
   parsed[!typed] <- NA_integer_; multi_token[!typed] <- NA_integer_
   rate <- if (n > 0L) filled / n else rep(NA_real_, length(cnames))
@@ -1653,13 +2090,18 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
              rows = rep(as.integer(n), length(cnames)),
              fill_rate = round(rate, 3),
              parsed = parsed, parse_rate = round(prate, 3),
-             multi_token = multi_token,
+             multi_token = multi_token, currency = currency,
+             # WHAT THIS COPY PRINTS OVER THE BAND, and only when that is not the
+             # heading the column was drawn for. Blank means "no disagreement",
+             # which is the ordinary case and says nothing at all.
+             heading = heading,
              may_be_blank = blank_ok,
              low_fill = !blank_ok & !is.na(rate) & rate < min_fill,
              # NOT ONE CELL of a column that was told what it holds actually holds
              # it. That is the band being wrong, and it is worth saying in its own
              # words rather than as a thin column, which it is not.
              wrong_kind = !is.na(prate) & prate == 0 & filled > 0L,
+             wrong_column = nzchar(heading),
              stringsAsFactors = FALSE)
 }
 

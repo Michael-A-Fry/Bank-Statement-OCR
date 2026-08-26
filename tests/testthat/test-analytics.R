@@ -121,3 +121,140 @@ test_that("end-to-end: a converted unsupported file is reportable from the log",
   expect_true(cl$count[1] >= 1)
   expect_match(cl$layout[1], "wibble")             # layout hint from the header
 })
+
+# ---------------------------------------------------------------------------
+# L6. ADMIN'S DRIFT AND USAGE TABLES WERE STATEMENT-SHAPED.
+#
+# Health was one statement-shaped test -- status ok AND no failed check AND trust
+# is not low -- and a report carries no trust level at all, so `trust != "low"`
+# was NA, the whole vector was NA, both percentages were NA, and Admin rendered
+# one row of NAs for any other-route template with six or more runs. A screen
+# that says nothing about a template is worse than one that says it is fine: the
+# admin reads it as "nothing to see" and it means "never measured".
+# ---------------------------------------------------------------------------
+
+# .an_runs(kind, ...) -- n run records for one template, of one kind.
+.an_runs <- function(kind, status, n = 10, ...) {
+  d <- data.frame(detected_template = rep("t1", n),
+                  ts = sprintf("2026-03-%02dT00:00:00Z", seq_len(n)),
+                  kind = rep(kind, n), status = status,
+                  trust_level = rep(NA_character_, n),
+                  kpi_fail_count = rep(NA_integer_, n),
+                  stringsAsFactors = FALSE)
+  extra <- list(...)
+  for (k in names(extra)) d[[k]] <- extra[[k]]
+  d
+}
+
+test_that("run_healthy is never NA, whatever route the run took", {
+  rep_runs <- .an_runs("tables", rep("ok", 6), n = 6,
+                       unclaimed_words = rep(0L, 6), weak_tables = rep(0L, 6))
+  expect_false(anyNA(run_healthy(rep_runs)))
+  expect_true(all(run_healthy(rep_runs)))
+  # a report is healthy when every table was found by its heading and no word
+  # fell outside a column -- NOT merely when the status is ok, which tolerates
+  # one unclaimed word.
+  spilt <- rep_runs; spilt$unclaimed_words <- rep(1L, 6)
+  expect_false(any(run_healthy(spilt)))
+  weak <- rep_runs; weak$weak_tables <- rep(2L, 6)
+  expect_false(any(run_healthy(weak)))
+  # a form: nothing disputed, nothing required missing
+  frm <- .an_runs("form", rep("ok", 4), n = 4, n_conflicts = rep(0L, 4),
+                  required_missing = rep(0L, 4))
+  expect_true(all(run_healthy(frm)))
+  frm$n_conflicts <- rep(3L, 4)
+  expect_false(any(run_healthy(frm)))
+})
+
+test_that("a statement's health test is exactly what it always was", {
+  # The only route with arithmetic behind it: its bar must not move because two
+  # other routes arrived.
+  s <- data.frame(detected_template = rep("t1", 3), ts = c("a", "b", "c"),
+                  status = c("ok", "ok", "needs_review"),
+                  kpi_fail_count = c(0L, 1L, 0L),
+                  trust_level = c("high", "high", "low"), stringsAsFactors = FALSE)
+  expect_identical(run_healthy(s), c(TRUE, FALSE, FALSE))
+  # and with no `kind` column at all -- every record written before today
+  expect_false("kind" %in% names(s))
+})
+
+test_that("template_drift reports a report template instead of a row of NAs", {
+  # six clean runs then four where the tables stopped being found by heading
+  r <- .an_runs("tables", c(rep("ok", 6), rep("needs_review", 4)),
+                unclaimed_words = c(rep(0L, 6), rep(4L, 4)),
+                weak_tables = c(rep(0L, 6), rep(2L, 4)))
+  d <- template_drift(r, recent_frac = 0.4, min_runs = 6)
+  expect_equal(nrow(d), 1L)
+  expect_identical(d$template[1], "t1")
+  expect_false(anyNA(d))                       # THE FAULT: every cell was NA
+  expect_equal(d$earlier_ok_pct[1], 100)
+  expect_equal(d$recent_ok_pct[1], 0)
+  expect_true(d$drop[1] >= 25)
+})
+
+test_that("a healthy report template is not reported as drifting", {
+  r <- .an_runs("tables", rep("ok", 10), unclaimed_words = rep(0L, 10),
+                weak_tables = rep(0L, 10))
+  expect_equal(nrow(template_drift(r)), 0L)
+})
+
+test_that("one report run does not turn a template's low-trust count into NA", {
+  # `NA == "low"` is NA, so a single form or report run -- neither of which
+  # records a trust level, because neither has any reconciliation to be confident
+  # about -- made this whole count NA and Admin printed a row that said nothing.
+  mixed <- data.frame(
+    detected_template = c("t1", "t1", "t1"), ts = c("a", "b", "c"),
+    kind = c("statement", "statement", "tables"),
+    status = c("ok", "needs_review", "ok"),
+    trust_level = c("high", "low", NA_character_), stringsAsFactors = FALSE)
+  u <- template_usage(mixed)
+  expect_equal(nrow(u), 1L)
+  expect_false(anyNA(u))
+  expect_equal(u$low_trust[1], 1L)         # the one statement that WAS graded low
+  expect_equal(u$n[1], 3L)
+})
+
+test_that("the layout hint on a page with no transaction header names nobody", {
+  # G9. The signature's fallback was the twelve most frequent long non-stopword
+  # words on the page. A statement takes the header-keyword branch and never gets
+  # there; a document that reaches the form or report route is BY DEFINITION one
+  # with no transaction header, so it is exactly the class that takes the
+  # fallback -- and the commonest words on such a page are the people named on
+  # it. Measured before this: "ambrose | whitcombe", written to logs/runs and to
+  # logs/metadata, both kept after the uploaded file itself is purged, while the
+  # metadata module's own header states that names are never stored.
+  p <- list(kind = "pdf", pages = paste(c(
+    "NORTHWIND TRUSTEE SERVICES",
+    "Consolidated position report",
+    "Prepared for Ambrose Family Trust",
+    "Trustee Whitcombe Ambrose",
+    "Ambrose Whitcombe Ambrose Whitcombe",
+    "Ambrose Whitcombe holdings schedule"), collapse = "\n"))
+  h <- layout_signature(p)$hint
+  expect_false(grepl("ambrose", h, fixed = TRUE))
+  expect_false(grepl("whitcombe", h, fixed = TRUE))
+  expect_false(grepl("northwind", h, fixed = TRUE))
+
+  # ...and what IS layout vocabulary still comes through, so two copies of one
+  # report family still cluster together -- which is the only reason the hint
+  # exists.
+  q <- list(kind = "pdf", pages = paste(c(
+    "Opening balance Closing balance",
+    "Prepared for Ambrose Family Trust",
+    "Type Opening Closing"), collapse = "\n"))
+  r <- list(kind = "pdf", pages = paste(c(
+    "Opening balance Closing balance",
+    "Prepared for Delacroix Family Trust",
+    "Type Opening Closing"), collapse = "\n"))
+  expect_true(nzchar(layout_signature(q)$hint))
+  expect_false(grepl("ambrose", layout_signature(q)$hint, fixed = TRUE))
+  expect_identical(layout_signature(q)$signature, layout_signature(r)$signature)
+})
+
+test_that("a statement's layout hint is unchanged by the PII-safe fallback", {
+  p <- list(kind = "pdf", pages = paste(
+    "Date Description Withdrawals Deposits Balance",
+    "01/04/2025 COFFEE 4.50 1,000.00", sep = "\n"))
+  expect_identical(layout_signature(p)$hint,
+                   "balance | date | deposits | description | withdrawals")
+})

@@ -129,3 +129,132 @@ test_that("converting the PDF writes downloadable files and never touches the fe
   expect_null(write_feed(res, list(feed = list(enabled = TRUE, feed_dir = feed_dir))))
   expect_false(dir.exists(feed_dir))
 })
+
+# ---------------------------------------------------------------------------
+# THE FRONT DOOR: what the verdict is allowed to say "ok" to
+# ---------------------------------------------------------------------------
+
+test_that("a report template can be forced, and an id that is not there is refused", {
+  # L1. convert_tables() has always taken a template_id and NOTHING ever passed
+  # one -- and worse, an id the library does not hold fell through to detection in
+  # silence, so "read it with THIS one" could be answered by a different template.
+  skip_if_no_pdf()
+  tdir <- file.path(tempdir(), paste0("docforce-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
+  tpl <- file.path(tdir, "templates"); out <- file.path(tdir, "out")
+  inp <- read_input(doc_pdf_fixture())
+  t <- document_template_from_proposal(
+    id = "northwind_position", bank = "Northwind", statement_type = "position report",
+    phrases = "Consolidated position report", tables = propose_tables(inp),
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
+  save_document_template(t, tpl)
+  # a SECOND template that could never be detected here (its phrase is not printed)
+  t2 <- t; t2$id <- "northwind_alternate"
+  t2$fingerprint$page_contains_all <- list("Quarterly derivatives schedule")
+  save_document_template(t2, tpl)
+
+  forced <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out,
+                           template_id = "northwind_alternate")
+  expect_identical(forced$template_id, "northwind_alternate")
+  expect_true(isTRUE(forced$forced_template))
+  # ...and the person's choice outranks detection, which would have chosen the other
+  auto <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
+  expect_identical(auto$template_id, "northwind_position")
+
+  missing <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out,
+                            template_id = "no_such_template")
+  expect_identical(missing$status, "unsupported")
+  expect_match(paste(missing$messages, collapse = " "), "not in the library")
+  expect_false(grepl("no_such_template", paste(missing$messages, collapse = " ")))
+})
+
+test_that("two report templates that both fit still convert, and the tie is named", {
+  # H10 / L2, measured: two valid templates over one fixture, both phrases
+  # genuinely printed, gave status "unsupported" and named neither of them.
+  skip_if_no_pdf()
+  tdir <- file.path(tempdir(), paste0("doctie-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
+  tpl <- file.path(tdir, "templates"); out <- file.path(tdir, "out")
+  inp <- read_input(doc_pdf_fixture())
+  t <- document_template_from_proposal(
+    id = "northwind_position", bank = "Northwind", statement_type = "position report",
+    phrases = "Consolidated position report", tables = propose_tables(inp),
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
+  save_document_template(t, tpl)
+  t2 <- t; t2$id <- "northwind_duplicate"
+  save_document_template(t2, tpl)
+
+  res <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
+  expect_identical(res$status, "needs_review")          # read, not refused
+  expect_true(res$template_id %in% c("northwind_position", "northwind_duplicate"))
+  expect_gt(res$n_rows, 90L)
+  msg <- paste(res$messages, collapse = " ")
+  expect_match(msg, "fit this document equally well")
+  expect_match(msg, "retire whichever template is the duplicate")
+  expect_false(grepl("northwind_duplicate", msg, fixed = TRUE))   # no ids on the card
+  expect_true(isTRUE(res$ambiguous))
+})
+
+test_that("words no column claimed decide the verdict, and are written beside it", {
+  # G3, measured on the fixture read through a band 120pt out of place: status was
+  # `ok`, confidence 1.00, and the four real closing balances were computed into
+  # `spilled` and written NOWHERE. unclaimed_words is now a gate, not a footnote.
+  skip_if_no_pdf()
+  tdir <- file.path(tempdir(), paste0("docspill-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
+  tpl <- file.path(tdir, "templates"); out <- file.path(tdir, "out")
+  inp <- read_input(doc_pdf_fixture())
+  t <- document_template_from_proposal(
+    id = "northwind_position", bank = "Northwind", statement_type = "position report",
+    phrases = "Consolidated position report", tables = propose_tables(inp),
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
+  save_document_template(t, tpl)
+  clean <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
+  expect_identical(clean$status, "ok")
+  expect_equal(clean$unclaimed_words, 0L)
+  expect_false(any(grepl("\\.unclaimed\\.csv$", clean$outputs)))
+
+  # now narrow the LAST column of the first table until it stops claiming its words
+  k <- names(t$tables)[1]
+  cols <- t$tables[[k]]$columns
+  j <- length(cols)
+  cols[[j]]$x_min <- cols[[j]]$x_max - 2
+  t$tables[[k]]$columns <- cols
+  unlink(list.files(tpl, full.names = TRUE))
+  save_document_template(t, tpl)
+  bad <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
+  expect_identical(bad$status, "needs_review")
+  expect_gt(bad$unclaimed_words, 1L)
+  u <- bad$outputs[grepl("\\.unclaimed\\.csv$", bad$outputs)]
+  expect_length(u, 1L)
+  expect_gt(nrow(utils::read.csv(u, stringsAsFactors = FALSE)), 0L)
+})
+
+test_that("the build stamp travels from the front door into the file", {
+  # G1. A report converts in March and in September the defence asks how row 14
+  # was derived; the file used to answer with sheet names and nothing else.
+  skip_if_no_pdf()
+  skip_if_not(requireNamespace("openxlsx", quietly = TRUE), "openxlsx not installed")
+  tdir <- file.path(tempdir(), paste0("docbuild-", as.integer(runif(1, 1, 1e6))))
+  on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
+  tpl <- file.path(tdir, "templates"); out <- file.path(tdir, "out")
+  inp <- read_input(doc_pdf_fixture())
+  t <- document_template_from_proposal(
+    id = "northwind_position", bank = "Northwind", statement_type = "position report",
+    phrases = "Consolidated position report", tables = propose_tables(inp),
+    pairs = propose_pairs(inp, page = 1L), doc_pages = .doc_npages(inp))
+  save_document_template(t, tpl)
+  res <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out,
+                        run_id = "0123456789-20260826000000-abcd")
+  expect_identical(res$build$template_id, "northwind_position")
+  expect_identical(res$build$engine_version, engine_version())
+  expect_false(is.na(res$build$source_sha256))
+  expect_false(is.na(res$build$template_sha256))
+  expect_identical(res$build$run_id, "0123456789-20260826000000-abcd")
+  bs <- openxlsx::read.xlsx(res$outputs[grepl("\\.xlsx$", res$outputs)][1],
+                            sheet = "Build")
+  expect_identical(bs$value[bs$field == "source_sha256"], res$build$source_sha256)
+  # ...and with no run id handed over, the file carries none rather than a guess
+  res2 <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
+  expect_null(res2$build$run_id)
+})

@@ -151,7 +151,7 @@ test_that("every result verdict uses the shared verdict card", {
   src <- .ui_src()
   # 45, not 30: the block now also carries the note recording why the tie headline
   # is gated on `unsupported`. The window only has to reach the end of cv_status.
-  block <- .ui_block(src, "output\\$cv_status <- renderUI", 45L)
+  block <- .ui_block(src, "output\\$cv_status <- renderUI", 58L)
   expect_match(block, 'paste0\\("verdict verdict-", lvl\\)')
   expect_match(block, 'class = "verdict-title"')
   # no second, hand-rolled palette
@@ -165,7 +165,7 @@ test_that("a template is only named when one actually read the statement", {
   src <- .ui_src()
   # 40, not 30: the block now also picks the headline for an ambiguous (tied)
   # result. The window only has to reach the end of cv_status, which is 34 lines.
-  block <- .ui_block(src, "output\\$cv_status <- renderUI", 40L)
+  block <- .ui_block(src, "output\\$cv_status <- renderUI", 58L)
   expect_match(block, 'st %in% c\\("ok", "needs_review"\\)')
   expect_match(block, "friendly_tpl\\(tid\\)")          # a name, not an internal id
   # and the form panel no longer repeats the same id underneath it
@@ -427,7 +427,12 @@ test_that("every check named in the proof strip has plain-English wording", {
 test_that("the bank picker is on the page, not behind a disclosure", {
   src <- .ui_src()
   i_bank <- grep('selectInput\\("cv_bank_quick"', src)
-  i_adv  <- grep('tags\\$summary\\("It picked the wrong bank\\?"\\)', src)
+  # WAS: tags$summary("It picked the wrong bank?"). Register L1 ("a form or report
+  # template cannot be forced, anywhere in the product") made that panel serve both
+  # routes, so its summary can no longer name a bank -- on the other route there is
+  # not one. The RULE this test exists for is untouched: the bank picker is in
+  # front of the disclosure, never inside it.
+  i_adv  <- grep('tags\\$summary\\("It picked the wrong template\\?"\\)', src)
   expect_length(i_bank, 1L)
   expect_length(i_adv, 1L)
   expect_true(i_bank < i_adv, info = "the bank picker fell back behind the disclosure")
@@ -491,7 +496,7 @@ test_that("a flagged result opens the evidence view without being asked", {
 # computed for real rows. The headline now follows the picker.
 test_that("the tie headline only appears where there is a pick to make", {
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_status <- renderUI", 40L)
+  blk <- .ui_block(src, "output\\$cv_status <- renderUI", 58L)
   expect_match(blk, 'ambig <- isTRUE\\(res\\$detect\\$ambiguous\\) && identical\\(st, "unsupported"\\)')
   # ...and the confidence grade is no longer withheld from an ambiguous run that
   # converted: `graded` turns on the status alone.
@@ -521,7 +526,7 @@ test_that("no raw check code reaches the verdict card", {
   # a message that was ONLY a KPI clause disappears rather than leaving an empty <p>
   expect_identical(strip("needs_review: 1 KPI(s) failed: amount_direction"), character(0))
   # and the card really uses it
-  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 45L),
+  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 58L),
                "plain_messages\\(res\\$messages\\)")
 })
 
@@ -732,7 +737,7 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
   # a hard-coded `5` would have hidden the wrong column and sorted the table on the
   # wrong key with nothing on screen to notice it. They are addressed by name.
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 60L)
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
   expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
   expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
   expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
@@ -744,7 +749,11 @@ test_that("the batch table sorts by what went wrong, by meaning not by spelling"
   # ...and no bare integer target survives, which is the whole point of at()
   expect_false(grepl("targets = 5", blk, fixed = TRUE))
   # the table is sortable and clickable at all
-  expect_match(blk, 'selection = "single"', fixed = TRUE)
+  # WAS: selection = "single". Register J7 ("thirty files, three failed: no way to
+  # re-run just those three") names single-select as the fault - the deliverable
+  # for a 30-file case was 30 row-clicks and 30 downloads. Clicking one row still
+  # opens it (DT's _row_last_clicked); ticking several now means something too.
+  expect_match(blk, 'selection = "multiple"', fixed = TRUE)
   # the engine's order really is worst-last, which is what descending re-reads
   expect_identical(BATCH_STATUSES, c("ok", "needs_review", "unsupported", "failed"))
   # ...and the key it builds really does put the worst first when sorted that way,
@@ -1588,7 +1597,7 @@ test_that("the batch Result column gathers the FAILURES on the first click", {
   # the very click meant to gather what went wrong. The initial order was right
   # and the old test only checked the initial order, so the inversion was
   # invisible. Pin the click direction, not just the opening state.
-  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 60L)
+  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 72L)
   expect_match(blk, 'orderSequence = list\\("desc", "asc"\\)')
   expect_match(blk, 'orderData = at\\("order"\\), targets = at\\("Result"\\)')
 })
@@ -1672,7 +1681,7 @@ test_that("the confidence level is on the hero card of every graded run", {
   expect_match(blk, "confidence: %s")
   expect_match(blk, "res\\$trust\\$level")
   # and the didn't-go-cleanly card still carries it too, so both halves agree
-  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 40L), "confidence: %s")
+  expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 58L), "confidence: %s")
 })
 
 test_that("a PDF that stops at medium says why medium is the ceiling", {
@@ -1728,15 +1737,20 @@ test_that("the feedback question is not answered for the reviewer", {
                "!length\\(input\\$cv_fb_verdict")
 })
 
-# A clean result read by the WRONG template looks perfect. cv_rematch is the only
+# A clean result read by the WRONG template looks perfect. cv_edit is the only
 # route back from that, and nothing rendered it -- while cv_teach stayed silent on
-# a clean result precisely BECAUSE it believed cv_rematch was on screen.
+# a clean result precisely BECAUSE it believed that line was on screen.
+#
+# WAS: cv_rematch, everywhere in this block. Register B1 renames it and WIDENS it
+# ("the always-available door is made by widening the existing re-match control
+# rather than adding anything"), so the id and the output moved with it. The rule
+# is unchanged and is asserted on the new name.
 test_that("a clean result still offers a way to fix a wrong match", {
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'uiOutput\\("cv_rematch"\\)')
-  expect_match(joined, "output\\$cv_rematch <- renderUI")
-  blk <- .ui_block(src, "output\\$cv_rematch <- renderUI", 24L)
-  expect_match(blk, "cv_rematch_go")
+  expect_match(joined, 'uiOutput\\("cv_edit"\\)')
+  expect_match(joined, "output\\$cv_edit <- renderUI")
+  blk <- .ui_block(src, "output\\$cv_edit <- renderUI", 30L)
+  expect_match(blk, "cv_edit_go")
   # it renders for a CLEAN result, not only for needs_review
   expect_match(blk, 'st %in% c\\("ok", "needs_review"\\)')
 })
@@ -1826,7 +1840,11 @@ test_that("an Admin download that cannot work is disabled and says why, never a 
   expect_match(.ui_block(src, "dl_when <- function", 8L), 'class = "disabled"')
   expect_match(paste(readLines(file.path(engine_root(), "www", "app.css"), warn = FALSE),
                      collapse = "\n"), "a\\.btn\\.disabled")
-  for (id in c("adm_ba_report", "adm_ba_csv", "adm_audit_dl", "adm_up_audit", "adm_inbox_audit"))
+  # WAS: "adm_audit_dl" was in this list. The "Single statement - safe summary"
+  # picker it belonged to is gone (register 1b -- it was a third route to an export
+  # the bulk picker above it and every saved upload already offer). The rule it is
+  # here to protect is unchanged for the four that remain.
+  for (id in c("adm_ba_report", "adm_ba_csv", "adm_up_audit", "adm_inbox_audit"))
     expect_match(joined, sprintf('dl_when\\("%s"', id))
   # req(FALSE) in a download handler is what Shiny answers as an HTTP 500 page.
   # Comments are stripped first: the fixes' own notes name the thing they removed,
@@ -2138,7 +2156,9 @@ test_that("the match is only called into question when detection left a question
   # the engine really does record those three, so this reads a fact
   det <- readLines(file.path(engine_root(), "R", "convert.R"), warn = FALSE)
   expect_true(any(grepl("thin", det, fixed = TRUE)))
-  blk <- .ui_block(.ui_src(), "output\\$cv_rematch <- renderUI", 24L)
+  # WAS: output$cv_rematch. Renamed to cv_edit by register B1; the branch this
+  # asserts on is the same one, unchanged.
+  blk <- .ui_block(.ui_src(), "output\\$cv_edit <- renderUI", 30L)
   expect_match(blk, "\\.match_is_thin\\(res\\)")
   expect_false(grepl("worth checking it's the right match", blk, fixed = TRUE))
 })
@@ -2150,8 +2170,9 @@ test_that("the template toolkit is not offered for a file that was never read", 
   # THE WINDOW HAS TO REACH THE END OF THE FUNCTION or the test passes by not
   # looking, and cv_teach keeps growing branches above these two -- a report
   # result, then both doors on an unrecognised one. Widened twice for that
-  # reason. The ORDER is the promise, not the line number.
-  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 210L)
+  # reason. The ORDER is the promise, not the line number. Widened again for the
+  # high-severity diagnostic that now takes the headline (register J8).
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 240L)
   i <- regexpr('if (identical(st, "failed")) return(NULL)', blk, fixed = TRUE)
   expect_gt(i, 0L)
   j <- regexpr('actionButton("cv_teach_go_fix"', blk, fixed = TRUE)
@@ -2237,7 +2258,10 @@ test_that("the Admin uploads table is described as the whole log it really is", 
   blk <- .ui_block(src, 'h4\\("Uploads', 5L)
   expect_false(grepl("new formats to pick up", blk, fixed = TRUE))
   expect_false(grepl("Statements the tool couldn't read", blk, fixed = TRUE))
-  expect_match(blk, "every statement converted here")
+  # WAS: "every statement converted here". The uploads table has always held every
+  # upload of every kind -- a report and a form are uploads too -- so the heading
+  # says document, which is the word the rest of the product uses for both routes.
+  expect_match(blk, "every document converted here")
   expect_match(blk, "needs_pickup")        # the pickup queue is still named, as a column
   # ...and the engine really does hand back rows the old heading denied: a
   # converted, template-matched upload that needs no pickup at all.
@@ -2272,7 +2296,7 @@ test_that("feedback is asked only about a conversion, and never in the proof gly
 # the clean files from the merely-uncomplaining ones without opening all thirty.
 test_that("the batch table grades a file with the same word its own card uses", {
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 60L)
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
   expect_match(blk, "Confidence = dash\\(b\\$trust\\)")
   # the card prints res$trust$level, and convert_batch really carries it per file
   expect_match(.ui_block(src, "output\\$cv_headline <- renderUI", 45L),
@@ -2312,4 +2336,437 @@ test_that("an empty date picker is decoded quietly, and a real date still arrive
   i <- grep('registerInputHandler\\("shiny.date", force = TRUE, \\.decode_shiny_date\\)', src)
   expect_length(i, 1L)
   expect_true(i < grep("\\.eff_picker <- function", src)[1])
+})
+
+# ---------------------------------------------------------------------------
+# B1. "For Other statements the likelihood that something will need to change on
+# every convert - it shouldn't just auto process, it should process and open up
+# the editor. For statements I want a threshold where it does and where it
+# doesn't, but ensure there is an option even if it's confident."
+#
+# There was no such thing anywhere: opening an editor was only ever something a
+# CLICK did, so the report route converted and stopped, and the statement route
+# had no threshold and no way back from a confident result either.
+# ---------------------------------------------------------------------------
+
+test_that("the editor opens by itself on the route that always needs it, and on a doubtful statement", {
+  needs <- .ui_fun(".needs_editor", also = ".is_txn_result")
+  # A REPORT AND A FORM ALWAYS OPEN. Neither carries any trust at all -- there is
+  # no reconciliation behind either -- so there is nothing to be confident about.
+  for (k in c("tables", "form")) {
+    expect_true(needs(list(kind = k, status = "ok"), "medium"))
+    expect_true(needs(list(kind = k, status = "needs_review"), "medium"))
+    # ...and the statement threshold cannot switch them off. The threshold was
+    # asked for on statements only, and "any" means "a statement never opens it".
+    expect_true(needs(list(kind = k, status = "ok"), "any"))
+  }
+  # A STATEMENT OPENS ON THE THRESHOLD. Default medium: only a `low` one.
+  expect_false(needs(list(status = "ok", trust = list(level = "high")), "medium"))
+  expect_false(needs(list(status = "ok", trust = list(level = "medium")), "medium"))
+  expect_true(needs(list(status = "ok", trust = list(level = "low")), "medium"))
+  expect_true(needs(list(status = "needs_review", trust = list(level = "low")), "medium"))
+  # high: medium and low both open it. any: neither does.
+  expect_true(needs(list(status = "ok", trust = list(level = "medium")), "high"))
+  expect_false(needs(list(status = "ok", trust = list(level = "low")), "any"))
+  # A statement with no trust recorded at all fails CLOSED -- it opens -- because
+  # an unproven figure is the case this exists for.
+  expect_true(needs(list(status = "ok"), "medium"))
+  # AND NOTHING OPENS ON A RESULT THAT PRODUCED NOTHING. An `unsupported`
+  # statement is trust `low`, and auto-opening the statement toolkit over it would
+  # answer, for her, the very question its card is asking.
+  expect_false(needs(list(status = "unsupported", trust = list(level = "low")), "medium"))
+  expect_false(needs(list(status = "failed"), "medium"))
+  expect_false(needs(list(kind = "tables", status = "unsupported"), "medium"))
+})
+
+test_that("the threshold is a deployment setting with a stated default, not a number in the code", {
+  src <- .ui_src()
+  i <- grep("^EDITOR_MIN_TRUST <- ", src)
+  expect_length(i, 1L)
+  blk <- paste(src[i:(i + 3)], collapse = " ")
+  expect_match(blk, "CONFIG\\$convert\\$open_editor_below_trust")
+  expect_match(blk, '%\\|\\|% "medium"')
+  # an unrecognised value keeps the default rather than silently meaning "never"
+  expect_match(paste(src[i:(i + 4)], collapse = " "),
+               'EDITOR_MIN_TRUST %in% c\\("high", "medium", "any"\\)')
+  # the same three words the feed gate already uses, so nobody learns a second
+  # vocabulary -- and the SAME function evaluates them
+  expect_match(paste(src[(i - 10):(i + 2)], collapse = " "), "feed\\.min_trust")
+  fe <- readLines(file.path(engine_root(), "R", "feed.R"), warn = FALSE)
+  expect_true(any(grepl("^\\.trust_ok <- function", fe)))
+})
+
+test_that("the auto-open fires on a real upload and on nothing else", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "run_conversion <- function", 80L)
+  expect_match(blk, "isTRUE\\(record\\) && \\.needs_editor\\(res, EDITOR_MIN_TRUST\\)")
+  expect_match(blk, "\\.edit_now\\(\\)")
+  # `record` is the gate BECAUSE it already separates a person handing the tool a
+  # file from the three re-runs that must stay silent. Each of those really does
+  # pass record = FALSE, or the sample would re-open the toolkit every time.
+  joined <- paste(src, collapse = "\n")
+  expect_match(joined, "run_conversion\\(SAMPLE_STATEMENT, basename\\(SAMPLE_STATEMENT\\), record = FALSE\\)")
+  expect_match(joined, "run_conversion\\(src\\$path, src\\$name, record = FALSE, force_tpl = tid")
+  # ...and a case folder never auto-opens anything: it does not come through here
+  expect_false(grepl(".needs_editor", .ui_block(src, "run_batch <- function", 80L), fixed = TRUE))
+})
+
+test_that("the door back is one control, on all three kinds, and it is not a new one", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # It renders for a report and a form too -- the guard that stopped it is gone.
+  blk <- .ui_block(src, "output\\$cv_edit <- renderUI", 30L)
+  expect_false(grepl("req(.is_txn_result(res))", blk, fixed = TRUE))
+  # ...and it asks the question that route actually has
+  expect_match(blk, "A table missing, or reading the wrong columns\\?")
+  expect_match(blk, "A value missing, or reading the wrong thing\\?")
+  expect_match(blk, "Not the right bank\\?")
+  # THE TWO HALF-WORKING CONTROLS IT REPLACES ARE GONE, not left beside it.
+  expect_false(grepl("cv_goto_report", joined, fixed = TRUE))
+  expect_false(grepl("cv_goto_templates", joined, fixed = TRUE))
+  # and it sits directly under the downloads, where the payoff is
+  i_dl <- grep('uiOutput\\("cv_downloads"\\)', src)
+  i_ed <- grep('uiOutput\\("cv_edit"\\)', src)
+  expect_length(i_ed, 1L)
+  expect_true(i_ed > i_dl && i_ed - i_dl < 30L)
+})
+
+test_that("the door carries the document and the template, which is what the deleted links did not", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "\\.edit_now <- function", 40L)
+  # a report opens the SAVED TEMPLATE on the document she just converted
+  expect_match(blk, "rb_open_template\\(t, src\\$path\\)")
+  expect_match(blk, "all_doc_templates\\(\\)\\[\\[tid\\]\\]")
+  # ...and a template that is no longer in the library SAYS SO rather than
+  # opening a blank screen with no explanation
+  expect_match(blk, "no longer in the library")
+  # a form has no editor of its own, and the notification says what will be built
+  expect_match(blk, "makes a report template")
+  # a statement seeds the toolkit with the template that matched
+  expect_match(blk, "open_guided\\(src\\$path, src\\$name, seed_tmpl = seed")
+  # the NON-admin set, so a parked template is never handed back on a result
+  expect_match(.ui_block(src, "all_doc_templates <- reactive", 4L),
+               "load_document_templates\\(DOC_DIR, USER_DOC_DIR\\)")
+})
+
+# ---------------------------------------------------------------------------
+# 0c. A badly OCR'd page can come back "ok" -- and the caveat lived in a panel
+# nobody opens, behind "Show me how it read this", while the verdict was green.
+# ---------------------------------------------------------------------------
+
+test_that("a scan says so beside the download, not in a panel", {
+  note <- .ui_fun(".scan_note")
+  # nothing machine-read: nothing said
+  expect_null(note(NULL, NULL))
+  expect_null(note(0L, 0L))
+  # read from a scan, nothing doubtful: still said, because the figures came off
+  # an image and not off a text layer
+  expect_match(note(3L, 0L), "read from a scan")
+  # ...and the count of doubtful figures when there is one, in plain words with
+  # no code, no score and no fraction
+  expect_match(note(3L, 4L), "4 figures came out too faint")
+  expect_match(note(3L, 1L), "1 figure came out too faint")
+  for (s in c(note(3L, 0L), note(3L, 4L))) {
+    expect_false(grepl("ocr", s, ignore.case = TRUE))
+    expect_false(grepl("confidence", s, ignore.case = TRUE))
+    expect_lt(length(gregexpr("[.]", s)[[1]]), 2L)     # one sentence
+  }
+  # and it is rendered WITH the download bar, not in the evidence panel
+  blk <- .ui_block(.ui_src(), "output\\$cv_downloads <- renderUI", 40L)
+  expect_match(blk, "\\.scan_note\\(res\\$header\\$ocr_pages, n_low\\)")
+  expect_match(blk, "ocr_low_conf")
+  # the flag it counts is really the one the reader writes
+  pp <- readLines(file.path(engine_root(), "R", "parse_pdf_table.R"), warn = FALSE)
+  expect_true(any(grepl('"ocr_low_conf"', pp, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# J8. Driven with no OCR software and an image-only PDF: the card said "no
+# template for this layout", the primary green button said "Set it up as a
+# report", and the diagnostics table said correctly that this machine has no OCR
+# software and a template will not help. The biggest button was the wrong one.
+# ---------------------------------------------------------------------------
+
+test_that("a high-severity diagnosis nobody can fix with a template takes the headline", {
+  bd <- .ui_fun(".blocking_diag")
+  mk <- function(cat, sev, own) data.frame(category = cat, severity = sev,
+    detail = paste(cat, "happened"), how_to_fix = "do this", fix_owner = own,
+    stringsAsFactors = FALSE)
+  # the file itself, and an engine gap: neither is mended by drawing boxes
+  expect_equal(bd(list(diagnostics = mk("scanned_no_ocr", "high", "input")))$category,
+               "scanned_no_ocr")
+  expect_equal(bd(list(diagnostics = mk("redaction_unverified", "high", "escalate")))$category,
+               "redaction_unverified")
+  # a TEMPLATE fault is deliberately NOT blocking -- a template is exactly the fix
+  expect_null(bd(list(diagnostics = mk("matched_but_empty", "high", "template"))))
+  # ...nor is anything below high, nor the explicit no-issues row
+  expect_null(bd(list(diagnostics = mk("date_out_of_range", "medium", "input"))))
+  expect_null(bd(list(diagnostics = mk("none", "info", "none"))))
+  expect_null(bd(list()))
+  # most severe first is the engine's own order, so the FIRST hit is the one
+  d <- rbind(mk("scanned_no_ocr", "high", "input"), mk("oversized", "high", "input"))
+  expect_equal(bd(list(diagnostics = d))$category, "scanned_no_ocr")
+  # the engine really grades ownership this way
+  dg <- readLines(file.path(engine_root(), "R", "diagnose.R"), warn = FALSE)
+  expect_true(any(grepl("scanned_no_ocr\\s+= \"input\"", dg)))
+  expect_true(any(grepl("^\\.diag_fix_owner <- function", dg)))
+  # and the card really puts it FIRST, above every "set it up" branch
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 240L)
+  i <- regexpr("bd <- .blocking_diag(res)", blk, fixed = TRUE)
+  expect_gt(i, 0L)
+  for (later in c('This looks like a report, not a bank statement.',
+                  'The tool cannot tell what kind of document this is.'))
+    expect_lt(i, regexpr(later, blk, fixed = TRUE))
+  # the primary action is REPLACED, not merely joined: the setup route on that
+  # branch is the quiet override, never a btn-primary
+  card <- substr(blk, i, i + 700L)
+  expect_match(card, 'other\\("Sure a template is what this needs\\?"')
+  expect_false(grepl("btn-primary", substr(card, 1, regexpr("other(", card, fixed = TRUE)),
+                     fixed = TRUE))
+})
+
+# ---------------------------------------------------------------------------
+# J7. "Thirty files, three failed: no way to re-run just those three and no way
+# to download the other twenty-seven."
+# ---------------------------------------------------------------------------
+
+test_that("a case folder can re-run the files that failed and hand back the rest", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # the table can be ticked, and one click still OPENS a row
+  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
+  expect_match(blk, 'selection = "multiple"', fixed = TRUE)
+  expect_match(joined, "observeEvent\\(input\\$cv_batch_row_last_clicked")
+  # THE RE-RUN IS THE SAME ENGINE CALL, on fewer files -- never a second pipeline
+  re <- .ui_block(src, "observeEvent\\(input\\$cv_batch_again", 40L)
+  expect_match(re, "run_batch\\(data\\.frame\\(name = basename\\(paths\\[keep\\]\\)")
+  # it refuses with a reason rather than doing nothing when nothing is ticked
+  expect_match(re, "Tick the files you want to convert again first")
+  # ...and it is never silent about converting fewer files than were ticked
+  expect_match(re, "no longer on this server, so only the rest")
+  # the same QID gate every other conversion goes through
+  expect_match(re, "\\.identity_ok\\(\\)")
+  # ONE FILE FOR THE WHOLE CASE, built from the outputs already on disk
+  dl <- .ui_block(src, "output\\$cv_batch_dl <- downloadHandler", 30L)
+  expect_match(dl, "\\.batch_outputs\\(cv_batch\\(\\)\\)")
+  expect_match(dl, "zip::zip")
+  # a host that cannot pack a zip says so in a file that opens, never a broken one
+  expect_match(dl, "could not be packed into one file")
+  # and neither control renders with nothing to act on
+  op <- .ui_block(src, "output\\$cv_batch_open <- renderUI", 30L)
+  expect_match(op, "if \\(length\\(sel\\)\\)")
+  expect_match(op, "if \\(length\\(outs\\)\\)")
+})
+
+# ---------------------------------------------------------------------------
+# B2. "Ensure submit feedback is also there on other reports." A report has no
+# reconciliation behind it, so a human's "this is wrong" is the ONLY signal there
+# is -- it matters MORE there, not less.
+# ---------------------------------------------------------------------------
+
+test_that("feedback is asked on a report and a form, and says why it matters there", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_feedback <- renderUI", 40L)
+  # NO KIND GUARD -- it may READ the kind to word one sentence, but it may never
+  # refuse to render on it. The two shapes that would do that are named outright.
+  expect_false(grepl("req(.is_txn_result(res))", blk, fixed = TRUE))
+  expect_false(grepl('identical(res$kind, "form")', blk, fixed = TRUE))
+  # the ONE return(NULL) pair it is allowed is about the RUN, not about the kind
+  expect_equal(length(gregexpr("return(NULL)", blk, fixed = TRUE)[[1]]), 2L)
+  # the one thing that changes with the route is the sentence saying why
+  expect_match(blk, "if \\(!\\.is_txn_result\\(res\\)\\)")
+  expect_match(blk, "the only check there is")
+  # ...and it does NOT reuse the statement promise, which no report can keep
+  expect_false(grepl("reconcile", blk, fixed = TRUE))
+  # it is rendered outside the transaction-only panel, or the guard would be back
+  # by the back door
+  i_fb <- grep('uiOutput\\("cv_feedback"\\)', src)
+  i_panel <- grep("output.cv_is_tables != true", src)
+  expect_length(i_fb, 1L)
+  expect_true(all(i_fb > i_panel))
+  expect_match(paste(src[i_fb:(i_fb + 2)], collapse = " "), "^\\s*uiOutput")
+})
+
+# ---------------------------------------------------------------------------
+# J9. "The OTHER route ships empty" -- and cv_empty only ever described
+# statements, three inches under a radio button reading "Something else".
+# ---------------------------------------------------------------------------
+
+test_that("the empty state promises what the answer she gave can deliver", {
+  src <- .ui_src()
+  blk <- .ui_block(src, "output\\$cv_empty <- renderUI", 55L)
+  expect_match(blk, 'other <- identical\\(kind_choice\\(\\), "other"\\)')
+  expect_match(blk, "Convert a report, a form or a letter")
+  # the two promises a report cannot keep are on the STATEMENT branch only
+  i_other <- regexpr('if (other)\n        tags$ul', blk, fixed = TRUE)
+  expect_match(blk, "Every transaction")
+  expect_match(blk, "Whether it reconciles")
+  # ...and the other branch promises what that route really gives
+  expect_match(blk, "Where each one came from")
+  expect_match(blk, "never reach the dashboards")
+  # THE SAMPLE IS A BANK STATEMENT, so it is not offered under "something else"
+  expect_match(blk, "if \\(!other && file\\.exists\\(SAMPLE_STATEMENT\\)\\)")
+  # one link element, not two literals sharing an id
+  expect_length(grep('actionLink\\("cv_empty_to_tmpl"', src), 1L)
+})
+
+test_that("the verdict card's headline is the diagnosis, not the generic template line", {
+  # On an `unsupported` run the engine writes ONE message whatever the cause --
+  # "we don't have a template for this layout yet" -- so the card said that over
+  # an image-only PDF on a machine with no OCR software, while its own diagnostics
+  # said at severity high that there was nothing on the page to read.
+  blk <- .ui_block(.ui_src(), "output\\$cv_status <- renderUI", 55L)
+  expect_match(blk, 'bdx <- if \\(st %in% c\\("unsupported", "failed"\\)\\) \\.blocking_diag\\(res\\)')
+  expect_match(blk, "headline <- \\.sentence\\(bdx\\$detail\\[1\\]\\)")
+  # nothing is DROPPED: the template sentence still renders as the body
+  expect_match(blk, "plain_messages\\(res\\$messages\\)")
+  # the engine really does write that one sentence for every unsupported run,
+  # which is what makes the headline swap necessary rather than cosmetic
+  cv <- readLines(file.path(engine_root(), "R", "convert.R"), warn = FALSE)
+  expect_true(any(grepl("we don't have a template for this layout yet", cv, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# THE SWEEP: fewer controls, one sentence each, and the same question asked the
+# same way on both routes.
+#
+# "This needs to be as SIMPLE as possible. No fancy bullshit." / "There are LOTS
+# of buttons, lots of things to interact with. It NEEDS to be even more simple."
+# / "We DO NOT want the platform getting overly verbose."
+#
+# The register counted 182 interactive controls and observed that Beth's whole
+# job is four of them. Nothing below adds a rule about WHICH controls exist; they
+# hold the ones this sweep removed removed, and put a ceiling under the total so
+# the next agent's additions have to pay for themselves.
+# ---------------------------------------------------------------------------
+
+.ui_control_ids <- function(src = .ui_src()) {
+  pat <- paste0("(actionButton|actionLink|textInput|textAreaInput|numericInput|",
+                "selectInput|selectizeInput|checkboxInput|checkboxGroupInput|",
+                "radioButtons|fileInput|sliderInput|downloadButton|downloadLink)",
+                "[(][\"][a-zA-Z0-9_]+")
+  sub(".*[\"]", "", unlist(regmatches(src, gregexpr(pat, src))))
+}
+
+test_that("the number of controls on screen does not creep back up", {
+  # Measured the way the register measures it, so the number in the register and
+  # the number here can never disagree. It was 182 when the register was written
+  # and 174 after this sweep. A rise is not forbidden by accident -- it is
+  # forbidden so that adding a control means removing one, which is the only
+  # discipline that has ever made a screen smaller.
+  ids <- .ui_control_ids()
+  expect_lte(length(ids), 174L)
+})
+
+test_that("one control per fact: the page number, and no buttons beside it", {
+  src <- .ui_src()
+  ids <- .ui_control_ids(src)
+  # "Back a page" / "Next page" did what the box's own arrows do.
+  expect_false("rb_prev_page" %in% ids)
+  expect_false("rb_next_page" %in% ids)
+  expect_true("rb_page" %in% ids)
+  # ...and the box is bounded and labelled with how many pages there are, which
+  # is what makes the buttons unnecessary rather than merely absent.
+  expect_match(.ui_block(src, "updateNumericInput\\(session, \"rb_page\", max = n", 3L),
+               "Page \\(1 to %d\\)")
+})
+
+test_that("the close-call panel has one action, not a second door to the toolkit", {
+  src <- .ui_src()
+  ids <- .ui_control_ids(src)
+  # Converting with the other template and then pressing the one door under the
+  # downloads reaches the toolkit seeded with exactly that template.
+  expect_false("cv_cand_go" %in% ids)
+  expect_true("cv_cand_convert" %in% ids)
+  expect_length(grep("input\\$cv_cand_go", src), 0L)
+  # the one door is still there, on every route
+  expect_true("cv_edit_go" %in% ids)
+})
+
+test_that("choosing a fingerprint phrase adds it, with no second button to press", {
+  src <- .ui_src()
+  ids <- .ui_control_ids(src)
+  expect_true("g_fp_pick" %in% ids)
+  expect_false("g_fp_add" %in% ids)
+  # the choice IS the action, and it clears itself so the same phrase can never
+  # be added twice by a re-render
+  blk <- .ui_block(src, "observeEvent\\(input\\$g_fp_pick", 12L)
+  expect_match(blk, "updateTextAreaInput\\(session, \"g_fp\"")
+  expect_match(blk, "updateSelectInput\\(session, \"g_fp_pick\", selected = \"\"\\)")
+  expect_match(blk, "ignoreInit = TRUE")
+})
+
+test_that("Admin's bulk audit audits and never converts", {
+  # Register 1b: five doors into one engine call, and this was one of them --
+  # a tick-box on the tab about what is FAILING that wrote real outputs and real
+  # log records. Convert's own picker takes thirty files and is the door.
+  src <- .ui_src()
+  expect_false("adm_ba_convert" %in% .ui_control_ids(src))
+  expect_length(grep("input\\$adm_ba_convert", src), 0L)
+  expect_match(.ui_block(src, "adm_slot\\$start\\(\"audit\"", 8L), "convert = FALSE", fixed = TRUE)
+  # and the promise on the screen says so
+  expect_match(.ui_block(src, "h4\\(\"Check a pile of files at once\"\\)", 2L),
+               "Nothing is converted or saved", fixed = TRUE)
+})
+
+test_that("the builder's preview offers the workbook, not the same rows twice", {
+  src <- .ui_src()
+  ids <- .ui_control_ids(src)
+  expect_true("rb_dl_xlsx" %in% ids)
+  expect_true("rb_dl_values" %in% ids)   # the only file the workbook's sheet is not
+  expect_false("rb_dl_csv" %in% ids)
+  expect_length(grep("output\\$rb_dl_csv", src), 0L)
+  # Convert still offers the long CSV once the template is saved, so nothing is
+  # unreachable -- it is just not offered twice.
+  expect_length(grep('c\\(xlsx = "dl_xlsx", csv = "dl_csv"\\)', src), 1L)
+})
+
+test_that("the drawn-column floor is engine tuning, not a number typed into a screen", {
+  src <- .ui_src()
+  # the value lives with the rest of the engine's geometry
+  p <- file.path(engine_root(), "R", "params.R")
+  params <- readLines(p, warn = FALSE)
+  expect_length(grep("^PARAM_DOC_MIN_COL_PT <- ", params), 1L)
+  expect_length(grep("^PARAM_DOC_SAME_PAGE_PT <- ", params), 1L)
+  # and app.R only names it
+  expect_match(.ui_block(src, "\\.RB_MIN_COL <- ", 1L), "PARAM_DOC_MIN_COL_PT")
+  expect_length(grep("\\.RB_MIN_COL <- [0-9]", src), 0L)
+  # the page-size slack too: no bare 2 deciding whether a document is a different
+  # size from the one the template was drawn on
+  expect_match(.ui_block(src, "output\\$rb_frame_note <- renderText", 10L),
+               "PARAM_DOC_SAME_PAGE_PT")
+})
+
+test_that("both builders ask who produced the document, and ask for a phrase, the same way", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  # The report builder said "Issuer" -- the field's name in the file -- where the
+  # statement toolkit asks a question. Two words for one question is the drift
+  # the two routes are meant not to have.
+  expect_match(joined, 'textInput\\("rb_bank", "Who produced this document\\?"')
+  expect_match(joined, 'textInput\\("g_bank", "Which bank is this statement from\\?"')
+  expect_length(grep('textInput\\("rb_bank", "Issuer"', src), 0L)
+  # ...and the fingerprint is asked for in one sentence on both, saying the same
+  # three things: one per line, all must appear, never a person's name. (Joined:
+  # the statement side's sentence is wrapped over two source lines.)
+  flat <- gsub('",\\s*\\n?\\s*"', "", joined)
+  for (frag in c("One phrase per line - all must appear, and they must not be words every statement carries",
+                 "One phrase per line - all must appear, and they must not be words every document carries"))
+    expect_true(grepl(frag, flat, fixed = TRUE), info = frag)
+})
+
+test_that("the messages this sweep rewrote are one sentence and carry no id", {
+  src <- .ui_src()
+  joined <- paste(src, collapse = "\n")
+  # A second sentence pointing at a control that is on screen two inches away.
+  expect_length(grep("Use \\\\u201cStart a new template\\\\u201d", src), 0L)
+  expect_match(joined, "Read as another example of this template - only the page changed\\.")
+  # A second sentence describing the panel the message is printed over: the
+  # notification is now the count and the correction, and stops.
+  expect_match(joined, 'sprintf\\("%d columns, ending on page %d\\.%s"')
+  # Reassurance.
+  expect_length(grep("Nothing else will change", src), 0L)
+  # The save note named the template id, which the header bar above already names.
+  expect_match(.ui_block(src, "output\\$rb_save_note <- renderText", 14L),
+               "Replaces the saved template with %s\\.")
+  # A file PATH in a message on screen.
+  expect_length(grep("Reloaded %s into the editor", src), 0L)
 })

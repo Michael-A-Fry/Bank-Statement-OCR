@@ -130,12 +130,70 @@ template_usage <- function(runs, feedback = NULL) {
     id <- tmpl[idx[1]]
     data.frame(template = id, n = length(idx),
       ok = sum(st[idx] == "ok"), needs_review = sum(st[idx] == "needs_review"),
-      low_trust = sum(tr[idx] == "low"),
+      # %in%, not ==: a form or a report records NO trust level, because neither
+      # has any reconciliation to be confident about -- and `NA == "low"` is NA,
+      # so one report run turned this whole count into NA and the row Admin
+      # printed for that template said nothing at all. %in% counts the runs that
+      # were actually graded low, which is what the column claims to be.
+      low_trust = sum(tr[idx] %in% "low"),
       flagged_feedback = as.integer(flagged_by_tmpl[[id]] %||% 0L),
       stringsAsFactors = FALSE)
   })
   res <- do.call(rbind, parts)
   res[order(-res$n), , drop = FALSE]
+}
+
+# run_healthy(runs) -- was each run a GOOD one? TRUE / FALSE, one per row, never
+# NA.
+#
+# HEALTH IS DEFINED PER KIND, because the three routes prove different things and
+# only one of them has any arithmetic behind it. This used to be a single
+# statement-shaped test -- `status ok AND no failed check AND trust is not low` --
+# and a report carries no trust level at all, so `trust != "low"` was NA, the
+# whole vector was NA, both percentages were NA, and the row Admin rendered for
+# any other-route template with six or more runs was six NAs across. A screen
+# that says NOTHING about a template is worse than one that says it is fine: the
+# admin reads it as "nothing to see" and it means "never measured".
+#
+#   statement  RECONCILIATION. The balances proved the read, no check failed, and
+#              the confidence grade is not `low`. Unchanged, deliberately: this
+#              is the only route with arithmetic behind it and its bar must not
+#              move because two other routes arrived. (A statement with NO trust
+#              level recorded is now judged on its status and its checks instead
+#              of turning the whole template's figures to NA. It cannot arise in
+#              practice -- a statement with no trust is one that did not convert,
+#              so its status is not `ok` -- but a screen must not be able to go
+#              blank on an edge case nobody has met.)
+#   report     EVERY TABLE FOUND BY ITS HEADING, NOTHING SPILLED. convert_tables
+#              already refuses `ok` to a report with a table found by position, a
+#              table that came out empty or thin, or a typed column that parsed
+#              nothing -- so `ok` carries all of that. What it does NOT carry is
+#              unclaimed words: it tolerates one, and a word printed inside a
+#              table that no column claimed is the sharpest sign the bands no
+#              longer fit. Here that is not health.
+#   form       NOTHING DISPUTED, NOTHING REQUIRED MISSING. A form has no
+#              reconciliation either; a label printed twice with two different
+#              values is the whole of its quality signal.
+#
+# Every field is read through .col() with a default, so a record written by an
+# older engine -- or by a route this function has never heard of -- degrades to
+# the status test rather than to NA.
+run_healthy <- function(runs) {
+  if (is.null(runs) || !is.data.frame(runs) || !nrow(runs)) return(logical(0))
+  kd <- as.character(.col(runs, "kind", "statement"))
+  kd[is.na(kd) | !nzchar(kd)] <- "statement"
+  st <- as.character(.col(runs, "status", "")); st[is.na(st)] <- ""
+  ok <- st == "ok"
+  num <- function(name) {
+    v <- suppressWarnings(as.integer(.col(runs, name, 0L))); v[is.na(v)] <- 0L; v
+  }
+  tr <- as.character(.col(runs, "trust_level", "")); tr[is.na(tr)] <- ""
+  out <- ok & num("kpi_fail_count") == 0L & tr != "low"     # statement
+  isrep <- kd == "tables"
+  out[isrep] <- (ok & num("unclaimed_words") == 0L & num("weak_tables") == 0L)[isrep]
+  isform <- kd == "form"
+  out[isform] <- (ok & num("n_conflicts") == 0L & num("required_missing") == 0L)[isform]
+  out
 }
 
 # template_drift(runs, recent_frac, min_runs) -- catch a template that USED to
@@ -144,6 +202,11 @@ template_usage <- function(runs, feedback = NULL) {
 # breaks the balance check -> the run is logged needs_review -> a template whose
 # recent health drops below its earlier health is flagged here. Deterministic,
 # from the logs; no thresholds to tune beyond the obvious ones.
+#
+# A REPORT TEMPLATE DRIFTS TOO, and the same way: the issuer renames a heading,
+# the table stops being found by it, the reader falls back to where it sat on the
+# example -- and every figure under that heading is read out of whatever ink now
+# sits there. run_healthy() above is what makes this table say so.
 template_drift <- function(runs, recent_frac = 0.4, min_runs = 6) {
   empty <- data.frame(template = character(0), runs = integer(0),
     earlier_ok_pct = numeric(0), recent_ok_pct = numeric(0),
@@ -154,10 +217,7 @@ template_drift <- function(runs, recent_frac = 0.4, min_runs = 6) {
   if (!any(keep)) return(empty)
   runs <- runs[keep, , drop = FALSE]; tmpl <- tmpl[keep]
   ts <- as.character(.col(runs, "ts", ""))
-  st <- as.character(.col(runs, "status", ""))
-  kf <- suppressWarnings(as.integer(.col(runs, "kpi_fail_count", 0))); kf[is.na(kf)] <- 0L
-  tr <- as.character(.col(runs, "trust_level", ""))
-  healthy <- st == "ok" & kf == 0 & tr != "low"
+  healthy <- run_healthy(runs)
   parts <- lapply(split(seq_along(tmpl), tmpl), function(idx) {
     o <- idx[order(ts[idx])]; k <- length(o)
     if (k < min_runs) return(NULL)

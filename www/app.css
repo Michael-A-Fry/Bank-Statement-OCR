@@ -34,6 +34,14 @@ hr{border-top-color:var(--line)}
 /* .note -- the pale blue 'here is what the tool worked out' panel. It was
    hand-rolled inline in two places, which is how two panels drift apart. */
 .note{padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px}
+/* .note-bad -- the same panel in the "something on this box is wrong" colours,
+   for the one line at the top of Admin naming a template that would not load.
+   Same shape as .note deliberately: it is the same kind of statement, about a
+   worse fact, and a second hand-rolled inline style is how two panels drift. */
+.note-bad{padding:8px 12px;background:var(--bad-bg);border:1px solid var(--bad-line);
+  border-radius:6px}
+.note-bad p{margin:0 0 4px}
+.note-bad ul{margin:0 0 4px 18px;padding:0}
 .modal-lg{width:95%;max-width:1240px}
 .modal-content{border-radius:12px}
 /* header */
@@ -319,6 +327,16 @@ a.hub-card-quiet{background:var(--bg)}
   pointer-events:none}
 .rb-sticky > div{box-shadow:var(--sh-2)}
 .rb-sticky button, .rb-sticky a, .rb-sticky input, .rb-sticky select{pointer-events:auto}
+
+/* SAVE IS WHAT TO DO NEXT, SO IT LOOKS LIKE IT.
+   "Save - this needs to be more prominent / draw in the user to know what to do
+   next." It was one more button of the same size and colour as the six others on
+   the screen. It is now full width, taller than anything else in the builder, and
+   the only control carrying a shadow -- which is the whole of what "prominent"
+   can mean without inventing a colour the design system does not have. */
+.rb-save{display:block;width:100%;font-weight:700;letter-spacing:.2px;
+  padding:12px 16px;box-shadow:var(--sh-2)}
+.rb-save:hover,.rb-save:focus{box-shadow:var(--sh-2)}
 
 /* WHERE THE TOOL TELLS YOU SOMETHING.
    Shiny puts notifications in the bottom-right corner, which on a screen whose
