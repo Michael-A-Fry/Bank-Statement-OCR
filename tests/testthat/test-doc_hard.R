@@ -604,3 +604,96 @@ test_that("a value box drawn round a wrapped email reads it whole", {
                               type = "text", where = .doc_pair_rel(lb, vb))))
   expect_identical(doc_pairs(inp, tmpl)$value[1], "beth.adams@example.co.nz")
 })
+
+# ---------------------------------------------------------------------------
+# A WRAPPED CELL IS NOT ALWAYS INDENTED
+#
+# Reported: "one row with data on 3 different lines coming back as 3 rows. This
+# edge case is where it's only two columns, where the first column's first row --
+# and only row -- has data on three printed lines."
+#
+# The indent rule came from a bank statement, where the description column is set
+# in from the date and its second line sits under the words rather than under the
+# date. A REPORT left-aligns the wrapped line under the first, at the same x.
+# ---------------------------------------------------------------------------
+
+.wr_tab <- function(end_y = 215) list(name = "t",
+  columns = list(list(name = "description", x_min = 55, x_max = 380, type = "text"),
+                 list(name = "amount", x_min = 390, x_max = 440, type = "money")),
+  header_rows = 1L, anchor = list(header_text = list("Description", "Amount")),
+  start = list(page = 1L, y = 85), end = list(page = 1L, y = end_y))
+
+test_that("a cell wrapped over three LEFT-ALIGNED lines is one row, not three", {
+  inp <- doc_input(list(doc_page(
+    doc_L(60, 90, "Description"), doc_R(430, 90, "Amount"),
+    doc_L(60, 130, "Professional services rendered in"),
+    doc_L(60, 146, "connection with the matter and"),
+    doc_L(60, 162, "associated disbursements"),
+    doc_R(430, 130, "1,250.00"),
+    doc_L(60, 200, "Filing fee"), doc_R(430, 200, "80.00"))))
+  r <- doc_table_rows(inp, .wr_tab(), NULL)
+  expect_equal(nrow(r$rows), 2L)
+  expect_identical(r$rows$description[1],
+    "Professional services rendered in connection with the matter and associated disbursements")
+  expect_identical(r$rows$amount[1], "1,250.00")
+  expect_identical(r$rows$description[2], "Filing fee")
+})
+
+test_that("the THIRD wrapped line is measured from the line above it, not from the row", {
+  # A gap measured from the row's top grows with every fold, so the third line
+  # stops looking like a wrap and comes back as a row of its own. Two lines fold
+  # and three do not is the shape of that bug; assert three.
+  inp <- doc_input(list(doc_page(
+    doc_L(60, 90, "Description"), doc_R(430, 90, "Amount"),
+    doc_L(60, 130, "one"), doc_L(60, 146, "two"), doc_L(60, 162, "three"),
+    doc_R(430, 130, "9.00"))))
+  r <- doc_table_rows(inp, .wr_tab(180), NULL)
+  expect_equal(nrow(r$rows), 1L)
+  expect_identical(r$rows$description[1], "one two three")
+})
+
+test_that("a left-aligned line set APART is a row of its own, not a wrap", {
+  # The guard that makes the un-indented rule safe: a sub-heading or a total is
+  # printed with MORE air above it, not less.
+  inp <- doc_input(list(doc_page(
+    doc_L(60, 90, "Description"), doc_R(430, 90, "Amount"),
+    doc_L(60, 130, "Filing fee"), doc_R(430, 130, "80.00"),
+    doc_L(60, 152, "Court fee"),  doc_R(430, 152, "60.00"),
+    doc_L(60, 200, "Disbursements"),
+    doc_L(60, 222, "Courier"), doc_R(430, 222, "12.00"))))
+  r <- doc_table_rows(inp, .wr_tab(235), NULL)
+  expect_equal(nrow(r$rows), 4L)
+  expect_identical(r$rows$description[3], "Disbursements")
+  expect_true(is.na(r$rows$amount[3]) || !nzchar(r$rows$amount[3]))
+})
+
+test_that("the un-indented rule cannot fold a ONE-COLUMN table of prose", {
+  # The regression this guard exists for: every line of a prose block is
+  # left-aligned at the same x, a leading apart, and fills the one column there
+  # is. Measured before the guard: a 14-line block became 1 row.
+  parts <- list(doc_L(40, 60, "Improved operation scenario"))
+  y <- 90
+  for (k in 1:8) { parts <- c(parts, list(doc_L(40, y, sprintf("line %d of the first paragraph", k)))); y <- y + 14 }
+  y <- y + 34
+  for (k in 1:6) { parts <- c(parts, list(doc_L(40, y, sprintf("line %d of the second paragraph", k)))); y <- y + 14 }
+  i <- doc_input(list(do.call(doc_page, parts)))
+  tab <- list(name = "prose", start = list(page = 1L, y = 80),
+              end = list(page = 1L, y = DOC_H), header_rows = 0L, follow = FALSE,
+              columns = list(list(name = "text", x_min = 0, x_max = DOC_W)))
+  expect_equal(doc_table_rows(i, tab, NULL)$n_rows, 14L)
+})
+
+test_that("the wrap rule itself answers each shape correctly", {
+  d_same <- data.frame(x = 60, text = "more words", stringsAsFactors = FALSE)
+  d_in   <- data.frame(x = 90, text = "more words", stringsAsFactors = FALSE)
+  # indented: a generous gap is still a wrap
+  expect_true(.doc_is_wrap(d_in, 60, 18, 14, 1L, 2L, 2L))
+  # same left edge: tight gap folds, loose gap does not
+  expect_true(.doc_is_wrap(d_same, 60, 15, 14, 1L, 2L, 2L))
+  expect_false(.doc_is_wrap(d_same, 60, 30, 14, 1L, 2L, 2L))
+  # ...and never on a one-column table, nor under a row that filled only one
+  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 1L, 1L, 2L))
+  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 1L, 2L, 1L))
+  # a line that fills two columns is a row whatever else is true
+  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 2L, 2L, 2L))
+})

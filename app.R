@@ -2666,6 +2666,10 @@ server <- function(input, output, session) {
   })
   observeEvent(input$rb_arm_label, { if (!is.null(rb$vdraft)) rb$mode <- "label" })
   observeEvent(input$rb_arm_value, { if (!is.null(rb$vdraft)) rb$mode <- "value" })
+  # ARMING OR CANCELLING CLEARS THE PAGE. A new question deserves a page with no
+  # leftover answer drawn on it, and Cancel that leaves the rectangle behind is
+  # a Cancel that visibly did not cancel.
+  observeEvent(rb$mode, { session$resetBrush("rb_brush") }, ignoreInit = TRUE)
   # Cancel leaves the guide as well as the step: somebody who cancels is steering.
   observeEvent(input$rb_disarm, { rb$guide <- FALSE; rb$mode <- "" })
   # Skip keeps what the tool worked out and moves on to the next step.
@@ -2733,13 +2737,34 @@ server <- function(input, output, session) {
   })
 
   # ---- The drag: whatever is armed, and nothing otherwise --------------------
+  # THE BLUE BOX MUST ALWAYS GO AWAY, AND IT MUST GO AWAY FIRST.
+  #
+  # Reported: "click and drag just stopped working. Cancelled out, created the
+  # table again, RELOADED THE PAGE, still no drag. The blue box appeared and does
+  # not disappear even when the next column is added."
+  #
+  # observeEvent fires on CHANGE. session$resetBrush() is what sets the value back
+  # to NULL so the next drag is a change -- and it used to sit BELOW three early
+  # returns and two calls that can throw (.rb_pg, rb_frame, .rb_box). Any of those
+  # leaves input$rb_brush holding the old rectangle, and then:
+  #   * the rectangle stays drawn on the page, over everything drawn after it;
+  #   * an identical drag sends an identical value, which is not a change, so
+  #     THE OBSERVER NEVER FIRES AGAIN -- "drag stopped working";
+  #   * and it survives a reload, because the stale value is on the server.
+  # Which is exactly the sequence reported, in order.
+  #
+  # So it is the first statement in the observer, before anything that can return
+  # or throw, and the rest of the body is wrapped so an error cannot leave the
+  # screen stuck either. A drag that fails must fail as a message, never as a
+  # rectangle nobody can get rid of.
   observeEvent(input$rb_brush, {
-    br <- input$rb_brush; if (is.null(br)) return()
+    br <- input$rb_brush
+    session$resetBrush("rb_brush")
+    if (is.null(br)) return()
     i <- rb_input(); if (is.null(i)) return()
     m <- as.character(rb$mode %||% "")
     pg <- .rb_pg(); fr <- rb_frame()
     box <- .rb_box(br, pg)
-    session$resetBrush("rb_brush")
 
     # THE FIX FOR "every time I drag it just creates a new table". A drag is a
     # way of answering a question, and when nothing has asked one it is a way of
@@ -2944,6 +2969,11 @@ server <- function(input, output, session) {
   # ---- The click: only ever moves the start or the end ----------------------
   observeEvent(input$rb_click, {
     cl <- input$rb_click; if (is.null(cl)) return()
+    # A CLICK MEANS "I AM DOING SOMETHING ELSE NOW", so any rectangle still on the
+    # page goes with it. Reported: the box persisted while trying to set the
+    # bottom edge -- the percentage updated but the picture kept the old
+    # selection, so the screen showed two different answers at once.
+    session$resetBrush("rb_brush")
     m <- as.character(rb$mode %||% "")
     if (!(m %in% c("start", "end", "bottom"))) return()
     d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }

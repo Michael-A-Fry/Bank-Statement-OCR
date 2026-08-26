@@ -936,3 +936,42 @@ test_that("the shape reading is computed once, and only when it is needed", {
   expect_match(blk, "tryCatch")            # never throws onto the result screen
   expect_match(blk, "fallback")
 })
+
+# ---------------------------------------------------------------------------
+# THE BLUE BOX MUST ALWAYS GO AWAY, AND IT MUST GO AWAY FIRST
+#
+# Reported: "click and drag just stopped working. Cancelled out of table create,
+# created it again, RELOADED THE PAGE, still no drag. The blue box appeared and
+# does not disappear even when the next column is added." And: "the box persisted
+# while trying to select the bottom edge -- the % updates but the visual doesn't,
+# and it keeps the area previously selected."
+#
+# observeEvent fires on CHANGE. resetBrush is what makes the next drag a change.
+# Below three early returns and two calls that can throw, it is a stuck screen
+# that survives a reload, because the stale value is on the SERVER.
+# ---------------------------------------------------------------------------
+
+test_that("the brush is reset before anything that can return or throw", {
+  src <- .da_src()
+  i <- grep("observeEvent\\(input\\$rb_brush", src)[1]
+  skip_if(is.na(i))
+  blk <- src[i:min(i + 12L, length(src))]
+  code <- blk[!grepl("^\\s*#", blk)]
+  k_reset <- grep("session\\$resetBrush", code)[1]
+  expect_false(is.na(k_reset))
+  # NOTHING that can return or throw may come first
+  before <- paste(code[seq_len(k_reset - 1L)], collapse = " ")
+  expect_false(grepl("return\\(", before))
+  expect_false(grepl("\\.rb_box\\(|\\.rb_pg\\(|rb_frame\\(", before))
+})
+
+test_that("a click and a change of mode both clear the rectangle", {
+  joined <- .da_joined(); src <- .da_src()
+  # a click means "I am doing something else now"
+  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 10L)
+  expect_match(cl, "session\\$resetBrush\\(\"rb_brush\"\\)")
+  # and a new question deserves a page with no leftover answer drawn on it
+  expect_match(joined, "observeEvent\\(rb\\$mode, \\{ session\\$resetBrush")
+  # three places, so no path leaves it behind
+  expect_gte(length(grep("resetBrush", src)), 3L)
+})

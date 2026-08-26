@@ -224,9 +224,38 @@
 # Getting this wrong in the other direction is what a tighter row tolerance costs:
 # once the wrap is correctly a separate LINE, a reader with no fold turns a
 # four-row table into no table at all, because the one-cell line breaks the run.
-.doc_is_wrap <- function(d, prev_left, gap, pitch, n_filled = 1L) {
-  is.finite(prev_left) && is.finite(gap) && is.finite(pitch) &&
-    n_filled <= 1L && gap > 0 && gap <= pitch * 1.4 && min(d$x) > prev_left + 4
+#
+# A WRAP IS NOT ALWAYS INDENTED, and requiring it to be was a real fault. The
+# indent rule comes from a bank statement, where the description column is set in
+# from the date and its second line sits under the words rather than under the
+# date. A REPORT left-aligns the wrapped line under the first, at exactly the same
+# x -- so `min(d$x) > prev_left + 4` was false and every wrapped line came back as
+# its own row. Reported as "one row with data on 3 different lines coming back as
+# 3 rows", on a two-column table.
+#
+# So indentation is one of TWO sufficient shapes, not a requirement:
+#   indented past the row's left edge  -> a generous gap is still a wrap
+#   at the SAME left edge              -> a wrap only under three extra guards
+#
+# The three guards on the un-indented shape, and each one is load bearing:
+#
+#  1. TIGHT GAP. No further apart than the closest thing this table sets, which is
+#     what `pitch` already is -- .doc_pitch(q = 0.25), the lower quartile, which on
+#     a table with wraps in it IS the wrap leading. A genuine sparse row (a
+#     sub-heading, a total set apart) is printed with MORE air above it, not less.
+#  2. THE TABLE HAS MORE THAN ONE COLUMN. A wrap is a cell overflowing its column,
+#     which is not a thing that can happen when there is only one. Without this,
+#     a one-column table of PROSE -- every line left-aligned at the same x, a
+#     leading apart, filling the one column there is -- folds into a single row.
+#     Measured: a 14-line block became 1.
+#  3. THE ROW ABOVE FILLED MORE THAN ONE COLUMN. That is what makes this line the
+#     overflow of a real row rather than the second line of a list.
+.doc_is_wrap <- function(d, prev_left, gap, pitch, n_filled = 1L,
+                         n_cols = 2L, prev_filled = 2L) {
+  if (!is.finite(prev_left) || !is.finite(gap) || !is.finite(pitch)) return(FALSE)
+  if (n_filled > 1L || gap <= 0) return(FALSE)
+  if (min(d$x) > prev_left + 4) return(gap <= pitch * 1.4)
+  gap <= pitch * 1.15 && n_cols >= 2L && prev_filled >= 2L
 }
 
 # .doc_is_rule(d) -- is this line a printed RULE rather than a row of data?
@@ -1044,6 +1073,13 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     kept_top <- numeric(0); kept_fill <- integer(0); kept_money <- logical(0)
     win_pitch <- .doc_pitch(w$y, q = 0.25)
     prev_left <- NA_real_; prev_i <- 0L
+    # The previous PHYSICAL line, folded or kept. A wrap's leading is a distance
+    # from the line above it, which is not the same thing as a distance from the
+    # row above it once a cell wraps more than once.
+    last_top <- NA_real_
+    # How many columns the last KEPT row filled. A wrap is the overflow of a row
+    # that had something in more than one column; the second line of a list is not.
+    prev_filled <- 0L
     for (li in seq_along(lines)) {
       d <- lines[[li]]
       # THE HEADER, TWO WAYS. Positionally: the leading lines of a window that
@@ -1075,9 +1111,16 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # A WRAPPED CELL belongs to the row above it, not to a row of its own.
       # Folded before the stop rule looks at it, so a wrap never ends a table and
       # never counts as a row that filled one column.
+      # MEASURED FROM THE LINE BEFORE IT, NOT FROM THE ROW. A cell wrapped over
+      # THREE lines has its third line two leadings below the row's top, so a gap
+      # measured from the row grows with every fold and the third line stops
+      # looking like a wrap. `last_top` is the previous PHYSICAL line -- folded or
+      # kept -- which is what the leading is actually a distance between.
       if (prev_i > 0L && n_filled >= 1L &&
-          .doc_is_wrap(d, prev_left, as.numeric(attr(d, "top")) - kept_top[length(kept_top)],
-                       win_pitch, n_filled)) {
+          .doc_is_wrap(d, prev_left,
+                       as.numeric(attr(d, "top")) -
+                         (if (is.finite(last_top)) last_top else kept_top[length(kept_top)]),
+                       win_pitch, n_filled, length(cols), prev_filled)) {
         for (i in seq_along(cells)) if (!is.na(cells[i]) && nzchar(cells[i])) {
           was <- out[[prev_i]][[cnames[i]]]
           out[[prev_i]][[cnames[i]]] <-
@@ -1086,6 +1129,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
             out[[prev_i]][[paste0(cnames[i], "__value")]] <-
               .doc_cell_value(out[[prev_i]][[cnames[i]]], ctypes[i])
         }
+        last_top <- as.numeric(attr(d, "top"))
         next
       }
 
@@ -1154,6 +1198,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
         rec[[paste0(cnames[i], "__value")]] <- .doc_cell_value(cells[i], ctypes[i])
       out[[length(out) + 1L]] <- rec
       prev_i <- length(out); prev_left <- min(d$x)
+      last_top <- as.numeric(attr(d, "top")); prev_filled <- as.integer(n_filled)
       last_pg <- as.integer(win$page); last_y <- max(d$y + d$height)
       fills <- c(fills, mean(!is.na(cells) & nzchar(cells)))
     }
