@@ -13,7 +13,7 @@ finding id.
 
 ---
 
-## 1.8.0
+## 1.8.1
 
 **A document nothing recognised is not "this statement".** Reported: drop a
 non-statement PDF into Convert and the only thing offered is the statement
@@ -22,15 +22,33 @@ for this **statement**"*, and the headline above it said *"No template for this
 **statement** yet"* — asserting, three times, the one fact nobody has at that
 point. All three pipelines have just said they cannot tell what the file is.
 
-There are two kinds of template and the front door tried both, so the card now
-offers both — and it is not a coin toss. `doc_shape_hint()` reads the first pages
-and counts two things: table-shaped blocks, and lines that start with a date and
-carry an amount, which is what a transaction row is whatever bank printed it. The
-likelier door is the primary button and **the count is printed beside it**, so
-the guess is checkable rather than asserted.
+**A clear decision, or a clear way to override it — never two big buttons.** Two
+doors side by side with the likelier one styled primary hands somebody a choice
+without telling them they are making one, and the only difference between the two
+is a shade of green. So:
 
-- **Both doors are always offered.** A tool that refuses the wrong door is worse
-  than one that guesses and says which it guessed.
+- **When the tool can tell, it decides and says so.** *"This looks like a report,
+  not a bank statement."* One primary button does that thing. The other answer is
+  underneath, spelled out as an answer — *"Not a report? It is a bank or card
+  statement"* — not as a second equal button.
+- **When it cannot tell, it says that and asks.** *"The tool cannot tell what kind
+  of document this is. Which is it?"* Two equal buttons are honest there and
+  nowhere else; dressing a coin toss as a decision is what this card exists to
+  stop.
+
+It is not a coin toss when it does decide. `doc_shape_hint()` reads the first
+pages and counts two things: table-shaped blocks, and lines that start with a date
+and carry an amount, which is what a transaction row is whatever bank printed it.
+**The count is printed under the decision**, so it is checkable rather than
+asserted.
+
+- The words for the two kinds are the words on **Add a template** — *a bank or
+  card statement* / *anything else* — because somebody meeting the same question
+  twice should not have to learn it twice.
+- Overriding onto the statement path with a document that has no transaction
+  table now names the button already on screen (*"press Set it up as a report on
+  the green card"*), instead of a radio called "Something else" on a tab it did
+  not offer to open. The radio is called *Anything else*.
 - **The report door carries the file through it** — no hunting for the same PDF
   on the next tab.
 - One plain sentence says what the two kinds *are*, since the person is being

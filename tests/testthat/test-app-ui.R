@@ -1487,11 +1487,17 @@ test_that("no on-screen text points at a control that is off screen", {
   # the raw block would read that record as a relapse.
   i <- grep("# Fail loud AND specific", src)
   expect_length(i, 1L)
-  blk <- src[i:min(i + 22L, length(src))]
+  blk <- src[i:min(i + 34L, length(src))]
   expect_match(paste(blk, collapse = " "), "return\\(invisible\\(FALSE\\)\\)")  # no modal is shown
   blk <- blk[!grepl("^\\s*#", blk)]
   expect_false(any(grepl("Not a transaction table?", blk, fixed = TRUE)))
   expect_false(any(grepl("top of this window", blk, fixed = TRUE)))
+  # NOR A RADIO CALLED SOMETHING IT IS NOT. The radio is "Anything else"; this
+  # message called it "Something else" and did not offer to open the tab. Where
+  # somebody lands here is the override on the green card, so the message names
+  # the button that is already in front of them.
+  expect_false(any(grepl("Something else", blk, fixed = TRUE)))
+  expect_true(any(grepl("Set it up as a report", blk, fixed = TRUE)))
 })
 
 # ---------------------------------------------------------------------------
@@ -2139,7 +2145,7 @@ test_that("the template toolkit is not offered for a file that was never read", 
   # looking, and cv_teach keeps growing branches above these two -- a report
   # result, then both doors on an unrecognised one. Widened twice for that
   # reason. The ORDER is the promise, not the line number.
-  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 160L)
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 210L)
   i <- regexpr('if (identical(st, "failed")) return(NULL)', blk, fixed = TRUE)
   expect_gt(i, 0L)
   j <- regexpr('actionButton("cv_teach_go_fix"', blk, fixed = TRUE)

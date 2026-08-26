@@ -7088,9 +7088,17 @@ server <- function(input, output, session) {
                                "as CSV and set that up instead."),
                          type = "warning", duration = 10)
       } else {
-        showNotification(paste("Couldn't read this file as a transaction table. Try a text PDF or a CSV export.",
-                               "If it is a form or a summary, set it up on Add a template as \u201cSomething else\u201d."),
-                         type = "error", duration = 10)
+        # NAME THE BUTTON THAT IS ON THE SCREEN. This is where somebody lands who
+        # overrode "this looks like a report" with "no, it is a statement" -- so
+        # the answer is one click away, on the card they just used, and the
+        # message should say which click. It used to name a radio called
+        # "Something else", on a tab it did not offer to open, and the radio is
+        # called "Anything else".
+        showNotification(paste("Couldn't read this file as a transaction table - there is no column of",
+                               "dates with a column of amounts beside it. If it is a report, a form or a",
+                               "letter, press \u201cSet it up as a report\u201d on the green card. If it really",
+                               "is a statement, a text PDF or a CSV export of it will read."),
+                         type = "error", duration = 14)
       }
       return(invisible(FALSE))
     }
@@ -7228,40 +7236,80 @@ server <- function(input, output, session) {
       # of ten and nothing on page 2. Half the measured cases are a couple of
       # minutes; the other half are not, so the button says what it does and
       # stops.
-      # NOTHING RECOGNISED IT, SO DO NOT CALL IT A STATEMENT.
+      # A CLEAR DECISION, OR A CLEAR WAY TO OVERRIDE IT. Never two big buttons.
       #
-      # This card used to say "No template read this STATEMENT" and offer one
-      # button, into the statement toolkit. For the report, schedule or letter
-      # somebody has just dropped in, that is the wrong door -- and the sentence
-      # asserts the one thing we are here precisely because nobody knows. There
-      # are two kinds of template and the front door tried both, so the card
-      # offers both.
+      # The first go at this offered both doors side by side with the likelier one
+      # styled as primary. That is neither: it hands somebody a choice without
+      # telling them they are making one, and the only difference between the two
+      # is a shade of green. Beth reads two large buttons and asks which.
       #
-      # It is not a coin toss either: doc_shape_hint() reads the first pages and
-      # counts table-shaped blocks and lines that start with a date and carry an
-      # amount, which is what a transaction row is whatever bank printed it. The
-      # likelier door is the primary one and the count is printed beside it, so
-      # the guess is checkable. BOTH ARE ALWAYS OFFERED -- a tool that refuses the
-      # wrong door is worse than one that guesses and says which it guessed.
+      # So: when the tool can tell, it SAYS SO, does that thing under one button,
+      # and puts the other answer underneath as an override that is unmistakably
+      # the opposite answer rather than a second equal choice. When it cannot
+      # tell, it says THAT, and asks -- two equal buttons are honest there and
+      # nowhere else.
+      #
+      # doc_shape_hint() is the reading: table-shaped blocks, and lines that start
+      # with a date and carry an amount, which is what a transaction row is
+      # whatever bank printed it. The count is printed, so the decision is
+      # checkable rather than asserted.
+      #
+      # The words for the two kinds are the words on Add a template -- "a bank or
+      # card statement" and "anything else" -- because a person meeting the same
+      # question twice should not have to learn it twice.
       hint <- cv_shape_hint()
-      looks_stmt <- !identical(hint$looks, "report")
-      stmt_btn <- actionButton("cv_teach_go", "Set up a STATEMENT template",
-        class = if (looks_stmt) "btn-primary btn-lg" else "btn-default btn-lg")
-      rep_btn <- actionButton("cv_teach_go_report", "Set up a REPORT or FORM template",
-        class = if (looks_stmt) "btn-default btn-lg" else "btn-primary btn-lg")
-      div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
-        strong("Nothing recognised this document \u2014 set a template up once and it converts every time."),
-        p(class = "muted", style = "margin:6px 0 2px", hint$sentence),
-        p(class = "muted", style = "margin:2px 0 10px",
-          strong("A statement"), " is a table of transactions with a running balance, and it reconciles. ",
-          strong("Anything else"), " - a report, a form, a schedule, a letter - is read by pointing at ",
-          "what you want; it downloads and never reaches the dashboards."),
-        div(style = "display:flex;gap:8px;flex-wrap:wrap",
-            if (looks_stmt) stmt_btn else rep_btn,
-            if (looks_stmt) rep_btn else stmt_btn),
-        div(style = "margin-top:8px",
-          span(class = "muted", "Would rather not? "),
+      looks <- as.character(hint$looks %||% "neither")
+      why <- p(class = "muted", style = "margin:6px 0 10px", hint$sentence)
+      box <- function(...) div(
+        style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
+        ...,
+        div(style = "margin-top:10px",
+          span(class = "muted", "Would rather not set one up? "),
           actionLink("cv_unsup_raise", "Send it to the team instead")))
+      # The override, spelled out as the OTHER ANSWER rather than as a button.
+      other <- function(question, answer, id) div(
+        style = "margin-top:10px;padding-top:10px;border-top:1px solid #cfe0d4",
+        span(class = "muted", question, " "),
+        actionLink(id, answer, style = "font-weight:700"))
+
+      if (identical(looks, "report"))
+        return(box(
+          strong(style = "font-size:15px",
+                 "This looks like a report, not a bank statement."),
+          why,
+          actionButton("cv_teach_go_report", "Set it up as a report \u2192",
+                       class = "btn-primary btn-lg"),
+          p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
+            "You point at the tables and figures you want. It downloads, and never reaches the dashboards."),
+          other("Not a report?", "It is a bank or card statement", "cv_teach_go")))
+
+      if (identical(looks, "statement"))
+        return(box(
+          strong(style = "font-size:15px",
+                 "This looks like a bank statement, but no template reads it yet."),
+          why,
+          actionButton("cv_teach_go", "Set it up as a bank statement \u2192",
+                       class = "btn-primary btn-lg"),
+          p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
+            "Set it up once and this layout converts every time, with its balance checked."),
+          other("Not a statement?", "It is something else - a report, a form, a letter",
+                "cv_teach_go_report")))
+
+      # CANNOT TELL. Say that, and ask. Two equal buttons are honest here because
+      # the tool genuinely has no answer -- and dressing a coin toss as a decision
+      # is the thing this card exists to stop.
+      box(
+        strong(style = "font-size:15px", "The tool cannot tell what kind of document this is."),
+        why,
+        p(style = "margin:6px 0 8px", strong("Which is it?")),
+        div(style = "display:flex;gap:8px;flex-wrap:wrap",
+          actionButton("cv_teach_go", "A bank or card statement",
+                       class = "btn-primary btn-lg"),
+          actionButton("cv_teach_go_report", "Anything else - a report, a form, a letter",
+                       class = "btn-primary btn-lg")),
+        p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
+          "A statement is a table of transactions with a running balance, and it reconciles. ",
+          "Anything else is read by pointing at what you want."))
     } else {
       # Happy path stays quiet: the "Wrong bank?" line up top already offers a fix,
       # so we don't repeat a toolkit prompt here.

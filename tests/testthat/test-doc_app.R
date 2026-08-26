@@ -862,23 +862,59 @@ test_that("the first screen does not contradict itself about which files it take
 # A DOCUMENT NOTHING RECOGNISED IS NOT "THIS STATEMENT"
 # ---------------------------------------------------------------------------
 
-test_that("an unrecognised document offers BOTH doors, and calls itself neither", {
-  src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 160L)
-  # the headline no longer asserts what the file is
-  expect_match(blk, "Nothing recognised this document", fixed = TRUE)
+# A CLEAR DECISION, OR A CLEAR WAY TO OVERRIDE IT. NEVER TWO BIG BUTTONS.
+#
+# The first go offered both doors side by side with the likelier one styled
+# primary. That is neither: it hands somebody a choice without telling them they
+# are making one, and the only difference between the two is a shade of green.
+test_that("when the tool can tell, it decides, and the other answer is one link", {
+  src <- .da_src()
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  # it SAYS what it decided, in a sentence about the document
+  expect_match(blk, "This looks like a report, not a bank statement.", fixed = TRUE)
+  expect_match(blk, "This looks like a bank statement, but no template reads it yet.",
+               fixed = TRUE)
+  # ...never the old assertion, and never the old two-button card
   expect_false(grepl("No template read this statement", blk, fixed = TRUE))
-  # BOTH routes, always -- refusing the wrong door is worse than guessing
-  expect_match(blk, 'actionButton\\("cv_teach_go", "Set up a STATEMENT template"')
-  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Set up a REPORT or FORM template"')
-  # ...with the likelier one primary, and the reading printed beside it
-  expect_match(blk, "cv_shape_hint\\(\\)")
+  expect_false(grepl("Nothing recognised this document", blk, fixed = TRUE))
+  # ONE primary button per decided branch, doing the decided thing
+  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Set it up as a report')
+  expect_match(blk, 'actionButton\\("cv_teach_go", "Set it up as a bank statement')
+  # and the override is the OTHER ANSWER, spelled out, not a second big button
+  expect_match(blk, '\\.rb_no_such_thing|other\\("Not a report\\?"')
+  expect_match(blk, 'other\\("Not a statement\\?"')
+  expect_match(blk, "It is a bank or card statement", fixed = TRUE)
+  expect_match(blk, "It is something else - a report, a form, a letter", fixed = TRUE)
+  # the decision is CHECKABLE: the count it used is printed
   expect_match(blk, "hint\\$sentence")
-  expect_match(blk, 'looks_stmt <- !identical\\(hint\\$looks, "report"\\)')
-  # and one plain sentence saying what the two kinds ARE, since the person is
-  # being asked to choose between them
-  expect_match(blk, "running balance", fixed = TRUE)
-  expect_match(blk, "never reaches the dashboards", fixed = TRUE)
+  expect_match(blk, "cv_shape_hint\\(\\)")
+})
+
+test_that("when the tool cannot tell, it says so and asks", {
+  # Two equal buttons are honest HERE and nowhere else -- dressing a coin toss as
+  # a decision is the thing this card exists to stop.
+  src <- .da_src()
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  expect_match(blk, "The tool cannot tell what kind of document this is.", fixed = TRUE)
+  expect_match(blk, "Which is it?", fixed = TRUE)
+  expect_match(blk, 'actionButton\\("cv_teach_go", "A bank or card statement"')
+  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Anything else')
+  # the same words Add a template uses, so the question is not learned twice
+  ui <- .da_block(src, 'radioButtons\\("ts_doctype"', 5L)
+  expect_match(ui, "A bank or card statement", fixed = TRUE)
+  expect_match(ui, "Anything else", fixed = TRUE)
+})
+
+test_that("the two ids are never rendered at the same time", {
+  # cv_teach_go is a BUTTON on one branch and the override LINK on another. Two
+  # elements sharing an input id keep independent click counters, so if both ever
+  # rendered together one of them would send a value identical to the current one
+  # and its observer would never fire -- a dead control, invisible from R. They
+  # are safe only because the branches return.
+  src <- .da_src()
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 200L)
+  for (b in c('identical\\(looks, "report"\\)', 'identical\\(looks, "statement"\\)'))
+    expect_match(blk, paste0("if \\(", b, "\\)\\n\\s*return\\(box\\("))
 })
 
 test_that("the report door carries the file through it", {

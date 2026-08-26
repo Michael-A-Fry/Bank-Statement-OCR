@@ -1645,9 +1645,27 @@ all three pipelines have said they cannot tell what it is. The single button
 followed from the same mistake: if it is a statement, there is only one door.
 
 There are two kinds of template and the front door already tries both, so the
-card offers both. **Both, always** -- a tool that refuses the wrong door is worse
-than one that guesses and says which it guessed, and the cost of a wrong guess is
-one extra click while the cost of a wrong refusal is the job.
+card had to cover both. The first attempt put them side by side with the likelier
+one styled primary, and that was wrong for a reason worth keeping: **two big
+buttons is neither a decision nor an override.** It hands somebody a choice
+without telling them they are making one, and the only thing separating the two
+is a shade of green. Held to the standard the whole screen is held to -- can Beth
+get through this without asking anybody -- it fails, because the honest question
+in front of her is "which of these am I supposed to press?"
+
+The shape that passes is:
+
+* **When the tool can tell, it decides and says so**, in a sentence about the
+  document. One primary button does that thing. The other answer sits underneath,
+  written out as an answer -- "Not a report? **It is a bank or card statement**"
+  -- so it reads as overriding a decision rather than as a second equal choice.
+* **When it cannot tell, it says that, and asks.** Two equal buttons are honest
+  there and nowhere else. Dressing a coin toss as a decision is exactly what this
+  card exists to stop, and it would be the same mistake in the other direction.
+
+Nothing is ever refused: a tool that closes the wrong door is worse than one that
+guesses and says which it guessed, because a wrong guess costs one click and a
+wrong refusal costs the job.
 
 It is not a coin toss either, and it did not need to be. `doc_shape_hint()` reads
 the first pages and counts two things the tool can already see:
@@ -1678,6 +1696,15 @@ between the two.
 **And the door carries the file through it.** Sending somebody to a tab where they
 have to find and upload the same PDF again is the small tax that turns "try the
 other one" into "give up"; `rb_handoff` already existed for exactly this.
+
+**Where the override lands mattered too.** Overriding "this looks like a report"
+with "no, it is a statement" runs the statement drafter, which on a report finds
+no column of dates beside a column of amounts and fails -- correctly. What it then
+said was "set it up on Add a template as 'Something else'", naming a radio that is
+called *Anything else*, on a tab it did not offer to open. The card the person
+just used is still on screen with the report button on it, so the message names
+that button. An override that fails has to land somewhere; the nearest thing that
+works is the right somewhere.
 
 **N190 (the label/value pairs were half the builder and invisible) - fixed.** Two
 reports, one gap: "the read whole doc should have the tables AND label value
