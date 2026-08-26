@@ -23,15 +23,45 @@ The two routes are equal. Every item is judged against both:
 > "Need an in-between pages start and end - sometimes there's headers on the
 > next x pages that are being pulled as rows. Again this needs to be as simple
 > as humanly possible."
+>
+> Asked again, as a design question: *"Can this be as easy as the in-between
+> start and end? Define where the data starts and stops?"*
 
-A table that runs over pages reprints its column headings at the top of each
-one. Those heading lines land in the output as data rows. `band$y_max` closes
-the BOTTOM of a continuation page (`doc_locate_table`); nothing closes the TOP.
+**Yes - and both edges already exist on the model.** `doc_locate_table()`
+(R/tables.R:500-501) sets, for every page in the run:
 
-Must be automatic where it can be - the header row's own wording is already on
-the template (`anchor$header_text`), so a line on a continuation page that
-matches it is a header, not a row. Any control added for it is a last resort,
-not the first answer.
+```r
+y_min <- if (p == p0) y_start else band_top   # band$y_min
+y_max <- if (p == p1) y_end_declared else band_bot   # band$y_max
+```
+
+`band$y_max` is the in-between BOTTOM edge, and the builder already asks for it
+(the `bottom` step). `band$y_min` is the in-between TOP edge, is read on exactly
+the same line, and **nothing ever asks for it or draws it** - it silently
+defaults to 0, the top of the paper. So this is one concept, not two: *on the
+pages in between, the data starts here and stops here.* The work is to ask for
+the top edge as the mirror of the bottom one, draw both, and default both.
+
+**And the automatic answer already exists too** (R/tables.R:506-512): on a
+continuation page the reader looks for the repeated header and, when it finds
+it, moves the window down to it and skips `header_rows` lines. So the common
+case should already work. When it does not, the cause is upstream:
+`need_hdr <- tab$anchor$header_text %||% .doc_column_names(tab)` (R/tables.R:463)
+and the builder writes that wording from the COLUMN NAMES
+(app.R:3146 `d$anchor$header_text <- ... cc$name`) - so **renaming a column
+breaks the match**, and `.doc_find_header` needs 0.6 of the names to hit.
+
+So the fix is two belts, in this order:
+
+1. Keep the remembered header wording as what was PRINTED on the page, separate
+   from whatever the column was renamed to. Then the automatic skip works and
+   nobody is asked anything.
+2. Add the in-between TOP edge as the mirror of the bottom edge that already
+   exists, defaulted and drawn, so when the automatic answer is wrong it is
+   corrected with a gesture already learned.
+
+Both belts, not one: the automatic path cannot cover a page whose header is not
+reprinted but which still carries a running title or a page banner.
 
 ### A2. A template that finds however many tables the document has
 > "If I'm creating a generic template for an overarching document that may
@@ -39,11 +69,56 @@ not the first answer.
 > create a template with the YAML that specifies all possible tables so that it
 > auto picks up as many as possible?"
 
-Today `tables:` is a fixed, named list and each entry is pinned to a page and a
-y. A quarterly pack with three holdings tables one month and seven the next
-needs one template that finds each table wherever it appears and however many
-there are - matched by its heading wording and its column shape, not by its
-coordinates. Tables the document does not contain must be absent, not empty.
+Clarified by the user when asked:
+
+> "A number of these 'other' reports will NOT have consistent page numbers, apart
+> from MAYBE the first. These have standardish formats but there may be x number
+> of pages in between, and sometimes there may only be 2 tables and others 40.
+> How do we best account for that? **We already collect table titles.**"
+
+That last sentence is the design. The builder's first gesture is "drag a box
+round the table's TITLE" and the wording is stored as the table's `name` - but
+today it is only a LABEL. It should be the SEARCH KEY.
+
+**What the code already does.** `doc_locate_table()` (R/tables.R:437-560)
+already finds a table by evidence rather than position - it tries, in order:
+its header wording (`.doc_find_header`), the rows it starts with
+(`.doc_find_first_column`), and only then the coordinates it was drawn at. And
+`follow: true` (R/tables.R:534-548) already extends a table across as many extra
+pages as keep repeating its header, recording `extended_to` so the extension is
+never silent.
+
+**The two things missing.**
+
+1. **The search is pinned to one page.** `p0 <- tab$start$page`, and the header
+   hunt runs on `lines0`, the lines of THAT page only. It has to sweep the
+   document instead. Nothing else about the anchor logic needs to change.
+2. **One entry can only match once.** A table entry needs to be able to say
+   "every place this appears is another one of me", producing as many tables as
+   the document actually contains.
+
+**The rule, in one sentence a person can hold:** *a table starts at its title and
+stops at the next one* (or at the bottom edge, or where its header stops
+repeating - whichever comes first).
+
+That single rule covers both shapes the user described:
+
+* 40 tables with DIFFERENT titles and the same columns - each occurrence becomes
+  its own table, named by its own title text.
+* the same table continuing over unknown pages - already handled by `follow`.
+
+A table the document does not contain this month produces NOTHING - not an empty
+sheet. That falls out of the rule for free: no title, no table.
+
+**In the builder** this must not become YAML. You draw ONE example table as you
+do now, and tick *"this document has more tables like this one"*. Nothing else
+changes. Page numbers stop being part of the template at all for these.
+
+Still open, and worth confirming with the user when it is built: what happens
+when two occurrences carry the SAME title (numbered `_1`, `_2`, presumably), and
+whether the output should be one sheet per table or one long sheet with a
+`table` column naming which it came from. The workbook already has a
+`table` column, so the second is nearly free.
 
 ### A3. A column whose FIRST row is blank swallows the column beside it
 > "When I define columns, but one of the columns doesn't have a first row of
