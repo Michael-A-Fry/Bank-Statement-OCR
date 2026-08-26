@@ -94,6 +94,41 @@ Two things must come with it:
    much and on the strength of what, in the same place it says how the table was
    found. A correction nobody can see is how the next wrong answer gets built.
 
+### 0b. Building a template across many documents already WORKS - and until 0 is fixed it is a trap
+
+The mode described - a template holding tables that never all appear in one
+document, built up from many examples - is already possible mechanically, and
+nobody has noticed. `rb_open_template()` (app.R) loads a saved template's tables
+back onto the page through `document_proposal_from_template()`, `rb_handoff()`
+puts a DIFFERENT document under them, `+ Add a table` appends to `rb$tables`, and
+Save writes every table back under the same id. So: open template A on example B,
+draw the three tables B has that A did not, save. The library grows.
+
+**And that is exactly the wrong thing to do today.** The tables carried over from
+example A are drawn on example B at A's coordinates, so they appear in the wrong
+place on the page in front of you - and the obvious, helpful, human response is to
+drag them until they fit B. Doing that re-pins them to B and breaks them for A,
+silently, and there is nothing on the screen that would tell anyone. Build a
+template over ten examples that way and each table ends up pinned to whichever
+example was open when it was last touched.
+
+Three things this needs, in this order:
+
+1. **Fix 0.** Bands anchored to the heading words stop being pinned to any one
+   example at all, which removes the trap at its root.
+2. **Say which document each table was drawn on.** A table carried in from another
+   example must be drawn and labelled as such - "drawn on 2024-Q1.pdf, not this
+   one" - so nobody adjusts it by accident. That is provenance ON the template,
+   and it is worth having for its own sake: with forty tables, "has this one ever
+   actually been seen in a real document, or did somebody guess it?" is a question
+   an admin will ask constantly.
+3. **A way to check the whole library against the whole folder.** An admin with
+   forty tables and twelve example documents needs one button that says which
+   tables still read correctly on which examples. Without it, every edit is a
+   change whose blast radius nobody can see. R/batch_audit.R and Admin's
+   "Batch & audit" tab exist for statements - whether they can serve this is worth
+   establishing before anything new is built.
+
 ---
 
 ## A. The engine - what comes out wrong
