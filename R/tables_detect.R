@@ -111,9 +111,14 @@
       # rows of this run begin, one line below the last of them -- so it is the
       # tail of that row, not the end of the table. Without this a description too
       # long for its column ends the table at the row it wrapped on.
+      # `pitch` is still right for `adjacent` above -- that is a distance between
+      # ROWS over a whole run, which is what a page statistic measures well. It is
+      # the wrong yardstick for one wrapped line, so .doc_is_wrap reads the
+      # leading off the two lines instead (see its comment in R/tables.R).
       if (!is.na(last) && ncell[i] <= 1L &&
           .doc_is_wrap(lines[[i]], min(lines[[last]]$x), tops[i] - tops[last],
-                       pitch, ncell[i])) next
+                       ncell[i], 2L, 2L,
+                       suppressWarnings(max(as.numeric(lines[[last]]$height), na.rm = TRUE)))) next
       if (length(cur) >= min_rows) out[[length(out) + 1L]] <- cur
       cur <- if (tabular[i]) i else integer(0)
     }

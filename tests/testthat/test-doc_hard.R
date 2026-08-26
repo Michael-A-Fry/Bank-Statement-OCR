@@ -684,16 +684,73 @@ test_that("the un-indented rule cannot fold a ONE-COLUMN table of prose", {
 })
 
 test_that("the wrap rule itself answers each shape correctly", {
-  d_same <- data.frame(x = 60, text = "more words", stringsAsFactors = FALSE)
-  d_in   <- data.frame(x = 90, text = "more words", stringsAsFactors = FALSE)
+  # A LINE HAS A TYPE HEIGHT. These fixtures had none, which is a shape no real
+  # caller produces - every words frame carries `height` - and it mattered the
+  # moment the rule stopped measuring against a page-wide pitch statistic and
+  # started measuring against the two lines themselves.
+  d_same <- data.frame(x = 60, text = "more words", height = 9, stringsAsFactors = FALSE)
+  d_in   <- data.frame(x = 90, text = "more words", height = 9, stringsAsFactors = FALSE)
+  # 9pt type under a 9pt line: one line of room is 18, so the ceilings are
+  # 25.2 for the indented shape and 20.7 for the same-left-edge one.
   # indented: a generous gap is still a wrap
-  expect_true(.doc_is_wrap(d_in, 60, 18, 14, 1L, 2L, 2L))
+  expect_true(.doc_is_wrap(d_in, 60, 18, 1L, 2L, 2L, 9))
   # same left edge: tight gap folds, loose gap does not
-  expect_true(.doc_is_wrap(d_same, 60, 15, 14, 1L, 2L, 2L))
-  expect_false(.doc_is_wrap(d_same, 60, 30, 14, 1L, 2L, 2L))
+  expect_true(.doc_is_wrap(d_same, 60, 15, 1L, 2L, 2L, 9))
+  expect_false(.doc_is_wrap(d_same, 60, 30, 1L, 2L, 2L, 9))
   # ...and never on a one-column table, nor under a row that filled only one
-  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 1L, 1L, 2L))
-  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 1L, 2L, 1L))
+  expect_false(.doc_is_wrap(d_same, 60, 15, 1L, 1L, 2L, 9))
+  expect_false(.doc_is_wrap(d_same, 60, 15, 1L, 2L, 1L, 9))
   # a line that fills two columns is a row whatever else is true
-  expect_false(.doc_is_wrap(d_same, 60, 15, 14, 2L, 2L, 2L))
+  expect_false(.doc_is_wrap(d_same, 60, 15, 2L, 2L, 2L, 9))
+  # NO TYPE HEIGHT AT ALL is a refusal, not a guess. A wrong fold merges two real
+  # rows into one, which is a wrong figure nobody can see.
+  d_noh <- data.frame(x = 60, text = "more words", stringsAsFactors = FALSE)
+  expect_false(.doc_is_wrap(d_noh, 60, 15, 1L, 2L, 2L, NA_real_))
+})
+
+# ---------------------------------------------------------------------------
+# ONE ROW PRINTED OVER THREE LINES.
+#
+# Reported: "one row with data on 3 different lines coming back as 3 rows. This
+# edge case is where it's only two columns, where the first column's first row
+# and only row data is [on the first line]."
+#
+# The predicate was right; the number handed to it was measured over the wrong
+# population. `pitch` was .doc_pitch(q = 0.25) over EVERY word in the reading
+# window, and an open-ended window is the whole page - so a footnote block set
+# tighter than the table dragged the quartile under the table's own leading, the
+# ceiling fell with it, and every wrap was rejected.
+# ---------------------------------------------------------------------------
+
+test_that("a cell wrapped over three lines is one row, footnotes or not", {
+  W <- function(text, x, y, h = 9) data.frame(text = text, x = x, y = y,
+        width = nchar(text) * 5, height = h, stringsAsFactors = FALSE)
+  mk <- function(footnote) {
+    w <- rbind(
+      W("Item", 60, 100),  W("Detail", 200, 100),
+      W("A1", 60, 118),    W("the first part of a long", 200, 118),
+                           W("description that keeps", 200, 130),
+                           W("going onto a third line", 200, 142),
+      W("A2", 60, 162),    W("short one", 200, 162))
+    # set TIGHTER than the table's 12pt leading - this is what used to poison the
+    # page-wide quartile and reject every wrap above it
+    if (footnote) w <- rbind(w, W("note one", 60, 300, 6),
+                                W("note two", 60, 306, 6),
+                                W("note three", 60, 312, 6))
+    list(kind = "pdf", words = list(w), pages = "x",
+         page_width = 595, page_height = 842)
+  }
+  tab <- list(name = "T", start = list(page = 1, y = 95), end = list(page = 1, y = 200),
+    header_rows = 1L, anchor = list(header_text = list("Item", "Detail")),
+    columns = list(list(name = "Item", x_min = 55, x_max = 150),
+                   list(name = "Detail", x_min = 195, x_max = 400)))
+  tmpl <- list(ref_width = 595, ref_height = 842)
+  for (footnote in c(TRUE, FALSE)) {
+    r <- doc_table_rows(mk(footnote), tab, tmpl)$rows
+    expect_equal(nrow(r), 2L)
+    expect_equal(r$Item, c("A1", "A2"))
+    # the three printed lines came back as ONE cell, joined with single spaces
+    expect_equal(r$Detail[1],
+      "the first part of a long description that keeps going onto a third line")
+  }
 })

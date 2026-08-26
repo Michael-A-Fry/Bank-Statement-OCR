@@ -210,7 +210,7 @@
   if (!is.finite(p) || p <= 0) NA_real_ else p
 }
 
-# .doc_is_wrap(d, prev_left, gap, pitch) -- is this line the TAIL of the row above
+# .doc_is_wrap(d, prev_left, gap, ...) -- is this line the TAIL of the row above
 # it rather than a row of its own?
 #
 # A description too long for its column wraps onto a second physical line, and
@@ -239,9 +239,7 @@
 #
 # The three guards on the un-indented shape, and each one is load bearing:
 #
-#  1. TIGHT GAP. No further apart than the closest thing this table sets, which is
-#     what `pitch` already is -- .doc_pitch(q = 0.25), the lower quartile, which on
-#     a table with wraps in it IS the wrap leading. A genuine sparse row (a
+#  1. TIGHT GAP. No further apart than one line of type. A genuine sparse row (a
 #     sub-heading, a total set apart) is printed with MORE air above it, not less.
 #  2. THE TABLE HAS MORE THAN ONE COLUMN. A wrap is a cell overflowing its column,
 #     which is not a thing that can happen when there is only one. Without this,
@@ -250,12 +248,45 @@
 #     Measured: a 14-line block became 1.
 #  3. THE ROW ABOVE FILLED MORE THAN ONE COLUMN. That is what makes this line the
 #     overflow of a real row rather than the second line of a list.
-.doc_is_wrap <- function(d, prev_left, gap, pitch, n_filled = 1L,
-                         n_cols = 2L, prev_filled = 2L) {
-  if (!is.finite(prev_left) || !is.finite(gap) || !is.finite(pitch)) return(FALSE)
+#
+# WHAT "ONE LINE" IS MEASURED AGAINST, and why it is not a page statistic.
+#
+# This used to be handed `pitch` -- .doc_pitch(w$y, q = 0.25), the lower quartile
+# of the gaps between 3pt y-groups over EVERY word in the reading window. Two
+# ordinary things put values into that sample that are not leadings at all:
+#
+#   * .doc_pitch groups at a fixed 3pt while .doc_lines groups the same words at
+#     the ADAPTIVE .doc_row_tol, so any word sitting 4pt or more off its own
+#     line's top -- a label in a larger face beside a smaller value, a
+#     superscript, a bullet -- injects a phantom "gap" of 4-8pt;
+#   * an open-ended window is the whole page, so a footer or a footnote block set
+#     tighter than the table contributes ITS leading to the sample.
+#
+# Either one drags the quartile below the table's real leading, the ceiling falls
+# under it, and EVERY wrap is rejected -- which is "one row with data on 3
+# different lines coming back as 3 rows". The predicate was sound; the number
+# handed to it was measured over the wrong population.
+#
+# So it is read off the two lines themselves: the type height of this line plus
+# that of the physical line above it. In plain words the rule becomes "a
+# one-column line sitting under the row with no room for a blank line between
+# them", which is what a person reading the page sees, and it cannot be knocked
+# over by a footnote below the table or by a heading set in a bigger face.
+.doc_is_wrap <- function(d, prev_left, gap, n_filled = 1L,
+                         n_cols = 2L, prev_filled = 2L, prev_height = NA_real_) {
+  if (!is.finite(prev_left) || !is.finite(gap)) return(FALSE)
   if (n_filled > 1L || gap <= 0) return(FALSE)
-  if (min(d$x) > prev_left + 4) return(gap <= pitch * 1.4)
-  gap <= pitch * 1.15 && n_cols >= 2L && prev_filled >= 2L
+  h  <- suppressWarnings(max(as.numeric(d$height %||% NA_real_), na.rm = TRUE))
+  ph <- .doc_num(prev_height, NA_real_)
+  # No type height to measure against (a caller that never carried one) -- fall
+  # back to this line's own height twice over, and if there is not even that,
+  # refuse rather than guess. A wrong fold merges two real rows into one.
+  if (!is.finite(h)) h <- ph
+  if (!is.finite(ph)) ph <- h
+  if (!is.finite(h) || !is.finite(ph) || h <= 0) return(FALSE)
+  span <- h + ph
+  if (min(d$x) > prev_left + 4) return(gap <= span * 1.4)
+  gap <= span * 1.15 && n_cols >= 2L && prev_filled >= 2L
 }
 
 # .doc_is_rule(d) -- is this line a printed RULE rather than a row of data?
@@ -1071,12 +1102,16 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     open_end <- isTRUE(win$open_end)
     max_gap <- .doc_num(tab$max_gap, 2.2)
     kept_top <- numeric(0); kept_fill <- integer(0); kept_money <- logical(0)
-    win_pitch <- .doc_pitch(w$y, q = 0.25)
     prev_left <- NA_real_; prev_i <- 0L
     # The previous PHYSICAL line, folded or kept. A wrap's leading is a distance
     # from the line above it, which is not the same thing as a distance from the
     # row above it once a cell wraps more than once.
     last_top <- NA_real_
+    # ...and its TYPE HEIGHT, which is what "one line" is measured against. See
+    # .doc_is_wrap: a page-wide pitch statistic is measured over the wrong
+    # population and rejects every wrap on an ordinary table. Assigned at exactly
+    # the same two places as last_top and nowhere else.
+    last_h <- NA_real_
     # How many columns the last KEPT row filled. A wrap is the overflow of a row
     # that had something in more than one column; the second line of a list is not.
     prev_filled <- 0L
@@ -1120,7 +1155,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
           .doc_is_wrap(d, prev_left,
                        as.numeric(attr(d, "top")) -
                          (if (is.finite(last_top)) last_top else kept_top[length(kept_top)]),
-                       win_pitch, n_filled, length(cols), prev_filled)) {
+                       n_filled, length(cols), prev_filled, last_h)) {
         for (i in seq_along(cells)) if (!is.na(cells[i]) && nzchar(cells[i])) {
           was <- out[[prev_i]][[cnames[i]]]
           out[[prev_i]][[cnames[i]]] <-
@@ -1130,6 +1165,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
               .doc_cell_value(out[[prev_i]][[cnames[i]]], ctypes[i])
         }
         last_top <- as.numeric(attr(d, "top"))
+        last_h <- suppressWarnings(max(as.numeric(d$height), na.rm = TRUE))
         next
       }
 
@@ -1199,6 +1235,7 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       out[[length(out) + 1L]] <- rec
       prev_i <- length(out); prev_left <- min(d$x)
       last_top <- as.numeric(attr(d, "top")); prev_filled <- as.integer(n_filled)
+      last_h <- suppressWarnings(max(as.numeric(d$height), na.rm = TRUE))
       last_pg <- as.integer(win$page); last_y <- max(d$y + d$height)
       fills <- c(fills, mean(!is.na(cells) & nzchar(cells)))
     }
