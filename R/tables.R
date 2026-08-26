@@ -1543,28 +1543,91 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   filled <- if (!nrow(rows)) integer(0) else vapply(cnames, function(n) {
     v <- rows[[n]]; sum(!is.na(v) & nzchar(v))
   }, integer(1))
+  # WHAT THE ENGINE ALREADY KNEW AND USED TO THROW AWAY. The __value companions
+  # are computed for every declared column above; counting them costs nothing and
+  # is the only thing that can tell a full column of the RIGHT words from a full
+  # column of the wrong ones. See .doc_col_report.
+  parsed <- if (!nrow(rows)) integer(0) else vapply(seq_along(cnames), function(i) {
+    if (identical(ctypes[i], "auto")) return(NA_integer_)
+    v <- rows[[paste0(cnames[i], "__value")]]
+    if (is.null(v)) NA_integer_ else sum(!is.na(v) & nzchar(as.character(v)))
+  }, integer(1))
+  multi_token <- if (!nrow(rows)) integer(0) else vapply(seq_along(cnames), function(i) {
+    if (identical(ctypes[i], "auto")) return(NA_integer_)
+    v <- trimws(as.character(rows[[cnames[i]]]))
+    sum(!is.na(v) & nzchar(v) & grepl("[[:space:]]", v))
+  }, integer(1))
+  report <- .doc_col_report(cnames, ctypes, filled, nrow(rows), tab,
+                            parsed, multi_token)
 
-  list(rows = rows,
-       report = .doc_col_report(cnames, ctypes, filled, nrow(rows), tab),
+  detail <- if (nrow(stops)) paste0(loc$detail, sprintf(
+              "; it stops on page %d, where the rows stop fitting it",
+              stops$page[nrow(stops)])) else loc$detail
+  # NOTHING SILENT. A column told what it holds, holding words that are not it,
+  # is not a thin column and does not read as one - so it says so itself, once,
+  # in the line the screen already prints under the table's name.
+  bad <- report$column[report$wrong_kind %in% TRUE]
+  if (length(bad))
+    detail <- paste0(detail, sprintf(
+      "; nothing in %s reads as %s, so that column is over the wrong part of the page",
+      .doc_and_list(bad),
+      if (length(bad) == 1L) "the kind of value it was set to hold"
+      else "the kind of value they were set to hold"))
+
+  list(rows = rows, report = report,
        spilled = spilled, stops = stops, row_fill = fills, n_rows = nrow(rows),
        n_header = n_header, anchor = loc$anchor, confidence = loc$confidence,
        last_page = last_pg, last_y = last_y,
-       detail = if (nrow(stops)) paste0(loc$detail, sprintf(
-                  "; it stops on page %d, where the rows stop fitting it",
-                  stops$page[nrow(stops)])) else loc$detail,
+       detail = detail,
        extended_to = loc$extended_to,
        pages = loc$pages, header_rows = n_header_rows)
 }
 
-# .doc_col_report(names, types, filled, n, tab) -> one row per column:
-# how full it came out, and whether that is below this table's threshold.
+# .doc_and_list(x) -- "Amount", "Amount and Balance", "Date, Amount and Balance".
+# A message a person reads, not a vector printed at them.
+.doc_and_list <- function(x) {
+  x <- as.character(x[!is.na(x) & nzchar(x)])
+  n <- length(x)
+  if (n == 0L) return("")
+  if (n == 1L) return(x)
+  paste(paste(x[-n], collapse = ", "), "and", x[n])
+}
+
+# .doc_col_report(names, types, filled, n, tab, parsed, multi_token) -> one row per
+# column: how full it came out, whether that is below this table's threshold, and
+# -- for a column whose kind somebody DECLARED -- whether what landed in it is
+# actually that kind of thing.
 #
 # A column can be legitimately empty -- the middle columns of a totals row, a
 # "notes" column used twice in forty rows -- so the threshold FLAGS, it never
 # drops, and a column marked `may_be_blank` is exempt from it entirely. The
 # default 0.5 is a starting point to be tuned per table, which is why it lives on
 # the table and not in params.R.
-.doc_col_report <- function(cnames, ctypes, filled, n, tab) {
+#
+# WHY `parsed` IS THE MOST VALUABLE NUMBER IN THIS FRAME.
+#
+# fill_rate asks only whether a cell has ANY text in it. Measured: a column
+# declared `money` whose band landed 60pt to the left held "Legal fees", "Court
+# filing" and "Disbursements" -- and reported filled 3, fill_rate 1.00, low_fill
+# FALSE, unclaimed 0, confidence 1.00, status ok. A perfectly full column of
+# clean-looking values, every one of them the wrong column's words. And the
+# engine ALREADY KNEW: it had computed `Amount__value` for each of those three
+# rows and got NA every time, then thrown the answer away.
+#
+# So two numbers per declared column, both free:
+#   parsed        how many cells produced a value of the declared kind
+#   multi_token   how many hold more than one whitespace-separated token
+# A money column at parse rate 0.00 is a BAND failure, not a thin column, and it
+# is a different thing to go and fix. multi_token is the other half of the same
+# picture: a column that swallowed its neighbour is full, parses, and holds two
+# things in every cell. Both are NA for an `auto` column, which declared no kind
+# and can therefore fail to be nothing.
+#
+# One guard, and between them they catch a band drawn over the wrong ink, a
+# column shifted sideways, a column whose neighbour was swallowed (A3), band
+# overflow, and OCR damage.
+.doc_col_report <- function(cnames, ctypes, filled, n, tab,
+                            parsed = NULL, multi_token = NULL) {
   min_fill <- .doc_num(tab$min_fill, 0.5)
   cols <- .doc_columns(tab)
   blank_ok <- vapply(seq_along(cnames), function(i)
@@ -1572,16 +1635,31 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
   if (!length(cnames))
     return(data.frame(column = character(0), type = character(0),
                       filled = integer(0), rows = integer(0), fill_rate = numeric(0),
+                      parsed = integer(0), parse_rate = numeric(0),
+                      multi_token = integer(0),
                       may_be_blank = logical(0), low_fill = logical(0),
+                      wrong_kind = logical(0),
                       stringsAsFactors = FALSE))
   filled <- if (length(filled) == length(cnames)) as.integer(filled)
             else rep(0L, length(cnames))
+  fit <- function(v) if (length(v) == length(cnames)) as.integer(v)
+                     else rep(NA_integer_, length(cnames))
+  parsed <- fit(parsed); multi_token <- fit(multi_token)
+  typed <- !(ctypes %in% "auto")
+  parsed[!typed] <- NA_integer_; multi_token[!typed] <- NA_integer_
   rate <- if (n > 0L) filled / n else rep(NA_real_, length(cnames))
+  prate <- ifelse(is.na(parsed) | filled == 0L, NA_real_, parsed / pmax(filled, 1L))
   data.frame(column = cnames, type = ctypes, filled = filled,
              rows = rep(as.integer(n), length(cnames)),
              fill_rate = round(rate, 3),
+             parsed = parsed, parse_rate = round(prate, 3),
+             multi_token = multi_token,
              may_be_blank = blank_ok,
              low_fill = !blank_ok & !is.na(rate) & rate < min_fill,
+             # NOT ONE CELL of a column that was told what it holds actually holds
+             # it. That is the band being wrong, and it is worth saying in its own
+             # words rather than as a thin column, which it is not.
+             wrong_kind = !is.na(prate) & prate == 0 & filled > 0L,
              stringsAsFactors = FALSE)
 }
 

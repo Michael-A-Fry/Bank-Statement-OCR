@@ -86,6 +86,17 @@ is_document_template <- function(t) {
     p <- c(p, w("min_fill must be between 0 and 1"))
   hr <- .doc_int(tab$header_rows, 1L)
   if (is.na(hr) || hr < 0L) p <- c(p, w("header_rows must be 0 or more"))
+  # doc_pages is the length of the document this table was DRAWN on, and it is
+  # what tells the reader that a positional match on a document of a different
+  # length is worth less (R/tables.R reads the table's own value first, then the
+  # template's). A per-table override is allowed -- a template grown over several
+  # examples has tables drawn on documents of different lengths -- so it is
+  # checked here rather than silently ignored.
+  if (!is.null(.doc_key(tab, "doc_pages"))) {
+    dp <- .doc_int(tab$doc_pages)
+    if (is.na(dp) || dp < 1L)
+      p <- c(p, w("doc_pages must be the number of pages the example had"))
+  }
   p
 }
 
@@ -221,31 +232,140 @@ delete_document_template <- function(id, dir = "templates/documents_user") {
   invisible(hit)
 }
 
-# detect_document_template(input, dtemplates) -> list(template_id, matched, score,
-# detail). Identical rule to detect_form(): every identifying phrase must appear,
-# and the winner must be strictly more specific than any other match -- a tie is
-# NOT a match, because choosing arbitrarily between two templates is choosing
-# arbitrarily between two sets of column bands.
+# .doc_fp_norm(x) -- ONE rule for comparing a typed phrase against a printed page.
+#
+# The two levels of this mode used to compare text differently: the fingerprint
+# matched with grepl(fixed = TRUE) -- case, spacing and punctuation all
+# significant -- while the header matcher normalised everything away. Measured
+# against a page printing "QUARTERLY PORTFOLIO REPORT": the phrase typed as
+# "Quarterly Portfolio Report" NEVER matched, and nothing on screen said why.
+# That is almost certainly the original complaint, "I put a phrase printed on it,
+# bang smack on front page, still used another template".
+#
+# So both sides are folded the same way: case, punctuation and runs of spaces
+# stop mattering. LINE BREAKS DELIBERATELY DO NOT FOLD. Collapsing them too would
+# let a phrase match across a line boundary, which makes detection LOOSER -- the
+# wrong direction for a fail-closed engine.
+#
+# Byte-wise and wrapped in safe(): a PDF's text layer is not always valid UTF-8
+# and detection must never crash on a file it merely reads badly.
+.doc_fp_norm <- function(x) {
+  x <- as.character(x %||% "")
+  safe({
+    x <- gsub("\u00a0", " ", x, fixed = TRUE, useBytes = TRUE)
+    x <- gsub("([A-Z])", "\\L\\1", x, perl = TRUE, useBytes = TRUE)
+    x <- gsub("[^a-z0-9\n]+", " ", x, useBytes = TRUE)
+    x <- gsub("[ \t]+", " ", x, useBytes = TRUE)
+    x <- gsub(" *\n *", "\n", x, useBytes = TRUE)
+    gsub("^[ \n]+|[ \n]+$", "", x, useBytes = TRUE)
+  }, x)
+}
+
+# .doc_tpl_name(t) -- a report template said in words. template_display_name()
+# appends "statement", which is exactly what these are not.
+.doc_tpl_name <- function(t) {
+  lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
+                      trimws(as.character(t$statement_type %||% ""))))
+  if (nzchar(lab)) lab else as.character(t$id %||% "this template")[1]
+}
+
+# detect_document_template(input, dtemplates) -> THE SAME RETURN SHAPE
+# detect_statement() has: template_id, matched, score, candidates, eligible_ids,
+# tied, margin, runner_up, detail, detail_plain.
+#
+# WHY THE SHAPE CHANGED. Every phrase still has to appear -- that stays the
+# eligibility gate -- but two things it could not say cost real work:
+#
+#   * A TIE RETURNED NOTHING. Two good one-phrase templates that both fit meant
+#     "unsupported" on a document the library can read perfectly, and it named
+#     neither of them. The statement route has never done that: it reports the tie
+#     and the caller reads the document with the best of them and marks it for
+#     review. Choosing by a PRINCIPLED order (most phrases, then shipped before
+#     hand-built, then the id) is not choosing arbitrarily, and it is a great deal
+#     better than refusing to read a document nobody can then convert.
+#   * A NEAR MISS SAID NOTHING. "no document template's identifying phrases were
+#     all found" cannot be acted on. Scoring fractionally costs nothing and lets
+#     this route say what the statement route says: which template came closest
+#     and which wording was not on the page.
 detect_document_template <- function(input, dtemplates) {
-  hay <- paste(input$pages %||% character(0), collapse = "\n")
-  if (!length(dtemplates))
+  none <- function(detail, plain = NULL)
+    list(template_id = NA_character_, matched = FALSE, score = 0,
+         candidates = data.frame(id = character(0), score = numeric(0),
+                                 need = numeric(0), stringsAsFactors = FALSE),
+         eligible_ids = character(0), tied = character(0),
+         margin = NA_real_, runner_up = NA_character_,
+         detail = detail, detail_plain = plain)
+  if (!length(dtemplates)) return(none("no document templates are installed"))
+
+  hay <- .doc_fp_norm(paste(input$pages %||% character(0), collapse = "\n"))
+  ids <- names(dtemplates)
+  sc <- lapply(ids, function(i) {
+    need <- as.character(unlist(dtemplates[[i]]$fingerprint$page_contains_all %||%
+                                  character(0)))
+    hit <- if (!length(need)) logical(0) else
+      vapply(need, function(ph) {
+        k <- .doc_fp_norm(ph)
+        nzchar(k) && grepl(k, hay, fixed = TRUE, useBytes = TRUE)
+      }, logical(1))
+    list(score = sum(hit), need = length(need), missing = need[!hit])
+  })
+  scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
+  needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
+  # A template with NO phrases can never be matched (validation refuses one), so
+  # it is never eligible however the page reads.
+  eligible <- needs > 0 & scores >= needs
+
+  # THE ORDER, and every step of it is principled. Most phrases first (the most
+  # specific template that fits wins), then a shipped template ahead of one built
+  # here (a shipped one has a test behind it), then the id so the answer is fully
+  # deterministic and never depends on the order a folder happened to list in.
+  shipped <- vapply(ids, function(i)
+    as.numeric(!identical(dtemplates[[i]]$origin %||% "default", "user")), numeric(1))
+  ord <- order(scores, needs, shipped, ids,
+               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
+  ids <- ids[ord]; scores <- scores[ord]; needs <- needs[ord]
+  shipped <- shipped[ord]; eligible <- eligible[ord]; sc <- sc[ord]
+  cand_df <- data.frame(id = ids, score = scores, need = needs,
+                        stringsAsFactors = FALSE)
+
+  if (!any(eligible)) {
+    best <- ids[1]; miss <- sc[[1]]$missing
     return(list(template_id = NA_character_, matched = FALSE, score = 0,
-                detail = "no document templates are installed"))
-  full <- vapply(dtemplates, function(t) {
-    need <- as.character(unlist(t$fingerprint$page_contains_all %||% character(0)))
-    length(need) > 0 && all(vapply(need, function(ph) grepl(ph, hay, fixed = TRUE), logical(1)))
-  }, logical(1))
-  if (!any(full))
-    return(list(template_id = NA_character_, matched = FALSE, score = 0,
-                detail = "no document template's identifying phrases were all found"))
-  need_len <- vapply(dtemplates, function(t)
-    length(t$fingerprint$page_contains_all %||% character(0)), integer(1))
-  cand <- which(full)
-  best <- cand[which.max(need_len[cand])]
-  matched <- sum(need_len[cand] == need_len[best]) == 1
-  list(template_id = names(dtemplates)[best], matched = matched, score = need_len[best],
+      candidates = cand_df, eligible_ids = character(0), tied = character(0),
+      margin = NA_real_, runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
+      detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
+        if (length(miss)) sprintf(" (missing %s)",
+          paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
+      # The same fact for the person holding the document: no id, no fraction.
+      detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
+        .doc_tpl_name(dtemplates[[best]]),
+        if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
+        else "the wording it looks for")))
+  }
+
+  e_ids <- ids[eligible]; e_needs <- needs[eligible]; e_ship <- shipped[eligible]
+  win <- e_ids[1]
+  second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
+  second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
+  # Unambiguous when the winner is strictly more specific, or ties on specificity
+  # and something principled separates them (a shipped template over a hand-built
+  # one). A shipped template drawing level with a hand-built one is not a real
+  # question, and stopping to ask it helps nobody.
+  matched <- (e_needs[1] > second_need) ||
+             (e_needs[1] == second_need && e_ship[1] > second_ship)
+  tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
+          else character(0)
+  if (length(tied) < 2L) tied <- character(0)
+  list(template_id = win, matched = matched, score = e_needs[1],
+       candidates = cand_df, eligible_ids = e_ids, tied = tied,
+       margin = if (is.finite(second_need)) e_needs[1] - second_need else Inf,
+       runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
        detail = if (matched) "matched by identifying phrases"
-                else "several document templates are equally specific here, so none was chosen")
+                else sprintf("%d document templates are equally specific here (%s)",
+                             length(tied), paste(tied, collapse = ", ")),
+       detail_plain = if (matched) NULL else
+         sprintf("%d templates fit this document equally well, so it was read with the %s.",
+                 length(tied), .doc_tpl_name(dtemplates[[win]])))
 }
 
 # ---------------------------------------------------------------------------
@@ -264,27 +384,55 @@ detect_document_template <- function(input, dtemplates) {
 #   long     every table stacked into one long frame (table/name/page/row/
 #            column/value) -- the shape that lets tables of different widths
 #            live in one file.
+#   unclaimed every word that fell inside a table's boundary and into no column
+#            (table/page/x/y/text). See document_unclaimed().
+#   misses   the keys of the tables this document does not carry.
+#
+# ABSENT IS NOT EMPTY. A table the reader could find no evidence of anywhere
+# (`anchor = "not_found"`) gets NO entry here at all -- no sheet, no long rows, no
+# per-column report -- rather than an entry full of zeroes that reads as "this
+# table is here and has nothing in it". Those two are different facts and a
+# spreadsheet cannot tell them apart. It is not silent: the key goes into `misses`
+# and document_summary() prints one row per miss saying it is not on this copy.
 extract_document <- function(input, tmpl) {
   tabs <- tmpl$tables %||% list()
   keys <- names(tabs) %||% character(0)
-  out <- list()
+  out <- list(); misses <- character(0)
   for (k in keys) {
     tab <- tabs[[k]]
     loc <- doc_locate_table(input, tab, tmpl)
+    if (identical(as.character(loc$anchor %||% "")[1], "not_found")) {
+      misses <- c(misses, k)
+      next
+    }
     r <- doc_table_rows(input, tab, tmpl, loc)
     r$key <- k
     r$name <- as.character(tab$name %||% k)[1]
     out[[k]] <- r
   }
   pairs <- doc_pairs(input, tmpl)
-  list(tables = out, pairs = pairs,
-       summary = document_summary(out),
+  list(tables = out, pairs = pairs, misses = misses,
+       summary = document_summary(out, misses, tabs),
        report = document_column_report(out),
-       long = document_long(out))
+       long = document_long(out),
+       unclaimed = document_unclaimed(out))
 }
 
-# document_summary(tables) -> the one-row-per-table picture described above.
-document_summary <- function(tables) {
+# .doc_table_optional(tab) -- TRUE when this table is one the document is not
+# expected to always carry, so its absence is not a fault.
+#
+# Two ways to say it, and the second is not this file's to invent: `optional: true`
+# on the table, or a table set to be read wherever it appears (`occurrence: all`),
+# where three-this-month-and-seven-next means absence is the ordinary case and a
+# permanent needs_review is a warning nobody reads.
+.doc_table_optional <- function(tab) {
+  isTRUE(tab$optional) ||
+    identical(as.character(tab$occurrence %||% "once")[1], "all")
+}
+
+# document_summary(tables, misses, specs) -> the one-row-per-table picture
+# described above, plus one row per table that is NOT on this document.
+document_summary <- function(tables, misses = character(0), specs = list()) {
   # AN EMPTY SUMMARY HAS TO HAVE THE SAME COLUMN TYPES AS A FULL ONE.
   #
   # It used to be ten character(0) columns, which reads as harmless and is not: a
@@ -298,8 +446,22 @@ document_summary <- function(tables) {
                 rows = integer(0), columns = integer(0), thin_columns = integer(0),
                 unclaimed_words = integer(0), found_by = character(0),
                 confidence = numeric(0), note = character(0))
+  miss_rows <- lapply(as.character(misses %||% character(0)), function(k) {
+    tb <- specs[[k]]
+    data.frame(table = k,
+               name = as.character((tb$name %||% k))[1],
+               pages = "", rows = 0L, columns = 0L, thin_columns = 0L,
+               unclaimed_words = 0L, found_by = "not on this document",
+               confidence = NA_real_,
+               note = if (.doc_table_optional(tb %||% list()))
+                        "this table is not on this copy, and it is set to be read wherever it appears"
+                      else "this table is not on this copy",
+               stringsAsFactors = FALSE)
+  })
   if (!length(tables))
-    return(as.data.frame(proto, stringsAsFactors = FALSE))
+    return(if (length(miss_rows)) {
+      out <- do.call(rbind, miss_rows); rownames(out) <- NULL; out
+    } else as.data.frame(proto, stringsAsFactors = FALSE))
   found_words <- c(header = "its heading", first_column = "the rows it starts with",
                    position_same_page = "where it sat on the example",
                    position_other_page = "where it sat on the example (different length document)")
