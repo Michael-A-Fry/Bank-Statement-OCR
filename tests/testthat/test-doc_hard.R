@@ -851,3 +851,92 @@ test_that("a page reprinting only the first line of a two-line heading skips one
   found <- .doc_find_printed_header(lines, sig)
   expect_equal(found$n_lines, 1L)     # not 2 - the second line is a data row
 })
+
+# ---------------------------------------------------------------------------
+# THE SAME TABLE, PRINTED FURTHER ACROSS THE PAGE.
+#
+# A table is found by its heading, which moves the reading window VERTICALLY to
+# wherever it turned up. Nothing moved it horizontally, so the bands stayed where
+# they were drawn on the one example document. Measured before the fix, on bands
+# drawn at 55-150 and 195-260:
+#
+#   shift  located by  confidence  what came out
+#     0pt  header      1.00        ABC/100  DEF/250  GHI/375
+#    60pt  header      1.00        ABC/NA   DEF/NA   GHI/NA
+#   120pt  header      1.00        NA/ABC   NA/DEF   NA/GHI    <- Code in Units
+#
+# Found with confidence 1.00, and Units reading as a full column of clean values
+# every one of which was wrong.
+# ---------------------------------------------------------------------------
+
+.crux_doc <- function(dx = 0) {
+  rows <- list(c("Code", "Units"), c("ABC", "100"), c("DEF", "250"), c("GHI", "375"))
+  w <- do.call(rbind, lapply(seq_along(rows), function(i) data.frame(
+    text = rows[[i]], x = c(60, 200) + dx, y = 100 + (i - 1) * 20,
+    width = c(40, 40), height = 10, stringsAsFactors = FALSE)))
+  list(kind = "pdf", words = list(w), pages = "x",
+       page_width = 595, page_height = 842)
+}
+.crux_tab <- list(name = "Holdings",
+  start = list(page = 1, y = 95), end = list(page = 1, y = 200), header_rows = 1L,
+  anchor = list(header_text = list("Code", "Units")),
+  columns = list(list(name = "Code", x_min = 55, x_max = 150),
+                 list(name = "Units", x_min = 195, x_max = 260)))
+.crux_tmpl <- list(ref_width = 595, ref_height = 842)
+
+test_that("a table printed further across the page still reads into the right columns", {
+  for (dx in c(0, 20, 40, 60, 80, 120, 200)) {
+    inp <- .crux_doc(dx)
+    rr <- doc_table_rows(inp, .crux_tab, .crux_tmpl)
+    expect_identical(rr$rows$Code, c("ABC", "DEF", "GHI"), info = paste("shift", dx))
+    expect_identical(rr$rows$Units, c("100", "250", "375"), info = paste("shift", dx))
+    expect_equal(nrow(rr$spilled), 0L, info = paste("shift", dx))
+  }
+})
+
+test_that("a table that already fits is never moved", {
+  # The band is drawn WIDER than the heading word inside it, and not
+  # symmetrically, so the raw difference between a heading cell's centre and its
+  # band's centre carries a constant that has nothing to do with this document -
+  # measured at -15pt on a table that had not moved at all. Asking "is anything
+  # actually outside its band?" first is what separates the two.
+  for (dx in c(0, 20, 40)) {
+    loc <- doc_locate_table(.crux_doc(dx), .crux_tab, .crux_tmpl)
+    expect_equal(loc$band_shift, 0, info = paste("shift", dx))
+  }
+})
+
+test_that("a correction nobody can see is not made silently", {
+  loc <- doc_locate_table(.crux_doc(120), .crux_tab, .crux_tmpl)
+  expect_gt(loc$band_shift, 0)
+  expect_match(loc$detail, "further right than the example")
+  expect_match(loc$detail, "columns were moved to match")
+})
+
+test_that("the shift is refused when it cannot be trusted", {
+  hdr <- function(...) {
+    d <- data.frame(..., stringsAsFactors = FALSE)
+    structure(d, top = min(d$y))
+  }
+  cols2 <- .crux_tab$columns
+  # ONE column matched is a coincidence, not a measurement
+  one <- hdr(text = "Code", x = 300, y = 100, width = 40, height = 10)
+  expect_equal(.doc_band_shift(one, cols2), 0)
+  # columns that DISAGREE mean this is not the same table shape - moving the
+  # bands on that evidence would make it worse, not better
+  disagree <- hdr(text = c("Code", "Units"), x = c(300, 210), y = 100,
+                  width = 40, height = 10)
+  expect_equal(.doc_band_shift(disagree, cols2), 0)
+  # and nothing to match at all
+  expect_equal(.doc_band_shift(NULL, cols2), 0)
+  expect_equal(.doc_band_shift(one, list()), 0)
+})
+
+test_that("a table read from where it sat on the example is left alone", {
+  # No heading was found, so there is nothing to measure the shift against. The
+  # honest answer is to change nothing.
+  blind <- .crux_tab; blind$anchor <- list(header_text = list("Nothing", "Here"))
+  loc <- doc_locate_table(.crux_doc(120), blind, .crux_tmpl)
+  expect_false(identical(loc$anchor, "header"))
+  expect_equal(loc$band_shift, 0)
+})

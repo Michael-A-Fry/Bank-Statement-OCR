@@ -500,6 +500,101 @@
   NULL
 }
 
+# ---------------------------------------------------------------------------
+# WHERE THIS COPY PRINTS THE TABLE, SIDEWAYS.
+#
+# A table is found by its heading, which moves the reading WINDOW vertically to
+# wherever that heading turned up. Nothing moved it HORIZONTALLY: the column
+# bands stayed exactly where they were drawn on the one example document, in
+# absolute page points. So a template could find a table perfectly and still read
+# every value into the wrong column.
+#
+# Measured on a two-column table whose bands were drawn at 55-150 and 195-260,
+# read on copies where the table sits further right:
+#
+#   shift  located by  confidence  what came out
+#     0pt  header      1.00        ABC/100  DEF/250  GHI/375
+#    40pt  header      1.00        ABC/100  DEF/250  GHI/375
+#    60pt  header      1.00        ABC/NA   DEF/NA   GHI/NA
+#   120pt  header      1.00        NA/ABC   NA/DEF   NA/GHI     <- Code in Units
+#
+# At 120pt the table is found with confidence 1.00 and Units reads as a perfectly
+# full column of clean values, every one of them wrong. That is the cardinal
+# failure this product exists to prevent, and it is exactly the case a template
+# built from many examples meets every day.
+#
+# The correction is free at the moment of the match. The heading LINE is in hand,
+# with its words and their x positions ON THIS DOCUMENT; the column names came
+# off the heading words on the example. So: match each column's name to the cell
+# of this heading that carries it, and the median difference between where those
+# cells sit and where the bands sit is how far the table has moved.
+#
+# THREE REFUSALS, because a wrong shift is worse than none:
+#   * fewer than two columns matched -- one agreement is a coincidence;
+#   * the columns disagree by more than a few points -- then the table is not the
+#     same shape here and moving the bands would make it worse, not better;
+#   * EVERY heading cell already falls inside its own band -- the table has not
+#     moved, so nothing is touched.
+# Every one of those returns 0, which is today's behaviour exactly.
+#
+# That last refusal is what makes the measure trustworthy, and it is not
+# obvious. A band is drawn WIDER than the heading word inside it, and not
+# symmetrically, so the raw difference between a heading cell's centre and its
+# band's centre is the sum of two things: how far the table moved (what we want)
+# and how the band happened to be drawn around its heading on the example (which
+# we do not). Measured on a table that had not moved at all, that constant was
+# -15pt -- so a naive reading would shove every band 15pt left on a document that
+# was already perfect. Asking "is anything actually outside its band?" first
+# separates them: no, and there is nothing to correct; yes, and the raw median is
+# a good enough estimate to bring every cell comfortably back inside.
+
+# .doc_band_shift(d, cols) -> how far right (positive) this document prints the
+# table, compared with where the template's bands sit. 0 when it cannot tell.
+.doc_band_shift <- function(d, cols) {
+  if (is.null(d) || !NROW(d) || !length(cols)) return(0)
+  cells <- .doc_cells(d, .doc_gap_for(d))
+  if (length(cells) < 2L) return(0)
+  ctext <- vapply(cells, function(z) .doc_norm(paste(z$text, collapse = " ")),
+                  character(1))
+  ccx   <- vapply(cells, function(z)
+    mean(c(min(z$x), max(z$x + .doc_num(z$width, 0)))), numeric(1))
+  used <- rep(FALSE, length(cells))
+  diffs <- numeric(0); outside <- logical(0)
+  for (j in seq_along(cols)) {
+    nm <- .doc_norm(as.character(cols[[j]]$name %||% ""))
+    lo <- .doc_num(cols[[j]]$x_min, NA_real_); hi <- .doc_num(cols[[j]]$x_max, NA_real_)
+    if (!nzchar(nm) || !is.finite(lo) || !is.finite(hi)) next
+    # The cell that IS this column's heading. Exact first, then a containment
+    # either way ("Unit price" printed as one cell, "Units" named "Units ").
+    hit <- which(!used & nzchar(ctext) & ctext == nm)
+    if (!length(hit))
+      hit <- which(!used & nzchar(ctext) &
+                     (vapply(ctext, function(t) grepl(t, nm, fixed = TRUE), logical(1)) |
+                      vapply(ctext, function(t) grepl(nm, t, fixed = TRUE), logical(1))))
+    if (length(hit) != 1L) next     # ambiguous is the same as unknown
+    used[hit] <- TRUE
+    diffs <- c(diffs, ccx[hit] - (lo + hi) / 2)
+    outside <- c(outside, ccx[hit] < lo || ccx[hit] > hi)
+  }
+  if (length(diffs) < 2L) return(0)
+  if (!any(outside)) return(0)      # it already fits -- leave it alone
+  m <- stats::median(diffs)
+  if (max(abs(diffs - m)) > 12) return(0)
+  if (abs(m) < 2) return(0)
+  as.numeric(m)
+}
+
+# .doc_shift_cols(cols, dx) -> the same columns, moved.
+.doc_shift_cols <- function(cols, dx) {
+  dx <- .doc_num(dx, 0)
+  if (!is.finite(dx) || dx == 0 || !length(cols)) return(cols)
+  lapply(cols, function(cc) {
+    if (is.finite(.doc_num(cc$x_min, NA_real_))) cc$x_min <- .doc_num(cc$x_min) + dx
+    if (is.finite(.doc_num(cc$x_max, NA_real_))) cc$x_max <- .doc_num(cc$x_max) + dx
+    cc
+  })
+}
+
 # .doc_find_first_column(lines, need, col) -> the top of the first line whose
 # FIRST-COLUMN band carries one of the remembered row labels, or NULL. This is
 # the second anchor: a table whose header wording changed (or was never printed)
@@ -608,6 +703,12 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
   hdr_sig <- if (start_at_header)
     .doc_header_printed(lines0, y_start, n_header_rows) else character(0)
 
+  # ...and how far sideways this copy prints it. Only ever measured off a heading
+  # the tool actually FOUND (anchor == "header"); a table read from the
+  # coordinates it was drawn at has nothing to measure against and is left alone.
+  band_shift <- if (identical(anchor, "header") && !is.null(h))
+    .doc_band_shift(lines0[[h$index]], cols0) else 0
+
   # A found header on the start page tells us what the SAME header looks like on
   # a continuation page, which is the only reliable way to know a page is more of
   # this table rather than the start of the next one.
@@ -691,10 +792,17 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
       "; its heading is printed again on page%s %s and is not read as rows",
       if (length(rep_pages) == 1L) "" else "s",
       paste(rep_pages, collapse = ", ")))
+  # A CORRECTION NOBODY CAN SEE IS HOW THE NEXT WRONG ANSWER GETS BUILT. If the
+  # bands were moved, say by how much and on the strength of what, in the same
+  # sentence that says how the table was found.
+  if (is.finite(band_shift) && band_shift != 0)
+    detail <- paste0(detail, sprintf(
+      "; this copy prints it %.0fpt further %s than the example, and its columns were moved to match",
+      abs(band_shift), if (band_shift > 0) "right" else "left"))
   list(pages = pages, windows = windows, anchor = anchor,
        confidence = .doc_anchor_confidence(anchor, hit),
        detail = detail, extended_to = extended_to, header_tops = header_tops,
-       header_sig = hdr_sig)
+       header_sig = hdr_sig, band_shift = as.numeric(band_shift))
 }
 
 # ---------------------------------------------------------------------------
@@ -1149,6 +1257,11 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
     if (!(t %in% .DOC_TYPES)) "auto" else t
   }, character(1))
   loc <- loc %||% doc_locate_table(input, tab, tmpl)
+  # ...MOVED TO WHERE THIS COPY PRINTS THEM. Measured off the heading the locator
+  # found (.doc_band_shift); 0 whenever it could not tell, which is the behaviour
+  # every template had before. The names and the types are unaffected - only where
+  # each band sits on the paper.
+  cols <- .doc_shift_cols(cols, loc$band_shift %||% 0)
 
   empty_rows <- function() {
     d <- data.frame(page = integer(0), row = integer(0), stringsAsFactors = FALSE)
