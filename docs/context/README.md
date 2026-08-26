@@ -16,8 +16,8 @@ Reference for whoever owns or changes the engine. None of this tells you how to
 | [metadata-capture.md](metadata-capture.md) | What the local-only metadata corpus stores per run, and the per-level privacy notes. Read before answering "what does this tool keep about our clients?". |
 | [edge-cases.md](edge-cases.md) | Real-world statement edge cases, each with an honest status. Read to decide whether an odd statement is a known limit or a bug. |
 | [outstanding-work.md](outstanding-work.md) | **The live register.** Everything raised in review that is not yet done, in the words it was raised in, with the design already agreed for each. Leads with the faults that produce a wrong figure. Start here before picking up work. |
-| [findings-2026-08-26.md](findings-2026-08-26.md) | The investigation behind that register: thirteen faults root-caused against the real code and reproduced, each with its exact edit sites. Read the entry before implementing it. |
 | [findings-register.md](findings-register.md) | Every defect found by review or real use, with its evidence and whether it is fixed. The audit trail behind the changelog. |
+| [findings-2026-08-26.md](findings-2026-08-26.md) | The investigation behind the register: thirteen faults root-caused against the real code and reproduced, each with its exact edit sites. Most are now fixed; the page is kept because it is the evidence for *why* they were fixed that way. |
 | [roadmap.md](roadmap.md) | The short prioritised backlog, the simplicity guardrails, and what was killed. |
 | [engine-audit.md](engine-audit.md) | What the engine audit left standing: the ideas deliberately **not** built, each with the fact that would change the answer. Read before proposing one of them again. |
 | [architecture/legacy-qlik-mapping.md](architecture/legacy-qlik-mapping.md) | What the legacy Qlik tool produced, kept as the parity reference for downstream categorisation. Cited as evidence by the findings register. |

@@ -79,6 +79,167 @@
   problems
 }
 
+# .detect_by_fingerprint(input, templates, noun, norm, name_fn) -> THE SAME RETURN
+# SHAPE detect_statement() has: template_id, matched, score, candidates,
+# eligible_ids, tied, margin, runner_up, detail, detail_plain.
+#
+# ONE DETECTOR FOR THE TWO OTHER ROUTES. detect_form() and
+# detect_document_template() were eighty-five identical lines apiece, differing in
+# four things: the noun in two messages, which normaliser folded the text, which
+# namer said the template in words, and the argument's name. The two routes the
+# owner insists must be treated identically were kept identical only by somebody
+# remembering to edit both files -- so a fix to one was a drift in the other, and
+# an alternative route is a route that rots. The four differences are parameters
+# now; nothing else about either route's answer changed.
+#
+# WHY THE NORMALISER STAYS A PARAMETER RATHER THAN BEING FOLDED IN TOO: .form_fp_norm
+# and .doc_fp_norm are deliberate separate copies (see the comment above
+# .form_fp_norm in R/forms.R -- the routes must not depend on each other's files
+# for the rule, and a test pins the two to the same answers). The SHAPE is what is
+# shared here, which is what was being duplicated.
+#
+# Every phrase still has to appear -- that stays the eligibility gate -- but two
+# things the old per-route detectors could not say cost real work:
+#
+#   * A TIE RETURNED NOTHING. Two good one-phrase templates that both fit meant
+#     "unsupported" on a document the library can read perfectly, and it named
+#     neither of them. The statement route has never done that: it reports the tie,
+#     reads with the best of them and marks the run for review. Choosing by a
+#     PRINCIPLED order (most phrases, then shipped before hand-built, then the id)
+#     is not choosing arbitrarily, and it beats refusing to read a document nobody
+#     can then convert.
+#   * A NEAR MISS SAID NOTHING. "no template's identifying phrases were all found"
+#     cannot be acted on. Scoring fractionally costs nothing and lets these routes
+#     say which template came closest and which wording was not on the page.
+.detect_by_fingerprint <- function(input, templates, noun, norm, name_fn) {
+  none <- function(detail, plain = NULL)
+    list(template_id = NA_character_, matched = FALSE, score = 0,
+         candidates = data.frame(id = character(0), score = numeric(0),
+                                 need = numeric(0), stringsAsFactors = FALSE),
+         eligible_ids = character(0), tied = character(0),
+         margin = NA_real_, runner_up = NA_character_,
+         detail = detail, detail_plain = plain)
+  if (!length(templates))
+    return(none(sprintf("no %s templates are installed", noun)))
+
+  hay <- norm(paste(input$pages %||% character(0), collapse = "\n"))
+  ids <- names(templates)
+  # A hand-assembled unnamed list still has to come back with an answer rather
+  # than an error: the id is the key it was filed under, or its position.
+  if (is.null(ids)) ids <- as.character(seq_along(templates))
+  ids[!nzchar(ids)] <- as.character(seq_along(templates))[!nzchar(ids)]
+  names(templates) <- ids
+  sc <- lapply(ids, function(i) {
+    need <- as.character(unlist(templates[[i]]$fingerprint$page_contains_all %||%
+                                  character(0)))
+    hit <- if (!length(need)) logical(0) else
+      vapply(need, function(ph) {
+        k <- norm(ph)
+        nzchar(k) && grepl(k, hay, fixed = TRUE, useBytes = TRUE)
+      }, logical(1))
+    list(score = sum(hit), need = length(need), missing = need[!hit])
+  })
+  scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
+  needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
+  # A template with NO phrases can never be matched (validation refuses one), so
+  # it is never eligible however the page reads.
+  eligible <- needs > 0 & scores >= needs
+
+  # THE ORDER, and every step of it is principled. Most phrases first (the most
+  # specific template that fits wins), then a shipped template ahead of one built
+  # here (a shipped one has a test behind it), then the id so the answer is fully
+  # deterministic and never depends on the order a folder happened to list in.
+  shipped <- vapply(ids, function(i)
+    as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
+  ord <- order(scores, needs, shipped, ids,
+               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
+  ids <- ids[ord]; scores <- scores[ord]; needs <- needs[ord]
+  shipped <- shipped[ord]; eligible <- eligible[ord]; sc <- sc[ord]
+  cand_df <- data.frame(id = ids, score = scores, need = needs,
+                        stringsAsFactors = FALSE)
+
+  if (!any(eligible)) {
+    best <- ids[1]; miss <- sc[[1]]$missing
+    return(list(template_id = NA_character_, matched = FALSE, score = 0,
+      candidates = cand_df, eligible_ids = character(0), tied = character(0),
+      margin = NA_real_, runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
+      detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
+        if (length(miss)) sprintf(" (missing %s)",
+          paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
+      # The same fact for the person holding the document: no id, no fraction.
+      detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
+        name_fn(templates[[best]]),
+        if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
+        else "the wording it looks for")))
+  }
+
+  e_ids <- ids[eligible]; e_needs <- needs[eligible]; e_ship <- shipped[eligible]
+  win <- e_ids[1]
+  second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
+  second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
+  # Unambiguous when the winner is strictly more specific, or ties on specificity
+  # and something principled separates them (a shipped template over a hand-built
+  # one). A shipped template drawing level with a hand-built one is not a real
+  # question, and stopping to ask it helps nobody.
+  matched <- (e_needs[1] > second_need) ||
+             (e_needs[1] == second_need && e_ship[1] > second_ship)
+  tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
+          else character(0)
+  if (length(tied) < 2L) tied <- character(0)
+  list(template_id = win, matched = matched, score = e_needs[1],
+       candidates = cand_df, eligible_ids = e_ids, tied = tied,
+       margin = if (is.finite(second_need)) e_needs[1] - second_need else Inf,
+       runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
+       detail = if (matched) "matched by identifying phrases"
+                else sprintf("%d %s templates are equally specific here (%s)",
+                             length(tied), noun, paste(tied, collapse = ", ")),
+       detail_plain = if (matched) NULL else
+         sprintf("%d templates fit this document equally well, so it was read with the %s.",
+                 length(tied), name_fn(templates[[win]])))
+}
+
+# .save_template_yaml(t, dir, validate_fn, noun) -> path. THE ONE SAVER the three kinds
+# share: strip the load-time origin, refuse an invalid template loudly, then write
+# <dir>/<id>.yaml safely.
+#
+# WHY IT IS ONE. save_user_template, save_fields_template and save_document_template
+# were the same six steps in the same order with the same comment copied into all
+# three -- except that only the statement one had the slug guard below. So on the
+# two OTHER routes, which have no reconciliation behind them, a report template
+# called "ACME Q1!" silently overwrote one called "ACME-Q1": both sanitise to
+# ACME_Q1.yaml, and months of somebody's work went with it. Merging is what makes
+# that impossible rather than what risks it.
+#
+# THE SLUG GUARD. Two DISTINCT ids can sanitise to the same file slug. Only
+# overwrite when the existing file holds the SAME original id (a genuine edit);
+# otherwise pick the next free slug so a different template is never silently
+# clobbered. (Templates are keyed by their id field at load, so the distinct ids
+# stay distinct -- only the filename is uniquified.)
+#
+# SAFELY: a copy of the previous version, a temp file, then an atomic rename. A
+# template is months of somebody's work that exists nowhere else on an offline box,
+# and a bare write_yaml truncates the target before it writes. See
+# save_yaml_safely() in R/util.R.
+.save_template_yaml <- function(t, dir, validate_fn, noun) {
+  t$origin <- NULL   # origin is assigned at load time, not stored
+  probs <- validate_fn(t)
+  if (length(probs)) stop(noun, " is not valid: ", paste(probs, collapse = "; "))
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  base_slug <- gsub("[^A-Za-z0-9_]+", "_", t$id %||% "user_template")
+  slug <- base_slug; k <- 2L
+  repeat {
+    path <- file.path(dir, paste0(slug, ".yaml"))
+    if (!file.exists(path)) break
+    existing_id <- tryCatch(yaml::read_yaml(path)$id, error = function(e) NULL)
+    if (identical(existing_id, t$id)) break
+    slug <- paste0(base_slug, "_", k); k <- k + 1L
+  }
+  path <- file.path(dir, paste0(slug, ".yaml"))
+  ok <- save_yaml_safely(t, path)
+  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
+  invisible(path)
+}
+
 # resolve_date_format(values, formats) -> the ONE declared format that reads EVERY
 # non-empty value, or NA_character_ when none of them does.
 #
@@ -672,32 +833,7 @@ duplicate_template_groups <- function(tset, user_only = TRUE) {
 # save_user_template(template, dir) -> path. Validates first (fail loud), writes
 # <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
 save_user_template <- function(template, dir = "templates/statements_user") {
-  template$origin <- NULL   # origin is assigned at load time, not stored
-  probs <- validate_template(template)
-  if (length(probs)) stop("template is not valid: ", paste(probs, collapse = "; "))
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  base_slug <- gsub("[^A-Za-z0-9_]+", "_", template$id %||% "user_template")
-  # Two DISTINCT ids can sanitise to the same file slug ("ANZ Go!" and "ANZ-Go"
-  # both -> "ANZ_Go"). Only overwrite when the existing file holds the SAME
-  # original id (a genuine edit); otherwise pick the next free slug so a different
-  # template is never silently clobbered. (Templates are keyed by their id field
-  # at load, so the distinct ids stay distinct -- only the filename is uniquified.)
-  slug <- base_slug; k <- 2L
-  repeat {
-    path <- file.path(dir, paste0(slug, ".yaml"))
-    if (!file.exists(path)) break
-    existing_id <- tryCatch(yaml::read_yaml(path)$id, error = function(e) NULL)
-    if (identical(existing_id, template$id)) break
-    slug <- paste0(base_slug, "_", k); k <- k + 1L
-  }
-  path <- file.path(dir, paste0(slug, ".yaml"))
-  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
-  # A template is months of somebody's work that exists nowhere else on an offline
-  # box, and a bare write_yaml truncates the target before it writes. See
-  # save_yaml_safely() in R/util.R.
-  ok <- save_yaml_safely(template, path)
-  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
-  invisible(path)
+  .save_template_yaml(template, dir, validate_template, "template")
 }
 
 # user_template_ids(dir) -> ids of templates that live in the user dir (the only

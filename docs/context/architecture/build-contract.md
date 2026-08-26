@@ -56,7 +56,7 @@ R/   -- operations, evidence and governance
   logging.R             run + feedback records, ONE FILE PER EVENT
   feedback.R            per-conversion human verdict capture
   metadata_capture.R    local-only per-run metadata corpus (retain-forever)
-  analytics.R           run/feedback logs -> Insights, drift, layout clusters
+  analytics.R           run/feedback logs -> Admin Health, drift, layout clusters
   audit.R               safe-to-share single-statement structural audit
   batch_audit.R         the same over a whole folder, clustered by gap
   coverage.R            "have I set this up right?" self-check
@@ -317,7 +317,7 @@ is the healthy ceiling there.
 ## 10. Logging (`logs/runs/<run_id>.json`, one FILE per run)
 `ts, requested_by, source_file, source_sha256, bank_hint, detected_template,
 template_version, status, trust_level, row_count, kpi_fail_count, message`
-(plus the layout/detection fields Insights reads). One file per event, never a
+(plus the layout/detection fields Admin's Health tab reads). One file per event, never a
 shared append, so concurrent conversions can never interleave or need a lock, and a
 record is never overwritten — a clashing `run_id` gets a `~2` suffix rather than
 erasing the earlier audit record.

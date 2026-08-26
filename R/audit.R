@@ -163,10 +163,9 @@ format_audit <- function(a) {
   paste(unlist(L), collapse = "\n")
 }
 
-# write_statement_audit(path, out) -> writes the markdown audit; returns the path.
-write_statement_audit <- function(path, out = NULL, templates = NULL) {
-  a <- statement_audit(path, templates = templates)
-  if (is.null(out)) out <- paste0(tools::file_path_sans_ext(basename(path)), ".audit.md")
-  writeLines(format_audit(a), out)
-  invisible(out)
-}
+# There is no write_statement_audit(). There was one, and nothing ever called it --
+# not the app, not scripts/audit-statement.R, not a test. Both real callers compose
+# the two halves themselves, format_audit(statement_audit(path)), because both hand
+# the text somewhere other than a file on the server: Admin streams it through a
+# download handler, and the script writes where the maintainer said. A wrapper that
+# picks a filename for you is only useful to a caller that does not exist.

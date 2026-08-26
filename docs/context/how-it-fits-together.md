@@ -89,8 +89,8 @@ being shown `amount_direction`.
 | I want to… | Change | Who |
 |---|---|---|
 | Add a bank | a YAML template | analyst, in the app — **Add a template**. Never code. |
-| Teach a wording ("balance at start" = opening balance) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Label dictionary**, plain English |
-| Teach a marker word ("cow" means money out) | `dictionaries/lexicon.yaml` | admin — **Admin → Data capture → Words the tool knows to look for** |
+| Teach a wording ("balance at start" = opening balance) | `dictionaries/labels.yaml` | admin — **Admin → Templates → Words the tool looks for**, plain English |
+| Teach a marker word ("cow" means money out) | `dictionaries/lexicon.yaml` | admin — **Admin → Templates → Words the tool knows to look for** |
 | Reword anything on screen | `ui_labels.R` / `ui_content.R` | analyst with an editor |
 | Add a check | `R/reconcile.R` (builder + the list), `CHECK_PLAIN`, and — if it can fail — `.KPI_DIAGNOSIS` + `.DIAG_FIX_OWNER` + `DIAG_PLAIN` | maintainer — [`../design.md`](../design.md) §8 has the full recipe **and the measured blast radius**: adding a check turns the suite red in about thirty places, and the runner shows you ten of them |
 | Move a threshold | `R/params.R` | maintainer → [engine-parameters.md](engine-parameters.md) |

@@ -195,17 +195,24 @@ reconciliation to fall back on - see 0 for the equivalent there
 Counted, not estimated (`app.R`, every `actionButton` / `selectInput` /
 `textInput` / `fileInput` / `radioButtons` / `checkbox*` / `download*`):
 
-| | |
-|---|---|
-| interactive controls | **182** |
-| outputs | 177 |
-| observers | 148 |
-| `app.R` | 8,793 lines |
-| engine (`R/`, ~50 files) | 16,763 lines |
-| docs | 34 files, 6,939 lines |
+| | first count | today |
+|---|---|---|
+| interactive controls (literal ids) | **182** | **174** |
+| `app.R` | 8,793 lines | 10,366 |
+| engine (`R/`, 50 files) | 16,763 lines | 20,001 |
+| docs | 34 files, 6,939 lines | 34 files, 9,970 lines |
 
-By screen: **report builder 56 · Admin 45 · Convert 34 · statement toolkit 32**
-· Add-a-template front 4 · About 2 · misc 9.
+By screen today: **report builder 52 · Admin 43 · Convert 33 · statement toolkit
+31** · page picture 4 · Add-a-template front 4 · analysis 3 · About 2 · downloads 2.
+
+**The count is a floor, not the number on screen.** That census only sees a
+control whose id is a STRING LITERAL. Everything built in a loop or by a helper -
+the per-table Edit/Remove pairs, the download-button helper, the per-candidate
+links - is invisible to it. Never quote 174 as the whole truth.
+
+Eight fewer literal controls, and 1,573 more lines of `app.R`, is the shape of
+this round: real cuts (1c, 1d below) landed at the same time as a large register
+of fixes. The surface is not yet smaller in the way the owner asked for.
 
 Beth's whole job is: pick a file, say what it is, press Convert, download.
 **Four controls.** The other 178 exist to teach a layout or to administer one.
@@ -252,7 +259,22 @@ the same control - that is the pattern. Keep it, keep the folder poller **if the
 team actually uses it** (establish that; it is 43 lines and cheap either way),
 and delete the rest.
 
+> **PARTLY DONE.** Admin's bulk audit no longer converts - it audits, and the
+> "Also convert & save" tick is gone, so that door into the engine call is shut.
+> A second file picker beside it ("Single statement - safe summary") is gone too.
+> Three doors left: Convert, the folder poller, and "try it on a sample".
+
 ### 1c. Admin: four sub-tabs, two jobs
+
+> **DONE.** Admin is **Templates** and **Health**. Insights and Batch & audit both
+> answered "what is not converting", so the bulk audit now sits under the gaps
+> table it is a source for; Data capture is a disclosure at the foot of Health;
+> feedback moved beside the templates it is about (C2). The "Also convert & save"
+> tick on the bulk audit is gone - Convert's own picker already takes thirty
+> files. **Left over:** `BA_CSV_WHY` still tells the reader to "Tick \"Also
+> convert & save\" before Run", naming a control that no longer exists, and
+> `adm_ba_csv` is therefore a download that can never enable. Cut the download and
+> the message, or restore the tick.
 
 Insights / Templates / Data capture / Batch & audit - 45 controls. An admin has
 two questions: *what is in the library and is it right*, and *what is failing*.
@@ -262,10 +284,12 @@ two questions: *what is in the library and is it right*, and *what is failing*.
 * **Insights** and **Batch & audit** overlap heavily - both answer "what is not
   converting".
 
-Two tabs: **Templates** (with feedback beside them, which C2 asks for anyway) and
-**Health**.
-
 ### 1d. Two vocabularies
+
+> **PARTLY DONE.** The two editors are on ONE tab now, one under the other -
+> "Words the tool looks for" (labels) and "Words the tool knows to look for"
+> (lexicon) - instead of a tab apart. Still two files and two editors, and the two
+> headings are four words apart, which is not a distinction a reader can hold.
 
 `dictionaries/labels.yaml` (the label dictionary) and `dictionaries/lexicon.yaml`
 (recognition vocabularies), each with its own Admin editor. Both mean "words the
@@ -288,6 +312,51 @@ Before anything is added to a screen: *does this answer a question the tool coul
 have answered itself?* If it could, the tool should answer it and the control
 should not exist. That single rule is what turns A1 (repeated headers), D4 (the
 bottom edge) and half of D2 from new controls into no controls.
+
+### 1e. The docs sweep of 2026-08-26 - what was cut, and what was deliberately kept
+
+The same rule read against `docs/`. **Cut:**
+
+* `findings-2026-08-26.md` (it sat beside this file) - **deleted.** A point-in-time
+  investigation of thirteen faults, twelve of them since implemented, carrying
+  exact `R/*.R:NNN` edit sites that the implementing commits then moved. Stale
+  line numbers are the failure `build-contract.md`'s module-map test exists to
+  stop: they send a maintainer to a place that is not there. The one part of it
+  that was not also in this register - the agreed `occurrence: all` design and
+  its measured false positive - is now in **A2** above, which is where it should
+  always have been.
+* `updating-a-version.md`'s five-row post-update check table, and
+  `backup-and-restore.md`'s two-step restore check, **both replaced by
+  `scripts/health-check.R` plus one conversion.** Four of those five rows asked
+  the operator to establish by hand what health-check now prints in one line - and
+  one of them was **false**: *"Upload a report you built a puller for ...
+  `templates\documents_user\` - Admin does not list these, so this is the only
+  way to see them"*. Admin has read one library of all three kinds since C1.
+* `go-live-checklist.md`'s *"Do the `findstr` one"* -
+  `findstr /s /m "write_failed" logs\feed\*.json` was the whole-server view of a
+  failed feed write. **Admin -> Health -> Analytics feed** now counts them on the
+  page. The command is kept as the headless form, not as the instruction.
+
+**Kept, having been considered:** `go-live-checklist.md` §2/§3/§4 restate
+`first-time-setup.md` §6/§4/§5 (build stamp, admin password, firewall) almost
+verbatim, and `deploy-on-the-qlik-server.md` §5/§6 restate them a third time.
+That reads like the biggest cut in `docs/` and it is not one: `test-docs-truth.R`
+**deliberately pins the same facts to both pages**, because an operator standing
+up a server at 9am must not be page-hopping for the next step. The third copy in
+`deploy-on-the-qlik-server.md` is the one worth revisiting - it is PowerShell
+where the others are `netsh`, and it is not pinned anywhere.
+
+**The stale-claim class to watch.** Every wrong sentence found in this sweep was a
+claim about the SCREEN, and the screen had moved: `Admin -> Insights` (nine
+pages), `Admin -> Data capture` (four), `Admin -> Templates -> Label dictionary`
+(the heading is *"Words the tool looks for"*), `Something else` on Add-a-template
+(it says *Anything else*), the `Next page` button (there is only a **Page** box),
+`Add this value` / `Preview on the document` (they are *+ Add a value* /
+*Read the whole document*), and the save message *"now upload the document on the
+Convert tab"* (it no longer says that). `test-docs-truth.R` already guards this
+class for ONE control - the evidence toggle - by reading `app.R`. Widening that
+guard to every navigation phrase a page prints is the durable fix; until it
+exists, every screen change silently rots a page.
 
 ---
 
@@ -394,6 +463,40 @@ sheet. That falls out of the rule for free: no title, no table.
 **In the builder** this must not become YAML. You draw ONE example table as you
 do now, and tick *"this document has more tables like this one"*. Nothing else
 changes. Page numbers stop being part of the template at all for these.
+
+**The agreed shape, from the 26 Aug root-cause pass** (kept here because it is the
+only record of it; the page it was on has been retired):
+
+* ONE optional key on a table entry, borrowed word-for-word from the fields mode:
+  `occurrence: all`. Absent (or `once`/`first`) is today's code path byte for
+  byte, so every saved template is untouched. `start`/`end` stay on the entry as
+  the example location - the round trip back to the builder needs them - and
+  simply stop being the search space.
+* A line on any page is an occurrence when all THREE hold: (a) `.doc_header_hit`
+  >= 0.75 against `anchor.header_text` - the bar the follow loop already uses,
+  raised from 0.6 because every line of every page is now a candidate; (b) it puts
+  a word in at least half the declared column bands, minimum 2; (c) it breaks into
+  at least that many gutter-separated cells (`.doc_cells`). **(c) is what kills
+  prose that merely names the columns** - measured: without it, the sentence
+  "Refer to the Security Units Cost Market value table" scored as an occurrence;
+  with it, zero.
+* Seven occurrences are ONE table with ONE column set (the match rule guarantees
+  it), so: one sheet, rows concatenated in document order, `row` numbered
+  continuously, and a new leading `section` column carrying the heading printed
+  above each occurrence. `section` is added ONLY for an `occurrence: all` table,
+  so no existing template's output shape moves.
+* Absence does NOT demote status for an `occurrence: all` table - three this month
+  and seven next means absence is the expected case, and a permanent
+  `needs_review` is a warning nobody reads. A missing PINNED table stays
+  `empty_tables` -> `needs_review` exactly as today.
+* In the builder it REMOVES controls: `propose_tables` already emits seven
+  near-identical entries ("Fund A holdings", "Fund A holdings 1", ...); collapse
+  them at propose time with the `.doc_same_header` + `.doc_same_shape` pair that
+  is already in the file. Measured: the 7-fund pack goes from 7 entries on screen
+  to 1. The only new thing on screen is a line in the muted subtitle
+  `output$rb_saved` already prints - "7 places · pages 3, 8, 13, 18, 23, 28,
+  33" - and one button in the Edit/Remove row that already exists: "Only this
+  one".
 
 ### A2b. Title first, then header - and ALL the variants of each
 

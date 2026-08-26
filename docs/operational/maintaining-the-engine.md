@@ -3,7 +3,7 @@
 For the **one analyst who owns this tool** — the person who inherits it, not a
 software engineer. Everything here is a copy-paste command or a file copy.
 
-Day-to-day upkeep (Insights, requests, dictionaries, tidying logs) is
+Day-to-day upkeep (Health, requests, dictionaries, tidying logs) is
 [admin-and-maintenance.md](admin-and-maintenance.md). This page is the three
 things that page does not cover:
 
@@ -71,9 +71,11 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **77 files, 1,060 tests, 5,572 passing assertions,
-0 failed, 0 errors** — taken on 2026-08-25, at `VERSION` 1.5.5, on R 4.4.3.
-Treat it as a floor to compare against, not a target to match.
+The last full run measured **77 files, 1,342 tests, 7,301 passing assertions,
+0 failed, 0 errors** — taken on 2026-08-26, at `VERSION` 1.8.1, on R 4.4.3,
+with 19 skipped because that box had no OCR tooling (run under
+`BSO_ALLOW_SKIPS=1`; on a server **with** tesseract and poppler the skips should
+be 0). Treat it as a floor to compare against, not a target to match.
 
 **That run was clean, and it is the first one that was.** For a long time the
 board carried five red lines, explained here and elsewhere as "the environment,
@@ -95,8 +97,39 @@ used to appear in the app folder after every suite run. It no longer does.
 line is a finding. Do not inherit an explanation for one from anybody, including
 this page.
 
-10 tests skipped, all of them needing tesseract/poppler. On a box **with** the
-OCR tools installed they should pass too; if they do not, that is a real finding.
+19 tests skipped on that box, all of them needing tesseract/poppler or a fixture
+those tools generate. On a box **with** the OCR tools installed they should pass
+too; if they do not, that is a real finding.
+
+### The five-second version: `scripts\health-check.R`
+
+The suite takes minutes and proves the *engine* is right. It says nothing about
+whether *this server* can run it. That is a different question, asked the same
+way, with the same two lines of setup:
+
+```
+cd /d D:\StatementStudio-offline
+set "R_LIBS_USER=%CD%\R-lib"
+set "R_LIBS_SITE="
+"R-runtime\bin\x64\Rscript.exe" scripts\health-check.R
+```
+
+Five checks, one line each, `PASS` or `FAIL`, and a non-zero exit code on any
+failure so a scheduled task can watch it without anybody reading it:
+
+| Check | Answers |
+|---|---|
+| **Settings** | did `config\config.yaml` parse, and was every setting in it understood |
+| **Admin** | is Admin still shut behind the placeholder password shipped in the example file |
+| **Templates** | how many bank statement / form / report templates loaded — **and how many were refused, with the reason** |
+| **Folders** | can this account really write to `logs\`, `uploads\`, `requests\`, the three `templates\*_user\` folders and the feed folder |
+| **Scans** | is tesseract/poppler still installed, or has scanned-statement reading gone away |
+
+It reads and changes nothing, so run it whenever. **Templates is the one to read
+twice.** A template that stops validating after an update used to simply vanish —
+gone from Admin, gone from detection, no message anywhere — and the statements it
+used to read quietly became "no template for this statement yet". This is the
+line that says so.
 
 
 **Check the `files` figure first.** If it is not the number of

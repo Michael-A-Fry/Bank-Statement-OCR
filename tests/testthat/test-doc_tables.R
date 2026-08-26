@@ -475,13 +475,38 @@ test_that("a document template round-trips through save and load", {
   back <- load_document_templates(dir)
   expect_identical(names(back), "northwind_position")
   expect_equal(length(back$northwind_position$tables), 3L)
-  expect_identical(document_template_ids(dir), "northwind_position")
+  # Listing and removing a report template go through the KIND-AGNOSTIC pair in
+  # R/templates.R -- the one Admin actually calls, and the one that can also find a
+  # file whose id was hand-edited. The document-only copies of these two were
+  # deleted because nothing but this test reached them.
+  expect_identical(user_template_ids(dir), "northwind_position")
   # and reading THROUGH the reloaded template gives the same rows
   r <- doc_table_rows(context_input(), back$northwind_position$tables$account_summary,
                       back$northwind_position)
   expect_equal(r$n_rows, 4L)
-  expect_true(delete_document_template("northwind_position", dir))
-  expect_identical(document_template_ids(dir), character(0))
+  expect_true(delete_user_template("northwind_position", dir))
+  expect_identical(user_template_ids(dir), character(0))
+})
+
+test_that("saving a report template cannot overwrite a different one whose id merely sanitises the same", {
+  # THE BUG THIS CLOSES. save_document_template used to write
+  # <gsub non-alnum>(id).yaml with no collision guard, so "ACME Q1!" and "ACME-Q1"
+  # both landed on ACME_Q1.yaml and the second silently destroyed the first -- on
+  # the route with no reconciliation behind it. It now shares the statement route's
+  # saver, which only overwrites when the file on disk holds the SAME id.
+  dir <- file.path(tempdir(), paste0("doctpl-slug-", as.integer(Sys.time())))
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  a <- doc_fixture_template(); a$id <- "ACME Q1!"
+  b <- doc_fixture_template(); b$id <- "ACME-Q1"
+  pa <- save_document_template(a, dir)
+  pb <- save_document_template(b, dir)
+  expect_false(identical(pa, pb))
+  expect_true(file.exists(pa))
+  back <- load_document_templates(dir)
+  expect_setequal(names(back), c("ACME Q1!", "ACME-Q1"))
+  # ...and re-saving the FIRST one is still an edit in place, not a third file.
+  expect_identical(save_document_template(a, dir), pa)
+  expect_equal(length(list.files(dir, pattern = "\\.yaml$")), 2L)
 })
 
 test_that("an invalid document template is never written to disk", {

@@ -1,4 +1,4 @@
-# Updating a version — merging dev into prod
+# Updating a version — merging dev into prod by hand
 
 You have two folders: **dev** (the new version) and **prod** (the one people use).
 This page moves dev into prod without destroying what prod has learned.
@@ -9,6 +9,10 @@ placeholder copies of some of those files, **under the same names**. Copy the
 wrong one and it is replaced silently. Nothing errors. The tool just quietly gets
 worse.
 
+(The package route — `make-bundle.bat` on the internet PC, replace the whole
+folder — cannot get this wrong and is the one to use when you have it:
+[updating.md](updating.md).)
+
 ---
 
 ## Never copy these from dev to prod
@@ -17,7 +21,8 @@ worse.
 |---|---|
 | **`dictionaries\labels.yaml`**<br>**`dictionaries\lexicon.yaml`** | **The dangerous pair.** Dev has these two files under these exact names — they are the shipped starting vocabularies. In prod the same names hold every wording and marker your team has taught it. Overwrite them and statements that reconciled last week stop reconciling, weeks before anyone connects the two. |
 | `config\config.yaml` | Prod's settings: port, admin password, feed folder. Dev's copy (if it has one) is a developer's. |
-| `templates\statements_user\`<br>`templates\fields_user\`<br>`templates\documents_user\` | Every template your team built in the app. Dev has only a `README.md` in each, so copying the *folder* is survivable — but never delete-and-replace one. |
+| `templates\statements_user\`<br>`templates\fields_user\`<br>`templates\documents_user\` | Every template your team built in the app — bank layouts, form fields, report pullers. Dev has only a `README.md` in each, so copying the *folder* is survivable — but never delete-and-replace one. |
+| **any `.yaml.bak` or `.yaml.*.part`** in those folders or in `dictionaries\` | Prod's undo. Every save now writes the previous contents beside the file first — templates as well as dictionaries — so a `.bak` is one step of history for a template that exists nowhere else. A `.part` is a save that died half-way; leave it for whoever is diagnosing that. |
 | `logs\` | The audit trail. `logs\metadata\` is kept forever and cannot be recreated. |
 | `uploads\` | Copies of real client statements. |
 | `feed\` | What Qlik reads. |
@@ -31,15 +36,25 @@ worse.
 | `R\params.R` | The engine's numeric thresholds — the one code file a maintainer edits. It sits inside `R\`, so **dragging the whole `R\` folder reverts every value you set.** If the release did not change it, do not copy it. If it did, open both side by side and re-apply your values by hand. |
 | `templates\statements\` | Curated templates. Copying replaces same-named files. A template you **promoted** in prod but never put in dev survives (nothing shares its name) — but check first. |
 
-## Everything else is safe to copy
+## Everything else is the product — copy all of it
 
-`app.R`, `R\` (except `params.R`), `scripts\`, `www\`, `docs\`, `tests\`,
-`samples\`, `templates\statements_seed\`, `config\config.example.yaml`,
-`README.md`, `CHANGELOG.md`, `RUN-ME.bat`, and **`VERSION`**.
+```
+app.R   ui_content.R   ui_labels.R   run.R   RUN-ME.bat   VERSION
+R\ (except params.R)   scripts\   www\   templates\statements_seed\
+config\config.example.yaml   docs\   tests\   samples\
+README.md   CHANGELOG.md
+```
 
-`VERSION` is not optional. It is stamped into every conversion, every run log and
-the Qlik feed manifest. Without it every output answers "which build produced this
-figure?" with `unknown`.
+That is the same list `scripts\bundle-offline.R` ships (`app_items` near the top
+of it), so it cannot quietly drift from what a real package contains. Two on it
+are easy to leave behind and both are silent when you do:
+
+- **`ui_content.R` and `ui_labels.R`** hold every word on every screen. `app.R`
+  sources them. A new `app.R` against last month's copies gives you the old
+  wording — or a blank panel where a label it now expects is missing.
+- **`VERSION`** is stamped into every conversion, every run log and the Qlik feed
+  manifest. Without it every output answers "which build produced this figure?"
+  with `unknown`.
 
 ---
 
@@ -66,22 +81,36 @@ figure?" with `unknown`.
    copy side by side and set your values again. Never paste the old file over the
    new one — a new version may have added parameters the engine now expects.
 
-6. **Start prod** — `RUN-ME.bat`, or the scheduled task. No internet needed and
+6. **Ask the box whether it is fit to convert.** One command, before you start it:
+
+   ```
+   cd /d D:\StatementStudio-offline
+   set "R_LIBS_USER=%CD%\R-lib"
+   set "R_LIBS_SITE="
+   "R-runtime\bin\x64\Rscript.exe" scripts\health-check.R
+   ```
+
+   It prints the version it is about to run and one line per check — the settings
+   file parsed, an admin password is set, how many bank statement / form / report
+   templates loaded **and how many were refused**, every folder it must write to
+   is writable, and the scan-reading software is still installed. `PASS` on the
+   last line means all of it passed. It reads and changes nothing, so it is safe
+   to run at any time.
+
+   A **refused** template is the one to read twice: it is a template that used to
+   work, has stopped validating, and would otherwise simply have vanished from
+   detection with no message anywhere.
+
+7. **Start prod** — `RUN-ME.bat`, or the scheduled task. No internet needed and
    nothing is reinstalled, so it is quick.
 
-7. **Check it came back whole**, in this order — each one checks a different
-   folder you were told not to overwrite:
+8. **Convert a statement you know reconciles.** It still reconciles, and its
+   `.json` download reads the **new** `build.engine_version`. That is the one
+   check health-check cannot make for you: it proves the engine and
+   `dictionaries\` came through together, and that `VERSION` travelled.
 
-   | Check | Proves |
-   |---|---|
-   | Convert a statement you know reconciles. It still reconciles. | The engine and `dictionaries\` |
-   | Open that conversion's `.json` download. `build.engine_version` reads the **new** version. | `VERSION` travelled |
-   | **Admin → Templates** lists your team's templates. | `templates\statements_user\` |
-   | Upload a report you built a puller for. It is recognised, not asked for. | `templates\documents_user\` — **Admin does not list these**, so this is the only way to see them |
-   | **Admin → Templates → Label dictionary** shows your own wordings. | `dictionaries\` again, directly |
-
-   If any check fails, stop and restore from step 1's backup rather than
-   converting anything real.
+   If either step 6 or step 8 fails, stop and restore from step 1's backup rather
+   than converting anything real.
 
 ---
 
@@ -90,12 +119,3 @@ figure?" with `unknown`.
 Going back is its own page: [rolling-back.md](rolling-back.md). Note that rolling
 the folder back does **not** withdraw rows the new version already published to
 `feed\` — that is a separate job, and it is the reason to decide quickly.
-
-## The safer route, when you have it
-
-Building a package on the internet PC (`make-bundle.bat`) and replacing the whole
-prod folder does all of this for you, and cannot get the dangerous pair wrong: the
-build renames `dictionaries\*.yaml` to `*.example.yaml`, so an update physically
-cannot touch prod's taught words. Use it when you can —
-[updating.md](updating.md). This page is for when you are merging two folders by
-hand instead.

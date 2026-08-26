@@ -29,7 +29,7 @@ done. Nothing on this list adds an R module.
 deterministically, and are already on screen in Admin:
 
 - *template-drift detection* → `template_drift()` in `R/analytics.R` — a sustained
-  drop in a template's clean-run rate, surfaced in Admin → Insights;
+  drop in a template's clean-run rate, surfaced in Admin → Health;
 - *unseen-layout clustering* → `unsupported_clusters()` in `R/analytics.R` — every
   unsupported/failed run grouped by layout signature, biggest gap first, with the
   closest template and an example file.

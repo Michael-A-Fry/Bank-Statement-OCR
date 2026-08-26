@@ -16,7 +16,7 @@ what new fact would change the answer.
 ## Answered deterministically, not with a model
 
 A local-ML learning loop over the metadata corpus was proposed twice. Its two
-headline uses are built, tested and on screen in **Admin → Insights**, with no
+headline uses are built, tested and on screen in **Admin → Health**, with no
 model at all:
 
 - **Template-drift detection — SHIPPED (`template_drift()` in `R/analytics.R`).**

@@ -283,7 +283,7 @@ template and says in words whether it will be recognised on its own next time.
 
 **The maintainer / admin** — one person, part-time. Sets the admin password (until
 they do, the Admin tab refuses to open for anybody, because the placeholder is
-printed in the example config). Watches Insights: which layouts keep failing, which
+printed in the example config). Watches Admin → Health: which layouts keep failing, which
 templates are drifting, which requests are outstanding. Promotes a good user
 template into the shipped set — which is what lets its output reach the dashboards.
 Edits the wording dictionary and the marker-word lexicon in plain English. Runs the
@@ -351,22 +351,25 @@ That is the whole maintenance model.
 
 ## Where it stands
 
-Version 1.3.0. 13 shipped templates, ten reconciliation checks, an automated suite
-of several hundred tests that fails on a *skipped* test as well as a failing one
-(because a skip proves nothing). The tally is deliberately not repeated here — it
-moves with every commit, and a stale number in this page would read as a
-regression signal; the last full run is recorded in
-[`operational/maintaining-the-engine.md`](operational/maintaining-the-engine.md).
+13 shipped bank templates plus 10 seed drafts, ten reconciliation checks, and an
+automated suite that fails on a *skipped* test as well as a failing one (because a
+skip proves nothing).
 
-Every defect found by adversarial review or real use is in
-[`context/findings-register.md`](context/findings-register.md) with its evidence
-and status, and that file states its own running total — **178 findings, 161
-fixed, 16 open, 1 not-a-defect** as of 2026-07-28. Read it there rather than
-here, because it is appended to faster than this page is. Two of the open ones
-are blocked on **evidence nobody has** rather than on effort — a spread of real
-forms, and one hand-keyed scanned statement to measure OCR digit accuracy against
-— and both fail closed and loudly today, so neither can put a wrong figure on
-screen.
+**No figure that moves is repeated on this page**, deliberately: a stale number
+here reads as a regression signal. Each one lives in exactly one place, which is
+where to read it.
+
+| Figure | Read it in |
+|---|---|
+| the version | the `VERSION` file, and `build.engine_version` on every output |
+| the test totals, and the last full run | [`operational/maintaining-the-engine.md`](operational/maintaining-the-engine.md) §1 |
+| findings raised, fixed and open | [`context/findings-register.md`](context/findings-register.md), which states its own running total at the top |
+| what is not yet done, in the words it was raised in | [`context/outstanding-work.md`](context/outstanding-work.md) |
+
+The open findings that are blocked on **evidence nobody has** rather than on
+effort — a spread of real forms, and one hand-keyed scanned statement to measure
+OCR digit accuracy against — fail closed and loudly today, so neither can put a
+wrong figure on screen.
 
 The engine is done in the sense that matters: the next three things on the roadmap
 are watching a real analyst build a template on a real statement, proving the

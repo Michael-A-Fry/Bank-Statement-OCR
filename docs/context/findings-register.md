@@ -1336,8 +1336,11 @@ protect: `backup-and-restore.md` ("four folders cannot be rebuilt"),
 `running-and-keeping-it-up.md`'s folder map, and the install picture in
 `design.md`. A server rebuilt from a documented backup would have come back with
 every bank template and every taught word, and with none of the document
-templates -- and nothing would have said so, because the restore check tells you
-to look at **Admin -> Templates**, which does not list them.
+templates -- and nothing would have said so, because the restore check told you
+to look at **Admin -> Templates**, which at the time did not list them. (Admin
+now reads one library of all three kinds, and `scripts/health-check.R` counts
+them from the command line, so the restore check no longer depends on uploading a
+report to find out.)
 
 The lesson is not "remember to update the docs". It is that **a folder of live
 state is not finished when the code writes to it** -- it is finished when the

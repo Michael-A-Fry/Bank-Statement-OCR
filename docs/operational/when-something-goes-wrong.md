@@ -156,7 +156,7 @@ Three ways, best first:
 
 1. **Send it to the team from the app.** On a *No template for this statement
    yet* result, click **Send it to the team instead**. It raises a request with
-   the layout shape and no statement content; it lands in **Admin → Insights →
+   the layout shape and no statement content; it lands in **Admin → Health →
    Format requests**.
 2. **Download the shareable diagnostic.** Under **See it on the page**, the *Download
    shareable diagnostic* button gives a small markdown file: the band frame, the
@@ -186,5 +186,5 @@ letters to `x`/`X` by case, digits to `9`, so `Countdown 47.20 on 17 Sep` become
   column, running-balance resets, foreign-currency lines.
 
 The maintainer can also generate all of this from the file itself —
-**Admin → Insights**, pick the upload, *Download its safe summary (no personal
+**Admin → Health**, pick the upload, *Download its safe summary (no personal
 data)*. Every value is masked to its shape.

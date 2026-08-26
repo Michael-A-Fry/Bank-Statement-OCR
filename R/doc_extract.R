@@ -21,11 +21,12 @@
 # numbers and nothing that could tell a wrong one from a right one, so publishing
 # them as if there were would be the worst thing this tool could do.
 
-# is_document_template(t) -- TRUE for a mode:document template.
-is_document_template <- function(t) {
-  identical(t$mode %||% "", "document") &&
-    (length(t$tables %||% list()) > 0L || length(t$pairs %||% list()) > 0L)
-}
+# There is no is_document_template(). `mode: document` is still the discriminator,
+# and template_kind() (R/templates.R) is what reads it -- one function answering
+# "what kind of template is this" for all three kinds, which is what every screen,
+# every save and every dispatch already asks. This was a second way to ask it that
+# nothing called, and it answered a slightly different question (it also demanded
+# at least one table or pair), so the two could disagree about the same file.
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -260,40 +261,17 @@ load_document_templates <- function(dir = "templates/documents", user_dir = NULL
 # save_document_template(t, dir) -> path. Validates first: an invalid template is
 # never written, so the loader's leniency never has to cover for this screen.
 save_document_template <- function(t, dir = "templates/documents_user") {
-  t$origin <- NULL
-  probs <- validate_document_template(t)
-  if (length(probs)) stop("document template is not valid: ", paste(probs, collapse = "; "))
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  path <- file.path(dir, paste0(gsub("[^A-Za-z0-9_]+", "_", t$id), ".yaml"))
-  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
-  # A report template can be forty tables grown over months, and it exists nowhere
-  # else on an offline box; a bare write_yaml truncates the target before it
-  # writes. See save_yaml_safely() in R/util.R.
-  ok <- save_yaml_safely(t, path)
-  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
-  invisible(path)
+  .save_template_yaml(t, dir, validate_document_template, "document template")
 }
 
-# document_template_ids(dir) / delete_document_template(id, dir) -- the same
-# read/remove pair the other two modes have, so Admin can manage these too.
-document_template_ids <- function(dir = "templates/documents_user") {
-  if (!dir.exists(dir)) return(character(0))
-  ids <- vapply(list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE), function(f) {
-    t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
-    as.character(t$id %||% NA_character_)[1]
-  }, character(1))
-  unname(ids[!is.na(ids)])
-}
-
-delete_document_template <- function(id, dir = "templates/documents_user") {
-  if (!dir.exists(dir) || is.null(id) || !nzchar(id)) return(invisible(FALSE))
-  hit <- FALSE
-  for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
-    t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
-    if (identical(as.character(t$id %||% "")[1], id) && file.remove(f)) hit <- TRUE
-  }
-  invisible(hit)
-}
+# There is no document_template_ids() / delete_document_template(). There was a
+# pair, written "so Admin can manage these too", and Admin never used it: it
+# resolves the folder for whichever kind the id belongs to and then calls the
+# kind-agnostic user_template_ids() / delete_user_template() (R/templates.R), which
+# walk whatever directory they are handed. That pair is also strictly the more
+# capable one -- delete_user_template() matches on the sanitised FILENAME as well
+# as the id field, so a report template whose id was hand-edited in the YAML box is
+# deletable through the live path and was not deletable through this one.
 
 # .doc_fp_norm(x) -- ONE rule for comparing a typed phrase against a printed page.
 #
@@ -336,104 +314,14 @@ delete_document_template <- function(id, dir = "templates/documents_user") {
 # detect_statement() has: template_id, matched, score, candidates, eligible_ids,
 # tied, margin, runner_up, detail, detail_plain.
 #
-# WHY THE SHAPE CHANGED. Every phrase still has to appear -- that stays the
-# eligibility gate -- but two things it could not say cost real work:
-#
-#   * A TIE RETURNED NOTHING. Two good one-phrase templates that both fit meant
-#     "unsupported" on a document the library can read perfectly, and it named
-#     neither of them. The statement route has never done that: it reports the tie
-#     and the caller reads the document with the best of them and marks it for
-#     review. Choosing by a PRINCIPLED order (most phrases, then shipped before
-#     hand-built, then the id) is not choosing arbitrarily, and it is a great deal
-#     better than refusing to read a document nobody can then convert.
-#   * A NEAR MISS SAID NOTHING. "no document template's identifying phrases were
-#     all found" cannot be acted on. Scoring fractionally costs nothing and lets
-#     this route say what the statement route says: which template came closest
-#     and which wording was not on the page.
+# The rule, and why each step of it is what it is, is .detect_by_fingerprint() in
+# R/templates.R -- ONE detector for both of the other routes. It used to be
+# eighty-five lines here and the same eighty-five lines in R/forms.R, which is how
+# a fix to one route became a drift in the other. The only thing this route still
+# owns is HOW ITS TEXT IS FOLDED (.doc_fp_norm) and how a report template is said
+# in words (.doc_tpl_name).
 detect_document_template <- function(input, dtemplates) {
-  none <- function(detail, plain = NULL)
-    list(template_id = NA_character_, matched = FALSE, score = 0,
-         candidates = data.frame(id = character(0), score = numeric(0),
-                                 need = numeric(0), stringsAsFactors = FALSE),
-         eligible_ids = character(0), tied = character(0),
-         margin = NA_real_, runner_up = NA_character_,
-         detail = detail, detail_plain = plain)
-  if (!length(dtemplates)) return(none("no document templates are installed"))
-
-  hay <- .doc_fp_norm(paste(input$pages %||% character(0), collapse = "\n"))
-  ids <- names(dtemplates)
-  # A hand-assembled unnamed list still has to come back with an answer rather
-  # than an error: the id is the key it was filed under, or its position.
-  if (is.null(ids)) ids <- as.character(seq_along(dtemplates))
-  ids[!nzchar(ids)] <- as.character(seq_along(dtemplates))[!nzchar(ids)]
-  names(dtemplates) <- ids
-  sc <- lapply(ids, function(i) {
-    need <- as.character(unlist(dtemplates[[i]]$fingerprint$page_contains_all %||%
-                                  character(0)))
-    hit <- if (!length(need)) logical(0) else
-      vapply(need, function(ph) {
-        k <- .doc_fp_norm(ph)
-        nzchar(k) && grepl(k, hay, fixed = TRUE, useBytes = TRUE)
-      }, logical(1))
-    list(score = sum(hit), need = length(need), missing = need[!hit])
-  })
-  scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
-  needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
-  # A template with NO phrases can never be matched (validation refuses one), so
-  # it is never eligible however the page reads.
-  eligible <- needs > 0 & scores >= needs
-
-  # THE ORDER, and every step of it is principled. Most phrases first (the most
-  # specific template that fits wins), then a shipped template ahead of one built
-  # here (a shipped one has a test behind it), then the id so the answer is fully
-  # deterministic and never depends on the order a folder happened to list in.
-  shipped <- vapply(ids, function(i)
-    as.numeric(!identical(dtemplates[[i]]$origin %||% "default", "user")), numeric(1))
-  ord <- order(scores, needs, shipped, ids,
-               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; needs <- needs[ord]
-  shipped <- shipped[ord]; eligible <- eligible[ord]; sc <- sc[ord]
-  cand_df <- data.frame(id = ids, score = scores, need = needs,
-                        stringsAsFactors = FALSE)
-
-  if (!any(eligible)) {
-    best <- ids[1]; miss <- sc[[1]]$missing
-    return(list(template_id = NA_character_, matched = FALSE, score = 0,
-      candidates = cand_df, eligible_ids = character(0), tied = character(0),
-      margin = NA_real_, runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
-      detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
-        if (length(miss)) sprintf(" (missing %s)",
-          paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
-      # The same fact for the person holding the document: no id, no fraction.
-      detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
-        .doc_tpl_name(dtemplates[[best]]),
-        if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
-        else "the wording it looks for")))
-  }
-
-  e_ids <- ids[eligible]; e_needs <- needs[eligible]; e_ship <- shipped[eligible]
-  win <- e_ids[1]
-  second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
-  second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
-  # Unambiguous when the winner is strictly more specific, or ties on specificity
-  # and something principled separates them (a shipped template over a hand-built
-  # one). A shipped template drawing level with a hand-built one is not a real
-  # question, and stopping to ask it helps nobody.
-  matched <- (e_needs[1] > second_need) ||
-             (e_needs[1] == second_need && e_ship[1] > second_ship)
-  tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
-          else character(0)
-  if (length(tied) < 2L) tied <- character(0)
-  list(template_id = win, matched = matched, score = e_needs[1],
-       candidates = cand_df, eligible_ids = e_ids, tied = tied,
-       margin = if (is.finite(second_need)) e_needs[1] - second_need else Inf,
-       runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
-       detail = if (matched) "matched by identifying phrases"
-                else sprintf("%d document templates are equally specific here (%s)",
-                             length(tied), paste(tied, collapse = ", ")),
-       detail_plain = if (matched) NULL else
-         sprintf("%d templates fit this document equally well, so it was read with the %s.",
-                 length(tied), .doc_tpl_name(dtemplates[[win]])))
+  .detect_by_fingerprint(input, dtemplates, "document", .doc_fp_norm, .doc_tpl_name)
 }
 
 # ---------------------------------------------------------------------------

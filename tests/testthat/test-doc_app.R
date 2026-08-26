@@ -125,9 +125,9 @@ test_that("one armed intent at a time, named on screen, and nothing armed by def
   arm <- .da_block(src, "output\\$rb_arm <- renderUI", 34L)
   expect_match(arm, "\\.RB_ASK\\[\\[rb\\$mode")
   expect_match(arm, "Nothing is waiting for a drag")
-  # ...and so does the hint under the picture, so they can never disagree
-  hint <- .da_block(src, "output\\$rb_hint <- renderUI", 8L)
-  expect_match(hint, "\\.RB_ASK\\[\\[rb\\$mode")
+  # ...and it is the ONLY place that sentence is printed. rb_hint used to print
+  # it a second time under the picture, while the banner above was showing it.
+  expect_false(any(grepl("rb_hint", src, fixed = TRUE)))
   # THE RULE ITSELF: a drag with nothing armed changes nothing and says so.
   brush <- .da_whole(src, "observeEvent\\(input\\$rb_brush")
   expect_match(brush, "if \\(!nzchar\\(m\\)\\)")
@@ -184,12 +184,21 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   expect_match(blk, "Ends", fixed = TRUE)
   expect_match(blk, "down the page", fixed = TRUE)        # said as a place, not a number
   expect_match(blk, '"rb_setstart"'); expect_match(blk, '"rb_setend"')
-  expect_match(blk, '"rb_gostart"'); expect_match(blk, '"rb_goend"')
+  # ONE BUTTON PER EDGE, not two. "Show me" turned to the page and "Move it"
+  # armed the drag without turning to it, so "Move it" on a start that lives on
+  # page 3 while page 1 was on screen armed against the WRONG page and the next
+  # drag re-pinned the start to page 1. They are one button now, and it must turn
+  # the page BEFORE it arms or the same trap is back.
+  expect_length(grep("rb_gostart|rb_goend", src), 0L)
+  mv <- .da_whole(src, "\\.rb_move_to <- function")
+  expect_match(mv, 'updateNumericInput\\(session, "rb_page"')
+  expect_true(regexpr("updateNumericInput", mv, fixed = TRUE) <
+              regexpr("rb\\$mode <- mode", mv))
   # and the three answers people actually want, as one press each
   for (b in c("rb_endauto", "rb_endpage", "rb_endlast"))
     expect_match(blk, sprintf('"%s"', b))
   # a click only ever moves one of those two, and only when it was asked for
-  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 42L)
+  cl <- .da_whole(src, "observeEvent\\(rb_click_late\\(\\)")
   expect_match(cl, 'if \\(!\\(m %in% c\\("start", "end", "bottom"\\)\\)\\) return\\(\\)')
   # an end before the start, or a start after the end, is refused where it
   # happens rather than explained later
@@ -685,7 +694,11 @@ test_that("the heading-height box cannot be read as a row count", {
   src <- .da_src(); joined <- .da_joined()
   expect_match(joined, 'numericInput\\("rb_hdrn", "Heading rows"')
   expect_false(grepl('numericInput("rb_hdrn", "How many rows"', joined, fixed = TRUE))
-  expect_match(joined, "You never say how many rows of DATA there are", fixed = TRUE)
+  # The LABEL is what stops it being read as a row count. The caption under it
+  # used to add a second sentence answering a question nobody asked, about a
+  # control that does not exist ("you never say how many rows of DATA there are").
+  expect_match(joined, "How many printed lines the heading takes up.", fixed = TRUE)
+  expect_false(grepl("how many rows of DATA", joined, fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -812,10 +825,14 @@ test_that("the guide walks columns, start, end, and the bottom edge of the pages
   expect_match(joined, 'rb\\$mode <- \\.rb_next_step\\("cols", d\\)')
   expect_match(joined, "rb\\$mode <- \\.rb_next_step\\(m, d\\)")
   # ...and it stops the moment somebody steers: Cancel, or Move it by hand
-  for (b in c("rb_disarm", "rb_setstart", "rb_setend")) {
-    blk <- .da_block(src, sprintf("observeEvent\\(input\\$%s,", b), 2L)
-    expect_match(blk, "rb\\$guide <- FALSE", info = b)
-  }
+  blk <- .da_block(src, "observeEvent\\(input\\$rb_disarm,", 2L)
+  expect_match(blk, "rb\\$guide <- FALSE")
+  # "Move it" on either edge steers too -- both go through .rb_move_to, which
+  # turns the page, stops the guide and arms, in that order.
+  expect_match(.da_whole(src, "\\.rb_move_to <- function"), "rb\\$guide <- FALSE")
+  for (b in c("rb_setstart", "rb_setend"))
+    expect_match(paste(src, collapse = "\n"),
+                 sprintf("observeEvent\\(input\\$%s, *\\.rb_move_to\\(", b), info = b)
   # every armed step can be skipped, keeping what the tool worked out
   expect_match(joined, 'actionButton\\("rb_skip_step"')
   expect_match(joined, "observeEvent\\(input\\$rb_skip_step")
@@ -825,7 +842,7 @@ test_that("the bottom edge is stored where the reader actually uses it", {
   # doc_locate_table() closes a CONTINUATION page's window at band$y_max
   # (R/tables.R). Anywhere else and the setting would be a control that changes
   # nothing -- which is worse than not having one.
-  cl <- .da_block(.da_src(), "observeEvent\\(input\\$rb_click", 42L)
+  cl <- .da_whole(.da_src(), "observeEvent\\(rb_click_late\\(\\)")
   expect_match(cl, "b <- d\\$band")
   expect_match(cl, "b\\$y_max <- y")
   expect_match(cl, "above the top of the table", fixed = TRUE)
@@ -982,9 +999,12 @@ test_that("the first screen does not contradict itself about which files it take
   expect_match(joined, "It has to be a PDF: you build this one by pointing at the page.",
                fixed = TRUE)
   # a spreadsheet chosen for a report is a DEAD END unless it is explained
-  blk <- .da_block(src, "output\\$rb_need_doc <- renderUI", 22L)
+  blk <- .da_whole(src, "output\\$rb_need_doc <- renderUI")
   expect_match(blk, "file_ext")
-  expect_match(blk, "has no page to point at", fixed = TRUE)
+  # ONE clause for the refusal. It used to run to three sentences, two of which
+  # restated the standing helpText asserted above.
+  expect_match(blk, "This half needs a PDF.", fixed = TRUE)
+  expect_false(grepl("has no page to point at", blk, fixed = TRUE))
   expect_match(blk, "A bank or card statement", fixed = TRUE)
 })
 
@@ -1028,11 +1048,15 @@ test_that("when the tool cannot tell, it says so and asks", {
   expect_match(blk, "The tool cannot tell what kind of document this is.", fixed = TRUE)
   expect_match(blk, "Which is it?", fixed = TRUE)
   expect_match(blk, 'actionButton\\("cv_teach_go", "A bank or card statement"')
-  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Anything else')
-  # the same words Add a template uses, so the question is not learned twice
+  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Something else')
+  # the same words Add a template uses, and the same words Convert's own "What is
+  # this?" uses, so the question is not learned three times
   ui <- .da_block(src, 'radioButtons\\("ts_doctype"', 5L)
   expect_match(ui, "A bank or card statement", fixed = TRUE)
-  expect_match(ui, "Anything else", fixed = TRUE)
+  expect_match(ui, "Something else", fixed = TRUE)
+  cv <- .da_block(src, 'radioButtons\\("cv_kind"', 6L)
+  expect_match(cv, "A bank or card statement", fixed = TRUE)
+  expect_match(cv, "Something else - a report, a form, a letter", fixed = TRUE)
 })
 
 test_that("the two ids are never rendered at the same time", {
@@ -1098,7 +1122,7 @@ test_that("the brush is reset before anything that can return or throw", {
 test_that("a click and a change of mode both clear the rectangle", {
   joined <- .da_joined(); src <- .da_src()
   # a click means "I am doing something else now"
-  cl <- .da_block(src, "observeEvent\\(input\\$rb_click", 10L)
+  cl <- .da_whole(src, "observeEvent\\(rb_click_late\\(\\)")
   expect_match(cl, "session\\$resetBrush\\(\"rb_brush\"\\)")
   # and a new question deserves a page with no leftover answer drawn on it
   expect_match(joined, "observeEvent\\(rb\\$mode, \\{ session\\$resetBrush")
@@ -1125,7 +1149,7 @@ test_that("a click and a change of mode both clear the rectangle", {
 # ---------------------------------------------------------------------------
 
 test_that("the boundary click records where and when it landed", {
-  blk <- .da_block(.da_src(), "observeEvent\\(input\\$rb_click", 220L)
+  blk <- .da_whole(.da_src(), "observeEvent\\(rb_click_late\\(\\)")
   expect_match(blk, "rb\\$click_at <- list\\(")
   expect_match(blk, "t = as\\.numeric\\(Sys\\.time\\(\\)\\)")
   expect_match(blk, "x = as\\.numeric\\(cl\\$x\\)")
@@ -1209,10 +1233,14 @@ test_that("every Admin action on a template dispatches on its kind", {
   save <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_save")
   expect_match(save, "\\.adm_save\\(kind, t\\)")
   expect_match(save, "\\.adm_kind_of\\(t\\)")     # the kind of the YAML in the box
-  # ...and checked against its own rulebook, not the statement one
-  val <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_validate")
-  expect_match(val, "\\.adm_validate\\(kind, t\\)")
-  expect_false(grepl("validate_template\\(t\\)", val))
+  # ...and checked against its own rulebook, not the statement one. The separate
+  # "Check it's valid" button is gone -- it was a pre-flight for a press that was
+  # already safe, since Save validates and refuses to write a word if it fails --
+  # so the check is asserted where it now lives, on the only press that can write.
+  expect_length(grep("adm_tpl_validate", src), 0L)
+  expect_match(save, "\\.adm_validate\\(kind, t\\)")
+  expect_match(save, "Not saved - problems")
+  expect_false(grepl("validate_template\\(t\\)", save))
   # the three savers and the three validators, each named once
   joined <- .da_joined()
   for (f in c("save_fields_template\\(t, USER_FIELDS_DIR\\)",
@@ -1501,7 +1529,10 @@ test_that("the saved-table list stops where its handlers stop, and says so", {
   blk <- .da_whole(src, "output\\$rb_saved <- renderUI")
   expect_match(blk, "min\\(length\\(rb\\$tables\\), \\.RB_MAX_ROWS\\)")
   expect_match(blk, "length\\(rb\\$tables\\) > \\.RB_MAX_ROWS")
-  expect_match(blk, "cannot be edited here", fixed = TRUE)
+  expect_match(blk, "Only the first %d can be edited here", fixed = TRUE)
+  # ...and it does NOT tell her to press Remove, or to go and edit the file
+  expect_false(grepl("removing tables above", blk, fixed = TRUE))
+  expect_false(grepl("in the template file", blk, fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -1810,9 +1841,17 @@ test_that("the ways to say where it ends are folded, and the direct corrections 
   expect_gt(i_sum, 0L)
   for (b in c("rb_endauto", "rb_endpage", "rb_endlast", "rb_clearbottom"))
     expect_gt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
-  # the two that correct a boundary directly stay on the line they belong to
-  for (b in c("rb_setstart", "rb_setend", "rb_gostart", "rb_goend", "rb_setbottom"))
-    expect_lt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
+  # the ones that correct a boundary directly stay on the line they belong to --
+  # ONE per edge now: "Show me" (turn to the page) and "Move it" (arm the drag)
+  # were one intention split in two, and split so that "Move it" armed against
+  # whichever page happened to be on screen.
+  for (b in c("rb_setstart", "rb_setend", "rb_setbottom")) {
+    j <- regexpr(sprintf('"%s"', b), w, fixed = TRUE)
+    expect_gt(j, 0L, label = b)
+    expect_lt(j, i_sum, label = b)
+  }
+  expect_false(grepl("rb_gostart", w, fixed = TRUE))
+  expect_false(grepl("rb_goend", w, fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -2090,8 +2129,12 @@ test_that("1c: Admin is two tabs, and the control count did not go up", {
   # nothing was DELETED to get there -- every control that did something is still
   # somewhere on one of the two
   joined <- .da_joined()
+  # (adm_dict_add and adm_sugg_approve were three teach-a-word forms ago: the
+  # dictionary form, the vocabulary form and the harvested-word form are ONE form
+  # now, adm_word_add, which writes to whichever file the answer belongs to. The
+  # capability is not gone, the second and third spellings of it are.)
   for (id in c("adm_meta_level", "adm_meta_save", "adm_lex_save", "adm_word_add",
-               "adm_sugg_approve", "adm_ba_run", "adm_dict_add", "adm_rollup",
+               "adm_ba_run", "adm_rollup",
                "adm_purge_uploads", "adm_up_wizard", "adm_inbox_wizard"))
     expect_match(joined, sprintf('"%s"', id), fixed = TRUE)
   # THE BUDGET. One control was added (the template check) and two removed (the

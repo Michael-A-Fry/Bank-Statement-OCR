@@ -297,8 +297,9 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   data.frame(out, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
-# is.blank_amount(x) -- TRUE when an amount cell is truly empty (so a NA value
-# there is expected, not malformed).
-is.blank_amount <- function(x) {
-  is.na(x) || !nzchar(trimws(as.character(x)))
-}
+# There is no is.blank_amount(). It said "TRUE when an amount cell is truly empty",
+# nothing ever called it and no test covered it: every place that needs the
+# distinction already has it, because .num() returns NA for a blank cell and the
+# coverage/reconciliation checks work from the parsed column rather than the raw
+# text. A predicate nobody consults cannot be the reason a blank is treated as
+# expected rather than malformed, so it was never load-bearing.

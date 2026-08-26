@@ -161,106 +161,14 @@ validate_fields_template <- function(t) {
 # detect_document_template() have: template_id, matched, score, candidates,
 # eligible_ids, tied, margin, runner_up, detail, detail_plain.
 #
-# Every phrase still has to appear -- that stays the eligibility gate -- but the
-# three faults the report detector had were here word for word, and cost the same
-# work:
-#
-#   * A TIE REFUSED. Two good one-phrase form templates that both fit meant
-#     "unsupported" on a document the library can read perfectly, and it named
-#     neither of them. The statement route has never done that: it reports the
-#     tie, reads with the best of them and marks the run for review. Choosing by
-#     a PRINCIPLED order (most phrases, then shipped before hand-built, then the
-#     id) is not choosing arbitrarily, and it beats refusing to read a document
-#     nobody can then convert.
-#   * A NEAR MISS SAID NOTHING. "no form template's identifying phrases were all
-#     found" cannot be acted on. Scoring fractionally costs nothing and lets this
-#     route say which template came closest and which wording was not on the page.
-#   * THE COMPARISON WAS CASE AND SPACING SENSITIVE while every other text
-#     comparison in the product normalises. See .form_fp_norm.
+# The rule, and why each step of it is what it is, is .detect_by_fingerprint() in
+# R/templates.R -- ONE detector for both of the other routes. It used to be
+# eighty-five lines here and the same eighty-five lines in R/doc_extract.R, which
+# is how a fix to one route became a drift in the other. The only thing this route
+# still owns is HOW ITS TEXT IS FOLDED (.form_fp_norm) and how a form template is
+# said in words (.form_tpl_name).
 detect_form <- function(input, ftemplates) {
-  none <- function(detail, plain = NULL)
-    list(template_id = NA_character_, matched = FALSE, score = 0,
-         candidates = data.frame(id = character(0), score = numeric(0),
-                                 need = numeric(0), stringsAsFactors = FALSE),
-         eligible_ids = character(0), tied = character(0),
-         margin = NA_real_, runner_up = NA_character_,
-         detail = detail, detail_plain = plain)
-  if (!length(ftemplates)) return(none("no form templates are installed"))
-
-  hay <- .form_fp_norm(paste(input$pages %||% character(0), collapse = "\n"))
-  ids <- names(ftemplates)
-  # A hand-assembled unnamed list still has to come back with an answer rather
-  # than an error: the id is the key it was filed under, or its position.
-  if (is.null(ids)) ids <- as.character(seq_along(ftemplates))
-  ids[!nzchar(ids)] <- as.character(seq_along(ftemplates))[!nzchar(ids)]
-  names(ftemplates) <- ids
-  sc <- lapply(ids, function(i) {
-    need <- as.character(unlist(ftemplates[[i]]$fingerprint$page_contains_all %||%
-                                  character(0)))
-    hit <- if (!length(need)) logical(0) else
-      vapply(need, function(ph) {
-        k <- .form_fp_norm(ph)
-        nzchar(k) && grepl(k, hay, fixed = TRUE, useBytes = TRUE)
-      }, logical(1))
-    list(score = sum(hit), need = length(need), missing = need[!hit])
-  })
-  scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
-  needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
-  # A template with NO phrases can never be matched (validation refuses one), so
-  # it is never eligible however the page reads.
-  eligible <- needs > 0 & scores >= needs
-
-  # THE ORDER, and every step of it is principled. Most phrases first (the most
-  # specific template that fits wins), then a shipped template ahead of one built
-  # here (a shipped one has a test behind it), then the id so the answer is fully
-  # deterministic and never depends on the order a folder happened to list in.
-  shipped <- vapply(ids, function(i)
-    as.numeric(!identical(ftemplates[[i]]$origin %||% "default", "user")), numeric(1))
-  ord <- order(scores, needs, shipped, ids,
-               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; needs <- needs[ord]
-  shipped <- shipped[ord]; eligible <- eligible[ord]; sc <- sc[ord]
-  cand_df <- data.frame(id = ids, score = scores, need = needs,
-                        stringsAsFactors = FALSE)
-
-  if (!any(eligible)) {
-    best <- ids[1]; miss <- sc[[1]]$missing
-    return(list(template_id = NA_character_, matched = FALSE, score = 0,
-      candidates = cand_df, eligible_ids = character(0), tied = character(0),
-      margin = NA_real_, runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
-      detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
-        if (length(miss)) sprintf(" (missing %s)",
-          paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
-      # The same fact for the person holding the document: no id, no fraction.
-      detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
-        .form_tpl_name(ftemplates[[best]]),
-        if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
-        else "the wording it looks for")))
-  }
-
-  e_ids <- ids[eligible]; e_needs <- needs[eligible]; e_ship <- shipped[eligible]
-  win <- e_ids[1]
-  second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
-  second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
-  # Unambiguous when the winner is strictly more specific, or ties on specificity
-  # and something principled separates them (a shipped template over a hand-built
-  # one). A shipped template drawing level with a hand-built one is not a real
-  # question, and stopping to ask it helps nobody.
-  matched <- (e_needs[1] > second_need) ||
-             (e_needs[1] == second_need && e_ship[1] > second_ship)
-  tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
-          else character(0)
-  if (length(tied) < 2L) tied <- character(0)
-  list(template_id = win, matched = matched, score = e_needs[1],
-       candidates = cand_df, eligible_ids = e_ids, tied = tied,
-       margin = if (is.finite(second_need)) e_needs[1] - second_need else Inf,
-       runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
-       detail = if (matched) "matched by identifying phrases"
-                else sprintf("%d form templates are equally specific here (%s)",
-                             length(tied), paste(tied, collapse = ", ")),
-       detail_plain = if (matched) NULL else
-         sprintf("%d templates fit this document equally well, so it was read with the %s.",
-                 length(tied), .form_tpl_name(ftemplates[[win]])))
+  .detect_by_fingerprint(input, ftemplates, "form", .form_fp_norm, .form_tpl_name)
 }
 
 # write_form_outputs(fields, outdir, basename, formats) -> named path vector.
@@ -425,20 +333,12 @@ convert_form <- function(path, fields_dir = "templates/fields",
   })
 }
 
-# save_fields_template(tmpl, dir) -> path. Validates then writes <dir>/<id>.yaml.
+# save_fields_template(tmpl, dir) -> path. Validates then writes <dir>/<id>.yaml,
+# through the one saver all three kinds share (.save_template_yaml, R/templates.R)
+# -- which is also how this route stopped being able to overwrite one form
+# template with another whose id merely sanitises to the same filename.
 save_fields_template <- function(tmpl, dir = "templates/fields_user") {
-  probs <- validate_fields_template(tmpl)
-  if (length(probs)) stop("fields template is not valid: ", paste(probs, collapse = "; "))
-  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  id <- gsub("[^A-Za-z0-9_]+", "_", tmpl$id)
-  path <- file.path(dir, paste0(id, ".yaml"))
-  # SAFELY: a copy of the previous version, a temp file, then an atomic rename.
-  # A template is months of somebody's work that exists nowhere else on an offline
-  # box, and a bare write_yaml truncates the target before it writes. See
-  # save_yaml_safely() in R/util.R.
-  ok <- save_yaml_safely(tmpl, path)
-  if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
-  invisible(path)
+  .save_template_yaml(tmpl, dir, validate_fields_template, "fields template")
 }
 
 # .forced_template_kind(id, ...) -> "statement" | "form" | "tables" | NA.

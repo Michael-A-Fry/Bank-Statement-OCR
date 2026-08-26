@@ -152,6 +152,74 @@ DIAG_PLAIN <- c(
   ocr                     = "page(s) machine-read (OCR)",
   ocr_confidence_unknown  = "scan quality unknown",
   none                    = "no issues found")
+
+# THE DIAGNOSTICS TABLE, IN WORDS THAT ARE TRUE OF THE ROUTE THE RUN ACTUALLY TOOK.
+#
+# build_diagnostics() is one function serving all three routes, so its remedies are
+# written in statement vocabulary. Driven in a browser, a report the tool did not
+# recognise came back carrying: "Add a template for this layout in the template
+# toolkit" (that is the STATEMENT toolkit, and this route does not have one), "The
+# closest match and the missing columns are in the detail" (the report detector
+# reports neither, and "the detail" is the column the sentence is sitting in), and
+# -- on a document the person had just told the tool is not a statement -- a row
+# headed "several accounts in one statement" warning that its running balances may
+# not be continuous. A report has no running balance; the same screen says so two
+# inches higher.
+#
+# THREE MAPS, AND ONLY THE WORDING MOVES. No row is added, dropped or re-graded:
+# a diagnostic the engine raised is still raised, still at its own severity, still
+# with its own detail. Only the sentence changes, and only for the codes named here.
+#   DIAG_FIX_PLAIN       -- replaces "How to fix" on EVERY route (the engine's own
+#                           is wrong on all of them).
+#   DIAG_PLAIN_OTHER     -- replaces the "What" word, non-statement routes only.
+#   DIAG_FIX_PLAIN_OTHER -- replaces "How to fix", non-statement routes only.
+# Anything not named keeps the engine's words verbatim.
+DIAG_FIX_PLAIN <- c(
+  unknown_format = paste("Set this layout up on the Add a template tab: upload this document",
+                         "and point at what you want out of it."))
+DIAG_PLAIN_OTHER <- c(
+  combined_statement  = "several accounts in one document",
+  multiple_statements = "several documents in one file")
+DIAG_FIX_PLAIN_OTHER <- c(
+  combined_statement  = "Check which account each figure belongs to.",
+  multiple_statements = paste("This upload looks like more than one document bundled together.",
+                              "Split it into one document per file and re-run."))
+
+# diag_for_route(d, statement) -- the diagnostics frame with its wording put right
+# for the route. `d` is the engine's frame (category / severity / detail /
+# how_to_fix / ...); `statement` is TRUE only when the run really was read as a
+# transaction statement. Returns `d` unchanged when there is nothing to say.
+plain_diag <- function(x, statement = TRUE) {
+  out <- plain_label(x, DIAG_PLAIN)
+  if (!isTRUE(statement)) {
+    x <- as.character(x)
+    hit <- x %in% names(DIAG_PLAIN_OTHER)
+    if (any(hit)) out[hit] <- unname(DIAG_PLAIN_OTHER[x[hit]])
+  }
+  out
+}
+diag_for_route <- function(d, statement = TRUE) {
+  if (!is.data.frame(d) || !nrow(d) || !("category" %in% names(d))) return(d)
+  cat_ <- as.character(d$category)
+  if ("how_to_fix" %in% names(d)) {
+    d$how_to_fix <- as.character(d$how_to_fix)
+    hit <- cat_ %in% names(DIAG_FIX_PLAIN)
+    if (any(hit)) d$how_to_fix[hit] <- unname(DIAG_FIX_PLAIN[cat_[hit]])
+    if (!isTRUE(statement)) {
+      hit <- cat_ %in% names(DIAG_FIX_PLAIN_OTHER)
+      if (any(hit)) d$how_to_fix[hit] <- unname(DIAG_FIX_PLAIN_OTHER[cat_[hit]])
+    }
+  }
+  # "6 account numbers appear in one statement period" -- the count is the engine's
+  # and is kept; only the noun is the wrong one for this route.
+  if (!isTRUE(statement) && "detail" %in% names(d)) {
+    hit <- cat_ %in% "combined_statement"
+    if (any(hit)) d$detail <- as.character(d$detail)
+    if (any(hit))
+      d$detail[hit] <- sub("one statement period", "this document", d$detail[hit], fixed = TRUE)
+  }
+  d
+}
 # ROW FLAGS -> plain words. A flag is how one ROW says something is true of it
 # ("this value arrived hidden", "the year came from the statement, not this
 # line"). Both transaction tables mapped their column HEADERS through

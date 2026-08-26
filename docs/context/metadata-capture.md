@@ -21,7 +21,7 @@ what it stores.
 
 ## Where it's controlled
 
-Admin tab → **Data capture**. A single **level** (Off / Standard / Full) plus
+**Admin → Health → Data capture** (a disclosure at the foot of the tab). A single **level** (Off / Standard / Full) plus
 per-category switches. The choice is saved to `config/config.yaml` under
 `metadata:` and applies to the next conversion. Full is the default.
 
@@ -108,7 +108,7 @@ tokens emitted are a low-cardinality indicator column's short distinct values
 that a description column *can contain* an account-number pattern
 (`AA 99-9999-9999999-99`) without ever storing a real digit.
 
-These "unrecognised" fields feed the suggestion queue in **Admin → Data capture**
+These "unrecognised" fields feed the suggestion queue in **Admin → Templates**
 (see [`../operational/admin-and-maintenance.md`](../operational/admin-and-maintenance.md)):
 what keeps turning up unrecognised is counted, offered most-frequent-first, a
 human approves one, and the deterministic engine picks it up on the next

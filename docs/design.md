@@ -17,6 +17,13 @@ repeating them.
 Everything below was checked against the running code on 2026-07-27, at `VERSION`
 1.3.0. Four parts were re-checked on **2026-07-28 at `VERSION` 1.4.0**: §1's
 locale rule, invariants **4** and **17** in §5, and §8's *add a check* recipe.
+
+**The tree has moved since.** As of 2026-08-26 (`VERSION` 1.8.1) `app.R` is
+10,366 lines and `R/` is 50 modules / 20,001 lines, and Admin is two tabs
+(Templates, Health) where this page's era had four. The ground rules, the shape,
+the schema and the invariants below are unchanged; anything counted is not.
+`docs/context/outstanding-work.md` is the live register of what has moved and
+what has not.
 Line numbers are deliberately absent for `app.R` — it moves. Functions and files
 are named instead, and every measured figure carries the date it was taken.
 
@@ -104,7 +111,7 @@ Rscript run.R <file> [bank] [outdir]
 ```
 
 Sizes, for orientation only — these move every week, so re-measure rather than
-quote: `R/` is 46 single-concern modules totalling a bit over twice the length of
+quote: `R/` is 50 single-concern modules totalling a bit under twice the length of
 `app.R`; `app.R` is a few thousand lines; `ui_labels.R` and `ui_content.R` are a
 few hundred between them.
 
@@ -827,12 +834,16 @@ StatementStudio-offline\
   templates\documents_user\             <- LIVE: report pullers built in the app
   logs\runs\  logs\feedback\  logs\metadata\  <- LIVE: the audit trail, kept forever
   uploads\<id>\                         <- LIVE: real client statements
+  requests\                             <- LIVE: "none of these fits" raises
   feed\                                 <- LIVE: what Qlik reads
   R-runtime\  R-lib\                    <- the app's own private R, installed on the box
 ```
 
 **Everything in the second group is server state that exists nowhere else**, and
-an update must not touch any of it. Some of it is irreplaceable in the strict
+an update must not touch any of it. `save_yaml_safely()` (R/util.R) writes a
+`<name>.yaml.bak` beside every file it saves - templates as well as dictionaries -
+so a `.bak` in any of those folders is live state too, and it is the only undo a
+template has. Nothing loads a `.bak` or a `.part`: every loader lists `*.yaml`. Some of it is irreplaceable in the strict
 sense — `templates\statements_user\`, `templates\fields_user\`,
 `templates\documents_user\` and
 `dictionaries\` are the accumulated work of the team and cannot be rebuilt from

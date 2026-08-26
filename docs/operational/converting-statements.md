@@ -8,7 +8,11 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 2. **Browse** and pick the file — `.csv`, `.tsv`, `.tdv`, `.xlsx` or `.pdf`.
    Up to **200 MB**. Pick several at once to do a whole case folder in one go;
    the button then reads *Convert N files*.
-3. **Type your QID** and click **Use this QID**. Six letters or numbers — your
+3. **What is this?** Leave it on **Work it out for me** — that is right almost
+   every time. The other two answers, **A bank or card statement** and
+   **Something else - a report, a form, a letter**, are there for the case where
+   it read a trustee report as a statement, or the other way round.
+4. **Type your QID** and click **Use this QID**. Six letters or numbers — your
    staff ID, e.g. `AB1234`. It is what the audit trail records as who ran this
    conversion, so **Convert does nothing until it is filled in**. You are asked
    once per session; after that the page just says *Recording as AB1234*, with a
@@ -16,14 +20,14 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 
    If there is no QID box at all, the server already knows who you are and the
    tool does not ask.
-4. Leave **Bank** on **Detect automatically**. Only set it if the tool read the
-   statement as the wrong bank.
-5. Click **Convert**. A scanned PDF takes tens of seconds — it is being OCR'd.
-6. Read the verdict, then **Download** Excel, CSV or JSON.
+5. Leave **Bank** on **Detect automatically**. Only set it if the tool read the
+   statement as the wrong bank. (There is one bank picker, in front. It goes away
+   once you have said this is not a statement.)
+6. Click **Convert**. A scanned PDF takes tens of seconds — it is being OCR'd.
+7. Read the verdict, then **Download** Excel, CSV or JSON.
 
-Everything the tool *proved* stays on the page under the verdict: whether the
-the summary cards, the strip of ticks, your
-transactions — and, in one disclosure headed **Checks & detail (for review)**,
+Everything the tool *proved* stays on the page under the verdict: the summary
+cards, the strip of ticks, your transactions — and, in one disclosure headed **Checks & detail (for review)**,
 the **Checks**, the **Diagnostics** and the **Field coverage**. That disclosure
 opens itself whenever a check has failed or the run needs review, so on the runs
 that need reading it is already open.

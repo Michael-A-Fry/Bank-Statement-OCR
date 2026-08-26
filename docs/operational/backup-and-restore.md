@@ -14,7 +14,7 @@ Five minutes, once a week, and before every update. It is a folder copy.
 | `templates\fields_user\` | The same, for form / IRD labelled-value templates. |
 | `templates\documents_user\` | The same, for the report / document pullers built on **Add a template → anything else** — the tables and figures somebody drew out of a report by hand. |
 | `dictionaries\` | `labels.yaml` + `lexicon.yaml` — every wording and marker taught in Admin. Losing these crashes nothing: statements that reconciled last week quietly stop reconciling, which is worse. |
-| `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Insights, drift detection and the layout-gap queue are computed from it. Once gone it cannot be recreated. |
+| `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Admin → Health, drift detection and the layout-gap queue are computed from it. Once gone it cannot be recreated. |
 
 Worth having, easy to live without: `config\config.yaml` (your settings —
 `RUN-ME.bat` keeps a same-machine copy under `%LOCALAPPDATA%\StatementStudio`,
@@ -64,15 +64,14 @@ the app starts), so the private R and packages are in place.
    `templates\statements_user\`, `templates\fields_user\`, `templates\documents_user\`,
    `dictionaries\`, `logs\metadata\`, `config\config.yaml`.
 3. **Start the app.**
-4. Check: **Admin → Templates** lists your user templates and the **Label
-   dictionary** shows your own wordings. Convert one statement you know
-   reconciles and confirm it still does.
-5. Check the **document** templates separately, because **Admin → Templates does
-   not list them** — they are matched at the front door, not chosen from a list.
-   Upload a report you have built a puller for and confirm the tool recognises it
-   instead of asking you to build one
-   ([pulling-tables-out-of-a-report.md](pulling-tables-out-of-a-report.md)). If it
-   asks, `templates\documents_user\` did not come back.
+4. Check, in one command: `Rscript scripts\health-check.R` (the exact line for the
+   server's private R is in
+   [maintaining-the-engine.md](maintaining-the-engine.md) §1). It counts the
+   templates that loaded, **all three kinds** — bank statement, form, report — and
+   names any that were refused. The counts should match what you backed up.
+5. Then convert one statement you know reconciles and confirm it still does. That
+   is the half health-check cannot do: it proves `dictionaries\` came back too.
+   **Admin → Templates** lists all three kinds by name if you want to read them.
 
 ### Rebuilding a lost server from nothing
 
@@ -86,13 +85,20 @@ the app starts), so the private R and packages are in place.
    re-check the admin password —
    [running-and-keeping-it-up.md](running-and-keeping-it-up.md).
 
-### Going back one dictionary save
+### Going back one save
 
-If someone saved a bad wording an hour ago and you have no fresh backup: every
-Admin save first writes the previous contents beside the file as
-`dictionaries\labels.yaml.bak` / `dictionaries\lexicon.yaml.bak`. Stop the app,
-copy the `.bak` over the `.yaml`, start it again. **One step of history only** —
-a second bad save overwrites the good `.bak`.
+If someone saved a bad wording — or a bad template — an hour ago and you have no
+fresh backup: **every save first writes the previous contents beside the file as
+`<name>.bak`**. That is `dictionaries\labels.yaml.bak` and
+`dictionaries\lexicon.yaml.bak`, and now also a `.yaml.bak` beside every template
+in `templates\statements_user\`, `templates\fields_user\` and
+`templates\documents_user\`. Stop the app, copy the `.bak` over the `.yaml`
+(dropping the `.bak`), start it again. **One step of history only** — a second bad
+save overwrites the good `.bak`.
+
+A `.yaml.<number>.part` file is a save that died half-way. Nothing loads it and
+nothing loads a `.bak`, so neither can ever be read as a template; leave them
+where they are.
 
 ## What backup does not cover
 

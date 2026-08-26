@@ -122,7 +122,7 @@ retention:
 
 `0` means keep them indefinitely. Restart the app.
 
-**Check:** **Admin → Insights → Saved statements - retention** states **your**
+**Check:** **Admin → Health → Saved statements - retention** states **your**
 number — *"Uploads are kept N days…"*, or *"kept indefinitely"* if you set `0` —
 and the red button beside it names the same number.
 
@@ -241,16 +241,18 @@ them needs the app to be idle.
 
 | Reading | Where | Healthy |
 |---|---|---|
-| People are converting | **Admin → Insights**, *Refresh from logs*, *Uploads* | rows, with today's timestamps and more than one QID |
+| People are converting | **Admin → Health**, *Refresh from logs*, *Uploads* | rows, with today's timestamps and more than one QID |
 | Conversions are clean | same page, *Conversions by status* | mostly `ok`; a few `needs_review` is normal, a wall of `unsupported` means a bank has no template yet |
 | The feed is still being written | `<feed_dir>\transactions\` | the file count has grown since step 7 |
-| No feed write has failed | on the server: `findstr /s /m "write_failed" logs\feed\*.json` | **prints nothing** |
+| No feed write has failed | **Admin → Health → Analytics feed** | a green line. It counts the conversions that did not reach the dashboards as intended, so nobody has to go looking |
 | Qlik is current | the Qlik app's last reload time | within its schedule, and its row count has grown |
 
-**Do the `findstr` one.** A share that goes read-only mid-morning fails *loudly
-on the converting analyst's screen* and nowhere else: every conversion still
-succeeds, every download is complete, and the dashboards simply stop gaining
-data. That command is the whole-server view of it, and empty is the good answer.
+**Read the Analytics feed line.** A share that goes read-only mid-morning used to
+fail *loudly on the converting analyst's screen* and nowhere else: every
+conversion still succeeded, every download was complete, and the dashboards
+simply stopped gaining data. It is a server fault, so it is now reported on the
+server's own page. (Headless, if you want it from a console:
+`findstr /s /m "write_failed" logs\feed\*.json` — empty is the good answer.)
 
 Then tell the team three things and nothing else:
 

@@ -171,9 +171,18 @@ test_that("a QID must be six letters or numbers", {
   src <- paste(readLines(file.path(engine_root(), "app.R"), warn = FALSE), collapse = "\n")
   expect_match(src, 'QID_PATTERN <- "\\^\\[A-Za-z0-9\\]\\{6\\}\\$"')
   # free text was the old behaviour: a typo or a name recorded against a
-  # conversion is a record nobody can follow back to a person
-  expect_match(src, "if \\(!grepl\\(QID_PATTERN, v\\)\\)")
+  # conversion is a record nobody can follow back to a person. The check used to
+  # run on a separate "Use this QID" button; that button is gone (it was a press
+  # that confirmed the box above it, and until it was pressed a perfectly valid
+  # QID sat in the box with Convert greyed out), so the SAME pattern is now
+  # applied to the box itself, the moment what is in it is a QID.
+  expect_match(src, "observeEvent\\(input\\$cv_qid, \\{")
+  expect_match(src, "if \\(grepl\\(QID_PATTERN, v\\)\\) \\{ cv_qid\\(toupper\\(v\\)\\)")
+  expect_match(src, "else cv_qid\\(NA_character_\\)",
+               info = "anything that is not a QID leaves the conversion blocked")
   expect_match(src, "cv_qid\\(toupper\\(v\\)\\)", info = "one identity per person in the log")
+  # and the refusal is still said, in the box rather than in a toast
+  expect_match(src, "A QID is six letters or numbers, e\\.g\\. AB1234\\.")
   for (v in c("AB1234", "abc123", "123456")) expect_true(grepl("^[A-Za-z0-9]{6}$", v))
   for (v in c("AB123", "AB12345", "AB-123", "", "Michael")) expect_false(grepl("^[A-Za-z0-9]{6}$", v))
 })

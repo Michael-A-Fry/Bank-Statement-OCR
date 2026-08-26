@@ -3,9 +3,9 @@
 One page per task, written for analysts rather than developers. Background — how
 it works and why — is in [`../context/`](../context/README.md).
 
-**Converting statements, not running the server?** Only the four *Every day*
+**Converting statements, not running the server?** Only the five *Every day*
 pages below are yours. [`../for-analysts/`](../for-analysts/README.md) is the
-short index that lists just those four, and it is the folder name to hand to
+short index that lists just those five, and it is the folder name to hand to
 somebody new — everything from *Running the server* down is for whoever owns the
 box.
 
@@ -27,7 +27,8 @@ box.
 | **Put it on the Qlik server: service account, boot start, firewall, the address** | [deploy-on-the-qlik-server.md](deploy-on-the-qlik-server.md) |
 | **Turn it on for real — the checklist for the day** | [go-live-checklist.md](go-live-checklist.md) |
 | Start it, keep it running after reboots, open the firewall port, change a setting | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
-| Back up the four irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
+| **Ask the box whether it is fit to convert — one command, after every update** | `scripts\health-check.R`, in [maintaining-the-engine.md](maintaining-the-engine.md) §1 |
+| Back up the five irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
 | Update to a new version (build a package, replace the folder) | [updating.md](updating.md) |
 | **Merge a dev folder into the live one by hand — and what must never be copied** | [updating-a-version.md](updating-a-version.md) |
 | **Put a bad version back, and deal with what it already sent to Qlik** | [rolling-back.md](rolling-back.md) |
@@ -51,8 +52,8 @@ The things that change live in **data and config, not code**.
 | To change | Where | Who, and how |
 |---|---|---|
 | A bank's layout — its columns, date and amount style | `templates\<bank>.yaml` | analyst, in the app — **Add a template**. No code. |
-| A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Templates → Label dictionary** |
-| A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Data capture → Words the tool knows to look for** |
+| A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Templates → Words the tool looks for** |
+| A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Templates → Words the tool knows to look for** |
 | A deployment setting (port, admin password, the Qlik feed gate, paths) | `config\config.yaml` | admin — annotated example in `config\config.example.yaml` |
 | A numeric engine threshold (year window, OCR DPI, row tolerance, redaction darkness) | `R\params.R` | maintainer — [../context/engine-parameters.md](../context/engine-parameters.md) |
 

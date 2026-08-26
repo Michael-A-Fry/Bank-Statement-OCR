@@ -25,8 +25,8 @@ on works without it.)
 
 | Where | Table | Use it when |
 |---|---|---|
-| **Admin → Insights** | *Feedback flagged as wrong / minor issues* — `ts`, `verdict`, `comment`, `template_id`, `run_id` | somebody rated a result **wrong** or **minor issues** in the app |
-| **Admin → Insights** | *Uploads* — `ts`, `file_ext`, `status`, `template`, `trust`, `needs_pickup`, `purged`, `run_id` | you know the file or roughly when it was converted |
+| **Admin → Templates** | *What the team said about these conversions* — `ts`, `verdict`, `comment`, `template_id`, `run_id`, and the document it was left on | somebody rated a result **wrong** or **minor issues** in the app |
+| **Admin → Health** | *Uploads* — `ts`, `file_ext`, `status`, `template`, `trust`, `needs_pickup`, `purged`, `run_id` | you know the file or roughly when it was converted |
 
 If she can only tell you the file name and the day, the Uploads table is the
 route: it lists every statement converted on this server, newest first.
@@ -110,7 +110,7 @@ the three output paths.
 
 The re-run is a conversion like any other, so it **writes its own new record**
 under `logs\runs\` with `requested_by: cli`. That is deliberate — the
-investigation leaves a trail too — but it means Admin's Insights and coverage
+investigation leaves a trail too — but it means Admin's Health tab and coverage
 tables will show your check runs alongside the analyst's. They are the ones with
 `cli` as the requester.
 

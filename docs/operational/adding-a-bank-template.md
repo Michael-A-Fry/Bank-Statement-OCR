@@ -183,10 +183,10 @@ Zealand dollars, look at this box before you Save.** A currency is a label on
 money, and a wrong one is a wrong figure: it stamps the currency column and the
 totals above the transactions table.
 
-**Everything as YAML** is on the toolkit's **Advanced** tab — *Load current
-settings* fills it, *Check & apply* validates and updates the preview, and a
-syntax error is reported with its line and column. The Simple tab picks up
-whatever you applied.
+**The complete template as text** is the toolkit's **Advanced** tab —
+*Load current settings* fills it, *Check & apply* validates and updates the
+preview, and a syntax error is reported with its line and column. The **Simple**
+tab picks up whatever you applied.
 
 ## When the preview reads nothing
 
@@ -199,13 +199,13 @@ wrong, and the fix is different for each:
   found at all.
 - **It is not a transaction table.** An IRD certificate, a KiwiSaver annual
   statement, a summary letter. Click **Not a transaction table?** in the toolkit:
-  it closes, switches the Add-a-template tab to *Something else*, and brings your
+  it closes, switches the Add-a-template tab to *Anything else*, and brings your
   document with it, so you land in the labelled-value builder with nothing to
   re-upload.
 
   If the toolkit **never opened** — you got a notification instead — the draft
   found no table at all. There is no link in a window that did not appear: set
-  the radio on the Add-a-template tab to *Something else* yourself.
+  the radio on the Add-a-template tab to *Anything else* yourself.
 
 If neither works, do not guess your way to a template that reads *something*: a
 template that reads the wrong part of the page is worse than no template. Use
@@ -215,26 +215,28 @@ layout with no client detail in it, and send that on.
 ## A form or summary (labelled values)
 
 For a document with no transaction table — an IRD certificate, an annual
-statement, a letter with figures in it — pick **Something else** on the Add a
-template tab. The builder appears below the upload:
+statement, a letter with figures in it — pick **Anything else — a report, a
+form, a summary, a letter** on the Add a template tab. The builder appears below the upload:
 
-1. **Draw a box** round a value you want. The tool reports what it read inside
-   the box and the wording printed beside it, and pre-fills a name.
-2. **Add this value**, pick its kind (money / date / date range / text), repeat
-   for the values that matter.
-3. **Preview on the document** — it reports *N of M values found* and which are
-   missing. If it says a value was not found and you have already drawn a box
-   round it, the box read nothing: redraw it slightly larger, or type the wording
-   instead under *Know the wording? Type them instead*.
-4. Name it, give it **a phrase printed on it** (all of them must appear), and
-   **Save template**.
+1. **+ Add a value**, then **draw a box** round the value and one round its
+   label. The tool reports what it read inside each box and pre-fills a name.
+2. Check **Call this value** and **What it is** (money / date / date range /
+   text), then **Save this value**. Repeat for the values that matter.
+3. **Read the whole document** — it reports what each value came out as, and
+   which were not found. If a value you have already drawn a box round is not
+   found, the box read nothing: redraw it slightly larger, or type the wording
+   instead under *Know the wording already? Type them instead*.
+4. Name it (**Who produced this document?**), give it **a phrase printed on it**
+   (all of them must appear), and **Save template**.
 
-**The gotcha to know before you start.** A form template is only tried when the
-transaction-statement path finds nothing. If any statement template already
-recognises your document, that one wins and your form template never runs — so
-the save message *"now upload the document on the Convert tab"* can be followed
-by the document converting as a statement instead. Check the result names your
+**The gotcha to know before you start,** and the save message now says it:
+*"Saved '<name>'. On Convert it is used when no statement template reads the
+document."* A form template is only tried when the transaction-statement path
+finds nothing, so if any statement template already recognises your document,
+that one wins and your form template never runs. Check the result names your
 form; if it names a bank statement template, tell whoever maintains the engine.
+(If you want to force it, set **What is this?** to **Something else - a report, a
+form, a letter** on Convert.)
 
 ## Templates built here vs. shipped templates
 

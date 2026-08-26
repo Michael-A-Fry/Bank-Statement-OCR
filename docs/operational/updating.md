@@ -16,9 +16,18 @@ R are all kept.
    **Replace the files in the destination**.
 3. **Double-click `RUN-ME.bat`.** It starts on the new version. It does not
    re-install R or the packages, so it is quick.
-4. **Re-apply any `R\params.R` change you had made** (see below), then convert
+4. **Ask the box whether it is fit to convert** — `scripts\health-check.R`, one
+   command, the exact line in
+   [maintaining-the-engine.md](maintaining-the-engine.md) §1. It prints the
+   version it is running and one line per check: the settings file parsed, an
+   admin password is set, how many bank statement / form / report templates
+   loaded **and how many were refused**, every folder it must write to is
+   writable, the scan-reading software is still installed. A **refused** template
+   is one that used to work and has stopped validating — it would otherwise just
+   have vanished from detection with no message anywhere.
+5. **Re-apply any `R\params.R` change you had made** (see below), then convert
    one statement you know reconciles and confirm it still does.
-5. **Check the new version is actually stamped on the output.** Open that
+6. **Check the new version is actually stamped on the output.** Open that
    conversion's `.json` download and look at `build.engine_version` near the top.
    It should read the version you just shipped. It is the same value written into
    every `logs\runs\<run_id>.json` and into the Qlik feed manifest, and it is what
@@ -73,12 +82,13 @@ The short version: a dev folder is not a package. The package build is what
 renames `dictionaries\*.yaml` to `*.example.yaml`, and that rename is the only
 reason a folder-replace cannot wipe your taught words. A hand copy skips it.
 
-### If a dictionary does get clobbered
+### If a dictionary or a template does get clobbered
 
-Every Admin save first writes the previous contents beside the file:
-`dictionaries\labels.yaml.bak`, `dictionaries\lexicon.yaml.bak`. Close the app,
-copy the `.bak` over the `.yaml` (dropping the `.bak`), start it again. One level
-of history, not many.
+Every save first writes the previous contents beside the file:
+`dictionaries\labels.yaml.bak`, `dictionaries\lexicon.yaml.bak`, and now a
+`.yaml.bak` beside every template saved in the three `templates\*_user\` folders
+as well. Close the app, copy the `.bak` over the `.yaml` (dropping the `.bak`),
+start it again. One level of history, not many.
 
 ### Re-applying an `R\params.R` change
 

@@ -423,36 +423,16 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
                                list(progress = .job_progress_writer(jobdir))))
     },
     audit = {
-      # The maintainer's bulk audit: a picture of a folder, then (optionally) the
-      # heavier pass that really converts and logs each file so the runs feed
-      # Insights. Both moved here whole from app.R; nothing about what they do
-      # changed, only which process does it.
+      # The maintainer's bulk audit: a picture of a folder. IT AUDITS; IT DOES NOT
+      # CONVERT. There was a second half here that really converted and logged each
+      # file, behind an "Also convert & save" tick. The tick was removed from Admin
+      # (Convert's own picker already takes thirty files and routes forms and
+      # reports properly), so the branch became unreachable -- and it was the last
+      # place in the product where a batch went through convert_statement() rather
+      # than convert_document(), so a report in the folder was converted as a failed
+      # statement. Converting a pile of files is Convert's case folder.
       tmpl <- load_template_set(args$templates_dir, args$user_templates_dir)
-      prog <- .job_progress_writer(jobdir)
-      b <- batch_audit(paths, templates = tmpl)
-      conv <- NULL
-      if (isTRUE(args$convert)) {
-        nms <- as.character(args$names %||% basename(paths))
-        rows <- vector("list", length(paths))
-        for (i in seq_along(paths)) {
-          if (is.function(prog)) prog(i, length(paths), nms[i])
-          r <- tryCatch(convert_statement(paths[i], outdir = args$outdir,
-                 templates_dir = args$templates_dir,
-                 user_templates_dir = args$user_templates_dir,
-                 logdir = args$logdir, requested_by = "batch"),
-                 error = function(e) NULL)
-          csv <- if (!is.null(r)) r$outputs[grepl("\\.csv$", r$outputs)] else character(0)
-          nrw <- if (length(csv) && file.exists(csv[1]))
-            tryCatch(nrow(utils::read.csv(csv[1], check.names = FALSE)),
-                     error = function(e) NA_integer_) else NA_integer_
-          rows[[i]] <- data.frame(file = nms[i], status = r$status %||% "failed",
-            template = r$template_id %||% NA_character_,
-            trust = r$trust$level %||% NA_character_,
-            n_rows = nrw, stringsAsFactors = FALSE)
-        }
-        conv <- do.call(rbind, rows)
-      }
-      list(audit = b, converted = conv)
+      list(audit = batch_audit(paths, templates = tmpl), converted = NULL)
     },
     stop(sprintf("no such job task: '%s'", as.character(task)[1])))
 }

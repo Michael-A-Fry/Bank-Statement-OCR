@@ -612,3 +612,83 @@ test_that("an answer she can SEE beats a template selection she cannot", {
   expect_true(any(grepl("different kind of document", as.character(r$messages),
                         fixed = TRUE)))
 })
+
+# ---------------------------------------------------------------------------
+# ONE DETECTOR, ONE SAVER -- the two OTHER routes must not be able to drift
+# ---------------------------------------------------------------------------
+
+test_that("detect_form and detect_document_template are the SAME rule, not two copies of it", {
+  # WHY THIS TEST EXISTS. The two were eighty-five identical lines apiece in two
+  # files, differing only in a noun, a normaliser and a namer. They are the two
+  # routes the brief insists are treated identically, and keeping them identical
+  # depended on somebody remembering to edit both. Both now call
+  # .detect_by_fingerprint(); this pins them to the same ANSWERS so a future
+  # divergence has to be deliberate.
+  mk <- function(id, phrases, origin = "default")
+    list(id = id, fingerprint = list(page_contains_all = phrases), origin = origin,
+         bank = "Kowhai", statement_type = "quarterly")
+  page <- list(pages = "KOWHAI  QUARTERLY   PORTFOLIO REPORT\nHoldings at 30 June")
+
+  # (1) a plain match, and the case/spacing folding both routes must do
+  one <- list(a = mk("a", "Quarterly Portfolio Report"))
+  expect_true(detect_form(page, one)$matched)
+  expect_true(detect_document_template(page, one)$matched)
+
+  # (2) the more specific template wins, on both
+  two <- list(a = mk("a", "Quarterly Portfolio Report"),
+              b = mk("b", c("Quarterly Portfolio Report", "Holdings at 30 June")))
+  expect_equal(detect_form(page, two)$template_id, "b")
+  expect_equal(detect_document_template(page, two)$template_id, "b")
+
+  # (3) a genuine tie is REPORTED and still read, on both
+  tie <- list(a = mk("a", "Quarterly Portfolio Report"),
+              b = mk("b", "Holdings at 30 June"))
+  fd <- detect_form(page, tie); dd <- detect_document_template(page, tie)
+  expect_setequal(fd$tied, c("a", "b"))
+  expect_setequal(dd$tied, fd$tied)
+  expect_equal(dd$template_id, fd$template_id)
+  expect_false(fd$matched); expect_false(dd$matched)
+  expect_identical(dd$detail_plain, fd$detail_plain)
+
+  # (4) a shipped template beats a hand-built one that is equally specific
+  ship <- list(u = mk("u", "Quarterly Portfolio Report", origin = "user"),
+               s = mk("s", "Quarterly Portfolio Report"))
+  expect_equal(detect_form(page, ship)$template_id, "s")
+  expect_equal(detect_document_template(page, ship)$template_id, "s")
+  expect_true(detect_form(page, ship)$matched)
+
+  # (5) a near miss names the closest and the wording that was not there
+  near <- list(a = mk("a", c("Quarterly Portfolio Report", "Units on issue")))
+  fn <- detect_form(page, near); dn <- detect_document_template(page, near)
+  expect_false(fn$matched)
+  expect_match(fn$detail, "Units on issue")
+  expect_identical(dn$detail, fn$detail)
+  expect_identical(dn$detail_plain, fn$detail_plain)
+
+  # (6) the ONE thing that is allowed to differ is the noun, and only there
+  empt_f <- detect_form(page, list())$detail
+  empt_d <- detect_document_template(page, list())$detail
+  expect_equal(empt_f, "no form templates are installed")
+  expect_equal(empt_d, "no document templates are installed")
+})
+
+test_that("saving a form template cannot overwrite a different one whose id merely sanitises the same", {
+  # Same bug, same close, as the report route: two DISTINCT ids that sanitise to
+  # one filename used to mean the second silently destroyed the first.
+  d <- tempfile("fieldslug_"); on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  base <- list(mode = "fields", format = "pdf",
+               fingerprint = list(page_contains_all = c("Kowhai Bank KiwiSaver",
+                                                        "Annual member statement")),
+               fields = list(opening_balance = "Opening balance"))
+  a <- base; a$id <- "Kowhai Q1!"
+  b <- base; b$id <- "Kowhai-Q1"
+  pa <- save_fields_template(a, d)
+  pb <- save_fields_template(b, d)
+  expect_false(identical(pa, pb))
+  expect_true(file.exists(pa))
+  back <- load_fields_templates(d, NULL)
+  expect_setequal(names(back), c("Kowhai Q1!", "Kowhai-Q1"))
+  # re-saving the first is an edit in place, not a third file
+  expect_identical(save_fields_template(a, d), pa)
+  expect_equal(length(list.files(d, pattern = "\\.yaml$")), 2L)
+})

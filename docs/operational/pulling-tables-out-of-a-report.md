@@ -82,8 +82,9 @@ Just under the column names. Skip it and the tool's own guess stands.
 
 > **Click the page where the table ENDS.**
 
-Turn the page first if the table carries on past this one — the page box and the
-**Next page →** button are above the picture, and the bar keeps waiting.
+Turn the page first if the table carries on past this one — the **Page** box is
+above the picture, and the bar keeps waiting. (One box, with its own arrows; it
+knows how many pages there are and cannot be stepped off the end.)
 
 ### 7 · If it runs over pages: the bottom edge of the ones in between
 
