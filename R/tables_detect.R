@@ -416,3 +416,89 @@ doc_suggest_name <- function(s) {
   k <- gsub("^_+|_+$", "", k)
   if (!nzchar(k)) "table" else k
 }
+
+# ---------------------------------------------------------------------------
+# WHAT DOES THIS DOCUMENT LOOK LIKE, when nothing recognised it?
+#
+# The front door tries three pipelines and, when all three come back
+# `unsupported`, the screen has to say what to do next. It used to say one thing:
+# "set up a template for this STATEMENT", with a button into the statement
+# toolkit -- which is right for a statement and flatly wrong for the report,
+# schedule or letter somebody has just dropped in. Calling the file a statement
+# twice in a sentence, when the whole reason we are here is that nothing could
+# tell what it was, is the tool asserting the one thing it does not know.
+#
+# It does not have to guess blind, though. Two cheap readings of the first pages
+# separate the two cases most of the time:
+#
+#   * how many TABLE-SHAPED blocks are on it (the report proposer, already built)
+#   * how many lines carry a DATE and a MONEY AMOUNT together -- which is what a
+#     transaction row is, whatever bank printed it
+#
+# The answer is a HINT, never a decision: both routes are always offered, and the
+# sentence says what was seen rather than what the file is. A tool that refuses
+# the wrong door is worse than one that guesses and says so.
+# ---------------------------------------------------------------------------
+
+# .doc_looks_txn_line(t) -- does this line have the SHAPE of a transaction row:
+# a date at the front and a money amount somewhere after it.
+#
+# Deliberately looser about the date than the label extractor is. That one needs
+# a value it can parse; this one only needs to recognise a shape, and statements
+# print "02 May", "02/05", "2 May 26" and "02-05-2026" all as the leading date of
+# a row. Requiring a parseable three-part date found 3 rows on a page of 11.
+.DOC_TXN_DATE_RX <- "^[^0-9A-Za-z]*[0-9]{1,2}[ /.-]{1,2}(?:[0-9]{1,2}|[A-Za-z]{3,9})\\b"
+.doc_looks_txn_line <- function(t) {
+  t <- trimws(as.character(t %||% ""))
+  if (!nzchar(t)) return(FALSE)
+  grepl(.DOC_TXN_DATE_RX, t, perl = TRUE) && !is.na(.value_from_line(t, "money"))
+}
+
+# doc_shape_hint(input, pages) -> list(tables, txn_lines, lines, looks, sentence)
+#
+# `looks` is "statement", "report" or "neither". `sentence` is plain English
+# about what was counted, safe to print next to both buttons.
+#
+# THE BEST PAGE, NOT THE TOTAL. A statement's first page is a cover -- name,
+# address, four summary figures -- and its rows start on page 2. Summing across
+# pages lets a cover dilute the one page that answers the question, so each page
+# is counted on its own and the best one is the reading.
+doc_shape_hint <- function(input, pages = 1:4) {
+  npg <- .doc_npages(input)
+  out <- list(tables = 0L, txn_lines = 0L, lines = 0L, looks = "neither",
+              sentence = "Nothing could be read off the page to go on.")
+  if (npg < 1L) return(out)
+  pages <- sort(unique(pages[pages >= 1L & pages <= npg]))
+  if (!length(pages)) return(out)
+
+  n_lines <- 0L; best_txn <- 0L
+  for (p in pages) {
+    w <- .doc_page_words(input, p)
+    if (is.null(w) || !NROW(w)) next
+    txt <- vapply(.doc_lines(w), function(d) paste(as.character(d$text), collapse = " "),
+                  character(1))
+    n_lines <- n_lines + length(txt)
+    n <- sum(vapply(txt, .doc_looks_txn_line, logical(1)))
+    if (n > best_txn) best_txn <- as.integer(n)
+  }
+  n_tab <- length(tryCatch(propose_tables(input, pages = pages), error = function(e) list()))
+
+  out$tables <- as.integer(n_tab); out$txn_lines <- as.integer(best_txn)
+  out$lines <- as.integer(n_lines)
+  if (!n_lines) return(out)
+
+  # FOUR is not a magic number, it is "more than a letterhead date and a total".
+  # A report's cover routinely carries a dated money figure or two; a statement
+  # carries a RUN of them, on one page, one under the other.
+  out$looks <- if (best_txn >= 4L) "statement" else if (n_tab >= 1L) "report" else "neither"
+  where <- if (length(pages) == 1L) "page" else sprintf("first %d pages", length(pages))
+  out$sentence <- switch(out$looks,
+    statement = sprintf(paste("Looking at the %s: %d line(s) on one page start with a date and carry",
+                              "an amount, which is what a transaction row looks like."),
+                        where, best_txn),
+    report = sprintf(paste("Looking at the %s: %d table-shaped block(s), and no run of lines starting",
+                           "with a date and carrying an amount."), where, n_tab),
+    sprintf(paste("Looking at the %s: neither a table nor a run of lines starting with a date and",
+                  "carrying an amount."), where))
+  out
+}

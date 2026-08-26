@@ -11,7 +11,12 @@
 STATUS_PLAIN <- c(
   ok           = "Converted successfully",
   needs_review = "Converted - please double-check it",
-  unsupported  = "No template for this statement yet",
+  # NOT "this statement". `unsupported` is reached only after all three pipelines
+  # have said they cannot tell what the file is, so the headline naming it a
+  # statement is the screen asserting the one fact nobody has. It is also the
+  # first line read on a report somebody has just dropped in, above a card that
+  # then offers both kinds of template.
+  unsupported  = "No template recognised this document yet",
   failed       = "Could not read this file")
 # "unsupported" covers two OPPOSITE situations, and one headline cannot say both.
 # Nothing fit -> a layout we have genuinely never seen, so go and build a template.
@@ -276,7 +281,7 @@ FEED_PLAIN <- list(
     why = "Only conversions that pass every check are published."),
   `withheld:unsupported` = list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
-    why = "No template read this statement, so there are no transactions to publish."),
+    why = "No template read this document, so there are no transactions to publish."),
   `withheld:failed` = list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
     why = "The file could not be read."),

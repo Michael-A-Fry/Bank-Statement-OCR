@@ -6145,7 +6145,7 @@ server <- function(input, output, session) {
     if (isTRUE((res$status %||% "") == "failed"))
       "Nothing was read from this file, so there is nothing to check and no fields to report."
     else
-      "No template read this statement, so no transactions were produced - there is nothing to check and no fields to report."
+      "No template read this document, so no transactions were produced - there is nothing to check and no fields to report."
   }
   # ...AND THE THIRD TABLE WAS LEFT OUT OF THAT FIX, which is the whole of this
   # defect: two of the three headings learned to say why they were empty and
@@ -7228,11 +7228,37 @@ server <- function(input, output, session) {
       # of ten and nothing on page 2. Half the measured cases are a couple of
       # minutes; the other half are not, so the button says what it does and
       # stops.
+      # NOTHING RECOGNISED IT, SO DO NOT CALL IT A STATEMENT.
+      #
+      # This card used to say "No template read this STATEMENT" and offer one
+      # button, into the statement toolkit. For the report, schedule or letter
+      # somebody has just dropped in, that is the wrong door -- and the sentence
+      # asserts the one thing we are here precisely because nobody knows. There
+      # are two kinds of template and the front door tried both, so the card
+      # offers both.
+      #
+      # It is not a coin toss either: doc_shape_hint() reads the first pages and
+      # counts table-shaped blocks and lines that start with a date and carry an
+      # amount, which is what a transaction row is whatever bank printed it. The
+      # likelier door is the primary one and the count is printed beside it, so
+      # the guess is checkable. BOTH ARE ALWAYS OFFERED -- a tool that refuses the
+      # wrong door is worse than one that guesses and says which it guessed.
+      hint <- cv_shape_hint()
+      looks_stmt <- !identical(hint$looks, "report")
+      stmt_btn <- actionButton("cv_teach_go", "Set up a STATEMENT template",
+        class = if (looks_stmt) "btn-primary btn-lg" else "btn-default btn-lg")
+      rep_btn <- actionButton("cv_teach_go_report", "Set up a REPORT or FORM template",
+        class = if (looks_stmt) "btn-default btn-lg" else "btn-primary btn-lg")
       div(style = "margin:12px 0;padding:14px;border:1px solid #b7e1b0;background:#eef8ec;border-radius:8px",
-        strong("No template read this statement \u2014 set one up and it converts every time."),
-        p(class = "muted", style = "margin:6px 0 10px",
-          "The tool pre-fills what it can detect from your statement; you confirm against a live preview and save."),
-        actionButton("cv_teach_go", "Set up a template for this statement", class = "btn-primary btn-lg"),
+        strong("Nothing recognised this document \u2014 set a template up once and it converts every time."),
+        p(class = "muted", style = "margin:6px 0 2px", hint$sentence),
+        p(class = "muted", style = "margin:2px 0 10px",
+          strong("A statement"), " is a table of transactions with a running balance, and it reconciles. ",
+          strong("Anything else"), " - a report, a form, a schedule, a letter - is read by pointing at ",
+          "what you want; it downloads and never reaches the dashboards."),
+        div(style = "display:flex;gap:8px;flex-wrap:wrap",
+            if (looks_stmt) stmt_btn else rep_btn,
+            if (looks_stmt) rep_btn else stmt_btn),
         div(style = "margin-top:8px",
           span(class = "muted", "Would rather not? "),
           actionLink("cv_unsup_raise", "Send it to the team instead")))
@@ -7283,6 +7309,31 @@ server <- function(input, output, session) {
     d <- res$diagnostics
     isTRUE(!is.null(d) && "category" %in% names(d) && any(d$category %in% "matched_but_empty"))
   }
+  # WHAT THE DOCUMENT LOOKS LIKE, read once per conversion and only when asked.
+  # It reads the first pages and runs the table proposer, so it is real work --
+  # but it is only ever needed by the card that appears when nothing matched, and
+  # a reactive computes it once and remembers it for that result.
+  cv_shape_hint <- reactive({
+    src <- cv_src()
+    fallback <- list(tables = 0L, txn_lines = 0L, lines = 0L, looks = "neither",
+                     sentence = "")
+    if (is.null(src) || !file.exists(src$path %||% "")) return(fallback)
+    inp <- tryCatch(read_input(src$path), error = function(e) NULL)
+    if (is.null(inp)) return(fallback)
+    tryCatch(doc_shape_hint(inp), error = function(e) fallback)
+  })
+
+  # THE REPORT DOOR, WITH THE FILE ALREADY THROUGH IT. Sending somebody to a tab
+  # where they have to find and upload the same file again is the sort of small
+  # tax that turns "try the other one" into "give up". rb_handoff is exactly the
+  # hand-over the statement toolkit already uses.
+  observeEvent(input$cv_teach_go_report, {
+    src <- cv_src()
+    if (!is.null(src) && !is.null(src$path) && file.exists(src$path)) rb_handoff(src$path)
+    updateRadioButtons(session, "ts_doctype", selected = "other")
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+  })
+
   .teach_now <- function(seed_matched = FALSE) {
     src <- cv_src(); req(src)
     res <- cv_res()

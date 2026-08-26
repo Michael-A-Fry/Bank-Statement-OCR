@@ -405,3 +405,78 @@ test_that("a value's name is the key it comes out under: lower case, underscores
   expect_identical(doc_suggest_name("  Closing   Balance  "), "closing_balance")
   expect_identical(doc_suggest_name("2012-13"), "2012_13")
 })
+
+# ---------------------------------------------------------------------------
+# WHEN NOTHING RECOGNISES IT, WHAT IS IT?
+#
+# Reported: dropping a non-statement PDF into Convert offers the STATEMENT
+# toolkit and nothing else. The card called the file "this statement" twice,
+# which is the one thing nobody knows at that point -- all three pipelines have
+# just said they cannot tell.
+# ---------------------------------------------------------------------------
+
+test_that("a line with a leading date and an amount is recognised whatever the date style", {
+  # Deliberately looser than the label extractor's date. Statements print
+  # "02 May", "02/05", "2 May 26" and "02-05-2026" as the leading date of a row;
+  # requiring a parseable three-part date found 3 rows on a page of 11.
+  expect_true(.doc_looks_txn_line("02 May EFTPOS COFFEE HOUSE 5.50 1,244.50"))
+  expect_true(.doc_looks_txn_line("02/05 SALARY ACME LTD 3,200.00"))
+  expect_true(.doc_looks_txn_line("2 May 26 DD POWER CO 180.20"))
+  expect_true(.doc_looks_txn_line("02-05-2026 TRANSFER 12.00"))
+  # a date with no amount, and an amount with no date, are both NOT rows
+  expect_false(.doc_looks_txn_line("Statement period from 1 May 2026 to 31 May 2026"))
+  expect_false(.doc_looks_txn_line("Closing balance $2,716.50"))
+  expect_false(.doc_looks_txn_line("Regional health outlay"))
+  expect_false(.doc_looks_txn_line(""))
+})
+
+test_that("the shape hint reads a statement as a statement and a report as a report", {
+  # A STATEMENT: a run of dated amounts, one under the other.
+  stmt <- doc_input(list(
+    doc_page(doc_L(40, 60, "Kowhai Bank"), doc_L(40, 90, "Closing balance"),
+             doc_R(300, 90, "2,716.50")),
+    doc_page(doc_L(40, 60, "Date"), doc_L(120, 60, "Details"), doc_R(400, 60, "Amount"),
+             doc_L(40, 90, "02 May"),  doc_L(120, 90, "EFTPOS"), doc_R(400, 90, "5.50"),
+             doc_L(40, 112, "03 May"), doc_L(120, 112, "SALARY"), doc_R(400, 112, "3,200.00"),
+             doc_L(40, 134, "05 May"), doc_L(120, 134, "POWER"),  doc_R(400, 134, "180.20"),
+             doc_L(40, 156, "07 May"), doc_L(120, 156, "RENT"),   doc_R(400, 156, "500.00"),
+             doc_L(40, 178, "09 May"), doc_L(120, 178, "FUEL"),   doc_R(400, 178, "88.10"))))
+  h <- doc_shape_hint(stmt)
+  expect_identical(h$looks, "statement")
+  expect_gte(h$txn_lines, 4L)
+  expect_match(h$sentence, "transaction row", fixed = TRUE)
+
+  # A REPORT: a table of figures with no dates on the rows at all.
+  rep <- doc_input(list(doc_page(
+    doc_L(40, 60, "Regional outlay"),
+    doc_L(40, 90, "Region"), doc_R(400, 90, "Amount"),
+    doc_L(40, 120, "North"), doc_R(400, 120, "1,000.00"),
+    doc_L(40, 142, "South"), doc_R(400, 142, "2,000.00"),
+    doc_L(40, 164, "East"),  doc_R(400, 164, "3,000.00"),
+    doc_L(40, 186, "West"),  doc_R(400, 186, "4,000.00"))))
+  h2 <- doc_shape_hint(rep)
+  expect_identical(h2$looks, "report")
+  expect_equal(h2$txn_lines, 0L)
+  expect_gte(h2$tables, 1L)
+
+  # NOTHING TO GO ON is its own answer, not a guess at one of the two.
+  h3 <- doc_shape_hint(doc_input(list(doc_page(doc_L(40, 60, "Dear Sir")))))
+  expect_identical(h3$looks, "neither")
+  expect_false(grepl("transaction row", h3$sentence, fixed = TRUE))
+})
+
+test_that("a cover page cannot dilute the page that answers the question", {
+  # THE BEST PAGE, NOT THE TOTAL. A statement's first page is name, address and
+  # four summary figures; its rows start on page 2. Summing across pages lets the
+  # cover outvote the evidence.
+  cover <- doc_page(doc_L(40, 60, "Kowhai Bank"), doc_L(40, 80, "JAMIE SAMPLE"),
+                    doc_L(40, 100, "1 Example Street"), doc_L(40, 120, "Wellington 6011"),
+                    doc_L(40, 140, "Account name Everyday"), doc_L(40, 160, "Page 1 of 2"))
+  rows <- doc_page(
+    doc_L(40, 60, "Date"), doc_R(400, 60, "Amount"),
+    doc_L(40, 90, "02 May"),  doc_R(400, 90, "5.50"),
+    doc_L(40, 112, "03 May"), doc_R(400, 112, "3,200.00"),
+    doc_L(40, 134, "05 May"), doc_R(400, 134, "180.20"),
+    doc_L(40, 156, "07 May"), doc_R(400, 156, "500.00"))
+  expect_identical(doc_shape_hint(doc_input(list(cover, rows)))$looks, "statement")
+})

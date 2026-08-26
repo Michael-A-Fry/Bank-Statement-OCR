@@ -13,6 +13,44 @@ finding id.
 
 ---
 
+## 1.8.0
+
+**A document nothing recognised is not "this statement".** Reported: drop a
+non-statement PDF into Convert and the only thing offered is the statement
+toolkit. The card said *"No template read this **statement** — set up a template
+for this **statement**"*, and the headline above it said *"No template for this
+**statement** yet"* — asserting, three times, the one fact nobody has at that
+point. All three pipelines have just said they cannot tell what the file is.
+
+There are two kinds of template and the front door tried both, so the card now
+offers both — and it is not a coin toss. `doc_shape_hint()` reads the first pages
+and counts two things: table-shaped blocks, and lines that start with a date and
+carry an amount, which is what a transaction row is whatever bank printed it. The
+likelier door is the primary button and **the count is printed beside it**, so
+the guess is checkable rather than asserted.
+
+- **Both doors are always offered.** A tool that refuses the wrong door is worse
+  than one that guesses and says which it guessed.
+- **The report door carries the file through it** — no hunting for the same PDF
+  on the next tab.
+- One plain sentence says what the two kinds *are*, since the person is being
+  asked to choose: a statement is a table of transactions with a running balance
+  and it reconciles; anything else is read by pointing at what you want, and
+  downloads without reaching the dashboards.
+- The date test is deliberately looser than the one the value extractor uses.
+  Statements print `02 May`, `02/05`, `2 May 26` and `02-05-2026` as the leading
+  date of a row; requiring a parseable three-part date found 3 rows on a page of
+  11.
+- Pages are counted **individually and the best one wins**. A statement's first
+  page is a cover — name, address, four summary figures — and its rows start on
+  page 2, so summing across pages lets the cover outvote the evidence.
+
+Measured: the tutorial statement reads as *statement* (12 dated amounts on one
+page), a three-page report and a government health table both read as *report*
+(N198).
+
+---
+
 ## 1.7.1
 
 A UI pass over the whole builder, walked screen by screen, plus four things

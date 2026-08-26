@@ -857,3 +857,46 @@ test_that("the first screen does not contradict itself about which files it take
   expect_match(blk, "has no page to point at", fixed = TRUE)
   expect_match(blk, "A bank or card statement", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# A DOCUMENT NOTHING RECOGNISED IS NOT "THIS STATEMENT"
+# ---------------------------------------------------------------------------
+
+test_that("an unrecognised document offers BOTH doors, and calls itself neither", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, "output\\$cv_teach <- renderUI", 160L)
+  # the headline no longer asserts what the file is
+  expect_match(blk, "Nothing recognised this document", fixed = TRUE)
+  expect_false(grepl("No template read this statement", blk, fixed = TRUE))
+  # BOTH routes, always -- refusing the wrong door is worse than guessing
+  expect_match(blk, 'actionButton\\("cv_teach_go", "Set up a STATEMENT template"')
+  expect_match(blk, 'actionButton\\("cv_teach_go_report", "Set up a REPORT or FORM template"')
+  # ...with the likelier one primary, and the reading printed beside it
+  expect_match(blk, "cv_shape_hint\\(\\)")
+  expect_match(blk, "hint\\$sentence")
+  expect_match(blk, 'looks_stmt <- !identical\\(hint\\$looks, "report"\\)')
+  # and one plain sentence saying what the two kinds ARE, since the person is
+  # being asked to choose between them
+  expect_match(blk, "running balance", fixed = TRUE)
+  expect_match(blk, "never reaches the dashboards", fixed = TRUE)
+})
+
+test_that("the report door carries the file through it", {
+  # Sending somebody to a tab where they must find and upload the same file again
+  # is the small tax that turns "try the other one" into "give up".
+  src <- .da_src()
+  blk <- .da_block(src, "observeEvent\\(input\\$cv_teach_go_report", 8L)
+  expect_match(blk, "rb_handoff\\(src\\$path\\)")
+  expect_match(blk, 'updateRadioButtons\\(session, "ts_doctype", selected = "other"\\)')
+  expect_match(blk, 'updateTabsetPanel\\(session, "main_tabs", selected = "Add a template"\\)')
+})
+
+test_that("the shape reading is computed once, and only when it is needed", {
+  # It reads pages and runs the table proposer, so it is real work -- and it is
+  # only ever wanted by the card that appears when nothing matched.
+  src <- .da_src()
+  blk <- .da_block(src, "cv_shape_hint <- reactive", 12L)
+  expect_match(blk, "doc_shape_hint\\(inp\\)")
+  expect_match(blk, "tryCatch")            # never throws onto the result screen
+  expect_match(blk, "fallback")
+})

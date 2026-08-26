@@ -2135,10 +2135,11 @@ test_that("the match is only called into question when detection left a question
 # encrypted, or not a PDF at all", and directly under it an offer to open the
 # template toolkit and "save an improved template". There is no page to draw on.
 test_that("the template toolkit is not offered for a file that was never read", {
-  # 120, not 105: cv_teach grew a branch for report results above these two, and
-  # the window has to reach the end of the function or the test passes by not
-  # looking. The ORDER is the promise, not the line number.
-  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 120L)
+  # THE WINDOW HAS TO REACH THE END OF THE FUNCTION or the test passes by not
+  # looking, and cv_teach keeps growing branches above these two -- a report
+  # result, then both doors on an unrecognised one. Widened twice for that
+  # reason. The ORDER is the promise, not the line number.
+  blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 160L)
   i <- regexpr('if (identical(st, "failed")) return(NULL)', blk, fixed = TRUE)
   expect_gt(i, 0L)
   j <- regexpr('actionButton("cv_teach_go_fix"', blk, fixed = TRUE)
@@ -2152,7 +2153,7 @@ test_that("the template toolkit is not offered for a file that was never read", 
 test_that("an empty checks or coverage table says why it is empty", {
   why <- .ui_fun(".why_empty")
   expect_match(why(list(status = "failed")), "Nothing was read from this file")
-  expect_match(why(list(status = "unsupported")), "No template read this statement")
+  expect_match(why(list(status = "unsupported")), "No template read this document")
   for (st in c("failed", "unsupported"))
     expect_match(why(list(status = st)), "nothing to check and no fields to report")
   blk <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 26L)

@@ -1629,6 +1629,56 @@ instead" is one press, in the banner.
   document on the left and a panel on the right, that is the one place nobody is
   looking, so every warning the builder raises was said into empty space.
 
+---
+
+## Which door, when nobody knows
+
+**N198 (an unrecognised document was called a statement, three times, and offered
+one door) - fixed.** Reported: drop a non-statement PDF into Convert and the only
+thing on offer is the statement toolkit.
+
+The wording was the tell. The headline read "No template for this STATEMENT
+yet"; the card under it read "No template read this STATEMENT - set up a template
+for this STATEMENT"; and the feed line read "No template read this statement".
+Four assertions about the file's kind, on the one screen reached **only** after
+all three pipelines have said they cannot tell what it is. The single button
+followed from the same mistake: if it is a statement, there is only one door.
+
+There are two kinds of template and the front door already tries both, so the
+card offers both. **Both, always** -- a tool that refuses the wrong door is worse
+than one that guesses and says which it guessed, and the cost of a wrong guess is
+one extra click while the cost of a wrong refusal is the job.
+
+It is not a coin toss either, and it did not need to be. `doc_shape_hint()` reads
+the first pages and counts two things the tool can already see:
+
+* **table-shaped blocks**, from the report proposer that was built for the builder
+* **lines that start with a date and carry a money amount** -- which is what a
+  transaction row is, whatever bank printed it, with no template, no bank and no
+  wording involved
+
+The likelier door is the primary button and **the count is printed beside it**, so
+the reader can check the guess instead of taking it. Two details were measured
+rather than assumed:
+
+* The date test is deliberately looser than `.value_from_line(x, "date")`.
+  Statements print `02 May`, `02/05`, `2 May 26` and `02-05-2026` as the leading
+  date of a row; requiring a parseable three-part date found **3 rows on a page of
+  11**, which would have read a statement as a report.
+* Pages are counted individually and the **best page wins**. A statement's first
+  page is a cover -- name, address, four summary figures -- and its rows start on
+  page 2, so summing across pages lets the cover outvote the page that answers the
+  question.
+
+Measured: the tutorial statement reads *statement* (12 dated amounts on one page);
+a three-page report and a government health table both read *report*; a page with
+neither reads *neither*, which is its own answer rather than a forced choice
+between the two.
+
+**And the door carries the file through it.** Sending somebody to a tab where they
+have to find and upload the same PDF again is the small tax that turns "try the
+other one" into "give up"; `rb_handoff` already existed for exactly this.
+
 **N190 (the label/value pairs were half the builder and invisible) - fixed.** Two
 reports, one gap: "the read whole doc should have the tables AND label value
 pair", and "where do the value label pairs come out in the CSV long? I can only
