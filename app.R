@@ -2459,6 +2459,10 @@ server <- function(input, output, session) {
     # screen that will not stop asking questions.
     guide = FALSE,
     colsel = NA_integer_, colver = 0L,   # which column the edit panel holds
+    # Where and when a click last set a boundary. Shiny sends a plot click on
+    # MOUSEDOWN, so a drag sends one too -- this is how the brush that follows is
+    # recognised as the tail of that same gesture rather than a new instruction.
+    click_at = NULL,
     preview = NULL, outputs = character(0))
 
   # A document handed over from the statement toolkit ("Not a transaction
@@ -2766,6 +2770,21 @@ server <- function(input, output, session) {
     br <- input$rb_brush
     session$resetBrush("rb_brush")
     if (is.null(br)) return()
+    # ...the tail of a click. Any CORNER of the box within a few points of where
+    # a boundary click just landed means this drag and that click were one
+    # gesture; the click already did the job.
+    ca <- rb$click_at
+    if (is.list(ca) && is.finite(ca$t %||% NA) &&
+        as.numeric(Sys.time()) - ca$t < 2.5) {
+      near <- function(a, b) isTRUE(abs(a - b) <= 8)
+      corners <- list(c(br$xmin, br$ymin), c(br$xmin, br$ymax),
+                      c(br$xmax, br$ymin), c(br$xmax, br$ymax))
+      if (any(vapply(corners, function(p)
+              near(p[1], ca$x) && near(p[2], ca$y), logical(1)))) {
+        rb$click_at <- NULL
+        return()
+      }
+    }
     i <- rb_input(); if (is.null(i)) return()
     m <- as.character(rb$mode %||% "")
     pg <- .rb_pg(); fr <- rb_frame()
@@ -3012,6 +3031,23 @@ server <- function(input, output, session) {
     }
     rb$draft <- d
     .rb_push_where(d)
+    # A DRAG THAT SHOULD HAVE BEEN A CLICK IS STILL A CLICK.
+    #
+    # Reported: "lots of the click-and-drags that should be clicks -- users will
+    # do this, we MUST account for it -- persist and seem to block other
+    # activity." They do, and the reason is in Shiny, not here: with no dblclick
+    # id the click is sent on MOUSEDOWN (shiny.js createClickInfo), so a drag
+    # sends the click at the press point first and the brush at mouseup second.
+    # The click sets the boundary -- correctly, at the point they pressed -- and
+    # then the brush arrives against the NEXT step and answers "that box was too
+    # small", or worse, acts on it.
+    #
+    # So the click records itself, and a brush that starts at the same point
+    # moments later is the tail of the same gesture and is swallowed in silence.
+    # Nothing to explain, because from the person's side nothing went wrong: they
+    # dragged where they wanted the line and the line is there.
+    rb$click_at <- list(t = as.numeric(Sys.time()), x = as.numeric(cl$x),
+                        y = as.numeric(cl$y))
     rb$mode <- .rb_next_step(m, d)
   })
 

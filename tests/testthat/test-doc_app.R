@@ -19,6 +19,23 @@
   paste(src[i:min(length(src), i + n - 1L)], collapse = "\n")
 }
 
+# THE WHOLE of a block, however long it grows. A fixed line count has to be
+# widened by hand every time the code inside it gains a paragraph, and a window
+# that has silently slid off the end of what it was checking passes for the
+# wrong reason. Counts braces instead, so it ends where the block ends.
+.da_whole <- function(src, pattern) {
+  i <- grep(pattern, src)[1]
+  skip_if(is.na(i), paste("not found:", pattern))
+  bare <- gsub("#.*$", "", gsub('"[^"]*"', "", gsub("'[^']*'", "", src)))
+  depth <- 0L
+  for (k in seq(i, length(src))) {
+    depth <- depth +
+      nchar(gsub("[^{(]", "", bare[k])) - nchar(gsub("[^})]", "", bare[k]))
+    if (k > i && depth <= 0L) return(paste(src[i:k], collapse = "\n"))
+  }
+  paste(src[i:length(src)], collapse = "\n")
+}
+
 # ---------------------------------------------------------------------------
 # ONE predicate for "is this a transaction statement?"
 # ---------------------------------------------------------------------------
@@ -105,7 +122,7 @@ test_that("one armed intent at a time, named on screen, and nothing armed by def
   hint <- .da_block(src, "output\\$rb_hint <- renderUI", 8L)
   expect_match(hint, "\\.RB_ASK\\[\\[rb\\$mode")
   # THE RULE ITSELF: a drag with nothing armed changes nothing and says so.
-  brush <- .da_block(src, "observeEvent\\(input\\$rb_brush", 200L)
+  brush <- .da_whole(src, "observeEvent\\(input\\$rb_brush")
   expect_match(brush, "if \\(!nzchar\\(m\\)\\)")
   expect_match(brush, "Nothing was waiting for that drag, so nothing changed")
   # and it dispatches on the mode alone -- not on which tab happens to be open
@@ -739,7 +756,7 @@ test_that("a drag that changed nothing names the column somebody was moving", {
   # Reported: "when I click edit, and drag where I actually want the column, it
   # says nothing was waiting". True, and useless: the button they still had to
   # press was named nowhere in the sentence.
-  brush <- .da_block(.da_src(), "observeEvent\\(input\\$rb_brush", 200L)
+  brush <- .da_whole(.da_src(), "observeEvent\\(input\\$rb_brush")
   expect_match(brush, "Drag its width on the page", fixed = TRUE)
   expect_match(brush, "rb\\$colsel")
 })
@@ -981,4 +998,69 @@ test_that("a click and a change of mode both clear the rectangle", {
   expect_match(joined, "observeEvent\\(rb\\$mode, \\{ session\\$resetBrush")
   # three places, so no path leaves it behind
   expect_gte(length(grep("resetBrush", src)), 3L)
+})
+
+# ---------------------------------------------------------------------------
+# A DRAG THAT SHOULD HAVE BEEN A CLICK
+#
+# Reported: "lots of the click-and-drags that should be clicks -- users will do
+# this, we MUST account for it -- persist and seem to block other activity. The
+# box persisted when trying to select the bottom edge between pages."
+#
+# The cause is in Shiny, not here. With no dblclick id the plot click is sent on
+# MOUSEDOWN (shiny.js createClickInfo), so dragging to place a boundary sends the
+# click at the press point FIRST and the brush at mouseup SECOND. The click does
+# the job; the brush then arrives against whatever step came next.
+#
+# A dblclick id does not help -- it only DELAYS the click by dblclickDelay. So
+# the reconciliation has to be ours: the click records where and when it landed,
+# and a brush with a corner at that same point moments later is the tail of the
+# same gesture and is swallowed in silence.
+# ---------------------------------------------------------------------------
+
+test_that("the boundary click records where and when it landed", {
+  blk <- .da_block(.da_src(), "observeEvent\\(input\\$rb_click", 220L)
+  expect_match(blk, "rb\\$click_at <- list\\(")
+  expect_match(blk, "t = as\\.numeric\\(Sys\\.time\\(\\)\\)")
+  expect_match(blk, "x = as\\.numeric\\(cl\\$x\\)")
+  expect_match(blk, "y = as\\.numeric\\(cl\\$y\\)")
+  # declared, or every read of it is an error the first time round
+  expect_match(.da_joined(), "click_at = NULL")
+})
+
+test_that("a brush that starts where a click just landed is swallowed", {
+  src <- .da_src()
+  i <- grep("observeEvent\\(input\\$rb_brush", src)[1]
+  skip_if(is.na(i))
+  code <- src[i:min(i + 30L, length(src))]
+  code <- code[!grepl("^\\s*#", code)]
+  blk <- paste(code, collapse = "\n")
+  # it reads the click the click observer wrote
+  expect_match(blk, "ca <- rb\\$click_at")
+  # any CORNER, because which corner is the press point depends on the direction
+  # they dragged in
+  expect_match(blk, "br\\$xmin, br\\$ymin")
+  expect_match(blk, "br\\$xmax, br\\$ymax")
+  # and it gives up quietly -- no notification, nothing changed, no rectangle
+  k_ret <- grep("return\\(\\)", code)
+  k_ca  <- grep("ca <- rb\\$click_at", code)[1]
+  expect_true(any(k_ret > k_ca))
+  swallow <- paste(code[k_ca:max(k_ret[k_ret > k_ca][1], k_ca)], collapse = " ")
+  expect_false(grepl("showNotification", swallow))
+  # one gesture only: the record is spent when it is used
+  expect_match(swallow, "rb\\$click_at <- NULL")
+})
+
+test_that("the swallow window is short enough not to eat a real drag", {
+  src <- .da_src()
+  i <- grep("observeEvent\\(input\\$rb_brush", src)[1]
+  skip_if(is.na(i))
+  blk <- paste(src[i:min(i + 30L, length(src))], collapse = "\n")
+  secs <- as.numeric(sub(".*Sys\\.time\\(\\)\\) - ca\\$t < ([0-9.]+).*", "\\1", blk))
+  expect_true(is.finite(secs))
+  expect_lte(secs, 3)      # longer and a deliberate second drag disappears
+  expect_gte(secs, 1)      # shorter and a slow drag is not covered
+  tol <- as.numeric(sub(".*abs\\(a - b\\) <= ([0-9.]+).*", "\\1", blk))
+  expect_true(is.finite(tol))
+  expect_lte(tol, 12)      # PDF points -- a corner further off is a real drag
 })
