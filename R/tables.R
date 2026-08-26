@@ -467,7 +467,11 @@
   if (!length(ix)) return(character(0))
   ix <- utils::head(ix[order(tops[ix])], n)
   for (i in ix) if (.doc_has_money(lines[[i]])) return(character(0))
-  sig <- vapply(ix, function(i) .doc_norm(.doc_line_text(lines[[i]])), character(1))
+  # unname: `which()` carries the names of whatever it indexed, and a signature is
+  # a plain vector of strings -- a stray names attribute makes two identical
+  # signatures compare unequal.
+  sig <- unname(vapply(ix, function(i) .doc_norm(.doc_line_text(lines[[i]])),
+                       character(1)))
   # A signature of two or three characters would match half the page.
   sig <- sig[nchar(sig) >= 6L]
   if (!length(sig)) character(0) else sig
@@ -595,6 +599,15 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     }
   }
 
+  # THE HEADING AS THIS DOCUMENT PRINTS IT, learned from the table's own first
+  # page. The `skip` lines at the top of that window ARE the heading, so their
+  # text is a signature that works even when the template's remembered wording
+  # does not - which is the ordinary case for a table the proposer marked as
+  # having no header (header_rows: 0, anchor.header_text: []). See
+  # .doc_header_printed for the two guards that stop it eating a real row.
+  hdr_sig <- if (start_at_header)
+    .doc_header_printed(lines0, y_start, n_header_rows) else character(0)
+
   # A found header on the start page tells us what the SAME header looks like on
   # a continuation page, which is the only reliable way to know a page is more of
   # this table rather than the start of the next one.
@@ -609,9 +622,15 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     if (p > p0) {
       lp <- .doc_lines(.doc_page_words(input, p, tmpl), tab$row_tol)
       hp <- .doc_find_header(lp, need_hdr)
+      # ...and if the remembered WORDING did not find it, look for the heading
+      # this document actually prints. Only ever reached when the wording test has
+      # already returned NULL, so every template that works today is untouched.
+      if (is.null(hp)) hp <- .doc_find_printed_header(lp, hdr_sig)
       if (!is.null(hp)) {
         y_min <- hp$top; header_tops[[as.character(p)]] <- hp$top
-        skip <- n_header_rows
+        # As many lines as ACTUALLY matched. A page that reprints only the first
+        # line of a two-line heading must skip one, not two, or a data row is lost.
+        skip <- .doc_int(hp$n_lines, n_header_rows)
       }
     } else if (!is.null(h)) header_tops[[as.character(p)]] <- h$top
     # OPEN-ENDED means "we do not actually know where this stops": the window runs
@@ -640,10 +659,13 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     while (p <= npg) {
       lp <- .doc_lines(.doc_page_words(input, p, tmpl), tab$row_tol)
       hp <- .doc_find_header(lp, need_hdr, min_hit = 0.75)
+      # A WHOLE-LINE signature match is stronger evidence than a 0.75 fraction of
+      # remembered wordings, so it is allowed to extend the table too.
+      if (is.null(hp)) hp <- .doc_find_printed_header(lp, hdr_sig)
       if (is.null(hp)) break
       windows[[length(windows) + 1L]] <- list(page = as.integer(p),
                                               y_min = hp$top, y_max = band_bot,
-                                              skip = as.integer(n_header_rows),
+                                              skip = .doc_int(hp$n_lines, n_header_rows),
                                               open_end = TRUE)
       header_tops[[as.character(p)]] <- hp$top
       extended_to <- as.integer(p)
@@ -659,9 +681,20 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     sprintf("read from where it sat on the example, and this document is a different length (page %d)", p0))
   if (!is.na(extended_to))
     detail <- paste0(detail, sprintf("; it carries on to page %d here", extended_to))
+  # ...and SAY that the heading was found again further on, because "those lines
+  # are not rows" is a fact somebody checking the output needs. header_tops was
+  # already collected and read by nothing.
+  rep_pages <- setdiff(as.integer(names(header_tops)), p0)
+  rep_pages <- sort(rep_pages[!is.na(rep_pages)])
+  if (length(rep_pages))
+    detail <- paste0(detail, sprintf(
+      "; its heading is printed again on page%s %s and is not read as rows",
+      if (length(rep_pages) == 1L) "" else "s",
+      paste(rep_pages, collapse = ", ")))
   list(pages = pages, windows = windows, anchor = anchor,
        confidence = .doc_anchor_confidence(anchor, hit),
-       detail = detail, extended_to = extended_to, header_tops = header_tops)
+       detail = detail, extended_to = extended_to, header_tops = header_tops,
+       header_sig = hdr_sig)
 }
 
 # ---------------------------------------------------------------------------
@@ -1195,8 +1228,17 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # repeated further down, on a continuation page whose top we did not find.
       # The wording rule refuses to fire on a line carrying money, so a totals row
       # that echoes the column names is kept as the row of data it is.
+      # Three ways a line is a heading and not a row: it is one of the leading
+      # `skip` lines of this window; it scores against the template's remembered
+      # wording; or its whole text IS the heading this document prints (learned on
+      # the table's own first page - see .doc_header_printed). The third is
+      # belt-and-braces for a heading reprinted at a y the window did not open at.
+      # All three sit inside the same no-money guard, which is what stops a totals
+      # row that echoes the column names from being swallowed.
       is_header <- li <= skip ||
-        (.doc_header_hit(d, hdr_need) >= 0.6 &&
+        ((.doc_header_hit(d, hdr_need) >= 0.6 ||
+          (length(loc$header_sig) &&
+             !is.null(.doc_find_printed_header(list(d), loc$header_sig)))) &&
          !any(vapply(d$text, function(t) !is.na(.value_from_line(t, "money")),
                      logical(1))))
       if (is_header) { n_header <- n_header + 1L; next }

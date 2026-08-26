@@ -754,3 +754,100 @@ test_that("a cell wrapped over three lines is one row, footnotes or not", {
       "the first part of a long description that keeps going onto a third line")
   }
 })
+
+# ---------------------------------------------------------------------------
+# REPRINTED HEADINGS ON CONTINUATION PAGES.
+#
+# Reported: "sometimes there's headers on the next x pages that are being pulled
+# as rows."
+#
+# Exactly ONE thing used to close the top of a continuation page's window: a
+# >=0.6 wording match of the template's remembered anchor$header_text. When that
+# missed, the window fell back to band$y_min - which nothing ever writes, so 0 -
+# and `skip` was hard-coded to 0 for every page after the first. The window
+# became the whole page and the reprinted heading was read as a row.
+#
+# The commonest way to miss needs no bad luck: the proposer marks a table with no
+# figures on its heading line as has_header = FALSE, writing header_rows: 0 and
+# anchor.header_text: [], so the wording test can never fire at all.
+# ---------------------------------------------------------------------------
+
+.a1_doc <- function(n_pages = 3L) {
+  W <- function(text, x, y, h = 9) data.frame(text = text, x = x, y = y,
+        width = nchar(text) * 5, height = h, stringsAsFactors = FALSE)
+  page <- function(n, rows) {
+    w <- rbind(W("Security", 60, 100), W("Units", 240, 100))   # reprinted heading
+    y <- 118
+    for (r in rows) { w <- rbind(w, W(r[1], 60, y), W(r[2], 240, y)); y <- y + 16 }
+    rbind(w, W("Page", 60, 760, 7), W(as.character(n), 100, 760, 7))  # footer
+  }
+  vals <- list(list(c("AAA", "10"), c("BBB", "20")),
+               list(c("CCC", "30"), c("DDD", "40")),
+               list(c("EEE", "50"), c("FFF", "60")))
+  list(kind = "pdf",
+       words = lapply(seq_len(n_pages), function(i) page(i, vals[[i]])),
+       pages = paste0("p", seq_len(n_pages)),
+       page_width = rep(595, n_pages), page_height = rep(842, n_pages))
+}
+.a1_tab <- function(header_text = list()) list(
+  name = "Holdings", start = list(page = 1, y = 100), end = list(page = 3, y = 200),
+  band = list(y_min = 0, y_max = 740), header_rows = 1L,
+  anchor = list(header_text = header_text),
+  columns = list(list(name = "Security", x_min = 55, x_max = 200),
+                 list(name = "Units", x_min = 235, x_max = 300)))
+
+test_that("a heading reprinted on every page is not read as rows, with nothing remembered", {
+  inp <- .a1_doc(); tmpl <- list(ref_width = 595, ref_height = 842)
+  tab <- .a1_tab(list())                       # the template remembers NO wording
+  loc <- doc_locate_table(inp, tab, tmpl)
+  # the heading is learned off the table's OWN first page, so it is right even
+  # when the template was drawn on a different copy
+  expect_identical(loc$header_sig, "securityunits")
+  r <- doc_table_rows(inp, tab, tmpl, loc)$rows
+  expect_equal(nrow(r), 6L)
+  expect_false(any(r$Security %in% "Security"))
+  expect_equal(r$Units, c("10", "20", "30", "40", "50", "60"))
+  # ...and it SAYS so, because "those lines are not rows" is a fact a reviewer needs
+  expect_match(loc$detail, "heading is printed again on pages 2, 3")
+})
+
+test_that("the remembered wording still wins when it is there, and the signature is a fallback only", {
+  inp <- .a1_doc(); tmpl <- list(ref_width = 595, ref_height = 842)
+  loc <- doc_locate_table(inp, .a1_tab(list("Security", "Units")), tmpl)
+  expect_identical(loc$anchor, "header")
+  r <- doc_table_rows(inp, .a1_tab(list("Security", "Units")), tmpl, loc)$rows
+  expect_equal(nrow(r), 6L)
+})
+
+test_that("a signature is refused when the learned heading carries a figure", {
+  # A line with money in it is DATA. A signature made of data would match data,
+  # and deleting a real row is the one thing this must never do.
+  d <- list(structure(data.frame(text = c("Opening", "1,240.55"), x = c(60, 240),
+                                 y = c(100, 100), width = 40, height = 9,
+                                 stringsAsFactors = FALSE), top = 100))
+  expect_identical(.doc_header_printed(d, 100, 1L), character(0))
+})
+
+test_that("the signature match is whole-line, so a data row cannot contain it", {
+  sig <- "securityunits"
+  row <- list(structure(data.frame(text = c("AAA", "10"), x = c(60, 240),
+                                   y = 118, width = 40, height = 9,
+                                   stringsAsFactors = FALSE), top = 118))
+  expect_null(.doc_find_printed_header(row, sig))
+  hdr <- list(structure(data.frame(text = c("Security", "Units"), x = c(60, 240),
+                                   y = 100, width = 40, height = 9,
+                                   stringsAsFactors = FALSE), top = 100))
+  found <- .doc_find_printed_header(hdr, sig)
+  expect_equal(found$n_lines, 1L)
+})
+
+test_that("a page reprinting only the first line of a two-line heading skips one, not two", {
+  sig <- c("securityunits", "codeandname")
+  lines <- list(
+    structure(data.frame(text = c("Security", "Units"), x = c(60, 240), y = 100,
+                         width = 40, height = 9, stringsAsFactors = FALSE), top = 100),
+    structure(data.frame(text = c("AAA", "10"), x = c(60, 240), y = 116,
+                         width = 40, height = 9, stringsAsFactors = FALSE), top = 116))
+  found <- .doc_find_printed_header(lines, sig)
+  expect_equal(found$n_lines, 1L)     # not 2 - the second line is a data row
+})
