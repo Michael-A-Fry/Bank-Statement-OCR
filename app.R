@@ -368,10 +368,33 @@ ui <- fluidPage(
           # more files. So it is the same control: pick one statement and you get
           # the result page; pick twelve and you get a row per file, each of which
           # OPENS that same result page. Nothing new to learn, nothing asked twice.
-          fileInput("cv_file", "Statement file(s) (.pdf / .csv / .tsv / .xlsx)",
+          fileInput("cv_file", "File(s) to convert (.pdf / .csv / .tsv / .xlsx)",
                     multiple = TRUE,
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
-          helpText(class = "muted", "One statement, or several for a whole case folder."),
+          helpText(class = "muted", "One document, or several for a whole case folder."),
+          # ---------------------------------------------------------------
+          # STATEMENT, OR NOT. Asked once, in front, and it decides everything
+          # after it.
+          #
+          # Reported twice. "When I put a non-statement PDF in here and click
+          # convert, it defaults to just the statement template wizard", and
+          # "there NEEDS to be a decision at every point that needs STATEMENT OR
+          # OTHER - this could be as simple as a toggle on the convert screen".
+          # And the fault that made it urgent: "I put a phrase printed on it,
+          # bang smack on front page, still used another template" -- a bank
+          # template matched a document that was not a statement, and the report
+          # pass is only reached when the statement pass fails, so the template
+          # carrying that phrase was never consulted at all.
+          #
+          # WORK IT OUT FOR ME STAYS THE DEFAULT, because it is right most of the
+          # time and a question asked on every single conversion is a tax on the
+          # common case. But the override is in FRONT, one click, and named in
+          # the same two words the rest of the app uses.
+          radioButtons("cv_kind", "What is this?",
+            c("Work it out for me" = "auto",
+              "A bank or card statement" = "statement",
+              "Something else - a report, a form, a letter" = "other"),
+            selected = "auto"),
           # WHO RAN THIS. Asked only when the tool genuinely cannot work it out.
           # Where the server sits behind a real sign-in (host or SSO) this renders
           # nothing at all -- asking for what the environment already established
@@ -394,8 +417,20 @@ ui <- fluidPage(
           # the bank the user had stopped asking for and said nothing. Verified in
           # the browser before it was removed: front=ANZ + disclosure=ASB left the
           # template list showing ANZ's templates only. One control, one answer.
-          selectInput("cv_bank_quick", "Bank",
-                      choices = c("Detect automatically" = ""), width = "100%"),
+          #
+          # ...AND IT GOES AWAY WHEN SHE HAS SAID THIS IS NOT A STATEMENT. A bank
+          # picker on a trustee report is a control that cannot do anything, sat
+          # in front of somebody who has just told the tool this is not a bank
+          # document. Reported as "the converted page picked the wrong bank (not
+          # a bank)": every screen that names a bank has to stop naming one when
+          # the answer is "something else".
+          conditionalPanel("input.cv_kind != 'other'",
+            selectInput("cv_bank_quick", "Bank",
+                        choices = c("Detect automatically" = ""), width = "100%")),
+          conditionalPanel("input.cv_kind == 'other'",
+            div(class = "note", style = "margin:0 0 14px;font-size:12.5px",
+              strong("No bank templates will be tried."),
+              " It is read by a form or report template, or you set one up.")),
           # OFF UNTIL IT CAN WORK, with the reason under it. It was a full-width
           # green button from the moment the page loaded, and pressing it with no
           # QID typed produced a message that fades. So the most prominent
@@ -406,6 +441,7 @@ ui <- fluidPage(
           helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
+          conditionalPanel("input.cv_kind != 'other'",
           tags$details(class = "adv-bank",
             tags$summary("It picked the wrong bank?"),
             # NO "include templates built here" tick-box. Whether a colleague's
@@ -426,7 +462,7 @@ ui <- fluidPage(
             # the screen explaining itself.
             div(style = "padding-top:10px",
               selectInput("cv_template", "Template (optional)",
-                          choices = c("(auto-detect)" = ""), width = "100%")))
+                          choices = c("(auto-detect)" = ""), width = "100%"))))
         ),
         mainPanel(
           width = 8,
@@ -888,6 +924,18 @@ ui <- fluidPage(
           textInput("rb_id", "Saves under this name", "new_report", width = "100%"),
           textAreaInput("rb_fp", "A phrase printed on it (one per line)",
                         rows = 2, width = "100%", value = ""),
+          # DRAG IT OFF THE PAGE, like everything else here.
+          #
+          # Reported: "I put a phrase printed on it, bang smack on front page,
+          # still used another template. Maybe another drag?" Half of that is the
+          # search order (Convert now asks what the document is). The other half
+          # is this box: it is the ONE thing on the builder that had to be typed,
+          # character for character, and a fingerprint that does not match the
+          # page exactly matches nothing at all. Every other box on this screen is
+          # filled by pointing at the page; so is this one now.
+          div(style = "margin:-6px 0 8px",
+            actionButton("rb_arm_phrase", "Drag it off the page instead",
+                         class = "btn-default btn-sm")),
           helpText(class = "muted",
                    "Recognised by these - all must appear, and they must not be words every document carries."),
           actionButton("rb_save", "Save template", class = "btn-primary"),
@@ -2614,7 +2662,13 @@ server <- function(input, output, session) {
     label  = c("Drag a box round the LABEL.",
                "The words that name the value - not the value itself."),
     value  = c("Drag a box round the VALUE.",
-               "The figure or the words that the label is naming."))
+               "The figure or the words that the label is naming."),
+    # THE ONE BOX THAT HAD TO BE TYPED. A fingerprint is matched against the page
+    # exactly, so a phrase retyped with a different dash, a stray space or the
+    # wrong capital matches nothing -- and the person is left looking at a phrase
+    # they can SEE on the page, wondering why another template was used.
+    phrase = c("Drag a box round A PHRASE PRINTED ON THIS DOCUMENT.",
+               "Its wording is how this document is recognised. A heading is ideal - not words every document carries."))
 
   rb <- reactiveValues(
     tables = list(), pairs = list(),
@@ -2890,6 +2944,16 @@ server <- function(input, output, session) {
   })
   observeEvent(input$rb_arm_label, { if (!is.null(rb$vdraft)) rb$mode <- "label" })
   observeEvent(input$rb_arm_value, { if (!is.null(rb$vdraft)) rb$mode <- "value" })
+  # THE FINGERPRINT, DRAGGED. It needs a page and nothing else -- it is not part
+  # of a table or a value, so it interrupts neither and arms on its own.
+  observeEvent(input$rb_arm_phrase, {
+    if (is.null(rb_doc())) {
+      showNotification("Upload the document at the top of this page first.",
+                       type = "warning", duration = 6); return()
+    }
+    rb$guide <- FALSE
+    rb$mode <- "phrase"
+  })
   # ARMING OR CANCELLING CLEARS THE PAGE. A new question deserves a page with no
   # leftover answer drawn on it, and Cancel that leaves the rectangle behind is
   # a Cancel that visibly did not cancel.
@@ -3163,6 +3227,45 @@ server <- function(input, output, session) {
                                "Two columns cannot overlap. Move the neighbour first if you",
                                "need the space."),
                          type = "message", duration = 9)
+      return()
+    }
+
+    # THE FINGERPRINT PHRASE, TAKEN OFF THE PAGE WORD FOR WORD.
+    #
+    # Matching is exact, so the difference between this and typing it is the
+    # difference between a template that recognises the document and one that
+    # never fires. Added to what is already there rather than replacing it: a
+    # fingerprint is a LIST, all of which must appear.
+    if (m == "phrase") {
+      txt <- .rb_read(box)
+      if (!nzchar(txt)) {
+        showNotification("Nothing readable in that box - drag round some printed words.",
+                         type = "warning", duration = 6); return()
+      }
+      have <- trimws(strsplit(as.character(input$rb_fp %||% ""), "\n")[[1]])
+      have <- have[nzchar(have)]
+      if (txt %in% have) {
+        showNotification(sprintf("\u201c%s\u201d is already one of the phrases.", txt),
+                         type = "message", duration = 6)
+        rb$mode <- ""; return()
+      }
+      updateTextAreaInput(session, "rb_fp", value = paste(c(have, txt), collapse = "\n"))
+      # It is HERS now, so the two observers that suggest a fingerprint stop.
+      rb_fp_auto(NA_character_)
+      rb$mode <- ""
+      # A phrase every document carries is the one fault that turns a correct
+      # "no template read this" into a confident wrong read, and the loader
+      # refuses it at save time. Saying so now costs nothing and saves the trip.
+      n_words <- length(strsplit(txt, "\\s+")[[1]])
+      showNotification(
+        if (n_words >= 2L || nchar(txt) >= 10L)
+          sprintf("Added \u201c%s\u201d.", txt)
+        else
+          sprintf(paste("Added \u201c%s\u201d - but one short word is printed on thousands of",
+                        "documents. Drag a heading as well, or this template will match",
+                        "things it has never seen."), txt),
+        type = if (n_words >= 2L || nchar(txt) >= 10L) "message" else "warning",
+        duration = if (n_words >= 2L || nchar(txt) >= 10L) 5 else 10)
       return()
     }
 
@@ -4667,6 +4770,13 @@ server <- function(input, output, session) {
   # which meant a bank chosen in the disclosure was thrown away without a word.)
   pick <- function(v) if (is.null(v) || !nzchar(v)) NULL else v
   bank_choice <- reactive(pick(input$cv_bank_quick))
+  # WHAT KIND OF DOCUMENT THIS IS, read in ONE place for the same reason the bank
+  # is. Two controls that both mean "this is not a statement" is how one of them
+  # gets silently discarded.
+  kind_choice <- reactive({
+    k <- as.character(input$cv_kind %||% "auto")[1]
+    if (k %in% c("auto", "statement", "other")) k else "auto"
+  })
   # ...and the exact template, if one was forced. Same one-place reading, so the
   # single conversion and a whole case folder cannot honour different overrides.
   tpl_choice <- reactive(pick(input$cv_template))
@@ -4817,7 +4927,12 @@ server <- function(input, output, session) {
          fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
          doc_dir = DOC_DIR, user_doc_dir = USER_DOC_DIR,
          requested_by = who_now(), logdir = LOGDIR,
-         force_template = force_tpl %||% tpl_choice(), force_rows = forced_rows)
+         force_template = force_tpl %||% tpl_choice(), force_rows = forced_rows,
+         # WHAT SHE SAID IT IS. "auto" is the default and the old behaviour; the
+         # other two take a whole half of the search off the table, which is the
+         # only reliable answer to "a phrase printed on page 1 and it still used
+         # another template".
+         kind = kind_choice())
   }
 
   # When the browser tab closes, take this session's scratch folder with it. The
@@ -5144,7 +5259,11 @@ server <- function(input, output, session) {
         fields_dir = FIELDS_DIR, user_fields_dir = USER_FIELDS_DIR,
         doc_dir = DOC_DIR, user_doc_dir = USER_DOC_DIR,
         requested_by = who, logdir = LOGDIR,
-        bank = bank_choice(), force_template = tpl_choice()),
+        bank = bank_choice(), force_template = tpl_choice(),
+        # A case folder answers "what is this?" once for the whole folder, the
+        # same as it answers "which bank" once. Thirty reports dropped in together
+        # must not each be searched for a bank template.
+        kind = kind_choice()),
       finish = function(b) {
         # A case that never came back is not an empty case. Say so on the verdict
         # card rather than draw a table of nothing.
@@ -5341,8 +5460,8 @@ server <- function(input, output, session) {
                    class = "btn-primary btn-lg btn-block disabled",
                    `aria-disabled` = "true"),
       p(class = "muted", style = "margin:6px 0 0;font-size:12.5px",
-        if (!got && !who) "Choose a statement above, and enter your QID."
-        else if (!got) "Choose a statement above."
+        if (!got && !who) "Choose a file above, and enter your QID."
+        else if (!got) "Choose a file above."
         else "Enter your QID above - it records who ran this conversion."))
   })
   outputOptions(output, "cv_go_btn", suspendWhenHidden = FALSE)
@@ -7593,6 +7712,35 @@ server <- function(input, output, session) {
         style = "margin-top:10px;padding-top:10px;border-top:1px solid #cfe0d4",
         span(class = "muted", question, " "),
         actionLink(id, answer, style = "font-weight:700"))
+
+      # SHE ALREADY ANSWERED THIS. When "What is this?" on the left was set, the
+      # kind is not in doubt and asking again is the tool ignoring what it was
+      # told. The card goes straight to the door she chose, with the override
+      # still underneath -- an answer can be changed, it just is not re-asked.
+      asked <- as.character(res$asked_kind %||% "auto")[1]
+      if (identical(asked, "other"))
+        return(box(
+          strong(style = "font-size:15px",
+                 "No form or report template reads this yet."),
+          p(class = "muted", style = "margin:6px 0 10px",
+            "No bank statement template was tried - you said this is not one."),
+          actionButton("cv_teach_go_report", "Set it up as a report \u2192",
+                       class = "btn-primary btn-lg"),
+          p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
+            "You point at the tables and figures you want. It downloads, and never reaches the dashboards."),
+          other("Is it a bank statement after all?",
+                "Set it up as a bank statement", "cv_teach_go")))
+      if (identical(asked, "statement"))
+        return(box(
+          strong(style = "font-size:15px", "No template reads this statement yet."),
+          why,
+          actionButton("cv_teach_go", "Set it up as a bank statement \u2192",
+                       class = "btn-primary btn-lg"),
+          p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
+            "Set it up once and this layout converts every time, with its balance checked."),
+          other("Not a statement after all?",
+                "It is something else - a report, a form, a letter",
+                "cv_teach_go_report")))
 
       if (identical(looks, "report"))
         return(box(

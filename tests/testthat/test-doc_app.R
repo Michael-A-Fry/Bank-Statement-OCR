@@ -477,6 +477,65 @@ test_that("a report converts through the front door as kind 'tables', and the ru
   expect_false(dir.exists(feed))
 })
 
+# ---------------------------------------------------------------------------
+# WHAT SHE SAID IT IS OUTRANKS WHAT THE TOOL GUESSED.
+#
+# Reported: "I put a phrase printed on it, bang smack on front page, still used
+# another template." A bank statement template matched a document that was not a
+# statement, and because the report pass is only reached when the statement pass
+# comes back unsupported, the report template carrying that phrase was never
+# consulted. No scoring change fixes that in general - but nobody has to guess
+# when the person holding the document already knows.
+# ---------------------------------------------------------------------------
+
+test_that("kind='other' takes every bank statement template off the table", {
+  skip_if_not(requireNamespace("yaml", quietly = TRUE), "yaml not installed")
+  tdir <- file.path(tempdir(), paste0("docapp-kind-", as.integer(Sys.time())))
+  on.exit(unlink(tdir, recursive = TRUE), add = TRUE)
+  dir.create(tdir, recursive = TRUE, showWarnings = FALSE)
+  # A file a SHIPPED statement template reads cleanly.
+  p <- file.path(tdir, "s.csv")
+  file.copy(file.path(engine_root(), "samples", "raw", "anz", "anz_transaction_export_01.csv"), p)
+  skip_if_not(file.exists(p), "sample statement missing")
+
+  common <- list(outdir = file.path(tdir, "out"), templates_dir = templates_dir(),
+                 user_templates_dir = NULL, fields_dir = fields_templates_dir(),
+                 doc_dir = file.path(tdir, "none"), logdir = file.path(tdir, "logs"))
+  auto <- do.call(convert_document, c(list(p), common))
+  expect_true(auto$status %in% c("ok", "needs_review"))     # it IS a statement
+
+  other <- do.call(convert_document, c(list(p), common, list(kind = "other")))
+  expect_identical(other$status, "unsupported")
+  expect_identical(other$asked_kind, "other")
+  expect_true(is.na(other$template_id %||% NA))
+  # ...and the answer is on the run record, so the log says which search was run
+  expect_identical(other$run_log$asked_kind, "other")
+})
+
+test_that("kind='statement' does not fall through to the other two paradigms", {
+  f <- paste(deparse(convert_document), collapse = "\n")
+  expect_true(grepl('kind <- match.arg(kind)', f, fixed = TRUE))
+  # the early return has to come BEFORE convert_form, or "it is a statement"
+  # still ends up being read as a form
+  i_ret  <- regexpr('identical(kind, "statement")', f, fixed = TRUE)
+  i_form <- regexpr("convert_form(", f, fixed = TRUE)
+  expect_gt(i_ret, 0L)
+  expect_lt(i_ret, i_form)
+  # forcing an exact statement template IS saying it is a statement
+  expect_true(grepl('kind <- "statement"', f, fixed = TRUE))
+})
+
+test_that("an empty statement set is how kind='other' is enforced, not a status rewrite", {
+  expect_true("use_statement_templates" %in% names(formals(convert_statement)))
+  expect_true(isTRUE(formals(convert_statement)$use_statement_templates))
+  # The gate is on the LOADING of the set. A result rewritten after the fact
+  # would already have parsed the file and written its outputs, and would still
+  # be carrying the wrong template's id.
+  f <- paste(deparse(convert_statement), collapse = " ")
+  expect_true(grepl("isTRUE(use_statement_templates)", f, fixed = TRUE))
+  expect_true(grepl("load_template_set(templates_dir, user_templates_dir)", f, fixed = TRUE))
+})
+
 test_that("with no report templates installed nothing about the front door changes", {
   # The statement pass has to actually run for "unsupported" to mean anything, and
   # that needs the template loader.
@@ -852,7 +911,9 @@ test_that("Convert is off until there is a file and a QID, with the reason under
   expect_match(blk, "input\\$cv_file")
   expect_match(blk, "disabled")
   # the two reasons are DIFFERENT JOBS and are never merged into "you cannot"
-  expect_match(blk, "Choose a statement above", fixed = TRUE)
+  # ...and it says FILE, not statement: half of what goes through this screen is
+  # not a statement, and the button that starts it must not say otherwise.
+  expect_match(blk, "Choose a file above", fixed = TRUE)
   expect_match(blk, "Enter your QID above", fixed = TRUE)
 })
 
@@ -1151,4 +1212,75 @@ test_that("the builder says when Save will REPLACE a saved template", {
   expect_match(blk, "Editing the saved template")
   expect_match(blk, "Save replaces it")
   expect_match(blk, "Building a template from")
+})
+
+# ---------------------------------------------------------------------------
+# STATEMENT, OR NOT: ASKED IN FRONT, ANSWERED ONCE.
+# ---------------------------------------------------------------------------
+
+test_that("Convert asks what the document is, and the engine is told", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_block(src, 'radioButtons\\("cv_kind"', 6L)
+  for (v in c('"auto"', '"statement"', '"other"')) expect_match(blk, v, fixed = TRUE)
+  expect_match(blk, 'selected = "auto"')          # nobody has to answer it
+  # ONE reading of it, like the bank
+  expect_match(joined, "kind_choice <- reactive")
+  args <- .da_whole(src, "convert_args <- function")
+  expect_match(args, "kind = kind_choice\\(\\)")
+  # ...and a case folder answers it once for the whole folder
+  expect_match(joined, "kind = kind_choice\\(\\)[,)]")
+  expect_gte(length(grep("kind = kind_choice\\(\\)", src)), 2L)
+})
+
+test_that("nothing bank-shaped is shown once she has said it is not a statement", {
+  joined <- .da_joined()
+  # the bank picker and the exact-template override both fold away
+  expect_match(joined, "conditionalPanel\\(\"input\\.cv_kind != 'other'\",\\s*\\n\\s*selectInput\\(\"cv_bank_quick\"")
+  expect_match(joined, "conditionalPanel\\(\"input\\.cv_kind != 'other'\",\\s*\\n\\s*tags\\$details\\(class = \"adv-bank\"")
+  # ...and something says why they are gone
+  expect_match(joined, "No bank templates will be tried", fixed = TRUE)
+})
+
+test_that("the teach card does not re-ask a question she already answered", {
+  blk <- .da_whole(.da_src(), "output\\$cv_teach <- renderUI")
+  expect_match(blk, "asked <- as\\.character\\(res\\$asked_kind")
+  expect_match(blk, 'identical\\(asked, "other"\\)')
+  expect_match(blk, 'identical\\(asked, "statement"\\)')
+  # and the override is still there, as the other answer rather than a re-ask
+  expect_match(blk, "Is it a bank statement after all\\?")
+  expect_match(blk, "Not a statement after all\\?")
+  # the branch that answers "other" must not send her to the statement toolkit
+  i_other <- regexpr('identical(asked, "other")', blk, fixed = TRUE)
+  i_stmt  <- regexpr('identical(asked, "statement")', blk, fixed = TRUE)
+  expect_gt(i_other, 0L); expect_gt(i_stmt, i_other)
+})
+
+# ---------------------------------------------------------------------------
+# THE FINGERPRINT, DRAGGED OFF THE PAGE.
+#
+# "I put a phrase printed on it, bang smack on front page, still used another
+# template. Maybe another drag?" It was the one box on the builder that had to
+# be typed, and matching is exact - so a retyped dash or a stray space matches
+# nothing at all.
+# ---------------------------------------------------------------------------
+
+test_that("the identifying phrase can be dragged, like everything else here", {
+  src <- .da_src(); joined <- .da_joined()
+  expect_match(.da_block(src, "\\.RB_ASK <- list\\(", 40L), "A PHRASE PRINTED ON THIS DOCUMENT")
+  expect_match(joined, 'actionButton\\("rb_arm_phrase"')
+  arm <- .da_whole(src, "observeEvent\\(input\\$rb_arm_phrase")
+  expect_match(arm, 'rb\\$mode <- "phrase"')
+  expect_match(arm, "Upload the document")       # no page, no drag, and it says so
+  brush <- .da_whole(src, "observeEvent\\(input\\$rb_brush")
+  expect_match(brush, 'if \\(m == "phrase"\\)')
+  expect_match(brush, "\\.rb_read\\(box\\)")
+  # ADDED, not replaced: a fingerprint is a list, all of which must appear
+  expect_match(brush, "paste\\(c\\(have, txt\\), collapse")
+  # ...and it does not add the same phrase twice
+  expect_match(brush, "txt %in% have")
+  # it is hers now, so the suggester stops
+  expect_match(brush, "rb_fp_auto\\(NA_character_\\)")
+  # a single short word is the fault that turns "no template" into a wrong read,
+  # and the loader refuses it at save time -- said now, not two screens later
+  expect_match(brush, "n_words >= 2L \\|\\| nchar\\(txt\\) >= 10L")
 })

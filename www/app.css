@@ -308,8 +308,17 @@ a.hub-card-quiet{background:var(--bg)}
    work is done scrolled down -- and a sentence at the top of the page is then
    off screen, which is the same as not being written at all. */
 .rb-sticky{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0 0;
-  margin:0 0 2px}
+  margin:0 0 2px;
+  /* IT MUST NOT EAT THE DRAG IT IS ASKING FOR.
+     The banner floats over the top of the page image as you scroll, which is the
+     whole point of it -- but an opaque floating strip also swallows every
+     mousedown that lands in it. Any drag started in the top inch of the visible
+     page did nothing at all, silently, which is one of the ways "click and drag
+     just stopped working" happens to somebody who has scrolled. The strip is
+     transparent to the pointer; the controls inside it are not. */
+  pointer-events:none}
 .rb-sticky > div{box-shadow:var(--sh-2)}
+.rb-sticky button, .rb-sticky a, .rb-sticky input, .rb-sticky select{pointer-events:auto}
 
 /* WHERE THE TOOL TELLS YOU SOMETHING.
    Shiny puts notifications in the bottom-right corner, which on a screen whose

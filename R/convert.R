@@ -199,7 +199,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL,
                               force_template = NULL, force_rows = NULL,
-                              log = TRUE) {
+                              log = TRUE, use_statement_templates = TRUE) {
   # NOTHING THAT TOUCHES `path` HAPPENS OUTSIDE THE FUNNEL. docs/design.md and
   # docs/overview.md both state "never throws at the front door" as a fact, but the
   # tryCatch used to open below this preamble -- so basename(path) sat outside it
@@ -242,7 +242,17 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
 
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
-    templates <- load_template_set(templates_dir, user_templates_dir)
+    # WHEN THE PERSON HAS SAID THIS IS NOT A BANK STATEMENT, no bank statement
+    # template gets a vote. Reported: "I put a phrase printed on it, bang smack on
+    # front page, still used another template" -- a statement template matched a
+    # document that was not a statement, and because convert_document only reaches
+    # the form and report passes when the statement pass comes back unsupported,
+    # the report template carrying that phrase was never even consulted. The
+    # answer is not a cleverer score: it is that a human answer outranks a guess.
+    # An empty set makes detect_statement() find nothing, which is the honest
+    # "no template read this" path that already exists, at no parsing cost.
+    templates <- if (isTRUE(use_statement_templates))
+      load_template_set(templates_dir, user_templates_dir) else list()
     input <- read_input(path, redaction_rects = redaction_rects)
     # THE FILE ITSELF COULD NOT BE READ. That is not the same answer as "we have
     # never seen this layout", and it must never be given the same one: a corrupt

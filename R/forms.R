@@ -247,19 +247,48 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
 # and counted in the "build these next" queue, which reads exactly that field. The
 # statement pass now only BUILDS the record (res$run_log); this function writes it
 # after the final outcome is known. Nothing is ever rewritten.
+#
+# `kind` IS THE PERSON'S OWN ANSWER, and it outranks detection.
+#   "auto"      work it out: statement, then form, then report (the default, and
+#               what every caller did before this existed).
+#   "statement" it is a bank or card statement. Only statement templates are
+#               tried; "no template for this yet" stays that answer instead of
+#               being quietly re-read as a report.
+#   "other"     it is NOT a bank statement. No statement template gets a vote, so
+#               a form or report template is reached even when some bank's
+#               fingerprint happens to fit.
+#
+# Reported: "I put a phrase printed on it, bang smack on front page, still used
+# another template." It did, because the report pass is only reached when the
+# statement pass fails, and a statement template had matched. No scoring change
+# fixes that in general -- but nobody has to guess when the person holding the
+# document already knows.
 convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
                              templates_dir = "templates/statements",
                              user_templates_dir = "templates/statements_user",
                              fields_dir = "templates/fields", user_fields_dir = NULL,
                              doc_dir = "templates/documents", user_doc_dir = NULL,
                              requested_by = NULL, formats = c("xlsx", "csv", "json"),
-                             logdir = "logs", force_template = NULL, force_rows = NULL) {
+                             logdir = "logs", force_template = NULL, force_rows = NULL,
+                             kind = c("auto", "statement", "other")) {
+  kind <- match.arg(kind)
+  # Forcing an exact statement template IS saying "this is a statement", so the
+  # two can never disagree.
+  if (!is.null(force_template) && nzchar(force_template)) kind <- "statement"
   res <- convert_statement(path, bank = bank, statement_type = statement_type, outdir = outdir,
                            templates_dir = templates_dir, user_templates_dir = user_templates_dir,
                            requested_by = requested_by, formats = formats, logdir = logdir,
                            force_template = force_template, force_rows = force_rows,
-                           log = FALSE)
+                           log = FALSE,
+                           use_statement_templates = !identical(kind, "other"))
   res$kind <- "statement"
+  res$asked_kind <- kind
+  if (!is.null(res$run_log)) res$run_log$asked_kind <- kind
+  # ...and when the person said it IS a statement, that is the whole search. A
+  # report template reading a bank statement it happened to fingerprint is the
+  # same wrong answer in the other direction, and it would arrive with no
+  # reconciliation behind it to catch it.
+  if (identical(kind, "statement")) { safe(log_run(logdir, res)); return(res) }
   # Fall back to form extraction only when nothing matched AND the user didn't
   # force a transaction template.
   if (is.null(force_template) && identical(res$status, "unsupported")) {
