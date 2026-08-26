@@ -2109,3 +2109,62 @@ test_that("1c: Admin is two tabs, and the control count did not go up", {
   expect_false("adm_audit_one" %in% ids)
   expect_true("adm_tpl_check" %in% ids)
 })
+
+# ---------------------------------------------------------------------------
+# A MOUSEDOWN IS NOT A CLICK UNTIL YOU KNOW NO DRAG FOLLOWED IT.
+#
+# This is why the report builder's drag did not work AT ALL in a browser, and the
+# fault was ours. Shiny sends a plot click on MOUSEDOWN, not mouseup, so the
+# leading edge of every drag arrives as a click. The click observer ran at that
+# instant and called session$resetBrush(), and resetBrush on the client runs
+# brush.reset(), which sets state.panel to NULL. Every mousemove after it threw
+#     TypeError: Cannot read properties of null (reading 'range')
+# out of boundsCss, and input$rb_brush was never sent.
+#
+# Measured in Chromium before the fix: 14 throws for one drag, rb_brush null, and
+# rb_click carrying a perfectly resolved panel - so the coordmap was always
+# correct and the gesture was pulling the panel out from under itself. The
+# statement toolkit's plot survived only because it has no click handler at all.
+#
+# After: the same drag throws nothing, and a title drag followed by a column-names
+# drag builds a 4-column table on page 2 of the sample report.
+# ---------------------------------------------------------------------------
+
+test_that("the click waits to find out whether it was the start of a drag", {
+  src <- .da_src(); joined <- .da_joined()
+  # it is DEBOUNCED, not immediate
+  expect_match(joined, "rb_click_late <- debounce\\(reactive\\(input\\$rb_click\\), \\.RB_CLICK_WAIT\\)")
+  expect_match(joined, "observeEvent\\(rb_click_late\\(\\)")
+  # nothing observes the raw click any more - that is the whole fault
+  expect_false(grepl("observeEvent(input$rb_click", joined, fixed = TRUE))
+  blk <- .da_whole(src, "observeEvent\\(rb_click_late\\(\\)")
+  # it stands down when a drag landed where the mouse went down
+  expect_match(blk, "ba <- rb\\$brush_at")
+  expect_match(blk, "br\\$xmin|ba\\$xmin")
+  # ...and only THEN is it safe to clear the rectangle
+  i_check <- regexpr("rb$brush_at", blk, fixed = TRUE)
+  i_reset <- regexpr('session$resetBrush("rb_brush")', blk, fixed = TRUE)
+  expect_gt(i_check, 0L); expect_gt(i_reset, i_check)
+})
+
+test_that("the drag records itself so the click it began with can stand down", {
+  blk <- .da_whole(.da_src(), "observeEvent\\(input\\$rb_brush")
+  expect_match(blk, "rb\\$brush_at <- list\\(")
+  for (k in c("xmin", "xmax", "ymin", "ymax")) expect_match(blk, sprintf("%s = as\\.numeric", k))
+  expect_match(.da_joined(), "brush_at = NULL")
+})
+
+test_that("the brush reports before the click it began with is allowed to act", {
+  joined <- .da_joined(); src <- .da_src()
+  # both waits are file scope, because the UI reads one of them
+  i_ui <- grep('brushOpts\\("rb_brush"', src)[1]
+  i_bw <- grep("^\\.RB_BRUSH_WAIT <- ", src)[1]
+  i_cw <- grep("^\\.RB_CLICK_WAIT <- ", src)[1]
+  expect_false(is.na(i_ui)); expect_false(is.na(i_bw)); expect_false(is.na(i_cw))
+  expect_lt(i_bw, i_ui)          # declared before the UI that reads it
+  expect_match(joined, "delay = \\.RB_BRUSH_WAIT")
+  num <- function(i) as.numeric(sub("^[^0-9]*([0-9]+).*$", "\\1", src[i]))
+  # THE ONE RULE BETWEEN THEM. If the click could act before the drag reported,
+  # the drag would be read as a click and the gesture lost - which is the bug.
+  expect_lt(num(i_bw), num(i_cw))
+})

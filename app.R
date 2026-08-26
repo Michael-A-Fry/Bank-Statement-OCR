@@ -129,6 +129,18 @@ job_set_max_concurrent(CONFIG$app$max_concurrent_jobs)
 # How often a waiting page asks its conversion how it is getting on. Half a
 # second: quick enough that a 2.9s CSV does not feel delayed, cheap enough that
 # ten waiting browsers cost a handful of file checks a second between them.
+# HOW LONG A MOUSEDOWN WAITS TO FIND OUT WHAT IT WAS.
+#
+# Shiny reports a plot click on MOUSEDOWN, so the leading edge of every drag
+# arrives as a click. Neither gesture can tell what it was on its own, so the
+# click waits to see whether a drag lands, and the drag reports first. The only
+# rule between these two numbers is that the brush is the shorter one -- if the
+# click could act before the drag reported, the drag would be read as a click
+# and the gesture lost.
+.RB_BRUSH_WAIT <- 250        # ms the brush settles for after the last movement
+.RB_CLICK_WAIT <- 450        # ms a mousedown waits before it counts as a click
+
+
 JOB_POLL_MS <- 500
 # Nothing may outlive the app. A child still OCR'ing when the server stops would
 # go on burning a core for two minutes on a result nobody can collect.
@@ -1020,7 +1032,7 @@ ui <- fluidPage(
             # the other half of "the blue box does not disappear even when the
             # next column is added" -- the server had already cleared the value,
             # and the client redrew the rectangle anyway.
-            brush = brushOpts("rb_brush", direction = "xy", delay = 900,
+            brush = brushOpts("rb_brush", direction = "xy", delay = .RB_BRUSH_WAIT,
                               delayType = "debounce", resetOnNew = TRUE)),
           uiOutput("rb_hint")),
         column(5,
@@ -3320,6 +3332,9 @@ server <- function(input, output, session) {
     # MOUSEDOWN, so a drag sends one too -- this is how the brush that follows is
     # recognised as the tail of that same gesture rather than a new instruction.
     click_at = NULL,
+    # ...and where the last DRAG landed, so the click it began with can recognise
+    # itself and stand down. The reconciliation has to run both ways round.
+    brush_at = NULL,
     preview = NULL, outputs = character(0))
 
   # A document handed over from the statement toolkit ("Not a transaction
@@ -3930,6 +3945,13 @@ server <- function(input, output, session) {
     br <- input$rb_brush
     session$resetBrush("rb_brush")
     if (is.null(br)) return()
+    # A DRAG HAPPENED. The mousedown that began it was reported as a click before
+    # this arrived (Shiny sends the click on mousedown), and that click is sitting
+    # in a debounce waiting to act. Record where the box is so it can recognise
+    # itself as the leading edge of this gesture and stand down.
+    rb$brush_at <- list(t = as.numeric(Sys.time()),
+                        xmin = as.numeric(br$xmin), xmax = as.numeric(br$xmax),
+                        ymin = as.numeric(br$ymin), ymax = as.numeric(br$ymax))
     # ...the tail of a click. Any CORNER of the box within a few points of where
     # a boundary click just landed means this drag and that click were one
     # gesture; the click already did the job.
@@ -4226,12 +4248,50 @@ server <- function(input, output, session) {
   })
 
   # ---- The click: only ever moves the start or the end ----------------------
-  observeEvent(input$rb_click, {
-    cl <- input$rb_click; if (is.null(cl)) return()
+  # A MOUSEDOWN IS NOT A CLICK UNTIL YOU KNOW NO DRAG FOLLOWED IT.
+  #
+  # This is why the report builder's drag did not work at all, and the fault was
+  # entirely ours. Shiny sends a plot click on MOUSEDOWN, not mouseup
+  # (shiny.js createClickInfo) -- so the leading edge of every drag is a click.
+  # This observer used to run at that instant and call session$resetBrush(), and
+  # resetBrush on the client runs brush.reset(), which sets state.panel to NULL.
+  # Every mousemove after it then threw
+  #     TypeError: Cannot read properties of null (reading 'range')
+  # out of boundsCss, and input$rb_brush was never sent at all. Measured in
+  # Chromium: 14 throws for one drag, rb_brush null, rb_click carrying a
+  # perfectly resolved panel -- so the coordmap was always fine and we were
+  # pulling the panel out from under our own gesture. The statement toolkit's
+  # plot survived only because it has no click handler.
+  #
+  # So the click is DEFERRED. It waits .RB_CLICK_WAIT ms, and then stands down if
+  # a drag landed in the meantime anywhere near where the mouse went down - which
+  # is the same reconciliation the brush observer already does in the other
+  # direction, and it has to be both ways round because neither gesture can tell
+  # what it was on its own.
+  #
+  # The brush's own debounce is deliberately shorter than this wait, so a real
+  # drag always reports before the click it began with is allowed to act.
+  rb_click_late <- debounce(reactive(input$rb_click), .RB_CLICK_WAIT)
+
+  observeEvent(rb_click_late(), {
+    cl <- rb_click_late(); if (is.null(cl)) return()
+    # DID A DRAG HAPPEN? If a brush landed since this mouse went down, and it
+    # started near enough to be the same gesture, then this was the beginning of
+    # that drag and not a click at all.
+    ba <- rb$brush_at
+    if (is.list(ba) && is.finite(ba$t %||% NA) &&
+        as.numeric(Sys.time()) - ba$t < (.RB_CLICK_WAIT / 1000) + 1.5) {
+      near <- function(a, b) isTRUE(abs(a - b) <= 12)
+      corners <- list(c(ba$xmin, ba$ymin), c(ba$xmin, ba$ymax),
+                      c(ba$xmax, ba$ymin), c(ba$xmax, ba$ymax))
+      if (any(vapply(corners, function(p)
+              near(p[1], cl$x) && near(p[2], cl$y), logical(1)))) return()
+    }
     # A CLICK MEANS "I AM DOING SOMETHING ELSE NOW", so any rectangle still on the
     # page goes with it. Reported: the box persisted while trying to set the
     # bottom edge -- the percentage updated but the picture kept the old
-    # selection, so the screen showed two different answers at once.
+    # selection, so the screen showed two different answers at once. Safe here
+    # because the gesture is over by the time this runs.
     session$resetBrush("rb_brush")
     m <- as.character(rb$mode %||% "")
     if (!(m %in% c("start", "end", "bottom"))) return()

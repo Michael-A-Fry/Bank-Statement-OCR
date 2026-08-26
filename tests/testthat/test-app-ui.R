@@ -1331,17 +1331,34 @@ test_that("the band editor draws and stores in the template's band frame", {
 # mis-drawn band is the commonest cause of a wrong amount column, so this is a
 # correctness fix wearing a usability costume.
 test_that("a drawn box commits on release, not on every mouse move", {
-  src <- paste(.ui_src(), collapse = " ")
+  lines <- .ui_src(); src <- paste(lines, collapse = " ")
+  num_at <- function(pat) {
+    i <- grep(pat, lines)[1]
+    if (is.na(i)) NA_integer_ else as.integer(sub("^[^0-9]*([0-9]+).*$", "\\1", lines[i]))
+  }
   for (id in c("g_pdf_brush", "rb_brush")) {
     blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
     # A debounce of ANY length is the promise -- one commit when the mouse stops,
-    # not one per mouse-move. The builder runs a shorter one than the toolkit
-    # because a drag there is a step in a wizard and waiting a second and a half
-    # to be told it worked is its own kind of broken.
+    # not one per mouse-move.
     expect_match(blk, 'delayType = "debounce"')
-    ms <- as.integer(sub(".*delay = ([0-9]+).*", "\\1", blk))
-    expect_gte(ms, 500L)
   }
+  # THE TOOLKIT waits long, because its drag is the whole gesture and there is
+  # nothing else competing for it.
+  tk <- as.integer(sub('.*brushOpts\\("g_pdf_brush", delay = ([0-9]+).*', "\\1", src))
+  expect_gte(tk, 500L)
+  # THE BUILDER CANNOT. Its plot also carries a click, and Shiny sends a plot
+  # click on MOUSEDOWN - so the leading edge of every drag arrives as a click and
+  # the click has to wait to find out whether a drag followed. The brush must
+  # report FIRST, or the drag is read as a click and the gesture is lost, which is
+  # exactly the fault that made the builder unusable. So the builder's delay is
+  # the named constant, and the only rule is that it is the shorter of the two.
+  expect_match(src, "brushOpts\\(\"rb_brush\", direction = \"xy\", delay = \\.RB_BRUSH_WAIT")
+  bw <- num_at("^\\.RB_BRUSH_WAIT <- ")
+  cw <- num_at("^\\.RB_CLICK_WAIT <- ")
+  expect_false(is.na(bw)); expect_false(is.na(cw))
+  expect_lt(bw, cw)
+  # ...and still long enough to be a debounce rather than a stream of commits.
+  expect_gte(bw, 150L)
 })
 
 # ---------------------------------------------------------------------------
