@@ -213,6 +213,53 @@ partial header hit (0.6-0.99), the tool KNOWS it has met a new wording. It could
 offer "this document called it X - remember that too?" and learn the variant
 instead of being told it.
 
+### A2c. All of this lives INSIDE one template - and that means two levels
+
+Confirmed by the user: *"This is, within a specific template."*
+
+So there are two separate decisions and they must not be confused:
+
+| level | what decides it | what it answers |
+|-------|-----------------|-----------------|
+| `fingerprint.page_contains_all` | `detect_document_template()`, R/doc_extract.R | **WHICH** template reads this document |
+| `tables[].find.title_any` / `.header_any` | `doc_locate_table()`, R/tables.R | **WHERE** the tables are, once that template has been chosen |
+
+The working shape is therefore ONE template per document FAMILY: a fingerprint
+made only of the part that never changes (the issuer's name, the report's
+standing title), and `find:` blocks on each table carrying all the variation
+inside the family. **An over-specific fingerprint is fatal to this** - the
+template never fires at all, so its variants never get a chance to be tried, and
+the document falls through to some other template or to unsupported. Guidance
+in the builder has to say that plainly, because the instinct is the opposite:
+somebody trying to make matching more reliable will add MORE phrases.
+
+**AND A REAL BUG, found while confirming this.** The two levels compare text
+differently:
+
+* `detect_document_template()` uses `grepl(phrase, hay, fixed = TRUE)` - case
+  and spacing sensitive, no normalisation.
+* `.doc_header_hit()` uses `.doc_norm()` - case, spacing and punctuation all
+  stripped.
+
+Measured against a page printing `QUARTERLY PORTFOLIO REPORT`:
+
+| fingerprint phrase as typed  | matches |
+|------------------------------|---------|
+| `QUARTERLY PORTFOLIO REPORT` | TRUE    |
+| `Quarterly Portfolio Report` | **FALSE** |
+| `Quarterly  Portfolio Report` (double space) | **FALSE** |
+
+This is very likely the original complaint - *"I put a phrase printed on it, bang
+smack on front page, still used another template"*. Typed in title case against a
+page printed in capitals, it can never match, and nothing on screen says why.
+
+Dragging the phrase off the page (built) sidesteps it by capturing the exact
+printed text. But the fingerprint should normalise the same way the header
+matcher does, so a typed phrase works too - and the same rule then applies
+everywhere text is compared to a page, instead of two rules that disagree.
+Statement templates use the same `.fp_fingerprint_problems` gate, so whatever is
+done here has to be checked against them as well.
+
 Still open, and worth confirming with the user when it is built: what happens
 when two occurrences carry the SAME title (numbered `_1`, `_2`, presumably), and
 whether the output should be one sheet per table or one long sheet with a
