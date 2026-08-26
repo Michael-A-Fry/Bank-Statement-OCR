@@ -480,3 +480,22 @@ test_that("a cover page cannot dilute the page that answers the question", {
     doc_L(40, 156, "07 May"), doc_R(400, 156, "500.00"))
   expect_identical(doc_shape_hint(doc_input(list(cover, rows)))$looks, "statement")
 })
+
+test_that("an empty name is empty, and never the literal word table", {
+  # Reported: "Call this value still defaulting sometimes to the table name rather
+  # than the label." doc_suggest_name() falls back to "table" for anything it
+  # cannot make a key out of -- right for a TABLE, and the reason a value came out
+  # called "table": the debounce observer fed it the empty box, stored the
+  # fallback on the draft, and the label drag then refused to overwrite a name
+  # that was no longer empty.
+  expect_identical(doc_suggest_name(""), "table")     # the fallback still exists
+  expect_identical(doc_suggest_name("   "), "table")
+  expect_identical(doc_suggest_name("!!!"), "table")
+  # ...so the VALUE screen must not call it with an empty box. Asserted where the
+  # decision is made rather than by changing a helper two other callers rely on.
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  i <- grep("observeEvent\\(rb_vname_d\\(\\)", src)[1]
+  skip_if(is.na(i))
+  blk <- paste(src[i:(i + 6L)], collapse = "\n")
+  expect_match(blk, "if \\(nzchar\\(typed\\)\\) doc_suggest_name\\(typed\\) else \"\"")
+})

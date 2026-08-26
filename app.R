@@ -711,8 +711,13 @@ ui <- fluidPage(
                           "Start and end" = "ends"),
               selected = c("tables", "edges", "names", "values", "ends"))),
           plotOutput("rb_plot", height = "840px", click = "rb_click",
+            # resetOnNew: SHINY KEEPS A BRUSH ACROSS A RE-RENDER unless told not
+            # to, and this plot re-renders on every change to the draft. That is
+            # the other half of "the blue box does not disappear even when the
+            # next column is added" -- the server had already cleared the value,
+            # and the client redrew the rectangle anyway.
             brush = brushOpts("rb_brush", direction = "xy", delay = 900,
-                              delayType = "debounce")),
+                              delayType = "debounce", resetOnNew = TRUE)),
           uiOutput("rb_hint")),
         column(5,
           tabsetPanel(id = "rb_tab", type = "tabs",
@@ -3399,10 +3404,20 @@ server <- function(input, output, session) {
     if (!nzchar(typed)) "Lower case with underscores - ird_number, total_paid."
     else sprintf("Comes out as  %s", doc_suggest_name(typed))
   })
+  # AN EMPTY BOX IS "NO NAME YET", NOT THE WORD "table".
+  #
+  # Reported: "Call this value still defaulting sometimes to the table name rather
+  # than the label." doc_suggest_name() falls back to the literal string "table"
+  # for anything it cannot make a key out of -- which is right for a TABLE and
+  # wrong here. This observer fed it the empty box half a second after "+ Add a
+  # value" was pressed, stored v$name = "table", and the label drag then refused
+  # to overwrite it because the name was no longer empty. The value came out
+  # called "table" and nothing on screen explained why.
   observeEvent(rb_vname_d(), {
     v <- rb$vdraft; if (is.null(v)) return()
-    nm <- doc_suggest_name(rb_vname_d() %||% "")
-    if (nzchar(nm) && !identical(nm, v$name)) { v$name <- nm; rb$vdraft <- v }
+    typed <- trimws(as.character(rb_vname_d() %||% ""))
+    nm <- if (nzchar(typed)) doc_suggest_name(typed) else ""
+    if (!identical(nm, as.character(v$name %||% ""))) { v$name <- nm; rb$vdraft <- v }
   }, ignoreInit = TRUE)
   observeEvent(input$rb_vtype, {
     v <- rb$vdraft; if (is.null(v)) return()
@@ -3548,10 +3563,29 @@ server <- function(input, output, session) {
     if (is.na(p0) || is.na(p1) || pg < p0 || pg > p1) return(invisible(NULL))
     y0 <- if (pg == p0) .doc_num(tb$start$y, 0) else 0
     y1 <- if (pg == p1) .doc_num(tb$end$y, r$h) else r$h
-    edges <- doc_column_edges(tb)
+    # DRAW THE COLUMNS, NOT THE EDGE VIEW.
+    #
+    # This drew from doc_column_edges(), which is a LOSSY projection: it collects
+    # every column's x_min and only the LAST column's x_max. That was harmless
+    # while the columns tiled and became a liar the moment they were allowed not
+    # to -- each band was drawn from its own left edge to the NEXT COLUMN'S left
+    # edge, so every gap was painted as if it belonged to the column before it and
+    # the tint ran straight over the column after. Reported as "it seems to just
+    # place the new column x axis on top of the previous, overlapping x axis":
+    # the model was right and the PICTURE was wrong, which is the worse of the
+    # two, because the picture is what is being checked.
+    #
+    # Each column is now drawn from its own x_min to its own x_max, so a gap
+    # between two columns is drawn as a gap -- which is the whole point of being
+    # allowed to have one.
+    cols <- .doc_columns(tb)
     col <- PALETTE[[key]]
+    bands <- Filter(Negate(is.null), lapply(cols, function(cc) {
+      lo <- .doc_num(cc$x_min, NA_real_); hi <- .doc_num(cc$x_max, NA_real_)
+      if (!is.finite(lo) || !is.finite(hi) || hi <= lo) NULL else c(lo, hi)
+    }))
     if ("tables" %in% lay) {
-      if (!is.null(edges) && length(edges) >= 2L) {
+      if (length(bands)) {
         # EVERY COLUMN IS TINTED. It used to tint only the odd-numbered ones,
         # meaning to show where one ends and the next begins -- but on screen
         # that reads as "these three are selected and these three are not", and
@@ -3561,15 +3595,17 @@ server <- function(input, output, session) {
         # thick outline round it, and it is the only one.
         pale <- if (lwd > 1) "16" else "0d"
         dark <- if (lwd > 1) "2a" else "1a"
-        for (j in seq_len(length(edges) - 1L))
-          rect(edges[j], y0, edges[j + 1L], y1, border = NA,
+        for (j in seq_along(bands))
+          rect(bands[[j]][1], y0, bands[[j]][2], y1, border = NA,
                col = pal_fill(key, if (j %% 2L == 1L) dark else pale))
       } else {
         rect(0, y0, r$w, y1, border = col, lty = 3, lwd = lwd)
       }
     }
-    if ("edges" %in% lay && !is.null(edges) && length(edges) >= 2L)
-      for (e in edges) lines(c(e, e), c(y0, y1), col = col, lwd = lwd)
+    # Two rules per column, its own two edges -- not one rule per shared divider,
+    # which is a different picture as soon as the columns do not touch.
+    if ("edges" %in% lay)
+      for (b in bands) for (e in b) lines(c(e, e), c(y0, y1), col = col, lwd = lwd)
     if ("ends" %in% lay) {
       # WHERE IT STARTS AND WHERE IT STOPS, named on the page in the same words
       # the panel beside it uses. Only on the page the boundary is actually on --

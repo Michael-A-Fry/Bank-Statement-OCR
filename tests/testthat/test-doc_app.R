@@ -169,7 +169,7 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   expect_match(cl, "past where the table ends")
   expect_match(cl, "above where the table starts")
   # and both markers are drawn on the page, named
-  plot <- .da_block(src, "\\.rb_draw_table <- function", 52L)
+  plot <- .da_block(src, "\\.rb_draw_table <- function", 78L)
   expect_match(plot, '"START')
   expect_match(plot, '"END"')
 })
@@ -310,13 +310,20 @@ test_that("the tool's own labels float above the page, and each layer switches o
 # it is the only thing on the picture that means "selected".
 test_that("every column band is tinted, and only the edited one is outlined", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "\\.rb_draw_table <- function", 34L)
+  blk <- .da_block(src, "\\.rb_draw_table <- function", 60L)
   # the fill is unconditional -- the alternation decides which SHADE, not whether
   expect_match(blk, "if (j %% 2L == 1L) dark else pale", fixed = TRUE)
   expect_match(blk, "pale <- if (lwd > 1)", fixed = TRUE)
   expect_match(blk, "dark <- if (lwd > 1)", fixed = TRUE)
   # the band's own rect is not guarded by which band it is
   expect_false(grepl("if (j %% 2L == 1L)\n            rect(", blk, fixed = TRUE))
+  # ...AND IT IS THE COLUMN'S OWN TWO EDGES, not the shared-divider view.
+  # doc_column_edges() keeps every x_min and only the LAST x_max, so drawing from
+  # it painted each gap as part of the column before it and ran the tint over the
+  # column after -- reported as "it places the new column x axis on top of the
+  # previous, overlapping". The model was right; the picture was not.
+  expect_match(blk, "bands\\[\\[j\\]\\]\\[1\\], y0, bands\\[\\[j\\]\\]\\[2\\], y1")
+  expect_false(grepl("edges <- doc_column_edges(tb)", blk, fixed = TRUE))
   # and exactly one thing draws a thick outline round a single band
   sel <- grep("border = PALETTE\\$warn, lwd = 3\\)", src)
   expect_length(sel, 1L)
