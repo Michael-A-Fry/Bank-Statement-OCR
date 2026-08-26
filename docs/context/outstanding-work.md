@@ -131,6 +131,54 @@ Three things this needs, in this order:
 
 ---
 
+## 0c. A badly OCR'd page can come back "ok"
+
+For a police deployment this is the most important single line in this document,
+because a large share of what arrives will be a scan of a photocopy.
+
+The plumbing is all there. Tesseract's per-word confidence is carried the whole
+way through to the table parser (`ocr_conf`, R/ocr.R:59-75) specifically "so the
+table parser can flag a transaction whose amount/date/balance cell contains a
+low-confidence word - a misread digit that a page-mean confidence would otherwise
+hide". `PARAM_OCR_PAGE_MIN_CONF <- 70` exists (R/params.R:34), and
+`low_ocr_confidence` is raised at severity **high** (R/diagnose.R:422).
+
+**And none of it decides the verdict.** The status gate is
+(R/convert.R:387-393):
+
+```r
+status <- if (row_count == 0L) "unsupported"
+          else if (kpi_fail_count > 0 || identical(recon$trust$level, "low") ||
+                   isTRUE(multi_resolved$likely_multiple) || thin_match || ambiguous)
+            "needs_review"
+          else "ok"
+```
+
+OCR confidence is not in it. So a statement read off a page whose OCR scored 40
+comes back **ok**, with a green card and a clean download, and the "loud caveat"
+lives in the diagnostics panel behind "Show me how it read this" - a panel most
+people never open. A misread `8` for a `3` in an amount is exactly the wrong
+figure that looks right, and reconciliation only catches it if it happens to
+break the balance.
+
+Three changes, cheapest first:
+
+1. **Put OCR confidence in the status gate.** A page below the threshold is
+   `needs_review`, never `ok`. One clause.
+2. **Mark the CELL, not the page.** `ocr_conf` is already per word and already
+   reaches the parser. A figure containing a low-confidence word should be
+   flagged in the OUTPUT - a column beside it, or a marker - so a reviewer opening
+   the spreadsheet in six months sees which numbers the machine was unsure of.
+   A page-level caveat on a 300-row statement tells nobody which row to check.
+3. **Say it on the card, not in a panel.** "This was read from a scan; N figures
+   were read with low confidence" belongs above the fold, next to the download.
+
+And the same gate is missing on the OTHER routes entirely, which have no
+reconciliation to fall back on - see 0 for the equivalent there
+(`unclaimed_words`, currently a footnote, should be a gate).
+
+---
+
 ## A. The engine - what comes out wrong
 
 ### A1. Repeated headers on continuation pages come back as rows
