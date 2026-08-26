@@ -463,6 +463,100 @@ template_overview <- function(tset) {
   out[order(out$bank, out$type, out$id), , drop = FALSE]
 }
 
+# ---------------------------------------------------------------------------
+# ONE LIBRARY, THREE KINDS.
+#
+# Admin's template list read load_template_set() and nothing else, so a template
+# built for a form or a report was INVISIBLE there: it could not be found, read,
+# checked, hidden or deleted, and the only screen that manages layouts quietly
+# claimed there were none. Reported as "even in the admin, other templates and
+# other things are not even seen" -- and the half of the app that reads
+# everything-that-is-not-a-bank-statement was managed by nothing at all.
+#
+# So the library is one list of three kinds, summarised in columns that mean the
+# same thing for all of them. Anything kind-specific (amount signs, date formats,
+# column bands) stays in the YAML below the list, where it always was: putting
+# nine mostly-empty columns on the screen is how a list of twelve templates
+# becomes unreadable.
+# ---------------------------------------------------------------------------
+
+# template_kind(t) -- which paradigm a loaded template belongs to. Reads the
+# template's own `mode`, because that is what every loader and every detector
+# dispatches on; a template with no mode is a transaction statement, which is
+# what every statement template written before the other two modes existed says.
+template_kind <- function(t) {
+  switch(as.character(t$mode %||% "statement")[1],
+         fields = "fields", document = "document", "statement")
+}
+
+# .TEMPLATE_KIND_LABEL -- the words on screen. "Other" is the word Convert and
+# "Add a template" both use for everything that is not a bank statement, so the
+# person meeting the distinction on a third screen does not have to learn a third
+# name for it.
+.TEMPLATE_KIND_LABEL <- c(statement = "Bank statement",
+                          fields    = "Other \u00b7 form",
+                          document  = "Other \u00b7 report")
+# ...and the same three kinds as ordinary nouns, for the middle of a sentence.
+# "checked as a Other \u00b7 report" is what happens when a column heading is asked to
+# do a noun's job.
+.TEMPLATE_KIND_NOUN <- c(statement = "bank statement", fields = "form",
+                         document  = "report")
+
+# template_library_name(t) -- the template in words, for whichever kind it is.
+# template_display_name() says "<bank> <type> statement", which is right for a
+# statement and a lie on the other two ("ACME report statement").
+template_library_name <- function(t) {
+  if (is.null(t) || !is.list(t)) return(NA_character_)
+  k <- template_kind(t)
+  if (identical(k, "statement")) return(template_display_name(t))
+  lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
+                      trimws(as.character(t$statement_type %||% ""))))
+  if (nzchar(lab)) lab else as.character(t$id %||% NA_character_)
+}
+
+# .template_reads(t) -- what this template actually pulls out, in one cell. The
+# three kinds find three different things, and "12 columns" / "8 values" /
+# "3 tables" is the shortest true answer for each.
+.template_reads <- function(t) {
+  k <- template_kind(t)
+  n1 <- function(n, one, many) sprintf("%d %s", n, if (n == 1L) one else many)
+  if (identical(k, "fields")) return(n1(length(t$fields %||% list()), "value", "values"))
+  if (identical(k, "document")) {
+    nt <- length(t$tables %||% list()); np <- length(t$pairs %||% list())
+    parts <- c(if (nt) n1(nt, "table", "tables"),
+               if (np) n1(np, "value", "values"))
+    return(if (length(parts)) paste(parts, collapse = " + ") else "nothing yet")
+  }
+  cols <- if (identical(t$format %||% "delimited", "pdf")) t$table$columns else t$columns
+  n1(length(cols %||% list()), "column", "columns")
+}
+
+# library_overview(statements, fields, documents) -> data.frame, one row per
+# template of any kind. `kind` leads, because it is the thing that decides which
+# editor opens and which half of the app the template belongs to.
+library_overview <- function(statements = list(), fields = list(), documents = list()) {
+  cols <- c("kind", "name", "id", "reads", "origin", "hidden", "version")
+  one <- function(t, k) data.frame(
+    kind    = unname(.TEMPLATE_KIND_LABEL[[k]]),
+    name    = template_library_name(t) %||% NA_character_,
+    id      = as.character(t$id %||% NA_character_)[1],
+    reads   = .template_reads(t),
+    origin  = if (identical(t$origin %||% "default", "user")) "user" else "tested",
+    hidden  = if (isTRUE(t$hidden)) "hidden" else "",
+    version = as.character(t$version %||% NA),
+    stringsAsFactors = FALSE)
+  rows <- c(lapply(statements, one, k = "statement"),
+            lapply(fields,     one, k = "fields"),
+            lapply(documents,  one, k = "document"))
+  if (!length(rows))
+    return(setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
+  out <- do.call(rbind, rows); rownames(out) <- NULL
+  # Statements first, then forms, then reports -- the order the app itself tries
+  # them in, and the order the two routes are named in everywhere else.
+  ord <- match(out$kind, unname(.TEMPLATE_KIND_LABEL))
+  out[order(ord, out$name, out$id), , drop = FALSE]
+}
+
 # template_display_name(t) -- the template said in words the person holding the
 # statement can check ("ANZ everyday statement"). Anything customer-facing uses
 # this; the id and the version stay for the logs. An id is a maintainer's handle

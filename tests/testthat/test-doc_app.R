@@ -509,7 +509,7 @@ test_that("with no report templates installed nothing about the front door chang
 
 test_that("the document builder fills in the same three boxes the statement toolkit does", {
   src <- .da_src(); joined <- .da_joined()
-  blk <- .da_block(src, "rb_id_auto <- reactiveVal", 44L)
+  blk <- .da_block(src, "rb_id_auto <- reactiveVal", 52L)
   # the issuer, guessed from the filename the same way open_guided guesses it
   expect_match(blk, "tools::toTitleCase")
   expect_match(blk, 'updateTextInput\\(session, "rb_bank"')
@@ -1063,4 +1063,92 @@ test_that("the swallow window is short enough not to eat a real drag", {
   tol <- as.numeric(sub(".*abs\\(a - b\\) <= ([0-9.]+).*", "\\1", blk))
   expect_true(is.finite(tol))
   expect_lte(tol, 12)      # PDF points -- a corner further off is a real drag
+})
+
+# ---------------------------------------------------------------------------
+# ADMIN SEES EVERY KIND, AND OPENS THE RIGHT EDITOR FOR IT.
+#
+# Reported: "even in the admin, other templates and other things are not even
+# seen", and "the template I set up for other, open in Admin, open template,
+# opens bank statement template!"
+# ---------------------------------------------------------------------------
+
+test_that("the Admin list is the whole library, not the statement half", {
+  joined <- .da_joined()
+  ov <- .da_block(.da_src(), "output\\$adm_tpl_overview <- renderDT", 4L)
+  expect_match(ov, "library_overview\\(")
+  expect_match(ov, "all_field_templates_admin\\(\\)")
+  expect_match(ov, "all_doc_templates_admin\\(\\)")
+  # hidden ones included, or the view that un-hides them cannot show them
+  for (r in c("all_field_templates_admin <- reactive", "all_doc_templates_admin <- reactive")) {
+    blk <- .da_block(.da_src(), r, 4L)
+    expect_match(blk, "include_hidden = TRUE")
+  }
+  # and one keyed library behind every action on the tab
+  expect_match(joined, "adm_lib <- reactive")
+  expect_match(joined, "\\.adm_kind <- function")
+})
+
+test_that("every Admin action on a template dispatches on its kind", {
+  src <- .da_src()
+  # picked / previewed out of the library, not out of the statement set
+  expect_match(.da_block(src, "observeEvent\\(input\\$adm_tpl_pick", 6L), "adm_lib\\(\\)")
+  # hidden, deleted and saved in the folder that kind lives in
+  for (p in c("observeEvent\\(input\\$adm_tpl_hide", "observeEvent\\(input\\$adm_tpl_delete,"))
+    expect_match(.da_whole(src, p), "\\.adm_user_dir\\(\\.adm_kind\\(id\\)\\)")
+  save <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_save")
+  expect_match(save, "\\.adm_save\\(kind, t\\)")
+  expect_match(save, "\\.adm_kind_of\\(t\\)")     # the kind of the YAML in the box
+  # ...and checked against its own rulebook, not the statement one
+  val <- .da_whole(src, "observeEvent\\(input\\$adm_tpl_validate")
+  expect_match(val, "\\.adm_validate\\(kind, t\\)")
+  expect_false(grepl("validate_template\\(t\\)", val))
+  # the three savers and the three validators, each named once
+  joined <- .da_joined()
+  for (f in c("save_fields_template\\(t, USER_FIELDS_DIR\\)",
+              "save_document_template\\(t, USER_DOC_DIR\\)",
+              "save_user_template\\(t, USER_TEMPLATES_DIR\\)",
+              "validate_fields_template\\(t\\)", "validate_document_template\\(t\\)"))
+    expect_match(joined, f)
+})
+
+test_that("opening a report template opens the report builder, not the statement toolkit", {
+  blk <- .da_whole(.da_src(), "observeEvent\\(input\\$adm_tpl_bands")
+  expect_match(blk, 'identical\\(kind, "document"\\)')
+  expect_match(blk, "rb_open_template\\(t, smp\\$path\\)")
+  # the statement route survives, on the else branch
+  expect_match(blk, "open_guided\\(smp\\$path")
+  # a form has no picture at all, and says so instead of opening an empty one
+  expect_match(blk, 'identical\\(kind, "fields"\\)')
+  # and the BUTTON says which editor it opens before it is pressed
+  btn <- .da_block(.da_src(), "output\\$adm_tpl_bands_btn <- renderUI", 12L)
+  expect_match(btn, "Open it in the report builder")
+  expect_match(btn, "Redraw its columns on a real statement")
+})
+
+test_that("opening a saved template stops the builder guessing over it", {
+  src <- .da_src(); joined <- .da_joined()
+  blk <- .da_whole(src, "rb_open_template <- function")
+  expect_match(blk, "document_proposal_from_template\\(t\\)")
+  expect_match(blk, "rb\\$tables <- prop\\$tables")
+  expect_match(blk, "rb\\$pairs  <- prop\\$pairs")
+  # the identity boxes are filled from the template, not left saying "new_report"
+  for (i in c("rb_bank", "rb_type", "rb_id", "rb_fp"))
+    expect_match(blk, sprintf('"%s"', i))
+  # the auto-suggesters stand down, or they overwrite what somebody saved
+  expect_match(blk, "rb_id_auto\\(NA_character_\\); rb_fp_auto\\(NA_character_\\)")
+  expect_match(blk, "rb_editing\\(")
+  expect_match(joined, "if \\(!is\\.na\\(rb_editing\\(\\)\\)\\) return\\(\\)")
+  # ...and it lands on the right tab with the right half of it open
+  expect_match(blk, 'updateRadioButtons\\(session, "ts_doctype", selected = "other"\\)')
+  expect_match(blk, 'selected = "Add a template"')
+  # a new document is a new template
+  expect_match(joined, "observeEvent\\(input\\$ts_file, \\{ rb_editing\\(NA_character_\\) \\}")
+})
+
+test_that("the builder says when Save will REPLACE a saved template", {
+  blk <- .da_block(.da_src(), "output\\$rb_editing_note <- renderUI", 8L)
+  expect_match(blk, "Editing the saved template")
+  expect_match(blk, "Save replaces it")
+  expect_match(blk, "Building a template from")
 })

@@ -607,7 +607,13 @@ ui <- fluidPage(
                           "background:#eef4ef;border:1px solid #cfe0d4"),
           div(style = "font-size:16px;line-height:1", "\U0001F4C4"),
           div(style = "flex:1;min-width:0;font-size:13px;color:#2f4f3a",
-            strong("Building a template from "), textOutput("rb_docname", inline = TRUE)),
+            # EDITING SOMETHING, OR MAKING SOMETHING. Save writes to the id in the
+            # box, so re-saving an opened template REPLACES it -- which is exactly
+            # right for an edit and alarming if you thought you were starting
+            # fresh. The line says which of the two is happening. ONE output per
+            # id: rb_docname appears once, and only the words around it change.
+            uiOutput("rb_editing_note", inline = TRUE),
+            textOutput("rb_docname", inline = TRUE)),
           # The kind-of-document radio folds away with the panel, so the way back
           # has to say so -- otherwise somebody who picked "anything else" by
           # mistake has no visible way to change their mind.
@@ -1035,7 +1041,10 @@ ui <- fluidPage(
         tabPanel(
           "Templates",
           br(),
-          helpText(HTML("Every layout the tool can read: <b>tested</b> = shipped and checked, <b>user</b> = built here. Click a row to view and edit it.")),
+          helpText(HTML(paste0(
+            "Every layout the tool can read, of <b>every kind</b> - bank statements ",
+            "and everything else. <b>tested</b> = shipped and checked, <b>user</b> = ",
+            "built here. Click a row to view and edit it."))),
           DTOutput("adm_tpl_overview"),
           br(),
           fluidRow(
@@ -1050,26 +1059,34 @@ ui <- fluidPage(
               # so there was no route from "this template is wrong" to the picture
               # of it. It needs a page to draw on, and the saved statements know
               # which template read them, so the page comes from there.
-              actionButton("adm_tpl_bands", "Redraw its columns on a real statement",
-                           class = "btn-primary"),
+              # The label follows the KIND of template selected -- see
+              # output$adm_tpl_bands_btn. A statement's columns are redrawn on a
+              # page; a report is reopened in the builder it was drawn in; a form
+              # has no picture at all.
+              uiOutput("adm_tpl_bands_btn"),
               uiOutput("adm_tpl_bands_msg"),
               br(),
+              # SAVE IS NOT HERE. It writes what is in the YAML box, so it lives
+              # under the YAML box -- two green buttons in one column, one of them
+              # about the picture and one about the text beside it, is the screen
+              # asking which without saying so.
               actionButton("adm_tpl_dup", "Duplicate (new id)"),
               actionButton("adm_tpl_validate", "Check it's valid"),
-              actionButton("adm_tpl_save", "Save as user template", class = "btn-primary"),
-              actionButton("adm_tpl_hide", "Hide / un-hide (user template)"),
-              actionButton("adm_tpl_delete", "Delete (user template)", class = "btn-danger"),
+              actionButton("adm_tpl_hide", "Hide / un-hide"),
+              actionButton("adm_tpl_delete", "Delete", class = "btn-danger"),
               br(), br(), uiOutput("adm_tpl_msg"),
               tags$details(
                 tags$summary(class = "muted", style = "cursor:pointer;font-size:12.5px", "How these actions work"),
-                helpText("Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id, saving, then deleting the old one. Hide parks a user template out of detection without deleting it. Delete only removes USER templates; shipped 'tested' ones are read-only and win on an id clash, so a copy needs its own id."))),
+                helpText("Duplicate copies this template with a new id into the editor - tweak it and Save. Rename by changing the id, saving, then deleting the old one. Hide parks a template out of detection without deleting it. Hide and Delete only work on templates built HERE; shipped 'tested' ones are read-only and win on an id clash, so a copy needs its own id. Save writes the text on the right into the folder for that kind of template - change its 'mode' and it moves."))),
             column(7,
               h4("Template YAML"),
-              textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"))
+              textAreaInput("adm_tpl_edit", NULL, value = "", width = "100%", height = "460px"),
+              actionButton("adm_tpl_save", "Save this text as a user template",
+                           class = "btn-primary"))
           ),
           tags$hr(),
-          h4("Near-duplicate user templates - consolidate the pile"),
-          helpText("Templates that read a statement identically (same format, amounts, dates and columns) but were drafted more than once. Keep the best one and Hide or Delete the rest - pick any id above to act on it."),
+          h4("Near-duplicate bank statement templates - consolidate the pile"),
+          helpText("Bank statement templates that read a statement identically (same format, amounts, dates and columns) but were drafted more than once. Keep the best one and Hide or Delete the rest - pick any id above to act on it. (Forms and reports are not compared this way: two of them can read the same document and still be two different jobs.)"),
           uiOutput("adm_tpl_dupes"),
           tags$hr(),
           h4("Label dictionary - the wordings the tool looks for"),
@@ -1343,6 +1360,65 @@ server <- function(input, output, session) {
   # Management set: EVERYTHING, including hidden, so Admin can preview and un-hide.
   all_templates <- reactive({ tpl_bump(); load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR, include_hidden = TRUE) })
 
+  # ---- THE WHOLE LIBRARY, ALL THREE KINDS ------------------------------------
+  #
+  # Reported: "even in the admin, other templates and other things are not even
+  # seen". They were not: Admin read all_templates() and nothing else, so a form
+  # or a report template - the entire other half of the app - could not be found,
+  # read, checked, hidden or deleted on the one screen that manages layouts. A
+  # person who had just built one was told, by an empty-looking list, that it did
+  # not exist.
+  #
+  # So there is one library, and everything in Admin reads it. Hidden ones are
+  # included for the same reason they are in all_templates(): this is the view
+  # that un-hides them.
+  all_field_templates_admin <- reactive({
+    tpl_bump()
+    safe(load_fields_templates(FIELDS_DIR, USER_FIELDS_DIR, include_hidden = TRUE), list())
+  })
+  all_doc_templates_admin <- reactive({
+    tpl_bump()
+    safe(load_document_templates(DOC_DIR, USER_DOC_DIR, include_hidden = TRUE), list())
+  })
+  # adm_lib() -- every template of every kind, keyed by id. Statements are added
+  # LAST so that on the (pathological) case of one id used by two kinds the
+  # statement wins the key, which is the same precedence the converter itself
+  # applies; adm_lib_dupe_ids() then names the clash on screen rather than letting
+  # a template silently disappear from the list.
+  adm_lib <- reactive({
+    out <- c(all_doc_templates_admin(), all_field_templates_admin(), all_templates())
+    out[!duplicated(names(out), fromLast = TRUE)]
+  })
+  adm_lib_dupe_ids <- reactive({
+    n <- c(names(all_templates()), names(all_field_templates_admin()),
+           names(all_doc_templates_admin()))
+    unique(n[duplicated(n)])
+  })
+  # .adm_kind(id) -- "statement" / "fields" / "document", read off the template
+  # itself. EVERY Admin action dispatches on this, because a form template saved
+  # through save_user_template() is a statement template with no columns, and a
+  # report template opened in the statement toolkit is the bug that started this.
+  .adm_kind <- function(id) {
+    t <- adm_lib()[[as.character(id %||% "")[1] %||% ""]]
+    if (is.null(t)) NA_character_ else template_kind(t)
+  }
+  # .ADM_KIND_DIR -- where a template of each kind is saved, and which folder
+  # holds the editable copies. One table, so the five actions below cannot drift
+  # apart on where a report template lives.
+  .adm_user_dir <- function(kind) switch(as.character(kind)[1],
+    fields = USER_FIELDS_DIR, document = USER_DOC_DIR, USER_TEMPLATES_DIR)
+  .adm_save <- function(kind, t) switch(as.character(kind)[1],
+    fields   = save_fields_template(t, USER_FIELDS_DIR),
+    document = save_document_template(t, USER_DOC_DIR),
+    save_user_template(t, USER_TEMPLATES_DIR))
+  .adm_validate <- function(kind, t) switch(as.character(kind)[1],
+    fields = validate_fields_template(t), document = validate_document_template(t),
+    validate_template(t))
+  # WHAT KIND THE TEXT IN THE BOX IS, not what kind the picker had selected. Save
+  # follows the YAML: change `mode: document` to `mode: fields` in the editor and
+  # it saves as a form template, because that is what it now is.
+  .adm_kind_of <- function(t) if (is.null(t)) NA_character_ else template_kind(t)
+
   # ---- Admin password gate. Hidden outputs are suspended, so no admin data is
   # computed or sent to the browser until the password is entered. Set it in
   # config/config.yaml (app.admin_password); the BSO_ADMIN_PASSWORD env var
@@ -1526,8 +1602,9 @@ server <- function(input, output, session) {
   # ---- Admin: template overview / preview / edit ----
   # The management view shows ALL templates, hidden ones included, so a parked
   # draft can be found and un-hidden.
+  # ...and ALL THREE KINDS, with `kind` in front. See adm_lib() for why.
   output$adm_tpl_overview <- renderDT(
-    template_overview(all_templates()),
+    library_overview(all_templates(), all_field_templates_admin(), all_doc_templates_admin()),
     options = list(pageLength = 25, dom = "tip"), rownames = FALSE, selection = "single")
 
   # Rebuilding the choices used to DROP the selection: selectize falls back to the
@@ -1540,9 +1617,19 @@ server <- function(input, output, session) {
   # whenever it still exists (a deleted one cannot, and falling back is right there).
   observe({
     req(admin_ok())      # reads an admin input now, so it re-verifies like the rest
-    ids  <- sort(names(all_templates()))
+    lib <- adm_lib()
+    ids <- names(lib)
+    # LABELLED BY KIND. Twelve bare ids in a dropdown do not say which of them is
+    # the report template you just built, and "type to search" cannot help you
+    # find a word that is not there. Grouped so the three kinds stay apart, and
+    # each option reads "<kind> - <id>".
+    kinds <- vapply(lib, template_kind, character(1))
+    ord <- order(match(kinds, names(.TEMPLATE_KIND_LABEL)), ids)
+    ids <- ids[ord]; kinds <- kinds[ord]
+    ch <- stats::setNames(ids, sprintf("%s \u2013 %s",
+                                       unname(.TEMPLATE_KIND_LABEL[kinds]), ids))
     keep <- isolate(input$adm_tpl_pick)
-    updateSelectInput(session, "adm_tpl_pick", choices = ids,
+    updateSelectInput(session, "adm_tpl_pick", choices = ch,
                       selected = if (!is.null(keep) && keep %in% ids) keep else NULL)
   })
 
@@ -1552,14 +1639,15 @@ server <- function(input, output, session) {
   # re-verifies the admin session here and fail-closes (silent no-op) without one.
   observeEvent(input$adm_tpl_overview_rows_selected, {
     req(admin_ok())
-    ov <- template_overview(all_templates())
+    ov <- library_overview(all_templates(), all_field_templates_admin(),
+                           all_doc_templates_admin())
     i <- input$adm_tpl_overview_rows_selected
     if (length(i) && i <= nrow(ov)) updateSelectInput(session, "adm_tpl_pick", selected = ov$id[i])
   })
 
   observeEvent(input$adm_tpl_pick, {
     req(admin_ok())
-    t <- all_templates()[[input$adm_tpl_pick]]; req(t)
+    t <- adm_lib()[[input$adm_tpl_pick]]; req(t)
     updateTextAreaInput(session, "adm_tpl_edit", value = template_yaml(t))
     output$adm_tpl_msg <- renderUI(NULL)
   })
@@ -1568,9 +1656,18 @@ server <- function(input, output, session) {
   # user one, so the analyst knows what Delete will do.
   output$adm_tpl_origin <- renderUI({
     id <- input$adm_tpl_pick; if (is.null(id) || !nzchar(id)) return(NULL)
-    is_user <- id %in% user_template_ids(USER_TEMPLATES_DIR)
-    hidden <- isTRUE(all_templates()[[id]]$hidden)
+    t <- adm_lib()[[id]]; if (is.null(t)) return(NULL)
+    kind <- template_kind(t)
+    is_user <- id %in% user_template_ids(.adm_user_dir(kind))
+    hidden <- isTRUE(t$hidden)
     tagList(
+      # WHICH KIND, FIRST AND IN BOLD. Every button under this line behaves
+      # differently depending on it, and the answer to "why did Redraw open the
+      # bank statement editor" was that nothing on the screen ever said what had
+      # been selected.
+      div(style = "margin:2px 0 4px",
+        strong(unname(.TEMPLATE_KIND_LABEL[[kind]])),
+        span(class = "muted", sprintf(" \u00b7 %s", .template_reads(t)))),
       span(class = "muted",
         if (is_user) "This is a USER template (yours) - editable, hideable & deletable."
         else "This is a shipped 'tested' template - read-only (Save makes a user copy)."),
@@ -1582,15 +1679,22 @@ server <- function(input, output, session) {
     req(admin_ok())
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
-    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+    # THE USER FOLDER FOR THIS KIND. set_user_template_hidden() only ever reads and
+    # rewrites YAML files in the folder it is given, so it hides a form or a report
+    # template exactly as it hides a statement one -- it just has to be pointed at
+    # the right folder. Pointed at the statement folder (as it always was), Hide
+    # answered "only USER templates can be hidden" about a template the person had
+    # built here five minutes earlier.
+    dir <- .adm_user_dir(.adm_kind(id))
+    if (!(id %in% user_template_ids(dir))) {
       output$adm_tpl_msg <- .tpl_note("Only USER templates can be hidden; this one is shipped/read-only.", ok = FALSE)
       return()
     }
-    now_hidden <- isTRUE(all_templates()[[id]]$hidden)
-    res <- safe(set_user_template_hidden(id, !now_hidden, USER_TEMPLATES_DIR), NULL)
+    now_hidden <- isTRUE(adm_lib()[[id]]$hidden)
+    res <- safe(set_user_template_hidden(id, !now_hidden, dir), NULL)
     if (is.null(res)) { output$adm_tpl_msg <- .tpl_note("Couldn't change it.", ok = FALSE); return() }
     tpl_bump(isolate(tpl_bump()) + 1)
-    nm <- template_display_name(all_templates()[[id]]) %||% id
+    nm <- template_library_name(adm_lib()[[id]]) %||% id
     output$adm_tpl_msg <- .tpl_note(if (isTRUE(res))
       sprintf("Hid <b>%s</b> - it won't be used for detection until you un-hide it.", id)
       else sprintf("Un-hid <b>%s</b> - it's active again.", id))
@@ -1607,11 +1711,24 @@ server <- function(input, output, session) {
   # variants can be consolidated (keep one, hide/delete the rest via the controls
   # above). Uses the management set so hidden variants show up too.
   output$adm_tpl_dupes <- renderUI({
+    # ONE ID, TWO KINDS. Nothing stops a form template and a report template being
+    # given the same id -- they are validated by different loaders reading
+    # different folders -- and the library keys by id, so the second one would
+    # simply not appear in the list above. Named here rather than left to be
+    # discovered as "my template vanished".
+    clash <- adm_lib_dupe_ids()
+    clash_ui <- if (length(clash)) tags$div(
+      style = "margin:6px 0;padding:6px 10px;border-left:3px solid var(--bad);background:var(--bad-bg)",
+      strong("The same id is used by more than one kind of template: "),
+      paste(clash, collapse = ", "),
+      p(style = "margin:4px 0 0", "Only one of them can appear in the list above. Give one a different id."))
+    else NULL
     groups <- duplicate_template_groups(all_templates())
     if (!length(groups))
-      return(helpText("No duplicate user templates - nothing to consolidate."))
+      return(tagList(clash_ui,
+        helpText("No duplicate user templates - nothing to consolidate.")))
     ov <- template_overview(all_templates())
-    do.call(tagList, lapply(seq_along(groups), function(gi) {
+    tagList(clash_ui, do.call(tagList, lapply(seq_along(groups), function(gi) {
       ids <- groups[[gi]]
       rows <- ov[ov$id %in% ids, , drop = FALSE]
       lab <- sprintf("%s \u00b7 %s", rows$bank[1] %||% "?", rows$format[1] %||% "?")
@@ -1619,7 +1736,7 @@ server <- function(input, output, session) {
         strong(sprintf("Same layout (%d): %s", length(ids), lab)),
         tags$ul(lapply(seq_len(nrow(rows)), function(i) tags$li(
           sprintf("%s%s", rows$id[i], if (nzchar(rows$hidden[i])) " (hidden)" else "")))))
-    }))
+    })))
   })
   # Delete a USER template (never a shipped one), then refresh the picker.
   #
@@ -1632,7 +1749,8 @@ server <- function(input, output, session) {
     req(admin_ok())
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
-    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+    dir <- .adm_user_dir(.adm_kind(id))
+    if (!(id %in% user_template_ids(dir))) {
       output$adm_tpl_msg <- .tpl_note("Only USER templates can be deleted; this one is shipped/read-only.", ok = FALSE)
       return()
     }
@@ -1640,11 +1758,11 @@ server <- function(input, output, session) {
       t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
       identical(t$id %||% "", id) ||
         identical(tools::file_path_sans_ext(basename(f)), gsub("[^A-Za-z0-9_]+", "_", id))
-    }, list.files(USER_TEMPLATES_DIR, pattern = "\\.ya?ml$", full.names = TRUE))
+    }, list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE))
     showModal(modalDialog(
       title = "Delete this template?", size = "m", easyClose = FALSE,
       p(sprintf("This permanently deletes %d file(s) from %s:",
-                length(files), USER_TEMPLATES_DIR)),
+                length(files), dir)),
       tags$ul(lapply(files, function(f) tags$li(tags$code(basename(f))))),
       p(strong("There is no undo and no backup."),
         " Statements this template was reading will stop being recognised by it from the next conversion; conversions already run are unaffected."),
@@ -1658,11 +1776,12 @@ server <- function(input, output, session) {
     removeModal()
     id <- input$adm_tpl_pick
     if (is.null(id) || !nzchar(id)) return()
-    if (!(id %in% user_template_ids(USER_TEMPLATES_DIR))) {
+    dir <- .adm_user_dir(.adm_kind(id))
+    if (!(id %in% user_template_ids(dir))) {
       output$adm_tpl_msg <- .tpl_note("Only USER templates can be deleted; this one is shipped/read-only.", ok = FALSE)
       return()
     }
-    ok <- safe(delete_user_template(id, USER_TEMPLATES_DIR), FALSE)
+    ok <- safe(delete_user_template(id, dir), FALSE)
     if (isTRUE(ok)) {
       tpl_bump(isolate(tpl_bump()) + 1)
       output$adm_tpl_msg <- .tpl_note(sprintf("Deleted user template <b>%s</b>.", id))
@@ -1675,18 +1794,20 @@ server <- function(input, output, session) {
     } else {
       output$adm_tpl_msg <- .tpl_note("Couldn't delete it.", ok = FALSE)
       notify_once("adm_tpl_delete",
-                  sprintf("Could not delete %s - check folder permissions on %s.", id, USER_TEMPLATES_DIR),
+                  sprintf("Could not delete %s - check folder permissions on %s.", id, dir),
                   type = "error", duration = 10)
     }
   })
 
   # Duplicate the selected template with a fresh id, into the editor to tweak+save.
+  # The new id must be free across the WHOLE library, not just the statement half,
+  # or a duplicated report template lands on an id a form template already holds.
   observeEvent(input$adm_tpl_dup, {
     req(admin_ok())
     t <- tryCatch(yaml::yaml.load(input$adm_tpl_edit %||% ""), error = function(e) NULL)
-    if (is.null(t) || is.null(t$id)) t <- templates()[[input$adm_tpl_pick]]
+    if (is.null(t) || is.null(t$id)) t <- adm_lib()[[input$adm_tpl_pick]]
     req(t)
-    ids <- names(templates())
+    ids <- names(adm_lib())
     new_id <- paste0(t$id, "_copy"); k <- 2L
     while (new_id %in% ids) { new_id <- paste0(t$id, "_copy", k); k <- k + 1L }
     t$id <- new_id; t$origin <- NULL
@@ -1698,24 +1819,46 @@ server <- function(input, output, session) {
   .tpl_note <- function(html, ok = TRUE)
     renderUI(div(style = sprintf("color:%s;font-size:12px", if (ok) PALETTE$ok else PALETTE$bad), HTML(html)))
 
+  # CHECKED AGAINST ITS OWN RULES. validate_template() is the STATEMENT rulebook:
+  # run over a report template it reported a pile of missing columns and no date
+  # format, none of which a report has -- so the one button that says whether a
+  # template is right answered nonsense for two of the three kinds.
   observeEvent(input$adm_tpl_validate, {
     req(admin_ok())
     t <- .tpl_from_editor()
     if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
-    probs <- validate_template(t)
-    output$adm_tpl_msg <- if (!length(probs)) .tpl_note("Valid \u2713")
+    kind <- .adm_kind_of(t)
+    probs <- safe(.adm_validate(kind, t), "could not be checked")
+    output$adm_tpl_msg <- if (!length(probs))
+        .tpl_note(sprintf("Valid \u2713 <span class='muted'>(checked as a %s)</span>",
+                          unname(.TEMPLATE_KIND_NOUN[[kind]])))
       else .tpl_note(paste("Problems:<br>", paste(probs, collapse = "<br>")), FALSE)
   })
 
+  # SAVED WHERE ITS OWN KIND LIVES. Everything here used to go through
+  # save_user_template() into the statement folder -- so editing a report template
+  # in Admin and pressing Save either refused it outright (it has no columns) or
+  # wrote a report template into templates/statements_user/, where no loader would
+  # ever look at it again. The kind is read off the YAML in the box, so changing
+  # `mode:` in the editor moves the file to the right folder on the next save.
   observeEvent(input$adm_tpl_save, {
     req(admin_ok())
     t <- .tpl_from_editor()
     if (is.null(t)) { output$adm_tpl_msg <- .tpl_note("That is not valid YAML.", FALSE); return() }
-    path <- tryCatch(save_user_template(t, USER_TEMPLATES_DIR), error = function(e) conditionMessage(e))
+    kind <- .adm_kind_of(t)
+    path <- tryCatch(.adm_save(kind, t), error = function(e) conditionMessage(e))
     if (is.character(path) && file.exists(path)) {
       tpl_bump(tpl_bump() + 1)
-      shadowed <- !is.null(safe(load_templates(TEMPLATES_DIR), list())[[t$id %||% ""]])
-      msg <- sprintf("Saved to %s.", path)
+      # Shadowing is a statement-template rule (a shipped id wins over a user one);
+      # the other two loaders take the first file they find in folder order, which
+      # is the curated folder, so the same warning is true for them.
+      shipped <- switch(kind,
+        fields   = safe(load_fields_templates(FIELDS_DIR, NULL, include_hidden = TRUE), list()),
+        document = safe(load_document_templates(DOC_DIR, NULL, include_hidden = TRUE), list()),
+        safe(load_templates(TEMPLATES_DIR), list()))
+      shadowed <- !is.null(shipped[[t$id %||% ""]])
+      msg <- sprintf("Saved to %s <span class='muted'>(as a %s)</span>.", path,
+                     unname(.TEMPLATE_KIND_NOUN[[kind]]))
       if (shadowed) msg <- paste0(msg, "<br><b>Note:</b> a shipped 'tested' template with id '",
         t$id, "' takes precedence - rename the id for your edit to apply.")
       output$adm_tpl_msg <- .tpl_note(msg, !shadowed)
@@ -2093,38 +2236,64 @@ server <- function(input, output, session) {
     }
     NULL
   }
+  # THE EDITOR THAT MATCHES THE TEMPLATE.
+  #
+  # Reported: "the template I set up for other, open in Admin, open template,
+  # opens bank statement template!" It did: this button called open_guided()
+  # unconditionally, so a report template -- built by pointing at a page -- was
+  # handed to the toolkit that edits transaction columns, bank name and all. The
+  # kind decides which builder opens, and the button says which before it is
+  # pressed (adm_tpl_bands_btn below).
   observeEvent(input$adm_tpl_bands, {
     req(admin_ok())
     tid <- input$adm_tpl_pick
     if (is.null(tid) || !nzchar(tid)) {
       output$adm_tpl_bands_msg <- .tpl_note("Pick a template first.", ok = FALSE); return()
     }
-    t <- all_templates()[[tid]]
+    t <- adm_lib()[[tid]]
     if (is.null(t)) {
       output$adm_tpl_bands_msg <- .tpl_note("That template could not be loaded.", ok = FALSE); return()
     }
-    # A fields (form) template has no columns to draw -- say which kind it is
-    # rather than opening an editor with nothing in it.
-    if (identical(t$mode %||% "", "fields")) {
+    kind <- template_kind(t)
+    # A fields (form) template finds its values by WORDING, not by coordinates --
+    # there is no picture of it to open. Say so, and point at the box that IS its
+    # editor, rather than opening a page with nothing drawn on it.
+    if (identical(kind, "fields")) {
       output$adm_tpl_bands_msg <- .tpl_note(paste(
-        "This is a form template - it reads labelled values, not columns, so there",
-        "are no bands to redraw. Edit its fields in the box on the right."), ok = FALSE)
+        "This is a form template: it finds its values by the wording printed beside",
+        "them, not by where they sit on the page, so there is nothing to draw. Its",
+        "fields are edited in the YAML box on the right."), ok = FALSE)
       return()
     }
     smp <- .tpl_sample(tid)
     if (is.null(smp)) {
-      # The honest dead end, with the reason and the way out. Without a statement
+      # The honest dead end, with the reason and the way out. Without a document
       # this template has read there is nothing to draw on, and no amount of
       # clicking will change that.
       output$adm_tpl_bands_msg <- .tpl_note(sprintf(paste(
-        "No saved statement was read with %s, so there is no page to draw its",
-        "columns on. Convert one statement with it first - then this button opens",
-        "it here. (Saved statements are deleted after the retention period, so an",
-        "old template may have none left.)"), htmltools::htmlEscape(tid)), ok = FALSE)
+        "No saved document was read with %s, so there is no page to draw its",
+        "%s on. Convert one with it first - then this button opens it here.",
+        "(Saved documents are deleted after the retention period, so an old",
+        "template may have none left.)"), htmltools::htmlEscape(tid),
+        if (identical(kind, "document")) "tables" else "columns"), ok = FALSE)
       return()
     }
     output$adm_tpl_bands_msg <- renderUI(NULL)
-    open_guided(smp$path, basename(smp$path), seed_tmpl = t, upload_id = smp$id)
+    if (identical(kind, "document")) rb_open_template(t, smp$path)
+    else open_guided(smp$path, basename(smp$path), seed_tmpl = t, upload_id = smp$id)
+  })
+  # ...and the button names the editor it will open, so nobody has to press it to
+  # find out. "Redraw its columns on a real statement" was a promise the button
+  # could not keep for two of the three kinds.
+  output$adm_tpl_bands_btn <- renderUI({
+    id <- input$adm_tpl_pick
+    t <- if (is.null(id) || !nzchar(id)) NULL else adm_lib()[[id]]
+    kind <- if (is.null(t)) NA_character_ else template_kind(t)
+    lab <- if (identical(kind, "document")) "Open it in the report builder"
+           else if (identical(kind, "fields")) "Edit its fields (in the box on the right)"
+           else "Redraw its columns on a real statement"
+    actionButton("adm_tpl_bands", lab,
+                 class = if (identical(kind, "fields")) "btn-default" else "btn-primary")
   })
 
   # adm_feed_health -- did the analytics feed actually receive what it should have?
@@ -2477,6 +2646,52 @@ server <- function(input, output, session) {
   })
   output$rb_has_doc <- reactive({ !is.null(rb_doc()) })
   outputOptions(output, "rb_has_doc", suspendWhenHidden = FALSE)
+
+  # ---- THE WAY BACK INTO A SAVED REPORT TEMPLATE -----------------------------
+  #
+  # A report template could be built and then never opened again. There was no
+  # route from a saved template back to the boxes it was drawn from, so the thing
+  # that actually goes wrong -- "this column is a few points too far left" -- meant
+  # editing coordinates as text, or drawing the whole template a second time. The
+  # statement half has had this door since Admin grew "Redraw its columns"; this is
+  # the same door for the other half, and it is what makes Admin's editor open the
+  # RIGHT builder instead of the bank statement one.
+  #
+  # rb_editing() holds the id of the saved template on screen, or NA for a new one.
+  # It is not decoration: while it is set, the three "we guessed this for you"
+  # observers below (issuer, id, fingerprint) stand down. A suggestion that
+  # overwrites what somebody deliberately saved is not a suggestion.
+  rb_editing <- reactiveVal(NA_character_)
+  output$rb_editing_note <- renderUI({
+    e <- rb_editing()
+    if (is.na(e) || !nzchar(e)) return(strong("Building a template from "))
+    tagList(strong(sprintf("Editing the saved template %s", e)),
+            span(class = "muted", " \u00b7 Save replaces it \u00b7 on "))
+  })
+  outputOptions(output, "rb_editing_note", suspendWhenHidden = FALSE)
+  rb_open_template <- function(t, path = NULL) {
+    prop <- document_proposal_from_template(t)
+    rb$tables <- prop$tables
+    rb$pairs  <- prop$pairs
+    rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
+    rb$guide <- FALSE; rb$preview <- NULL; rb$click_at <- NULL
+    updateTextInput(session, "rb_bank", value = as.character(t$bank %||% "")[1])
+    updateTextInput(session, "rb_type",
+                    value = as.character(t$statement_type %||% "report")[1])
+    updateTextInput(session, "rb_id", value = as.character(t$id %||% "")[1])
+    updateTextAreaInput(session, "rb_fp", value = paste(
+      trimws(as.character(unlist(t$fingerprint$page_contains_all %||% character(0)))),
+      collapse = "\n"))
+    rb_id_auto(NA_character_); rb_fp_auto(NA_character_)
+    rb_editing(as.character(t$id %||% "")[1])
+    if (!is.null(path) && file.exists(path)) rb_handoff(path)
+    updateRadioButtons(session, "ts_doctype", selected = "other")
+    updateTabsetPanel(session, "main_tabs", selected = "Add a template")
+  }
+  # A DIFFERENT DOCUMENT IS A DIFFERENT TEMPLATE. Uploading one while a saved
+  # template is open would otherwise leave its name and its boxes on screen over a
+  # page they were never drawn on.
+  observeEvent(input$ts_file, { rb_editing(NA_character_) }, ignoreInit = TRUE)
 
   # WHAT TO DO NEXT, AND WHY NOTHING HAPPENED. Choosing "anything else" and
   # uploading a spreadsheet used to do nothing at all: the picker accepts one
@@ -3813,6 +4028,10 @@ server <- function(input, output, session) {
   rb_seeded <- reactiveVal(NA_character_)
   observe({
     p <- rb_doc(); if (is.null(p)) return()
+    # ...UNLESS A SAVED TEMPLATE IS OPEN. Then the issuer and the phrase on screen
+    # are somebody's answers, not the tool's guesses, and overwriting them with a
+    # guess drawn from the filename is how an edit turns into a second template.
+    if (!is.na(rb_editing())) return()
     nm <- input$ts_file$name %||% basename(p)
     if (identical(rb_seeded(), nm)) return()
     rb_seeded(nm)
@@ -3839,6 +4058,7 @@ server <- function(input, output, session) {
   # printed on thousands. Only replaces what was suggested, never what was typed.
   observeEvent(rb$tables, {
     if (!length(rb$tables)) return()
+    if (!is.na(rb_editing())) return()     # see the seeding observer above
     nm <- trimws(as.character(rb$tables[[1]]$name %||% ""))
     if (!nzchar(nm) || length(strsplit(nm, "\\s+")[[1]]) < 2L) return()
     cur <- trimws(input$rb_fp %||% "")

@@ -16,20 +16,35 @@ is_fields_template <- function(t) identical(t$mode %||% "", "fields") && !is.nul
 # SILENT: the skip reasons come back on attr(x, "load_errors"), exactly as
 # load_templates() does for statement templates, so the app can say which form
 # template vanished and why.
-load_fields_templates <- function(dir = "templates/fields", user_dir = NULL) {
+#
+# include_hidden mirrors load_template_set(): a template flagged `hidden: true` is
+# parked out of detection without being deleted, and the Admin management view
+# asks for them back so it can un-hide one. Hiding used to work for statement
+# templates only, which made Admin's Hide button a control that did nothing on two
+# of the three kinds -- worse than no control.
+load_fields_templates <- function(dir = "templates/fields", user_dir = NULL,
+                                  include_hidden = FALSE) {
   out <- list()
   errors <- character(0)
   dirs <- c(dir, user_dir)
-  for (d in dirs) {
+  # Which FOLDER a template came out of is the only thing that says whether it is
+  # shipped-and-tested or built on this box, and Admin has to say which before it
+  # offers to delete one. Stamped here, the same marker load_templates() puts on a
+  # statement template, so one overview can read all three kinds the same way.
+  origins <- c(rep("default", length(dir)), rep("user", length(user_dir)))
+  for (k in seq_along(dirs)) {
+    d <- dirs[[k]]
     if (is.null(d) || !dir.exists(d)) next
     for (f in list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)) {
       t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
       if (is.null(t) || !is_fields_template(t) || is.null(t$id)) next
+      if (isTRUE(t$hidden) && !include_hidden) next
       probs <- validate_fields_template(t)
       if (length(probs)) {
         errors <- c(errors, sprintf("%s: %s", t$id, paste(probs, collapse = "; ")))
         next
       }
+      t$origin <- origins[[k]]
       if (is.null(out[[t$id]])) out[[t$id]] <- t
     }
   }

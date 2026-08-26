@@ -499,3 +499,66 @@ test_that("an empty name is empty, and never the literal word table", {
   blk <- paste(src[i:(i + 6L)], collapse = "\n")
   expect_match(blk, "if \\(nzchar\\(typed\\)\\) doc_suggest_name\\(typed\\) else \"\"")
 })
+
+# ---------------------------------------------------------------------------
+# THE WAY BACK INTO A SAVED REPORT TEMPLATE.
+#
+# Reported: "the template I set up for other, open in Admin, open template,
+# opens bank statement template!" Part of the reason there was no other door to
+# open is that nothing could turn a saved report template back into the boxes it
+# was drawn from, so a saved template could only ever be edited as text.
+# ---------------------------------------------------------------------------
+
+test_that("a report template round-trips through the builder's own form", {
+  t <- document_template_from_proposal(
+    "rep1", "ACME", "report", c("Quarterly Holdings Report"),
+    tables = list(list(
+      name = "Holdings", start = list(page = 1, y = 100), end = list(page = 2, y = 700),
+      band = list(y_min = 90, y_max = 720), header_rows = 2L, follow = TRUE,
+      columns = list(list(name = "Code", x_min = 40, x_max = 100, type = "text"),
+                     list(name = "Units", x_min = 110, x_max = 180, type = "number")))),
+    pairs = list(list(
+      name = "ird_number", label_text = "IRD number",
+      label = list(x_min = 40, x_max = 120, y_min = 50, y_max = 62, page = 1),
+      value = list(x_min = 130, x_max = 220, y_min = 50, y_max = 62, page = 1),
+      type = "text")),
+    doc_pages = 2L)
+
+  p <- document_proposal_from_template(t)
+  expect_length(p$tables, 1L)
+  expect_length(p$pairs, 1L)
+  # the NAME comes back on the draft, not just as the key it was filed under
+  expect_identical(p$tables[[1]]$name, "Holdings")
+  expect_identical(p$pairs[[1]]$name, "ird_number")
+  expect_identical(p$pairs[[1]]$label_text, "IRD number")
+  # the bottom edge survives -- the control that spent a release doing nothing
+  expect_equal(p$tables[[1]]$band$y_max, 720)
+  expect_length(.doc_columns(p$tables[[1]]), 2L)
+
+  # and putting it straight back gives the SAME template: an edit that changes
+  # nothing must save something identical, or opening a template quietly rewrites it
+  t2 <- document_template_from_proposal(
+    t$id, t$bank, t$statement_type, unlist(t$fingerprint$page_contains_all),
+    p$tables, p$pairs, t$doc_pages)
+  t2$ref_width <- t$ref_width; t2$ref_height <- t$ref_height
+  expect_identical(t, t2)
+})
+
+test_that("a hand-written report template with no names still opens", {
+  t <- list(id = "hand", mode = "document",
+            fingerprint = list(page_contains_all = list("Annual Return 2024")),
+            tables = list(holdings = list(columns = list(
+              code = list(x_min = 10, x_max = 50)))),
+            pairs = list(total = list(label_text = "Total")))
+  p <- document_proposal_from_template(t)
+  expect_identical(p$tables[[1]]$name, "holdings")   # the key it was filed under
+  expect_identical(p$pairs[[1]]$name, "total")
+  expect_identical(p$tables[[1]]$header_rows, 1L)    # the default, made explicit
+})
+
+test_that("nothing at all comes back as nothing, not an error", {
+  p <- document_proposal_from_template(list(id = "x", mode = "document"))
+  expect_identical(p, list(tables = list(), pairs = list()))
+  expect_identical(document_proposal_from_template(NULL),
+                   list(tables = list(), pairs = list()))
+})

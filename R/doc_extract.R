@@ -158,18 +158,29 @@ validate_document_template <- function(t) {
 # load_document_templates(dir, user_dir) -> named list<template>, keyed by id.
 # Lenient like the form loader (one bad template never breaks the others) and,
 # like it, never SILENT: the skip reasons come back on attr(x, "load_errors").
-load_document_templates <- function(dir = "templates/documents", user_dir = NULL) {
+#
+# include_hidden mirrors load_template_set() and load_fields_templates(): a
+# template flagged `hidden: true` is parked out of detection without being
+# deleted, and only the Admin management view asks for them back.
+load_document_templates <- function(dir = "templates/documents", user_dir = NULL,
+                                    include_hidden = FALSE) {
   out <- list(); errors <- character(0)
-  for (d in c(dir, user_dir)) {
+  dirs <- c(dir, user_dir)
+  # Shipped or built here -- see load_fields_templates() for why this is stamped.
+  origins <- c(rep("default", length(dir)), rep("user", length(user_dir)))
+  for (k in seq_along(dirs)) {
+    d <- dirs[[k]]
     if (is.null(d) || !dir.exists(d)) next
     for (f in list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)) {
       t <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
       if (is.null(t) || !identical(t$mode %||% "", "document") || is.null(t$id)) next
+      if (isTRUE(t$hidden) && !include_hidden) next
       probs <- validate_document_template(t)
       if (length(probs)) {
         errors <- c(errors, sprintf("%s: %s", t$id, paste(probs, collapse = "; ")))
         next
       }
+      t$origin <- origins[[k]]
       if (is.null(out[[t$id]])) out[[t$id]] <- t
     }
   }
@@ -554,6 +565,53 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
     if (isTRUE(is.finite(v))) out[[k]] <- v
   }
   if (length(out)) out else NULL
+}
+
+# document_proposal_from_template(t) -> list(tables, pairs), the INVERSE of
+# document_template_from_proposal() below.
+#
+# WHY IT EXISTS. A report template could be built and saved and never opened
+# again: there was no way back from a saved template to the boxes on the page it
+# was drawn from. So "this column is 4pt too far left" -- the thing that actually
+# goes wrong -- meant either editing coordinates as text in a YAML box or
+# throwing the template away and drawing all of it a second time. The statement
+# half has had the way back for a long time (Admin -> "Redraw its columns"); this
+# is the same door for the other half.
+#
+# The two forms are nearly the same shape already (the builder saves its drafts
+# almost verbatim), so this is mostly re-keying: the template keys tables and
+# values by their output name, and a draft carries that name INSIDE it.
+document_proposal_from_template <- function(t) {
+  empty <- list(tables = list(), pairs = list())
+  if (!is.list(t)) return(empty)
+  tabs <- t$tables %||% list()
+  prs  <- t$pairs %||% list()
+  keys <- names(tabs) %||% rep("", length(tabs))
+  tables <- lapply(seq_along(tabs), function(i) {
+    tb <- tabs[[i]]
+    if (!is.list(tb)) return(NULL)
+    # The NAME is what the builder shows and what the output column set is keyed
+    # by. A template written by hand may leave it out, in which case the key it
+    # was filed under is the name it was given.
+    tb$name <- as.character(tb$name %||% keys[i] %||% sprintf("Table %d", i))[1]
+    tb$columns <- .doc_columns(tb)
+    tb$band <- .doc_band_of(tb)
+    tb$header_rows <- .doc_int(tb$header_rows, 1L)
+    tb$follow <- isTRUE(tb$follow)
+    tb
+  })
+  pairs <- lapply(seq_along(prs), function(i) {
+    pr <- prs[[i]]
+    if (!is.list(pr)) return(NULL)
+    # A pair's name is its KEY (the column heading in the output); label_text is
+    # the wording printed on the page. They are different things and the builder
+    # edits both, so both come back.
+    pr$name <- as.character(pr$name %||% (names(prs) %||% "")[i] %||% "")[1]
+    pr$type <- as.character(pr$type %||% "text")[1]
+    pr
+  })
+  list(tables = Filter(Negate(is.null), tables),
+       pairs  = Filter(Negate(is.null), pairs))
 }
 
 # document_template_from_proposal(id, bank, type, phrases, tables, pairs, input)

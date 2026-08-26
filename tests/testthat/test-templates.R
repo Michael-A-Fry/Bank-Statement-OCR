@@ -342,3 +342,76 @@ test_that("a draft template is refused with a reason that says what to do", {
   ok <- suppressWarnings(load_templates(d, origin = "user", strict = FALSE))
   expect_false(is.null(ok[["seed_x"]]))
 })
+
+# ---------------------------------------------------------------------------
+# ONE LIBRARY, THREE KINDS.
+#
+# Reported: "even in the admin, other templates and other things are not even
+# seen." Admin's list read the statement set and nothing else, so a form or a
+# report template - the whole other half of the app - could not be found, read,
+# checked, hidden or deleted on the one screen that manages layouts.
+# ---------------------------------------------------------------------------
+
+.lib_stmt <- function(id = "s1") list(id = id, bank = "ANZ", statement_type = "everyday",
+  format = "pdf", version = 1,
+  table = list(columns = list(date = list(x_min = 1, x_max = 2),
+                              amount = list(x_min = 3, x_max = 4))))
+.lib_fields <- function(id = "f1") list(id = id, bank = "IRD", statement_type = "summary",
+  mode = "fields", format = "pdf", version = 2,
+  fields = list(a = "A", b = "B", c = "C"))
+.lib_doc <- function(id = "d1") list(id = id, bank = "ACME", statement_type = "report",
+  mode = "document", format = "pdf", version = 3,
+  tables = list(x = list(), y = list()), pairs = list(p = list()))
+
+test_that("template_kind reads the paradigm off the template itself", {
+  expect_identical(template_kind(.lib_stmt()), "statement")
+  expect_identical(template_kind(.lib_fields()), "fields")
+  expect_identical(template_kind(.lib_doc()), "document")
+  # a template written before the other two modes existed declares no mode at all
+  expect_identical(template_kind(list(id = "old")), "statement")
+})
+
+test_that("the library lists all three kinds, statements first", {
+  ov <- library_overview(list(.lib_stmt()), list(.lib_fields()), list(.lib_doc()))
+  expect_equal(nrow(ov), 3L)
+  expect_identical(names(ov)[1], "kind")
+  expect_identical(ov$kind, unname(.TEMPLATE_KIND_LABEL[c("statement", "fields", "document")]))
+  expect_identical(ov$id, c("s1", "f1", "d1"))
+  # "Other" is the word Convert and Add-a-template both use, so the distinction
+  # is not given a third name on a third screen
+  expect_true(all(grepl("^Other ", ov$kind[2:3])))
+})
+
+test_that("the library says what each template actually reads", {
+  ov <- library_overview(list(.lib_stmt()), list(.lib_fields()), list(.lib_doc()))
+  expect_identical(ov$reads[ov$id == "s1"], "2 columns")
+  expect_identical(ov$reads[ov$id == "f1"], "3 values")
+  expect_identical(ov$reads[ov$id == "d1"], "2 tables + 1 value")
+  # a report template with neither says so rather than showing "0"
+  d <- .lib_doc(); d$tables <- list(); d$pairs <- list()
+  expect_identical(library_overview(documents = list(d))$reads, "nothing yet")
+})
+
+test_that("the library names a report and a form without calling them statements", {
+  expect_identical(template_library_name(.lib_doc()), "ACME report")
+  expect_identical(template_library_name(.lib_fields()), "IRD summary")
+  # ...and still says "statement" where that is the truth
+  expect_identical(template_library_name(.lib_stmt()), "ANZ everyday statement")
+})
+
+test_that("the library carries origin and hidden for every kind", {
+  d <- .lib_doc(); d$origin <- "user"; d$hidden <- TRUE
+  f <- .lib_fields(); f$origin <- "default"
+  ov <- library_overview(fields = list(f), documents = list(d))
+  expect_identical(ov$origin[ov$id == "d1"], "user")
+  expect_identical(ov$hidden[ov$id == "d1"], "hidden")
+  expect_identical(ov$origin[ov$id == "f1"], "tested")
+  expect_identical(ov$hidden[ov$id == "f1"], "")
+})
+
+test_that("an empty library is an empty frame with the right columns, not an error", {
+  ov <- library_overview()
+  expect_equal(nrow(ov), 0L)
+  expect_identical(names(ov),
+    c("kind", "name", "id", "reads", "origin", "hidden", "version"))
+})

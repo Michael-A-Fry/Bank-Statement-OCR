@@ -947,9 +947,15 @@ test_that("hiding a template says so somewhere that survives the redraw", {
   src <- .ui_src()
   i <- grep("input\\$adm_tpl_hide", src)
   expect_length(i, 1L)
-  blk <- paste(src[i:(i + 26L)], collapse = " ")
+  blk <- paste(src[i:(i + 34L)], collapse = " ")
   expect_match(blk, 'notify_once\\("adm_tpl_hide"')
-  expect_match(blk, "template_display_name")      # by its name, not its id
+  # By its NAME, not its id -- and by the name that is true for whichever kind of
+  # template it is. template_display_name() appends "statement" to everything,
+  # which is a lie about a report and about a form.
+  expect_match(blk, "template_library_name")
+  # ...and it hides in the folder THAT KIND lives in, or Hide is a control that
+  # does nothing on two of the three kinds.
+  expect_match(blk, "\\.adm_user_dir\\(\\.adm_kind\\(id\\)\\)")
 })
 
 test_that("the exact-template picker is called exactly 'Template (optional)'", {
