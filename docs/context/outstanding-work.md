@@ -17,6 +17,85 @@ The two routes are equal. Every item is judged against both:
 
 ---
 
+## 0. THE CRUX: a table is found by its heading, but its COLUMNS are still pinned to the page
+
+Everything in section A2 - one template finding however many tables a document
+has, anywhere in it - rests on this, and it does not hold today.
+
+`doc_locate_table()` finds a table by evidence: its heading wording, then the rows
+it starts with, then the coordinates it was drawn at. When it finds the heading it
+moves the reading WINDOW vertically to it. **It does nothing horizontally.** The
+column bands stay exactly where they were drawn on the one example document, in
+absolute page points. So a template that finds a table perfectly can still read
+every value into the wrong column.
+
+Measured, by calling the real engine on a two-column table (`Code`, `Units`) whose
+bands were drawn at 55-150 and 195-260, then reading the SAME table on a copy
+where it sits further right:
+
+| shift | located by | confidence | what came out | `low_fill` | unclaimed words |
+|-------|-----------|-----------|----------------|-----------|-----------------|
+| 0pt   | header | 1.00 | `ABC/100  DEF/250  GHI/375` | - | 0 |
+| 40pt  | header | 1.00 | `ABC/100  DEF/250  GHI/375` | - | 0 |
+| 60pt  | header | 1.00 | `ABC/NA   DEF/NA   GHI/NA`  | Units | 3 |
+| 80pt  | header | 1.00 | *no rows at all* | - | 6 |
+| 120pt | header | 1.00 | **`NA/ABC   NA/DEF   NA/GHI`** | Code | 3 |
+
+Read the last row carefully. The table was found, with **confidence 1.00**, and
+the `Code` values were delivered in the `Units` column. `Units` reads as a
+perfectly full column of clean values and every one of them is wrong.
+
+To be fair to what exists: it is **not silent**. `low_fill` fires on the emptied
+column, which makes the result `needs_review`. But the message that reaches the
+screen is *"a column came out mostly empty - check the column edges on those, a
+band drawn slightly too narrow loses the whole column"* (R/doc_extract.R:539-543),
+which sends the reviewer to fix the empty column - the wrong problem entirely -
+while the full-looking column of wrong values carries no mark at all.
+
+**Why this is the crux, not just another fault.** It is the single thing standing
+between where the tool is and the mode the owner described:
+
+> "us as admins when it comes to making custom templates with lots of different
+> tables that don't appear in a single doc, but can come up in many different ways"
+
+A template built from many examples, finding tables wherever they appear, is
+exactly the case where the bands and the page will not line up. Today the tool
+would find those tables confidently and read them wrongly. It also generalises
+several symptoms already in this register:
+
+* A3 (a blank first row "pulls all info in the last column into the second to
+  last") is this same class - bands and words disagreeing about where a column is.
+* D5 (auto widths "sometimes too big and or too small for the data") is the same
+  thing seen from the builder's side.
+* The whole of A2 depends on it.
+
+**The shape of the fix: anchor the columns to the header words, not to the page.**
+
+When the table is located by its heading, the reader is holding that heading
+LINE - its words and their x positions on THIS document. The bands were drawn
+relative to the heading words on the example. So the correction is available for
+free at the moment of the match: derive the offset (and, where page widths
+differ, the scale) between the example's heading words and this copy's, and move
+the bands by it. One measurement per table per document, and every horizontal
+shift, margin change and page-width difference stops mattering. `doc_header_names()`
+already relates a band to the heading word inside it, so half the machinery is
+there.
+
+Two things must come with it:
+
+1. **A band that still does not fit must say THAT.** `unclaimed_words` is the real
+   tell - words inside the table's own window that no column claimed. It was 3 in
+   both wrong cases above and 0 in both right ones, which makes it a far better
+   signal than `low_fill`. It is already computed and already carried
+   (`unclaimed_words` in the summary frame); it needs to drive its own message -
+   *"N words inside this table were not in any column - the bands do not fit this
+   document"* - separately from the empty-column one.
+2. **Do not correct silently.** If the bands are moved, the result must say by how
+   much and on the strength of what, in the same place it says how the table was
+   found. A correction nobody can see is how the next wrong answer gets built.
+
+---
+
 ## A. The engine - what comes out wrong
 
 ### A1. Repeated headers on continuation pages come back as rows
