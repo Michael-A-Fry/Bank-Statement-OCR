@@ -57,7 +57,12 @@ test_that("a table that MOVED down the page is still found by its heading", {
   expect_identical(r$rows$Type, c("Transaction", "Savings"))
 })
 
-test_that("with no heading to go on it falls back to position, and says THAT", {
+test_that("with nothing it was told to look for on the page, it says the table is not here", {
+  # WAS: this asserted the position fall-through, and its own comment described
+  # what that produced -- the title line and the header row quietly read as data,
+  # three rows where the table has two. That is the cardinal failure, and the
+  # register (H1) asks for the fifth outcome instead: a table found ONLY by
+  # position, when the template DID say what to look for, is refused.
   inp <- context_input(); tm <- doc_fixture_template()
   tab <- tm$tables$account_summary
   tab$start$page <- 7L; tab$end$page <- 7L
@@ -65,14 +70,12 @@ test_that("with no heading to go on it falls back to position, and says THAT", {
   tab$anchor$first_column <- list("NoSuchLabel")
   tab$doc_pages <- 7L
   loc <- doc_locate_table(inp, tab, tm)
-  expect_identical(loc$anchor, "position_same_page")
-  expect_lt(loc$confidence, 0.5)
-  # THE POINT OF THE TEST. Reading from a stale position on a page where the
-  # table has moved does not fail loudly -- it quietly picks up the title line and
-  # the header row as if they were data. That is why the confidence above is low
-  # and why the status rule in convert_tables() sends this to review.
+  expect_identical(loc$anchor, "not_found")
+  expect_equal(loc$confidence, 0)
+  expect_length(loc$windows, 0L)
+  expect_match(loc$detail, "not found on this document", fixed = TRUE)
   r <- doc_table_rows(inp, tab, tm, loc)
-  expect_equal(r$n_rows, 3L)
+  expect_equal(r$n_rows, 0L)
 })
 
 test_that("the first-column labels find a table whose heading changed", {
@@ -618,4 +621,106 @@ test_that("a value with wording and no box at all is read, and does not crash th
   tm$pairs$nothing <- list(type = "money")
   expect_true(any(grepl("neither a box nor any wording",
                         validate_document_template(tm))))
+})
+
+# ---------------------------------------------------------------------------
+# A TABLE THE DOCUMENT DOES NOT CONTAIN (register H1, H2, H3)
+# ---------------------------------------------------------------------------
+
+# one_table_doc() -- a one-page document carrying ONE table, and it is not the
+# Account summary. Everything below asks the Account summary's template entry to
+# read it, which is what a family template of many tables does on every copy.
+one_table_doc <- function() doc_input(list(doc_page(
+  doc_L(40, 60, "Fees charged"),
+  doc_L(40, 90, "Fee"), doc_L(240, 90, "Basis"), doc_R(500, 90, "Amount"),
+  doc_L(40, 110, "AccountKeeping"), doc_L(240, 110, "per month"), doc_R(500, 110, "5.00"),
+  doc_L(40, 128, "Transaction"), doc_L(240, 128, "per item"), doc_R(500, 128, "0.30"))))
+
+test_that("a table the document does not contain comes back absent, not fabricated", {
+  # MEASURED BEFORE THE FIX: anchor position_same_page, confidence 0.40, and one
+  # row -- "Transaction | per item | NA | 0.30" -- which is the FEE table's ink
+  # read through the Account summary's bands and delivered under its name. A
+  # thirty-five table template did that thirty-four times on one document.
+  inp <- one_table_doc(); tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  tab$start$page <- 1L; tab$end$page <- 1L
+  loc <- doc_locate_table(inp, tab, tm)
+  expect_identical(loc$anchor, "not_found")
+  expect_equal(loc$confidence, 0)
+  expect_length(loc$windows, 0L)
+  r <- doc_table_rows(inp, tab, tm, loc)
+  expect_equal(r$n_rows, 0L)
+  expect_equal(nrow(r$rows), 0L)
+  # and it is SAID -- the summary reports it as not found, not as an empty table
+  # that happened to have nothing in it.
+  s <- document_summary(list(account_summary = c(r, list(name = "Account summary"))))
+  expect_identical(s$found_by, "not found")
+  expect_equal(s$rows, 0L)
+})
+
+test_that("a table whose declared page is past the end of the document is refused", {
+  # The clamp put page 2 of a 12-page template onto the LAST page of a 2-page
+  # copy and read whatever ink was there -- for every table at once.
+  inp <- one_table_doc(); tm <- doc_fixture_template()
+  loc <- doc_locate_table(inp, tm$tables$account_summary, tm)   # declared start: page 2
+  expect_identical(loc$anchor, "not_found")
+  expect_length(loc$windows, 0L)
+  expect_match(loc$detail, "page 2", fixed = TRUE)
+  expect_match(loc$detail, "only has 1 page", fixed = TRUE)
+  expect_equal(doc_table_rows(inp, tm$tables$account_summary, tm, loc)$n_rows, 0L)
+})
+
+test_that("a table that IS on the document is untouched by either refusal", {
+  inp <- context_input(); tm <- doc_fixture_template()
+  loc <- doc_locate_table(inp, tm$tables$account_summary, tm)
+  expect_identical(loc$anchor, "header")
+  expect_equal(doc_table_rows(inp, tm$tables$account_summary, tm, loc)$n_rows, 4L)
+  ext <- extract_document(inp, tm)
+  expect_identical(unname(vapply(ext$tables, function(r) r$anchor, character(1))),
+                   c("header", "header", "header"))
+})
+
+test_that("a declared END past the last page still just stops at the last page", {
+  # Only the START is refused. A table declared to finish on page 7 of a shorter
+  # copy is a truncation the row run already handles, not a fabrication.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tab <- tm$tables$transactions
+  tab$end$page <- 99L
+  loc <- doc_locate_table(inp, tab, tm)
+  expect_identical(loc$anchor, "header")
+  expect_true(max(loc$pages) <= 7L)
+})
+
+test_that("the different-length grade reads the page count off the TEMPLATE, so 0.2 is reachable", {
+  # doc_pages is written at the template ROOT (document_template_from_proposal),
+  # and this graded itself on tab$doc_pages -- a key nothing writes -- so the
+  # comparison was always TRUE and position_other_page could never happen.
+  tm <- doc_fixture_template()                       # root doc_pages = 7
+  blank <- doc_page(doc_L(40, 60, "prose only"), doc_L(40, 90, "more prose"),
+                    doc_L(40, 120, "and more"))
+  tab <- tm$tables$position
+  tab$anchor <- NULL                                 # nothing declared to look for
+  tab$start$page <- 1L; tab$end$page <- 1L
+  short <- doc_locate_table(doc_input(list(blank)), tab, tm)
+  expect_identical(short$anchor, "position_other_page")
+  expect_equal(short$confidence, 0.2)
+  same <- doc_locate_table(doc_input(rep(list(blank), 7)), tab, tm)
+  expect_identical(same$anchor, "position_same_page")
+  expect_equal(same$confidence, 0.4)
+  # ...and a per-table override still wins where a template sets one.
+  tab$doc_pages <- 1L
+  own <- doc_locate_table(doc_input(list(blank)), tab, tm)
+  expect_identical(own$anchor, "position_same_page")
+})
+
+test_that("a table with nothing declared to look for still reads from where it was drawn", {
+  # The refusal is of a GUESS made against evidence that failed, never of a table
+  # whose template never said what to look for -- that one has only its position.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tab <- tm$tables$account_summary
+  tab$anchor <- NULL
+  tab$start$page <- 7L; tab$end$page <- 7L
+  loc <- doc_locate_table(inp, tab, tm)
+  expect_true(loc$anchor %in% c("header", "position_same_page", "position_other_page"))
+  expect_gt(length(loc$windows), 0L)
 })

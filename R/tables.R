@@ -620,14 +620,52 @@
 # example"), and the whole point of keeping them distinct is that the last two
 # deserve a look and the first does not.
 .DOC_ANCHOR_RANK <- c(header = 1L, first_column = 2L,
-                      position_same_page = 3L, position_other_page = 4L)
+                      position_same_page = 3L, position_other_page = 4L,
+                      not_found = 5L)
 .doc_anchor_confidence <- function(anchor, hit = NA_real_) {
   switch(anchor,
     header             = if (is.na(hit)) 0.9 else max(0.6, min(1, hit)),
     first_column       = 0.7,
     position_same_page = 0.4,
     position_other_page = 0.2,
+    not_found          = 0,
     0.2)
+}
+
+# ---------------------------------------------------------------------------
+# THE FIFTH OUTCOME: **THIS TABLE IS NOT HERE**.
+#
+# The ladder used to be header -> first_column -> POSITION, and the last rung
+# always succeeded: p0 was clamped into range and a window opened regardless. So
+# a table the document does not contain came back FULL -- of whatever ink sits at
+# the coordinates it was drawn at. Measured on a template of thirty-five tables
+# run against a document carrying one: thirty-four copies of that one table's row,
+# each under a different table's name and columns, with `empty` counting zero and
+# the workbook looking complete. That is the cardinal failure of this product --
+# a wrong figure that looks right -- produced by the reader on its own.
+#
+# So there is now a way to say no. `anchor = "not_found"` carries confidence 0 and
+# NO windows, which means doc_table_rows reads nothing, the table comes back with
+# zero rows, and convert_tables already reports that as "those tables were not
+# found on this document". Nothing new on any screen.
+#
+# It is returned in exactly two situations, and both are refusals of a GUESS:
+#
+#   * the table declares evidence -- a remembered heading wording, or the row
+#     labels it starts with -- and NONE of it is on the page. The template said
+#     what to look for and it is not there. (A table that declares neither has no
+#     way to say "this is not it", so position remains all there is for it and
+#     nothing about it changes.)
+#   * the page it is declared to start on is past the end of this document. The
+#     clamp used to put it on the LAST page and read whatever ink was there --
+#     including for tables that ARE present elsewhere and would have matched by
+#     heading, which is how a 12-page template read every one of its tables off
+#     page 2 of a 2-page document.
+.doc_no_table <- function(detail) {
+  list(pages = integer(0), windows = list(), anchor = "not_found",
+       confidence = .doc_anchor_confidence("not_found"),
+       detail = as.character(detail)[1], extended_to = NA_integer_,
+       header_tops = list(), header_sig = character(0), band_shift = 0)
 }
 
 # doc_locate_table(input, tab, tmpl) -> list(
@@ -640,6 +678,15 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
   npg <- .doc_npages(input)
   p0 <- .doc_int(tab$start$page, 1L); if (is.na(p0) || p0 < 1L) p0 <- 1L
   p1 <- .doc_int(tab$end$page, p0);   if (is.na(p1) || p1 < p0) p1 <- p0
+  # A PAGE THIS DOCUMENT DOES NOT HAVE IS NOT THE LAST PAGE. See .doc_no_table:
+  # clamping p0 into range read this table off whatever ink the last page happens
+  # to carry. The END is still clamped -- a table declared to finish on page 7 of a
+  # 5-page copy simply finishes at the bottom of page 5, which is a truncation the
+  # follow rule and the row run already handle.
+  if (npg >= 1L && p0 > npg)
+    return(.doc_no_table(sprintf(
+      "this table is set to start on page %d and this document only has %d page%s",
+      p0, npg, if (npg == 1L) "" else "s")))
   p0 <- min(p0, max(npg, 1L)); p1 <- min(p1, max(npg, 1L))
 
   band <- tab$band %||% list()
@@ -685,7 +732,23 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
       y_start <- fc$top - pitch * n_header_rows - 1
       start_at_header <- n_header_rows > 0L
     } else {
-      anchor <- if (identical(npg, .doc_int(tab$doc_pages, npg)))
+      # NOTHING THE TEMPLATE SAID TO LOOK FOR IS ON THE PAGE. That is the table
+      # saying it is not here, and the answer is to say so rather than to read
+      # the coordinates blind -- see .doc_no_table.
+      sought <- c(as.character(unlist(.doc_key(.doc_key(tab, "anchor"), "header_text")
+                                      %||% character(0))),
+                  as.character(unlist(.doc_key(.doc_key(tab, "anchor"), "first_column")
+                                      %||% character(0))))
+      sought <- sought[!is.na(sought) & nzchar(trimws(sought))]
+      if (length(sought))
+        return(.doc_no_table("this table was not found on this document"))
+      # THE DECLARED LENGTH IS WRITTEN AT THE TEMPLATE'S ROOT, and this graded
+      # itself on `tab$doc_pages` -- a key nothing has ever written -- so the
+      # comparison was always TRUE and the 0.2 tier could never be reached. A
+      # per-table override still wins where one is set.
+      declared_pages <- .doc_int(.doc_key(tab, "doc_pages"),
+                                 .doc_int(.doc_key(tmpl, "doc_pages"), npg))
+      anchor <- if (identical(npg, declared_pages))
                   "position_same_page" else "position_other_page"
       y_start <- y_start_declared
       # The declared start is the top of the table as it was DRAWN, which includes
