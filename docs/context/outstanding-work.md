@@ -179,6 +179,110 @@ reconciliation to fall back on - see 0 for the equivalent there
 
 ---
 
+## 1. THE STRIP LIST - 182 controls, and the job needs four
+
+> "This needs to be as SIMPLE as possible. No fancy bullshit. What can we strip?
+> What doesn't NEED to exist?"
+
+Counted, not estimated (`app.R`, every `actionButton` / `selectInput` /
+`textInput` / `fileInput` / `radioButtons` / `checkbox*` / `download*`):
+
+| | |
+|---|---|
+| interactive controls | **182** |
+| outputs | 177 |
+| observers | 148 |
+| `app.R` | 8,793 lines |
+| engine (`R/`, ~50 files) | 16,763 lines |
+| docs | 34 files, 6,939 lines |
+
+By screen: **report builder 56 · Admin 45 · Convert 34 · statement toolkit 32**
+· Add-a-template front 4 · About 2 · misc 9.
+
+Beth's whole job is: pick a file, say what it is, press Convert, download.
+**Four controls.** The other 178 exist to teach a layout or to administer one.
+
+### 1a. TWO BUILDERS DOING ONE JOB - the biggest cut available
+
+The statement toolkit (`g_`, 32 controls, a modal) and the report builder
+(`rb_`, 56 controls, an inline tab) are two applications, two mental models and
+88 controls for a single task: *point at a page, say what is there, save it*.
+
+A bank statement **is** a table with columns. The only real differences are:
+
+* three extra questions - which column is the date, which the amount, which the
+  balance,
+* an amount-sign and date-format setting,
+* and reconciliation, which happens after reading and not during it.
+
+Those are **fields on a template, not a second application.**
+
+One builder. When the kind is "bank statement" it asks the three extra questions
+and reconciles afterwards. That single change:
+
+* removes roughly a third of the app's surface,
+* delivers the "50/50, treated fairly" requirement by removing the thing that has
+  to be made equal - there is one way to teach a layout, so the two routes cannot
+  drift apart,
+* **makes D1 moot.** D1 asks for the report builder to be popped out to look like
+  the statement toolkit. Making them *look* alike is a worse answer than there
+  being one of them.
+
+This is the largest single item in this document and it should be costed before
+any of the D-series simplifications are attempted, because most of them stop
+existing if it goes ahead.
+
+### 1b. Five doors into one function
+
+A conversion can be started from: Convert (one file), Convert (a case folder),
+Admin -> Batch & audit, the folder poller (`R/inbox.R`), and "try it on a
+sample". Five paths into one engine call.
+
+Every alternative route is a route that rots without anyone noticing, because
+nobody exercises it weekly. Convert already handles one file or thirty through
+the same control - that is the pattern. Keep it, keep the folder poller **if the
+team actually uses it** (establish that; it is 43 lines and cheap either way),
+and delete the rest.
+
+### 1c. Admin: four sub-tabs, two jobs
+
+Insights / Templates / Data capture / Batch & audit - 45 controls. An admin has
+two questions: *what is in the library and is it right*, and *what is failing*.
+
+* **Data capture** (a whole tab plus `R/metadata_capture.R`, 313 lines) is on-box
+  analytics. Nobody in a police unit asks that question.
+* **Insights** and **Batch & audit** overlap heavily - both answer "what is not
+  converting".
+
+Two tabs: **Templates** (with feedback beside them, which C2 asks for anyway) and
+**Health**.
+
+### 1d. Two vocabularies
+
+`dictionaries/labels.yaml` (the label dictionary) and `dictionaries/lexicon.yaml`
+(recognition vocabularies), each with its own Admin editor. Both mean "words the
+tool looks for". One file, one editor.
+
+### What NOT to strip
+
+**None of the ~50 R modules is dead code.** Every one was checked for references
+outside its own file and its tests; all are wired in. The engine is not bloated
+with orphans - `R/split.R`, `R/detect_redaction.R`, `R/column_profile.R`,
+`R/row_coverage.R` and the rest all earn their place.
+
+**The bloat is entirely surface.** Screens and options, not code. Any strip that
+deletes engine capability is cutting the wrong thing; any strip that removes a
+second way to do something already possible is cutting the right thing.
+
+### The rule to apply from here
+
+Before anything is added to a screen: *does this answer a question the tool could
+have answered itself?* If it could, the tool should answer it and the control
+should not exist. That single rule is what turns A1 (repeated headers), D4 (the
+bottom edge) and half of D2 from new controls into no controls.
+
+---
+
 ## A. The engine - what comes out wrong
 
 ### A1. Repeated headers on continuation pages come back as rows
@@ -497,6 +601,10 @@ document it came from and the template that read it - for both routes.
 > "When creating template, like the convert xray wizard, we need to pop it out
 > so you only see the info related to creating the template. User is finding it
 > hard to understand what to do next - select table, title, columns etc."
+
+**Decide 1a first.** If the two builders become one, this stops existing: there
+is nothing to make match. Making two builders *look* alike is a worse answer than
+there being one of them, and doing this work first means doing it twice.
 
 ### D2. Far fewer things on screen
 > "There are LOTS of buttons, lots of things to interact with. It NEEDS to be
