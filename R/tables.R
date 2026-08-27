@@ -1463,15 +1463,50 @@ doc_auto_end <- function(input, tab, tmpl = NULL) {
 # a person can point at it in one gesture. Every cell of it becomes a column, and
 # the boundary between two columns is the middle of the white space between two
 # header cells -- which is where it belongs, and is what the eye would pick too.
-doc_columns_from_box <- function(input, box, tmpl = NULL) {
+doc_columns_from_box <- function(input, box, tmpl = NULL, y_to = NA_real_) {
   pg <- .doc_int(.doc_key(box, "page"), 1L)
   w <- .doc_page_words(input, pg, tmpl)
   if (is.null(w)) return(list())
-  sel <- w[w$cx >= .doc_num(box$x_min, -Inf) & w$cx <= .doc_num(box$x_max, Inf) &
-           w$cy >= .doc_num(box$y_min, -Inf) & w$cy <= .doc_num(box$y_max, Inf), ,
-           drop = FALSE]
+  # A COLUMN WITH A BLANK HEADING HAS NO INK IN THE HEADER ROW, so a box drawn
+  # round the headings cannot see it -- and it is usually the TOTAL column.
+  #
+  # Reported: "Column name, statement x-y, statement t-y, period x-z, (blank).
+  # The blank is the total column, and has two blank rows then data for the total
+  # of each period." Reproduced exactly: four bands, four columns read, every row
+  # reporting itself complete, and the totals SILENTLY GONE - they sit to the
+  # right of the box, so they are not even unclaimed.
+  #
+  # So when the caller says where the table ends, the bands are taken from the
+  # whole table and the names from its heading line. The blank column then falls
+  # out of the projection like any other (the totals lower down ARE ink) and
+  # comes back named column_N, present and renameable, instead of absent.
+  #
+  # The x limits of the box are deliberately dropped in that case: the missing
+  # column is BESIDE the box, which is the whole reason it was missed.
+  yb <- .doc_num(y_to, NA_real_)
+  wide <- is.finite(yb) && yb > .doc_num(box$y_max, -Inf)
+  sel <- if (wide)
+    w[w$cy >= .doc_num(box$y_min, -Inf) & w$cy <= yb, , drop = FALSE]
+  else
+    w[w$cx >= .doc_num(box$x_min, -Inf) & w$cx <= .doc_num(box$x_max, Inf) &
+      w$cy >= .doc_num(box$y_min, -Inf) & w$cy <= .doc_num(box$y_max, Inf), ,
+      drop = FALSE]
   if (!nrow(sel)) return(list())
   gap <- .doc_gap_for(sel)
+  # ...and only TABLE-SHAPED lines vote on where the columns are. A footer, a
+  # page number or a sentence under the table is one cell wide; letting it into
+  # the projection would smear two real bands into one or invent a band of its
+  # own. The heading line is kept whatever its shape, because it is the thing
+  # being named from.
+  if (wide) {
+    keep <- unlist(lapply(.doc_lines(sel), function(d)
+      if (length(.doc_cells(d[order(d$x), , drop = FALSE], gap)) >= 2L)
+        as.numeric(d$cy) else numeric(0)))
+    hdr_y <- .doc_num(box$y_max, -Inf)
+    sel <- sel[sel$cy <= hdr_y | sel$cy %in% keep, , drop = FALSE]
+    if (!nrow(sel)) return(list())
+    gap <- .doc_gap_for(sel)
+  }
   # THE NAMES COME FROM THE TOP LINE, the BANDS from everything in the box.
   # A box drawn round a header row is drawn by hand and will catch the first row
   # of data as often as not -- and it should, because the data is what the bands

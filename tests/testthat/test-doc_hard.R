@@ -1481,3 +1481,79 @@ test_that("a band under another column's heading is read, and holds the run", {
   # ...and it is carried on the result, so a log or a screen can say which table
   expect_match(paste(src, collapse = "\n"), "res\\$wrong_column_tables <- wrong_col")
 })
+
+# ---------------------------------------------------------------------------
+# THE COLUMN WITH NO HEADING, WHICH IS THE TOTAL COLUMN
+#
+# Reported: "Some of the financial summaries have the top row as: Column name,
+# statement x-y, statement t-y, period x-z, (blank). The blank is the total
+# column, and has two blank rows then data for the total of each period."
+#
+# A box drawn round the headings cannot see a column whose heading is blank, and
+# the totals sit to the RIGHT of that box - so they were not even unclaimed.
+# Measured before the fix: four bands, four columns, four rows every one of which
+# reported itself complete, and both totals silently gone.
+# ---------------------------------------------------------------------------
+
+.blank_total_page <- function() {
+  doc_input(list(doc_page(
+    doc_L(40, 60, "Financial summary"),
+    doc_L(40,  96, "Item"), doc_R(240, 96, "Statement 1-3"),
+    doc_R(360, 96, "Statement 4-6"), doc_R(470, 96, "Period 1-6"),
+    # ...and nothing at all over the fifth column
+    doc_L(40, 120, "Gross income"), doc_R(240,120,"1,000.00"), doc_R(360,120,"2,000.00"), doc_R(470,120,"3,000.00"),
+    doc_L(40, 140, "Expenses"),     doc_R(240,140,"400.00"),   doc_R(360,140,"500.00"),   doc_R(470,140,"900.00"),
+    doc_L(40, 160, "Net"),          doc_R(240,160,"600.00"),   doc_R(360,160,"1,500.00"), doc_R(470,160,"2,100.00"),
+    doc_R(570, 160, "2,100.00"),    # the total column starts here: two blank rows above it
+    doc_L(40, 180, "Tax payable"),  doc_R(240,180,"90.00"),    doc_R(360,180,"225.00"),   doc_R(470,180,"315.00"),
+    doc_R(570, 180, "315.00"))))
+}
+
+test_that("a column with a blank heading is still a column", {
+  inp <- .blank_total_page()
+  hdr <- list(page = 1, x_min = 30, x_max = 520, y_min = 88, y_max = 104)
+
+  # THE BOX ALONE CANNOT SEE IT, and that is not a bug in the box - there is no
+  # ink in the header row to see. It is why the end has to be supplied.
+  expect_equal(length(doc_columns_from_box(inp, hdr, NULL)), 4L)
+
+  # WITH THE TABLE'S END, the projection of the whole table finds it: the totals
+  # lower down are ink like any other.
+  cols <- doc_columns_from_box(inp, hdr, NULL, y_to = 200)
+  expect_equal(length(cols), 5L)
+  nm <- vapply(cols, function(c) c$name, character(1))
+  expect_identical(nm[1:4], c("Item", "Statement 1-3", "Statement 4-6", "Period 1-6"))
+  # unnamed, not missing: present and renameable, which is the whole difference
+  expect_match(nm[5], "^column_")
+  expect_true(cols[[5]]$x_min > cols[[4]]$x_min)
+
+  # ...AND THE FIGURES COME OUT, in the rows they were printed in, with the two
+  # blank rows blank rather than shifted up.
+  tab <- list(name = "Financial summary", start = list(page = 1, y = 88),
+              end = list(page = 1, y = 200), header_rows = 1L, columns = cols,
+              anchor = list(header_text = as.list(nm), first_column = list()))
+  r <- doc_table_rows(inp, tab, NULL)
+  expect_equal(r$n_rows, 4L)
+  tot <- as.character(r$rows[[nm[5]]])
+  expect_true(is.na(tot[1]) || !nzchar(tot[1]))
+  expect_true(is.na(tot[2]) || !nzchar(tot[2]))
+  expect_identical(tot[3], "2,100.00")
+  expect_identical(tot[4], "315.00")
+  # the columns it already read are untouched by the extra band
+  expect_identical(as.character(r$rows[["Period 1-6"]]),
+                   c("3,000.00", "900.00", "2,100.00", "315.00"))
+})
+
+test_that("the widened band search ignores lines that are not table rows", {
+  # A footer or a sentence under the table is one cell wide. Letting it vote on
+  # where the columns are would smear two real bands together or invent one.
+  pages <- doc_input(list(doc_page(
+    doc_L(40,  96, "Item"), doc_R(240, 96, "Amount"),
+    doc_L(40, 120, "Gross income"), doc_R(240, 120, "1,000.00"),
+    doc_L(40, 140, "Expenses"),     doc_R(240, 140, "400.00"),
+    doc_L(40, 190, "This summary is prepared on a cash basis and is unaudited."))))
+  hdr <- list(page = 1, x_min = 30, x_max = 300, y_min = 88, y_max = 104)
+  cols <- doc_columns_from_box(pages, hdr, NULL, y_to = 210)
+  expect_equal(length(cols), 2L)
+  expect_identical(vapply(cols, function(c) c$name, character(1)), c("Item", "Amount"))
+})

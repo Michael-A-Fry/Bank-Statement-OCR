@@ -4274,7 +4274,24 @@ server <- function(input, output, session) {
 
     if (m == "cols") {
       d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
-      cols <- tryCatch(doc_columns_from_box(i, box, fr), error = function(e) list())
+      # THE BANDS COME FROM THE WHOLE TABLE, not just the box that was drawn.
+      #
+      # A column whose heading is BLANK has no ink in the header row, so a box
+      # round the headings cannot see it - and on these summaries the blank one
+      # is the TOTAL column. Reported: "Column name, statement x-y, statement
+      # t-y, period x-z, (blank). The blank is the total column, and has two
+      # blank rows then data for the total of each period." The totals sit to the
+      # right of the box, so they were not even unclaimed: four columns, every
+      # row reporting itself complete, and the totals gone.
+      #
+      # The draft's end is the bottom of the page at this point (the title step
+      # sets it there and doc_auto_end refines it after), which is exactly the
+      # right window to look in: everything below the heading that is shaped like
+      # a table row votes on where the columns are.
+      y_to <- if (.doc_int(d$end$page, pg) == pg) .doc_num(d$end$y, NA_real_) else NA_real_
+      if (!is.finite(y_to)) y_to <- .doc_num(fr$ref_height, NA_real_)
+      cols <- tryCatch(doc_columns_from_box(i, box, fr, y_to = y_to),
+                       error = function(e) list())
       if (length(cols) < 1L) {
         showNotification("No column names readable in that box - drag round the row of headings.",
                          type = "warning", duration = 7); return()
