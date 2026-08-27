@@ -972,6 +972,45 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
   band_shift <- if (identical(anchor, "header") && !is.null(h))
     .doc_band_shift(lines0[[h$index]], cols0) else 0
 
+  # THE TABLE IS AS LONG AS IT IS HERE, not as long as it was on the example.
+  #
+  # "The MOST important thing is to be able to automatically detect the length of
+  # each of the tables, and be able to consistently pull that content." A declared
+  # end was treated as EXACT, so a schedule of twelve rows on the example and
+  # three hundred here was cut off at twelve - and truncation is invisible,
+  # because every row that did come out is right.
+  #
+  # doc_auto_end() has always known how to answer this: it opens the end, READS
+  # the table, and reports the bottom of the last row the stop rule kept. It only
+  # ever ran in the builder, so the length was measured once and then asserted
+  # forever. Now it is asked again on every document.
+  #
+  # THREE REFUSALS, because the opposite mistake - swallowing whatever follows
+  # the table on the page - is just as bad as truncating it:
+  #   * it can only ever make the table LONGER. A shorter answer is ignored, so a
+  #     document this rule reads badly can never come back with fewer rows than
+  #     the exact window would have given.
+  #   * it is only asked where the example's end is NOT already the paper's edge.
+  #     Those tables are open-ended anyway and the follow rule owns them - which
+  #     is also what stops this recursing, since doc_auto_end's own probe opens
+  #     the end to the page height.
+  #   * `auto_end: false` on the table turns it off for good, for a template whose
+  #     end is deliberately mid-page.
+  grew_to <- NULL
+  if (!isFALSE(.doc_key(tab, "auto_end")) &&
+      is.finite(y_end_declared) && y_end_declared < band_bot - 1) {
+    probe <- tab
+    probe$start$page <- p0; probe$end$page <- p1
+    ae  <- tryCatch(doc_auto_end(input, probe, tmpl, follow = FALSE),
+                    error = function(e) NULL)
+    aep <- .doc_int(ae$page, NA_integer_); aey <- .doc_num(ae$y, NA_real_)
+    if (is.finite(aep) && is.finite(aey) && aep >= p0 && aep <= max(npg, 1L) &&
+        (aep > p1 || (aep == p1 && aey > y_end_declared + 1))) {
+      grew_to <- list(page = aep, y = aey)
+      p1 <- aep; y_end_declared <- aey
+    }
+  }
+
   # A found header on the start page tells us what the SAME header looks like on
   # a continuation page, which is the only reliable way to know a page is more of
   # this table rather than the start of the next one.
@@ -997,6 +1036,11 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
         skip <- .doc_int(hp$n_lines, n_header_rows)
       }
     } else if (!is.null(h)) header_tops[[as.character(p)]] <- h$top
+    # OPEN-ENDED means "we do not actually know where this stops": the window runs
+    # to the bottom of the page because the table carries on past it, not because
+    # anyone said it ends there. Those are the windows doc_table_rows() has to
+    # stop by watching the rows themselves (see the row-run rule); a window with a
+    # real declared end is exact and is left alone.
     # OPEN-ENDED means "we do not actually know where this stops": the window runs
     # to the bottom of the page because the table carries on past it, not because
     # anyone said it ends there. Those are the windows doc_table_rows() has to
@@ -1052,6 +1096,11 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     detail <- paste0(detail, sprintf(
       "; the template had it on page %d, and it is on page %d here",
       moved_from, p0))
+  # IT IS LONGER HERE, AND THE REPORT SAYS SO. Reading past the example's end is
+  # the point of the rule, and it is also the thing a reviewer would want to know
+  # had happened before trusting a row count.
+  if (!is.null(grew_to))
+    detail <- paste0(detail, "; it runs further down the page here than on the example")
   if (!is.na(extended_to))
     detail <- paste0(detail, sprintf("; it carries on to page %d here", extended_to))
   # ...and SAY that the heading was found again further on, because "those lines
@@ -1390,7 +1439,7 @@ doc_header_names <- function(input, tab, tmpl = NULL, edges = NULL, loc = NULL) 
 # (see doc_table_rows) is what decides, so the end offered here is exactly the end
 # the extraction would use. It is a PROPOSAL: it can be wrong, it is drawn on the
 # page, and one click moves it.
-doc_auto_end <- function(input, tab, tmpl = NULL) {
+doc_auto_end <- function(input, tab, tmpl = NULL, follow = TRUE) {
   probe <- tab
   # OPEN THE END OF THE START PAGE, AND FOLLOW -- do not simply point the end at
   # the last page of the document. Measured: pointing it at page 7 read pages 6
@@ -1399,7 +1448,15 @@ doc_auto_end <- function(input, tab, tmpl = NULL) {
   # asks the right question one page at a time: does the NEXT page repeat this
   # table's header? The stop rule ends it within a page; the follow rule ends it
   # between pages.
-  probe$follow <- TRUE
+  # FOLLOWING IS THE BUILDER'S QUESTION, NOT THE READER'S. In the builder nobody
+  # has said where the table ends yet, so "does the next page carry on?" is part
+  # of the answer. At READ time the table already has an end and the follow rule
+  # in doc_locate_table owns the between-pages decision -- and that rule is gated
+  # on the end reaching the paper's edge, which is exactly the guard that stops a
+  # schedule swallowing the schedule after it. Forcing follow here removed that
+  # guard: measured, every table with an identically-headed table on the next
+  # page came back DOUBLE (AccountOne 6 rows -> 12, a fund pack 42 -> 168).
+  probe$follow <- isTRUE(follow)
   probe$end <- list(page = .doc_int(tab$start$page, 1L),
                     y = .doc_frame(tmpl)$height)
   r <- tryCatch(doc_table_rows(input, probe, tmpl), error = function(e) NULL)

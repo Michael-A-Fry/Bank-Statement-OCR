@@ -1557,3 +1557,87 @@ test_that("the widened band search ignores lines that are not table rows", {
   expect_equal(length(cols), 2L)
   expect_identical(vapply(cols, function(c) c$name, character(1)), c("Item", "Amount"))
 })
+
+# ---------------------------------------------------------------------------
+# HOW LONG THE TABLE IS ON *THIS* DOCUMENT
+#
+# "The MOST important thing is to be able to automatically detect the length of
+# each of the tables, and be able to consistently pull that content."
+#
+# A declared end was treated as EXACT, so a template drawn on a five-row example
+# read five rows off a thirty-row copy -- and truncation is invisible, because
+# every row that did come out is right. doc_auto_end() has always known how to
+# answer this by READING the table; it only ever ran in the builder, so the
+# length was measured once and asserted forever.
+# ---------------------------------------------------------------------------
+
+.sched_of <- function(n, extra = NULL) {
+  parts <- list(doc_L(40, 60, "Schedule of payments"),
+                doc_L(40, 96, "Ref"), doc_L(160, 96, "Detail"), doc_R(430, 96, "Amount"))
+  y <- 120
+  for (i in seq_len(n)) {
+    parts <- c(parts, list(doc_L(40, y, sprintf("P-%03d", i)),
+                           doc_L(160, y, "Payment made"),
+                           doc_R(430, y, .doc_money(100 + i))))
+    y <- y + 18
+  }
+  if (!is.null(extra)) parts <- c(parts, extra(y + 46))
+  doc_input(list(do.call(doc_page, parts)))
+}
+
+.sched_tmpl <- function(n) {
+  ex <- .sched_of(n)
+  document_template_from_proposal("sched", "Acme", "report",
+    phrases = list("Schedule of payments"),
+    tables = propose_tables(ex), pairs = list())
+}
+
+test_that("a table longer than the example is read in full, and says so", {
+  t <- .sched_tmpl(5)                      # drawn on a five-row example
+  expect_lt(.doc_num(t$tables[[1]]$end$y), 400)   # a real, mid-page declared end
+  for (n in c(5L, 12L, 30L)) {
+    ext <- extract_document(.sched_of(n), t)
+    expect_equal(NROW(ext$tables[[1]]$rows), n,
+                 info = sprintf("a copy with %d rows", n))
+  }
+  # and reading past the example's end is REPORTED, never silent
+  expect_match(extract_document(.sched_of(30), t)$tables[[1]]$detail,
+               "runs further down the page here than on the example", fixed = TRUE)
+  expect_false(grepl("runs further down",
+                     extract_document(.sched_of(5), t)$tables[[1]]$detail, fixed = TRUE))
+})
+
+test_that("it can only ever make a table longer, never shorter", {
+  # The rule reads the table to find its end, and a reader that can be wrong must
+  # only be able to be wrong in the direction that loses nothing. A shorter
+  # answer than the declared end is ignored outright.
+  t <- .sched_tmpl(30)                     # drawn on a THIRTY-row example
+  expect_equal(NROW(extract_document(.sched_of(30), t)$tables[[1]]$rows), 30L)
+  expect_equal(NROW(extract_document(.sched_of(5),  t)$tables[[1]]$rows), 5L)
+})
+
+test_that("a second table under the first is still not swallowed", {
+  # The opposite mistake, and just as bad. The stop rule ends the first table at
+  # the gap; opening its end must not change that.
+  fees <- function(y) c(
+    list(doc_L(40, y, "Fees charged"),
+         doc_L(40, y + 26, "Code"), doc_L(160, y + 26, "Fee"), doc_R(430, y + 26, "Amount")),
+    unlist(lapply(1:3, function(i) list(
+      doc_L(40,  y + 50 + (i - 1) * 18, sprintf("F-%02d", i)),
+      doc_L(160, y + 50 + (i - 1) * 18, "Account fee"),
+      doc_R(430, y + 50 + (i - 1) * 18, .doc_money(9 + i)))), recursive = FALSE))
+  inp <- .sched_of(4, extra = fees)
+  props <- propose_tables(inp)
+  expect_equal(length(props), 2L)
+  t <- document_template_from_proposal("s3", "Acme", "report",
+         phrases = list("Schedule of payments"), tables = props, pairs = list())
+  ext <- extract_document(inp, t)
+  rows <- vapply(ext$tables, function(x) NROW(x$rows), integer(1))
+  expect_equal(unname(sort(rows)), c(3L, 4L))
+})
+
+test_that("auto_end: false leaves a deliberately mid-page end alone", {
+  t <- .sched_tmpl(5)
+  t$tables[[1]]$auto_end <- FALSE
+  expect_equal(NROW(extract_document(.sched_of(30), t)$tables[[1]]$rows), 5L)
+})
