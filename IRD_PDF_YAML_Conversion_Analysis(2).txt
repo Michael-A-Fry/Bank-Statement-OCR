@@ -1,0 +1,2031 @@
+PRIVACY STATUS
+
+This edition is deliberately de-identified. It contains no customer or entity names, IRD numbers, addresses, email addresses, telephone numbers, bank-account numbers, operation references, source-document filenames, or customer financial values. References to Sample Entity, Sample Partnership, Sample Individual, dates such as 31-Mar-YY, and schematic coordinates such as P1/Y1 are generic placeholders only.
+
+IRD PDF/YAML CONVERSION TOOL: ANALYSIS AND RECOMMENDED DESIGN
+
+Honestly, I think you're attacking the wrong problem.
+
+The YAML you've generated is trying to model a physical PDF layout when the thing you're actually trying to extract is a logical document structure.
+
+Looking at your example, there are at least 7 classes of variability that make fixed page/y/x coordinate templates fundamentally brittle.
+
+
+PROBLEM 1: TABLES DON'T HAVE FIXED POSITIONS
+
+Your YAML currently says things like:
+
+start:
+  page: 16
+  y: 286.0
+
+end:
+  page: 16
+  y: 413.9
+
+But that assumes:
+
+- every prior table has exactly the same number of rows
+- no section expands
+- no section is absent
+- no section gains an additional column
+- no section gains an additional record
+
+None of those assumptions are true.
+
+Example:
+
+Current Contact Details
+
+appears at different locations depending on:
+
+- number of names
+- number of addresses
+- number of nominated persons
+- number of contact history records
+
+So the Y position is derived from everything before it.
+
+Bad anchor:
+
+page: 4
+y: 201.7
+
+Good anchor:
+
+heading: Current Contact Details
+
+The heading is invariant.
+
+The coordinates are not.
+
+
+PROBLEM 2: PAGE NUMBERS ARE MEANINGLESS
+
+Your YAML says:
+
+address_history:
+  start:
+    page: 6
+
+  end:
+    page: 15
+
+In another report, Address History may start on an entirely different page.
+
+The page number is merely a by-product of row counts.
+
+Never use page numbers as identification.
+
+Use:
+
+start_after_heading: Address History
+
+instead.
+
+
+PROBLEM 3: TABLES SPAN PAGES
+
+Example:
+
+Address History
+
+may run across an arbitrary number of pages.
+
+Your current extraction appears to be trying to define a start page and end page. That is unnecessary.
+
+Instead:
+
+Table starts at heading A.
+Table ends when heading B appears.
+
+For example:
+
+table:
+  name: Address History
+
+  starts_when:
+    heading: Address History
+
+  ends_when:
+    next_detected_section: true
+
+The terminating section is not named in advance. It is whichever valid section start is physically encountered next in the document, regardless of section type, order, or how many configured sections are absent. If no later section exists, the table ends at the end of its containing document component.
+
+This is much simpler.
+
+
+PROBLEM 4: HEADER AND FOOTER CONTAMINATION
+
+This is your biggest issue.
+
+Examples such as:
+
+*** IN CONFIDENCE ***
+
+Page 17 of 44
+
+The information contained in this report...
+
+are being inserted as rows:
+
+Tax Agent History
+
+row 1 = disclaimer
+row 2 = disclaimer
+row 3 = disclaimer
+row 4 = IN CONFIDENCE
+row 5 = actual data
+
+This tells me your parser is reading all text between the start and end positions rather than all valid records between the start and end positions.
+
+You need a global suppression layer.
+
+For example:
+
+ignore_patterns:
+  - 'Page \\d+ of \\d+'
+  - 'IN CONFIDENCE'
+  - 'The information contained in this report'
+  - 'Inland Revenue does not guarantee'
+  - 'any liability for any errors'
+
+This should be applied before table extraction, globally, rather than being repeated for each table.
+
+
+PROBLEM 5: HEADINGS APPEAR INSIDE OTHER TABLE EXTRACTIONS
+
+Example:
+
+Your extraction produced:
+
+Nominated Persons History
+
+row 2 = Address History
+row 3 = Tax Type Address Type Address Date Applied
+
+This is because Address History begins before Nominated Persons History has technically ended according to the fixed region in the template.
+
+What actually happened was:
+
+Page 6
+
+Nominated Persons History
+
+1 row
+
+Address History
+
+Your parser effectively said, "everything below this heading belongs to me," instead of, "a new recognised heading has been encountered, therefore the previous table ends."
+
+This is the most important rule in the system:
+
+A table ends immediately before the next recognised table heading.
+
+It should not end at a fixed page number, Y position, or expected row count.
+
+
+PROBLEM 6: COLUMN HEADERS CHANGE BETWEEN REPORT VERSIONS
+
+These are not stable:
+
+Agent IRD Number
+IRD Number
+Tax Agent IRD
+IRD Num
+
+All of those could occur.
+
+If your template requires:
+
+header_text:
+  - Agent IRD Number
+
+it will fail when another equivalent label is used.
+
+Instead, use synonyms or aliases:
+
+header_aliases:
+  ird_number:
+    - IRD Number
+    - Agent IRD Number
+    - Tax Agent IRD
+    - IRD Num
+
+Then normalize each detected variation to a canonical field name:
+
+Agent IRD Number -> ird_number
+Tax Agent IRD -> ird_number
+
+
+PROBLEM 7: SOME TABLES DO NOT EXIST
+
+Your output shows:
+
+Current Address: not on this document
+Business Classification: not on this document
+Outstanding Debts: not on this document
+
+This is expected.
+
+You should treat table presence as optional rather than required.
+
+Current model:
+
+table:
+  Current Address
+  start page: 3
+
+If missing, this can become a template failure.
+
+Better:
+
+table:
+  name: Current Address
+  required: false
+
+Then the R process should apply this logic:
+
+if found:
+  extract
+
+if not found:
+  return an empty table with the expected canonical schema
+
+
+THE REALLY IMPORTANT REALISATION
+
+I think you're trying to produce YAML at the wrong level.
+
+Your YAML currently describes where the table physically is.
+
+What you actually need is a template that describes how to recognise the table.
+
+Those are fundamentally different.
+
+I would redesign the template structure to something closer to:
+
+tables:
+  address_history:
+    heading:
+      - Address History
+
+    required: false
+    end_at_next_heading: true
+
+    columns:
+      tax_type:
+        aliases:
+          - Tax Type
+
+      address_type:
+        aliases:
+          - Address Type
+
+      address:
+        aliases:
+          - Address
+
+      date_applied:
+        aliases:
+          - Date Applied
+
+      date_ceased:
+        aliases:
+          - Date Ceased
+
+    remove_rows_containing:
+      - IN CONFIDENCE
+      - Page
+      - The information contained in this report
+
+Notice what disappeared:
+
+- page numbers
+- Y coordinates
+- X coordinates
+- fixed start positions
+- fixed end positions
+- expected table lengths
+
+Those are precisely the properties that vary between documents.
+
+
+RECOMMENDED EXTRACTION PROCESS FOR ALL IRD REPORTS
+
+STAGE 1: GLOBAL DOCUMENT CLEANING
+
+Remove or suppress:
+
+- repeated document headers
+- repeated footers
+- page numbers
+- confidentiality labels
+- statutory disclaimers
+- watermarks
+
+This should happen before any section or table is interpreted.
+
+
+STAGE 2: IDENTIFY ALL KNOWN SECTION HEADINGS
+
+Examples include:
+
+- Customer Names
+- Current Address
+- Address History
+- Tax Registrations
+- Bank Accounts
+
+Use the full dictionary of known canonical section headings and accepted heading aliases to build a document-wide section index.
+
+
+STAGE 3: SPLIT THE DOCUMENT INTO LOGICAL SECTIONS
+
+Use this model:
+
+Heading A
+through to immediately before Heading B
+= Section A
+
+Heading B
+through to immediately before Heading C
+= Section B
+
+This allows sections to move between pages, change length, span many pages, or be absent entirely without invalidating the template.
+
+
+STAGE 4: DETECT AND INTERPRET HEADERS DYNAMICALLY
+
+Do not rely exclusively on exact header text or fixed X coordinates.
+
+Use a combination of:
+
+- canonical header aliases
+- expected field count
+- approximate left-to-right order
+- data-type patterns
+- repeated values and row structure
+
+Relevant data-type patterns include:
+
+- dates
+- monetary values
+- IRD numbers
+- telephone numbers
+- email addresses
+- bank account numbers
+- booleans
+- status descriptions
+
+Column coordinates can still be used as weak supporting evidence within a detected section, but never as the primary means of finding the section or deciding its page range.
+
+
+STAGE 5: NORMALIZE TO CANONICAL NAMES
+
+Examples:
+
+IRD #
+IRD Number
+Tax Agent IRD
+Agent IRD Number
+
+should all normalize to:
+
+ird_number
+
+The same principle should be applied to table names, headings, dates, currency fields, contact fields, and equivalent terminology used across report versions.
+
+
+STAGE 6: RETURN STANDARDISED DATA FRAMES
+
+Every known table should return a stable canonical schema.
+
+If a section is present, return its validated records.
+
+If a section is absent, return an empty data frame with the expected columns.
+
+If a section is found but cannot be parsed reliably, return it separately as an exception with diagnostic information rather than silently treating footer text or another section as valid rows.
+
+At that point, the YAML can become perhaps 90% smaller and should survive future IRD format changes significantly better than a coordinate-based template.
+
+
+FINAL CONCLUSION
+
+The fundamental issue is not that the YAML is incomplete. The issue is that the YAML is modeling the physical PDF layout rather than the document's semantic structure.
+
+That is why the current process is already producing hundreds of edge cases, including section bleed, footer contamination, false rows, missing sections, shifting page ranges, duplicate headings, unstable headers, and failed continuation handling.
+
+The simplest and most generalisable solution is:
+
+1. Clean repeated page furniture globally.
+2. Detect sections using recognised heading aliases.
+3. End each section at the next recognised heading.
+4. Treat all sections as optional unless genuinely mandatory.
+5. Interpret columns using aliases, field order, data types, and weak positional evidence.
+6. Normalize all output into stable canonical schemas.
+7. Validate records and quarantine uncertain extraction rather than silently accepting it.
+
+The YAML should describe recognition rules and output schemas, not the coordinates of one example PDF.
+
+
+================================================================================
+EXTENSION: EXACT CHANGES REQUIRED WITHIN THE EXISTING STATEMENT STUDIO ARCHITECTURE
+================================================================================
+
+This extension should be read together with the analysis above. It does not propose a new application, a separate parsing stack, Python, machine learning, or an external service. It explains exactly how Statement Studio's existing mode: document architecture needs to be extended so that IRD reports can be generalised accurately without weakening the statement pipeline or violating the application's current design rules.
+
+
+1. THE PRECISE ARCHITECTURAL PROBLEM
+
+Statement Studio already made the correct high-level decision by keeping reports in mode: document and routing them through R/tables.R, R/tables_detect.R, and R/doc_extract.R. The problem is narrower than the original analysis implied.
+
+The document engine is not wrong because it uses coordinates. Coordinates are necessary for assigning words to columns once a table has been located. The problem is that the current document schema uses coordinates for two different jobs:
+
+1. locating the logical section; and
+2. interpreting the physical columns inside that section.
+
+Only the second job should depend principally on coordinates.
+
+The current YAML stores each table as one fixed observed instance:
+
+- fixed start page;
+- fixed start Y coordinate;
+- fixed end page;
+- fixed end Y coordinate;
+- optional repeated-page band;
+- fixed X bands for columns.
+
+That works when the next PDF has substantially the same pagination as the example used to build the template. It does not generalise across IRD reports because every earlier optional or variable-length section changes the page and Y position of every later section.
+
+Therefore, the required extension is not to remove the existing document engine or remove all coordinates. It is to separate the table definition into:
+
+- semantic location rules, which find the section independently of page number;
+- continuation and termination rules, which determine its variable extent;
+- physical interpretation rules, which use X bands and row geometry after the section has been found;
+- validation rules, which decide whether the extracted rows are credible.
+
+That distinction is the centre of the required change.
+
+
+2. WHAT MUST REMAIN UNCHANGED
+
+The following parts of the current architecture should remain intact:
+
+- mode: document remains a separate engine from statements and fields;
+- reports remain download-only and must continue to be refused by write_feed();
+- R/ remains independent of app.R and the UI files;
+- a new IRD report layout must remain a YAML change, not document-specific R code;
+- input continues to use the existing read_input() shape, especially pages and words;
+- output remains deterministic for the same bytes, template, and engine version;
+- the front door must continue returning a failed result rather than throwing;
+- all R source loaded by the engine remains ASCII-only;
+- no IRD-specific heading, field name, disclaimer, or table name may be hardcoded in R/tables.R, R/tables_detect.R, or R/doc_extract.R;
+- existing coordinate-only document templates must continue to load and behave as they do now;
+- uncertainty must be surfaced as diagnostics, not hidden by silently dropping words or manufacturing rows.
+
+This matters because the correct change is an additive extension to mode: document, not a redesign of the whole conversion pathway.
+
+
+3. THE REQUIRED GENERALISATION MODEL
+
+Every document table should be represented by four separate layers.
+
+3.1 Identity
+
+This defines what the logical table is and which headings can identify it.
+
+Example:
+
+  identity:
+    canonical_name: address_history
+    heading_aliases:
+      - Address History
+    required: false
+
+The canonical name is stable application output. The heading aliases are source wording. They must not be conflated.
+
+3.2 Location
+
+This defines how to locate the heading or, where a heading is absent, how to locate an equivalent structural anchor.
+
+Example:
+
+  locate:
+    method: heading
+    heading_match: normalized_exact
+    search_scope: document
+    occurrence: first
+
+This replaces the current assumption that start.page and start.y are always authoritative.
+
+The engine should continue supporting the current coordinate method:
+
+  locate:
+    method: fixed
+    start: {page: 6, y: 334.1}
+
+A template can therefore be old-style fixed, new-style anchored, or hybrid.
+
+3.3 Extent
+
+This defines where the table begins after its heading, how it continues, and what ends it.
+
+Example:
+
+  extent:
+    starts_after: heading_and_header
+    continues_across_pages: true
+    ends_at:
+      method: next_known_heading
+    page_band:
+      y_min: auto
+      y_max: 520
+
+The table's end is no longer inferred from a page number observed in one sample. The primary terminating event is the next recognised section heading. A fixed end coordinate can remain as a fallback for templates that genuinely require it.
+
+3.4 Interpretation and validation
+
+This defines the columns, canonical output names, aliases, types, row rules, continuation rules, and evidence required before a candidate row is accepted.
+
+Example:
+
+  columns:
+    - id: tax_type
+      header_aliases: [Tax Type]
+      x_min: 71.9
+      x_max: 179.5
+      type: text
+      may_be_blank: true
+
+    - id: address_type
+      header_aliases: [Address Type]
+      x_min: 180.5
+      x_max: 291.3
+      type: text
+      may_be_blank: true
+
+    - id: address
+      header_aliases: [Address]
+      x_min: 291.3
+      x_max: 398.9
+      type: text
+      may_be_blank: false
+
+    - id: date_applied
+      header_aliases: [Date Applied, Applied Date]
+      x_min: 398.9
+      x_max: 509.7
+      type: date
+      formats: ["%d/%m/%Y"]
+      may_be_blank: false
+
+    - id: date_ceased
+      header_aliases: [Date Ceased, Ceased Date, End Date]
+      x_min: 509.7
+      x_max: 621.6
+      type: date
+      formats: ["%d/%m/%Y"]
+      may_be_blank: true
+
+  row_rules:
+    require_any: [address, date_applied]
+    reject_if_matches_global_noise: true
+    continuation: merge_into_previous
+
+The aliases help identify and verify the header. The X bands still determine where data words land. This is how wording tolerance and physical extraction work together without pretending that headings alone can reconstruct a table.
+
+
+4. THE YAML SCHEMA EXTENSION THAT IS ACTUALLY NEEDED
+
+The existing schema should be extended rather than replaced. A practical structure is:
+
+  tables:
+    address_history:
+      name: Address History
+      required: false
+
+      locate:
+        method: heading
+        headings:
+          - Address History
+        match: normalized_exact
+        occurrence: first
+        fallback:
+          method: fixed
+          start: {page: 6, y: 334.1}
+
+      header:
+        rows: auto
+        aliases:
+          - [Tax Type, Address Type, Address, Date Applied, Date Ceased]
+        minimum_matches: 3
+        repeat_policy: consume
+
+      extent:
+        starts_after: header
+        continues_across_pages: true
+        ends_at:
+          method: next_known_heading
+        fallback_end:
+          method: fixed
+          end: {page: 15, y: 312.3}
+        band:
+          y_max: 433.8
+
+      columns:
+        - id: tax_type
+          output_name: Tax Type
+          header_aliases: [Tax Type]
+          x_min: 71.9
+          x_max: 179.5
+          type: text
+          may_be_blank: true
+
+        - id: address_type
+          output_name: Address Type
+          header_aliases: [Address Type]
+          x_min: 180.5
+          x_max: 291.3
+          type: text
+          may_be_blank: true
+
+        - id: address
+          output_name: Address
+          header_aliases: [Address]
+          x_min: 291.3
+          x_max: 398.9
+          type: text
+          may_be_blank: false
+
+        - id: date_applied
+          output_name: Date Applied
+          header_aliases: [Date Applied, Applied Date]
+          x_min: 398.9
+          x_max: 509.7
+          type: date
+          formats: ["%d/%m/%Y"]
+          may_be_blank: false
+
+        - id: date_ceased
+          output_name: Date Ceased
+          header_aliases: [Date Ceased, Ceased Date, End Date]
+          x_min: 509.7
+          x_max: 621.6
+          type: date
+          formats: ["%d/%m/%Y"]
+          may_be_blank: true
+
+      rows:
+        require_any: [address, date_applied]
+        new_row:
+          any:
+            - column_matches: {column: date_applied, type: date}
+            - column_nonblank: address
+        continuation:
+          policy: merge_previous
+          allowed_blank_leading_columns: true
+        totals:
+          policy: keep_flagged
+
+      noise:
+        use_global: true
+
+      validation:
+        minimum_rows: 0
+        expected_column_count: 5
+        minimum_header_matches: 3
+        maximum_unclaimed_ratio: 0.10
+        maximum_invalid_row_ratio: 0.05
+
+The exact names may be adjusted to fit build-contract.md, but these capabilities are required. A design that omits one of these concepts will leave a known class of IRD failures unresolved.
+
+
+5. THE GLOBAL DOCUMENT REGISTRY
+
+The engine cannot stop a table at the next known heading unless it has a document-wide registry of all headings before extracting any table.
+
+This requires a first pass across the document.
+
+For each configured table, collect:
+
+- canonical table id;
+- accepted heading aliases;
+- whether the table is optional;
+- heading match method;
+- header aliases;
+- expected relative order if supplied;
+- whether the heading may repeat as a continuation marker.
+
+The first pass should produce ordered heading candidates such as:
+
+  page P1, y Y1, customer_online_details, score 1.00
+  page P1, y Y2, business_classification, score 1.00
+  page P2, y Y3, customer_names, score 1.00
+  page P3, y Y4, current_address, score 1.00
+  page P4, y Y5, current_contact_details, score 1.00
+
+Each candidate must retain its source words and coordinate provenance.
+
+The section index, not the YAML's example page number, becomes the primary source of table boundaries.
+
+This one index resolves several current failures at once:
+
+- optional tables can be absent without shifting later tables;
+- variable-length tables can expand or shrink;
+- a table can span any number of pages;
+- a new heading terminates the preceding section before its words become rows;
+- order can be checked without being used as an absolute location;
+- repeated headings can be classified as continuations rather than new independent sections.
+
+
+6. HEADING MATCHING MUST BE CONTROLLED, NOT FUZZY BY DEFAULT
+
+The engine does not need unrestricted fuzzy matching. That would create ambiguous section boundaries and weaken determinism.
+
+For IRD reports, use a controlled normalisation pipeline:
+
+- trim leading and trailing whitespace;
+- collapse internal whitespace;
+- compare case-insensitively;
+- normalize line breaks to spaces;
+- optionally normalize punctuation variants explicitly allowed by the template;
+- do not discard arbitrary words;
+- do not use edit-distance matching unless separately enabled and bounded.
+
+Recommended match modes:
+
+- exact: source text must match exactly;
+- normalized_exact: case and whitespace normalized;
+- contains: allowed only for a sufficiently distinctive phrase;
+- all_tokens: all configured tokens must be present in the heading region;
+- regex: advanced, validated, and deterministic.
+
+Heading aliases should live in the document template because they describe this particular report family. They should not automatically be added to dictionaries/labels.yaml. That dictionary currently serves labelled-value extraction. A report section heading is a structural rule, not necessarily a global label synonym.
+
+If the same heading vocabulary genuinely applies across many document templates, a separate document-heading dictionary can later be introduced. It should not be mixed into the existing labels dictionary without an explicit contract change.
+
+
+7. GLOBAL PAGE FURNITURE SUPPRESSION
+
+IRD page furniture is currently entering table rows because it lies inside the table's physical window. The engine needs a global, provenance-preserving suppression stage for mode: document.
+
+This should not delete words from read_input(). The original input shape and coordinates should remain untouched. Instead, the document extractor should classify matching words or lines as page furniture and exclude them from candidate data rows.
+
+The template should support patterns such as:
+
+  page_noise:
+    lines:
+      - match: regex
+        value: '^Page [0-9]+( of [0-9]+)?$'
+
+      - match: normalized_exact
+        value: '*** IN CONFIDENCE ***'
+
+      - match: contains
+        value: 'The information contained in this report has been gathered'
+
+      - match: contains
+        value: 'Inland Revenue does not guarantee its accuracy or completeness'
+
+    recurrence:
+      use_repeated_margin_lines: true
+      minimum_pages: 2
+      top_margin_ratio: 0.12
+      bottom_margin_ratio: 0.18
+
+Two mechanisms are needed:
+
+1. explicit template rules for known statutory disclaimers and labels;
+2. repeated-margin detection for text recurring in approximately the same top or bottom region across multiple pages.
+
+Repeated-margin detection must be conservative. It should classify text as furniture only when:
+
+- it repeats on multiple pages;
+- it occurs within a configured top or bottom margin;
+- its normalized text is stable enough to identify;
+- it does not overlap a recognised table heading or header row.
+
+Suppressed words must remain countable and inspectable. Diagnostics should report how many words or lines were suppressed and by which rule. This preserves the existing principle that the engine never silently drops content.
+
+
+8. CONTINUATION PAGES AND REPEATED HEADERS
+
+The current follow flag is too coarse for the IRD cases shown.
+
+A table may continue onto a new page in at least four ways:
+
+- without repeating either heading or column header;
+- with the section heading repeated;
+- with the column header repeated;
+- with both repeated.
+
+The extension needs an explicit continuation policy:
+
+  continuation:
+    across_pages: true
+    repeated_heading: consume
+    repeated_header: consume
+    page_start_without_header: allow
+    stop_on_new_heading: true
+
+When the same heading appears again before another known section heading, the engine must decide whether it is:
+
+- a continuation marker for the current section;
+- a duplicated printed heading;
+- a genuinely repeated section that should produce another table instance.
+
+The decision should be template-driven. For most IRD report sections, repeated headings inside an open section should be consumed as continuation furniture. The engine should retain their locations in provenance but not output them as rows.
+
+The observed output statement that a heading is printed again on a continuation page and is not read as rows is useful evidence. That behaviour should become a supported policy rather than an incidental result.
+
+
+9. ROW RECONSTRUCTION IS AS IMPORTANT AS SECTION LOCATION
+
+Correctly locating a section does not by itself create correct rows. PDF words frequently wrap, split, or drift vertically.
+
+Examples from an observed IRD layout include:
+
+- an email address split across visual lines;
+- "Income Tax" and "Non-Individuals" split into separate extracted rows;
+- a tax agent name split across lines;
+- a payment source or address spanning several word groups;
+- a blank leading field on a continuation line;
+- totals that have no label in the expected first column.
+
+The current row tolerance groups words by Y position, but the document engine needs a second pass that decides whether each physical line starts a new logical row or continues the previous one.
+
+Required row policies include:
+
+- physical: every clustered Y line is a row;
+- merge_previous: a line that does not satisfy new-row evidence is appended to the preceding logical row;
+- carry_forward: selected blank fields inherit the previous row's value;
+- append_by_column: text in each column is appended only to the same column in the preceding row;
+- reject: unmatched lines become invalid-row diagnostics rather than data.
+
+New-row evidence should be declarative. Examples:
+
+- a valid date in one of the expected date columns;
+- a valid IRD number in the expected first column;
+- a value in a required identity column;
+- a complete minimum set of typed fields;
+- a configured first-column token.
+
+For Current Tax Agent, for example, a physical line containing only "Non-Individuals" and the remainder of the agent name should not become an independent record. It should be merged into the preceding logical row by column.
+
+This is necessary to solve the rows visible in the example output. Section anchoring alone will not fix them.
+
+
+10. COLUMN BANDS SHOULD BECOME RELATIVE AND VERIFIABLE
+
+Fixed X bands remain useful because the source PDF has real geometry. However, they should not be treated as unverified constants.
+
+The engine already has ref_width and ref_height and a single coordinate frame invariant. Preserve that. Add two capabilities:
+
+10.1 Relative storage or normalization
+
+Internally compare bands as proportions of ref_width:
+
+  x_min_ratio = x_min / ref_width
+  x_max_ratio = x_max / ref_width
+
+The YAML may continue storing points for compatibility, but the engine can scale consistently when the rendered page size differs.
+
+10.2 Header-based verification and optional adjustment
+
+After locating the section header, compare each configured column's expected header aliases with the words found inside its band.
+
+If enough headers match, the bands are confirmed.
+
+If header words are present but slightly displaced, a template may allow bounded adjustment:
+
+  header:
+    band_adjustment:
+      enabled: true
+      maximum_shift: 12
+      maximum_edge_change: 8
+
+Adjustment must be deterministic, bounded, and recorded in provenance. It must never allow columns to overlap. Existing overlap refusal remains essential.
+
+The engine should not freely derive every column from every header on every document because headers may wrap and some IRD tables have sparse or missing header cells. The configured bands remain the prior; header geometry is evidence that can confirm or make a small bounded correction.
+
+
+11. DYNAMIC PERIOD COLUMNS REQUIRE A DIFFERENT TABLE SHAPE
+
+The later IRD return tables are not ordinary fixed-schema row tables. Their columns are filing periods, and the period headings change with the customer and report date.
+
+For example:
+
+- 31-Mar-YY;
+- 31-Mar-YY;
+- 31-Mar-YY;
+- and so on.
+
+The current generated YAML incorrectly treats those dates as permanent canonical column names. That template will fail when a report contains different years or a different number of periods.
+
+The document schema therefore needs a matrix or dynamic-columns mode.
+
+Example:
+
+  shape: matrix
+
+  row_key:
+    id: measure
+    x_min: 40
+    x_max: 273
+    type: text
+
+  dynamic_columns:
+    header_type: date
+    header_formats: ["%d-%b-%y", "%d-%b-%Y"]
+    x_region: {x_min: 273, x_max: 726}
+    output:
+      pivot: long
+      name_column: filing_period
+      value_column: value
+
+  summary_column:
+    aliases: [Totals, Total, Summary]
+    optional: true
+    x_region: {x_min: 724, x_max: 792}
+
+The output should be long and stable:
+
+  table_id
+  measure
+  filing_period
+  value
+  is_summary
+  source_page
+
+It should not create a different workbook schema for every combination of filing years.
+
+This is required for:
+
+- Filing Period - Return Type;
+- Filing Period - Companies Return;
+- Filing Period - Imputation Return;
+- similar PTS and individual income return matrices.
+
+Without dynamic columns, no single template can generalise across report dates.
+
+
+12. DOCUMENT SUBTYPES MUST BE RECOGNISED WITHIN THE IRD FAMILY
+
+The reviewed document structures demonstrate materially different IRD document structures:
+
+- the main Level 1 report containing many named sections;
+- Personal Tax Summary matrices;
+- Individual Income Return matrices;
+- Financial Statements Summary;
+- Companies Return;
+- Imputation Return;
+- GST Sales and Income tables.
+
+These should not be forced into one enormous table list whose every section is optional. That would make detection weak and diagnostics difficult to interpret.
+
+Use one IRD document family with separate template variants, or a parent profile with subtype components, for example:
+
+- ird_level1_report;
+- ird_personal_tax_summary;
+- ird_individual_income_return;
+- ird_financial_statements_summary;
+- ird_companies_return;
+- ird_imputation_return;
+- ird_gst_sales_income.
+
+The main combined PDF can contain several of these components sequentially. The document engine should therefore support component detection within a file:
+
+  components:
+    - template: ird_level1_report
+      locate_by: fingerprint
+      repeat: false
+
+    - template: ird_financial_statements_summary
+      locate_by: local_fingerprint
+      repeat: false
+
+    - template: ird_companies_return
+      locate_by: local_fingerprint
+      repeat: false
+
+This can be implemented either as a first-class component schema or initially as separate anchored table groups in one template. The important requirement is that each subtype has its own distinctive fingerprint and table definitions. A one-size-fits-all optional-table template is not sufficiently discriminating.
+
+
+13. REQUIRED TABLE VALIDATION
+
+The mode: document engine has no financial reconciliation, so it needs structural validation strong enough to prevent obviously contaminated tables from appearing clean.
+
+For each table, calculate at least:
+
+- heading found status;
+- header match count and ratio;
+- number of physical lines;
+- number of accepted logical rows;
+- number of merged continuation lines;
+- number of rejected lines;
+- number and ratio of unclaimed words;
+- thin-column count;
+- invalid typed-value count by column;
+- unexpected heading count inside the section;
+- noise lines suppressed;
+- duplicate repeated-header count;
+- termination method used;
+- whether a fallback coordinate was used;
+- whether bands were adjusted;
+- whether the table was absent as permitted;
+- whether the table was required but missing.
+
+A table should receive a table-level verdict such as:
+
+- extracted;
+- extracted_with_warnings;
+- absent_optional;
+- missing_required;
+- invalid_header;
+- excessive_unclaimed_words;
+- excessive_invalid_rows;
+- ambiguous_boundary;
+- fallback_location_used.
+
+The resulting document should be needs_review or equivalent when any important table is structurally uncertain. Since reports are download-only, this does not affect the feed gate, but it gives the user an honest result instead of a workbook containing disclaimers as records.
+
+
+14. NEGATIVE EVIDENCE AND CROSS-TABLE CONTAMINATION
+
+The current example clearly shows one table absorbing the next table's heading and header. The new validation must treat a recognised heading inside candidate rows as negative evidence.
+
+Rules required:
+
+- once a recognised heading candidate is reached, close the current table before that Y position;
+- never accept a known section heading as a data row unless the template explicitly allows that text as data;
+- never accept a known header signature from another table as an ordinary row;
+- if two section candidates overlap, mark the boundary ambiguous rather than assigning the same words to both;
+- every source word in the document region may be classified as data, header, heading, page furniture, or unclaimed, but should not normally be claimed by two tables.
+
+This should produce a document-level overlap diagnostic. The existing no-overlapping-column invariant should be complemented by a no-unexplained-overlapping-section rule.
+
+
+15. BACKWARD COMPATIBILITY
+
+This extension can be introduced without invalidating current templates.
+
+Recommended loading rules:
+
+- if a table has start and end but no locate or extent keys, use the existing fixed behaviour unchanged;
+- if locate.method is heading, use semantic location;
+- if semantic location fails and a configured fallback exists, use the fallback and flag it;
+- if semantic location fails with no fallback and required is false, return absent_optional;
+- if semantic location fails with no fallback and required is true, return missing_required;
+- existing header_rows maps to header.rows;
+- existing follow maps to continuation.across_pages, with the current semantics preserved;
+- existing band.y_max maps to extent.band.y_max;
+- existing anchor.header_text seeds header aliases;
+- existing column name remains output_name when id is absent;
+- current fixed coordinate validation and overlap checks remain active.
+
+A schema_version field should be added to document templates. For example:
+
+  schema_version: 2
+
+Version 1 remains the current coordinate schema. Version 2 admits semantic location, dynamic columns, row rules, and structured validation.
+
+Do not silently reinterpret a version 1 template with materially different semantics.
+
+
+16. REQUIRED R MODULE RESPONSIBILITIES
+
+No IRD-specific logic should enter R. The following generic responsibilities are required.
+
+R/tables.R
+
+- validate the version 2 schema;
+- normalize old and new table definitions into one internal representation;
+- enforce allowed match modes;
+- validate aliases, row rules, dynamic columns, and fallback definitions;
+- reject overlapping physical column bands;
+- reject invalid or unbounded fuzzy rules;
+- reject PII in document fingerprints and structural anchors using the existing policy.
+
+R/tables_detect.R
+
+- build the document-wide heading registry;
+- normalize heading text;
+- score heading and header candidates;
+- resolve repeated headings;
+- identify local component fingerprints;
+- produce ordered section boundaries and ambiguity diagnostics.
+
+R/doc_extract.R
+
+- apply page-furniture masks without mutating the original input;
+- extract words inside resolved semantic boundaries;
+- assign words to columns using the existing coordinate frame;
+- consume repeated headings and repeated headers;
+- reconstruct logical rows from physical lines;
+- parse and validate typed columns;
+- support fixed and dynamic-column table shapes;
+- record every fallback, merge, rejection, and unclaimed word in provenance.
+
+A new generic module may be justified if these concerns make an existing file too broad, for example:
+
+- R/doc_structure.R for heading registry and section boundaries;
+- R/doc_rows.R for physical-to-logical row reconstruction;
+- R/doc_noise.R for page-furniture classification.
+
+If new modules are added, the build-contract module map and its bidirectional test must be updated in the same change.
+
+
+17. BUILDER AND ADMIN CHANGES
+
+The current builder asks an analyst to draw start and end points from one document. For version 2 it needs to ask different questions.
+
+Required builder flow:
+
+1. Identify the table heading on the selected example.
+2. Save the heading wording as an alias and show its normalized form.
+3. Ask whether the heading is required or optional.
+4. Ask whether the next recognised heading ends this table.
+5. Identify the header row or rows.
+6. Derive initial column bands from the header, then allow manual adjustment.
+7. Ask how continuation pages behave.
+8. Ask how a new logical row is recognised.
+9. Ask whether wrapped lines should merge into the previous row.
+10. Ask whether columns are fixed or dynamically generated from dates/periods.
+11. Show global page furniture detected across the sample and allow safe rules to be added.
+12. Test the draft template against every available corpus document before saving.
+13. Display table-level diagnostics, especially unclaimed words, invalid rows, fallback usage, and unexpected headings.
+
+The builder should not present fixed start and end coordinates as the primary saved rule for a semantic table. It may retain them as a fallback captured from the worked example.
+
+
+18. CORPUS-BASED TEMPLATE BUILDING IS MANDATORY
+
+A general template cannot be established from one fully drafted example. The current YAML is overfitted because its bounds and period columns describe one Sample Entity Level 1 report exactly.
+
+For each IRD subtype, the development corpus needs variation across:
+
+- individuals and entities;
+- short and long histories;
+- missing optional sections;
+- sections with zero, one, and many rows;
+- sections that begin near the bottom of a page;
+- tables spanning one page and many pages;
+- repeated and non-repeated headers;
+- different filing-year ranges;
+- different report-generation years;
+- different return types;
+- wrapped long names, addresses, and emails;
+- blank optional values;
+- scanned PDFs if that path is intended to be supported;
+- examples from distinct IRD rendering versions.
+
+At minimum, template promotion should require:
+
+- one build fixture;
+- several unseen validation fixtures;
+- at least one fixture missing an optional section;
+- at least one multi-page table fixture;
+- at least one dynamic-period fixture where the years differ from the build fixture;
+- a negative fixture from another IRD subtype;
+- a negative fixture from a non-IRD document.
+
+The template must not be promoted because it extracts one sample accurately. It must be promoted because it meets measured acceptance criteria across the corpus.
+
+
+19. REQUIRED TEST COVERAGE
+
+The following tests are needed before claiming that the engine generalises.
+
+Schema tests
+
+- version 1 templates still load unchanged;
+- version 2 anchored templates validate;
+- invalid matching rules are refused;
+- dynamic columns require a header type and stable output fields;
+- overlapping column bands remain refused;
+- an invalid fallback definition is refused;
+- missing required identifiers are refused.
+
+Heading and section tests
+
+- a table is found after earlier optional sections are removed;
+- a table is found after earlier sections gain rows and move it to another page;
+- a recognised next heading closes the table before its words;
+- a repeated heading can be consumed as continuation;
+- two ambiguous headings produce a review diagnostic;
+- heading order is checked but not used as a fixed page location.
+
+Noise tests
+
+- repeated disclaimers are suppressed from rows;
+- page numbers are suppressed;
+- confidentiality labels are suppressed;
+- source words remain available in provenance;
+- data text that resembles a generic footer phrase is not suppressed outside the permitted margin or recurrence rule.
+
+Row tests
+
+- wrapped descriptions merge into the previous row;
+- split agent names merge by column;
+- blank optional cells do not force false rows;
+- a known next-table header cannot become a row;
+- rejected lines are counted and visible;
+- totals are retained or excluded according to the template rule.
+
+Dynamic matrix tests
+
+- different filing-year ranges produce the same long output schema;
+- totals or summary columns are identified separately;
+- a missing year column does not shift values into the wrong year;
+- repeated matrix headers on continuation pages are consumed;
+- different date header formats are resolved for the whole header set rather than recycled element-wise.
+
+Determinism tests
+
+- the same input and version 2 template produce byte-identical outputs;
+- heading candidate ordering is deterministic;
+- band adjustment is deterministic;
+- ambiguity resolution never depends on filesystem order.
+
+Integration tests
+
+- the Sample Entity Level 1 report no longer includes disclaimer text in Current Contact Details, External IDs, Bank Accounts, or Tax Agent History;
+- Nominated Persons History stops before Address History;
+- optional sections can be absent without affecting later section extraction;
+- Address History can span a different number of pages;
+- period matrices work when the years differ from 2018 to 2023;
+- mode: document remains refused by write_feed();
+- convert_document() still returns a result rather than throwing for malformed version 2 YAML or an unsupported report.
+
+
+20. OBJECTIVE ACCEPTANCE CRITERIA
+
+"Works over and over" needs a measurable definition. The following is a practical promotion gate.
+
+A document template may be promoted only when, across its validation corpus:
+
+- 100 percent of expected section headings are located correctly;
+- 0 known headings or page-furniture lines appear as data rows;
+- 0 source words are assigned to overlapping tables without an explicit rule;
+- 100 percent of dynamic period columns are associated with the correct period;
+- required tables missing from extraction always produce a failed or review verdict;
+- optional absent tables return an empty canonical schema rather than an error;
+- all accepted typed dates and numbers parse under the configured whole-column resolution rules;
+- unclaimed-word and invalid-row thresholds are met for every table, not only for the document average;
+- outputs are deterministic;
+- all negative fixtures are refused or classified as another subtype;
+- every fallback coordinate use is visible in diagnostics;
+- every corpus document can be manually traced from output cell to source page and coordinates.
+
+A 100 percent row-value comparison against hand-keyed goldens should be required for high-value tables where the corpus permits it. Where a full golden is impractical, use sampled cell-level verification plus complete structural counts, but do not call that equivalent to a full golden.
+
+
+21. WHAT NOT TO DO
+
+Do not try to solve this by:
+
+- adding more fixed page numbers;
+- increasing every end Y coordinate;
+- setting every table to follow: true;
+- making the table window extend to the bottom of every page;
+- lowering min_fill until contaminated rows fit;
+- adding all possible headings to one global loose fuzzy matcher;
+- treating date values such as 31-Mar-YY as permanent column names;
+- assuming all absent tables are extraction failures;
+- assuming all zero-row tables are legitimately absent;
+- deleting unclaimed words to make diagnostics look clean;
+- using OCR as the default for born-digital IRD PDFs;
+- adding IRD-specific if statements to R/doc_extract.R;
+- allowing a visually plausible workbook to count as validation;
+- promoting a template from the same document used to build it.
+
+Those changes may improve one file and make the general case harder to diagnose.
+
+
+22. RECOMMENDED IMPLEMENTATION ORDER
+
+Phase 1: Stop contamination without changing table location
+
+- add generic page-furniture masking;
+- add recognised-heading exclusion inside rows;
+- add table-level structural diagnostics;
+- add tests against the supplied sample Level 1 extraction failures.
+
+This gives immediate improvement while preserving current templates.
+
+Phase 2: Add semantic section location
+
+- add schema_version 2;
+- add heading aliases and match modes;
+- build the document-wide heading registry;
+- add next-known-heading termination;
+- retain fixed coordinates as fallback;
+- update the builder to save semantic rules.
+
+This removes dependence on prior section lengths and page numbers.
+
+Phase 3: Add logical row reconstruction
+
+- add declarative new-row evidence;
+- add merge-previous and append-by-column policies;
+- add rejected-line diagnostics;
+- add goldens for wrapped names, descriptions, addresses, and emails.
+
+This resolves false rows and split records.
+
+Phase 4: Add dynamic matrix tables
+
+- add shape: matrix;
+- detect date/period headers dynamically;
+- output a stable long schema;
+- handle totals and summary columns explicitly;
+- validate against different year ranges.
+
+This resolves the return, PTS, financial summary, company return, and imputation tables.
+
+Phase 5: Add component/subtype recognition and promotion governance
+
+- split IRD template families by actual document subtype;
+- add local component fingerprints for combined PDFs;
+- run the corpus suite in Admin;
+- require validation fixtures and negative fixtures before promotion.
+
+This is what turns a working parser into a maintainable generalised system.
+
+
+23. THE MOST IMPORTANT DESIGN DECISION IN ONE SENTENCE
+
+Use semantic anchors to find and bound each logical section, but retain bounded page geometry to interpret the words inside that section.
+
+That is the simplest extension consistent with Statement Studio's existing architecture. It avoids both extremes:
+
+- the current overfitted approach, where one sample's pages and Y positions define the document; and
+- a geometry-free text parser, which cannot reliably assign unlabeled PDF values to columns.
+
+
+24. FINAL REQUIRED OUTCOME
+
+The completed mode: document pipeline should operate as follows:
+
+1. read the PDF once into the existing page and word structures;
+2. identify and mask page furniture without deleting provenance;
+3. fingerprint the IRD document family and any embedded subtype components;
+4. build one ordered registry of recognised section headings and headers;
+5. locate each optional or required table by semantic anchor;
+6. bound it at the next valid heading or configured terminator;
+7. continue it across any number of pages under explicit continuation rules;
+8. verify or boundedly adjust its X bands from the located header;
+9. cluster physical text lines;
+10. reconstruct logical rows using declarative type and continuation evidence;
+11. handle dynamic period columns as a stable long-form matrix;
+12. validate every table structurally;
+13. return empty canonical schemas for legitimately absent optional tables;
+14. return review or failure diagnostics for uncertain boundaries, bad headers, contamination, or invalid rows;
+15. preserve source page and coordinate provenance for every output value;
+16. write deterministic download-only outputs;
+17. prove the template against a varied unseen corpus before promotion.
+
+The existing YAML is valuable as a worked geometry sample, but it cannot itself be the general template. Its coordinates should become fallback and column evidence. Its fixed pages, fixed end positions, and date-named period columns must not remain the primary rules.
+
+
+================================================================================
+CRITICAL CORRECTION: SECTION ORDER CANNOT BE ASSUMED
+================================================================================
+
+The earlier example that listed Tax Registrations, Current Tax Agent, or Bank Accounts as possible successors to Address History was wrong. It still encoded an expected order, just less visibly than fixed pages did.
+
+The reviewed IRD structures prove that there is no dependable next-table list:
+
+- sections may be absent entirely;
+- sections may contain zero, one, or many records;
+- a section may be the last section in the report;
+- any number of other sections may occur after it;
+- IRD report variants may omit or reorder structural sections;
+- appended return documents introduce separate components with different structures;
+- wording that is also a known section name can appear as data under No Information Held, so bare text matching alone is not enough.
+
+The engine must therefore never define a table boundary as "Address History ends when one of these named successor tables appears." It must define the boundary as:
+
+    Start at the validated start of this section.
+    End immediately before the nearest later validated section start of any configured type.
+    If no later validated section exists in the same document component, end at the component boundary.
+
+This is order-independent.
+
+
+THE CORRECT MODEL
+
+The template contains an unordered catalogue of section definitions. It does not contain a workflow or expected sequence.
+
+Conceptually:
+
+  sections:
+    customer_names: ...
+    current_address: ...
+    contact_history: ...
+    address_history: ...
+    tax_registrations: ...
+    bank_accounts: ...
+
+  boundary_policy:
+    end_at_nearest_later_section: true
+    order: unconstrained
+
+For a document being processed, the engine first detects every valid section start independently. It then sorts only the detected physical locations by page and Y coordinate.
+
+For example, the detection result for one PDF might be:
+
+  1. Business Classification
+  2. Customer Names
+  3. Current Address
+  4. Current Contact Details
+  5. Contact History
+  6. External IDs
+  7. Address History
+  8. Tax Registrations
+
+Another PDF might be:
+
+  1. Customer Names
+  2. External IDs
+  3. Address History
+  4. Bank Accounts
+  5. Income Returns Filed
+
+The YAML does not need to predict either sequence. After detection, the physical sequence itself establishes the boundaries.
+
+If Address History is detected at location L7 and Tax Registrations happens to be the next validated section at L8, Address History ends at L8. If Bank Accounts is next instead, it ends there. If Address History is the last valid section, it ends at the component boundary. No successor names are stored in Address History's definition.
+
+
+A VALID SECTION START IS NOT JUST A HEADING STRING
+
+Stopping at any occurrence of a known phrase would also be wrong. The Sample Partnership report contains known section names such as Customer Online Details, Nominated Person's Details, and Tax Agent History as values inside No Information Held. Those occurrences are data, not new section starts.
+
+A candidate should be accepted as a section start only when enough independent structural evidence agrees. The generic evidence should include:
+
+1. Heading wording
+   The text matches one of that section's configured heading aliases after controlled normalization.
+
+2. Header evidence
+   The expected column-header signature occurs immediately beside or below the candidate, subject to the section's configured layout. A multi-column table should normally require several header matches, not only its title.
+
+3. Geometry
+   The candidate appears in a heading-like location relative to the header and following rows. It must not merely occur inside a data column of an already open table.
+
+4. Row evidence
+   One or more following lines are compatible with the candidate section's expected column count or field types, unless the schema explicitly permits an empty table.
+
+5. Component scope
+   The candidate occurs inside the current report component rather than in a different appended return document or repeated page furniture.
+
+6. Conflict evidence
+   The same words are not already claimed as a valid data value in a higher-confidence enclosing section, such as No Information Held.
+
+This creates a validated section start, not a text hit.
+
+
+THE REQUIRED DETECTION ALGORITHM
+
+Pass 1: Detect document-component boundaries
+
+Separate the Level 1 report from appended Personal Tax Summary, Financial Statements Summary, Companies Return, Imputation Return, GST, or other return components. A table cannot continue through a component boundary merely because no ordinary Level 1 section follows it.
+
+Pass 2: Generate section-start candidates
+
+For every section definition, scan the entire component for its heading aliases. Do not stop after the first text occurrence and do not assume any section order.
+
+Pass 3: Validate candidates independently
+
+Score each candidate against the section's header signature, geometry, and following-row shape. Reject heading words found as ordinary values.
+
+Pass 4: Resolve conflicting candidates
+
+Where two candidates overlap, retain the stronger structural match or return an ambiguous-boundary diagnostic. Do not let two sections claim the same heading/header words.
+
+Pass 5: Build the physical section index
+
+Sort all accepted candidates by:
+
+  component_id,
+  page_number,
+  y_coordinate,
+  deterministic tie-breaker
+
+This sorting describes what the PDF contains. It does not impose a business order.
+
+Pass 6: Derive each extent
+
+For accepted candidate i:
+
+  start = the point after its validated heading/header block
+  end   = the start of accepted candidate i + 1
+
+For the last candidate in a component:
+
+  end = component_end
+
+Page furniture is masked within that extent. Repeated instances of the same heading can be consumed as continuation markers or treated as separate occurrences according to the section's repeat policy.
+
+
+THE YAML SHOULD NOT NAME SUCCESSORS
+
+The correct section structure is closer to:
+
+  tables:
+    address_history:
+      name: Address History
+      required: false
+
+      detector:
+        headings:
+          - Address History
+        heading_match: normalized_exact
+
+        header_signatures:
+          - [Tax Type, Address Type, Address, Date Applied, Date Ceased]
+
+        minimum_header_matches: 3
+        require_following_row_evidence: true
+
+      extent:
+        start_after: detected_header
+        end_at: nearest_later_valid_section
+        if_last: component_end
+
+      continuation:
+        across_pages: true
+        repeated_heading: consume
+        repeated_header: consume
+
+      columns:
+        # Existing X-band definitions remain here.
+
+There is deliberately no next_heading list and no ordered section list.
+
+The global rule should also not be represented as an array of possible next headings. It should be an engine capability applied after all valid candidates have been detected.
+
+
+WHAT "COMPONENT END" MUST MEAN
+
+"End of document" is too broad for combined IRD PDFs. The Level 1 section can finish and then an appended return component can begin. If the final Level 1 table simply extended to the end of the whole PDF, it would absorb the appended return pages.
+
+A component boundary is the start of a structurally different embedded report. It should be identified by a local fingerprint such as a sufficiently distinctive combination of:
+
+- the repeated ARU/IRD report masthead;
+- Filing Period or Period header structure;
+- Return Type values;
+- subtype-specific header signatures;
+- changed page geometry or orientation where applicable;
+- a new report identity block.
+
+The final section in each component ends at that component boundary. The final component ends at the PDF boundary.
+
+
+OPTIONAL, REPEATED, AND EMPTY SECTIONS
+
+Optional sections
+
+Their absence has no boundary effect. They simply do not appear in the detected section index.
+
+Empty sections
+
+A heading and valid header may be present with no data rows. This can still be a valid section start if the template permits empty sections. Its extent ends at the next valid section start and it returns an empty canonical table.
+
+Repeated sections
+
+A template needs a repeat policy:
+
+- continuation: later identical heading/header occurrences extend the same logical table;
+- separate: each occurrence is a separate table instance;
+- merge: extract separate occurrences and combine them with occurrence provenance;
+- refuse: duplicates are structurally unexpected and cause review.
+
+Repeated page headers should not automatically become new sections. Their location inside an already open multi-page section and matching repeated-header policy provide the distinction.
+
+Last section
+
+No next heading is required. Its boundary is the end of its report component after removing page furniture.
+
+
+CORRECTION TO THE REQUIRED ACCEPTANCE TESTS
+
+The tests must explicitly prove order independence:
+
+- permute the section order and confirm every section is still found;
+- remove any arbitrary subset of optional sections and confirm later sections are unaffected;
+- make each section, in turn, the last section and confirm it ends at the component boundary;
+- insert an arbitrary known section between two others and confirm both boundaries update automatically;
+- place a known section name inside No Information Held and confirm it remains data;
+- repeat a heading on a continuation page and confirm it is not treated as an independent successor;
+- append a different IRD return component and confirm the final Level 1 table stops before it;
+- include two genuine occurrences of the same section and verify the configured repeat policy;
+- provide an empty section followed by any other section and confirm the empty section is retained correctly;
+- create two equally plausible section-start candidates and confirm the result is review, not silent selection.
+
+
+REVISED CENTRAL RULE
+
+The correct central design rule is:
+
+  Detect every section independently from its own heading, header, geometry, and row evidence. Then derive boundaries from the sorted physical locations of the validated detections. Never encode which section is expected to come next.
+
+This handles any order, any subset, any number of intervening sections, and a section that is last. It also avoids the opposite error of treating every occurrence of a known phrase as a boundary.
+
+
+================================================================================
+VALIDATION AGAINST SAMPLE PARTNERSHIP AND SAMPLE INDIVIDUAL RETURN EXAMPLES
+================================================================================
+
+SHORT ANSWER
+
+The corrected order-independent section-boundary design would work for the Level 1 report sections in the Sample Partnership example, but it is not sufficient by itself for every appended page in either example.
+
+These files confirm that the complete IRD solution needs two generic parsing layers inside mode: document:
+
+1. SECTION DOCUMENTS
+   Reports containing a variable subset of separately headed tables, in any order. The Level 1 report is this type.
+
+2. MATRIX COMPONENTS
+   Return extracts containing one logical table whose columns are dynamic filing periods and whose rows continue across pages, often without repeating the full header. The Sample Individual Income Return and the appended sample partnership return pages are this type.
+
+The first design solves the Level 1 report. The second capability must be implemented for the return components. Treating both as the same kind of table would recreate the current overfitting problem in a different form.
+
+
+1. SAMPLE PARTNERSHIP: WHAT THE CORRECTED DESIGN HANDLES
+
+The initial Level 1 component are the same general Level 1 report family as the Sample Entity Level 1 example, but they prove that section presence and pagination differ materially.
+
+Observed differences include:
+
+- optional sections may be absent and later listed as values under No Information Held;
+- several short sections may share one page;
+- a long history or payment table may span many pages;
+- a following section may begin partway through the page on which the preceding table ends;
+- a table may continue onto a later page before another section begins;
+- the final Level 1 section may end only when a different appended report component begins.
+
+This confirms that fixed pages and fixed successor lists cannot generalise.
+
+The corrected algorithm does handle this portion if it works as follows:
+
+- detect each real section independently;
+- validate each section start using heading plus its own header geometry;
+- sort accepted starts by physical page and Y position;
+- end each section immediately before the next accepted start of any type;
+- end the final Level 1 section at the detected Level 1 component boundary;
+- consume page furniture on every page;
+- treat missing sections as absent_optional;
+- retain known section names inside No Information Held as values rather than boundaries.
+
+The last point is critical. In the Sample Partnership example, Customer Online Details, Nominated Person's Details, and Tax Agent History occur under No Information Held. They must not open new sections because they do not have the required adjacent header signature or heading geometry. A bare dictionary of heading strings would fail this document.
+
+Therefore, for the Level 1 portion, the corrected approach is suitable, provided that a valid section start requires structural evidence and not heading text alone.
+
+
+2. SAMPLE PARTNERSHIP: WHAT REQUIRES ADDITIONAL COMPONENT HANDLING
+
+Pages after the Level 1 report are not merely more Level 1 sections.
+
+The file contains several appended report components with different schemas:
+
+- a Partnerships/LTCs Return matrix;
+- a Financial Statements Summary matrix;
+- a GST Sales and Income table;
+- a partner-attribution table.
+
+These components do not all expose a convenient unique title in the same location. Their identity is established by combinations such as:
+
+- a fresh IRD/ARU masthead or report header;
+- customer identity repeated;
+- Filing Period or Period;
+- a vector of period headings;
+- Return Type values such as Partnerships/LTCs Return or Financial Statements Summary;
+- a distinctive matrix header such as Sales and Income, Zero Rated Supplies, Debit Adjustments, and GST Position;
+- a distinctive row-header set for partner attribution.
+
+They must be detected as local components before table extents are derived.
+
+The required logic is:
+
+1. Level 1 component ends when a new return-component fingerprint is validated.
+2. Each appended return component receives its own parser profile.
+3. The final logical table in that component ends at the next component start, not at the next Level 1 heading.
+4. A disclaimer-only or continuation page remains attached to the current component unless a new component fingerprint begins.
+
+This is especially important where one component ends and another starts without a simple section title that can be placed in a global heading list.
+
+
+3. SAMPLE INDIVIDUAL INCOME RETURN: WHY ORDINARY SECTION BOUNDARIES ARE NOT ENOUGH
+
+The Sample Individual Income Return is structurally different from the Level 1 report.
+
+It is effectively one wide logical matrix continued across five pages:
+
+- the filing periods form dynamic columns;
+- the first column contains measure names;
+- the rightmost value may contain a total;
+- page 1 establishes the period headings;
+- later pages continue the measure rows without repeating the complete filing-period header;
+- footer text repeats on every page;
+- some rows contain booleans, some numbers, some codes, and some legitimately blank cells;
+- the set and wording of measures differ between return versions.
+
+A section catalogue cannot parse this reliably because entries such as Total RWT, Taxable Income, Refund, PTS Status, or Government Subsidies are row labels, not section headings.
+
+The correct profile is a dynamic matrix component:
+
+  component_type: period_matrix
+
+  detector:
+    document_fingerprints:
+      - Info Sharing - Individual Income Return
+
+    structural_fingerprints:
+      - Filing Period
+      - Return Type
+
+  matrix:
+    orientation: measures_by_period
+    row_key: first_column
+
+    dynamic_columns:
+      source: filing_period_header
+      type: date
+
+    optional_summary_column:
+      enabled: true
+
+    continue_until: component_end
+    continuation_pages:
+      header_required: false
+
+The engine must carry the period-column geometry established on the first page across continuation pages. It cannot expect each page to repeat the header.
+
+The output should be stable long form, for example:
+
+  component_type
+  return_type
+  measure
+  filing_period
+  value
+  is_summary
+  source_page
+  source_coordinates
+
+It should not create permanent YAML columns named after one report's particular years.
+
+
+4. SAMPLE PARTNERSHIP RETURN MATRICES: SAME FAMILY, DIFFERENT MEMBER
+
+The sample partnership appended returns confirm that there is not one universal period-matrix schema.
+
+They include at least three orientations:
+
+A. Measures by filing period
+
+Financial Statements Summary and Partnerships/LTCs Return use measure labels as rows and filing periods as columns. These can use the same generic measures_by_period matrix engine as the sample individual return, with different component fingerprints and row dictionaries.
+
+B. Periods by measure
+
+GST Sales and Income uses periods as rows and financial measures as fixed columns. This is an ordinary fixed-column table with a dynamic row count, not a filing-period matrix across columns.
+
+C. Repeated period rows with many measures
+
+Partner attribution uses each filing period as a row and may have more than one row for the same period, representing different partners or attribution records. It cannot be deduplicated by filing period. The row identity must preserve occurrence or another available party key.
+
+Therefore, component profiles need an explicit table shape:
+
+- fixed_columns;
+- measures_by_period;
+- records_by_period.
+
+This is a generic distinction and does not require IRD-specific code.
+
+
+5. UPDATED COMPONENT SCHEMA
+
+A suitable generic extension is:
+
+  components:
+    level1_report:
+      type: sections
+
+      detector:
+        fingerprints:
+          - Asset Recovery Unit - Level 1 report provided by Inland Revenue
+
+      extent:
+        end_at: nearest_later_component
+        if_last: document_end
+
+      section_catalogue:
+        # Unordered table definitions.
+
+    individual_income_return:
+      type: period_matrix
+
+      detector:
+        fingerprints:
+          - Info Sharing - Individual Income Return
+          - Filing Period
+          - Return Type
+        minimum_matches: 2
+
+      matrix:
+        orientation: measures_by_period
+        header_anchor: Filing Period
+        period_type: date
+        row_key_region: first_column
+        continue_until: component_end
+        continuation_header: optional
+        output: long
+
+    financial_statements_summary:
+      type: period_matrix
+
+      detector:
+        local_fingerprints:
+          - Filing Period
+          - Return Type
+          - Financial Statements Summary
+        minimum_matches: 3
+
+      matrix:
+        orientation: measures_by_period
+        header_anchor: Filing Period
+        continue_until: component_end
+        output: long
+
+    gst_sales_income:
+      type: fixed_columns
+
+      detector:
+        header_signature:
+          - Period
+          - Sales and Income
+          - Zero Rated Supplies
+          - Purchases & Expenses
+          - GST Position
+        minimum_matches: 4
+
+      table:
+        end_at: component_end
+        continuation_header: optional
+
+The exact syntax should follow build-contract.md, but these capabilities are necessary.
+
+
+6. COMPONENT DETECTION MUST ALSO BE ORDER-INDEPENDENT
+
+The same correction applied to Level 1 sections applies to appended components.
+
+Do not define:
+
+  Financial Statements Summary is followed by Companies Return.
+
+Instead:
+
+- generate all component-start candidates independently;
+- validate each candidate against its own local fingerprint and geometry;
+- sort accepted component starts physically;
+- end each component at the nearest later validated component start;
+- end the last component at document end.
+
+A report may contain only one return component, several components, or a different subset. The engine cannot assume which return follows another.
+
+
+7. PAGE 31-TYPE CASES: DO NOT CREATE EMPTY COMPONENTS FROM PAGE BREAKS
+
+The Sample Partnership example includes a page containing effectively only confidentiality/disclaimer material between substantive component pages.
+
+A page break is not a component boundary.
+
+A component begins only when its own structural fingerprint is validated. A page containing only repeated furniture should be:
+
+- masked as page furniture;
+- retained in provenance;
+- attached to the currently open component for extent purposes;
+- excluded from table rows;
+- not interpreted as an empty table or new component.
+
+This prevents blank or disclaimer pages from fragmenting a multi-page return.
+
+
+8. ROW DEFINITIONS MUST BE PROFILE-SPECIFIC
+
+For section tables, a row often begins when a typed key appears in a configured column.
+
+For period matrices, a row begins with a measure label and is followed by the expected number of period values.
+
+For GST records, a row begins with a valid period date.
+
+For partner attribution, a row begins with a period but duplicate periods are valid.
+
+The YAML therefore needs generic row strategies rather than one universal row rule:
+
+  row_strategy: typed_key
+
+  row_strategy: measure_plus_period_vector
+
+  row_strategy: date_keyed_record
+
+  row_strategy: repeated_date_record
+
+Each strategy remains generic. The template supplies aliases, types, and geometry.
+
+
+9. SAMPLE-INDIVIDUAL-SPECIFIC RISKS THE CURRENT EXTENSION MUST ADDRESS
+
+The Sample Individual example exposes the following requirements:
+
+- Filing-period years differ from the Sample Entity Level 1 example, proving year headings cannot be hardcoded.
+- Return measure wording can change between report generations.
+- Some boolean rows lack a summary value while numeric rows may include one.
+- Some rows are intentionally blank for all periods.
+- PTS Status contains codes rather than numbers or booleans.
+- negative monetary values use parentheses;
+- apostrophes, commas, and quoted-looking punctuation appear in labels;
+- the table continues without a repeated full header;
+- repeated footers must be removed without dropping table rows near the bottom of the page.
+
+Consequently:
+
+- value type should be inferred or configured per row family, not forced for the entire matrix;
+- raw values should be retained verbatim alongside parsed values;
+- the number of expected period cells comes from the detected header;
+- a missing summary cell must not shift values left or right;
+- blank rows need an explicit keep or drop policy;
+- parenthesised numbers need deterministic numeric parsing;
+- continuation pages must reuse the initial column model.
+
+
+10. SAMPLE-PARTNERSHIP-SPECIFIC RISKS THE CURRENT EXTENSION MUST ADDRESS
+
+The Sample Partnership example exposes additional requirements:
+
+- known table names occur as No Information Held values;
+- multiple ordinary tables share one page;
+- one table can continue onto the next page before another starts halfway down that page;
+- a totals row may immediately precede the next heading;
+- a return component may begin without a simple unique title line;
+- several different component types can be appended in one file;
+- duplicate filing periods can be legitimate records;
+- an operation/reference string can repeat as bottom-page furniture;
+- the main report and appended returns can have different extraction quality or page structure.
+
+Therefore:
+
+- section validation needs heading plus header evidence;
+- component validation needs multiple local fingerprints;
+- totals must be recognised before boundary closure;
+- recurring operation/reference text needs configurable page-furniture suppression;
+- duplicate periods must not be automatically collapsed;
+- table and component provenance must retain component id as well as page number.
+
+
+11. REVISED ANSWER: WOULD THE DESIGN WORK FOR THESE FILES?
+
+For the sample partnership Level 1 pages: yes, once the section detector is genuinely order-independent and requires heading plus header evidence.
+
+For the Sample Individual Income Return: not with section boundaries alone. It requires the dynamic measures-by-period matrix profile described above.
+
+For the sample partnership's appended return pages: not with one Level 1 section catalogue. They require independently detected component profiles, including measures-by-period, fixed-column, and repeated-period record shapes.
+
+For the complete files end to end: yes, if the implementation includes both layers:
+
+1. unordered semantic section detection within section-based components; and
+2. unordered component detection with component-specific table shapes.
+
+Without the second layer, the engine may solve the Level 1 pages in the sample partnership document while still overfitting or misreading the appended returns and the sample individual document.
+
+
+12. FINAL UPDATED ARCHITECTURE
+
+The complete generic hierarchy should be:
+
+  PDF
+    -> independently detected COMPONENTS, in whatever physical order exists
+         -> SECTION COMPONENT
+              -> independently detected SECTIONS, in whatever physical order exists
+                   -> fixed-band or typed-row tables
+
+         -> PERIOD MATRIX COMPONENT
+              -> dynamic filing-period columns
+              -> measure rows across continuation pages
+
+         -> FIXED-COLUMN COMPONENT
+              -> dynamic number of date-keyed records
+
+         -> REPEATED-PERIOD RECORD COMPONENT
+              -> duplicate period values permitted
+
+At both the component and section levels, boundaries are derived only after all valid candidates at that level have been independently detected and physically sorted.
+
+No component definition names its expected successor.
+No section definition names its expected successor.
+No filing years are permanent YAML column names.
+No known heading string becomes a boundary without structural validation.
+
+That full model is capable of covering the Sample Entity Level 1 report, the Sample Partnership report and appended returns, the Sample Personal Tax Summary, and the Sample Individual Income Return without introducing document-specific logic into R.
+
