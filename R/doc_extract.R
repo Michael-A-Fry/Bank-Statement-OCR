@@ -768,6 +768,30 @@ write_document_outputs <- function(ext, outdir, basename,
   unique(as.character(rep$table[!is.na(rate) & rate <= 0 & !is.na(filled) & filled > 0L]))
 }
 
+# .doc_wrong_columns(rep) -> the tables holding a band that is sitting under
+# ANOTHER of that table's headings.
+#
+# THE COMPUTED FLAG NOBODY READ. R/tables.R works this out properly - a
+# comparative table right-anchored to the page (Q1..Q4, Total) that gains Q5
+# pushes every older column left, so `Q1` holds Q2's figure and `Total` holds
+# Q5's - and it says so, in the table's own detail line. But `wrong_column` was
+# put on the report and then read by NOTHING: not the status, not the summary,
+# not the screen. Every other signal on that run says perfect, because every
+# other signal is true: the rows are there, the columns are full, nothing is
+# unclaimed. Only the headings disagree.
+#
+# So a run that carries one is `needs_review`. It cannot be `ok`: the figures are
+# real figures under the wrong names, which is the one thing this tool exists to
+# stop. (Register I2.)
+#
+# Read defensively for the same reason as .doc_parse_failures: a report frame
+# from a build that predates the column makes this do nothing, rather than error.
+.doc_wrong_columns <- function(rep) {
+  if (is.null(rep) || !nrow(rep) || !("table" %in% names(rep))) return(character(0))
+  if (!("wrong_column" %in% names(rep))) return(character(0))
+  unique(as.character(rep$table[rep$wrong_column %in% TRUE]))
+}
+
 convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir = NULL,
                            outdir = "out", formats = c("xlsx", "csv"),
                            template_id = NULL, run_id = NULL) {
@@ -837,9 +861,11 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
                                 na.rm = TRUE))
     spilt <- unique(as.character((ext$unclaimed %||% document_unclaimed(ext$tables))$table))
     parse_fail <- .doc_parse_failures(ext$report)
+    wrong_col  <- .doc_wrong_columns(ext$report)
     res$empty_tables <- empty; res$thin_tables <- thin; res$weak_tables <- weak
     res$absent_tables <- absent; res$unclaimed_words <- unclaimed
     res$parse_fail_tables <- parse_fail
+    res$wrong_column_tables <- wrong_col
     # The build stamp: WHAT PRODUCED THIS FILE. A report converts in March and in
     # September the defence asks how row 14 was derived; the file used to answer
     # with sheet names and nothing else. Deliberately deterministic - the run id
@@ -872,6 +898,7 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
     res$status <- if (res$n_rows == 0L) "unsupported"
                   else if (length(empty) || length(thin) || length(weak) ||
                            length(absent_pinned) || length(parse_fail) ||
+                           length(wrong_col) ||
                            ambiguous || unclaimed > .DOC_MAX_UNCLAIMED) "needs_review"
                   else "ok"
     # MATCHED, AND READ NOTHING -- kept as its two halves as well as joined.
@@ -901,6 +928,16 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
       status_message("needs_review",
         sprintf("a column of figures on %s came out holding no figures at all", nm(parse_fail)),
         "the column edges there are over the wrong part of the page")
+      # A BAND UNDER ANOTHER OF THIS TABLE'S OWN HEADINGS. Every other signal on
+      # such a run says perfect, and every other signal is TRUE: the rows are
+      # there, the columns are full, nothing is unclaimed. Only the headings
+      # disagree - which is the shifted-by-one shape, and the figures are real
+      # figures filed under the wrong names. It cannot be reported as ok.
+      else if (length(wrong_col))
+      status_message("needs_review",
+        sprintf("the columns on %s do not line up with the headings this copy prints",
+                nm(wrong_col)),
+        "this copy has probably gained or lost a column - check the figures against the page before using them")
       else if (unclaimed > .DOC_MAX_UNCLAIMED)
       status_message("needs_review",
         sprintf("%d word(s) inside %s were not in any column", unclaimed, nm(spilt)),

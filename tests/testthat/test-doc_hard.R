@@ -1399,3 +1399,51 @@ test_that("the builder passes a base only while it is still the same template", 
   joined <- paste(src, collapse = "\n")
   expect_match(joined, "rb_editing\\(NA_character_\\); rb_base\\(NULL\\)")
 })
+
+# ---------------------------------------------------------------------------
+# THE COMPUTED FLAG NOBODY READ
+#
+# R/tables.R works out properly that a band is sitting under ANOTHER of its own
+# table's headings -- a comparative table right-anchored to the page (Q1..Q4,
+# Total) that gains Q5 pushes every older column left, so Q1 holds Q2's figure
+# and Total holds Q5's. It puts `wrong_column` on the per-column report and says
+# so in the table's detail line.
+#
+# And nothing anywhere read it. `grep wrong_column` outside the line that
+# computes it returned nothing: not the status, not the summary, not the screen.
+# So the run came back **ok** -- and every other signal on it was TRUE, which is
+# what makes this the dangerous shape: the rows are there, the columns are full,
+# nothing is unclaimed, confidence is 1.00. Only the headings disagree, and the
+# figures are real figures filed under the wrong names. (Register I2.)
+# ---------------------------------------------------------------------------
+
+test_that("a band under another column's heading is read, and holds the run", {
+  rep <- function(wrong) data.frame(
+    table = c("position", "position"), column = c("Q1", "Q6"),
+    wrong_kind = c(FALSE, FALSE), wrong_column = c(FALSE, wrong),
+    stringsAsFactors = FALSE)
+  expect_length(.doc_wrong_columns(rep(FALSE)), 0L)
+  expect_identical(.doc_wrong_columns(rep(TRUE)), "position")
+  # named ONCE, however many columns of that table disagree -- a shifted table
+  # disagrees in every column at once and the status names tables, not columns
+  many <- data.frame(table = c("position", "position", "position"),
+                     column = c("Q1", "Q2", "Q6"),
+                     wrong_column = c(TRUE, TRUE, TRUE), stringsAsFactors = FALSE)
+  expect_identical(.doc_wrong_columns(many), "position")
+  # a report frame from a build that predates the column does nothing, rather
+  # than erroring -- the same rule .doc_parse_failures is read by
+  expect_length(.doc_wrong_columns(data.frame(table = "x", column = "y",
+                                              stringsAsFactors = FALSE)), 0L)
+  expect_length(.doc_wrong_columns(NULL), 0L)
+
+  # AND IT GATES. The status line and the message both have to name it, or the
+  # flag is computed, read, and still thrown away.
+  src <- readLines(file.path(engine_root(), "R", "doc_extract.R"), warn = FALSE)
+  i <- grep("res\\$status <- if \\(res\\$n_rows == 0L\\)", src)[1]
+  skip_if(is.na(i), "the status gate was not found")
+  blk <- paste(src[i:min(length(src), i + 45L)], collapse = "\n")
+  expect_match(blk, "length\\(wrong_col\\)")
+  expect_match(blk, "do not line up with the headings this copy prints", fixed = TRUE)
+  # ...and it is carried on the result, so a log or a screen can say which table
+  expect_match(paste(src, collapse = "\n"), "res\\$wrong_column_tables <- wrong_col")
+})
