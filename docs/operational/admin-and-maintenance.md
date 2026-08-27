@@ -42,7 +42,10 @@ Every layout the tool can read, of **all three kinds**: bank statements, forms
 - **A template that failed to load is named at the top of the tab**, with the
   reason. A template that stops validating after an update does not vanish
   silently — this is the first place to look when one "stopped working".
-- **Check it's valid** parses and validates without saving.
+- **Save this text as a user template** checks it before it writes: bad YAML, or
+  a template that breaks its own kind's rules, is refused with the reasons listed
+  and nothing is written. It is checked as the kind the *text* declares — change
+  `mode:` in the box and it is checked, and saved, as that kind.
 - **Check it still reads the examples on this box** re-runs the template against
   the documents on this server it has already read. No folder to pick: the tool
   knows which those are.

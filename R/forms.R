@@ -307,14 +307,21 @@ convert_form <- function(path, fields_dir = "templates/fields",
                   else if (res$n_conflicts > 0 || res$required_missing > 0 ||
                            ambiguous) "needs_review"
                   else "ok"
+    # MATCHED, AND FOUND NOTHING -- kept as its two halves as well as joined, for
+    # the same reason as the document engine: diagnostics_matched_empty needs them
+    # apart, and parsing them back out of the message would be a second way to say
+    # one thing.
+    me_why <- sprintf(
+      # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
+      # person holding the document cannot check anything against one, and the
+      # id is still on the run record where it is useful.
+      "the %s fits this document but found none of its %d values",
+      .form_tpl_name(tmpl), res$n_fields)
+    me_fix <- paste("the labels are probably printed differently here, or the values sit in a",
+                    "table rather than beside their label")
+    if (res$n_values == 0L) res$matched_empty <- list(why = me_why, fix = me_fix)
     res$messages <- if (res$n_values == 0L)
-      status_message("unsupported",
-        # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
-        # person holding the document cannot check anything against one, and the
-        # id is still on the run record where it is useful.
-        sprintf("the %s fits this document but found none of its %d values",
-                .form_tpl_name(tmpl), res$n_fields),
-        "the labels are probably printed differently here, or the values sit in a table rather than beside their label")
+      status_message("unsupported", me_why, me_fix)
       else if (ambiguous)
       status_message("needs_review",
         sprintf("%d templates fit this document equally well", length(det$tied)),
@@ -608,6 +615,11 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
         !is.na(fr$template_id %||% NA) && (fr$n_fields %||% 0L) > 0L) {
       res$messages <- fr$messages
       res$form_matched_empty <- fr$template_id
+      # ...and the DIAGNOSTICS TABLE with it. It was built by the statement pass,
+      # which ran before this engine spoke, so it still said "no template matched"
+      # underneath a message saying one had. See diagnostics_matched_empty.
+      res$diagnostics <- diagnostics_matched_empty(
+        res$diagnostics, fr$matched_empty$why, fr$matched_empty$fix)
     }
     if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
       fr$kind <- "form"
@@ -675,6 +687,11 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
       # and did not fit" needs the opposite advice from "there is no template".
       res$messages <- tr$messages
       res$doc_matched_empty <- tr$template_id
+      # ...and the DIAGNOSTICS TABLE with it, for the same reason as the form
+      # branch above: it was built by the statement pass and still contradicts
+      # the sentence this engine just wrote. See diagnostics_matched_empty.
+      res$diagnostics <- diagnostics_matched_empty(
+        res$diagnostics, tr$matched_empty$why, tr$matched_empty$fix)
     }
   }
   .record_and_return(logdir, res, notice)

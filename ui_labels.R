@@ -30,6 +30,16 @@ STATUS_PLAIN <- c(
 # demanding a pick from a screen that had no picker on it, while the confidence
 # grade the engine had already computed was thrown away beside it.
 STATUS_PLAIN_AMBIGUOUS <- "More than one template fits - pick which one"
+# THE OTHER of those two opposite situations, and the one that went unsaid for
+# longer. A template's identifying wording DID match, and that template then read
+# nothing off the page. "No template recognised this document yet" is simply
+# false there, and the card's own body said so directly underneath it - the
+# engine's sentence names the template and says it fits. Two statements, one
+# screen, one of them a lie, and the bigger type was carrying it.
+#
+# It says WHAT HAPPENED, not what to do: the door underneath (cv_teach_go_empty)
+# already opens that template, and the diagnostics row carries the cure.
+STATUS_PLAIN_MATCHED_EMPTY <- "A template fits this document but read nothing from it"
 # ONE entry per check reconcile() can emit (R/reconcile.R -- the list at the
 # bottom of that file is the authoritative set). A check with no entry here shows
 # its raw code on screen, which is the moment a forensic reviewer stops trusting

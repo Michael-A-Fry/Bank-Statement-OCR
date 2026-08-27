@@ -348,3 +348,67 @@ test_that("an ordinary unsupported layout still gets the template advice (#54 gu
   expect_true("unknown_format" %in% d$category)
   expect_false("scanned_no_ocr" %in% d$category)
 })
+
+# ---------------------------------------------------------------------------
+# A VERDICT THAT CONTRADICTS ITS OWN BODY
+#
+# Driven in a browser with a report template whose heading was declared taller
+# than the table, so it MATCHED the document and read nothing. The screen then
+# said three things and two of them were false:
+#   title  "No template recognised this document yet"                  <- FALSE
+#   body   "the Acme report fits this document but read no rows..."    <- true
+#   diag   "layout not recognised - high - no templates match"         <- FALSE
+#
+# The cause is the running order: the statement pass builds the diagnostics
+# before the engine that actually reads the document has spoken. It is not only
+# wording -- app.R's .matched_but_empty(res) reads the TABLE, so on the other
+# route the headline swap never fired and neither did the door that opens the
+# template that failed.
+# ---------------------------------------------------------------------------
+
+test_that("a template that matched and read nothing replaces the detection row", {
+  d <- rbind(
+    data.frame(where = "file", category = "pdf_producer", severity = "info",
+               detail = "made by Acme", how_to_fix = "", stringsAsFactors = FALSE),
+    data.frame(where = "detection", category = "unknown_format", severity = "high",
+               detail = "no templates match the supplied hints",
+               how_to_fix = "Add a template", stringsAsFactors = FALSE))
+  out <- diagnostics_matched_empty(d, "the Acme report fits this document but read no rows",
+                                   "the tables have probably moved")
+  expect_false("unknown_format" %in% out$category)
+  expect_true("matched_but_empty" %in% out$category)
+  # ONE ROW REPLACED, IN PLACE. Everything else in the table is still true and
+  # keeps its position -- the detection row is the only thing being contradicted.
+  expect_equal(nrow(out), 2L)
+  expect_identical(out$category[1], "pdf_producer")
+  expect_identical(out$severity[out$category == "matched_but_empty"], "high")
+  expect_identical(out$where[out$category == "matched_but_empty"], "template")
+})
+
+test_that("the row swap survives every shape of diagnostics table it can be handed", {
+  one <- data.frame(where = "detection", category = "unknown_format", severity = "high",
+                    detail = "x", how_to_fix = "y", stringsAsFactors = FALSE)
+  # THE NEGATIVE-INDEX TRAP. `diag[-at[-1], ]` reads as "drop the extra matches",
+  # and with no extra matches at[-1] is integer(0) -- which in R selects NOTHING
+  # and would empty the whole table on the commonest case of all.
+  o1 <- diagnostics_matched_empty(one, "why", "fix")
+  expect_equal(nrow(o1), 1L)
+  expect_identical(o1$detail, "why")
+
+  # nothing to replace -> it goes on the front, and nothing already there is lost
+  none <- data.frame(where = "file", category = "pdf_producer", severity = "info",
+                     detail = "x", how_to_fix = "", stringsAsFactors = FALSE)
+  o2 <- diagnostics_matched_empty(none, "why", "fix")
+  expect_equal(nrow(o2), 2L)
+  expect_identical(o2$category[1], "matched_but_empty")
+
+  # no table at all -> the one row, so a caller never has to check first
+  expect_equal(nrow(diagnostics_matched_empty(NULL, "why", "fix")), 1L)
+  expect_equal(nrow(diagnostics_matched_empty(list(), "why", "fix")), 1L)
+
+  # ...and it never says it twice
+  dup <- rbind(o1, o1)
+  o3 <- diagnostics_matched_empty(dup, "newer", "fix")
+  expect_equal(nrow(o3), 1L)
+  expect_identical(o3$detail, "newer")
+})

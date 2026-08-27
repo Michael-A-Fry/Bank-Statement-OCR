@@ -54,11 +54,7 @@
   }
   get(name, envir = env)
 }
-.ui_block <- function(src, pat, n = 40L) {
-  i <- grep(pat, src)
-  testthat::expect_true(length(i) >= 1)
-  paste(src[i[1]:min(i[1] + n, length(src))], collapse = " ")
-}
+.ui_block <- .src_block   # brace-balanced, in helper.R
 # The stylesheet, as text. It used to be three tags$style(HTML(...)) blocks inside
 # app.R; it is now www/app.css, served off disk by Shiny (no CDN, so air-gapping
 # is untouched). The rules below are about the CSS wherever it lives, so they read
@@ -2247,11 +2243,36 @@ test_that("an empty checks or coverage table says why it is empty", {
   # so the identical sentence appeared twice on one screen, each time half about
   # the other table.
   expect_match(why(list(status = "unsupported"), "nothing to check"), "nothing to check\\.$")
-  expect_match(why(list(status = "unsupported"), "no fields to report"), "no fields to report\\.$")
+  expect_match(why(list(status = "unsupported"), "no field coverage to report"),
+               "no field coverage to report\\.$")
   blk <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 26L)
   expect_match(blk, 'if \\(has_kpis\\) DTOutput\\("cv_kpis"\\) else said\\("nothing to check"\\)')
-  expect_match(blk, 'said\\("no fields to report"\\)')
+  expect_match(blk, 'said\\("no field coverage to report"\\)')
   expect_match(blk, "if \\(has_cov\\) tagList")
+})
+
+# ...AND THE SPLIT THAT MADE EACH HEADING SAY ITS OWN THING LEFT ONE OF THEM
+# UNGRAMMATICAL. .why_empty frames every phrase as "..., so there is %s.", and
+# the phrase kept its plural from the joined sentence it was cut out of: "so
+# there is no fields to report." It shipped on BOTH routes, on every unsupported
+# or failed run, and the test above pinned the broken string.
+#
+# So this pins the RULE instead of the strings: whatever phrases the screen
+# passes to said(), each one has to finish the sentence .why_empty starts. A
+# plural noun straight after "no" cannot.
+test_that("every empty-table phrase finishes the sentence it is dropped into", {
+  blk    <- .ui_block(.ui_src(), "output\\$cv_detail <- renderUI", 26L)
+  phrase <- regmatches(blk, gregexpr('said\\("[^"]+"\\)', blk))[[1]]
+  phrase <- sub('^said\\("', "", sub('"\\)$', "", phrase))
+  expect_gt(length(phrase), 1L)
+  why <- .ui_fun(".why_empty")
+  for (p in phrase) {
+    s <- why(list(status = "unsupported"), p)
+    expect_match(s, "\\.$")
+    # "there is no fields", "there is no rows" -- the failure this exists for.
+    expect_false(grepl("there is no [a-z]+s\\b", s),
+                 info = paste("plural after \"there is no\":", s))
+  }
 })
 
 # ...AND THE THIRD TABLE WAS LEFT OUT OF THAT FIX. Two of the three headings in
@@ -2908,7 +2929,19 @@ test_that("the Advanced tab holds the live template without being asked", {
   expect_length(grep("g_adv_load", src), 0L)
   blk <- .ui_block(src, "observeEvent\\(input\\$g_tabs,", 6L)
   expect_match(blk, 'identical\\(input\\$g_tabs, "Advanced"\\)')
-  expect_match(blk, 'updateTextAreaInput\\(session, "g_yaml", value = template_yaml\\(guided_live\\(\\)\\)\\)')
+  expect_match(blk, 'updateTextAreaInput\\(session, "g_yaml", value = live\\)')
+  # ...BUT A BOX YOU HAVE TYPED IN IS NOT A STALE BOX. Refreshing on every visit
+  # meant: type here, glance at Simple, come back, and the typing is gone with no
+  # message and nothing to undo it -- the same silent loss the button was cut
+  # for, turned round the other way and needing no button at all. So the box is
+  # refreshed only while it is still exactly what the tool put in it, which is
+  # the test the two vocabulary editors already use.
+  expect_match(blk, "g_yaml_put")
+  expect_match(blk, "Your edits are still here", fixed = TRUE)
+  # and applying settles it, or the warning would stand for the rest of the
+  # session on a box that had been dealt with
+  expect_match(.ui_block(src, "observeEvent\\(input\\$g_adv_apply,", 6L),
+               "g_yaml_put\\(input\\$g_yaml")
   # the only way back from text to the live template stays
   expect_match(joined, 'actionButton\\("g_adv_apply", "Check & apply"')
 })
@@ -3112,4 +3145,89 @@ test_that("one measurement has one wording wherever the screen says it", {
   expect_true(any(grepl("were not in any column", src, fixed = TRUE)))
   expect_false(any(grepl("found by position rather than by a heading", src, fixed = TRUE)))
   expect_true(any(grepl("were found by position, not by their heading", src, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
+# A VERDICT WHOSE TITLE CONTRADICTS ITS OWN BODY
+#
+# Driven in Chromium with a report template whose heading was declared taller
+# than the table, so it MATCHED the document and read nothing. Three statements
+# on one screen and two of them false:
+#   title  "No template recognised this document yet"                  <- FALSE
+#   body   "the Acme report fits this document but read no rows..."    <- true
+#   diag   "layout not recognised - high - no templates match"         <- FALSE
+#
+# ui_labels.R has said since it was written that `unsupported` "covers two
+# OPPOSITE situations and one headline cannot say both". This is the second
+# situation, and it went unsaid.
+# ---------------------------------------------------------------------------
+
+test_that("a template that matched and read nothing takes the headline", {
+  src <- .ui_src()
+  f <- .ui_fun(".matched_but_empty",
+               also = c(".diagnostics_of", ".statement_route", ".is_txn_result"))
+  none <- data.frame(where = "detection", category = "unknown_format",
+                     severity = "high", detail = "x", how_to_fix = "y",
+                     stringsAsFactors = FALSE)
+  yes  <- data.frame(where = "template", category = "matched_but_empty",
+                     severity = "high", detail = "x", how_to_fix = "y",
+                     stringsAsFactors = FALSE)
+  expect_false(f(list(diagnostics = none)))
+  expect_true(f(list(diagnostics = yes)))
+  # a result with no diagnostics at all is the ORDINARY case and must not throw
+  expect_false(f(list()))
+  expect_false(f(list(diagnostics = NULL)))
+
+  # THE HEADLINE IS THE THIRD SWAP ON ONE LINE, not a new mechanism: the tie
+  # above it and the blocking diagnosis below it are the same idea.
+  blk <- .ui_block(src, "output\\$cv_status <- renderUI", 45L)
+  expect_match(blk, "\\.matched_but_empty\\(res\\)")
+  expect_match(blk, "STATUS_PLAIN_MATCHED_EMPTY")
+  # ...and it is ranked between them: after the tie, before the blocking diagnosis,
+  # which is the only order in which all three can be right at once.
+  expect_true(regexpr("STATUS_PLAIN_AMBIGUOUS", blk, fixed = TRUE) <
+              regexpr("STATUS_PLAIN_MATCHED_EMPTY", blk, fixed = TRUE))
+  expect_true(regexpr("STATUS_PLAIN_MATCHED_EMPTY", blk, fixed = TRUE) <
+              regexpr(".blocking_diag(res)", blk, fixed = TRUE))
+
+  # the words themselves say what happened, and do not repeat the headline they
+  # replaced (read from ui_labels.R, which is where the wording lives)
+  lab <- new.env(parent = globalenv())
+  sys.source(file.path(engine_root(), "ui_labels.R"), envir = lab)
+  words <- get("STATUS_PLAIN_MATCHED_EMPTY", envir = lab)
+  expect_false(grepl("No template", words, fixed = TRUE))
+  expect_match(words, "read nothing")
+})
+
+# ---------------------------------------------------------------------------
+# THE TWO ROUTES SAID DIFFERENT THINGS ON THE SAME DEAD END
+#
+# Photographed side by side. On "other" the card leads with a NEW fact -- "No
+# bank statement template was tried - you said this is not one." On "statement"
+# it led with "No template reads this statement yet." one inch under a verdict
+# title reading "No template recognised this document yet": the same fact twice,
+# in two sizes. The words sweep cut the duplication from one branch and left it
+# standing on the other -- the one Beth is likelier to be on.
+# ---------------------------------------------------------------------------
+
+test_that("both routes lead the unrecognised card with a fact the verdict cannot say", {
+  # COMMENTS STRIPPED FIRST. Both cut sentences are quoted in the comments that
+  # record why they went, so a test that reads the raw block finds them and calls
+  # the fix a failure.
+  code <- sub("\\s*#.*$", "", .ui_src())
+  blk  <- .ui_block(code, "output\\$cv_teach <- renderUI", 240L)
+  # each branch says which half of the tool was tried -- the one thing the card
+  # above it does not know
+  expect_match(blk, "No bank statement template was tried", fixed = TRUE)
+  expect_match(blk, "Every bank statement template was tried", fixed = TRUE)
+  # and neither says the verdict's own headline back to her
+  expect_false(grepl("No template reads this statement yet", blk, fixed = TRUE))
+  expect_false(grepl("No form or report template reads this yet", blk, fixed = TRUE))
+  # ...nor works out what kind of document it is at somebody who has just said.
+  # `why` is doc_shape_hint's "12 line(s) look like a transaction row"; it belongs
+  # on the branches where the tool is deciding, not on the two where it was told.
+  a0 <- regexpr('identical(asked, "other")', blk, fixed = TRUE)
+  a1 <- regexpr('identical(looks, "report")', blk, fixed = TRUE)
+  expect_true(a0 > 0 && a1 > a0)
+  expect_false(grepl("why,", substr(blk, a0, a1 - 1L), fixed = TRUE))
 })

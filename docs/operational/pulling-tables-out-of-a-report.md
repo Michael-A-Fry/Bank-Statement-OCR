@@ -161,8 +161,7 @@ document. A gap is visible. A lost column would not be.
 
 Both are stated in words — *Starts page 2, 14% down the page* — with:
 
-- **Show me** — turns to that page
-- **Move it** — then click the page where it should be
+- **Move it** — turns to that page, then click (or drag a box) where it should be
 - **Work the end out for me** — reads down and finds where the rows stop
 - **End at the bottom of its page** / **End at the bottom of the last page**
 - **Type the exact positions instead** — for when you want it exactly on a number

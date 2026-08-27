@@ -13,10 +13,18 @@
 }
 .da_joined <- function() paste(.da_src(), collapse = "\n")
 # .da_block(pattern, n) -- n lines from the first line matching `pattern`.
+# A FIXED LINE COUNT IS A PROMISE THE CODE KEEPS BREAKING. Add a paragraph of
+# comment inside an observer and the window slides off the end of what it was
+# checking: the lucky half of these go red for no reason, and the unlucky half
+# go GREEN FOR THE WRONG REASON, because the line they were pinning is no longer
+# inside the text they read. So this is .da_whole with the old count kept as a
+# FLOOR -- never a ceiling -- and it skips, as it always did, when the anchor
+# itself has gone.
 .da_block <- function(src, pattern, n) {
   i <- grep(pattern, src)[1]
   skip_if(is.na(i), paste("not found:", pattern))
-  paste(src[i:min(length(src), i + n - 1L)], collapse = "\n")
+  w <- length(strsplit(.da_whole(src, pattern), "\n", fixed = TRUE)[[1]])
+  paste(src[i:min(length(src), i + max(n, w) - 1L)], collapse = "\n")
 }
 
 # THE WHOLE of a block, however long it grows. A fixed line count has to be
@@ -197,13 +205,31 @@ test_that("the start and the end are on the screen in words, and easy to move", 
   # and the three answers people actually want, as one press each
   for (b in c("rb_endauto", "rb_endpage", "rb_endlast"))
     expect_match(blk, sprintf('"%s"', b))
-  # a click only ever moves one of those two, and only when it was asked for
-  cl <- .da_whole(src, "observeEvent\\(rb_click_late\\(\\)")
-  expect_match(cl, 'if \\(!\\(m %in% c\\("start", "end", "bottom"\\)\\)\\) return\\(\\)')
+  # ONE PLACE MOVES THESE LINES, and both gestures reach it. The logic used to
+  # live inside the click observer, so a DRAG aimed at the same question fell
+  # through the brush observer's list of modes and did nothing at all -- no
+  # rectangle, no message, no change, the banner still asking. That is the
+  # complaint the register carries in the owner's words, and the click/drag
+  # reconciliation made it likelier: a fast drag lands its brush before the
+  # click's wait is up, so the brush is ignored for want of a branch and the
+  # click then stands down as the leading edge of that same drag.
+  ed <- .da_whole(src, "\\.rb_set_edge <- function")
   # an end before the start, or a start after the end, is refused where it
   # happens rather than explained later
-  expect_match(cl, "past where the table ends")
-  expect_match(cl, "above where the table starts")
+  expect_match(ed, "past where the table ends")
+  expect_match(ed, "above where the table starts")
+  # the CLICK reaches it, and only when one of the three was asked for
+  cl <- .da_whole(src, "observeEvent\\(rb_click_late\\(\\)")
+  expect_match(cl, 'm %in% c\\("start", "end", "bottom"\\)')
+  expect_match(cl, "\\.rb_set_edge\\(m, \\.rb_pg\\(\\), as\\.numeric\\(cl\\$y\\)\\)")
+  # ...AND SO DOES THE DRAG, at the edge of the box that faces the table's body,
+  # BEFORE the "too small to read anything from" guard -- a line drawn along the
+  # page is two points tall and is a perfectly good way to point at a row.
+  br <- .da_whole(src, "observeEvent\\(input\\$rb_brush")
+  expect_match(br, 'if \\(m %in% c\\("start", "end", "bottom"\\)\\)')
+  expect_match(br, '\\.rb_set_edge\\(m, pg, if \\(m == "start"\\) box\\$y_min else box\\$y_max\\)')
+  expect_true(regexpr('.rb_set_edge(m, pg,', br, fixed = TRUE) <
+              regexpr("box$x_max - box$x_min < 2", br, fixed = TRUE))
   # and both markers are drawn on the page, named
   plot <- .da_block(src, "\\.rb_draw_table <- function", 78L)
   expect_match(plot, '"START')
@@ -672,7 +698,7 @@ test_that("one column out of a header drag is said out loud, twice", {
   expect_match(blk, 'type = "warning"')
   # ...and again on the verdict card, so it is not only said at the moment of
   # the drag and then forgotten
-  v <- .da_block(src, "output\\$rb_prev_status <- renderUI", 60L)
+  v <- .da_whole(src, "output\\$rb_prev_status <- renderUI")
   expect_match(v, "one_col <- sum\\(num\\(s\\$columns\\) == 1L\\)")
   expect_match(v, "each", fixed = TRUE)
   expect_match(v, "row arrives whole in one cell", fixed = TRUE)
@@ -771,7 +797,7 @@ test_that("the preview shows the values as well as the tables", {
   expect_match(joined, 'output\\$rb_prev_values <- renderTable')
   # and the count is in the verdict line, so a values-only template is not
   # reported as "0 tables" and nothing else
-  v <- .da_block(.da_src(), "output\\$rb_prev_status <- renderUI", 60L)
+  v <- .da_whole(.da_src(), "output\\$rb_prev_status <- renderUI")
   expect_match(v, "n_val <- NROW\\(ext\\$pairs\\)")
   expect_match(v, "reads labelled values only", fixed = TRUE)
 })
@@ -797,7 +823,7 @@ test_that("every count on the verdict card is forced to a number", {
   # summary used to be ten character(0) columns, and sum() over one is an error.
   # Fixed at the source (R/doc_extract.R types the empty frame); this is the
   # second lock, because the screen must not be the thing that falls over.
-  v <- .da_block(.da_src(), "output\\$rb_prev_status <- renderUI", 60L)
+  v <- .da_whole(.da_src(), "output\\$rb_prev_status <- renderUI")
   expect_match(v, "num <- function\\(v\\)")
   expect_false(grepl("sum\\(s\\$rows\\)", v))          # the exact line that threw
   for (f in c("num(s$thin_columns)", "num(s$unclaimed_words)", "num(s$rows)"))
@@ -842,7 +868,7 @@ test_that("the bottom edge is stored where the reader actually uses it", {
   # doc_locate_table() closes a CONTINUATION page's window at band$y_max
   # (R/tables.R). Anywhere else and the setting would be a control that changes
   # nothing -- which is worse than not having one.
-  cl <- .da_whole(.da_src(), "observeEvent\\(rb_click_late\\(\\)")
+  cl <- .da_whole(.da_src(), "\\.rb_set_edge <- function")
   expect_match(cl, "b <- d\\$band")
   expect_match(cl, "b\\$y_max <- y")
   expect_match(cl, "above the top of the table", fixed = TRUE)

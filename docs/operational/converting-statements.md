@@ -12,7 +12,7 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    every time. The other two answers, **A bank or card statement** and
    **Something else - a report, a form, a letter**, are there for the case where
    it read a trustee report as a statement, or the other way round.
-4. **Type your QID** and click **Use this QID**. Six letters or numbers — your
+4. **Type your QID.** Six letters or numbers — your
    staff ID, e.g. `AB1234`. It is what the audit trail records as who ran this
    conversion, so **Convert does nothing until it is filled in**. You are asked
    once per session; after that the page just says *Recording as AB1234*, with a

@@ -14,8 +14,10 @@ click **Save template**. On a statement the tool drafted cleanly, that is the
 entire job — the bands are already drawn and the columns already mapped from
 your own file, and the preview underneath is showing you the result.
 
-So: **Add a template** tab → **Browse** the example → leave the question on *A
-bank or card statement* → **Open the toolkit**.
+So: **Add a template** tab → leave the question on *A bank or card statement* →
+**Browse** the example. The toolkit opens on the upload; there is no button to
+press. (**Open the toolkit** appears under the file picker afterwards — it is the
+way back in if you press Cancel, not a step.)
 
 The toolkit prints its own numbered strip along the top. On a **PDF** it reads:
 
@@ -183,10 +185,15 @@ Zealand dollars, look at this box before you Save.** A currency is a label on
 money, and a wrong one is a wrong figure: it stamps the currency column and the
 totals above the transactions table.
 
-**The complete template as text** is the toolkit's **Advanced** tab —
-*Load current settings* fills it, *Check & apply* validates and updates the
-preview, and a syntax error is reported with its line and column. The **Simple**
-tab picks up whatever you applied.
+**The complete template as text** is the toolkit's **Advanced** tab. Opening the
+tab fills the box with the settings as they stand, so it can never show you a
+stale copy; *Check & apply* validates and updates the preview, and a syntax error
+is reported with its line and column. The **Simple** tab picks up whatever you
+applied.
+
+If you have typed in the box and go back to **Simple**, your typing is still
+there when you return — the box is only refreshed while it is untouched, and the
+line above it says so.
 
 ## When the preview reads nothing
 

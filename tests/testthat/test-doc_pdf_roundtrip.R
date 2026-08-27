@@ -258,3 +258,59 @@ test_that("the build stamp travels from the front door into the file", {
   res2 <- convert_tables(doc_pdf_fixture(), doc_dir = tpl, outdir = out)
   expect_null(res2$build$run_id)
 })
+
+# ---------------------------------------------------------------------------
+# THE VERDICT THAT CONTRADICTED ITS OWN BODY, ON THE WHOLE ROUTE
+#
+# Driven in a browser: a report template whose heading was declared taller than
+# the table MATCHES the document and reads nothing. The engine says so plainly
+# -- "the Acme report fits this document but read no rows from any of its 1
+# table(s)" -- and the diagnostics table an inch below still said `unknown_format`,
+# "no templates match the supplied hints", at severity high.
+#
+# The cause is the running order: the statement pass builds the diagnostics
+# before the engine that actually reads the document has spoken. So the swap
+# happens where the document engine's answer is adopted, and this drives the
+# whole of convert_document() to prove it, rather than the helper alone.
+# ---------------------------------------------------------------------------
+
+test_that("a report template that matched and read nothing says so in BOTH places", {
+  skip_if_no_pdf()
+  path <- doc_pdf_fixture()
+  tdir <- file.path(tempdir(), "me-tpl"); unlink(tdir, recursive = TRUE); dir.create(tdir)
+  odir <- file.path(tempdir(), "me-out"); unlink(odir, recursive = TRUE); dir.create(odir)
+  on.exit(unlink(c(tdir, odir), recursive = TRUE), add = TRUE)
+
+  inp <- read_input(path)
+  t <- document_template_from_proposal("me_probe", "Acme", "report",
+                                       phrases = header_phrases(inp),
+                                       tables  = propose_tables(inp),
+                                       pairs   = list())
+  # ONE table, its heading declared taller than the table is. It still matches
+  # (the fingerprint phrases are untouched) and it is still LOCATED -- every data
+  # row is simply swallowed as heading, and there is no second table to rescue
+  # the run. This is the shape the browser produced.
+  t$tables <- t$tables[1]
+  t$tables[[1]]$header_rows <- 200L
+  save_document_template(t, tdir)
+
+  res <- convert_document(path, kind = "other", doc_dir = tdir, outdir = odir,
+                          formats = "csv", logdir = file.path(tempdir(), "me-logs"))
+
+  expect_identical(res$status, "unsupported")
+  # the engine's own sentence reached the screen...
+  expect_match(res$messages[1], "fits this document but read no rows")
+  expect_identical(res$doc_matched_empty, "me_probe")
+  # ...AND THE TABLE BESIDE IT NOW AGREES WITH IT.
+  expect_true("matched_but_empty" %in% res$diagnostics$category)
+  expect_false("unknown_format" %in% res$diagnostics$category)
+  # the two say the same thing, because they are the same string
+  expect_match(res$diagnostics$detail[res$diagnostics$category == "matched_but_empty"],
+               "fits this document but read no rows")
+  # and the cure names the tab this route is actually on, not the statement
+  # toolkit, which is what "open it in the toolkit" meant everywhere else
+  expect_match(res$diagnostics$how_to_fix[res$diagnostics$category == "matched_but_empty"],
+               "Add a template", fixed = TRUE)
+  # nothing else in the table was disturbed by the swap
+  expect_gte(nrow(res$diagnostics), 1L)
+})

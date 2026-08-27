@@ -69,3 +69,35 @@ expect_statement_ok <- function(fixture_path, expected_csv_path,
   testthat::expect_equal(got, exp)
   invisible(res)
 }
+
+# .src_block(src, pat, n) -- the block of app.R that starts at the first line
+# matching `pat`, as one string.
+#
+# THE WINDOW USED TO BE A LINE COUNT, and a line count is a promise the code
+# keeps breaking. Add a paragraph of comment inside an observer and the window
+# slides off the end of what it was checking: the lucky half of those tests go
+# red for no reason, and the unlucky half go GREEN FOR THE WRONG REASON -- the
+# pattern they were pinning is simply no longer inside the text they read. That
+# is the worse failure, because nothing announces it.
+#
+# So it counts braces instead, and ends where the block ends. `n` survives as a
+# FLOOR, not a ceiling, for the call sites whose pattern is a plain line rather
+# than the head of a block: the result is at least the n lines it always was, so
+# no assertion that passes today can start failing because the window shrank.
+#
+# Strings and comments are stripped before counting, or a brace inside a message
+# would close a block early.
+.src_block <- function(src, pat, n = 40L) {
+  i <- grep(pat, src)
+  testthat::expect_true(length(i) >= 1, info = paste("not found:", pat))
+  i <- i[1]
+  bare <- gsub("#.*$", "", gsub('"[^"]*"', "", gsub("'[^']*'", "", src)))
+  depth <- 0L; end <- NA_integer_
+  for (k in seq(i, length(src))) {
+    depth <- depth +
+      nchar(gsub("[^{(]", "", bare[k])) - nchar(gsub("[^})]", "", bare[k]))
+    if (k > i && depth <= 0L) { end <- k; break }
+  }
+  if (is.na(end)) end <- length(src)
+  paste(src[i:min(length(src), max(end, i + n - 1L))], collapse = " ")
+}

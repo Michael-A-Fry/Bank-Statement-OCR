@@ -36,6 +36,40 @@
   "columns sit - the usual cause is a column band drawn in the wrong place, or over",
   "the wrong part of the page. \"See it on the page\" shows what the tool saw.")
 
+# diagnostics_matched_empty(diag, why, fix) -- swap "no template matched" for
+# "one did, and it read nothing".
+#
+# THE STATEMENT PASS RUNS FIRST ON EVERY ROUTE, so on a report or a form the
+# diagnostics table is built by R/convert.R before the engine that actually reads
+# the document has spoken. When that engine then says "the Sample Report report
+# fits this document but read no rows from any of its 1 table(s)", the table
+# beside it still reads `unknown_format` - "no templates match the supplied
+# hints", at severity high. Two false statements against one true one, on a
+# screen a forensic reviewer is meant to be able to quote.
+#
+# It is not only wording. .matched_but_empty(res) in app.R reads the TABLE, not
+# the message, so on the other route the headline swap never fired and neither
+# did the door that opens the template that failed - the analyst was sent to
+# build a second copy of a template that already exists.
+#
+# One row is replaced where it stands. The detection row is the thing being
+# contradicted; everything else in the table is still true and keeps its place.
+diagnostics_matched_empty <- function(diag, why, fix) {
+  row <- .diag_row("template", "matched_but_empty", "high", why, fix)
+  if (is.null(diag) || !is.data.frame(diag) || !nrow(diag)) return(row)
+  at <- which(diag$category %in% c("unknown_format", "matched_but_empty"))
+  if (!length(at)) {
+    out <- rbind(row, diag[, names(row), drop = FALSE])
+  } else {
+    diag[at[1], names(row)] <- row
+    # setdiff, never `-at[-1]`: a negative index of length zero selects NOTHING
+    # in R and would empty the whole table on the common single-row case.
+    out <- diag[setdiff(seq_len(nrow(diag)), at[-1]), , drop = FALSE]
+  }
+  rownames(out) <- NULL
+  out
+}
+
 # Same rule, two more defects that were each written out twice in slightly
 # different words. Both are raised from two places -- a failing reconciliation KPI
 # and a direct check -- and in both the SITUATION differs (and stays in the detail)

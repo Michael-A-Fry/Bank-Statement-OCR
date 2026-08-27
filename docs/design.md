@@ -378,7 +378,7 @@ The schema, in the shape the builder saves it:
 
 ```yaml
 id: acme_valuation_report
-mode: document                 # the discriminator; is_document_template() reads it
+mode: document                 # the discriminator; template_kind() reads it
 format: pdf
 ref_width: 595.28              # the page size the boxes were drawn in
 ref_height: 841.89

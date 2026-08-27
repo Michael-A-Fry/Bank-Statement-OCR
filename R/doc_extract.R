@@ -874,14 +874,25 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
                            length(absent_pinned) || length(parse_fail) ||
                            ambiguous || unclaimed > .DOC_MAX_UNCLAIMED) "needs_review"
                   else "ok"
+    # MATCHED, AND READ NOTHING -- kept as its two halves as well as joined.
+    # The diagnostics table needs them apart (diagnostics_matched_empty, called by
+    # convert_document once this result comes back), and taking them back out of
+    # the message would be a second way to say one thing.
+    #
+    # "the toolkit" was the statement toolkit's name everywhere else in the
+    # product, printed here to somebody holding a report. The tab is the same one
+    # on both routes and it is called "Add a template".
+    me_why <- sprintf(
+      # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
+      # person holding the document cannot check anything against one, and the
+      # id is still on the run record where it is useful.
+      "the %s fits this document but read no rows from any of its %d table(s)",
+      .doc_tpl_name(tmpl), res$n_tables)
+    me_fix <- paste("the tables have probably moved or been renamed on this copy -",
+                    "open it on the \"Add a template\" tab and check where each table starts")
+    if (res$n_rows == 0L) res$matched_empty <- list(why = me_why, fix = me_fix)
     res$messages <- if (res$n_rows == 0L)
-      status_message("unsupported",
-        # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
-        # person holding the document cannot check anything against one, and the
-        # id is still on the run record where it is useful.
-        sprintf("the %s fits this document but read no rows from any of its %d table(s)",
-                .doc_tpl_name(tmpl), res$n_tables),
-        "the tables have probably moved or been renamed here - open it in the toolkit and check where they start")
+      status_message("unsupported", me_why, me_fix)
       else if (ambiguous)
       status_message("needs_review",
         sprintf("%d templates fit this document equally well%s", length(det$tied), absent_note),

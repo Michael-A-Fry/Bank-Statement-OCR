@@ -358,6 +358,22 @@ pal_fill <- function(name, alpha) paste0(PALETTE[[name]], alpha)
   d[which(hit)[1], , drop = FALSE]
 }
 
+# .matched_but_empty(res) -- the engine matched a template's identifying wording
+# and that template then read nothing.
+#
+# It is the one `unsupported` result whose template id is a REAL match rather
+# than the closest miss, so it is the one that may be seeded into the toolkit,
+# and the one whose headline must NOT say "no template recognised this document".
+#
+# FILE SCOPE, beside .blocking_diag, because the same fact is needed in two
+# places that are 2,400 lines apart: the verdict headline and the card that
+# offers the template that failed. It reads only `res`.
+.matched_but_empty <- function(res) {
+  d <- .diagnostics_of(res)
+  isTRUE(is.data.frame(d) && "category" %in% names(d) &&
+         any(d$category %in% "matched_but_empty"))
+}
+
 # .scan_note(ocr_pages, low_conf) -- ONE SENTENCE saying this came off a scan,
 # for the line beside the download.
 #
@@ -4180,6 +4196,31 @@ server <- function(input, output, session) {
         type = "message", duration = 9)
       return()
     }
+    # A DRAG WHERE A CLICK IS EXPECTED ANSWERS THE QUESTION ANYWAY.
+    #
+    # This is the branch that was missing. Armed with "Click the page where the
+    # table STARTS", a drag did nothing whatsoever -- no rectangle, no message,
+    # no change to the draft, the banner still asking -- because the list below
+    # has branches for title/cols/addcol/colpos/phrase/label/value and none for
+    # these three. Confirmed in a browser; a plain click straight afterwards
+    # worked. It is the exact thing the register carries in the owner's words:
+    # "lots of the click-and-drags that should be clicks - users will do this, we
+    # MUST account for it."
+    #
+    # A boundary is a LINE, so the box gives it one: the edge of the box that
+    # faces the table's body. Drag round the table and its top is where it starts
+    # and its bottom is where it ends -- which is what the person drawing the box
+    # already meant. Refusals, the next step and the "where" panel are the click's,
+    # because .rb_set_edge is now the one place that moves these lines.
+    #
+    # BEFORE THE SIZE GUARD. A line drawn along the page is a legitimate way to
+    # say "here", and it is two points tall, so the guard would have thrown it
+    # out as "too small to read anything from" -- true of reading words, wrong
+    # about pointing at a row.
+    if (m %in% c("start", "end", "bottom")) {
+      .rb_set_edge(m, pg, if (m == "start") box$y_min else box$y_max)
+      return()
+    }
     if (box$x_max - box$x_min < 2 || box$y_max - box$y_min < 2) {
       showNotification("That box was too small to read anything from.",
                        type = "warning", duration = 5)
@@ -4480,41 +4521,18 @@ server <- function(input, output, session) {
     # because the gesture is over by the time this runs.
     session$resetBrush("rb_brush")
     m <- as.character(rb$mode %||% "")
-    if (!(m %in% c("start", "end", "bottom"))) return()
-    d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return() }
-    pg <- .rb_pg(); y <- round(max(as.numeric(cl$y), 0), 1)
-    if (m == "start") {
-      p1 <- .doc_int(d$end$page, pg)
-      if (pg > p1 || (pg == p1 && y >= .doc_num(d$end$y, Inf))) {
-        showNotification("That is at or past where the table ends - not applied.",
-                         type = "warning", duration = 6); return()
-      }
-      d$start <- list(page = as.integer(pg), y = y)
-    } else if (m == "end") {
-      p0 <- .doc_int(d$start$page, pg)
-      if (pg < p0 || (pg == p0 && y <= .doc_num(d$start$y, 0))) {
-        showNotification("That is at or above where the table starts - not applied.",
-                         type = "warning", duration = 6); return()
-      }
-      d$end <- list(page = as.integer(pg), y = y)
-      # An end on a later page means there are now pages in between, and they
-      # need a bottom edge. Filled in, never asked for. (Register D4.)
-      d <- .rb_default_bottom(d)
-    } else {
-      # THE BOTTOM EDGE OF EVERY PAGE BUT THE LAST. Stored on the table's band,
-      # which is what doc_locate_table() uses to close a continuation page's
-      # window (R/tables.R). Refused above the top of the band, because a bottom
-      # above the top is not a table.
-      b <- d$band %||% list()
-      top <- .doc_num(b$y_min, 0)
-      if (y <= top + 2) {
-        showNotification("That is at or above the top of the table - not applied.",
-                         type = "warning", duration = 6); return()
-      }
-      b$y_max <- y; d$band <- b
+    if (!(m %in% c("start", "end", "bottom"))) {
+      # A CLICK WHERE A DRAG IS EXPECTED USED TO DO NOTHING AND SAY NOTHING.
+      # The pinned banner is standing there saying "Drag a box round the table's
+      # heading", so the person is not lost -- but a drag with nothing armed gets
+      # a notification naming the button to press, and this got silence. Same
+      # gesture-does-not-fit situation, so the same courtesy.
+      if (nzchar(m) && !is.null(.RB_ASK[[m]]))
+        showNotification(sprintf("A click cannot answer that one. %s", .RB_ASK[[m]][1]),
+                         type = "message", duration = 7)
+      return()
     }
-    rb$draft <- d
-    .rb_push_where(d)
+    .rb_set_edge(m, .rb_pg(), as.numeric(cl$y))
     # A DRAG THAT SHOULD HAVE BEEN A CLICK IS STILL A CLICK.
     #
     # Reported: "lots of the click-and-drags that should be clicks -- users will
@@ -4532,8 +4550,60 @@ server <- function(input, output, session) {
     # dragged where they wanted the line and the line is there.
     rb$click_at <- list(t = as.numeric(Sys.time()), x = as.numeric(cl$x),
                         y = as.numeric(cl$y))
-    rb$mode <- .rb_next_step(m, d)
   })
+
+  # .rb_set_edge(m, pg, y) -- put the table's start, end or page-bottom line at y.
+  #
+  # ONE PLACE, because two gestures reach it. It was written inside the click
+  # observer, so a DRAG aimed at the same question fell through the brush
+  # observer's list of modes and did nothing at all: no rectangle, no message, no
+  # change to the draft, the banner still asking. Confirmed in a browser. That is
+  # the exact complaint the register carries -- "lots of the click-and-drags that
+  # should be clicks - users will do this, we MUST account for it" -- and the
+  # click/drag reconciliation made it likelier, not rarer: a FAST drag lands its
+  # brush before .RB_CLICK_WAIT is up, so the brush is ignored for want of a
+  # branch and the click then stands down as the leading edge of that same drag.
+  # Both halves of the gesture step aside and nothing happens.
+  #
+  # Returns TRUE if the line moved, FALSE if it was refused (having said why).
+  .rb_set_edge <- function(m, pg, y) {
+    d <- rb$draft; if (is.null(d)) { rb$mode <- ""; return(FALSE) }
+    y <- round(max(as.numeric(y), 0), 1)
+    if (m == "start") {
+      p1 <- .doc_int(d$end$page, pg)
+      if (pg > p1 || (pg == p1 && y >= .doc_num(d$end$y, Inf))) {
+        showNotification("That is at or past where the table ends - not applied.",
+                         type = "warning", duration = 6); return(FALSE)
+      }
+      d$start <- list(page = as.integer(pg), y = y)
+    } else if (m == "end") {
+      p0 <- .doc_int(d$start$page, pg)
+      if (pg < p0 || (pg == p0 && y <= .doc_num(d$start$y, 0))) {
+        showNotification("That is at or above where the table starts - not applied.",
+                         type = "warning", duration = 6); return(FALSE)
+      }
+      d$end <- list(page = as.integer(pg), y = y)
+      # An end on a later page means there are now pages in between, and they
+      # need a bottom edge. Filled in, never asked for. (Register D4.)
+      d <- .rb_default_bottom(d)
+    } else {
+      # THE BOTTOM EDGE OF EVERY PAGE BUT THE LAST. Stored on the table's band,
+      # which is what doc_locate_table() uses to close a continuation page's
+      # window (R/tables.R). Refused above the top of the band, because a bottom
+      # above the top is not a table.
+      b <- d$band %||% list()
+      top <- .doc_num(b$y_min, 0)
+      if (y <= top + 2) {
+        showNotification("That is at or above the top of the table - not applied.",
+                         type = "warning", duration = 6); return(FALSE)
+      }
+      b$y_max <- y; d$band <- b
+    }
+    rb$draft <- d
+    .rb_push_where(d)
+    rb$mode <- .rb_next_step(m, d)
+    TRUE
+  }
 
   # ---- The table being worked on --------------------------------------------
   # WHAT THIS PANEL IS ABOUT, in one line, at the top of it: which table, whether
@@ -5570,8 +5640,12 @@ server <- function(input, output, session) {
   output$rb_prev_status <- renderUI({
     ext <- rb$preview
     if (is.null(ext)) {
-      if (!length(rb$tables) && !length(.rb_all_pairs()))
-        return(p(class = "muted", "Save a table or a value first."))
+      # ONE LINE APART, IN THE SAME WORDS, IN THE SAME GREY. The disabled button
+      # directly above already carries "Save a table or a value first." beside
+      # itself, which is where that sentence belongs -- it is the reason the
+      # button is off. Printed again here it was the same instruction twice on
+      # the one screen a first-time builder is always looking at.
+      if (!length(rb$tables) && !length(.rb_all_pairs())) return(NULL)
       return(p(class = "muted", "Press \u201cRead the whole document\u201d to see what comes out."))
     }
     # EVERY COUNT IS FORCED TO A NUMBER. A template with values and no tables
@@ -7184,6 +7258,19 @@ server <- function(input, output, session) {
     # nothing, which is the one case where there genuinely is a choice to make.
     ambig <- isTRUE(res$detect$ambiguous) && identical(st, "unsupported")
     headline <- if (ambig) STATUS_PLAIN_AMBIGUOUS else plain_status(st)
+    # ...AND A TEMPLATE THAT MATCHED AND THEN READ NOTHING TAKES IT FROM BOTH,
+    # because "No template recognised this document yet" is FALSE on that run and
+    # the card's own body says so an inch below: "the Sample Report report fits
+    # this document but read no rows from any of its 1 table(s)". One of those two
+    # sentences is a lie and the bigger type was carrying it.
+    #
+    # ui_labels.R has said since it was written that `unsupported` "covers two
+    # OPPOSITE situations and one headline cannot say both" -- nothing fit, versus
+    # something fit and read nothing. This is the second situation, and it is the
+    # third swap on this line rather than a new mechanism: the tie above and the
+    # blocking diagnosis below are the same idea.
+    if (!ambig && identical(st, "unsupported") && .matched_but_empty(res))
+      headline <- STATUS_PLAIN_MATCHED_EMPTY
     # ...AND A HIGH-SEVERITY DIAGNOSIS NOBODY CAN FIX WITH A TEMPLATE OUTRANKS
     # BOTH. On an `unsupported` run the engine's message is always the same
     # sentence -- "we don't have a template for this layout yet" -- whatever the
@@ -8288,8 +8375,13 @@ server <- function(input, output, session) {
         h4("Diagnostics - where / why / how to fix"),
         if (has_diag) DTOutput("cv_diag") else p(class = "muted", style = "margin:0 0 8px", WHY_NO_DIAG),
         h4("Field coverage - what's present / empty / not read as its own column"),
+        # "no field coverage", not "no fields": .why_empty frames both headings as
+        # "... so there is %s." and "so there is no fields to report" is not a
+        # sentence. It read correctly before the two headings were split apart to
+        # each say what is true of its own table, and the split kept the plural
+        # from the joined version. This is the heading's own subject, singular.
         if (has_cov) tagList(uiOutput("cv_cov_summary"), DTOutput("cv_coverage"))
-        else said("no fields to report")))
+        else said("no field coverage to report")))
   })
 
   output$cv_cov_summary <- renderUI({
@@ -9550,8 +9642,19 @@ server <- function(input, output, session) {
                 "Set it up as a bank statement", "cv_teach_go")))
       if (identical(asked, "statement"))
         return(box(
-          strong(style = "font-size:15px", "No template reads this statement yet."),
-          why,
+          # THE MIRROR OF THE BRANCH ABOVE, and it was missing. The words sweep cut
+          # this duplication from the "other" branch and left it standing here --
+          # on Beth's likelier route. The lead read "No template reads this
+          # statement yet." one inch under a verdict title reading "No template
+          # recognised this document yet": the same fact twice, in two sizes.
+          #
+          # And `why` was a THIRD saying of something worse: doc_shape_hint's
+          # "12 line(s) ... look like a transaction row" is the tool working out
+          # what kind of document this is, printed to somebody who has just told
+          # it. Both are gone; what is left is the one thing this card can say
+          # that the card above cannot -- which half of the tool was tried.
+          strong(style = "font-size:15px",
+                 "Every bank statement template was tried - none reads this layout."),
           actionButton("cv_teach_go", "Set it up as a bank statement \u2192",
                        class = "btn-primary btn-lg"),
           p(class = "muted", style = "margin:8px 0 0;font-size:12.5px",
@@ -9630,15 +9733,8 @@ server <- function(input, output, session) {
   observeEvent(input$ab_go_template,
     updateTabsetPanel(session, "main_tabs", selected = "Add a template"))
 
-  # .matched_but_empty(res) -- the engine matched a template's identifying wording
-  # and that template then read zero transactions. The engine raises it as a
-  # diagnostic category (R/diagnose.R), which is where this reads it from: it is
-  # the one `unsupported` result whose template id is a REAL match rather than the
-  # closest miss, so it is the one that may be seeded into the toolkit.
-  .matched_but_empty <- function(res) {
-    d <- res$diagnostics
-    isTRUE(!is.null(d) && "category" %in% names(d) && any(d$category %in% "matched_but_empty"))
-  }
+  # (.matched_but_empty lives at file scope now, beside .blocking_diag -- the
+  # verdict headline needs the same fact 2,400 lines earlier.)
   # WHAT THE DOCUMENT LOOKS LIKE, read once per conversion and only when asked.
   # It reads the first pages and runs the table proposer, so it is real work --
   # but it is only ever needed by the card that appears when nothing matched, and
@@ -9937,10 +10033,36 @@ server <- function(input, output, session) {
   # Advanced tab: the box holds the live template whenever the tab is opened.
   # This is the whole of what "Load current settings" used to be, done at the
   # only moment it can matter, so a stale box cannot be edited and applied.
+  #
+  # ...BUT A BOX YOU HAVE TYPED IN IS NOT A STALE BOX. Refreshing on every visit
+  # meant: type here, glance at Simple to check something, come back, and the
+  # typing is gone with no message and nothing to undo it. That is the same
+  # silent loss the "Load current settings" button was cut for, turned round the
+  # other way, and it is worse than what it replaced because it needs no button.
+  #
+  # So: the same test the two vocabulary editors use (.vocab_stale) -- is the box
+  # still exactly what the tool last put in it? Then refreshing it loses nothing.
+  # Otherwise the typing stands, and the line above it says so, and whether the
+  # Simple settings have moved underneath it. Apply is then a choice.
+  g_yaml_put <- reactiveVal(NULL)     # the last text this tab wrote into the box
   observeEvent(input$g_tabs, {
     if (!identical(input$g_tabs, "Advanced")) return()
     req(guided())
-    updateTextAreaInput(session, "g_yaml", value = template_yaml(guided_live()))
+    live <- template_yaml(guided_live())
+    put  <- g_yaml_put()
+    if (!is.null(put) && !identical(trimws(input$g_yaml %||% ""), trimws(put))) {
+      moved <- !identical(trimws(live), trimws(put))
+      output$g_adv_msg <- renderUI(span(class = if (moved) "bad" else "muted",
+        if (moved)
+          paste("Your edits are still here, so the box was not refreshed - but the Simple",
+                "settings have changed since you typed them. Press Apply to use what is in",
+                "the box, or clear the box and reopen this tab to start from the new settings.")
+        else
+          "Your edits are still here, so the box was not refreshed."))
+      return()
+    }
+    updateTextAreaInput(session, "g_yaml", value = live)
+    g_yaml_put(live)
     output$g_adv_msg <- renderUI(NULL)
   }, ignoreInit = TRUE)
 
@@ -9999,6 +10121,10 @@ server <- function(input, output, session) {
     if (identical(parsed$format, "pdf"))
       updateTextAreaInput(session, "g_fp",
         value = paste(unlist(parsed$fingerprint$page_contains_all %||% list()), collapse = "\n"))
+    # Applied text IS the live template now, so the box is no longer "edited" and
+    # the next visit to this tab refreshes it normally. Without this the warning
+    # above would stand for the rest of the session on a box you had settled.
+    g_yaml_put(input$g_yaml %||% "")
     output$g_adv_msg <- renderUI(span(class = "ok", "Applied - preview updated below."))
   })
 

@@ -12,11 +12,7 @@
   readLines(app, warn = FALSE)
 }
 # the N lines starting at the first line matching `pat`, as one string
-.app_block <- function(src, pat, n = 60L) {
-  i <- grep(pat, src)
-  testthat::expect_true(length(i) >= 1)
-  paste(src[i[1]:min(i[1] + n, length(src))], collapse = " ")
-}
+.app_block <- .src_block   # brace-balanced, in helper.R
 # .app_fun(name) -- one of app.R's PURE helpers, lifted out and made callable, so
 # a rule can be tested on BEHAVIOUR rather than on the spelling of its source.
 # Found by name, read forward until it parses (which is exactly where the
