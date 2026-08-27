@@ -71,11 +71,22 @@ skipped: 0
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing.
 
-The last full run measured **77 files, 1,342 tests, 7,301 passing assertions,
-0 failed, 0 errors** — taken on 2026-08-26, at `VERSION` 1.8.1, on R 4.4.3,
-with 19 skipped because that box had no OCR tooling (run under
+The last full run measured **79 files, 1,397 tests, 7,713 passing assertions,
+2 failed, 0 errors** — taken on 2026-08-27, at `VERSION` 1.9.0, on R 4.3.3,
+with 18 skipped because that box had no OCR tooling (run under
 `BSO_ALLOW_SKIPS=1`; on a server **with** tesseract and poppler the skips should
 be 0). Treat it as a floor to compare against, not a target to match.
+
+**THE TWO RED LINES ARE NAMED, because an unexplained red line is how a real one
+gets ignored.** Both are reconciliation assertions on PDF fixtures --
+`test-split.R:208` (the ANZ bundle) and `test-tutorial_everyday_pdf.R:35` (the
+tutorial sample) -- and both fail **identically on the commit before** the change
+that produced this figure, measured on the same box. That is the whole of what
+has been established about them here: they are not new, and they were not
+diagnosed. The box had neither `tesseract` nor poppler's `pdftoppm` installed,
+which is the first thing to rule out before reading either as an engine fault.
+**Anything beyond those two is new and is yours.** If they pass on your box,
+expect 0 failed and say so here.
 
 **That run was clean, and it is the first one that was.** For a long time the
 board carried five red lines, explained here and elsewhere as "the environment,

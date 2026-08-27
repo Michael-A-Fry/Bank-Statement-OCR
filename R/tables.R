@@ -1081,6 +1081,67 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     }
   }
 
+  # THE NEXT SECTION IS WHERE THIS ONE STOPS (R/doc_structure.R).
+  #
+  # Everything above decides how far this table RUNS. None of it can see the
+  # thing that most often ends it: another section starting. A short section
+  # followed to the bottom of its page swallows the next section's heading and
+  # header as rows -- observed, three fabricated rows under a one-row table -- and
+  # neither the declared end (measured on a copy with different row counts above
+  # it) nor the row-run rule (a heading carries no money and fills few columns,
+  # which is what a total row looks like too) reliably stops it.
+  #
+  # So the LAST word on extent is the document's own section index: this table
+  # ends immediately before the nearest validated section start below it,
+  # whichever section that is. No successor is named anywhere -- naming one would
+  # be the same overfitting as a page number, and these reports reorder and omit
+  # sections freely.
+  #
+  # It can only ever make a table SHORTER, and it only trims what a later section
+  # would have claimed, so a template that reads correctly today cannot start
+  # losing rows to it. Opt-in (schema_version 2), so version 1 templates are
+  # untouched.
+  capped <- NULL
+  if (doc_sections_enabled(tmpl)) {
+    ix <- doc_section_index_for(input, tmpl)
+    if (is.data.frame(ix) && nrow(ix)) {
+      # This table's OWN starts come out first, by name. Its heading sits at the
+      # top of its own window, so leaving it in would cap the table at itself and
+      # return nothing; and where the heading is reprinted on a continuation page
+      # it is this table carrying on, not a new section.
+      own <- .doc_norm(as.character(tab$name %||% "")[1])
+      if (nzchar(own)) {
+        tabs_all <- .doc_key(tmpl, "tables")
+        mine <- vapply(ix$key, function(k) {
+          tb <- .doc_key(tabs_all, k)
+          identical(.doc_norm(as.character((tb %||% list())$name %||% k)[1]), own)
+        }, logical(1), USE.NAMES = FALSE)
+        ix <- ix[!mine, , drop = FALSE]
+      }
+      capped <- doc_section_cap(ix, p0, y_start)
+    }
+  }
+  if (!is.null(capped)) {
+    trimmed <- list()
+    for (z in windows) {
+      if (z$page > capped$page) next
+      if (z$page == capped$page) {
+        if (capped$y <= z$y_min) next          # the section starts above this window
+        z$y_max <- min(.doc_num(z$y_max, capped$y), capped$y)
+        z$open_end <- FALSE                    # it has a real end now
+      }
+      trimmed[[length(trimmed) + 1L]] <- z
+    }
+    # Never trim a table out of existence: an empty result would be indistinguishable
+    # from "not on this document", which is a different and much worse answer.
+    if (length(trimmed)) {
+      windows <- trimmed
+      if (!is.na(extended_to) && extended_to > capped$page) extended_to <- NA_integer_
+    } else {
+      capped <- NULL
+    }
+  }
+
   pages <- vapply(windows, function(z) z$page, integer(1))
   detail <- switch(anchor,
     header = sprintf("found by its heading on page %d", p0),
@@ -1103,6 +1164,13 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     detail <- paste0(detail, "; it runs further down the page here than on the example")
   if (!is.na(extended_to))
     detail <- paste0(detail, sprintf("; it carries on to page %d here", extended_to))
+  # WHERE IT STOPPED, AND WHAT STOPPED IT. A table whose extent was decided by
+  # another section beginning was not read to its declared end, and a reviewer
+  # counting rows against the paper needs to know that is why.
+  if (!is.null(capped)) {
+    nt <- doc_section_note(doc_section_index_for(input, tmpl), capped)
+    if (!is.null(nt)) detail <- paste0(detail, "; ", nt)
+  }
   # ...and SAY that the heading was found again further on, because "those lines
   # are not rows" is a fact somebody checking the output needs. header_tops was
   # already collected and read by nothing.
@@ -1123,7 +1191,8 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
   list(pages = pages, windows = windows, anchor = anchor,
        confidence = .doc_anchor_confidence(anchor, hit),
        detail = detail, extended_to = extended_to, header_tops = header_tops,
-       header_sig = hdr_sig, band_shift = as.numeric(band_shift))
+       header_sig = hdr_sig, band_shift = as.numeric(band_shift),
+       capped_at = capped)
 }
 
 # ---------------------------------------------------------------------------
@@ -1912,6 +1981,14 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
 
   hdr_need <- tab$anchor$header_text %||% cnames
   n_header_rows <- max(0L, .doc_int(tab$header_rows, 1L))
+  # PAGE FURNITURE, RECOGNISED ONCE FOR THE WHOLE DOCUMENT (R/doc_noise.R).
+  # A disclaimer or a "Page 4 of 44" printed inside this table's window is not a
+  # row of it, and no band or fill threshold can tell them apart -- on the page
+  # they are both just text between the boundaries. Cached per document, so a
+  # twenty-table report builds this once.
+  noise <- doc_noise_mask_for(input, tmpl)
+  noise_h <- .doc_frame(tmpl)$height
+  n_noise <- 0L
   out <- list(); fills <- numeric(0); n_header <- 0L; rowno <- 0L
   # Where the last row this table actually kept came to an end. That is the
   # answer to "where does it stop?", and it is the reader's answer rather than a
@@ -1996,6 +2073,15 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       # does not count as an unclaimed word, does not end an open window, and
       # does not enter the row-spacing the stop rule is measured against.
       if (.doc_is_rule(d)) next
+      # ...and neither is the page's own furniture. Treated exactly as a printed
+      # border is: not a row, not an unclaimed word, and not part of the row
+      # spacing the stop rule measures -- because a footer sitting between two
+      # rows must not look like the gap that ends the table. Counted, and said in
+      # `detail` below: a line withheld without a word about it is the silent drop
+      # this engine does not do.
+      if (doc_is_noise(noise, .doc_line_text(d), attr(d, "top"), noise_h)) {
+        n_noise <- n_noise + 1L; next
+      }
 
       j <- .doc_col_of(d$cx, cols)
       cells <- rep(NA_character_, length(cols))
@@ -2222,11 +2308,17 @@ doc_table_rows <- function(input, tab, tmpl = NULL, loc = NULL) {
       "; %s carr%s figures in more than one currency",
       .doc_and_list(mixed), if (length(mixed) == 1L) "ies" else "y"))
 
+  # WHAT WAS WITHHELD AS PAGE FURNITURE. The rows this table did NOT get are
+  # invisible in every other number on this list -- fill rates and unclaimed words
+  # are both computed over what survived -- so the count says itself.
+  nz <- doc_noise_report(noise, n_noise)
+  if (!is.null(nz)) detail <- paste0(detail, "; ", nz)
+
   list(rows = rows, report = report,
        spilled = spilled, stops = stops, row_fill = fills, n_rows = nrow(rows),
        n_header = n_header, anchor = loc$anchor, confidence = loc$confidence,
        last_page = last_pg, last_y = last_y,
-       detail = detail,
+       detail = detail, n_noise = n_noise,
        extended_to = loc$extended_to,
        pages = loc$pages, header_rows = n_header_rows)
 }
