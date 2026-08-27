@@ -3560,6 +3560,16 @@ server <- function(input, output, session) {
   # observers below (issuer, id, fingerprint) stand down. A suggestion that
   # overwrites what somebody deliberately saved is not a suggestion.
   rb_editing <- reactiveVal(NA_character_)
+  # ...and rb_base() holds the template ITSELF, which is a different thing from
+  # its id and is what stops a round trip losing what the builder never asks
+  # about. document_template_from_proposal(base = ) has always known how to keep
+  # `hidden`, `notes`, per-table `row_tol` / `max_gap` and to put `version` UP by
+  # one -- and nothing ever passed it, so every edit of a saved report template
+  # rebuilt it from a whitelist. A PARKED template came back live and could start
+  # claiming documents again; a template edited seven times was version 1 seven
+  # times, so today's copy was indistinguishable from last month's in every
+  # record that keeps a version. (Register H6.)
+  rb_base <- reactiveVal(NULL)
   output$rb_editing_note <- renderUI({
     e <- rb_editing()
     if (is.na(e) || !nzchar(e)) return(strong("Building a template from "))
@@ -3592,6 +3602,7 @@ server <- function(input, output, session) {
       collapse = "\n"))
     rb_id_auto(NA_character_); rb_fp_auto(NA_character_)
     rb_editing(as.character(t$id %||% "")[1])
+    rb_base(t)
     if (!is.null(path) && file.exists(path)) rb_handoff(path)
     updateRadioButtons(session, "ts_doctype", selected = "other")
     updateTabsetPanel(session, "main_tabs", selected = "Add a template")
@@ -3620,7 +3631,7 @@ server <- function(input, output, session) {
     # template had been opened from Convert - which is the one route into "add
     # tables from a second example" that anybody would try first.
     rb_handoff(NULL)
-    if (!.rb_has_work()) { rb_editing(NA_character_); rb$frame <- NULL; return() }
+    if (!.rb_has_work()) { rb_editing(NA_character_); rb_base(NULL); rb$frame <- NULL; return() }
     rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
     rb$edit_idx <- NA_integer_; rb$rm_armed <- NULL; rb$preview <- NULL
     updateNumericInput(session, "rb_page", value = 1)
@@ -3635,7 +3646,7 @@ server <- function(input, output, session) {
     rb$draft <- NULL; rb$vdraft <- NULL; rb$mode <- ""; rb$colsel <- NA_integer_
     rb$edit_idx <- NA_integer_; rb$rm_armed <- NULL; rb$preview <- NULL
     rb$frame <- NULL
-    rb_editing(NA_character_); rb_seeded(NA_character_)
+    rb_editing(NA_character_); rb_base(NULL); rb_seeded(NA_character_)
     rb_id_auto(NA_character_); rb_fp_auto(NA_character_)
     updateTextInput(session, "rb_id", value = "new_report")
     updateTextAreaInput(session, "rb_fp", value = "")
@@ -5568,10 +5579,21 @@ server <- function(input, output, session) {
   rb_template <- reactive({
     ph <- trimws(strsplit(input$rb_fp %||% "", "\n")[[1]]); ph <- ph[nzchar(ph)]
     fr <- rb_frame()
+    id <- input$rb_id %||% "new_report"
+    # THE BASE ONLY APPLIES WHILE IT IS STILL THE SAME TEMPLATE. Rename it in the
+    # id box and Save writes a NEW one, so carrying the old template's fields into
+    # it would be a fresh template born `hidden: true` and at version 8 -- parked
+    # and invisible on the day it was made, for reasons nobody could see. The id
+    # is the only thing that decides which of the two is happening, and it is what
+    # the header bar above the page is already saying.
+    ed <- rb_editing()
+    base <- if (!is.na(ed) && nzchar(ed) && identical(trimws(as.character(id)[1]), ed))
+      rb_base() else NULL
     t <- document_template_from_proposal(
-      id = input$rb_id %||% "new_report", bank = input$rb_bank %||% "NewIssuer",
+      id = id, bank = input$rb_bank %||% "NewIssuer",
       statement_type = input$rb_type %||% "report", phrases = ph,
-      tables = rb$tables, pairs = .rb_all_pairs(), doc_pages = rb_n_pages())
+      tables = rb$tables, pairs = .rb_all_pairs(), doc_pages = rb_n_pages(),
+      base = base)
     t$ref_width <- fr$ref_width; t$ref_height <- fr$ref_height
     t
   })

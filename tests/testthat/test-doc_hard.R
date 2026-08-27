@@ -1335,3 +1335,67 @@ test_that("prose that merely NAMES the columns is not an occurrence of the table
   away <- .doc_lines(doc_page(doc_L(40, 400, "Item"), doc_L(90, 400, "Total")))[[1]]
   expect_false(.doc_is_occurrence(away, list("Item", "Total"), bands))
 })
+
+# ---------------------------------------------------------------------------
+# THE ROUND TRIP THAT UN-PARKED A PARKED TEMPLATE
+#
+# document_template_from_proposal(base = ) has always known how to keep what the
+# builder never asks about, and NOTHING EVER PASSED IT: app.R's rb_template()
+# called it with no base at all, so opening a saved report template and saving it
+# again rebuilt it from a whitelist.
+#
+# Measured on the fixture template before the fix:
+#   hidden   TRUE  -> LOST      a PARKED template came back live and could start
+#                               claiming documents again, with nothing said
+#   notes    set   -> LOST      why it was parked, gone with it
+#   version  7     -> 1         so a template edited seven times was version 1
+#                               seven times, and today's copy is indistinguishable
+#                               from last month's in every record that keeps one
+#   row_tol / max_gap survived, because the proposal round-trips those.
+# (Register H6.)
+# ---------------------------------------------------------------------------
+
+test_that("saving over a template keeps what the builder never asks about", {
+  t <- doc_fixture_template()
+  t$hidden  <- TRUE
+  t$notes   <- "parked while the layout settles"
+  t$version <- 7
+  prop <- document_proposal_from_template(t)
+  ph <- unlist(t$fingerprint$page_contains_all %||% list())
+
+  # WITHOUT a base -- a template being drawn for the first time -- the result is
+  # byte for byte what it always was, and must stay that way.
+  fresh <- document_template_from_proposal(t$id, t$bank, t$statement_type,
+             phrases = ph, tables = prop$tables, pairs = prop$pairs)
+  expect_null(fresh$hidden)
+  expect_null(fresh$notes)
+  expect_equal(fresh$version, 1)
+
+  # WITH one, the loaded template is modified rather than rebuilt.
+  again <- document_template_from_proposal(t$id, t$bank, t$statement_type,
+             phrases = ph, tables = prop$tables, pairs = prop$pairs, base = t)
+  expect_true(isTRUE(again$hidden))
+  expect_identical(again$notes, "parked while the layout settles")
+  # ...and the version goes UP, so the record can tell the copies apart
+  expect_equal(again$version, 8)
+  # the builder still owns what the builder owns
+  expect_identical(again$id, t$id)
+  expect_equal(length(again$tables), length(prop$tables))
+})
+
+test_that("the builder passes a base only while it is still the same template", {
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  i <- grep("rb_template <- reactive", src)[1]
+  skip_if(is.na(i), "rb_template not found")
+  blk <- paste(src[i:min(length(src), i + 30L)], collapse = "\n")
+  expect_match(blk, "base = base", fixed = TRUE)
+  # THE RENAME GUARD, and it is the whole reason this is not just `base = rb_base()`.
+  # Change the id in the box and Save writes a NEW template; carrying the old
+  # one's fields into it would make a fresh template that is hidden on the day it
+  # was created, at version 8, for reasons nobody can see anywhere on screen.
+  expect_match(blk, "rb_editing\\(\\)")
+  expect_match(blk, "identical\\(trimws\\(as\\.character\\(id\\)\\[1\\]\\), ed\\)")
+  # and the base is dropped everywhere the id is, or it outlives its template
+  joined <- paste(src, collapse = "\n")
+  expect_match(joined, "rb_editing\\(NA_character_\\); rb_base\\(NULL\\)")
+})
