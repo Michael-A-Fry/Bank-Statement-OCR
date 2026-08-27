@@ -1,26 +1,12 @@
-# logging.R -- run + feedback logs. Concurrency is handled by the SIMPLEST thing
-# that cannot break: ONE FILE PER EVENT, never a shared append.
-#
-# When ten people convert statements at the same moment (even off the same
-# network share), each conversion writes its OWN file -- logs/runs/<run_id>.json
-# -- so records can never interleave, corrupt, or need a lock. There is no
-# database, no server, no API, nothing to tune. To read the log you list a
-# folder; to open one record you double-click a .json in Notepad. That is the
-# entire concurrency story (see docs/context/how-it-fits-together.md).
-# No raw statement content is ever written -- only metadata about the run.
+# logging.R -- run and feedback logs. ONE FILE PER EVENT, never a shared append, so records cannot
+# interleave, corrupt or need a lock. The concurrency story: docs/context/how-it-fits-together.md.
 
-# .safe_name(x) -- make a string safe to use as a filename.
+# Make a string safe to use as a filename.
 .safe_name <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", as.character(x))
 
-# write_log_record(logdir, subdir, id, record) -- write one JSON file at
-# <logdir>/<subdir>/<id>.json. Returns the path (invisibly).
-#
-# NEVER OVERWRITES. run_id is (content hash + whole second), so converting the
-# same statement twice inside one second produces the same id -- and opening the
-# file "w" meant the second conversion silently ERASED the first one's audit
-# record. In a forensic tool a destroyed audit record is the cardinal failure, so
-# a clashing id gets a "~2", "~3" ... suffix instead: two conversions, two
-# records, and the clash is visible in the filename rather than invisible.
+# Write one JSON file at <logdir>/<subdir>/<id>.json. NEVER OVERWRITES: run_id is content hash plus whole
+# second, so the same statement converted twice in one second reused the id and opening "w" ERASED the
+# first conversion's audit record. A clash gets a "~2" suffix, so it is visible in the filename.
 write_log_record <- function(logdir, subdir, id, record) {
   dir <- file.path(logdir, subdir)
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE, showWarnings = FALSE)
@@ -38,21 +24,9 @@ write_log_record <- function(logdir, subdir, id, record) {
   invisible(path)
 }
 
-# identity_fields(attested, detected, source) -- the WHO of a conversion, as two
-# SEPARATE facts that must never be collapsed into one.
-#
-#   attested_by       what the person TYPED on Convert. A claim. May be blank.
-#   detected_identity what the machine could actually establish. Never overwritten
-#                     by the claim.
-#   identity_source   how detected_identity was established, so a reader can judge
-#                     it: "host" (the Shiny host's authenticated user), "sso" (an
-#                     identity forwarded by a proxy/gateway), "os" (the account the
-#                     SERVER process runs as -- in the shipped one-server model
-#                     that is the SAME for everybody and identifies nobody), or
-#                     "none".
-# Recording only the typed name made the audit trail self-declared; recording only
-# the detected one stamped every conversion in the department identically. Both,
-# labelled, is the only honest answer.
+# The WHO of a conversion, as two facts that must never be collapsed: attested_by is what the person
+# TYPED (a claim), detected_identity is what the machine established and is never overwritten by the
+# claim. Only the typed name made the audit self-declared; only the detected one stamped every run alike.
 .IDENTITY_SOURCES <- c("host", "sso", "os", "none")
 identity_fields <- function(attested = NA_character_, detected = NA_character_,
                             source = "none") {
@@ -66,14 +40,9 @@ identity_fields <- function(attested = NA_character_, detected = NA_character_,
        identity_source = src)
 }
 
-# amend_log_record(logdir, subdir, id, fields) -> TRUE when the record was amended.
-#
-# Adds fields to an ALREADY-WRITTEN record (the UI knows things the engine does
-# not -- who attested the run, and what the machine could actually establish about
-# them). Refuses, returning FALSE, when the record is missing OR when the id is
-# ambiguous (a same-second clash left a "~2" sibling): stamping one person's name
-# onto another person's conversion is precisely the silently-wrong outcome the
-# charter forbids, so it fails closed and the caller says so out loud.
+# Add fields to an ALREADY-WRITTEN record, since the UI knows things the engine does not. Refuses when
+# the record is missing or the id is ambiguous (a same-second clash left a "~2" sibling): stamping one
+# person's name onto another's conversion is precisely the silently-wrong outcome forbidden.
 amend_log_record <- function(logdir, subdir, id, fields) {
   if (!length(fields) || !is.list(fields)) return(invisible(FALSE))
   dir <- file.path(logdir, subdir)
@@ -94,8 +63,7 @@ amend_log_record <- function(logdir, subdir, id, fields) {
   invisible(ok)
 }
 
-# .rows_bind(records) -- bind a list of named-list records into one data.frame,
-# aligning on the union of fields and coalescing NULL/absent to NA.
+# Bind a list of named-list records into one frame, aligning on the union of fields.
 .rows_bind <- function(records) {
   cols <- unique(unlist(lapply(records, names)))
   rows <- lapply(records, function(r) {
@@ -106,8 +74,7 @@ amend_log_record <- function(logdir, subdir, id, fields) {
   do.call(rbind, c(rows, list(stringsAsFactors = FALSE)))
 }
 
-# read_log_records(logdir, subdir) -- read every JSON file in the folder into a
-# single data.frame (empty frame if none). A half-written file is skipped.
+# Read every JSON file in the folder into a single frame. A half-written file is skipped.
 read_log_records <- function(logdir, subdir) {
   dir <- file.path(logdir, subdir)
   files <- if (dir.exists(dir)) list.files(dir, pattern = "\\.json$", full.names = TRUE) else character(0)

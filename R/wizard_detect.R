@@ -1,14 +1,10 @@
-# wizard_detect.R -- auto-detection helpers so the template wizard can pre-fill
-# everything from a sample. Goal: an analyst with ZERO data background only has
-# to CONFIRM plain-English guesses, never type a date code or pick jargon.
-# Pure base R.
+# wizard_detect.R -- auto-detection helpers so the template wizard can pre-fill everything from a
+# sample: an analyst with no data background only has to CONFIRM plain-English guesses.
 
 wd_delims <- function() c(",", "\t", ";", "|")
 
-# .delim_of_line(line) -- pick the most frequent candidate delimiter in ONE line
-# (the header), defaulting to comma. Shared by detect_delimiter (reads the line from
-# a path) and column_profile.R's .delim_of (sniffs an in-memory line), so the two
-# can never disagree about how a delimiter is chosen.
+# Pick the most frequent candidate delimiter in ONE line, defaulting to comma. Shared by
+# detect_delimiter and column_profile.R's .delim_of, so the two cannot disagree.
 .delim_of_line <- function(line) {
   if (!length(line) || is.na(line) || !nzchar(line)) return(",")
   counts <- vapply(wd_delims(), function(d) {
@@ -24,13 +20,11 @@ detect_delimiter <- function(path) {
   .delim_of_line(if (length(line)) line[1] else "")
 }
 
-# Candidate date formats: strptime code, plain label, and a shape regex so a
-# 2-digit year is never mistaken for a 4-digit one. Ordered by auto-detect
-# priority: unambiguous / year-bearing forms first, the ambiguous US order after
-# the day/month default, and the YEAR-LESS forms ("2 Dec") last -- those take the
-# year from the statement period (works on PDF statements; see parse_pdf_table).
+# Candidate date formats: strptime code, plain label, and a shape regex so a 2-digit year is never
+# mistaken for a 4-digit one. Ordered by auto-detect priority - unambiguous forms first, the
+# ambiguous US order after the day/month default, and the YEAR-LESS forms last.
 wd_date_table <- function() list(
-  # numeric, with a year
+  # Numeric, with a year.
   list(fmt = "%d/%m/%Y", label = "31/12/2025  (day/month/year)",             rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$"),
   list(fmt = "%d/%m/%y", label = "31/12/25  (day/month/2-digit year)",       rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{2}$"),
   list(fmt = "%Y-%m-%d", label = "2025-12-31  (year-month-day, ISO)",        rx = "^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$"),
@@ -40,17 +34,14 @@ wd_date_table <- function() list(
   list(fmt = "%d.%m.%y", label = "31.12.25  (day.month.2-digit year)",       rx = "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{2}$"),
   list(fmt = "%Y/%m/%d", label = "2025/12/31  (year/month/day)",             rx = "^[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}$"),
   list(fmt = "%m/%d/%Y", label = "12/31/2025  (US month/day/year)",          rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$"),
-  # month-name, with a year
+  # Month-name, with a year.
   list(fmt = "%d %b %Y", label = "31 Dec 2025  (day month-name year)",       rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{4}$"),
   list(fmt = "%d %B %Y", label = "31 December 2025  (day full-month year)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{4}$"),
   list(fmt = "%d %b %y", label = "31 Dec 25  (day month-name 2-digit year)", rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{2}$"),
   list(fmt = "%d-%b-%Y", label = "31-Dec-2025  (day-month-name-year)",       rx = "^[0-9]{1,2}-[A-Za-z]{3,9}-[0-9]{4}$"),
   list(fmt = "%b %d, %Y", label = "Dec 31, 2025  (US month-name day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
   list(fmt = "%B %d, %Y", label = "December 31, 2025  (US full-month day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
-  # YEAR-LESS: the year comes from the statement period, not the cell. Ordinal
-  # suffixes ("12th"), a leading weekday ("Tue 12 Oct") and the connective "of"
-  # ("12 of October") are folded away by .normalise_date_str before these match,
-  # so "12th October" and "12 October" are the same format to the tool.
+  # YEAR-LESS: the year comes from the statement period, not the cell.
   list(fmt = "%d %b", label = "2 Dec  (day + month-name, e.g. 12th October; year from the statement)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
   list(fmt = "%d %B", label = "2 December  (day + full month; year from the statement)", rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
   list(fmt = "%b %d", label = "Oct 12  (month-name + day; year from the statement)",   rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
@@ -58,21 +49,15 @@ wd_date_table <- function() list(
   list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE)
 )
 
-# Return the strptime code that parses ALL sample values, or "" if none fit.
-# Folds the human spellings via the SAME .normalise_date_str() the reader uses
-# (weekday / ordinal / "of" / Sept), so detection can never disagree with parsing.
-# A year-less format is validated by appending a sentinel year (a bare "2 Dec"
-# can't be an R Date on its own).
+# The strptime code that parses ALL sample values, or "" if none fit. Folds the human spellings via
+# the SAME .normalise_date_str the reader uses. A year-less format is validated with a sentinel year.
 detect_date_format <- function(values) {
   v <- trimws(as.character(values)); v <- v[nzchar(v) & !is.na(v)]
   if (!length(v)) return("")
   v <- utils::head(v, 50L)
   v <- .normalise_date_str(v)   # same folding the reader uses -> they agree
-  # Validate with the SAME strict parser the reader uses (parse_date), not a bare
-  # as.Date(): the detector must never pick a format the reader would then reject
-  # -- e.g. a 4-digit year under "%y", or an out-of-range year. Year-less forms
-  # get a sentinel year exactly as the reader's fallback does. (parse_date
-  # re-normalises internally; on already-normalised input that is a no-op.)
+  # Validate with the SAME strict parser the reader uses, not a bare as.Date(): the detector must
+  # never pick a format the reader would then reject, such as a 4-digit year under "%y".
   parses <- function(fmt, yearless)
     if (isTRUE(yearless)) !any(is.na(parse_date(paste(v, "2000"), paste(fmt, "%Y"))$iso))
     else !any(is.na(parse_date(v, fmt)$iso))
@@ -87,7 +72,7 @@ date_format_label <- function(fmt) {
   fmt
 }
 
-# Plain-English labels for each amount style (names = engine style codes).
+# Plain-English labels for each amount style; names are the engine style codes.
 wd_amount_labels <- function() c(
   "signed"            = "One amount column, a minus sign means money out",
   "type_dc"           = "A D / C (debit / credit) indicator column",
@@ -96,11 +81,11 @@ wd_amount_labels <- function() c(
   "unsigned"          = "Unsigned amounts (credit card): a plain number is a charge, a 'CR' is a payment"
 )
 
-# Guess the amount style from headers + a small character sample.
+# Guess the amount style from headers and a small character sample.
 detect_amount_style <- function(headers, df = NULL) {
   h <- tolower(headers)
   hit <- function(pats) any(vapply(pats, function(p) any(grepl(p, h)), logical(1)))
-  # header words + indicator tokens come from the lexicon (admin/ML-extendable).
+  # Header words and indicator tokens come from the lexicon.
   if (hit(lex("amount_style_debit_headers")) &&
       hit(lex("amount_style_credit_headers"))) return("debit_credit_cols")
   if (!is.null(df)) {
@@ -114,21 +99,18 @@ detect_amount_style <- function(headers, df = NULL) {
       suf_rx <- sprintf("(%s)[[:space:]]*$", paste(c(lex("dr_cr_suffix_debit"),
                         lex("dr_cr_suffix_credit")), collapse = "|"))
       suf <- grepl(suf_rx, vals, ignore.case = TRUE)
-      # ALL amounts carry DR/CR -> dr_cr_suffix; only SOME (bare numbers plus a
-      # stray CR payment) -> the unsigned credit-card style.
+      # ALL amounts carry DR/CR means dr_cr_suffix; only SOME - bare numbers plus a stray CR payment
+      # - means the unsigned credit-card style.
       if (length(vals) && any(suf)) return(if (all(suf)) "dr_cr_suffix" else "unsigned")
     }
   }
   "signed"
 }
 
-# detect_type_dc_values(headers, df) -- for a `type_dc` statement, deterministically
-# work out which indicator value means a DEBIT (money out) and which a CREDIT, from
-# the column's actual contents, so a drafted template pins type_debit_value instead
-# of relying on a blind "D" default (which silently flips the sign when the bank
-# writes "d" / "DR" / "Debit" / "credit"). Also returns the indicator COLUMN, since
+# For a `type_dc` statement, work out which indicator value means DEBIT and which CREDIT from the
+# column's contents, so a drafted template pins type_debit_value instead of a blind "D" default that
+# silently flips the sign when the bank writes "d" or "Debit". Also returns the indicator COLUMN, since
 # a header like "debit_credit" is not caught by the generic `type` name match.
-# Deterministic: an explicit token table first, first-letter D/C only as a fallback.
 detect_type_dc_values <- function(headers, df) {
   none <- list(debit = NULL, credit = NULL, column = NULL)
   if (is.null(df) || !length(headers)) return(none)
@@ -144,8 +126,7 @@ detect_type_dc_values <- function(headers, df) {
   }
   if (is.null(pick)) return(none)
   vals <- trimws(as.character(df[[pick]])); vals <- unique(vals[nzchar(vals)])
-  # debit / credit indicator tokens come from the lexicon (add "cow"/"horse" there
-  # and this recognises them automatically); first-letter D/C is the last resort.
+  # Debit and credit indicator tokens come from the lexicon; first-letter D/C is the last resort.
   dset <- toupper(lex("debit_markers")); cset <- toupper(lex("credit_markers"))
   classify <- function(v) {
     u <- toupper(v)
@@ -163,8 +144,8 @@ detect_type_dc_values <- function(headers, df) {
 
 # Best-guess a source column for a canonical field.
 wd_field_patterns <- function() list(
-  # Kept deliberately conservative: word-bounded or exact where a loose match
-  # could hit the wrong column ("Money In" must not become the amount).
+  # Deliberately conservative: word-bounded or exact where a loose match could hit the wrong column
+  # ("Money In" must not become the amount).
   date = "date|\\bday\\b", amount = "amount|value|^money$|^sum$",
   description = "payee|description|details|memo|narrative|narration",
   particulars = "particulars", code = "^code$|analysis",

@@ -1,59 +1,22 @@
-# diagnose.R -- fail-loud diagnostics. For any run that isn't perfectly clean,
-# produce a structured explanation: WHERE it happened, WHY (category), HOW BAD
-# (severity), the detail, and HOW TO FIX it. The goal is never a silent wrong
-# answer: if the engine can't be fully confident, it says exactly why and what
-# to do about it.
-#
-# build_diagnostics(status, messages, det, parsed, recon) -> data.frame with
-# columns: where, category, severity, detail, how_to_fix (most severe first).
+# diagnose.R -- fail-loud diagnostics. build_diagnostics(...) returns a data.frame of where,
+# category, severity, detail, how_to_fix, most severe first.
 
 .diag_row <- function(where, category, severity, detail, how_to_fix) {
   data.frame(where = where, category = category, severity = severity,
              detail = detail, how_to_fix = how_to_fix, stringsAsFactors = FALSE)
 }
 
-# WHO fixes this, so a lone analyst never wonders whether to draw a box or phone a
-# developer:
-#   template = the analyst, in the wizard (a column/box/date/amount setting)
-#   input    = the person who supplied the file (split a bundle, re-export, rescan)
-#   review   = just eyeball the data (expected situation, not an error)
-#   none     = informational, no action
-#   escalate = a genuine engine gap -> send it to a developer (rare)
-#
-# ONE entry per category the engine can raise. A plain lookup table rather than a
-# switch(): adding a diagnostic means adding its line HERE too, and it is obvious at
-# a glance which categories are covered. That matters -- when this was a switch,
-# four live categories had quietly fallen off the end and were being reported as
-# "Developer - engine gap" (see below), including date_format_mismatch, whose own
-# how-to-fix text tells the analyst to change the template. The test
-# "every diagnostic category has a declared owner" (test-diagnose.R) scans this
-# file for the categories actually raised and fails if one is missing here.
-# One fix for one defect: a template whose wording matches but whose columns read
-# nothing. Whether a fallback template rescued the run changes the detail, never
-# the cure -- so the cure is written once.
+# WHO fixes this: template = the analyst in the toolkit; input = whoever supplied the file; review =
+# eyeball the data; none = informational; escalate = a genuine engine gap. A lookup table rather than
+# a switch - as a switch, four live categories fell off the end and read as "Developer - engine gap".
 .FIX_EMPTY_TEMPLATE <- paste(
   "Open this statement in the template toolkit with that template and check where the",
   "columns sit - the usual cause is a column band drawn in the wrong place, or over",
   "the wrong part of the page. \"See it on the page\" shows what the tool saw.")
 
-# diagnostics_matched_empty(diag, why, fix) -- swap "no template matched" for
-# "one did, and it read nothing".
-#
-# THE STATEMENT PASS RUNS FIRST ON EVERY ROUTE, so on a report or a form the
-# diagnostics table is built by R/convert.R before the engine that actually reads
-# the document has spoken. When that engine then says "the Sample Report report
-# fits this document but read no rows from any of its 1 table(s)", the table
-# beside it still reads `unknown_format` - "no templates match the supplied
-# hints", at severity high. Two false statements against one true one, on a
-# screen a forensic reviewer is meant to be able to quote.
-#
-# It is not only wording. .matched_but_empty(res) in app.R reads the TABLE, not
-# the message, so on the other route the headline swap never fired and neither
-# did the door that opens the template that failed - the analyst was sent to
-# build a second copy of a template that already exists.
-#
-# One row is replaced where it stands. The detection row is the thing being
-# contradicted; everything else in the table is still true and keeps its place.
+# Swap "no template matched" for "one did, and it read nothing". The statement pass runs first, so on
+# a report the diagnostics table is built before the engine that reads the document has spoken.
+# .matched_but_empty(res) in app.R reads the TABLE, not the message, so the headline swap never fired.
 diagnostics_matched_empty <- function(diag, why, fix) {
   row <- .diag_row("template", "matched_but_empty", "high", why, fix)
   if (is.null(diag) || !is.data.frame(diag) || !nrow(diag)) return(row)
@@ -62,28 +25,23 @@ diagnostics_matched_empty <- function(diag, why, fix) {
     out <- rbind(row, diag[, names(row), drop = FALSE])
   } else {
     diag[at[1], names(row)] <- row
-    # setdiff, never `-at[-1]`: a negative index of length zero selects NOTHING
-    # in R and would empty the whole table on the common single-row case.
+      # setdiff, never `-at[-1]`: a negative index of length zero selects NOTHING in R and would
+      # empty the whole table on the common single-row case.
     out <- diag[setdiff(seq_len(nrow(diag)), at[-1]), , drop = FALSE]
   }
   rownames(out) <- NULL
   out
 }
 
-# Same rule, two more defects that were each written out twice in slightly
-# different words. Both are raised from two places -- a failing reconciliation KPI
-# and a direct check -- and in both the SITUATION differs (and stays in the detail)
-# while the cure does not. So the cure is written once here and used from both.
+# Both defects are raised from two places - a failing KPI and a direct check - and in both the
+# SITUATION differs while the cure does not.
 .FIX_ROW_PARSE <- paste(
   "Source lines that didn't parse are usually a delimiter/quoting problem, or a",
   "preamble/footer line read as data. Check those rows, and this template's",
   "delimiter and header/footer settings in the toolkit.")
 
-# The two copies of this one had already drifted apart, which is the whole reason
-# to write a cure once: the KPI copy said "Do NOT release this output", the header
-# copy only "treat their visible text with caution". Same defect, same pages, same
-# risk -- so which warning you got depended on nothing but whether the caller
-# happened to pass `recon`. The stronger wording is the correct one for both.
+# The two copies had drifted: the KPI copy said "Do NOT release this output", the header copy only
+# "treat their visible text with caution". Which one you got depended on whether `recon` was passed.
 .FIX_REDACTION_UNVERIFIED <- paste(
   "The tool could not confirm that text hidden under a redaction box stayed hidden on",
   "every page. Do NOT release this output: check those pages against the source PDF",
@@ -120,36 +78,20 @@ diagnostics_matched_empty <- function(diag, why, fix) {
   ocr                     = "none",
   document_provenance     = "none",
   none                    = "none",
-  # a genuine engine/install gap: the page could not be rasterised, so the tool
-  # cannot prove nothing is hidden under a box. Only a maintainer can fix that.
+  # A genuine engine or install gap: the page could not be rasterised, so the tool cannot prove
+  # nothing is hidden under a box.
   redaction_unverified    = "escalate")
 
-# .diag_fix_owner(category) -- look the owner up. An unknown category defaults to
-# escalate (fail safe: surface it, don't hide it).
+# An unknown category defaults to escalate - fail safe: surface it, do not hide it.
 .diag_fix_owner <- function(category) {
   owner <- unname(.DIAG_FIX_OWNER[as.character(category)])
   owner[is.na(owner)] <- "escalate"
   owner
 }
 
-# ---------------------------------------------------------------------------
-# PDF document provenance (informational).
-#
-# .PDF_GENERAL_TOOLS -- Producer / Creator strings that name a GENERAL-PURPOSE
-# document tool (an editor, a converter, an office suite, a raster re-writer)
-# rather than a bank's own statement-composition system. Matched case-insensitively
-# as a substring of the self-declared Producer or Creator.
-#
-# WHY name them at all: the single most common question asked of a statement PDF is
-# "did this come from the bank, or has it been through someone's PDF editor?" --
-# and the answer is sitting in the file's own header. Naming the tool is a FACT
-# about the file, not an accusation: plenty of innocent workflows (printing to PDF,
-# combining pages, re-saving an email attachment) leave exactly these strings, and
-# the strings themselves can be edited or removed by anyone. The diagnostic
-# therefore says what the file claims and stops there -- it is severity "info",
-# fix_owner "none", and it changes no figure, no status and no trust score.
-#
-# Plain vector on purpose: extending it is a one-line edit an analyst can make.
+# PDF document provenance (informational). .PDF_GENERAL_TOOLS names Producer/Creator strings belonging
+# to general-purpose software rather than a bank's statement system. Naming the tool is a FACT, not an
+# accusation - anyone can edit these strings - so it changes no figure, status or trust score.
 .PDF_GENERAL_TOOLS <- c(
   "Adobe Acrobat", "Acrobat Distiller", "Adobe Photoshop", "Adobe Illustrator",
   "Foxit", "Nitro", "PDF-XChange", "PDFsam", "Sejda", "Smallpdf", "iLovePDF",
@@ -158,9 +100,8 @@ diagnostics_matched_empty <- function(diag, why, fix) {
   "Microsoft PowerPoint", "Word for", "Excel for", "Google Docs Renderer",
   "Skia/PDF", "Quartz PDFContext", "Preview", "Scribus", "Canva", "Chromium")
 
-# .pdf_tool_hit(x) -- the first general-purpose tool named in `x`, or NA. Matched
-# as a LITERAL substring (fixed = TRUE): the entries are product names, so a stray
-# regex metacharacter in one must never change what the others match.
+# The first general-purpose tool named in `x`, or NA. Matched as a LITERAL substring: a stray regex
+# metacharacter in one product name must never change what the others match.
 .pdf_tool_hit <- function(x) {
   if (is.null(x) || !length(x) || is.na(x[1]) || !nzchar(x[1])) return(NA_character_)
   s <- tolower(x[1])
@@ -169,19 +110,11 @@ diagnostics_matched_empty <- function(diag, why, fix) {
   if (length(hit)) hit[1] else NA_character_
 }
 
-# Verbatim period bounds / effective dates are parsed with the shared
-# .tolerant_date (see R/params.R) -- NA on anything unrecognised so the
-# effective-range check simply skips rather than guessing.
+# Verbatim period bounds are parsed with the shared .tolerant_date - NA on anything unrecognised,
+# so the effective-range check skips rather than guessing.
 
-# ---------------------------------------------------------------------------
-# What a FAILING reconciliation check means, and what to do about it: one entry
-# per KPI that can fail (R/reconcile.R). Named fields rather than the positional
-# c(where, category, severity, fix) vector this used to be -- the positions were
-# read back as info[1]..info[4] two screens away, which is exactly how a wrong
-# severity or a fix text in the category slot would slip through unnoticed.
-#
-# ADDING A KPI: add its entry here. Without one it still gets a diagnostic, but a
-# deliberately vague one (.KPI_DIAGNOSIS_FALLBACK) that names no cause and no cure.
+# What a FAILING reconciliation check means and what to do about it, one entry per KPI that can fail.
+# Named fields rather than a positional vector read back as info[1]..info[4] two screens away.
 .KPI_DIAGNOSIS <- list(
   balance_reconciliation = list(
     where = "balance check", category = "reconciliation_mismatch", severity = "high",
@@ -201,18 +134,13 @@ diagnostics_matched_empty <- function(diag, why, fix) {
   no_unparsed_rows = list(
     where = "rows", category = "row_parse", severity = "high",
     how_to_fix = .FIX_ROW_PARSE),
-  # Its own category, not amount_parse. The amounts here were read PERFECTLY -- it
-  # is their DIRECTION that may be inverted -- and amount_parse is worded on screen
-  # as "amounts couldn't be read", the opposite of what happened, on a card a
-  # forensic accountant acts on. Same code, same file, two different defects.
+  # Its own category, not amount_parse: the amounts were read PERFECTLY and it is their DIRECTION
+  # that may be inverted, while amount_parse reads on screen as "amounts couldn't be read".
   amount_direction = list(
     where = "amount direction", category = "amount_direction", severity = "high",
     how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
-  # Had no entry, so the gravest verdict the engine can reach -- the redaction scan
-  # did not finish, so blacked-out text may have been read and emitted -- was
-  # rendered with the fallback below: category reconciliation_mismatch, owner
-  # "template", advice "review this check against the source statement". It told the
-  # analyst to adjust their column mapping about a possible PII leak.
+  # Had no entry, so the gravest verdict the engine can reach - blacked-out text may have been
+  # emitted - was rendered with the fallback, telling the analyst to adjust their column mapping.
   redaction_scan = list(
     where = "redactions", category = "redaction_unverified", severity = "high",
     how_to_fix = .FIX_REDACTION_UNVERIFIED))
@@ -237,12 +165,9 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     rows[[length(rows) + 1L]] <<- .diag_row(where, category, severity, detail, how_to_fix)
   }
 
-  # A SCAN WE COULD NOT MACHINE-READ is not an unknown layout, and must never be
-  # reported as one. With no text and no word boxes every template scores 0, so the
-  # generic "no template matched -- closest X, missing 'TransactionDate'" message is
-  # actively misleading: it sends the analyst to build a template for a page that has
-  # no readable text, which can never work. Say what actually happened, and name the
-  # cause -- missing OCR tooling is an ADMIN fix, poor scan quality is not.
+  # A scan we could not machine-read is not an unknown layout: with no text every template scores 0,
+  # so "no template matched" sent the analyst to build a template for a page with no text. Missing OCR
+  # tooling is an ADMIN fix; poor scan quality is not.
   no_ocr <- suppressWarnings(as.integer(metadata$scanned_no_ocr %||% 0L))
   if (identical(status, "unsupported") && !is.na(no_ocr) && no_ocr > 0) {
     tools_missing <- !isTRUE(metadata$ocr_tools %||% TRUE)
@@ -256,23 +181,15 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           paste("The scan quality was too low to read. Try a cleaner copy - scan at 300 dpi or higher,",
                 "straight, in good contrast - or ask the bank for a digital (text) PDF."))
   } else if (identical(status, "unsupported") && !is.null(metadata$matched_empty)) {
-    # The wording matched, the layout did not. "Add a template" is not the fix --
-    # there IS one, its columns just sit in the wrong place. Send the analyst to
-    # the template that failed, not to a blank form.
+    # The wording matched, the layout did not. "Add a template" is not the fix - there IS one, its
+    # columns just sit in the wrong place.
     add("template", "matched_but_empty", "high",
         sprintf("%s matches the wording on this statement but read no transactions from it",
                 metadata$matched_empty),
         .FIX_EMPTY_TEMPLATE)
   } else if (identical(status, "unsupported")) {
-    # A TIE is not an unknown layout, and "go and add a template" is the wrong
-    # instruction for it: templates that already fit scored the same, so a new one
-    # would simply tie as well and the next conversion would be no better. Same
-    # status, opposite fix -- so say the opposite thing.
-    # detail_plain, not detail: this table is customer-facing, and `detail` is the
-    # log line ("closest anz_everyday_pdf score 2/3 (missing '...')"). The template
-    # id and the fraction stay in the run log and the audit record; the reader gets
-    # the same evidence in words. Falls back to `detail` for callers that build a
-    # det by hand.
+    # A TIE is not an unknown layout: templates that already fit scored the same, so a new one
+    # would simply tie as well. detail_plain, not detail - this table is customer-facing.
     add("detection", "unknown_format", "high",
         det$detail_plain %||% det$detail %||% "no template matched this file",
         paste("Add a template for this layout in the template toolkit (Add a template tab:",
@@ -285,15 +202,12 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   }
 
   if (!is.null(metadata)) {
-    # A tie no longer stops the conversion -- the tested template is used and the
-    # run held for review. The duplicate templates are still a real problem, and
-    # only a maintainer can fix them, so it is raised here rather than put to the
-    # person who just wanted her spreadsheet.
+    # A tie no longer stops the conversion - the tested template is used and the run held for
+    # review. The duplicate templates are still real, and only a maintainer can fix them.
     if (length(metadata$tied %||% character(0)) >= 2)
       add("detection", "ambiguous_template", "medium",
-          # Naming the one that was USED matters: the tie list alone does not say
-          # which template these figures came from, and that is the first thing a
-          # reviewer needs in order to check them.
+          # Naming the one that was USED matters: the tie list alone does not say which template
+          # these figures came from.
           sprintf("%s templates fit this statement equally well: %s%s",
                   length(metadata$tied), paste(metadata$tied, collapse = ", "),
                   if (!is.null(metadata$tied_used))
@@ -321,12 +235,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
   }
 
-  # PDF document provenance. Raised for EVERY status (a file that didn't even match
-  # a template is exactly when "what wrote this?" is worth knowing), and only when
-  # there is something to say: the modified time differs from the creation time, or
-  # the Producer/Creator names a general-purpose PDF tool. Facts only -- severity
-  # info, fix_owner none, no effect on figures, status or trust. Read from either
-  # place the reader's metadata can arrive so it works whichever caller supplies it.
+  # PDF document provenance, raised for EVERY status - a file that did not match a template is
+  # exactly when "what wrote this?" is worth knowing. Facts only; no effect on figures or trust.
   doc <- metadata$pdf_doc %||% parsed$header$pdf_doc
   if (is.list(doc)) {
     fv <- function(v) if (is.null(v) || !length(v) || is.na(v[1]) || !nzchar(as.character(v[1])))
@@ -356,11 +266,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   if (!is.null(parsed) && !is.null(parsed$transactions)) {
     tx <- parsed$transactions
 
-    # 0. effective_from / effective_to (SOFT signal, P2-9): if the matched template
-    # declares a validity window and this statement's period falls outside it, the
-    # bank may have changed the format. Never a hard filter -- the statement still
-    # parses; this is only a caution so an outdated-format template that matches
-    # newer statements is visible, not silently trusted.
+    # A SOFT signal: if the matched template declares a validity window and this statement's period
+    # falls outside it, the bank may have changed the format. Never a hard filter.
     tmpl <- metadata$template
     if (!is.null(tmpl)) {
       eff_from <- .tolerant_date(tmpl$effective_from); eff_to <- .tolerant_date(tmpl$effective_to)
@@ -379,9 +286,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       k <- recon$kpis
       fails <- k[k$status == "fail", , drop = FALSE]
       for (i in seq_len(nrow(fails))) {
-        # An auto-split run tags each KPI name "<name> [statement N]"; match the
-        # BASE name so the correct severity + fix text (not the generic fallback)
-        # are used, while the failing statement stays visible in the detail below.
+        # An auto-split run tags each KPI name "<name> [statement N]"; match the BASE name so the
+        # correct severity and fix text are used, while the failing statement stays in the detail.
         nm <- sub("[[:space:]]*\\[statement [0-9]+\\]$", "", fails$name[i])
         stmt_tag <- regmatches(fails$name[i], regexpr("\\[statement [0-9]+\\]$", fails$name[i]))
         info <- .KPI_DIAGNOSIS[[nm]] %||% .KPI_DIAGNOSIS_FALLBACK
@@ -396,10 +302,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         "no balance or stated count to reconcile against",
         "The engine can't confirm every transaction was captured (nothing to reconcile the total against). Count the rows against the statement, or prefer a CSV/Excel export or a statement that shows a running balance.")
 
-    # 2. Row-level parse problems (independent of KPI wiring).
-    # Guarded like the redaction pair below: the KPI and the row-level scan both
-    # find the same malformed rows and now share one cure, so without this the
-    # reader gets the same instruction twice and reads it as two findings.
+    # Row-level parse problems, independent of KPI wiring. Guarded: the KPI and the row-level scan
+    # find the same malformed rows and share one cure, so twice would read as two findings.
     mal <- which(grepl("malformed", tx$flags %||% ""))
     if (length(mal) && !("row_parse" %in% raised))
       add(sprintf("rows %s", .rng(mal)), "row_parse", "high",
@@ -437,11 +341,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d redacted value(s), kept as shown", length(red)),
       "Redactions are intentional; values are left as [REDACTED]. No action needed.")
 
-    # The header signal, for callers that pass no `recon` (build_diagnostics is
-    # called without one in places). When the redaction_scan KPI ran it has
-    # ALREADY said this, in more detail, from the same header field -- and two
-    # rows both headed "do NOT release this output" read as two separate leaks.
-    # One fact, reported once, by whichever source got here first.
+    # The header signal, for callers that pass no `recon`. When the redaction_scan KPI ran it has
+    # ALREADY said this, and two rows both headed "do NOT release" read as two separate leaks.
     rsi <- suppressWarnings(as.integer(parsed$header$redaction_scan_incomplete %||% NA))
     if (!is.na(rsi) && rsi > 0 && !("redaction_unverified" %in% raised))
       add("redactions", "redaction_unverified", "high",
@@ -456,8 +357,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     if (!is.na(ocrc) && ocrc < PARAM_OCR_PAGE_MIN_CONF) add("OCR text", "low_ocr_confidence", "high",
       sprintf("lowest page-mean OCR confidence was %.0f%%", ocrc),
       "OCR is unsure of some characters. Re-scan at higher DPI/contrast, or verify the flagged pages against the image; reconciliation still guards the totals. Rows with a doubtful cell carry an 'ocr_low_conf' flag.")
-    # OCR ran but confidence could not be measured (the TSV pass failed): a
-    # distinct caveat, since the generic info note above understates it.
+    # OCR ran but confidence could not be measured: a distinct caveat, since the generic info note
+    # understates it.
     if (!is.na(ocrp) && ocrp > 0 && is.na(ocrc)) add("OCR text", "ocr_confidence_unknown", "high",
       "OCR ran but its confidence could not be measured",
       "Treat the machine-read values as unverified and check them against the image.")
@@ -475,7 +376,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   out[order(match(out$severity, c("high", "medium", "info"))), , drop = FALSE]
 }
 
-# diag_fix_owner_label(owner) -- plain-language "who fixes this" for display.
+# Plain-language "who fixes this" for display.
 diag_fix_owner_label <- function(owner) {
   unname(c(
     template = "You - adjust the template (toolkit)",

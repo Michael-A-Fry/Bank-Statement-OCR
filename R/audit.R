@@ -1,12 +1,7 @@
-# audit.R -- a SAFE-TO-SHARE structural audit of a statement, for improving
-# templates and the engine without ever leaking PII. Every piece of real text is
-# MASKED to its shape only: letters -> x/X (by case), digits -> 9, punctuation and
-# spaces kept. So "Coffee Shop 12" -> "Xxxxxx Xxxx 99", "1,234.56" -> "9,999.99",
-# "17 Sep" -> "99 Xxx". No merchant names, no amounts, no account numbers, no dates
-# survive -- only the LAYOUT, FORMATS and POSITIONS a template needs.
+# audit.R -- a SAFE-TO-SHARE structural audit of a statement. Every piece of real text is MASKED to
+# its shape; only the LAYOUT, FORMATS and POSITIONS a template needs survive.
 
-# mask_text(x) -- shape-only mask. Unicode-aware (accented letters are masked
-# too, via \p{}), so NOTHING real survives. Preserves the [REDACTED] token.
+# Shape-only mask, Unicode-aware so accented letters are masked too. Preserves [REDACTED].
 mask_text <- function(x) {
   x <- as.character(x)
   red <- !is.na(x) & grepl("REDACT", toupper(x))
@@ -19,20 +14,9 @@ mask_text <- function(x) {
   out
 }
 
-# .audit_rows(input, tmpl, max_rows) -- every visual row group in a PDF table,
-# with its date/amount/description cells MASKED, so a reviewer can see the shape
-# of each row (e.g. a "[REDACTED]" date, a two-date cell "99 Xxx 99 Xxx", a blank
-# amount) and why rows near the top might drop.
-#
-# It reads the page the way the READER does -- the shared .group_rows() and
-# .pdf_cell() from R/parse_pdf_table.R -- and stops there: it shows every visual
-# row, applying none of the reader's keep/stitch/continuation decisions. That is
-# the cross-check (what was on the page vs what came out), and it only works if
-# both agree on where the lines ARE. This used to carry its own copies of both:
-# the grouper was the pairwise-gap version (cumsum(diff(y) > tol)) that
-# .group_rows replaced precisely because it merges a block of tightly-set lines
-# into one giant row -- so on the dense statements a reviewer opens this report to
-# understand, it showed three rows for two hundred and quietly blamed the reader.
+# Every visual row group in a PDF table with its cells MASKED. It reads the page the way the READER
+# does - the shared .group_rows() and .pdf_cell() - and applies none of the keep or stitch decisions.
+# A private copy of the grouper here merged tightly-set lines into one giant row.
 .audit_rows <- function(input, tmpl, max_rows = 40L) {
   t <- tmpl$table %||% list(); cols <- t$columns %||% list()
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
@@ -57,7 +41,7 @@ mask_text <- function(x) {
   if (length(rows)) do.call(rbind, rows) else data.frame()
 }
 
-# statement_audit(path, templates) -> a structured, PII-free audit list.
+# A structured, PII-free audit list.
 statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
   root <- Sys.getenv("ENGINE_ROOT", ".")
   if (is.null(templates))
@@ -71,11 +55,11 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
   parsed <- if (!is.null(tmpl)) safe(parse_statement(input, tmpl), NULL) else NULL
   recon  <- if (!is.null(parsed)) safe(reconcile(parsed, tmpl), NULL) else NULL
 
-  # redaction map: counts + positions only (no text)
+  # Redaction map: counts and positions only, no text.
   red <- input$meta$redactions
   red_total <- if (!is.null(red)) sum(red$redacted_words) else 0L
 
-  # word layout sample (page 1), masked -- for building a template from scratch
+  # Word layout sample (page 1), masked, for building a template from scratch.
   wl <- NULL
   wbp <- input$words %||% list()
   w1 <- if (length(wbp)) wbp[[1]] else NULL
@@ -101,8 +85,8 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
                        score = det$score %||% NA, detail = det$detail %||% NA_character_,
                        n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA),
     period_shape = list(start = mask_text(meta$period_start), end = mask_text(meta$period_end)),
-    # A template may declare SEVERAL candidate date formats; this is a one-line
-    # description, so show them all rather than emitting a vector into a scalar field.
+    # A template may declare SEVERAL candidate date formats; this is a one-line description, so show
+    # them all rather than emitting a vector into a scalar field.
     date_format  = paste(tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
                          collapse = " | "),
     amount_sign  = tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_,
@@ -121,7 +105,7 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
   )
 }
 
-# format_audit(a) -> a readable, safe-to-share markdown report.
+# A readable, safe-to-share markdown report.
 format_audit <- function(a) {
   if (!is.null(a$error)) return(paste("Audit failed:", a$error))
   L <- c()
@@ -162,10 +146,3 @@ format_audit <- function(a) {
   }
   paste(unlist(L), collapse = "\n")
 }
-
-# There is no write_statement_audit(). There was one, and nothing ever called it --
-# not the app, not scripts/audit-statement.R, not a test. Both real callers compose
-# the two halves themselves, format_audit(statement_audit(path)), because both hand
-# the text somewhere other than a file on the server: Admin streams it through a
-# download handler, and the script writes where the maintainer said. A wrapper that
-# picks a filename for you is only useful to a caller that does not exist.

@@ -1,49 +1,17 @@
-# batch_audit.R -- review MANY statements at once (a whole folder of 250+ PDFs of
-# every bank/variant) and produce a SINGLE, PII-safe picture: what parses, what
-# doesn't, the unsupported layouts CLUSTERED, N recommended DRAFT templates
-# (editable) for the biggest gaps, and a feature-gap summary telling you what the
-# wizard/engine would need to cover the rest. No PII: only shapes, counts,
-# institution names (from a matched template), and layout hashes.
+# batch_audit.R -- review MANY statements at once and produce a SINGLE, PII-safe picture. Only
+# shapes, counts, institution names and layout hashes.
 
-# .kind_of(input) -- a coarse, safe descriptor of the file kind.
+# A coarse, safe descriptor of the file kind.
 .kind_of <- function(input) {
   if (identical(input$kind, "pdf"))
     return(if ((input$meta$ocr_pages %||% 0L) > 0L) "pdf-scanned" else "pdf-text")
   input$kind %||% "?"
 }
 
-# batch_audit(paths, templates, fields_templates, doc_templates) -> list(per_file,
-# clusters, recommendations, feature_gaps). Safe to share.
-#
-# FORM documents count as COVERED. The app's real front door is convert_document(),
-# which tries the transaction pipeline and then falls back to FORM (mode: fields)
-# extraction -- so an IRD summary or a KiwiSaver statement converts perfectly in
-# the app. The audit only ever asked the TRANSACTION half, so those documents came
-# back "unsupported": they inflated the gap count, they were clustered as layouts
-# to build, and they consumed one of the N draft-template recommendations that
-# should have gone to a real gap. A coverage report that under-reports coverage
-# sends an analyst off to build a template that already exists.
-#
-# AND SO DO REPORTS, FOR THE IDENTICAL REASON. convert_document() has a THIRD
-# door after the form one -- a mode:document template reading a report's many
-# tables (R/doc_extract.R) -- and this audit had never heard of it either.
-# Measured on the shipped seven-page report fixture: convert_tables() reads it as
-# `ok`, six tables and a hundred-odd rows, while batch_audit() on the SAME file
-# returned detected FALSE, template anz_everyday_pdf, status unsupported, 0 rows
-# -- the two halves of one product disagreeing about one file. It was
-# clustered as a layout gap, it consumed one of the eight draft recommendations,
-# and the draft it produced was a BANK STATEMENT draft for a document that is not
-# a statement. Exactly the paragraph above, one route later.
-#
-# WHY the read-only primitives (detect_form + extract_fields,
-# detect_document_template + extract_document) and not convert_document() itself:
-# this audit is a picture, not a conversion run. convert_document() WRITES a
-# workbook/CSV/JSON per file and a run-log record per file -- for a 250-file
-# folder that is 250 spurious conversions on disk and 250 run-log entries
-# polluting the Admin history and the "build these next" queue, which reads
-# exactly those records. The detectors reach the SAME verdict about whether a
-# template matches, with no side effects, and reuse the `input` this loop already
-# read. The audit stays what it says on the tin.
+# Returns list(per_file, clusters, recommendations, feature_gaps). Safe to share. FORM and REPORT
+# documents count as COVERED - asking only the transaction half inflated the gap count and spent
+# draft recommendations. Read-only primitives, not convert_document(): a 250-file folder would be
+# 250 spurious conversions polluting the "build these next" queue.
 batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
                         fields_templates = NULL, doc_templates = NULL) {
   root <- Sys.getenv("ENGINE_ROOT", ".")
@@ -79,9 +47,8 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
     tmpl <- if (isTRUE(det$matched)) templates[[det$template_id]] else NULL
     parsed <- if (!is.null(tmpl)) safe(parse_statement(input, tmpl), NULL) else NULL
     recon  <- if (!is.null(parsed)) safe(reconcile(parsed, tmpl), NULL) else NULL
-    # FORM fallback, in the same order convert_document() uses it: only when no
-    # transaction template matched. `form` stays NULL otherwise, so a statement's
-    # verdict is completely unchanged.
+    # FORM fallback, in the same order convert_document() uses it: only when no transaction template
+    # matched.
     ftmpl <- NULL; fields <- NULL
     if (is.null(tmpl) && length(fields_templates)) {
       fdet <- safe(detect_form(input, fields_templates), list(matched = FALSE))
@@ -90,10 +57,7 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
         fields <- safe(extract_fields(input, ftmpl, dict), NULL)
       }
     }
-    # REPORT fallback, third and last -- the same order and the same reason
-    # convert_document() uses: it is reached only when neither a transaction
-    # template nor a form template claimed the document, so it can never take
-    # work away from either.
+    # REPORT fallback, third and last, so it can never take work away from either of the others.
     dtmpl <- NULL; dext <- NULL
     if (is.null(tmpl) && is.null(ftmpl) && length(doc_templates)) {
       ddet <- safe(detect_document_template(input, doc_templates), list(matched = FALSE))
@@ -110,20 +74,16 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
       else "ok"
     sig <- lsig$signature %||% NA_character_
     if (!is.null(sig) && !is.na(sig) && is.null(rep_path[[sig]])) rep_path[[sig]] <- p
-    # Amount style / date format / bank: from the matched template when there IS
-    # one, otherwise DETECT them from the file itself (a draft) -- so a batch of
-    # mostly-unsupported statements still shows what styles/formats are present,
-    # which is the whole point of the audit (they were blank before).
+    # Amount style, date format and bank come from the matched template when there is one, otherwise
+    # are DETECTED from the file, so a mostly-unsupported batch still shows what is present.
     if (!is.null(tmpl)) {
       amt_style <- tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_
-      # .one_date_format: a template may declare SEVERAL candidate date formats
-      # (see resolve_date_format); this frame needs ONE scalar per file.
+      # A template may declare SEVERAL candidate date formats; this frame needs ONE scalar per file.
       dt_fmt    <- .one_date_format(tmpl$table$date_format %||% tmpl$columns$date$format)
       bank_v    <- tmpl$bank %||% NA_character_
     } else if (!is.null(ftmpl) || !is.null(dtmpl)) {
-      # a form has labelled values and a report has its own tables, not a
-      # transaction table: no amount style and no date format to report, but the
-      # institution IS known from the template.
+      # A form has labelled values and a report its own tables, not a transaction table: no amount
+      # style and no date format, but the institution IS known from the template.
       amt_style <- NA_character_; dt_fmt <- NA_character_
       bank_v    <- (ftmpl %||% dtmpl)$bank %||% NA_character_
     } else {
@@ -139,37 +99,31 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
                   else if (!is.null(dtmpl)) dtmpl$id
                   else det$template_id) %||% NA_character_,
       bank = bank_v, status = status,
-      # ROWS MEAN WHAT THE ROUTE SAYS THEY MEAN, and `status` says which route.
-      # A statement is counted in transactions; a report in the rows of its own
-      # tables, which is the number the analyst is looking for and was printed as
-      # a flat 0 for every report this audit has ever seen.
+      # Rows mean what the route says they mean, and `status` says which route. A report is counted
+      # in the rows of its own tables - printed as a flat 0 for every report this audit has seen.
       n_rows = if (!is.null(parsed)) nrow(parsed$transactions)
                else if (!is.null(dext)) sum(vapply(dext$tables,
                  function(r) as.integer(r$n_rows %||% 0L), integer(1)))
                else 0L,
-      # a form is measured in FIELDS, not rows -- reported in its own column so a
-      # covered form is never mistaken for an empty statement.
+      # A form is measured in FIELDS, in its own column so a covered form is never mistaken for an
+      # empty statement.
       n_fields = if (!is.null(fields)) nrow(fields) else 0L,
-      # ...and a report in TABLES, for the same reason: "6 tables, 102 rows" is a
-      # covered report and "0 tables, 0 rows" is a template that no longer fits.
+      # ...and a report in TABLES: "6 tables, 102 rows" is a covered report and "0 tables, 0 rows"
+      # is a template that no longer fits.
       n_tables = if (!is.null(dext)) length(dext$tables) else 0L,
       n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA,
       redacted = sum(input$meta$redactions$redacted_words %||% 0L),
       amount_style = amt_style, date_format = dt_fmt,
       trust = if (!is.null(recon)) recon$trust$level else NA_character_,
       signature = sig,
-      # G9: the hint goes into a report headed "safe to share - no PII", so it is
-      # filtered to the structural words it is supposed to be made of. The
-      # SIGNATURE, which is what actually clusters, is untouched.
+      # The hint goes into a report headed "safe to share - no PII", so it is filtered to structural
+      # words. The SIGNATURE, which is what actually clusters, is untouched.
       layout_hint = .layout_hint_safe(lsig$hint, input$kind), stringsAsFactors = FALSE)
   }
   per <- do.call(rbind, rows)
 
-  # cluster the unsupported/failed by layout signature -> the biggest gaps first.
-  # "form" and "report" are deliberately NOT in this set: both are covered work,
-  # not gaps, so neither may be clustered as a layout to build or consume a draft
-  # recommendation -- and a draft recommendation is a BANK STATEMENT draft, which
-  # is the wrong thing entirely for a document that is not a statement.
+  # Cluster the unsupported and failed by layout signature, biggest gaps first. "form" and "report"
+  # are deliberately not in this set: both are covered work, not gaps.
   uns <- per[per$status %in% c("unsupported", "failed", "unreadable"), , drop = FALSE]
   clusters <- data.frame(); recs <- list()
   if (nrow(uns)) {
@@ -181,7 +135,7 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
         data.frame(signature = s, count = as.integer(tab[[s]]), example_idx = ex$idx,
                    kind = ex$kind, layout_hint = ex$layout_hint, stringsAsFactors = FALSE)
       }))
-      # recommend a draft template for each of the top clusters
+      # Recommend a draft template for each of the top clusters.
       top <- utils::head(clusters, max_recommendations)
       for (k in seq_len(nrow(top))) {
         p <- rep_path[[top$signature[k]]]
@@ -207,8 +161,8 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L,
     with_redactions = sum(per$redacted > 0, na.rm = TRUE),
     multi_account = sum(per$n_accounts > 1, na.rm = TRUE),
     multi_period = sum(per$n_periods > 1, na.rm = TRUE),
-    # forms and reports are reported as their OWN kinds of coverage -- neither a
-    # statement nor a gap -- so "unsupported" means what it says.
+    # Forms and reports are reported as their OWN kinds of coverage - neither a statement nor a gap
+    # - so "unsupported" means what it says.
     forms = sum(per$status == "form"),
     reports = sum(per$status == "report"),
     report_tables = sum(per$n_tables, na.rm = TRUE),
@@ -231,12 +185,9 @@ format_batch_audit <- function(b) {
   add(sprintf("- amount styles seen: %s", paste(sprintf("%s(%s)", names(g$amount_styles), g$amount_styles), collapse = ", ")))
   add(sprintf("- date formats seen: %s", paste(sprintf("%s(%s)", names(g$date_formats), g$date_formats), collapse = ", ")))
   add(sprintf("- banks matched: %s", paste(sprintf("%s(%s)", names(g$banks), g$banks), collapse = ", ")))
-  # Say the form count out loud. Silence here is what made an already-covered IRD /
-  # KiwiSaver document read as a coverage gap.
+  # Say the form count out loud: silence here made an already-covered IRD document read as a gap.
   add(sprintf("- form (labelled-value) documents covered by a fields template: %d", g$forms %||% 0L))
-  # Say the report count out loud too, and how much came out of them -- a report
-  # counted as a gap sent an analyst off to build a bank-statement template for a
-  # document that is not a statement.
+  # Say the report count too - a report counted as a gap sent an analyst off to build a bank template.
   add(sprintf("- report (many-table) documents covered by a document template: %d, holding %d table(s)",
       g$reports %||% 0L, g$report_tables %||% 0L))
   add(sprintf("\n## The gaps - %d unsupported/failed across %d distinct layouts (forms excluded - they are covered, and so are reports)",
@@ -256,65 +207,21 @@ format_batch_audit <- function(b) {
   paste(unlist(L), collapse = "\n")
 }
 
-# ---------------------------------------------------------------------------
-# ONE TEMPLATE, MANY EXAMPLES: does the rest of it still read?
-# ---------------------------------------------------------------------------
-#
-# H7. A template can hold forty tables that never all appear in one copy, grown
-# from a dozen examples over months. An admin who has just drawn table 41 has no
-# way to ask "do the other forty still read?" -- and without that answer, every
-# edit is a change whose blast radius nobody can see, which is what makes a
-# forty-table template a thing nobody dares touch.
-#
-# batch_audit() above cannot serve this: it asks the library which template fits
-# each file, and the question here is the exact opposite -- ONE template is named,
-# and the folder is asked what it does to it. So the template is FORCED, and
-# whether the fingerprint would also have picked it is reported as its own
-# column rather than deciding anything. Both facts matter and they are different
-# facts: a table can read perfectly on a document the fingerprint would never
-# have fired on (A2c -- an over-specific fingerprint is fatal, and this is where
-# that shows up).
-#
-# READ-ONLY, like the audit above and for the same reason: no workbook, no run
-# record, no entry in the "build these next" queue. Twelve examples through
-# convert_document() would be twelve spurious conversions on disk.
-#
-# THE GRID SPEAKS document_summary()'s VOCABULARY, with the file in front of it:
-# `rows`, `found_by`, `confidence`, `unclaimed_words`, `note` all mean here
-# exactly what they mean on the summary of a conversion, so there is no second
-# vocabulary to learn -- and `unclaimed_words`, the single best tell that a band
-# no longer fits a document, comes along for free. Only two things differ, both
-# so that ONE shape serves both other routes: the key column is `item` rather
-# than `table`, because a form template's items are its fields; and the two
-# column-COUNT columns are left out, because a field has no columns.
-#
-# A table the copy does not carry at all appears as its own row, rows 0, found_by
-# "not on this document" -- "absent" and "empty" are different facts, and a grid
-# that cannot tell them apart cannot answer the question.
-#
-# Where a measure does not apply it is NA, never 0. A form has nothing to be
-# confident about and no columns for a word to fall outside of, and writing 0
-# there would report a form as a clean, fully-checked read beside a report that
-# really was one.
-#
-# `progress(i, n, file)` matches convert_batch()'s callback exactly -- plain, not
-# a Shiny call, so a folder can be run from the R console, and one that errors is
-# ignored rather than costing the check its run.
-#
-# Returns list(grid, message):
-#   grid     one row per example per table (or per field, for a form template)
-#   message  ONE sentence: how many examples, and what needs a look.
+# ONE TEMPLATE, MANY EXAMPLES: does the rest of it still read? batch_audit() asks which template fits
+# each file; this asks the opposite, so the template is FORCED and whether the fingerprint would also
+# have picked it is its own column rather than deciding anything. READ-ONLY. A table the copy does not
+# carry is its own row, rows 0: absent and empty are different facts, and where a measure does not
+# apply it is NA, never 0. progress(i, n, file) matches convert_batch()'s callback exactly.
 
-# .tc_grid_proto() -- the empty grid, with the column types a full one has. A
-# zero-row frame is a shape, and a shape that changes with the row count is not
-# one (the same rule document_summary() states about its own prototype).
+# The empty grid, with the column types a full one has: a shape that changes with the row count is
+# not a shape.
 .tc_grid_proto <- function() data.frame(
   file = character(0), detected = logical(0), item = character(0),
   name = character(0), pages = character(0), rows = integer(0),
   found_by = character(0), confidence = numeric(0),
   unclaimed_words = integer(0), note = character(0), stringsAsFactors = FALSE)
 
-# .tc_row(file, detected, ...) -- one grid row, every column present.
+# One grid row, every column present.
 .tc_row <- function(file, detected, item, name, pages, rows, found_by,
                     confidence, unclaimed_words, note) {
   data.frame(file = as.character(file)[1], detected = isTRUE(detected),
@@ -326,9 +233,8 @@ format_batch_audit <- function(b) {
              note = as.character(note)[1], stringsAsFactors = FALSE)
 }
 
-# .tc_document(file, detected, input, tmpl) -- the grid rows one example produces for a
-# mode:document template. document_summary() already answers the whole question,
-# misses included; this only puts the columns in the grid's order.
+# The grid rows one example produces for a mode:document template. document_summary() already
+# answers the whole question; this only puts the columns in the grid's order.
 .tc_document <- function(file, detected, input, tmpl) {
   ext <- safe(extract_document(input, tmpl), NULL)
   if (is.null(ext))
@@ -348,12 +254,8 @@ format_batch_audit <- function(b) {
              note = as.character(s$note), stringsAsFactors = FALSE)
 }
 
-# .tc_fields(file, detected, input, tmpl, dict) -- the same grid for a
-# mode:fields template. A form has no columns for a word to fall outside of and
-# nothing to be confident about, so those two measures are NA rather than 0:
-# "does not apply" and "none" are different answers, and writing 0 for the first
-# is how a form came to be counted as a clean zero-failure conversion beside a
-# reconciled statement.
+# The same grid for a mode:fields template. A form has no columns for a word to fall outside of and
+# nothing to be confident about, so those two measures are NA rather than 0.
 .tc_fields <- function(file, detected, input, tmpl, dict) {
   f <- safe(extract_fields(input, tmpl, dict), NULL)
   if (is.null(f) || !nrow(f))
@@ -377,9 +279,8 @@ template_check <- function(tmpl, paths, progress = NULL, dict = NULL) {
   paths <- as.character(paths %||% character(0))
   kind <- safe(template_kind(tmpl), "statement")
   empty <- .tc_grid_proto()
-  # A BANK STATEMENT IS CHECKED BY ITS OWN ARITHMETIC, and that is a different
-  # tool: reconciliation reads a folder through the case-folder run, which
-  # already exists. Refused out loud rather than answered with an empty grid.
+  # A bank statement is checked by its own arithmetic, which is a different tool. Refused out loud
+  # rather than answered with an empty grid.
   if (!kind %in% c("document", "fields"))
     return(list(grid = empty, message = status_message("needs_review",
       "this is a bank statement template, and a folder of statements is checked by converting them",
@@ -409,11 +310,8 @@ template_check <- function(tmpl, paths, progress = NULL, dict = NULL) {
   }
   grid <- do.call(rbind, parts); rownames(grid) <- NULL
 
-  # THE ONE SENTENCE. What an admin wants to know after editing a forty-table
-  # template is not a percentage: it is whether anything STOPPED reading. So the
-  # sentence names the count of tables that came out with nothing on every single
-  # example -- the ones an edit has broken -- and says nothing else when there
-  # are none.
+  # What an admin wants after editing a forty-table template is whether anything STOPPED reading, so
+  # the sentence names the count of tables that came out with nothing on every single example.
   n_files <- length(unique(grid$file))
   items <- unique(grid$item[!is.na(grid$item)])
   dead <- items[vapply(items, function(k)

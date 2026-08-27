@@ -1,51 +1,28 @@
-# config.R -- ONE place for all deployment settings. load_config() reads
-# config/config.yaml (kept out of any distributed copy; copy config/config.example.yaml
-# to create it) and deep-merges it over the built-in defaults, so a partial or
-# absent file still yields a complete, valid config. The admin password also accepts
-# an environment-variable override (BSO_ADMIN_PASSWORD) for sites that would rather
-# not keep it in a file; the file is the default home otherwise.
+# config.R -- ONE place for all deployment settings, deep-merged over the built-in defaults so a
+# partial or absent file still yields a complete, valid config. BSO_ADMIN_PASSWORD overrides.
 
-# .DEFAULT_ADMIN_PASSWORD -- the PLACEHOLDER shipped in the example config. It is
-# not a password, it is a "you have not set one yet" marker: while it is still in
-# force the app REFUSES to serve the Admin tab at all (see admin_password_is_default
-# below and the gate in app.R). Kept as a named constant so the default, the
-# example file and the refusal can never drift apart.
+# The PLACEHOLDER shipped in the example config. While it is in force the app REFUSES Admin.
 .DEFAULT_ADMIN_PASSWORD <- "changeme"
 
-# .config_defaults() -- every setting the app/engine reads, with safe defaults.
 .config_defaults <- function() list(
   app = list(
     title          = "Statement Studio",
     admin_password = .DEFAULT_ADMIN_PASSWORD,  # placeholder -> Admin stays CLOSED
     shiny_url      = "http://localhost:8100", # the URL Qlik's "Convert a statement" tile opens
     port           = 8100L,
-    # Biggest statement a user may upload, in MB. Shiny's own default is 5 MB, which
-    # rejects the scanned PDFs this tool exists to read, so we set our own.
     max_upload_mb  = 200,
-    # Whether Convert's "Include user-created templates" box starts TICKED.
-    # TRUE, because the product's promise is "build a template once and that bank
-    # converts automatically from then on" -- with this off, a template Beth builds
-    # is excluded from auto-detection and the promise is false. Governance is NOT
-    # served by this switch: what reaches Qlik is gated on template ORIGIN in
-    # R/feed.R (feed.allowed_template_origins), which is unaffected by it. Set it
-    # false only if your team wants to opt in to its own templates each time.
+    # TRUE, because the promise is "build a template once and that bank converts automatically".
+    # Governance is not served by this switch: what reaches Qlik is gated on template ORIGIN.
     user_templates_default = TRUE
   ),
-  # EVERY TEMPLATE LIVES UNDER templates/. Seven folders used to sit at the root
-  # of the app (templates, templates_user, templates_seed, fields_templates,
-  # fields_templates_user, doc_templates, doc_templates_user) and a person had to
-  # already know the naming convention to tell which was which. They are now one
-  # folder with a README that is the map. The SEPARATION is unchanged and load
-  # bearing -- curated vs user is the Qlik governance gate, and one folder per
-  # mode is what stops a report template joining statement detection.
-  #
-  # A folder name is the template's `mode:`. See templates/README.md.
+  # EVERY TEMPLATE LIVES UNDER templates/, one folder per kind. The separation is load bearing: curated
+  # vs user is the Qlik governance gate, and one folder per mode stops a report template joining
+  # statement detection. A folder name is the template's `mode:`.
   paths = list(
     templates      = "templates/statements",       # PROVEN / curated statements
     user_templates = "templates/statements_user",  # analyst drafts (Shiny only, NEVER Qlik)
     fields         = "templates/fields",
     user_fields    = "templates/fields_user",
-    # mode:document templates -- a report carrying many tables (R/doc_extract.R).
     docs           = "templates/documents",
     user_docs      = "templates/documents_user",
     dictionary     = "dictionaries/labels.yaml",
@@ -55,40 +32,23 @@
     logs           = "logs"
   ),
   feed = list(
-    # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny
-    # app; each result is written here (gated) as a side-effect, and a Qlik folder
-    # connection + scheduled reload turns it into org-wide dashboards. Only
-    # reconciled conversions from PROVEN (curated) templates reach the dashboard
-    # table -- the governance gate -- so unvetted output never becomes org data.
+    # The analytics feed Qlik loads. Only reconciled conversions from PROVEN (curated) templates
+    # reach the dashboard table, so unvetted output never becomes org data.
     enabled                  = TRUE,       # write the feed on each conversion
     feed_dir                 = "feed",
     require_status_ok        = TRUE,       # only clean conversions (status == ok)
-    # high | medium | any. 'medium' (default) accepts every CLEAN conversion; 'high'
-    # accepts ONLY balance-proven ones (opening + txns = printed closing) -- stricter,
-    # but a clean statement with no running balance is 'medium' and would be withheld.
     min_trust                = "medium",
     allowed_template_origins = list("default"),  # 'default' = curated/proven; add 'user' to include drafts
     template_allowlist       = list(),     # optional: restrict to specific template ids
     include_review_feed      = TRUE,       # also write withheld runs to feed/review (separate table)
-    # HOW LONG A ROW STAYS LOADABLE. One CSV per statement is written here and
-    # nothing ever removed one, while Qlik loads the folder with a wildcard -- so
-    # at 50 conversions a day the reload walks about 18,000 files after a year and
-    # 55,000 after three, and every reload gets slower for ever. archive_feed()
-    # (R/feed.R) MOVES rows older than this into feed/archive/, which the wildcard
-    # does not reach: nothing is deleted, and a row is one folder away if it is
-    # ever wanted again. 400 days by default so a dashboard can always compare
-    # this month with the same month last year. 0 (or less) means never archive --
-    # a real choice, and feed_retention_note() then says so out loud.
+    # One CSV per statement is written and nothing removed one, while Qlik loads the folder with a
+    # wildcard, so at 50 conversions a day the reload walks 18,000 files after a year. 0 or less means
+    # never archive.
     keep_days                = 400
   ),
   metadata = list(
-    # LOCAL-ONLY structural + quality capture about every conversion -- the raw
-    # material for future on-box analysis / a local ML assist. Written to
-    # logs/metadata/<run_id>.json (one file per run, never a shared append), it
-    # NEVER leaves this machine and NEVER enters the governed Qlik feed. No raw
-    # statement CONTENT is stored -- only structure, counts and quality signals;
-    # any account number is stored ONLY as a hash. See docs/context/metadata-capture.md
-    # for the per-level PII notes.
+    # Local-only structural and quality capture. It NEVER leaves this machine and NEVER enters the
+    # governed feed: no raw statement CONTENT, and any account number stored as a hash.
     level    = "full",          # off | standard | full  -- how much detail to capture
     capture  = list(            # per-category switches (each applies within its level)
       layout         = TRUE,    # layout signature, format, column/page shape
@@ -104,32 +64,16 @@
     retain_forever = TRUE       # exempt metadata from log rollup (never archived / deleted)
   ),
   retention = list(
-    # Every converted statement is copied byte-for-byte into uploads/<id>/ so a
-    # format that failed can be picked up and fixed. Those copies are REAL client
-    # statements, so they must not sit there forever by accident. After this many
-    # days the tidy-up (purge_uploads, R/retention.R) deletes the copied FILE and
-    # keeps the small record.json, so the audit of "this was uploaded, this is what
-    # happened" survives while the client data does not. 0 (or a negative number)
-    # means keep the copies indefinitely -- a deliberate choice, and the Convert
-    # page then says so out loud.
+    # Every converted statement is copied byte-for-byte into uploads/<id>/. Those are REAL client
+    # statements, so purge_uploads() deletes the copied FILE and keeps record.json.
     uploads_keep_days = 90
   )
 )
 
-# admin_password_is_default(cfg) -- TRUE while the shipped placeholder (or a blank)
-# is still the admin password. The app uses this to REFUSE the Admin tab rather
-# than serve template deletion, the shared dictionary and the analytics-feed
-# settings behind a password that is printed in the example file and the docs.
-# .modernise_template_paths(cfg) -- a settings file written before the templates
-# were consolidated names the OLD folders, and the file WINS over the defaults.
-# That is the point of a settings file, and here it would be a trap: the folders
-# are moved on start, so a config still pointing at templates_user\ points at an
-# empty folder, and every template the team built disappears from the app with
-# nothing said. It is settings, so nothing errors -- the app just has no
-# templates.
-#
-# Only EXACT legacy names are rewritten. A site that set a genuinely custom path
-# (D:\shared\templates) has made a decision, and nothing here overrides it.
+# admin_password_is_default() is TRUE while the shipped placeholder is in force, and the app uses it
+# to REFUSE Admin. .modernise_template_paths() rewrites a settings file naming the OLD folders: the
+# file WINS over the defaults, so such a config points at an empty folder and every template the team
+# built disappears with nothing said.
 .LEGACY_TEMPLATE_PATHS <- list(
   templates      = c("templates",             "templates/statements"),
   user_templates = c("templates_user",        "templates/statements_user"),
@@ -154,29 +98,14 @@ admin_password_is_default <- function(cfg = load_config()) {
   is.na(pw) || !nzchar(pw) || identical(pw, .DEFAULT_ADMIN_PASSWORD)
 }
 
-# config_error(cfg) -- the YAML parse failure recorded by load_config(), or NULL.
-# A broken config.yaml silently reverting to built-ins used to be invisible; one
-# stray tab restored the placeholder admin password and redirected the Qlik feed
-# with nothing said. Callers surface this (startup warning + Admin banner).
+# The YAML parse failure recorded by load_config(), or NULL. A broken config.yaml silently reverting
+# to built-ins was invisible: one stray tab restored the placeholder password and redirected the feed.
 config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 
-# ---- yes/no settings that decide how much governance is in force ------------
-# Every one of these is read with isTRUE(), so ANYTHING that is not a real logical
-# reads as FALSE. YAML makes that easy to trip over: `true`, `yes`, `on` and `True`
-# all parse to TRUE, but `'true'`, `"yes"` and `1` parse to a string or a number --
-# and quoting a value is the most ordinary thing a person editing YAML in Notepad
-# does. The result was silent and one-directional:
-#
-#   feed.require_status_ok: 'true'  -> the status gate switched OFF, so conversions
-#                                      the tool itself flags as needing review were
-#                                      written to feed/transactions marked accepted
-#   feed.enabled: 'true'            -> the feed switched OFF, and the dashboards
-#                                      simply stopped gaining data
-#
-# Neither said anything, and both were chosen by a quote character. So the words a
-# person would reasonably write are accepted, and anything unrecognisable keeps the
-# BUILT-IN DEFAULT (never the weaker reading) and is reported through config_error,
-# which the startup warning and the Admin banner already shout about.
+# Yes/no settings deciding how much governance is in force, all read with isTRUE(). YAML makes this
+# easy to trip over - `true` is TRUE but `'true'` is a string, and quoting feed.require_status_ok
+# switched the status gate OFF. Anything unrecognisable keeps the BUILT-IN DEFAULT, never the weaker
+# reading.
 .FLAG_SETTINGS <- list(
   c("app", "user_templates_default"),
   c("feed", "enabled"), c("feed", "require_status_ok"),
@@ -185,7 +114,6 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 .FLAG_TRUE  <- c("true", "yes", "on", "y", "t", "1")
 .FLAG_FALSE <- c("false", "no", "off", "n", "f", "0")
 
-# .as_flag(v) -- v as TRUE/FALSE, or NA when it is not a yes/no at all.
 .as_flag <- function(v) {
   if (is.logical(v) && length(v) == 1L && !is.na(v)) return(v)
   if (is.null(v) || length(v) != 1L) return(NA)
@@ -196,17 +124,9 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
   NA
 }
 
-# .coerce_flags(cfg, defaults) -> cfg with every .FLAG_SETTINGS value a real
-# logical and every .ENUM_SETTINGS value one of its allowed words, carrying attr
-# "flag_error" naming anything that could not be read.
-#
-# It also repairs a SECTION of the wrong shape (`feed: 3`, `app: hello` -- a
-# mis-indented line is enough to produce one). That replaced the whole settings
-# block with a bare value, and the first `cfg$app$admin_password` then died with
-# "$ operator is invalid for atomic vectors" -- the app simply would not start, on
-# go-live morning, over one space. Defaults go back in and the banner says which
-# section, which is the same fail-loud-but-keep-running contract as an unparseable
-# file above.
+# Returns cfg with every flag a real logical and every enum an allowed word, carrying attr
+# "flag_error". It also repairs a SECTION of the wrong shape - one mis-indented line replaced a whole
+# settings block with a bare value and the app would not start.
 .coerce_flags <- function(cfg, defaults = .config_defaults()) {
   bad <- character(0)
   for (sec in unique(vapply(.FLAG_SETTINGS, `[[`, "", 1L))) {
@@ -233,33 +153,14 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
   cfg
 }
 
-# ---- settings that are one of a SHORT LIST of words -------------------------
-# The same defect as the yes/no settings above, and the same cure. Validation
-# covered five booleans; the two settings that decide what reaches the Qlik
-# dashboards were never checked at all, and BOTH fail closed and SILENTLY:
-#
-#   feed.min_trust: meduim            -> .trust_ok() falls through its switch() to
-#                                        the "high only" branch, so every clean
-#                                        medium statement is withheld and the
-#                                        dashboards stop gaining data
-#   allowed_template_origins: [Default] -> the gate compares against the lowercase
-#                                        "default" it stamps itself, so every
-#                                        conversion returns withheld:not_proven
-#
-# Failing closed is right. Failing closed silently is not: Admin reported both as
-# "handled as intended" in green while the dashboards went flat. So a value that
-# is only in the wrong CASE is simply read (nobody meant anything else by
-# `Default`), and a value that is not in the list at all keeps the built-in
-# default -- never a weaker one -- and is reported through the same banner the
-# yes/no settings already use.
+# Settings that are one of a short list of words. BOTH fail closed and silently - a misspelt min_trust
+# withholds every clean medium statement, a mis-cased origin makes every conversion return
+# withheld:not_proven. Wrong CASE is simply read; not in the list keeps the default and is reported.
 .ENUM_SETTINGS <- list(
   list(key = c("feed", "min_trust"),                values = c("high", "medium", "any")),
   list(key = c("feed", "allowed_template_origins"), values = c("default", "user"), many = TRUE),
   list(key = c("metadata", "level"),                values = c("off", "standard", "full")))
 
-# .coerce_enums(cfg, defaults) -> cfg, carrying attr "enum_error". Shaped exactly
-# like .coerce_flags so that .coerce_flags stays the ONE place that assembles the
-# banner, rather than there being two of them saying it two ways.
 .coerce_enums <- function(cfg, defaults) {
   bad <- character(0)
   for (e in .ENUM_SETTINGS) {
@@ -275,23 +176,17 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
                             .or_list(e$values)))
       next
     }
-    # In the list, but perhaps not in the case the gate compares in. Put it back
-    # in the shape it came in (a list stays a list) so nothing downstream moves.
     cfg[[k]] <- if (isTRUE(e$many) && is.list(v)) as.list(w) else w
   }
   if (length(bad)) attr(cfg, "enum_error") <- bad
   cfg
 }
 
-# .or_list(x) -- "high, medium or any". Said the way a person would say it,
-# because this sentence is read by whoever has to fix the file.
 .or_list <- function(x) {
   if (length(x) < 2L) return(paste(x, collapse = ""))
   paste(paste(utils::head(x, -1L), collapse = ", "), "or", utils::tail(x, 1L))
 }
 
-# .deep_merge(base, over) -- override wins; sub-lists merge key-by-key, scalars
-# replace. A NULL override leaves the base untouched (so a blank YAML key = default).
 .deep_merge <- function(base, over) {
   if (is.null(over)) return(base)
   if (!is.list(base) || !is.list(over)) return(over)
@@ -299,15 +194,7 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
   base
 }
 
-# save_metadata_config(level, capture, path) -- persist ONLY the metadata block to
-# config.yaml (merging over whatever is already there), so the Admin toggle for the
-# local capture survives a restart without disturbing the rest of the file. Returns
-# TRUE on success. retain_forever stays TRUE -- metadata is never rolled up.
 save_metadata_config <- function(level, capture, path = .config_path()) {
-  # An UNREADABLE existing file must never be treated as an empty one: merging
-  # onto list() and writing would silently delete every other setting in it (the
-  # admin password, the Qlik feed_dir, the paths) to save one toggle. Refuse and
-  # let the caller say so -- the file is still there to be fixed by hand.
   if (!is.null(path) && file.exists(path)) {
     parsed <- tryCatch(yaml::read_yaml(path), error = function(e) e)
     if (inherits(parsed, "error"))
@@ -326,21 +213,15 @@ save_metadata_config <- function(level, capture, path = .config_path()) {
   invisible(ok)
 }
 
-# .config_path() -- BSO_CONFIG env wins; else config/config.yaml next to the app.
 .config_path <- function() {
   p <- Sys.getenv("BSO_CONFIG", "")
   if (nzchar(p)) p else file.path("config", "config.yaml")
 }
 
-# load_config is called MANY times per conversion (once per lex() via .lexicon_path,
-# plus convert/feed/metadata), and each call rebuilt the defaults + re-parsed
-# config.yaml. Cache the file-merged config keyed by path + mtime + size, so it
-# re-reads ONLY when the file actually changes (an admin save or a hand-edit) --
-# self-invalidating, no writer needs to remember to clear it. The env-secret
-# override is applied fresh on every call, never cached, so it can't go stale.
+# load_config is called many times per conversion, and each call rebuilt the defaults and re-parsed
+# the file. Cached on path + mtime + size. The env-secret override is applied fresh every call.
 .CONFIG_CACHE <- new.env(parent = emptyenv())
 
-# load_config(path) -> the complete, merged config list.
 load_config <- function(path = .config_path(), refresh = FALSE) {
   fi  <- if (!is.null(path) && file.exists(path)) file.info(path) else NULL
   key <- paste(path %||% "<none>",
@@ -350,11 +231,9 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
   } else {
     c0 <- .config_defaults()
     if (!is.null(fi)) {
-      # A config.yaml that does not parse is NOT the same as no config.yaml. It
-      # silently reverted the admin password to the shipped placeholder and the
-      # Qlik feed_dir to "feed" -- a weaker posture, chosen by a stray tab, with
-      # nothing said. Defaults are still used (the app must start), but the failure
-      # is RECORDED on the result so every caller can shout about it.
+      # A config.yaml that does not parse is NOT the same as no config.yaml: it silently reverted the
+      # admin password to the placeholder, a weaker posture chosen by a stray tab. Defaults still let
+      # the app start, but the failure is RECORDED.
       fromfile <- tryCatch(yaml::read_yaml(path), error = function(e) e)
       if (inherits(fromfile, "error")) {
         attr(c0, "config_error") <- sprintf("%s could not be read: %s", path,
@@ -369,9 +248,6 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
             path, fe)
         }
       } else if (!is.null(fromfile)) {
-        # An empty file (or comments only) parses to NULL and legitimately means
-        # "all defaults" -- silent. Anything else that is not a settings map (a
-        # bare string, a list of values) is a mistake worth saying out loud.
         attr(c0, "config_error") <- sprintf(
           "%s is not a settings file (it holds no name: value settings)", path)
       }
@@ -380,38 +256,15 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
     assign(key, c0, envir = .CONFIG_CACHE)
     c0
   }
-  # Env override for the one secret, so a site can keep it out of the file entirely.
   envpw <- Sys.getenv("BSO_ADMIN_PASSWORD", "")
   if (nzchar(envpw)) cfg$app$admin_password <- envpw
   cfg
 }
 
-# ---------------------------------------------------------------------------
-# THE OLD TEMPLATE LAYOUT, MOVED ONCE, ON A SERVER NOBODY CAN LOG INTO EASILY
-#
-# Templates used to live in seven folders at the root of the app. They now live
-# in one, templates/, with a folder per kind. Renaming folders in a repository is
-# free; renaming them under a running deployment is not, because two of those
-# folders hold work that exists nowhere else -- every bank layout and every
-# report puller somebody built on the box.
-#
-# So the code does the move rather than a person, once, on the first start after
-# an update, and says so in logs\startup.log. The alternative -- reading both the
-# old and the new location forever -- keeps working but never converges: two
-# places to look, two places to back up, and a folder that quietly stops being
-# read the day somebody tidies it.
-#
-# RULES, because this touches irreplaceable files:
-#   * it MOVES, it never copies-and-deletes and never deletes;
-#   * a destination file that already exists is NEVER overwritten -- the source
-#     is left alone and reported, so a clash is visible rather than resolved;
-#   * an emptied folder is left on disk with a MOVED.txt in it, so somebody who
-#     goes looking for templates_user\ finds a sentence instead of nothing;
-#   * it is idempotent: with nothing to move it does nothing and says nothing.
-# ---------------------------------------------------------------------------
+# The old template layout, moved once. Rules, because this touches irreplaceable files: it MOVES and
+# never deletes; an existing destination file is NEVER overwritten; an emptied folder keeps a
+# MOVED.txt; and it is idempotent.
 
-# Old root folder -> new home. The old flat `templates/` is handled separately
-# below, because after the move `templates/` still exists -- it is the parent.
 .TEMPLATE_LAYOUT_MOVES <- list(
   c("templates_user",        "templates/statements_user"),
   c("templates_seed",        "templates/statements_seed"),
@@ -421,8 +274,6 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
   c("doc_templates_user",    "templates/documents_user")
 )
 
-# migrate_template_layout(root) -> character vector of sentences about what
-# happened (empty when there was nothing to do). Caller decides where they go.
 migrate_template_layout <- function(root = ".") {
   said <- character(0)
   .yamls <- function(d) list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)
@@ -448,9 +299,8 @@ migrate_template_layout <- function(root = ".") {
     invisible(NULL)
   }
 
-  # Say it the way the person reading logs\startup.log sees it: relative to the
-  # app folder. Plain prefix removal, not a regex -- root is a real path and can
-  # hold anything a Windows folder name can.
+  # Relative to the app folder, the way the person reading logs\\startup.log sees it. Plain prefix
+  # removal, not a regex - root is a real path and can hold anything a Windows folder name can.
   .rel <- function(p) {
     pre <- paste0(root, "/")
     p <- if (startsWith(p, pre)) substring(p, nchar(pre) + 1L) else p
@@ -473,13 +323,10 @@ migrate_template_layout <- function(root = ".") {
     invisible(NULL)
   }
 
-  # 1. The old flat templates\ -- .yaml files sitting directly in it. After the
-  #    move there are none, so this cannot run twice.
   flat <- file.path(root, "templates")
   if (dir.exists(flat) && length(.yamls(flat)))
     .move_files(flat, file.path(root, "templates", "statements"), "statement template")
 
-  # 2. The six folders that moved wholesale.
   for (m in .TEMPLATE_LAYOUT_MOVES) {
     from <- file.path(root, m[1]); to <- file.path(root, m[2])
     if (!dir.exists(from)) next

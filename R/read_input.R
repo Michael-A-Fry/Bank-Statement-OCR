@@ -1,18 +1,10 @@
-# read_input.R -- dispatch by file extension to the right reader and compute
-# the content hash. Returns a uniform `input` object (build-contract section 6).
+# read_input.R -- dispatch by file extension to the right reader and compute the content hash.
+# Returns a uniform `input` object.
 
-# read_excel_input(path) -- .xlsx reader (readxl). Real workbooks are messy, so
-# three deterministic clean-ups happen here, before the engine sees the table:
-#   sheet  - pick the sheet that actually holds the transaction table (a header
-#            row with a date + a money-ish name and data rows under it) instead
-#            of blindly taking sheet 1;
-#   header - find the real header row within the first 30 rows, skipping the
-#            logo / account-info preamble rows exports often carry;
-#   dates  - a date-NAMED column stored as Excel serial numbers (e.g. 46023) is
-#            turned back into ISO dates. Only date-named columns: an amount
-#            column full of five-digit values must never become dates.
-# A clean single-sheet file (header on row 1) reads exactly as before, so the
-# shipped generic template and its golden test are unaffected.
+# .xlsx reader (readxl). Real workbooks are messy, so three deterministic clean-ups happen first: pick
+# the sheet that actually holds the transaction table; find the real header row within the first 30
+# rows; and turn a date-NAMED column stored as Excel serials back into ISO dates - date-named only,
+# because an amount column full of five-digit values must never become dates.
 read_excel_input <- function(path) {
   if (!requireNamespace("readxl", quietly = TRUE)) return(list(table = NULL))
   sheets <- safe(readxl::excel_sheets(path), character(0))
@@ -39,18 +31,15 @@ read_excel_input <- function(path) {
     if (is.null(best) || score > best$score)
       best <- list(sheet = sh, raw = raw, hdr = hdr, score = score)
   }
-  # No sheet looked like a transaction table -> old behaviour (sheet 1 as-is),
-  # so a plain grid with unusual header names still reads.
+  # No sheet looked like a transaction table, so fall back to sheet 1 as-is.
   if (is.null(best)) {
     tbl <- safe(as.data.frame(readxl::read_excel(path, col_types = "text"),
                               stringsAsFactors = FALSE))
     return(list(table = tbl))
   }
   raw <- best$raw
-  # Preamble = every row ABOVE the header (bank / account / period / balances a
-  # statement export prints before the table). Kept as text so parse_statement
-  # can mine statement-level metadata from it -- and ONLY from it, never the
-  # transaction rows -- exactly as the PDF path does.
+  # Preamble is every row ABOVE the header. Kept as text so parse_statement can mine statement-level
+  # metadata from it - and ONLY from it, never the transaction rows.
   preamble <- if (best$hdr > 1) vapply(seq_len(best$hdr - 1L), function(r)
     paste(trimws(as.character(unlist(raw[r, ], use.names = FALSE))), collapse = " "),
     character(1)) else character(0)
@@ -60,13 +49,13 @@ read_excel_input <- function(path) {
   tbl <- raw[seq.int(best$hdr + 1L, nrow(raw)), , drop = FALSE]
   names(tbl) <- make.unique(h)
   rownames(tbl) <- NULL
-  # drop fully-empty spacer rows (merged cells / section gaps)
+  # Drop fully-empty spacer rows (merged cells, section gaps).
   keep <- vapply(seq_len(nrow(tbl)), function(i) {
     rr <- as.character(unlist(tbl[i, ], use.names = FALSE))
     any(!is.na(rr) & nzchar(trimws(rr)))
   }, logical(1))
   tbl <- tbl[keep, , drop = FALSE]
-  # serial-date fix, date-named columns only
+  # Serial-date fix, date-named columns only.
   for (cn in names(tbl)) {
     if (!grepl("date", tolower(cn))) next
     v <- trimws(as.character(tbl[[cn]]))
@@ -74,10 +63,8 @@ read_excel_input <- function(path) {
     ok <- !is.na(num) & num > 20000 & num < 80000
     filled <- !is.na(v) & nzchar(v)
     if (sum(filled) > 0 && sum(ok) >= 0.6 * sum(filled)) {
-      # The DATE is the integer part of an Excel serial; the fraction is the time.
-      # floor() (never round()) so a noon (.5) serial can't tip to the next day --
-      # round() uses banker's rounding, which would shift 45000.5 -> 45000 but
-      # 45001.5 -> 45002.
+      # The DATE is the integer part of an Excel serial and the fraction is the time. floor(), never
+      # round(), so a noon serial cannot tip to the next day - round() uses banker's rounding.
       v[ok] <- format(as.Date(floor(num[ok]), origin = "1899-12-30"), "%Y-%m-%d")
       tbl[[cn]] <- v
     }
@@ -85,10 +72,8 @@ read_excel_input <- function(path) {
   list(table = tbl, sheet = best$sheet, header_row = best$hdr, preamble = preamble)
 }
 
-# read_pdf_input(path) -- PDF reader delegating to read_pdf() (R/read_pdf.R):
-# page text, positioned + redaction-guarded word boxes, detected sections, and a
-# per-page redaction summary. Extraction only -- never crashes; degrades to an
-# empty structure when pdftools is missing or the file is unreadable.
+# PDF reader delegating to read_pdf(). Never crashes; degrades to an empty structure when pdftools
+# is missing or the file is unreadable.
 read_pdf_input <- function(path, redaction_rects = NULL,
                            markers = pdf_redaction_markers(),
                            anchors = pdf_section_anchors()) {
@@ -109,44 +94,31 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     redaction_scan_incomplete = pdf$redaction_scan_incomplete %||% 0L,
     ocr = pdf$ocr,
     ocr_conf = pdf$ocr_conf,
-    # Pages that ARE scans but could not be machine-read, and whether the OCR tools
-    # exist on this machine. read_pdf works both out; they have to be CARRIED, or
-    # the "this is a scan we couldn't read" diagnostic can never fire on a real
-    # conversion and a scan on an OCR-less box is reported as an unknown layout --
-    # sending the analyst to build a template for a page with no readable text.
+    # Pages that ARE scans but could not be machine-read, and whether the OCR tools exist here. They
+    # have to be CARRIED, or a scan on an OCR-less box is reported as an unknown layout.
     scanned_no_ocr = pdf$scanned_no_ocr %||% 0L,
     ocr_tools_available = pdf$ocr_tools_available %||% TRUE,
-    # Self-declared document provenance (producer / creator / created / modified /
-    # encrypted). Facts about the FILE, never about the figures -- see read_pdf.R.
+    # Self-declared document provenance. Facts about the FILE, never about the figures.
     doc_info = pdf$doc_info
   )
 }
 
-# .INPUT_CACHE -- read_input can be EXPENSIVE (a scanned PDF is OCR'd and every
-# page is rendered for the redaction scan -- tens of seconds). The GUI reads the
-# SAME uploaded file several times across one flow (convert, then draft, preview,
-# x-ray, guided columns...), so without a cache a scanned statement is OCR'd 4-5x
-# and the front end appears to hang for minutes. read_input is deterministic in the
-# file's CONTENT, so we key the parsed result by its SHA-256: the first read does
-# the work, every later read of the same bytes is instant. Bounded to a handful of
-# recent files so a long session can't grow memory without limit.
+# read_input can be EXPENSIVE - a scanned PDF is OCR'd and every page rendered for the redaction
+# scan - and the GUI reads the SAME file several times per flow, so without a cache a scanned
+# statement is OCR'd four or five times. Deterministic in CONTENT, so keyed by SHA-256.
 .INPUT_CACHE <- new.env(parent = emptyenv())
 .INPUT_CACHE_MAX <- 12L
 
-# read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table,
-# pages, meta). The tool never redacts; statements arrive already redacted.
-# `redaction_rects` is an optional way to tell the reader where a redaction
-# ALREADY sits (belt-and-braces alongside the automatic detection of rasterised
-# black boxes), so any text a supplied box covers is not emitted; NULL relies on
-# the text-layer marker sweep and the scanned-page black-box detector.
+# read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table, pages, meta). The tool
+# never redacts; statements arrive already redacted. `redaction_rects` optionally tells the reader
+# where a redaction already sits, alongside automatic detection of rasterised black boxes.
 read_input <- function(path, redaction_rects = NULL) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))
   sha <- file_sha256(path)
-  # Cache hit: same content already parsed. Return it, but point $path at the
-  # caller's CURRENT file (identical bytes, but a fresh temp path in the GUI) so
-  # any downstream re-read of $path still resolves. Only when no redaction_rects
-  # were supplied (those change what text is emitted, so they bypass the cache).
+  # Cache hit: return it, but point $path at the caller's CURRENT file - identical bytes, fresh temp
+  # path in the GUI - so any downstream re-read still resolves. Only when no redaction_rects were
+  # supplied, since those change what text is emitted.
   cacheable <- is.null(redaction_rects) && !is.null(sha) && !is.na(sha)
   if (cacheable && exists(sha, envir = .INPUT_CACHE, inherits = FALSE)) {
     cached <- get(sha, envir = .INPUT_CACHE, inherits = FALSE)
@@ -181,22 +153,17 @@ read_input <- function(path, redaction_rects = NULL) {
     on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
     input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
     input$meta$redaction_scan_incomplete <- x$redaction_scan_incomplete %||% 0L
-    # Scan-but-unreadable accounting (see read_pdf_input). convert_statement reads
-    # these two straight off input$meta to raise the scanned_no_ocr diagnostic, so
-    # a gap here silently turns that loud message back into a misleading
-    # "unknown format".
+    # Scan-but-unreadable accounting: convert_statement reads these two straight off input$meta, so a
+    # gap here silently turns that loud message back into a misleading "unknown format".
     input$meta$scanned_no_ocr <- x$scanned_no_ocr %||% 0L
     input$meta$ocr_tools_available <- x$ocr_tools_available %||% TRUE
-    # Who wrote this PDF, and when. Forensic provenance the reader gets for free
-    # from pdf_info; carried on the input so diagnostics can STATE it. Reported
-    # factually and never interpreted -- it changes no figure, status or trust.
+    # Who wrote this PDF, and when. Reported factually and never interpreted.
     input$meta$pdf_doc <- x$doc_info
   } else {
     stop(sprintf("unsupported file extension: '%s'", ext))
   }
   if (cacheable) {
-    # crude bound: reset if we're holding too many distinct files (a session works
-    # with a handful, so this rarely fires -- it just caps memory).
+    # Crude bound: reset if we are holding too many distinct files.
     if (length(ls(.INPUT_CACHE)) >= .INPUT_CACHE_MAX)
       rm(list = ls(.INPUT_CACHE), envir = .INPUT_CACHE)
     assign(sha, input, envir = .INPUT_CACHE)
@@ -204,16 +171,12 @@ read_input <- function(path, redaction_rects = NULL) {
   input
 }
 
-# clear_input_cache() -- drop all cached inputs (e.g. after a redaction re-run or
-# to free memory). read_input rebuilds on the next call.
+# Drop all cached inputs. read_input rebuilds on the next call.
 clear_input_cache <- function() rm(list = ls(.INPUT_CACHE), envir = .INPUT_CACHE)
 
-# render_page_view(path, page, dpi) -> list(ras, w, h, pg) or NULL. Render ONE PDF
-# page to a raster (+ its point size) for the visual editors, CACHED by file/page/dpi.
-# pdf_render_page + magick decode is ~0.3-0.8s/page; the band editor re-runs its
-# render reactive on EVERY box assignment (the template changed), so without this the
-# page bitmap is re-rendered on every click though only the overlaid bands moved --
-# the main cause of the editor feeling frozen. Bounded to a few recent pages.
+# Render ONE PDF page to a raster plus its point size, cached by file, page and dpi. pdf_render_page
+# plus magick decode is 0.3-0.8s a page and the band editor re-runs its render reactive on EVERY box
+# assignment, so without this the bitmap is re-rendered on every click though only the bands moved.
 .PAGE_RASTER_CACHE <- new.env(parent = emptyenv())
 render_page_view <- function(path, page = 1L, dpi = 100L) {
   page <- max(1L, suppressWarnings(as.integer(page))); if (is.na(page)) page <- 1L
@@ -223,24 +186,16 @@ render_page_view <- function(path, page = 1L, dpi = 100L) {
     return(get(key, envir = .PAGE_RASTER_CACHE, inherits = FALSE))
   sz <- tryCatch(pdftools::pdf_pagesize(path), error = function(e) NULL)
   if (is.null(sz) || page > nrow(sz)) return(NULL)
-  # suppressWarnings: a PDF that embeds fonts the machine lacks (e.g. Symbol /
-  # ArialUnicode) makes the renderer warn -- harmless (a few glyphs may look off),
-  # so keep it out of the console.
-  # with_image_scratch: ImageMagick spills big pages to disk, so keep that spill
-  # in a folder that goes away with the call (R/util.R). as.raster() gives a
-  # plain R object, so nothing here outlives the scratch folder.
+  # suppressWarnings: a PDF embedding fonts the machine lacks makes the renderer warn harmlessly.
+  # with_image_scratch keeps ImageMagick's disk spill in a folder that goes away with the call;
+  # as.raster() gives a plain R object, so nothing outlives the scratch folder.
   ras <- with_image_scratch(
     tryCatch(suppressWarnings(as.raster(magick::image_read(
       pdftools::pdf_render_page(path, page = page, dpi = dpi)))), error = function(e) NULL))
   if (is.null(ras)) return(NULL)
-  # THE PICTURE IS THE AUTHORITY ON WHICH WAY THE PAGE FACES.
-  #
-  # pdf_pagesize reports the page box before its /Rotate is applied; poppler
-  # renders after it. On a rotated page the raster comes back landscape while
-  # the box says portrait -- and the caller then draws that landscape image into
-  # a portrait coordinate system, so the page is stretched one way, squashed the
-  # other, and every box anybody draws on it lands somewhere else entirely.
-  # The raster cannot be wrong about its own shape, so it decides.
+  # THE PICTURE IS THE AUTHORITY ON WHICH WAY THE PAGE FACES. pdf_pagesize reports the page box
+  # before its /Rotate is applied and poppler renders after it, so on a rotated page the raster comes
+  # back landscape while the box says portrait, and the caller draws into the wrong system.
   w <- as.numeric(sz$width[page]); h <- as.numeric(sz$height[page])
   if (is.finite(w) && is.finite(h) &&
       xor(ncol(ras) > nrow(ras), w > h)) { tmp <- w; w <- h; h <- tmp }

@@ -1,11 +1,6 @@
-# inbox.R -- a read-only view of the folder-drop intake folders for the Admin
-# "Folder intake" panel. The folder-drop pipeline moves each dropped statement from
-# inbox/ to processed/ (converted) or failed/ (couldn't), writing outputs to
-# outbox/<name>/, and parks unmovable files in stuck/. This surfaces those
-# folders in the app so the intake is visible and its failures are actionable --
-# no more "nothing seems to be in processed/". Read-only: it never moves files.
+# inbox.R -- a read-only view of the folder-drop intake folders for Admin. It never moves files.
 
-# .folder_files(dir) -> data.frame(file, size_kb, modified), newest first.
+# data.frame(file, size_kb, modified), newest first.
 .folder_files <- function(dir) {
   empty <- data.frame(file = character(0), size_kb = numeric(0),
                       modified = character(0), stringsAsFactors = FALSE)
@@ -21,9 +16,7 @@
   out[order(info$mtime, decreasing = TRUE), , drop = FALSE]
 }
 
-# inbox_status(root) -> list(folders = named list<data.frame>, counts = named int).
-# Folders: inbox (waiting), processed (done), failed (needs attention),
-# stuck (couldn't be moved -- a permissions problem), outbox (output folders).
+# Returns list(folders, counts): inbox, processed, failed, stuck (could not be moved), outbox.
 inbox_status <- function(root = ".") {
   folders <- c("inbox", "processed", "failed", "stuck", "outbox")
   out <- lapply(folders, function(d) .folder_files(file.path(root, d)))
@@ -31,10 +24,10 @@ inbox_status <- function(root = ".") {
   list(folders = out, counts = vapply(out, nrow, integer(1)))
 }
 
-# failed_file_path(name, root) -> path of a failed original, for re-audit/wizard.
+# The path of a failed original, for re-audit or the wizard.
 failed_file_path <- function(name, root = ".") {
-  # `name` arrives from the browser; refuse anything that is not a plain filename,
-  # so it cannot walk out of failed/ and read arbitrary files off the server.
+  # `name` arrives from the browser: refuse anything but a plain filename, so it cannot walk out of
+  # failed/ and read arbitrary files off the server.
   if (length(name) != 1L || is.na(name) || !nzchar(name) ||
       grepl("[/\\\\]", name) || name %in% c(".", ".."))
     return(NA_character_)

@@ -1,5 +1,5 @@
-# schema.R -- canonical core schema, constructors, and coercion helpers.
-# The core `transactions` table is STABLE and identical across every bank.
+# schema.R -- canonical core schema, constructors, and coercion helpers. The core `transactions`
+# table is STABLE and identical across every bank.
 
 # Ordered core columns and their storage types (see build-contract section 2).
 CORE_COLUMNS <- c(

@@ -1,51 +1,22 @@
-# templates.R -- load + validate declarative per-bank YAML templates.
 
-# Keys every template declares, regardless of format.
 .TEMPLATE_COMMON <- c("id", "bank", "statement_type", "format", "version",
                       "min_score", "fingerprint", "currency")
 .VALID_SIGN <- c("signed", "debit_credit_cols", "dr_cr_suffix", "type_dc", "unsigned")
-# Header values a PDF template may pin with a drawn box (table.metadata_regions),
-# for statements whose label wording the dictionary doesn't recognise.
 .META_REGION_FIELDS <- c("opening_balance", "closing_balance", "period_start",
                          "period_end", "account_number", "account_name")
 
-# Column names essentially EVERY statement export in the world carries. Used only
-# by the delimited/excel half of the fingerprint gate below.
 .FP_UNIVERSAL_COLUMNS <- c("date", "amount", "description", "balance", "details",
   "memo", "note", "notes", "type", "credit", "debit", "value", "total",
   "reference", "ref", "code", "id", "name", "number", "no", "account", "currency",
   "particulars", "payee", "comment", "comments", "category", "transaction",
   "deposit", "deposits", "withdrawal", "withdrawals")
 
-# .fp_fingerprint_problems(ph, min_score, fmt) -- the load-time gate on a
-# template's fingerprint. Two separate rules, both about the CARDINAL failure
-# (a wrong figure that looks right):
-#
-# 1. DISTINCTIVENESS. A fingerprint made of words that sit on every statement
-#    means the template matches statements it has never seen and parses them with
-#    another bank's column bands. This actually happened: the ASB PDF template
-#    scored its min_score of 2 on the bare words "Deposit" and "Balance", so a
-#    FOREIGN bank's PDF was parsed as ASB (charges emitted as credits, status ok,
-#    feed ACCEPTED) -- and, because it also scored 2 on real ANZ statements, it
-#    became a permanent runner-up that pushed every genuine ANZ PDF into review.
-#
-#    The rule is stricter for PDF than for delimited/excel, deliberately:
-#      * PDF phrases are matched as a substring ANYWHERE in the page text, so a
-#        generic word is worth nothing as evidence -> min_score must NOT be
-#        reachable by the generic phrases alone.
-#      * delimited/excel phrases must equal a whole COLUMN NAME, so even a common
-#        name is real evidence that the file has that exact column, and min_score
-#        counts how many must line up at once -> we only require that not EVERY
-#        phrase is generic. And "generic" there means BOTH short-and-single-word
-#        AND one of the handful of universal column names, so a foreign-language
-#        or unusual header ("Datum") still counts as distinctive. This is what
-#        keeps the deliberately-generic excel_generic_xlsx (Date / Description /
-#        Amount / Balance) valid -- "Description" is not a short word.
-#
-# 2. NO PII. A phrase that names a PERSON identifies one customer, not a layout,
-#    and a template file is listed in Admin, shown in the YAML box and copied into
-#    the offline bundle. The drafter already refuses to propose one; this closes
-#    the hand-edited Advanced-YAML path too.
+# The load-time gate on a template's fingerprint. DISTINCTIVENESS: a fingerprint of words on every
+# statement matches statements it has never seen and parses them with another bank's bands - the ASB
+# PDF template scored its min_score of 2 on the bare words "Deposit" and "Balance", so a foreign bank's
+# PDF was parsed as ASB with charges emitted as credits and the feed ACCEPTED it. Stricter for PDF: a
+# PDF phrase matches anywhere in the page text, while a delimited phrase must equal a whole COLUMN
+# NAME. NO PII: template files are listed in Admin and copied into the offline bundle.
 .fp_fingerprint_problems <- function(ph, min_score, fmt) {
   problems <- character(0)
   ph <- trimws(as.character(unlist(ph %||% character(0))))
@@ -79,38 +50,10 @@
   problems
 }
 
-# .detect_by_fingerprint(input, templates, noun, norm, name_fn) -> THE SAME RETURN
-# SHAPE detect_statement() has: template_id, matched, score, candidates,
-# eligible_ids, tied, margin, runner_up, detail, detail_plain.
-#
-# ONE DETECTOR FOR THE TWO OTHER ROUTES. detect_form() and
-# detect_document_template() were eighty-five identical lines apiece, differing in
-# four things: the noun in two messages, which normaliser folded the text, which
-# namer said the template in words, and the argument's name. The two routes the
-# owner insists must be treated identically were kept identical only by somebody
-# remembering to edit both files -- so a fix to one was a drift in the other, and
-# an alternative route is a route that rots. The four differences are parameters
-# now; nothing else about either route's answer changed.
-#
-# WHY THE NORMALISER STAYS A PARAMETER RATHER THAN BEING FOLDED IN TOO: .form_fp_norm
-# and .doc_fp_norm are deliberate separate copies (see the comment above
-# .form_fp_norm in R/forms.R -- the routes must not depend on each other's files
-# for the rule, and a test pins the two to the same answers). The SHAPE is what is
-# shared here, which is what was being duplicated.
-#
-# Every phrase still has to appear -- that stays the eligibility gate -- but two
-# things the old per-route detectors could not say cost real work:
-#
-#   * A TIE RETURNED NOTHING. Two good one-phrase templates that both fit meant
-#     "unsupported" on a document the library can read perfectly, and it named
-#     neither of them. The statement route has never done that: it reports the tie,
-#     reads with the best of them and marks the run for review. Choosing by a
-#     PRINCIPLED order (most phrases, then shipped before hand-built, then the id)
-#     is not choosing arbitrarily, and it beats refusing to read a document nobody
-#     can then convert.
-#   * A NEAR MISS SAID NOTHING. "no template's identifying phrases were all found"
-#     cannot be acted on. Scoring fractionally costs nothing and lets these routes
-#     say which template came closest and which wording was not on the page.
+# One detector for the form and report routes; same return shape as detect_statement(). The
+# normaliser stays a parameter because .form_fp_norm and .doc_fp_norm are deliberate separate copies.
+# Two things the per-route detectors could not say: a TIE returned "unsupported" on a document the
+# library reads perfectly and named neither template, and a NEAR MISS said nothing actionable.
 .detect_by_fingerprint <- function(input, templates, noun, norm, name_fn) {
   none <- function(detail, plain = NULL)
     list(template_id = NA_character_, matched = FALSE, score = 0,
@@ -124,8 +67,6 @@
 
   hay <- norm(paste(input$pages %||% character(0), collapse = "\n"))
   ids <- names(templates)
-  # A hand-assembled unnamed list still has to come back with an answer rather
-  # than an error: the id is the key it was filed under, or its position.
   if (is.null(ids)) ids <- as.character(seq_along(templates))
   ids[!nzchar(ids)] <- as.character(seq_along(templates))[!nzchar(ids)]
   names(templates) <- ids
@@ -141,14 +82,8 @@
   })
   scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
   needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
-  # A template with NO phrases can never be matched (validation refuses one), so
-  # it is never eligible however the page reads.
   eligible <- needs > 0 & scores >= needs
 
-  # THE ORDER, and every step of it is principled. Most phrases first (the most
-  # specific template that fits wins), then a shipped template ahead of one built
-  # here (a shipped one has a test behind it), then the id so the answer is fully
-  # deterministic and never depends on the order a folder happened to list in.
   shipped <- vapply(ids, function(i)
     as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
   ord <- order(scores, needs, shipped, ids,
@@ -166,7 +101,6 @@
       detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
         if (length(miss)) sprintf(" (missing %s)",
           paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
-      # The same fact for the person holding the document: no id, no fraction.
       detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
         name_fn(templates[[best]]),
         if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
@@ -177,10 +111,6 @@
   win <- e_ids[1]
   second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
   second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
-  # Unambiguous when the winner is strictly more specific, or ties on specificity
-  # and something principled separates them (a shipped template over a hand-built
-  # one). A shipped template drawing level with a hand-built one is not a real
-  # question, and stopping to ask it helps nobody.
   matched <- (e_needs[1] > second_need) ||
              (e_needs[1] == second_need && e_ship[1] > second_ship)
   tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
@@ -198,28 +128,11 @@
                  length(tied), name_fn(templates[[win]])))
 }
 
-# .save_template_yaml(t, dir, validate_fn, noun) -> path. THE ONE SAVER the three kinds
-# share: strip the load-time origin, refuse an invalid template loudly, then write
-# <dir>/<id>.yaml safely.
-#
-# WHY IT IS ONE. save_user_template, save_fields_template and save_document_template
-# were the same six steps in the same order with the same comment copied into all
-# three -- except that only the statement one had the slug guard below. So on the
-# two OTHER routes, which have no reconciliation behind them, a report template
-# called "ACME Q1!" silently overwrote one called "ACME-Q1": both sanitise to
-# ACME_Q1.yaml, and months of somebody's work went with it. Merging is what makes
-# that impossible rather than what risks it.
-#
-# THE SLUG GUARD. Two DISTINCT ids can sanitise to the same file slug. Only
-# overwrite when the existing file holds the SAME original id (a genuine edit);
-# otherwise pick the next free slug so a different template is never silently
-# clobbered. (Templates are keyed by their id field at load, so the distinct ids
-# stay distinct -- only the filename is uniquified.)
-#
-# SAFELY: a copy of the previous version, a temp file, then an atomic rename. A
-# template is months of somebody's work that exists nowhere else on an offline box,
-# and a bare write_yaml truncates the target before it writes. See
-# save_yaml_safely() in R/util.R.
+# THE ONE SAVER the three kinds share: strip the load-time origin, refuse an invalid template loudly,
+# write <dir>/<id>.yaml safely. Only the statement saver had the slug guard, so a report template
+# called "ACME Q1!" silently overwrote one called "ACME-Q1". THE SLUG GUARD: two distinct ids can
+# sanitise to one file slug, so only overwrite when the existing file holds the SAME original id.
+# Safely means a backup, a temp file and an atomic rename - a bare write_yaml truncates first.
 .save_template_yaml <- function(t, dir, validate_fn, noun) {
   t$origin <- NULL   # origin is assigned at load time, not stored
   probs <- validate_fn(t)
@@ -240,22 +153,9 @@
   invisible(path)
 }
 
-# resolve_date_format(values, formats) -> the ONE declared format that reads EVERY
-# non-empty value, or NA_character_ when none of them does.
-#
-# WHY a template may declare a LIST of candidate formats: the same bank, the same
-# export, the same header row -- and two different date styles across eras. ASB's
-# FastNet CSV writes "2014/12/20" in one export and "13/10/2025" in another, so
-# pinning one format made the other detect confidently and then return EVERY date
-# NA (dates_readable = fail).
-#
-# WHY it is all-or-nothing: reading some rows under one format and the rest under
-# another is precisely the silently-wrong outcome the charter forbids -- "13/10"
-# and "10/13" are both readable, and a per-row mixture would swap day and month
-# with nothing to show for it. So a candidate only wins if it reads the WHOLE
-# column, the first such candidate (declaration order) wins so the result is
-# deterministic, and "none of them fits" returns NA so the caller fails closed
-# rather than guessing.
+# The ONE declared format that reads EVERY non-empty value, or NA when none does; a template may
+# declare a LIST because one bank's export carries two date styles across eras. All-or-nothing:
+# reading some rows under one format and the rest under another would swap day and month.
 resolve_date_format <- function(values, formats) {
   fmts <- trimws(as.character(unlist(formats %||% character(0))))
   fmts <- fmts[!is.na(fmts) & nzchar(fmts)]
@@ -268,23 +168,9 @@ resolve_date_format <- function(values, formats) {
   NA_character_
 }
 
-# resolve_delimiter(header_line, template) -> the ONE declared delimiter to read
-# this file with. Like the date format above, a template MAY declare a LIST -- the
-# same bank publishing the same export as CSV and as tab-delimited (ASB FastNet
-# ships both: asb_transaction_export_01.csv and asb_transaction_export_02.tdv,
-# byte-identical layout, different separator). Pinning one meant the other's header
-# never split into columns at all, so it scored 0 and came back "unsupported".
-#
-# THE ALL-OR-NOTHING RULE, and why it is this one: a candidate wins only if the
-# header row, split by it, contains EVERY column name the template's fingerprint
-# names. Splitting a tab-delimited line on commas yields ONE field, so it can never
-# satisfy that -- the wrong separator is rejected outright rather than "sort of"
-# working. The test deliberately looks at the HEADER ONLY: making it depend on the
-# data rows would let a single ragged row (which the reader is built to isolate and
-# flag) reject the correct delimiter and pick a catastrophic one. When no candidate
-# satisfies it, the FIRST declared delimiter is used -- identical to the old
-# behaviour, so the file simply fails to score and stays honestly unsupported.
-# A single declared delimiter short-circuits: every existing template is untouched.
+# The ONE declared delimiter, from a list because the same bank ships the same layout as CSV and as
+# tab-delimited. A candidate wins only if the header row split by it contains EVERY column name the
+# fingerprint names. The HEADER only: depending on data rows would let one ragged row reject it.
 resolve_delimiter <- function(header_line, template) {
   d <- as.character(unlist(template$delimiter %||% ","))
   d <- d[!is.na(d) & nzchar(d)]
@@ -301,9 +187,6 @@ resolve_delimiter <- function(header_line, template) {
   d[1]
 }
 
-# .delimiter_problems(spec) -- validate a declared delimiter. A list is allowed
-# (resolve_delimiter picks one), but every entry must be a real separator string:
-# an empty entry would split every line into single characters.
 .delimiter_problems <- function(spec) {
   if (is.null(spec)) return(character(0))
   d <- as.character(unlist(spec))
@@ -312,11 +195,9 @@ resolve_delimiter <- function(header_line, template) {
   character(0)
 }
 
-# .date_format_problems(spec, where, allow_list) -- validate a declared date
-# format. A LIST of candidates is allowed only where the reader resolves it
-# (resolve_date_format); everywhere else a list must be REJECTED loudly, because
-# base as.Date() recycles a format vector element-wise -- row 1 read as %Y/%m/%d,
-# row 2 as %d/%m/%Y -- which is a whole column of plausible, wrong dates.
+# A LIST is allowed only where the reader resolves it; elsewhere it must be REJECTED loudly, because
+# as.Date() recycles a format vector element-wise - row 1 as %Y/%m/%d, row 2 as %d/%m/%Y - which is a
+# whole column of plausible, wrong dates.
 .date_format_problems <- function(spec, where, allow_list) {
   if (is.null(spec)) return(character(0))
   f <- as.character(unlist(spec))
@@ -329,19 +210,12 @@ resolve_delimiter <- function(header_line, template) {
   character(0)
 }
 
-# .one_date_format(spec) -- a declared format collapsed to ONE display string, for
-# the overview table and the duplicate-layout signature (both of which need a
-# single scalar per template, not a vector).
 .one_date_format <- function(spec) {
   f <- as.character(unlist(spec %||% character(0)))
   f <- f[!is.na(f) & nzchar(f)]
   if (!length(f)) NA_character_ else paste(f, collapse = " | ")
 }
 
-# validate_template(t) -> character vector of problems (length 0 if valid).
-# Format-aware: delimited/excel carry columns+amount_sign at the top level and
-# fingerprint on the header; pdf carries them under `table:` and fingerprints on
-# page text.
 validate_template <- function(t) {
   problems <- character(0)
   if (!is.list(t)) return("template is not a mapping")
@@ -354,18 +228,12 @@ validate_template <- function(t) {
     problems <- c(problems, sprintf("format '%s' is not one of %s", fmt,
                                     paste(valid_fmt, collapse = "/")))
 
-  # decimal_mark is optional; when present it must name a known locale.
   dm <- t$decimal_mark %||% t$table$decimal_mark
   if (!is.null(dm) && !(dm %in% c("auto", "dot", "comma")))
     problems <- c(problems, sprintf("decimal_mark '%s' is not one of auto/dot/comma", dm))
 
-  # effective_from / effective_to: a window that CLOSES BEFORE IT OPENS can never
-  # contain a statement. Such a template loads, validates and detects like any
-  # other, and the only sign of it is that every statement it should have caught
-  # comes back "no template for this layout yet" -- a silent no-op, which is the
-  # one thing this engine is not allowed to be. Unparseable bounds are left alone:
-  # the soft window check in diagnose.R already skips those rather than guessing,
-  # and a validator that rejected what it could not read would be guessing too.
+  # A window that CLOSES BEFORE IT OPENS can never contain a statement, and the only sign is that
+  # everything it should have caught comes back "no template for this layout yet".
   eff_from <- .tolerant_date(t$effective_from)
   eff_to   <- .tolerant_date(t$effective_to)
   if (!is.na(eff_from) && !is.na(eff_to) && eff_from > eff_to)
@@ -378,11 +246,9 @@ validate_template <- function(t) {
   if (identical(fmt, "pdf")) {
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$page_contains_all))
       problems <- c(problems, "fingerprint.page_contains_all is required for pdf templates")
-    # Distinctiveness + PII gate (see .fp_fingerprint_problems for the WHY).
     if (!is.null(t$fingerprint) && !is.null(t$fingerprint$page_contains_all))
       problems <- c(problems, .fp_fingerprint_problems(
         t$fingerprint$page_contains_all, t$min_score, "pdf"))
-    # The pdf reader takes ONE date format; a list here would be recycled per row.
     problems <- c(problems, .date_format_problems(t$table$date_format,
                                                   "table.date_format", allow_list = FALSE))
     tab <- t$table
@@ -392,8 +258,6 @@ validate_template <- function(t) {
       for (k in c("date", "description"))
         if (is.null(tab$columns[[k]]))
           problems <- c(problems, sprintf("table.columns.%s is required", k))
-      # amount source depends on the sign style, exactly like the delimited path:
-      # debit_credit_cols needs debit+credit bands; everything else needs amount.
       if (identical(tab$amount_sign, "debit_credit_cols")) {
         for (k in c("debit", "credit"))
           if (is.null(tab$columns[[k]]))
@@ -403,9 +267,6 @@ validate_template <- function(t) {
       }
       if (!is.null(tab$amount_sign) && !(tab$amount_sign %in% .VALID_SIGN))
         problems <- c(problems, sprintf("table.amount_sign '%s' is invalid", tab$amount_sign))
-      # metadata_regions (optional): each entry pins a header value to a drawn box.
-      # The field must be one we actually wire into the header, and the box needs an
-      # x-band. Absent metadata_regions leaves validation exactly as it was.
       if (!is.null(tab$metadata_regions)) {
         mr <- tab$metadata_regions
         if (!is.list(mr)) problems <- c(problems, "table.metadata_regions must be a mapping")
@@ -424,24 +285,14 @@ validate_template <- function(t) {
     if (is.null(t$amount_sign)) problems <- c(problems, "missing key 'amount_sign'")
     if (!is.null(t$fingerprint) && is.null(t$fingerprint$header_contains_all))
       problems <- c(problems, "fingerprint.header_contains_all is required")
-    # Same distinctiveness + PII gate as the pdf branch above -- this branch used
-    # to have NO content gate at all, so a [Date, Amount] template could be saved
-    # and would then match any CSV in the building.
     if (!is.null(t$fingerprint) && !is.null(t$fingerprint$header_contains_all))
       problems <- c(problems, .fp_fingerprint_problems(
         t$fingerprint$header_contains_all, t$min_score, fmt))
-    # columns.date.format MAY be a list of candidates (resolve_date_format picks
-    # the one that reads the whole column, or none -- never a per-row mixture).
     problems <- c(problems, .date_format_problems(t$columns$date$format,
                                                   "columns.date.format", allow_list = TRUE))
-    # delimiter MAY likewise be a list (resolve_delimiter picks the one under which
-    # the header carries every fingerprinted column, or the first as before).
     problems <- c(problems, .delimiter_problems(t$delimiter))
-    # date + description are always required; the money column depends on the
-    # sign style, exactly like the pdf branch above. A debit_credit_cols template
-    # (separate money-in / money-out columns) has NO single 'amount' column -- it
-    # supplies debit + credit instead (checked below), so requiring 'amount' here
-    # would reject the tool's own draft of a very common CSV shape.
+    # A debit_credit_cols template has no single 'amount' column, so requiring one here would reject
+    # the tool's own draft of a very common CSV shape.
     always <- if (identical(t$amount_sign, "debit_credit_cols")) c("date", "description")
               else c("date", "amount", "description")
     if (!is.null(t$columns)) for (k in always)
@@ -456,15 +307,11 @@ validate_template <- function(t) {
     if (identical(t$amount_sign, "type_dc")) {
       if (!.has_col("type"))
         problems <- c(problems, "amount_sign 'type_dc' requires columns.type")
-      # The debit token is mandatory: without it the reader falls back to a blind
-      # "D", which silently flips the sign on any bank that writes it differently.
       if (is.null(t$type_debit_value) || !nzchar(trimws(as.character(t$type_debit_value))))
         problems <- c(problems, "amount_sign 'type_dc' requires type_debit_value (which indicator value means a debit)")
     }
   }
 
-  # split: opt-in auto-split of a bundled upload (see split.R). Validate loudly so
-  # a bad split config is rejected, never silently applied.
   if (!is.null(t$split) && !isFALSE(t$split)) {
     if (!identical(fmt, "pdf"))
       problems <- c(problems, "split is only supported for pdf templates")
@@ -481,7 +328,6 @@ validate_template <- function(t) {
     }
   }
 
-  # extras: {source} for delimited/excel, {x_min,x_max} bands for pdf.
   extras <- if (identical(fmt, "pdf")) t$table$extras else t$extras
   if (!is.null(extras)) {
     if (!is.list(extras)) problems <- c(problems, "extras must be a mapping")
@@ -497,12 +343,9 @@ validate_template <- function(t) {
   problems
 }
 
-# load_templates(dir, origin, strict) -> named list<template> keyed by id.
-# origin ("default" | "user") is stamped on each template so the app and reports
-# can tell a curated team template from one an accountant created. strict=TRUE
-# (curated set): an invalid template is a HARD error. strict=FALSE (user set):
-# an invalid/duplicate template is skipped with a warning, so one bad user
-# template can never break everyone's conversions.
+# origin ("default" | "user") is stamped so the app can tell a curated team template from one an
+# accountant created. strict=FALSE skips an invalid template with a warning, so one bad user
+# template cannot break everyone's conversions.
 load_templates <- function(dir, origin = "default", strict = TRUE) {
   if (!dir.exists(dir)) {
     if (strict) stop(sprintf("templates dir not found: %s", dir))
@@ -518,16 +361,8 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
                                   basename(f), conditionMessage(t)))
       next
     }
-    # AN UNFINISHED SEED IS NOT A TEMPLATE. templates/statements_seed/ ships
-    # starting points whose bands are placeholders marked "# TODO draw" - and YAML
-    # drops comments, so once one is copied into templates/statements_user/
-    # nothing the loader can see says it
-    # is unfinished. Six of the ten shipped seeds validate as-is, so a half-drawn
-    # one would join detection with placeholder coordinates. It would fail loudly
-    # (garbage rows break reconciliation; no rows reports "matched, read nothing"),
-    # but the person would be debugging a template they had not finished drawing.
-    # `draft: true` makes that state visible to the loader, which refuses it and
-    # says what to do - the same shape as the `sample: true` exclusion below.
+    # An unfinished seed is not a template: the shipped seeds' bands are placeholders marked in
+    # comments, and YAML drops comments, so once copied into statements_user/ nothing said so.
     if (isTRUE(t$draft)) {
       errors <- c(errors, sprintf("%s: this is an unfinished seed template - draw its bands in the toolkit, then delete the `draft: true` line",
                                   t$id %||% basename(f)))
@@ -550,35 +385,20 @@ load_templates <- function(dir, origin = "default", strict = TRUE) {
     if (strict) stop("Invalid template(s):\n", paste(errors, collapse = "\n"))
     warning("Skipped invalid user template(s):\n", paste(errors, collapse = "\n"))
   }
-  # A skipped template DISAPPEARS -- it stops matching, stops showing in Admin, and
-  # the only trace is an R warning nobody reads. Failing closed is right (a template
-  # we cannot validate must not parse statements), but doing it SILENTLY is not: an
-  # analyst whose saved template vanished after an update would have no way to find
-  # out why. Carry the reasons back with the result so the app can say plainly
-  # "N template(s) could not be loaded" and name each one.
+  # A skipped template DISAPPEARS - it stops matching, stops showing in Admin, and the only trace is
+  # an R warning nobody reads. Failing closed is right; doing it silently is not.
   attr(templates, "load_errors") <- errors
   templates
 }
 
-# load_template_set(default_dir, user_dir, include_hidden) -> merged templates.
-# Curated defaults load first and WIN on any id clash (a user template can never
-# shadow a team-blessed one). User templates fill in the rest and are marked
-# origin="user". A user template flagged `hidden: true` is EXCLUDED by default, so
-# it stops taking part in detection/conversion without being deleted (a cluttered
-# pile of near-duplicate drafts can be parked, not lost). include_hidden = TRUE
-# returns them too, for the Admin management view that can un-hide them.
+# Curated defaults load first and WIN on any id clash, so a user template can never shadow a
+# team-blessed one. A `hidden: true` user template drops out of detection without being deleted.
 load_template_set <- function(default_dir = "templates/statements",
                               user_dir = "templates/statements_user",
                               include_hidden = FALSE) {
   d <- load_templates(default_dir, origin = "default", strict = TRUE)
-  # Carry the skip reasons across the merge. Subsetting a list (`u[...]`, the
-  # `sample` filter below) DROPS its attributes, so without this the attribute
-  # load_templates() attaches is silently thrown away here -- and a user template
-  # dropped for, say, a generic fingerprint would vanish with no explanation
-  # anywhere in the app, which is the exact defect attr(x, "load_errors") exists to
-  # close. Both sets contribute (the curated set is strict, so in practice it
-  # stops rather than returning errors, but carrying it costs nothing and is right
-  # if that ever changes).
+  # Carry the skip reasons across the merge: subsetting a list DROPS its attributes, so a user
+  # template dropped for a generic fingerprint would vanish with no explanation anywhere.
   errors <- as.character(attr(d, "load_errors") %||% character(0))
   if (!is.null(user_dir) && dir.exists(user_dir)) {
     u <- load_templates(user_dir, origin = "user", strict = FALSE)
@@ -587,19 +407,13 @@ load_template_set <- function(default_dir = "templates/statements",
       u <- u[!vapply(u, function(t) isTRUE(t$hidden), logical(1))]
     for (id in names(u)) if (is.null(d[[id]])) d[[id]] <- u[[id]]
   }
-  # Sample / tutorial templates (`sample: true`) are worked examples, not real
-  # bank formats -- they must never take part in production detection, or their
-  # generic wording could match (or tie with) a real statement and mis-parse it
-  # with a demo's hardcoded bands. They stay loadable via load_templates() for the
-  # wizard walkthrough and their own self-tests, just not in this detection set.
+  # Sample templates are worked examples: their generic wording could match or tie with a real
+  # statement and mis-parse it with a demo's hardcoded bands. Still loadable for the walkthrough.
   out <- d[!vapply(d, function(t) isTRUE(t$sample), logical(1))]
   attr(out, "load_errors") <- errors   # re-attached AFTER the subset (which drops attrs)
   out
 }
 
-# template_overview(tset) -- a flat data.frame summarising every loaded template,
-# for the Admin overview and the Convert "what's covered" panel. `origin` reads as
-# "tested" (a shipped, golden-file-tested default) or "user" (built on this box).
 template_overview <- function(tset) {
   cols <- c("id", "bank", "type", "format", "amount_sign", "date_format", "origin", "hidden", "version")
   if (!length(tset))
@@ -612,8 +426,6 @@ template_overview <- function(tset) {
       type        = t$statement_type %||% NA_character_,
       format      = t$format %||% "delimited",
       amount_sign = (if (is_pdf) t$table$amount_sign else t$amount_sign) %||% "signed",
-      # .one_date_format: a template may declare SEVERAL candidate date formats;
-      # the overview is one row per template, so show them as one cell.
       date_format = .one_date_format(if (is_pdf) t$table$date_format else t$columns$date$format),
       origin      = if (identical(t$origin %||% "default", "user")) "user" else "tested",
       hidden      = if (isTRUE(t$hidden)) "hidden" else "",
@@ -624,48 +436,21 @@ template_overview <- function(tset) {
   out[order(out$bank, out$type, out$id), , drop = FALSE]
 }
 
-# ---------------------------------------------------------------------------
-# ONE LIBRARY, THREE KINDS.
-#
-# Admin's template list read load_template_set() and nothing else, so a template
-# built for a form or a report was INVISIBLE there: it could not be found, read,
-# checked, hidden or deleted, and the only screen that manages layouts quietly
-# claimed there were none. Reported as "even in the admin, other templates and
-# other things are not even seen" -- and the half of the app that reads
-# everything-that-is-not-a-bank-statement was managed by nothing at all.
-#
-# So the library is one list of three kinds, summarised in columns that mean the
-# same thing for all of them. Anything kind-specific (amount signs, date formats,
-# column bands) stays in the YAML below the list, where it always was: putting
-# nine mostly-empty columns on the screen is how a list of twelve templates
-# becomes unreadable.
-# ---------------------------------------------------------------------------
+# One library, three kinds. Admin read load_template_set() and nothing else, so a form or report
+# template was invisible there - it could not be found, checked, hidden or deleted.
 
-# template_kind(t) -- which paradigm a loaded template belongs to. Reads the
-# template's own `mode`, because that is what every loader and every detector
-# dispatches on; a template with no mode is a transaction statement, which is
-# what every statement template written before the other two modes existed says.
+# Reads the template's own `mode`, which is what every loader and detector dispatches on.
 template_kind <- function(t) {
   switch(as.character(t$mode %||% "statement")[1],
          fields = "fields", document = "document", "statement")
 }
 
-# .TEMPLATE_KIND_LABEL -- the words on screen. "Other" is the word Convert and
-# "Add a template" both use for everything that is not a bank statement, so the
-# person meeting the distinction on a third screen does not have to learn a third
-# name for it.
 .TEMPLATE_KIND_LABEL <- c(statement = "Bank statement",
                           fields    = "Other \u00b7 form",
                           document  = "Other \u00b7 report")
-# ...and the same three kinds as ordinary nouns, for the middle of a sentence.
-# "checked as a Other \u00b7 report" is what happens when a column heading is asked to
-# do a noun's job.
 .TEMPLATE_KIND_NOUN <- c(statement = "bank statement", fields = "form",
                          document  = "report")
 
-# template_library_name(t) -- the template in words, for whichever kind it is.
-# template_display_name() says "<bank> <type> statement", which is right for a
-# statement and a lie on the other two ("ACME report statement").
 template_library_name <- function(t) {
   if (is.null(t) || !is.list(t)) return(NA_character_)
   k <- template_kind(t)
@@ -675,9 +460,6 @@ template_library_name <- function(t) {
   if (nzchar(lab)) lab else as.character(t$id %||% NA_character_)
 }
 
-# .template_reads(t) -- what this template actually pulls out, in one cell. The
-# three kinds find three different things, and "12 columns" / "8 values" /
-# "3 tables" is the shortest true answer for each.
 .template_reads <- function(t) {
   k <- template_kind(t)
   n1 <- function(n, one, many) sprintf("%d %s", n, if (n == 1L) one else many)
@@ -692,9 +474,6 @@ template_library_name <- function(t) {
   n1(length(cols %||% list()), "column", "columns")
 }
 
-# library_overview(statements, fields, documents) -> data.frame, one row per
-# template of any kind. `kind` leads, because it is the thing that decides which
-# editor opens and which half of the app the template belongs to.
 library_overview <- function(statements = list(), fields = list(), documents = list()) {
   cols <- c("kind", "name", "id", "reads", "origin", "hidden", "version")
   one <- function(t, k) data.frame(
@@ -712,18 +491,12 @@ library_overview <- function(statements = list(), fields = list(), documents = l
   if (!length(rows))
     return(setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
   out <- do.call(rbind, rows); rownames(out) <- NULL
-  # Statements first, then forms, then reports -- the order the app itself tries
-  # them in, and the order the two routes are named in everywhere else.
   ord <- match(out$kind, unname(.TEMPLATE_KIND_LABEL))
   out[order(ord, out$name, out$id), , drop = FALSE]
 }
 
-# template_display_name(t) -- the template said in words the person holding the
-# statement can check ("ANZ everyday statement"). Anything customer-facing uses
-# this; the id and the version stay for the logs. An id is a maintainer's handle
-# and a score is an internal metric -- neither is something an accountant can act
-# on, and the charter's interface rule forbids putting either in front of her.
-# Falls back to the id when a template declares no bank or type.
+# The template said in words the person holding the statement can check. The id and version stay for
+# the logs, since an id is a maintainer's handle an accountant cannot act on.
 template_display_name <- function(t) {
   if (is.null(t) || !is.list(t)) return(NA_character_)
   lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
@@ -731,25 +504,11 @@ template_display_name <- function(t) {
   if (nzchar(lab)) paste(lab, "statement") else as.character(t$id %||% NA_character_)
 }
 
-# template_yaml(t) -- the template rendered as YAML text for preview/edit, with the
-# load-time `origin` marker stripped so it round-trips cleanly.
 template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
 
-# .template_shape(t) -- a structural signature: two templates that share one are
-# the same layout drafted more than once.
-#
-# ONE BRANCH PER KIND, and it has to be. The signature used to be built from the
-# STATEMENT keys only -- format, amount_sign, date_format and the transaction
-# column mapping -- none of which a form or a report template has. So every one
-# of them collapsed to the same string ("pdf~~~~~~") and the duplicate grouper
-# put the whole lot in one group: three unrelated report templates already
-# reported each other as duplicates, and at forty that is one enormous false
-# alarm on the very screen a maintainer opens to prune the library.
-#
-# What makes each kind the same layout twice:
-#   statement  the columns it reads, and how it reads them (unchanged)
-#   report     the phrases that pick it, its table titles and their column bands
-#   form       the label wordings it looks for
+# A structural signature: two templates sharing one are the same layout drafted twice. ONE BRANCH PER
+# KIND, because built from the statement keys alone every form and report template collapsed to the
+# same string and the duplicate grouper put the whole lot in one group.
 .tpl_key <- function(x) gsub("[^a-z0-9]+", "", tolower(as.character(x %||% "")))
 
 .template_shape <- function(t) {
@@ -759,8 +518,6 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
   is_pdf <- identical(t$format %||% "delimited", "pdf")
   cols   <- if (is_pdf) t$table$columns else t$columns
   sign   <- if (is_pdf) t$table$amount_sign else t$amount_sign
-  # NA (no format declared) folds to "" so the signature is unchanged for the
-  # templates that never declared one.
   dfmt   <- .one_date_format(if (is_pdf) t$table$date_format else t$columns$date$format)
   if (is.na(dfmt)) dfmt <- ""
   colsig <- if (is.null(cols)) "" else paste(sort(vapply(names(cols), function(k) {
@@ -771,18 +528,12 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
   paste(t$format %||% "delimited", sign %||% "", dfmt %||% "", colsig, sep = "~~")
 }
 
-# .template_fp_sig(t) -- the identifying phrases, normalised and sorted. Two
-# report templates drafted off the same page capture the same phrases, so this
-# separates two DIFFERENT families rather than two drafts of one.
 .template_fp_sig <- function(t) {
   ph <- unlist(t$fingerprint$page_contains_all %||%
                t$fingerprint$header_contains_all %||% character(0))
   paste(sort(unique(.tpl_key(ph))), collapse = "+")
 }
 
-# .template_shape_document(t) -- a report template's shape: its phrases, then
-# every table as its title and the bands it reads, sorted so the order the tables
-# happen to be listed in does not make two identical templates look different.
 .template_shape_document <- function(t) {
   tabs <- t$tables %||% list()
   nms <- names(tabs) %||% rep("", length(tabs))
@@ -802,8 +553,6 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
         paste(sort(prs), collapse = ","), sep = "~~")
 }
 
-# .template_shape_fields(t) -- a form template's shape: the wordings it looks
-# for. A form has no columns and no bands; the labels ARE the layout.
 .template_shape_fields <- function(t) {
   flds <- t$fields %||% list()
   nms <- names(flds) %||% rep("", length(flds))
@@ -817,11 +566,7 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
   paste("fields", paste(sort(wl), collapse = "|"), sep = "~~")
 }
 
-# duplicate_template_groups(tset, user_only) -> list of id-vectors, one per group
-# of templates that share a layout (see .template_shape). Only groups with >1
-# member are returned -- these are the "heap of near-duplicates" to consolidate:
-# keep one, hide or delete the rest. user_only ignores shipped templates (you
-# can't delete those anyway). Deterministic; safe to show (ids + shapes only).
+# Groups of templates that share a layout - the near-duplicates to consolidate.
 duplicate_template_groups <- function(tset, user_only = TRUE) {
   if (user_only) tset <- Filter(function(t) identical(t$origin %||% "default", "user"), tset)
   if (length(tset) < 2) return(list())
@@ -830,14 +575,10 @@ duplicate_template_groups <- function(tset, user_only = TRUE) {
   unname(groups[vapply(groups, length, integer(1)) > 1L])
 }
 
-# save_user_template(template, dir) -> path. Validates first (fail loud), writes
-# <dir>/<id>.yaml. This is how the guided flow persists an accountant's template.
 save_user_template <- function(template, dir = "templates/statements_user") {
   .save_template_yaml(template, dir, validate_template, "template")
 }
 
-# user_template_ids(dir) -> ids of templates that live in the user dir (the only
-# ones the app may delete / rename -- shipped "tested" templates are read-only).
 user_template_ids <- function(dir = "templates/statements_user") {
   if (!dir.exists(dir)) return(character(0))
   ids <- vapply(list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE), function(f) {
@@ -846,8 +587,6 @@ user_template_ids <- function(dir = "templates/statements_user") {
   unname(ids[!is.na(ids)])
 }
 
-# delete_user_template(id, dir) -> TRUE if a user template file was removed. Only
-# ever touches the user dir; shipped templates cannot be deleted from the app.
 delete_user_template <- function(id, dir = "templates/statements_user") {
   if (!dir.exists(dir) || is.null(id) || !nzchar(id)) return(invisible(FALSE))
   safe_id <- gsub("[^A-Za-z0-9_]+", "_", id)
@@ -861,11 +600,6 @@ delete_user_template <- function(id, dir = "templates/statements_user") {
   invisible(hit)
 }
 
-# set_user_template_hidden(id, hidden, dir) -> the new hidden state. Writes (or
-# clears) `hidden: true` in the user template's own file, keeping its filename.
-# Hidden templates drop out of detection/conversion (load_template_set default)
-# but stay on disk and in the Admin management view, so they can be un-hidden or
-# merged later. Only user templates -- shipped ones are read-only.
 set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates/statements_user") {
   if (!(id %in% user_template_ids(dir))) stop("only user-created templates can be hidden")
   for (f in list.files(dir, pattern = "\\.ya?ml$", full.names = TRUE)) {
@@ -873,8 +607,6 @@ set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates/stateme
     if (identical(t$id %||% "", id)) {
       t$origin <- NULL
       if (isTRUE(hidden)) t$hidden <- TRUE else t$hidden <- NULL
-      # Hiding rewrites the template in place, so it gets the same protection as
-      # saving one: parking a template must never be a way to lose it.
       ok <- save_yaml_safely(t, f)
       if (!isTRUE(ok)) stop(attr(ok, "reason") %||% "the file could not be written")
       return(invisible(isTRUE(hidden)))
@@ -883,10 +615,6 @@ set_user_template_hidden <- function(id, hidden = TRUE, dir = "templates/stateme
   stop("template not found: ", id)
 }
 
-# There is no rename_user_template(). There was one, and nothing ever called it
-# but its own test: no screen offers a rename, and a template id is a stable
-# handle that the run log, the feed manifest and every audit record point back to
-# -- so renaming one in place would leave those records naming a template that no
-# longer exists. A user template is re-saved under a new id (save_user_template)
-# and the old one deleted (delete_user_template) when that is genuinely wanted,
-# which is two visible steps rather than one silent one.
+# There is no rename_user_template(): a template id is a stable handle the run log, the feed manifest
+# and every audit record point back to, so renaming one would leave those records naming a template
+# that no longer exists.

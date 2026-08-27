@@ -1,9 +1,7 @@
-# parse.R -- map a read table through a template into the canonical schema.
-# Guarantees: verbatim descriptions, redactions honoured, NO silent drops
-# (every non-empty data row becomes a transaction; malformed rows are flagged).
+# parse.R -- map a read table through a template into the canonical schema. Guarantees: verbatim
+# descriptions, redactions honoured, NO silent drops (malformed rows are flagged, never dropped).
 
-# .col_source(template, field) -- the source column name for a canonical field,
-# or NULL when the template maps it to null / omits it.
+# The source column name for a canonical field, or NULL when unmapped.
 .col_source <- function(template, field) {
   spec <- template$columns[[field]]
   if (is.null(spec)) return(NULL)
@@ -11,9 +9,8 @@
   as.character(spec)
 }
 
-# .pick(tbl, name) -- fetch a column by name as character, or NULL if absent.
-# Exact match first; then a UNIQUE case-insensitive match ("DATE" for "Date"),
-# so a bank flipping its header casing doesn't silently blank the column.
+# Fetch a column by name as character, or NULL. Exact match first, then a UNIQUE case-insensitive
+# match, so a bank flipping its header casing does not silently blank the column.
 .pick <- function(tbl, name) {
   if (is.null(name)) return(NULL)
   if (name %in% names(tbl)) return(as.character(tbl[[name]]))
@@ -22,15 +19,9 @@
   NULL
 }
 
-# .delimited_meta(input, reader) -- statement-level metadata (period, opening /
-# closing balance, account, stated count) for a delimited or excel file, mined
-# from ANY preamble ABOVE the transaction table -- the block a bank export prints
-# before the rows. Reads ONLY the preamble, never the transaction rows, so a
-# stray date pair or money value in the data can never be misread as a period or
-# balance. Reuses extract_metadata (the SAME generic extractor the PDF path uses)
-# so labelled balances / period wording are recognised identically everywhere.
-# Returns NULL when there is no preamble -- the header then stays all-NA, exactly
-# as before, so a bare transaction CSV is unaffected.
+# Statement-level metadata for a delimited or excel file, mined from ANY preamble ABOVE the table.
+# Reads only the preamble, never the rows, so a stray date pair or money value in the data can never
+# be misread as a period or balance. NULL when there is no preamble.
 .delimited_meta <- function(input, reader) {
   pre <- switch(input$kind %||% "",
     delimited = {
@@ -41,8 +32,7 @@
     character(0))
   pre <- pre[!is.na(pre) & nzchar(trimws(pre))]
   if (!length(pre)) return(NULL)
-  # A minimal PDF-free shim: extract_metadata treats `pages` as the text to mine
-  # and skips its pdf-only probes for a non-pdf kind.
+  # A minimal PDF-free shim: extract_metadata treats `pages` as the text to mine.
   shim <- list(kind = input$kind %||% "delimited", pages = pre, meta = list(), path = input$path)
   safe(extract_metadata(shim), NULL)
 }
@@ -56,10 +46,8 @@ REDACTION_TOKEN <- "[REDACTED]"
 
 # parse_statement(input, template) -> list(transactions, extras, header, provenance)
 parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
-  # PDF templates parse straight from positioned word boxes (R/parse_pdf_table.R).
-  # `meta` lets a caller that ALREADY computed extract_metadata(input) (convert_
-  # statement does, for multi-statement + detection) hand it in, so the PDF parser
-  # doesn't recompute the identical scan. NULL -> the parser computes it, unchanged.
+  # PDF templates parse straight from positioned word boxes. `meta` lets a caller that already ran
+  # extract_metadata(input) hand it in so the PDF parser does not repeat the identical scan.
   if (identical(template$format %||% "delimited", "pdf"))
     return(parse_pdf_table(input, template, force_rows = force_rows, meta = meta))
   reader <- switch(template$format %||% "delimited",
@@ -68,9 +56,8 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
                      source_spans = list(), raw = character(0),
                      field_counts = integer(0), expected_fields = NA_integer_,
                      n_data_lines = NA_integer_),
-    # PDF text is extracted (pages/word boxes/sections via read_pdf) but
-    # per-bank transaction-table parsing is future work: degrade to an empty
-    # table so reconciliation reports needs_review, never crash.
+    # PDF text is extracted but per-bank table parsing on this branch is future work: degrade to an
+    # empty table so reconciliation reports needs_review, never crash.
     pdf       = list(table = NULL, source_lines = integer(0),
                      source_spans = list(), raw = character(0),
                      field_counts = integer(0), expected_fields = NA_integer_,
@@ -81,16 +68,9 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   if (is.null(tbl)) tbl <- data.frame()
   n <- nrow(tbl)
 
-  # ---- date ----
-  # A template MAY declare SEVERAL candidate formats for columns.date.format,
-  # because one bank's one export can change date style between eras (ASB FastNet
-  # writes 2014/12/20 in one export and 13/10/2025 in another). resolve_date_format
-  # picks the ONE candidate that reads EVERY non-empty cell in this column --
-  # all-or-nothing, never a per-row mixture, because "03/04" is readable as both
-  # 3 April and 4 March and a per-row fallback would silently swap them. When no
-  # candidate reads the whole column it returns NA, so every date comes back NA
-  # and the dates_readable KPI fails loudly rather than guessing.
-  # A single declared format resolves to itself: unchanged behaviour.
+  # A template MAY declare SEVERAL candidate date formats. resolve_date_format picks the ONE that
+  # reads EVERY non-empty cell - all-or-nothing, never a per-row mixture, because "03/04" is readable
+  # as both 3 April and 4 March. With no candidate every date is NA and dates_readable fails loudly.
   date_src <- .col_source(template, "date")
   date_col <- .pick(tbl, date_src)
   date_fmt <- resolve_date_format(date_col, template$columns$date$format %||% "%Y-%m-%d")
@@ -104,8 +84,7 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
 
   # ---- amount (sign handling per template$amount_sign) ----
   style <- template$amount_sign %||% "signed"
-  # decimal_mark: dot | comma | auto (default). Lets a European template declare
-  # its locale so "1.234,56" and bare "1.234" are read correctly.
+  # decimal_mark: dot | comma | auto, so a European template can declare its locale.
   dec <- template$decimal_mark %||% "auto"
   amt_opts <- list(decimal = dec, unsigned_default = template$unsigned_default %||% "debit")
   if (style == "signed") {
@@ -120,8 +99,8 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
     amt_opts$type <- .pick(tbl, .col_source(template, "type"))
     amt_opts$type_debit_value  <- template$type_debit_value %||% "D"
-    # Optional credit token: when declared, parse_amount fails closed on any
-    # indicator that is neither debit nor credit. Absent -> binary back-compat.
+    # Optional credit token: when declared, parse_amount fails closed on any indicator that is
+    # neither debit nor credit.
     amt_opts$type_credit_value <- template$type_credit_value
   } else {
     amt_col <- .pick(tbl, .col_source(template, "amount"))
@@ -158,9 +137,8 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
 
   # ---- extras (template-declared per-bank columns, keyed by row_id) ----
   extras <- .build_extras(template, tbl, n)
-  # Separate money-in / money-out statements: preserve the verbatim debit and
-  # credit cells alongside the collapsed signed amount, so the original split
-  # stays visible (previews + workbook) and in the JSON. Mirrors the PDF path.
+  # Separate money-in / money-out statements keep the verbatim debit and credit cells beside the
+  # collapsed signed amount, so the original split stays visible. Mirrors the PDF path.
   if (identical(style, "debit_credit_cols") && n > 0) {
     db <- blank_to_na(as.character(amt_opts$debit  %||% rep(NA_character_, n)))
     cr <- blank_to_na(as.character(amt_opts$credit %||% rep(NA_character_, n)))
@@ -181,20 +159,16 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     if (amt_red) f <- c(f, "redacted")
     fc <- if (i <= length(reader$field_counts)) reader$field_counts[i] else NA_integer_
     exp <- reader$expected_fields
-    # An amount that did not come out as a number is malformed WHETHER the cell held
-    # unreadable text or nothing at all. A "did this row carry an amount input?"
-    # guard used to exempt a genuinely BLANK amount cell, so such a row carried no
-    # flag whatsoever while the PDF path flags the same row -- and a row with no
-    # amount is exactly a row whose money cannot be totalled, i.e. the completeness
-    # proof is broken and nothing said so. A REDACTED amount is still not malformed:
-    # it was read correctly and is deliberately withheld (amt_red above).
+    # An amount that did not come out as a number is malformed WHETHER the cell held unreadable text
+    # or nothing at all: exempting a blank amount cell left such a row with no flag while the PDF
+    # path flags it. A REDACTED amount is still not malformed - it was deliberately withheld.
     malformed <- (!is.na(fc) && !is.na(exp) && fc != exp) ||
                  (is.na(a$value[i]) && !amt_red)
     if (malformed) f <- c(f, "malformed")
     if (isTRUE(fx_present[i])) f <- c(f, "fx")
     paste(f, collapse = ",")
   }, character(1))
-  # redacted amounts must not carry a derived value.
+  # Redacted amounts must not carry a derived value.
   a$value[.is_redacted(a$raw)] <- NA_real_
 
   core <- data.frame(
@@ -208,10 +182,8 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   core <- coerce_core(core)
 
   page_count <- if (identical(input$kind, "pdf")) (input$meta$page_count %||% NA_integer_) else NA_integer_
-  # Statement-level metadata from the preamble (period / balances / account /
-  # stated count). NULL when there's no preamble, so a bare transaction table
-  # keeps the all-NA header it had before -- reconciliation then leans on the
-  # running-balance column (running_balance_continuity), exactly as today.
+  # Statement-level metadata from the preamble. NULL when there is none, so a bare transaction table
+  # keeps its all-NA header and reconciliation leans on running_balance_continuity.
   md <- .delimited_meta(input, reader)
   header <- list(
     bank = template$bank %||% NA_character_,
@@ -230,9 +202,8 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     stated_count = md$stated_count %||% NA_integer_
   )
 
-  # Provenance is per PARSED ROW: a multi-line quoted record maps to one row and
-  # records its full physical line span, so the audit trail survives embedded
-  # newlines instead of being blanked for the whole statement.
+  # Provenance is per PARSED ROW: a multi-line quoted record maps to one row and records its full
+  # physical line span, so the audit trail survives embedded newlines.
   spans <- reader$source_spans %||% list()
   raw <- reader$raw %||% rep(NA_character_, n)
   source_ref <- if (length(spans) == n) {
@@ -247,28 +218,22 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     stringsAsFactors = FALSE
   )
 
-  # Physical data lines legitimately consumed by MULTI-LINE records (a quoted field
-  # with an embedded newline spans several physical lines but is one record). The
-  # completeness KPI subtracts these so a valid multi-line statement doesn't look
-  # like it "lost" lines; a physical line captured by NO record still shows up.
+  # Physical data lines legitimately consumed by MULTI-LINE records. The completeness KPI subtracts
+  # these so a valid multi-line statement does not look like it lost lines.
   multiline_extra <- if (length(spans) == n && n > 0)
     as.integer(sum(lengths(spans)) - length(spans)) else 0L
 
   list(transactions = core, extras = extras, header = header,
        provenance = provenance,
-       # completeness accounting for reconcile: how many non-empty physical data
-       # lines the source held (vs how many rows we parsed).
+       # Completeness accounting: non-empty physical data lines the source held, against rows parsed.
        source_line_count = reader$n_data_lines %||% NA_integer_,
-       # spreadsheet padding lines (bare separators, no content) that were not
-       # turned into transactions. Carried so the omission can be STATED rather
-       # than merely happening -- it is deliberately excluded from
-       # source_line_count so the completeness proof compares like with like.
+       # Spreadsheet padding lines not turned into transactions. Carried so the omission can be
+       # STATED, and excluded from source_line_count so the completeness proof compares like with like.
        padding_line_count = reader$n_padding_lines %||% 0L,
        multiline_extra = multiline_extra)
 }
 
-# .format_line_span(v) -- "csv:line=5" for a single physical line, "csv:line=5-6"
-# for a contiguous span, "csv:line=5,8" otherwise.
+# "csv:line=5", "csv:line=5-6" for a contiguous span, "csv:line=5,8" otherwise.
 .format_line_span <- function(v) {
   v <- as.integer(v)
   if (length(v) == 0 || all(is.na(v))) return(NA_character_)
@@ -278,10 +243,7 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   sprintf("csv:line=%s", paste(v, collapse = ","))
 }
 
-# .build_extras(template, tbl, n) -- honour a template `extras:` block, building
-# a row_id-keyed data.frame from the mapped source columns. Missing source
-# columns become NA (never silently omitted). Returns the empty row_id frame when
-# no extras are declared.
+# Honour a template `extras:` block. Missing source columns become NA, never silently omitted.
 .build_extras <- function(template, tbl, n) {
   spec <- template$extras
   if (is.null(spec) || length(spec) == 0) {
@@ -296,10 +258,3 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   }
   data.frame(out, stringsAsFactors = FALSE, check.names = FALSE)
 }
-
-# There is no is.blank_amount(). It said "TRUE when an amount cell is truly empty",
-# nothing ever called it and no test covered it: every place that needs the
-# distinction already has it, because .num() returns NA for a blank cell and the
-# coverage/reconciliation checks work from the parsed column rather than the raw
-# text. A predicate nobody consults cannot be the reason a blank is treated as
-# expected rather than malformed, so it was never load-bearing.

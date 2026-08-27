@@ -1,36 +1,15 @@
-# forms.R -- orchestrator for the "mode: fields" paradigm (IRD summaries,
-# KiwiSaver/account summaries): documents whose useful data is LABELLED VALUES,
-# not a transaction table. This wires the standalone extract_fields() primitive
-# into a full pipeline (load templates -> detect by fingerprint -> extract ->
-# write outputs), kept deliberately separate from the transaction pipeline so the
-# core stays unchanged. A fields template is a normal YAML with `mode: fields`
-# and a `fields:` block; they live in templates/fields/ (curated) and
-# templates/fields_user/ (built on the box).
+# forms.R -- orchestrator for "mode: fields": documents whose useful data is LABELLED VALUES, not
+# a transaction table. Templates live in templates/fields/ and templates/fields_user/.
 
-# is_fields_template(t) -- TRUE for a mode:fields template.
 is_fields_template <- function(t) identical(t$mode %||% "", "fields") && !is.null(t$fields)
 
-# load_fields_templates(dir, user_dir) -> named list<template>, keyed by id. Only
-# VALID mode:fields templates are returned. Lenient (a bad one is skipped, not
-# fatal) so one malformed form template can never break the others -- but never
-# SILENT: the skip reasons come back on attr(x, "load_errors"), exactly as
-# load_templates() does for statement templates, so the app can say which form
-# template vanished and why.
-#
-# include_hidden mirrors load_template_set(): a template flagged `hidden: true` is
-# parked out of detection without being deleted, and the Admin management view
-# asks for them back so it can un-hide one. Hiding used to work for statement
-# templates only, which made Admin's Hide button a control that did nothing on two
-# of the three kinds -- worse than no control.
+# Only VALID mode:fields templates. Lenient - a bad one is skipped, not fatal - but never silent:
+# skip reasons come back on attr(x, "load_errors"). include_hidden parks one out of detection.
 load_fields_templates <- function(dir = "templates/fields", user_dir = NULL,
                                   include_hidden = FALSE) {
   out <- list()
   errors <- character(0)
   dirs <- c(dir, user_dir)
-  # Which FOLDER a template came out of is the only thing that says whether it is
-  # shipped-and-tested or built on this box, and Admin has to say which before it
-  # offers to delete one. Stamped here, the same marker load_templates() puts on a
-  # statement template, so one overview can read all three kinds the same way.
   origins <- c(rep("default", length(dir)), rep("user", length(user_dir)))
   for (k in seq_along(dirs)) {
     d <- dirs[[k]]
@@ -52,26 +31,15 @@ load_fields_templates <- function(dir = "templates/fields", user_dir = NULL,
   out
 }
 
-# .fields_fingerprint_problems(ph) -- the SAME generic-fingerprint gate the
-# statement templates pass, applied to a form template.
-#
-# WHY a form template needs it MORE, not less. detect_form() matches when every
-# phrase is found anywhere in the page text, and it is reached for every statement
-# no transaction template recognised. There is no reconciliation behind it and no
-# balance check to catch a wrong match -- just an extraction and a download button.
-# So a form template whose fingerprint is made of words that sit on every bank
-# statement would turn a correct "unsupported" verdict into a confident, unchecked
-# "form" result. detect_form requires ALL phrases, so the effective min_score is
-# the phrase count; that is what is handed to the shared gate.
+# The same generic-fingerprint gate statement templates pass, and a form template needs it MORE:
+# detect_form() matches when every phrase is found anywhere in the page text, with no reconciliation
+# behind it, so a generic fingerprint turns a correct "unsupported" into an unchecked "form" result.
 .fields_fingerprint_problems <- function(ph) {
   ph <- trimws(as.character(unlist(ph %||% character(0))))
   ph <- ph[!is.na(ph) & nzchar(ph)]
   if (!length(ph)) return(paste0(
     "fingerprint.page_contains_all is required: without identifying phrases a form ",
     "template can never be matched, and a template that matches nothing is a trap"))
-  # The shared implementation lives in R/templates.R and is the single source of
-  # truth for "is this fingerprint distinctive / free of PII". Fall back to its
-  # distinctiveness rule only if that file is not loaded (never weaker).
   if (exists(".fp_fingerprint_problems", mode = "function"))
     return(.fp_fingerprint_problems(ph, min_score = length(ph), fmt = "pdf"))
   specific <- (lengths(strsplit(ph, "\\s+")) >= 2) | (nchar(ph) >= 10)
@@ -81,7 +49,6 @@ load_fields_templates <- function(dir = "templates/fields", user_dir = NULL,
   character(0)
 }
 
-# validate_fields_template(t) -> character() of problems (empty = valid).
 validate_fields_template <- function(t) {
   p <- character(0)
   if (!is.list(t)) return("template is not a mapping")
@@ -93,19 +60,9 @@ validate_fields_template <- function(t) {
   p
 }
 
-# .fields_label_problems(fields) -- THE SAME PII GATE THE FINGERPRINT PASSES,
-# applied to the label wordings a field matches on.
-#
-# WHY. The gate guarded one field. A form template's labels are captured
-# VERBATIM off the page -- typed from it, or dragged off it -- and the saved file
-# goes into templates/fields_user/, which is what gets copied off the box when
-# somebody backs it up or sends it on. "Prepared for Mr John Smith" was refused
-# as a fingerprint phrase and accepted, unchanged, as a label to look for. Same
-# rule, same wording, so there is one thing to learn and not two.
-#
-# It is a rule about NAMING A PERSON, not about wording: a label is meant to be
-# the words printed beside the value ("Opening balance"), and no printed label
-# names the account holder.
+# The same PII gate the fingerprint passes, applied to the label wordings a field matches on. Labels
+# are captured VERBATIM into templates/fields_user/, which gets copied off the box: "Prepared for Mr
+# John Smith" was refused as a fingerprint phrase and accepted as a label.
 .fields_label_problems <- function(fields) {
   if (!length(fields) || !exists(".fp_has_pii", mode = "function")) return(character(0))
   bad <- character(0)
@@ -126,17 +83,8 @@ validate_fields_template <- function(t) {
     paste(sprintf("'%s'", unique(bad)), collapse = ", "))
 }
 
-# .form_fp_norm(x) -- how a fingerprint phrase is compared to the page: case,
-# spacing and punctuation taken out of it, exactly as the report route's
-# .doc_fp_norm and the table header matcher's .doc_norm already do.
-#
-# WHY IT IS A SEPARATE COPY. The three routes must agree on this rule and must
-# not depend on each other's files to get it; the shape is what is shared, and a
-# test pins the two to the same answers. Measured before this existed: a
-# template whose phrase was typed "Anz Kiwisaver Scheme" against a page printing
-# "ANZ KiwiSaver Scheme" never matched, and nothing on screen said why -- the
-# exact complaint "I put a phrase printed on it, bang smack on front page, still
-# used another template".
+# Case, spacing and punctuation taken out of both sides: a phrase typed "Anz Kiwisaver Scheme"
+# against a page printing "ANZ KiwiSaver Scheme" never matched, and nothing said why.
 .form_fp_norm <- function(x) {
   x <- as.character(x %||% "")
   safe({
@@ -149,41 +97,20 @@ validate_fields_template <- function(t) {
   }, x)
 }
 
-# .form_tpl_name(t) -- a form template said in WORDS. template_display_name()
-# appends "statement", which is exactly what a form is not.
 .form_tpl_name <- function(t) {
   lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
                       trimws(as.character(t$statement_type %||% ""))))
   if (nzchar(lab)) lab else as.character(t$id %||% "this template")[1]
 }
 
-# detect_form(input, ftemplates) -> THE SAME RETURN SHAPE detect_statement() and
-# detect_document_template() have: template_id, matched, score, candidates,
-# eligible_ids, tied, margin, runner_up, detail, detail_plain.
-#
-# The rule, and why each step of it is what it is, is .detect_by_fingerprint() in
-# R/templates.R -- ONE detector for both of the other routes. It used to be
-# eighty-five lines here and the same eighty-five lines in R/doc_extract.R, which
-# is how a fix to one route became a drift in the other. The only thing this route
-# still owns is HOW ITS TEXT IS FOLDED (.form_fp_norm) and how a form template is
-# said in words (.form_tpl_name).
+# Same return shape as detect_statement(). The rule is .detect_by_fingerprint() in R/templates.R;
+# this route owns only how its text is folded and how a form template is named.
 detect_form <- function(input, ftemplates) {
   .detect_by_fingerprint(input, ftemplates, "form", .form_fp_norm, .form_tpl_name)
 }
 
-# write_form_outputs(fields, outdir, basename, formats) -> named path vector.
-#
-# THE COLUMN LIST IS THE WHOLE OF A FORM'S EVIDENCE. It used to be a fixed seven,
-# and `conflict` -- the one quality signal a form has, and the signal that already
-# DECIDES the run's status -- was not among them. Measured on the shipped sample:
-# three values were labels printed more than once with different figures, the tool
-# took the first of each and said so on the screen, and the downloaded CSV showed
-# all three as matched TRUE, flagged FALSE with no conflict column at all. The
-# screen gets closed; the file is what goes in the bundle. So the file carries
-# what the screen carried: the conflict, how many times the label was read
-# (`n`), the readings that were NOT taken (`other_values`), and -- the same
-# evidence the report route's pairs have always carried -- the page it was read
-# from and how it was found.
+# THE COLUMN LIST IS THE WHOLE OF A FORM'S EVIDENCE. It was a fixed seven, and `conflict` - the one
+# quality signal a form has, and the one that DECIDES the run's status - was not among them.
 write_form_outputs <- function(fields, outdir, basename,
                                formats = c("xlsx", "csv", "json")) {
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
@@ -192,14 +119,8 @@ write_form_outputs <- function(fields, outdir, basename,
                                "page", "found_by", "matched", "required",
                                "flagged", "conflict", "n"), names(fields)),
                  drop = FALSE]
-  # A CELL READING "=1+1" MUST NOT REACH THE FILE LIVE. Excel evaluates it on
-  # open, so the reviewer sees 2 where the document printed =1+1 -- a wrong figure
-  # that looks right, delivered by the tool's own output. The statement path
-  # guards a fixed list of text columns and the report path guards every
-  # character column; a form has a fixed schema but its VALUES come off the page,
-  # so it is guarded the same way. Nothing is stripped: a leading quote is added
-  # and Excel shows the literal text. The JSON stays verbatim -- it is never
-  # executed -- exactly as on the other two routes.
+  # A cell reading "=1+1" must not reach the file live: Excel evaluates it on open. Nothing is
+  # stripped - a leading quote is added - and the JSON stays verbatim.
   safe_tidy <- .doc_csv_safe(tidy)
   if ("csv" %in% formats) {
     p <- file.path(outdir, paste0(basename, ".fields.csv"))
@@ -210,11 +131,8 @@ write_form_outputs <- function(fields, outdir, basename,
     p <- file.path(outdir, paste0(basename, ".fields.xlsx"))
     wb <- openxlsx::createWorkbook(); openxlsx::addWorksheet(wb, "Fields")
     openxlsx::writeData(wb, "Fields", safe_tidy)
-    # ...AND THE SAME FILE TWICE MUST BE THE SAME FILE. openxlsx stamps the wall
-    # clock into docProps/core.xml and the ZIP's own mod-times, so a form workbook
-    # differed byte for byte between two runs of one document while the statement
-    # one did not -- which breaks "re-run it and show it produces the same file",
-    # the check a maintainer runs to prove nothing has drifted.
+    # The same file twice must be the same file: openxlsx stamps the wall clock into
+    # docProps/core.xml and the ZIP's mod-times.
     tryCatch({
       wb$core <- .deterministic_core(wb$core)
       openxlsx::saveWorkbook(wb, p, overwrite = TRUE)
@@ -232,8 +150,6 @@ write_form_outputs <- function(fields, outdir, basename,
   paths
 }
 
-# convert_form(path, ...) -> result list. Never throws: any failure is a `failed`
-# result with an actionable message, mirroring convert_statement's contract.
 convert_form <- function(path, fields_dir = "templates/fields",
                          user_fields_dir = NULL, outdir = "out",
                          formats = c("xlsx", "csv", "json"),
@@ -248,10 +164,6 @@ convert_form <- function(path, fields_dir = "templates/fields",
     dict <- dict %||% (if (exists("default_label_dict", mode = "function")) default_label_dict() else list())
 
     tmpl <- NULL; det <- NULL; ambiguous <- FALSE
-    # FORCING A TEMPLATE, ALL THE WAY THROUGH. The argument has always existed and
-    # nothing ever passed it; worse, an id that is not in the library fell through
-    # to detection in silence, so "read it with THIS one" could quietly be
-    # answered by a different template altogether.
     forced <- !is.null(template_id) && nzchar(as.character(template_id)[1])
     if (forced) {
       tmpl <- ftpls[[as.character(template_id)[1]]]
@@ -264,9 +176,6 @@ convert_form <- function(path, fields_dir = "templates/fields",
       }
     } else {
       det <- detect_form(input, ftpls)
-      # A TIE IS NOT AN ANSWER OF "NO". Two templates that both fit used to mean
-      # "unsupported" on a document the library reads perfectly, and it named
-      # neither. Read it with the best of them, say so, and send it to review.
       ambiguous <- !isTRUE(det$matched) && length(det$tied) >= 2
       if (!isTRUE(det$matched) && !ambiguous) {
         res$status <- "unsupported"
@@ -281,9 +190,6 @@ convert_form <- function(path, fields_dir = "templates/fields",
     fields <- extract_fields(input, tmpl, dict)
     res$template_id <- tmpl$id %||% NA_character_
     res$template_version <- tmpl$version %||% NA
-    # WHICH TEMPLATE CONTENT ran, not just which id. A report converts in March
-    # and in September the defence asks how a figure was derived; a declared
-    # `version:` that nobody bumps cannot answer that and a content hash can.
     res$template_sha256 <- template_sha256(tmpl)
     res$forced_template <- forced
     res$detect <- det
@@ -292,29 +198,15 @@ convert_form <- function(path, fields_dir = "templates/fields",
     res$n_fields <- nrow(fields)
     res$required_missing <- sum(isTRUE(fields$flagged) | fields$flagged, na.rm = TRUE)
     res$outputs <- write_form_outputs(fields, outdir, base, formats)
-    # HOW MANY VALUES DID WE ACTUALLY GET? n_fields counts the fields the template
-    # DECLARES, not the ones found - so a document where nothing was read still
-    # reported "4 field(s) extracted", status ok. A form has no reconciliation to
-    # catch that: a labelled value is trusted because it was read, so an empty or
-    # contradictory read must say so itself. This is the same gate the statement
-    # path got (zero rows is not "ok"), which the form path never had.
+    # n_fields counts the fields the template DECLARES, not the ones found, so a document where
+    # nothing was read still reported "4 field(s) extracted", status ok.
     res$n_values <- sum(!is.na(fields$value) & nzchar(fields$value %||% ""))
-    # A label found more than once with DIFFERENT values. The tool takes the first
-    # and marks it; it must never be reported as a clean read, because which one is
-    # right is a question only someone holding the document can answer.
     res$n_conflicts <- sum(isTRUE(fields$conflict) | fields$conflict, na.rm = TRUE)
     res$status <- if (res$n_values == 0L) "unsupported"
                   else if (res$n_conflicts > 0 || res$required_missing > 0 ||
                            ambiguous) "needs_review"
                   else "ok"
-    # MATCHED, AND FOUND NOTHING -- kept as its two halves as well as joined, for
-    # the same reason as the document engine: diagnostics_matched_empty needs them
-    # apart, and parsing them back out of the message would be a second way to say
-    # one thing.
     me_why <- sprintf(
-      # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
-      # person holding the document cannot check anything against one, and the
-      # id is still on the run record where it is useful.
       "the %s fits this document but found none of its %d values",
       .form_tpl_name(tmpl), res$n_fields)
     me_fix <- paste("the labels are probably printed differently here, or the values sit in a",
@@ -340,22 +232,14 @@ convert_form <- function(path, fields_dir = "templates/fields",
   })
 }
 
-# save_fields_template(tmpl, dir) -> path. Validates then writes <dir>/<id>.yaml,
-# through the one saver all three kinds share (.save_template_yaml, R/templates.R)
-# -- which is also how this route stopped being able to overwrite one form
-# template with another whose id merely sanitises to the same filename.
+# Through the one saver all three kinds share, so this route cannot overwrite one form template
+# with another whose id merely sanitises to the same filename.
 save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   .save_template_yaml(tmpl, dir, validate_fields_template, "fields template")
 }
 
-# .forced_template_kind(id, ...) -> "statement" | "form" | "tables" | NA.
-#
-# ONE id, and the libraries say what kind of thing it is. The alternative -- the
-# caller telling us the kind alongside the id -- is a second thing to get right
-# and a second thing to get wrong, and the answer is already written down.
-# Statement first, then form, then report: the same order the front door tries
-# them in, so an id that somehow existed in two libraries resolves the way the
-# document would have been read anyway.
+# One id, and the libraries say what kind of thing it is. Statement, then form, then report - the
+# same order the front door tries them in.
 .forced_template_kind <- function(id, templates_dir, user_templates_dir,
                                   fields_dir, user_fields_dir, doc_dir, user_doc_dir) {
   id <- as.character(id %||% "")[1]
@@ -369,32 +253,18 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   NA_character_
 }
 
-# .route_record(kind, r, origin) -- the part of the run record that changes when
-# the ROUTE changes. Three rules, and all three were broken:
-#
-#   1. A MEASURE THAT DOES NOT APPLY IS NA, NOT ZERO. `row_count` and
-#      `kpi_fail_count` were literal zeros on every form and report run, so Admin
-#      counted each of them as a clean zero-failure conversion alongside
-#      statements that genuinely reconciled. Zero failures and no failures to
-#      count are not the same fact and a spreadsheet cannot tell them apart.
-#   2. THE DETECTION FIELDS BELONG TO THE STATEMENT ATTEMPT AND ARE CLEARED.
-#      closest_template, detect_detail, period_start, period_end and layout_hint
-#      were carried over from the pass that failed -- measured, a form run
-#      reported a period of "1 April 2025" scraped off the form, and layout_hint
-#      carried page words that on a non-statement are as likely to be somebody's
-#      surname as a column name. The layout SIGNATURE stays: it is a hash of the
-#      page shape, it names nobody, and it is what clusters layouts.
-#   3. THE FILES ARE NAMED. Without them a record and the workbook it produced
-#      can only be tied together by guessing at a filename.
+# The part of the run record that changes when the ROUTE changes. Three rules, all broken before: a
+# measure that does not apply is NA, not zero (literal zeros made Admin count every form and report
+# run as a clean zero-failure conversion); the detection fields belong to the statement attempt and
+# are CLEARED (the layout SIGNATURE stays - it names nobody); and the files are named.
 .route_record <- function(kind, r, origin) {
   list(kind              = kind,
        status            = r$status,
        detected_template = r$template_id %||% NA_character_,
        template_origin   = origin,
        template_version  = r$template_version %||% NA,
-       # WHICH TEMPLATE CONTENT ran. Hardcoded NA on both other routes until now,
-       # while template_sha256() has always worked on any template: the
-       # difference between a right figure and a defensible one.
+       # Which template content ran. Hardcoded NA on both other routes until now: the difference
+       # between a right figure and a defensible one.
        template_sha256   = r$template_sha256 %||% NA_character_,
        trust_level       = NA_character_,
        row_count         = NA_integer_,
@@ -409,9 +279,8 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
        message           = paste(r$messages, collapse = " | "))
 }
 
-# .route_min_conf(tr) -- the LEAST confident table in a report, which is the one
-# that decides whether the workbook can be trusted. Read defensively: R/tables.R
-# owns confidence and this must degrade to NA rather than error if it moves.
+# The LEAST confident table decides whether the workbook can be trusted. R/tables.R owns
+# confidence, so this must degrade to NA rather than error.
 .route_min_conf <- function(tr) {
   cf <- suppressWarnings(as.numeric(vapply(tr$tables %||% list(),
     function(x) as.numeric(x$confidence %||% NA_real_)[1], numeric(1))))
@@ -419,39 +288,14 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   if (!length(cf)) NA_real_ else min(cf)
 }
 
-# .record_and_return(logdir, res) -- write the run record and SAY SO IF IT COULD
-# NOT BE WRITTEN.
-#
-# K9: log_run() wrapped the write in safe() and both callers here wrapped it
-# again, so a run log that could not be written was swallowed twice. Proven with
-# an uncreatable log folder: no file, nothing propagated. On a full disk or a
-# vanished network path every conversion still succeeded, produced a complete
-# workbook, and left no audit record at all -- and nobody was told. In a forensic
-# deployment the record is half the deliverable.
-#
-# Written defensively against log_run()'s own contract: it may hand back the path
-# it wrote, nothing at all, or (if R/convert.R gains the richer return K9 asks
-# for) a list of path and reason. Whatever comes back, the FACT tested here is
-# the one that matters -- is there a file on disk. When there is not, the writer
-# is asked once more, unwrapped, purely so the operator gets the real reason
-# instead of a shrug.
+# Write the run record and SAY SO IF IT COULD NOT BE WRITTEN: log_run() wrapped the write in safe() and
+# both callers wrapped it again, so on a full disk every conversion still succeeded and left no audit
+# record with nobody told. The FACT tested is whether there is a file on disk.
 .record_and_return <- function(logdir, res, notice = character(0)) {
   if (length(notice)) res$messages <- c(notice, res$messages)
-  # L7. THE METADATA RECORD IS WRITTEN BY THE STATEMENT PASS AND KEPT FOREVER.
-  #
-  # capture_metadata() runs inside convert_statement(), which on this route is the
-  # attempt that FAILED before the form or the report read the document. So the
-  # one record that is exempt from every rollup and never deleted said
-  # status "unsupported", template_id null, and carried no kind at all -- for a
-  # conversion that produced six tables and a hundred rows. The corpus
-  # R/suggestions.R mines for "build these next" therefore could not tell a layout
-  # nobody can read from a report that read perfectly, and every such run inflated
-  # the gap list.
-  #
-  # This is the single choke point both exits pass through, and by here `res` is
-  # the final answer with its true kind - so it is the only honest place to
-  # correct it. Best effort: a metadata record that cannot be amended must never
-  # cost somebody their conversion.
+  # capture_metadata() runs inside convert_statement(), which on this route is the attempt that FAILED,
+  # so the one record exempt from every rollup said "unsupported" for a conversion that produced six
+  # tables. Best effort: a record that cannot be amended must not cost somebody their conversion.
   safe(amend_metadata_record(logdir, res))
   out <- tryCatch(log_run(logdir, res), error = function(e) conditionMessage(e))
   p <- if (is.list(out)) as.character(out$path %||% NA_character_)[1]
@@ -466,8 +310,6 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   if (is.null(rec) || !length(rec)) {
     res$log_error <- "no record of this conversion was built"
   } else {
-    # The file may be there even when nothing was handed back. Look before
-    # writing again: a second record of one run is its own kind of wrong.
     id <- as.character(rec$run_id %||% res$run_id %||% "unknown")[1]
     expect <- file.path(logdir, "runs", paste0(safe(.safe_name(id), id), ".json"))
     if (file.exists(expect)) { res$log_path <- expect; return(res) }
@@ -482,8 +324,6 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
                      else if (!is.na(q) && nzchar(q)) q
                      else "the audit log folder could not be written to"
   }
-  # One sentence, first, where the person is looking: she has a workbook and no
-  # record of how she got it, and only an operator can fix that.
   res$messages <- c(status_message("needs_review",
     "this conversion was not recorded in the audit log",
     "tell whoever looks after this server before the file is relied on"),
@@ -491,45 +331,11 @@ save_fields_template <- function(tmpl, dir = "templates/fields_user") {
   res
 }
 
-# convert_document(path, ...) -> result. The single front door: try the normal
-# transaction pipeline first; if nothing matched, fall back to form (mode:fields)
-# extraction, so ONE upload handles bank statements AND labelled-value PDFs (IRD
-# summaries, KiwiSaver, letters). The result carries `kind` = "statement" or
-# "form" so the UI knows which way to render it. Never throws.
-#
-# THE RUN LOG IS WRITTEN HERE, ONCE. convert_statement() used to write it before
-# returning, so a form that converted perfectly was already on record as an
-# `unsupported` statement under the same run_id -- reported as a failure in Admin
-# and counted in the "build these next" queue, which reads exactly that field. The
-# statement pass now only BUILDS the record (res$run_log); this function writes it
-# after the final outcome is known. Nothing is ever rewritten.
-#
-# `kind` IS THE PERSON'S OWN ANSWER, and it outranks detection.
-#   "auto"      work it out: statement, then form, then report (the default, and
-#               what every caller did before this existed).
-#   "statement" it is a bank or card statement. Only statement templates are
-#               tried; "no template for this yet" stays that answer instead of
-#               being quietly re-read as a report.
-#   "other"     it is NOT a bank statement. No statement template gets a vote, so
-#               a form or report template is reached even when some bank's
-#               fingerprint happens to fit.
-#
-# Reported: "I put a phrase printed on it, bang smack on front page, still used
-# another template." It did, because the report pass is only reached when the
-# statement pass fails, and a statement template had matched. No scoring change
-# fixes that in general -- but nobody has to guess when the person holding the
-# document already knows.
-#
-# `template_id` IS THE PERSON'S ANSWER TAKEN ONE STEP FURTHER: not just what kind
-# of document it is, but WHICH template reads it. It travels the whole way and it
-# CARRIES ITS KIND -- the id is looked up in all three libraries and the route
-# follows from where it was found. Before this, convert_form() and
-# convert_tables() each took a template_id and nothing ever passed one, while the
-# front door's only override turned into kind "statement" outright: forcing a
-# form template produced an unsupported STATEMENT. `force_template` is the old
-# name for the same argument and is still accepted, so nothing that calls it
-# breaks; an id that is in no library is said out loud and the document is read
-# the usual way rather than refused.
+# The single front door: transaction pipeline, then form extraction, then report, so ONE upload handles
+# statements, labelled-value PDFs and multi-table reports. Never throws. THE RUN LOG IS WRITTEN HERE,
+# ONCE: convert_statement() used to write it before returning, so a form that converted perfectly was
+# on record as an `unsupported` statement. `kind` is the person's own answer and outranks detection;
+# `template_id` CARRIES ITS KIND, looked up in all three libraries.
 convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = "out",
                              templates_dir = "templates/statements",
                              user_templates_dir = "templates/statements_user",
@@ -550,21 +356,15 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
                                          fields_dir, user_fields_dir,
                                          doc_dir, user_doc_dir)
     if (is.na(forced_kind)) { unknown_template <- TRUE; want <- "" }
-    # A TEMPLATE OF THE WRONG KIND AND AN EXPLICIT ANSWER ARE A CONTRADICTION,
-    # and the answer wins. Reported, and browser-proven: the "it picked the wrong
-    # bank?" panel keeps its selection when it is hidden, so ticking "Something
-    # else" left a bank template still chosen underneath -- and it beat her, in
-    # silence, on a control she could no longer see. An answer she can see must
-    # never lose to one she cannot.
+    # A template of the wrong kind and an explicit answer are a contradiction, and the answer wins: the
+    # "wrong bank?" panel keeps its selection when hidden, so ticking "Something else" left a bank
+    # template chosen underneath, beating her on a control she could no longer see.
     if (!is.na(forced_kind) &&
         ((identical(kind, "other") && identical(forced_kind, "statement")) ||
          (identical(kind, "statement") && forced_kind %in% c("form", "tables")))) {
       contradiction <- TRUE; forced_kind <- NA_character_; want <- ""
     }
   }
-  # Forcing an exact statement template IS saying "this is a statement", so the
-  # two can never disagree. Forcing a form or a report template says the opposite
-  # just as plainly, and now says it just as effectively.
   if (identical(forced_kind, "statement")) kind <- "statement"
   else if (forced_kind %in% c("form", "tables")) kind <- "other"
   force_stmt  <- if (identical(forced_kind, "statement") && nzchar(want)) want else NULL
@@ -579,10 +379,6 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
   res$kind <- "statement"
   res$asked_kind <- kind
   if (!is.null(res$run_log)) res$run_log$asked_kind <- kind
-  # ASKED FOR A TEMPLATE THAT IS NOT THERE. Held, not written on to `res` here,
-  # because a form or report result REPLACES `res` further down and would carry
-  # the notice away with it -- and the one thing a notice must not do is go
-  # missing on the route it was about.
   notice <- character(0)
   if (unknown_template) notice <- status_message("needs_review",
     "the template you asked for is not in the library, so this was read the usual way",
@@ -590,66 +386,44 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
   if (contradiction) notice <- status_message("needs_review",
     "the template that was chosen is for a different kind of document, so what you said this is was used instead",
     "if that is wrong, say what the document is again and convert it once more")
-  # ...and when the person said it IS a statement, that is the whole search. A
-  # report template reading a bank statement it happened to fingerprint is the
-  # same wrong answer in the other direction, and it would arrive with no
-  # reconciliation behind it to catch it.
+  # When the person said it IS a statement, that is the whole search: a report template reading a
+  # bank statement it happened to fingerprint is the same wrong answer in the other direction.
   if (identical(kind, "statement")) return(.record_and_return(logdir, res, notice))
-  # Fall back to form extraction only when nothing matched AND the user didn't
-  # force a transaction template -- or go straight there when the form template
-  # to use was named.
   if (is.null(force_stmt) && !want_tables &&
       (want_form || identical(res$status, "unsupported"))) {
     fr <- tryCatch(convert_form(path, fields_dir = fields_dir, user_fields_dir = user_fields_dir,
                                 outdir = outdir, formats = formats,
                                 template_id = if (want_form) want else NULL),
                    error = function(e) NULL)
-    # A form template that MATCHED this document but read none of its values is a
-    # different answer from "we have no template for this layout", and needs the
-    # opposite advice: the template exists, its labels do not match how this
-    # document prints them (or the values sit in a table rather than beside their
-    # label). Without this the specific message was thrown away and the analyst was
-    # sent to build a template that already exists - the same mistake the statement
-    # path made before matched_but_empty.
+    # A form template that MATCHED but read none of its values needs the opposite advice from "we have
+    # no template": the template exists and its labels do not match how this document prints them.
+    # Without this the analyst was sent to build a template that already exists.
     if (!is.null(fr) && identical(fr$status, "unsupported") &&
         !is.na(fr$template_id %||% NA) && (fr$n_fields %||% 0L) > 0L) {
       res$messages <- fr$messages
       res$form_matched_empty <- fr$template_id
-      # ...and the DIAGNOSTICS TABLE with it. It was built by the statement pass,
-      # which ran before this engine spoke, so it still said "no template matched"
-      # underneath a message saying one had. See diagnostics_matched_empty.
       res$diagnostics <- diagnostics_matched_empty(
         res$diagnostics, fr$matched_empty$why, fr$matched_empty$fix)
     }
     if (!is.null(fr) && (fr$status %in% c("ok", "needs_review"))) {
       fr$kind <- "form"
       fr$run_id <- res$run_id      # keep the run id so logging/feedback still line up
-      # ...and the person's OWN answer survives the handover. It was dropped here:
-      # the run record kept asked_kind and the result did not, so the screen could
-      # not say "you told us this is not a statement" back to her.
+      # The person's own answer survives the handover: the run record kept asked_kind and the result
+      # did not, so the screen could not say "you told us this is not a statement" back to her.
       fr$asked_kind <- kind
-      # Reuse the statement pass's record (who/when/source/hash all still true)
-      # and overwrite what the FORM decided, so the one record on disk describes
-      # what actually happened -- see .route_record() for the three rules.
       fr$run_log <- utils::modifyList(res$run_log %||% list(), c(
         .route_record("form", fr, "fields"),
         list(n_fields         = as.integer(fr$n_fields %||% NA_integer_),
-             # THE NUMBERS THAT DECIDE A FORM'S STATUS, BY NAME. All three were
-             # computed and thrown away, so the only trace of "three labels
-             # disagreed" was prose inside a truncated message string -- which
-             # nothing can count, sort or chart.
+             # The numbers that decide a form's status, by name. All three were computed and thrown
+             # away, so the only trace of "three labels disagreed" was prose inside a message.
              n_values         = as.integer(fr$n_values %||% NA_integer_),
              n_conflicts      = as.integer(fr$n_conflicts %||% NA_integer_),
              required_missing = as.integer(fr$required_missing %||% NA_integer_))))
       res <- fr
     }
   }
-  # THIRD AND LAST: a REPORT carrying many tables (mode:document, R/doc_extract.R).
-  # Reached only when neither a transaction template nor a form template read the
-  # document, so it can never take work away from either. It stays last because it
-  # is the least checkable of the three -- no reconciliation, no labelled values,
-  # just tables read off the page -- and the honest place for the least checkable
-  # answer is after every better one has been tried and failed.
+  # Third and last: a REPORT carrying many tables, reached only when neither a transaction nor a
+  # form template read the document. Last because it is the least checkable of the three.
   if (is.null(force_stmt) && !want_form &&
       (want_tables || identical(res$status, "unsupported"))) {
     tr <- tryCatch(convert_tables(path, doc_dir = doc_dir, user_doc_dir = user_doc_dir,
@@ -665,9 +439,6 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
         .route_record("tables", tr, "document"),
         list(n_tables     = as.integer(tr$n_tables %||% NA_integer_),
              n_table_rows = as.integer(tr$n_rows %||% NA_integer_),
-             # THE NUMBERS THAT DECIDE A REPORT'S STATUS, BY NAME -- the same
-             # ones convert_tables() weighs. A table found by position at
-             # confidence 0.40 used to reach the record only as prose.
              min_confidence  = .route_min_conf(tr),
              empty_tables    = length(tr$empty_tables %||% character(0)),
              thin_tables     = length(tr$thin_tables %||% character(0)),
@@ -677,19 +448,11 @@ convert_document <- function(path, bank = NULL, statement_type = NULL, outdir = 
       res <- tr
     } else if (!is.null(tr) && identical(tr$status, "unsupported") &&
                !is.na(tr$template_id %||% NA) && (tr$n_tables %||% 0L) > 0L &&
-               # ...unless the FORM pass already claimed this document. Two
-               # templates that both matched and both read nothing is one
-               # message, and the earlier, more checkable paradigm keeps it
-               # rather than being silently overwritten by the later one.
+               # ...unless the FORM pass already claimed this document: two templates that both matched
+               # and both read nothing is one message, and the earlier, more checkable paradigm keeps it.
                is.null(res$form_matched_empty)) {
-      # Matched this report but read nothing from it -- the same distinction the
-      # statement and form paths make, and the same reason: "the template exists
-      # and did not fit" needs the opposite advice from "there is no template".
       res$messages <- tr$messages
       res$doc_matched_empty <- tr$template_id
-      # ...and the DIAGNOSTICS TABLE with it, for the same reason as the form
-      # branch above: it was built by the statement pass and still contradicts
-      # the sentence this engine just wrote. See diagnostics_matched_empty.
       res$diagnostics <- diagnostics_matched_empty(
         res$diagnostics, tr$matched_empty$why, tr$matched_empty$fix)
     }

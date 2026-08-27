@@ -1,19 +1,10 @@
-# requests.R -- the "none of these fits -- tell our team" escape hatch. When a
-# statement's format matches no dropdown option, the accountant can describe it in
-# plain words and raise it for review. The engine can't teach itself, but nothing
-# is lost: a request is logged for a maintainer to turn into a template.
-#
-# PII-SAFE BY DESIGN: a request stores ONLY the free-text the user typed plus
-# generic, non-identifying context (file extension, the bank label, and which
-# date / amount options were on screen). It NEVER stores statement content, and
-# the UI warns the user to describe the format, not paste statement details. The
-# requests folder is local-only so nothing typed here is ever shared.
+# requests.R -- the "none of these fits, tell our team" escape hatch. PII-safe by design: a request
+# stores only the free text typed plus generic context (file extension, bank label, which options were
+# on screen), never statement content, and the folder is local-only.
 
 .requests_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "requests")
 
-# record_template_request(detail, context, requested_by, dir) -> request id.
-# `detail` is the user's description; `context` is a small named list of generic,
-# non-PII fields (file_ext, bank, date_format, amount_style, ...).
+# `detail` is the user's description; `context` is a small named list of generic, non-PII fields.
 record_template_request <- function(detail, context = list(),
                                     requested_by = NULL, dir = NULL) {
   dir <- .requests_dir(dir); dir.create(dir, recursive = TRUE, showWarnings = FALSE)
@@ -29,7 +20,7 @@ record_template_request <- function(detail, context = list(),
   id
 }
 
-# set_request_status(id, status, dir) -- triage a request (open/actioned/dismissed).
+# Triage a request: open, actioned or dismissed.
 set_request_status <- function(id, status, dir = NULL) {
   dir <- .requests_dir(dir); f <- file.path(dir, paste0(id, ".json"))
   if (!file.exists(f)) return(invisible(FALSE))
@@ -41,8 +32,7 @@ set_request_status <- function(id, status, dir = NULL) {
   invisible(TRUE)
 }
 
-# read_template_requests(dir) -> data.frame of raised requests, newest first, for
-# the Admin review queue. The `context` map is flattened to a compact string.
+# Raised requests, newest first, for the Admin review queue.
 read_template_requests <- function(dir = NULL) {
   dir <- .requests_dir(dir)
   recs <- Sys.glob(file.path(dir, "*.json"))

@@ -1,27 +1,8 @@
-# metadata_capture.R -- the LOCAL-ONLY "ML goldmine" capture.
-#
-# Every conversion can emit a rich, structured metadata record describing HOW it
-# went -- the layout it matched, how cleanly it parsed, what the detector saw, how
-# it reconciled, and any OCR / redaction signals. This is the raw material for
-# future on-box analysis and a possible local ML assist (recommend template edits,
-# spot drift, cluster unseen layouts). It is written per-run to
-# logs/metadata/<run_id>.json (one file per run -- the same concurrency-safe story
-# as the run log) and is KEPT FOREVER.
-#
-# TWO HARD RULES:
-#   1. LOCAL ONLY. This never leaves the box and NEVER enters the governed Qlik
-#      feed (feed.R). It lives under logs/, which no feed connection reads.
-#   2. NO RAW CONTENT / PII-CONSCIOUS. Descriptions, payees, references and raw
-#      amounts are NEVER stored -- only structure, counts, ratios and quality
-#      signals. An account number is stored ONLY as a salted-free SHA-256 hash
-#      (so the same account links across runs without the number being readable).
-#      Balance anchors and the statement period ARE stored: they are financial
-#      metadata, not personal identifiers, and never leave the machine.
-#
-# Detail is controlled by config$metadata: a `level` (off | standard | full) and
-# per-category `capture` switches. `standard` keeps the essentials; `full`
-# (default) adds the detailed histograms/coverage/anchors. See
-# docs/context/metadata-capture.md for the per-level PII documentation.
+# metadata_capture.R -- the LOCAL-ONLY capture describing HOW a conversion went, written per-run to
+# logs/metadata/<run_id>.json and KEPT FOREVER. Two hard rules: (1) LOCAL ONLY - it never leaves the
+# box and NEVER enters the governed Qlik feed; (2) NO RAW CONTENT - only structure, counts, ratios and
+# quality signals, with an account number stored as a hash. Balance anchors and the period ARE stored:
+# financial metadata, not personal identifiers. Per-level PII detail: docs/context/metadata-capture.md.
 
 metadata_levels <- function() c("off", "standard", "full")
 
@@ -39,51 +20,17 @@ metadata_levels <- function() c("off", "standard", "full")
   is.null(cap) || is.null(cap[[category]]) || isTRUE(cap[[category]])
 }
 
-# .meta_hash(x) -- PII-safe one-way hash of an identifier (account number), or NA
-# when none is present (so it serialises to null, never a readable value).
+# A PII-safe one-way hash of an identifier, or NA when none is present, so it serialises to null.
 .meta_hash <- function(x) {
   x <- as.character(x %||% NA); x <- x[!is.na(x) & nzchar(trimws(x))]
   if (!length(x)) return(NA_character_)
   substr(.str_hash(paste(sort(unique(trimws(x))), collapse = "|")), 1, 16)
 }
 
-# .layout_hint_safe(hint, kind) -- the layout hint with anything that is not a
-# structural word removed.
-#
-# G9. layout_signature() (R/layout.R) keys a PDF's hint off the line carrying the
-# most transaction-header keywords -- and when NO line carries two of them it
-# falls back to THE TWELVE COMMONEST LONG WORDS ON THE PAGE. Measured on a page
-# whose commonest words were two surnames, the hint came back as
-# "ambrose | whitcombe", and that string is written into logs/runs and into
-# logs/metadata, which is kept FOREVER and whose rule 2 at the top of this file
-# says descriptions, payees, references and names are NEVER stored. It also
-# reaches the bulk audit's report, which is headed "safe to share - no PII".
-#
-# IT BITES THE OTHER ROUTES SPECIFICALLY. A bank statement has a transaction
-# header, so it takes the keyword branch and yields "amount | balance | date |
-# description". A document that reaches the form or the report route is BY
-# DEFINITION one with no transaction header -- so it is exactly the class that
-# takes the fallback.
-#
-# The hint exists to CLUSTER layouts, and a surname clusters nothing: it belongs
-# to one person, so it can only ever split a cluster that should have been one.
-# So a PDF's hint is kept only where it is made of the structural words it is
-# supposed to be made of. A delimited or excel file's hint is its HEADER ROW --
-# column names, structure by construction, and there is no frequency fallback on
-# that branch at all -- so it is passed through untouched rather than filtered
-# down to nothing.
-#
-# Nothing else moves. What actually clusters is the SIGNATURE, a hash of the
-# whole token set, and it is not touched here: every cluster this tool has ever
-# formed still forms, with a hint that names nobody.
-#
-# R/layout.R HAS SINCE FIXED ITS OWN HALF -- its fallback now keeps only header
-# keywords too, so on today's engine this filter changes nothing. It stays
-# anyway, and only here, at the two places these files WRITE a hint down: this
-# module's records are kept forever and its own rule 2 above promises no names
-# are in them, and a promise a module makes about its own files should not
-# depend on a fallback in a different module staying as it is. It is a lock on a
-# door, not a second way to do something.
+# The layout hint with anything that is not a structural word removed. layout_signature() falls back to
+# the commonest long words on the page, which on one page were two surnames - written into a folder
+# kept FOREVER whose rule 2 says names are never stored. A hint exists to CLUSTER layouts and a surname
+# clusters nothing. What actually clusters is the SIGNATURE, which is not touched here.
 .layout_hint_safe <- function(hint, kind = "pdf") {
   h <- as.character(hint %||% "")[1]
   if (is.na(h) || !nzchar(h)) return("")
@@ -102,9 +49,7 @@ metadata_levels <- function() c("off", "standard", "full")
   as.list(table(toks))
 }
 
-# .amount_buckets(x) -- magnitude DISTRIBUTION of the amounts (structure, not
-# values): how many fall in each order-of-magnitude band. Feeds anomaly/shape
-# models without ever storing a single amount.
+# Magnitude DISTRIBUTION of the amounts. Feeds anomaly models without storing a single amount.
 .amount_buckets <- function(x) {
   v <- suppressWarnings(abs(as.numeric(x))); v <- v[!is.na(v) & v > 0]
   if (!length(v)) return(NULL)
@@ -113,10 +58,8 @@ metadata_levels <- function() c("off", "standard", "full")
   as.list(table(cut(v, breaks = br, labels = labs, right = FALSE)))
 }
 
-# .len_stats(x) -- min / median / max character length of a text column (a shape
-# signal for descriptions), never the text itself. Input is sanitised to valid
-# UTF-8 first so nchar() can't throw on a hostile multibyte value in a non-UTF-8
-# locale.
+# min / median / max character length of a text column, never the text. Sanitised to valid UTF-8
+# first so nchar() cannot throw on a hostile multibyte value in a non-UTF-8 locale.
 .len_stats <- function(x) {
   n <- nchar(.enc_safe(x %||% character(0)))
   n <- n[!is.na(n) & n > 0]
@@ -125,9 +68,7 @@ metadata_levels <- function() c("off", "standard", "full")
        max = as.integer(max(n)), mean = round(mean(n), 1))
 }
 
-# .source_headers(input, template) -- the source COLUMN NAMES a delimited/excel
-# file carried (structure, not content), so a model sees the raw header inventory
-# and the drafter's mapping can be scored against it.
+# The source COLUMN NAMES a delimited or excel file carried, so the drafter's mapping can be scored.
 .source_headers <- function(input, template) {
   kind <- input$kind %||% ""
   hdr <- if (identical(kind, "excel")) names(input$table %||% list())
@@ -137,8 +78,7 @@ metadata_levels <- function() c("off", "standard", "full")
   trimws(as.character(hdr[nzchar(trimws(as.character(hdr)))]))
 }
 
-# .mapped_sources(template) -- every source column the template maps (canonical +
-# extras), so header - mapped = the columns we did NOT use (the "we missed it" set).
+# Every source column the template maps, so header minus mapped is the set we did NOT use.
 .mapped_sources <- function(template) {
   if (is.null(template)) return(character(0))
   one_src <- function(c) {
@@ -152,11 +92,7 @@ metadata_levels <- function() c("off", "standard", "full")
   srcs[!is.na(srcs) & nzchar(srcs)]
 }
 
-# capture_metadata(ctx, config) -> a named-list metadata record, or NULL when the
-# level is "off". `ctx` bundles the conversion's artifacts:
-#   run_id, ts, requested_by, sha, input, parsed, recon, det, meta, template,
-#   status, elapsed_ms
-# It NEVER throws (caller wraps in safe() regardless).
+# Returns a named-list metadata record, or NULL when the level is "off". Never throws.
 capture_metadata <- function(ctx, config = load_config()) {
   level <- tolower(config$metadata$level %||% "full")
   if (identical(level, "off")) return(NULL)
@@ -171,14 +107,9 @@ capture_metadata <- function(ctx, config = load_config()) {
     schema        = 1L,
     run_id        = ctx$run_id %||% NA_character_,
     ts            = ctx$ts %||% format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
-    # WHICH ROUTE THIS RECORD DESCRIBES. Every record used to describe the
-    # STATEMENT attempt and say nothing about being one, so a report that
-    # converted perfectly was filed here as `status: unsupported,
-    # template_id: null` -- and this folder is kept forever and is what
-    # R/suggestions.R mines for "build these next". A genuinely unsupported
-    # layout and a report that read 102 rows out of 6 tables were the same
-    # record. This field is what separates them; amend_metadata_record() below
-    # is what corrects the rest once the route is known.
+    # WHICH ROUTE THIS RECORD DESCRIBES. Every record used to describe the STATEMENT attempt and say
+    # nothing about being one, so a report that converted perfectly was filed as unsupported with a
+    # null template_id - in the folder R/suggestions.R mines for "build these next".
     kind          = as.character(ctx$kind %||% "statement")[1],
     level         = level,
     requested_by  = ctx$requested_by %||% NA_character_,
@@ -195,7 +126,7 @@ capture_metadata <- function(ctx, config = load_config()) {
 
   # ---- layout ----
   if (.meta_on(config, "layout")) {
-    # reuse the signature the caller already computed (convert.R) when supplied.
+    # Reuse the signature the caller already computed when supplied.
     sig <- ctx$layout_sig %||% safe(layout_signature(ctx$input), list(signature = NA, hint = ""))
     rec$layout <- list(
       signature = sig$signature %||% NA_character_,
@@ -205,7 +136,7 @@ capture_metadata <- function(ctx, config = load_config()) {
       n_columns = if (identical(ctx$input$kind, "excel")) ncol(ctx$input$table %||% data.frame())
                   else if (identical(ctx$input$kind, "delimited")) length(strsplit(
                     (ctx$input$lines %||% "")[1], "[,\t;|]")[[1]]) else NA_integer_)
-    # G9: the hint, and only the part of it this file is allowed to keep forever.
+    # The hint, and only the part of it this file is allowed to keep forever.
     if (.meta_at_least(level, "full"))
       rec$layout$hint <- .layout_hint_safe(sig$hint, ctx$input$kind)
   }
@@ -228,7 +159,7 @@ capture_metadata <- function(ctx, config = load_config()) {
   # ---- parse quality (incl. the "things we missed") ----
   if (.meta_on(config, "parse_quality") && n >= 0) {
     flags <- tx$flags %||% character(0)
-    # rows the engine could NOT fully read -- the sharpest training signal.
+    # Rows the engine could NOT fully read - the sharpest training signal.
     unparsed_dates <- if (n > 0) sum(is.na(tx$date) & !is.na(tx$date_raw) &
                                        nzchar(trimws(as.character(tx$date_raw)))) else 0L
     unparsed_amounts <- if (n > 0) sum(is.na(tx$amount) & !grepl("redacted", flags)) else 0L
@@ -239,7 +170,7 @@ capture_metadata <- function(ctx, config = load_config()) {
       unparsed_dates  = unparsed_dates,     # date cell present but unreadable
       unparsed_amounts = unparsed_amounts,  # amount cell present but unreadable
       amount_sign     = tmpl$amount_sign %||% tmpl$table$amount_sign %||% NA_character_,
-      # joined: a template may declare several candidate formats (scalar field)
+      # Joined: a template may declare several candidate formats in one scalar field.
       date_format     = paste(tmpl$columns$date$format %||% tmpl$table$date_format %||% NA_character_,
                               collapse = " | "))
     if (.meta_at_least(level, "full")) {
@@ -275,12 +206,8 @@ capture_metadata <- function(ctx, config = load_config()) {
     }
   }
 
-  # ---- novelty / gaps: what we did NOT recognise (the ML-feedback signal) ----
-  # These are the "new or unique" and "we missed it" bits: source columns the
-  # template never mapped, and indicator tokens (e.g. a bank writing "cow"/"horse"
-  # for debit/credit) that matched NEITHER declared value. Short structural tokens,
-  # never statement content -- exactly what a future model would learn new
-  # vocabulary from.
+  # Novelty: what we did NOT recognise. Source columns the template never mapped, and indicator
+  # tokens that matched neither declared value. Short structural tokens, never statement content.
   if (.meta_on(config, "novelty") && .meta_at_least(level, "standard")) {
     nov <- list()
     hdrs <- .source_headers(ctx$input, tmpl)
@@ -308,12 +235,8 @@ capture_metadata <- function(ctx, config = load_config()) {
     if (length(nov)) rec$novelty <- nov
   }
 
-  # ---- template hints: everything needed to DRAFT a template ----
-  # The richest single signal for a statement the engine could NOT match (but
-  # captured for every run at `full`): PII-safe per-source-column profiles
-  # (kind / format / fill / masked shape) plus the engine's own best-guess
-  # mapping, so a human or an AI assistant has ALL the structural detail to build
-  # a template without seeing statement content. See column_profile.R.
+  # The richest single signal for a statement the engine could not match: PII-safe per-column
+  # profiles plus the engine's best-guess mapping, so a template can be built without seeing content.
   if (.meta_on(config, "template_hints") && .meta_at_least(level, "full")) {
     th <- safe(template_hints(ctx$input, tmpl, matched = isTRUE(ctx$det$matched)), NULL)
     if (!is.null(th) && length(th)) rec$template_hints <- th
@@ -363,42 +286,19 @@ capture_metadata <- function(ctx, config = load_config()) {
   rec
 }
 
-# write_metadata_record(logdir, run_id, record) -- persist one metadata record to
-# logs/metadata/<run_id>.json. No-op for a NULL record (level = off). Never throws.
+# Persist one record to logs/metadata/<run_id>.json. No-op for a NULL record. Never throws.
 write_metadata_record <- function(logdir, run_id, record) {
   if (is.null(record) || is.null(run_id) || is.na(run_id)) return(invisible(NULL))
   safe(write_log_record(logdir, "metadata", run_id, record))
 }
 
-# ---------------------------------------------------------------------------
-# WHEN A FORM OR A REPORT WINS, THE RECORD HAS TO SAY SO
-# ---------------------------------------------------------------------------
-#
-# L7. convert_document() tries the statement pipeline first and only then the
-# form and the report ones -- and the metadata record is written by the statement
-# pass, before either of the others has run. So a report that converted perfectly
-# left a record describing the abandoned statement attempt: `status:
-# "unsupported"`, `template_id: null`, no kind. Measured against the seven-page
-# fixture, where the run log for the SAME run correctly said kind tables, status
-# ok, 6 tables, 102 rows.
-#
-# That record is kept FOREVER and is exempt from the rollup, and R/suggestions.R
-# mines exactly this folder for "build these next". So the corpus could not tell
-# a genuinely unsupported layout -- a real gap, worth a template -- from a report
-# that read 102 rows. It would recommend building what already exists, which is
-# the same fault L4 fixed in the bulk audit, one folder along.
-#
-# THE STATEMENT ATTEMPT IS NOT DELETED. It is moved under its own name. The
-# statement pipeline really did find no match, and that is a signal worth keeping
-# (it is what a future model would learn "this is not a statement" from); what it
-# may not do is masquerade as the verdict on the run. So the top of the record
-# tells the truth about the run and `statement_attempt` holds what the first pass
-# thought, labelled.
+# When a form or a report wins, the record has to say so. convert_document() tries the statement
+# pipeline first and the record is written by that pass, so a report that converted perfectly left a
+# record describing the abandoned attempt - kept forever and mined by R/suggestions.R, so the corpus
+# would recommend building what already exists. The statement attempt is moved, not deleted.
 
-# route_metadata(res) -- the fields a form or report result corrects on the
-# statement attempt's record, plus that route's own structure. Numbers and
-# counts only, exactly as rule 2 at the top of this file requires: no label
-# text, no table names, no values.
+# The fields a form or report result corrects on the statement attempt's record, plus that route's
+# own structure. Numbers and counts only: no label text, no table names, no values.
 route_metadata <- function(res) {
   k <- as.character(res$kind %||% "statement")[1]
   if (!k %in% c("form", "tables")) return(list())
@@ -428,34 +328,25 @@ route_metadata <- function(res) {
   out
 }
 
-# .metadata_record_path(logdir, run_id) -- the file the statement pass just wrote
-# for THIS run. write_log_record() never overwrites, so a run id that clashed
-# with an earlier one is filed as "<id>~2.json"; the record for this run is the
-# most recently written of that set, never simply "<id>.json". Getting that wrong
-# would correct one run's record with another run's answer, which is worse than
-# the fault being fixed.
+# The file the statement pass just wrote for THIS run. write_log_record() never overwrites, so a
+# clashing run id is filed as "<id>~2.json" and this run's record is the most recently written of
+# that set - getting it wrong would correct one run's record with another run's answer.
 .metadata_record_path <- function(logdir, run_id) {
   id <- as.character(run_id %||% NA_character_)[1]
   if (is.na(id) || !nzchar(id)) return(NA_character_)
   dir <- file.path(logdir, "metadata")
   if (!dir.exists(dir)) return(NA_character_)
   base <- safe(.safe_name(id), id)
-  # .safe_name() has already reduced the id to [A-Za-z0-9_.-], so the only
-  # character left that a regular expression would read as anything but itself
-  # is the dot.
+  # .safe_name() has already reduced the id to [A-Za-z0-9_.-], so the only character left that a
+  # regular expression would read as anything but itself is the dot.
   rx <- paste0("^", gsub(".", "\\.", base, fixed = TRUE), "(~[0-9]+)?\\.json$")
   hits <- list.files(dir, pattern = rx, full.names = TRUE)
   if (!length(hits)) return(NA_character_)
   hits[order(file.mtime(hits), hits, decreasing = TRUE)][1]
 }
 
-# amend_metadata_record(logdir, res) -- correct this run's metadata record once
-# the route is known. No-op when there is no record (capture level `off`, or a
-# statement run, which the record already describes correctly). Never throws.
-#
-# In place, on the file this run wrote: a second file would leave the forever
-# corpus holding two records for one conversion, one of them the wrong answer --
-# which is the fault this fixes, doubled.
+# Correct this run's metadata record once the route is known. In place, on the file this run wrote:
+# a second file would leave the forever corpus holding two records for one conversion.
 amend_metadata_record <- function(logdir, res) {
   delta <- safe(route_metadata(res), list())
   if (!length(delta)) return(invisible(NULL))
@@ -465,9 +356,8 @@ amend_metadata_record <- function(logdir, res) {
                                  simplifyVector = FALSE), NULL)
   if (is.null(old)) return(invisible(NULL))
   keep <- c("status", "template_id", "template_origin", "template_version")
-  # NULL -> NA, because a NULL element of a list serialises as `{}` -- an empty
-  # OBJECT where the record said null. "template_id": {} is a worse answer than
-  # the one being corrected: it reads as a value that is there and is empty.
+  # NULL -> NA, because a NULL element of a list serialises as `{}` - an empty OBJECT where the
+  # record said null, which reads as a value that is there and is empty.
   old$statement_attempt <- lapply(old[intersect(keep, names(old))],
                                   function(v) if (is.null(v)) NA else v)
   rec <- utils::modifyList(old, delta)

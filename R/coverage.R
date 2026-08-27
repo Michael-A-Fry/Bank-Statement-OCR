@@ -1,16 +1,7 @@
-# coverage.R -- "have I set this up right? what's right, what's wrong, what's
-# present but missing?" A per-conversion field report that answers exactly that.
-#
-# For each core field it says one of:
-#   populated  -- the template maps it AND real data came out (good)
-#   empty      -- the template maps it BUT every row is blank  (PRESENT BUT
-#                 MISSING: usually a wrong column/band -> the thing to fix)
-#   unmapped   -- the template doesn't map it (absent by design; fine)
-#   partial    -- mapped, some rows populated, some blank (worth a glance)
-# This is deterministic and template-aware, so it never guesses.
+# coverage.R -- a per-conversion field report. Per core field: populated, empty (mapped but every row
+# blank - PRESENT BUT MISSING, usually a wrong column or band), unmapped, or partial.
 
-# .field_is_mapped(template, field) -- is this canonical field wired in the
-# template (delimited columns / pdf table.columns, incl. debit+credit -> amount)?
+# Is this canonical field wired in the template - including debit+credit mapping to amount?
 .field_is_mapped <- function(template, field) {
   cols <- if (identical(template$format %||% "delimited", "pdf")) template$table$columns else template$columns
   if (is.null(cols)) return(FALSE)
@@ -20,8 +11,7 @@
   !is.null(cols[[field]])
 }
 
-# field_coverage(parsed, template) -> data.frame(field, mapped, populated, empty,
-# n, verdict, note) over the reporting-relevant core fields.
+# Returns data.frame(field, mapped, populated, empty, n, verdict, note) over the core fields.
 field_coverage <- function(parsed, template) {
   tx <- parsed$transactions
   n <- if (is.null(tx)) 0L else nrow(tx)
@@ -47,8 +37,7 @@ field_coverage <- function(parsed, template) {
   do.call(rbind, rows)
 }
 
-# coverage_summary(cov) -> one-line human summary, e.g.
-# "8 fields populated, 1 present-but-empty (check: balance), 2 not on this statement".
+# One-line human summary.
 coverage_summary <- function(cov) {
   if (is.null(cov) || !nrow(cov)) return("no fields")
   pop <- sum(cov$verdict == "populated"); part <- sum(cov$verdict == "partial")

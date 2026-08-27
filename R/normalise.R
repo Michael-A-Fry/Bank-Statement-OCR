@@ -1,75 +1,38 @@
-# normalise.R -- deterministic field normalisation.
-# parse_date / parse_amount / clean_description. No locale guessing, no ML.
+# normalise.R -- deterministic field normalisation: parse_date / parse_amount / clean_description.
 
-# .normalise_date_str(s) -- fold the human spellings of a date onto the canonical
-# form the strptime codes expect. For PARSING/DETECTION ONLY -- the raw cell is
-# always kept verbatim elsewhere. This is the SINGLE source of truth shared by
-# parse_date and the wizard's detect_date_format, so the reader and the detector
-# can never disagree about what a date looks like. It:
-#   * drops a leading weekday word     "Tuesday 12 October" -> "12 October"
-#   * drops ordinal suffixes           "12th October" / "21st" -> "12 October" / "21"
-#   * drops the connective "of"        "12 of October" -> "12 October"
-#   * folds the 4-letter "Sept"->"Sep" that %b expects ("September"/%B is untouched:
-#     the word boundary after "Sept" fails inside the longer word)
-#   * collapses any doubled spaces the removals leave behind
+# Fold the human spellings of a date onto the form strptime expects. For PARSING and DETECTION only -
+# the raw cell stays verbatim. Shared by parse_date and detect_date_format so they cannot disagree.
 .normalise_date_str <- function(s) {
   s <- trimws(as.character(s))
   s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bof\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
-  # ordinal day suffixes: "17th Sep" / "1st Aug" -> "17 Sep" / "1 Aug"
+  # Ordinal day suffixes: "17th Sep" -> "17 Sep".
   s <- gsub("\\b([0-9]{1,2})(st|nd|rd|th)\\b", "\\1", s, ignore.case = TRUE)
   trimws(gsub("\\s+", " ", s))
 }
 
-# .date_canon(z) -- fold a date string onto a single comparable form so the
-# round-trip check in .date_strict never FALSE-rejects on a cosmetic difference
-# the declared format legitimately allows. It normalises away, on BOTH sides of
-# the comparison:
-#   * case               ("Oct" vs "oct")
-#   * month-name width    (%b "Oct" round-trip vs a source that wrote "October")
-#   * zero-padding        (%d "01" round-trip vs a source that wrote "1")
-#   * run-together spaces
-# COMPARISON aid only -- the raw cell is always kept verbatim elsewhere. English
-# month names, matching the reader's existing %b/%B parse assumption.
+# Fold a date onto one comparable form so .date_strict's round-trip never FALSE-rejects on a cosmetic
+# difference the declared format allows. A comparison aid only.
 .date_canon <- function(z) {
   z <- tolower(trimws(as.character(z)))
-  # any month word -> its 3-letter key (unique per English month) so a %b vs %B
-  # width difference between the round-trip and the source never mismatches.
+  # Any month word to its 3-letter key, so a %b vs %B width difference never mismatches.
   z <- gsub("\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*", "\\1",
             z, perl = TRUE)
   z <- gsub("(?<![0-9])0+([0-9])", "\\1", z, perl = TRUE)  # strip leading zeros in numbers
-  # A digit run together with a month NAME ("20Apr") is separated, on BOTH sides of
-  # the comparison. WHY: OCR reads a tightly-set date column as ONE token -- measured
-  # at 86% of day+month tokens on a real ANZ scan. base as.Date() parses "20Apr 2026"
-  # under "%d %b %Y" CORRECTLY (strptime treats format whitespace as optional), but
-  # the round-trip below reformats it to "20 Apr 2026", and without this fold the two
-  # strings differed, the date failed closed to NA, and the reader dropped the row --
-  # 41 rows survived out of 300 on that statement. Because .date_strict canonicalises
-  # the round-trip AND the source with this same function, the change is symmetric: it
-  # adds no parse leniency, a genuinely space-less declared format still matches, and
-  # the guard's real target ("13/08/2025" misread under %d/%m/%y) carries no month
-  # name and is untouched, as is the year bound.
+  # A digit run together with a month NAME ("20Apr") is separated on BOTH sides. OCR reads a tightly-set
+  # date column as ONE token - 86% of day+month tokens on a real ANZ scan - and the round-trip reformats
+  # it with a space, so without this the date failed closed and 41 rows survived out of 300. Symmetric,
+  # so it adds no parse leniency.
   z <- gsub("(?<=[0-9])(?=(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))", " ", z, perl = TRUE)
   z <- gsub("(?<=(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))(?=[0-9])", " ", z, perl = TRUE)
   trimws(gsub("[[:space:]]+", " ", z))
 }
 
-# .date_strict(s, fmt) -- parse already-normalised date strings under `fmt`,
-# returning ISO ONLY when the parse is TRUSTWORTHY, else NA. Base as.Date() is
-# dangerously lenient: it reads "13/08/2025" under "%d/%m/%y" as 2020 (year<-"20",
-# the trailing "25" silently ignored) -- a wrong figure that looks right, the
-# cardinal failure. Two deterministic guards close that hole:
-#   1. ROUND-TRIP -- reformat the parsed Date back through the SAME `fmt` and
-#      require it to canonically match the input. If the format didn't consume
-#      the whole string (or read the wrong field widths) the two disagree.
-#   2. YEAR BOUND [PARAM_YEAR_MIN, PARAM_YEAR_MAX] -- a 2-digit source read under a
-#      4-digit "%Y" (year 0025) round-trips clean but is obvious nonsense. The
-#      trusted-year window is one shared decision (see R/params.R); reconcile and
-#      diagnose apply the same bound.
-# Both are needed: the round-trip catches (1)'s wrong-width case (year stays in
-# range), the bound catches (2)'s out-of-range case (round-trip matches).
+# Parse already-normalised date strings under `fmt`, returning ISO ONLY when the parse is trustworthy.
+# Base as.Date() reads "13/08/2025" under "%d/%m/%y" as 2020, silently ignoring the trailing "25". Two
+# guards close that - a ROUND-TRIP through the same fmt, and a YEAR BOUND - each catching the other's miss.
 .date_strict <- function(s, fmt) {
   d <- suppressWarnings(as.Date(s, format = fmt))
   parsed <- which(!is.na(d))
@@ -83,9 +46,7 @@
   format(d, "%Y-%m-%d")                                # format(NA) -> NA
 }
 
-# parse_date(x, fmt) -> list(iso, raw)
-# `iso` is YYYY-MM-DD (NA when unparseable OR untrustworthy -- see .date_strict);
-# `raw` is the input verbatim. Never emits a silently-wrong date.
+# -> list(iso, raw). `iso` is NA when unparseable or untrustworthy; `raw` is verbatim. Never wrong.
 parse_date <- function(x, fmt) {
   raw <- as.character(x)
   iso <- rep(NA_character_, length(raw))
@@ -97,26 +58,10 @@ parse_date <- function(x, fmt) {
   list(iso = iso, raw = raw)
 }
 
-# .num(s, decimal) -- parse a money string to numeric, ROBUSTLY. Handles the real
-# formats that appear on statements, and returns NA (never a silently-wrong value)
-# when it can't be sure -- the caller then flags the NA. Covered:
-#   thousands : 1,234.56  /  1 234.56  /  1'234.56
-#   decimals  : 1,234.56 (US)  and  1.234,56 (European comma) via last-separator
-#   negatives : -123.45  /  (123.45)  /  123.45-  /  trailing DR or OD ; CR = +ve
-#   currency  : dollar, pound, euro and any other symbol/letters stripped
-#
-# `decimal` selects how a LONE separator is read (a template can declare its
-# bank's locale via `decimal_mark:` so nothing is guessed):
-#   "auto"  (default) -- lone dot = decimal, lone comma uses the 1-2-digit rule.
-#             Correct for NZ/AU/UK/US ("1.234"=1.234, "1,234"=1234).
-#   "dot"   -- dot is the decimal point, comma is thousands (US/UK/NZ explicit).
-#   "comma" -- comma is the decimal, dot is thousands (European: "1.234"=1234,
-#             "1.234,56"=1234.56, "1234,56"=1234.56).
-# The mixed case ("1.234,56" / "1,234.56", both separators present) is
-# unambiguous and read the same way under every mode.
-# debit_rx / credit_rx: the trailing balance-sign markers, defaulted to the
-# built-ins so a direct call is unchanged; .num builds them from the lexicon once
-# per column (so "cow"/"OD"-style markers plumb in without a code change).
+# Parse a money string to numeric, returning NA rather than a silently-wrong value. Handles thousands
+# (comma, space, apostrophe), US and European decimals by the last-separator rule, and negatives written
+# as -123.45 / (123.45) / 123.45- / trailing DR or OD (CR is positive). `decimal` fixes how a LONE
+# separator is read, so nothing is guessed.
 .num_one <- function(raw, decimal = "auto",
                      debit_rx = "(DR|OD)\\s*$", credit_rx = "CR\\s*$") {
   if (is.na(raw)) return(NA_real_)
@@ -137,7 +82,7 @@ parse_date <- function(x, fmt) {
   } else if (identical(decimal, "comma")) {
     s <- gsub("\\.", "", s); s <- sub(",", ".", s)     # dot = thousands, comma = decimal
   } else if (hasdot && hascomma) {
-    # auto + both separators: the LAST separator is the decimal one (unambiguous).
+    # auto + both separators: the LAST separator is the decimal one.
     if (max(gregexpr(",", s)[[1]]) > max(gregexpr("\\.", s)[[1]])) {
       s <- gsub("\\.", "", s); s <- sub(",", ".", s)  # European: . thousands, , decimal
     } else s <- gsub(",", "", s)                       # US/UK: , thousands
@@ -160,14 +105,13 @@ parse_date <- function(x, fmt) {
          debit_rx = debit_rx, credit_rx = credit_rx, USE.NAMES = FALSE)
 }
 
-# .direction(v) -- sign -> "debit" (<0) / "credit" (>0) / NA (0 or NA).
+# Sign to "debit" (<0) / "credit" (>0) / NA (0 or NA).
 .direction <- function(v) {
   ifelse(is.na(v), NA_character_,
     ifelse(v < 0, "debit", ifelse(v > 0, "credit", NA_character_)))
 }
 
-# parse_amount(x, style, opts) -> list(value, direction, raw)
-# Styles: signed | debit_credit_cols | dr_cr_suffix | type_dc.
+# -> list(value, direction, raw). Styles: signed | debit_credit_cols | dr_cr_suffix | type_dc.
 parse_amount <- function(x, style = "signed", opts = list()) {
   style <- style %||% "signed"
   dec <- opts[["decimal"]] %||% "auto"     # locale of the decimal separator
@@ -185,7 +129,7 @@ parse_amount <- function(x, style = "signed", opts = list()) {
     dz <- ifelse(is.na(dv), 0, dv)
     cz <- ifelse(is.na(cv), 0, cv)
     value <- cz - abs(dz)
-    # If both columns blank for a row, value is unknown, not zero.
+    # If both columns are blank for a row, value is unknown, not zero.
     both_blank <- is.na(dv) & is.na(cv)
     value[both_blank] <- NA_real_
     raw <- ifelse(!is.na(cv) & cv != 0, as.character(cr),
@@ -196,14 +140,12 @@ parse_amount <- function(x, style = "signed", opts = list()) {
 
   if (style == "dr_cr_suffix") {
     raw <- as.character(x)
-    # debit / credit suffix markers come from the lexicon (default DR / CR).
+    # Debit and credit suffix markers come from the lexicon.
     dset <- toupper(lex("dr_cr_suffix_debit")); cset <- toupper(lex("dr_cr_suffix_credit"))
     suf <- toupper(sub(".*?([A-Za-z]{2})\\s*$", "\\1", trimws(raw)))
     strip_rx <- sprintf("\\s*(%s)\\s*$", paste(c(dset, cset), collapse = "|"))
-    # The SUFFIX is the sole source of sign in this style, so read the magnitude
-    # UNSIGNED: .num already makes "(500.00)" and "-500.00" negative, which would
-    # then be flipped a SECOND time by a DR suffix -> a wrong +500 for a figure
-    # marked debit twice over. abs() keeps the suffix authoritative.
+    # The SUFFIX is the sole source of sign here, so read the magnitude UNSIGNED: .num already makes
+    # "(500.00)" negative, which a DR suffix would flip again into a wrong +500.
     mag <- abs(.num(sub(strip_rx, "", trimws(raw), perl = TRUE, ignore.case = TRUE), dec))
     sign <- ifelse(suf %in% dset, -1, ifelse(suf %in% cset, 1, NA_real_))
     value <- mag * sign
@@ -211,26 +153,15 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   }
 
   if (style == "unsigned") {
-    # Credit-card style: one amount column of UNSIGNED magnitudes, where the sign
-    # is implied, not printed. An unmarked amount is a CHARGE; a trailing CR is a
-    # PAYMENT (the opposite). `unsigned_default` sets the charge's sign:
-    #   "debit"  (default) -> charge = -mag (money out), CR payment = +mag. This
-    #            is the cash-flow view, consistent with a withdrawal column.
-    #   "credit"           -> charge = +mag, CR payment = -mag. Charges raise the
-    #            balance, so this ties out to a card's owed closing balance.
-    # The CR marker always flips RELATIVE to the charge sign. amount_raw stays
-    # verbatim either way.
+    # Credit-card style: one column of UNSIGNED magnitudes, an unmarked amount is a CHARGE and a trailing
+    # CR a PAYMENT. `unsigned_default` sets the charge's sign and CR always flips relative to it.
     raw <- as.character(x)
     mag <- abs(.num(raw, dec))
     base <- if (identical(opts[["unsigned_default"]] %||% "debit", "credit")) 1 else -1
     up <- toupper(trimws(raw))
     sgn <- rep(base, length(mag))
-    # The payment marker comes from the LEXICON (default "CR"), exactly as the
-    # dr_cr_suffix style above reads it. Hardcoding "CR" here meant the SAME
-    # admin-approved vocabulary was honoured in one amount style and silently
-    # ignored in the other: a bank whose payment marker is written any other way
-    # had every payment read with the CHARGE sign -- a wrong sign that looks right,
-    # and invisible because the marker still prints beside it.
+    # The payment marker comes from the LEXICON, exactly as dr_cr_suffix reads it. Hardcoding "CR" meant
+    # a bank whose payment marker is written otherwise had every payment read with the CHARGE sign.
     credit_rx <- sprintf("(%s)\\s*$", paste(toupper(lex("dr_cr_suffix_credit")), collapse = "|"))
     sgn[grepl(credit_rx, up)] <- -base             # a CR payment is the opposite of a charge
     value <- ifelse(is.na(mag), NA_real_, sgn * mag)
@@ -240,25 +171,20 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   if (style == "type_dc") {
     raw <- as.character(x)
     mag <- abs(.num(raw, dec))
-    # Compare the indicator CASE- and whitespace-insensitively: a statement may
-    # print it as "D" / "d" / "Debit" / " DR ", and a case-sensitive "D" match
-    # silently flips every debit to a credit -- a wrong sign that looks right.
-    # Exact `[[` indexing (never `$`) avoids partial-matching `type` onto
-    # `type_debit_value` when the type column is unmapped.
+    # Compare the indicator case- and whitespace-insensitively: a statement may print "D" / "d" / "Debit"
+    # / " DR ", and a case-sensitive match silently flips every debit to a credit. Exact `[[` indexing
+    # avoids partial-matching `type` onto `type_debit_value`.
     tv   <- toupper(trimws(as.character(opts[["type"]] %||% rep(NA_character_, length(raw)))))
     dval <- toupper(trimws(as.character(opts[["type_debit_value"]] %||% "D")))
     cval <- opts[["type_credit_value"]]
     cval <- if (is.null(cval)) NA_character_ else toupper(trimws(as.character(cval)))
     is_debit <- !is.na(tv) & nzchar(tv) & tv == dval
     if (!is.na(cval) && nzchar(cval)) {
-      # A credit token is declared: a value matching NEITHER token is genuinely
-      # ambiguous, so fail CLOSED (NA, flagged downstream) rather than silently
-      # signing it a credit. This is the fail-closed contract at work.
+      # A credit token is declared, so a value matching NEITHER is genuinely ambiguous: fail CLOSED.
       is_credit <- !is.na(tv) & nzchar(tv) & tv == cval
       value <- ifelse(is_debit, -mag, ifelse(is_credit, mag, NA_real_))
     } else {
-      # Back-compat (no credit token declared): the long-standing binary rule --
-      # anything that is not the debit token is treated as a credit.
+      # Back-compat with no credit token declared: anything not the debit token is a credit.
       value <- ifelse(is_debit, -mag, mag)
     }
     return(list(value = value, direction = .direction(value), raw = raw))
@@ -267,8 +193,7 @@ parse_amount <- function(x, style = "signed", opts = list()) {
   stop(sprintf("parse_amount: unknown style '%s'", style))
 }
 
-# clean_description(x) -- VERBATIM. Only trim outer whitespace. Never strip
-# apostrophes, ampersands, unicode, or any interior character.
+# VERBATIM. Only trim outer whitespace - never strip apostrophes, ampersands, unicode or anything inside.
 clean_description <- function(x) {
   trimws(as.character(x))
 }

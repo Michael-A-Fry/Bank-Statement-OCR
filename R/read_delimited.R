@@ -1,52 +1,25 @@
-# read_delimited.R -- robust base-R delimited reader (CSV/TSV/TDV/TXT).
-# Honours an optional preamble skip and returns a character-only data.frame with
-# a per-parsed-row -> source-line mapping for provenance. Parses defensively,
-# one logical record at a time, so a single malformed record can never shift the
-# columns of its neighbours, throw away the whole statement, or hide a lost row.
-#
-# Key guarantees implemented here:
-#  * NO silent drops -- `n_data_lines` reports the count of non-empty physical
-#    data lines so reconcile can prove every source record became a row.
-#  * Rectangular parse -- every logical record is normalised to exactly
-#    `expected_fields` cells (quote-aware pad-short / truncate-long) so an
-#    over-long or short row is isolated + flagged, never corrupts other rows.
-#  * Provenance survives multi-line records -- a quoted field with an embedded
-#    newline spans several physical lines but stays ONE row, with its full line
-#    span and raw text recorded per row.
+# read_delimited.R -- robust base-R delimited reader (CSV/TSV/TDV/TXT). Parses one logical record at a
+# time, so a single malformed record can never shift its neighbours' columns or hide a lost row.
+# Guarantees: NO silent drops (`n_data_lines` lets reconcile prove every record became a row); a
+# RECTANGULAR parse; and provenance that survives multi-line records.
 
-# .count_dquotes(s) -- number of double-quote characters in a string. A CSV
-# record is complete when this total (across accumulated physical lines) is
-# even: escaped quotes ("") contribute two and stay even, an open quoted field
-# leaves it odd until the closing quote arrives.
+# Number of double-quote characters. A CSV record is complete when the total across accumulated
+# physical lines is even: escaped quotes contribute two, an open quoted field leaves it odd.
 .count_dquotes <- function(s) {
   m <- gregexpr('"', s, fixed = TRUE)[[1]]
   if (length(m) == 1 && m[1] == -1) 0L else length(m)
 }
 
-# .is_padding_line(ln, delim) -- TRUE when a physical data line holds NOTHING but
-# separators and whitespace (",,,,,,"). Spreadsheets routinely pad an export out to
-# a fixed block, so a two-transaction statement arrives with two dozen such lines
-# (samples/raw/asb/asb_transaction_export_03.csv has 24).
-#
-# WHY these are ignored exactly like an EMPTY line, and why that is not a silent
-# drop: the reader already ignores "" lines, and a line of bare separators carries
-# the same amount of information -- no date, no amount, no description, no
-# reference. It cannot be a transaction and cannot move a total. Keeping them
-# produced 24 phantom rows in the accountant's workbook, all flagged `malformed`,
-# which BURIES a genuinely malformed row in noise -- the flag stops meaning
-# anything. The test is applied to the raw physical line BEFORE any field mapping,
-# so a row whose content merely landed in unexpected columns still has characters
-# in it and is kept + flagged as before. The count is returned as
-# `n_padding_lines` so it is reported, never invisible.
+# TRUE when a physical data line holds nothing but separators and whitespace - spreadsheet padding.
+# Ignoring them is not a silent drop: such a line carries no date, amount, description or reference,
+# while keeping them produced 24 phantom rows all flagged `malformed`, BURYING a genuinely malformed
+# row. The count comes back as `n_padding_lines`.
 .is_padding_line <- function(ln, delim) {
   stripped <- gsub(delim, "", as.character(ln), fixed = TRUE)
   !nzchar(gsub("[[:space:]]", "", stripped))
 }
 
-# .split_records(lines) -- coalesce physical data lines into logical CSV records
-# respecting quoted fields. Returns a list of records, each
-# list(text = combined text with embedded newlines, lines = physical indices).
-# `lines` are the physical line strings; `idx` their original line numbers.
+# Coalesce physical data lines into logical CSV records respecting quoted fields.
 .split_records <- function(lines, idx) {
   records <- list()
   buf <- NULL; buf_lines <- integer(0); open <- FALSE
@@ -60,18 +33,16 @@
       buf <- NULL; buf_lines <- integer(0)
     }
   }
-  # A leftover buffer means the final record had an unbalanced quote; keep it as
-  # a record (it will parse defensively + be flagged) rather than dropping it.
+  # A leftover buffer means the final record had an unbalanced quote; keep it as a record - it will
+  # parse defensively and be flagged - rather than dropping it.
   if (!is.null(buf)) {
     records[[length(records) + 1L]] <- list(text = buf, lines = buf_lines)
   }
   records
 }
 
-# .record_fields(text, delim) -- split one logical record into its fields,
-# respecting quotes. Falls back to a quote-blind split if the record is so
-# malformed that read.table refuses it, so a single bad record never crashes the
-# reader (the field count will then differ from expected -> flagged malformed).
+# Split one logical record into fields, respecting quotes. Falls back to a quote-blind split if the
+# record is so malformed that read.table refuses it, so a single bad record never crashes the reader.
 .record_fields <- function(text, delim) {
   fv <- safe(utils::read.table(
     text = text, sep = delim, header = FALSE, quote = "\"",
@@ -84,9 +55,8 @@
   as.character(unlist(fv[1, , drop = TRUE]))
 }
 
-# read_delimited(input, template) -> list(table, source_lines, source_spans,
-#   header_line_no, raw, field_counts, expected_fields, n_data_lines,
-#   n_padding_lines)
+# read_delimited(input, template) -> list(table, source_lines, source_spans, header_line_no, raw,
+# field_counts, expected_fields, n_data_lines, n_padding_lines).
 read_delimited <- function(input, template) {
   lines <- input$lines %||% character(0)
 
@@ -100,20 +70,15 @@ read_delimited <- function(input, template) {
   if (is.na(hidx)) return(empty)
 
   header_line <- lines[hidx]
-  # The delimiter is resolved from the HEADER LINE, exactly as detection resolves
-  # it (R/detect.R .header_fields), so the reader and the detector can never
-  # disagree about how this file splits. A template declaring one delimiter --
-  # every shipped template but ASB -- resolves straight back to it.
+  # The delimiter is resolved from the HEADER LINE, exactly as detection resolves it, so the reader
+  # and the detector cannot disagree about how this file splits.
   delim <- resolve_delimiter(header_line, template)
   header_names <- .record_fields(header_line, delim)
   expected_fields <- length(header_names)
 
   data_idx_all <- if (hidx < length(lines)) seq.int(hidx + 1L, length(lines)) else integer(0)
-  # Keep every physical data line that carries CONTENT (no silent drops). Ignored:
-  # blank lines, and lines of bare separators + whitespace (spreadsheet padding --
-  # see .is_padding_line). Both are excluded from n_data_lines too, so reconcile's
-  # completeness proof compares like with like; the padding count is reported
-  # separately so the omission is stated, not hidden.
+  # Keep every physical data line carrying CONTENT. Blank lines and spreadsheet padding are excluded
+  # from n_data_lines too, so reconcile's completeness proof compares like with like.
   data_idx <- data_idx_all[nzchar(trimws(lines[data_idx_all]))]
   padding <- if (length(data_idx)) .is_padding_line(lines[data_idx], delim) else logical(0)
   n_padding_lines <- sum(padding)
@@ -123,8 +88,8 @@ read_delimited <- function(input, template) {
   records <- .split_records(lines[data_idx], data_idx)
   nrec <- length(records)
 
-  # Build a rectangular character matrix: each record normalised to exactly
-  # expected_fields cells so a ragged record cannot shift its neighbours.
+  # A rectangular character matrix: each record normalised to exactly expected_fields cells so a
+  # ragged record cannot shift its neighbours.
   mat <- matrix("", nrow = nrec, ncol = expected_fields)
   field_counts <- integer(nrec)
   raw <- character(nrec)

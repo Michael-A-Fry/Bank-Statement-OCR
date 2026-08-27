@@ -30,8 +30,7 @@
 # Fixed epoch stamped into the workbook so the xlsx is byte-reproducible.
 .XLSX_FIXED_TIMESTAMP <- "2001-01-01T00:00:00Z"
 
-# .deterministic_core(core) -- rewrite the dcterms:created timestamp in the
-# workbook core-properties XML to a constant. Robust to the tag being empty.
+# Rewrite the dcterms:created timestamp in the core-properties XML to a constant.
 .deterministic_core <- function(core) {
   core <- as.character(core)[1]
   if (is.na(core) || !nzchar(core)) return(core)
@@ -40,13 +39,9 @@
   gsub("<dcterms:created[^>]*>[^<]*</dcterms:created>", repl, core, perl = TRUE)
 }
 
-# .normalize_zip_timestamps(path) -- an xlsx is a ZIP; the container stamps each
-# entry's DOS modification time (2-second granularity) with the wall clock, so
-# identical content still yields differing bytes run-to-run. Walk the central
-# directory + each local file header and pin every mod-time/mod-date field to a
-# constant (1980-01-01 00:00), making the archive byte-reproducible. Pure base R
-# (readBin/writeBin); no external zip tooling. No-op if the structure is not the
-# expected single-segment ZIP (never throws).
+# An xlsx is a ZIP, and the container stamps each entry's DOS modification time with the wall clock,
+# so identical content yields differing bytes run to run. Walk the central directory and each local
+# file header and pin every mod-time field to a constant. No-op if the structure is unexpected.
 .normalize_zip_timestamps <- function(path) {
   n <- file.info(path)$size
   if (is.na(n) || n < 22) return(invisible(FALSE))
@@ -54,7 +49,7 @@
 
   rd16 <- function(o) as.integer(raw[o + 1L]) + 256L * as.integer(raw[o + 2L])
   rd32 <- function(o) rd16(o) + 65536 * rd16(o + 2L)
-  # Fixed DOS date = 1980-01-01 (year 0, month 1, day 1) -> 0x0021; time 0.
+  # Fixed DOS date 1980-01-01 (0x0021); time 0.
   set_dt <- function(o) {
     raw[o + 1L] <<- as.raw(0x00); raw[o + 2L] <<- as.raw(0x00)  # time
     raw[o + 3L] <<- as.raw(0x21); raw[o + 4L] <<- as.raw(0x00)  # date
@@ -62,7 +57,7 @@
   sig <- function(o, b0, b1, b2, b3)
     identical(raw[o + 1:4], as.raw(c(b0, b1, b2, b3)))
 
-  # Locate the End Of Central Directory record (PK\5\6), scanning from the end.
+  # Locate the End Of Central Directory record, scanning from the end.
   eocd <- -1L
   lo <- max(0L, n - 22L - 65535L)
   for (o in seq.int(n - 22L, lo)) {
@@ -89,16 +84,10 @@
   invisible(TRUE)
 }
 
-# .neutralize_formula(v) -- defend the SPREADSHEET outputs (xlsx/csv) against
-# formula injection: a merchant/description beginning with = + @ (or a leading
-# tab/CR) executes as a formula when opened in Excel. Prefix those with a single
-# quote so Excel shows the literal text. Characters are preserved (nothing is
-# stripped); only a display-safety marker is added, and ONLY for spreadsheets --
-# the JSON output stays byte-for-byte verbatim (it is never executed). Applied to
-# free-text columns only, so numeric-looking raw fields are untouched.
-# Includes the verbatim *_raw source cells: they are copied straight from the
-# statement, so a hostile PDF could put "=cmd" in an amount/date/balance cell and
-# it would execute when the xlsx/csv is opened in Excel unless neutralised here.
+# Defend the SPREADSHEET outputs against formula injection: a description beginning with = + @ or a
+# leading tab executes as a formula in Excel. Prefix those with a single quote; nothing is stripped,
+# and only for spreadsheets - the JSON stays byte-for-byte verbatim. Includes the *_raw cells, since a
+# hostile PDF could put "=cmd" in an amount cell.
 .SS_TEXT_COLS <- c("description", "particulars", "code", "reference",
                    "other_party", "type", "raw", "debit", "credit",
                    "date_raw", "amount_raw", "balance_raw")
@@ -114,16 +103,9 @@
   df
 }
 
-# display_transactions(transactions, extras) -- the HUMAN-facing transaction table
-# for the previews, the workbook's Transactions sheet and the CSV. Differences from
-# the stable 16-column core: (1) the verbatim *_raw cells (date_raw, amount_raw,
-# balance_raw) are dropped -- they stay in the JSON + Provenance (the full record),
-# but clutter the tabular surfaces people read; (2) every EXTRA column that was
-# pulled is shown too -- the separate debit/credit of a money-in/out statement (next
-# to `amount`), a per-bank column (card, units...), or a column the user mapped
-# under a custom name in the toolkit -- so what the toolkit captured is what the
-# output shows. The JSON keeps the full core + extras, so nothing is lost. Empty
-# columns are left in place here (the app trims them per view).
+# The HUMAN-facing transaction table for previews, the Transactions sheet and the CSV. Two differences
+# from the stable 16-column core: the verbatim *_raw cells are dropped (they stay in the JSON and
+# Provenance) and every EXTRA column pulled is shown. The JSON keeps the full core plus extras.
 .DISPLAY_DROP_COLS <- c("date_raw", "amount_raw", "balance_raw")
 display_transactions <- function(transactions, extras = NULL) {
   df <- as.data.frame(transactions, stringsAsFactors = FALSE, check.names = FALSE)
@@ -145,18 +127,16 @@ display_transactions <- function(transactions, extras = NULL) {
   df
 }
 
-# write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
-# `build` is the provenance stamp (engine version + template content hash) the
-# orchestrator passes in; it goes into the JSON -- the full-record output -- so a
-# figure can always be traced back to the build and template that produced it.
+# write_outputs(...) -> named path vector. `build` is the provenance stamp the orchestrator passes in;
+# it goes into the JSON so a figure can be traced back to the build and template that produced it.
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
                           diagnostics = NULL, metadata = NULL, build = NULL) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   paths <- character(0)
 
-  # The human-facing transaction table, built ONCE and shared by the workbook and
-  # the CSV, so the two files can never disagree about what was captured.
+  # The human-facing table, built ONCE and shared by the workbook and the CSV, so the two files can
+  # never disagree about what was captured.
   sheet_tx <- if (any(c("xlsx", "csv") %in% formats))
     .spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras))
 
@@ -179,10 +159,8 @@ write_outputs <- function(parsed, recon, outdir, basename,
       openxlsx::addWorksheet(wb, "Metadata")
       openxlsx::writeData(wb, "Metadata", metadata_df(metadata))
     }
-    # Byte-reproducibility (guarantee 11.4): openxlsx stamps docProps/core.xml
-    # with the wall-clock time, so identical input+template would otherwise yield
-    # differing xlsx bytes. Pin the created timestamp to a fixed constant before
-    # saving so the same input always produces the same file.
+    # openxlsx stamps docProps/core.xml with the wall clock, so identical input would otherwise yield
+    # differing xlsx bytes.
     wb$core <- .deterministic_core(wb$core)
     openxlsx::saveWorkbook(wb, xlsx_path, overwrite = TRUE)
     safe(.normalize_zip_timestamps(xlsx_path))
@@ -197,9 +175,8 @@ write_outputs <- function(parsed, recon, outdir, basename,
 
   if ("json" %in% formats) {
     json_path <- file.path(outdir, paste0(basename, ".json"))
-    # engine_version is stamped even when no `build` is supplied, so EVERY JSON
-    # names the build that wrote it (a constant per install -- the file stays
-    # byte-reproducible). template_sha256 only appears when a template ran.
+    # engine_version is stamped even when no `build` is supplied, so EVERY JSON names the build that
+    # wrote it. template_sha256 only appears when a template ran.
     full <- list(
       build = utils::modifyList(list(engine_version = engine_version()),
                                 as.list(build %||% list())),

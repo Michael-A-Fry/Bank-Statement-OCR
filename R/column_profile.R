@@ -1,27 +1,12 @@
-# column_profile.R -- "everything you'd need to DRAFT a template", captured
-# PII-safely. When the engine can't match a statement, the single most useful
-# thing to record is a STRUCTURAL description of its source columns plus the
-# engine's own best-guess mapping, so a human -- or an AI assistant -- can turn it
-# into a template WITHOUT ever seeing statement content.
-#
-# PII posture (identical to the rest of metadata capture): no raw values leave
-# here. A column yields its NAME, inferred KIND, fill rate, cardinality, and a
-# MASKED example shape (each digit -> 9, EVERY letter -- ASCII or not -> A, only the
-# ASCII separators a shape needs are kept, so "31/12/2025" -> "99/99/9999" and
-# "TAMAKI PMT" -> "AAAAAA AAA"). Literal tokens are emitted ONLY for a genuine
-# debit/credit-style INDICATOR column (values in the known D/C domain, or a header
-# that names itself an indicator) -- NEVER for a free-text / reference / payee
-# column, whose few short values would be real content.
+# column_profile.R -- "everything you'd need to DRAFT a template", captured PII-safely: a column
+# yields its NAME, inferred KIND, fill rate, cardinality and a MASKED example shape. Literal tokens
+# are emitted ONLY for a genuine debit/credit indicator column.
 
-# .enc_safe(x) -- coerce to valid UTF-8, dropping bytes invalid in the source
-# encoding, so nchar()/gsub()/substr() can never throw on a hostile multibyte value
-# in a non-UTF-8 locale (the air-gapped Windows box). Sanitise once, up front.
+# Coerce to valid UTF-8 so nchar/gsub/substr can never throw on a hostile multibyte value.
 .enc_safe <- function(x) iconv(as.character(x), from = "", to = "UTF-8", sub = "")
 
-# .mask_value(s) -- collapse a value to a PII-safe shape. Digit -> 9; ASCII letter
-# -> A; then ANY remaining non-structural character (a te reo macron, an accent,
-# CJK / Greek text, a non-$ currency glyph) is content too and is masked to A. Only
-# the ASCII separators a shape needs are kept, so no readable character survives.
+# Collapse a value to a PII-safe shape: digit to 9, ASCII letter to A, then ANY remaining
+# non-structural character (a macron, an accent, CJK text) is content too and is masked to A.
 .mask_value <- function(s) {
   s <- as.character(s)
   s <- gsub("[0-9]", "9", s)                    # digit -> 9
@@ -29,10 +14,8 @@
   gsub("[^0-9A-Za-z ./,:()$+-]", "A", s)        # any other char (incl. non-ASCII) -> A
 }
 
-# .modal_shape(v) -- the most common masked shape across a sample (capped in
-# length so a long free-text field can't bloat the record). Ties are broken by the
-# shape string so the choice is deterministic across machines/locales (the shapes
-# are pure ASCII after masking).
+# The most common masked shape across a sample. Ties broken by the shape string, so the choice is
+# deterministic across machines and locales.
 .modal_shape <- function(v) {
   v <- v[nzchar(v)]
   if (!length(v)) return(NA_character_)
@@ -43,26 +26,17 @@
   if (nchar(ms) > 48L) paste0(substr(ms, 1L, 45L), "...") else ms
 }
 
-# Column-name patterns that decide whether a low-cardinality column's LITERAL
-# values may be emitted. A CONTENT header (description / reference / payee / name /
-# particulars ...) never leaks its values, even when short and few. An INDICATOR
-# header (type / dr-cr / debit-credit / direction ...) is one whose few short codes
-# ARE the structural signal a template needs.
+# Column-name patterns deciding whether a low-cardinality column's LITERAL values may be emitted. A
+# CONTENT header never leaks its values even when short and few.
 .CONTENT_COL_RX   <- "desc|payee|paye|detail|memo|narrat|particular|referen|other.?part|counterpart|\\bname\\b|address|payer|remitter|merchant"
 .INDICATOR_COL_RX <- "type|dr.?cr|cr.?dr|d/?c|debit.?credit|credit.?debit|\\bsign\\b|indicat|in/?out|money.?in|money.?out|direction"
 
-# A character is "currency-ish" if it is NOT a digit, letter, standard number
-# punctuation or space. This ASCII-only negation matches the dollar, pound and euro
-# signs (and any other
-# currency glyph) WITHOUT embedding a multibyte character in the pattern -- raw
-# such a glyph in a regex warns and can mis-match in a non-UTF-8 locale (the air-gapped
-# Windows box), so every money test here stays ASCII.
+# "Currency-ish" as an ASCII-only negation: it matches every currency glyph WITHOUT embedding a
+# multibyte character in the pattern, which warns and can mis-match in a non-UTF-8 locale.
 .CURRENCY_RX <- "[^0-9A-Za-z.,'()+[:space:]-]"
 
-# .looks_money(v) -- vectorised: does each value look like a money figure?
-# Strip a DR/CR/OD suffix and every currency/letter/symbol, then ask whether the
-# remaining core is a well-formed number (optional sign/parens, digits, grouping
-# and decimal separators). Loose on purpose -- kind inference thresholds it.
+# Vectorised: does each value look like a money figure? Loose on purpose - kind inference
+# thresholds it.
 .looks_money <- function(v) {
   up <- toupper(trimws(as.character(v)))
   core <- gsub("(DR|CR|OD)[[:space:]]*$", "", up)   # drop a balance-sign suffix
@@ -72,11 +46,8 @@
     grepl("^[(+-]?[0-9][0-9.,]*[0-9]?[)]?$", core)
 }
 
-# .col_kind(v, dfmt) -- infer a column's KIND from a nonempty sample:
-#   date | money | integer | indicator | text | empty
-# Order matters: a decisive date/money test wins before the low-cardinality
-# indicator test, so a two-value date column is still "date", not "indicator".
-# `dfmt` is the pre-computed detect_date_format(v) so the caller doesn't run it twice.
+# Infer a column's KIND: date | money | integer | indicator | text | empty. Order matters - a decisive
+# date or money test wins before the low-cardinality indicator test.
 .col_kind <- function(v, dfmt = detect_date_format(v)) {
   if (!length(v)) return("empty")
   if (nzchar(dfmt)) return("date")
@@ -91,9 +62,8 @@
   "text"
 }
 
-# .money_shape(v) -- the STYLE facts a template needs for a money column: which
-# separators, sign convention and suffix appear. Maps straight onto amount_sign /
-# decimal_mark. Counts and booleans only, never a figure.
+# The STYLE facts a template needs for a money column: which separators, sign convention and suffix
+# appear. Counts and booleans only, never a figure.
 .money_shape <- function(v) {
   up <- toupper(trimws(as.character(v)))
   last_sep <- function(s) {
@@ -112,7 +82,7 @@
     dr_cr_suffix    = any(grepl("(DR|CR|OD)[[:space:]]*$", up)))
 }
 
-# .col_profile(name, values) -- one PII-safe column profile (see file header).
+# One PII-safe column profile.
 .col_profile <- function(name, values) {
   raw <- .enc_safe(values)               # valid UTF-8 up front: nchar/gsub never throw
   n   <- length(raw)
@@ -133,11 +103,8 @@
   } else if (identical(kind, "indicator")) {
     toks <- sort(unique(toupper(ne)), method = "radix")     # deterministic ordering
     nm <- tolower(as.character(name))
-    # Emit the LITERAL values ONLY when this is genuinely a debit/credit-style
-    # indicator -- its values are a recognised D/C domain, OR the header names it an
-    # indicator column -- and never for a content/reference/payee column (whose few
-    # short values would be real content). Everything else: count only.
-    # type_dc_domain() already upper-cases, so no toupper() needed.
+    # Emit the LITERAL values ONLY when this is genuinely a debit/credit indicator - a recognised D/C
+    # domain, or a header that names itself one - never for a content, reference or payee column.
     is_content   <- grepl(.CONTENT_COL_RX, nm)
     is_indicator <- all(toks %in% type_dc_domain()) || grepl(.INDICATOR_COL_RX, nm)
     if (!is_content && is_indicator && length(toks) <= 12L && all(nchar(toks) <= 8L))
@@ -150,9 +117,8 @@
   prof
 }
 
-# column_profiles(df) -- profile every column of a source table (capped so a
-# pathologically wide sheet can't blow up the record). Each column is profiled
-# defensively so one hostile column degrades to nothing, not the whole bundle.
+# Profile every column, capped so a pathologically wide sheet cannot blow up the record. Each column
+# is profiled defensively so one hostile column degrades to nothing, not the whole bundle.
 column_profiles <- function(df) {
   if (is.null(df) || !ncol(df)) return(list())
   profs <- lapply(seq_len(min(ncol(df), 60L)),
@@ -160,10 +126,8 @@ column_profiles <- function(df) {
   Filter(Negate(is.null), profs)
 }
 
-# .suggest_mapping(df) -- the engine's OWN best guess at the template. This is
-# LITERALLY what the drafter would produce: it calls the shared .derive_mapping()
-# brain (draft.R) and flattens it to a header-names-only skeleton, so the hint can
-# never diverge from Draft-a-template. No filename, no values.
+# The engine's OWN best guess at the template - literally what the drafter would produce, since it
+# calls the shared .derive_mapping() brain. No filename, no values.
 .suggest_mapping <- function(df) {
   if (is.null(df) || !ncol(df)) return(NULL)
   dm <- safe(.derive_mapping(names(df), df, "%d/%m/%Y"), NULL)
@@ -189,16 +153,16 @@ column_profiles <- function(df) {
   out
 }
 
-# .delim_of(input) -- sniff a delimited file's separator from its first non-empty
-# line (no file re-read; shares the choice logic with detect_delimiter).
+# Sniff a delimited file's separator from its first non-empty line, sharing the choice logic with
+# detect_delimiter.
 .delim_of <- function(input) {
   ln <- input$lines %||% character(0)
   ln <- ln[nzchar(trimws(ln))]
   .delim_of_line(if (length(ln)) ln[1] else "")
 }
 
-# .pdf_shapes(input) -- for a PDF, the money/date STYLE facts scannable from the
-# text tokens (no columns exist until a template defines bands). Structural only.
+# For a PDF, the money and date STYLE facts scannable from the text tokens, since no columns exist
+# until a template defines bands.
 .pdf_shapes <- function(input) {
   toks <- unlist(lapply(input$words %||% list(), function(w)
     if (!is.null(w) && nrow(w)) as.character(w$text) else character(0)))
@@ -217,20 +181,12 @@ column_profiles <- function(df) {
   out
 }
 
-# template_hints(input, template, matched) -> the full "how to draft a template"
-# bundle for one input, or NULL. Delimited/Excel: per-column profiles + the
-# engine's suggested mapping. PDF: suggested column bands (only worth it when NO
-# template matched -- otherwise the bands are already known) and text style shapes.
-# Never throws (caller wraps in safe() too). Structural only -- see the PII note in
-# the file header.
+# The full "how to draft a template" bundle for one input, or NULL. Structural only.
 template_hints <- function(input, template = NULL, matched = FALSE) {
   kind <- input$kind %||% ""
   if (identical(kind, "excel") || identical(kind, "delimited")) {
-    # The delimiter for a delimited file: the MATCHED template's (so its
-    # preamble.header_regex + delimiter locate the real header, not a preamble line),
-    # else sniffed once from the source.
-    # A template may declare several candidate delimiters; the profile records one
-    # value, so take the one actually in force for this file.
+    # The delimiter for a delimited file: the MATCHED template's, so its preamble.header_regex
+    # locates the real header rather than a preamble line, else sniffed from the source.
     delim <- if (identical(kind, "delimited")) {
       d <- template$delimiter %||% .delim_of(input)
       if (length(d) > 1L) (.delim_of(input) %||% d[1]) else d
@@ -261,10 +217,8 @@ template_hints <- function(input, template = NULL, matched = FALSE) {
     }
     sh <- safe(.pdf_shapes(input), list())
     if (length(sh)) out$shapes <- sh
-    # NOTE: raw header/fingerprint PHRASES are deliberately NOT persisted -- a
-    # statement's title line can be an account-holder or company name (PII). The
-    # person drafting a PDF template reads the fingerprint phrases off the statement
-    # itself (and the visual band editor supplies the columns).
+    # Raw header and fingerprint PHRASES are deliberately NOT persisted - a statement's title line can
+    # be an account-holder or company name.
     if (length(out) <= 1L) return(NULL)   # nothing useful beyond `kind`
     return(out)
   }

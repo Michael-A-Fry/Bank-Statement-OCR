@@ -1,19 +1,12 @@
-# OCR support via the system Tesseract engine, driven from R with system2().
-# No R 'tesseract' binding and no Python/reticulate are required. The deployment
-# host only needs two apt packages installed: `tesseract-ocr` and `poppler-utils`.
-#
-# Used as the fallback path in read_pdf.R for pages with no usable text layer
-# (scanned / image-only statements). OCR only ever reads VISIBLE pixels, so any
-# redaction painted over the page is inherently respected - Tesseract cannot read
-# what a black box covers - and every OCR'd value is flagged `ocr` with lower
-# confidence so forensic reviewers always know machine-read vs. extracted text.
+# OCR via the system Tesseract engine, driven with system2(): just `tesseract-ocr` and `poppler-utils`
+# on the host. It reads only VISIBLE pixels, so a painted redaction is inherently respected.
 
 # TRUE only when both external tools are present on PATH.
 ocr_available <- function() {
   nzchar(Sys.which("tesseract")) && nzchar(Sys.which("pdftoppm"))
 }
 
-# OCR a single image file (PNG/TIFF/JPG) -> character vector of text lines.
+# OCR a single image file to a character vector of text lines.
 ocr_image <- function(path, lang = "eng", psm = 6L) {
   if (!nzchar(Sys.which("tesseract")) || !file.exists(path)) return(character(0))
   out <- tryCatch(
@@ -25,8 +18,7 @@ ocr_image <- function(path, lang = "eng", psm = 6L) {
   out[!is.na(out)]
 }
 
-# OCR an image to Tesseract TSV -> per-word data.frame (incl. `conf` 0-100 and
-# bounding box), or NULL. This is what confidence gating + table recovery use.
+# OCR an image to Tesseract TSV -> per-word frame including `conf` 0-100 and a bounding box, or NULL.
 ocr_image_tsv <- function(path, lang = "eng", psm = 6L) {
   if (!nzchar(Sys.which("tesseract")) || !file.exists(path)) return(NULL)
   out <- tryCatch(
@@ -41,7 +33,7 @@ ocr_image_tsv <- function(path, lang = "eng", psm = 6L) {
            error = function(e) NULL)
 }
 
-# Mean confidence (0-100) of recognised words on an image; NA when none.
+# Mean confidence of recognised words on an image; NA when none.
 ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   df <- ocr_image_tsv(path, lang, psm)
   if (is.null(df) || !("conf" %in% names(df))) return(NA_real_)
@@ -51,11 +43,8 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   if (!length(w)) NA_real_ else round(mean(w), 1)
 }
 
-# .ocr_tsv_to_words(tsv, scale) -- Tesseract TSV -> word boxes in PDF POINTS
-# (columns x,y,width,height,space,text -- the same shape pdftools::pdf_data uses,
-# plus per-word conf/ocr_conf), so the PDF table parser can assign columns for a
-# SCANNED statement exactly as for a text-layer one. `scale` = 72/dpi maps image
-# pixels to points.
+# Tesseract TSV to word boxes in PDF POINTS - the shape pdftools::pdf_data uses, plus per-word conf -
+# so the table parser columns a SCANNED statement exactly as a text-layer one. `scale` is 72/dpi.
 .ocr_tsv_to_words <- function(tsv, scale) {
   if (is.null(tsv) || !nrow(tsv) ||
       !all(c("left", "top", "width", "height", "text") %in% names(tsv))) return(NULL)
@@ -63,11 +52,7 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
   keep <- !is.na(conf) & conf >= 0 & nzchar(trimws(as.character(tsv$text)))
   d <- tsv[keep, , drop = FALSE]
   if (!nrow(d)) return(NULL)
-  # `conf` (0-100 per-word confidence) is carried through so the table parser can
-  # flag a transaction whose amount/date/balance cell contains a low-confidence
-  # word -- a misread digit that a page-mean confidence would otherwise hide.
-  # `ocr_conf` is the same figure under the words-frame contract name, so the
-  # X-ray view can shade doubtful words; text-layer pages carry it as NA.
+  # `conf` lets the table parser flag a low-confidence digit in a money cell that a page mean hides.
   cf <- suppressWarnings(as.numeric(d$conf))
   data.frame(width = d$width * scale, height = d$height * scale,
              x = d$left * scale, y = d$top * scale, space = TRUE,
@@ -75,28 +60,18 @@ ocr_word_confidence <- function(path, lang = "eng", psm = 6L) {
              conf = cf, ocr_conf = cf, stringsAsFactors = FALSE)
 }
 
-# Render one PDF page to PNG (poppler pdftoppm) and OCR it.
-# Returns list(text = character lines, words = positioned boxes in PDF points,
-# conf = mean confidence, ok = logical). The text uses the preprocessed image
-# (accuracy); the word boxes use the RAW render (clean, known-scale geometry).
+# Returns list(text, words, conf, ok). Text uses the preprocessed image; word boxes the RAW render.
 ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", preprocess = TRUE) {
   if (!ocr_available() || !file.exists(pdf))
     return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
-  # All of this page's image work happens inside with_image_scratch(), so
-  # ImageMagick's disk spill goes in a folder of ours that is deleted on the way
-  # out (see R/util.R). Nothing below reads a magick image after this returns.
+  # Inside with_image_scratch(), so ImageMagick's disk spill goes in a folder deleted on the way out.
   with_image_scratch(.ocr_pdf_page_work(pdf, page, dpi, lang, preprocess))
 }
 
-# The actual page work, split out only so ocr_pdf_page() above can wrap the whole
-# of it in one with_image_scratch() without indenting every line. Never call this
-# directly -- call ocr_pdf_page().
+# Split out only so ocr_pdf_page() can wrap all of it in one with_image_scratch(). Never call directly.
 .ocr_pdf_page_work <- function(pdf, page, dpi, lang, preprocess) {
   prefix <- tempfile("ocrpg_")
-  # EVERY intermediate image this function makes must be named under `prefix`, so
-  # this single sweep removes all of them -- the poppler render AND the two
-  # preprocessed copies below. They are pictures of a client's statement; leaving
-  # any of them behind leaks readable client data onto the host's disk.
+  # EVERY intermediate image must be named under `prefix` - they are pictures of a client's statement.
   on.exit(unlink(Sys.glob(paste0(prefix, "*")), force = TRUE), add = TRUE)
   rc <- tryCatch(
     system2("pdftoppm",
@@ -109,50 +84,33 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   img <- Sys.glob(paste0(prefix, "*.png"))
   if (!length(img)) return(list(text = character(0), words = NULL, ok = FALSE, conf = NA_real_))
   have_pp <- isTRUE(preprocess) && exists("preprocess_image", mode = "function")
-  # Measure the page skew ONCE and share it across both OCR passes. The text pass
-  # and the geometry (word-box) pass deskew the SAME source render with the SAME
-  # deterministic estimator (max_angle 5), so re-running the ~1.6s/page projection
-  # search in each pass pays for an identical answer twice. Measure here and hand
-  # the angle to both preprocess calls; NULL (magick absent / measure failed) makes
-  # each pass measure itself, so the fallback is behaviour-identical.
+  # Measure the page skew ONCE and share it: both passes deskew the SAME render with the SAME estimator,
+  # so re-running the 1.6s projection search per pass buys an identical answer twice.
   skew_angle <- if (have_pp && exists(".detect_skew_angle", mode = "function"))
     tryCatch(.detect_skew_angle(magick::image_read(img[1]), max_angle = 5),
              error = function(e) NULL) else NULL
-  # Both preprocessed images are written UNDER the render prefix, so the ONE
-  # on.exit() glob above deletes them along with the render. This is not tidiness:
-  # each is a full-page picture of the CLIENT'S BANK STATEMENT, and on the default
-  # tempfile() name they fell outside that glob and survived for the life of the R
-  # process: measured 1.4 MB per page on a real 300 dpi A4 scan, so one 11-page
-  # statement left ~15 MB of readable statement imagery sitting on the server's
-  # system drive -- on a box that is meant to run for months without a restart.
-  # Naming them here IS the fix; nothing else about either pass changes.
-  # Text pass: full preprocessing (deskew/upscale allowed) for best accuracy.
+  # Both preprocessed images go UNDER the render prefix so the one on.exit glob deletes them: each is a
+  # full-page picture of the CLIENT'S BANK STATEMENT at 1.4 MB a page, and on a default tempfile() name
+  # they survived the life of the R process. Text pass: full preprocessing, deskew and upscale allowed.
   use_img <- if (have_pp)
     preprocess_image(img[1], out_path = paste0(prefix, "_text.png"),
                      opts = c(preprocess_opts(), list(deskew_angle = skew_angle))) else img[1]
   txt <- ocr_image(use_img, lang = lang)
-  # Word-box pass: GEOMETRY-PRESERVING preprocessing (no deskew/resize), so the
-  # accuracy lift doesn't move any column. Reuses the shared skew angle.
+  # Word-box pass: GEOMETRY-PRESERVING preprocessing, no deskew or resize, so the accuracy lift does
+  # not move any column. Reuses the shared skew angle.
   box_img <- if (have_pp)
     preprocess_image(img[1], out_path = paste0(prefix, "_box.png"),
                      opts = c(preprocess_opts_geometry(), list(deskew_angle = skew_angle))) else img[1]
   words <- .ocr_tsv_to_words(ocr_image_tsv(box_img, lang = lang), scale = 72 / dpi)
-  # The word boxes live in the (possibly deskewed) box-image frame, so report THAT
-  # image's size in points as the page dimensions -- keeps the parser's page-size
-  # normalisation consistent with where the words actually are.
+  # Word boxes live in the box-image frame, so report THAT image's point size as the page dimensions.
   bw <- tryCatch({ ii <- magick::image_info(magick::image_read(box_img)); c(ii$width, ii$height) * 72 / dpi },
                  error = function(e) c(NA_real_, NA_real_))
-  # Rasterised-redaction detection: solid black rectangles a scanner captured as
-  # image (a real blacked-out value) leave no OCR word behind, so find them by
-  # pixels here -- in the SAME box-image frame the word boxes use -- and hand the
-  # regions back so read_pdf can reconstruct the hidden cells as [REDACTED]
-  # (preserved + flagged) instead of silently losing the row.
+  # Rasterised redactions leave no OCR word behind, so find them by pixels here, in the SAME frame the
+  # word boxes use, and hand the regions back for read_pdf to rebuild the cells as [REDACTED].
   dark_rects <- if (exists("detect_dark_regions", mode = "function"))
     tryCatch(detect_dark_regions(magick::image_read(box_img), scale = 72 / dpi),
              error = function(e) NULL) else NULL
-  # Page-mean confidence from the SAME box-image words the PER-WORD flags use, so
-  # the reported ocr_min_confidence can never diverge from the per-cell confidences
-  # (the text pass runs on a separately upscaled/deskewed image whose mean differs).
+  # Page-mean confidence from the SAME box-image words the per-word flags use, so they cannot diverge.
   box_conf <- {
     cf <- if (!is.null(words) && "conf" %in% names(words))
       suppressWarnings(as.numeric(words$conf)) else numeric(0)
@@ -164,11 +122,8 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
        width = bw[1], height = bw[2], dark_rects = dark_rects)
 }
 
-# .text_bad_ratio(s) -- fraction of characters that are UNTRUSTWORTHY: the Unicode
-# replacement char, C0/C1 control codes (bar tab/newline/CR), and the private-use
-# area. A broken-CID / no-ToUnicode font extracts the right LENGTH of such garbage,
-# so a high ratio means the "text layer" can't be believed and the page should be
-# read by OCR instead.
+# Fraction of characters that are UNTRUSTWORTHY: replacement char, C0/C1 controls, private-use area. A
+# broken-CID font extracts the right LENGTH of such garbage, so a high ratio means it cannot be believed.
 .text_bad_ratio <- function(s) {
   cp <- suppressWarnings(utf8ToInt(enc2utf8(paste(s, collapse = ""))))
   cp <- cp[!is.na(cp)]
@@ -180,12 +135,8 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   sum(bad) / length(cp)
 }
 
-# page_needs_ocr(page_text, word_boxes, ...) -- decide whether a page must be read
-# by OCR. Routes on more than a flat character count so it no longer (a) skips a
-# scanned transaction page that carries a thin incidental text layer (a Bates
-# stamp / footer), (b) trusts corrupt broken-font text of the right length, or
-# (c) OCRs a genuine digital page whose pdf_text came back empty but whose word
-# boxes are present -- a digital PDF must never be OCR'd.
+# Decide whether a page must be read by OCR. More than a flat character count, so it no longer skips a
+# scan carrying a thin text layer, trusts broken-font garbage, or OCRs a digital page with empty text.
 page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = PARAM_OCR_MIN_CHARS,
                            min_words = PARAM_OCR_MIN_WORDS, max_bad_ratio = PARAM_OCR_MAX_BAD_RATIO) {
   joined <- paste(page_text %||% "", collapse = "")
@@ -194,14 +145,12 @@ page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = PARAM_OCR_M
             else if (is.data.frame(word_boxes)) nrow(word_boxes) else length(word_boxes)
   have_words <- !is.na(nwords) && nwords >= min_words
 
-  # (c) effectively empty text: OCR only if there are NO real word boxes. Word
-  # boxes present => the page HAS a digital text layer; never OCR it.
+  # Effectively empty text: OCR only if there are NO word boxes - boxes mean a digital text layer.
   if (is.null(page_text) || !nzchar(trimws(joined)) || nchar_ns < min_chars)
     return(!have_words)
-  # (b) text present but mostly garbage (broken CID font) -> OCR.
+  # Text present but mostly garbage (broken CID font).
   if (.text_bad_ratio(joined) > max_bad_ratio) return(TRUE)
-  # (a) real text but almost no word boxes: a scanned page whose only digital text
-  # is an incidental stamp/footer, the transaction rows being image-only -> OCR.
+  # Real text but almost no word boxes: a scan whose only digital text is an incidental stamp.
   if (!is.na(nwords) && nwords < min_words) return(TRUE)
   FALSE
 }

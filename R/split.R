@@ -1,55 +1,16 @@
-# split.R -- opt-in, DETERMINISTIC auto-split of a bundled upload into its
-# constituent statements, each parsed and reconciled INDEPENDENTLY, with trust
-# rolled up to the weakest segment.
-#
-# THE CHARTER RULE. A wrongly-placed boundary is itself a silently-wrong outcome,
-# so auto-split runs ONLY when:
-#   1. a template OPTS IN (a `split:` block), and
-#   2. the boundaries are located by a DECLARED deterministic page marker (not a
-#      guess -- a "Page 1 of N" reset, or a repeated opening-balance label), and
-#   3. the number of statements is INDEPENDENTLY CONFIRMED -- a DIFFERENT structural
-#      count (distinct periods, page-1 resets, or repeated opening/closing blocks)
-#      agrees on the same count. This is necessary and is checked before any work.
-# Per-segment reconciliation is reported as added confidence but is NOT a substitute
-# for the count check: a running-balance column is continuous across ANY cut, so a
-# wrongly-placed boundary would still reconcile within each piece -- reconciliation
-# alone cannot prove a boundary is right, only an independent count can.
-# When any of these is not satisfied the engine keeps its safe default: flag the
-# bundle and refuse the merged parse (needs_review). Hidden values are never
-# guessed; nothing is invented to make a segment reconcile.
-#
-# Scope: PDF bundles (the format whose boundaries -- page-number resets, repeated
-# header blocks -- are deterministically locatable). A delimited/Excel export is
-# almost always a single account/period; bundle-split for those is future work and
-# falls through to flag-and-refuse today.
+# split.R -- opt-in, DETERMINISTIC auto-split of a bundled PDF into its constituent statements, each
+# parsed and reconciled independently, with trust rolled up to the weakest segment. A wrongly-placed
+# boundary is itself a silently-wrong outcome, so it runs ONLY when the boundaries come from a DECLARED
+# deterministic page marker AND the number of statements is INDEPENDENTLY CONFIRMED by a different
+# structural count - per-segment reconciliation is not a substitute, because a running balance is
+# continuous across ANY cut. Otherwise the safe default stands: flag the bundle, refuse the parse.
 
 .SPLIT_SIGNALS <- c("page1_marker", "opening_label")
 
-# .split_spec(template) -- the split settings for a template. Accepts `split: true`,
-# a block with `on` / `min_statements`, or nothing at all; only an explicit
-# `split: false` turns it off.
-#
-# IT USED TO BE OPT-IN, AND THE OPT-IN WAS THE WRONG LOCK. Exactly ONE of the
-# thirteen shipped templates declared a `split:` block, so a bundle read by any of
-# the other twelve -- or by any template an analyst builds -- got no split at all
-# and fell through to the merged parse. Measured on a two-statement Westpac bundle:
-#
-#   opt-in (as it was):  needs_review, trust LOW, balance_reconciliation FAILED
-#                        and running_balance_continuity FAILED
-#   defaulted on:        2 statements, reconciled separately, per-statement checks
-#
-# That failing pair is the symptom this whole feature exists to remove, and the
-# opt-in was what kept it.
-#
-# Turning it on is safe because THE OPT-IN WAS NEVER WHAT MADE SPLITTING SAFE --
-# the commit gate in split_bundle() is: the segment count must be confirmed by an
-# INDEPENDENT structural signal (.count_agrees), and every segment must parse AND
-# reconcile, or the whole thing refuses and flag-and-refuse takes over. A second
-# lock on an already-locked door only ever kept out the people who should have
-# come in. Measured across every PDF in the corpus, defaulting on changes NO
-# existing outcome: nothing gains a split it should not have, nothing loses one.
-#
-# `split: false` remains, for a template that must never be cut.
+# The split settings for a template; only an explicit `split: false` turns it off. It used to be
+# opt-in, and the opt-in was the wrong lock: one of thirteen shipped templates declared a `split:`
+# block, so a bundle read by any of the other twelve fell through to the merged parse. The commit gate
+# in split_bundle() is what makes splitting safe, and defaulting on changes no existing outcome.
 .split_spec <- function(template) {
   s <- template$split %||% TRUE
   if (isFALSE(s)) return(NULL)
@@ -62,9 +23,8 @@
     min_statements = max(2L, suppressWarnings(as.integer(s$min_statements %||% 2L))))
 }
 
-# .page_texts(input) -- one text string per page, COMBINING the word boxes and the
-# page text layer, so a boundary marker (e.g. a "Page 1 of N" footer) is found
-# whichever layer carries it.
+# One text string per page, COMBINING the word boxes and the page text layer, so a boundary marker
+# is found whichever layer carries it.
 .page_texts <- function(input) {
   wl <- input$words %||% list()
   pg <- input$pages %||% character(0)
@@ -78,10 +38,8 @@
   }, character(1))
 }
 
-# .segment_starts(input, spec) -- the 1-based page indices where each statement
-# STARTS, located deterministically from the declared marker. Always includes
-# page 1 (leading pages belong to the first statement). NULL when the signal is
-# unavailable (e.g. not a PDF).
+# The 1-based page indices where each statement STARTS. Always includes page 1; NULL when the
+# signal is unavailable.
 .segment_starts <- function(input, spec) {
   if (!identical(input$kind %||% "", "pdf")) return(NULL)
   txt <- .page_texts(input)
@@ -96,9 +54,7 @@
   starts
 }
 
-# .subinput_pages(input, pages) -- a standalone PDF input restricted to `pages`,
-# with every per-page field subset and the page counts / OCR figures recomputed so
-# the segment parses exactly as if it had been uploaded on its own.
+# A standalone PDF input restricted to `pages`, so the segment parses exactly as if uploaded alone.
 .subinput_pages <- function(input, pages) {
   sub <- input
   take <- function(x) if (is.null(x)) NULL else x[pages]
@@ -111,9 +67,8 @@
   m$page_count <- length(pages)
   ocr <- input$page_ocr %||% logical(0)
   if (length(ocr)) m$ocr_pages <- sum(as.logical(ocr[pages]), na.rm = TRUE)
-  # ocr_min_conf is deliberately NOT narrowed to this segment: the input keeps only
-  # a whole-document minimum, so every segment inherits it. Conservative on purpose
-  # -- the OCR caveat can then only over-warn, never under-warn.
+  # ocr_min_conf is deliberately NOT narrowed to this segment: every segment inherits the whole-
+  # document minimum, so the OCR caveat can only over-warn, never under-warn.
   if (!is.null(m$redactions) && is.data.frame(m$redactions) && "page" %in% names(m$redactions)) {
     rd <- m$redactions[m$redactions$page %in% pages, , drop = FALSE]
     if (nrow(rd)) rd$page <- match(rd$page, pages)   # renumber to the segment's frame
@@ -123,52 +78,20 @@
   sub
 }
 
-# .trust_rank(level) -- order trust so the weakest segment can be found.
+# Order trust so the weakest segment can be found.
 .trust_rank <- function(level) match(level %||% "low", c("low", "medium", "high"))
 
-# .bundle_period(statements) -> list(start, end, why)
-#   start/end : the bundle's period as the statements PRINT it, or NA
-#   why        : one plain sentence when it is NA, else NA
-#
-# THE BUG THIS REPLACES. The combined header took statement 1's start and
-# statement k's end IN FILE ORDER. Bank bundles are routinely filed newest-first,
-# so on samples/_private_staging/anz_0382004_multi.pdf that produced
-# "20 Apr 2026 to 19 Feb 2026" -- a period that ENDS TWO MONTHS BEFORE IT STARTS --
-# and it went out to the governed feed's run manifest as an `accepted` row. Nothing
-# on screen, in the checks or in the feed noticed. Date order, not file order, is
-# the only thing that can decide a span.
-#
-# SHOULD A BUNDLE PUBLISH ONE MERGED PERIOD AT ALL? Only when the parts JOIN UP.
-# Here is the reasoning, because it is the interesting half of the fix:
-#
-# A period on a court-facing extract is a claim about COVERAGE -- "these figures
-# are everything this account did between these two dates". For statements that
-# meet end-to-start, min(start)..max(end) is exactly that claim and it is true.
-# For statements that do NOT, it is false in the most dangerous direction: on the
-# very sample above the three statements leave 18-19 Apr 2026 covered by no printed
-# statement, so a merged span would silently assert two days of coverage the file
-# does not have, and a transaction missing from that window could never be noticed.
-# That is a plausible figure standing in for one nobody checked, which the charter
-# calls the cardinal failure. An OVERLAP is worse still: overlapping sections are
-# not one account's consecutive statements at all, so there is no single span to
-# state. So: contiguous -> publish the true span; anything else -> publish nothing,
-# and say why.
-#
-# Nothing is lost by publishing nothing. Every statement's own period is in
-# `statements`, the feed stamps each transaction row with ITS OWN statement's
-# period (.split_stamp, R/feed.R), and the card's split table shows them all. The
-# empty field is the honest answer to a question the bundle does not answer.
-#
-# The rules are the ones .period_span (R/extract_metadata.R) already applies to
-# several periods printed inside ONE statement, so the engine cannot hold two
-# different opinions about when periods join up -- including that A SHARED
-# BOUNDARY DAY IS NOT AN OVERLAP (banks print the previous closing date as the
-# next opening date), and that one unreadable bound means the ORDER of the whole
-# set is unknown, which is exactly when a guess produces a wrong answer.
+# The bundle's period as the statements PRINT it, or NA with one plain sentence saying why. The combined
+# header used to take statement 1's start and statement k's end IN FILE ORDER, and bank bundles are
+# routinely filed newest-first, so one sample produced "20 Apr 2026 to 19 Feb 2026" and it went to the
+# governed feed accepted. Date order, not file order, decides a span. A merged period is published only
+# when the parts JOIN UP: a period on a court-facing extract is a claim about COVERAGE, and a gap makes
+# it false in the most dangerous direction while an OVERLAP means these are not one account's
+# consecutive statements. Nothing is lost by publishing nothing - each statement's own period is kept.
 .bundle_period <- function(statements) {
   none <- function(why) list(start = NA_character_, end = NA_character_, why = why)
-  # Unreachable from split_bundle (it commits only with two statements or more),
-  # but every `why` below can reach a screen, so none of them may be a code word.
+  # Unreachable from split_bundle, which commits only with two statements or more, but every `why`
+  # below can reach a screen, so none may be a code word.
   if (!length(statements))
     return(none("no statement period is stated for this file as a whole"))
   raw_s <- vapply(statements, function(s) as.character(s$period_start %||% NA)[1],
@@ -187,11 +110,8 @@
                       "that statement against the source")))
   o  <- order(ds, de)
   ds <- ds[o]; de <- de[o]
-  # Join up: each statement starts on, or the day after, the one before it ends.
-  # `<` is an overlap; `> +1` is a gap. Both mean this is not one continuous span,
-  # and they are told apart because they are different faults with different cures:
-  # a gap is days nobody has a statement for (ask the bank for the missing one), an
-  # overlap means these are not one account's consecutive statements at all.
+  # Join up: each statement starts on, or the day after, the one before it ends. `<` is an overlap,
+  # `> +1` is a gap, told apart because they have different cures.
   if (length(ds) > 1) {
     nxt <- ds[-1]; prv <- de[-length(de)]
     if (any(nxt < prv))
@@ -206,17 +126,13 @@
                           paste(sprintf("%s to %s", format(prv[hole] + 1), format(nxt[hole] - 1)),
                                 collapse = "; "))))
   }
-  # Verbatim, as the statements print it -- never a reformatted date.
+  # Verbatim, as the statements print it - never a reformatted date.
   list(start = raw_s[o][1], end = raw_e[o][length(o)], why = NA_character_)
 }
 
-# .count_agrees(k, meta, on) -- does an INDEPENDENT structural count (one the split
-# signal did not itself produce) agree that there are k statements? This is the
-# corroboration that guards against a marker that legitimately repeats inside one
-# statement. It is a NECESSARY condition to commit a split: per-segment
-# reconciliation is NOT sufficient on its own, because a running-balance column is
-# continuous across any cut, so a wrongly-placed boundary would still "reconcile"
-# within each piece. Only an independent count can confirm the number of statements.
+# Does an INDEPENDENT structural count agree that there are k statements? This guards against a
+# marker that legitimately repeats inside one statement, and it is a NECESSARY condition to commit:
+# per-segment reconciliation is not sufficient, because a running balance is continuous across any cut.
 .count_agrees <- function(k, meta, on) {
   counts <- integer(0)
   if (!identical(on, "page1_marker")) counts <- c(counts, meta$page1_markers %||% NA)
@@ -228,12 +144,9 @@
   length(counts) > 0 && any(counts == k)
 }
 
-# split_bundle(input, template, meta) -> a COMBINED result
-#   list(parsed, recon, statements, n_statements, on)
-# or NULL when it is not safe to split (caller then flag-and-refuses). `parsed` and
-# `recon` are shaped exactly like the single-statement path, so the rest of the
-# pipeline (outputs, diagnostics, coverage) is unchanged -- except transactions
-# carry a `statement_index` column and trust is the weakest segment's.
+# Returns a COMBINED result list(parsed, recon, statements, n_statements, on), or NULL when it is not
+# safe to split. Shaped exactly like the single-statement path, except transactions carry a
+# `statement_index` column and trust is the weakest segment's.
 split_bundle <- function(input, template, meta = NULL) {
   spec <- .split_spec(template)
   if (is.null(spec)) return(NULL)
@@ -243,19 +156,17 @@ split_bundle <- function(input, template, meta = NULL) {
   npages <- length(input$pages %||% input$words %||% list())
   if (is.null(starts) || length(starts) < spec$min_statements || !npages) return(NULL)
 
-  # page ranges: [start_i .. start_{i+1}-1], last runs to the final page.
+  # Page ranges: [start_i .. start_{i+1}-1], last runs to the final page.
   ends <- c(starts[-1] - 1L, npages)
   ranges <- Map(function(a, b) seq.int(a, b), starts, ends)
   k <- length(ranges)
   if (k < spec$min_statements) return(NULL)
 
-  # COMMIT GATE (checked BEFORE the work): the segment count must be confirmed by an
-  # INDEPENDENT structural signal. A running balance is continuous across any cut, so
-  # per-segment reconciliation cannot prove a boundary is right -- only an independent
-  # count can. Unconfirmed -> refuse, and the safe flag-and-refuse default takes over.
+  # COMMIT GATE, checked BEFORE the work: the segment count must be confirmed by an INDEPENDENT
+  # structural signal. Unconfirmed means refuse, and flag-and-refuse takes over.
   if (!.count_agrees(k, meta, spec$on)) return(NULL)
 
-  # Parse + reconcile each segment INDEPENDENTLY.
+  # Parse and reconcile each segment INDEPENDENTLY.
   segs <- lapply(seq_len(k), function(i) {
     si <- .subinput_pages(input, ranges[[i]])
     p  <- safe(parse_statement(si, template), NULL)
@@ -266,7 +177,6 @@ split_bundle <- function(input, template, meta = NULL) {
   })
   if (any(vapply(segs, is.null, logical(1)))) return(NULL)   # a segment wouldn't parse -> refuse
 
-  # ---- combine transactions (tagged with the statement they came from) ----
   txs <- lapply(seq_len(k), function(i) {
     t <- segs[[i]]$parsed$transactions
     t$statement_index <- i
@@ -278,12 +188,11 @@ split_bundle <- function(input, template, meta = NULL) {
   extras <- lapply(segs, function(s) s$parsed$extras)
   combined_extras <- if (all(vapply(extras, function(e) !is.null(e) && ncol(e) > 0, logical(1))))
     safe(do.call(rbind, extras), NULL) else NULL
-  # renumber the extras join key to match the recombined transactions (each segment
-  # had its own 1..n row_id) so the JSON extras<->transactions join stays valid.
+  # Renumber the extras join key to match the recombined transactions - each segment had its own
+  # 1..n row_id - so the JSON extras-to-transactions join stays valid.
   if (!is.null(combined_extras) && "row_id" %in% names(combined_extras) && nrow(combined_extras))
     combined_extras$row_id <- seq_len(nrow(combined_extras))
 
-  # ---- per-statement summary (period / balances / trust, per segment) ----
   statements <- lapply(seq_len(k), function(i) {
     h <- segs[[i]]$parsed$header; tr <- segs[[i]]$recon$trust
     list(index = i, pages = sprintf("%d-%d", min(segs[[i]]$pages), max(segs[[i]]$pages)),
@@ -293,15 +202,9 @@ split_bundle <- function(input, template, meta = NULL) {
          trust_level = tr$level, trust_score = tr$score)
   })
 
-  # ---- combined header (summary; per-statement anchors live in `statements`) ----
-  # Per-statement IDENTITY fields (account, balances, count) are nulled here: they
-  # differ per statement, and the feed stamps header fields onto EVERY row, so a
-  # single value would mislabel other statements' rows. The truth is in `statements`
-  # (and each row's statement_index).
-  #
-  # The PERIOD is one of those fields, not an exception to them: it is published
-  # only when the statements join up into one continuous span, and is empty
-  # otherwise. See .bundle_period above for the whole argument.
+  # Per-statement IDENTITY fields (account, balances, count) are nulled here: they differ per
+  # statement, and the feed stamps header fields onto EVERY row. The PERIOD is one of those fields,
+  # published only when the statements join up into one continuous span.
   period <- .bundle_period(statements)
   header <- segs[[1]]$parsed$header
   header$row_count       <- nrow(combined_tx)
@@ -313,15 +216,9 @@ split_bundle <- function(input, template, meta = NULL) {
   header$opening_balance <- NA_real_        # per-segment in `statements`
   header$closing_balance <- NA_real_
   header$stated_count    <- NA_integer_
-  # THE LAST GATE, and the reason a backwards period cannot come back silently.
-  # .bundle_period cannot construct one -- but the whole point of this fix is that
-  # the previous author did not think he could either. A period that runs backwards
-  # is not a value to report, it is proof this function is broken, so it is refused
-  # here rather than published: split_bundle is called through safe() (R/convert.R),
-  # so the refusal drops the run onto the flag-and-refuse default (needs_review,
-  # "this looks like several statements") instead of onto a court-facing extract.
-  # The matching check on the ordinary single-statement path is in reconcile()
-  # (.kpi_dates_within_period, R/reconcile.R), which is where a reviewer sees it.
+  # THE LAST GATE, and the reason a backwards period cannot come back silently. A period that runs
+  # backwards is not a value to report, it is proof this function is broken, so it is refused here:
+  # split_bundle is called through safe(), so the refusal drops the run onto flag-and-refuse.
   if (.period_runs_backwards(header$period_start, header$period_end))
     stop("internal: the bundle period was built backwards - refusing to publish it",
          call. = FALSE)
@@ -331,11 +228,10 @@ split_bundle <- function(input, template, meta = NULL) {
     provenance = do.call(rbind, lapply(segs, function(s) s$parsed$provenance)),
     statements = statements, n_statements = k,
     source_line_count = NA_integer_, multiline_extra = 0L)
-  # keep row_id provenance aligned to the recombined rows
+  # Keep row_id provenance aligned to the recombined rows.
   if (!is.null(combined_parsed$provenance))
     combined_parsed$provenance$row_id <- seq_len(nrow(combined_parsed$provenance))
 
-  # ---- combined KPIs: every segment's checks, stacked and statement-tagged ----
   kpis <- do.call(rbind, lapply(seq_len(k), function(i) {
     ki <- segs[[i]]$recon$kpis
     ki$name <- sprintf("%s [statement %d]", ki$name, i)
@@ -343,7 +239,7 @@ split_bundle <- function(input, template, meta = NULL) {
   }))
   rownames(kpis) <- NULL
 
-  # ---- roll trust up to the WEAKEST segment ----
+  # Roll trust up to the WEAKEST segment.
   ranks   <- vapply(segs, function(s) .trust_rank(s$recon$trust$level), integer(1))
   level   <- c("low", "medium", "high")[min(ranks)]
   score   <- min(vapply(segs, function(s) s$recon$trust$score %||% 0, numeric(1)))
@@ -352,11 +248,8 @@ split_bundle <- function(input, template, meta = NULL) {
     sprintf("upload auto-split into %d statements at %s boundaries (pages %s); each reconciled independently",
             k, spec$on, paste(vapply(statements, function(s) s$pages, character(1)), collapse = ", ")),
     "statement count confirmed by an independent structural signal (period / page-1 / balance-block count)",
-    # WHY THE FILE HAS NO ONE PERIOD, on the same screen as the split itself. An
-    # empty field with no explanation reads as something the tool forgot to fill
-    # in; this is the one thing about the bundle the reviewer cannot work out for
-    # herself, so it is said out loud rather than left to silence. (Same treatment
-    # .period_span's `period_note` already gets on the single-statement path.)
+    # Why the file has no one period, on the same screen as the split. An empty field with no
+    # explanation reads as something the tool forgot to fill in.
     if (!is.na(period$why)) period$why,
     sprintf("overall trust is the weakest statement's (statement%s %s): %s",
             if (length(weakest) > 1) "s" else "",
@@ -371,8 +264,7 @@ split_bundle <- function(input, template, meta = NULL) {
                  ocr_min_confidence = min(vapply(segs,
                    function(s) s$recon$trust$ocr_min_confidence %||% NA_real_, numeric(1)))))
 
-  # A non-NULL return IS the "committed" signal; per-statement page ranges are in
-  # `statements`, so no separate committed/boundaries fields are needed.
+  # A non-NULL return IS the "committed" signal; per-statement page ranges are in `statements`.
   list(parsed = combined_parsed, recon = combined_recon,
        statements = statements, n_statements = k, on = spec$on)
 }

@@ -1,36 +1,6 @@
-# doc_extract.R -- the "document" template mode: ONE template per kind of
-# document, carrying every table on it and every label/value pair, and the
-# orchestration that turns an upload into files you can download.
-#
-# THREE MODES NOW, AND WHY THEY ARE SEPARATE.
-#   statement (R/parse_pdf_table.R)  one table of transactions, checked against a
-#                                    running balance, fed to the dashboards.
-#   fields    (R/forms.R)            labelled values found by their WORDING. No
-#                                    coordinates at all -- an IRD form's labels
-#                                    are printed the same way every time.
-#   document  (this file)            many tables of different shapes plus
-#                                    label/value pairs, found by wording where
-#                                    that works and by position where it does not.
-#
-# They share the fingerprint gate and nothing else, deliberately. The statement
-# path is the one with money on it and it is not going to be destabilised by this.
-#
-# NO ROUTE TO THE FEED. A document template produces files to download and
-# nothing more. write_feed() refuses `kind = "tables"` outright, so this cannot
-# reach a dashboard even by accident: there is no reconciliation behind these
-# numbers and nothing that could tell a wrong one from a right one, so publishing
-# them as if there were would be the worst thing this tool could do.
-
-# There is no is_document_template(). `mode: document` is still the discriminator,
-# and template_kind() (R/templates.R) is what reads it -- one function answering
-# "what kind of template is this" for all three kinds, which is what every screen,
-# every save and every dispatch already asks. This was a second way to ask it that
-# nothing called, and it answered a slightly different question (it also demanded
-# at least one table or pair), so the two could disagree about the same file.
-
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
+# doc_extract.R -- the "document" template mode: ONE template per kind of document, carrying every
+# table and label/value pair on it. NO ROUTE TO THE FEED: write_feed() refuses `kind = "tables"` -
+# there is no reconciliation behind these numbers.
 
 .doc_box_problems <- function(box, where) {
   if (!is.list(box)) return(sprintf("%s is not a box", where))
@@ -45,8 +15,6 @@
   character(0)
 }
 
-# .doc_table_problems(tab, key) -- everything that would make this table read
-# nothing, or read the wrong thing, said as the thing to go and fix.
 .doc_table_problems <- function(tab, key) {
   p <- character(0)
   w <- function(...) sprintf("table '%s': %s", key, sprintf(...))
@@ -69,9 +37,8 @@
       p <- c(p, w("column %d has kind '%s', which is not one of %s", j, ty,
                   paste(.DOC_TYPES, collapse = "/")))
   }
-  # OVERLAPPING BANDS ARE A SILENT DATA LOSS. A word can only land in one column,
-  # and the earlier band wins -- so an overlap does not duplicate a value, it
-  # DELETES it from the second column, and every row still looks complete.
+  # Overlapping bands are a silent data loss: a word lands in one column and the earlier band wins,
+  # so an overlap DELETES the value from the second column while every row still looks complete.
   if (length(cols) > 1L) {
     ord <- order(vapply(cols, function(cc) .doc_num(cc$x_min, Inf), numeric(1)))
     cs <- cols[ord]
@@ -87,44 +54,21 @@
     p <- c(p, w("min_fill must be between 0 and 1"))
   hr <- .doc_int(tab$header_rows, 1L)
   if (is.na(hr) || hr < 0L) p <- c(p, w("header_rows must be 0 or more"))
-  # doc_pages is the length of the document this table was DRAWN on, and it is
-  # what tells the reader that a positional match on a document of a different
-  # length is worth less (R/tables.R reads the table's own value first, then the
-  # template's). A per-table override is allowed -- a template grown over several
-  # examples has tables drawn on documents of different lengths -- so it is
-  # checked here rather than silently ignored.
+  # doc_pages is the length of the document this table was DRAWN on, which tells the reader a
+  # positional match on a document of a different length is worth less.
   if (!is.null(.doc_key(tab, "doc_pages"))) {
     dp <- .doc_int(tab$doc_pages)
     if (is.na(dp) || dp < 1L)
       p <- c(p, w("doc_pages must be the number of pages the example had"))
   }
-  # `occurrence: all` -- "read this table wherever it appears, however many times".
-  #
-  # It was refused at the door for a while, and rightly: .doc_table_optional()
-  # reads the same key to mean the table's absence is expected, so with no reader
-  # a template using it would lose tables and say nothing. The reader exists now -
-  # doc_locate_repeats() finds every page whose printed name and column headings
-  # match, and extract_document() reads each place as its own table - so the key
-  # is accepted. Anything else is still refused rather than silently meaning
-  # `once`.
   occ <- as.character(.doc_key(tab, "occurrence") %||% "")[1]
   if (nzchar(occ) && !(occ %in% c("once", "first", "all")))
     p <- c(p, w("occurrence must be 'once', 'first' or 'all', not '%s'", occ))
   p
 }
 
-# .doc_pii_problems(tabs, prs) -- THE SAME PII GATE THE FINGERPRINT PASSES,
-# applied to the two other places this mode captures page text VERBATIM.
-#
-# WHY IT MATTERS MORE HERE THAN ANYWHERE. The builder's FIRST gesture is "drag a
-# box round the table's TITLE", and whatever words are in that box become the
-# table's name. A pair's label_text is captured the same way. Both are written
-# into templates/documents_user/, which is exactly what gets copied off the box
-# when somebody backs the library up or hands it to a colleague.
-#
-# Measured before this existed: "Prepared for Mr John Smith" was REFUSED as a
-# fingerprint phrase and accepted without a word as a table name. One rule, one
-# wording, three places - so there is one thing to learn and not three.
+# The same PII gate the fingerprint passes, applied to a table's name and a pair's label_text -
+# both drag-captured verbatim into templates/documents_user/, which is what gets copied off the box.
 .doc_pii_problems <- function(tabs, prs) {
   if (!exists(".fp_has_pii", mode = "function")) return(character(0))
   txt <- c(
@@ -143,7 +87,6 @@
     paste(sprintf("'%s'", unique(txt[hit])), collapse = ", "))
 }
 
-# validate_document_template(t) -> character() of problems (empty = valid).
 validate_document_template <- function(t) {
   p <- character(0)
   if (!is.list(t)) return("template is not a mapping")
@@ -152,10 +95,8 @@ validate_document_template <- function(t) {
   tabs <- t$tables %||% list(); prs <- t$pairs %||% list()
   if (!length(tabs) && !length(prs))
     p <- c(p, "this template finds nothing: add at least one table or one value")
-  # The SAME fingerprint gate the other two modes pass. It matters as much here:
-  # detection is all-phrases-must-appear with no reconciliation behind it, so a
-  # fingerprint of words that sit on every report would extract one document with
-  # another's column bands and present the result as a clean read.
+  # The same fingerprint gate the other two modes pass. Detection is all-phrases-must-appear with no
+  # reconciliation behind it, so a generic fingerprint reads one document with another's bands.
   fp <- t$fingerprint$page_contains_all
   if (is.null(fp) || !length(fp))
     p <- c(p, paste0("fingerprint.page_contains_all is required: without identifying ",
@@ -171,13 +112,8 @@ validate_document_template <- function(t) {
   for (k in names(prs)) {
     sp <- prs[[k]]
     if (!is.list(sp)) { p <- c(p, sprintf("value '%s' is not a mapping", k)); next }
-    # THREE WAYS TO FIND A VALUE, and a template may use any of them:
-    #   a value box + a label box   read by wording, placed by the offset between
-    #   a value box alone           read from that spot on the page
-    #   a label wording alone       read by the label matcher, no coordinates
-    # So a missing value box is only a fault when there is no wording either --
-    # that is a value the template can never find, which is the thing worth
-    # refusing.
+    # Three ways to find a value: a value box plus a label box, a value box alone, or a label
+    # wording alone. So a missing value box is only a fault when there is no wording either.
     vbox <- .doc_key(sp, "value"); lbox <- .doc_key(sp, "label")
     has_box <- is.list(vbox) && !is.na(.doc_num(.doc_key(vbox, "x_min")))
     has_word <- nzchar(trimws(as.character(.doc_key(sp, "label_text") %||% "")))
@@ -195,8 +131,6 @@ validate_document_template <- function(t) {
       p <- c(p, sprintf(paste("value '%s' says the value sits '%s' of the label,",
                               "which is not one of right/left/above/below"), k, wr))
   }
-  # Worksheet names come from the table names, and two tables that differ only in
-  # punctuation would collide there. Caught here, where it can be renamed.
   if (length(tabs) > 1L) {
     nm <- .doc_norm(vapply(tabs, function(x) as.character(x$name %||% "")[1], character(1)))
     dup <- unique(nm[duplicated(nm) & nzchar(nm)])
@@ -207,22 +141,12 @@ validate_document_template <- function(t) {
   p
 }
 
-# ---------------------------------------------------------------------------
-# Load / save / detect
-# ---------------------------------------------------------------------------
-
-# load_document_templates(dir, user_dir) -> named list<template>, keyed by id.
-# Lenient like the form loader (one bad template never breaks the others) and,
-# like it, never SILENT: the skip reasons come back on attr(x, "load_errors").
-#
-# include_hidden mirrors load_template_set() and load_fields_templates(): a
-# template flagged `hidden: true` is parked out of detection without being
-# deleted, and only the Admin management view asks for them back.
+# Lenient like the form loader - one bad template never breaks the others - and never silent: skip
+# reasons come back on attr(x, "load_errors").
 load_document_templates <- function(dir = "templates/documents", user_dir = NULL,
                                     include_hidden = FALSE) {
   out <- list(); errors <- character(0)
   dirs <- c(dir, user_dir)
-  # Shipped or built here -- see load_fields_templates() for why this is stamped.
   origins <- c(rep("default", length(dir)), rep("user", length(user_dir)))
   for (k in seq_along(dirs)) {
     d <- dirs[[k]]
@@ -244,38 +168,13 @@ load_document_templates <- function(dir = "templates/documents", user_dir = NULL
   out
 }
 
-# save_document_template(t, dir) -> path. Validates first: an invalid template is
-# never written, so the loader's leniency never has to cover for this screen.
 save_document_template <- function(t, dir = "templates/documents_user") {
   .save_template_yaml(t, dir, validate_document_template, "document template")
 }
 
-# There is no document_template_ids() / delete_document_template(). There was a
-# pair, written "so Admin can manage these too", and Admin never used it: it
-# resolves the folder for whichever kind the id belongs to and then calls the
-# kind-agnostic user_template_ids() / delete_user_template() (R/templates.R), which
-# walk whatever directory they are handed. That pair is also strictly the more
-# capable one -- delete_user_template() matches on the sanitised FILENAME as well
-# as the id field, so a report template whose id was hand-edited in the YAML box is
-# deletable through the live path and was not deletable through this one.
-
-# .doc_fp_norm(x) -- ONE rule for comparing a typed phrase against a printed page.
-#
-# The two levels of this mode used to compare text differently: the fingerprint
-# matched with grepl(fixed = TRUE) -- case, spacing and punctuation all
-# significant -- while the header matcher normalised everything away. Measured
-# against a page printing "QUARTERLY PORTFOLIO REPORT": the phrase typed as
-# "Quarterly Portfolio Report" NEVER matched, and nothing on screen said why.
-# That is almost certainly the original complaint, "I put a phrase printed on it,
-# bang smack on front page, still used another template".
-#
-# So both sides are folded the same way: case, punctuation and runs of spaces
-# stop mattering. LINE BREAKS DELIBERATELY DO NOT FOLD. Collapsing them too would
-# let a phrase match across a line boundary, which makes detection LOOSER -- the
-# wrong direction for a fail-closed engine.
-#
-# Byte-wise and wrapped in safe(): a PDF's text layer is not always valid UTF-8
-# and detection must never crash on a file it merely reads badly.
+# ONE rule for comparing a typed phrase against a printed page: case, punctuation and runs of spaces
+# stop mattering on both sides. LINE BREAKS DELIBERATELY DO NOT FOLD - collapsing them would let a
+# phrase match across a line boundary. Byte-wise: a PDF text layer is not always valid UTF-8.
 .doc_fp_norm <- function(x) {
   x <- as.character(x %||% "")
   safe({
@@ -288,68 +187,27 @@ save_document_template <- function(t, dir = "templates/documents_user") {
   }, x)
 }
 
-# .doc_tpl_name(t) -- a report template said in words. template_display_name()
-# appends "statement", which is exactly what these are not.
 .doc_tpl_name <- function(t) {
   lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
                       trimws(as.character(t$statement_type %||% ""))))
   if (nzchar(lab)) lab else as.character(t$id %||% "this template")[1]
 }
 
-# detect_document_template(input, dtemplates) -> THE SAME RETURN SHAPE
-# detect_statement() has: template_id, matched, score, candidates, eligible_ids,
-# tied, margin, runner_up, detail, detail_plain.
-#
-# The rule, and why each step of it is what it is, is .detect_by_fingerprint() in
-# R/templates.R -- ONE detector for both of the other routes. It used to be
-# eighty-five lines here and the same eighty-five lines in R/forms.R, which is how
-# a fix to one route became a drift in the other. The only thing this route still
-# owns is HOW ITS TEXT IS FOLDED (.doc_fp_norm) and how a report template is said
-# in words (.doc_tpl_name).
+# Same return shape as detect_statement(). The rule is .detect_by_fingerprint() in R/templates.R;
+# this route owns only how its text is folded and how a report template is named.
 detect_document_template <- function(input, dtemplates) {
   .detect_by_fingerprint(input, dtemplates, "document", .doc_fp_norm, .doc_tpl_name)
 }
 
-# ---------------------------------------------------------------------------
-# Extraction
-# ---------------------------------------------------------------------------
-
-# extract_document(input, tmpl) -> list(tables, pairs, summary, report, long).
-#
-#   tables   named list, one per template table: name, rows, report, spilled,
-#            anchor, confidence, detail, pages
-#   pairs    one data.frame of every label/value pair (see doc_pairs)
-#   summary  ONE ROW PER TABLE: how it was found, how sure, how many rows, how
-#            many columns came out thin, how many words no column claimed. This
-#            is the whole quality picture on one screen, and it is the thing to
-#            read before trusting any of the numbers underneath it.
-#   long     every table stacked into one long frame (table/name/page/row/
-#            column/value) -- the shape that lets tables of different widths
-#            live in one file.
-#   unclaimed every word that fell inside a table's boundary and into no column
-#            (table/page/x/y/text). See document_unclaimed().
-#   misses   the keys of the tables this document does not carry.
-#
-# ABSENT IS NOT EMPTY. A table the reader could find no evidence of anywhere
-# (`anchor = "not_found"`) gets NO entry here at all -- no sheet, no long rows, no
-# per-column report -- rather than an entry full of zeroes that reads as "this
-# table is here and has nothing in it". Those two are different facts and a
-# spreadsheet cannot tell them apart. It is not silent: the key goes into `misses`
-# and document_summary() prints one row per miss saying it is not on this copy.
+# `long` stacks every table into one frame so tables of different widths can share a file. ABSENT IS
+# NOT EMPTY: a table found nowhere gets NO entry rather than one full of zeroes; its key goes into
+# `misses` instead.
 extract_document <- function(input, tmpl) {
   tabs <- tmpl$tables %||% list()
   keys <- names(tabs) %||% character(0)
   out <- list(); misses <- character(0)
   for (k in keys) {
     tab <- tabs[[k]]
-    # A TABLE SET TO REPEAT IS READ WHEREVER IT IS PRINTED, not once.
-    #
-    # "It CAN appear more than once, but not always." doc_locate_repeats() gives
-    # every page whose printed name and column headings match this table; each
-    # one is read in its own right and comes back as its own table, named for the
-    # page it was found on. Reading only the first would have been the silent
-    # loss this key was refused for -- a seven-fund pack losing six funds with a
-    # green tick beside it.
     places <- if (identical(as.character(tab$occurrence %||% "once")[1], "all"))
       doc_locate_repeats(input, tab, tmpl) else integer(0)
     if (length(places) > 1L) {
@@ -390,30 +248,14 @@ extract_document <- function(input, tmpl) {
        unclaimed = document_unclaimed(out))
 }
 
-# .doc_table_optional(tab) -- TRUE when this table is one the document is not
-# expected to always carry, so its absence is not a fault.
-#
-# Two ways to say it, and the second is not this file's to invent: `optional: true`
-# on the table, or a table set to be read wherever it appears (`occurrence: all`),
-# where three-this-month-and-seven-next means absence is the ordinary case and a
-# permanent needs_review is a warning nobody reads.
+# Two ways to say the document does not always carry this table: `optional: true`, or `occurrence:
+# all`, where absence is the ordinary case and a permanent needs_review is a warning nobody reads.
 .doc_table_optional <- function(tab) {
   isTRUE(tab$optional) ||
     identical(as.character(tab$occurrence %||% "once")[1], "all")
 }
 
-# document_summary(tables, misses, specs) -> the one-row-per-table picture
-# described above, plus one row per table that is NOT on this document.
 document_summary <- function(tables, misses = character(0), specs = list()) {
-  # AN EMPTY SUMMARY HAS TO HAVE THE SAME COLUMN TYPES AS A FULL ONE.
-  #
-  # It used to be ten character(0) columns, which reads as harmless and is not: a
-  # template with values on it and no tables is a real thing to build (a form),
-  # and every caller that adds up a number then meets sum(character(0)) --
-  # "invalid 'type' (character) of argument". That is what "Read the whole
-  # document" answered with when somebody had drawn only label/value pairs. A
-  # zero-row frame is a shape, and a shape that changes with the row count is not
-  # one.
   proto <- list(table = character(0), name = character(0), pages = character(0),
                 rows = integer(0), columns = integer(0), thin_columns = integer(0),
                 unclaimed_words = integer(0), found_by = character(0),
@@ -439,8 +281,6 @@ document_summary <- function(tables, misses = character(0), specs = list()) {
                    position_other_page = "where it sat on the example (different length document)")
   rows <- lapply(names(tables), function(k) {
     r <- tables[[k]]
-    # match(), not [[ ]]: indexing a named vector by a name it does not carry is
-    # an ERROR, and "" is exactly what an unset anchor gives.
     fb <- unname(found_words[match(as.character(r$anchor %||% "")[1], names(found_words))])
     data.frame(table = k, name = r$name %||% k,
                pages = paste(unique(r$pages %||% integer(0)), collapse = ", "),
@@ -456,15 +296,8 @@ document_summary <- function(tables, misses = character(0), specs = list()) {
   out <- do.call(rbind, c(rows, miss_rows)); rownames(out) <- NULL; out
 }
 
-# document_unclaimed(tables) -> every word that fell inside a table's boundary and
-# into NO column: table, page, x, y, text.
-#
-# THIS IS THE BEST PIECE OF EVIDENCE THIS ROUTE PRODUCES, and it used to be
-# computed and thrown away -- the only reader anywhere was an nrow() for the
-# count. Measured on a fixture read through bands 120pt out of place, the spilled
-# frame held the four real closing balances, in order, with their page and their
-# position: exactly the figures the workbook was missing. A count says something
-# is wrong; this says WHAT was lost and where it was printed.
+# Every word that fell inside a table's boundary and into NO column. On a read through bands 120pt out
+# of place this held the four real closing balances: a count says something is wrong, this says what.
 document_unclaimed <- function(tables) {
   empty <- data.frame(table = character(0), page = integer(0), x = numeric(0),
                       y = numeric(0), text = character(0), stringsAsFactors = FALSE)
@@ -484,7 +317,6 @@ document_unclaimed <- function(tables) {
   out
 }
 
-# document_column_report(tables) -> every table's per-column fill report, stacked.
 document_column_report <- function(tables) {
   if (!length(tables))
     return(data.frame(table = character(0), column = character(0), type = character(0),
@@ -501,13 +333,6 @@ document_column_report <- function(tables) {
   out <- do.call(rbind, rows); rownames(out) <- NULL; out
 }
 
-# document_long(tables) -> every cell of every table as one long frame.
-#
-# WHY LONG AND NOT WIDE. Thirty tables of thirty different widths cannot share a
-# wide layout without inventing columns that do not exist in most of them. Long is
-# the only honest single-file shape: one row per cell, carrying which table, which
-# page and which row it came from. The per-table sheets in the workbook are the
-# readable form; this is the form you can load somewhere else.
 document_long <- function(tables) {
   empty <- data.frame(table = character(0), table_name = character(0),
                       page = integer(0), row = integer(0), column = character(0),
@@ -517,8 +342,6 @@ document_long <- function(tables) {
     r <- tables[[k]]$rows
     if (is.null(r) || !nrow(r)) return(NULL)
     vals <- setdiff(names(r), c("page", "row"))
-    # The parsed "__value" companions are a convenience on the sheet, not separate
-    # data -- carrying them here would double every row of the long file.
     vals <- vals[!grepl("__value$", vals)]
     if (!length(vals)) return(NULL)
     do.call(rbind, lapply(vals, function(cn) data.frame(
@@ -537,33 +360,17 @@ document_long <- function(tables) {
   out
 }
 
-# ---------------------------------------------------------------------------
-# Outputs
-# ---------------------------------------------------------------------------
-
-# The sheets the READER writes for itself, which therefore cannot also be a
-# table's sheet. A table called "Report" used to destroy the whole workbook:
-# openxlsx refuses the duplicate, the tryCatch swallowed it, the xlsx was silently
-# never added to the outputs, and the per-table CSV fallback was gated on "no
-# openxlsx" so it did not run either. Two roll-up CSVs, no workbook, no error.
+# Sheets the reader writes for itself, which therefore cannot also be a table's sheet: a table called
+# "Report" made openxlsx refuse the workbook, and the CSV fallback was gated on "no openxlsx".
 .DOC_RESERVED_SHEETS <- c("Build", "Values", "Report")
 
-# .doc_sheet_names(tables, reserved) -- table names turned into legal, unique
-# worksheet names. Excel refuses : \ / ? * [ ] and anything over 31 characters,
-# two sheets cannot share a name, and THE COMPARISON IS CASE-INSENSITIVE -- so
-# "Fees" and "FEES" collide as surely as two identical names do.
 .doc_sheet_names <- function(tables, reserved = .DOC_RESERVED_SHEETS) {
   raw <- vapply(names(tables), function(k)
     as.character(tables[[k]]$name %||% k)[1], character(1))
-  # ':' sits LAST in the class on purpose: a class opening "[:" reads as the start
-  # of a POSIX class name to PCRE, and the whole pattern then fails to compile.
   s <- gsub("[\\\\/?*\\[\\]:]", " ", raw, perl = TRUE)
   s <- trimws(gsub("\\s+", " ", s))
   s[!nzchar(s)] <- names(tables)[!nzchar(s)]
   s <- substr(s, 1, 31)
-  # Claimed folded to lower case: the reader's own sheets first, then each table
-  # in turn. A collision takes a numbered suffix, and the NAME is trimmed to make
-  # room for it rather than the suffix being trimmed off the end.
   used <- tolower(as.character(reserved %||% character(0)))
   for (i in seq_along(s)) {
     cand <- s[i]; k <- 1L
@@ -577,15 +384,8 @@ document_long <- function(tables) {
   stats::setNames(s, names(tables))
 }
 
-# .doc_csv_safe(df) -- the formula guard, applied to EVERY character column.
-#
-# A cell reading "=1+1" reached the file verbatim and Excel evaluated it, so the
-# reviewer saw 2 where the document printed =1+1: a wrong figure that looks right,
-# delivered by the tool's own output. The statement path neutralises exactly this
-# (.neutralize_formula, R/outputs.R) over a fixed list of text columns; a report
-# has no fixed schema, so every character column is guarded instead. Nothing is
-# stripped -- a leading quote is added, which Excel shows as the literal text.
-# The JSON, as on the statement path, stays verbatim: it is never executed.
+# The formula guard, on EVERY character column: a cell reading "=1+1" reached the file verbatim and
+# Excel showed 2. Nothing is stripped - a leading quote is added - and the JSON stays verbatim.
 .doc_csv_safe <- function(df) {
   if (is.null(df) || !ncol(df)) return(df)
   for (nm in names(df))
@@ -594,8 +394,6 @@ document_long <- function(tables) {
   df
 }
 
-# .doc_build_df(build) -- the build stamp as a two-column field/value frame, the
-# same shape .header_df() gives the statement workbook's Summary sheet.
 .doc_build_df <- function(build) {
   b <- as.list(build %||% list())
   if (!length(b) || is.null(names(b)))
@@ -609,12 +407,8 @@ document_long <- function(tables) {
              stringsAsFactors = FALSE, row.names = NULL)
 }
 
-# .doc_block_csv(path, blocks) -- several frames written into one CSV, each under
-# its own one-line heading, separated by a blank line.
-#
-# Used for the report CSV only, which is the EVIDENCE file rather than the
-# loadable one: the long CSV and the values CSV stay plain single-table files that
-# read.csv() opens with no arguments, because that is the whole point of them.
+# Several frames in one CSV, each under a one-line heading. The report CSV only; long and values
+# stay plain single-table files.
 .doc_block_csv <- function(path, blocks) {
   lines <- character(0)
   for (nm in names(blocks)) {
@@ -629,28 +423,9 @@ document_long <- function(tables) {
   invisible(path)
 }
 
-# write_document_outputs(ext, outdir, basename, formats, build) -> the paths
-# written, carrying attr(, "notes"): anything the writer had to say out loud.
-#
-# WHAT IS WRITTEN, AND WHY EACH.
-#   .tables.xlsx       a sheet per table, plus Values (the label/value pairs),
-#                      Report (how each table was found and how full it came out)
-#                      and Build (what produced this file). This is the readable
-#                      form: it is what gets opened.
-#   .tables-long.csv   every cell, one per row, tagged with its table and page.
-#                      This is the loadable form, and it stays a plain one-table
-#                      CSV that read.csv() opens with no arguments.
-#   .report.csv        WHAT PRODUCED THIS and HOW IT READ: the build stamp, then
-#                      one row per table, then the per-column fill report. It used
-#                      to be the column report alone, and on a machine with no
-#                      openxlsx the per-table summary -- the one thing unique to
-#                      this route -- was written NOWHERE AT ALL, while the comment
-#                      here claimed nothing was dropped for want of a package.
-#   .unclaimed.csv     every word inside a table that no column claimed, written
-#                      only when there are some. Its existence is the signal.
-#   .values.csv        the label/value pairs, when the template has any.
-# When the workbook cannot be written -- openxlsx missing, OR openxlsx refusing
-# the workbook -- a CSV PER TABLE is written instead, and the reason is said.
+# Returns the paths written with attr "notes". .report.csv carries the build stamp and the per-column
+# fill report; .unclaimed.csv is written only when there are unclaimed words, so its existence is the
+# signal.
 write_document_outputs <- function(ext, outdir, basename,
                                    formats = c("xlsx", "csv"), build = NULL) {
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
@@ -679,19 +454,11 @@ write_document_outputs <- function(ext, outdir, basename,
         openxlsx::addWorksheet(wb, "Build")
         openxlsx::writeData(wb, "Build", build_df)
       }
-      # THE SAME TWO LINES THE STATEMENT WRITER USES. Without them openxlsx stamps
-      # the wall clock into docProps/core.xml and the ZIP container stamps each
-      # entry's mod-time, so the same document read through the same template
-      # produced a DIFFERENT file every run -- and "re-run it and show it produces
-      # the same file", the check a maintainer runs to prove the tool has not
-      # drifted, failed on this route for a reason that has nothing to do with the
-      # figures. That is the worst kind of false alarm.
+      # Without these openxlsx stamps the wall clock into docProps/core.xml and the ZIP stamps each
+      # entry's mod-time, so the same document read through the same template differed every run.
       wb$core <- .deterministic_core(wb$core)
       openxlsx::saveWorkbook(wb, p, overwrite = TRUE)
       safe(.normalize_zip_timestamps(p))
-      # ...and the file has to actually BE there. A path added for a workbook that
-      # was never written is the same lie as a workbook written and never
-      # mentioned, and it is the one a download button hits.
       fi <- file.info(p)
       isTRUE(!is.na(fi$size) && fi$size > 0 && !fi$isdir)
     }, error = function(e) FALSE)
@@ -716,9 +483,6 @@ write_document_outputs <- function(ext, outdir, basename,
       paths <- c(paths, p)
     }
   }
-  # No workbook -> a CSV per table, so the per-table shape is still available.
-  # Gated on whether one was actually WRITTEN, not on whether openxlsx exists: a
-  # workbook openxlsx refused is a missing workbook too.
   if ("csv" %in% formats && !wrote_xlsx) {
     for (k in names(tables)) {
       r <- tables[[k]]$rows
@@ -738,42 +502,11 @@ write_document_outputs <- function(ext, outdir, basename,
   paths
 }
 
-# ---------------------------------------------------------------------------
-# The front door
-# ---------------------------------------------------------------------------
-
-# convert_tables(path, ...) -> a result list shaped like convert_form()'s, with
-# `kind = "tables"`. Never throws.
-#
-# THE STATUS RULE. There is no reconciliation here, so "ok" cannot mean "the
-# figures add up" -- it can only mean "every table was found, and none of them
-# came out suspiciously empty". Anything less is needs_review, and it says which
-# table and why. A template that matched but found NO rows at all is `unsupported`,
-# because that is the same answer as having no template: this document is not the
-# one the template was drawn on.
-#
-# WHAT ELSE DECIDES IT NOW, and both were computed and discarded before:
-#   * UNCLAIMED WORDS. Words inside a table's own boundary that no column claimed.
-#     Measured 4 on a read where every figure landed one column across, and 0 on
-#     both correct reads of the same fixture - which makes it a far better signal
-#     than a mostly-empty column, and it decided nothing. More than one word is
-#     enough: a low bar is not noisy on this evidence.
-#   * A TYPED COLUMN THAT PARSED NOTHING. A `money` column holding "Transaction",
-#     "Savings", "TermDeposit" reports itself completely full, because fill asks
-#     only whether a cell has any text at all - while the engine already knows not
-#     one cell of it parsed as money and throws that away. A money column at a
-#     parse rate of zero is a band over the wrong ink, not a thin column.
-# Both are read defensively: R/tables.R owns the per-column report, and if it is
-# not carrying parse counts on this build the clause simply does not fire.
+# Never throws. There is no reconciliation here, so "ok" can only mean every table was found and none
+# came out suspiciously empty; a template that matched but found NO rows is `unsupported`. Two further
+# signals: UNCLAIMED WORDS inside a table's own boundary, and A TYPED COLUMN THAT PARSED NOTHING.
 .DOC_MAX_UNCLAIMED <- 1L
 
-# .doc_parse_failures(rep) -> the tables holding a typed column that parsed
-# nothing at all.
-#
-# R/tables.R owns the per-column report and decides what "parsed nothing" means:
-# `wrong_kind` is its answer and is used as given. The parse-rate fallback is here
-# only so this gate degrades to doing nothing, rather than erroring, on a report
-# frame that predates those columns.
 .doc_parse_failures <- function(rep) {
   if (is.null(rep) || !nrow(rep) || !("table" %in% names(rep))) return(character(0))
   if ("wrong_kind" %in% names(rep))
@@ -784,24 +517,8 @@ write_document_outputs <- function(ext, outdir, basename,
   unique(as.character(rep$table[!is.na(rate) & rate <= 0 & !is.na(filled) & filled > 0L]))
 }
 
-# .doc_wrong_columns(rep) -> the tables holding a band that is sitting under
-# ANOTHER of that table's headings.
-#
-# THE COMPUTED FLAG NOBODY READ. R/tables.R works this out properly - a
-# comparative table right-anchored to the page (Q1..Q4, Total) that gains Q5
-# pushes every older column left, so `Q1` holds Q2's figure and `Total` holds
-# Q5's - and it says so, in the table's own detail line. But `wrong_column` was
-# put on the report and then read by NOTHING: not the status, not the summary,
-# not the screen. Every other signal on that run says perfect, because every
-# other signal is true: the rows are there, the columns are full, nothing is
-# unclaimed. Only the headings disagree.
-#
-# So a run that carries one is `needs_review`. It cannot be `ok`: the figures are
-# real figures under the wrong names, which is the one thing this tool exists to
-# stop. (Register I2.)
-#
-# Read defensively for the same reason as .doc_parse_failures: a report frame
-# from a build that predates the column makes this do nothing, rather than error.
+# The tables holding a band sitting under ANOTHER of that table's headings. Such a run is
+# needs_review, because the figures are real figures under the wrong names.
 .doc_wrong_columns <- function(rep) {
   if (is.null(rep) || !nrow(rep) || !("table" %in% names(rep))) return(character(0))
   if (!("wrong_column" %in% names(rep))) return(character(0))
@@ -819,10 +536,6 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
     dtpls <- load_document_templates(doc_dir, user_doc_dir)
     input <- read_input(path)
     tmpl <- NULL; det <- NULL; ambiguous <- FALSE
-    # FORCING A TEMPLATE, ALL THE WAY THROUGH. The argument has always existed and
-    # nothing ever passed it; worse, an id that is not in the library fell through
-    # to detection in silence, so "read it with THIS one" could quietly be
-    # answered by a different template altogether.
     forced <- !is.null(template_id) && nzchar(as.character(template_id)[1])
     if (forced) {
       tmpl <- dtpls[[as.character(template_id)[1]]]
@@ -835,9 +548,8 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
       }
     } else {
       det <- detect_document_template(input, dtpls)
-      # A TIE IS NOT AN ANSWER OF "NO". Two templates that both fit used to mean
-      # "unsupported" on a document the library reads perfectly, and it named
-      # neither. Read it with the best of them, say so, and send it to review.
+      # A tie is not an answer of "no": two templates that both fit used to mean "unsupported" on a
+      # document the library reads perfectly, naming neither.
       ambiguous <- !isTRUE(det$matched) && length(det$tied) >= 2
       if (!isTRUE(det$matched) && !ambiguous) {
         res$status <- "unsupported"
@@ -865,10 +577,6 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
     thin <- unique(ext$report$table[ext$report$low_fill %in% TRUE])
     weak <- names(ext$tables)[vapply(ext$tables, function(r)
       isTRUE((r$confidence %||% 1) < 0.5), logical(1))]
-    # ABSENT, not empty: a table this document does not carry at all. An absence
-    # is only a fault for a table that is PINNED here - one set to be read
-    # wherever it appears is expected to be missing sometimes, and a permanent
-    # needs_review is a warning nobody reads.
     tabs <- tmpl$tables %||% list()
     absent <- as.character(ext$misses %||% character(0))
     absent_pinned <- absent[!vapply(absent, function(k)
@@ -882,12 +590,8 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
     res$absent_tables <- absent; res$unclaimed_words <- unclaimed
     res$parse_fail_tables <- parse_fail
     res$wrong_column_tables <- wrong_col
-    # The build stamp: WHAT PRODUCED THIS FILE. A report converts in March and in
-    # September the defence asks how row 14 was derived; the file used to answer
-    # with sheet names and nothing else. Deliberately deterministic - the run id
-    # is stamped only when the caller hands one over, and no wall clock is written
-    # at all, because the same document read through the same template must still
-    # produce the same bytes (the maintainer's drift check depends on it).
+    # Deliberately deterministic: the run id is stamped only when the caller hands one over and no
+    # wall clock is written, so the same document through the same template gives the same bytes.
     build <- list(engine_version = engine_version(),
                   template_id = res$template_id,
                   template_version = as.character(res$template_version %||% NA),
@@ -917,18 +621,7 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
                            length(wrong_col) ||
                            ambiguous || unclaimed > .DOC_MAX_UNCLAIMED) "needs_review"
                   else "ok"
-    # MATCHED, AND READ NOTHING -- kept as its two halves as well as joined.
-    # The diagnostics table needs them apart (diagnostics_matched_empty, called by
-    # convert_document once this result comes back), and taking them back out of
-    # the message would be a second way to say one thing.
-    #
-    # "the toolkit" was the statement toolkit's name everywhere else in the
-    # product, printed here to somebody holding a report. The tab is the same one
-    # on both routes and it is called "Add a template".
     me_why <- sprintf(
-      # THE TEMPLATE IN WORDS, not its id. An id is a maintainer's handle: the
-      # person holding the document cannot check anything against one, and the
-      # id is still on the run record where it is useful.
       "the %s fits this document but read no rows from any of its %d table(s)",
       .doc_tpl_name(tmpl), res$n_tables)
     me_fix <- paste("the tables have probably moved or been renamed on this copy -",
@@ -944,11 +637,6 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
       status_message("needs_review",
         sprintf("a column of figures on %s came out holding no figures at all", nm(parse_fail)),
         "the column edges there are over the wrong part of the page")
-      # A BAND UNDER ANOTHER OF THIS TABLE'S OWN HEADINGS. Every other signal on
-      # such a run says perfect, and every other signal is TRUE: the rows are
-      # there, the columns are full, nothing is unclaimed. Only the headings
-      # disagree - which is the shifted-by-one shape, and the figures are real
-      # figures filed under the wrong names. It cannot be reported as ok.
       else if (length(wrong_col))
       status_message("needs_review",
         sprintf("the columns on %s do not line up with the headings this copy prints",
@@ -980,8 +668,6 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
         "check the column edges on those - a band drawn slightly too narrow loses the whole column")
       else status_message("ok", sprintf("%d table(s), %d row(s)%s",
                                         res$n_tables, res$n_rows, absent_note))
-    # ...and anything the WRITER had to say is said too, rather than a file
-    # quietly not being there.
     if (length(notes)) res$messages <- c(res$messages, notes)
     res
   }, error = function(e) {
@@ -989,14 +675,6 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
   })
 }
 
-# ---------------------------------------------------------------------------
-# Building a template from what was proposed
-# ---------------------------------------------------------------------------
-
-# .doc_band_of(tb) -- a table's band, or NULL. Only the numbers that are actually
-# set are written, so a template does not carry four keys where one was meant:
-# an absent y_max means "to the bottom of the page", which is a different
-# statement from "to 0".
 .doc_band_of <- function(tb) {
   b <- tb$band
   if (!is.list(b) || !length(b)) return(NULL)
@@ -1008,20 +686,8 @@ convert_tables <- function(path, doc_dir = "templates/documents", user_doc_dir =
   if (length(out)) out else NULL
 }
 
-# document_proposal_from_template(t) -> list(tables, pairs), the INVERSE of
-# document_template_from_proposal() below.
-#
-# WHY IT EXISTS. A report template could be built and saved and never opened
-# again: there was no way back from a saved template to the boxes on the page it
-# was drawn from. So "this column is 4pt too far left" -- the thing that actually
-# goes wrong -- meant either editing coordinates as text in a YAML box or
-# throwing the template away and drawing all of it a second time. The statement
-# half has had the way back for a long time (Admin -> "Redraw its columns"); this
-# is the same door for the other half.
-#
-# The two forms are nearly the same shape already (the builder saves its drafts
-# almost verbatim), so this is mostly re-keying: the template keys tables and
-# values by their output name, and a draft carries that name INSIDE it.
+# The way back from a saved template to the boxes it was drawn from, so "this column is 4pt too far
+# left" does not mean editing YAML. Mostly re-keying, since the template keys by output name.
 document_proposal_from_template <- function(t) {
   empty <- list(tables = list(), pairs = list())
   if (!is.list(t)) return(empty)
@@ -1031,9 +697,6 @@ document_proposal_from_template <- function(t) {
   tables <- lapply(seq_along(tabs), function(i) {
     tb <- tabs[[i]]
     if (!is.list(tb)) return(NULL)
-    # The NAME is what the builder shows and what the output column set is keyed
-    # by. A template written by hand may leave it out, in which case the key it
-    # was filed under is the name it was given.
     tb$name <- as.character(tb$name %||% keys[i] %||% sprintf("Table %d", i))[1]
     tb$columns <- .doc_columns(tb)
     tb$band <- .doc_band_of(tb)
@@ -1044,9 +707,6 @@ document_proposal_from_template <- function(t) {
   pairs <- lapply(seq_along(prs), function(i) {
     pr <- prs[[i]]
     if (!is.list(pr)) return(NULL)
-    # A pair's name is its KEY (the column heading in the output); label_text is
-    # the wording printed on the page. They are different things and the builder
-    # edits both, so both come back.
     pr$name <- as.character(pr$name %||% (names(prs) %||% "")[i] %||% "")[1]
     pr$type <- as.character(pr$type %||% "text")[1]
     pr
@@ -1055,35 +715,13 @@ document_proposal_from_template <- function(t) {
        pairs  = Filter(Negate(is.null), pairs))
 }
 
-# Per-table keys the builder does not ask about and the reader does use. They were
-# dropped on the way back out, which is the same defect the `band` comment below
-# describes: a key set on the template, obeyed by the reader, and silently gone
-# the first time the template was opened and saved.
-#   row_tol / max_gap  how far apart words are still one line / one cell
-#   doc_pages          the length of the example THIS table was drawn on
-#   optional           this document does not always carry it, so absence is fine
-#   occurrence         read it wherever it appears, not just where it was drawn
+# Per-table keys the builder does not ask about and the reader does use. Dropped on the way out,
+# they were silently gone the first time a template was opened and saved.
 .DOC_TABLE_CARRY <- c("row_tol", "max_gap", "doc_pages", "optional", "occurrence")
 
-# document_template_from_proposal(id, bank, type, phrases, tables, pairs,
-#                                 doc_pages, base) -> a mode:document template.
-# This is what the confirm-and-name screen saves: the proposals (see
-# R/tables_detect.R) with the names a person gave them.
-#
-# `base` IS THE TEMPLATE THIS ONE IS BEING SAVED OVER, and it is the whole of the
-# round-trip fix. Opening a saved template and saving it again used to REBUILD it
-# from a whitelist, so everything the builder does not ask about was lost on the
-# way past: `hidden: true` (a PARKED template silently returned to live detection
-# and could start claiming documents again), `notes`, per-table `row_tol` and
-# `max_gap`, and `version` -- which is a literal 1 here, so a template edited
-# seven times was version 1 seven times and today's copy was indistinguishable
-# from last month's in every record kept.
-#
-# So when a base is given, the loaded template is MODIFIED rather than rebuilt:
-# it keeps everything it had, the builder replaces only what the builder owns
-# (the tables, the values, the fingerprint, the name and the issuer), and the
-# version goes UP by one. With no base -- a template being drawn for the first
-# time -- the result is byte for byte what it always was.
+# `base` is the template being saved over, and it is the whole round-trip fix: rebuilding from a
+# whitelist lost `hidden: true` (a parked template returned to live detection), `notes`, per-table
+# row_tol and max_gap, and `version`. With a base the loaded template is MODIFIED and version += 1.
 document_template_from_proposal <- function(id, bank, statement_type, phrases,
                                             tables = list(), pairs = list(),
                                             doc_pages = NA_integer_, base = NULL) {
@@ -1098,14 +736,8 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
       start = list(page = .doc_int(tb$start$page, 1L), y = .doc_num(tb$start$y, 0)),
       end   = list(page = .doc_int(tb$end$page, .doc_int(tb$start$page, 1L)),
                    y = .doc_num(tb$end$y, 0)),
-      # THE BAND IS CARRIED, and it was not. `end` is a place on the LAST page;
-      # `band$y_max` is where the window closes on every page in between
-      # (doc_locate_table), which is the whole reason the builder asks for it. It
-      # was set on the draft, drawn on the screen, written in the "where it
-      # starts and stops" panel -- and then dropped here, so the reader never saw
-      # it and the footer came back in the rows anyway. A control that changes
-      # nothing is worse than no control: it answers the question and the
-      # question stays answered wrongly.
+      # The band is carried: `end` is a place on the LAST page while `band$y_max` is where the
+      # window closes on every page between. Dropped here, the footer came back in the rows.
       band = .doc_band_of(tb),
       header_rows = .doc_int(tb$header_rows, 1L),
       follow = isTRUE(tb$follow),
@@ -1126,10 +758,6 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
     k <- doc_suggest_name(pr$name %||% pr$label_text %||% "value")
     k <- make.unique(c(pused, k), sep = "_")[length(pused) + 1L]
     pused <- c(pused, k)
-    # WHERE, spelled out on the template. The two boxes already imply it, but a
-    # person editing this file -- or the screen that lets them change it from
-    # "to the right of it" to "under it" -- should not have to do coordinate
-    # arithmetic to find out which side the tool will look on.
     rel <- if (is.list(pr$label) && is.list(pr$value))
              .doc_pair_rel(pr$label, pr$value) else NULL
     if (is.list(pr$where)) rel <- utils::modifyList(rel %||% list(), pr$where)
@@ -1148,27 +776,15 @@ document_template_from_proposal <- function(id, bank, statement_type, phrases,
        doc_pages = .doc_int(doc_pages),
        ref_width = .A4_W, ref_height = .A4_H,
        fingerprint = list(page_contains_all = as.list(ph)),
-       # NO CURRENCY. A document template has no reconciliation behind it and
-       # nothing in this mode ever reads one -- so stamping "NZD" on a report of
-       # rupees or euros would be a false statement in a saved file, made by a
-       # converter that never looks at it. A statement template declares its
-       # currency because the balance proof spends it; this one does not.
+       # No currency: nothing in this mode ever reads one, so stamping "NZD" on a report of euros
+       # would be a false statement in a saved file.
        pairs = pkeyed, tables = keyed)
   if (!is.list(base) || !length(base)) return(built)
-  # SAVING OVER AN EXISTING TEMPLATE: keep it, and change only what the builder
-  # owns. `origin` is a load-time marker, not part of the template, and
-  # save_document_template drops it anyway.
   out <- base
   out$origin <- NULL
-  # Exactly what the builder owns, and nothing else. ref_width/ref_height are
-  # NOT on this list: the frame is part of the template, and the A4 default this
-  # function falls back to would relabel every band on a Letter-sized template
-  # without converting one of them.
   for (k in c("id", "bank", "statement_type", "format", "mode", "doc_pages",
               "fingerprint", "pairs", "tables"))
     out[[k]] <- built[[k]]
-  # ...and the version goes UP rather than back to 1. A number that is always 1
-  # cannot tell today's template from last month's in any record that keeps it.
   v <- suppressWarnings(as.numeric(base$version %||% NA))
   out$version <- if (is.finite(v)) v + 1 else 1
   out

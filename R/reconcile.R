@@ -1,50 +1,10 @@
-# reconcile.R -- reconciliation KPIs + deterministic trust mapping.
-#
-# SHAPE OF THIS FILE, and where to add things:
-#   * one `.kpi_*()` builder per check. Each takes only what it needs, and returns
-#     ONE .kpi() row -- or NULL when the check does not apply to this statement
-#     (`amount_direction`, `ocr_confidence` and `redaction_scan` are only raised
-#     when there is something to say).
-#   * `.reconcile_trust()` turns the finished KPI table into the trust level,
-#     score and reasons.
-#   * `reconcile()` is the list of checks, in report order, and nothing else.
-#
-# TO ADD A KPI: write a `.kpi_<name>()` builder below, then add one line to the
-# list in reconcile(). Then give it a plain-English label in `CHECK_PLAIN`
-# (ui_labels.R) and, if it can FAIL, a how-to-fix entry in build_diagnostics()
-# (R/diagnose.R, section 1) -- a failing check with no fix text falls back to a
-# generic "review this against the source statement".
+# reconcile.R -- reconciliation KPIs and deterministic trust mapping. One .kpi_*() builder per check,
+# each returning ONE .kpi() row or NULL when it does not apply. To add one: write the builder, add a
+# line to reconcile(), a label in CHECK_PLAIN and, if it can FAIL, a fix entry in build_diagnostics().
 
-# A CHECK THAT DID NOT RUN SHOWS NO FIGURES.
-#
-# The Checks table prints Expected and Read beside the verdict, so a row could
-# read "No row failed to read | could not be checked | Expected 79 | Read 79" --
-# two numbers that agree, under a result saying nothing was proved. On a clean
-# CSV the identical "7 | 7" IS the proof, so the figures cannot tell a reviewer
-# which of the two she is looking at, and 79 = 79 beside a check that never ran
-# reads as a pass. balance_reconciliation already gets this right by passing no
-# figures on its "na" path; enforcing it HERE rather than in each builder means
-# it holds for every check, including the next one written.
-#
-# INFORMATIONAL rows are exempt: their `actual` is the fact they exist to report
-# (redacted row count, OCR confidence), the table gives them their own word
-# rather than "could not be checked", and app.R reads the redaction count off it.
-#
-# AN `expected` MUST BE SOMETHING THE REVIEWER CAN CHECK. It may be a figure the
-# STATEMENT PRINTS, or a plain target for the rows we produced (0, ">0", n). It
-# may never be a count synthesised from our own skips -- a number in a column
-# headed Expected that appears nowhere in the document leaves a forensic reviewer
-# unable to check the checker, and it is the checker's own arithmetic presented as
-# the document's. See .kpi_no_unparsed_rows for the case this rule was written for.
-#
-# A `detail` IS RENDERED UNDER TWO DIFFERENT NAMES. build_diagnostics()
-# (R/diagnose.R) re-emits every FAILING check as a diagnostic carrying this exact
-# string, and the verdict card prints the diagnostics and the failing checks in one
-# list -- so a failing check's detail appears twice on one screen, once under the
-# diagnostic's wording and once under the check's own. Write it as a self-contained
-# statement of WHAT WAS FOUND, leading with the fault, so it stays true under a
-# heading worded either way. (That the same finding is listed twice at all is not
-# this file's to fix; the emitter and the card own that.)
+# A CHECK THAT DID NOT RUN SHOWS NO FIGURES: "Expected 79 | Read 79" under "could not be checked"
+# reads as a pass. An `expected` must be a figure the STATEMENT PRINTS or a plain target, never a
+# count synthesised from our own skips. A `detail` is re-emitted verbatim by build_diagnostics().
 .kpi <- function(name, status, expected = NA, actual = NA,
                  discrepancy = NA, detail = "", informational = FALSE) {
   if (identical(status, "na") && !isTRUE(informational)) {
@@ -56,9 +16,7 @@
              informational = informational, stringsAsFactors = FALSE)
 }
 
-# .row_list(ids, max_show) -- "row 4", "rows 4, 9 and 12", "rows 4, 9, 12 ... (+3 more)".
-# A KPI detail has to POINT AT the offending rows or the reviewer cannot act on it,
-# but it must stay readable when a whole column failed to parse, hence the cap.
+# A detail must POINT AT the offending rows, but stay readable when a whole column failed to parse.
 .row_list <- function(ids, max_show = 10L) {
   ids <- suppressWarnings(as.integer(ids)); ids <- ids[!is.na(ids)]
   if (!length(ids)) return("no row identified")
@@ -68,29 +26,17 @@
   if (extra > 0) sprintf("%s%s and %d more", lbl, shown, extra) else paste0(lbl, shown)
 }
 
-# .header_ocr(h) -- the two OCR figures off the header, read ONCE the same way by
-# the ocr_confidence KPI and by the trust cap below, so they cannot disagree about
-# whether this statement was machine-read. -> list(pages, conf).
 .header_ocr <- function(h) {
   pages <- suppressWarnings(as.integer(h$ocr_pages %||% 0L))
   if (is.na(pages)) pages <- 0L
   list(pages = pages, conf = suppressWarnings(as.numeric(h$ocr_min_confidence %||% NA)))
 }
 
-# ---- the checks -------------------------------------------------------------
-
-# 1. balance_reconciliation: opening + sum(amount) == closing.
 .kpi_balance_reconciliation <- function(tx, h, n) {
   opening <- suppressWarnings(as.numeric(h$opening_balance %||% NA))
   closing <- suppressWarnings(as.numeric(h$closing_balance %||% NA))
-  # Many statements don't PRINT a labelled opening/closing balance -- the figure
-  # is simply the first/last running balance. Rather than report "na" when the
-  # info is plainly there, DERIVE the MISSING one from the running-balance column
-  # (closing = last balance; opening = first balance - first amount) -- but ONLY
-  # when the OTHER balance is labelled, so at least one INDEPENDENT anchor remains.
-  # (Deriving BOTH would just re-check the balance column's endpoints and could
-  # mask a mid-column break, so both-missing stays honest "na" and
-  # running_balance_continuity is the check there.) Noted in the detail.
+  # Derive the MISSING anchor from the balance column, but ONLY when the OTHER is labelled, so one
+  # independent anchor remains: deriving both could mask a mid-column break.
   bal <- if (!is.null(tx$balance)) tx$balance else rep(NA_real_, n)
   derived <- character(0)
   if (is.na(closing) && !is.na(opening) && n > 0 && any(!is.na(bal))) {
@@ -99,9 +45,6 @@
   if (is.na(opening) && !is.na(closing) && n > 0 && !is.na(bal[1]) && !is.na(tx$amount[1])) {
     opening <- bal[1] - tx$amount[1]; derived <- c(derived, "opening")
   }
-  # Which rows have no readable amount? One blank / unreadable / redacted amount is
-  # enough to make the total unprovable, so name them: "it didn't reconcile" is
-  # useless to a reviewer who cannot see WHICH figure is missing.
   na_amt <- if (n > 0) which(is.na(tx$amount)) else integer(0)
   na_ids <- if (length(na_amt)) (tx$row_id %||% seq_len(n))[na_amt] else integer(0)
 
@@ -118,12 +61,8 @@
                        opening, sum(tx$amount), closing, note)))
   }
   if (!is.na(opening) && !is.na(closing) && n > 0) {
-    # BOTH anchors are printed on the statement -- the strongest completeness proof
-    # there is was available -- and a single unreadable amount is all that stopped
-    # it. Reporting "na" here shrugged off the one check that could have caught a
-    # wrong figure, and the run still came out trust medium / status ok / fed to
-    # Qlik. Unproven is not the same as not applicable: FAIL, so it routes to
-    # needs_review and the feed withholds it until a human resolves the amount.
+    # Both anchors are printed and a single unreadable amount is all that stopped the strongest
+    # completeness proof there is. Unproven is not not-applicable: FAIL, so the feed withholds it.
     return(.kpi(
       "balance_reconciliation", "fail",
       expected = round(opening + sum(tx$amount, na.rm = TRUE), 2),
@@ -134,16 +73,8 @@
                               "then re-run"),
                        length(na_amt), .row_list(na_ids), opening, closing)))
   }
-  # Honest about WHICH anchor is missing. The old single message claimed there was
-  # "no opening/closing balance and no running-balance column" even when the
-  # statement printed both -- factually untrue, and it sent reviewers looking for
-  # a balance that was on the page all along.
-  # ...and the same untruth was still live in the BOTH-missing branch: it claimed
-  # there was no running-balance column even when the column was present, populated
-  # and passing running_balance_continuity two rows lower on the same screen. When
-  # the column IS there, the reason both anchors are refused is not that it is
-  # missing -- it is that deriving BOTH from it would only check that column against
-  # its own endpoints, which proves nothing. Say the real reason.
+  # Honest about WHICH anchor is missing: the old message claimed there was no balance and no
+  # running-balance column even when the statement printed both.
   has_bal <- any(!is.na(bal))
   why <- if (n == 0) "no transactions to reconcile"
     else if (is.na(opening) && is.na(closing) && has_bal)
@@ -159,13 +90,8 @@
   .kpi("balance_reconciliation", "na", detail = why)
 }
 
-# 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
-# A blank/redacted MIDDLE balance must not open a blind window: skipping both
-# pairs around an NA balance lets a real break hide inside the gap (100, NA, 130
-# with amounts 0/+20/+5 would wrongly "pass" -- 130 should be 125). Instead
-# BRIDGE the gap: carry the last known-good balance plus the running sum of the
-# intervening amounts, and check the next known balance against that. If any
-# intervening amount is itself NA the bridge is genuinely unverifiable, so it is
+# balance[i] == balance[i-1] + amount[i]. A blank or redacted MIDDLE balance must not open a blind
+# window, so BRIDGE it. If any intervening amount is itself NA the bridge is unverifiable and is
 # counted and surfaced, never silently passed.
 .kpi_running_balance_continuity <- function(tx, n) {
   if (!(n >= 2 && !all(is.na(tx$balance))))
@@ -193,14 +119,8 @@
        expected = 0, actual = bad, discrepancy = bad, detail = detail)
 }
 
-# 2b. amount_direction (P2-10): a `signed` statement proves money-in vs money-out
-# by its OWN +/- signs. If EVERY amount carries the same sign AND there is no
-# running-balance column to cross-check, the file may in fact list UNSIGNED
-# magnitudes -- read as all money-in (or all money-out), possibly inverted, with
-# nothing to catch it (the loose excel_generic catch-all is the classic case).
-# Fail closed so it routes to needs_review and is withheld from the governed
-# feed, rather than feeding a silently sign-inverted statement to dashboards.
-# NULL (no KPI at all) when the direction is genuinely provable.
+# If EVERY amount carries the same sign AND there is no running-balance column to cross-check, the
+# file may list unsigned magnitudes read as all money-in, possibly inverted. Fail closed.
 .kpi_amount_direction <- function(tx, template) {
   style <- (if (!is.null(template)) template$amount_sign %||% template$table$amount_sign else NULL)
   amt_nz <- tx$amount[!is.na(tx$amount) & tx$amount != 0]
@@ -214,30 +134,9 @@
                        "inverted; check a few rows against the source or set the correct amount style"))
 }
 
-# 3. transaction_count: parsed > 0 and == stated count if present.
-#
-# WHY THE NO-COUNT CASE KEEPS "pass" (it was challenged, and the answer is not
-# "because it always did"). The rule this file already enforces is that a check
-# which did not run must not report pass -- that is why no_unparsed_rows says
-# "na" on a PDF. The difference is what the row DISPLAYS. The PDF case set
-# expected = n and actual = n, so it showed a proof it had not performed. This
-# case sets expected = ">0", which is exactly and only the thing it did test: the
-# row on screen reads "Row count | Expected >0 | Read 7 | OK", and a reviewer can
-# see from the Expected column that no printed figure was involved. A check that
-# declares its own weakness on the same line is not a silent one.
-#
-# The alternative (return "na" when the statement prints no count) was built and
-# measured. It is honest, but every real sample in this repo prints no count, so
-# it demotes essentially every statement from "high" to "medium" -- and a grade
-# that stops varying stops carrying information, which is the same defect moved
-# somewhere else. Keeping it would need a compensating trust rule ("high stands
-# when the balance proof passed"), i.e. machinery to undo most of what the change
-# did. The claim the reviewer reads was already corrected where it belonged: the
-# label is "Row count", the topic, not "Row count matches the statement".
-#
-# n == 0 is still a real failure and still reported as one -- it is reachable from
-# every caller that reconciles without going through convert (an auto-split
-# segment, the batch audit).
+# The no-count case keeps "pass" because expected = ">0" is exactly what it tested. Returning "na"
+# was measured: every real sample prints no count, so it demotes essentially every statement to
+# medium, and a grade that stops varying stops carrying information.
 .kpi_transaction_count <- function(h, n) {
   stated <- suppressWarnings(as.integer(h$stated_count %||% NA))
   if (!is.na(stated))
@@ -251,35 +150,16 @@
                                "statement if the total matters"), n))
 }
 
-# .period_runs_backwards(start, end) -- does this period END BEFORE IT STARTS?
-# TRUE only when BOTH bounds read as dates and the end is the earlier one; an
-# unreadable bound is unknown, not backwards.
-#
-# A BACKWARDS PERIOD IS NEVER DATA, IT IS ALWAYS A DEFECT. No statement covers
-# negative time, so wherever one appears the tool has mis-assembled it -- and one
-# did: a bundle's combined header took the first statement's start and the last
-# statement's end IN FILE ORDER, so a newest-first bundle published "20 Apr 2026
-# to 19 Feb 2026" and the governed feed accepted it (see .bundle_period, R/split.R,
-# for the fix and the reasoning). Named once, here, so the two places that must
-# refuse one -- the bundle header as it is built, and every reconciled statement
-# as it is checked -- cannot come to different conclusions about what backwards is.
+# TRUE only when both bounds read as dates; an unreadable bound is unknown, not backwards. A
+# newest-first bundle published "20 Apr 2026 to 19 Feb 2026" and the feed accepted it. Named once
+# so the bundle header and every reconciled statement cannot disagree.
 .period_runs_backwards <- function(start, end) {
   s <- .tolerant_date(start %||% NA); e <- .tolerant_date(end %||% NA)
   !is.na(s) && !is.na(e) && e < s
 }
 
-# 4. dates_within_period: all dates within period_start..period_end.
-# Period bounds may be verbatim strings ("1 May 2026"), not ISO -> parse both
-# tolerantly (the shared .tolerant_date, see R/params.R) so an unparseable bound
-# skips the check rather than crashing.
-#
-# A BACKWARDS PERIOD FAILS HERE, AND SAYS SO IN ITS OWN WORDS. It already failed,
-# arithmetically -- no date can be inside an empty range, so every row counted as
-# "outside period" -- but the detail then read "34 date(s) outside period", which
-# blames the rows for a fault in the period and sends the reviewer to check
-# thirty-four transactions that are all perfectly fine. The fault is stated
-# instead, and the check cannot pass: containment against a range that runs
-# backwards proves nothing about the rows either way.
+# Bounds may be verbatim strings, so an unparseable bound skips the check. A BACKWARDS period fails
+# in its own words: the old detail read "34 date(s) outside period", blaming the rows.
 .kpi_dates_within_period <- function(tx, h, n) {
   ps <- .tolerant_date(h$period_start %||% NA); pe <- .tolerant_date(h$period_end %||% NA)
   if (.period_runs_backwards(h$period_start, h$period_end))
@@ -294,13 +174,8 @@
   d <- suppressWarnings(as.Date(tx$date))
   within <- !is.na(d) & d >= ps & d <= pe
   outside <- sum(!within, na.rm = TRUE)
-  # EXPECTED AND ACTUAL MUST BE THE SAME KIND OF THING. They are rendered side by
-  # side under exactly those two headings, and this check used to put a date RANGE
-  # in one and a COUNT in the other -- "Expected 2025-08-13..2025-09-01, Actual 34"
-  # invites the reviewer to read 34 as a date and find it is not one. The count is
-  # the finding, not the measurement: what the rows actually span is the thing
-  # comparable to the period, so that goes in Actual and the count stays in the
-  # detail, where it already was.
+  # Expected and Actual are rendered side by side, so they must be the same kind of thing: a date
+  # RANGE against a COUNT invites the reviewer to read 34 as a date.
   span <- if (any(!is.na(d))) sprintf("%s..%s", min(d, na.rm = TRUE), max(d, na.rm = TRUE))
           else NA_character_
   .kpi("dates_within_period", if (outside == 0) "pass" else "fail",
@@ -308,19 +183,9 @@
        discrepancy = outside, detail = sprintf("%d date(s) outside period", outside))
 }
 
-# 4b. dates_readable: the never-silently-wrong safety net for the date column.
-# A template can fingerprint-match while its date mapping misses (renamed or
-# re-cased header, wrong sheet, wrong format) - every date comes back NA and,
-# with no period to check against, nothing above would fail. Rows with no
-# readable date at ALL must never leave as a clean "ok".
-#
-# EVERY row, not "at least one". The threshold used to be d_ok > 0, so 1 readable
-# date out of 500 passed, under a label ("Row dates could be read") a reviewer
-# reads as a statement about the whole column. That is the silently-wrong shape
-# the charter forbids: 499 rows with no usable date, behind a green tick. A
-# PARTIAL read is not "could not be checked" either -- the check ran and found a
-# real defect in specific rows -- so it fails, and the rows are named by the
-# date_parse / date_unresolved diagnostics that already exist for them.
+# The safety net for the date column: a template can fingerprint-match while its date mapping
+# misses. EVERY row, not "at least one" - one readable date out of 500 passed under a label a
+# reviewer reads as being about the whole column.
 .kpi_dates_readable <- function(tx, n) {
   if (n == 0) return(NULL)
   d_ok <- sum(!is.na(suppressWarnings(as.Date(tx$date))))
@@ -334,41 +199,24 @@
                 else "no row dates could be read - the date column mapping or format is wrong")
 }
 
-# 5. no_unparsed_rows: every non-empty source data line became a transaction.
-# Completeness is proven by comparing the count of non-empty PHYSICAL source
-# data lines against parsed rows -- computing it from the parsed table alone
-# (n vs n-malformed) can never see a record that was merged/lost, so a stray
-# cross-line quote would silently pass. `source_line_count` is threaded from
-# the reader; NA (excel/pdf) falls back to the malformed-only check.
+# Completeness is proven against non-empty PHYSICAL source lines; computing it from the parsed
+# table alone can never see a record that was merged or lost. NA (excel/pdf) falls back to malformed.
 .kpi_no_unparsed_rows <- function(parsed, tx, n) {
   malformed <- sum(grepl("malformed", tx$flags))
   src_lines <- suppressWarnings(as.integer(parsed$source_line_count %||% NA))
-  # A legitimate multi-line quoted record spans several physical lines but is ONE
-  # parsed row; those continuation lines are accounted for here so they are not
-  # miscounted as lost. A physical line captured by no record still fails loudly.
+  # A multi-line quoted record spans several physical lines but is ONE parsed row. A physical line
+  # captured by no record still fails loudly.
   extra_ml <- suppressWarnings(as.integer(parsed$multiline_extra %||% 0L))
   if (is.na(extra_ml)) extra_ml <- 0L
   lost <- if (!is.na(src_lines)) max(0L, src_lines - n - extra_ml) else 0L
   good <- n - malformed
   expected_rows <- if (!is.na(src_lines)) src_lines else n
-  # Rows the PDF reader examined but did not keep (headers, summary lines, notes,
-  # and any row whose date or amount it could not read). Threaded out of
-  # parse_pdf_table so this KPI can state a real number instead of nothing.
   skipped_rows <- suppressWarnings(as.integer(parsed$skipped_row_count %||% NA))
   visual_rows  <- suppressWarnings(as.integer(parsed$visual_row_count %||% NA))
 
   if (!is.na(src_lines)) {
-    # Delimited: the physical data-line count is known, so completeness is provable.
-    #
-    # THIS ONE KEEPS ITS "pass", deliberately. It is the third of the three checks
-    # that were challenged for passing more generously than they sound, and it is
-    # the one that holds up: it compares two independently-counted quantities, it
-    # can and does come back "fail" on real files, and its label ("No row failed to
-    # read") claims exactly what it proves and nothing more. It is true that it
-    # never looks inside a cell -- and it must not, because that is what
-    # dates_readable, balance_reconciliation and the malformed flag are for. A
-    # check that proves one thing soundly is not the same defect as a check that
-    # proves nothing and says "pass".
+    # Delimited: the physical data-line count is known, so completeness is provable. It never looks
+    # inside a cell, and must not - that is what dates_readable and balance_reconciliation are for.
     return(.kpi(
       "no_unparsed_rows", if (malformed == 0 && lost == 0) "pass" else "fail",
       expected = expected_rows, actual = good, discrepancy = expected_rows - good,
@@ -381,95 +229,21 @@
       "no_unparsed_rows", "fail", expected = expected_rows, actual = good,
       discrepancy = malformed, detail = sprintf("%d malformed row(s)", malformed)))
   }
-  # PDF / Excel: there is NO independent source-line count, so `lost` was always
-  # 0 by construction and this KPI reported "pass" for every such statement -- a
-  # green tick for a check that never ran, which is exactly the failure the
-  # charter forbids. Say "not applicable" instead, and show the skipped-row count
-  # so the number is a fact the reviewer can check on the page rather than a
-  # reassurance nobody computed.
-  # THE THIN PARSE. A PDF has no source-line count, so completeness "cannot be
-  # proved" -- but there is one thing it CAN prove, and it used to throw away:
-  # rows that looked like transactions and could not be read (the date didn't
-  # parse, or there was no amount in the money bands). Headings and summary lines
-  # are skipped on every healthy statement and mean nothing; these do not.
-  #
-  # WHY THIS MATTERS: reading 5 rows of a 500-row statement used to pass every
-  # check -- transaction_count only requires n > 0 when the statement prints no
-  # stated count, and this KPI returned "na". A green run, on the dashboards,
-  # missing 99% of the money. That is the exact failure the charter forbids.
-  #
-  # WHAT IT IS MEASURED AGAINST, AND WHY THAT CHANGED. The test used to be "more
-  # rows were missed than captured" (actionable >= kept), calibrated here as
-  # "healthy conversions sit at 4-36% actionable skips against kept rows; the
-  # broken ones are at 100-1300%". That sentence was false, and a file shipped in
-  # this repo falsified it: samples/_private_staging/anz_0382025_feb.pdf converts
-  # PERFECTLY -- 7 transactions whose money-in and money-out agree to the cent,
-  # both directions, with the totals the statement prints on its own page 2 -- and
-  # it sat at 171%, failed this check, and was held back from the dashboards.
-  # Re-measured over every PDF sample in the repo, actionable-against-kept on
-  # conversions that reconcile exactly runs 0, 1, 5, 7, 12, 13, 14, 20, 23, 36,
-  # 64, 78, 129 and 800 per cent. The 800% is an ASB statement with ONE real
-  # transaction and eight lines of account-number / statement-number / page-number
-  # furniture, and it is a perfect read. No threshold on that ratio separates a
-  # healthy conversion from a broken one, because the two quantities are not
-  # comparable: `kept` counts transactions, while `actionable` counts whatever
-  # page furniture happens to carry a digit in a money band -- a phone number in a
-  # footer, an upcoming-payments block, an other-accounts balance line. The number
-  # could not be moved, so the sentence had to go.
-  #
-  # So the old comparison KEEPS its place -- more missed than captured is still
-  # necessary -- and gains the MAGNITUDE guard it never had. What is comparable is
-  # rows against rows over one denominator: of every visual row the reader
-  # examined, how many were transaction-shaped and unreadable? A handful of such
-  # rows on a full page is furniture; a QUARTER of the whole document is not.
-  #
-  # Measured that way (parse_pdf_table's own visual_row_count, the number this KPI
-  # is handed): every PDF sample in the repo that reconciles runs 0-16% -- the
-  # worst is 11 of 67 rows -- while the same statements with the template pushed
-  # off the table run 34-52%, and the one the suite pins (tests/testthat/
-  # test-reconcile.R, tutorial with the date band off its column: 12 unreadable
-  # rows, 31 examined, 0 read) is 39%. A quarter sits above every healthy sample
-  # with room and below every broken one this repo can produce.
-  #
-  # This IS a threshold, and calling it anything else is how the last one survived
-  # being wrong. What makes it safe is not the number, it is that both conditions
-  # must hold and that everything under it is still REPORTED: the "na" row below
-  # states the actionable count in words, and See it on the page lists every
-  # skipped row with its reason. The threshold decides whether the run is held
-  # back, not whether the reviewer is told.
-  #
-  # It is also strictly NARROWER than the rule it replaces (it adds a condition),
-  # so it can only stop a false alarm, never raise a new one -- and narrower is
-  # affordable, because every way a template can be pushed off the table on these
-  # samples reads ZERO rows rather than a few: n == 0 already fails
-  # transaction_count and comes out of convert_statement as "matched the wording on
-  # this statement but read no transactions from it". Be honest that no PARTIAL
-  # read exists in this repo to calibrate against.
-  #
-  # THE SMALL-STATEMENT FLOOR STAYS. Three is the smallest count that cannot be one
-  # stray row plus its neighbour; below that this is noise rather than a finding,
-  # and crying wolf on a small honest statement teaches people to ignore the one
-  # warning that matters.
-  #
-  # Note this is NOT "more rows didn't look like transactions than did", which is
-  # true of most statements and is fine: headings, notes, summary lines and wrapped
-  # text are excluded from `actionable` entirely.
+  # PDF / Excel: there is NO independent source-line count, so `lost` was always 0 by construction and
+  # this reported "pass" for every such statement - a green tick for a check that never ran.
+  # THE THIN PARSE. A PDF can still prove one thing: rows that looked like transactions and could not
+  # be read. "More missed than captured" alone was falsified by a shipped sample sitting at 171%,
+  # because `kept` counts transactions while `actionable` counts page furniture carrying a digit, so
+  # it gains a MAGNITUDE guard over one denominator - healthy samples run 0-16%, the same statements
+  # with the template off the table 34-52%. Both conditions must hold and everything under it is
+  # still REPORTED; the small-statement floor stays, or crying wolf teaches people to ignore it.
   actionable <- suppressWarnings(as.integer(parsed$actionable_skip_count %||% NA))
   if (!is.na(actionable) && !is.na(visual_rows) && actionable >= 3L &&
       actionable >= n && actionable * 4L > visual_rows) {
     return(.kpi(
       "no_unparsed_rows", "fail",
-      # NOTHING IN THE EXPECTED COLUMN. It used to read `n + actionable`: on the
-      # ANZ statement above that printed "Expected 19" beside "Read 7", and the
-      # statement prints no 19 anywhere -- a figure invented by the checker, in the
-      # column a reviewer uses to check the checker, on the one row that quarantines
-      # the run. Expected may hold something the statement PRINTS, or a plain target
-      # for the rows we produced (0, ">0", n); it may never hold a synthesised count
-      # of what the document "should" have contained. The two figures that are real
-      # -- how many rows were read, and how many were transaction-shaped and
-      # unreadable -- are both in the detail and both countable on the page.
-      # balance_reconciliation already declines to print figures it cannot stand
-      # behind; so does this.
+      # Nothing in the Expected column. It used to read n + actionable - "Expected 19" beside
+      # "Read 7" on a statement that prints no 19 anywhere, invented by the checker.
       expected = NA, actual = n, discrepancy = actionable,
       detail = sprintf(paste0("%d of the %d row(s) the reader examined look like transactions and ",
                               "could not be read, against %d that were read - more than a quarter ",
@@ -479,23 +253,14 @@
                               "See it on the page shows which rows and why."),
                        actionable, visual_rows, n)))
   }
-  # THE SKIPPED COUNT IS THE MOST ALARMING NUMBER ON THIS ROW, and it sat beside a
-  # Result column reading "could not be checked" with nothing to size it. The
-  # engine already knows the fact that settles it: `actionable` counts only the
-  # skips that MEAN something -- a row shaped like a transaction that would not
-  # read -- while headings, summary lines and wrapped text are excluded and are
-  # skipped on every healthy statement. When that count is zero, say so; a reviewer
-  # should not have to open a second screen to find out that 122 is the normal
-  # number for a statement of this length.
+  # The skipped count is the most alarming number on this row and sat beside "could not be checked"
+  # with nothing to size it. `actionable` counts only the skips that MEAN something.
   skip_note <- if (is.na(skipped_rows) || skipped_rows == 0L || is.na(actionable)) ""
     else if (actionable == 0L) " None of the skipped rows looked like a transaction."
     else sprintf(" %d of the skipped rows looked like a transaction and could not be read.",
                  actionable)
   .kpi("no_unparsed_rows", "na", expected = expected_rows, actual = good,
        discrepancy = NA,
-       # "the balance proof above", not `balance_reconciliation`: a raw engine code
-       # on a customer-facing screen is something the operational guide tells the
-       # analyst to REPORT AS A BUG, so this row must not be the one that prints it.
        detail = if (!is.na(skipped_rows) && !is.na(visual_rows))
          sprintf(paste0("cannot be proved for this format: there is no independent ",
                         "source line count. %d of %d visual row(s) were read as ",
@@ -510,7 +275,6 @@
                    "completeness."))
 }
 
-# 6. redaction_summary: informational count of redacted rows.
 .kpi_redaction_summary <- function(tx) {
   redacted <- sum(grepl("redacted", tx$flags))
   .kpi("redaction_summary", "na", expected = NA, actual = redacted,
@@ -518,11 +282,8 @@
        informational = TRUE)
 }
 
-# 7. ocr_confidence: informational -- was any page machine-read (OCR), and how
-# confident was the worst page? OCR is never 100% accurate, so this must be
-# visible to a forensic reviewer alongside the confidence figure. It does not
-# move the score (it is informational) but it DOES cap the trust level below --
-# an OCR'd statement is never rated "high". NULL when no page was OCR'd.
+# Informational: was any page machine-read, and how confident was the worst page? It does not move
+# the score but it DOES cap trust - an OCR'd statement is never rated "high".
 .kpi_ocr_confidence <- function(h) {
   o <- .header_ocr(h)
   if (o$pages <= 0) return(NULL)
@@ -534,15 +295,9 @@
        informational = TRUE)
 }
 
-# 8. redaction_scan: did the occlusion scan actually finish on every page?
-# The scan is the ONLY thing that proves text under a redaction box stayed
-# hidden. When it could not complete, the reader falls back to the raw text
-# layer -- so words the sender blacked out may have been emitted verbatim. The
-# header carried that fact all the way here and NOTHING read it: the run said
-# "Converted successfully", trust was uncapped, and the feed accepted a file
-# that may contain hidden text. Honouring redactions is absolute, so this FAILS
-# (routing to needs_review and withholding the feed) rather than warning quietly.
-# NULL (nothing raised) when the scan was clean, so a good run changes nothing.
+# The occlusion scan is the ONLY thing that proves text under a redaction box stayed hidden; when
+# it could not complete the reader fell back to the raw text layer, so blacked-out words may have
+# been emitted verbatim. Honouring redactions is absolute, so this FAILS rather than warning.
 .kpi_redaction_scan <- function(h) {
   scan_incomplete <- suppressWarnings(as.integer(h$redaction_scan_incomplete %||% 0L))
   if (is.na(scan_incomplete)) scan_incomplete <- 0L
@@ -555,11 +310,8 @@
                                "source PDF before use"), scan_incomplete))
 }
 
-# ---- deterministic trust -----------------------------------------------------
-# .reconcile_trust(kpis, tx, h, n) -> list(level, score, reasons, ...).
-# The KPI table decides the base level; the caveats below can only LOWER a "high"
-# (never raise anything), because each describes something the checks could not
-# prove. `kpis` still carries the internal `informational` column here.
+# The KPI table decides the base level; the caveats below can only LOWER a "high", because each
+# describes something the checks could not prove.
 .reconcile_trust <- function(kpis, tx, h, n) {
   applicable <- kpis[!kpis$informational, ]
   n_fail <- sum(applicable$status == "fail")
@@ -582,25 +334,9 @@
   }
   score <- if (total == 0) 0 else round(100 * (n_pass + 0.5 * n_na) / total)
 
-  # Balance reconciliation is the strongest proof of completeness (opening + every
-  # transaction = closing). When it PASSES, a failing running-balance-continuity
-  # check alone -- typical of combined/multi-account statements where the balance
-  # column resets between sections -- should not drag trust to "low". The result
-  # still surfaces as needs-review (a KPI failed), but honestly rated medium.
-  #
-  # THE REASON JUSTIFIES THE LEVEL. IT DOES NOT GRADE THE OTHER CHECK.
-  # It used to add "the running-balance / period checks are secondary and commonly
-  # flag on combined/multi-account statements". On a real needs_review run that
-  # sentence was printed directly above a HIGH diagnostic reading "This upload looks
-  # like more than one statement bundled together, which corrupts a single parse.
-  # Split it into one statement per file and re-run" -- so the tool excused, as
-  # commonplace, the exact condition another line of the same screen was calling
-  # corrupting. This function cannot see the diagnostics (build_diagnostics runs
-  # AFTER reconcile and takes its output), so it can never know whether something
-  # worse is being said elsewhere on the run -- which means it must not rank the
-  # failing check at all. State the fact that earns the medium, say plainly that it
-  # does not clear anything, and leave the grading to the surfaces that can see the
-  # whole run.
+  # Balance reconciliation is the strongest proof of completeness, so a failing
+  # running-balance-continuity check alone - typical of combined statements where the balance column
+  # resets - should not drag trust to "low". The reason justifies the level; it does not grade.
   if (identical(level, "low")) {
     fails <- applicable$name[applicable$status == "fail"]
     bal_pass <- any(applicable$name == "balance_reconciliation" & applicable$status == "pass")
@@ -614,10 +350,8 @@
     }
   }
 
-  # Completeness guard (forensic): if NEITHER a balance reconciliation NOR a
-  # running-balance check could run, and there's no stated count, the engine has
-  # no independent way to know a transaction was dropped. Say so loudly and never
-  # rate such a run "high" -- silence here would be a silent audit gap.
+  # Completeness guard: with NEITHER a balance reconciliation NOR a running-balance check and no
+  # stated count, a dropped transaction cannot be detected. Never rate such a run "high".
   bal_ok  <- any(kpis$name == "balance_reconciliation"     & kpis$status != "na")
   run_ok  <- any(kpis$name == "running_balance_continuity" & kpis$status != "na")
   cnt_ok  <- !is.na(suppressWarnings(as.integer(h$stated_count %||% NA)))
@@ -628,9 +362,6 @@
       "completeness UNVERIFIED: no balance or stated count to reconcile against, so a dropped/missing transaction cannot be detected automatically - check the row count against the statement")
   }
 
-  # Unresolved-year caveat: rows kept with date_unresolved carry a verbatim
-  # day/month but NO year (no statement period was found). Say so explicitly --
-  # the money is preserved but the dates are not fully known.
   n_dateunres <- sum(grepl("date_unresolved", tx$flags))
   if (n_dateunres > 0) {
     if (identical(level, "high")) level <- "medium"
@@ -639,12 +370,8 @@
       n_dateunres))
   }
 
-  # Inferred-year caveat: the mirror image of the case above. The table printed
-  # day+month only, NO statement period could be read, and the reader took the year
-  # from the one 4-digit number it found in free page text (a footer, a copyright
-  # line). Those dates come out fully formed and LOOK proven, so nothing above would
-  # ever question them -- but the year came from outside the period wording and is
-  # an inference, not a fact. Cap trust and say where the year came from.
+  # The mirror image: day+month only, no period, year taken from the one 4-digit number in free
+  # page text. Those dates come out fully formed and LOOK proven, but the year is an inference.
   n_yearinf <- sum(grepl("date_year_inferred", tx$flags))
   if (n_yearinf > 0) {
     if (identical(level, "high")) level <- "medium"
@@ -653,10 +380,6 @@
       n_yearinf))
   }
 
-  # OCR caveat (forensic): a statement where ANY page was machine-read by OCR is
-  # never rated "high" -- OCR is not guaranteed accurate, and reconciliation math
-  # only cross-checks amounts, not the verbatim descriptions. Always surface that
-  # OCR was used and the confidence figure so the reviewer verifies the source.
   ocr <- .header_ocr(h)
   if (ocr$pages > 0) {
     if (identical(level, "high")) level <- "medium"
@@ -665,8 +388,6 @@
       ocr$pages,
       if (is.na(ocr$conf)) " (page confidence could not be measured)"
       else sprintf(" (min page confidence %.0f%%)", ocr$conf)))
-    # A per-cell flag is stronger than the page mean: it points at the exact rows
-    # whose date/amount/balance may have been misread.
     n_ocrlow <- sum(grepl("ocr_low_conf", tx$flags))
     if (n_ocrlow > 0)
       reasons <- c(reasons, sprintf(
@@ -678,9 +399,6 @@
        ocr_pages = ocr$pages, ocr_min_confidence = ocr$conf)
 }
 
-# reconcile(parsed, template) -> list(kpis, trust)
-# The checks, in the order they are reported. A builder returning NULL means "this
-# check does not apply to this statement" and simply does not appear.
 reconcile <- function(parsed, template = NULL) {
   tx <- parsed$transactions
   h  <- parsed$header
@@ -704,7 +422,6 @@ reconcile <- function(parsed, template = NULL) {
 
   trust <- .reconcile_trust(kpis, tx, h, n)
 
-  # Return KPIs without the internal informational flag column exposed downstream.
   list(kpis = kpis[, c("name", "status", "expected", "actual", "discrepancy", "detail")],
        trust = trust)
 }
