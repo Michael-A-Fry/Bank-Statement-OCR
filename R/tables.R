@@ -744,6 +744,119 @@
        header_tops = list(), header_sig = character(0), band_shift = 0)
 }
 
+# ---------------------------------------------------------------------------
+# WHICH PAGE IS THIS TABLE ON -- asked of the whole document, not of one page.
+#
+# Reported: "A number of these reports will NOT have consistent page numbers...
+# there may be x number of pages in between", and "it CANNOT assume that tables
+# will be in the same place - what it's doing is saying hey I saw these here
+# last time. NOT helpful when we're getting SIGNIFICANTLY differing reports."
+#
+# That was exactly it. The reader took `tab$start$page` and read THAT PAGE, so a
+# report with two extra pages in the middle lost every table below the insert -
+# measured on the fixture: insert two pages and all three tables come back
+# "not found on this document".
+#
+# A TABLE'S IDENTITY IS ITS NAME PLUS ITS COLUMN NAMES. Both are already
+# captured: the builder's first gesture is "drag a box round the table's TITLE"
+# and its wording becomes tab$name, and "drag a box round the ROW OF COLUMN
+# NAMES" fills anchor$header_text. The title was never used to find anything -
+# it only labelled the sheet. Now the two together are what is searched for, on
+# every page, and the declared page is a preference for breaking ties rather
+# than a requirement.
+#
+# THE SCORE, out of 2: the fraction of the column names printed on one line
+# (the same .doc_find_header the reader already trusts, so the bar is the same
+# 0.6), plus 1 if the table's name is printed on that page. Either alone is
+# enough to be looked at; both together is what a real match looks like.
+.DOC_PAGE_MIN_SCORE <- 0.6
+
+# .doc_page_has_title(lines, title) -- is the table's own name printed here.
+# Whole words, normalised, so "Fees charged" finds "Fees charged (GST incl)".
+# A one-word or very short name is refused: "Total" or "Notes" appears on half
+# the pages of a report and would vote for all of them.
+.doc_page_has_title <- function(lines, title) {
+  key <- .doc_norm(title)
+  if (nchar(key) < 8L) return(FALSE)
+  any(vapply(lines, function(d) grepl(key, .doc_norm(.doc_line_text(d)), fixed = TRUE),
+             logical(1)))
+}
+
+# .doc_page_score(input, tab, tmpl, p) -- how much this page looks like this
+# table, out of 2.
+.doc_page_score <- function(input, tab, tmpl, p, need, title) {
+  lines <- .doc_lines(.doc_page_words(input, p, tmpl), tab$row_tol)
+  if (!length(lines)) return(0)
+  h <- if (length(need)) .doc_find_header(lines, need) else NULL
+  (if (is.null(h)) 0 else as.numeric(h$hit)) +
+    (if (.doc_page_has_title(lines, title)) 1 else 0)
+}
+
+# .doc_search_terms(tab) -- what this table can be recognised BY, or NULL.
+#
+# NOTHING TO SEARCH FOR IS NOT A SEARCH. A table with neither a usable name nor
+# remembered column wording can only be found where it was drawn, and pretending
+# otherwise would move it to whichever page scored the most noise.
+.doc_search_terms <- function(tab) {
+  need <- tab$anchor$header_text %||% .doc_column_names(tab)
+  need <- as.character(unlist(need %||% character(0)))
+  need <- need[!is.na(need) & nzchar(trimws(need))]
+  title <- as.character(tab$name %||% "")[1]
+  if (!length(need) && nchar(.doc_norm(title)) < 8L) return(NULL)
+  list(need = need, title = title)
+}
+
+# .doc_page_scores(input, tab, tmpl) -> a score per page, 0 where nothing matched.
+.doc_page_scores <- function(input, tab, tmpl = NULL) {
+  npg <- .doc_npages(input)
+  if (is.na(npg) || npg < 1L) return(numeric(0))
+  s <- .doc_search_terms(tab); if (is.null(s)) return(numeric(0))
+  vapply(seq_len(npg), function(p)
+    .doc_page_score(input, tab, tmpl, p, s$need, s$title), numeric(1))
+}
+
+# .doc_find_page(input, tab, tmpl) -> the page this table is on, or NA to leave
+# the declared page alone.
+#
+# THE DECLARED PAGE IS TRIED FIRST AND WINS WHENEVER THE TABLE IS ON IT. This is
+# not an optimisation, it is the correctness rule: a report can print two
+# DIFFERENT tables under the same column headings - the fixture does, one account
+# per page - and searching the whole document for a table that is exactly where
+# it was said to be would let the first of them answer for both. Look elsewhere
+# only when the table is not where the template left it, which is also the only
+# time anybody wanted a search. It keeps the ordinary document at one page
+# scored instead of forty.
+#
+# Ties among the rest go to the page NEAREST the declared one; doc_locate_repeats()
+# is what handles a table that is genuinely printed more than once.
+.doc_find_page <- function(input, tab, tmpl = NULL) {
+  s <- .doc_search_terms(tab); if (is.null(s)) return(NA_integer_)
+  npg <- .doc_npages(input); if (is.na(npg) || npg < 1L) return(NA_integer_)
+  p0 <- .doc_int(tab$start$page, 1L); if (is.na(p0) || p0 < 1L) p0 <- 1L
+  if (p0 <= npg &&
+      .doc_page_score(input, tab, tmpl, p0, s$need, s$title) >= .DOC_PAGE_MIN_SCORE)
+    return(NA_integer_)
+  sc <- vapply(seq_len(npg), function(p)
+    .doc_page_score(input, tab, tmpl, p, s$need, s$title), numeric(1))
+  if (!any(sc >= .DOC_PAGE_MIN_SCORE)) return(NA_integer_)
+  best <- which(sc >= max(sc) - 1e-9)
+  as.integer(best[which.min(abs(best - p0))])
+}
+
+# doc_locate_repeats(input, tab, tmpl) -> every page this table is printed on,
+# best first, for a table set to be read wherever it appears.
+#
+# "It CAN appear more than once, but not always" - so this returns one page for
+# the ordinary document and several for the one that repeats it, and the caller
+# does not have to know which kind it is holding.
+doc_locate_repeats <- function(input, tab, tmpl = NULL) {
+  sc <- .doc_page_scores(input, tab, tmpl)
+  if (!length(sc)) return(integer(0))
+  hit <- which(sc >= .DOC_PAGE_MIN_SCORE)
+  if (!length(hit)) return(integer(0))
+  as.integer(hit[order(-sc[hit], hit)])
+}
+
 # doc_locate_table(input, tab, tmpl) -> list(
 #   pages, windows, anchor, confidence, detail, extended_to, header_tops)
 #
@@ -759,6 +872,17 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
   # to carry. The END is still clamped -- a table declared to finish on page 7 of a
   # 5-page copy simply finishes at the bottom of page 5, which is a truncation the
   # follow rule and the row run already handle.
+  # WHERE THIS COPY PRINTS IT, before anything is read off a page number. The
+  # template's page is where the table WAS; .doc_find_page asks this document
+  # where it IS, by the table's name and its column names. A table that spans
+  # pages moves as a whole - the same number of pages, starting at the new one.
+  # See .doc_find_page for what it refuses to answer.
+  moved_from <- NA_integer_
+  pf <- .doc_find_page(input, tab, tmpl)
+  if (!is.na(pf) && pf != p0) {
+    moved_from <- p0
+    p1 <- min(p1 + (pf - p0), max(npg, 1L)); p0 <- pf
+  }
   if (npg >= 1L && p0 > npg)
     return(.doc_no_table(sprintf(
       "this table is set to start on page %d and this document only has %d page%s",
@@ -919,6 +1043,15 @@ doc_locate_table <- function(input, tab, tmpl = NULL) {
     first_column = sprintf("found by the rows it starts with on page %d", p0),
     position_same_page = sprintf("read from where it sat on the example (page %d)", p0),
     sprintf("read from where it sat on the example, and this document is a different length (page %d)", p0))
+  # IT MOVED, AND THE REPORT SAYS SO. A table found two pages further on than the
+  # template remembers is the ordinary case for these documents, not a fault -
+  # but a reviewer checking a figure against the paper needs to be told which
+  # page it actually came off, and a table that "moved" ten pages is worth a
+  # second look at whether it is the same table at all.
+  if (!is.na(moved_from))
+    detail <- paste0(detail, sprintf(
+      "; the template had it on page %d, and it is on page %d here",
+      moved_from, p0))
   if (!is.na(extended_to))
     detail <- paste0(detail, sprintf("; it carries on to page %d here", extended_to))
   # ...and SAY that the heading was found again further on, because "those lines

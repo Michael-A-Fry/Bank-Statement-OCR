@@ -243,8 +243,13 @@ test_that("template_check reads every table of a template on every example", {
   tc <- template_check(tmpl, list.files(dir, full.names = TRUE))
   expect_true(is.data.frame(tc$grid))
   expect_identical(names(tc$grid), names(.tc_grid_proto()))
-  # one row per example per table -- that IS the grid
-  expect_equal(nrow(tc$grid), 2L * length(tmpl$tables))
+  # one row per example per table READ -- that IS the grid. A template entry set
+  # to be read wherever it appears is read once per place, so the grid counts
+  # places, not entries.
+  places <- sum(vapply(tmpl$tables, function(tb)
+    if (identical(as.character(tb$occurrence %||% "once")[1], "all")) 2L else 1L,
+    integer(1)))
+  expect_equal(nrow(tc$grid), 2L * places)
   expect_equal(length(unique(tc$grid$file)), 2L)
   expect_true(all(tc$grid$rows > 0L))
   expect_true(all(tc$grid$detected))

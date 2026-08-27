@@ -41,7 +41,14 @@ test_that("a real seven-page PDF proposes the tables that are on it", {
   ends   <- vapply(props, function(p) as.integer(p$end$page), integer(1))
   expect_true(any(starts == 2L))
   expect_true(any(starts == 6L))
-  expect_true(any(starts == 7L))
+  # PAGE 7 PRINTS PAGE 2'S TABLE AGAIN, for a second account, and the proposer
+  # now folds the two into ONE entry that says it is read wherever it appears
+  # rather than offering the same table twice to be named twice. So page 7 is not
+  # a separate start; it is one of that entry's places.
+  rep <- Filter(function(p) identical(p$occurrence, "all"), props)
+  expect_equal(length(rep), 1L)
+  expect_true(7L %in% vapply(rep[[1]]$.places,
+                             function(q) as.integer(q$start$page), integer(1)))
 
   # The schedule: proposed as one table spanning pages 3 to 5, four columns.
   i <- which(starts == 3L)
@@ -65,15 +72,28 @@ test_that("what was proposed is what gets read back out", {
   expect_equal(validate_document_template(tmpl), character(0))
 
   ext <- extract_document(inp, tmpl)
-  expect_equal(length(ext$tables), length(props))
+  # A REPEATING ENTRY IS READ ONCE PER PLACE, so the read tables outnumber the
+  # template's entries by exactly the extra places. Anything else means a place
+  # was dropped.
+  keys   <- names(tmpl$tables)
+  places <- vapply(props, function(p) max(1L, length(p$.places %||% list())), integer(1))
+  expect_equal(length(ext$tables), sum(places))
   # THE ASSERTION THAT MATTERS. The proposer counted the rows one way (runs of
   # tabular lines) and the reader counted them another (words inside a boundary,
   # assigned to bands). If those two ever disagree, the template a person
   # confirmed on screen is not the template that produces their file.
-  for (k in seq_along(props)) {
-    nm <- names(ext$tables)[k]
-    expect_equal(ext$tables[[nm]]$n_rows, props[[k]]$n_rows,
-                 info = sprintf("table '%s' (%s)", nm, props[[k]]$name))
+  #
+  # Matched by KEY, never by position: a folded entry's places come back as
+  # `key` and `key__pN`, and its proposed n_rows is every place added up.
+  for (i in seq_along(keys)) {
+    k  <- keys[i]
+    mine <- ext$tables[names(ext$tables) == k |
+                       startsWith(names(ext$tables), paste0(k, "__p"))]
+    expect_gt(length(mine), 0L)
+    expect_equal(sum(vapply(mine, function(x) as.integer(x$n_rows), integer(1))),
+                 as.integer(props[[i]]$n_rows),
+                 info = sprintf("table '%s' (%s), %d place(s)", k, props[[i]]$name,
+                                length(mine)))
   }
   # Nothing inside a table's boundary was left unclaimed by every column.
   expect_equal(sum(ext$summary$unclaimed_words), 0L)

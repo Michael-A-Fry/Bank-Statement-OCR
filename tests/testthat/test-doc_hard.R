@@ -1186,7 +1186,7 @@ test_that("the whole fixture reports no column disagreement and no wrong kind", 
 
 .fund_pack <- function(letters_ = LETTERS[1:7]) {
   one <- function(letter) {
-    parts <- list(doc_L(40, 60, sprintf("Fund %s holdings", letter)),
+    parts <- list(doc_L(40, 60, "Holdings"),
                   doc_L(40, 100, "Security"), doc_R(330, 100, "Units"),
                   doc_R(430, 100, "Unit price"), doc_R(530, 100, "Market value"))
     y <- 124
@@ -1203,11 +1203,17 @@ test_that("the whole fixture reports no column disagreement and no wrong kind", 
 }
 
 test_that("seven near-identical proposals fold into ONE that says where it repeats", {
-  # A2. A holdings table per fund proposed seven entries -- "Fund A holdings",
-  # "Fund A holdings 1", ... -- seven things to read, name and confirm where
-  # there is one thing to teach. They are the same table by the two tests this
-  # file already owns, so they fold into one carrying `occurrence: all` and
-  # remembering every place. It REMOVES six things from the screen.
+  # A2. A holdings table per fund proposed seven entries -- seven things to read,
+  # name and confirm where there is one thing to teach. They fold into one
+  # carrying `occurrence: all` and remembering every place, which REMOVES six
+  # things from the screen.
+  #
+  # THE FOLD NEEDS THE SAME PRINTED HEADING, not just the same columns. "Table
+  # name + columns IS the table": two schedules printed under identical column
+  # headings but different titles are different tables, and folding them is how
+  # twelve rows ended up under one account's name (see the AccountOne/AccountTwo
+  # test above, which is that bug). So this pack prints the same title on every
+  # page, which is what a genuinely repeating table does.
   inp <- .fund_pack()
   cands <- list()
   for (p in 1:7) for (cd in .doc_page_candidates(inp, p)) cands[[length(cands) + 1L]] <- cd
@@ -1219,6 +1225,34 @@ test_that("seven near-identical proposals fold into ONE that says where it repea
   expect_equal(length(f[[1]]$.places), 7L)
   expect_equal(vapply(f[[1]]$.places, function(q) as.integer(q$start$page), integer(1)), 1:7)
   expect_equal(f[[1]]$n_rows, 42L)             # every place's rows, added up
+})
+
+test_that("a folded table is READ in every place, not just the first", {
+  # The fold is only safe because of this. Folding seven entries into one and
+  # then reading one place would delete six funds from the output with a green
+  # tick beside it -- the silent loss `occurrence: all` was refused for.
+  inp <- .fund_pack()
+  props <- propose_tables(inp)
+  expect_equal(length(props), 1L)
+  t <- document_template_from_proposal("fp", "Acme", "report",
+         phrases = list("Holdings"), tables = props, pairs = list())
+  expect_equal(length(t$tables), 1L)
+  ext <- extract_document(inp, t)
+  expect_equal(length(ext$tables), 7L)
+  expect_equal(sum(vapply(ext$tables, function(x) NROW(x$rows), integer(1))), 42L)
+  # each one says which page it came off, so two funds can never be read as one
+  expect_true(all(grepl("page [1-7]\\)$", vapply(ext$tables, function(x) x$name, character(1)))))
+})
+
+test_that("two tables with the same columns but different titles are NOT folded", {
+  # The other half of the same rule, and the one that is a wrong figure if it
+  # goes: "AccountOne" and "AccountTwo" print identical column headings.
+  inp <- hard_same_header_twice()
+  props <- propose_tables(inp)
+  expect_equal(length(props), 2L)
+  expect_identical(vapply(props, function(p) p$name, character(1)),
+                   c("AccountOne", "AccountTwo"))
+  expect_null(props[[1]]$occurrence)
 })
 
 test_that("the fold refuses what geometry alone cannot vouch for", {

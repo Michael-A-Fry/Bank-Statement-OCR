@@ -1374,9 +1374,13 @@ test_that("a drawn box commits on release, not on every mouse move", {
   bw <- num_at("^\\.RB_BRUSH_WAIT <- ")
   cw <- num_at("^\\.RB_CLICK_WAIT <- ")
   expect_false(is.na(bw)); expect_false(is.na(cw))
-  expect_lt(bw, cw)
-  # ...and still long enough to be a debounce rather than a stream of commits.
-  expect_gte(bw, 150L)
+  # THE BRUSH REPORTS ON RELEASE. It used to be the shorter wait, so it reported
+  # first - and that made its debounce fire MID-DRAG whenever somebody paused,
+  # which reset the brush under the still-pressed mouse and killed the gesture.
+  # Longer than any drag a person makes means shiny.js only ever flushes it on
+  # mouseup, which is what "on release" costs in this API.
+  expect_gt(bw, cw)
+  expect_gte(bw, 5000L)
 })
 
 # ---------------------------------------------------------------------------

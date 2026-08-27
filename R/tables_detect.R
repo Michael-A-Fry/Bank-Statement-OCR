@@ -244,6 +244,11 @@
            type = "auto"))
     body_ix <- if (has_header) ix[-1] else ix
     list(name = if (is.na(nm)) sprintf("Table on page %d", page) else nm,
+         # THE PAPER THIS ONE WAS MEASURED ON. Bands are points in the page's own
+         # frame, so two candidates on differently sized pages are not comparable
+         # however alike their numbers look -- see .doc_same_frame.
+         .frame = c(.doc_num((input$page_width  %||% NA_real_)[page], NA_real_),
+                    .doc_num((input$page_height %||% NA_real_)[page], NA_real_)),
          start = list(page = as.integer(page), y = round(tops[ix[1]] - 1, 1)),
          end   = list(page = as.integer(page),
                       y = round(max(vapply(lines[ix], function(d) max(d$y + d$height),
@@ -285,6 +290,41 @@
   ha <- .doc_header_key(a); hb <- .doc_header_key(b)
   nzchar(ha) && nzchar(hb) &&
     (identical(ha, hb) || startsWith(hb, ha) || startsWith(ha, hb))
+}
+
+# .doc_same_title(a, b) -- do these two candidates print the SAME heading above
+# themselves?
+#
+# THE TABLE'S NAME IS HALF ITS IDENTITY. "Table name + columns IS the table" -
+# and the fold below was testing only the columns, so two schedules printed under
+# the same column headings folded into one whatever they were called. Measured
+# the moment doc_locate_repeats() switched the fold on: "AccountOne" and
+# "AccountTwo" became a single twelve-row table under AccountOne's name, six of
+# those rows belonging to another account with nothing on screen to say so. The
+# fold's own comment predicted exactly that failure.
+#
+# The raw heading is compared, before the proposer has made the names unique, so
+# a pack printing "Holdings" over seven funds still folds to one while
+# "AccountOne"/"AccountTwo" stay two. An untitled candidate is named for its page
+# ("Table on page 4"), so it never matches another - which is the safe direction:
+# too many tables is a nuisance, two tables silently merged is a wrong figure.
+# .doc_same_frame(a, b) -- were these two measured on the same size of paper?
+#
+# A portrait page and a landscape one in the same document print their bands in
+# different spaces, so identical-looking x positions mean different places.
+# Measured: a "Wide" table on a portrait page and a "Wide" table on a landscape
+# page folded into one six-row entry the moment the fold switched on.
+.doc_same_frame <- function(a, b) {
+  fa <- as.numeric(a$.frame %||% c(NA_real_, NA_real_))
+  fb <- as.numeric(b$.frame %||% c(NA_real_, NA_real_))
+  if (length(fa) != 2L || length(fb) != 2L) return(TRUE)   # unknown: not a refusal
+  if (!all(is.finite(c(fa, fb)))) return(TRUE)
+  all(abs(fa - fb) <= 2)
+}
+
+.doc_same_title <- function(a, b) {
+  na <- .doc_norm(a$name %||% ""); nb <- .doc_norm(b$name %||% "")
+  nzchar(na) && nzchar(nb) && identical(na, nb)
 }
 
 # .doc_continues(prev, cd) -- may `cd` be more of `prev`, printed on the next page?
@@ -330,7 +370,8 @@
   for (cd in cands) {
     at <- NA_integer_
     for (i in seq_along(kept))
-      if (.doc_same_header(kept[[i]], cd) && .doc_same_shape(kept[[i]], cd)) { at <- i; break }
+      if (.doc_same_title(kept[[i]], cd) && .doc_same_frame(kept[[i]], cd) &&
+          .doc_same_header(kept[[i]], cd) && .doc_same_shape(kept[[i]], cd)) { at <- i; break }
     if (is.na(at)) {
       cd$.places <- list(list(start = cd$start, end = cd$end))
       kept[[length(kept) + 1L]] <- cd

@@ -98,32 +98,18 @@
     if (is.na(dp) || dp < 1L)
       p <- c(p, w("doc_pages must be the number of pages the example had"))
   }
-  # A KEY NOTHING IMPLEMENTS IS A SILENT LOSS, NOT A FUTURE FEATURE.
+  # `occurrence: all` -- "read this table wherever it appears, however many times".
   #
-  # `occurrence: all` is meant to say "read this table wherever it appears, however
-  # many times", and the design for it is settled (register A2). The reader for it
-  # is NOT built: there is no doc_locate_repeats in R/tables.R, so a table carrying
-  # the key is located exactly once, at the coordinates it was drawn at - while
-  # .doc_table_optional() reads the same key to mean its absence is expected and
-  # must not be reported. Between them, a template that used the key would lose
-  # tables and say nothing, which is the cardinal failure of this product wearing
-  # a feature's name.
-  #
-  # So it is refused at the door until the reader exists. The refusal names the
-  # reader, so whoever builds it knows exactly which line to delete. Anything other
-  # than `once`/`first` is refused too, rather than silently meaning `once`.
+  # It was refused at the door for a while, and rightly: .doc_table_optional()
+  # reads the same key to mean the table's absence is expected, so with no reader
+  # a template using it would lose tables and say nothing. The reader exists now -
+  # doc_locate_repeats() finds every page whose printed name and column headings
+  # match, and extract_document() reads each place as its own table - so the key
+  # is accepted. Anything else is still refused rather than silently meaning
+  # `once`.
   occ <- as.character(.doc_key(tab, "occurrence") %||% "")[1]
-  if (nzchar(occ)) {
-    if (identical(occ, "all")) {
-      if (!exists("doc_locate_repeats", mode = "function"))
-        p <- c(p, w(paste("is set to be read wherever it appears, and the reader for",
-                          "that is not built yet - it would be read once, where it was",
-                          "drawn, and its absence anywhere else would go unreported.",
-                          "Remove 'occurrence: all' until doc_locate_repeats() exists.")))
-    } else if (!(occ %in% c("once", "first"))) {
-      p <- c(p, w("occurrence must be 'once' or 'first' (or 'all' once that is built), not '%s'", occ))
-    }
-  }
+  if (nzchar(occ) && !(occ %in% c("once", "first", "all")))
+    p <- c(p, w("occurrence must be 'once', 'first' or 'all', not '%s'", occ))
   p
 }
 
@@ -356,6 +342,36 @@ extract_document <- function(input, tmpl) {
   out <- list(); misses <- character(0)
   for (k in keys) {
     tab <- tabs[[k]]
+    # A TABLE SET TO REPEAT IS READ WHEREVER IT IS PRINTED, not once.
+    #
+    # "It CAN appear more than once, but not always." doc_locate_repeats() gives
+    # every page whose printed name and column headings match this table; each
+    # one is read in its own right and comes back as its own table, named for the
+    # page it was found on. Reading only the first would have been the silent
+    # loss this key was refused for -- a seven-fund pack losing six funds with a
+    # green tick beside it.
+    places <- if (identical(as.character(tab$occurrence %||% "once")[1], "all"))
+      doc_locate_repeats(input, tab, tmpl) else integer(0)
+    if (length(places) > 1L) {
+      got <- 0L
+      for (i in seq_along(places)) {
+        one <- tab
+        span <- .doc_int(tab$end$page, .doc_int(tab$start$page, 1L)) -
+                .doc_int(tab$start$page, 1L)
+        one$start$page <- places[i]
+        one$end$page   <- places[i] + max(0L, span)
+        lo <- doc_locate_table(input, one, tmpl)
+        if (identical(as.character(lo$anchor %||% "")[1], "not_found")) next
+        rr <- doc_table_rows(input, one, tmpl, lo)
+        kk <- if (i == 1L) k else sprintf("%s__p%d", k, places[i])
+        rr$key <- kk
+        rr$name <- sprintf("%s (page %d)", as.character(tab$name %||% k)[1], places[i])
+        out[[kk]] <- rr
+        got <- got + 1L
+      }
+      if (got == 0L) misses <- c(misses, k)
+      next
+    }
     loc <- doc_locate_table(input, tab, tmpl)
     if (identical(as.character(loc$anchor %||% "")[1], "not_found")) {
       misses <- c(misses, k)

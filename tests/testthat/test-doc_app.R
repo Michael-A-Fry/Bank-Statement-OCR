@@ -2233,9 +2233,21 @@ test_that("the brush reports before the click it began with is allowed to act", 
   expect_lt(i_bw, i_ui)          # declared before the UI that reads it
   expect_match(joined, "delay = \\.RB_BRUSH_WAIT")
   num <- function(i) as.numeric(sub("^[^0-9]*([0-9]+).*$", "\\1", src[i]))
-  # THE ONE RULE BETWEEN THEM. If the click could act before the drag reported,
-  # the drag would be read as a click and the gesture lost - which is the bug.
-  expect_lt(num(i_bw), num(i_cw))
+  # THE RULE REVERSED, AND THIS IS WHY. The brush wait used to be the SHORTER of
+  # the two, so a drag reported before the click it began with. That made the
+  # debounce fire MID-DRAG the moment anybody paused - and both observers reset
+  # the brush, which on the client sets state.panel to NULL, so the rectangle
+  # vanished with the mouse still down and the release then sent nothing at all.
+  # Reported as "the drag box only stays open for like half a second and then
+  # disappears". So the brush wait is now longer than any drag a person makes:
+  # shiny.js flushes it on mouseup (mouseupBrushing -> immediateCall), which
+  # makes it "on release only", and the click no longer touches the rectangle.
+  expect_gt(num(i_bw), num(i_cw))
+  expect_gte(num(i_bw), 5000)
+  # ...and the click observer must not reset the brush, which is what killed it.
+  # Comments stripped first: the reason it went is written where it used to be.
+  cl <- .da_whole(sub("\\s*#.*$", "", src), "observeEvent\\(rb_click_late\\(\\)")
+  expect_false(grepl("resetBrush", cl, fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -2254,26 +2266,21 @@ test_that("the brush reports before the click it began with is allowed to act", 
     columns = list(list(name = "C1", x_min = 10, x_max = 90),
                    list(name = "C2", x_min = 100, x_max = 180)))))
 
-test_that("a key nothing implements is refused, not carried", {
-  # occurrence: all means "read this wherever it appears". The reader for it does
-  # not exist - but .doc_table_optional() already reads the SAME key to mean the
-  # table's absence is expected and must not be reported. Between them a template
-  # using it would lose tables and say nothing, which is this product's cardinal
-  # failure wearing a feature's name.
+test_that("occurrence: all is accepted now the reader exists, and refuses nonsense", {
+  # It WAS refused, and rightly: .doc_table_optional() reads the same key to mean
+  # the table's absence is expected, so with no reader a template using it would
+  # lose tables and say nothing. doc_locate_repeats() is that reader now - it
+  # finds every page whose printed name and column headings match this table, and
+  # extract_document() reads each place as its own table.
   skip_if_not(exists("validate_document_template", mode = "function"))
+  expect_true(exists("doc_locate_repeats", mode = "function"))
   t <- .fin_tmpl(); t$tables$a$occurrence <- "all"
-  expect_match(paste(validate_document_template(t), collapse = " "),
-               "wherever it appears")
-  # ...and it names the function whose absence is the reason, so whoever builds
-  # it knows which line to delete
-  expect_match(paste(validate_document_template(t), collapse = " "),
-               "doc_locate_repeats")
-  # anything unrecognised is refused rather than silently meaning "once"
+  expect_length(validate_document_template(t), 0L)
+  # anything unrecognised is still refused rather than silently meaning "once"
   t$tables$a$occurrence <- "sometimes"
   expect_match(paste(validate_document_template(t), collapse = " "), "occurrence must be")
-  # and the ordinary template is untouched
   t$tables$a$occurrence <- NULL
-  expect_identical(validate_document_template(t), character(0))
+  expect_length(validate_document_template(t), 0L)
 })
 
 test_that("a person's name is refused everywhere page text is captured, not just the fingerprint", {

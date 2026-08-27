@@ -281,13 +281,21 @@ test_that("a pair follows its label when the label moves, and falls back to the 
 test_that("the tables on the document are proposed, with a continuation joined into one", {
   inp <- context_input()
   props <- propose_tables(inp)
-  expect_equal(length(props), 6L)
+  # FIVE, NOT SIX. Page 7 prints page 2's "Account summary" again for a second
+  # account, and the two now fold into ONE entry that says it is read wherever it
+  # appears - so the screen offers one table to name instead of "Account summary"
+  # and "Account summary 1", and the reader reads both places.
+  expect_equal(length(props), 5L)
   nms <- vapply(props, function(p) p$name, character(1))
   expect_true("Account summary" %in% nms)
   expect_true("Fees charged" %in% nms)
   expect_true("Contact details" %in% nms)
   expect_true("Statement of position by period" %in% nms)
-  expect_true("Account summary 1" %in% nms)        # the page-7 copy, made unique
+  expect_false("Account summary 1" %in% nms)
+  sm <- props[[which(nms == "Account summary")]]
+  expect_identical(sm$occurrence, "all")
+  expect_equal(vapply(sm$.places, function(q) as.integer(q$start$page), integer(1)),
+               c(2L, 7L))
 
   tx <- props[[which(vapply(props, function(p) p$start$page == 3L, logical(1)))]]
   expect_equal(tx$start$page, 3L)
@@ -1138,8 +1146,19 @@ test_that("a table that is not on this document is absent, and is said to be", {
   # H1. A table the document does not carry came back full of whatever sat at its
   # old coordinates. It now has no entry, no sheet, no long rows and no column
   # report -- and one row in the summary saying so.
+  #
+  # ABSENT MEANS THE DOCUMENT DOES NOT CARRY IT, and that is now the only way to
+  # be absent. This used to be staged by pointing the table at the wrong page,
+  # which no longer works and should not: a table is searched for by its printed
+  # name and its column headings across the whole document, so a wrong page
+  # number is a thing the reader corrects rather than a thing it trips over.
+  # (There is a test for exactly that, below.) So the table is given an identity
+  # this document does not print anywhere.
   inp <- context_input(); tm <- doc_fixture_template()
-  tm$tables$position$start$page <- 2L; tm$tables$position$end$page <- 2L
+  tm$tables$position$name <- "Schedule of unclaimed monies"
+  tm$tables$position$anchor <- list(
+    header_text  = list("Claimant", "Last known address", "Amount unclaimed"),
+    first_column = list("Claimant A", "Claimant B"))
   ext <- extract_document(inp, tm)
   expect_identical(ext$misses, "position")
   expect_false("position" %in% names(ext$tables))
@@ -1154,6 +1173,28 @@ test_that("a table that is not on this document is absent, and is said to be", {
   expect_match(s$note[s$table == "position"], "not on this copy")
   # and the summary keeps ONE shape: the same columns whether or not any is missing
   expect_identical(names(s), names(extract_document(inp, doc_fixture_template())$summary))
+})
+
+test_that("a wrong page number is corrected, not treated as absence", {
+  # The other half of the rule above, and the reason these reports were failing:
+  # "it CANNOT assume that tables will be in the same place - what it's doing is
+  # saying hey I saw these here last time." A table is found by what it PRINTS -
+  # its name and its column headings - anywhere in the document; the page the
+  # template remembers is only tried first.
+  inp <- context_input(); tm <- doc_fixture_template()
+  tm$tables$position$start$page <- 2L; tm$tables$position$end$page <- 2L
+  ext <- extract_document(inp, tm)
+  expect_false("position" %in% ext$misses)
+  expect_true("position" %in% names(ext$tables))
+  # found where it actually is, and the report says so rather than saying nothing
+  loc <- doc_locate_table(inp, tm$tables$position, tm)
+  expect_equal(loc$windows[[1]]$page, 6L)
+  expect_match(loc$detail, "the template had it on page 2, and it is on page 6 here",
+               fixed = TRUE)
+  # and the rows are the ones a correct template would have read
+  ok <- extract_document(inp, doc_fixture_template())
+  drop <- function(d) d[, setdiff(names(d), "page"), drop = FALSE]
+  expect_equal(drop(ext$tables$position$rows), drop(ok$tables$position$rows))
 })
 
 test_that("a table set to be read wherever it appears may be absent without fault", {
