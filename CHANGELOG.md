@@ -13,6 +13,111 @@ finding id.
 
 ---
 
+## 1.9.0
+
+The release that makes the **other** route real: a document that is not a bank
+statement — a trustee report, a valuation, a letter — is read by pointing at its
+tables and its labelled values, and comes out as a workbook. It is download-only:
+nothing on this route reconciles and nothing reaches Qlik.
+
+### Wrong figures this stops
+
+**Columns now follow the table when the copy prints it lower.** The bands were
+drawn on one document and applied verbatim to the next; the same table printed
+40pt down the page read its figures out of the neighbouring columns and reported
+them as full. The engine now asks the document where its heading actually is and
+shifts the bands to match, and it refuses to shift on any of four grounds —
+fewer than two columns matched, the columns disagreeing by more than 12pt, no
+heading found, or every heading cell already inside its band.
+
+**A three-line row is one row.** Wrapping was decided against a page-wide line
+pitch, so a description running onto a second and third line arrived as three
+rows with two of them empty of figures. It is measured off the two lines' own
+type heights now.
+
+**A continuation page's repeated heading is not data.** A table carrying on over
+five pages contributed its heading five times as rows of text. The heading is
+learned off the table's own first page and matched whole-line, and it is refused
+outright if any learned line carries money — a heading that looks like a figure
+is not a heading.
+
+**A column whose first row is empty no longer swallows its neighbour.**
+
+**A scan the tool could barely read is no longer reported as a clean conversion.**
+OCR page confidence now gates the status, so a poor scan lands at *needs review*
+instead of green.
+
+**`occurrence: all` is refused when it is written.** It validated, it was
+preserved on save, and `.doc_table_optional()` read it to mean "absence is
+expected" — but nothing existed to find the repeats, so a template carrying it
+silently reported every missing table as fine. Refused until the reader exists.
+
+**A verdict no longer contradicts its own body.** A template that MATCHED a
+document and read nothing from it was headlined "No template recognised this
+document yet" with the engine's true sentence directly underneath and a
+diagnostics row saying "no templates match" beside it. Two false statements
+against one true one, on a forensic screen.
+
+### The report and form routes
+
+- **Admin lists every template of every kind**, split by kind, and opening one
+  opens the editor that kind belongs to. Report templates were invisible there —
+  including to the restore check in `backup-and-restore.md`, which is why
+  `scripts\health-check.R` now counts all three kinds from the command line.
+- **Convert asks what the document is** rather than guessing, and an "other"
+  document opens the editor instead of auto-processing.
+- **Feedback works on the other route**, traceable to the run and the template.
+- **A drag now answers a question that asked for a click**, and a click that
+  cannot answer says so. Both gestures reach one place. Previously a drag aimed
+  at "where does the table start" did nothing at all — no rectangle, no message,
+  no change.
+- **PII is refused in table names and in labels**, not only in the places it was
+  already checked.
+- **Every template write goes through `save_yaml_safely()`**, so a write
+  interrupted by a crash or a full disk cannot leave a half-written template.
+
+### Simpler
+
+182 named controls at the start of this work, **162 now**; fifteen actually left
+the screen and every one has a surviving route to the same outcome. Executable
+code fell 85 lines across `app.R`, `ui_labels.R` and `R\`. The line counts rose,
+because every cut carries the reason it was made beside it.
+
+`docs\` was truth-checked against the code: six pages named controls that no
+longer exist, including step 4 of the four-step recipe in
+`converting-statements.md`.
+
+### Copying this release onto the offline box
+
+Read [`docs/operational/updating-a-version.md`](docs/operational/updating-a-version.md)
+for the procedure and the *Never copy* table. **This is the list of what this
+release actually changed** — step 4 of that page:
+
+```
+app.R   ui_labels.R   VERSION   CHANGELOG.md
+R\   (23 files, and see the warning below about params.R)
+scripts\health-check.R   (NEW)
+www\app.css
+docs\   (23 files)
+tests\   (21 files)
+```
+
+**`R\params.R` CHANGED IN THIS RELEASE, and it is the file you are told never to
+copy in a sweep.** It gained two parameters — `PARAM_DOC_MIN_COL_PT` and
+`PARAM_DOC_SAME_PAGE_PT` — and `app.R` reads both. Keep your old copy and the app
+raises "object not found" the first time somebody opens the report builder. So:
+take the new file, then re-apply your own values by hand, exactly as step 5 says.
+Do not paste the old file over the new one.
+
+`scripts\health-check.R` is new and is now step 6 of the update: run it before
+starting prod and it says, in one command, whether the settings parsed, an admin
+password is set, how many templates of each kind loaded **and how many were
+refused**, every folder is writable, and the scan-reading software is present.
+
+77 files, 1363 tests, 7593 passing, 0 failing, 15 skipped.
+
+---
+
 ## 1.8.1
 
 **A document nothing recognised is not "this statement".** Reported: drop a
