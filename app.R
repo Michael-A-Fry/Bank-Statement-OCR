@@ -133,11 +133,29 @@ job_set_max_concurrent(CONFIG$app$max_concurrent_jobs)
 #
 # Shiny reports a plot click on MOUSEDOWN, so the leading edge of every drag
 # arrives as a click. Neither gesture can tell what it was on its own, so the
-# click waits to see whether a drag lands, and the drag reports first. The only
-# rule between these two numbers is that the brush is the shorter one -- if the
-# click could act before the drag reported, the drag would be read as a click
-# and the gesture lost.
-.RB_BRUSH_WAIT <- 250        # ms the brush settles for after the last movement
+# click waits to see whether a drag lands.
+#
+# THE BRUSH REPORTS ON RELEASE, AND ONLY ON RELEASE. This number is not a
+# settling time; it is how Shiny's API spells "when the mouse comes up". Reported:
+# "the drag box only stays open for like half a second and then disappears - any
+# long drag and release DID NOT WORK, just disappeared." Root-caused in
+# shiny.js: mousemove calls brushInfoSender.normalCall(), which DEBOUNCES, so a
+# short delay fires MID-DRAG the moment somebody pauses - and this observer's
+# first act is session$resetBrush(), which on the client sets state.panel to
+# NULL. The rectangle is wiped off the screen with the mouse still down, and
+# every mousemove after it throws "Cannot read properties of null (reading
+# 'range')" out of boundsCss. Then the release sends nothing at all, because
+# mouseupBrushing only flushes the sender `if (brushInfoSender.isPending())` --
+# and it is not pending any more, it already fired.
+#
+# Measured in Chromium at 250ms: box gone after a 900ms pause, banner unmoved
+# after release, five of those throws per drag. A quick flick worked, which is
+# why it survived every test drive: those never pause.
+#
+# So the delay is longer than any drag a person makes. The debounce then cannot
+# fire while the mouse is down, mouseup finds it pending and flushes it, and the
+# ONE brush that arrives is the finished box.
+.RB_BRUSH_WAIT <- 30000      # ms: "on release only" -- see above, never a settle
 .RB_CLICK_WAIT <- 450        # ms a mousedown waits before it counts as a click
 
 
@@ -4525,24 +4543,31 @@ server <- function(input, output, session) {
       if (any(vapply(corners, function(p)
               near(p[1], cl$x) && near(p[2], cl$y), logical(1)))) return()
     }
-    # A CLICK MEANS "I AM DOING SOMETHING ELSE NOW", so any rectangle still on the
-    # page goes with it. Reported: the box persisted while trying to set the
-    # bottom edge -- the percentage updated but the picture kept the old
-    # selection, so the screen showed two different answers at once. Safe here
-    # because the gesture is over by the time this runs.
-    session$resetBrush("rb_brush")
+    # AND IT DOES NOT TOUCH THE RECTANGLE. This line used to be
+    # session$resetBrush("rb_brush"), on the reasoning that "a click means I am
+    # doing something else now" and that "the gesture is over by the time this
+    # runs". THE SECOND HALF IS FALSE, and it is the whole of the reported bug:
+    # a drag lasting longer than .RB_CLICK_WAIT is still in progress when this
+    # fires, so the reset landed MID-DRAG. resetBrush on the client is
+    # brush.reset(), which sets state.panel to NULL; the rectangle vanished with
+    # the mouse still down, every mousemove after it threw "Cannot read
+    # properties of null (reading 'range')" out of boundsCss, and the release
+    # then sent nothing. Measured in Chromium: box gone at 450ms - which is this
+    # number - five throws per drag, and the banner unmoved afterwards. "The drag
+    # box only stays open for like half a second and then disappears. Any long
+    # drag and release DID NOT WORK."
+    #
+    # Nothing needs the reset here. The brush observer clears the rectangle once
+    # it has acted, and resetOnNew = TRUE clears it whenever the plot redraws.
     m <- as.character(rb$mode %||% "")
-    if (!(m %in% c("start", "end", "bottom"))) {
-      # A CLICK WHERE A DRAG IS EXPECTED USED TO DO NOTHING AND SAY NOTHING.
-      # The pinned banner is standing there saying "Drag a box round the table's
-      # heading", so the person is not lost -- but a drag with nothing armed gets
-      # a notification naming the button to press, and this got silence. Same
-      # gesture-does-not-fit situation, so the same courtesy.
-      if (nzchar(m) && !is.null(.RB_ASK[[m]]))
-        showNotification(sprintf("A click cannot answer that one. %s", .RB_ASK[[m]][1]),
-                         type = "message", duration = 7)
-      return()
-    }
+    # NO SCOLDING A CLICK THAT IS THE START OF A DRAG. This branch briefly told
+    # the person "a click cannot answer that one" when the armed step wanted a
+    # drag -- which was right while the brush reported in 250ms, and is wrong now
+    # that it reports on RELEASE: a drag lasting longer than .RB_CLICK_WAIT sends
+    # its mousedown-click first, and the message would fire on the way into a
+    # perfectly good drag. The pinned banner is already saying what to do, in
+    # bigger type and without waiting to be provoked.
+    if (!(m %in% c("start", "end", "bottom"))) return()
     .rb_set_edge(m, .rb_pg(), as.numeric(cl$y))
     # A DRAG THAT SHOULD HAVE BEEN A CLICK IS STILL A CLICK.
     #
