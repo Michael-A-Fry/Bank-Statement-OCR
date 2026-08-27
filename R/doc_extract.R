@@ -342,6 +342,25 @@ extract_document <- function(input, tmpl) {
   out <- list(); misses <- character(0)
   for (k in keys) {
     tab <- tabs[[k]]
+    # A PERIOD MATRIX FINDS ITSELF (R/doc_matrix.R). Its columns are filing
+    # periods read off this document, so it cannot go through doc_locate_table --
+    # there is no remembered column wording to find it by, and there must not be:
+    # a template that stored "31-Mar-18" as a column name is wrong for every other
+    # customer and for the same one next year. It is anchored on the wording that
+    # DOES hold still ("Filing Period"), and everything to the right of that is
+    # derived. The result has the same shape as an ordinary table's, so
+    # everything below here is unchanged.
+    if (doc_is_matrix(tab)) {
+      r <- doc_matrix_extract(input, tab, tmpl)
+      if (identical(as.character(r$anchor %||% "")[1], "not_found")) {
+        misses <- c(misses, k)
+        next
+      }
+      r$key <- k
+      r$name <- as.character(tab$name %||% k)[1]
+      out[[k]] <- r
+      next
+    }
     # A TABLE SET TO REPEAT IS READ WHEREVER IT IS PRINTED, not once.
     #
     # "It CAN appear more than once, but not always." doc_locate_repeats() gives

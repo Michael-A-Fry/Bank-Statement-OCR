@@ -31,6 +31,7 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   forms.R               orchestrator for the fields paradigm
   tables.R              a REPORT's tables: locate by wording, read, measure the fill
   tables_detect.R       propose the tables + label/value pairs on a report
+  doc_matrix.R          the table whose columns are filing periods (shape: matrix)
   doc_extract.R         orchestrator for the document paradigm (many tables)
   split.R               opt-in deterministic auto-split of a bundled upload
   reconcile.R           reconciliation KPIs + deterministic trust mapping
