@@ -105,11 +105,26 @@
   na_amt <- if (n > 0) which(is.na(tx$amount)) else integer(0)
   na_ids <- if (length(na_amt)) (tx$row_id %||% seq_len(n))[na_amt] else integer(0)
 
+  # EVERY AMOUNT DERIVED FROM THE BALANCE COLUMN MAKES THIS SUM TELESCOPE.
+  # sum(balance[i] - balance[i-1]) over every row IS closing_bal - opening_bal, so
+  # opening + sum(amount) equals closing by construction and the check would report
+  # the strongest proof the tool owns while having tested nothing at all. Partial
+  # derivation still constrains the amounts that WERE read -- those rows have to
+  # absorb the rest of the balance movement -- so it stays a real check, said with
+  # the count beside it. Total derivation is honest "na".
+  n_der <- .n_from_balance(tx)
+  if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt) && n_der >= n)
+    return(.kpi("balance_reconciliation", "na",
+      detail = sprintf(paste("every one of the %d amount(s) was derived from the",
+                             "running-balance column, so adding them back up only",
+                             "re-states that column and proves nothing"), n)))
   if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt)) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
     note <- if (length(derived))
       sprintf(" [%s derived from the running-balance column]", paste(derived, collapse = " & ")) else ""
+    if (n_der > 0)
+      note <- sprintf("%s [%d of %d amount(s) derived from the balance column]", note, n_der, n)
     return(.kpi(
       "balance_reconciliation", if (abs(disc) < PARAM_MONEY_TOL) "pass" else "fail",
       expected = round(expected_close, 2), actual = round(closing, 2),
@@ -167,6 +182,26 @@
 # intervening amounts, and check the next known balance against that. If any
 # intervening amount is itself NA the bridge is genuinely unverifiable, so it is
 # counted and surfaced, never silently passed.
+# .n_from_balance(tx) -- how many amounts were DERIVED from the balance column
+# rather than read from the amount column (the `amount_from_balance` row flag,
+# R/parse_pdf_table.R).
+#
+# WHY THE CHECKS HAVE TO ASK. A derived amount is balance[i] - balance[i-1], so
+# checking it against the balance column is CHECKING IT AGAINST ITSELF. Per row
+# that is harmless -- the figure is arithmetic on two printed numbers, not a guess
+# -- but those rows prove nothing, and a check that counted them would report a
+# proof it does not have. If EVERY amount were derived the sum telescopes to
+# closing - opening and balance_reconciliation would pass for free.
+#
+# This is the verifier's own false-positive path, and the only honest handling is
+# to subtract it: say how many rows were derived, and refuse to claim a proof when
+# nothing independent is left. A smaller true claim beats a larger hollow one.
+.n_from_balance <- function(tx) {
+  f <- tx$flags
+  if (is.null(f)) return(0L)
+  sum(grepl("amount_from_balance", as.character(f), fixed = TRUE), na.rm = TRUE)
+}
+
 .kpi_running_balance_continuity <- function(tx, n) {
   if (!(n >= 2 && !all(is.na(tx$balance))))
     return(.kpi("running_balance_continuity", "na", detail = "no running balance column"))
@@ -189,6 +224,17 @@
   if (unverifiable > 0)
     detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank/redacted)",
                       detail, unverifiable)
+  # A row whose amount was DERIVED from these balances satisfies this check by
+  # construction, so it is not evidence. Say how many, and when that is every row
+  # the check has tested nothing and must not report a pass.
+  nd <- .n_from_balance(tx)
+  if (nd > 0) {
+    detail <- sprintf("%s; %d of %d amount(s) were derived from this column and so prove nothing here",
+                      detail, nd, n)
+    if (n - nd < 2)
+      return(.kpi("running_balance_continuity", "na",
+                  detail = sprintf("every amount was derived from the balance column, so there is nothing independent to check here (%d row(s))", n)))
+  }
   .kpi("running_balance_continuity", if (ok) "pass" else "fail",
        expected = 0, actual = bad, discrepancy = bad, detail = detail)
 }

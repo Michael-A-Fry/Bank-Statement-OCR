@@ -733,3 +733,65 @@ test_that("dates_within_period compares a span with a span, not a span with a co
   expect_identical(as.character(r2$actual), "2026-01-05..2026-06-20")
   expect_match(r2$detail, "1 date(s) outside period", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# A DERIVED AMOUNT MUST NOT BE COUNTED AS EVIDENCE FOR ITSELF.
+#
+# The reader can fill a hole in the amount column from the two balances around it
+# (`amount_from_balance`, R/parse_pdf_table.R): the money that moved between two
+# consecutive rows IS the difference between their printed balances, so the figure
+# is arithmetic on two numbers on the page rather than a guess.
+#
+# But checking such a row against the balance column is checking it against
+# ITSELF. sum(balance[i] - balance[i-1]) over EVERY row telescopes to
+# closing - opening, so if every amount were derived then opening + sum(amount)
+# equals closing by construction -- and balance_reconciliation, the strongest
+# completeness proof this tool owns, would report a pass having tested nothing.
+# That is a false positive in the verifier, and a verifier's false-positive rate is
+# a hard ceiling on the accuracy of everything built on top of it.
+#
+# So: partial derivation is still a real check (the amounts that WERE read have to
+# absorb the rest of the balance movement) and says so with the count; total
+# derivation is honest "na".
+# ---------------------------------------------------------------------------
+test_that("partial derivation still checks, and says how much of it was derived", {
+  # three rows, one of them derived from the balance column
+  tx <- .tx(c(-10, 40, -5), balance = c(90, 130, 125),
+            flags = c("", "amount_from_balance", ""))
+  k <- .kpi_balance_reconciliation(tx, list(opening_balance = 100,
+                                           closing_balance = 125), 3L)
+  expect_identical(k$status, "pass")                    # the read rows are checked
+  expect_match(k$detail, "1 of 3 amount(s) derived", fixed = TRUE)
+  c2 <- .kpi_running_balance_continuity(tx, 3L)
+  expect_identical(c2$status, "pass")
+  expect_match(c2$detail, "1 of 3 amount(s) were derived", fixed = TRUE)
+  expect_match(c2$detail, "prove nothing here", fixed = TRUE)
+})
+
+test_that("a statement whose every amount was derived proves nothing, and says so", {
+  tx <- .tx(c(-10, 40, -5), balance = c(90, 130, 125),
+            flags = rep("amount_from_balance", 3))
+  k <- .kpi_balance_reconciliation(tx, list(opening_balance = 100,
+                                           closing_balance = 125), 3L)
+  # the arithmetic WOULD tie out exactly -- that is the whole danger
+  expect_equal(100 + sum(tx$amount), 125)
+  expect_identical(k$status, "na")                      # never "pass"
+  expect_match(k$detail, "proves nothing", fixed = TRUE)
+  c2 <- .kpi_running_balance_continuity(tx, 3L)
+  expect_identical(c2$status, "na")
+  expect_match(c2$detail, "nothing independent to check", fixed = TRUE)
+})
+
+test_that("a statement with nothing derived is unchanged, down to the wording", {
+  # The derived-amount handling must be invisible on the overwhelmingly common
+  # case: no flag, no extra clause, no change of status.
+  tx <- .tx(c(-10, 40, -5), balance = c(90, 130, 125))
+  k <- .kpi_balance_reconciliation(tx, list(opening_balance = 100,
+                                            closing_balance = 125), 3L)
+  expect_identical(k$status, "pass")
+  expect_false(grepl("derived from the balance column", k$detail, fixed = TRUE))
+  c2 <- .kpi_running_balance_continuity(tx, 3L)
+  expect_identical(c2$status, "pass")
+  expect_false(grepl("prove nothing", c2$detail, fixed = TRUE))
+  expect_identical(.n_from_balance(tx), 0L)
+})

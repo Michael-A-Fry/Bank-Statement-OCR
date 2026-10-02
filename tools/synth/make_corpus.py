@@ -66,6 +66,17 @@ DESCRIPTIONS = [
     "AP KIWISAVER CONTRIB", "EFTPOS FUEL STOP 114", "INTEREST PAID",
     "ONLINE PAYMENT POWERCO", "EFTPOS SUPERMARKET 2201", "BANK FEE MONTHLY",
 ]
+# Long enough to spill out of the description band (80-330) into the DEBIT band
+# (330-395) and stop there, leaving the credit and balance columns clean. This is
+# the common real shape: a reference number tacked onto a description runs a little
+# wide, not clear across the page. It is the case where the balance column can
+# still rescue the amount, so it has to be tested separately from the extreme one.
+MEDIUM_DESCRIPTIONS = [
+    "EFTPOS PURCHASE RIVERSIDE DAIRY AND CONVENIENCE STORE 0114",
+    "AUTOMATIC PAYMENT TO MATAI HOLDINGS TRUST REFERENCE 88412-00",
+    "DIRECT DEBIT CITY COUNCIL RATES ASSESSMENT NUMBER 2291104A",
+    "ONLINE BILL PAYMENT POWERCO CUSTOMER ACCOUNT NO 55120-03",
+]
 LONG_DESCRIPTIONS = [
     "EFTPOS PURCHASE AT RIVERSIDE DAIRY AND CONVENIENCE STORE LIMITED BRANCH 0114",
     "AUTOMATIC PAYMENT TO MATAI HOLDINGS TRUST ACCOUNT REFERENCE 88412-00 PARTICULARS RENT",
@@ -175,7 +186,8 @@ def make_rows(n, seed, year=2026, month=2, long_desc=False, with_balance=True,
         else:
             debit, credit = amt, None
             bal = round(bal - amt, 2)
-        pool = LONG_DESCRIPTIONS if long_desc else DESCRIPTIONS
+        pool = (LONG_DESCRIPTIONS if long_desc == "long" else
+                MEDIUM_DESCRIPTIONS if long_desc == "medium" else DESCRIPTIONS)
         rows.append({
             "date": "%02d %s" % (day, MONTHS[mon - 1]),
             "iso_date": "%04d-%02d-%02d" % (yr, mon, day),
@@ -380,14 +392,17 @@ CASES = [
          n=20, band_nudge={"debit": 10, "credit": 10}),
     case("band_left_aligned", "amounts LEFT-aligned in their band, not right",
          n=20, amount_align="left"),
-    case("band_narrow_desc", "description overflows its band into the debit band",
-         n=20, long_desc=True),
+    case("band_narrow_desc", "description overflows across ALL the numeric bands",
+         n=20, long_desc="long"),
+    case("band_overflow_debit_only",
+         "description spills into the debit band only; credit and balance stay clean",
+         n=20, long_desc="medium"),
 
     # ---- the wrapped row -----------------------------------------------------
     case("wrap_indented", "long descriptions over 2-3 INDENTED lines",
-         n=14, long_desc=True, wrap_desc=True),
+         n=14, long_desc="long", wrap_desc=True),
     case("wrap_blank_stub", "the same, NOT indented -- Nurminen's blank-stub shape",
-         n=14, long_desc=True, wrap_desc=True, blank_stub_wrap=True),
+         n=14, long_desc="long", wrap_desc=True, blank_stub_wrap=True),
 
     # ---- how money is printed ------------------------------------------------
     case("money_dr_cr_suffix", "amounts carry a DR / CR suffix",
@@ -448,7 +463,7 @@ def build(case_name, note, out_dir, seed=4242, **kw):
     cover = int(kw.pop("cover_page", 0) or 0)
     landscape = kw.pop("landscape", False)
     rotate = kw.pop("rotate", 0)
-    long_desc = kw.pop("long_desc", False)
+    long_desc = kw.pop("long_desc", False)   # False | "medium" | "long"
     with_balance = kw.pop("with_balance", True)
     allow_overdraft = kw.pop("allow_overdraft", False)
     day_step = kw.pop("day_step", 3)

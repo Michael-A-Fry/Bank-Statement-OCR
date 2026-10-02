@@ -167,10 +167,43 @@ parse_date <- function(x, fmt) {
   !all(ok)
 }
 
+# .DASHES -- every character a PDF may use where a minus sign belongs, as its
+# \uXXXX escape so no non-ASCII byte enters this file.
+#
+# MEASURED, AND IT WAS A LIVE SIGN INVERSION. poppler returns a typeset minus as
+# U+2212 MINUS SIGN, not as an ASCII hyphen -- this repository's own fixture
+# generator carries the note "base pdf() maps '-' to U+2212" -- and .num_one only
+# ever looked for "-". So "\u2212123.45" came back as +123.45: a withdrawal read
+# as a deposit, which is the worst single error this tool can make. Every shipped
+# fixture happens to use an ASCII hyphen, so the whole suite passed over it.
+#
+# On a statement that prints a running balance the continuity check would catch
+# it. On one that does not (and they exist) nothing would.
+#
+# Matched as BYTES, one fixed string at a time, never as a character class: a
+# multibyte class in a regex throws under LC_ALL=C, which is the locale this
+# deploys and tests under.
+.DASHES <- c("\u2212",  # MINUS SIGN -- what poppler emits for a typeset minus
+             "\u2010",  # HYPHEN
+             "\u2011",  # NON-BREAKING HYPHEN
+             "\u2013",  # EN DASH
+             "\u2014",  # EM DASH
+             "\ufe63",  # SMALL HYPHEN-MINUS
+             "\uff0d")  # FULLWIDTH HYPHEN-MINUS
+# U+00AD SOFT HYPHEN is a line-break hint, not a sign: it is REMOVED, not read as
+# a minus. Treating an invisible formatting character as a negation would invent a
+# sign the page never showed.
+.SOFT_HYPHEN <- "\u00ad"
+.ascii_dashes <- function(x) {
+  x <- gsub(.SOFT_HYPHEN, "", x, fixed = TRUE, useBytes = TRUE)
+  for (d in .DASHES) x <- gsub(d, "-", x, fixed = TRUE, useBytes = TRUE)
+  x
+}
+
 .num_one <- function(raw, decimal = "auto",
                      debit_rx = "(DR|OD)\\s*$", credit_rx = "CR\\s*$") {
   if (is.na(raw)) return(NA_real_)
-  raw <- trimws(as.character(raw))
+  raw <- .ascii_dashes(trimws(as.character(raw)))
   if (!nzchar(raw)) return(NA_real_)
   if (.money_contaminated(raw, debit_rx, credit_rx)) return(NA_real_)
   neg <- FALSE

@@ -245,3 +245,53 @@ test_that("the sign marker a site configured is vocabulary, not contamination", 
   expect_true(.money_contaminated("500.00 PMT"))          # undeclared: still noise
   expect_false(.money_contaminated("500.00 OWING", debit_rx = "(OWING)\\s*$"))
 })
+
+# ---------------------------------------------------------------------------
+# A TYPESET MINUS IS NOT AN ASCII HYPHEN, AND READING IT AS POSITIVE INVERTS
+# THE TRANSACTION.
+#
+# poppler returns a typeset minus as U+2212 MINUS SIGN. This repository's own
+# fixture generator carries the note "base pdf() maps '-' to U+2212" -- so the
+# fact was known here -- and .num_one only ever looked for an ASCII "-". The
+# measured consequence: "−123.45" came back as +123.45. A withdrawal read as
+# a deposit, which is the worst single error this tool can make.
+#
+# WHY 5,145 PASSING TESTS DID NOT CATCH IT: every shipped fixture happens to use
+# an ASCII hyphen. The suite was self-consistent and wrong together. That is the
+# argument for a corpus whose right answer is known independently (tools/synth/).
+#
+# On a statement printing a running balance the continuity check would have caught
+# the inversion. On one that does not -- and struct_no_balance_col is exactly that
+# shape -- nothing would have.
+# ---------------------------------------------------------------------------
+test_that("every character a PDF uses for a minus sign reads as negative", {
+  expect_equal(.num("-123.45"), -123.45)          # ASCII hyphen-minus
+  expect_equal(.num("−123.45"), -123.45)     # U+2212 MINUS SIGN  <- poppler's
+  expect_equal(.num("‐123.45"), -123.45)     # U+2010 HYPHEN
+  expect_equal(.num("‑123.45"), -123.45)     # U+2011 NON-BREAKING HYPHEN
+  expect_equal(.num("–123.45"), -123.45)     # U+2013 EN DASH
+  expect_equal(.num("—123.45"), -123.45)     # U+2014 EM DASH
+  expect_equal(.num("﹣123.45"), -123.45)     # U+FE63 SMALL HYPHEN-MINUS
+  expect_equal(.num("－123.45"), -123.45)     # U+FF0D FULLWIDTH HYPHEN-MINUS
+  # trailing, which is how a good many statements print it
+  expect_equal(.num("123.45−"), -123.45)
+  # and with the thousands separator in place, which is the real printed shape
+  expect_equal(.num("−1,234.56"), -1234.56)
+})
+
+test_that("a soft hyphen is removed, never read as a sign", {
+  # U+00AD is an invisible line-break hint. Reading it as a negation would invent
+  # a sign the page never showed -- the opposite failure to the one above, and
+  # just as wrong.
+  expect_equal(.num("1­23.45"), 123.45)
+  expect_equal(.num("123.45­"), 123.45)
+})
+
+test_that("normalising dashes does not make a positive amount negative", {
+  # The guard against over-correcting: nothing here may acquire a sign.
+  for (s in c("123.45", "1,234.56", "$99.00", "1,234.56 CR", "0.00"))
+    expect_gte(.num(s), 0)
+  # ...and a lone dash is still no number at all, not zero
+  expect_true(is.na(.num("−")))
+  expect_true(is.na(.num("-")))
+})

@@ -217,6 +217,7 @@ diag_for_route <- function(d) {
 # cell wide, and the advice belongs to the check or diagnostic that owns it.
 FLAG_PLAIN <- c(
   redacted           = "hidden on the statement - no value was derived",
+  amount_from_balance = "worked out from the balance column, not read from the amount",
   malformed          = "the amount could not be read as a number",
   fx                 = "carries a foreign-currency amount",
   date_unresolved    = "a date was printed but could not be read",

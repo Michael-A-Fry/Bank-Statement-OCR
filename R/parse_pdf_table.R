@@ -1152,11 +1152,62 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # the [REDACTED] token for every guarded word) rather than a hand-listed subset.
   redacted <- if (n == 0) logical(0) else
     (amt_redacted | grepl("REDACT", getc("raw"), ignore.case = TRUE))
+  # ---- A HOLE THE PAGE CAN FILL ITSELF ---------------------------------------
+  #
+  # A statement that prints a running balance carries its own answer key: the
+  # money that moved between two consecutive rows IS the difference between their
+  # printed balances. So when the amount cell could not be read but BOTH balances
+  # around it could, the figure is not a guess -- it is arithmetic on two numbers
+  # printed on the same page.
+  #
+  # WHY THIS IS WORTH DOING. The contaminated-cell guard in .num_one refuses an
+  # amount cell that a long description has overflowed into, which is right: the
+  # alternative was gluing a reference number to a credit and reporting
+  # 22911047.44. But a refusal leaves the analyst a hole to fill by hand FROM THE
+  # SAME TWO BALANCES two columns to the right. Measured on the synthetic corpus
+  # (tools/synth/, case band_narrow_desc): 20 of 20 amounts refused, every one of
+  # them recoverable this way.
+  #
+  # IT NEVER CROSSES A REDACTION. If the amount was hidden, deriving it from the
+  # balances would RECONSTRUCT A REDACTED FIGURE -- this tool would become the
+  # thing that defeats a redaction applied for privilege or third-party privacy.
+  # A hidden amount stays unknown, whatever the arithmetic says.
+  #
+  # IT NEVER OVERWRITES A FIGURE THAT WAS READ. A read amount that disagrees with
+  # the balance delta is a CONFLICT, not a hole, and silently replacing it would
+  # destroy the evidence of the disagreement. running_balance_continuity
+  # (R/reconcile.R) is what reports that, and it still does.
+  #
+  # IT NEVER INVENTS A ZERO. Two equal balances mean the balance did not move,
+  # which is not the same fact as "a transaction of exactly nothing happened".
+  #
+  # AND EVERY DERIVED FIGURE IS FLAGGED `amount_from_balance`, because it makes
+  # running_balance_continuity tautological for that one row -- the amount was
+  # computed FROM the balances it would be checked against. The flag is what keeps
+  # the audit trail honest about which figures were read and which were derived.
+  prev_bal <- if (n == 0) numeric(0) else c(
+    suppressWarnings(as.numeric(.num(md$opening_balance %||% NA_character_, dec)))[1],
+    balance[-n])
+  from_balance <- if (n == 0) logical(0) else {
+    derivable <- is.na(amt$value) & !amt_redacted & !redacted &
+      has_bal & !is.na(balance) & !is.na(prev_bal)
+    d <- round(balance - prev_bal, 2)
+    ok <- derivable & is.finite(d) & abs(d) >= 0.005
+    if (any(ok)) {
+      amt$value[ok] <- d[ok]
+      amt$direction[ok] <- .direction(d[ok])
+    }
+    ok
+  }
+
   # malformed: the row was kept (dated line carrying a money-looking amount) yet
   # the amount could not be parsed to a number -- a genuine parse failure, not a
   # redaction. Flagging it lets the no_unparsed_rows KPI catch PDF parse gaps the
   # same way it already does for delimited (previously this path never set the
   # flag, so no_unparsed_rows was blind to a mis-read PDF amount).
+  # Computed AFTER the balance derivation above, so a hole the page filled itself
+  # is not also reported as an unreadable amount: the row has a usable figure, and
+  # `amount_from_balance` is the flag that says where it came from.
   malformed <- if (n == 0) logical(0) else (is.na(amt$value) & !redacted)
   # date_unresolved: kept despite an unknown year (see .date_ok) -- date_iso is NA
   # but the transaction is preserved. Marked so trust/review reflect the gap. A
@@ -1208,6 +1259,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # in: the description is complete but was ASSEMBLED, so say so.
     f <- add(f, merged_vec, "row_text_merged")
     f <- add(f, ocr_low, "ocr_low_conf")
+    # derived from the two printed balances, not read from the amount column
+    f <- add(f, from_balance, "amount_from_balance")
     f
   }
   if (n > 0) amt$value[amt_redacted] <- NA_real_   # only null when the AMOUNT was hidden
