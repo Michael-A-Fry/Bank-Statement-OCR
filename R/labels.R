@@ -276,3 +276,32 @@ default_label_dict <- function() {
   hit <- cands[file.exists(cands)]
   if (length(hit)) load_label_dict(hit[1]) else list()
 }
+
+# .field_from_region(words_by_page, region, vtype) -> list(value, raw, matched).
+# The label-free counterpart to match_label: "the value is over HERE, wherever
+# its label is". Reads the words inside a page-box (PDF points) in reading order
+# and coerces the result to the requested value type. `region` is a list with
+# page (default 1) plus any of x_min/x_max/y_min/y_max; a missing bound is open.
+# This is what a statement template's table$metadata_regions boxes are read with.
+.field_from_region <- function(words_by_page, region, vtype = "text") {
+  none <- list(value = NA_character_, raw = NA_character_, matched = FALSE)
+  if (is.null(region)) return(none)
+  pg <- suppressWarnings(as.integer(region$page %||% 1)); if (is.na(pg) || pg < 1) pg <- 1L
+  w <- if (pg <= length(words_by_page)) words_by_page[[pg]] else NULL
+  if (is.null(w) || !nrow(w)) return(none)
+  w <- as.data.frame(w, stringsAsFactors = FALSE)
+  keep <- rep(TRUE, nrow(w))
+  # a word counts as inside when it OVERLAPS the box, so a value clipped by a
+  # box drawn slightly too tight is still read rather than silently dropped.
+  if (!is.null(region$x_min)) keep <- keep & (w$x + w$width) >= region$x_min
+  if (!is.null(region$x_max)) keep <- keep & w$x <= region$x_max
+  if (!is.null(region$y_min)) keep <- keep & (w$y + w$height) >= region$y_min
+  if (!is.null(region$y_max)) keep <- keep & w$y <= region$y_max
+  sel <- w[keep, , drop = FALSE]
+  if (!nrow(sel)) return(none)
+  sel <- sel[order(round(sel$y / 3), sel$x), , drop = FALSE]   # reading order
+  raw <- paste(sel$text, collapse = " ")
+  val <- if (identical(vtype, "text")) raw else .value_from_line(raw, vtype)
+  list(value = if (is.na(val) || !nzchar(val)) NA_character_ else val,
+       raw = raw, matched = !is.na(val) && nzchar(val))
+}

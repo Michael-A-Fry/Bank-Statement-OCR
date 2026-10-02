@@ -179,54 +179,24 @@ DIAG_PLAIN <- c(
 # THREE MAPS, AND ONLY THE WORDING MOVES. No row is added, dropped or re-graded:
 # a diagnostic the engine raised is still raised, still at its own severity, still
 # with its own detail. Only the sentence changes, and only for the codes named here.
-#   DIAG_FIX_PLAIN       -- replaces "How to fix" on EVERY route (the engine's own
-#                           is wrong on all of them).
-#   DIAG_PLAIN_OTHER     -- replaces the "What" word, non-statement routes only.
-#   DIAG_FIX_PLAIN_OTHER -- replaces "How to fix", non-statement routes only.
+#   DIAG_FIX_PLAIN -- replaces "How to fix", because the engine's own wording for
+#                     these codes is wrong for the person reading this screen.
 # Anything not named keeps the engine's words verbatim.
 DIAG_FIX_PLAIN <- c(
-  unknown_format = paste("Set this layout up on the Add a template tab: upload this document",
+  unknown_format = paste("Set this layout up on the Add a template tab: upload this statement",
                          "and point at what you want out of it."))
-DIAG_PLAIN_OTHER <- c(
-  combined_statement  = "several accounts in one document",
-  multiple_statements = "several documents in one file")
-DIAG_FIX_PLAIN_OTHER <- c(
-  combined_statement  = "Check which account each figure belongs to.",
-  multiple_statements = paste("This upload looks like more than one document bundled together.",
-                              "Split it into one document per file and re-run."))
 
-# diag_for_route(d, statement) -- the diagnostics frame with its wording put right
-# for the route. `d` is the engine's frame (category / severity / detail /
-# how_to_fix / ...); `statement` is TRUE only when the run really was read as a
-# transaction statement. Returns `d` unchanged when there is nothing to say.
-plain_diag <- function(x, statement = TRUE) {
-  out <- plain_label(x, DIAG_PLAIN)
-  if (!isTRUE(statement)) {
-    x <- as.character(x)
-    hit <- x %in% names(DIAG_PLAIN_OTHER)
-    if (any(hit)) out[hit] <- unname(DIAG_PLAIN_OTHER[x[hit]])
-  }
-  out
-}
-diag_for_route <- function(d, statement = TRUE) {
+# plain_diag(x) / diag_for_route(d) -- the diagnostics frame with its wording put
+# right for the screen. `d` is the engine's frame (category / severity / detail /
+# how_to_fix / ...). Returns `d` unchanged when there is nothing to say.
+plain_diag <- function(x) plain_label(x, DIAG_PLAIN)
+diag_for_route <- function(d) {
   if (!is.data.frame(d) || !nrow(d) || !("category" %in% names(d))) return(d)
   cat_ <- as.character(d$category)
   if ("how_to_fix" %in% names(d)) {
     d$how_to_fix <- as.character(d$how_to_fix)
     hit <- cat_ %in% names(DIAG_FIX_PLAIN)
     if (any(hit)) d$how_to_fix[hit] <- unname(DIAG_FIX_PLAIN[cat_[hit]])
-    if (!isTRUE(statement)) {
-      hit <- cat_ %in% names(DIAG_FIX_PLAIN_OTHER)
-      if (any(hit)) d$how_to_fix[hit] <- unname(DIAG_FIX_PLAIN_OTHER[cat_[hit]])
-    }
-  }
-  # "6 account numbers appear in one statement period" -- the count is the engine's
-  # and is kept; only the noun is the wrong one for this route.
-  if (!isTRUE(statement) && "detail" %in% names(d)) {
-    hit <- cat_ %in% "combined_statement"
-    if (any(hit)) d$detail <- as.character(d$detail)
-    if (any(hit))
-      d$detail[hit] <- sub("one statement period", "this document", d$detail[hit], fixed = TRUE)
   }
   d
 }
@@ -290,18 +260,6 @@ plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, 
 UNREAD_ROW_PLAIN_LAYER <- "Rows that look like transactions but weren't read"
 UNREAD_ROW_PLAIN_KEY   <- "row that looks like a transaction and could not be read"
 
-# ---------------------------------------------------------------------------
-# THE "NEEDS A LOOK" COLUMN ON A FORM RESULT, one entry per column extract_fields
-# (R/extract_fields.R) sets on a field. It listed `flagged` alone, so on a real
-# ANZ KiwiSaver summary the verdict card said "3 label(s) appear more than once
-# with different values; the first of each was taken - check them against the
-# document" over a table whose NEEDS A LOOK cell was empty on all seven rows.
-# `conflict` is the very column convert_form() counts into that sentence, so the
-# tool knew which three and would not say -- which leaves a reviewer suspecting
-# all seven. A field can carry both, and then it says both.
-FIELD_LOOK_PLAIN <- c(
-  flagged  = "required and not found",
-  conflict = "appears more than once with different values - the first was taken")
 # plain_failing_check(x) -- the batch table's "What to check" column, in words.
 #
 # convert_batch() (R/batch.R) carries the engine's own CODE with the map that

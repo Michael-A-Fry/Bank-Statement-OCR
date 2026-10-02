@@ -69,13 +69,21 @@ skipped: 0
 - **The pass condition is `failed: 0`, `errors: 0`, `skipped: 0`** — not a
   particular total. The `files` / `tests` / `passed` figures grow every time a
   test is added, so a higher total than last time is normal and healthy; a
-  noticeably *lower* one means something did not run, and is worth chasing.
+  noticeably *lower* one means something did not run, and is worth chasing —
+  unless scope was deliberately removed, which is what happened at 1.9.0 and is
+  the only reason the figures below are lower than 1.8.1's.
 
-The last full run measured **77 files, 1,342 tests, 7,301 passing assertions,
-0 failed, 0 errors** — taken on 2026-08-26, at `VERSION` 1.8.1, on R 4.4.3,
-with 19 skipped because that box had no OCR tooling (run under
-`BSO_ALLOW_SKIPS=1`; on a server **with** tesseract and poppler the skips should
-be 0). Treat it as a floor to compare against, not a target to match.
+The last full run measured **70 files, 961 tests, 5,091 passing assertions,
+0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.9.0, on R 4.3.3,
+with 1 skipped: one split test needs a Westpac bundle that lives in
+`samples/_private_staging/` and is deliberately not committed. Treat it as a
+floor to compare against, not a target to match.
+
+**The figures fell between 1.8.1 and 1.9.0, and that is correct.** 1.9.0 removed
+the form (`mode: fields`) and report (`mode: document`) routes entirely — the
+tool converts bank statements and nothing else — so seven test files and the
+engine modules under them went with them. Nothing stopped running that still has
+code behind it.
 
 **That run was clean, and it is the first one that was.** For a long time the
 board carried five red lines, explained here and elsewhere as "the environment,

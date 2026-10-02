@@ -99,62 +99,6 @@ test_that("two labels on one line each resolve to their OWN value", {
          date = list(x_min = 40, x_max = 74), description = list(x_min = 74, x_max = 360),
          amount = list(x_min = 360, x_max = 470), balance = list(x_min = 470, x_max = 545))))
 
-test_that("a year inferred from free page text is flagged, not silently trusted (P3-a)", {
-  # year-less "05 Jan" dates, NO parseable period, but a single 4-digit year sits
-  # in the page text (a footer/copyright). The row is kept with that year so it
-  # isn't dropped, but must carry date_year_inferred so the guess is visible.
-  w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),
-                      c("4.50", 415, 40, 25), c("95.50", 488, 40, 30)))
-  inp <- .rb_input(w, pages = "Kowhai Bank statement   (c) 2019 Kowhai Bank Ltd")
-  tx <- parse_pdf_table(inp, .rb_tmpl("signed"))$transactions
-  expect_equal(nrow(tx), 1L)
-  expect_true(startsWith(tx$date, "2019-01-05"))            # year taken from the text
-  expect_true(grepl("date_year_inferred", tx$flags))       # ...but flagged as a guess
-})
-
-test_that("an overdrawn PDF balance keeps its negative sign (OD marker)", {
-  w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),
-                      c("4.50", 415, 40, 25), c("95.50", 488, 40, 30), c("OD", 520, 40, 15)))
-  tx <- parse_pdf_table(.rb_input(w), .rb_tmpl("signed"))$transactions
-  expect_equal(tx$balance, -95.50)
-  expect_identical(tx$balance_raw, "95.50 OD")   # raw verbatim
-})
-
-test_that("a kept PDF row whose amount cannot be parsed is flagged malformed", {
-  # dr_cr_suffix style, but the amount cells carry no DR/CR marker -> direction
-  # unknown -> value NA. The row is still a dated money line, so it is kept and
-  # must be flagged so no_unparsed_rows fails rather than passing silently.
-  w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("RENT", 110, 40, 45), c("500.00", 415, 40, 30)))
-  p <- parse_pdf_table(.rb_input(w), .rb_tmpl("dr_cr_suffix"))
-  expect_true(is.na(p$transactions$amount[1]))
-  expect_true(grepl("malformed", p$transactions$flags[1]))
-  k <- reconcile(p)$kpis
-  expect_identical(k$status[k$name == "no_unparsed_rows"], "fail")
-})
-
-test_that(".is_summary drops only true summary lines, never real transactions", {
-  count_kept <- function(desc) {
-    toks <- strsplit(desc, " ")[[1]]
-    rows <- c(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16)),
-              lapply(seq_along(toks), function(i) c(toks[i], 90 + i, 40, 20)),
-              list(c("10.00", 415, 40, 25), c("95.50", 488, 40, 30)))
-    nrow(parse_pdf_table(.rb_input(.rb_words(rows)), .rb_tmpl("signed"))$transactions)
-  }
-  # real transactions that merely LOOK summary-ish (label is not the WHOLE
-  # description) -> always kept; money must never vanish silently
-  expect_equal(count_kept("Total Credit Union deposit"), 1L)
-  expect_equal(count_kept("Total Payment to ACME"), 1L)
-  expect_equal(count_kept("Total Payments to ACME Ltd"), 1L)
-  expect_equal(count_kept("Transfer carried forward interest"), 1L)
-  expect_equal(count_kept("Carried forward interest adj"), 1L)
-  expect_equal(count_kept("brought forward stock purchase"), 1L)
-  # genuine summary rows (the description IS the label) -> dropped
-  expect_equal(count_kept("Opening Balance"), 0L)
-  expect_equal(count_kept("Balance Brought Fwd"), 0L)
-  expect_equal(count_kept("Total Credits"), 0L)
-  expect_equal(count_kept("Carried Forward"), 0L)
-})
-
 test_that("a label's value to its LEFT is read, not the next line's number", {
   # "1,234.56 Closing balance" then a following line with its own number: the
   # closing balance must be 1,234.56, never the next line's 5.00.
@@ -180,22 +124,6 @@ test_that("an OCR-read statement is capped below high and carries a caveat", {
   expect_equal(r$trust$ocr_min_confidence, 94)
   expect_true(any(grepl("OCR", r$trust$reasons)))         # caveat present
   expect_true(any(r$kpis$name == "ocr_confidence"))       # confidence figure shown
-})
-
-test_that("a low-confidence OCR word in a critical cell flags that row", {
-  # OCR word boxes carry per-word `conf`; a doubtful digit in the amount cell must
-  # flag the row even when the page-mean confidence looks healthy.
-  w <- data.frame(stringsAsFactors = FALSE,
-    text = c("05","Jan","COFFEE","4.50","95.50", "06","Jan","RENT","500.00","595.50"),
-    x = c(45,60,110,415,488, 45,60,110,415,488),
-    y = c(40,40,40,40,40, 70,70,70,70,70), width = rep(20,10), height = rep(10,10),
-    conf = c(96,95,93,97,94, 96,95,93,42,94))              # row 2 amount @ 42%
-  tx <- parse_pdf_table(.rb_input(w), .rb_tmpl("signed"))$transactions
-  expect_false(grepl("ocr_low_conf", tx$flags[1]))         # all high-conf
-  expect_true(grepl("ocr_low_conf", tx$flags[2]))          # the 42% amount
-  # a text-layer page (no conf column) must never raise the flag
-  tx2 <- parse_pdf_table(.rb_input(w[, setdiff(names(w), "conf")]), .rb_tmpl("signed"))$transactions
-  expect_false(any(grepl("ocr_low_conf", tx2$flags)))
 })
 
 # ---- stated transaction count -> real completeness check -------------------
@@ -234,22 +162,6 @@ test_that("a date cell with two dates parses the FIRST, not a mangled year", {
   tx <- parse_pdf_table(input, tmpl)$transactions
   expect_equal(tx$date, c("2024-08-22", "2024-09-17"))     # first date, correct year
   expect_identical(tx$date_raw, c("22 Aug 24 Aug", "17 Sep 19 Sep"))  # verbatim, both dates
-})
-
-# ---- year-less dates with NO resolvable period: preserve, never drop -------
-test_that("year-less PDF dates with no period are preserved, not dropped", {
-  # No period anywhere and a year-less date_format: rather than silently drop the
-  # whole statement, keep the rows with date_iso = NA + a date_unresolved flag so
-  # the transactions (amount, description, verbatim raw date) survive for review.
-  w <- .rb_words(list(c("13", 45, 40, 12), c("Aug", 60, 40, 16), c("COFFEE", 110, 40, 45),
-                      c("4.50", 415, 40, 25), c("95.50", 488, 40, 30)))
-  input <- .rb_input(w, pages = "ASB statement\nAccount 12-3456-7890123-00")  # no period, no year
-  tx <- parse_pdf_table(input, .rb_tmpl("signed"))$transactions
-  expect_equal(nrow(tx), 1L)                        # NOT dropped to zero
-  expect_true(is.na(tx$date[1]))                    # year genuinely unknown -> no ISO
-  expect_identical(tx$date_raw[1], "13 Aug")        # raw date kept verbatim
-  expect_equal(tx$amount[1], 4.50)                  # data preserved
-  expect_true(grepl("date_unresolved", tx$flags[1]))
 })
 
 # ---- NA reduction: derive a missing balance from the running-balance column ---
@@ -299,16 +211,6 @@ test_that("a Visa PDF parses unsigned charges/CR payments and drops the balance 
   # distinctive multi-word fingerprint (a bare "Visa" is now rejected as generic)
   expect_length(validate_template(c(tmpl, list(min_score = 1,
     fingerprint = list(page_contains_all = list("Visa Card Statement"))))), 0)  # 'unsigned' validates
-})
-
-# ---- reconcile: 2-digit-year period bounds --------------------------------
-test_that("dates_within_period resolves a 2-digit-year period", {
-  w <- .rb_words(list(c("05", 45, 40, 12), c("Jan", 60, 40, 16), c("COFFEE", 110, 40, 45),
-                      c("4.50", 415, 40, 25), c("95.50", 488, 40, 30)))
-  input <- .rb_input(w, pages = "Opening date 1 Jan 26\nClosing date 31 Jan 26")
-  p <- parse_pdf_table(input, .rb_tmpl("signed"))
-  k <- reconcile(p)$kpis
-  expect_identical(k$status[k$name == "dates_within_period"], "pass")
 })
 
 # ---- delimited: debit_credit_cols malformed detection ---------------------

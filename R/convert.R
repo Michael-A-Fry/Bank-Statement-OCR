@@ -53,14 +53,9 @@ template_sha256 <- function(template) {
 # log_run(logdir, result) -- write THE run-log record: exactly ONE file per run,
 # named by run_id, holding the FINAL outcome.
 #
-# WHY this is a separate function rather than inline in convert_statement: the
-# front door (convert_document) may fall back to FORM extraction after the
-# statement pipeline returns "unsupported". When convert_statement wrote the log
-# itself, a successfully converted IRD/KiwiSaver form was recorded as an
-# unsupported statement -- and counted in Admin's "build these next" queue, which
-# reads exactly that field. Now convert_statement BUILDS the record
-# (result$run_log) and only writes it when it is the whole story; convert_document
-# writes it once, after the final outcome is known. No record is ever rewritten.
+# Separate from convert_statement so a caller that may still change the outcome
+# can build the record (result$run_log) and write it once the outcome is final.
+# No record is ever rewritten.
 log_run <- function(logdir, result) {
   rec <- result$run_log
   if (is.null(rec) || !length(rec)) return(invisible(NULL))
@@ -190,7 +185,7 @@ log_run <- function(logdir, result) {
 
 # convert_statement(...) -> result (build-contract sections 6, 7).
 # `log = FALSE` builds the run record on the result (result$run_log) WITHOUT
-# writing it, so a caller that may still change the outcome (convert_document's
+# writing it, so a caller that may still change the outcome
 # form fallback) can write exactly one, final record itself.
 convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               outdir = "out", templates_dir = "templates/statements",
@@ -199,11 +194,11 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               formats = c("xlsx", "csv", "json"),
                               logdir = "logs", redaction_rects = NULL,
                               force_template = NULL, force_rows = NULL,
-                              log = TRUE, use_statement_templates = TRUE) {
+                              log = TRUE) {
   # NOTHING THAT TOUCHES `path` HAPPENS OUTSIDE THE FUNNEL. docs/design.md and
   # docs/overview.md both state "never throws at the front door" as a fact, but the
   # tryCatch used to open below this preamble -- so basename(path) sat outside it
-  # and convert_document(1L) threw "a character vector argument expected" before a
+  # and convert_statement(1L) threw "a character vector argument expected" before a
   # single guard ran. Shiny always hands over a character datapath, so nothing was
   # breaking; the danger was that the next maintainer to add a line here would
   # believe it was protected. What is left above the tryCatch cannot throw for any
@@ -242,17 +237,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
 
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
-    # WHEN THE PERSON HAS SAID THIS IS NOT A BANK STATEMENT, no bank statement
-    # template gets a vote. Reported: "I put a phrase printed on it, bang smack on
-    # front page, still used another template" -- a statement template matched a
-    # document that was not a statement, and because convert_document only reaches
-    # the form and report passes when the statement pass comes back unsupported,
-    # the report template carrying that phrase was never even consulted. The
-    # answer is not a cleverer score: it is that a human answer outranks a guess.
-    # An empty set makes detect_statement() find nothing, which is the honest
-    # "no template read this" path that already exists, at no parsing cost.
-    templates <- if (isTRUE(use_statement_templates))
-      load_template_set(templates_dir, user_templates_dir) else list()
+    templates <- load_template_set(templates_dir, user_templates_dir)
     input <- read_input(path, redaction_rects = redaction_rects)
     # THE FILE ITSELF COULD NOT BE READ. That is not the same answer as "we have
     # never seen this layout", and it must never be given the same one: a corrupt
@@ -533,7 +518,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   # requested_by defaults to the OS-authenticated user, so every conversion is
   # attributed to a real person without any login prompt.
   # BUILT here, WRITTEN by log_run() -- see log_run() for why the write is
-  # separable (the form fallback in convert_document may still change `status`).
+  # separable.
   result$run_log <- list(
     ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     run_id = run_id,
@@ -558,7 +543,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     status = result$status,
     trust_level = result$trust$level %||% NA_character_,
     row_count = row_count,
-    n_fields = NA_integer_,          # forms only (see convert_document)
+    n_fields = NA_integer_,
     kpi_fail_count = kpi_fail_count,
     pages = result$metadata$pages_actual %||% NA_integer_,
     period_start = result$metadata$period_start %||% NA_character_,
@@ -571,7 +556,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
 
   # ---- metadata capture: LOCAL ONLY, kept forever (logs/metadata/), never fed ----
   # This describes the STATEMENT ATTEMPT (how the file read, what the columns
-  # looked like) and stays per-attempt even when convert_document later succeeds
+  # looked like) and stays per-attempt
   # with a form template -- the statement pipeline really did find no match, and
   # that is the signal the capture exists to keep. The RUN record is the single
   # per-run OUTCOME; this is not a second copy of it.

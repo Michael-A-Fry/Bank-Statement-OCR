@@ -15,107 +15,136 @@ finding id.
 
 ## 1.9.0
 
-The release that makes the **other** route real: a document that is not a bank
-statement — a trustee report, a valuation, a letter — is read by pointing at its
-tables and its labelled values, and comes out as a workbook. It is download-only:
-nothing on this route reconciles and nothing reaches Qlik.
+**This tool reads bank statements. It does nothing else.**
 
-### Wrong figures this stops
+The two other routes — forms (`mode: fields`) and reports (`mode: document`) —
+are **removed**, engine and screens together. A statement is the only kind of
+document the tool accepts, the only kind it has a template for, and the only kind
+any screen asks about.
 
-**Columns now follow the table when the copy prints it lower.** The bands were
-drawn on one document and applied verbatim to the next; the same table printed
-40pt down the page read its figures out of the neighbouring columns and reported
-them as full. The engine now asks the document where its heading actually is and
-shifts the bands to match, and it refuses to shift on any of four grounds —
-fewer than two columns matched, the columns disagreeing by more than 12pt, no
-heading found, or every heading cell already inside its band.
+### Why
 
-**A three-line row is one row.** Wrapping was decided against a page-wide line
-pitch, so a description running onto a second and third line arrived as three
-rows with two of them empty of figures. It is measured off the two lines' own
-type heights now.
+A report engine and a statement engine do not cost the same to be right about.
+A statement reconciles: the opening balance, the running balance and the closing
+balance check each other, so a wrong read has somewhere to show up. A report has
+nothing of the kind — no arithmetic anywhere can tell a figure read out of the
+wrong column from the right one — and it was download-only for exactly that
+reason. It carried roughly a third of the codebase, every screen had to ask
+"which kind is this?" before it could say anything, and the answer was never
+checkable. The statement path now gets all of the attention.
 
-**A continuation page's repeated heading is not data.** A table carrying on over
-five pages contributed its heading five times as rows of text. The heading is
-learned off the table's own first page and matched whole-line, and it is refused
-outright if any learned line carries money — a heading that looks like a figure
-is not a heading.
+### What went
 
-**A column whose first row is empty no longer swallows its neighbour.**
+| Removed | Was |
+|---|---|
+| `R/tables.R`, `R/tables_detect.R`, `R/doc_extract.R` | the report engine (many tables of different shapes) |
+| `R/forms.R`, `R/extract_fields.R` | the form engine (labelled values found by wording) and the three-door front door |
+| `templates/fields\`, `fields_user\`, `documents\`, `documents_user\` | the two other template libraries |
+| `tools/corpus/` | a survey harness for the report engine |
+| 7 test files, 2 helpers, 1 fixture builder | the tests behind all of it |
+| `docs\operational\pulling-tables-out-of-a-report.md` | the analyst page for the report route |
 
-**A scan the tool could barely read is no longer reported as a clean conversion.**
-OCR page confidence now gates the status, so a poor scan lands at *needs review*
-instead of green.
+**9,893 lines of executable code and 44 MB of specimen PDFs.** `R/` + `app.R` +
+the two `ui_` files: **31,368 lines → 21,741**.
 
-**`occurrence: all` is refused when it is written.** It validated, it was
-preserved on save, and `.doc_table_optional()` read it to mean "absence is
-expected" — but nothing existed to find the repeats, so a template carrying it
-silently reported every missing table as fine. Refused until the reader exists.
+### What that simplified, rather than merely deleted
 
-**A verdict no longer contradicts its own body.** A template that MATCHED a
-document and read nothing from it was headlined "No template recognised this
-document yet" with the engine's true sentence directly underneath and a
-diagnostics row saying "no templates match" beside it. Two false statements
-against one true one, on a forensic screen.
+- **One front door.** `convert_statement()` in `R/convert.R`. There is no
+  `convert_document()` trying three pipelines in order and no `kind` to stamp.
+- **`.is_txn_result()` and `.statement_route()` are gone from `app.R`** — ten
+  call sites that asked "is this actually a statement?" before every card, every
+  table and every trust headline could speak. The answer is now yes, always.
+- **`diag_for_route()` / `plain_diag()` lost their `statement` argument** and
+  `DIAG_PLAIN_OTHER` / `DIAG_FIX_PLAIN_OTHER` went with it: two whole dictionaries
+  that existed to re-word a statement diagnostic for a document that had no
+  running balance.
+- **`template_kind()`, `.TEMPLATE_KIND_LABEL`, `.TEMPLATE_KIND_NOUN` and
+  `template_library_name()` are gone.** One kind needs no discriminator.
+  `.template_shape()` lost two of its three branches; `library_overview()` lost
+  its `kind` column and the row grouping that existed to split by it.
+- **`.detect_by_fingerprint()` is gone** — a detector parameterised over noun,
+  normaliser and namer so two routes could share it, with zero callers left.
+- **Four config paths removed** (`fields`, `user_fields`, `docs`, `user_docs`),
+  with their legacy-name rewrites and their folder-migration entries.
+- **Two dead parameters removed** from `R/params.R` (`PARAM_DOC_MIN_COL_PT`,
+  `PARAM_DOC_SAME_PAGE_PT`).
 
-### The report and form routes
+### The one real bug this found
 
-- **Admin lists every template of every kind**, split by kind, and opening one
-  opens the editor that kind belongs to. Report templates were invisible there —
-  including to the restore check in `backup-and-restore.md`, which is why
-  `scripts\health-check.R` now counts all three kinds from the command line.
-- **Convert asks what the document is** rather than guessing, and an "other"
-  document opens the editor instead of auto-processing.
-- **Feedback works on the other route**, traceable to the run and the template.
-- **A drag now answers a question that asked for a click**, and a click that
-  cannot answer says so. Both gestures reach one place. Previously a drag aimed
-  at "where does the table start" did nothing at all — no rectangle, no message,
-  no change.
-- **PII is refused in table names and in labels**, not only in the places it was
-  already checked.
-- **Every template write goes through `save_yaml_safely()`**, so a write
-  interrupted by a crash or a full disk cannot leave a half-written template.
+**A pinned header value stopped being read, and said nothing.** A statement
+template may pin a header figure to a drawn box (`table$metadata_regions`) for
+layouts whose wording the label dictionary cannot find. That reader called
+`.field_from_region()`, which lived in `R/extract_fields.R` — deleted with the
+form engine. The call site wraps it in `safe()`, so the missing function became
+`NA`: every pinned closing balance, opening balance, account number and statement
+period silently came back empty instead of erroring. The function is restored to
+`R/labels.R`, beside `match_label()` whose counterpart it is, and the two tests
+that cover it pass again.
 
-### Simpler
+A sweep for every other name the deleted files provided found no second case:
+the remaining references were all comments, now corrected.
 
-182 named controls at the start of this work, **162 now**; fifteen actually left
-the screen and every one has a surviving route to the same outcome. Executable
-code fell 85 lines across `app.R`, `ui_labels.R` and `R\`. The line counts rose,
-because every cut carries the reason it was made beside it.
+### Still true, and checked
 
-`docs\` was truth-checked against the code: six pages named controls that no
-longer exist, including step 4 of the four-step recipe in
-`converting-statements.md`.
+The suite is **70 files, 961 tests, 5,094 passing assertions, 0 failed,
+0 errors**, with one skip — a split test that needs a Westpac bundle kept out of
+the repository on purpose. The app boots and serves. Nothing in `R/` reads
+`app.R` or the two `ui_` files, and the directory map in
+`docs/context/architecture/build-contract.md` matches `R/` in both directions,
+because a test fails if it does not.
 
 ### Copying this release onto the offline box
 
 Read [`docs/operational/updating-a-version.md`](docs/operational/updating-a-version.md)
-for the procedure and the *Never copy* table. **This is the list of what this
-release actually changed** — step 4 of that page:
+for the procedure and the *Never copy* table. **This release both changes and
+DELETES files, and the deletions matter**: an old `R/forms.R` left behind on the
+box is still sourced at startup and will error on functions that no longer exist.
+Delete first, then copy.
+
+**Delete on the box:**
+
+```
+R\forms.R   R\extract_fields.R   R\tables.R   R\tables_detect.R   R\doc_extract.R
+templates\fields\   templates\fields_user\   templates\documents\   templates\documents_user\
+tools\corpus\
+docs\operational\pulling-tables-out-of-a-report.md
+tests\testthat\helper-doc.R   tests\testthat\helper-doc-hard.R
+tests\testthat\fixtures\make_document_fixture.R
+tests\testthat\test-doc_app.R        tests\testthat\test-doc_hard.R
+tests\testthat\test-doc_pairs.R      tests\testthat\test-doc_pdf_roundtrip.R
+tests\testthat\test-doc_tables.R     tests\testthat\test-extract_fields.R
+tests\testthat\test-forms.R
+```
+
+**Then copy over:**
 
 ```
 app.R   ui_labels.R   VERSION   CHANGELOG.md
-R\   (23 files, and see the warning below about params.R)
-scripts\health-check.R   (NEW)
-www\app.css
-docs\   (23 files)
-tests\   (21 files)
+R\   (10 files: analytics batch batch_audit config convert
+       diagnose jobs labels metadata_capture templates)
+R\params.R            (see the note below)
+scripts\health-check.R
+templates\README.md
+docs\   (7 files: design.md  context\architecture\build-contract.md
+         context\how-it-fits-together.md  context\roadmap.md
+         for-analysts\README.md  operational\README.md
+         operational\maintaining-the-engine.md)
+tests\  (14 files, all modified: app-ui batch batch_audit config convert
+         deployment diagnose docs-truth jobs labels metadata_capture
+         robustness seams templates)
 ```
 
-**`R\params.R` CHANGED IN THIS RELEASE, and it is the file you are told never to
-copy in a sweep.** It gained two parameters — `PARAM_DOC_MIN_COL_PT` and
-`PARAM_DOC_SAME_PAGE_PT` — and `app.R` reads both. Keep your old copy and the app
-raises "object not found" the first time somebody opens the report builder. So:
-take the new file, then re-apply your own values by hand, exactly as step 5 says.
-Do not paste the old file over the new one.
+**`R\params.R` is the file you are told never to copy in a sweep, and its only
+change here is a DELETION** — the two `PARAM_DOC_*` parameters nothing reads any
+more. Nothing fails if you keep your old copy; it simply keeps two dead lines.
+Either take the new file and re-apply your own values by hand as step 5 says, or
+leave yours alone. Your choice, and both are safe — unlike 1.9.0's earlier draft
+of this note, which was written when those parameters were live.
 
-`scripts\health-check.R` is new and is now step 6 of the update: run it before
-starting prod and it says, in one command, whether the settings parsed, an admin
-password is set, how many templates of each kind loaded **and how many were
-refused**, every folder is writable, and the scan-reading software is present.
+`www\app.css`, `config\`, `dictionaries\` and `samples\raw\` are **unchanged**
+from 1.8.1. Do not copy them.
 
-77 files, 1363 tests, 7593 passing, 0 failing, 15 skipped.
-
+70 files, 961 tests, 5,094 passing, 0 failing, 1 skipped.
 ---
 
 ## 1.8.1
@@ -498,7 +527,6 @@ installed the thing and did not yet know what the network called the box.
 describes the third template mode (`mode: document`) — the schema, why it is a
 separate engine, the four load-bearing decisions inside it, and the one line that
 keeps it out of the dashboards. A new analyst page,
-[pulling-tables-out-of-a-report.md](docs/operational/pulling-tables-out-of-a-report.md),
 covers the builder end to end including what it still cannot do. The analyst
 folder is five pages, not four.
 

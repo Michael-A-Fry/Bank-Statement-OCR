@@ -438,13 +438,11 @@ test_that("the Convert screen shows an auto-split bundle statement by statement"
 })
 
 # ---------------------------------------------------------------------------
-# THE FORM RESULT: the card counts contested labels, and the table must NAME the
-# same ones. convert_form() (R/forms.R) counts the `conflict` column into "N
-# label(s) appear more than once with different values"; the Values-found table
-# marked only `flagged` (required and not found), so on a real ANZ KiwiSaver
-# summary the card said three and the NEEDS A LOOK column was empty on all seven
-# rows. A reviewer told that three of seven figures are contested and not which
-# three has to distrust all seven -- the opposite of what the message is for.
+# .app_helper(name) -- lift one pure helper OUT of app.R and call it directly.
+# app.R is not a package, so a helper defined inside it cannot be sourced without
+# starting a Shiny app; this reads the file, grows the text one line at a time
+# from the definition until it parses, and evaluates just that.
+# ---------------------------------------------------------------------------
 .app_helper <- function(name) {
   src <- .src("app.R")
   env <- new.env(parent = globalenv())
@@ -460,34 +458,6 @@ test_that("the Convert screen shows an auto-split bundle statement by statement"
   }
   fail(paste("could not lift", name, "out of app.R"))
 }
-
-test_that("every conflicted form field the card counts is marked on the table", {
-  look <- .app_helper(".field_needs_look")
-  f <- data.frame(field = c("a", "b", "c", "d"),
-                  flagged  = c(FALSE, FALSE, TRUE, TRUE),
-                  conflict = c(FALSE, TRUE, FALSE, TRUE),
-                  stringsAsFactors = FALSE)
-  got <- look(f)
-  expect_identical(got[1], "")                              # clean row: nothing said
-  expect_match(got[2], "appears more than once")            # the card's own fact
-  expect_match(got[3], "required and not found")
-  expect_match(got[4], "required and not found")            # both, not the first match
-  expect_match(got[4], "appears more than once")
-  # the count the card prints and the count the table marks are the same number,
-  # because both are sum(conflict)
-  expect_identical(sum(nzchar(got[f$conflict])), sum(f$conflict))
-  # a frame with no conflict column at all (an older result) still renders
-  expect_identical(look(data.frame(flagged = c(TRUE, FALSE))), c("yes - required and not found", ""))
-})
-
-test_that("the two Needs-a-look sentences are wording, kept with the other wording", {
-  L <- .ui_labels()
-  expect_setequal(names(L$FIELD_LOOK_PLAIN), c("flagged", "conflict"))
-  # ...and those are really the engine's own two columns on a field
-  ef <- .src("R/extract_fields.R")
-  expect_true(any(grepl("flagged  = required && !res\\$matched", ef)))
-  expect_true(any(grepl("conflict = res\\$conflict", ef)))
-})
 
 # ---------------------------------------------------------------------------
 # WHICH SKIPPED ROWS "LOOK LIKE TRANSACTIONS" IS THE ENGINE'S ANSWER, NOT A

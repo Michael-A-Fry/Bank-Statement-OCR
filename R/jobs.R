@@ -411,26 +411,19 @@ job_seed_input_cache <- function(x) {
 
 # job_run_task(task, paths, args) -- WHAT A CHILD DOES. Three tasks, because the
 # app has three places that used to block: one statement, a whole case folder, and
-# the maintainer's bulk audit. It lives here rather than in the child script so it
-# is ordinary, testable R that the suite can call directly.
+# the maintainer's bulk audit. Ordinary testable R, so the suite can call it.
 job_run_task <- function(task, paths, args, jobdir = NULL) {
   paths <- as.character(paths)
   args <- as.list(args %||% list())
   switch(as.character(task)[1],
-    convert = do.call(convert_document, c(list(paths[1]), args)),
+    convert = do.call(convert_statement, c(list(paths[1]), args)),
     batch = {
       do.call(convert_batch, c(list(paths), args,
                                list(progress = .job_progress_writer(jobdir))))
     },
     audit = {
       # The maintainer's bulk audit: a picture of a folder. IT AUDITS; IT DOES NOT
-      # CONVERT. There was a second half here that really converted and logged each
-      # file, behind an "Also convert & save" tick. The tick was removed from Admin
-      # (Convert's own picker already takes thirty files and routes forms and
-      # reports properly), so the branch became unreachable -- and it was the last
-      # place in the product where a batch went through convert_statement() rather
-      # than convert_document(), so a report in the folder was converted as a failed
-      # statement. Converting a pile of files is Convert's case folder.
+      # CONVERT. Converting a pile of files is Convert's case folder.
       tmpl <- load_template_set(args$templates_dir, args$user_templates_dir)
       list(audit = batch_audit(paths, templates = tmpl), converted = NULL)
     },

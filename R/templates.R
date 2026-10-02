@@ -79,130 +79,11 @@
   problems
 }
 
-# .detect_by_fingerprint(input, templates, noun, norm, name_fn) -> THE SAME RETURN
-# SHAPE detect_statement() has: template_id, matched, score, candidates,
-# eligible_ids, tied, margin, runner_up, detail, detail_plain.
-#
-# ONE DETECTOR FOR THE TWO OTHER ROUTES. detect_form() and
-# detect_document_template() were eighty-five identical lines apiece, differing in
-# four things: the noun in two messages, which normaliser folded the text, which
-# namer said the template in words, and the argument's name. The two routes the
-# owner insists must be treated identically were kept identical only by somebody
-# remembering to edit both files -- so a fix to one was a drift in the other, and
-# an alternative route is a route that rots. The four differences are parameters
-# now; nothing else about either route's answer changed.
-#
-# WHY THE NORMALISER STAYS A PARAMETER RATHER THAN BEING FOLDED IN TOO: .form_fp_norm
-# and .doc_fp_norm are deliberate separate copies (see the comment above
-# .form_fp_norm in R/forms.R -- the routes must not depend on each other's files
-# for the rule, and a test pins the two to the same answers). The SHAPE is what is
-# shared here, which is what was being duplicated.
-#
-# Every phrase still has to appear -- that stays the eligibility gate -- but two
-# things the old per-route detectors could not say cost real work:
-#
-#   * A TIE RETURNED NOTHING. Two good one-phrase templates that both fit meant
-#     "unsupported" on a document the library can read perfectly, and it named
-#     neither of them. The statement route has never done that: it reports the tie,
-#     reads with the best of them and marks the run for review. Choosing by a
-#     PRINCIPLED order (most phrases, then shipped before hand-built, then the id)
-#     is not choosing arbitrarily, and it beats refusing to read a document nobody
-#     can then convert.
-#   * A NEAR MISS SAID NOTHING. "no template's identifying phrases were all found"
-#     cannot be acted on. Scoring fractionally costs nothing and lets these routes
-#     say which template came closest and which wording was not on the page.
-.detect_by_fingerprint <- function(input, templates, noun, norm, name_fn) {
-  none <- function(detail, plain = NULL)
-    list(template_id = NA_character_, matched = FALSE, score = 0,
-         candidates = data.frame(id = character(0), score = numeric(0),
-                                 need = numeric(0), stringsAsFactors = FALSE),
-         eligible_ids = character(0), tied = character(0),
-         margin = NA_real_, runner_up = NA_character_,
-         detail = detail, detail_plain = plain)
-  if (!length(templates))
-    return(none(sprintf("no %s templates are installed", noun)))
-
-  hay <- norm(paste(input$pages %||% character(0), collapse = "\n"))
-  ids <- names(templates)
-  # A hand-assembled unnamed list still has to come back with an answer rather
-  # than an error: the id is the key it was filed under, or its position.
-  if (is.null(ids)) ids <- as.character(seq_along(templates))
-  ids[!nzchar(ids)] <- as.character(seq_along(templates))[!nzchar(ids)]
-  names(templates) <- ids
-  sc <- lapply(ids, function(i) {
-    need <- as.character(unlist(templates[[i]]$fingerprint$page_contains_all %||%
-                                  character(0)))
-    hit <- if (!length(need)) logical(0) else
-      vapply(need, function(ph) {
-        k <- norm(ph)
-        nzchar(k) && grepl(k, hay, fixed = TRUE, useBytes = TRUE)
-      }, logical(1))
-    list(score = sum(hit), need = length(need), missing = need[!hit])
-  })
-  scores <- vapply(sc, function(s) as.numeric(s$score), numeric(1))
-  needs  <- vapply(sc, function(s) as.numeric(s$need), numeric(1))
-  # A template with NO phrases can never be matched (validation refuses one), so
-  # it is never eligible however the page reads.
-  eligible <- needs > 0 & scores >= needs
-
-  # THE ORDER, and every step of it is principled. Most phrases first (the most
-  # specific template that fits wins), then a shipped template ahead of one built
-  # here (a shipped one has a test behind it), then the id so the answer is fully
-  # deterministic and never depends on the order a folder happened to list in.
-  shipped <- vapply(ids, function(i)
-    as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
-  ord <- order(scores, needs, shipped, ids,
-               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
-  ids <- ids[ord]; scores <- scores[ord]; needs <- needs[ord]
-  shipped <- shipped[ord]; eligible <- eligible[ord]; sc <- sc[ord]
-  cand_df <- data.frame(id = ids, score = scores, need = needs,
-                        stringsAsFactors = FALSE)
-
-  if (!any(eligible)) {
-    best <- ids[1]; miss <- sc[[1]]$missing
-    return(list(template_id = NA_character_, matched = FALSE, score = 0,
-      candidates = cand_df, eligible_ids = character(0), tied = character(0),
-      margin = NA_real_, runner_up = if (length(ids) >= 2) ids[2] else NA_character_,
-      detail = sprintf("closest %s score %g/%g%s", best, scores[1], needs[1],
-        if (length(miss)) sprintf(" (missing %s)",
-          paste(sprintf("'%s'", miss), collapse = ", ")) else ""),
-      # The same fact for the person holding the document: no id, no fraction.
-      detail_plain = sprintf("The closest we have is the %s, but this file doesn't print %s.",
-        name_fn(templates[[best]]),
-        if (length(miss)) paste(sprintf("\"%s\"", miss), collapse = " or ")
-        else "the wording it looks for")))
-  }
-
-  e_ids <- ids[eligible]; e_needs <- needs[eligible]; e_ship <- shipped[eligible]
-  win <- e_ids[1]
-  second_need <- if (length(e_needs) >= 2) e_needs[2] else -Inf
-  second_ship <- if (length(e_ship) >= 2) e_ship[2] else -Inf
-  # Unambiguous when the winner is strictly more specific, or ties on specificity
-  # and something principled separates them (a shipped template over a hand-built
-  # one). A shipped template drawing level with a hand-built one is not a real
-  # question, and stopping to ask it helps nobody.
-  matched <- (e_needs[1] > second_need) ||
-             (e_needs[1] == second_need && e_ship[1] > second_ship)
-  tied <- if (sum(eligible) >= 2) e_ids[e_needs == e_needs[1] & e_ship == e_ship[1]]
-          else character(0)
-  if (length(tied) < 2L) tied <- character(0)
-  list(template_id = win, matched = matched, score = e_needs[1],
-       candidates = cand_df, eligible_ids = e_ids, tied = tied,
-       margin = if (is.finite(second_need)) e_needs[1] - second_need else Inf,
-       runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
-       detail = if (matched) "matched by identifying phrases"
-                else sprintf("%d %s templates are equally specific here (%s)",
-                             length(tied), noun, paste(tied, collapse = ", ")),
-       detail_plain = if (matched) NULL else
-         sprintf("%d templates fit this document equally well, so it was read with the %s.",
-                 length(tied), name_fn(templates[[win]])))
-}
-
 # .save_template_yaml(t, dir, validate_fn, noun) -> path. THE ONE SAVER the three kinds
 # share: strip the load-time origin, refuse an invalid template loudly, then write
 # <dir>/<id>.yaml safely.
 #
-# WHY IT IS ONE. save_user_template, save_fields_template and save_document_template
+# WHY IT IS ONE. save_user_template
 # were the same six steps in the same order with the same comment copied into all
 # three -- except that only the statement one had the slug guard below. So on the
 # two OTHER routes, which have no reconciliation behind them, a report template
@@ -641,81 +522,33 @@ template_overview <- function(tset) {
 # becomes unreadable.
 # ---------------------------------------------------------------------------
 
-# template_kind(t) -- which paradigm a loaded template belongs to. Reads the
-# template's own `mode`, because that is what every loader and every detector
-# dispatches on; a template with no mode is a transaction statement, which is
-# what every statement template written before the other two modes existed says.
-template_kind <- function(t) {
-  switch(as.character(t$mode %||% "statement")[1],
-         fields = "fields", document = "document", "statement")
-}
-
-# .TEMPLATE_KIND_LABEL -- the words on screen. "Other" is the word Convert and
-# "Add a template" both use for everything that is not a bank statement, so the
-# person meeting the distinction on a third screen does not have to learn a third
-# name for it.
-.TEMPLATE_KIND_LABEL <- c(statement = "Bank statement",
-                          fields    = "Other \u00b7 form",
-                          document  = "Other \u00b7 report")
-# ...and the same three kinds as ordinary nouns, for the middle of a sentence.
-# "checked as a Other \u00b7 report" is what happens when a column heading is asked to
-# do a noun's job.
-.TEMPLATE_KIND_NOUN <- c(statement = "bank statement", fields = "form",
-                         document  = "report")
-
-# template_library_name(t) -- the template in words, for whichever kind it is.
-# template_display_name() says "<bank> <type> statement", which is right for a
-# statement and a lie on the other two ("ACME report statement").
-template_library_name <- function(t) {
-  if (is.null(t) || !is.list(t)) return(NA_character_)
-  k <- template_kind(t)
-  if (identical(k, "statement")) return(template_display_name(t))
-  lab <- trimws(paste(trimws(as.character(t$bank %||% "")),
-                      trimws(as.character(t$statement_type %||% ""))))
-  if (nzchar(lab)) lab else as.character(t$id %||% NA_character_)
-}
-
-# .template_reads(t) -- what this template actually pulls out, in one cell. The
-# three kinds find three different things, and "12 columns" / "8 values" /
-# "3 tables" is the shortest true answer for each.
+# .template_reads(t) -- what this template pulls out, in one cell, for the Admin
+# library row. "12 columns" is the shortest true answer.
 .template_reads <- function(t) {
-  k <- template_kind(t)
-  n1 <- function(n, one, many) sprintf("%d %s", n, if (n == 1L) one else many)
-  if (identical(k, "fields")) return(n1(length(t$fields %||% list()), "value", "values"))
-  if (identical(k, "document")) {
-    nt <- length(t$tables %||% list()); np <- length(t$pairs %||% list())
-    parts <- c(if (nt) n1(nt, "table", "tables"),
-               if (np) n1(np, "value", "values"))
-    return(if (length(parts)) paste(parts, collapse = " + ") else "nothing yet")
-  }
   cols <- if (identical(t$format %||% "delimited", "pdf")) t$table$columns else t$columns
-  n1(length(cols %||% list()), "column", "columns")
+  n <- length(cols %||% list())
+  sprintf("%d %s", n, if (n == 1L) "column" else "columns")
 }
 
-# library_overview(statements, fields, documents) -> data.frame, one row per
-# template of any kind. `kind` leads, because it is the thing that decides which
-# editor opens and which half of the app the template belongs to.
-library_overview <- function(statements = list(), fields = list(), documents = list()) {
-  cols <- c("kind", "name", "id", "reads", "origin", "hidden", "version")
-  one <- function(t, k) data.frame(
-    kind    = unname(.TEMPLATE_KIND_LABEL[[k]]),
-    name    = template_library_name(t) %||% NA_character_,
+# library_overview(statements) -> data.frame, one row per template, for the Admin
+# library table. template_overview() is the ENGINE view of the same set (formats,
+# signs, date patterns); this is the HUMAN one -- the name, what it reads, and
+# whether it is a shipped template or somebody's own.
+library_overview <- function(statements = list()) {
+  cols <- c("name", "id", "reads", "origin", "hidden", "version")
+  one <- function(t) data.frame(
+    name    = template_display_name(t) %||% NA_character_,
     id      = as.character(t$id %||% NA_character_)[1],
     reads   = .template_reads(t),
     origin  = if (identical(t$origin %||% "default", "user")) "user" else "tested",
     hidden  = if (isTRUE(t$hidden)) "hidden" else "",
     version = as.character(t$version %||% NA),
     stringsAsFactors = FALSE)
-  rows <- c(lapply(statements, one, k = "statement"),
-            lapply(fields,     one, k = "fields"),
-            lapply(documents,  one, k = "document"))
+  rows <- lapply(statements, one)
   if (!length(rows))
     return(setNames(data.frame(matrix(character(0), 0, length(cols))), cols))
   out <- do.call(rbind, rows); rownames(out) <- NULL
-  # Statements first, then forms, then reports -- the order the app itself tries
-  # them in, and the order the two routes are named in everywhere else.
-  ord <- match(out$kind, unname(.TEMPLATE_KIND_LABEL))
-  out[order(ord, out$name, out$id), , drop = FALSE]
+  out[order(out$name, out$id), , drop = FALSE]
 }
 
 # template_display_name(t) -- the template said in words the person holding the
@@ -736,26 +569,9 @@ template_display_name <- function(t) {
 template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
 
 # .template_shape(t) -- a structural signature: two templates that share one are
-# the same layout drafted more than once.
-#
-# ONE BRANCH PER KIND, and it has to be. The signature used to be built from the
-# STATEMENT keys only -- format, amount_sign, date_format and the transaction
-# column mapping -- none of which a form or a report template has. So every one
-# of them collapsed to the same string ("pdf~~~~~~") and the duplicate grouper
-# put the whole lot in one group: three unrelated report templates already
-# reported each other as duplicates, and at forty that is one enormous false
-# alarm on the very screen a maintainer opens to prune the library.
-#
-# What makes each kind the same layout twice:
-#   statement  the columns it reads, and how it reads them (unchanged)
-#   report     the phrases that pick it, its table titles and their column bands
-#   form       the label wordings it looks for
-.tpl_key <- function(x) gsub("[^a-z0-9]+", "", tolower(as.character(x %||% "")))
-
+# the same layout drafted more than once. What makes two templates the same
+# layout is the columns they read and how they read them.
 .template_shape <- function(t) {
-  kind <- template_kind(t)
-  if (identical(kind, "document")) return(.template_shape_document(t))
-  if (identical(kind, "fields"))   return(.template_shape_fields(t))
   is_pdf <- identical(t$format %||% "delimited", "pdf")
   cols   <- if (is_pdf) t$table$columns else t$columns
   sign   <- if (is_pdf) t$table$amount_sign else t$amount_sign
@@ -769,52 +585,6 @@ template_yaml <- function(t) { t$origin <- NULL; yaml::as.yaml(t) }
     else sprintf("%s:%s", k, (if (is.list(c)) c$source else c) %||% "")
   }, character(1))), collapse = "|")
   paste(t$format %||% "delimited", sign %||% "", dfmt %||% "", colsig, sep = "~~")
-}
-
-# .template_fp_sig(t) -- the identifying phrases, normalised and sorted. Two
-# report templates drafted off the same page capture the same phrases, so this
-# separates two DIFFERENT families rather than two drafts of one.
-.template_fp_sig <- function(t) {
-  ph <- unlist(t$fingerprint$page_contains_all %||%
-               t$fingerprint$header_contains_all %||% character(0))
-  paste(sort(unique(.tpl_key(ph))), collapse = "+")
-}
-
-# .template_shape_document(t) -- a report template's shape: its phrases, then
-# every table as its title and the bands it reads, sorted so the order the tables
-# happen to be listed in does not make two identical templates look different.
-.template_shape_document <- function(t) {
-  tabs <- t$tables %||% list()
-  nms <- names(tabs) %||% rep("", length(tabs))
-  tsig <- if (!length(tabs)) character(0) else vapply(seq_along(tabs), function(i) {
-    tb <- tabs[[i]]
-    cols <- tb$columns %||% list()
-    band <- if (!length(cols)) "" else paste(vapply(seq_along(cols), function(j) {
-      cc <- cols[[j]]
-      sprintf("%s-%s", cc$x_min %||% "", cc$x_max %||% "")
-    }, character(1)), collapse = ",")
-    title <- .tpl_key(tb$name %||% nms[i])
-    if (!nzchar(title)) title <- .tpl_key(nms[i])
-    paste0(title, "[", band, "]")
-  }, character(1))
-  prs <- .tpl_key(names(t$pairs %||% list()) %||% character(0))
-  paste("document", .template_fp_sig(t), paste(sort(tsig), collapse = "|"),
-        paste(sort(prs), collapse = ","), sep = "~~")
-}
-
-# .template_shape_fields(t) -- a form template's shape: the wordings it looks
-# for. A form has no columns and no bands; the labels ARE the layout.
-.template_shape_fields <- function(t) {
-  flds <- t$fields %||% list()
-  nms <- names(flds) %||% rep("", length(flds))
-  wl <- if (!length(flds)) character(0) else vapply(seq_along(flds), function(i) {
-    spec <- flds[[i]]
-    if (is.character(spec)) spec <- list(any_of = spec)
-    w <- if (is.list(spec)) unlist(spec$any_of %||% spec$label %||% character(0)) else character(0)
-    if (!length(w)) w <- nms[i]
-    paste(sort(unique(.tpl_key(w))), collapse = "/")
-  }, character(1))
-  paste("fields", paste(sort(wl), collapse = "|"), sep = "~~")
 }
 
 # duplicate_template_groups(tset, user_only) -> list of id-vectors, one per group

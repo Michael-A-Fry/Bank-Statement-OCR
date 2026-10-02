@@ -240,28 +240,6 @@ test_that("the CLI prints a run id that names the record it just wrote", {
 })
 
 # ---------------------------------------------------------------------------
-# "Never throws at the front door" is stated as a FACT in docs/design.md and
-# docs/overview.md. It was not one: the tryCatch opened below the preamble, so
-# basename(path) sat outside it and convert_document(1L) threw before any guard
-# ran. Unreachable from Shiny (a datapath is always character) -- which is exactly
-# why it needed a test rather than a reader's trust.
-test_that("the front door never throws, whatever it is handed", {
-  out <- tempfile("convhostile_"); dir.create(out)
-  adir <- tempfile("adir_"); dir.create(adir)
-  zero <- tempfile("zero_", fileext = ".csv"); file.create(zero)
-  hostile <- list(1L, 3.14, NULL, NA, NA_character_, c("a.csv", "b.csv"),
-                  list("a.csv"), adir, zero,
-                  file.path(tempdir(), "nope.csv"), "", TRUE)
-  for (i in seq_along(hostile)) {
-    r <- convert_document(hostile[[i]], outdir = out, templates_dir = templates_dir(),
-                          fields_dir = fields_templates_dir(),
-                          logdir = out)
-    expect_identical(r$status, "failed", info = paste("input", i))
-    expect_true(nzchar(paste(r$messages, collapse = " ")), info = paste("input", i))
-  }
-})
-
-# ---------------------------------------------------------------------------
 # N83, THE OTHER HALF: THE PROSE GUARD WAS DEFEATED BY A BLANK LINE.
 #
 # .delimited_tabular decides on ADJACENCY -- two records that split the same way

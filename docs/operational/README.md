@@ -15,7 +15,6 @@ box.
 |---|---|
 | Convert a statement and download the result | [converting-statements.md](converting-statements.md) |
 | Teach it a new bank layout, no code | [adding-a-bank-template.md](adding-a-bank-template.md) |
-| Pull tables and figures out of anything that is **not** a statement | [pulling-tables-out-of-a-report.md](pulling-tables-out-of-a-report.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
 | Describe a tricky layout with no client information in it | [survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) |
 

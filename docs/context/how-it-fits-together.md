@@ -39,9 +39,8 @@ thing. Everything here is a pointer — the detail is in the file named.
 
 `R/convert.R` is the orchestrator that runs that column top to bottom and never
 throws: every failure becomes a `failed` result with an actionable message.
-`convert_document()` is the front door — it tries the statement pipeline, then
-falls back to the FORM pipeline (`R/forms.R`, `R/extract_fields.R`) for a labelled
--value document like an IRD form.
+`convert_statement()` is the front door, and the only one — this tool reads bank
+statements and nothing else.
 
 ---
 

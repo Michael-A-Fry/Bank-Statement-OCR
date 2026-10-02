@@ -54,10 +54,10 @@ are named instead, and every measured figure carries the date it was taken.
 - **Never throws at the front door.** `convert_statement()` wraps its whole body
   in `tryCatch`; any error becomes `status = "failed"` with an actionable message.
   *Whole* body is the load-bearing word. The `tryCatch` used to open below a short
-  preamble, so `basename(path)` sat outside it and `convert_document(1L)` threw
+  preamble, so `basename(path)` sat outside it and `convert_statement(1L)` threw
   before a single guard ran. Everything that touches `path` is now inside; what is
   left above it cannot throw for any input. If you add a line to that preamble,
-  prove it — `convert_document(1L)` must come back `failed`, not error.
+  prove it — `convert_statement(1L)` must come back `failed`, not error.
 - Two helpers are everywhere and are defined in `R/util.R`: `%||%` (null/empty
   coalesce) and `safe(expr, default)` (swallow an error, return a default).
 
@@ -81,8 +81,8 @@ are named instead, and every measured figure carries the date it was taken.
    logs/runs/     <----------+                                statements/      (shipped, tested)
    logs/feedback/ <----------+                                statements_user/ (built in the app)
    logs/metadata/ <----------+                                statements_seed/ (unfinished starts)
-   requests/      <----------+                                fields/  fields_user/     (mode: fields)
-   logs/startup.log <--------+                                documents/  documents_user/ (mode: document)
+   requests/      <----------+
+   logs/startup.log <--------+
                              |                              dictionaries/      (labels, lexicon)
                              |                              config/config.yaml
                              v
@@ -136,20 +136,8 @@ drift with every release.
 
 ## 3. The path a statement takes
 
-Front door: **`convert_document(path, ...)`** in `R/forms.R`. It tries three
-pipelines **in this order**, and only moves on when the one before returns
-`unsupported` and no template was forced:
-
-1. the **statement** pipeline (`convert_statement()`),
-2. the **form** pipeline (labelled values by wording, `convert_form()`),
-3. the **document** pipeline (many tables, `convert_tables()` in `R/doc_extract.R`).
-
-The order is the point: the most checkable case is tried first, and the least
-checkable last. It writes the run log exactly once, after the final outcome is
-known, and stamps `kind` (`statement` / `form` / `tables`) — which is what
-`write_feed()` reads to refuse the last two.
-
-The statement pipeline is **`convert_statement()`** in `R/convert.R`, top to
+Front door: **`convert_statement()`** in `R/convert.R`. It writes the run log
+exactly once, after the outcome is known, and stamps `kind = "statement"`. Top to
 bottom:
 
 | # | Call | File | What it produces |
@@ -172,8 +160,9 @@ bottom:
 button in `app.R` only — the one place a person has looked at the verdict. Admin's
 bulk re-audit and the CLI scripts deliberately do not publish.
 
-`convert_batch()` (`R/batch.R`) is a loop over `convert_document()`, nothing more,
-so a batch answer and a single-file answer for the same statement cannot disagree.
+`convert_batch()` (`R/batch.R`) is a loop over `convert_statement()`, nothing
+more, so a batch answer and a single-file answer for the same statement cannot
+disagree.
 
 ### Status, decided in `convert.R`
 
@@ -351,109 +340,6 @@ Read it before adding a key. Three rules matter more than the rest:
    `as.Date()` recycles a format vector element-wise: row 1 as `%Y/%m/%d`, row 2
    as `%d/%m/%Y`, a whole column of plausible wrong dates.
 
-### `mode: document` — the third template kind
-
-Everything above is a **statement**: one table of transactions, columns running
-the full height of every page, judged against a running balance. There are two
-other modes, and they exist because all three of those facts are false for other
-documents.
-
-| mode | Engine | What it reads | Checked against | Where it goes |
-|---|---|---|---|---|
-| *(absent)* / statement | `R/parse_pdf_table.R` | one transaction table | a running balance | Excel/CSV/JSON **and the Qlik feed** |
-| `fields` | `R/forms.R`, `R/extract_fields.R` | labelled values, found by **wording only**, no coordinates | nothing | download only |
-| `document` | `R/tables.R`, `R/tables_detect.R`, `R/doc_extract.R` | **many tables of different shapes**, plus label/value pairs | nothing | download only |
-
-**Why `document` is a separate engine and not a wider statement parser.**
-Widening the statement parser would have put the least checkable case inside the
-code path every real conversion runs through. The statement path is not
-destabilised by report work; that is the whole reason for the split.
-
-**Download only, enforced rather than assumed.** `write_feed()` refuses
-`kind = "tables"` outright — one line, with a test. There is no reconciliation
-behind a report and nothing that could tell a wrong figure from a right one, so
-publishing one as if there were would be the worst thing this tool could do.
-
-The schema, in the shape the builder saves it:
-
-```yaml
-id: acme_valuation_report
-mode: document                 # the discriminator; template_kind() reads it
-format: pdf
-ref_width: 595.28              # the page size the boxes were drawn in
-ref_height: 841.89
-fingerprint:
-  page_contains_all:           # same gate as the other two modes, same reasons
-    - Consolidated position report
-tables:
-  schedule_of_transactions:
-    name: Schedule of transactions
-    start: {page: 3, y: 148.0}   # a POSITION on a page, not a whole page
-    end:   {page: 5, y: 700.9}
-    header_rows: 2               # how many lines the heading takes; NOT a row count
-    follow: true                 # keep going if the next page repeats the header
-    min_fill: 0.5
-    anchor:
-      header_text: [Date, Description, Amount, Balance]
-      first_column: []
-    columns:                     # bands that TILE the width: they meet, never overlap
-      - {name: Date,        x_min: 40,  x_max: 110, type: auto}
-      - {name: Description, x_min: 110, x_max: 360, type: auto}
-pairs:
-  prepared_for:
-    label_text: Prepared for     # found by WORDING on the next document
-    label: {page: 1, x_min: 39, x_max: 100, y_min: 99, y_max: 110}
-    value: {page: 1, x_min: 149, x_max: 214, y_min: 99, y_max: 110}
-    where: {where: right, gap: 49, cross: 0, width: 65, height: 11}
-    type: text
-```
-
-Four things in there are load-bearing and easy to undo by accident:
-
-1. **A table is a `(page, y)` START and a `(page, y)` END**, not a set of pages.
-   Reports put two tables on one page and run a third over three; whole-page
-   boundaries cannot express either.
-   **`band.y_max` is a third fact, and it is not the end.** The end is a place on
-   the LAST page; `band.y_max` is where the window closes on every page in
-   between (`doc_locate_table()`). Absent, it is the bottom of the paper — so a
-   footer printed close under the table is read in as rows on every page but the
-   last. The builder asks for it as a step, but only when the table spans pages.
-2. **Columns are BANDS. Gaps are allowed; overlaps are not.** The asymmetry is
-   the design. A gap is visible and counted — every word inside the table that no
-   column claimed is reported as *unclaimed words* — while an overlap silently
-   reads a figure into the first column and loses it from the second. So
-   `doc_add_column()` and `doc_set_column_band()` work on the column list, move
-   only what they were asked to move, and CLAMP off a neighbour rather than
-   through it. `.doc_table_problems()` still refuses an overlap, because a
-   template can be hand-edited.
-   The edge view (`doc_column_edges()` / `doc_columns_from_edges()`) survives for
-   one job: columns DERIVED from a header row tile, deliberately, because a value
-   wider on row 40 than it was in the heading still has to land somewhere.
-   Applying that tolerance to a column somebody DRAWS was the mistake — it made
-   the tool either widen a neighbour over a column of figures or invent a column
-   in the gap, and both shipped before the distinction was seen (N185, N188).
-3. **A pair stores the SIDE, not an offset.** `where.where` is
-   `right`/`left`/`above`/`below`; on the next document the label is found by its
-   wording and the search runs in that direction (`.doc_pair_window()`,
-   `.doc_pair_pick()`). A fixed offset misses as soon as the figure is a digit
-   longer, which on a re-print it usually is. A template with two boxes and no
-   `where` still reads — the relation is worked out from the boxes.
-4. **`header_rows` is how tall the heading is, never a row count.** The number of
-   data rows is read from the page, between the start and the end.
-
-**The reader tells you where it is unsure, and never silently drops anything.**
-Two numbers travel with every table: **unclaimed words** (inside the boundary,
-claimed by no column — a band drawn a few points too narrow loses a column of
-figures and every remaining row still looks perfect) and **thin columns** (mostly
-empty). A one-column table can have neither, so it is called out separately.
-
-**Nothing in these three files is specific to any document.** No fixture wording,
-bank name or column name appears in `R/tables.R`, `R/tables_detect.R` or
-`R/doc_extract.R`; the default column kind is `auto`, which means the page's own
-words stand uncoerced; and a document template carries no `currency`, because
-nothing in this mode reads one. `tools/corpus/` exists to keep that honest — it
-surveys the engine against a folder of real PDFs nobody here wrote.
-
 ### The two ways variability is absorbed — read before adding a synonym
 
 - **Transaction tables**: rows have no per-row labels, they live in columns.
@@ -564,7 +450,7 @@ because only it has the figures.
 
 **`.unique_names()` in `app.R` cannot be replaced by per-file subfolders.**
 The obvious-looking cure is wrong. The clash is in the **output** name, not the
-input path: `convert_document()` writes to `outdir` under
+input path: `convert_statement()` writes to `outdir` under
 `file_path_sans_ext(basename(path))`, and `convert_batch()` takes ONE `outdir` for
 the whole case. Two inputs at `sess/1/statement.pdf` and `sess/2/statement.pdf`
 therefore still both write `sess/statement.xlsx`, and both rows' download buttons

@@ -27,11 +27,6 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   lexicon.R             externalised recognition vocabularies (admin-editable)
   parse.R               parse_statement(input, template) -> parsed object
   extract_metadata.R    generic statement metadata + multi-statement detection
-  extract_fields.R      key-value ("mode: fields") extraction (IRD/forms)
-  forms.R               orchestrator for the fields paradigm
-  tables.R              a REPORT's tables: locate by wording, read, measure the fill
-  tables_detect.R       propose the tables + label/value pairs on a report
-  doc_extract.R         orchestrator for the document paradigm (many tables)
   split.R               opt-in deterministic auto-split of a bundled upload
   reconcile.R           reconciliation KPIs + deterministic trust mapping
   diagnose.R            fail-loud diagnostics (where / why / how bad / who fixes)
@@ -80,10 +75,6 @@ tests/testthat/         golden-file + unit tests
 app.R  ui_content.R  ui_labels.R   the Shiny app
 run.R                   thin CLI entrypoint
 scripts/                bundle / install / audit command-line entry points
-tools/corpus/           survey the document engine against real third-party PDFs
-                        (fetch-corpus.py collects them; run-corpus.R measures.
-                        The PDFs themselves are never committed - other people's
-                        files under other people's licences)
 tools/webr/             run the suite under WebR when no system R is available
 docs/                   operational how-tos + context (charter, this contract, …)
 ```
@@ -266,9 +257,6 @@ is rejected by `validate_template` on any other format or with an unknown `on` v
   `~2` suffix. There is deliberately no `log_event()` / JSONL appender — a shared
   append is the one write that can interleave over SMB.
 - `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates/statements", user_templates_dir="templates/statements_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", redaction_rects=NULL, force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`.
-- `convert_document(path, ...)` is the **front door**: it runs `convert_statement()`
-  and falls back to the form/labelled-value pipeline (`R/forms.R`) only when the
-  statement path returns `unsupported` and no template was forced.
 
 ## 7. Status model (`result$status`)
 `ok` (matched + parsed + reconciled) · `needs_review` (parsed but a KPI failed

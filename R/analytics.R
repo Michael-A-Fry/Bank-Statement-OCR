@@ -164,7 +164,7 @@ template_usage <- function(runs, feedback = NULL) {
 #              practice -- a statement with no trust is one that did not convert,
 #              so its status is not `ok` -- but a screen must not be able to go
 #              blank on an edge case nobody has met.)
-#   report     EVERY TABLE FOUND BY ITS HEADING, NOTHING SPILLED. convert_tables
+#   report     EVERY TABLE FOUND BY ITS HEADING, NOTHING SPILLED. the reader
 #              already refuses `ok` to a report with a table found by position, a
 #              table that came out empty or thin, or a typed column that parsed
 #              nothing -- so `ok` carries all of that. What it does NOT carry is

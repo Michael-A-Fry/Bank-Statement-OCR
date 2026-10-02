@@ -85,13 +85,7 @@ p <- cfg$paths %||% list()
 kinds <- list(
   "bank statement" = .load(load_template_set(p$templates %||% "templates/statements",
                                              p$user_templates %||% "templates/statements_user",
-                                             include_hidden = TRUE)),
-  "form"           = .load(load_fields_templates(p$fields %||% "templates/fields",
-                                                 p$user_fields %||% "templates/fields_user",
-                                                 include_hidden = TRUE)),
-  "report"         = .load(load_document_templates(p$docs %||% "templates/documents",
-                                                   p$user_docs %||% "templates/documents_user",
-                                                   include_hidden = TRUE)))
+                                             include_hidden = TRUE)))
 counted <- paste(vapply(names(kinds), function(k) sprintf("%d %s", kinds[[k]]$n, k),
                         character(1)), collapse = ", ")
 refused <- unlist(lapply(kinds, `[[`, "why"), use.names = FALSE)
@@ -121,8 +115,6 @@ say(!length(refused), "Templates", sprintf("%s; %s", counted,
 }
 folders <- c(p$logs %||% "logs", p$uploads %||% "uploads", p$requests %||% "requests",
              p$user_templates %||% "templates/statements_user",
-             p$user_fields %||% "templates/fields_user",
-             p$user_docs %||% "templates/documents_user",
              cfg$feed$feed_dir %||% "feed")
 bad_folders <- folders[!vapply(folders, .writable, logical(1))]
 say(!length(bad_folders), "Folders",

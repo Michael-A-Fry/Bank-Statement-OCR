@@ -31,23 +31,14 @@
     # false only if your team wants to opt in to its own templates each time.
     user_templates_default = TRUE
   ),
-  # EVERY TEMPLATE LIVES UNDER templates/. Seven folders used to sit at the root
-  # of the app (templates, templates_user, templates_seed, fields_templates,
-  # fields_templates_user, doc_templates, doc_templates_user) and a person had to
-  # already know the naming convention to tell which was which. They are now one
-  # folder with a README that is the map. The SEPARATION is unchanged and load
-  # bearing -- curated vs user is the Qlik governance gate, and one folder per
-  # mode is what stops a report template joining statement detection.
-  #
-  # A folder name is the template's `mode:`. See templates/README.md.
+  # EVERY TEMPLATE LIVES UNDER templates/. Folders used to sit at the root of the
+  # app (templates, templates_user, templates_seed) and a person had to already
+  # know the naming convention to tell which was which. They are now one folder
+  # with a README that is the map. The SEPARATION is unchanged and load bearing:
+  # curated vs user is the Qlik governance gate. See templates/README.md.
   paths = list(
     templates      = "templates/statements",       # PROVEN / curated statements
     user_templates = "templates/statements_user",  # analyst drafts (Shiny only, NEVER Qlik)
-    fields         = "templates/fields",
-    user_fields    = "templates/fields_user",
-    # mode:document templates -- a report carrying many tables (R/doc_extract.R).
-    docs           = "templates/documents",
-    user_docs      = "templates/documents_user",
     dictionary     = "dictionaries/labels.yaml",
     lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",
@@ -132,11 +123,7 @@
 # (D:\shared\templates) has made a decision, and nothing here overrides it.
 .LEGACY_TEMPLATE_PATHS <- list(
   templates      = c("templates",             "templates/statements"),
-  user_templates = c("templates_user",        "templates/statements_user"),
-  fields         = c("fields_templates",      "templates/fields"),
-  user_fields    = c("fields_templates_user", "templates/fields_user"),
-  docs           = c("doc_templates",         "templates/documents"),
-  user_docs      = c("doc_templates_user",    "templates/documents_user")
+  user_templates = c("templates_user",        "templates/statements_user")
 )
 .modernise_template_paths <- function(cfg) {
   for (k in names(.LEGACY_TEMPLATE_PATHS)) {
@@ -414,11 +401,7 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
 # below, because after the move `templates/` still exists -- it is the parent.
 .TEMPLATE_LAYOUT_MOVES <- list(
   c("templates_user",        "templates/statements_user"),
-  c("templates_seed",        "templates/statements_seed"),
-  c("fields_templates",      "templates/fields"),
-  c("fields_templates_user", "templates/fields_user"),
-  c("doc_templates",         "templates/documents"),
-  c("doc_templates_user",    "templates/documents_user")
+  c("templates_seed",        "templates/statements_seed")
 )
 
 # migrate_template_layout(root) -> character vector of sentences about what

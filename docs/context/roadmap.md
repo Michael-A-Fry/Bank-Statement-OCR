@@ -46,9 +46,9 @@ un-parking conditions in [engine-audit.md](engine-audit.md).
    per-bank R code, redesign it as a template option or a named transform.
 2. **Two extraction strategies only** — positional bands, and anchored/regex.
    Resist a third paradigm unless it clearly earns its keep.
-3. **Be sceptical of the interactive subsystems** (the visual band editor, the
-   `mode: fields` form path). They carry the maintenance weight; keep them
-   *writing templates*, never holding their own logic.
+3. **Be sceptical of the interactive subsystems** (above all the visual band
+   editor). They carry the maintenance weight; keep them *writing templates*,
+   never holding their own logic.
 4. **R modules stay small and single-concern** — one job each. The current set is
    mapped in [architecture/build-contract.md](architecture/build-contract.md) §1,
    and a test fails if that map and `R/` disagree in either direction.

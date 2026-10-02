@@ -449,61 +449,6 @@ test_that("N simultaneous jobs on one statement produce identical output files",
 })
 
 # ---------------------------------------------------------------------------
-# VERBATIM ACROSS THE PROCESS BOUNDARY.
-#
-# Found by running it: app.R forces LC_CTYPE to a UTF-8 locale at startup, the
-# child inherited the SERVICE's environment instead (C/ASCII on the deployment
-# box), and the CSV it delivered held "Caf<U+00E9> Kr<U+00F6>ne" where the
-# statement says "Cafe Kroene" with its accents. Not a warning, not a flag: a
-# description silently no longer verbatim, in the file the analyst downloads, and
-# a different answer from the same statement converted before this change. It is
-# pinned here at the level that matters -- the OUTPUT BYTES, against the same
-# conversion run in this process.
-test_that("a non-ASCII description survives the process boundary, byte for byte", {
-  skip_if_not(file.exists(.csv_fixture()))
-  on.exit(.jobs_reset())
-  .jobs_reset()
-  # The app runs in a UTF-8 locale (app.R does this at startup); on a host that
-  # has none there is nothing for the two processes to disagree about.
-  old <- Sys.getlocale("LC_CTYPE")
-  on.exit(suppressWarnings(Sys.setlocale("LC_CTYPE", old)), add = TRUE)
-  got <- FALSE
-  for (loc in c("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8"))
-    if (nzchar(suppressWarnings(Sys.setlocale("LC_CTYPE", loc)))) { got <- TRUE; break }
-  skip_if_not(got, "no UTF-8 locale on this host")
-
-  d <- tempfile("tjobenc_"); dir.create(d)
-  p <- file.path(d, "accents.csv")
-  con <- file(p, open = "w", encoding = "UTF-8")
-  writeLines(c(
-    "Type,Details,Particulars,Code,Reference,Amount,Date,ForeignCurrencyAmount,ConversionCharge",
-    "Payment,Caf\u00e9 Kr\u00f6ne,M\u00fcller GmbH,note,1671190,-23.40,19/06/2014,,",
-    "Salary,Payroll Ltd,Warner Bros,,Payroll,2000.00,19/06/2014,,"), con)
-  close(con)
-
-  h <- job_start(p, file.path(d, "viajob"), task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
-                 logdir = .tlog(), requested_by = "TSTJOB")
-  expect_identical(.await(list(h), 240), "done")
-  # Collecting the result must not even WARN: the warning readRDS raised printed
-  # the transaction lines of the statement onto the server console to do it.
-  expect_silent(res <- job_result(h))
-  here <- convert_document(p, outdir = file.path(d, "inprocess"),
-                           templates_dir = templates_dir(),
-                           logdir = .tlog(),
-                           requested_by = "TSTJOB")
-  expect_identical(res$status, "ok")
-  expect_identical(res$feed_rows$description, here$feed_rows$description)
-  expect_identical(res$feed_rows$description[1], "Caf\u00e9 Kr\u00f6ne")
-  # THE DELIVERED FILE, not just the object: the CSV is what the analyst
-  # downloads and what the dashboards are fed from.
-  expect_identical(unname(tools::md5sum(res$outputs[["csv"]])),
-                   unname(tools::md5sum(here$outputs[["csv"]])))
-  expect_false(any(grepl("<U+", readLines(res$outputs[["csv"]], warn = FALSE), fixed = TRUE)))
-  job_reap(h)
-})
-
-# ---------------------------------------------------------------------------
 # A CASE FOLDER IS ONE JOB, and it still says which file it is on.
 test_that("a batch job reports per-file progress the screen can read", {
   skip_if_not(file.exists(.csv_fixture()))

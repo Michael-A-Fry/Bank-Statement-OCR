@@ -7,7 +7,6 @@ you will want it.
 |---|---|
 | Convert a statement and download the result | [converting-statements.md](../operational/converting-statements.md) |
 | Teach it a new bank layout, no code | [adding-a-bank-template.md](../operational/adding-a-bank-template.md) |
-| Pull tables and figures out of anything that is **not** a statement | [pulling-tables-out-of-a-report.md](../operational/pulling-tables-out-of-a-report.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](../operational/when-something-goes-wrong.md) |
 | Describe a tricky layout to someone, with no client information in it | [survey-a-statement-with-ai.md](../operational/survey-a-statement-with-ai.md) |
 

@@ -215,25 +215,9 @@ test_that("page numbers are clamped to the document, in one place", {
   expect_false(grepl("max\\(1L, as\\.integer\\(input\\$[A-Za-z_]*page", joined))
   # every page box says how many pages there are
   expect_match(joined, "Page \\(1 to %d\\)")
-  # Three page boxes: the toolkit, the X-ray and the one builder for everything
-  # that is not a statement. The count is the inventory - a new page box that does
-  # not say how many pages there are is exactly what this catches.
-  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 3L)
-})
-
-# ---------------------------------------------------------------------------
-# The 'Other document' builder asked for the file a second time, so the picker at
-# the top of the page did nothing at all on that path and nothing said so.
-test_that("the builder uses the document already uploaded, and never asks twice", {
-  src <- .ui_src()
-  joined <- paste(src, collapse = "\n")
-  expect_match(joined, "rb_doc <- reactive")
-  expect_match(.ui_block(src, "rb_doc <- reactive", 8L), "input\\$ts_file")
-  # There is no second file picker on this page at all any more. The builder used
-  # to carry its own ("draw on a different PDF instead"), which meant the picker
-  # at the top of the page did nothing on that path and nothing said so.
-  expect_false(any(grepl('fileInput\\("(fb|rb)_sample"', src)))
-  expect_match(.ui_block(src, "output\\$rb_has_doc <- reactive", 2L), "rb_doc\\(\\)")
+  # Two page boxes: the toolkit and the X-ray. The count is the inventory - a new
+  # page box that does not say how many pages there are is what this catches.
+  expect_equal(length(gregexpr("Page \\(1 to %d\\)", joined)[[1]]), 2L)
 })
 
 # ---------------------------------------------------------------------------
@@ -635,37 +619,6 @@ test_that("a batch is more files in the same picker, not a second screen", {
   expect_true(i_batch < min(i_status))
 })
 
-test_that("every file in a batch goes through the engine's own batch loop", {
-  # There must be no second conversion pipeline in the UI: a batch answer and a
-  # single-file answer for the same statement have to be the same code.
-  #
-  # REWRITTEN for the move off this process. The loop is unchanged and is still
-  # R/batch.R's; what changed is WHICH PROCESS runs it (R/jobs.R, job_run_task),
-  # so the assertion follows it there rather than going quietly vacuous scanning
-  # an app.R that no longer holds the call.
-  joined <- paste(.ui_src(), collapse = "\n")
-  jobs <- paste(readLines(file.path(engine_root(), "R", "jobs.R"), warn = FALSE), collapse = "\n")
-  expect_match(joined, 'cv_slot\\$start\\("batch", paths, sess')     # app.R asks for it
-  expect_match(jobs, "convert_batch, c\\(list\\(paths\\), args,")   # ...and this runs it
-  expect_true(exists("convert_batch"))
-  expect_true(exists("batch_summary"))
-  expect_true(exists("BATCH_STATUSES"))
-  # ...and neither side calls the single-file front door in a loop of its own
-  for (s in c(joined, jobs))
-    expect_false(grepl("for \\([a-z]+ in seq_along\\(paths\\)\\)[^\n]*convert_document", s))
-  # THE SEAM test-batch.R guards, asserted where the arguments now are: anything
-  # convert_batch does not itself take goes on to convert_document(), which has no
-  # `...`, so one stale argument fails EVERY file in the case.
-  blk <- .ui_block(.ui_src(), 'cv_slot\\$start\\("batch", paths, sess', 12L)
-  expect_false(grepl("keep_rows", blk, fixed = TRUE))
-  a <- sub("(?s).*args = list\\(", "", blk, perl = TRUE)
-  a <- sub("(?s)\\),\\s*finish =.*", "", a, perl = TRUE)
-  sent <- unique(unlist(regmatches(a, gregexpr("[A-Za-z_][A-Za-z_0-9]*(?= =)", a, perl = TRUE))))
-  expect_gt(length(sent), 4L)                       # the scan must not go quiet
-  expect_identical(setdiff(sent, names(formals(convert_document))), character(0))
-  expect_true("outdir" %in% names(formals(convert_document)))   # job_start adds this one
-})
-
 test_that("the QID is asked once for the whole batch, before it starts", {
   # REWRITTEN for the shared gate. The check used to be written out inside
   # cv_go, and this test read it there; it is now .identity_ok(), because the
@@ -826,26 +779,6 @@ test_that("nobody waits in silence: a queued conversion says how many are ahead"
                      info = paste("the waiting message says", w))
 })
 
-test_that("no conversion runs in the app's own R process any more", {
-  # THE WHOLE CHANGE, in one assertion. An engine call made on this thread freezes
-  # every other analyst's browser for as long as it takes -- measured at 65
-  # seconds of a dead page while one person converted one scanned statement.
-  app <- file.path(engine_root(), "app.R")
-  skip_if_not(file.exists(app))
-  # The PARSER's own call tokens, so a comment naming convert_batch() (there are
-  # several, and they should stay) can never be mistaken for a call, and a call
-  # hidden after a "#" inside a string can never be missed.
-  pd <- utils::getParseData(parse(app, keep.source = TRUE))
-  calls <- pd$text[pd$terminal & pd$token == "SYMBOL_FUNCTION_CALL"]
-  expect_gt(length(calls), 100L)                    # the scan must not go quiet
-  expect_identical(
-    intersect(calls, c("convert_document", "convert_statement", "convert_batch",
-                       "batch_audit", "convert_form")),
-    character(0))
-  # ...and every launch goes through the one slot object, which caps and queues
-  expect_gt(length(grep("\\$start\\(\"(convert|batch|audit)\"", .ui_src())), 3L)
-})
-
 test_that("a tab closed mid-conversion takes its process with it", {
   # An abandoned scan would otherwise hold a core for two more minutes producing
   # a result no browser is left to read -- and the cap would count it the while.
@@ -937,7 +870,7 @@ test_that("two uploads with the same name cannot overwrite each other's outputs"
 test_that("the exact-template list is narrowed by the bank already chosen", {
   src <- .ui_src()
   # the filter, the bank it filters on and the update all sit in ONE observer
-  i <- grep("ov <- template_overview\\(ts\\)", src)
+  i <- grep("ov <- template_overview\\(cv_pick_templates\\(\\)\\)", src)
   expect_length(i, 1L)
   blk <- paste(src[max(1L, i - 3L):(i + 10L)], collapse = " ")
   expect_match(blk, "bank <- bank_choice\\(\\)")                      # the same choice
@@ -964,25 +897,6 @@ test_that("rebuilding the Admin template picker keeps the template you picked", 
   blk <- paste(src[max(1L, min(i) - 6L):(max(i) + 3L)], collapse = " ")
   expect_match(blk, "keep <- isolate\\(input\\$adm_tpl_pick\\)")
   expect_match(blk, "selected = if \\(!is\\.null\\(keep\\) && keep %in% ids\\) keep else NULL")
-})
-
-# Hiding decides whether a template is used to read statements AT ALL. It landed
-# silently: the inline note was wiped by the rebuild above, and unlike Delete it
-# had no toast to survive it. A state change nobody can confirm happened is the
-# same class of defect as a silent success anywhere else in this app.
-test_that("hiding a template says so somewhere that survives the redraw", {
-  src <- .ui_src()
-  i <- grep("input\\$adm_tpl_hide", src)
-  expect_length(i, 1L)
-  blk <- paste(src[i:(i + 34L)], collapse = " ")
-  expect_match(blk, 'notify_once\\("adm_tpl_hide"')
-  # By its NAME, not its id -- and by the name that is true for whichever kind of
-  # template it is. template_display_name() appends "statement" to everything,
-  # which is a lie about a report and about a form.
-  expect_match(blk, "template_library_name")
-  # ...and it hides in the folder THAT KIND lives in, or Hide is a control that
-  # does nothing on two of the three kinds.
-  expect_match(blk, "\\.adm_user_dir\\(\\.adm_kind\\(id\\)\\)")
 })
 
 test_that("the exact-template picker is called exactly 'Template (optional)'", {
@@ -1343,47 +1257,6 @@ test_that("the band editor draws and stores in the template's band frame", {
 })
 
 # ---------------------------------------------------------------------------
-# N26. Shiny sends a brush on every mouse-move, so nudging a band fought a
-# re-read the whole way. A long debounce swallows the mid-drag sends; the mouse
-# release flushes immediately (shiny.js calls immediateCall on mouseup). A
-# mis-drawn band is the commonest cause of a wrong amount column, so this is a
-# correctness fix wearing a usability costume.
-test_that("a drawn box commits on release, not on every mouse move", {
-  lines <- .ui_src(); src <- paste(lines, collapse = " ")
-  num_at <- function(pat) {
-    i <- grep(pat, lines)[1]
-    if (is.na(i)) NA_integer_ else as.integer(sub("^[^0-9]*([0-9]+).*$", "\\1", lines[i]))
-  }
-  for (id in c("g_pdf_brush", "rb_brush")) {
-    blk <- regmatches(src, regexpr(sprintf('brushOpts\\("%s".{0,120}', id), src, perl = TRUE))
-    # A debounce of ANY length is the promise -- one commit when the mouse stops,
-    # not one per mouse-move.
-    expect_match(blk, 'delayType = "debounce"')
-  }
-  # THE TOOLKIT waits long, because its drag is the whole gesture and there is
-  # nothing else competing for it.
-  tk <- as.integer(sub('.*brushOpts\\("g_pdf_brush", delay = ([0-9]+).*', "\\1", src))
-  expect_gte(tk, 500L)
-  # THE BUILDER CANNOT. Its plot also carries a click, and Shiny sends a plot
-  # click on MOUSEDOWN - so the leading edge of every drag arrives as a click and
-  # the click has to wait to find out whether a drag followed. The brush must
-  # report FIRST, or the drag is read as a click and the gesture is lost, which is
-  # exactly the fault that made the builder unusable. So the builder's delay is
-  # the named constant, and the only rule is that it is the shorter of the two.
-  expect_match(src, "brushOpts\\(\"rb_brush\", direction = \"xy\", delay = \\.RB_BRUSH_WAIT")
-  bw <- num_at("^\\.RB_BRUSH_WAIT <- ")
-  cw <- num_at("^\\.RB_CLICK_WAIT <- ")
-  expect_false(is.na(bw)); expect_false(is.na(cw))
-  # THE BRUSH REPORTS ON RELEASE. It used to be the shorter wait, so it reported
-  # first - and that made its debounce fire MID-DRAG whenever somebody paused,
-  # which reset the brush under the still-pressed mouse and killed the gesture.
-  # Longer than any drag a person makes means shiny.js only ever flushes it on
-  # mouseup, which is what "on release" costs in this API.
-  expect_gt(bw, cw)
-  expect_gte(bw, 5000L)
-})
-
-# ---------------------------------------------------------------------------
 # N27. The save name was fixed at draft time and built from the BANK alone, so
 # every layout one bank issues drafted the same name and the second save
 # overwrote the first. Templates that cannot be told apart by name are exactly
@@ -1422,77 +1295,6 @@ test_that("the way out is on Simple and outside the settings disclosure", {
   expect_match(paste(src, collapse = " "), "'Tell our team' box below")
 })
 
-# ---------------------------------------------------------------------------
-# N31. The form builder opened with the ABSTRACT step - a blank box headed "the
-# values to pull out" - and put the one concrete thing a person can do, point at
-# a number, last and marked optional. The page now leads with the document.
-test_that("the builder leads with the document, not a blank list", {
-  src <- .ui_src()
-  step <- grep('uiOutput\\("rb_vstep"\\)', src)
-  typed <- grep('textAreaInput\\("rb_val_typed"', src)
-  expect_length(step, 1L); expect_length(typed, 1L)
-  expect_true(step < typed)                        # the concrete step is first
-  # and the typed list is behind the disclosure, not in front of it
-  det <- grep("Know the wording already\\? Type them instead", src)
-  expect_length(det, 1L)
-  expect_true(det < typed && typed - det < 4L)
-  # nothing is deleted: the shortcut still parses through the same helper
-  expect_true(any(grepl("parse_fields_spec\\(input\\$rb_val_typed\\)", src)))
-  expect_false(any(grepl("Value printed away from its wording", src, fixed = TRUE)))
-})
-
-# A PAIR IS TWO DRAGS, AND NEITHER OF THEM IS A GUESS.
-#
-# The version before this asked for the label and then GUESSED the value -- the
-# next thing along the same line, else the line under it. A guess that is right
-# nine times in ten is a habit of not checking, and the tenth is wrong in a file
-# nobody re-reads. It also only ever looked right and down, so a value printed to
-# the LEFT of its label, or above it, could not be expressed at all.
-#
-# So: two drags, both asked for out loud, and what is stored is the label's
-# wording plus WHICH SIDE the value was on. On the next document the label is
-# found by its wording and the search runs in that direction -- which survives a
-# longer figure and a wider label, where a fixed offset does not.
-test_that("a value is two explicit drags, and the side is stored, not guessed", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  brush <- .ui_block(src, "observeEvent\\(input\\$rb_brush", 190L)
-  # the label drag stores the wording and then ASKS for the value
-  lab <- .ui_block(src, 'if \\(m == "label"\\)', 26L)
-  expect_match(lab, "label_text <- txt", fixed = TRUE)
-  expect_match(lab, 'rb\\$mode <- "value"')
-  # nothing hunts for the value beside the label any more
-  expect_false(grepl("right <- w\\[w\\$cx > box\\$x_max", joined))
-  expect_false(grepl("below <- w\\[w\\$cy > box\\$y_max", joined))
-  # the value drag works out the side from the two boxes
-  val <- .ui_block(src, 'if \\(m == "value"\\)', 16L)
-  expect_match(val, "\\.doc_pair_rel\\(v\\$label, box\\)")
-  # ...which is SHOWN, in words, before it is saved...
-  card <- .ui_block(src, "output\\$rb_vstep <- renderUI", 20L)
-  expect_match(card, "\\.doc_pair_where_text\\(rel\\)")
-  expect_match(card, "not drawn yet")
-  # ...and can be overridden, before AND after saving
-  expect_match(joined, 'selectInput\\("rb_vwhere"')
-  for (w in c('"right"', '"left"', '"below"', '"above"'))
-    expect_match(joined, sprintf("= %s,?", w))
-  expect_match(joined, 'observeEvent\\(input\\$rb_vwhere')
-  expect_match(joined, 'paste0\\("rb_ved_", i\\), "Edit"')
-  # saving refuses a half-drawn pair rather than storing one box
-  sv <- .ui_block(src, "observeEvent\\(input\\$rb_vsave", 24L)
-  expect_match(sv, "Drag a box round the label first")
-  expect_match(sv, "Drag a box round the value first")
-})
-
-test_that("a value can be removed, and so can a table and a column", {
-  # Nothing built by hand is worth building if it cannot be taken back.
-  src <- .ui_src()
-  joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'paste0("rb_vrm_", i), "Remove"', fixed = TRUE)   # a value
-  expect_match(joined, 'paste0("rb_rm_", i), "Remove"', fixed = TRUE)    # a table
-  expect_match(joined, 'paste0("rb_cx_", j)', fixed = TRUE)              # a column
-  for (id in c("rb_vrm_", "rb_rm_", "rb_cx_"))
-    expect_match(joined, sprintf('observeEvent\\(input\\[\\[paste0\\("%s", [ij]\\)\\]\\]', id))
-})
-
 # ---- N34: the preview's row count is a PARTIAL read, and must say so ---------
 # draft_preview stops at PREVIEW_PAGES so the toolkit stays quick on a 46-page
 # statement. The verdict then announced that count as "N transaction rows read" -
@@ -1509,21 +1311,6 @@ test_that("the toolkit preview states that it read only the first few pages", {
   # it is only called partial when the document really is longer than the preview
   expect_match(blk, "np > PREVIEW_PAGES")
   expect_match(blk, "read from the first %d of %d pages")
-})
-
-# ---- N35: the first question has to be answerable again ----------------------
-# "A statement, or labelled values?" is asked once on the page BEHIND the toolkit
-# modal, and not at all when the toolkit is opened from a Convert result. Cancel
-# threw the work away without answering it.
-test_that("the toolkit offers a way back to the other builder, carrying the file", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'actionLink("g_not_statement"', fixed = TRUE)
-  blk <- .ui_block(src, "observeEvent\\(input\\$g_not_statement", 12L)
-  expect_match(blk, "rb_handoff\\(g\\$path\\)")                 # the file goes with it
-  expect_match(blk, "ts_doctype", fixed = TRUE)                # ...and the answer changes
-  expect_match(blk, "removeModal\\(\\)")
-  # the builder must actually READ the handoff, or the link is theatre
-  expect_match(.ui_block(src, "rb_doc <- reactive", 8L), "rb_handoff\\(\\)")
 })
 
 test_that("no on-screen text points at a control that is off screen", {
@@ -2128,48 +1915,12 @@ test_that("the toolkit preview asks what the tool already knows before it ticks"
   expect_false(grepl('if (n > 0L) return(div(class = "verdict verdict-high"', blk, fixed = TRUE))
 })
 
-# The form result was the only table on Convert handed straight to datatable():
-# a FIELD column of engine schema names beside a LABEL column that already said
-# the same thing in the document's words, and three columns of `true` / `false`.
-test_that("the form result table shows no schema name and no raw true/false", {
-  src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_fields <- renderDT", 22L)
-  expect_match(blk, "yes_no\\(f\\$matched\\)")
-  expect_match(blk, "yes_no\\(f\\$required\\)")
-  expect_match(blk, "What the document calls it")
-  # the engine's own column names never reach the frame that is drawn
-  expect_false(grepl('"field", "label", "value", "matched"', blk, fixed = TRUE))
-  # a field whose label is blank keeps its identity in readable form
-  expect_match(blk, "cv_friendly_cols\\(as\\.character\\(f\\$field")
-  yn <- .ui_fun("yes_no")
-  expect_identical(yn(c(TRUE, FALSE, NA)), c("yes", "no", "no"))
-})
-
-# "Read as: anz_kiwisaver_fields". friendly_tpl returned the RAW ID for anything
-# not in all_templates(), and form templates are deliberately not in that set --
-# so the fix for "Read as: NA NA statement" swapped one wrong answer for an engine
-# code on a customer-facing screen, which the charter forbids outright.
-test_that("a form template is named, not printed as its id", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  expect_match(joined, "all_field_templates <- reactive")
-  expect_match(.ui_block(src, "all_field_templates <- reactive", 4L),
-               "load_fields_templates\\(FIELDS_DIR, USER_FIELDS_DIR\\)")
-  expect_match(.ui_block(src, "friendly_tpl <- function", 20L),
-               "all_field_templates\\(\\)\\[\\[tid\\]\\]")
-  # the shipped form template really does carry the two fields the name is built
-  # from, so this is wired to a fact and not to a hope
-  ft <- load_fields_templates(fields_templates_dir())
-  t <- ft[["anz_kiwisaver_fields"]]
-  expect_false(is.null(t))
-  expect_identical(.ui_fun(".tpl_label")(t$bank, t$statement_type), "ANZ kiwisaver statement")
-})
-
 # One needs_review screen carried three alarm levels: a headline calling the
 # failures "secondary and commonly flag", a What-to-check list holding only the
 # dates item, a HIGH diagnostic saying "split it into one statement per file", and
 # a prominent button offering the template toolkit instead.
 test_that("what to check leads with the highest-severity diagnostic, and it carries the action", {
-  top <- .ui_fun("top_diagnostics", also = c(".diagnostics_of", ".statement_route", ".is_txn_result"))
+  top <- .ui_fun("top_diagnostics", also = ".diagnostics_of")
   d <- data.frame(where = c("upload", "dates"),
                   category = c("multiple_statements", "date_out_of_range"),
                   severity = c("high", "medium"),
@@ -2191,9 +1942,8 @@ test_that("what to check leads with the highest-severity diagnostic, and it carr
   # the card lists it, and the remedy is the action line under it
   blk <- .ui_block(.ui_src(), "failed_checks_ui <- function", 34L)
   expect_match(blk, "dg <- top_diagnostics\\(res\\)")
-  # never the code -- and in the words of the route this run took, not always the
-  # statement route's (ui_labels.R: plain_diag / DIAG_PLAIN_OTHER)
-  expect_match(blk, "plain_diag\\(dg\\$category\\[i\\], \\.statement_route\\(res\\)\\)")
+  # in plain words, never the engine's code (ui_labels.R: plain_diag / DIAG_PLAIN)
+  expect_match(blk, "plain_diag\\(dg\\$category\\[i\\]\\)")
   expect_match(blk, "Do this first: ")
   expect_match(blk, "dg\\$how_to_fix\\[1\\]")
 })
@@ -2434,18 +2184,9 @@ test_that("an empty date picker is decoded quietly, and a real date still arrive
 # had no threshold and no way back from a confident result either.
 # ---------------------------------------------------------------------------
 
-test_that("the editor opens by itself on the route that always needs it, and on a doubtful statement", {
-  needs <- .ui_fun(".needs_editor", also = ".is_txn_result")
-  # A REPORT AND A FORM ALWAYS OPEN. Neither carries any trust at all -- there is
-  # no reconciliation behind either -- so there is nothing to be confident about.
-  for (k in c("tables", "form")) {
-    expect_true(needs(list(kind = k, status = "ok"), "medium"))
-    expect_true(needs(list(kind = k, status = "needs_review"), "medium"))
-    # ...and the statement threshold cannot switch them off. The threshold was
-    # asked for on statements only, and "any" means "a statement never opens it".
-    expect_true(needs(list(kind = k, status = "ok"), "any"))
-  }
-  # A STATEMENT OPENS ON THE THRESHOLD. Default medium: only a `low` one.
+test_that("the editor opens by itself on a doubtful statement, and not on a confident one", {
+  needs <- .ui_fun(".needs_editor")
+  # IT OPENS ON THE THRESHOLD. Default medium: only a `low` one.
   expect_false(needs(list(status = "ok", trust = list(level = "high")), "medium"))
   expect_false(needs(list(status = "ok", trust = list(level = "medium")), "medium"))
   expect_true(needs(list(status = "ok", trust = list(level = "low")), "medium"))
@@ -2515,24 +2256,6 @@ test_that("the door back is one control, on all three kinds, and it is not a new
   expect_true(i_ed > i_dl && i_ed - i_dl < 30L)
 })
 
-test_that("the door carries the document and the template, which is what the deleted links did not", {
-  src <- .ui_src()
-  blk <- .ui_block(src, "\\.edit_now <- function", 40L)
-  # a report opens the SAVED TEMPLATE on the document she just converted
-  expect_match(blk, "rb_open_template\\(t, src\\$path\\)")
-  expect_match(blk, "all_doc_templates\\(\\)\\[\\[tid\\]\\]")
-  # ...and a template that is no longer in the library SAYS SO rather than
-  # opening a blank screen with no explanation
-  expect_match(blk, "no longer in the library")
-  # a form has no editor of its own, and the notification says what will be built
-  expect_match(blk, "makes a report template")
-  # a statement seeds the toolkit with the template that matched
-  expect_match(blk, "open_guided\\(src\\$path, src\\$name, seed_tmpl = seed")
-  # the NON-admin set, so a parked template is never handed back on a result
-  expect_match(.ui_block(src, "all_doc_templates <- reactive", 4L),
-               "load_document_templates\\(DOC_DIR, USER_DOC_DIR\\)")
-})
-
 # ---------------------------------------------------------------------------
 # 0c. A badly OCR'd page can come back "ok" -- and the caveat lived in a panel
 # nobody opens, behind "Show me how it read this", while the verdict was green.
@@ -2572,7 +2295,7 @@ test_that("a scan says so beside the download, not in a panel", {
 # ---------------------------------------------------------------------------
 
 test_that("a high-severity diagnosis nobody can fix with a template takes the headline", {
-  bd <- .ui_fun(".blocking_diag", also = c(".diagnostics_of", ".statement_route", ".is_txn_result"))
+  bd <- .ui_fun(".blocking_diag", also = ".diagnostics_of")
   mk <- function(cat, sev, own) data.frame(category = cat, severity = sev,
     detail = paste(cat, "happened"), how_to_fix = "do this", fix_owner = own,
     stringsAsFactors = FALSE)
@@ -2594,18 +2317,16 @@ test_that("a high-severity diagnosis nobody can fix with a template takes the he
   dg <- readLines(file.path(engine_root(), "R", "diagnose.R"), warn = FALSE)
   expect_true(any(grepl("scanned_no_ocr\\s+= \"input\"", dg)))
   expect_true(any(grepl("^\\.diag_fix_owner <- function", dg)))
-  # and the card really puts it FIRST, above every "set it up" branch
+  # and the card really puts it FIRST, above the "set it up" branch
   blk <- .ui_block(.ui_src(), "output\\$cv_teach <- renderUI", 240L)
   i <- regexpr("bd <- .blocking_diag(res)", blk, fixed = TRUE)
   expect_gt(i, 0L)
-  for (later in c('This looks like a report, not a bank statement.',
-                  'The tool cannot tell what kind of document this is.'))
-    expect_lt(i, regexpr(later, blk, fixed = TRUE))
+  expect_lt(i, regexpr("Every bank statement template was tried", blk, fixed = TRUE))
   # the primary action is REPLACED, not merely joined: the setup route on that
   # branch is the quiet override, never a btn-primary
   card <- substr(blk, i, i + 700L)
-  expect_match(card, 'other\\("Sure a template is what this needs\\?"')
-  expect_false(grepl("btn-primary", substr(card, 1, regexpr("other(", card, fixed = TRUE)),
+  expect_match(card, 'Sure a template is what this needs\\?')
+  expect_false(grepl("btn-primary", substr(card, 1, regexpr("Sure a template", card, fixed = TRUE)),
                      fixed = TRUE))
 })
 
@@ -2639,72 +2360,6 @@ test_that("a case folder can re-run the files that failed and hand back the rest
   op <- .ui_block(src, "output\\$cv_batch_open <- renderUI", 30L)
   expect_match(op, "if \\(length\\(sel\\)\\)")
   expect_match(op, "if \\(length\\(outs\\)\\)")
-})
-
-# ---------------------------------------------------------------------------
-# B2. "Ensure submit feedback is also there on other reports." A report has no
-# reconciliation behind it, so a human's "this is wrong" is the ONLY signal there
-# is -- it matters MORE there, not less.
-# ---------------------------------------------------------------------------
-
-test_that("feedback is asked on a report and a form, and says why it matters there", {
-  src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_feedback <- renderUI", 40L)
-  # NO KIND GUARD -- it may READ the kind to word one sentence, but it may never
-  # refuse to render on it. The two shapes that would do that are named outright.
-  expect_false(grepl("req(.is_txn_result(res))", blk, fixed = TRUE))
-  expect_false(grepl('identical(res$kind, "form")', blk, fixed = TRUE))
-  # the ONE return(NULL) pair it is allowed is about the RUN, not about the kind
-  expect_equal(length(gregexpr("return(NULL)", blk, fixed = TRUE)[[1]]), 2L)
-  # WHY IT MATTERS THERE IS SAID AT THE TOP OF THE RESULT, NOT AT THE BOTTOM.
-  # This panel used to carry a third saying of it -- "your reading of it against
-  # the page is the only check there is" -- under a route paragraph and a verdict
-  # card that had both already said there is no running balance behind a report
-  # and that she is the check. The sentence is not lost; it is two inches higher,
-  # on both halves of the OTHER route, in one wording. (Words sweep, cut 29.)
-  expect_false(grepl("the only check there is", blk, fixed = TRUE))
-  for (out in c("cv_form", "cv_tables"))
-    expect_match(.ui_block(src, sprintf("output\\$%s <- renderUI", out), 34L),
-                 "so nothing reconciles", fixed = TRUE)
-  # ...and this panel does NOT reuse the statement promise, which no report can keep
-  expect_false(grepl("reconcile", blk, fixed = TRUE))
-  # it is rendered outside the transaction-only panel, or the guard would be back
-  # by the back door
-  i_fb <- grep('uiOutput\\("cv_feedback"\\)', src)
-  i_panel <- grep("output.cv_is_tables != true", src)
-  expect_length(i_fb, 1L)
-  expect_true(all(i_fb > i_panel))
-  expect_match(paste(src[i_fb:(i_fb + 2)], collapse = " "), "^\\s*uiOutput")
-})
-
-# ---------------------------------------------------------------------------
-# J9. "The OTHER route ships empty" -- and cv_empty only ever described
-# statements, three inches under a radio button reading "Something else".
-# ---------------------------------------------------------------------------
-
-test_that("the empty state promises what the answer she gave can deliver", {
-  src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_empty <- renderUI", 42L)
-  expect_match(blk, 'other <- identical\\(kind_choice\\(\\), "other"\\)')
-  expect_match(blk, "Convert a report, a form or a letter")
-  # THE ROUTE STILL SPLITS -- the heading, what may be uploaded, and where an
-  # unrecognised layout is set up all differ by the answer she gave...
-  expect_match(blk, "Upload it on the left", fixed = TRUE)
-  expect_match(blk, "Upload a statement on the left", fixed = TRUE)
-  expect_match(blk, "Your bank is detected automatically", fixed = TRUE)
-  expect_match(blk, "If no template fits this layout yet", fixed = TRUE)
-  # ...but the screen no longer ADVERTISES the result page to somebody who has
-  # already opened it. Every one of the six bullets is delivered and named on the
-  # result itself -- the download bar, the proof strip, the table navigator.
-  expect_false(grepl("You'll get back", blk, fixed = TRUE))
-  expect_false(grepl("Whether it reconciles", blk, fixed = TRUE))
-  expect_false(grepl("Where each one came from", blk, fixed = TRUE))
-  # and it does not name a distinction nobody outside Admin makes
-  expect_false(grepl("a form or report template", blk, fixed = TRUE))
-  # THE SAMPLE IS A BANK STATEMENT, so it is not offered under "something else"
-  expect_match(blk, "if \\(!other && file\\.exists\\(SAMPLE_STATEMENT\\)\\)")
-  # one link element, not two literals sharing an id
-  expect_length(grep('actionLink\\("cv_empty_to_tmpl"', src), 1L)
 })
 
 test_that("the verdict card's headline is the diagnosis, not the generic template line", {
@@ -2762,19 +2417,6 @@ test_that("the number of controls on screen does not creep back up", {
   expect_lte(length(ids), 174L)
 })
 
-test_that("one control per fact: the page number, and no buttons beside it", {
-  src <- .ui_src()
-  ids <- .ui_control_ids(src)
-  # "Back a page" / "Next page" did what the box's own arrows do.
-  expect_false("rb_prev_page" %in% ids)
-  expect_false("rb_next_page" %in% ids)
-  expect_true("rb_page" %in% ids)
-  # ...and the box is bounded and labelled with how many pages there are, which
-  # is what makes the buttons unnecessary rather than merely absent.
-  expect_match(.ui_block(src, "updateNumericInput\\(session, \"rb_page\", max = n", 3L),
-               "Page \\(1 to %d\\)")
-})
-
 test_that("the close-call panel has one action, not a second door to the toolkit", {
   src <- .ui_src()
   ids <- .ui_control_ids(src)
@@ -2813,187 +2455,12 @@ test_that("Admin's bulk audit audits and never converts", {
                "Nothing is converted or saved", fixed = TRUE)
 })
 
-test_that("the builder's preview offers the workbook, not the same rows twice", {
-  src <- .ui_src()
-  ids <- .ui_control_ids(src)
-  expect_true("rb_dl_xlsx" %in% ids)
-  expect_true("rb_dl_values" %in% ids)   # the only file the workbook's sheet is not
-  expect_false("rb_dl_csv" %in% ids)
-  expect_length(grep("output\\$rb_dl_csv", src), 0L)
-  # Convert still offers the long CSV once the template is saved, so nothing is
-  # unreachable -- it is just not offered twice.
-  expect_length(grep('c\\(xlsx = "dl_xlsx", csv = "dl_csv"\\)', src), 1L)
-})
-
-test_that("the drawn-column floor is engine tuning, not a number typed into a screen", {
-  src <- .ui_src()
-  # the value lives with the rest of the engine's geometry
-  p <- file.path(engine_root(), "R", "params.R")
-  params <- readLines(p, warn = FALSE)
-  expect_length(grep("^PARAM_DOC_MIN_COL_PT <- ", params), 1L)
-  expect_length(grep("^PARAM_DOC_SAME_PAGE_PT <- ", params), 1L)
-  # and app.R only names it
-  expect_match(.ui_block(src, "\\.RB_MIN_COL <- ", 1L), "PARAM_DOC_MIN_COL_PT")
-  expect_length(grep("\\.RB_MIN_COL <- [0-9]", src), 0L)
-  # the page-size slack too: no bare 2 deciding whether a document is a different
-  # size from the one the template was drawn on
-  expect_match(.ui_block(src, "output\\$rb_frame_note <- renderText", 10L),
-               "PARAM_DOC_SAME_PAGE_PT")
-})
-
-test_that("both builders ask who produced the document, and ask for a phrase, the same way", {
-  src <- .ui_src()
-  joined <- paste(src, collapse = "\n")
-  # The report builder said "Issuer" -- the field's name in the file -- where the
-  # statement toolkit asks a question. Two words for one question is the drift
-  # the two routes are meant not to have.
-  expect_match(joined, 'textInput\\("rb_bank", "Who produced this document\\?"')
-  expect_match(joined, 'textInput\\("g_bank", "Which bank is this statement from\\?"')
-  expect_length(grep('textInput\\("rb_bank", "Issuer"', src), 0L)
-  # ...and the fingerprint is asked for in one sentence on both, saying the same
-  # three things: one per line, all must appear, never a person's name. (Joined:
-  # the statement side's sentence is wrapped over two source lines.)
-  flat <- gsub('",\\s*\\n?\\s*"', "", joined)
-  for (frag in c("One phrase per line - all must appear, and they must not be words every statement carries",
-                 "One phrase per line - all must appear, and they must not be words every document carries"))
-    expect_true(grepl(frag, flat, fixed = TRUE), info = frag)
-})
-
-test_that("the messages this sweep rewrote are one sentence and carry no id", {
-  src <- .ui_src()
-  joined <- paste(src, collapse = "\n")
-  # A second sentence pointing at a control that is on screen two inches away.
-  expect_length(grep("Use \\\\u201cStart a new template\\\\u201d", src), 0L)
-  expect_match(joined, "Read as another example of this template - only the page changed\\.")
-  # A second sentence describing the panel the message is printed over: the
-  # notification is now the count and the correction, and stops.
-  expect_match(joined, 'sprintf\\("%d columns, ending on page %d\\.%s"')
-  # Reassurance.
-  expect_length(grep("Nothing else will change", src), 0L)
-  # The save note named the template id, which the header bar above already names.
-  expect_match(.ui_block(src, "output\\$rb_save_note <- renderText", 14L),
-               "Replaces the saved template with %s\\.")
-  # A file PATH in a message on screen.
-  expect_length(grep("Reloaded %s into the editor", src), 0L)
-})
-
 # ---------------------------------------------------------------------------
 # THE CONTROL SWEEP OF 2026-08-26. Every case below is one control that changed
 # nothing the person chose, or that only meant something in one state and was
 # always on screen. The rule each is held to: never remove the only route to a
 # capability, and never leave a control that answers a question the tool has
 # already answered.
-# ---------------------------------------------------------------------------
-
-test_that("the QID is read from the box, not confirmed with a second press", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # "Use this QID" was a button whose only job was to confirm the box above it --
-  # and until it was pressed, a perfectly valid QID sat visible in the box with
-  # Convert greyed out and a caption underneath reading "Enter your QID above".
-  expect_length(grep("cv_qid_set", src), 0L)
-  expect_match(joined, 'QID_PATTERN <- "\\^\\[A-Za-z0-9\\]\\{6\\}\\$"')
-  blk <- .ui_block(src, "observeEvent\\(input\\$cv_qid,", 6L)
-  expect_match(blk, "grepl\\(QID_PATTERN, v\\)")
-  expect_match(blk, "cv_qid\\(toupper\\(v\\)\\)")
-  # the refusal did not disappear with the button -- it moved to the box, and it
-  # waits until the answer cannot come right rather than nagging mid-word
-  why <- .ui_block(src, 'output\\$cv_qid_why <- renderUI', 9L)
-  expect_match(why, "A QID is six letters or numbers")
-  expect_match(why, "nchar\\(v\\) <= 6L")
-  # ...and the reason the button is off is still said where the button is
-  expect_match(joined, "Enter your QID above - it records who ran this conversion\\.")
-})
-
-test_that("Group by and Measure exist only on the view they act on", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # On "Balance over time" and "Running total" the data is drawn ungrouped, so
-  # "Group by" silently meant "date label style" -- and "Measure = Count" printed
-  # real account balances as bare integers with no dollar sign under a y-label
-  # reading "Balance". A money figure rendered as a non-money figure, by a control
-  # the person was invited to touch.
-  for (id in c("an_group", "an_unit"))
-    expect_match(joined, sprintf("conditionalPanel\\(\"input.an_view == 'inout'\", class = \"col-sm-4\",\\s*\\n\\s*(selectInput|radioButtons)\\(\"%s\"", id))
-  # belt and braces in the plot itself: nothing they were last set to may leak
-  plot <- .ui_block(src, "output\\$cv_trend <- renderPlot", 12L)
-  expect_match(plot, 'if \\(view != "inout"\\) unit <- "amount"')
-  # and the date axis works its own labels out instead of following "Group by"
-  xd <- .ui_block(src, "xdate <- function\\(dates\\)", 6L)
-  expect_false(grepl("grp", xd, fixed = TRUE))
-  expect_match(xd, "sp > 120")
-  # the three views themselves are untouched -- this is a defer, not a delete
-  expect_match(joined, 'selectInput\\("an_view", "Show"')
-})
-
-test_that("the Advanced tab holds the live template without being asked", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # "Load current settings" was a button for a box that went stale the instant
-  # anything on Simple was touched, with nothing on screen saying so -- so the way
-  # it was used was: edit a stale template, Check & apply, and quietly revert your
-  # own Simple choices.
-  expect_length(grep("g_adv_load", src), 0L)
-  blk <- .ui_block(src, "observeEvent\\(input\\$g_tabs,", 6L)
-  expect_match(blk, 'identical\\(input\\$g_tabs, "Advanced"\\)')
-  expect_match(blk, 'updateTextAreaInput\\(session, "g_yaml", value = live\\)')
-  # ...BUT A BOX YOU HAVE TYPED IN IS NOT A STALE BOX. Refreshing on every visit
-  # meant: type here, glance at Simple, come back, and the typing is gone with no
-  # message and nothing to undo it -- the same silent loss the button was cut
-  # for, turned round the other way and needing no button at all. So the box is
-  # refreshed only while it is still exactly what the tool put in it, which is
-  # the test the two vocabulary editors already use.
-  expect_match(blk, "g_yaml_put")
-  expect_match(blk, "Your edits are still here", fixed = TRUE)
-  # and applying settles it, or the warning would stand for the rest of the
-  # session on a box that had been dealt with
-  expect_match(.ui_block(src, "observeEvent\\(input\\$g_adv_apply,", 6L),
-               "g_yaml_put\\(input\\$g_yaml")
-  # the only way back from text to the live template stays
-  expect_match(joined, 'actionButton\\("g_adv_apply", "Check & apply"')
-})
-
-test_that("uploading an example opens the builder on BOTH routes", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # The same act -- "I have an example, teach it" -- cost one press on the report
-  # route and two on the statement route, and the extra press was on the route
-  # Beth is likelier to be on.
-  expect_match(joined, "\\.ts_open_toolkit <- function\\(\\)")
-  blk <- .ui_block(src, "observeEvent\\(input\\$ts_file, \\{\\s*$", 4L)
-  expect_match(paste(src, collapse = "\n"),
-               "observeEvent\\(input\\$ts_file, \\{\\s*\\n\\s*if \\(!identical\\(input\\$ts_doctype")
-  # the button is not deleted -- it is the way back in after Cancel, and it is not
-  # on screen when there is nothing for it to open
-  expect_match(joined, "conditionalPanel\\(\"input.ts_doctype == 'statement' && output.ts_have_file == true\",\\s*\\n\\s*actionButton\\(\"ts_go\"")
-  expect_match(joined, 'output\\$ts_have_file <- reactive')
-})
-
-test_that("the same question is asked in the same words wherever it is asked", {
-  src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # Convert's "What is this?", Add-a-template's "What is this?" and the
-  # cannot-tell card on the result all offer the same two answers. They had
-  # drifted -- Something/Anything, and a "summary" on one screen only.
-  n <- length(grep('"A bank or card statement"', src, fixed = TRUE))
-  expect_gte(n, 3L)
-  expect_gte(length(grep('"Something else - a report, a form, a letter"', src, fixed = TRUE)), 3L)
-  expect_length(grep('A bank or card statement - a table of transactions', src, fixed = TRUE), 0L)
-  expect_length(grep('Anything else - a report, a form, a summary, a letter', src, fixed = TRUE), 0L)
-})
-
-test_that("the column edit panel asks for a name and a kind, and nothing else", {
-  src <- .ui_src()
-  w <- paste(src, collapse = "\n")
-  # "Done with this column" closed a panel that closes itself: Edit on another
-  # column reselects, Save and Cancel clear the draft, and Cancel in the sticky
-  # banner un-arms the drag from where the person is actually looking.
-  expect_length(grep("rb_cdone", src), 0L)
-  # the typed edges are NOT a duplicate of the drag (typed is exact, dragged is
-  # approximate) so they stay -- behind the same disclosure their four siblings on
-  # the start/end panel already sit behind
-  i_sum <- regexpr("Type the exact edges instead", w, fixed = TRUE)
-  expect_gt(i_sum, 0L)
-  for (b in c("rb_cx0", "rb_cx1"))
-    expect_gt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
-  for (b in c("rb_cname", "rb_ckind"))
-    expect_lt(regexpr(sprintf('"%s"', b), w, fixed = TRUE), i_sum, label = b)
-})
 
 # ---------------------------------------------------------------------------
 # THE WORDS SWEEP. "We DO NOT want the platform getting overly verbose." One
@@ -3056,48 +2523,30 @@ test_that("the diagnostics table speaks the route the run actually took", {
                    "Very long PDFs (>100 pages) may hit tool limits; split into smaller files if extraction stalls."),
     stringsAsFactors = FALSE)
 
-  # THE STATEMENT-ONLY REMEDY IS WRONG ON EVERY ROUTE, so it is replaced on both
-  for (stmt in c(TRUE, FALSE)) {
-    got <- e$diag_for_route(d, statement = stmt)
-    expect_false(grepl("template toolkit", got$how_to_fix[1], fixed = TRUE))
-    expect_false(grepl("closest match", got$how_to_fix[1], fixed = TRUE))
-    expect_match(got$how_to_fix[1], "Add a template tab", fixed = TRUE)
-    # a category with nothing to correct keeps the engine's own words, verbatim
-    expect_identical(got$how_to_fix[3], d$how_to_fix[3])
-    expect_identical(got$detail[3], d$detail[3])
-    # NO ROW IS ADDED, DROPPED OR RE-GRADED -- only the wording moves
-    expect_identical(nrow(got), nrow(d))
-    expect_identical(got$category, d$category)
-    expect_identical(got$severity, d$severity)
-  }
-
-  # ON THE STATEMENT ROUTE the running-balance warning is a real warning: untouched
-  onstmt <- e$diag_for_route(d, statement = TRUE)
-  expect_identical(onstmt$how_to_fix[2], d$how_to_fix[2])
-  expect_identical(onstmt$detail[2], d$detail[2])
-  expect_match(e$plain_diag("combined_statement", TRUE), "in one statement")
-
-  # ON THE OTHER ROUTE it stops talking about running balances and statements
-  other <- e$diag_for_route(d, statement = FALSE)
-  expect_false(grepl("running balance", other$how_to_fix[2], fixed = TRUE))
-  expect_false(grepl("statement", other$how_to_fix[2], fixed = TRUE))
-  expect_false(grepl("statement", other$detail[2], fixed = TRUE))
-  expect_match(other$detail[2], "6 account numbers", fixed = TRUE)   # the count survives
-  expect_match(e$plain_diag("combined_statement", FALSE), "in one document")
-  expect_match(e$plain_diag("multiple_statements", FALSE), "several documents")
+  # THE ENGINE'S OWN REMEDY FOR unknown_format NAMES THINGS THIS SCREEN DOES NOT
+  # SHOW (the closest match, the missing columns), so it is replaced
+  got <- e$diag_for_route(d)
+  expect_false(grepl("template toolkit", got$how_to_fix[1], fixed = TRUE))
+  expect_false(grepl("closest match", got$how_to_fix[1], fixed = TRUE))
+  expect_match(got$how_to_fix[1], "Add a template tab", fixed = TRUE)
+  # a category with nothing to correct keeps the engine's own words, verbatim
+  expect_identical(got$how_to_fix[3], d$how_to_fix[3])
+  expect_identical(got$detail[3], d$detail[3])
+  # NO ROW IS ADDED, DROPPED OR RE-GRADED -- only the wording moves
+  expect_identical(nrow(got), nrow(d))
+  expect_identical(got$category, d$category)
+  expect_identical(got$severity, d$severity)
+  # the running-balance warning is a real warning here: untouched
+  expect_identical(got$how_to_fix[2], d$how_to_fix[2])
+  expect_identical(got$detail[2], d$detail[2])
+  expect_match(e$plain_diag("combined_statement"), "in one statement")
   # an empty or malformed frame is handed straight back
-  expect_identical(e$diag_for_route(NULL, FALSE), NULL)
-  expect_identical(nrow(e$diag_for_route(d[0, ], FALSE)), 0L)
+  expect_identical(e$diag_for_route(NULL), NULL)
+  expect_identical(nrow(e$diag_for_route(d[0, ])), 0L)
 })
 
 test_that("every reader of the diagnostics goes through the one route-aware door", {
   src <- .ui_src()
-  # .statement_route asks what she SAID, not what kind the engine got as far as
-  # setting: on the other route R/forms.R hands back the statement attempt
-  # unchanged, so .is_txn_result says TRUE about a document she called a report.
-  rt <- .ui_block(src, "\\.statement_route <- function", 3L)
-  expect_match(rt, "res\\$asked_kind")
-  expect_match(rt, '"other"')
   # every reader of the frame's WORDING goes through .diagnostics_of
   for (blk in c(.ui_block(src, "\\.blocking_diag <- function", 12L),
                 .ui_block(src, "top_diagnostics <- function", 14L),
@@ -3105,7 +2554,7 @@ test_that("every reader of the diagnostics goes through the one route-aware door
     expect_match(blk, "\\.diagnostics_of\\(res\\)")
   # ...and the "What" column is mapped route-aware too
   expect_false(any(grepl("plain_label(dg$category[i], DIAG_PLAIN)", src, fixed = TRUE)))
-  expect_true(any(grepl("plain_diag(dg$category[i], .statement_route(res))", src, fixed = TRUE)))
+  expect_true(any(grepl("plain_diag(dg$category[i])", src, fixed = TRUE)))
 })
 
 test_that("the scan is warned about once, not three times above the fold", {
@@ -3125,31 +2574,7 @@ test_that("the scan is warned about once, not three times above the fold", {
   expect_match(chips, "date_unresolved")
 })
 
-test_that("both halves of the OTHER route say the no-reconciliation fact the same way", {
-  src <- .ui_src()
-  form <- .ui_block(src, "output\\$cv_form <- renderUI", 12L)
-  tabs <- .ui_block(src, "output\\$cv_tables <- renderUI", 34L)
-  expect_match(form, "No running balance behind a form, so nothing reconciles", fixed = TRUE)
-  expect_match(tabs, "No running balance behind a report, so nothing reconciles", fixed = TRUE)
-  # and the second verdict card no longer repeats the engine's three counts, which
-  # the card above already prints AND names the tables in
-  expect_false(grepl("found by position rather than by a heading", tabs, fixed = TRUE))
-  expect_match(tabs, "Every table was found by its own heading and every column filled", fixed = TRUE)
-  # the third saying of it, at the bottom of the page beside the feedback box, is gone
-  expect_false(any(grepl("adds up to a balance the tool can check", src, fixed = TRUE)))
-})
 
-test_that("one measurement has one wording wherever the screen says it", {
-  src <- .ui_src()
-  # It was spelled three ways: "claimed by no column" in the builder, "not claimed
-  # by any column" on Convert, "not in any column" in the engine. A reviewer who
-  # meets one measurement under three names has to work out it is one measurement.
-  expect_false(any(grepl("claimed by no column", src, fixed = TRUE)))
-  expect_false(any(grepl("not claimed by any column", src, fixed = TRUE)))
-  expect_true(any(grepl("were not in any column", src, fixed = TRUE)))
-  expect_false(any(grepl("found by position rather than by a heading", src, fixed = TRUE)))
-  expect_true(any(grepl("were found by position, not by their heading", src, fixed = TRUE)))
-})
 
 # ---------------------------------------------------------------------------
 # A VERDICT WHOSE TITLE CONTRADICTS ITS OWN BODY
@@ -3168,8 +2593,7 @@ test_that("one measurement has one wording wherever the screen says it", {
 
 test_that("a template that matched and read nothing takes the headline", {
   src <- .ui_src()
-  f <- .ui_fun(".matched_but_empty",
-               also = c(".diagnostics_of", ".statement_route", ".is_txn_result"))
+  f <- .ui_fun(".matched_but_empty", also = ".diagnostics_of")
   none <- data.frame(where = "detection", category = "unknown_format",
                      severity = "high", detail = "x", how_to_fix = "y",
                      stringsAsFactors = FALSE)
@@ -3214,24 +2638,14 @@ test_that("a template that matched and read nothing takes the headline", {
 # standing on the other -- the one Beth is likelier to be on.
 # ---------------------------------------------------------------------------
 
-test_that("both routes lead the unrecognised card with a fact the verdict cannot say", {
-  # COMMENTS STRIPPED FIRST. Both cut sentences are quoted in the comments that
-  # record why they went, so a test that reads the raw block finds them and calls
-  # the fix a failure.
+test_that("the unrecognised card leads with a fact the verdict cannot say", {
+  # COMMENTS STRIPPED FIRST: a cut sentence quoted in a comment would otherwise
+  # read as the fix having failed.
   code <- sub("\\s*#.*$", "", .ui_src())
   blk  <- .ui_block(code, "output\\$cv_teach <- renderUI", 240L)
-  # each branch says which half of the tool was tried -- the one thing the card
+  # it says WHICH HALF of the tool was tried -- the one thing the verdict card
   # above it does not know
-  expect_match(blk, "No bank statement template was tried", fixed = TRUE)
   expect_match(blk, "Every bank statement template was tried", fixed = TRUE)
-  # and neither says the verdict's own headline back to her
+  # and it does not say the verdict's own headline back to her
   expect_false(grepl("No template reads this statement yet", blk, fixed = TRUE))
-  expect_false(grepl("No form or report template reads this yet", blk, fixed = TRUE))
-  # ...nor works out what kind of document it is at somebody who has just said.
-  # `why` is doc_shape_hint's "12 line(s) look like a transaction row"; it belongs
-  # on the branches where the tool is deciding, not on the two where it was told.
-  a0 <- regexpr('identical(asked, "other")', blk, fixed = TRUE)
-  a1 <- regexpr('identical(looks, "report")', blk, fixed = TRUE)
-  expect_true(a0 > 0 && a1 > a0)
-  expect_false(grepl("why,", substr(blk, a0, a1 - 1L), fixed = TRUE))
 })

@@ -583,7 +583,7 @@ test_that("the one-page deployment guide says the things that actually stop it",
 # ---------------------------------------------------------------------------
 test_that("no template is committed into a folder the server owns", {
   root <- engine_root()
-  for (d in c("statements_user", "fields_user", "documents_user")) {
+  for (d in c("statements_user")) {
     p <- file.path(root, "templates", d)
     expect_true(dir.exists(p), info = paste("missing folder:", d))
     stray <- setdiff(list.files(p), "README.md")
@@ -603,7 +603,7 @@ test_that("every kind of template lives under templates/, and nowhere else", {
   expect_identical(grep("template", at_root, value = TRUE), "templates")
   # and every configured template path points inside it
   cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  for (k in c("templates", "user_templates", "fields", "user_fields", "docs", "user_docs"))
+  for (k in c("templates", "user_templates"))
     expect_match(cfg$paths[[k]], "^templates/", info = k)
 })
 
@@ -669,22 +669,24 @@ test_that("the health check FAILS, and names the reason, on a settings file it c
   expect_match(r$text, "min_trust", fixed = TRUE)
 })
 
-# K-loaderrors: attr(x, "load_errors") was computed by all three template loaders
-# and read by NOTHING, so a template that stopped validating after an update
-# simply vanished -- gone from Admin, gone from detection, no message anywhere,
-# and the statements it used to read quietly became "no template for this
-# statement yet". This is the one place on the box that reads it.
+# K-loaderrors: attr(x, "load_errors") was computed by the template loader and read
+# by NOTHING, so a template that stopped validating after an update simply
+# vanished -- gone from Admin, gone from detection, no message anywhere, and the
+# statements it used to read quietly became "no template for this statement yet".
+# This is the one place on the box that reads it.
 test_that("the health check names every template that was refused, and why", {
   # Its own folder, pointed at through the settings file, so this never writes
   # into the running copy's template library -- the suite shares this tree.
-  d <- tempfile("hcdoc_"); dir.create(d)
+  d <- tempfile("hcuser_"); dir.create(d)
   on.exit(unlink(d, recursive = TRUE), add = TRUE)
   cfg <- c("app:", "  admin_password: a-real-password",
-           "paths:", paste0("  user_docs: ", d))
+           "paths:", paste0("  user_templates: ", d))
   expect_match(.hc_run(cfg)$text, "none were refused")          # nothing wrong yet
 
-  writeLines(c("id: zz_health_check_probe", "mode: document",
-               "name: Probe", "tables:", "  holdings:", "    name: Holdings"),
+  # A half-written template: enough to be a YAML file with an id, not enough to
+  # be a statement template. The loader skips it and records why.
+  writeLines(c("id: zz_health_check_probe", "bank: Probe",
+               "statement_type: test", "format: delimited", "version: 1"),
              file.path(d, "zz_health_check_probe.yaml"))
   r <- .hc_run(cfg)
   expect_equal(r$status, 1L)

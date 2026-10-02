@@ -220,17 +220,12 @@ test_that("a settings SECTION of the wrong shape does not stop the app starting"
 
 .mig_fake <- function() {
   root <- tempfile("mig"); dir.create(root)
-  for (d in c("templates", "templates_user", "templates_seed", "fields_templates",
-              "fields_templates_user", "doc_templates", "doc_templates_user"))
+  for (d in c("templates", "templates_user", "templates_seed"))
     dir.create(file.path(root, d), recursive = TRUE)
   w <- function(rel, txt = "id: x") writeLines(txt, file.path(root, rel))
   w("templates/anz.yaml"); w("templates/asb.yaml")
   w("templates_user/beth_bank.yaml")
   w("templates_seed/anz_loan.yaml")
-  w("fields_templates/ird.yaml")
-  w("fields_templates_user/beth_form.yaml")
-  w("doc_templates/report.yaml")
-  w("doc_templates_user/beth_report.yaml")
   root
 }
 
@@ -240,15 +235,10 @@ test_that("every old template folder is moved under templates/", {
   expect_gt(length(said), 0)
   for (p in c("templates/statements/anz.yaml", "templates/statements/asb.yaml",
               "templates/statements_user/beth_bank.yaml",
-              "templates/statements_seed/anz_loan.yaml",
-              "templates/fields/ird.yaml",
-              "templates/fields_user/beth_form.yaml",
-              "templates/documents/report.yaml",
-              "templates/documents_user/beth_report.yaml"))
+              "templates/statements_seed/anz_loan.yaml"))
     expect_true(file.exists(file.path(root, p)), info = p)
   # and nothing is left in the old places
-  for (p in c("templates_user/beth_bank.yaml", "doc_templates_user/beth_report.yaml"))
-    expect_false(file.exists(file.path(root, p)), info = p)
+  expect_false(file.exists(file.path(root, "templates_user/beth_bank.yaml")))
 })
 
 test_that("running it again does nothing and says nothing", {
@@ -287,7 +277,8 @@ test_that("an emptied folder is left with a note in it, not deleted", {
   expect_true(file.exists(note))
   expect_match(paste(readLines(note), collapse = "\n"),
                "templates\\statements_user\\", fixed = TRUE)
-  expect_true(dir.exists(file.path(root, "doc_templates_user")))
+  # the emptied folder itself survives the move, so the note can be found in it
+  expect_true(dir.exists(file.path(root, "templates_user")))
 })
 
 test_that("a settings file naming the old folders is read as naming the new ones", {
@@ -297,16 +288,11 @@ test_that("a settings file naming the old folders is read as naming the new ones
   # would vanish from the app with nothing said.
   d <- tempfile("cfg"); dir.create(d)
   p <- file.path(d, "config.yaml")
-  writeLines(c("paths:", "  templates: templates", "  user_templates: templates_user",
-               "  fields: fields_templates", "  user_fields: fields_templates_user",
-               "  docs: doc_templates", "  user_docs: doc_templates_user"), p)
+  writeLines(c("paths:", "  templates: templates",
+               "  user_templates: templates_user"), p)
   cfg <- load_config(p)
   expect_equal(cfg$paths$templates, "templates/statements")
   expect_equal(cfg$paths$user_templates, "templates/statements_user")
-  expect_equal(cfg$paths$fields, "templates/fields")
-  expect_equal(cfg$paths$user_fields, "templates/fields_user")
-  expect_equal(cfg$paths$docs, "templates/documents")
-  expect_equal(cfg$paths$user_docs, "templates/documents_user")
 })
 
 test_that("a path somebody chose on purpose is never rewritten", {

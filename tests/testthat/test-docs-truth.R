@@ -166,7 +166,6 @@ test_that("the analyst's own pages are reachable from the folder she is handed",
   expect_true(file.exists(idx))
   txt <- if (file.exists(idx)) paste(readLines(idx, warn = FALSE), collapse = "\n") else ""
   for (page in c("converting-statements.md", "adding-a-bank-template.md",
-                 "pulling-tables-out-of-a-report.md",
                  "when-something-goes-wrong.md", "survey-a-statement-with-ai.md"))
     expect_true(grepl(page, txt, fixed = TRUE),
                 info = paste("the analyst's index does not name", page))
@@ -426,7 +425,7 @@ test_that("the published suite baseline is one this tree could have produced", {
   expect_gt(length(dt), 0L)
   expect_true(all(as.Date(dt) <= Sys.Date()))
   # Retired figures, by name (the idiom test-deployment-docs.R already uses).
-  for (stale in c("855 tests", "4,213", "725 tests"))
+  for (stale in c("855 tests", "4,213", "725 tests", "1,342 tests", "7,301"))
     expect_false(grepl(stale, txt, fixed = TRUE), info = paste("stale figure:", stale))
 })
 

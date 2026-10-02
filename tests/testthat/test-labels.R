@@ -71,22 +71,6 @@ test_that("the shipped base dictionary loads and carries synonyms", {
   expect_true(any(grepl("brought forward", .spec_terms(d$opening_balance))))
 })
 
-test_that("extract_fields flags a required-but-missing field", {
-  tmpl <- list(fields = list(
-    total = list(any_of = "Grand total", value = "money", required = TRUE)))
-  f <- extract_fields(list(pages = "nothing relevant here"), tmpl, dict = list())
-  expect_true(f$flagged[f$field == "total"])
-  expect_false(f$matched[f$field == "total"])
-})
-
-test_that("extract_fields inherits dictionary synonyms by field name", {
-  dict <- list(opening_balance = list(
-    any_of = c("opening balance", "balance brought forward"), value = "money"))
-  tmpl <- list(fields = list(opening_balance = list()))   # no wording of its own
-  f <- extract_fields(list(pages = "Balance brought forward   $77.00"), tmpl, dict = dict)
-  expect_equal(f$value[f$field == "opening_balance"], "$77.00")
-})
-
 # ---------------------------------------------------------------------------
 # N1xx: THE ENGINE MUST GIVE THE SAME ANSWER IN EVERY LOCALE IT RUNS IN.
 #
