@@ -135,6 +135,7 @@ DIAG_PLAIN <- c(
   document_provenance     = "what the PDF says about itself",
   multiple_statements     = "several statements in one file",
   page_orientation        = "the pages are the wrong way round",
+  sign_from_ink           = "a minus sign the page draws rather than prints",
   combined_statement      = "several accounts in one statement",
   mixed_currency          = "more than one currency",
   oversized               = "unusually large file",

@@ -48,10 +48,20 @@ filt <- if (length(args) > 1) args[2] else NULL
 TPL_DIR <- file.path(root, "templates", "statements")
 tset <- load_templates(TPL_DIR)
 
-# Which template each case is drawn for. The corpus draws at anz_everyday_pdf's
-# bands, so that is the template to force; a case that tests DETECTION is scored
-# with detection left to the engine instead (template = NA).
-tpl_for <- function(case) if (grepl("^detect_", case)) NA_character_ else "anz_everyday_pdf"
+# Which template each case is drawn for.
+#
+# Most cases draw at anz_everyday_pdf's bands (separate debit and credit columns),
+# so that is the template to force. The `signed_` cases draw at
+# anz_investmentfunds_pdf's bands instead -- ONE signed amount column, where the
+# minus GLYPH carries the sign. Both are shipped templates; the corpus exercises
+# the real ones rather than inventing a convenient layout.
+#
+# A case that tests DETECTION is scored with detection left to the engine (NA).
+tpl_for <- function(case) {
+  if (grepl("^detect_", case)) return(NA_character_)
+  if (grepl("^signed_", case)) return("anz_investmentfunds_pdf")
+  "anz_everyday_pdf"
+}
 
 # .signed(debit, credit) -- the truth's two columns as the one signed number the
 # engine produces. A debit is money out: negative.

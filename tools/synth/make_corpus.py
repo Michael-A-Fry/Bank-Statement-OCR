@@ -57,6 +57,28 @@ HEADER = ["Date", "Transaction type and details", "Withdrawals", "Deposits", "Ba
 # testing detection, not parsing, and says so in its name.
 FINGERPRINT = ["Transaction type and details", "Withdrawals", "Deposits"]
 
+# ---------------------------------------------------------------------------
+# THE SECOND LAYOUT: ONE SIGNED AMOUNT COLUMN.
+#
+# Everything above draws at anz_everyday_pdf's bands, where debits and credits have
+# SEPARATE columns -- so the sign comes from WHICH column a figure is in, and a
+# minus sign is decoration the reader never needs. That hides a whole fault class.
+#
+# anz_investmentfunds_pdf (shipped) is the other shape: `amount_sign: signed`, one
+# amount column, and the sign carried by the glyph itself. Here a minus that the
+# text layer does not report is a transaction read backwards, and a minus the text
+# layer reports that the page does not SHOW is the same error in reverse. Those are
+# the two cases below, and neither can be expressed in the two-column layout.
+SIGNED_BANDS = {
+    "date":        (320, 360),
+    "description": (360, 440),
+    "units":       (440, 475),
+    "unit_price":  (475, 500),
+    "amount":      (500, 545),
+}
+# The phrases anz_investmentfunds_pdf's fingerprint requires.
+SIGNED_FINGERPRINT = ["Investment Funds", "account transactions"]
+
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -361,6 +383,70 @@ def draw_statement(sh, opening, rows, closing, year=2026, month=2,
 # ground truth dict written beside the PDF.
 # ---------------------------------------------------------------------------
 
+def draw_signed(sh, opening, rows, closing, year=2026, month=2,
+                invisible_minus=False, ink_minus=False, y_table=200, row_pitch=14):
+    """Draw a ONE-AMOUNT-COLUMN statement at anz_investmentfunds_pdf's bands.
+
+    invisible_minus: the minus is printed in the page background colour, so it is
+        in the text layer but not on the page. Real banks do this to keep a column
+        right-aligned, and a reader that trusts the text layer turns every DEPOSIT
+        into a withdrawal.
+    ink_minus: the minus is drawn as a vector line, so it is on the page but NOT in
+        the text layer, and every WITHDRAWAL reads as a deposit.
+    Only one at a time -- they are opposite faults and mixing them in one file
+    would make a failure unattributable.
+    """
+    b = SIGNED_BANDS
+    sh.text(40, 60, "Kowhai Investment Funds", size=14, bold=True)
+    sh.text(40, 78, "Your account transactions", size=10)
+    sh.text(40, 96, "A R TAMATI", size=9)
+    # The period must COVER the rows actually drawn, or every date after the first
+    # month reads as out of period and the case reports a fault it does not have.
+    last = rows[-1]["iso_date"] if rows else "%04d-%02d-28" % (year, month)
+    ly, lm, ld = (int(v) for v in last.split("-"))
+    sh.text(40, 128, "Statement period 1 %s %d to %d %s %d"
+            % (MONTHS[month - 1], year, ld, MONTHS[lm - 1], ly), size=9)
+    y = y_table
+    sh.text(b["date"][0], y, "Date", size=9, bold=True)
+    sh.text(b["description"][0], y, "Details", size=9, bold=True)
+    sh.text(b["units"][1], y, "Units", size=9, bold=True, align="right")
+    sh.text(b["unit_price"][1], y, "Price", size=9, bold=True, align="right")
+    sh.text(b["amount"][1], y, "Amount", size=9, bold=True, align="right")
+    sh.line(b["date"][0], y + 4, b["amount"][1], y + 4)
+    y += 18
+    drawn = []
+    for i, r in enumerate(rows):
+        signed = -(r["debit"] or 0) if r["debit"] else (r["credit"] or 0)
+        sh.text(b["date"][0], y, r["iso_date"][8:10] + "/" + r["iso_date"][5:7]
+                + "/" + r["iso_date"][0:4], size=9)
+        sh.text(b["description"][0], y, r["description"][:22], size=9)
+        sh.text(b["units"][1], y, "%.4f" % (abs(signed) / 2.5), size=9, align="right")
+        sh.text(b["unit_price"][1], y, "2.5000", size=9, align="right")
+        mag = money(abs(signed))
+        x1 = b["amount"][1]
+        if signed < 0 and ink_minus:
+            # on the page as ink, absent from the text layer
+            sh.text(x1, y, mag, size=9, align="right")
+            tw = sh.c.stringWidth(mag, "Helvetica", 9)
+            sh.line(x1 - tw - 6, y - 3, x1 - tw - 2, y - 3, width=0.9)
+        elif signed > 0 and invisible_minus:
+            # in the text layer, invisible on the page: the bank's alignment trick
+            sh.text(x1, y, mag, size=9, align="right")
+            tw = sh.c.stringWidth(mag, "Helvetica", 9)
+            sh.c.saveState()
+            sh.c.setFillColorRGB(0.878, 0.878, 0.878)   # the page background
+            sh.c.setFont("Helvetica", 9)
+            sh.c.drawString(x1 - tw - 5, sh.h - y, "-")
+            sh.c.restoreState()
+        else:
+            sh.text(x1, y, ("-" + mag) if signed < 0 else mag, size=9, align="right")
+        drawn.append(r)
+        y += row_pitch
+    sh.text(b["description"][0], y + 10, "Closing balance", size=9, bold=True)
+    sh.text(b["amount"][1], y + 10, money(closing), size=9, bold=True, align="right")
+    return drawn
+
+
 def case(name, note, **kw):
     """Declare one case as a (name, note, kwargs) triple."""
     return (name, note, kw)
@@ -452,6 +538,16 @@ CASES = [
     case("dates_across_new_year", "a period that crosses 31 Dec, dates printed with no year",
          n=60, rows_per_page=30, start_month=11, day_step=2),
 
+    # ---- ONE SIGNED AMOUNT COLUMN, where the minus glyph IS the sign ---------
+    case("signed_baseline", "one signed amount column, minus printed normally",
+         n=16, layout="signed"),
+    case("signed_minus_as_ink",
+         "the minus is a drawn LINE: on the page, absent from the text layer",
+         n=16, layout="signed", ink_minus=True),
+    case("signed_minus_invisible",
+         "a minus printed in the background colour: in the text layer, not on the page",
+         n=16, layout="signed", invisible_minus=True),
+
     # ---- detection, not parsing ----------------------------------------------
     case("detect_phrase_missing", "a fingerprint phrase is reworded",
          n=16, drop_fingerprint=True),
@@ -479,6 +575,7 @@ def build(case_name, note, out_dir, seed=4242, **kw):
     long_desc = kw.pop("long_desc", False)   # False | "medium" | "long"
     with_balance = kw.pop("with_balance", True)
     allow_overdraft = kw.pop("allow_overdraft", False)
+    layout = kw.pop("layout", "twocol")
     day_step = kw.pop("day_step", 3)
     start_month = kw.pop("start_month", 2)
     start_year = kw.pop("start_year", 2026)
@@ -504,12 +601,18 @@ def build(case_name, note, out_dir, seed=4242, **kw):
         sh.text(40, 360, "This page carries no transactions.", size=10)
         sh.page_break()
 
-    drawn = draw_statement(sh, opening, rows, closing, **kw)
+    drawn = (draw_signed if layout == "signed" else draw_statement)(
+        sh, opening, rows, closing, **kw)
     sh.save()
 
     if rotate:
         _apply_rotate(pdf, rotate)
 
+    # The signed layout prints no running balance, so the truth must not claim one:
+    # scoring a balance the page never showed would mark every row wrong.
+    if layout == "signed":
+        for r in drawn:
+            r["balance"] = None
     truth = {
         "case": case_name,
         "note": note,

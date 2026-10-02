@@ -225,6 +225,23 @@ read_pdf <- function(path, redaction_rects = NULL,
   length(page_height) <- np
   # pdf_data may return fewer/NULL entries on odd pages; normalise to np slots.
   if (is.null(word_list)) word_list <- vector("list", np)
+  # RECONCILE THE TEXT LAYER WITH THE INK ACTUALLY ON THE PAGE. Two constructions
+  # real statements use make the text layer wrong about a sign in opposite
+  # directions -- see .apply_ink_signs. Both are silent wrong figures, and neither
+  # is caught by arithmetic on a statement with no running balance. The counts are
+  # carried so a diagnostic can say the page uses them.
+  ink_minus <- 0L; faint_dropped <- 0L
+  ink <- .pdf_ink(path)
+  if (!is.null(ink) && length(ink) >= 1L) {
+    for (p in seq_along(word_list)) {
+      if (p > length(ink) || is.null(word_list[[p]]) || !nrow(word_list[[p]])) next
+      r <- safe(.apply_ink_signs(word_list[[p]], ink[[p]]), NULL)
+      if (is.null(r)) next
+      word_list[[p]] <- r$words
+      ink_minus <- ink_minus + r$ink_minus
+      faint_dropped <- faint_dropped + r$faint_dropped
+    }
+  }
   # A ROTATED PAGE FACES THE OTHER WAY FROM ITS PAGE BOX.
   #
   # pdf_pagesize reports the box BEFORE the page's /Rotate is applied; the text
@@ -404,6 +421,11 @@ read_pdf <- function(path, redaction_rects = NULL,
                             scan_incomplete = red_scan_incomplete,
                             stringsAsFactors = FALSE),
     redaction_scan_incomplete = sum(red_scan_incomplete),
+    # Signs this page carried as INK rather than as text, and signs the text layer
+    # carried that the page does not SHOW. Both are facts about the document worth
+    # telling a reviewer, even though the figures are now right.
+    ink_minus_signs = ink_minus,
+    faint_minus_signs = faint_dropped,
     ocr = ocr_flags,
     ocr_conf = ocr_conf,
     # Pages that ARE scans but could not be machine-read because the OCR tools are
@@ -545,3 +567,195 @@ read_pdf <- function(path, redaction_rects = NULL,
 # The right-edge error would matter if the reader ever used right-alignment to tell
 # a debit column from a credit one. It does not today.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# WHEN THE TEXT LAYER AND THE PAGE DISAGREE ABOUT A SIGN.
+#
+# Two constructions real statements use, and the text layer is wrong about both.
+# They are opposite faults and each is a silent wrong figure:
+#
+#   A MINUS DRAWN AS A LINE. The sign is a short stroke of vector ink, not a
+#     glyph, so pdftotext reports "789.01" for a figure the page shows as -789.01.
+#     Every withdrawal reads as a deposit.
+#   A MINUS DRAWN IN THE BACKGROUND COLOUR. Some banks print the sign in white (or
+#     near-white) on positive amounts so the column stays right-aligned. It is in
+#     the text layer and invisible on the page, so "1,527.57" is reported as
+#     "-1,527.57". Every deposit reads as a withdrawal.
+#
+# NEITHER IS CAUGHT BY ARITHMETIC when the statement has no running balance to
+# reconcile against -- and anz_investmentfunds_pdf, a shipped template, is exactly
+# that shape. Measured on the corpus (tools/synth/): 14 of 16 rows inverted by the
+# drawn minus, 3 of 16 by the invisible one, every one of them at trust `low` with
+# no arithmetic objection, because there was nothing to object with.
+#
+# BOTH ARE VISIBLE IN `pdftocairo -svg`, which is the same poppler bundle the OCR
+# path already needs, so this costs no new dependency and no Python.
+#
+# THREE TRAPS, all measured, all handled below:
+#   * `pdftocairo` SHRINKS the page to its default paper unless given -noshrink,
+#     which silently scales every coordinate by ~0.9988.
+#   * A STROKED path's `d` is in PDF user space (y up from the bottom) and carries
+#     the page flip in a `transform` matrix. It must be applied.
+#   * A GLYPH's `<use x y>` is already in the surface frame (y down from the top)
+#     and carries NO transform. Applying the matrix to it would be wrong.
+#
+# A faint colour is one at or above .INK_FAINT on every channel: at 87.8% grey on
+# white a glyph is not readable, which is the whole point of the trick. Anything
+# darker is ink somebody meant to be seen and is left alone.
+.INK_FAINT <- 0.85
+# A sign stroke is SHORT and horizontal. A table rule is long; an underline is
+# long. Lengths are in points and generous at both ends, because a minus is drawn
+# at whatever width the font suggests.
+.INK_MIN_LEN <- 1.5
+.INK_MAX_LEN <- 9.0
+
+# .pdf_ink(path) -> list, one entry per page, each list(strokes, faint); or NULL.
+# NULL is a normal answer (no pdftocairo on this box, or output we could not read)
+# and the caller simply does not get the extra evidence.
+.pdf_ink <- function(path) {
+  exe <- Sys.which("pdftocairo")
+  if (!nzchar(exe) || !file.exists(path)) return(NULL)
+  out <- tempfile(fileext = ".svg"); on.exit(unlink(out), add = TRUE)
+  st <- suppressWarnings(safe(system2(exe, c("-svg", "-noshrink", shQuote(path), shQuote(out)),
+                                      stdout = FALSE, stderr = FALSE), 1L))
+  if (!identical(as.integer(st), 0L) || !file.exists(out)) return(NULL)
+  svg <- safe(paste(readLines(out, warn = FALSE), collapse = "\n"), NULL)
+  if (is.null(svg) || !nzchar(svg)) return(NULL)
+  pages <- strsplit(svg, "<g id=\"surface", fixed = TRUE)[[1]]
+  if (length(pages) < 2) pages <- c("", svg) else pages <- pages
+  lapply(pages[-1], function(pg) list(strokes = .ink_strokes(pg), faint = .ink_faint(pg)))
+}
+
+# .ink_strokes(pg) -> data.frame(x0, x1, y, len, linewidth) for the HORIZONTAL
+# strokes on one page, in word coordinates (y measured down from the page top).
+.ink_strokes <- function(pg) {
+  none <- data.frame(x0 = numeric(0), x1 = numeric(0), y = numeric(0),
+                     len = numeric(0), linewidth = numeric(0))
+  m <- regmatches(pg, gregexpr("<path fill=\"none\"[^/]*?/>", pg))[[1]]
+  if (!length(m)) return(none)
+  m <- m[grepl("d=\"M ", m, fixed = TRUE)]
+  if (!length(m)) return(none)
+  g1 <- function(x, rx) {
+    v <- rep(NA_real_, length(x)); hit <- grepl(rx, x)
+    v[hit] <- as.numeric(sub(rx, "\\1", x[hit], perl = TRUE)); v
+  }
+  lw <- g1(m, ".*stroke-width=\"([0-9.]+)\".*")
+  # the first "M x y L x y" of the path; a sign is one segment, so this is enough
+  seg <- ".*d=\"M ([0-9.eE+-]+) ([0-9.eE+-]+) L ([0-9.eE+-]+) ([0-9.eE+-]+).*"
+  keep <- grepl(seg, m)
+  if (!any(keep)) return(none)
+  m <- m[keep]; lw <- lw[keep]
+  px0 <- as.numeric(sub(seg, "\\1", m)); py0 <- as.numeric(sub(seg, "\\2", m))
+  px1 <- as.numeric(sub(seg, "\\3", m)); py1 <- as.numeric(sub(seg, "\\4", m))
+  # the page flip, from this path's own transform; absent means identity
+  mx <- "matrix\\(\\s*([0-9.eE+-]+),\\s*([0-9.eE+-]+),\\s*([0-9.eE+-]+),\\s*([0-9.eE+-]+),\\s*([0-9.eE+-]+),\\s*([0-9.eE+-]+)\\s*\\)"
+  tf <- regmatches(m, regexpr(mx, m))
+  a <- rep(1, length(m)); b <- rep(0, length(m)); cc <- rep(0, length(m))
+  dd <- rep(1, length(m)); e <- rep(0, length(m)); f <- rep(0, length(m))
+  has <- vapply(tf, length, integer(1)) > 0L
+  if (any(has)) {
+    t1 <- unlist(tf[has])
+    a[has]  <- as.numeric(sub(paste0(".*", mx, ".*"), "\\1", t1))
+    b[has]  <- as.numeric(sub(paste0(".*", mx, ".*"), "\\2", t1))
+    cc[has] <- as.numeric(sub(paste0(".*", mx, ".*"), "\\3", t1))
+    dd[has] <- as.numeric(sub(paste0(".*", mx, ".*"), "\\4", t1))
+    e[has]  <- as.numeric(sub(paste0(".*", mx, ".*"), "\\5", t1))
+    f[has]  <- as.numeric(sub(paste0(".*", mx, ".*"), "\\6", t1))
+  }
+  sx <- function(x, y) a * x + cc * y + e
+  sy <- function(x, y) b * x + dd * y + f
+  X0 <- sx(px0, py0); Y0 <- sy(px0, py0)
+  X1 <- sx(px1, py1); Y1 <- sy(px1, py1)
+  horiz <- abs(Y1 - Y0) < 0.6 & is.finite(X0) & is.finite(X1) & is.finite(Y0)
+  if (!any(horiz)) return(none)
+  data.frame(x0 = pmin(X0, X1)[horiz], x1 = pmax(X0, X1)[horiz],
+             y = ((Y0 + Y1) / 2)[horiz], len = abs(X1 - X0)[horiz],
+             linewidth = lw[horiz])
+}
+
+# .ink_faint(pg) -> data.frame(x, y) for glyphs drawn in a near-background colour,
+# in word coordinates. `<use x y>` is already in the surface frame, so it is NOT
+# put through the stroke transform -- doing so was the trap worth writing down.
+.ink_faint <- function(pg) {
+  none <- data.frame(x = numeric(0), y = numeric(0))
+  gm <- regmatches(pg, gregexpr("<g fill=\"rgb\\([^)]*\\)\"[^>]*>.*?</g>", pg))[[1]]
+  if (!length(gm)) return(none)
+  rx <- ".*rgb\\(\\s*([0-9.]+)%,\\s*([0-9.]+)%,\\s*([0-9.]+)%\\s*\\).*"
+  r <- as.numeric(sub(rx, "\\1", gm)); g <- as.numeric(sub(rx, "\\2", gm))
+  b <- as.numeric(sub(rx, "\\3", gm))
+  faint <- is.finite(r) & is.finite(g) & is.finite(b) &
+    pmin(r, g, b) >= .INK_FAINT * 100
+  if (!any(faint)) return(none)
+  out <- lapply(gm[faint], function(one) {
+    u <- regmatches(one, gregexpr("<use[^/]*?x=\"[0-9.eE+-]+\"[^/]*?y=\"[0-9.eE+-]+\"[^/]*/>", one))[[1]]
+    if (!length(u)) return(NULL)
+    data.frame(x = as.numeric(sub(".*x=\"([0-9.eE+-]+)\".*", "\\1", u)),
+               y = as.numeric(sub(".*y=\"([0-9.eE+-]+)\".*", "\\1", u)))
+  })
+  out <- out[!vapply(out, is.null, logical(1))]
+  if (!length(out)) return(none)
+  do.call(rbind, out)
+}
+
+# .money_like(t) -- does this token look like a bare money magnitude? Only such a
+# token may acquire a sign from vector ink; a stroke near a DESCRIPTION word is a
+# rule, a box edge or an underline, never a minus.
+.money_like <- function(t) grepl("^[0-9][0-9,.]*$", trimws(t))
+
+# .apply_ink_signs(w, ink) -> list(words, ink_minus, faint_dropped)
+#
+# Reconcile one page's words with the ink actually on it.
+#
+# A FAINT MINUS IS NOT ON THE PAGE, so the word is dropped. It is a separate word
+# in the text layer ("-" beside "832.08"), and the column band pastes the two
+# together, which is how an invisible sign became a real one. Dropping it leaves
+# the band holding the magnitude alone, which is what a reader of the page sees.
+#
+# A STROKE JUST LEFT OF A MONEY TOKEN IS A MINUS, so the token gains one. The gap
+# allowed is a fraction of the word's own HEIGHT rather than a fixed number of
+# points, because a minus is set at whatever width the type size suggests -- the
+# same reasoning poppler's own layout code uses for word spacing.
+#
+# NEITHER IS SILENT. The counts travel on the input's metadata so R/diagnose.R can
+# say the page uses these constructions: a statement whose signs came from vector
+# ink is a fact a reviewer should know, even when the figures are now right.
+.apply_ink_signs <- function(w, ink) {
+  out <- list(words = w, ink_minus = 0L, faint_dropped = 0L)
+  if (is.null(w) || !nrow(w) || is.null(ink)) return(out)
+  w <- as.data.frame(w, stringsAsFactors = FALSE)
+  need <- c("text", "x", "y", "width", "height")
+  if (!all(need %in% names(w))) return(out)
+  h <- suppressWarnings(as.numeric(w$height)); h[!is.finite(h) | h <= 0] <- 8
+  top <- suppressWarnings(as.numeric(w$y)); left <- suppressWarnings(as.numeric(w$x))
+
+  # ---- the invisible minus -------------------------------------------------
+  fa <- ink$faint
+  drop <- rep(FALSE, nrow(w))
+  if (!is.null(fa) && nrow(fa)) {
+    # Any of the dash glyphs a PDF may use, via the one normaliser that knows them
+    # (.ascii_dashes, R/normalise.R) rather than a second list here -- and never as
+    # a multibyte character class, which throws under LC_ALL=C.
+    is_dash <- grepl("^-+$", trimws(.ascii_dashes(w$text)))
+    for (i in which(is_dash)) {
+      if (any(abs(fa$x - left[i]) <= 3 &
+              fa$y >= top[i] & fa$y <= top[i] + h[i] + 1)) drop[i] <- TRUE
+    }
+  }
+
+  # ---- the minus drawn as a line -------------------------------------------
+  st <- ink$strokes
+  added <- 0L
+  if (!is.null(st) && nrow(st)) {
+    sgn <- st[st$len >= .INK_MIN_LEN & st$len <= .INK_MAX_LEN, , drop = FALSE]
+    if (nrow(sgn)) for (i in seq_len(nrow(w))) {
+      if (drop[i] || !.money_like(w$text[i])) next
+      gap <- left[i] - sgn$x1
+      if (any(gap >= -0.5 & gap <= 0.8 * h[i] &
+              sgn$y >= top[i] & sgn$y <= top[i] + h[i] + 1)) {
+        w$text[i] <- paste0("-", w$text[i]); added <- added + 1L
+      }
+    }
+  }
+  list(words = w[!drop, , drop = FALSE], ink_minus = added,
+       faint_dropped = sum(drop))
+}

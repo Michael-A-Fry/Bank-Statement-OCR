@@ -107,6 +107,13 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     sections = pdf$sections,
     redactions = pdf$redactions,
     redaction_scan_incomplete = pdf$redaction_scan_incomplete %||% 0L,
+    # Signs read from the ink rather than the text layer, and signs the text layer
+    # claimed that the page does not show (.apply_ink_signs, R/read_pdf.R). CARRIED
+    # for the same reason scanned_no_ocr below is: a count that stops here can
+    # never reach a diagnostic, and the figures it explains would then look
+    # unaccountably negative to anyone checking them against the page by eye.
+    ink_minus_signs = pdf$ink_minus_signs %||% 0L,
+    faint_minus_signs = pdf$faint_minus_signs %||% 0L,
     ocr = pdf$ocr,
     ocr_conf = pdf$ocr_conf,
     # Pages that ARE scans but could not be machine-read, and whether the OCR tools
@@ -187,6 +194,13 @@ read_input <- function(path, redaction_rects = NULL) {
     # "unknown format".
     input$meta$scanned_no_ocr <- x$scanned_no_ocr %||% 0L
     input$meta$ocr_tools_available <- x$ocr_tools_available %||% TRUE
+    # Signs the reader took from the ink rather than the text layer, and signs the
+    # text layer claimed that the page does not show. Same reason as the two lines
+    # above: this is the THIRD place a count has to be copied to reach a
+    # diagnostic, and a gap at any of them leaves the figures unexplained to anyone
+    # checking them against the page by eye.
+    input$meta$ink_minus_signs <- x$ink_minus_signs %||% 0L
+    input$meta$faint_minus_signs <- x$faint_minus_signs %||% 0L
     # Who wrote this PDF, and when. Forensic provenance the reader gets for free
     # from pdf_info; carried on the input so diagnostics can STATE it. Reported
     # factually and never interpreted -- it changes no figure, status or trust.

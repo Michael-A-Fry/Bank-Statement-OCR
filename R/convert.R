@@ -432,7 +432,9 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
         metadata = c(.page_shape_note(input, template),
-                list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+                list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
+                     faint_minus_signs = input$meta$faint_minus_signs %||% 0L,
+                     multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         template = template, pdf_doc = input$meta$pdf_doc,
                         # A template that matched but read nothing is a DIFFERENT
                         # problem from an unknown layout, and has a different fix:

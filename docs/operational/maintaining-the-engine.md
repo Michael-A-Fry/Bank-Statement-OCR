@@ -73,7 +73,7 @@ skipped: 0
   unless scope was deliberately removed, which is what happened at 1.9.0 and is
   the only reason the figures below are lower than 1.8.1's.
 
-The last full run measured **70 files, 965 tests, 5,130 passing assertions,
+The last full run measured **71 files, 979 tests, 5,261 passing assertions,
 0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.9.0, on R 4.3.3,
 with 1 skipped: one split test needs a Westpac bundle that lives in
 `samples/_private_staging/` and is deliberately not committed. Treat it as a

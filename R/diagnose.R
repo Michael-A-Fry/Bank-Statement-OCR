@@ -76,6 +76,7 @@
   oversized               = "input",
   oversized_page          = "input",
   page_orientation        = "input",
+  sign_from_ink           = "review",
   low_ocr_confidence      = "input",
   ocr_confidence_unknown  = "input",
   completeness_unverified = "input",
@@ -302,6 +303,24 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     # teaches the analyst to read past high-severity warnings -- the specific habit
     # the charter forbids building. So it speaks only when nothing was read.
     nrows_read <- if (is.data.frame(parsed$transactions)) nrow(parsed$transactions) else 0L
+    # THE SIGNS ON THIS PAGE WERE NOT WHERE A SIGN NORMALLY IS. Either a minus was
+    # drawn as vector ink and is absent from the text layer, or one was printed in
+    # the background colour and is in the text layer but not on the page. The reader
+    # now handles both (.apply_ink_signs, R/read_pdf.R) and the figures are right --
+    # but a statement that prints its signs this way is a fact about the document,
+    # and a reviewer comparing the workbook against the page should know why a
+    # figure is negative when the page shows no minus they can see. Info severity,
+    # fix_owner "review": nothing is wrong and nothing needs correcting.
+    .nink <- suppressWarnings(as.integer(metadata$ink_minus_signs %||% 0L))
+    .nfaint <- suppressWarnings(as.integer(metadata$faint_minus_signs %||% 0L))
+    if (!is.na(.nink) && !is.na(.nfaint) && (.nink + .nfaint) > 0L)
+      add("upload", "sign_from_ink", "info",
+          paste(c(if (.nink > 0L) sprintf("%d minus sign(s) are drawn as a line, not printed as text", .nink),
+                  if (.nfaint > 0L) sprintf("%d minus sign(s) are in the text but printed in the background colour, so they are not on the page", .nfaint)),
+                collapse = "; "),
+          paste("Nothing to fix - the signs have been read from the page itself.",
+                "If you are checking a figure against the statement by eye, this is",
+                "why a minus may be hard to see."))
     if (isTRUE(metadata$page_orientation_differs) && nrows_read == 0L)
       add("upload", "page_orientation", "high",
           sprintf("the page is %s and this template's columns are %s",
