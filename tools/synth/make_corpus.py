@@ -519,6 +519,25 @@ CASES = [
          "description spills into the debit band only; credit and balance stay clean",
          n=20, long_desc="medium"),
 
+    # ---- THE BANK MOVED A COLUMN AFTER THE TEMPLATE WAS BUILT ----------------
+    # The commonest real-world failure once a template exists: the layout shifts a
+    # little at the next statement run. 25pt is enough that the amounts no longer
+    # fall in their declared bands at all, so the template still MATCHES (the
+    # wording is unchanged) and reads nothing useful. That combination -- matches,
+    # reads badly, says nothing about why -- is what the drift detector is for.
+    # 25pt turned out NOT to break it -- the bands are 65pt wide, so an amount
+    # right-aligned 25pt early still has its centre inside. Worth recording: the
+    # band model absorbs a shift of a third of a column width without complaint.
+    case("drift_amounts_left_25pt",
+         "amounts 25pt left: still inside the bands, must still read perfectly",
+         n=20, band_nudge={"debit": -25, "credit": -25, "balance": -25}),
+    case("mustflag_drift_amounts_55pt",
+         "amounts 55pt left: OUT of their bands -- NO template can read this, so it is\n          scored on being caught and on column_fit naming the columns",
+         n=20, band_nudge={"debit": -55, "credit": -55, "balance": -55}),
+    case("mustflag_drift_balance_55pt",
+         "only the balance left its band: the rest of the row still reads, so this is the\n          drift that LOOKS cleanest and is scored on column_fit naming the one column",
+         n=20, band_nudge={"balance": -55}),
+
     # ---- the wrapped row -----------------------------------------------------
     case("wrap_indented", "long descriptions over 2-3 INDENTED lines",
          n=14, long_desc="long", wrap_desc=True),

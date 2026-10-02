@@ -43,6 +43,7 @@ R/   -- OCR and image handling
 R/   -- templates without code (the wizard + drafting)
   draft.R               draft a template from a single file
   column_profile.R      everything needed to draft, captured from a sample
+  column_fit.R          which declared column a statement no longer puts there
   wizard_auto.R         wizard pre-fill helpers
   wizard_detect.R       delimiter / date / amount auto-detection
   layout.R              stable, PII-light layout fingerprint

@@ -130,6 +130,7 @@ DIAG_PLAIN <- c(
   unknown_format          = "layout not recognised",
   ambiguous_template      = "more than one template fits",
   matched_but_empty       = "matched the wording, read no transactions",
+  column_bands            = "a column is not where the template says",
   unreadable              = "file could not be read",
   scanned_no_ocr          = "a scan with no readable text",
   document_provenance     = "what the PDF says about itself",

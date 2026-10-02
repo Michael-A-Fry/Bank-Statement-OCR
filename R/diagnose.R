@@ -60,6 +60,7 @@
   unknown_format          = "template",
   ambiguous_template      = "template",
   matched_but_empty       = "template",
+  column_bands            = "template",
   reconciliation_mismatch = "template",
   balance_break           = "template",
   row_count               = "template",
@@ -365,6 +366,43 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     }
   }
 
+  # A COLUMN IS NOT WHERE THE TEMPLATE SAYS IT IS. Raised among the template faults
+  # and before the informational rows, because it does not say a figure is wrong -- it
+  # says WHICH COLUMN to look at, which is the thing none of the arithmetic checks can
+  # tell you. R/column_fit.R has the measurement.
+  #
+  # TWO CALLS, TWO LITERAL SEVERITIES, and not one call with a variable: a column the
+  # statement simply does not print is not the same event as a column that has moved,
+  # the instruction for each is the opposite of the other, and a category whose
+  # severity is computed cannot be audited by reading the file (test-diagnose.R scans
+  # for exactly this shape).
+  if (!is.null(metadata$column_fit_note)) {
+    if (identical(as.character(metadata$column_fit_severity %||% "medium")[1], "info"))
+      add("template columns", "column_bands", "info",
+          metadata$column_fit_note,
+          paste("Nothing to fix. It is recorded because a column the template expects is",
+                "absent from this statement - and if that column is the running balance,",
+                "the balance checks had nothing to test, so the figures rest on the",
+                "reading alone rather than on arithmetic that confirms it."))
+    else
+      add("template columns", "column_bands", "medium",
+          metadata$column_fit_note,
+          paste("Open the template and move the column edges named above. An offset, where",
+                "one is given, is measured in points from where the template puts them now,",
+                "and the range in brackets is every offset that reads this statement - aim",
+                "for the MIDDLE of that range, not an edge, so the next statement has slack",
+                "too. Re-run this file afterwards: if the balance checks pass, the template",
+                "is right again. Do NOT edit a shipped template in place while other",
+                "statements still read correctly with it - if the bank has changed its",
+                "layout, the older statements still need the older template. Ask whoever",
+                "maintains the templates."))
+  }
+
+  # OUTSIDE the parsed block on purpose. A template that matched the wording and read
+  # NOTHING is the case this diagnostic is worth the most on -- there are no rows to
+  # hang a row-level fault off, and "matched_but_empty" says the template is wrong
+  # without saying which column. This answers that, so it must not depend on a parse
+  # having produced anything.
   if (!is.null(parsed) && !is.null(parsed$transactions)) {
     tx <- parsed$transactions
 

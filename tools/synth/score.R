@@ -155,6 +155,18 @@ score_one <- function(pdf, truth_path) {
   out$matched <- matched
   out$fabricated <- fab
   out$refused <- ref
+  # DOES THE TEMPLATE STILL FIT THE PAGE? Scored for EVERY case, in both directions,
+  # because a drift detector is only worth having if it is silent on a good statement:
+  # a `medium` finding on a clean case fails that case, and its absence on a drift case
+  # fails that one. R/column_fit.R has the measurement.
+  cfm <- tryCatch(.column_fit_note_meta(inp, tpl), error = function(e) list())
+  out$bands <- as.character(cfm$column_fit_severity %||% "-")[1]
+  out$bands_note <- as.character(cfm$column_fit_note %||% "")[1]
+  # ...compared against what THIS case declares it should say. Every case not named in
+  # .EXPECT_BANDS must report nothing at all.
+  out$bands_want <- unname(.EXPECT_BANDS[case] %||% NA)
+  if (is.na(out$bands_want)) out$bands_want <- "-"
+  out$bands_ok <- identical(out$bands, out$bands_want)
   # A `mustflag_` case passes by being CAUGHT, not by being right.
   out$mustflag <- grepl("^mustflag_", case)
   if (out$mustflag) out$caught <- !identical(out$trust, "high")
@@ -166,6 +178,36 @@ score_one <- function(pdf, truth_path) {
   out$detail <- paste(firstbad, collapse = "; ")
   out
 }
+
+# WHICH CASES THE TEMPLATE IS NOT SUPPOSED TO FIT, and at what severity. Every other
+# case must report NOTHING: that is the half of the drift check that is easy to get
+# wrong and expensive to get wrong, because a detector that fires on a good statement
+# teaches an analyst to ignore the one that matters.
+#
+# `medium` means the template needs editing; `info` means a column the statement
+# simply does not print. Each entry below is a measurement, not a preference:
+#
+#   band_narrow_desc        the description overruns every numeric band and drags the
+#                           amounts in with it -- no money column reads anything and
+#                           the engine refuses all 20 amounts.
+#   band_overflow_debit_only  the description overruns the debit band. The output is
+#                           still right, but only because 11 amounts were DERIVED from
+#                           the running balance -- and those are exactly the 11 rows
+#                           reported here. Two independent mechanisms, same 11 rows.
+#   mustflag_drift_*        the amounts are out of their bands. Caught by trust alone
+#                           already; the bar here is that the COLUMN is named.
+#   mustflag_debit_in_credit_column  the debit column is empty because the debits are
+#                           drawn in the credit band. Nothing distinguishes that from a
+#                           bank with no debit column, so `info` is the honest severity.
+#   struct_no_balance_col   no running balance printed at all. Nothing to fix, and
+#                           worth saying: the balance checks had nothing to test.
+.EXPECT_BANDS <- c(
+  band_narrow_desc                = "medium",
+  band_overflow_debit_only        = "medium",
+  mustflag_drift_amounts_55pt     = "medium",
+  mustflag_drift_balance_55pt     = "medium",
+  mustflag_debit_in_credit_column = "info",
+  struct_no_balance_col           = "info")
 
 cases <- sort(list.files(corpus, "[.]truth[.]json$", full.names = TRUE))
 if (!is.null(filt)) cases <- cases[grepl(filt, basename(cases), fixed = TRUE)]
@@ -179,26 +221,39 @@ for (tp in cases) {
   rows[[length(rows) + 1]] <- r
 }
 
-fmt <- "%-24s %5s %5s %5s %5s %5s %5s %5s %5s  %-7s %s\n"
+fmt <- "%-30s %5s %5s %5s %5s %5s %5s %5s %5s  %-7s %-6s %s\n"
 cat(sprintf(fmt, "case", "truth", "got", "ok", "FABR", "refus", "date", "bal",
-            "miss", "trust", ""))
-cat(strrep("-", 116), "\n")
+            "miss", "trust", "bands", ""))
+cat(strrep("-", 124), "\n")
 bad <- 0L
 for (r in rows) {
-  clean <- if (isTRUE(r$mustflag)) isTRUE(r$caught) else
-    (identical(r$status, "parsed") && r$fabricated == 0L &&
-     r$missing == 0L && r$phantom == 0L)
+  clean <- isTRUE(r$bands_ok) &&
+    (if (isTRUE(r$mustflag)) isTRUE(r$caught) else
+      (identical(r$status, "parsed") && r$fabricated == 0L &&
+       r$missing == 0L && r$phantom == 0L))
   flag <- if (clean) "" else "  <-- "
   if (!clean) bad <- bad + 1L
   cat(sprintf(fmt, r$case, r$n_truth, r$n_parsed, r$matched, r$fabricated,
               r$refused, r$wrong_dates, r$wrong_balances, r$missing + r$phantom,
-              r$trust %||% "-",
-              paste0(flag, if (isTRUE(r$mustflag))
-                sprintf("must be caught: trust %s -> %s", r$trust %||% "-",
-                        if (isTRUE(r$caught)) "CAUGHT" else "MISSED")
+              r$trust %||% "-", r$bands %||% "-",
+              paste0(flag, if (!isTRUE(r$bands_ok))
+                  sprintf("bands: wanted %s, got %s%s", r$bands_want, r$bands %||% "-",
+                          if (nzchar(r$bands_note %||% ""))
+                            sprintf(" -- %s", substr(r$bands_note, 1, 60)) else "")
+                else if (isTRUE(r$mustflag))
+                  sprintf("must be caught: trust %s, bands %s -> %s", r$trust %||% "-",
+                          r$bands %||% "-",
+                          if (isTRUE(r$caught)) "CAUGHT" else "MISSED")
                 else if (identical(r$status, "parsed")) r$detail else r$status)))
 }
-cat(strrep("-", 116), "\n")
+cat(strrep("-", 124), "\n")
+# A RENAMED CASE MUST NOT SILENTLY VOID ITS EXPECTATION. An entry naming a case that
+# is not in the corpus is a hole in the scoreboard, not a harmless leftover.
+.seen <- vapply(rows, function(r) r$case, character(1))
+.gone <- setdiff(names(.EXPECT_BANDS), .seen)
+if (length(.gone))
+  cat(sprintf("WARNING: .EXPECT_BANDS names %d case(s) not in this corpus: %s\n",
+              length(.gone), paste(.gone, collapse = ", ")))
 .tot <- function(f) sum(vapply(rows, function(r)
   if (isTRUE(r$mustflag)) 0L else as.integer(r[[f]] %||% 0L), integer(1)), na.rm = TRUE)
 cat(sprintf("%d of %d cases clean (no fabricated figure, no missing or phantom row)\n",

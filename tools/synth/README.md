@@ -5,7 +5,7 @@ paired with the exact rows it was drawn from. `score.R` runs the engine over the
 and scores it against that ground truth.
 
 ```
-python3 tools/synth/make_corpus.py --out /tmp/corpus    # 37 cases, PDF + .truth.json
+python3 tools/synth/make_corpus.py --out /tmp/corpus    # 40 cases, PDF + .truth.json
 Rscript  tools/synth/score.R /tmp/corpus                # the score board
 python3 tools/synth/make_corpus.py --list               # what each case tests
 ```
@@ -40,6 +40,7 @@ a **wrong figure**, as opposed to a crash.
 | `FABR` | **fabricated** — an amount that is not the amount on the page, and is not NA. **This must be 0.** |
 | `refus` | **refused** — the reader could not read the cell, returned NA, and the row carries `malformed`. A gap a reviewer can see. Not the same fault. |
 | `miss` | rows missing or invented. Visible to anyone counting rows. |
+| `bands` | what `column_fit` said about the template's geometry: `-`, `info` or `medium`. Checked **both ways** against `.EXPECT_BANDS` in `score.R` — a case not named there must report `-`. |
 
 Scoring *fabricated* and *refused* together hides the only improvement that
 matters. When the contaminated-cell guard went into `.num_one`, this corpus went
@@ -62,6 +63,20 @@ Three faults, all measured here first, all now fixed with a suite test each:
 3. **A rotated page read nothing and said nothing.** Now `unsupported` with a
    high-severity diagnostic naming the orientation and the remedy.
    (`page_orientation`, `R/diagnose.R`.)
+
+4. **A column that moved was caught, but never named.** A 55pt shift puts the running
+   balance inside the debit band: 14 of 20 amounts came back as the *balance* rather
+   than the transaction. Reconciliation caught the run every time — trust `low`,
+   nothing wrong published — but "something is wrong with this statement" is a long
+   way from "your balance column is empty on 19 of 20 rows". `R/column_fit.R` answers
+   the second question. (`mustflag_drift_amounts_55pt`, `mustflag_drift_balance_55pt`;
+   **25pt did not break it**, which `drift_amounts_left_25pt` holds in place — the
+   bands are 65-77pt wide, so a third of a column is absorbed.)
+
+   The same check cross-validated something already in the engine. On
+   `band_overflow_debit_only` the output is correct on all 20 rows — but only because
+   11 amounts were **derived from the running balance**, the debit cells being
+   unreadable (`STORE 214.29 0114`). `column_fit` names 11 rows. They are the same 11.
 
 It also found a fault in **itself**, which is worth recording because it is the
 same class: `money()` printed `abs(x)`, so an overdrawn balance printed without its

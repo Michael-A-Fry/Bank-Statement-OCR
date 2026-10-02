@@ -61,7 +61,7 @@ Every phrase the *What* column can print, and what it means for you:
 | redactions found and kept · what the PDF says about itself · no issues found | **Nothing.** Stated for the record. |
 | hidden text could not be checked | **Stop.** The tool could not prove that text under a black box stayed hidden. **Do not release this output.** It is not the file's fault and not yours — the server is missing its image reader. Tell the maintainer. |
 
-**"info" does not mean "nothing to do".** Seven kinds of row are *info* severity
+**"info" does not mean "nothing to do".** Eight kinds of row are *info* severity
 and three of them still ask you for something:
 
 - *several accounts in one statement* — **info**, and its *How to fix* ends
@@ -85,6 +85,12 @@ and three of them still ask you for something:
   page itself in both cases, so the figures are right — this row exists because a
   minus that is hard to see by eye would otherwise make a correct negative look
   like a mistake when you check the workbook against the statement.
+- *a column is not where the template says* — **info** when it reports a column
+  the statement simply does not print, and it says "Nothing to fix". It is
+  recorded for one reason: if that column is the running balance, then the
+  balance checks had nothing to test, so the figures rest on the reading alone
+  rather than on arithmetic that confirms it. The SAME row at **medium** means
+  something different — a column has moved, and the template needs editing.
 - *no issues found* — **info**, and it is the whole table. Described at the end
   of this section.
 
@@ -104,7 +110,7 @@ Both of those are *Converted successfully*, confidence **medium** — with rows 
 this table. Read the *How to fix* sentence, not the row count and not the
 severity word:
 
-- **info** is a note. It is not always "nothing to do" — see the seven kinds
+- **info** is a note. It is not always "nothing to do" — see the eight kinds
   above. On the 311-row PDF, one of the two info rows asks you to review per
   account.
 - **medium** on *completeness not auto-verified* is the same fact the confidence

@@ -210,6 +210,50 @@ log_run <- function(logdir, result) {
                              frame$width, frame$height))
 }
 
+# .column_fit_note_meta(input, template) -- the metadata build_diagnostics needs to
+# say "a column of this template is not where the statement puts it", or an empty list.
+#
+# THE FAILURE IT CARRIES is the commonest one a WORKING template hits: the bank moves
+# a column at the next statement run, the wording is unchanged so the template still
+# matches, and the figures come out of the wrong places. Reconciliation catches it --
+# trust goes low and nothing wrong publishes -- but the analyst is told "needs review"
+# and not which column moved. See R/column_fit.R for the measurement.
+#
+# SKIPPED ON A PAGE THAT IS THE WRONG SHAPE, deliberately. A landscape or rotated page
+# is refused a band frame at all (.pdf_orientation_differs), so every band reads
+# nonsense and this would report all five columns as broken -- true, useless, and
+# drowning the one diagnostic that names the real cause. page_orientation outranks it
+# and says the actionable thing.
+#
+# Never throws: a template geometry question must not be able to fail a conversion
+# that otherwise worked.
+.column_fit_note_meta <- function(input, template) {
+  if (length(.page_shape_note(input, template))) return(list())
+  fit <- tryCatch(column_fit(input, template), error = function(e) NULL)
+  if (is.null(fit)) return(list())
+  note <- tryCatch(column_fit_note(fit), error = function(e) NA_character_)
+  if (is.na(note) || !nzchar(note)) return(list())
+  # THE TEMPLATE NEEDS EDITING, on any one of three measured grounds:
+  #
+  #   1. a money column holds something that is not an amount, or reads far more rows
+  #      somewhere else -- the column is wrong where it is;
+  #   2. one page-wide offset reads the amounts and the declared bands do not;
+  #   3. a money column is empty on every row AND amounts are sitting where no money
+  #      column covers them -- so the column has MOVED rather than being absent.
+  #
+  # OTHERWISE IT IS INFORMATION, NOT A FAULT. A template declaring a balance column the
+  # statement does not print is worth saying -- it means the arithmetic verifier had
+  # nothing to check, which is the strongest check there is -- but it is not a template
+  # error and must not be dressed as one. Ground 3 is what separates the two, and
+  # without it a balance column that had moved read as "nothing to fix".
+  strays <- as.integer(fit$strays %||% 0L) >= .CFIT_MIN_ROWS
+  faulty <- any(!fit$columns$verdict %in% c("fits", "empty")) ||
+    !is.null(fit$shift) ||
+    (strays && any(fit$columns$verdict == "empty" & fit$columns$kind == "money"))
+  list(column_fit_note = note,
+       column_fit_severity = if (faulty) "medium" else "info")
+}
+
 # convert_statement(...) -> result (build-contract sections 6, 7).
 # `log = FALSE` builds the run record on the result (result$run_log) WITHOUT
 # writing it, so a caller that may still change the outcome can write exactly one,
@@ -432,6 +476,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
         metadata = c(.page_shape_note(input, template),
+                .column_fit_note_meta(input, template),
                 list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
                      faint_minus_signs = input$meta$faint_minus_signs %||% 0L,
                      multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
