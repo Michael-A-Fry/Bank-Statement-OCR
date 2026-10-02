@@ -147,9 +147,127 @@ clean with **0 fabricated figures**, and the two that are not clean are both cor
 refusals: a reworded fingerprint is not detected, and a rotated page is refused with
 its reason.
 
+### Four more faults the corpus and the research found
+
+**A typeset minus read as POSITIVE.** poppler returns a typeset minus as `U+2212
+MINUS SIGN`, not an ASCII hyphen — this repository's own fixture generator carries
+the note — and the number parser only looked for `-`. So `−123.45` came back as
+**+123.45**: a withdrawal read as a deposit. `U+2010`, `U+2011`, `U+2013`, `U+2014`,
+`U+FE63` and `U+FF0D` were wrong the same way. Every shipped fixture happens to use
+an ASCII hyphen, so 5,145 passing tests went straight over it — the suite was
+self-consistent and wrong together. `U+00AD` SOFT HYPHEN is now *removed* rather
+than read as a minus: treating an invisible line-break hint as a negation would
+invent a sign the page never showed.
+
+**The sign the page draws, and the sign it hides.** Two constructions real
+statements use, opposite faults, both silent:
+
+- a minus drawn as a **line** of vector ink is absent from the text layer, so every
+  withdrawal reads as a deposit;
+- a minus printed in the **background colour** (banks do this on positive amounts
+  to keep a column right-aligned) is in the text layer and not on the page, so
+  every deposit reads as a withdrawal.
+
+Both need a **signed single amount column** to bite, and `anz_investmentfunds_pdf`
+— a shipped template — is that shape *and* has no balance column, so there was no
+arithmetic to object with: 14 of 16 rows inverted one way, 3 of 16 the other, all at
+trust `low` with nothing saying why. Both now read 16 of 16. The sign is taken from
+the page itself with `pdftocairo`, from the poppler bundle the OCR path already
+needs — no new dependency, no Python, no new R package. A new `sign_from_ink`
+diagnostic says the page prints its signs this way, because a minus that is hard to
+see by eye would otherwise make a correct negative look like a mistake.
+
+**A hole the page can fill itself.** A statement printing a running balance says
+what moved between two rows: the difference between their printed balances. Where
+the amount cell could not be read but both balances could, the figure is arithmetic
+on two printed numbers rather than a guess — 20 of 20 recovered on the measured
+case, each flagged `amount_from_balance`. It never crosses a **redaction** (deriving
+a hidden amount would make this tool the thing that defeats a redaction applied for
+privilege), never overwrites a figure that *was* read (a disagreement is a conflict,
+not a hole), and never invents a zero from two equal balances.
+
+**And the verifier was taught to subtract it.** `sum(balance[i] - balance[i-1])`
+telescopes to `closing - opening`, so if every amount were derived then
+`opening + sum(amount) = closing` **by construction** and `balance_reconciliation`
+— the strongest completeness proof this tool owns — would report a pass having
+tested nothing. Both checks now count the derived rows: partial derivation stays a
+real check and says how much was derived, total derivation is honest `na`.
+
+### An identity the audit log can stand behind
+
+**A live audit-integrity defect, not a hardening exercise.** The app trusted any of
+**eight** identity header names with no check that the request had come through a
+proxy, while listening on every network card. So
+
+```
+curl -H "X-Forwarded-User: some.other.detective" http://host:8100/
+```
+
+made the run log record a conversion against a name the sender chose, in the tier
+`R/logging.R` defines as "an identity forwarded by a proxy/gateway. Also
+per-person". A record that certifies a claim it cannot know is worse than one that
+records nothing: a blank is a gap, a wrong name is evidence of the wrong thing.
+
+The header now says *who*; a **shared secret** that exists nowhere but the proxy's
+own configuration shows the claim came from something entitled to make it, compared
+in constant time. No secret, no `sso` — and it **downgrades** rather than refusing,
+because a mistyped secret must not take the tool away from a whole office. Eight
+header names became one, from config (one of the eight was a Cloudflare header, on
+an air-gapped server). Two `httpuv` behaviours that defeat a correctly configured
+proxy are now refused: duplicates **join with a comma** into `"attacker,real.name"`,
+and the **underscore spelling** `X_Remote_User` overwrites the hyphen one — nginx
+drops underscore headers by default for this reason, **IIS and Apache do not**.
+
+**`app.bind_host` makes the listening address configurable**, defaulting to
+`0.0.0.0` on purpose: flipping it to loopback in an update would take a running
+deployment offline, and that is your call, not an upgrade's.
+`docs\operational\who-is-using-it.md` is the procedure, and is explicit about what
+it does not fix.
+
+### Who opened whose statement, and when
+
+Downloads were recorded nowhere, so the first question anyone reviewing this tool
+asks could not be answered. There is now one record per download in
+`logs\downloads\` — what, which object, which conversion, when, who, how the
+identity was established, and the **SHA-256 of the bytes handed over**. That last
+field is the one that matters after retention deletes the source statement: it is
+then the only proof of what was produced and taken. All six download handlers write
+one, and a test walks `app.R` rather than naming them so the rule holds for handlers
+nobody has written yet. It never breaks a download — one that works but is not
+logged beats one that fails because the logging did.
+
+**A record is not a gate.** It says who took a copy; it does not stop anyone taking
+one. That needs case ownership, which does not exist yet.
+
+### Two more things the health check now asks
+
+Both name a way the server can be **wrong while looking fine**:
+
+- **Identity** — which of the four configurations is in force, including the unsafe
+  one (a header believed while the app is reachable without the proxy). An operator
+  previously could not find out without reading two files.
+- **Signs** — whether `pdftocairo` and `pdftotext` are installed. The reader fails
+  **quiet** without them: it simply gets no extra evidence, so a server missing them
+  reads a drawn or hidden minus with the sign inverted and reports nothing wrong.
+  They ship in the same poppler zip as `pdftoppm`, so normally both are present.
+  "Normally" is not something a forensic tool may rely on.
+
+### Seventy lines that measured as worthless, and came back out
+
+`pdftools` floors every coordinate to a whole point, pushing a word's **centre**
+0.49pt left on average and up to 1.31pt — and the centre decides which column band
+a word joins. `pdftotext -bbox-layout` fixes it with no new dependency, so it was
+built and wired in. Scored against the corpus: **998 of 1,034 rows correct with
+integer boxes, 998 of 1,034 with floats.** Not one row changed, on any of 33 cases,
+including three that nudge a band by 1, 3 and 10 points — because a band boundary
+lives in the **gutter** between columns, and a real gutter is several points wide.
+The 70 lines came out; the measurement stayed in `R/read_pdf.R` under "MEASURED AND
+NOT DONE". Unmeasured machinery is what the cull was against, and that standard
+applies to new work too.
+
 ### Still true, and checked
 
-The suite is **70 files, 965 tests, 5,130 passing assertions, 0 failed,
+The suite is **72 files, 985 tests, 5,293 passing assertions, 0 failed,
 0 errors**, with one skip — a split test that needs a Westpac bundle kept out of
 the repository on purpose. The app boots and serves. Nothing in `R/` reads
 `app.R` or the two `ui_` files, and the directory map in
@@ -183,18 +301,21 @@ tests\testthat\test-forms.R
 
 ```
 app.R   ui_labels.R   VERSION   CHANGELOG.md
-R\   (12 files: analytics batch batch_audit config convert diagnose
-       jobs labels metadata_capture normalise parse_pdf_table templates)
+R\   (18 files: analytics batch batch_audit config convert diagnose jobs
+       labels logging metadata_capture normalise parse_pdf_table read_input
+       read_pdf reconcile templates util)
 R\params.R            (see the note below)
-scripts\health-check.R
+scripts\health-check.R   scripts\install-offline.R   scripts\run_app.R
 templates\README.md
-docs\   (7 files: design.md  context\architecture\build-contract.md
-         context\how-it-fits-together.md  context\roadmap.md
-         for-analysts\README.md  operational\README.md
-         operational\maintaining-the-engine.md)
-tests\  (17 files: helper.R, and test- app-ui batch batch_audit config
-         convert deployment diagnose docs-truth jobs labels metadata_capture
-         normalise parse_pdf_table robustness seams templates)
+docs\   (9 files: design.md  operational\who-is-using-it.md (NEW)
+         context\architecture\build-contract.md  context\how-it-fits-together.md
+         context\roadmap.md  for-analysts\README.md  operational\README.md
+         operational\maintaining-the-engine.md
+         operational\when-something-goes-wrong.md)
+tests\  (20 files: helper.R, test-download-log.R and test-read_pdf-ink.R are
+         NEW; and test- app-ui batch batch_audit config convert deployment
+         diagnose docs-truth jobs labels metadata_capture normalise
+         parse_pdf_table reconcile robustness seams templates)
 ```
 
 `tools\synth\` is NEW and is deliberately **not** on that list: it is a dev-time
@@ -211,7 +332,7 @@ of this note, which was written when those parameters were live.
 `www\app.css`, `config\`, `dictionaries\` and `samples\raw\` are **unchanged**
 from 1.8.1. Do not copy them.
 
-70 files, 965 tests, 5,130 passing, 0 failing, 1 skipped.
+72 files, 985 tests, 5,293 passing, 0 failing, 1 skipped.
 ---
 
 ## 1.8.1
