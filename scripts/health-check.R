@@ -71,6 +71,32 @@ say(!shut, "Admin",
     if (shut) "the admin password is still the placeholder shipped in the example file, so Admin is closed to everybody"
     else "an admin password is set")
 
+# ---- 2b. who the audit trail will name --------------------------------------
+# NOT a pass/fail: both configurations are legitimate and the shipped default is
+# the open one. What an operator cannot do today is find out WHICH is in force
+# without reading two files, and the difference decides whether a name in
+# logs\runs\*.json can be stood behind. So this states it.
+#
+# The unsafe combination is the one worth naming out loud: an identity header
+# trusted while the app listens on every network card means anyone who can route
+# to this machine can put a colleague's name on their own conversion. The app
+# refuses to believe a header without the shared secret for exactly that reason;
+# this says so before somebody discovers it from a log.
+.a <- cfg$app %||% list()
+.one <- function(k, d = "") { v <- .a[[k]] %||% d
+  if (length(v) != 1L || is.na(v)) d else trimws(as.character(v)) }
+.bind <- .one("bind_host", "0.0.0.0")
+.hdr <- .one("identity_header"); .sec <- .one("identity_shared_secret")
+.loopback <- .bind %in% c("127.0.0.1", "localhost")
+.believed <- nzchar(.hdr) && nzchar(.sec)
+say(TRUE, "Identity", paste0(
+  if (.loopback) "listening on this machine only" else sprintf("listening on %s (every network card)", .bind),
+  "; ",
+  if (!nzchar(.hdr)) "no forwarded identity header is read, so a conversion is recorded against the name the person types or the service account"
+  else if (!.believed) sprintf("'%s' is configured but app.identity_shared_secret is EMPTY, so the header is IGNORED - set the secret here and on the proxy, or the proxy is doing nothing", .hdr)
+  else if (.loopback) sprintf("'%s' is believed when the shared secret matches, and nothing can reach this app except through the proxy", .hdr)
+  else sprintf("'%s' is believed when the shared secret matches - but this app is reachable WITHOUT the proxy, so set app.bind_host to 127.0.0.1 (see docs/operational/who-is-using-it.md)", .hdr)))
+
 # ---- 3. the templates, loaded AND refused ------------------------------------
 p <- cfg$paths %||% list()
 # Each loader is asked for the reasons it skipped a template. The curated

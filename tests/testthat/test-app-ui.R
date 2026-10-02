@@ -2649,3 +2649,109 @@ test_that("the unrecognised card leads with a fact the verdict cannot say", {
   # and it does not say the verdict's own headline back to her
   expect_false(grepl("No template reads this statement yet", blk, fixed = TRUE))
 })
+
+# ---------------------------------------------------------------------------
+# AN IDENTITY FORWARDED IN A HEADER IS NOT EVIDENCE UNTIL THE REQUEST PROVES
+# WHERE IT CAME FROM.
+#
+# This was a live audit-integrity defect, not a hardening exercise. The app
+# trusted any of EIGHT header names with no check that the request had passed
+# through a proxy, while listening on every network card -- so
+#
+#     curl -H "X-Forwarded-User: some.other.detective" http://host:8100/
+#
+# made the run log record a conversion against a name the sender chose, in the
+# tier R/logging.R documents as "an identity forwarded by a proxy/gateway. Also
+# per-person". A record that certifies a claim it cannot know is the cardinal
+# failure for an audit trail that may be produced in court.
+#
+# The header now says WHO; a shared secret that exists nowhere but the proxy's own
+# configuration shows the claim came from something entitled to make it. No
+# secret, no "sso" -- and it DOWNGRADES rather than refusing, because a
+# mistyped secret must not take the tool away from a whole office.
+# ---------------------------------------------------------------------------
+
+# .ident(cfg, request) -- drive detected_identity_info() with a crafted request.
+.ident <- function(cfg, request) {
+  f <- .ui_fun("detected_identity_info",
+               also = c(".ident_cfg", ".req_header_name", ".raw_header_spellings"))
+  e <- environment(f)
+  assign("CONFIG", list(app = cfg), envir = e)
+  assign("session", list(user = NULL, request = request), envir = e)
+  assign("current_user", function() "svc_statementstudio", envir = e)
+  f()
+}
+.IDENT_ON <- list(identity_header = "X-Remote-User",
+                  identity_shared_secret = "s3cret-from-the-proxy",
+                  identity_secret_header = "X-Statement-Studio-Secret")
+.hdrs <- function(...) {
+  h <- list(...)
+  raw <- setNames(unlist(h), tolower(gsub("^HTTP_", "", gsub("_", "-", names(h)))))
+  c(h, list(HEADERS = raw))
+}
+
+test_that("a forged identity header is refused, and the run is never called 'sso'", {
+  # no proxy configured at all: the header is simply not read
+  r <- .ident(list(identity_header = "", identity_shared_secret = ""),
+              .hdrs(HTTP_X_FORWARDED_USER = "some.other.detective"))
+  expect_identical(r$source, "os")
+  expect_false(identical(r$who, "some.other.detective"))
+
+  # proxy configured, but the request carries no secret
+  r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "some.other.detective"))
+  expect_identical(r$source, "os")
+
+  # ...and a guessed secret is no better
+  r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "some.other.detective",
+                               HTTP_X_STATEMENT_STUDIO_SECRET = "guess"))
+  expect_identical(r$source, "os")
+})
+
+test_that("the real proxy is still believed", {
+  r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "real.detective",
+                               HTTP_X_STATEMENT_STUDIO_SECRET = "s3cret-from-the-proxy"))
+  expect_identical(r$source, "sso")
+  expect_identical(r$who, "real.detective")
+})
+
+test_that("the two httpuv header tricks that defeat a careful proxy are refused", {
+  # DUPLICATES ARE JOINED WITH A COMMA. httpuv's header map is case-insensitive,
+  # so two copies of the name arrive as one value "attacker,real.detective" --
+  # which a plain nzchar() test accepts as a username.
+  r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "attacker,real.detective",
+                               HTTP_X_STATEMENT_STUDIO_SECRET = "s3cret-from-the-proxy"))
+  expect_identical(r$source, "os")
+
+  # THE UNDERSCORE SPELLING IS A SEPARATE HEADER THAT WINS THE SAME ROOK KEY.
+  # httpuv's map is underscore-SENSITIVE, so "X_Remote_User" is its own entry, but
+  # it normalises to the same HTTP_X_REMOTE_USER and is written second. A proxy
+  # that strips and sets only the hyphen spelling is bypassed by sending the
+  # underscore one. (nginx drops underscore headers by default for this reason;
+  # IIS and Apache do not.) So more than one spelling of the name is a refusal.
+  smuggled <- list(
+    HTTP_X_REMOTE_USER = "attacker",                    # the value that won
+    HTTP_X_STATEMENT_STUDIO_SECRET = "s3cret-from-the-proxy",
+    HEADERS = c("x-remote-user" = "real.detective",     # what the proxy set
+                "x_remote_user" = "attacker",           # what the client smuggled
+                "x-statement-studio-secret" = "s3cret-from-the-proxy"))
+  r <- .ident(.IDENT_ON, smuggled)
+  expect_identical(r$source, "os")
+})
+
+test_that("the shared-secret comparison cannot be timed one character at a time", {
+  expect_true(.secret_ok("s3cret", "s3cret"))
+  expect_false(.secret_ok("s3cret", "s3creT"))     # case matters
+  expect_false(.secret_ok("s3cre", "s3cret"))      # a prefix is not a match
+  expect_false(.secret_ok("s3cretx", "s3cret"))
+  # absent, empty or unusable input is never proof of anything
+  for (bad in list(NULL, NA, "", character(0)))
+    expect_false(.secret_ok(bad, "s3cret"))
+  for (bad in list(NULL, NA, ""))
+    expect_false(.secret_ok("s3cret", bad))
+  # every byte is compared: no early exit on the first difference
+  src <- readLines(file.path(engine_root(), "R", "util.R"), warn = FALSE)
+  i <- grep("^\\.secret_ok <- function", src)
+  blk <- paste(src[i:(i + 12)], collapse = "\n")
+  expect_match(blk, "xor")
+  expect_false(grepl("identical(got, want)", blk, fixed = TRUE))
+})

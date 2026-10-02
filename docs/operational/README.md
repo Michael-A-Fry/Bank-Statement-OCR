@@ -25,6 +25,7 @@ box.
 | Set it up for the first time (air-gapped) | [first-time-setup.md](first-time-setup.md) |
 | **Put it on the Qlik server: service account, boot start, firewall, the address** | [deploy-on-the-qlik-server.md](deploy-on-the-qlik-server.md) |
 | **Turn it on for real — the checklist for the day** | [go-live-checklist.md](go-live-checklist.md) |
+| **Let the whole team in, and have the audit trail name the right person** | [who-is-using-it.md](who-is-using-it.md) |
 | Start it, keep it running after reboots, open the firewall port, change a setting | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
 | **Ask the box whether it is fit to convert — one command, after every update** | `scripts\health-check.R`, in [maintaining-the-engine.md](maintaining-the-engine.md) §1 |
 | Back up the five irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |

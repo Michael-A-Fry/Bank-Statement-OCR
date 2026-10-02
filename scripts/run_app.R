@@ -153,13 +153,37 @@ suppressWarnings(tryCatch({
 if (!is.finite(.max_mb) || .max_mb <= 0) .max_mb <- 200
 options(shiny.maxRequestSize = .max_mb * 1024^2)
 .boot("uploads up to ", .max_mb, " MB")
-# host = "0.0.0.0" is EVERY network card, which is what lets anybody but this
-# machine reach it. It is also why the firewall rule is not optional.
-.boot("listening on every network card - the firewall rule decides who gets in")
+# WHICH ADDRESS IT LISTENS ON, and why it matters more than it looks.
+#
+# "0.0.0.0" is EVERY network card, so anyone who can route to this machine can
+# open a connection to the app directly -- including past a reverse proxy sitting
+# in front of it. That is what made a forged identity header believable (see
+# detected_identity_info in app.R): the proxy was not on the path at all.
+#
+# "127.0.0.1" accepts only connections from this machine, which is what makes the
+# proxy unavoidable. It is the right answer once a proxy is in front, and the wrong
+# answer before -- nobody could reach the app. So it is CONFIGURED, not hardcoded,
+# and the shipped default stays "0.0.0.0" because flipping it in an update would
+# take a running deployment offline. The procedure is
+# docs/operational/who-is-using-it.md; the health check says which one is in force.
+#
+# Note a Windows detail: Windows Firewall does not filter loopback traffic, so a
+# rule on the port is no substitute for the bind address. If the socket is not
+# listening on the LAN interface there is nothing to filter.
+.bind <- tryCatch(.cfg$app$bind_host, error = function(e) NULL)
+.bind <- if (length(.bind) != 1L || is.na(.bind) || !nzchar(trimws(.bind)))
+  "0.0.0.0" else trimws(as.character(.bind))
+if (identical(.bind, "127.0.0.1") || identical(.bind, "localhost")) {
+  .boot("listening on THIS MACHINE ONLY - reachable through the reverse proxy")
+} else {
+  .boot("listening on every network card (", .bind, ") - the firewall rule decides",
+        " who gets in, and a forwarded identity header is NOT trusted on this",
+        " address unless the shared secret is set")
+}
 # If runApp itself falls over, that is the one failure worth a line in the file:
 # by then the console has gone and the task is about to report a number.
 tryCatch(
-  shiny::runApp(app_dir, host = "0.0.0.0", port = port, launch.browser = FALSE),
+  shiny::runApp(app_dir, host = .bind, port = port, launch.browser = FALSE),
   error = function(e) {
     .boot("STOPPED WITH AN ERROR - ", conditionMessage(e))
     quit(status = 3L, save = "no")

@@ -516,3 +516,24 @@ safe_readlines <- function(path, encoding = NULL) {
   # No BOM, not valid UTF-8, no declared encoding -> Windows-1252 fallback.
   .transcode_lines(body, "WINDOWS-1252")
 }
+
+# .secret_ok(got, want) -- is this request carrying the shared secret?
+#
+# CONSTANT TIME, ON PURPOSE. `identical()` and `==` stop at the first differing
+# byte, so the time they take reveals how much of the secret a guess got right,
+# and a few thousand timed requests recover it one character at a time. Comparing
+# every byte regardless costs nothing here and removes the whole class.
+#
+# A LENGTH MISMATCH IS STILL A MISMATCH, and is answered without comparing: the
+# length is not the secret. Absent, empty or non-character input is FALSE -- the
+# question is "did this request prove where it came from", and silence is not
+# proof.
+.secret_ok <- function(got, want) {
+  if (is.null(got) || is.null(want)) return(FALSE)
+  got <- as.character(got)[1]; want <- as.character(want)[1]
+  if (is.na(got) || is.na(want) || !nzchar(got) || !nzchar(want)) return(FALSE)
+  a <- charToRaw(got); b <- charToRaw(want)
+  if (length(a) != length(b)) return(FALSE)
+  # bitwXor over the whole vector, then one test: no early exit anywhere.
+  sum(as.integer(xor(a, b))) == 0L
+}

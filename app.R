@@ -3273,16 +3273,78 @@ server <- function(input, output, session) {
   #   "none" -- nothing at all.
   # Header values are only ever stored as a string in the audit log -- never
   # evaluated -- so there is no injection surface.
-  .SSO_HEADERS <- c("HTTP_X_FORWARDED_USER", "HTTP_X_AUTH_REQUEST_USER",
-    "HTTP_X_AUTH_REQUEST_EMAIL", "HTTP_X_FORWARDED_EMAIL", "HTTP_REMOTE_USER",
-    "HTTP_X_REMOTE_USER", "HTTP_X_FORWARDED_PREFERRED_USERNAME", "HTTP_CF_ACCESS_AUTHENTICATED_USER_EMAIL")
+  #
+  # A FORWARDED HEADER IS NOT EVIDENCE OF ANYTHING ON ITS OWN, and treating it as
+  # evidence was a live audit-integrity defect. This app trusted any of EIGHT
+  # header names with no check that the request had come through a proxy at all,
+  # while listening on every network card -- so
+  #
+  #     curl -H "X-Forwarded-User: some.other.detective" http://host:8100/
+  #
+  # made the run log record a conversion against a name the sender chose, in the
+  # tier R/logging.R documents as "an identity forwarded by a proxy/gateway. Also
+  # per-person". The record certified a claim it could not know, which is the one
+  # thing an audit trail must never do.
+  #
+  # THE FIX IS TO REQUIRE PROOF OF PROVENANCE, not to drop the feature. The header
+  # says WHO; a shared secret, present nowhere but the proxy's own configuration,
+  # shows the claim came from something entitled to make it. No secret, no "sso" --
+  # the person is asked to identify themselves exactly as if no proxy were there.
+  # Downgrade, never refuse: a misconfigured secret must not take the tool away
+  # from a whole office.
+  #
+  # ONE header name, from config. Eight names were eight forgery surfaces and
+  # seven that no proxy in this deployment would ever set (one of them was a
+  # Cloudflare header, on an air-gapped server).
+  .ident_cfg <- function(k, d = "") {
+    v <- CONFIG$app[[k]] %||% d
+    if (length(v) != 1L || is.na(v)) d else trimws(as.character(v))
+  }
+  # .req_header_name(name) -- the Rook/CGI key httpuv builds for a header name.
+  # httpuv upper-cases and turns "-" into "_", so "X-Remote-User" arrives as
+  # HTTP_X_REMOTE_USER (httpuv src/webapplication.cpp, normalizeHeaderName).
+  .req_header_name <- function(name)
+    paste0("HTTP_", toupper(gsub("-", "_", name, fixed = TRUE)))
+  #
+  # TWO httpuv BEHAVIOURS THAT DEFEAT A CAREFUL PROXY, both read off its source:
+  #
+  #   * DUPLICATE HEADERS ARE JOINED WITH A COMMA. httpuv's header map is
+  #     case-insensitive, so "X-Remote-User" and "x-remote-user" are one key and
+  #     two copies arrive as "attacker,real.detective". A plain nzchar() test
+  #     accepts that string as a username, so a comma is treated as an attack and
+  #     the claim is thrown away rather than parsed.
+  #   * THE UNDERSCORE SPELLING IS A DIFFERENT HEADER THAT OVERWRITES THE SAME
+  #     KEY. The map is underscore-SENSITIVE, so "X_Remote_User" is a separate
+  #     entry -- but it normalises to the same HTTP_X_REMOTE_USER, and the
+  #     underscore form is written second and wins. A proxy that diligently
+  #     strips and sets only the hyphen spelling is therefore bypassed by a client
+  #     sending the underscore one. nginx drops underscore headers by default for
+  #     exactly this reason; IIS and Apache do not. So the raw header list is
+  #     checked too, and more than one spelling of the name is a refusal.
+  .raw_header_spellings <- function(req, name) {
+    hs <- tryCatch(req$HEADERS, error = function(e) NULL)
+    if (is.null(hs) || !length(names(hs))) return(1L)   # cannot tell: don't block
+    want <- toupper(gsub("[-_]", "", name))
+    sum(toupper(gsub("[-_]", "", names(hs))) == want)
+  }
   detected_identity_info <- function() {
     su <- session$user
     if (!is.null(su) && nzchar(trimws(su))) return(list(who = trimws(su), source = "host"))
     req <- session$request
-    if (!is.null(req)) for (h in .SSO_HEADERS) {
-      v <- tryCatch(req[[h]], error = function(e) NULL)
-      if (!is.null(v) && nzchar(trimws(v))) return(list(who = trimws(v), source = "sso"))
+    hdr <- .ident_cfg("identity_header")
+    secret <- .ident_cfg("identity_shared_secret")
+    if (!is.null(req) && nzchar(hdr) && nzchar(secret)) {
+      got <- tryCatch(req[[.req_header_name(.ident_cfg("identity_secret_header",
+                      "X-Statement-Studio-Secret"))]], error = function(e) NULL)
+      # Constant-time: a byte-by-byte comparison leaks the secret one character at
+      # a time to anyone willing to time the responses.
+      if (.secret_ok(got, secret)) {
+        v <- tryCatch(req[[.req_header_name(hdr)]], error = function(e) NULL)
+        v <- if (is.null(v)) "" else trimws(as.character(v)[1])
+        if (nzchar(v) && !grepl(",", v, fixed = TRUE) &&
+            .raw_header_spellings(req, hdr) <= 1L)
+          return(list(who = v, source = "sso"))
+      }
     }
     cu <- current_user()
     if (!is.null(cu) && nzchar(cu) && !identical(cu, "unknown"))

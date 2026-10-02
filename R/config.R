@@ -29,7 +29,46 @@
     # served by this switch: what reaches Qlik is gated on template ORIGIN in
     # R/feed.R (feed.allowed_template_origins), which is unaffected by it. Set it
     # false only if your team wants to opt in to its own templates each time.
-    user_templates_default = TRUE
+    user_templates_default = TRUE,
+    # ---- WHO IS USING THIS, and whether the app may believe the answer --------
+    #
+    # A reverse proxy that authenticates against the organisation's directory can
+    # forward the signed-in user in a request header, and the audit log records it
+    # as identity_source "sso" -- "an identity forwarded by a proxy/gateway. Also
+    # per-person" (R/logging.R). That claim is only true if the request REALLY came
+    # through the proxy, and a bare header cannot show that: anyone who can reach
+    # the app's port can send the same header with any name in it, and the run log
+    # then certifies a lie. For a tool whose records may be produced in court that
+    # is the cardinal failure -- an audit trail asserting something it cannot know.
+    #
+    # So the header is believed ONLY when the request also carries the shared
+    # secret below, which exists nowhere but the proxy's own configuration. The
+    # header says who; the secret shows the claim came from something entitled to
+    # make it. Without the secret the header is ignored and the person is asked to
+    # identify themselves, exactly as if no proxy were there.
+    #
+    # identity_header: the ONE header name this deployment's proxy sets. One name,
+    # not a list: every additional name is another thing a client can forge, and a
+    # list of eight (which is what this app used to carry, including a Cloudflare
+    # header on an air-gapped server) is eight forgery surfaces and seven that no
+    # proxy here will ever set. Empty = trust no header at all.
+    identity_header = "",
+    # identity_shared_secret: any long random string, set here AND on the proxy.
+    # Empty = no header is trusted, whatever identity_header says.
+    identity_shared_secret = "",
+    # The header the secret arrives in. Shiny has its own `shiny.sharedSecret`
+    # option that rejects the whole request on a mismatch; this is deliberately
+    # separate, because a wrong secret here must not take the app down for
+    # everybody -- it must downgrade the identity claim and let the person type
+    # their own name.
+    identity_secret_header = "X-Statement-Studio-Secret",
+    # The address the app listens on. "127.0.0.1" accepts only connections from
+    # this machine, which is what makes the proxy unavoidable and the header
+    # unforgeable from the network. The shipped default stays "0.0.0.0" because
+    # changing it would take a running deployment offline on an update; the health
+    # check says so out loud, and docs/operational/who-is-using-it.md is the
+    # procedure for moving to loopback once a proxy is in front.
+    bind_host = "0.0.0.0"
   ),
   # EVERY TEMPLATE LIVES UNDER templates/. Folders used to sit at the root of the
   # app (templates, templates_user, templates_seed) and a person had to already
