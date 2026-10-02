@@ -1,0 +1,128 @@
+# ShinyProxy configuration for Statement Studio -- one container per analyst.
+#
+# READ THIS FIRST. The DECISIONS below are the point of this file and I stand
+# behind them: a per-user volume, identity taken from the organisation's directory,
+# a hard limit on concurrent containers, and a heartbeat that reclaims abandoned
+# ones. The KEY NAMES are ShinyProxy's and vary between major versions -- check each
+# against the configuration reference for the version you install
+# (https://www.shinyproxy.io/documentation/configuration/) before going live. This
+# file was written without a ShinyProxy instance to test it against, and saying so
+# is worth more than a file that looks authoritative and silently does nothing.
+#
+# The architecture it belongs to is in docs/operational/one-container-per-analyst.md.
+
+proxy:
+  title: Statement Studio
+  port: 8080
+  # Bind to loopback and put the Windows reverse proxy in front, for the same
+  # reason the bare app does: an identity header is only evidence if the request
+  # cannot have come from anywhere but the proxy.
+  bind-address: 127.0.0.1
+
+  # ---- WHO IS USING IT ----------------------------------------------------
+  #
+  # `ldap` reads the organisation's own directory, which is what you want: no
+  # second password list for criminal-evidence access, and a leaver loses access
+  # when their AD account is disabled rather than when somebody remembers.
+  #
+  # The alternative is `webservice` / header-based auth behind the IIS layer
+  # described in who-is-using-it.md. Use one or the other, never both -- two
+  # sources of identity is two answers to "who did this".
+  #
+  # DO NOT USE `simple` OR `none` ON A SERVER THAT HOLDS EVIDENCE. `simple` keeps
+  # users in this file; `none` makes every session anonymous, which makes the
+  # download log worthless.
+  authentication: ldap
+  ldap:
+    url: ldap://dc.your.domain:389/DC=your,DC=domain
+    user-dn-pattern: "sAMAccountName={0}"
+    # Group membership is how you keep this to the people who should have it. An
+    # app without this line is open to everybody the directory knows.
+    group-search-base: OU=Groups
+    group-search-filter: "(member={0})"
+
+  # ---- HOW MANY AT ONCE ---------------------------------------------------
+  #
+  # The container is now the unit of concurrency, so the R-level cap in R/jobs.R is
+  # one per container and THIS is the number that protects the machine. Set it from
+  # cores, not from optimism: tesseract is OpenMP-parallel, and the measurement in
+  # R/jobs.R is that three concurrent scans on four cores had not finished a single
+  # PAGE after ten minutes. One container per two cores is a sane starting point.
+  #
+  # An analyst over the limit should be TOLD to wait, which is what
+  # container-wait-time governs. A silent stall is the failure the queue in
+  # R/jobs.R exists to remove, and it must not come back at this layer.
+  max-total-instances: 4
+  max-instances: 1          # one session per person: a second tab reuses the first
+  container-wait-time: 60000
+
+  # ---- WHEN A TAB IS ABANDONED -------------------------------------------
+  #
+  # A browser closed without signing out leaves a container holding a copy of
+  # somebody's bank statement. Reclaim it: the copy is evidence, and an idle
+  # container is also a core the next analyst cannot have.
+  heartbeat-rate: 10000
+  heartbeat-timeout: 900000        # 15 minutes idle
+
+  specs:
+    - id: statement-studio
+      display-name: Statement Studio
+      description: Convert a bank statement to a spreadsheet
+      container-image: statement-studio:1.9.0
+      port: 3838
+
+      # ---- THE ISOLATION, AND IT IS THIS LINE -------------------------------
+      #
+      # A path per user, so the container can only see that analyst's uploads,
+      # outputs and logs. This is what moves isolation from "the app's own checks
+      # are correct" to "the file system will not permit it" -- the whole reason
+      # for this deployment.
+      #
+      # The host directories must exist and be writable by uid 10001 (the
+      # Dockerfile's `studio` user):
+      #   mkdir -p /srv/studio-data/<user>/{uploads,logs,feed,templates-user}
+      #   chown -R 10001:10001 /srv/studio-data
+      #
+      # SHARED, DELIBERATELY: templates/statements (the curated set) is baked into
+      # the image and read-only. A template an analyst builds lands in their own
+      # templates-user mount -- which means it is theirs alone until a maintainer
+      # promotes it, and that is the correct default for a governance gate, not an
+      # oversight. Promotion is the procedure in templates/README.md.
+      container-volumes:
+        - "/srv/studio-data/#{proxy.userId}/uploads:/srv/statement-studio/uploads"
+        - "/srv/studio-data/#{proxy.userId}/logs:/srv/statement-studio/logs"
+        - "/srv/studio-data/#{proxy.userId}/feed:/srv/statement-studio/feed"
+        - "/srv/studio-data/#{proxy.userId}/templates-user:/srv/statement-studio/templates/statements_user"
+
+      # ---- WHAT THE APP IS TOLD ABOUT THE PERSON ----------------------------
+      #
+      # ShinyProxy already knows who this is, so the app does not have to work it
+      # out from a header it cannot verify. SHINYPROXY_USERNAME arrives inside the
+      # container, where nothing but ShinyProxy can set it -- which is a stronger
+      # guarantee than the shared-secret arrangement the bare deployment needs,
+      # because there is no network path to forge it over.
+      #
+      # TO USE IT, app.R's detected_identity_info() needs a branch that reads
+      # Sys.getenv("SHINYPROXY_USERNAME") and reports source "host". That is NOT
+      # written yet -- today the app would fall back to the container's own account
+      # and the audit log would say `os`, which identifies nobody. Do this before
+      # going live or the download log cannot name a person.
+      container-env:
+        SHINYPROXY_USERNAME: "#{proxy.userId}"
+
+      # One statement at a time per analyst, and a ceiling so one scanned 300-page
+      # PDF cannot take the host down for everyone else.
+      container-cpu-limit: 2
+      container-memory-limit: 4g
+
+      # The container is disposable; the evidence is on the mount.
+      container-network: sp-net
+
+logging:
+  file:
+    name: /var/log/shinyproxy/shinyproxy.log
+  level:
+    # Who started a session and when. This is ShinyProxy's half of the audit trail
+    # and it is NOT a substitute for the app's own download log: this says somebody
+    # opened the tool, that says somebody took a copy of a statement.
+    eu.openanalytics: INFO

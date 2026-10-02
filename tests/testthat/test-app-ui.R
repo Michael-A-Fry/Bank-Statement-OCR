@@ -2686,7 +2686,9 @@ test_that("the unrecognised card leads with a fact the verdict cannot say", {
                   identity_secret_header = "X-Statement-Studio-Secret")
 .hdrs <- function(...) {
   h <- list(...)
-  raw <- setNames(unlist(h), tolower(gsub("^HTTP_", "", gsub("_", "-", names(h)))))
+  raw <- if (length(h))
+    setNames(unlist(h), tolower(gsub("^HTTP_", "", gsub("_", "-", names(h)))))
+    else character(0)
   c(h, list(HEADERS = raw))
 }
 
@@ -2704,6 +2706,36 @@ test_that("a forged identity header is refused, and the run is never called 'sso
   # ...and a guessed secret is no better
   r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "some.other.detective",
                                HTTP_X_STATEMENT_STUDIO_SECRET = "guess"))
+  expect_identical(r$source, "os")
+})
+
+test_that("one container per analyst: the name arrives in the environment", {
+  # ShinyProxy starts a container per person and sets SHINYPROXY_USERNAME inside it
+  # (deploy/shinyproxy-application.yml). That is a STRONGER guarantee than any
+  # header: nothing on the network can reach into a container's environment, so
+  # there is no forgery to defend against and no shared secret to keep.
+  #
+  # Without this the app would fall back to the CONTAINER'S OWN account, the audit
+  # log would say `os` -- which R/logging.R documents as identifying NOBODY -- and
+  # the download log could not name a person. The entire point of the
+  # per-container deployment would be lost at the last step.
+  before <- Sys.getenv("SHINYPROXY_USERNAME", unset = NA_character_)
+  on.exit(if (is.na(before)) Sys.unsetenv("SHINYPROXY_USERNAME")
+          else Sys.setenv(SHINYPROXY_USERNAME = before), add = TRUE)
+
+  Sys.setenv(SHINYPROXY_USERNAME = "container.detective")
+  r <- .ident(list(identity_header = "", identity_shared_secret = ""), .hdrs())
+  expect_identical(r$source, "host")          # the platform's own authenticated user
+  expect_identical(r$who, "container.detective")
+
+  # ...and a forged header cannot beat it, because it is checked first
+  r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "attacker"))
+  expect_identical(r$who, "container.detective")
+
+  # ...and with it unset, nothing about the bare deployment changed
+  Sys.unsetenv("SHINYPROXY_USERNAME")
+  r <- .ident(list(identity_header = "", identity_shared_secret = ""),
+              .hdrs(HTTP_X_FORWARDED_USER = "attacker"))
   expect_identical(r$source, "os")
 })
 

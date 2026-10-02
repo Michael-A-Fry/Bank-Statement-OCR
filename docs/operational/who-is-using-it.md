@@ -206,7 +206,8 @@ ownership to check against, so cross-case reading is still gated on the shared a
 password rather than on a reasoned, logged, per-case grant. The log makes it
 *visible* after the fact, which is worth having and is not the same as prevention.
 
-Real per-user isolation needs one R process
+**The next step is written up: [one-container-per-analyst.md](one-container-per-analyst.md)**,
+with a Dockerfile and a ShinyProxy config. Real per-user isolation needs one R process
 per user, which on Windows means a Linux guest running ShinyProxy (free,
 Apache-2.0, one container per session) or Posit Connect with `RunAsCurrentUser`
 enabled — note that Connect **without** that setting shares one process between up

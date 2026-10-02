@@ -3347,6 +3347,20 @@ server <- function(input, output, session) {
   detected_identity_info <- function() {
     su <- session$user
     if (!is.null(su) && nzchar(trimws(su))) return(list(who = trimws(su), source = "host"))
+    # ONE CONTAINER PER ANALYST: the name arrives in the ENVIRONMENT, and that is a
+    # stronger guarantee than any header. ShinyProxy sets SHINYPROXY_USERNAME inside
+    # the container it started for this person (deploy/shinyproxy-application.yml),
+    # and nothing on the network can reach into a container's environment -- so
+    # unlike a forwarded header there is no forgery to defend against and no shared
+    # secret to keep. "host" is the right tier: it is the platform's own
+    # authenticated user, exactly as session$user is on a Shiny host.
+    #
+    # Without this branch the app would fall back to the CONTAINER'S OWN account,
+    # the audit log would record `os` -- which the log's own documentation says
+    # "identifies NOBODY" -- and the download log could not name a person. The whole
+    # point of the per-container deployment would be lost at the last step.
+    spu <- trimws(Sys.getenv("SHINYPROXY_USERNAME", ""))
+    if (nzchar(spu)) return(list(who = spu, source = "host"))
     req <- session$request
     hdr <- .ident_cfg("identity_header")
     secret <- .ident_cfg("identity_shared_secret")
