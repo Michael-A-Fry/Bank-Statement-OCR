@@ -479,6 +479,13 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                 .column_fit_note_meta(input, template),
                 list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
                      faint_minus_signs = input$meta$faint_minus_signs %||% 0L,
+                     # Did the sign-from-ink scan RUN? Only askable of a PDF, and
+                     # `pdf_doc` is the thing only a PDF has. A statement read
+                     # without the scan, that prints its minus as ink, is read with
+                     # the signs inverted and no check objects -- so the one honest
+                     # thing to do is say the check did not happen.
+                     ink_scan_ran = is.null(input$meta$pdf_doc) ||
+                       isTRUE(input$meta$ink_scan_ok),
                      multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         template = template, pdf_doc = input$meta$pdf_doc,
                         # A template that matched but read nothing is a DIFFERENT

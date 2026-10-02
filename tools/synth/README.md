@@ -5,10 +5,31 @@ paired with the exact rows it was drawn from. `score.R` runs the engine over the
 and scores it against that ground truth.
 
 ```
-python3 tools/synth/make_corpus.py --out /tmp/corpus    # 40 cases, PDF + .truth.json
+python3 tools/synth/make_corpus.py --out /tmp/corpus    # 43 cases, PDF + .truth.json
 Rscript  tools/synth/score.R /tmp/corpus                # the score board
 python3 tools/synth/make_corpus.py --list               # what each case tests
 ```
+
+...and two more for SIZE, because every case above is small and the statements this
+tool is for are not. Before these existed the largest statement ever put through the
+engine was **nine pages**:
+
+```
+python3 tools/synth/make_bench.py --out /tmp/bench      # 30 / 100 / 200 pages
+python3 tools/synth/make_bench.py --out /tmp/bench --pages 400
+Rscript  tools/synth/bench.R /tmp/bench                 # per-stage timings
+```
+
+`bench.R` times each stage separately and **scores correctness too** -- a fast wrong
+answer is not a result. The measured figures live in
+[maintaining-the-engine.md](../../docs/operational/maintaining-the-engine.md); the
+short version is 0.17 s/page, flat, 0 wrong figures to 400 pages. Two stages were
+rewritten on the strength of it.
+
+`truth.R` holds the truth-file reader both harnesses use. It is one file because
+bench.R was first written with its own copy, read a field the truth does not have,
+and reported **900 of 900 amounts fabricated** on a statement the engine had read
+perfectly -- the same lesson as `money()` printing `abs(x)` below.
 
 **Python 3.9 or newer**, plus `reportlab` and `pymupdf`. Tested on **3.11, 3.12 and
 3.13**, which produce **byte-identical ground truth** — so the corpus can be
@@ -77,6 +98,16 @@ Three faults, all measured here first, all now fixed with a suite test each:
    `band_overflow_debit_only` the output is correct on all 20 rows — but only because
    11 amounts were **derived from the running balance**, the debit cells being
    unreadable (`STORE 214.29 0114`). `column_fit` names 11 rows. They are the same 11.
+
+5. **A per-page check that had only ever been tested on one page.** The sign-from-ink
+   scan split the renderer's output on a marker this poppler does not emit, so a
+   multi-page statement collapsed into ONE ink page: pages 2+ got no sign correction,
+   and page 1 got false positives from strokes elsewhere in the document. The two
+   3-page cases (`signed_minus_as_ink_3page`, `signed_minus_invisible_3page`) report
+   **48 fabricated figures** against the old code, every one a sign inversion from row
+   31 on, at trust `medium` -- they would have published. They are 3 pages for exactly
+   that reason, and the layout has no balance column because that is the only shape
+   where the ink is the *only* evidence of the sign.
 
 It also found a fault in **itself**, which is worth recording because it is the
 same class: `money()` printed `abs(x)`, so an overdrawn balance printed without its

@@ -72,6 +72,8 @@
   date_out_of_range       = "template",
   # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
   account_number_shape    = "input",
+  # an install/renderer gap, not anything the analyst or the template can fix
+  sign_scan_unavailable   = "escalate",
   unreadable              = "input",
   scanned_no_ocr          = "input",
   multiple_statements     = "input",
@@ -392,6 +394,26 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
   # the instruction for each is the opposite of the other, and a category whose
   # severity is computed cannot be audited by reading the file (test-diagnose.R scans
   # for exactly this shape).
+  # THE SIGN CHECK DID NOT RUN, which is worth more than it looks. Some banks draw
+  # the minus as a stroke of ink, and some print it in the background colour on
+  # POSITIVE amounts to keep a column right-aligned. Both are invisible to the text
+  # layer, in opposite directions, and on a statement with no running balance NOTHING
+  # ELSE CATCHES EITHER -- the figures come out inverted and every check passes.
+  # pdftocairo is what reads them, and it ships in the same poppler bundle as the
+  # tools the rest of the reader already needs, so its absence is an install fault.
+  if (isTRUE(!is.null(metadata$ink_scan_ran)) && !isTRUE(metadata$ink_scan_ran)) {
+    add("signs", "sign_scan_unavailable", "high",
+        paste("the check that reads a minus sign from the page itself did not run, so",
+              "if this bank draws its minus as a line, or prints one in the background",
+              "colour, the money-in / money-out direction may be inverted on every row"),
+        paste("Ask whoever set the tool up to install Poppler, including pdftocairo",
+              "(it is in the offline bundle under offline/prereqs, alongside the",
+              "pdftotext this reader already uses). Until then, check the +/- direction",
+              "of these rows against the statement by eye before using them - and",
+              "treat a statement with NO running balance column as unverified,",
+              "because the balance checks are what would otherwise have caught it."))
+  }
+
   if (!is.null(metadata$column_fit_note)) {
     if (identical(as.character(metadata$column_fit_severity %||% "medium")[1], "info"))
       add("template columns", "column_bands", "info",

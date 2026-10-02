@@ -406,7 +406,8 @@ def draw_statement(sh, opening, rows, closing, year=2026, month=2,
 # ---------------------------------------------------------------------------
 
 def draw_signed(sh, opening, rows, closing, year=2026, month=2,
-                invisible_minus=False, ink_minus=False, y_table=200, row_pitch=14):
+                invisible_minus=False, ink_minus=False, y_table=200, row_pitch=14,
+                rows_per_page=30):
     """Draw a ONE-AMOUNT-COLUMN statement at anz_investmentfunds_pdf's bands.
 
     invisible_minus: the minus is printed in the page background colour, so it is
@@ -417,6 +418,14 @@ def draw_signed(sh, opening, rows, closing, year=2026, month=2,
         the text layer, and every WITHDRAWAL reads as a deposit.
     Only one at a time -- they are opposite faults and mixing them in one file
     would make a failure unattributable.
+
+    IT PAGINATES, and it has to. Both faults above are recoverable on a statement
+    with a running balance -- the engine derives the amount from the balance delta
+    and gets the right figure anyway. This layout has NO balance column, so the ink
+    is the only evidence of the sign, which makes it the only layout where a fault
+    in the ink scan shows up as a wrong figure. It was one page, so the ink scan's
+    per-page split went untested, and a multi-page statement was read with the signs
+    inverted from page 2 on while the whole suite passed.
     """
     b = SIGNED_BANDS
     sh.text(40, 60, "Kowhai Investment Funds", size=14, bold=True)
@@ -428,16 +437,24 @@ def draw_signed(sh, opening, rows, closing, year=2026, month=2,
     ly, lm, ld = (int(v) for v in last.split("-"))
     sh.text(40, 128, "Statement period 1 %s %d to %d %s %d"
             % (MONTHS[month - 1], year, ld, MONTHS[lm - 1], ly), size=9)
-    y = y_table
-    sh.text(b["date"][0], y, "Date", size=9, bold=True)
-    sh.text(b["description"][0], y, "Details", size=9, bold=True)
-    sh.text(b["units"][1], y, "Units", size=9, bold=True, align="right")
-    sh.text(b["unit_price"][1], y, "Price", size=9, bold=True, align="right")
-    sh.text(b["amount"][1], y, "Amount", size=9, bold=True, align="right")
-    sh.line(b["date"][0], y + 4, b["amount"][1], y + 4)
-    y += 18
+    def head(y):
+        sh.text(b["date"][0], y, "Date", size=9, bold=True)
+        sh.text(b["description"][0], y, "Details", size=9, bold=True)
+        sh.text(b["units"][1], y, "Units", size=9, bold=True, align="right")
+        sh.text(b["unit_price"][1], y, "Price", size=9, bold=True, align="right")
+        sh.text(b["amount"][1], y, "Amount", size=9, bold=True, align="right")
+        sh.line(b["date"][0], y + 4, b["amount"][1], y + 4)
+        return y + 18
+
+    y = head(y_table)
     drawn = []
+    on_page = 0
     for i, r in enumerate(rows):
+        if on_page >= rows_per_page:
+            sh.page_break()
+            y = head(96)
+            on_page = 0
+        on_page += 1
         signed = -(r["debit"] or 0) if r["debit"] else (r["credit"] or 0)
         sh.text(b["date"][0], y, r["iso_date"][8:10] + "/" + r["iso_date"][5:7]
                 + "/" + r["iso_date"][0:4], size=9)
@@ -553,6 +570,16 @@ CASES = [
          n=16, decimal_comma=True),
     case("money_minus_as_line", "the minus sign is VECTOR INK, absent from the text layer",
          n=16, negatives_as_line=True),
+    # THE SAME FAULT, OVER THREE PAGES, and this is not padding. .pdf_ink split the
+    # renderer's output on a marker poppler 24.02 does not emit, so a multi-page
+    # statement collapsed to ONE ink page: pages 2+ got no sign correction at all,
+    # and page 1 got false positives from strokes elsewhere in the document. Every
+    # ink case was a single page, so the entire suite passed while a 100-page
+    # statement was read with the signs inverted from page 2 on. This is the
+    # regression, and it costs one case.
+    case("money_minus_as_line_3page",
+         "the same drawn-line minus over THREE pages: the ink scan must see them all",
+         n=90, rows_per_page=30, day_step=0, negatives_as_line=True),
 
     # ---- structure the reader has to refuse or absorb ------------------------
     case("struct_total_row", "an unheaded TOTAL row under the transactions",
@@ -588,6 +615,21 @@ CASES = [
     case("signed_minus_invisible",
          "a minus printed in the background colour: in the text layer, not on the page",
          n=16, layout="signed", invisible_minus=True),
+
+    # THE SAME TWO FAULTS OVER THREE PAGES, and this layout is the only one where
+    # they are unrecoverable: there is no balance column, so the ink is the only
+    # evidence of the sign. .pdf_ink split the renderer's output on a marker poppler
+    # 24.02 does not emit, so a multi-page statement collapsed to ONE ink page --
+    # pages 2+ got no sign correction and page 1 got false positives from strokes
+    # elsewhere in the document. Every ink case was a single page, so the entire
+    # suite passed while every multi-page statement of this shape was read with the
+    # signs inverted from page 2 on. These are the regression.
+    case("signed_minus_as_ink_3page",
+         "the drawn-line minus over THREE pages -- the ink scan must see every page",
+         n=75, layout="signed", ink_minus=True, day_step=0),
+    case("signed_minus_invisible_3page",
+         "the background-colour minus over THREE pages, same reason",
+         n=75, layout="signed", invisible_minus=True, day_step=0),
 
     # ---- detection, not parsing ----------------------------------------------
     case("detect_phrase_missing", "a fingerprint phrase is reworded",

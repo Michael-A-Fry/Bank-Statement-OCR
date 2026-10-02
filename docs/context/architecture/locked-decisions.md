@@ -160,9 +160,15 @@ have scored as unchanged. `FABR` must be 0. `refus` is a gap a reviewer can see.
 <a name="d7"></a>
 ### D7. No Docker. No container runtime on the server.
 
-**Decision.** The app runs as an R process on the Windows server, behind IIS. The
-container work (`deploy/Dockerfile`, `deploy/shinyproxy-application.yml`) stays on the
-shelf, built and documented but **not adopted**.
+**Decision.** The app runs as a **single R process** on the Windows server, started as
+a service, behind IIS. There is no container runtime, no ShinyProxy, no Linux guest.
+
+The container work was written, costed, and then **deleted** — `deploy/Dockerfile`,
+`deploy/shinyproxy-application.yml`, the operational page for it, and the app's own
+`SHINYPROXY_USERNAME` identity branch. Deleted rather than shelved on purpose: a
+deployment option sitting in the tree that cannot run in the only environment this
+tool is installed in is a thing the next maintainer has to read, cost and reject
+again. If the triggers at the end of this section are ever met, it is in the history.
 
 **The licensing trap first, because it decides it.** **Docker Desktop requires a paid
 subscription for government entities, unconditionally** — the employee-count and
@@ -189,9 +195,10 @@ Windows Integrated Auth, a shared-secret identity header, and the app bound to
 loopback. That is an afternoon, it needs no new technology, and it gets you a named
 person in the download log, which is the thing you actually asked for.
 
-Revisit containers only if one of these becomes true: a second analyst needs to work
-the same case concurrently, an audit requires OS-enforced separation rather than
-application-enforced, or someone else takes over the server who already runs Docker.
+**Revisit containers only if one of these becomes true**, and then recover the files
+from git history rather than rewriting them: a second analyst needs to work the same
+case concurrently; an audit requires OS-enforced separation rather than
+application-enforced; or someone takes over the server who already runs Docker.
 
 Two things that are **not** options, so nobody spends a week on them: **Shiny Server
 does not run on Windows**, open source or Pro, and **Shiny Server Pro support ended in
@@ -275,6 +282,33 @@ real -55 leaves 14. The centre is better advice than the truth.
 
 ---
 
+## 2b. What it costs on a real job
+
+Not a decision, but the thing every decision above has to survive. Measured at 1.10.0
+(`tools/synth/bench.py` + `bench.R`), on statements that reconcile exactly:
+
+| pages | rows | total | per page | wrong figures |
+|---|---|---|---|---|
+| 100 | 3,000 | 17.0 s | 0.17 s | 0 |
+| 200 | 6,000 | 33.6 s | 0.17 s | 0 |
+| 400 | 12,000 | 69.5 s | 0.17 s | 0 |
+
+**Linear in pages, flat per page, memory negligible.** There is no size at which this
+falls over, which is the only property worth locking.
+
+It was not always so, and both causes are worth remembering because they are the same
+mistake in two places: **a cost that is linear in pages buying information that is
+not.** The drift check read every page when eight spread across the document answer
+the question (46% of a 100-page conversion, now 1.7 s flat). The vector-redaction scan
+rasterised every page when the render pass already done for the sign check says which
+pages draw anything that could hide text (14.6 s of reading, now 3.8 s).
+
+`parse` is ~70% of what remains and is diffuse -- a third of it in `sub`/`gsub`/`grepl`
+spread across cell normalisation, no single hot spot. Making it faster means changing
+`.num()`, the money reader, and that is not a change to make for speed.
+
+---
+
 ## 3. The decision metrics, and their status
 
 Everything the tool can use to decide whether a conversion is trustworthy.
@@ -289,7 +323,8 @@ Everything the tool can use to decide whether a conversion is trustworthy.
 | `dates_readable` | the date column was found and parsed | **built** |
 | `no_unparsed_rows` | no row was silently dropped | **built** |
 | `account_number` (shape) | the account number was read intact | **built**, this change |
-| `column_bands` | the template still fits the page | **built**, this change |
+| `column_bands` | the template still fits the page | **built** |
+| `sign_scan_unavailable` | the minus-on-the-page check actually ran | **built**. High severity: both ink faults are invisible to the text layer, in opposite directions, and nothing else catches either on a statement with no running balance |
 | `redaction_summary`, `redaction_scan`, `ocr_confidence` | informational / was anything hidden read | **built** |
 | account number **check digit** | the account number is arithmetically valid | **researched, deliberately not built** — [account-number-check-digit.md](../account-number-check-digit.md) |
 | printed column **totals** cross-check | the sum of our debits equals the total the statement prints | **not built**. Free where a statement prints them; needs a template field to pin the region |
@@ -318,7 +353,6 @@ Open, and honestly so:
   have nothing to work with. Worth building, but not as a replacement.
 - **The check digit.** [Its own page](../account-number-check-digit.md) says what
   finishing it needs: one real statement per bank, to validate against.
-- **One container per analyst.** Built, documented, shelved — [D7](#d7).
 
 ## Related
 
@@ -326,7 +360,5 @@ Open, and honestly so:
 - [../charter.md](../charter.md) — the interface rule, and "refuse, explain, never guess"
 - [../../operational/who-is-using-it.md](../../operational/who-is-using-it.md) — do this
   instead of containers
-- [../../operational/one-container-per-analyst.md](../../operational/one-container-per-analyst.md)
-  — the shelved option, in full
 - [../account-number-check-digit.md](../account-number-check-digit.md) — the one metric
   researched and not built

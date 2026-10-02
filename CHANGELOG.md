@@ -13,6 +13,60 @@ finding id.
 
 ---
 
+## 1.10.0
+
+**A wrong figure that was live on every multi-page statement, and the tool is now
+three times faster on a big one.**
+
+**The sign read from the page was only ever read from page 1.** `.pdf_ink` split the
+renderer's output on a marker poppler 24.02 does not emit, so a multi-page statement
+collapsed into one ink entry holding every page's ink. Pages 2 onward got **no sign
+correction at all**, and page 1 got **false positives** from strokes elsewhere in the
+document. Measured on two new 3-page corpus cases: **48 fabricated figures**, every
+one a sign inversion (`731.87` where the statement said `-731.87`), all from row 31 —
+page 2 — and **trust stayed `medium`, so they would have published**. Both faults are
+invisible to the text layer and neither is caught by arithmetic on a statement with no
+running balance, which is exactly the shape of the `anz_investmentfunds_pdf` template
+we ship. Every ink case in the suite was a single page, so nothing failed.
+
+- `.pdf_ink` now returns one entry per page, and **refuses to apply ink at all** if
+  the count does not match the document rather than guessing the alignment.
+- A statement read **without** that scan now says so — `sign_scan_unavailable`, high
+  severity, owner `escalate`, because a missing `pdftocairo` is an install fault and
+  the consequence is inverted money-in/money-out with every check passing.
+- `draw_signed` in the corpus generator paginates, which is what made the regression
+  testable: this layout has no balance column, so the ink is the only evidence of the
+  sign.
+
+**It scales now, and the figures are documented.** Nothing had ever been run above
+nine pages. A 100-page statement took 49.8 s; it takes **17.0 s**, and 400 pages /
+12,000 rows takes 69.5 s at a flat 0.17 s/page with 0 wrong figures. Two stages were
+the cost:
+
+- the **drift check** was 46% of a 100-page conversion. Capped to eight pages spread
+  across the document — the information is not linear in pages even though the cost
+  was. 23.0 s → 1.7 s, and flat.
+- the **vector-redaction scan** rasterised every page of every PDF. The render pass
+  already done for the sign check says which pages draw a filled shape or an image,
+  and a page that draws neither cannot hide text, so it is not rasterised. Reading
+  100 pages: 14.6 s → 3.8 s. The gate only ever says "there is nothing here" — with
+  no usable ink list every page is scanned as before, because a page wrongly skipped
+  would leak blacked-out text.
+
+**No container deployment.** `deploy/Dockerfile`, the ShinyProxy config, the
+operational page for it and the app's `SHINYPROXY_USERNAME` identity branch are
+**deleted**. It cannot run on an air-gapped Windows box without a Linux guest and a
+container runtime, Docker Desktop is licensed for government entities
+unconditionally, and a deployment option in the tree that cannot run in the only
+environment this tool is installed in is a thing the next maintainer has to cost and
+reject again. The reasoning, and the triggers for revisiting it, are in
+[`docs/context/architecture/locked-decisions.md`](docs/context/architecture/locked-decisions.md).
+
+**Also:** a template that stops fitting now names the column (`column_bands`); the
+account number's shape is checked (`account_number`); no two files may define the same
+function name (a guard, after `.col_kind` was silently defined twice); and the
+architecture is written down as closed decisions with the evidence that closed each.
+
 ## 1.9.0
 
 **This tool reads bank statements. It does nothing else.**

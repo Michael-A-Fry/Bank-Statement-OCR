@@ -73,8 +73,8 @@ skipped: 0
   unless scope was deliberately removed, which is what happened at 1.9.0 and is
   the only reason the figures below are lower than 1.8.1's.
 
-The last full run measured **73 files, 1,012 tests, 5,448 passing assertions,
-0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.9.0, on R 4.3.3,
+The last full run measured **73 files, 1,019 tests, 5,457 passing assertions,
+0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.10.0, on R 4.3.3,
 with 1 skipped: one split test needs a Westpac bundle that lives in
 `samples/_private_staging/` and is deliberately not committed. Treat it as a
 floor to compare against, not a target to match.
@@ -83,6 +83,40 @@ Run it as `NOT_CRAN=true BSO_ALLOW_SKIPS=1 Rscript tests/run_tests.R`. Without
 `NOT_CRAN` the OS-level concurrency proof in `test-jobs.R` skips itself — ten
 assertions quietly not run, and they are the ones that prove the job cap is
 enforced by the operating system rather than merely bookkept.
+
+## How long a big statement takes
+
+Measured at 1.10.0 on this build (R 4.3.3, poppler 24.02.0, four cores), on synthetic
+statements that reconcile exactly — `tools/synth/make_bench.py` draws them,
+`tools/synth/bench.R` times them:
+
+| pages | rows | total | per page | peak extra memory | wrong figures |
+|---|---|---|---|---|---|
+| 30 | 900 | 10.7 s | 0.36 s | ~6 MB | 0 |
+| 100 | 3,000 | 17.0 s | 0.17 s | ~2 MB | 0 |
+| 200 | 6,000 | 33.6 s | 0.17 s | ~3 MB | 0 |
+| 400 | 12,000 | 69.5 s | 0.17 s | ~16 MB | 0 |
+
+**It is linear in pages and flat per page**, which is the property that matters: a
+statement twice the size takes twice as long and no more. Memory is negligible, so
+there is no size at which the server runs out.
+
+Two things to know when a number here looks wrong:
+
+- **`parse` is about 70% of it** (47.8 s of the 400-page run) and it is diffuse —
+  profiling puts a third of the time in `sub`/`gsub`/`grepl` spread across cell
+  normalisation, with no single hot spot. There is no cheap win left in it; a faster
+  parse means changing `.num()`, which is the money reader, and that is not a change
+  to make for speed alone.
+- **Conversions run in child processes** (`R/jobs.R`), so a 400-page job does not
+  freeze anyone else's browser. The cap on concurrent jobs is what protects the
+  machine: tesseract is OpenMP-parallel, and three concurrent *scans* on four cores
+  had not finished a single page after ten minutes.
+
+Re-run the benchmark after any change to reading, parsing or the diagnostics, and
+compare against the table. Two of the four stages were rewritten on the strength of
+it: the sign scan was reading the whole document once per call, and the drift check
+was 46% of a 100-page conversion before it was capped to eight sampled pages.
 
 **The figures fell between 1.8.1 and 1.9.0, and that is correct.** 1.9.0 removed
 the form (`mode: fields`) and report (`mode: document`) routes entirely — the

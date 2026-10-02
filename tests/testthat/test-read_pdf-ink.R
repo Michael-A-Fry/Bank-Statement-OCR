@@ -115,3 +115,135 @@ test_that("the counts reach a diagnostic, through all three places they are copi
   d0 <- build_diagnostics("ok", metadata = list(ink_minus_signs = 0L, faint_minus_signs = 0L))
   expect_false("sign_from_ink" %in% (d0$category %||% character(0)))
 })
+
+# ---------------------------------------------------------------------------
+# ...AND IT HAS TO SEE EVERY PAGE.
+#
+# MEASURED BUG, and it was the worst class of error this tool can make. .pdf_ink split
+# the renderer's output on `<g id="surface`, a marker poppler 24.02 does not emit, so a
+# multi-page statement collapsed into ONE ink entry holding every page's ink. read_pdf
+# applied that entry to page 1 alone, which is wrong in both directions at once:
+#
+#   * pages 2..N got NO sign correction, so a bank that draws its minus as a stroke
+#     had every page after the first read with the signs INVERTED; and
+#   * page 1 got FALSE POSITIVES, because a stroke anywhere in the document at the
+#     same (x, y) as a page-1 amount turned a correct positive negative.
+#
+# Every ink case in this file and in the corpus was a SINGLE PAGE, so the whole suite
+# passed while this was live. On the 3-page corpus cases it produced 48 fabricated
+# figures -- 29 sign inversions on the drawn-minus case, 19 on the invisible-minus
+# case, every one of them from row 31 on, which is page 2 -- and trust stayed MEDIUM,
+# so they would have published.
+#
+# The lesson is not about SVG. It is that a per-page mechanism tested only on
+# one-page documents is untested.
+
+test_that(".pdf_ink returns one entry per page, not one for the document", {
+  f <- .ink_pdf("signed_minus_as_ink_3page")
+  expect_identical(suppressMessages(pdftools::pdf_info(f))$pages, 3L)
+  ink <- .pdf_ink(f)
+  expect_false(is.null(ink))
+  expect_length(ink, 3L)
+  # and every page really carries its own strokes -- a split that yielded three
+  # entries by accident, two of them empty, would pass a length check alone
+  expect_true(all(vapply(ink, function(p) nrow(p$strokes) > 0L, logical(1))))
+})
+
+test_that("a drawn minus is honoured on page 3 as well as page 1", {
+  f <- .ink_pdf("signed_minus_as_ink_3page")
+  tp <- load_templates(templates_dir())
+  input <- read_input(f)
+  expect_true(isTRUE(input$meta$ink_scan_ok))
+  expect_identical(as.integer(input$meta$ink_scan_pages), 3L)
+  parsed <- parse_statement(input, tp[["anz_investmentfunds_pdf"]])
+  tx <- parsed$transactions
+  skip_if_not(nrow(tx) > 60, "specimen did not parse to three pages of rows")
+  # the fault was confined to pages 2+, so the test has to look there: with the bug
+  # every withdrawal after row 30 came back POSITIVE
+  late <- tx$amount[31:nrow(tx)]
+  expect_true(any(late < 0), info = "no negative amount after page 1 -- signs inverted")
+  # ...and the proportion of withdrawals is the same on page 1 as later, because the
+  # generator draws them from one distribution
+  expect_gt(mean(late < 0), 0.25)
+})
+
+test_that("ink that does not line up with the document is not applied at all", {
+  # Applying ink[[p]] to page p is only meaningful if they are the same page. A list
+  # of the wrong length means the renderer and the text layer disagree about the
+  # document, and guessing the alignment inverts signs on whichever pages are
+  # offset -- the exact fault the scan exists to prevent, caused by the scan.
+  src <- paste(readLines(file.path(engine_root(), "R", "read_pdf.R"), warn = FALSE),
+               collapse = "\n")
+  expect_match(src, "ink_ok <- !is.null(ink) && identical(ink_pages, as.integer(np))",
+               fixed = TRUE)
+  # and a one-page document still gets its scan, which is the case that always worked
+  f <- .ink_pdf("signed_minus_as_ink")
+  m <- read_input(f)$meta
+  expect_true(isTRUE(m$ink_scan_ok))
+  expect_identical(as.integer(m$ink_scan_pages), 1L)
+})
+
+# ---------------------------------------------------------------------------
+# THE SAME RENDER PASS ALSO SAYS WHICH PAGES COULD BE HIDING SOMETHING.
+#
+# The vector-redaction scan rasterises a page to check whether each word came out
+# solid. It is the only thing that catches a box DRAWN over text still present in the
+# text layer, which would otherwise leak blacked-out text into the spreadsheet -- and
+# it costs one external rasterisation PER PAGE: measured, about 11 of the 14.6 seconds
+# that reading a 100-page statement took, nearly all of it on statements with no
+# redactions at all.
+#
+# A word can only be hidden by paint, and paint is a filled path or an image. Both are
+# already in the renderer's output, produced in ONE pass for the sign check. So a page
+# that draws neither needs no rasterising, and the question costs nothing.
+
+test_that(".ink_fills finds the paint on a redacted page and none on a clean one", {
+  overlay <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
+  clean   <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
+  skip_if_not(file.exists(overlay) && file.exists(clean))
+  io <- .pdf_ink(overlay); ic <- .pdf_ink(clean)
+  expect_false(is.null(io)); expect_false(is.null(ic))
+  expect_gt(as.integer(io[[1]]$fills), 0L)      # four boxes, measured
+  expect_identical(as.integer(ic[[1]]$fills), 0L)
+})
+
+test_that("the skip is for the PRESENCE of paint, never for its absence", {
+  # A page wrongly skipped leaks redacted text, so the gate may only ever say "there
+  # is nothing here". Without a usable ink list -- no pdftocairo, or a page count that
+  # does not line up -- every page must be scanned exactly as before.
+  src <- paste(readLines(file.path(engine_root(), "R", "read_pdf.R"), warn = FALSE),
+               collapse = "\n")
+  expect_match(src, "can_hide <- !ink_ok || p > ink_pages ||", fixed = TRUE)
+  expect_match(src, "ink[[p]]$fills %||% 1L", fixed = TRUE)   # default: assume paint
+})
+
+test_that("a box over text is still caught with the gate in place", {
+  # The gate is only safe if it changes nothing about what gets FOUND. This is the
+  # overlay fixture that the colour-blind-detection work was built on.
+  f <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
+  skip_if_not(file.exists(f))
+  input <- read_input(f)
+  txt <- paste(unlist(input$pages %||% input$text %||% ""), collapse = " ")
+  expect_match(txt, "REDACTED", fixed = TRUE)
+})
+
+test_that("a statement read WITHOUT the sign scan says so, loudly", {
+  # The reason this is severity `high` and owner `escalate`: both ink faults are
+  # invisible to the text layer, in OPPOSITE directions, and on a statement with no
+  # running balance nothing else catches either -- the figures come out inverted and
+  # every check passes. So the only honest output is "this check did not happen".
+  d <- build_diagnostics("ok", metadata = list(ink_scan_ran = FALSE))
+  expect_true("sign_scan_unavailable" %in% d$category)
+  i <- which(d$category == "sign_scan_unavailable")
+  expect_identical(d$severity[i], "high")
+  expect_match(d$detail[i], "inverted")
+  expect_match(d$how_to_fix[i], "pdftocairo", fixed = TRUE)
+  expect_identical(unname(.diag_fix_owner("sign_scan_unavailable")), "escalate")
+
+  # ...and it does NOT fire when the scan ran, nor on a delimited file, which has no
+  # page to read ink from and must not be told its signs are in doubt.
+  expect_false("sign_scan_unavailable" %in%
+    build_diagnostics("ok", metadata = list(ink_scan_ran = TRUE))$category)
+  expect_false("sign_scan_unavailable" %in%
+    build_diagnostics("ok", metadata = list())$category)
+})

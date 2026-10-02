@@ -58,6 +58,26 @@
 # a two-thirds majority means something; below it every answer is noise.
 .CFIT_MIN_ROWS <- 4L
 
+# ...and how many PAGES it will look at, spread evenly across the document.
+#
+# MEASURED: on a 100-page statement this check was 23.0 of the 49.8 seconds a whole
+# conversion took -- 46%, the single largest stage, larger than reading the PDF. The
+# cost is linear in pages and the INFORMATION is not: a column either sits where the
+# template says or it does not, and eight pages spread through the document answer
+# that as well as a hundred. The cap makes the check O(1) in document length.
+#
+# EVENLY SPREAD, and never just the first eight: a bank that re-ran its composition
+# halfway through a bundle moves the columns from that point on, and a sample taken
+# off the front would report a clean fit for a document that stops fitting on page 50.
+# The first and last page are always included.
+#
+# WHAT THE CAP GIVES UP, stated plainly: a drift confined to a few pages in the middle
+# can fall between the samples. The figures are still safe -- the running balance
+# breaks across those rows and trust goes low -- so what is lost is the EXPLANATION,
+# not the protection. A statement whose layout changes partway through is also a
+# bundle rather than one statement, which R/split.R is the right answer to.
+.CFIT_MAX_PAGES <- 8L
+
 # Of the rows where a band holds anything, the fraction that must hold the right KIND
 # of thing for the band to be called healthy.
 .CFIT_OK_RATE <- 0.9
@@ -176,7 +196,10 @@
   pw <- input$page_width %||% rep(NA_real_, length(wbp))
   ph <- input$page_height %||% rep(NA_real_, length(wbp))
   rows <- list()
-  for (p in seq_along(wbp)) {
+  np <- length(wbp)
+  look <- if (np <= .CFIT_MAX_PAGES) seq_len(np) else
+    unique(c(1L, round(seq(1, np, length.out = .CFIT_MAX_PAGES)), np))
+  for (p in look) {
     w <- wbp[[p]]
     if (is.null(w) || !nrow(w)) next
     w <- .words_to_band_frame(as.data.frame(w, stringsAsFactors = FALSE), frame, pw[p], ph[p])

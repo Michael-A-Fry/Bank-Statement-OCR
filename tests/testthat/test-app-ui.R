@@ -2709,33 +2709,25 @@ test_that("a forged identity header is refused, and the run is never called 'sso
   expect_identical(r$source, "os")
 })
 
-test_that("one container per analyst: the name arrives in the environment", {
-  # ShinyProxy starts a container per person and sets SHINYPROXY_USERNAME inside it
-  # (deploy/shinyproxy-application.yml). That is a STRONGER guarantee than any
-  # header: nothing on the network can reach into a container's environment, so
-  # there is no forgery to defend against and no shared secret to keep.
+test_that("no identity source reads the environment any more", {
+  # There was a branch here reading an environment variable set by a per-container
+  # deployment. That deployment has been deleted (locked-decisions.md, D7: no container
+  # runtime on an air-gapped Windows box), and this holds the branch gone.
   #
-  # Without this the app would fall back to the CONTAINER'S OWN account, the audit
-  # log would say `os` -- which R/logging.R documents as identifying NOBODY -- and
-  # the download log could not name a person. The entire point of the
-  # per-container deployment would be lost at the last step.
-  before <- Sys.getenv("SHINYPROXY_USERNAME", unset = NA_character_)
-  on.exit(if (is.na(before)) Sys.unsetenv("SHINYPROXY_USERNAME")
-          else Sys.setenv(SHINYPROXY_USERNAME = before), add = TRUE)
-
-  Sys.setenv(SHINYPROXY_USERNAME = "container.detective")
-  r <- .ident(list(identity_header = "", identity_shared_secret = ""), .hdrs())
-  expect_identical(r$source, "host")          # the platform's own authenticated user
-  expect_identical(r$who, "container.detective")
-
-  # ...and a forged header cannot beat it, because it is checked first
+  # It must stay gone for a reason that is specific to how this app runs: it is ONE R
+  # process serving every analyst, so every session shares one environment. An
+  # environment variable is therefore not a per-person authenticated identity here --
+  # a leftover branch reading one would let anything able to set a variable in the
+  # service account environment name itself in the download log.
+  ln <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  expect_false(any(grepl("PROXY_USERNAME", ln, fixed = TRUE)))
+  # ...and no environment read survives anywhere in the identity chain itself
+  i <- grep("detected_identity_info <- function", ln, fixed = TRUE)[1]
+  expect_false(is.na(i))
+  expect_false(any(grepl("Sys.getenv", ln[i:(i + 40L)], fixed = TRUE)))
+  # the real guarantee the deleted branch was tested for is kept: a forged header
+  # cannot name itself without the shared secret
   r <- .ident(.IDENT_ON, .hdrs(HTTP_X_REMOTE_USER = "attacker"))
-  expect_identical(r$who, "container.detective")
-
-  # ...and with it unset, nothing about the bare deployment changed
-  Sys.unsetenv("SHINYPROXY_USERNAME")
-  r <- .ident(list(identity_header = "", identity_shared_secret = ""),
-              .hdrs(HTTP_X_FORWARDED_USER = "attacker"))
   expect_identical(r$source, "os")
 })
 

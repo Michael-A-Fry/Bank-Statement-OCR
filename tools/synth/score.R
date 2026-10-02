@@ -39,6 +39,9 @@ suppressWarnings(suppressMessages({
 root <- normalizePath(".")
 Sys.setenv(ENGINE_ROOT = root)
 for (f in list.files(file.path(root, "R"), "[.]R$", full.names = TRUE)) source(f)
+# .signed / eq_money / read_truth, shared with bench.R so the two harnesses cannot
+# disagree about what the ground truth says (see tools/synth/truth.R).
+source(file.path(root, "tools", "synth", "truth.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (!length(args)) stop("usage: score.R <corpus-dir> [filter]")
@@ -65,26 +68,11 @@ tpl_for <- function(case) {
 
 # .signed(debit, credit) -- the truth's two columns as the one signed number the
 # engine produces. A debit is money out: negative.
-.signed <- function(debit, credit) {
-  if (!is.null(debit) && !is.na(debit)) return(-abs(as.numeric(debit)))
-  if (!is.null(credit) && !is.na(credit)) return(abs(as.numeric(credit)))
-  NA_real_
-}
-
-eq_money <- function(a, b, tol = 0.005) {
-  if (is.na(a) && is.na(b)) return(TRUE)
-  if (is.na(a) || is.na(b)) return(FALSE)
-  abs(a - b) < tol
-}
 
 score_one <- function(pdf, truth_path) {
-  tr <- jsonlite::fromJSON(truth_path, simplifyDataFrame = FALSE)
+  tr <- read_truth(truth_path)
   case <- tr$case
-  want <- lapply(tr$rows, function(r) list(
-    date = r$date,
-    amount = .signed(r$debit, r$credit),
-    balance = if (is.null(r$balance)) NA_real_ else as.numeric(r$balance),
-    description = r$description))
+  want <- tr$want
 
   out <- list(case = case, note = tr$note, n_truth = length(want),
               n_parsed = NA_integer_, matched = NA_integer_,

@@ -206,13 +206,20 @@ ownership to check against, so cross-case reading is still gated on the shared a
 password rather than on a reasoned, logged, per-case grant. The log makes it
 *visible* after the fact, which is worth having and is not the same as prevention.
 
-**The next step is written up: [one-container-per-analyst.md](one-container-per-analyst.md)**,
-with a Dockerfile and a ShinyProxy config. Real per-user isolation needs one R process
-per user, which on Windows means a Linux guest running ShinyProxy (free,
-Apache-2.0, one container per session) or Posit Connect with `RunAsCurrentUser`
-enabled — note that Connect **without** that setting shares one process between up
-to 20 users, so buying it does not buy isolation by itself. Shiny Server Pro is not
-an option: support for it ended in March 2026.
+**Real per-user isolation would need one R process per analyst, and it is not being
+built.** It was costed and rejected — see
+[locked-decisions.md, D7](../context/architecture/locked-decisions.md). On Windows it
+means a Linux guest running a container runtime: five new layers on an air-gapped box
+maintained by one person, and Docker Desktop is licensed for government entities
+unconditionally. Posit Connect is the paid alternative, and note that **without**
+`RunAsCurrentUser` it shares one R process between up to 20 users, so buying it does
+not buy isolation by itself. Shiny Server is not an option at all — it does not run on
+Windows, and Pro support ended in March 2026.
+
+So the honest position is that **this page is the isolation story**: identity is
+recorded, and a download is logged against a named person. Separation is enforced by
+the app's own checks, not by the file system. Revisit that only if a second analyst
+must work the same case concurrently, or an audit requires OS-enforced separation.
 
 ---
 

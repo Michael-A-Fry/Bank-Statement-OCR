@@ -232,9 +232,17 @@ read_pdf <- function(path, redaction_rects = NULL,
   # carried so a diagnostic can say the page uses them.
   ink_minus <- 0L; faint_dropped <- 0L
   ink <- .pdf_ink(path)
-  if (!is.null(ink) && length(ink) >= 1L) {
+  # ONE INK PAGE PER DOCUMENT PAGE, OR THE SCAN DOES NOT RUN. Applying ink[[p]] to
+  # word_list[[p]] is only meaningful if the two are the same page. A short or long
+  # list means the renderer and the text layer disagree about the document, and
+  # guessing the alignment inverts signs on whichever pages are offset -- the exact
+  # fault this scan exists to prevent, caused by the scan. `ink_scan_pages` is
+  # carried so a diagnostic can say the check did not run.
+  ink_pages <- length(ink %||% list())
+  ink_ok <- !is.null(ink) && identical(ink_pages, as.integer(np))
+  if (ink_ok) {
     for (p in seq_along(word_list)) {
-      if (p > length(ink) || is.null(word_list[[p]]) || !nrow(word_list[[p]])) next
+      if (is.null(word_list[[p]]) || !nrow(word_list[[p]])) next
       r <- safe(.apply_ink_signs(word_list[[p]], ink[[p]]), NULL)
       if (is.null(r)) next
       word_list[[p]] <- r$words
@@ -372,7 +380,14 @@ read_pdf <- function(path, redaction_rects = NULL,
     # picture. Rasterise the page and mark any word whose rendered box is ~solid
     # dark as redacted, the same visibility test the scanned path uses, here at
     # word granularity. Skipped when the page was OCR'd (already covered) or off.
-    if (scan_vector && !ocr_flags[p]) {
+    # SKIPPED WHEN THE RENDERER SAYS THERE IS NOTHING ON THIS PAGE THAT COULD HIDE
+    # ANYTHING (see .ink_fills). `ink_ok` is required, so a page is only skipped when
+    # the ink list is known to line up with the document; without that, every page is
+    # scanned exactly as before. Erring towards scanning is the only safe direction --
+    # a page wrongly skipped would leak blacked-out text.
+    can_hide <- !ink_ok || p > ink_pages ||
+      suppressWarnings(as.integer(ink[[p]]$fills %||% 1L)) > 0L
+    if (scan_vector && !ocr_flags[p] && isTRUE(can_hide)) {
       gp <- words[[p]]
       if (!is.null(gp) && nrow(gp) > 0) {
         occ <- detect_occluded_words(path, p, gp, page_width[p], page_height[p],
@@ -426,6 +441,10 @@ read_pdf <- function(path, redaction_rects = NULL,
     # telling a reviewer, even though the figures are now right.
     ink_minus_signs = ink_minus,
     faint_minus_signs = faint_dropped,
+    # the sign-from-ink scan: did it run, and over how many pages. A statement read
+    # without it, that prints its minus as ink, is read with inverted signs.
+    ink_scan_ok = ink_ok,
+    ink_scan_pages = ink_pages,
     ocr = ocr_flags,
     ocr_conf = ocr_conf,
     # Pages that ARE scans but could not be machine-read because the OCR tools are
@@ -621,9 +640,62 @@ read_pdf <- function(path, redaction_rects = NULL,
   if (!identical(as.integer(st), 0L) || !file.exists(out)) return(NULL)
   svg <- safe(paste(readLines(out, warn = FALSE), collapse = "\n"), NULL)
   if (is.null(svg) || !nzchar(svg)) return(NULL)
-  pages <- strsplit(svg, "<g id=\"surface", fixed = TRUE)[[1]]
-  if (length(pages) < 2) pages <- c("", svg) else pages <- pages
-  lapply(pages[-1], function(pg) list(strokes = .ink_strokes(pg), faint = .ink_faint(pg)))
+  # ---- ONE ENTRY PER PAGE, AND THE SPLIT HAS TO BE RIGHT -------------------
+  #
+  # MEASURED BUG, and it was silent, and it moved figures in BOTH directions. This
+  # split on `<g id="surface`, which poppler 24.02 does not emit at all: a 100-page
+  # statement therefore returned ONE entry holding every page's ink. read_pdf then
+  # applied that to page 1 alone, so
+  #
+  #   * pages 2..N got NO sign correction -- a bank that draws its minus as a stroke
+  #     had every page after the first read with the signs inverted; and
+  #   * page 1 got FALSE positives -- a stroke anywhere in the document at the same
+  #     (x, y) as a page-1 amount turned a correct positive negative.
+  #
+  # Neither shows on a one-page fixture, which is why every test passed. poppler
+  # wraps each page in <page>...</page> inside a <pageSet>; the surface form is kept
+  # as a fallback because other builds do emit it, and a single-page SVG has neither.
+  per_page <- regmatches(svg, gregexpr("<page>.*?</page>", svg))[[1]]
+  if (!length(per_page)) {
+    surf <- strsplit(svg, "<g id=\"surface", fixed = TRUE)[[1]]
+    per_page <- if (length(surf) >= 2) surf[-1] else svg
+  }
+  lapply(per_page, function(pg) list(strokes = .ink_strokes(pg),
+                                     faint = .ink_faint(pg),
+                                     fills = .ink_fills(pg)))
+}
+
+# .ink_fills(pg) -- how many FILLED SHAPES or images this page draws. Nothing is
+# measured about them; the count exists only to answer "could anything on this page be
+# hiding text?", and 0 means no.
+#
+# WHY THAT QUESTION IS WORTH ASKING. The vector-redaction scan rasterises a page and
+# checks whether each word's box came out solid -- the only thing that catches a box
+# DRAWN over text that is still in the text layer, which would otherwise leak
+# blacked-out text into the spreadsheet. It also costs one external rasterisation PER
+# PAGE: measured, about 11 of the 14.6 seconds that reading a 100-page statement took,
+# and all of it wasted on the overwhelming majority of statements, which have no
+# redactions at all.
+#
+# A word can only be hidden by something painted over it, and everything that can be
+# painted over it is either a filled path or an image. Both are in the renderer's own
+# output, which has already been produced in ONE pass for the sign check -- so the
+# question is answered for free, and a page that draws neither does not need
+# rasterising. Measured on the fixtures: the two redaction fixtures have 4 and 2
+# filled paths, a real ANZ statement and a 30-page synthetic have NONE.
+#
+# CONSERVATIVE BY CONSTRUCTION. This may only ever say "there is nothing here"; if the
+# renderer is unavailable or the page count does not line up, read_pdf scans every
+# page exactly as before. A false "nothing here" would leak redacted text, so the test
+# is for the PRESENCE of paint and never for its absence.
+.ink_fills <- function(pg) {
+  pats <- c('<path[^>]*fill="rgb[(]', "<image", "<pattern", '<use[^>]*mask=')
+  n <- 0L
+  for (rx in pats) {
+    hit <- gregexpr(rx, pg, perl = TRUE)[[1]]
+    if (hit[1] > 0) n <- n + length(hit)
+  }
+  n
 }
 
 # .ink_strokes(pg) -> data.frame(x0, x1, y, len, linewidth) for the HORIZONTAL

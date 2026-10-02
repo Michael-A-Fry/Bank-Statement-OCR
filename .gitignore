@@ -96,3 +96,7 @@ make-bundle.log
 !/templates/statements_user/README.md
 !/templates/fields_user/README.md
 !/templates/documents_user/README.md
+
+# Python bytecode from the dev-time corpus generator (tools/synth). Never shipped.
+__pycache__/
+*.pyc

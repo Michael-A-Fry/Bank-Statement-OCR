@@ -114,6 +114,11 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     # unaccountably negative to anyone checking them against the page by eye.
     ink_minus_signs = pdf$ink_minus_signs %||% 0L,
     faint_minus_signs = pdf$faint_minus_signs %||% 0L,
+    # ...and whether that scan RAN. A statement read without it, that prints its
+    # minus as ink, is read with the signs inverted and nothing objects. Carried for
+    # the same reason as the counts: a fact that stops here can never be reported.
+    ink_scan_ok = pdf$ink_scan_ok %||% FALSE,
+    ink_scan_pages = pdf$ink_scan_pages %||% 0L,
     ocr = pdf$ocr,
     ocr_conf = pdf$ocr_conf,
     # Pages that ARE scans but could not be machine-read, and whether the OCR tools
@@ -201,6 +206,8 @@ read_input <- function(path, redaction_rects = NULL) {
     # checking them against the page by eye.
     input$meta$ink_minus_signs <- x$ink_minus_signs %||% 0L
     input$meta$faint_minus_signs <- x$faint_minus_signs %||% 0L
+    input$meta$ink_scan_ok <- x$ink_scan_ok %||% FALSE
+    input$meta$ink_scan_pages <- x$ink_scan_pages %||% 0L
     # Who wrote this PDF, and when. Forensic provenance the reader gets for free
     # from pdf_info; carried on the input so diagnostics can STATE it. Reported
     # factually and never interpreted -- it changes no figure, status or trust.
