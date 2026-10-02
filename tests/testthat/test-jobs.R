@@ -588,3 +588,85 @@ test_that("liveness cannot mistake 'this host cannot tell' for 'it died'", {
   # noticed as dead
   expect_false(isTRUE(job_pid_alive(2147483000L)))
 })
+
+# ---------------------------------------------------------------------------
+# "ARE WE SURE IT HANDLES MULTIPLE USERS GRACEFULLY?" -- measured, at the OS.
+#
+# The test above pins the queue by reading each job's RECORDED state. That is not
+# the same question as "how many R processes are actually alive", and only the
+# second one protects the machine: a cap that is bookkept correctly but not
+# enforced would still put ten OCR processes on a four-core box.
+#
+# This asks the operating system instead, by polling the recorded pids. It found
+# that job_poll can briefly report MORE jobs as "running" than the cap -- a
+# finished child whose exit has not been noticed yet, while its replacement has
+# already started. The processes are within the cap throughout; it is the
+# bookkeeping that lags. And the lag is in the SAFE direction: job_pump computes
+# free slots by SUBTRACTING the running count, so an over-report starts FEWER
+# jobs, never more.
+#
+# The second half is the one that matters most for a forensic tool: every one of
+# those concurrent conversions must produce the SAME answer it would have produced
+# alone. A pipeline that is merely fast under load, and quietly different, would be
+# worse than one that queued.
+# ---------------------------------------------------------------------------
+test_that("the cap is enforced by the OS, not just bookkept, and load changes no figure", {
+  skip_if_not(file.exists(.csv_fixture()))
+  skip_on_cran()
+  on.exit(.jobs_reset())
+  .jobs_reset()
+  cap <- 2L
+  job_set_max_concurrent(cap)
+  N <- cap + 3L                      # deliberately oversubscribed
+  hs <- lapply(seq_len(N), function(i) {
+    od <- tempfile("tconc_"); dir.create(od)
+    job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
+              templates_dir = templates_dir(),
+              logdir = .tlog(), requested_by = "TSTCONC")
+  })
+
+  # how many of these jobs have a pid that is a LIVE process right now
+  live <- function() sum(vapply(hs, function(h) {
+    p <- file.path(h$dir, "pid")
+    if (!file.exists(p)) return(FALSE)
+    pid <- suppressWarnings(as.integer(readLines(p, warn = FALSE)[1]))
+    !is.na(pid) && isTRUE(job_pid_alive(pid))
+  }, logical(1)))
+
+  worst <- 0L; t0 <- Sys.time()
+  repeat {
+    worst <- max(worst, live())
+    st <- vapply(hs, job_poll, character(1))
+    if (all(st %in% c("done", "failed"))) break
+    if (as.numeric(difftime(Sys.time(), t0, units = "secs")) > 240) break
+    Sys.sleep(0.1)
+  }
+  expect_lte(worst, cap)             # THE invariant: never more processes than the cap
+  expect_gt(worst, 0L)               # and the probe really was watching something
+
+  st <- vapply(hs, job_poll, character(1))
+  expect_identical(st, rep("done", N))   # oversubscribing loses nobody's work
+
+  # EVERY concurrent run produced the SAME answer. Not "all succeeded" -- the same
+  # row count, the same status, from the same input.
+  res <- lapply(hs, function(h) safe(job_result(h), NULL))
+  expect_true(all(!vapply(res, is.null, logical(1))))
+  rows <- vapply(res, function(r) as.integer(r$run_log$row_count %||% NA_integer_), integer(1))
+  expect_false(any(is.na(rows)))
+  expect_identical(length(unique(rows)), 1L)
+  expect_setequal(unique(vapply(res, function(r) r$status %||% "", character(1))), "ok")
+  for (h in hs) job_reap(h)
+})
+
+test_that("a queued analyst is TOLD to wait, in words, with a number", {
+  # A silent wait is the failure R/jobs.R exists to remove, so the message is part
+  # of the contract and not a nicety. app.R's job_say() is what renders it; this
+  # pins that the words and the number are both there, and that the number falls.
+  src <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  blk <- .src_block(src, "job_say <- function", 20L)
+  expect_match(blk, "job_queue_ahead\\(h\\)")
+  expect_match(blk, "ahead of yours", fixed = TRUE)
+  expect_match(blk, "starts as soon as one finishes", fixed = TRUE)
+  # and with nothing in front, it does not say "0 conversions ahead of yours"
+  expect_match(blk, "Yours starts in a moment", fixed = TRUE)
+})

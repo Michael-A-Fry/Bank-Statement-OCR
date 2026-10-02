@@ -28,13 +28,35 @@ and JSON; the R harness (tools/synth/score.R) reads them. A subset of the PDFs i
 committed as fixtures, the generator is a dev-time tool, and the product gains no
 Python dependency.
 
+PYTHON: 3.9 or newer. Tested on 3.11, 3.12 and 3.13, which produce BYTE-IDENTICAL
+ground truth -- the corpus is reproducible across interpreters and across runs, so
+it can be regenerated, bisected against, or handed to somebody else and still mean
+the same thing. Needs reportlab (drawing) and pymupdf (one case: /Rotate 90).
+
 Run:  python3 tools/synth/make_corpus.py --out /tmp/corpus
       python3 tools/synth/make_corpus.py --out /tmp/corpus --only band_cliff
 """
 
-import argparse, json, os, random, sys
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
+import argparse, json, os, random, sys, zlib
+
+# The oldest interpreter this is known to work on. CHECKED BEFORE THE THIRD-PARTY
+# IMPORTS BELOW, because otherwise the reportlab import fails first and the person
+# on an old Python sees a traceback about a package instead of being told the
+# version. (That is exactly what happened the first time this guard was written,
+# further down the file, where it could never run.)
+MIN_PYTHON = (3, 9)
+if sys.version_info < MIN_PYTHON:
+    sys.exit("make_corpus.py needs Python %d.%d or newer (this is %s)"
+             % (MIN_PYTHON[0], MIN_PYTHON[1], sys.version.split()[0]))
+
+try:
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+except ImportError as e:            # noqa: BLE001 -- the message IS the handling
+    sys.exit("make_corpus.py needs reportlab to draw the specimens (%s).\n"
+             "  python3 -m pip install reportlab pymupdf\n"
+             "Nothing in the app needs it: this is a dev-time tool and the server "
+             "runs R alone." % e)
 
 # A4 in points. The y axis in reportlab runs UP from the bottom; every layout
 # below is written in TOP-DOWN coordinates (y from the top of the page) and
@@ -580,9 +602,18 @@ def build(case_name, note, out_dir, seed=4242, **kw):
     start_month = kw.pop("start_month", 2)
     start_year = kw.pop("start_year", 2026)
 
-    # A per-case seed, derived from the name rather than from the iteration order,
-    # so adding a case does not change the figures in every other one.
-    case_seed = seed + (abs(hash(case_name)) % 9973)
+    # A per-case seed derived from the NAME, so adding a case does not change the
+    # figures in every other one.
+    #
+    # crc32 AND NOT hash(). Python salts the hash of a string per process unless
+    # PYTHONHASHSEED is set, so `hash(case_name)` made the corpus IRREPRODUCIBLE:
+    # two runs of the same interpreter produced different figures for the same
+    # case, and 0 of 37 truth files matched between Python 3.11 and 3.12. Nothing
+    # measured was wrong -- each PDF carries its own truth, so every score compared
+    # like with like -- but "regenerate the corpus and get the same corpus" has to
+    # hold for a corpus to be bisected against or handed to anybody else. crc32 is
+    # stable across processes, versions and platforms, and is in the stdlib.
+    case_seed = seed + (zlib.crc32(case_name.encode("utf-8")) % 9973)
     opening, rows, closing = make_rows(n, seed=case_seed, long_desc=long_desc,
                                        with_balance=with_balance,
                                        allow_overdraft=allow_overdraft,
@@ -642,7 +673,7 @@ def _apply_rotate(pdf, deg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", help="where to write the PDFs and truth files")
     ap.add_argument("--only", default=None,
                     help="build just the cases whose name contains this")
     ap.add_argument("--list", action="store_true")
@@ -650,8 +681,10 @@ def main():
 
     if a.list:
         for name, note, _ in CASES:
-            print("%-26s %s" % (name, note))
+            print("%-30s %s" % (name, note))
         return 0
+    if not a.out:
+        ap.error("--out is required (or use --list to see the cases)")
 
     os.makedirs(a.out, exist_ok=True)
     built = 0

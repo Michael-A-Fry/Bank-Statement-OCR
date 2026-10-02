@@ -5,10 +5,23 @@ paired with the exact rows it was drawn from. `score.R` runs the engine over the
 and scores it against that ground truth.
 
 ```
-python3 tools/synth/make_corpus.py --out /tmp/corpus    # 31 cases, PDF + .truth.json
+python3 tools/synth/make_corpus.py --out /tmp/corpus    # 37 cases, PDF + .truth.json
 Rscript  tools/synth/score.R /tmp/corpus                # the score board
 python3 tools/synth/make_corpus.py --list               # what each case tests
 ```
+
+**Python 3.9 or newer**, plus `reportlab` and `pymupdf`. Tested on **3.11, 3.12 and
+3.13**, which produce **byte-identical ground truth** — so the corpus can be
+regenerated, bisected against, or handed to somebody else and still mean the same
+thing.
+
+> That reproducibility had to be fixed to be true. The per-case seed was
+> `hash(case_name)`, and Python **salts the hash of a string per process** unless
+> `PYTHONHASHSEED` is set — so two runs of the same interpreter produced different
+> figures and 0 of 37 truth files matched between 3.11 and 3.12. Nothing measured was
+> wrong, because each PDF carries its own truth and every score compared like with
+> like; but a corpus you cannot regenerate is one you cannot bisect against. It is
+> `zlib.crc32` now.
 
 ## Why this exists
 
