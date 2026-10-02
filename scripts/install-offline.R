@@ -94,7 +94,8 @@ find_dir <- function(name) {
 repo   <- find_dir("repo")
 prereq <- find_dir("prereqs")
 pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
-          "pdftools", "magick", "testthat")
+          "pdftools", "magick", "openssl", "digest", "zip", "htmltools",
+          "testthat")
 
 ## 1. R packages ------------------------------------------------------------
 if (!nzchar(repo)) stop("Could not find the 'repo' folder. Run this from inside the 'offline' folder.")

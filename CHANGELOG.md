@@ -77,6 +77,28 @@ not stuck. Five concurrent 100-page jobs against a cap of 3 finish in 43.8 s (on
 alone: 17.0 s), all five complete, and `job_queue_ahead()` lets the screen say where
 someone is in the queue.
 
+**The offline bundle was missing a package our own code names.** `openssl` is called
+by name in `R/util.R`, `R/convert.R` and `R/layout.R`, and it was in neither the
+bundle's list nor any listed package's dependency tree. The hashes still came out
+right, because `digest` computes the same SHA-256 and ships as a dependency of shiny
+— but a required package present by accident of another package's dependencies is not
+a requirement that has been met. `openssl`, `digest`, `zip` and `htmltools` are now
+named explicitly, in both `bundle-offline.R` and `install-offline.R` (the suite
+already enforced that those two agree).
+
+**And `file_sha256()` could return an MD5.** The last-resort branch was
+`tools::md5sum`, so with neither openssl nor digest available a function named
+`file_sha256` returned an MD5 — into a field labelled sha256, in an evidence record,
+with nothing saying the algorithm had changed. "Is this the same statement the analyst
+converted in March?" would have compared two different algorithms and confidently
+answered no. It returns `NA` now, which is what a missing file already returns, so
+every caller handles it.
+
+**The bundle manifest understated what a missing Poppler costs.** It said "scanned
+PDFs will not be readable", which is true and is the smaller half: without
+`pdftocairo` a statement that draws its minus as ink converts with money-in/money-out
+**inverted**. The manifest, the build warning and the go-live checklist now say so.
+
 **Also:** a template that stops fitting now names the column (`column_bands`); the
 account number's shape is checked (`account_number`); no two files may define the same
 function name (a guard, after `.col_kind` was silently defined twice); and the

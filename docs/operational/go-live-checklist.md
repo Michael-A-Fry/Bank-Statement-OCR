@@ -213,6 +213,53 @@ a shipped template. Convert it. Download the Excel.
 A figure that disagrees is a **stop**. Do not go live around it — take it to
 [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md).
 
+### ...and check the SIGNS, specifically
+
+Add one check to the list above, and do it on a statement that has **withdrawals and
+deposits in a single signed column** if the unit receives any:
+
+- **every withdrawal is negative and every deposit is positive.**
+
+This is called out separately because it is the one error the arithmetic cannot
+always catch. Some banks draw the minus as a short **line of ink** rather than
+printing it as a character, and some print one in the **background colour** on
+positive amounts to keep a column right-aligned. Both are invisible to the text
+layer, in opposite directions, and on a statement with **no running balance column**
+there is nothing to reconcile against — so the figures come out inverted and every
+check passes.
+
+`pdftocairo` is what reads them. Two ways to be sure it is there:
+
+```
+Rscript scripts\health-check.R
+```
+
+— the **Signs** line must say the page can be read. And on any conversion, a
+diagnostic reading *"the sign-on-the-page check could not run"* is a **stop**: it
+means Poppler is incomplete on this box. The remedy is in the bundle under
+`offline\prereqs`, and `offline\manifest.txt` says whether it travelled.
+
+### 8b. Run a LONG one, so nobody mistakes slow for stuck
+
+If the unit handles statements over about fifty pages, convert one before go-live and
+time it. Measured on a reference build:
+
+| | per page | 120 pages |
+|---|---|---|
+| a normal PDF (has a text layer) | 0.17 s | ~20 seconds |
+| a **scan** (every page read as a picture) | **9.3 s** | **~19 minutes** |
+
+A long **digital** statement is a non-event — 400 pages and 12,000 rows convert in
+about 70 seconds. A long **scan** really does take a quarter of an hour or more, and
+the screen says how long before it starts. Tell the team that number, because the
+natural response to a silent screen is to reload or upload again, and on this
+single-process server re-uploading is the one response that makes it worse.
+
+**Never split a long statement into smaller files to speed it up.** The
+opening-plus-transactions-equals-closing check only works across the whole statement;
+split it and each piece has an opening balance nothing printed, so you lose the proof
+that the figures are right. The tool used to advise splitting. It was wrong.
+
 ## 9. Make it survive a reboot
 
 **Do:** register the scheduled task exactly as

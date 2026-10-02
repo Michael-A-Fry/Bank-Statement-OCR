@@ -146,9 +146,16 @@ test_that("the manifest states every prerequisite, present or absent", {
   for (key in c("r_installer:", "installer:", "packages:", "poppler:", "tesseract:",
                 "app_payload:", "dictionaries:", "private_data:"))
     expect_true(any(grepl(key, man, fixed = TRUE)), info = paste("manifest omits", key))
-  # an absent prerequisite is named as MISSING and says what it costs
-  expect_match(grep("^  poppler:", man, value = TRUE), "MISSING")
-  expect_match(paste(man, collapse = "\n"), "scanned PDFs will not be readable", fixed = TRUE)
+  # an absent prerequisite is named as MISSING and says what it costs -- and for
+  # POPPLER what it costs is not only scans. pdftocairo is how the reader sees a minus
+  # DRAWN as ink, or printed in the background colour: without it such a statement
+  # converts with money-in/money-out INVERTED, and where there is no running balance
+  # every check still passes. The manifest used to call that "scanned PDFs will not be
+  # readable", which is true and is the smaller half.
+  pl <- grep("^  poppler:", man, value = TRUE)
+  expect_match(pl, "MISSING")
+  expect_match(pl, "scanned PDFs unreadable", fixed = TRUE)
+  expect_match(pl, "INVERTED", fixed = TRUE)
   # and the present ones are not reported as missing
   for (key in c("^  r_installer:", "^  installer:", "^  tesseract:", "^  app_payload:"))
     expect_false(grepl("MISSING", grep(key, man, value = TRUE)), info = key)

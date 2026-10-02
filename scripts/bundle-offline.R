@@ -38,8 +38,17 @@ dist      <- "StatementStudio-offline"
 bundle    <- file.path(dist, "offline")
 repo_path <- file.path(bundle, "repo")
 prereq    <- file.path(bundle, "prereqs")
+# EVERY package our own code NAMES, not every package it ends up needing: miniCRAN
+# resolves the dependencies below. `openssl` is on the list because R/util.R,
+# R/convert.R and R/layout.R call it by name -- it was absent before, and absent from
+# every listed package's dependency tree, so the offline install got it only if
+# something else happened to pull it in. It did not. The hash still came out right
+# because `digest` computes the same SHA-256 and ships with shiny, but a required
+# package present by accident of another package's dependencies is not a requirement
+# that has been met.
 pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
-          "pdftools", "magick", "testthat")
+          "pdftools", "magick", "openssl", "digest", "zip", "htmltools",
+          "testthat")
 
 # Paths that must NEVER travel inside a bundle. samples/_private_staging holds
 # REAL bank statements -- its own README promises the folder "stays local ...
@@ -323,7 +332,16 @@ man <- c(
     if (length(gap)) sprintf("MISSING %s (the app will not start)", paste(sort(gap), collapse = ", "))
     else sprintf("%d file(s) in offline/repo", length(list.files(repo_path, pattern = "\\.zip$", recursive = TRUE)))
   }),
-  sprintf("  poppler:       %s", if (isTRUE(got_poppler)) "included" else "MISSING (scanned PDFs will not be readable)"),
+  # POPPLER IS NOT ONLY ABOUT SCANS, and saying so understated it by a long way.
+  # pdftocairo is how the reader sees a minus DRAWN as ink, or printed in the
+  # background colour -- two constructions real banks use, both invisible to the text
+  # layer, in opposite directions. Without it such a statement is converted with
+  # money-in and money-out INVERTED, and where there is no running balance nothing
+  # objects: every check passes. That is a wrong figure, not a missing capability.
+  sprintf("  poppler:       %s", if (isTRUE(got_poppler)) "included"
+          else paste("MISSING -- scanned PDFs unreadable, AND signs drawn as ink",
+                     "cannot be read, so some statements would convert with",
+                     "money-in/money-out INVERTED")),
   sprintf("  tesseract:     %s", if (isTRUE(got_tesseract)) "included" else "MISSING (scanned PDFs will not be readable)"),
   sprintf("  app_payload:   %s", if (length(missing)) sprintf("INCOMPLETE -- not in the repo: %s", paste(missing, collapse = ", "))
           else sprintf("complete (%d items)", copied)),
@@ -346,6 +364,10 @@ cat(sprintf("      manifest: %s\n", file.path(bundle, "manifest.txt")))
 # A missing OCR tool is NOT a detail: the server will read text PDFs, CSV and Excel
 # fine and then hit a scanned statement it cannot read at all. Say so here, loudly,
 # while the internet is still available to fix it -- not days later on the server.
+#
+# AND FOR POPPLER IT IS WORSE THAN A GAP: without pdftocairo those statements convert
+# SILENTLY WRONG rather than failing. The app raises `sign_scan_unavailable` at high
+# severity on every such run, but a bundle that can be fixed here should be.
 if (!isTRUE(got_poppler) || !isTRUE(got_tesseract)) {
   missing_ocr <- c(if (!isTRUE(got_poppler)) "Poppler", if (!isTRUE(got_tesseract)) "Tesseract")
   cat("\n***********************************************************************\n")

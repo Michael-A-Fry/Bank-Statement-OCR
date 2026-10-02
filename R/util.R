@@ -35,8 +35,23 @@ locate_header <- function(lines, template) {
   if (length(nz)) nz[1] else NA_integer_
 }
 
-# file_sha256(path) -- deterministic content hash. Uses openssl when available,
-# otherwise digest, otherwise tools::md5sum as a last-resort fallback.
+# file_sha256(path) -- deterministic content hash. openssl when available, otherwise
+# digest. BOTH COMPUTE SHA-256, so the value does not depend on which one is installed:
+# the same file hashes the same on the air-gapped server as on the machine that built
+# the bundle, which is the only reason the figure is worth recording.
+#
+# AND NOTHING ELSE. There used to be a `tools::md5sum` last resort, which returned an
+# MD5 from a function called file_sha256 -- into a field labelled sha256, in an
+# evidence record, with nothing saying the algorithm had changed. A mislabelled hash is
+# worse than no hash: "is this the same statement the analyst converted in March?" gets
+# a confident answer that compares two different algorithms and says no. NA is the
+# honest output when it cannot be computed, and NA is already what a missing file
+# returns, so every caller already handles it.
+#
+# In practice neither branch is ever missed: `digest` ships as a dependency of shiny
+# and DT. `openssl` is named in the offline bundle's package list anyway, because
+# relying on a package being present by accident of another package's dependencies is
+# not the same as requiring it.
 file_sha256 <- function(path) {
   if (!file.exists(path)) return(NA_character_)
   if (requireNamespace("openssl", quietly = TRUE)) {
@@ -46,7 +61,7 @@ file_sha256 <- function(path) {
   if (requireNamespace("digest", quietly = TRUE)) {
     return(digest::digest(file = path, algo = "sha256"))
   }
-  unname(tools::md5sum(path))
+  NA_character_
 }
 
 # with_image_scratch(expr) -- run a piece of image work with ImageMagick's
