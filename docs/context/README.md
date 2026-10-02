@@ -12,6 +12,7 @@ Reference for whoever owns or changes the engine. None of this tells you how to
 | [charter.md](charter.md) | **Read first.** Purpose, users, scope and the non-negotiables. If a change conflicts with the charter, the change is wrong. |
 | [how-it-fits-together.md](how-it-fits-together.md) | **Read second.** One page: how a statement flows from upload to dashboard, which module owns each step, where the on-screen wording lives, and where each kind of change goes. |
 | [architecture/build-contract.md](architecture/build-contract.md) | The data contract every conversion honours — transaction schema, flags vocabulary, template YAML spec, statuses, output artefacts. Check it before changing anything the engine emits. |
+| [architecture/locked-decisions.md](architecture/locked-decisions.md) | Every architectural decision that is CLOSED, the evidence that closed it, and the one thing that would reopen it. Read before changing the pipeline, the template model, or the deployment. |
 | [engine-parameters.md](engine-parameters.md) | Every numeric threshold, what it decides, and the effect of moving it. Read before editing `R/params.R`. |
 | [metadata-capture.md](metadata-capture.md) | What the local-only metadata corpus stores per run, and the per-level privacy notes. Read before answering "what does this tool keep about our clients?". |
 | [edge-cases.md](edge-cases.md) | Real-world statement edge cases, each with an honest status. Read to decide whether an odd statement is a known limit or a bug. |
