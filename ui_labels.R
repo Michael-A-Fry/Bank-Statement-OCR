@@ -134,6 +134,7 @@ DIAG_PLAIN <- c(
   scanned_no_ocr          = "a scan with no readable text",
   document_provenance     = "what the PDF says about itself",
   multiple_statements     = "several statements in one file",
+  page_orientation        = "the pages are the wrong way round",
   combined_statement      = "several accounts in one statement",
   mixed_currency          = "more than one currency",
   oversized               = "unusually large file",

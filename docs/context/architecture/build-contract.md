@@ -75,6 +75,10 @@ tests/testthat/         golden-file + unit tests
 app.R  ui_content.R  ui_labels.R   the Shiny app
 run.R                   thin CLI entrypoint
 scripts/                bundle / install / audit command-line entry points
+tools/synth/            the MEASURED corpus: adversarial synthetic statements, each
+                        with the ground truth it was drawn from, and the scorer that
+                        reports how many figures the reader FABRICATED (must be 0)
+                        vs refused. Dev-time only - the server runs R alone.
 tools/webr/             run the suite under WebR when no system R is available
 docs/                   operational how-tos + context (charter, this contract, …)
 ```

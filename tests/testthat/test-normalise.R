@@ -185,3 +185,63 @@ test_that("a date whose day and month name are run together still parses (#27)",
 test_that("the round-trip guard still rejects the mis-parsed 2-digit year (#27 guard)", {
   expect_true(is.na(parse_date("13/08/2025", "%d/%m/%y")$iso))
 })
+
+# ---------------------------------------------------------------------------
+# A CELL CARRYING WORDS IS NOT A FIGURE, AND MUST NOT BECOME ONE.
+#
+# A column band collects every word whose centre falls in it (.pdf_cell,
+# R/parse_pdf_table.R), so a long transaction description that overflows its own
+# band drops words into the amount band beside it. .num_one's "remove everything
+# that is not a digit" then GLUED THE DIGITS TOGETHER: the cell
+# "ASSESSMENT 2291104A 7.44" -- a reference number and a $7.44 credit -- came back
+# as 22911047.44. Not a crash and not an NA: a plausible figure four orders of
+# magnitude wrong, in a row whose date and description are both right, which is the
+# one error a reviewer reading the screen cannot catch.
+#
+# Measured on the synthetic corpus (tools/synth/, case band_narrow_desc): 13 of 20
+# rows were fabricated this way. With this guard the corpus fabricates nothing.
+#
+# THE ANSWER IS NA, NEVER A GUESS. "Take the rightmost money-looking token" would
+# be right most of the time and silently wrong the rest, which is worse than a gap;
+# NA fires the `malformed` flag that already says "the amount could not be read as
+# a number" on the row.
+# ---------------------------------------------------------------------------
+test_that("an amount cell that also holds words is refused, not glued into a number", {
+  # the measured cases, verbatim from the corpus
+  expect_true(is.na(.num("ASSESSMENT 2291104A 7.44")))
+  expect_true(is.na(.num("88412-00 PARTICULARS")))
+  expect_true(is.na(.num("586.27 LIMITED")))
+  expect_true(is.na(.num("2,478.48 RENT")))
+  expect_true(is.na(.num("OF FOUR")))
+  expect_true(is.na(.num("2291104A")))          # a bare reference, letters and all
+  # two numbers in one cell is two things, whichever one was wanted
+  expect_true(is.na(.num("0114 586.27")))
+})
+
+test_that("every way a statement really prints money still reads", {
+  expect_equal(.num("1,234.56"), 1234.56)
+  expect_equal(.num("$1,234.56"), 1234.56)
+  expect_equal(.num("NZD 1,234.56"), 1234.56)   # a currency CODE is declared, not noise
+  expect_equal(.num("AUD 99.00"), 99)
+  expect_equal(.num("£1,234.56"), 1234.56) # a SYMBOL is not a letter, so never noise
+  expect_equal(.num("€99.00"), 99)
+  expect_equal(.num("1,234.56 CR"), 1234.56)
+  expect_equal(.num("1,234.56 DR"), -1234.56)
+  expect_equal(.num("196.16 OD"), -196.16)
+  expect_equal(.num("(123.45)"), -123.45)
+  expect_equal(.num("-1,234.56"), -1234.56)
+  expect_equal(.num("7.44"), 7.44)
+  # space-separated thousands (French / Nordic), which IS two digit runs and IS one
+  # amount -- the shape the two-runs rule has to let through.
+  expect_equal(.num("1 234,56"), 1234.56)
+  expect_equal(.num("12 345 678,90"), 12345678.90)
+})
+
+test_that("the sign marker a site configured is vocabulary, not contamination", {
+  # The marker words come from the lexicon so a site can set its bank's wording.
+  # A guard with its own hardcoded list would reject exactly what the lexicon
+  # exists to allow, so the caller's own debit_rx / credit_rx are what is stripped.
+  expect_false(.money_contaminated("500.00 PMT", credit_rx = "(PMT)\\s*$"))
+  expect_true(.money_contaminated("500.00 PMT"))          # undeclared: still noise
+  expect_false(.money_contaminated("500.00 OWING", debit_rx = "(OWING)\\s*$"))
+})

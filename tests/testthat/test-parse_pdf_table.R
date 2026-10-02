@@ -724,7 +724,11 @@ test_that("a page within the snap counts as the frame; a missing ref means A4", 
   frame <- pdf_band_frame(list())                        # no ref recorded
   expect_equal(frame, list(width = .A4_W, height = .A4_H))
   expect_equal(pdf_band_frame_scale(frame, .A4_W * 1.01, .A4_H * 1.01), c(1, 1))
-  expect_false(all(pdf_band_frame_scale(frame, .A4_W * 1.5, .A4_H) == 1))
+  # ...and a page genuinely a different SIZE really is scaled. Scaled in BOTH
+  # directions: this assertion used to be written as 1.5x the width at the SAME
+  # height, which is not one layout at two sizes but two different page SHAPES, and
+  # a shape difference is now refused rather than squashed (next test).
+  expect_false(all(pdf_band_frame_scale(frame, .A4_W * 1.5, .A4_H * 1.5) == 1))
   # An unknown page size assumes the page IS the frame, rather than scaling by NA
   # and moving every band off the statement.
   expect_equal(pdf_band_frame_scale(frame, NA_real_, NA_real_), c(1, 1))
@@ -1129,4 +1133,47 @@ test_that("pdf_reason_actionable decides on the code, not on words in the senten
   # carrying its own explanation that it is a heading.
   expect_true(grepl("didn't parse|no amount", .PDF_ROW_REASON_TEXT[["heading_or_note"]]))
   expect_false(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["heading_or_note"]]))
+})
+
+# ---------------------------------------------------------------------------
+# A PAGE OF A DIFFERENT SHAPE IS NOT THE SAME LAYOUT AT A DIFFERENT SIZE.
+#
+# The band-frame rescale exists for "the same statement, another size" -- a rescan,
+# another export, a different scanner DPI. It treated ANY size difference as that,
+# and a landscape page is a size difference: against an A4-portrait frame an
+# 842x595 page had every x multiplied by 0.707, so the "Withdrawals" heading at
+# x=341 (inside the debit band, 330-395) landed at x=241 -- inside the DESCRIPTION
+# band. Every column slid one to the left.
+#
+# Measured on the synthetic corpus (tools/synth/, case page_landscape): squashing
+# it read 0 of 16 rows; leaving it alone reads 16 of 16, because a landscape
+# statement whose columns still sit at the template's x positions needs no
+# transform at all. The danger is the near miss -- an aspect ratio close enough
+# that dates still parse while amounts slide into the next column, which is a wrong
+# figure in a row that looks right.
+# ---------------------------------------------------------------------------
+test_that("a page in the other orientation is left alone, not squashed into the frame", {
+  frame <- pdf_band_frame(list())                       # A4 portrait
+  expect_true(.pdf_orientation_differs(frame, .A4_H, .A4_W))      # landscape A4
+  expect_equal(pdf_band_frame_scale(frame, .A4_H, .A4_W), c(1, 1))
+
+  # EVERY REAL PAPER SIZE IS STILL RESCALED, which is the whole point of the frame.
+  # Letter is 9% off A4's aspect ratio and Legal 17%, so the tolerance has to sit
+  # above both and far below the 100% an orientation flip costs.
+  expect_false(.pdf_orientation_differs(frame, 612, 792))         # US Letter
+  expect_false(.pdf_orientation_differs(frame, 612, 1008))        # US Legal
+  expect_false(.pdf_orientation_differs(frame, .A4_W * 2, .A4_H * 2))
+  expect_false(all(pdf_band_frame_scale(frame, 612, 792) == 1))   # and really scaled
+
+  # An unknown or nonsense page size is never called a shape difference: the rule
+  # there is already "assume the page IS the frame", and a refusal on NA would move
+  # this question from "we don't know" to "we know it is wrong".
+  for (bad in list(c(NA_real_, NA_real_), c(0, 100), c(100, 0), c(Inf, 100)))
+    expect_false(.pdf_orientation_differs(frame, bad[1], bad[2]))
+
+  # A template that declares a LANDSCAPE frame reverses the whole question, because
+  # the frame is the template's, never the paper industry's.
+  land <- pdf_band_frame(list(table = list(ref_width = .A4_H, ref_height = .A4_W)))
+  expect_true(.pdf_orientation_differs(land, .A4_W, .A4_H))       # portrait page now
+  expect_false(.pdf_orientation_differs(land, .A4_H, .A4_W))
 })

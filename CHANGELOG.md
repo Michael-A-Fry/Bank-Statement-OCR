@@ -84,9 +84,72 @@ that cover it pass again.
 A sweep for every other name the deleted files provided found no second case:
 the remaining references were all comments, now corrected.
 
+### A measured corpus, and the three faults it found
+
+`tools/synth/` is new and is the first thing in this repository that can say how
+accurate the reader IS, rather than only whether it has changed. A Python generator
+draws adversarial synthetic statements - 31 cases: page offsets, odd-page offsets,
+a table starting on page 2 and page 3, column bands nudged 3pt and 10pt, left-
+aligned amounts, wrapped descriptions both indented and blank-stubbed, DR/CR
+suffixes, bracketed negatives, comma decimals, a minus drawn as vector ink, an
+unheaded total row, a footer shaped like a transaction, missing column headings,
+9pt row pitch, no opening balance, no balance column, an overdraft printed two
+ways, a period crossing 31 December, landscape, and /Rotate 90 - and writes beside
+each PDF the exact rows it was drawn from. `score.R` then reports how many figures
+the reader **fabricated**, counted separately from how many it honestly **refused**.
+
+A golden file cannot do this: a golden file is the reader's own output, so if the
+reader is wrong the golden is wrong with it and agrees with itself for ever.
+
+**The corpus found three faults, each now fixed with a suite test of its own.**
+
+**An amount cell holding words became a number.** A column band collects every word
+whose centre falls in it, so a long description that overflows its own band drops
+words into the amount band beside it - and `.num_one()` removed everything that was
+not a digit and GLUED THE REST TOGETHER. The cell `ASSESSMENT 2291104A 7.44` - a
+reference number beside a $7.44 credit - came back as `22911047.44`. Not a crash
+and not a blank: a plausible figure four orders of magnitude wrong, in a row whose
+date and description were both right, which is the one error a reviewer reading the
+screen cannot catch. 13 of 20 rows on the measured case. Such a cell is now `NA`
+and the row carries the `malformed` flag that already says "the amount could not be
+read as a number". **Never a guess**: "take the rightmost money-looking token" would
+be right most of the time and silently wrong the rest, which is worse than a gap.
+Every real way a statement prints money still reads - `$1,234.56`, `NZD 1,234.56`,
+`1,234.56 CR`, `196.16 OD`, `(123.45)`, `1 234,56` - and a site's own configured
+sign marker counts as declared vocabulary rather than noise.
+
+**A landscape page was squashed into a portrait frame.** The band-frame rescale
+exists for one statement at another size - a rescan, another export, a different
+scanner DPI - and treated *any* size difference as that. A landscape page is a size
+difference: against an A4-portrait frame every `x` was multiplied by 0.707, so the
+`Withdrawals` heading at x=341, inside the debit band, landed at x=241 - inside the
+*description* band, with every column slid one to the left. It read 0 of 16 rows.
+Not rescaling it reads **16 of 16**. The danger was never the total failure but the
+near miss: an aspect ratio close enough that dates still parse while amounts slide
+into the next column. Every real paper size is still rescaled (Letter is 9% from
+A4's aspect ratio, Legal 17%; an orientation flip is 100%).
+
+**A rotated page read nothing and said nothing.** A `/Rotate 90` page - ordinary
+scanner output - produced an empty table with no reason given. It is now
+`unsupported` with a high-severity `page_orientation` diagnostic naming both shapes
+and the remedy. It speaks **only when nothing was read**, because a landscape
+statement that parses perfectly must not carry a high-severity warning: that is how
+an analyst learns to read past high-severity warnings.
+
+The generator also found a fault in **itself**, recorded because it is the same
+class: `money()` printed `abs(x)`, so an overdrawn balance printed without its sign
+and the first scoring run blamed the engine for 221 wrong balances on a 260-row
+statement. The reader was right and the generator was lying. A second case was
+measuring an impossible document - 260 rows stepped 1-3 days apart made a *twenty
+month* statement period, then blamed the reader for inferring the wrong year on
+dates printed with no year at all. Both fixed; the corpus now reads 29 of 31 cases
+clean with **0 fabricated figures**, and the two that are not clean are both correct
+refusals: a reworded fingerprint is not detected, and a rotated page is refused with
+its reason.
+
 ### Still true, and checked
 
-The suite is **70 files, 961 tests, 5,094 passing assertions, 0 failed,
+The suite is **70 files, 965 tests, 5,130 passing assertions, 0 failed,
 0 errors**, with one skip — a split test that needs a Westpac bundle kept out of
 the repository on purpose. The app boots and serves. Nothing in `R/` reads
 `app.R` or the two `ui_` files, and the directory map in
@@ -120,8 +183,8 @@ tests\testthat\test-forms.R
 
 ```
 app.R   ui_labels.R   VERSION   CHANGELOG.md
-R\   (10 files: analytics batch batch_audit config convert
-       diagnose jobs labels metadata_capture templates)
+R\   (12 files: analytics batch batch_audit config convert diagnose
+       jobs labels metadata_capture normalise parse_pdf_table templates)
 R\params.R            (see the note below)
 scripts\health-check.R
 templates\README.md
@@ -129,10 +192,14 @@ docs\   (7 files: design.md  context\architecture\build-contract.md
          context\how-it-fits-together.md  context\roadmap.md
          for-analysts\README.md  operational\README.md
          operational\maintaining-the-engine.md)
-tests\  (14 files, all modified: app-ui batch batch_audit config convert
-         deployment diagnose docs-truth jobs labels metadata_capture
-         robustness seams templates)
+tests\  (17 files: helper.R, and test- app-ui batch batch_audit config
+         convert deployment diagnose docs-truth jobs labels metadata_capture
+         normalise parse_pdf_table robustness seams templates)
 ```
+
+`tools\synth\` is NEW and is deliberately **not** on that list: it is a dev-time
+measuring harness that needs Python, the box runs R alone, and nothing in the app
+reads it. Copy it only if you want to run the corpus on a machine that has Python.
 
 **`R\params.R` is the file you are told never to copy in a sweep, and its only
 change here is a DELETION** — the two `PARAM_DOC_*` parameters nothing reads any
@@ -144,7 +211,7 @@ of this note, which was written when those parameters were live.
 `www\app.css`, `config\`, `dictionaries\` and `samples\raw\` are **unchanged**
 from 1.8.1. Do not copy them.
 
-70 files, 961 tests, 5,094 passing, 0 failing, 1 skipped.
+70 files, 965 tests, 5,130 passing, 0 failing, 1 skipped.
 ---
 
 ## 1.8.1

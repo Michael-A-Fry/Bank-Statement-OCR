@@ -27,8 +27,6 @@ fixture <- function(rel) file.path(engine_root(), rel)
 templates_dir      <- function() file.path(.templates_root(), "statements")
 user_templates_dir <- function() file.path(.templates_root(), "statements_user")
 seed_templates_dir <- function() file.path(.templates_root(), "statements_seed")
-fields_templates_dir   <- function() file.path(.templates_root(), "fields")
-document_templates_dir <- function() file.path(.templates_root(), "documents")
 
 # read_core_csv -- read a golden/core CSV back with the exact core column types
 # so comparisons are type-stable.

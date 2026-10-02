@@ -183,10 +183,37 @@ log_run <- function(logdir, result) {
   NULL
 }
 
+# .page_shape_note(input, template) -- the metadata build_diagnostics needs to say
+# "this page is the wrong shape for these columns", or an empty list.
+#
+# A template's x-bands are stored against a page SHAPE, portrait A4 unless the
+# template declares otherwise. A landscape or rotated page is not that shape at
+# another size, so the reader refuses to squash it into the frame
+# (.pdf_orientation_differs, R/parse_pdf_table.R) and nothing lands in a band. That
+# refusal is correct and it is also silent: the analyst gets an empty table and no
+# reason. This carries the reason to the one place that can say it.
+#
+# `template` is NULL on the unsupported path, where no template was chosen -- the
+# frame is then the default, which is what every shipped template uses anyway, so
+# the question "is this page the wrong way round?" is still answerable and is still
+# the most useful thing to say about a landscape page nothing recognised.
+.page_shape_note <- function(input, template) {
+  pw <- suppressWarnings(as.numeric(input$page_width %||% NA))[1]
+  ph <- suppressWarnings(as.numeric(input$page_height %||% NA))[1]
+  if (is.na(pw) || is.na(ph) || pw <= 0 || ph <= 0) return(list())
+  frame <- pdf_band_frame(template %||% list())
+  if (!.pdf_orientation_differs(frame, pw, ph)) return(list())
+  shape <- function(w, h) if (w > h) "landscape" else "portrait"
+  list(page_orientation_differs = TRUE,
+       page_shape = sprintf("%s (%.0f x %.0f pt)", shape(pw, ph), pw, ph),
+       frame_shape = sprintf("%s (%.0f x %.0f pt)", shape(frame$width, frame$height),
+                             frame$width, frame$height))
+}
+
 # convert_statement(...) -> result (build-contract sections 6, 7).
 # `log = FALSE` builds the run record on the result (result$run_log) WITHOUT
-# writing it, so a caller that may still change the outcome
-# form fallback) can write exactly one, final record itself.
+# writing it, so a caller that may still change the outcome can write exactly one,
+# final record itself.
 convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               outdir = "out", templates_dir = "templates/statements",
                               user_templates_dir = "templates/statements_user",
@@ -303,11 +330,12 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       result$trust <- list(level = "low", score = 0, reasons = det$detail)
       result$metadata <- c(meta, list(multiple = multi))
       result$diagnostics <- build_diagnostics("unsupported", det = det,
-        metadata = list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+        metadata = c(.page_shape_note(input, NULL),
+                list(multi = multi, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         # A scan we could not machine-read looks identical to an
                         # unknown layout unless we say so -- carry the reason through.
                         scanned_no_ocr = input$meta$scanned_no_ocr %||% 0L,
-                        ocr_tools = input$meta$ocr_tools_available %||% TRUE))
+                        ocr_tools = input$meta$ocr_tools_available %||% TRUE)))
     } else {
       # .read_with(tid) -- read the statement with ONE template, all the way to a
       # reconciled result. Opt-in auto-split (see split.R): if the template declares
@@ -403,7 +431,8 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
         "ok"
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-        metadata = list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
+        metadata = c(.page_shape_note(input, template),
+                list(multi = multi_resolved, pages = meta$pages_actual, max_page_pt = meta$max_page_pt,
                         template = template, pdf_doc = input$meta$pdf_doc,
                         # A template that matched but read nothing is a DIFFERENT
                         # problem from an unknown layout, and has a different fix:
@@ -411,7 +440,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                         matched_empty = if (row_count == 0L) template$id else NULL,
                         tied = if (ambiguous) det$tied else NULL,
                         # which of the tied templates produced these figures
-                        tied_used = if (ambiguous) template$id else NULL))
+                        tied_used = if (ambiguous) template$id else NULL)))
       outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta,
         build = list(engine_version = engine_version(), template_id = template$id,

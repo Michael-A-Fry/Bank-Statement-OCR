@@ -86,6 +86,39 @@
 .A4_W <- 595.28
 .A4_H <- 841.89
 .PAGE_SCALE_SNAP <- 0.02   # a page within 2% of the frame counts as the same size
+# How far a page's aspect ratio may differ from the frame's and still be treated as
+# the SAME LAYOUT at another size. Every real paper size is inside this: Letter is
+# 9% from A4 portrait, Legal 17%. A page in the other ORIENTATION is 100% away, and
+# is not a scaled copy of the frame at all -- see .pdf_orientation_differs.
+.PAGE_ASPECT_TOL <- 0.25
+
+# .pdf_orientation_differs(frame, page_w, page_h) -- TRUE when this page cannot be
+# the frame's layout at a different size, because its SHAPE is different.
+#
+# MEASURED. The rescale below exists for "the same statement, another size" -- a
+# rescan, another export, a different scanner DPI. It assumed any size difference
+# was that, and a LANDSCAPE page is a size difference: on an 841x595 page against
+# an A4-portrait frame it multiplied every x by 0.707, so the "Withdrawals" heading
+# at x=341 (inside the debit band, 330-395) moved to x=241 -- inside the
+# DESCRIPTION band. Every column slid into its neighbour. On the measured case that
+# produced zero rows, which is a visible failure; with an aspect ratio closer to
+# the frame's it is the mechanism that puts an amount in the wrong column and
+# reports a wrong figure in a row whose date and description are right.
+# (tools/synth/, case page_landscape.)
+#
+# So a shape difference is NOT rescaled. The coordinates are left alone, the row
+# finder fails visibly rather than quietly, and R/diagnose.R says WHY -- which is
+# the one thing the silent squash could never do.
+.pdf_orientation_differs <- function(frame, page_w, page_h) {
+  pw <- suppressWarnings(as.numeric(page_w)); ph <- suppressWarnings(as.numeric(page_h))
+  if (length(pw) != 1L || length(ph) != 1L) return(FALSE)
+  if (is.na(pw) || is.na(ph) || !is.finite(pw) || !is.finite(ph) || pw <= 0 || ph <= 0)
+    return(FALSE)                                  # unknown size: assume the frame
+  r_page <- pw / ph
+  r_frame <- frame$width / frame$height
+  if (!is.finite(r_page) || !is.finite(r_frame) || r_frame <= 0) return(FALSE)
+  abs(r_page / r_frame - 1) > .PAGE_ASPECT_TOL
+}
 
 # pdf_band_frame(template) -- the frame this template's bands are stored in.
 # Always a usable positive size: a missing, unparseable or nonsense ref falls back
@@ -101,6 +134,10 @@ pdf_band_frame <- function(template) {
 # coordinate by this to land in the frame; DIVIDE a band by it to draw that band
 # on the page. An unknown page size scales by 1 (assume it is already the frame).
 pdf_band_frame_scale <- function(frame, page_w, page_h) {
+  # A page of a different SHAPE is not this layout at another size, so it is left
+  # exactly where it is rather than squashed into the frame. See
+  # .pdf_orientation_differs for the measurement behind this.
+  if (.pdf_orientation_differs(frame, page_w, page_h)) return(c(1, 1))
   one <- function(pv, fv) {
     s <- if (length(pv) == 1L && !is.na(pv) && is.finite(pv) && pv > 0) fv / pv else 1
     if (abs(s - 1) < .PAGE_SCALE_SNAP) 1 else s

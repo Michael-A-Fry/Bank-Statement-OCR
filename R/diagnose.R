@@ -75,6 +75,7 @@
   multiple_statements     = "input",
   oversized               = "input",
   oversized_page          = "input",
+  page_orientation        = "input",
   low_ocr_confidence      = "input",
   ocr_confidence_unknown  = "input",
   completeness_unverified = "input",
@@ -285,6 +286,32 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("upload", "oversized_page", "medium",
           sprintf("largest page is %.0f pt (> 2880 pt / 40 in)", mp),
           "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
+    # THE PAGE IS THE WRONG SHAPE FOR THE TEMPLATE'S COLUMNS, and that is the whole
+    # reason nothing read. A template's x-bands are stored against a page shape
+    # (portrait A4 unless the template says otherwise); a landscape or rotated page
+    # is not that shape at another size, so the reader refuses to squash it into the
+    # frame (.pdf_orientation_differs, R/parse_pdf_table.R). Said HIGH because
+    # without it the analyst gets an empty table and no reason, and the remedy --
+    # rotate the pages and re-run -- is thirty seconds' work nothing pointed at.
+    #
+    # ONLY WHEN IT ACTUALLY EXPLAINS A FAILURE. A differently shaped page is not by
+    # itself a fault: once the reader stopped squashing them, a LANDSCAPE statement
+    # whose columns still sit at the template's x positions reads every row
+    # correctly (tools/synth/, case page_landscape: 16 of 16). Raising this on a
+    # clean result would put a high-severity warning on a perfect parse, which
+    # teaches the analyst to read past high-severity warnings -- the specific habit
+    # the charter forbids building. So it speaks only when nothing was read.
+    nrows_read <- if (is.data.frame(parsed$transactions)) nrow(parsed$transactions) else 0L
+    if (isTRUE(metadata$page_orientation_differs) && nrows_read == 0L)
+      add("upload", "page_orientation", "high",
+          sprintf("the page is %s and this template's columns are %s",
+                  metadata$page_shape %||% "a different shape",
+                  metadata$frame_shape %||% "the other way round"),
+          paste("The columns are set up for the other page orientation, so they",
+                "cannot be placed on this page. Rotate the pages to match and",
+                "re-run; if the statement really is printed this way, set the",
+                "layout up again on the Add a template tab from a page of this",
+                "shape."))
   }
 
   # PDF document provenance. Raised for EVERY status (a file that didn't even match

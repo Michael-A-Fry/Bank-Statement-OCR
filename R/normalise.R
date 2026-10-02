@@ -117,11 +117,62 @@ parse_date <- function(x, fmt) {
 # debit_rx / credit_rx: the trailing balance-sign markers, defaulted to the
 # built-ins so a direct call is unchanged; .num builds them from the lexicon once
 # per column (so "cow"/"OD"-style markers plumb in without a code change).
+# .money_contaminated(raw) -- TRUE when a cell that must hold ONE money value
+# holds something else as well, so no number may honestly be taken from it.
+#
+# MEASURED, NOT IMAGINED. A column band collects every word whose centre falls in
+# it (.pdf_cell, R/parse_pdf_table.R). A long transaction description that
+# overflows its own band therefore drops words into the amount band beside it, and
+# .num_one's "drop everything that is not a digit" then GLUED THE DIGITS TOGETHER:
+# the cell "ASSESSMENT 2291104A 7.44" -- a reference number and a $7.44 credit --
+# came back as 22911047.44. Not a crash, not an NA: a plausible-looking figure
+# four orders of magnitude wrong, in a row whose date and description are right.
+# Found by scoring the synthetic corpus against its own ground truth
+# (tools/synth/, case band_narrow_desc: 13 of 20 rows wrong this way).
+#
+# The answer is NA, never a guess. Taking "the rightmost money-looking token"
+# would be right most of the time and silently wrong the rest, which is the worse
+# failure; NA fires the `malformed` flag that already exists and already says
+# "the amount could not be read as a number" on the row.
+#
+# What is still legitimate, and must keep working:
+#   "$1,234.56"  "NZD 1,234.56"  "1,234.56 CR"  "1,234.56 DR"  "(123.45)"
+#   "1 234,56"   -- space-separated thousands (French/Nordic), a real shape
+#   "500.00 PMT" -- whatever THIS bank's sign marker is, which is why the caller's
+#                   own debit_rx / credit_rx are stripped rather than a fixed list:
+#                   the marker vocabulary is admin-approved in the lexicon, and a
+#                   guard with its own hardcoded copy would reject the very
+#                   wording the lexicon exists to let a site configure.
+.MONEY_WORDS <- c("NZD", "AUD", "USD", "GBP", "EUR", "JPY", "CAD")
+.money_contaminated <- function(raw, debit_rx = NULL, credit_rx = NULL) {
+  s <- toupper(trimws(as.character(raw)))
+  # the caller's own sign markers are declared vocabulary, not contamination
+  for (rx in c(debit_rx, credit_rx)) if (!is.null(rx)) s <- sub(rx, " ", s)
+  # ...and so is a currency CODE, which is letters and so must be named. A currency
+  # SYMBOL needs no stripping: it is not a letter, so it never looks like a word
+  # here, and the digit-only pass below drops it. Matching one would also mean a
+  # multibyte character class in a regex, which THROWS under LC_ALL=C -- the locale
+  # this deploys and tests under (see the note above .value_from_line in R/labels.R).
+  s <- gsub(sprintf("\\b(%s)\\b", paste(.MONEY_WORDS, collapse = "|")), " ", s)
+  # any OTHER letter means this cell is carrying words, not a figure
+  if (grepl("[A-Za-z]", s, useBytes = TRUE)) return(TRUE)
+  # two or more separate digit runs means two or more things in one cell, unless
+  # they are space-separated thousands: 1-3 digits, then groups of exactly 3.
+  runs <- regmatches(s, gregexpr("[0-9][0-9.,]*", s))[[1]]
+  if (length(runs) < 2) return(FALSE)
+  lead <- sub("[.,].*$", "", runs[1])
+  if (nchar(lead) > 3L) return(TRUE)
+  rest <- runs[-1]
+  ok <- vapply(rest, function(r) grepl("^[0-9]{3}([.,][0-9]{1,2})?$", r), logical(1))
+  !all(ok)
+}
+
 .num_one <- function(raw, decimal = "auto",
                      debit_rx = "(DR|OD)\\s*$", credit_rx = "CR\\s*$") {
   if (is.na(raw)) return(NA_real_)
   raw <- trimws(as.character(raw))
   if (!nzchar(raw)) return(NA_real_)
+  if (.money_contaminated(raw, debit_rx, credit_rx)) return(NA_real_)
   neg <- FALSE
   up <- toupper(raw)
   if (grepl(debit_rx, up)) neg <- TRUE              # debit / overdrawn balance
