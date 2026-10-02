@@ -602,6 +602,71 @@
 }
 
 # ---- deterministic trust -----------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE ACCOUNT NUMBER, which is the one piece of metadata that is self-checking.
+#
+# WHY IT IS WORTH A CHECK AT ALL. Every other KPI here proves something about the
+# FIGURES. This proves something about WHOSE figures they are -- and on a forensic
+# job that is not a lesser question. A statement whose account number was misread by
+# one digit is a statement attributed to the wrong account.
+#
+# NZ bank account numbers are printed bank(2)-branch(4)-base(7)-suffix(2 or 3), the
+# national convention, so a value that is four groups of digits and does NOT have
+# those lengths has lost or gained a character somewhere. That is the commonest OCR
+# damage there is, and the engine cannot otherwise see it: a misread digit is still a
+# digit, so nothing downstream complains.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO: the modulus-11 CHECK DIGIT. IRD publishes the
+# weightings (see docs/context/account-number-check-digit.md) and the
+# arithmetic is twenty lines, so the reason it is not here is not difficulty:
+#
+#   * it cannot be validated. Every account number in this repo's fixtures is
+#     deliberately fake, as test data in a police tool should be, so there is not one
+#     known-good number to prove an implementation against -- and several of the fake
+#     ones sit in real branch ranges, so switching the check on would brand the test
+#     corpus invalid and then the suite could not tell a true positive from our own
+#     made-up data.
+#   * an unvalidated check that can call a GENUINE statement invalid is worse than no
+#     check. Branch-range and weighting tables also move as banks merge, and this
+#     machine is air-gapped, so a stale table fails silently in the direction of
+#     accusing real evidence.
+#
+# The structural check below needs no table, cannot go stale, and catches the damage
+# that actually happens. The research is recorded so that whoever has real statements
+# per bank can finish the job with something to test against.
+#
+# FOUR GROUPS OR IT DOES NOT APPLY. A credit-card number, an IBAN or an overseas
+# account is not malformed, it is not this; and damage that destroys the grouping
+# cannot be told apart from a format we have not seen. `na` is the honest answer to
+# both, and silence beats a confident wrong accusation.
+.NZ_ACCT_LEN <- list(bank = 2L, branch = 4L, base = 7:8, suffix = 2:4)
+
+.kpi_account_number <- function(h) {
+  raw <- trimws(as.character(h$account_number %||% NA_character_))[1]
+  if (is.na(raw) || !nzchar(raw)) return(NULL)   # not captured: nothing to say
+  # the separators a statement might print, normalised to one
+  s <- gsub("-+", "-", gsub("[[:space:]/.]+", "-", raw))
+  s <- sub("^-+", "", sub("-+$", "", s))
+  g <- strsplit(s, "-", fixed = TRUE)[[1]]
+  if (length(g) != 4L)
+    return(.kpi("account_number", "na",
+                detail = sprintf("the account number \"%s\" is not in the four-part New Zealand form, so its shape could not be checked", raw)))
+  want <- .NZ_ACCT_LEN
+  bad_chr <- !grepl("^[0-9]+$", g)
+  bad_len <- c(!nchar(g[1]) %in% want$bank, !nchar(g[2]) %in% want$branch,
+               !nchar(g[3]) %in% want$base, !nchar(g[4]) %in% want$suffix)
+  shape <- paste(nchar(g), collapse = "-")
+  if (any(bad_chr))
+    return(.kpi("account_number", "fail", expected = "digits only",
+                actual = raw,
+                detail = sprintf("the account number \"%s\" contains a character that is not a digit, which on a scanned statement is a misread digit", raw)))
+  if (any(bad_len))
+    return(.kpi("account_number", "fail", expected = "2-4-7-2", actual = shape,
+                detail = sprintf("the account number \"%s\" has %s digits in its four parts where a New Zealand account number has 2-4-7-2, so a digit has been lost or gained", raw, shape)))
+  .kpi("account_number", "pass", expected = "2-4-7-2", actual = shape,
+       detail = sprintf("the account number \"%s\" is a well-formed New Zealand account number", raw))
+}
+
 # .reconcile_trust(kpis, tx, h, n) -> list(level, score, reasons, ...).
 # The KPI table decides the base level; the caveats below can only LOWER a "high"
 # (never raise anything), because each describes something the checks could not
@@ -739,6 +804,7 @@ reconcile <- function(parsed, template = NULL) {
     transaction_count          = .kpi_transaction_count(h, n),
     dates_within_period        = .kpi_dates_within_period(tx, h, n),
     dates_readable             = .kpi_dates_readable(tx, n),
+    account_number             = .kpi_account_number(h),
     no_unparsed_rows           = .kpi_no_unparsed_rows(parsed, tx, n),
     redaction_summary          = .kpi_redaction_summary(tx),
     ocr_confidence             = .kpi_ocr_confidence(h),

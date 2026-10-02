@@ -15,6 +15,7 @@ Reference for whoever owns or changes the engine. None of this tells you how to
 | [engine-parameters.md](engine-parameters.md) | Every numeric threshold, what it decides, and the effect of moving it. Read before editing `R/params.R`. |
 | [metadata-capture.md](metadata-capture.md) | What the local-only metadata corpus stores per run, and the per-level privacy notes. Read before answering "what does this tool keep about our clients?". |
 | [edge-cases.md](edge-cases.md) | Real-world statement edge cases, each with an honest status. Read to decide whether an odd statement is a known limit or a bug. |
+| [account-number-check-digit.md](account-number-check-digit.md) | The IRD check-digit algorithm for NZ account numbers, recorded in full, and why it is deliberately NOT switched on. Read before implementing it. |
 | [outstanding-work.md](outstanding-work.md) | **The live register.** Everything raised in review that is not yet done, in the words it was raised in, with the design already agreed for each. Leads with the faults that produce a wrong figure. Start here before picking up work. |
 | [findings-register.md](findings-register.md) | Every defect found by review or real use, with its evidence and whether it is fixed. The audit trail behind the changelog. |
 | [findings-2026-08-26.md](findings-2026-08-26.md) | The investigation behind the register: thirteen faults root-caused against the real code and reproduced, each with its exact edit sites. Most are now fixed; the page is kept because it is the evidence for *why* they were fixed that way. |

@@ -71,6 +71,7 @@
   amount_direction        = "template",
   date_out_of_range       = "template",
   # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
+  account_number_shape    = "input",
   unreadable              = "input",
   scanned_no_ocr          = "input",
   multiple_statements     = "input",
@@ -170,6 +171,21 @@
   no_unparsed_rows = list(
     where = "rows", category = "row_parse", severity = "high",
     how_to_fix = .FIX_ROW_PARSE),
+  # NOT a template fault, which is why it gets its own category. Every other failing
+  # check here points at the mapping; this one points at the IMAGE. The account number
+  # is the only piece of metadata that can be checked against its own shape, and it is
+  # the field that says whose statement this is -- so a misread digit here is a
+  # statement attributed to the wrong account, not a column in the wrong place.
+  account_number = list(
+    where = "account number", category = "account_number_shape", severity = "medium",
+    how_to_fix = paste("Read the account number off the statement image and compare it",
+                       "character by character. On a scan this is almost always a misread",
+                       "digit (0/8, 1/7, 5/6) or a lost one. If the image is right and the",
+                       "tool is wrong, the account-number region in the template is picking",
+                       "up a neighbouring character - adjust it in the template toolkit. If",
+                       "the STATEMENT prints it in some form other than the New Zealand",
+                       "2-4-7-2, nothing is wrong with the file and the shape rule should be",
+                       "reported to whoever maintains the templates.")),
   # Its own category, not amount_parse. The amounts here were read PERFECTLY -- it
   # is their DIRECTION that may be inverted -- and amount_parse is worded on screen
   # as "amounts couldn't be read", the opposite of what happened, on a card a

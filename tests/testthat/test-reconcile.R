@@ -795,3 +795,77 @@ test_that("a statement with nothing derived is unchanged, down to the wording", 
   expect_false(grepl("prove nothing", c2$detail, fixed = TRUE))
   expect_identical(.n_from_balance(tx), 0L)
 })
+
+# ---------------------------------------------------------------------------
+# THE ACCOUNT NUMBER -- the only piece of METADATA that can be checked against
+# itself, and the field that says whose statement this is. A misread digit here is
+# a statement attributed to the wrong account, and nothing else in the engine can
+# see it: a misread digit is still a digit.
+#
+# The modulus-11 check digit is deliberately NOT implemented -- see
+# docs/context/account-number-check-digit.md for the algorithm and for the reason,
+# which is that every account number in this repo is deliberately fake, so there is
+# nothing to validate an implementation against.
+.acct <- function(x) .kpi_account_number(list(account_number = x))
+
+test_that("a well-formed NZ account number passes, in the forms a statement prints", {
+  for (a in c("01-9988-0043217-00",      # the ordinary printed form
+              "06-0705-0503820-28",      # a non-zero suffix
+              "03-1234-1234567-001",     # a 3-digit suffix, which the spec allows
+              "01 0234 0123456 00",      # spaces instead of hyphens
+              "01/0234/0123456/00")) {   # and slashes
+    k <- .acct(a)
+    expect_identical(k$status, "pass", info = a)
+    expect_identical(k$name, "account_number")
+  }
+})
+
+test_that("a lost digit fails, and the detail names the shape that was found", {
+  k <- .acct("01-9988-004321-00")        # base is 6 long, not 7
+  expect_identical(k$status, "fail")
+  expect_identical(k$actual, "2-4-6-2")
+  expect_match(k$detail, "2-4-6-2")
+  expect_match(k$detail, "lost or gained")
+})
+
+test_that("a letter read for a digit fails, and says that is what happened", {
+  # the damage OCR actually does: l for 1, O for 0, S for 5
+  k <- .acct("0l-9988-0043217-00")
+  expect_identical(k$status, "fail")
+  expect_match(k$detail, "not a digit")
+  expect_identical(.acct("01-9988-O043217-00")$status, "fail")
+})
+
+test_that("an account number that is not NZ-shaped is NOT a failure", {
+  # A card number, an IBAN, or damage severe enough to destroy the grouping. An
+  # account the rule cannot judge and an account the rule rejects are only the same
+  # thing if you assume the rule is complete -- and a confident wrong accusation
+  # about evidence is the one outcome worth avoiding most.
+  for (a in c("4111111111111111", "GB29NWBK60161331926819", "0199880043217")) {
+    k <- .acct(a)
+    expect_identical(k$status, "na", info = a)
+    expect_match(k$detail, "could not be checked")
+    # a check that did not run shows no figures (the rule at the top of reconcile.R)
+    expect_true(is.na(k$expected)); expect_true(is.na(k$actual))
+  }
+})
+
+test_that("no account number captured raises no row at all", {
+  expect_null(.acct(NA_character_))
+  expect_null(.acct(""))
+  expect_null(.kpi_account_number(list()))
+})
+
+test_that("the check is registered, labelled, and has a fix that is not the fallback", {
+  # The three places a KPI has to appear or it reaches a reviewer as a raw code --
+  # the contract written at the top of R/reconcile.R.
+  src <- paste(readLines(file.path(engine_root(), "R", "reconcile.R"), warn = FALSE),
+               collapse = "\n")
+  expect_match(src, "account_number             = .kpi_account_number(h)", fixed = TRUE)
+  expect_true("account_number" %in% names(.KPI_DIAGNOSIS))
+  expect_identical(.KPI_DIAGNOSIS$account_number$severity, "medium")
+  expect_match(.KPI_DIAGNOSIS$account_number$how_to_fix, "character by character")
+  # ...and it is owned by whoever holds the IMAGE, not whoever edits the template:
+  # every other failing check points at the mapping, this one points at the scan.
+  expect_identical(unname(.diag_fix_owner("account_number_shape")), "input")
+})

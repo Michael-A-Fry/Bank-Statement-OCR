@@ -291,6 +291,70 @@ test_that("no non-ASCII byte survives in the three UI files, literals included",
 })
 
 # ---------------------------------------------------------------------------
+# NO TWO FILES MAY DEFINE THE SAME FUNCTION NAME.
+#
+# THE FAILURE IS SILENT AND IT MOVES FIGURES. The app sources every file in R/ and
+# then app.R, so when two files define one name the LAST one sourced wins, decided by
+# nothing but alphabetical order. Nothing errors. Every call in both files now reaches
+# one body -- and if the two took different arguments, or meant different things, the
+# loser is answering questions it was never written for.
+#
+# It happened twice while R/column_fit.R was being written. `.col_kind` and
+# `.looks_money` already existed in R/column_profile.R, where they INFER a column kind
+# from a sample of data; the new ones read the kind a TEMPLATE DECLARES. Same names,
+# opposite directions, and `column_fit.R` sorts after `column_profile.R`, so the new
+# pair silently won everywhere -- including inside the drafting wizard, which had been
+# working. The rename to `.cfit_*` then missed one call site, so that one resolved to
+# the OTHER signature and quietly returned the wrong answer.
+#
+# A reviewer cannot catch this by reading a diff: both halves are correct on their own
+# page, and the collision only exists in the union. Only a scan of the whole tree can.
+#
+# Top-level definitions only -- a helper nested inside another function is scoped to
+# it and shadows nothing, which is why the pattern is anchored to column 1.
+.top_level_defs <- function() {
+  files <- c(list.files(file.path(engine_root(), "R"), "[.]R$", full.names = TRUE),
+             file.path(engine_root(), c("app.R", "ui_labels.R", "ui_content.R", "run.R")))
+  files <- files[file.exists(files)]
+  out <- list()
+  for (f in files) {
+    ln <- readLines(f, warn = FALSE)
+    m <- grep("^(`[^`]+`|[.A-Za-z][A-Za-z0-9._]*)[ ]*<-[ ]*function", ln, value = TRUE)
+    nm <- gsub("`", "", trimws(sub("[ ]*<-[ ]*function.*$", "", m)))
+    for (n in nm) out[[n]] <- c(out[[n]], basename(f))
+  }
+  out
+}
+
+test_that("no function name is defined in two files, and none twice in one file", {
+  defs <- .top_level_defs()
+  expect_gt(length(defs), 400L)            # the scan must not go quiet
+  across <- names(defs)[vapply(defs, function(v) length(unique(v)) > 1L, logical(1))]
+  expect_identical(across, character(0),
+    info = paste("defined in two files, so load order decides which body answers:",
+                 paste(vapply(across, function(n)
+                   sprintf("%s (%s)", n, paste(unique(defs[[n]]), collapse = " + ")),
+                   character(1)), collapse = "; ")))
+  twice <- names(defs)[vapply(defs, function(v) length(v) > length(unique(v)), logical(1))]
+  expect_identical(twice, character(0),
+    info = paste("defined twice in one file, so the first body is dead code:",
+                 paste(twice, collapse = ", ")))
+})
+
+test_that("the loader really does source all of R/, which is what the guard assumes", {
+  # The guard above is only worth having if its file list matches what actually runs.
+  # app.R loads EVERY file in R/ in one line; if that ever becomes a hand-written list,
+  # a module left off it would be outside the scan and a collision in it would stay
+  # silent -- so this fails the moment the assumption stops holding.
+  app <- readLines(file.path(engine_root(), "app.R"), warn = FALSE)
+  expect_true(any(grepl('for (.f in list.files("R", full.names = TRUE, pattern = "\\\\.R$")) source(.f)',
+                        app, fixed = TRUE)),
+    info = "app.R no longer sources all of R/ in one line -- re-check .top_level_defs")
+  for (f in c("ui_labels.R", "ui_content.R"))
+    expect_true(any(grepl(sprintf('source("%s")', f), app, fixed = TRUE)))
+})
+
+# ---------------------------------------------------------------------------
 # ONE CLICK FROM THE VERDICT, which is what the page promises and what the
 # charter promises ("every diagnostic still exists and is still reachable in one
 # click"). The checks used to live at the bottom of the panel that "Show me how it
