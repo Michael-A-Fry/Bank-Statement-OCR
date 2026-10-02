@@ -22,6 +22,14 @@
 # fabricated count fell from 13 to 0 while refused rose from 0 to 20 -- a strictly
 # better engine that a single combined figure would have scored as unchanged.
 #
+# A `mustflag_` CASE IS SCORED THE OTHER WAY ROUND. Some pages cannot be read
+# correctly by any reader and must not be read wrongly in silence -- a debit drawn
+# inside the credit column, say: the page says credit, and no column reader can
+# know better. Scoring that on figure accuracy scores an impossibility. The real
+# requirement is that the statement comes back FLAGGED, so for these cases the test
+# is `trust` is not high, and the fabricated figures are expected rather than
+# counted against the engine.
+#
 # Run:  Rscript tools/synth/score.R <corpus-dir> [case-name-filter]
 # The corpus is built by tools/synth/make_corpus.py.
 
@@ -137,6 +145,9 @@ score_one <- function(pdf, truth_path) {
   out$matched <- matched
   out$fabricated <- fab
   out$refused <- ref
+  # A `mustflag_` case passes by being CAUGHT, not by being right.
+  out$mustflag <- grepl("^mustflag_", case)
+  if (out$mustflag) out$caught <- !identical(out$trust, "high")
   out$wrong_dates <- wd
   out$wrong_balances <- wb
   out$missing <- max(0L, length(want) - nrow(tx))
@@ -164,18 +175,22 @@ cat(sprintf(fmt, "case", "truth", "got", "ok", "FABR", "refus", "date", "bal",
 cat(strrep("-", 116), "\n")
 bad <- 0L
 for (r in rows) {
-  clean <- identical(r$status, "parsed") && r$fabricated == 0L &&
-    r$missing == 0L && r$phantom == 0L
+  clean <- if (isTRUE(r$mustflag)) isTRUE(r$caught) else
+    (identical(r$status, "parsed") && r$fabricated == 0L &&
+     r$missing == 0L && r$phantom == 0L)
   flag <- if (clean) "" else "  <-- "
   if (!clean) bad <- bad + 1L
   cat(sprintf(fmt, r$case, r$n_truth, r$n_parsed, r$matched, r$fabricated,
               r$refused, r$wrong_dates, r$wrong_balances, r$missing + r$phantom,
               r$trust %||% "-",
-              paste0(flag, if (identical(r$status, "parsed")) r$detail else r$status)))
+              paste0(flag, if (isTRUE(r$mustflag))
+                sprintf("must be caught: trust %s -> %s", r$trust %||% "-",
+                        if (isTRUE(r$caught)) "CAUGHT" else "MISSED")
+                else if (identical(r$status, "parsed")) r$detail else r$status)))
 }
 cat(strrep("-", 116), "\n")
-.tot <- function(f) sum(vapply(rows, function(r) as.integer(r[[f]] %||% 0L),
-                               integer(1)), na.rm = TRUE)
+.tot <- function(f) sum(vapply(rows, function(r)
+  if (isTRUE(r$mustflag)) 0L else as.integer(r[[f]] %||% 0L), integer(1)), na.rm = TRUE)
 cat(sprintf("%d of %d cases clean (no fabricated figure, no missing or phantom row)\n",
             length(rows) - bad, length(rows)))
 cat(sprintf("FABRICATED FIGURES: %d        (this must be 0)\n", .tot("fabricated")))

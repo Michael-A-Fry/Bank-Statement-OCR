@@ -510,3 +510,38 @@ read_pdf <- function(path, redaction_rects = NULL,
     return(redaction_rects[[p]])
   NULL
 }
+
+# ---------------------------------------------------------------------------
+# MEASURED AND NOT DONE: float word boxes.
+#
+# pdftools::pdf_data() floors x, y, width and height to whole points. Against the
+# true boxes, over 9,260 words of the synthetic corpus:
+#
+#   word x        bias -0.33 pt, range [-1.00, 0]
+#   word CENTRE   bias -0.49 pt, range [-1.31, 0]   55% of words off by >0.5 pt
+#   word RIGHT    bias -0.64 pt, range [-1.70, 0]   20% of words off by >1.0 pt
+#
+# A word joins the column band containing its CENTRE, so that is a systematic
+# half-point push towards the band on the left, and it looked like a real accuracy
+# limit worth fixing. `pdftotext -bbox-layout` reports the same boxes as floats and
+# needs no new dependency -- it is the poppler binary the OCR path already needs,
+# and its XML parses with base regex.
+#
+# IT WAS BUILT, WIRED IN AND SCORED AGAINST THE CORPUS: 998 of 1,034 rows correct
+# with integer boxes, 998 of 1,034 with floats. Not one row changed, on any of 33
+# cases, including three that nudge a column band by 1, 3 and 10 points.
+#
+# WHY, and it is the useful part: a band boundary lives in the GUTTER between two
+# columns, and the gutter on a real statement is several points wide. A systematic
+# error of half a point -- worst case 1.3 -- cannot carry a word across it. The
+# cases where it could are the ones where the amount sits within a point of the
+# boundary, and there the layout is genuinely ambiguous: no reader working from
+# column positions can know which column the bank meant.
+#
+# So 70 lines came back out. If a column-edge misread ever shows up on a real
+# statement this is the first thing to try again, and it is in the history of this
+# file -- but it is not carried as unmeasured machinery in the meantime.
+#
+# The right-edge error would matter if the reader ever used right-alignment to tell
+# a debit column from a credit one. It does not today.
+# ---------------------------------------------------------------------------

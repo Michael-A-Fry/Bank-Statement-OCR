@@ -388,6 +388,19 @@ CASES = [
     # ---- the band model under stress -----------------------------------------
     case("band_cliff_3pt", "amounts drawn 3pt into the NEXT band",
          n=20, band_nudge={"debit": 3, "credit": 3}),
+    case("band_cliff_1pt", "amounts drawn 1pt over -- inside the rounding error",
+         n=20, band_nudge={"debit": 1, "credit": 1, "balance": 1}),
+    # A CASE THE READER CANNOT GET RIGHT, AND MUST NOT GET WRONG QUIETLY.
+    # The debit is drawn so far over that it sits inside the CREDIT band. No reader
+    # working from column positions can know that a figure in the credit column is
+    # really a debit -- the page says otherwise -- so scoring it on figure accuracy
+    # would be scoring an impossibility. What it CAN be scored on is whether the
+    # run is caught: the sign flips, the running balance stops adding up, and the
+    # statement must come back flagged rather than clean. `mustflag_` tells the
+    # scorer that is the whole test.
+    case("mustflag_debit_in_credit_column",
+         "a debit drawn inside the credit band: unknowable, so it must be caught",
+         n=20, band_nudge={"debit": 32, "credit": 38}),
     case("band_cliff_10pt", "amounts drawn 10pt over, centre now in the wrong band",
          n=20, band_nudge={"debit": 10, "credit": 10}),
     case("band_left_aligned", "amounts LEFT-aligned in their band, not right",
