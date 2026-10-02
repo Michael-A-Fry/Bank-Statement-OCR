@@ -155,6 +155,35 @@ say(!length(missing_ocr), "Scans",
                  paste(missing_ocr, collapse = " and "),
                  if (length(missing_ocr) == 1L) "is" else "are"))
 
+# ---- 6. reading the ink, not just the text -----------------------------------
+# WHY THIS IS A SEPARATE CHECK AND NOT A FOOTNOTE TO THE ONE ABOVE.
+#
+# Some banks draw a minus sign as a short LINE rather than printing it as a
+# character, and some print one in the BACKGROUND COLOUR on positive amounts to keep
+# a column right-aligned. In the first case the text layer has no sign and every
+# withdrawal reads as a deposit; in the second it has a sign the page does not show
+# and every deposit reads as a withdrawal. The reader takes the sign from the page
+# itself using pdftocairo (.apply_ink_signs, R/read_pdf.R), and on a statement with
+# no running balance NOTHING ELSE CAN CATCH EITHER FAULT - there is no arithmetic to
+# object with.
+#
+# pdftocairo comes from the same poppler package as pdftoppm, so normally both are
+# present or neither is. But the reader fails QUIET if it is missing - it simply
+# gets no extra evidence - which means a server missing it reads those statements
+# with inverted signs and says nothing. That is the one thing this tool must never
+# do, so it is asked about by name.
+missing_ink <- c("pdftocairo", "pdftotext")[!nzchar(Sys.which(c("pdftocairo", "pdftotext")))]
+say(!length(missing_ink), "Signs",
+    if (!length(missing_ink))
+      "signs drawn as ink rather than printed as text can be read from the page"
+    else sprintf(paste("%s %s not installed, so a minus drawn as a line or printed in",
+                       "the background colour CANNOT be seen - a statement that prints",
+                       "its signs that way would be read with the signs inverted, with",
+                       "nothing to catch it. Install the poppler tools (same package as",
+                       "pdftoppm)."),
+                 paste(missing_ink, collapse = " and "),
+                 if (length(missing_ink) == 1L) "is" else "are"))
+
 # ---- the verdict -------------------------------------------------------------
 failed <- Filter(function(r) !r$ok, .results)
 if (!length(failed)) {

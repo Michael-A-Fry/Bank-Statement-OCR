@@ -25,7 +25,9 @@ safe <- function(expr, default = NULL) tryCatch(expr, error = function(e) defaul
 
 # --- the USER PATH, read and written carefully ------------------------------
 # Poppler and Tesseract are only usable if their folders are on PATH (R/ocr.R
-# refuses a scan unless BOTH `tesseract` and `pdftoppm` resolve). Appending to the
+# refuses a scan unless BOTH `tesseract` and `pdftoppm` resolve, and the sign check
+# in health-check.R additionally wants `pdftocairo` and `pdftotext` -- all three
+# poppler binaries ship in the same zip). Appending to the
 # HKCU PATH is therefore part of setup -- but it rewrites the whole value, so
 # getting the read wrong destroys the operator's environment silently.
 

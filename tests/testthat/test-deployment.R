@@ -639,10 +639,14 @@ test_that("every kind of template lives under templates/, and nowhere else", {
        status = as.integer(attr(out, "status") %||% 0L))
 }
 
-test_that("the health check answers all five questions and exits non-zero on a failure", {
+test_that("the health check answers every question and exits non-zero on a failure", {
   r <- .hc_run()
-  # every question an operator has after an update, each on its own line
-  for (area in c("Settings", "Admin", "Templates", "Folders", "Scans"))
+  # every question an operator has after an update, each on its own line. Two were
+  # added after the first five because each names a way the server can be WRONG
+  # while looking fine: Identity (whether a name in the audit log can be stood
+  # behind) and Signs (whether a minus drawn as ink can be seen at all).
+  for (area in c("Settings", "Admin", "Identity", "Templates", "Folders",
+                 "Scans", "Signs"))
     expect_match(r$text, area, fixed = TRUE, info = area)
   expect_match(r$text, "PASS", fixed = TRUE)
   # PASS/FAIL and nothing else -- a third state is one nobody knows what to do with
@@ -711,4 +715,52 @@ test_that("no non-ASCII byte survives in the health check", {
   expect_true(file.exists(f))
   raw <- readBin(f, "raw", file.info(f)$size)
   expect_equal(sum(as.integer(raw) > 127L), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# A SERVER THAT CANNOT SEE THE INK MUST SAY SO, because the reader fails QUIET.
+#
+# Some banks draw a minus as a short line rather than printing it as a character,
+# and some print one in the background colour on positive amounts to keep a column
+# right-aligned. The reader takes the sign from the page itself with pdftocairo
+# (.apply_ink_signs, R/read_pdf.R). Without that binary it simply gets no extra
+# evidence and carries on -- so a server missing it reads those statements with the
+# signs INVERTED and reports nothing wrong. On a statement with no running balance
+# there is no arithmetic to object with either.
+#
+# pdftocairo ships in the same poppler zip as pdftoppm, so normally both are there.
+# "Normally" is not a thing a forensic tool may rely on.
+# ---------------------------------------------------------------------------
+test_that("the health check FAILS when it cannot read a sign drawn as ink", {
+  # A PATH holding everything R needs and no poppler. Built by COPYING, because a
+  # directory that merely comes first cannot hide a binary further along it.
+  d <- tempfile("nopoppler_"); dir.create(file.path(d, "bin"), recursive = TRUE)
+  on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  want <- c("Rscript", "R", "sh", "bash", "which", "cat", "ls", "uname", "sed", "grep",
+            "tesseract", "pdftoppm")
+  for (t in want) {
+    src <- Sys.which(t)
+    if (nzchar(src)) file.copy(src, file.path(d, "bin", basename(src)), overwrite = TRUE)
+  }
+  skip_if_not(file.exists(file.path(d, "bin", "Rscript")), "could not stage an R")
+  skip_if_not(nzchar(Sys.which("pdftocairo")), "pdftocairo absent here anyway")
+
+  cfg <- file.path(d, "config.yaml")
+  writeLines(c("app:", "  admin_password: a-real-password"), cfg)
+  out <- suppressWarnings(system2(file.path(d, "bin", "Rscript"),
+    shQuote(file.path(engine_root(), "scripts", "health-check.R")),
+    stdout = TRUE, stderr = TRUE,
+    env = c(sprintf("PATH=%s", file.path(d, "bin")),
+            sprintf("BSO_CONFIG=%s", cfg),
+            sprintf("R_HOME=%s", R.home()),
+            sprintf("HOME=%s", Sys.getenv("HOME")))))
+  txt <- paste(out, collapse = "\n")
+  skip_if_not(grepl("Signs", txt, fixed = TRUE), "the staged R could not run the check")
+
+  expect_match(txt, "FAIL  Signs")
+  expect_match(txt, "pdftocairo", fixed = TRUE)         # WHICH tool
+  expect_match(txt, "signs inverted", fixed = TRUE)     # and what it costs
+  expect_equal(as.integer(attr(out, "status") %||% 0L), 1L)
+  # ...and it is a DIFFERENT question from the scan tools, which are present here
+  expect_match(txt, "PASS  Scans")
 })
