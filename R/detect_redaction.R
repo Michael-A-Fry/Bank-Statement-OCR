@@ -138,7 +138,35 @@ detect_occluded_words <- function(path, page, words, page_w = NA, page_h = NA,
     y0 <- max(1L, as.integer(floor(wy[i] * sy)) + 1L)
     y1 <- min(H,  as.integer(ceiling((wy[i] + wh[i]) * sy)))
     if (x1 <= x0 || y1 <= y0) next
-    occ[i] <- mean(dark[x0:x1, y0:y1]) >= occ_thresh
+    box <- m[x0:x1, y0:y1]
+    # TWO QUESTIONS OF THE SAME PIXELS, and the second one was missing.
+    #
+    #   DARK   -- is this word blacked out? Catches a black redaction stripe, and
+    #             catches one that covers MOST of a word while a sliver still shows.
+    #   FLAT   -- can this word still be SEEN? Visible text is dark strokes on a
+    #             lighter ground, so its greyscale range is wide; a word under an
+    #             opaque fill of ANY colour is a flat patch and the range collapses.
+    #
+    # The darkness test alone is colour-blind in the direction that matters. A WHITE
+    # box over live text is one of the commonest failed redactions there is -- people
+    # do it in Word and Acrobat constantly -- and it hides an account number
+    # completely while being the least dark thing on the page. Measured on one
+    # specimen with the same number covered four ways, darkness flagged BLACK and
+    # missed WHITE, GREY and YELLOW.
+    #
+    # It costs nothing: the pixels are already in memory. The render is 69% of
+    # read_input's time on a 9-page statement and ONE statistic was being taken from
+    # it, which is the real answer to "are we using this tool well".
+    #
+    # A SHADED TABLE HEADER IS NOT A REDACTION, and this is what keeps that true. A
+    # grey band behind its column names leaves the glyphs plainly visible, so the
+    # range stays wide -- measured 217 against a threshold of 16. An earlier attempt
+    # read the draw order out of the page's vector ink instead and got this exactly
+    # wrong on a real ANZ statement, which paints light background panels AFTER most
+    # of its text: 162 words on a clean page called redacted. Rendering the page and
+    # looking at it needs no such reasoning, because the composite IS the answer.
+    occ[i] <- mean(dark[x0:x1, y0:y1]) >= occ_thresh ||
+      diff(range(box)) < PARAM_REDACT_FLAT_SPREAD
   }
   list(ok = TRUE, occluded = occ)
 }

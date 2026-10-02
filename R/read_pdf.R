@@ -759,3 +759,35 @@ read_pdf <- function(path, redaction_rects = NULL,
   list(words = w[!drop, , drop = FALSE], ink_minus = added,
        faint_dropped = sum(drop))
 }
+
+# ---------------------------------------------------------------------------
+# MEASURED AND NOT DONE: reading redaction boxes out of the page's vector ink.
+#
+# A box over text hides it whatever colour the box is, and the raster scan in
+# R/detect_redaction.R used to ask only "is this word DARK" -- so a WHITE box over
+# live text, one of the commonest failed redactions there is, was missed entirely.
+# Measured on a specimen with the same account number covered four ways, it flagged
+# BLACK and missed WHITE, GREY and YELLOW.
+#
+# The obvious fix, and the one the hook above was written for, is to read the filled
+# rectangles from the page itself: pdftocairo reports every one, with its colour. It
+# was built -- fills, glyph positions, and a z-order test, because a shaded table
+# header is a filled rectangle over its own column names and flagging it would
+# withhold the header of every statement that shades one.
+#
+# IT FAILED ON THE FIRST REAL STATEMENT IT SAW. anz_card_summary_sample.pdf paints
+# ten large light-grey background panels at SVG offsets AFTER most of its glyphs, so
+# the draw order in the converted SVG says they are on top of text they plainly do
+# not hide. 162 words on a clean page came back redacted.
+#
+# The lesson is worth more than the code was: draw order in a converted SVG is not a
+# reliable proxy for "hides the text" on real PDFs. The right question is simply
+# whether the word can still be SEEN, and the renderer already answers it -- a word
+# under an opaque fill of any colour is a FLAT patch, and visible text never is. That
+# is PARAM_REDACT_FLAT_SPREAD in R/detect_redaction.R: one more statistic from pixels
+# already in memory, no z-order reasoning, and it needs no assumption about how a
+# particular PDF writer ordered its display list.
+#
+# About a hundred lines came back out. The vector pass remains for what it is
+# genuinely better at -- reading a SIGN the text layer gets wrong (.pdf_ink above).
+# ---------------------------------------------------------------------------

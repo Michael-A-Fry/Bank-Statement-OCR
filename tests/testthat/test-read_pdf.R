@@ -211,3 +211,81 @@ test_that("read_pdf rebuilds page text from guarded boxes when redacted", {
   expect_true(all(w1$text[covered] == REDACTION_TOKEN))
   expect_true(any(covered))
 })
+
+# ---------------------------------------------------------------------------
+# A BOX OVER TEXT HIDES IT WHATEVER COLOUR THE BOX IS.
+#
+# detect_occluded_words used to ask one question of the rendered page: "is this word
+# DARK". That catches a black redaction stripe and is colour-blind in the direction
+# that matters most. A WHITE box over live text is one of the commonest failed
+# redactions there is -- people do it in Word and Acrobat constantly -- and it hides
+# an account number completely while being the least dark thing on the page.
+#
+# Measured on redaction_overlay_colours.pdf, where the SAME account number is covered
+# four ways: the darkness test flagged BLACK and missed WHITE, GREY and YELLOW. Three
+# numbers invisible on the statement arrived in the output with nothing saying so --
+# so the analyst could not reconcile what they were given against what they could
+# see, and if the box was somebody's attempt to protect third-party data the tool had
+# quietly undone it.
+#
+# It now also asks whether the word can still be SEEN. Visible text is dark strokes
+# on a lighter ground, so its greyscale range is wide; a word under an opaque fill of
+# any colour is a flat patch and the range collapses.
+# ---------------------------------------------------------------------------
+
+test_that("a box over text is caught whatever colour it is", {
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(requireNamespace("magick", quietly = TRUE))
+  f <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
+  skip_if_not(file.exists(f))
+  pdf <- read_pdf(f)
+  txt <- paste(pdf$pages, collapse = " ")
+
+  # EVERY covered number is gone from the text the engine will use. Not "most":
+  # one that survives is one that reaches a spreadsheet invisibly.
+  for (n in c("0043217", "0043218", "0043219", "0043220"))
+    expect_false(grepl(n, txt, fixed = TRUE),
+                 info = paste("a covered account number survived:", n))
+  expect_equal(sum(pdf$redactions$redacted_words) > 0L, TRUE)
+
+  # ...and the one NOTHING covers is untouched. A guard that hid everything would
+  # pass the half of this test above and be useless.
+  expect_true(grepl("0099999", txt, fixed = TRUE))
+  expect_true(grepl("CLEAR", txt, fixed = TRUE))
+})
+
+test_that("a shaded table header is not a redaction", {
+  # The failure that would be worse than the gap. A grey band behind its own column
+  # names is a filled rectangle covering them, and flagging it would withhold the
+  # header of every statement that shades one.
+  #
+  # An earlier attempt read the DRAW ORDER out of the page's vector ink instead, and
+  # got this exactly wrong on a real ANZ statement, which paints light background
+  # panels after most of its text: 162 words on a clean page called redacted.
+  # Rendering the page and looking at it needs no such reasoning -- the composite IS
+  # the answer. (See "MEASURED AND NOT DONE" in R/read_pdf.R.)
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  skip_if_not(requireNamespace("magick", quietly = TRUE))
+  f <- fixture("tests/testthat/fixtures/redaction_shaded_header.pdf")
+  skip_if_not(file.exists(f))
+  txt <- paste(read_pdf(f)$pages, collapse = " ")
+
+  # the shaded header survives, word for word
+  for (w in c("Date", "Transaction", "Withdrawals", "Balance"))
+    expect_true(grepl(w, txt, fixed = TRUE), info = paste("shaded header word lost:", w))
+  # so does the ordinary row under it, figures included
+  expect_true(grepl("EFTPOS RIVERSIDE DAIRY", txt, fixed = TRUE))
+  expect_true(grepl("1,996.10", txt, fixed = TRUE))
+  # and the genuine white-box redaction in the same file is still caught
+  expect_false(grepl("0043217", txt, fixed = TRUE))
+})
+
+test_that("a real statement with light background panels is not redacted", {
+  # The regression that matters: this fixture paints ten large light-grey panels and
+  # is completely clean. It is the file that proved the vector-draw-order approach
+  # wrong, so it is the file that has to stay at zero.
+  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+  pdf <- read_pdf(fixture(SAMPLE_PDF))
+  expect_equal(sum(pdf$redactions$redacted_words), 0L)
+  expect_true(grepl("CARD SUMMARY", paste(pdf$pages, collapse = " "), ignore.case = TRUE))
+})

@@ -69,6 +69,25 @@ PARAM_REDACT_OCC_THRESH <- 0.70   # a word box at/above this dark-fill is occlud
 # strokes slightly MORE at lower dpi, so the false-positive margin is preserved).
 # Don't drop below ~72 without re-checking the small-redaction (min_area_pt) margin.
 PARAM_REDACT_VECTOR_DPI <- 100L   # render dpi for the digital vector-box scan
+# A WORD UNDER AN OPAQUE BOX IS FLAT, WHATEVER COLOUR THE BOX IS. The dark-pixel
+# test above asks "is this word black"; this one asks "can this word still be SEEN",
+# which is the question that actually matters and the one a darkness test gets wrong
+# in a specific and common way: a WHITE box over live text hides it completely and
+# is not dark. Measured on a specimen with the same account number covered four ways
+# -- black, white, grey, yellow -- the darkness test flagged the black box and
+# MISSED the other three, all of which hide the number entirely.
+#
+# Visible text is dark strokes on a lighter ground, so the greyscale range inside
+# its box is wide. A word under an opaque fill of any colour is a flat patch and its
+# range collapses. Below this value the word is treated as hidden.
+#
+# THE NUMBER COMES FROM MEASUREMENT, with a wide margin either side:
+#   covered words (all four colours) ........  0
+#   lowest VISIBLE word on a real statement .. 23  (a huge watermark word box)
+#   lowest visible across the shipped PDF fixtures . 247
+# 16 sits clear of both. Too high and a faint watermark is called a redaction,
+# withholding legible text -- the opposite failure, and just as bad.
+PARAM_REDACT_FLAT_SPREAD <- 16L
 
 # .plausible_year(y) -- is a 4-digit year within the trusted window? Vectorised.
 .plausible_year <- function(y) {
