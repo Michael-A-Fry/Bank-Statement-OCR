@@ -289,3 +289,71 @@ test_that("a real statement with light background panels is not redacted", {
   expect_equal(sum(pdf$redactions$redacted_words), 0L)
   expect_true(grepl("CARD SUMMARY", paste(pdf$pages, collapse = " "), ignore.case = TRUE))
 })
+
+# ---------------------------------------------------------------------------
+# HOW LONG IS THIS GOING TO TAKE?
+#
+# A digital page costs 0.17s and a scanned page 9.3s -- measured, 55x apart -- so a
+# 120-page scan is nineteen minutes behind the same "Converting statement..." that a
+# one-page statement shows for a second. Nineteen minutes of silence is
+# indistinguishable from a hung tool, and on a single-process server the natural
+# response (reload, upload again) is the one that makes it worse.
+
+test_that("the estimate knows a digital statement from a scan, and is cheap", {
+  skip_if_not(nzchar(Sys.which("pdfinfo")) && nzchar(Sys.which("pdftotext")))
+  f <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
+  skip_if_not(file.exists(f))
+  t0 <- Sys.time()
+  e <- conversion_estimate(f)
+  spent <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  expect_false(is.null(e))
+  expect_identical(e$pages, 1L)
+  expect_false(e$scanned)
+  expect_lt(spent, 5)                 # it must not be more waiting (measured: 0.05s)
+  # under half a minute it says NOTHING: a number nobody needed is noise, and this
+  # appears on every conversion
+  expect_identical(e$note, "")
+})
+
+test_that("the estimate refuses rather than guesses", {
+  expect_null(conversion_estimate(character(0)))
+  expect_null(conversion_estimate(file.path(tempdir(), "no-such-file.pdf")))
+  # not a PDF: a CSV has no pages and nothing to estimate from
+  csv <- file.path(tempdir(), "est.csv")
+  writeLines("a,b\n1,2", csv)
+  expect_null(conversion_estimate(csv))
+})
+
+test_that("the sentence scales, and a long scan says it is not stuck", {
+  # The numbers here are the measured ones in R/params.R. A digital 400-page
+  # statement is a non-event; a 120-page scan is the case this exists for.
+  expect_identical(.estimate_note(10L, FALSE, 10 * PARAM_SECS_PER_PAGE), "")
+  big <- .estimate_note(400L, FALSE, 400 * PARAM_SECS_PER_PAGE)
+  expect_match(big, "400 pages")
+  expect_match(big, "seconds")
+  scan <- .estimate_note(120L, TRUE, 120 * PARAM_SECS_PER_SCAN_PAGE)
+  expect_match(scan, "scans rather than text")
+  expect_match(scan, "19 minutes")
+  expect_match(scan, "not stuck", fixed = TRUE)
+  # and an absurd job is stated in hours rather than a four-digit minute count
+  expect_match(.estimate_note(2000L, TRUE, 2000 * PARAM_SECS_PER_SCAN_PAGE), "hours")
+})
+
+test_that("a long statement is told it is fine, and NOT told to split", {
+  # The advice here used to be "may hit tool limits; split into smaller files". Both
+  # halves were wrong: 400 pages convert in 70 seconds, and splitting a statement
+  # destroys the opening-plus-transactions-equals-closing check, which is the proof
+  # that the figures are right. The tool was telling people to degrade their evidence.
+  d <- build_diagnostics("ok", metadata = list(pages = 400L))
+  i <- which(d$category == "oversized")
+  expect_length(i, 1L)
+  expect_identical(d$severity[i], "info")
+  expect_match(d$how_to_fix[i], "Do NOT split", fixed = TRUE)
+  expect_match(d$how_to_fix[i], "across the whole statement")
+  expect_false(grepl("tool limits", d$how_to_fix[i], fixed = TRUE))
+  # ...and a long SCAN says where the time went
+  ds <- build_diagnostics("ok", metadata = list(pages = 120L, ocr_pages = 120L))
+  j <- which(ds$category == "oversized")
+  expect_match(ds$detail[j], "read as scans")
+  expect_match(ds$how_to_fix[j], "scanned pages as pictures")
+})

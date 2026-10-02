@@ -863,3 +863,66 @@ read_pdf <- function(path, redaction_rects = NULL,
 # About a hundred lines came back out. The vector pass remains for what it is
 # genuinely better at -- reading a SIGN the text layer gets wrong (.pdf_ink above).
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# HOW LONG IS THIS GOING TO TAKE?
+#
+# MEASURED, and the two answers are 55x apart: a digital page costs 0.17s and a
+# scanned page costs 9.3s, because tesseract has to read it as a picture. So a
+# 120-page digital statement is 20 seconds and a 120-page SCAN is nineteen MINUTES --
+# and the analyst is shown the same "Converting statement..." for both.
+#
+# Nineteen minutes of silence is indistinguishable from a hung tool. People reload the
+# page, upload it again, or report it broken; and on a shared single-process server
+# re-uploading is the one response that makes it worse. One sentence up front turns it
+# into an informed wait.
+#
+# IT HAS TO BE CHEAP, or it is just more waiting. Page count comes from pdfinfo and
+# the scan test from the first few pages of text only -- both sub-second on a
+# 400-page file, measured. It is deliberately a GUESS and says so: it reads a sample,
+# not the document.
+.ESTIMATE_SAMPLE_PAGES <- 3L
+
+# conversion_estimate(path) -> list(pages, scanned, secs, note) or NULL when the
+# question cannot be answered cheaply (not a PDF, no poppler, unreadable).
+conversion_estimate <- function(path) {
+  if (!length(path) || !file.exists(path)) return(NULL)
+  if (!grepl("[.]pdf$", path, ignore.case = TRUE)) return(NULL)
+  info <- Sys.which("pdfinfo"); txt <- Sys.which("pdftotext")
+  if (!nzchar(info) || !nzchar(txt)) return(NULL)
+  out <- safe(suppressWarnings(system2(info, shQuote(path), stdout = TRUE, stderr = FALSE)), NULL)
+  if (is.null(out)) return(NULL)
+  pg <- suppressWarnings(as.integer(trimws(sub("^Pages:[[:space:]]*", "",
+          grep("^Pages:", out, value = TRUE)[1]))))
+  if (!length(pg) || is.na(pg) || pg < 1L) return(NULL)
+  # the sample: text from the first few pages only
+  n <- min(pg, .ESTIMATE_SAMPLE_PAGES)
+  tf <- tempfile(fileext = ".txt"); on.exit(unlink(tf), add = TRUE)
+  st <- safe(suppressWarnings(system2(txt, c("-f", "1", "-l", as.character(n),
+        shQuote(path), shQuote(tf)), stdout = FALSE, stderr = FALSE)), 1L)
+  chars <- if (identical(as.integer(st), 0L) && file.exists(tf))
+    nchar(gsub("[[:space:]]", "", paste(readLines(tf, warn = FALSE), collapse = ""))) else 0L
+  # PER SAMPLED PAGE, not for the sample: a 1-page sample of a 400-page scan and a
+  # 3-page sample of one are the same document, and dividing by the wrong n called
+  # the first digital.
+  scanned <- (chars / max(1L, n)) < PARAM_OCR_MIN_CHARS
+  secs <- pg * (if (scanned) PARAM_SECS_PER_SCAN_PAGE else PARAM_SECS_PER_PAGE)
+  list(pages = pg, scanned = scanned, secs = secs,
+       note = .estimate_note(pg, scanned, secs))
+}
+
+# .estimate_note(pages, scanned, secs) -- the sentence, or "" when there is nothing
+# worth saying. Silence under about half a minute: a number nobody needed is noise,
+# and this appears on every single conversion.
+.estimate_note <- function(pages, scanned, secs) {
+  if (!is.finite(secs) || secs < 30) return("")
+  howlong <- if (secs < 90) sprintf("about %.0f seconds", round(secs / 10) * 10)
+             else if (secs < 5400) sprintf("about %.0f minutes", max(1, round(secs / 60)))
+             else sprintf("over %.0f hours", floor(secs / 3600))
+  if (scanned)
+    sprintf(paste("%d pages, and they look like scans rather than text, so every page",
+                  "has to be read as a picture - expect %s. Leave it running; it is not stuck."),
+            pages, howlong)
+  else
+    sprintf("%d pages, so expect %s.", pages, howlong)
+}

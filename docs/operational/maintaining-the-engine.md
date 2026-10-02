@@ -73,7 +73,7 @@ skipped: 0
   unless scope was deliberately removed, which is what happened at 1.9.0 and is
   the only reason the figures below are lower than 1.8.1's.
 
-The last full run measured **73 files, 1,019 tests, 5,457 passing assertions,
+The last full run measured **73 files, 1,023 tests, 5,479 passing assertions,
 0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.10.0, on R 4.3.3,
 with 1 skipped: one split test needs a Westpac bundle that lives in
 `samples/_private_staging/` and is deliberately not committed. Treat it as a
@@ -112,6 +112,47 @@ Two things to know when a number here looks wrong:
   freeze anyone else's browser. The cap on concurrent jobs is what protects the
   machine: tesseract is OpenMP-parallel, and three concurrent *scans* on four cores
   had not finished a single page after ten minutes.
+
+### A SCAN is 55 times slower, and that is the number that matters
+
+| | per page | 120 pages |
+|---|---|---|
+| digital PDF (a text layer) | 0.17 s | ~20 seconds |
+| **scanned PDF (OCR)** | **9.3 s** | **~19 minutes** |
+
+Measured on a rasterised specimen: 3 pages, 27.8 s, OCR confidence 81, and it detected
+and parsed correctly -- the quality is fine, it is only slow. tesseract dominates it.
+
+Nineteen minutes behind a screen that says "Converting statement..." is
+indistinguishable from a hung tool, so `conversion_estimate()` probes the file first
+(pdfinfo for the page count, the first three pages' text for the scan test -- 0.05 s on
+a 400-page file) and the wait is stated up front. It says nothing under half a minute.
+
+### Several analysts at once
+
+Five 100-page conversions started together, cap of 3, four cores:
+
+```
+analyst 1: running   0 ahead     t=  0.6s  running running running queued queued
+analyst 2: running   1 ahead     t= 15.2s  done    done    running running running
+analyst 3: running   2 ahead     t= 17.3s  done    done    done    running running
+analyst 4: queued    3 ahead     t= 43.8s  done    done    done    done    done
+analyst 5: queued    4 ahead
+```
+
+**43.8 s wall for five, against 17.0 s for one**, and all five produced the full 3,000
+rows plus a workbook. Nothing thrashed and nothing was dropped. `job_queue_ahead()` is
+what lets the screen say "you are fifth in line" rather than leaving someone guessing.
+
+The cap is 3 on four cores, and it is the number that protects the machine: tesseract
+is OpenMP-parallel, and three concurrent **scans** on four cores had not finished a
+single page after ten minutes. Raise it only with a measurement.
+
+### The biggest output
+
+400 pages / 12,000 rows produces a 1.1 MB workbook with all six sheets
+(Transactions, Summary, Checks, Provenance, Diagnostics, Metadata), 12,000 rows on
+sheet 1, status `ok`. Writing it is 1.4 s of the 69.5 s.
 
 Re-run the benchmark after any change to reading, parsing or the diagnostics, and
 compare against the table. Two of the four stages were rewritten on the strength of

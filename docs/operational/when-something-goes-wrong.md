@@ -61,7 +61,7 @@ Every phrase the *What* column can print, and what it means for you:
 | redactions found and kept · what the PDF says about itself · no issues found | **Nothing.** Stated for the record. |
 | hidden text could not be checked | **Stop.** The tool could not prove that text under a black box stayed hidden. **Do not release this output.** It is not the file's fault and not yours — the server is missing its image reader. Tell the maintainer. |
 
-**"info" does not mean "nothing to do".** Eight kinds of row are *info* severity
+**"info" does not mean "nothing to do".** Nine kinds of row are *info* severity
 and three of them still ask you for something:
 
 - *several accounts in one statement* — **info**, and its *How to fix* ends
@@ -91,6 +91,14 @@ and three of them still ask you for something:
   balance checks had nothing to test, so the figures rest on the reading alone
   rather than on arithmetic that confirms it. The SAME row at **medium** means
   something different — a column has moved, and the template needs editing.
+- *unusually large file* — **info**, and it says "No action". A long statement is
+  read the same way a short one is: 400 pages and 12,000 rows convert in about 70
+  seconds. It is said only because a long job looks like a stuck one, and because a
+  SCANNED statement costs about 9.3 seconds a page against 0.17 for a digital one —
+  a factor of 55, so a 120-page scan really is nineteen minutes. **Do not split a
+  long statement into smaller files.** The opening-plus-transactions-equals-closing
+  check only works across the whole statement, so splitting it removes the proof
+  that the figures are right.
 - *no issues found* — **info**, and it is the whole table. Described at the end
   of this section.
 
@@ -110,7 +118,7 @@ Both of those are *Converted successfully*, confidence **medium** — with rows 
 this table. Read the *How to fix* sentence, not the row count and not the
 severity word:
 
-- **info** is a note. It is not always "nothing to do" — see the eight kinds
+- **info** is a note. It is not always "nothing to do" — see the nine kinds
   above. On the 311-row PDF, one of the two info rows asks you to review per
   account.
 - **medium** on *completeness not auto-verified* is the same fact the confidence

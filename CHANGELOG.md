@@ -62,6 +62,21 @@ environment this tool is installed in is a thing the next maintainer has to cost
 reject again. The reasoning, and the triggers for revisiting it, are in
 [`docs/context/architecture/locked-decisions.md`](docs/context/architecture/locked-decisions.md).
 
+**A long statement is no longer told to split itself.** The `oversized` advice above
+100 pages said "may hit tool limits; split into smaller files". Both halves were
+wrong: 400 pages convert in 70 seconds with no limit to hit, and splitting a statement
+**destroys the opening-plus-transactions-equals-closing check**, because each piece
+then has an opening balance nothing printed. The tool was telling analysts to degrade
+their own evidence to fix a problem it does not have. Now `info`, with the measured
+figure and an explicit "do NOT split".
+
+**A scan is 55x slower, and the wait is stated up front.** 9.3 s a page against 0.17,
+so a 120-page scan is nineteen minutes behind the same "Converting statement...".
+`conversion_estimate()` probes the file in 0.05 s and says how long, and says it is
+not stuck. Five concurrent 100-page jobs against a cap of 3 finish in 43.8 s (one
+alone: 17.0 s), all five complete, and `job_queue_ahead()` lets the screen say where
+someone is in the queue.
+
 **Also:** a template that stops fitting now names the column (`column_bands`); the
 account number's shape is checked (`account_number`); no two files may define the same
 function name (a guard, after `.col_kind` was silently defined twice); and the

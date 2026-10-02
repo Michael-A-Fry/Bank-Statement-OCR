@@ -52,7 +52,16 @@ PARAM_STATED_COUNT_MAX <- 100000L
 # ---- oversized-input advisories (diagnostics) ------------------------------
 # Not hard limits -- the engine still tries. Above these it warns that a very
 # large file may hit tool/render limits, so a stall has an explanation.
-PARAM_MAX_PAGES   <- 100L         # PDFs longer than this may hit tool limits
+PARAM_MAX_PAGES   <- 100L         # above this a conversion is worth warning about
+# Seconds per page, MEASURED at 1.10.0 on this build (tools/synth/bench.R and a
+# rasterised 3-page specimen). The two differ by 55x, which is the whole reason the
+# estimate exists: a long DIGITAL statement is a non-event, a long SCAN is an hour.
+#   digital: 400 pages / 12,000 rows in 69.5s, flat at 0.17 s/page
+#   scanned: 3 pages in 27.8s, 9.3 s/page, and tesseract dominates it
+# Re-measure after any change to reading or parsing; the figures are in
+# docs/operational/maintaining-the-engine.md.
+PARAM_SECS_PER_PAGE      <- 0.17
+PARAM_SECS_PER_SCAN_PAGE <- 9.3
 PARAM_MAX_PAGE_PT <- 2880         # a page dimension over this (40 in) can break render/OCR
 
 # ---- redaction detection ---------------------------------------------------

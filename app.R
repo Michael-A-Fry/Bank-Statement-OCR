@@ -3517,7 +3517,16 @@ server <- function(input, output, session) {
     show_result()
     cv_dir(sess)
     who <- who_now()
-    cv_slot$start("convert", src, sess, message = "Converting statement\u2026",
+    # HOW LONG, UP FRONT. A digital page costs 0.17s and a SCANNED page 9.3s --
+    # measured, 55x apart -- so a 120-page scan is nineteen minutes behind the same
+    # "Converting statement..." that a one-page statement shows for a second.
+    # Nineteen minutes of silence is indistinguishable from a hung tool: people
+    # reload, upload again, or report it broken, and on a single-process server
+    # re-uploading is the one response that makes it worse. The probe costs 0.05s on a
+    # 400-page file and says nothing at all under half a minute.
+    est <- safe(conversion_estimate(src), NULL)
+    cv_slot$start("convert", src, sess,
+      message = paste(c("Converting statement\u2026", est$note %||% ""), collapse = " "),
       args = convert_args(force_tpl = force_tpl, include_user = include_user),
       finish = function(res) {
         # Complete the audit record with the attested vs detected identity split.
