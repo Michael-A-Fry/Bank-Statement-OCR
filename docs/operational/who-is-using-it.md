@@ -194,12 +194,19 @@ of them is the process identity. Isolation is entirely in the app's own checks.
 signed-in user can list and download any upload, and cross-case reading is gated
 on one shared admin password rather than on a reasoned, logged, per-case grant.
 
-**Downloads are not logged.** "Who opened whose statement, when" is **not
-answerable today**. Uploads and conversions are recorded; the download that
-actually puts someone's bank statement on someone's screen is not.
+**Downloads ARE logged** — one record per download in `logs\downloads\`, naming
+who, what, when, which conversion it came from, and the SHA-256 of the bytes handed
+over. That last field is the one that matters after retention deletes the source
+statement: it is then the only proof of what was produced and taken. Every download
+handler writes one, including a download that handed back only an explanation.
 
-Of those, the download log is the one to fix first, because it is the question
-anyone reviewing this tool will ask. Real per-user isolation needs one R process
+**But a record is not a gate.** It says who took a copy; it does not stop anyone
+taking one. While every analyst shares one server account there is no case
+ownership to check against, so cross-case reading is still gated on the shared admin
+password rather than on a reasoned, logged, per-case grant. The log makes it
+*visible* after the fact, which is worth having and is not the same as prevention.
+
+Real per-user isolation needs one R process
 per user, which on Windows means a Linux guest running ShinyProxy (free,
 Apache-2.0, one container per session) or Posit Connect with `RunAsCurrentUser`
 enabled — note that Connect **without** that setting shares one process between up

@@ -2340,8 +2340,10 @@ server <- function(input, output, session) {
       req(admin_ok())        # admin-only export
       b <- adm_ba()
       if (is.null(b)) { notify_once("adm_ba_report", BA_REPORT_WHY, duration = 6)
-                        return(.dl_note(file, BA_REPORT_WHY)) }
-      writeLines(format_batch_audit(b), file) })
+                        .dl_note(file, BA_REPORT_WHY)
+                        return(.dl_log("bulk-audit:nothing", file = file)) }
+      writeLines(format_batch_audit(b), file)
+      .dl_log("bulk-audit", file = file) })
 
   # adm_tpl_bands -- open the SELECTED template in the visual editor, on a real
   # statement it has actually read.
@@ -2549,12 +2551,19 @@ server <- function(input, output, session) {
       id <- input$adm_up_pick
       p <- if (!is.null(id) && nzchar(id)) upload_file_path(id, UPLOADS_DIR) else NA_character_
       if (is.na(p)) { notify_once("adm_up_audit", UP_AUDIT_WHY, duration = 6)
-                      return(.dl_note(file, UP_AUDIT_WHY)) }
+                      .dl_note(file, UP_AUDIT_WHY)
+                      return(.dl_log("upload-audit:nothing", id = id, file = file)) }
       a <- tryCatch(format_audit(statement_audit(need_file(p), templates = templates())),
                     error = function(e) NULL)
-      if (is.null(a)) return(.dl_note(file, sprintf(
-        "The saved statement for %s could not be read - it may have been deleted by the retention purge. Its upload record is still in Insights.", id)))
+      if (is.null(a)) {
+        .dl_note(file, sprintf(
+          "The saved statement for %s could not be read - it may have been deleted by the retention purge. Its upload record is still in Insights.", id))
+        return(.dl_log("upload-audit:unreadable", id = id, file = file)) }
       writeLines(a, file)
+      # THE ONE THAT MATTERS MOST. This reads a statement SOMEBODY ELSE uploaded,
+      # and until there is case ownership to check against, the record of who read
+      # it is the only control there is.
+      .dl_log("upload-audit", id = id, file = file)
     })
 
   # ---- Admin: format requests raised via the "tell our team" escape hatch ----
@@ -2655,12 +2664,16 @@ server <- function(input, output, session) {
       nm <- input$adm_inbox_pick
       p <- if (!is.null(nm) && nzchar(nm)) failed_file_path(nm, ".") else NA_character_
       if (is.na(p)) { notify_once("adm_inbox_audit", INBOX_WHY, duration = 6)
-                      return(.dl_note(file, INBOX_WHY)) }
+                      .dl_note(file, INBOX_WHY)
+                      return(.dl_log("inbox-audit:nothing", id = nm, file = file)) }
       a <- tryCatch(format_audit(statement_audit(need_file(p), templates = templates())),
                     error = function(e) NULL)
-      if (is.null(a)) return(.dl_note(file, sprintf(
-        "%s could not be read at all, so there is nothing to summarise. That it cannot be read IS the finding: it is not a statement this tool can open, or the file is damaged.", nm)))
+      if (is.null(a)) {
+        .dl_note(file, sprintf(
+          "%s could not be read at all, so there is nothing to summarise. That it cannot be read IS the finding: it is not a statement this tool can open, or the file is damaged.", nm))
+        return(.dl_log("inbox-audit:unreadable", id = nm, file = file)) }
       writeLines(a, file)
+      .dl_log("inbox-audit", id = nm, file = file)
     })
 
   # ---- Add a template: ONE builder, one table at a time ---------------------
@@ -3031,12 +3044,16 @@ server <- function(input, output, session) {
       # back the reason in the file, never an HTTP 500 error page.
       if (is.null(src) || is.null(tmpl)) {
         notify_once("ix_cov", "Convert a PDF statement first - nothing to diagnose yet.", duration = 6)
-        return(.dl_note(file, "Nothing to diagnose yet: convert a PDF statement, then download this from its result page.")) }
+        .dl_note(file, "Nothing to diagnose yet: convert a PDF statement, then download this from its result page.")
+        return(.dl_log("row-coverage:nothing", file = file)) }
       inp <- tryCatch(read_input(src$path), error = function(e) NULL)
       if (is.null(inp)) {
         notify_once("ix_cov", "Couldn't re-read the file for the diagnostic.", type = "error", duration = 6)
-        return(.dl_note(file, "The statement could not be re-read from disk, so no diagnostic could be built. The scratch copy may have been cleaned up - convert it again.")) }
+        .dl_note(file, "The statement could not be re-read from disk, so no diagnostic could be built. The scratch copy may have been cleaned up - convert it again.")
+        return(.dl_log("row-coverage:unreadable", file = file)) }
       writeLines(format_row_coverage(row_coverage(inp, tmpl)), file)
+      .dl_log("row-coverage", id = tid, file = file,
+              run_id = safe((res$run_id %||% NA_character_)[1], NA_character_))
     })
   # "This IS a transaction": select a skipped row and add it. We record its page +
   # y-band as a force_rows entry and re-run the conversion, so the row lands in the
@@ -3352,6 +3369,24 @@ server <- function(input, output, session) {
     list(who = NA_character_, source = "none")
   }
   detected_identity <- function() detected_identity_info()$who
+  # .dl_log(what, id, file, run_id) -- record that somebody took a copy.
+  #
+  # EVERY downloadHandler calls this, from inside `content`, AFTER the bytes are in
+  # place -- so the hash is of what was actually handed over, not of what was meant
+  # to be. A download that produced only an explanation (.dl_note) is still a
+  # download and is still recorded: "she asked for the workbook and got a note
+  # saying why there wasn't one" is a fact a reviewer may need.
+  #
+  # It never throws and never blocks the download (log_download, R/logging.R). A
+  # download that works but is not logged is better than one that fails because the
+  # logging did -- the opposite trade would turn a full disk into an outage.
+  .dl_log <- function(what, id = NA_character_, file = NA_character_,
+                      run_id = NA_character_) {
+    info <- safe(detected_identity_info(), list(who = NA_character_, source = "none"))
+    safe(log_download(LOGDIR, what = what, id = id, path = file,
+                      who = info$who, source = info$source, run_id = run_id), NULL)
+    invisible(NULL)
+  }
   # Is the detected identity actually THIS PERSON (rather than the server's own
   # account)? Only a host/SSO sign-in is; that is the only case where pre-filling
   # the name box or saying "signed in as" is true.
@@ -3918,7 +3953,8 @@ server <- function(input, output, session) {
       outs <- .batch_outputs(cv_batch())
       if (!length(outs)) {
         notify_once("dl", NOTHING_TO_DL, duration = 6)
-        return(.dl_note(file, NOTHING_TO_DL))
+        .dl_note(file, NOTHING_TO_DL)
+        return(.dl_log("case-zip:nothing", file = file))
       }
       # zip::zip is what openxlsx already brings, so it is on every box this runs
       # on and needs no external tool -- which matters on a machine with no
@@ -5230,9 +5266,12 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       p <- .out_path(ext)
+      rid <- safe((cv_res()$run_id %||% NA_character_)[1], NA_character_)
       if (is.na(p)) { notify_once("dl", NOTHING_TO_DL, duration = 6)
-                      return(.dl_note(file, NOTHING_TO_DL)) }
+                      .dl_note(file, NOTHING_TO_DL)
+                      return(.dl_log(paste0(ext, ":nothing"), run_id = rid, file = file)) }
       file.copy(p, file, overwrite = TRUE)
+      .dl_log(ext, id = safe(basename(dirname(p)), NA_character_), file = file, run_id = rid)
     })
   output$dl_xlsx <- mk_dl("xlsx"); output$dl_csv <- mk_dl("csv"); output$dl_json <- mk_dl("json")
 

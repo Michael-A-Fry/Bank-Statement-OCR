@@ -117,3 +117,69 @@ read_log_records <- function(logdir, subdir) {
   if (!length(recs)) return(data.frame())
   .rows_bind(recs)
 }
+
+# ---------------------------------------------------------------------------
+# WHO OPENED WHOSE STATEMENT, AND WHEN.
+#
+# The uploads are recorded and the conversions are recorded. The DOWNLOAD -- the
+# moment somebody's bank statement actually lands on somebody's screen -- was not
+# recorded anywhere, so the question a reviewer of this tool asks first could not be
+# answered at all.
+#
+# It is the question the standards ask too. ACPO Principle 3: "An audit trail or
+# other record of all processes applied to digital evidence should be created and
+# preserved." NIST SP 800-86 4.2 is more specific still, requiring "a log of every
+# person who had physical custody of the evidence, documenting the actions that they
+# performed on the evidence and at what time". A conversion log answers what was
+# produced; only a download log answers who took a copy.
+#
+# THE SHA-256 OF THE BYTES HANDED OVER IS THE LOAD-BEARING FIELD. Retention deletes
+# the source statement from uploads\ after its window; after that the hash is the
+# only remaining proof of what was produced and taken. It is also what lets a
+# dispute about "the spreadsheet I was given said X" be settled.
+#
+# ONE FILE PER EVENT, NEVER OVERWRITTEN, the same shape as a run record -- so the
+# same backup, the same retention and the same reader work on both, and a destroyed
+# record is as visible here as it is there.
+#
+# WHAT IT DOES NOT DO, said plainly: it records the download, it does not authorise
+# it. While every analyst shares one server account there is no case ownership to
+# check against, so this is a record of who took what, not a gate on who may. The
+# gate is docs/operational/who-is-using-it.md, and it is not built yet.
+#
+# log_download(logdir, what, id, path, who, source, run_id) -> the record, invisibly.
+# Never throws and never blocks the download: a failure to record is recorded in the
+# record itself where it can be, and a download that works but is not logged is
+# better than a download that fails because logging did.
+log_download <- function(logdir, what, id = NA_character_, path = NA_character_,
+                         who = NA_character_, source = NA_character_,
+                         run_id = NA_character_, bytes = NA_integer_) {
+  one <- function(v, d = NA_character_) {
+    v <- tryCatch(as.character(v)[1], error = function(e) NA_character_)
+    if (length(v) != 1L || is.na(v) || !nzchar(trimws(v))) d else trimws(v)
+  }
+  sha <- NA_character_; n <- suppressWarnings(as.integer(bytes))
+  if (!is.na(path) && nzchar(path) && file.exists(path)) {
+    sha <- tryCatch(as.character(file_sha256(path)), error = function(e) NA_character_)
+    if (is.na(n)) n <- tryCatch(as.integer(file.info(path)$size), error = function(e) NA_integer_)
+  }
+  rec <- list(
+    event = "download",
+    what = one(what, "unknown"),          # which download: xlsx, csv, audit, ...
+    object_id = one(id),                  # the upload / batch / template it names
+    run_id = one(run_id),                 # the conversion it came from, when there is one
+    at_utc = format(as.POSIXct(Sys.time(), tz = "UTC"), "%Y-%m-%dT%H:%M:%SZ"),
+    by = one(who),                        # who the server could establish
+    identity_source = one(source, "none"),# and how -- judge `by` by this, not alone
+    file_name = if (!is.na(path) && nzchar(path)) basename(path) else NA_character_,
+    bytes = if (is.na(n)) NA_integer_ else n,
+    sha256 = sha,                         # of the bytes handed over
+    engine_version = tryCatch(engine_version(), error = function(e) NA_character_))
+  # The id is unique per event, so two downloads in the same second never collide
+  # into one record (write_log_record's ~2 suffix would keep both, but a readable
+  # id is worth more than relying on that).
+  rid <- sprintf("%s-%s-%s", format(as.POSIXct(Sys.time(), tz = "UTC"), "%Y%m%dT%H%M%S"),
+                 rec$what, substr(.safe_name(paste0(rec$object_id, rec$by, sha)), 1, 10))
+  invisible(tryCatch({ write_log_record(logdir, "downloads", rid, rec); rec },
+                     error = function(e) rec))
+}
