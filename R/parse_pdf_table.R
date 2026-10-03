@@ -61,8 +61,8 @@
 # A template's bands -- table$columns$<col>$x_min/x_max, table$region,
 # table$metadata_regions, and stored force_rows y-bands -- are PDF points measured
 # on a page of size table$ref_width x table$ref_height: the size of the page the
-# analyst drew them on, recorded by draft_template() (R/draft.R). THAT page size,
-# and nothing else, is the BAND FRAME. Origin top-left, y increasing downward, the
+# bands were measured on (by the automatic reader, or by a person in the column
+# editor). THAT page size, and nothing else, is the BAND FRAME. Origin top-left, y increasing downward, the
 # same axes pdftools reports word boxes in.
 #
 # Everything that touches a band converts with the two functions below and nowhere

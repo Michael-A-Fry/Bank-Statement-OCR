@@ -318,9 +318,7 @@ and was fixed, so it cannot come back.
 | Prove | the suite (§1): the new test passes **and nothing else breaks** | same |
 
 Step by step:
-[`tests/HOWTO-add-template-test.md`](../../tests/HOWTO-add-template-test.md)
-(written for templates; its fixture and golden steps still apply, and its test
-step is being rewritten for the automatic reader).
+[`tests/HOWTO-add-template-test.md`](../../tests/HOWTO-add-template-test.md).
 
 **Never use a real customer statement as a fixture.** Fixtures are committed and
 travel with the package. Invent the people, the accounts and the figures, and

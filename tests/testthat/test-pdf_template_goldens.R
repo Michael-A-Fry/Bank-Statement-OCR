@@ -30,11 +30,14 @@ for (.g in PDF_GOLDENS) local({
     skip_if_not(file.exists(fixture(g$fx)))
     expect_auto_read_golden(g$fx, g$exp, outcomes = "proven")
   })
-  test_that(sprintf("%s: the fixture template extracts its fixture to the golden table", g$id), {
-    skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-    skip_if_not(file.exists(fixture(g$fx)))
-    expect_statement_ok(g$fx, g$exp, template_id = g$id)
-  })
+  # Only the layouts that came with a fixture template have this second reader to
+  # check; a golden added in 2.0 pins the automatic reader alone.
+  if (g$id %in% names(fixture_templates()))
+    test_that(sprintf("%s: the fixture template extracts its fixture to the golden table", g$id), {
+      skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+      skip_if_not(file.exists(fixture(g$fx)))
+      expect_statement_ok(g$fx, g$exp, template_id = g$id)
+    })
 })
 
 # The guard: every fixture template carries a golden snapshot, so no reader test
