@@ -308,7 +308,49 @@ async function run(browser, D) {
         (await page.$eval('#cv_status', e => e.innerText)).includes('read nothing'));
   await shot(page, '4-single');
 
-  // 8. a phone
+  // 8. EVERY OTHER SCREEN: About, Add a template (with a statement in the toolkit),
+  //    and each Admin tab -- at desktop and phone width. Nothing may draw an error
+  //    where its content should be (DT does exactly that when an extension is
+  //    missing: Admin's template list once read "The extension RowGroup does not
+  //    exist"), push the page sideways, or put an error in the console.
+  if (!process.env.APP_URL) {
+    const tp = await ctx.newPage();
+    const terr = [];
+    tp.on('pageerror', e => terr.push('PAGEERROR ' + String(e).slice(0, 160)));
+    tp.on('console', m => { if (m.type() === 'error') terr.push('CONSOLE ' + m.text().slice(0, 160)); });
+    await tp.goto(URL_ + '?admin', { waitUntil: 'networkidle' }); await sleep(1500);
+    const screen = async name => {
+      await sleep(1500);
+      const drawnErr = await tp.evaluate(() => [...document.querySelectorAll('.shiny-output-error, .tab-pane.active .shiny-output-error-validation')]
+        .filter(e => e.offsetParent !== null && !e.classList.contains('shiny-output-error-validation')).map(e => e.innerText.slice(0, 120)));
+      check(`${name}: nothing draws an error`, drawnErr.length === 0, JSON.stringify(drawnErr));
+      await tp.setViewportSize({ width: 390, height: 900 }); await sleep(700);
+      const o = await tp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      check(`${name}: fits a phone`, o === 0, `overflow ${o}px`);
+      await tp.setViewportSize({ width: 1440, height: 900 }); await sleep(500);
+      await shot(tp, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-'));
+    };
+    await tp.click('a[data-value="About"]'); await screen('About');
+    await tp.click('a[data-value="Add a template"]'); await sleep(800);
+    const gf = await tp.$('#main_tabs ~ .tab-content .tab-pane.active input[type=file]');
+    if (gf) {
+      await gf.setInputFiles(path.join(D, 'anz_march.pdf'));
+      check('the toolkit opens on a statement', await waitFor(tp, () => !!document.querySelector('.modal-dialog'), 30000));
+      await screen('Toolkit');
+      await tp.evaluate(() => { const c = [...document.querySelectorAll('.modal-footer button')].find(b => /cancel/i.test(b.innerText)); if (c) c.click(); });
+      await sleep(1500);
+    }
+    await tp.click('a[data-value="Admin"]'); await sleep(800);
+    await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
+    check('Admin lists the templates', (await tp.$$('#adm_tpl_overview tbody tr')).length >= 5);
+    await screen('Admin Templates');
+    const health = await tp.$('.tab-pane.active a[data-value="Health"]');
+    if (health) { await health.click(); await screen('Admin Health'); }
+    eq('no console or script errors on any screen', terr, []);
+    await tp.close();
+  }
+
+  // 9. a phone
   await page.setViewportSize({ width: 390, height: 900 }); await sleep(800);
   eq('nothing pushes the page sideways on a phone',
      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0);

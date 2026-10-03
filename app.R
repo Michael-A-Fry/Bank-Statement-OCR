@@ -509,6 +509,10 @@ ui <- fluidPage(
     # install cannot serve a browser its cached copy of the old stylesheet.
     tags$link(rel = "stylesheet", type = "text/css",
               href = sprintf("app.css?v=%s", engine_version())),
+    # The tab icon -- local like everything else. Without one every page load asked
+    # for /favicon.ico, got a 404, and put an error in the browser console that
+    # anyone checking the console for a real fault then had to read past.
+    tags$link(rel = "icon", type = "image/x-icon", href = "favicon.ico"),
     # A DATE BOX MUST NOT THROW ON ITS WAY IN. Shiny bundles bootstrap-datepicker
     # (the validity window on the template toolkit is the app's only date box) and
     # then renames the plugin to bsDatepicker via its own noConflict. The library's
@@ -1630,7 +1634,21 @@ server <- function(input, output, session) {
   # the band heading -- so the split costs no second table, no second observer and
   # no control, and (proven in a browser) rows_selected is still the data-frame
   # row index, which is what the row-click handler below reads.
+  #
+  # ...IF THIS DT HAS RowGroup. Not every DT release ships that extension, and on one
+  # that does not, datatable() draws an ERROR where the table should be -- measured on
+  # DT 0.31: both Admin template tables read "The extension RowGroup does not exist",
+  # so no template could be seen, picked or opened from Admin at all. The offline
+  # bundle takes whatever DT is current when it is built, so the server's version is
+  # not ours to promise. Without the extension the route is simply shown as the
+  # first column, and the table is sorted on it: the same bands, drawn plainly.
+  .DT_ROWGROUP <- dir.exists(file.path(system.file("htmlwidgets", "lib", "datatables-extensions",
+                                                   package = "DT"), "RowGroup"))
   .adm_rowgroup <- function(df, page = 25L, none = "Nothing here yet.") {
+    if (!.DT_ROWGROUP)
+      return(datatable(df, rownames = FALSE, selection = "single",
+                       options = dt_none_opts(none, pageLength = page, dom = "tip", scrollX = TRUE,
+                                              orderFixed = list(list(0L, "asc")))))
     datatable(df, rownames = FALSE, selection = "single",
               extensions = "RowGroup",
               options = dt_none_opts(none,

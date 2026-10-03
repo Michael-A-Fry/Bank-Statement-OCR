@@ -2777,3 +2777,19 @@ test_that("a scan's first pages are read off-process, and Convert stops the read
   # new files, or a re-check, stop it too
   expect_match(.src_block(src, "plan_start_check <- function\\(\\)", 6L), "plan_slot\\$cancel\\(\\)")
 })
+
+# ---------------------------------------------------------------------------
+# A DT WITHOUT RowGroup MUST NOT TAKE ADMIN'S TEMPLATE LIST WITH IT. Not every DT
+# release ships the extension; on one that does not (measured: DT 0.31) both Admin
+# template tables drew "The extension RowGroup does not exist" and nothing could be
+# opened. The bundle takes whatever DT is current, so the app checks, and falls back.
+test_that("Admin's template tables do not depend on a DT extension being present", {
+  src <- .ui_src()
+  blk <- .src_block(src, "\\.adm_rowgroup <- function", 20L)
+  expect_match(paste(src, collapse = "\n"), '\\.DT_ROWGROUP <- dir\\.exists\\(file\\.path\\(system\\.file\\("htmlwidgets", "lib", "datatables-extensions"')
+  expect_match(blk, "if \\(!\\.DT_ROWGROUP\\)")
+  # and the browser is not left asking for an icon that is not there (a 404 in the
+  # console on every page load)
+  expect_match(paste(src, collapse = "\n"), 'tags\\$link\\(rel = "icon", type = "image/x-icon", href = "favicon.ico"\\)')
+  expect_true(file.exists(file.path(engine_root(), "www", "favicon.ico")))
+})

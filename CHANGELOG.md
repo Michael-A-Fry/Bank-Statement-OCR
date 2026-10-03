@@ -13,6 +13,24 @@ finding id.
 
 ---
 
+## 1.22.1
+
+**Admin's template list works on every DT; every screen is now pressed by the
+browser check.**
+
+- **Fixed: Admin → Templates could show no templates at all.** Both tables there
+  used DT's RowGroup extension, which not every DT release ships; on one without
+  it (measured: DT 0.31) each table drew "The extension RowGroup does not exist",
+  so no template could be seen, picked or opened from Admin. The offline bundle
+  takes whatever DT is current when it is built, so the app now checks for the
+  extension and, without it, shows the band as an ordinary first column.
+- A tab icon (`www/favicon.ico`): every page load used to ask for one, get a 404,
+  and put an error in the browser console.
+- `tools/ui/check.mjs` now also tours About, the template toolkit with a statement
+  in it, and both Admin tabs, at desktop and phone width, failing on anything drawn
+  as an error, any sideways scroll, or any console error (54 checks). That tour is
+  what found the RowGroup fault.
+
 ## 1.22.0
 
 **A scan gets a suggested template too.**
