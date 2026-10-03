@@ -424,3 +424,6 @@ a.hub-card-quiet{background:var(--bg)}
 /* a wide table scrolls inside its own box rather than pushing the whole page sideways
    (measured: 142px past the right edge at phone width, from the checks/transactions) */
 div.dataTables_wrapper{max-width:100%;overflow-x:auto}
+/* a long button label wraps on a phone instead of poking out of its card (measured:
+   'Open that template and fix its columns' ran 1px past a 390px screen) */
+@media (max-width:767px){.btn{white-space:normal;max-width:100%}}

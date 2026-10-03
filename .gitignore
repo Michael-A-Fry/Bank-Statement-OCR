@@ -75,6 +75,8 @@ Rplots.pdf
 node_modules/
 package.json
 package-lock.json
+# ...except the browser check that IS part of the repo (dev-only, never shipped)
+!tools/ui/package.json
 
 # Deployment config (holds the admin password) - keep the .example committed, not this.
 /config/config.yaml

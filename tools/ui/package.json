@@ -1,0 +1,8 @@
+{
+  "name": "bso-ui-check",
+  "private": true,
+  "description": "Dev-time only: drives the Convert screen in a real browser. Never shipped.",
+  "type": "module",
+  "scripts": { "check": "node check.mjs" },
+  "dependencies": { "playwright": "^1.50.0" }
+}

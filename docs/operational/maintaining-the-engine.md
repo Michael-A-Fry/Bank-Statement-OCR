@@ -79,6 +79,11 @@ with 1 skipped: one split test needs a Westpac bundle that lives in
 `samples/_private_staging/` and is deliberately not committed. Treat it as a
 floor to compare against, not a target to match.
 
+**After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the
+buttons:** `node tools/ui/check.mjs` drives the Convert screen in a real browser
+and fails when it does not do what it says (see [`tools/ui/README.md`](../../tools/ui/README.md)).
+The suite reads `app.R` as text; only this proves the screen works.
+
 Run it as `NOT_CRAN=true BSO_ALLOW_SKIPS=1 Rscript tests/run_tests.R`. Without
 `NOT_CRAN` the OS-level concurrency proof in `test-jobs.R` skips itself — ten
 assertions quietly not run, and they are the ones that prove the job cap is
