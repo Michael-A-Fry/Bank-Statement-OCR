@@ -112,6 +112,12 @@
 # not match the files is refused outright: lined up wrongly, every template would
 # land on its neighbour's statement.
 #
+# `done(i, n, file, row)` is called just AFTER file i, with that file's row of the
+# frame below minus `result` (a few short fields, never the transactions) -- so a
+# screen can show each file's verdict the moment it exists rather than all of them
+# when the last one finishes. Same rules as `progress`: a plain callback, and one
+# that errors is ignored.
+#
 # `progress(i, n, file)` is called just BEFORE file i is converted -- a plain
 # callback, not a Shiny call, so a folder can be run from the R console. One that
 # errors is ignored: a broken progress bar must not cost a case its run.
@@ -122,7 +128,7 @@
 # them and marks the result `dropped_feed_rows` -- that word order on purpose:
 # `$` partially matches, so `feed_rows_dropped` would make res$feed_rows return
 # the marker instead of NULL and a stated drop would read as data).
-convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL) {
+convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL, done = NULL) {
   paths <- as.character(paths %||% character(0))
   n <- length(paths)
   ft <- as.character(force_templates %||% character(0))
@@ -165,6 +171,7 @@ convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL) {
     msg <- paste(as.character(res$messages %||% character(0)), collapse = " | ")
     out$message[i]       <- if (nzchar(msg)) msg else NA_character_
     results[[i]]         <- res
+    if (is.function(done)) safe(done(i, n, paths[i], out[i, , drop = FALSE]))
   }
 
   out$result <- results

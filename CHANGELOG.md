@@ -13,6 +13,27 @@ finding id.
 
 ---
 
+## 1.20.0
+
+**A case folder converts in front of you, file by file.**
+
+A case used to run behind a full-screen overlay that said "3 of 12" and nothing
+else until the last file was done. Now the Convert table is the progress:
+
+- A bar and *Converting 3 of 12 - march.pdf* above the table; each row goes
+  *Waiting* → *Converting…* → its verdict (rows, confidence, what to check) **the
+  moment that file finishes**, not when the whole case does. No overlay: the first
+  results can be read while the rest convert.
+- Waiting behind other people's work says so in the table ("2 conversions ahead of
+  yours").
+- The templates and Convert are locked while a case runs, and any other way into a
+  conversion (the toolkit's re-run after a save, a sample) waits until it finishes
+  rather than cancelling the case and reclaiming the folder it is writing into.
+- Engine: `convert_batch(done = )` is called after each file with that file's row
+  (never its transactions); the child job writes it as `done_NNNNN.rds` (written
+  aside and renamed, so never half-read) and `job_done_rows()` reads the new ones.
+- A single file still uses the progress panel: one file has no rows to fill in.
+
 ## 1.19.0
 
 **A template built here wins on its own statements without being held for review.**

@@ -143,8 +143,33 @@ async function run(browser, D) {
      ['Your choice', 'Your choice']);
   await shot(page, '1-suggested');
 
-  // 3. convert: the results arrive in the SAME rows, worst first
-  await page.click('#cv_go'); await waitIdle(page);
+  // 3. convert: the case's progress is IN the table -- no overlay hiding the page --
+  //    and the results arrive in the same rows, worst first
+  await page.click('#cv_go');
+  const seen = { overlay: false, header: new Set(), cells: new Set(), button: new Set(), locked: false };
+  for (let t = 0; t < 600; t++) {
+    const s = await page.evaluate(() => ({
+      overlay: document.body.classList.contains('ss-run'),
+      running: !!document.querySelector('.plan-running'),
+      header: ((document.querySelector('.plan-running .plan-head') || {}).innerText || '').replace(/ - .*$/, ''),
+      cells: [...document.querySelectorAll('td.plan-res')].map(td => td.innerText.split('\n')[0].trim()),
+      button: (document.querySelector('#cv_go') || {}).innerText || '',
+      locked: [...document.querySelectorAll('select.plan-pick')].some(x => x.disabled) }));
+    if (s.overlay) seen.overlay = true;
+    if (s.header) seen.header.add(s.header);
+    s.cells.forEach(c => seen.cells.add(c)); seen.button.add(s.button);
+    if (s.locked) seen.locked = true;
+    if (!s.running && t > 4) break;
+    await sleep(200);
+  }
+  await sleep(1500);
+  check('a case converts with the page still readable (no overlay)', !seen.overlay);
+  check('the table says which file it is on', [...seen.header].some(h => /^(Converting \d+ of 6|Starting)/.test(h)),
+        JSON.stringify([...seen.header]));
+  check('rows show their own state while the case runs',
+        [...seen.cells].some(c => /^(Waiting|Converting)/.test(c)), JSON.stringify([...seen.cells]));
+  check('Convert is locked while it runs', seen.button.has('Converting\u2026'), JSON.stringify([...seen.button]));
+  check('the dropdowns are locked while it runs', seen.locked);
   check('every row carries its result',
         await waitFor(page, () => document.querySelectorAll('tr.plan-openable').length === 6, 300000));
   r = await rows(page);

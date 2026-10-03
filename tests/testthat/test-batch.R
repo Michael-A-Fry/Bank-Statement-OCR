@@ -369,3 +369,23 @@ test_that("a chosen template that is not there fails THAT file, loudly and corre
   # the screen has words for it
   expect_true("template_unavailable" %in% names(.b_labels()$DIAG_PLAIN))
 })
+
+# ---------------------------------------------------------------------------
+# EACH FILE'S VERDICT THE MOMENT IT EXISTS. The Convert table fills in row by row
+# while a case runs; this is the engine half of that -- a callback after each file
+# with that file's row, and never its transactions.
+test_that("done() is called after each file, in order, with that file's verdict", {
+  dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- file.path(dir, c("a_anz.csv", "b_unknown.csv"))
+  seen <- list()
+  b <- .b_run(paths, done = function(i, n, f, row) seen[[length(seen) + 1L]] <<- list(i = i, n = n, f = f, row = row))
+  expect_length(seen, 2L)
+  expect_identical(vapply(seen, function(x) x$i, integer(1)), 1:2)
+  expect_identical(vapply(seen, function(x) x$n, integer(1)), c(2L, 2L))
+  expect_identical(vapply(seen, function(x) x$row$status, ""), b$status)
+  # a few short fields -- the transactions are never in it
+  expect_false("result" %in% names(seen[[1]]$row))
+  expect_true(all(c("status", "rows", "trust", "failing_check") %in% names(seen[[1]]$row)))
+  # a done() that errors costs nothing
+  expect_identical(.b_run(paths, done = function(...) stop("boom"))$status, b$status)
+})

@@ -3105,6 +3105,7 @@ server <- function(input, output, session) {
   cv_plan_done  <- reactiveVal(0L)            # how many of them so far (for the screen only)
   cv_plan_picks <- reactiveVal(character(0))  # per row: NA / "" / a template id
   cv_plan_ran   <- reactiveVal(NULL)          # list(gen, expected): each row's reading when last converted
+  cv_run        <- reactiveVal(NULL)          # list(gen, rows): the case converting now, and its rows
 
   plan_start_check <- function() {
     plan_env$i <- 0L
@@ -3257,17 +3258,37 @@ server <- function(input, output, session) {
 
   # .plan_select(gen, i, choices, first, selected, name) -- the row's dropdown: a
   # plain <select> (see "THE CHOICES LIVE HERE"), the templates grouped by bank.
-  .plan_select <- function(gen, i, choices, first, selected, name) {
+  .plan_select <- function(gen, i, choices, first, selected, name, locked = FALSE) {
     opt <- function(v, lab) tags$option(value = v,
       selected = if (identical(v, selected)) NA else NULL, lab)
     tags$select(class = "plan-pick", `data-gen` = gen, `data-row` = i,
       `aria-label` = sprintf("Template for %s", name),
+      disabled = if (isTRUE(locked)) NA else NULL,
       opt("", first),
       lapply(names(choices), function(bank) {
         g <- choices[[bank]]
         tags$optgroup(label = bank,
           lapply(seq_along(g), function(k) opt(unname(g[k]), names(g)[k])))
       }))
+  }
+
+  # .plan_verdict(status, rows, trust, failing_check, again) -- a file's Result and
+  # What-to-check cells. One builder, used for a finished case and for each file's
+  # verdict as it arrives mid-run, so the two can never say it differently.
+  .plan_verdict <- function(s, n_rows, conf, fc, again = FALSE) {
+    s <- as.character(s); graded <- .is_graded(s)
+    n_rows <- suppressWarnings(as.integer(n_rows)); conf <- as.character(conf)
+    what <- plain_failing_check(fc)
+    list(
+      tags$td(class = "plan-res",
+        div(class = paste("plan-verdict", paste0("v-", s)), plain_status(s)),
+        if (graded) div(class = "plan-sub",
+          sprintf("%s row%s", if (is.na(n_rows)) "?" else format(n_rows, big.mark = ","),
+                  if (identical(n_rows, 1L)) "" else "s"),
+          " \u00b7 confidence ", span(class = paste0("conf-", conf), conf)),
+        if (again) span(class = "plan-chip plan-mine", "Changed")),
+      tags$td(class = "plan-what",
+        if (is.na(what) || !nzchar(what)) span(class = "muted", "\u2014") else what))
   }
 
   output$cv_plan <- renderUI({
@@ -3290,10 +3311,16 @@ server <- function(input, output, session) {
     changed <- plan_changed()
     b <- cv_batch()
     res <- !one && !is.null(b) && nrow(b) == nrow(rows)   # this case's results are in
-    open <- cv_batch_row()
+    # ...and a case converting right now, for THIS upload: its rows fill in as each
+    # file finishes (cv_slot$live, R/jobs.R job_done_rows)
+    live <- cv_slot$live(); run <- cv_run()
+    running <- !is.null(live) && !is.null(run) && identical(run$gen, p$gen)
+    cols <- res || running
+    open <- if (running) NA_integer_ else cv_batch_row()
     # worst first once there are results -- the files that need work at the top and
     # grouped by what went wrong (BATCH_STATUSES is worst-LAST, so a status's
-    # position in it is its severity; one the screen has no words for sorts first)
+    # position in it is its severity; one the screen has no words for sorts first).
+    # A first run keeps the upload order while it runs, so rows do not jump about.
     ord <- seq_len(nrow(rows))
     if (res) {
       sev <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
@@ -3312,48 +3339,60 @@ server <- function(input, output, session) {
       first <- if (identical(r$state, "none")) "Choose a template\u2026" else "Detect automatically"
       sel <- if (!is.na(picks[i])) picks[i] else if (!is.na(r$guess)) r$guess else ""
       mine <- nzchar(eff[i])
-      ctl <- if (pickable && length(ch)) .plan_select(p$gen, i, ch, first, sel, r$name)
+      # locked while a case converts: a choice made mid-run would apply to nothing
+      ctl <- if (pickable && length(ch)) .plan_select(p$gen, i, ch, first, sel, r$name, locked = running)
              else if (pickable) span(class = "muted", "No template reads this kind of file yet")
              else span(class = "muted", "\u2014")
       tpl_cell <- tags$td(class = "plan-tpl", ctl,
-        if (res && mine) div(class = "plan-note", "your choice"))
-      again <- i %in% changed
-      tail <- if (!res) {
+        if (cols && mine) div(class = "plan-note", "your choice"))
+      in_run <- running && i %in% run$rows
+      tail <- if (in_run) {
+        k <- match(i, run$rows)
+        d <- if (!is.null(live$done)) live$done[live$done$k == k, , drop = FALSE] else NULL
+        if (!is.null(d) && nrow(d)) .plan_verdict(d$status[1], d$rows[1], d$trust[1], d$failing_check[1])
+        else if (identical(live$state, "running") && identical(as.integer(live$i), as.integer(k)))
+          list(tags$td(class = "plan-res", div(class = "plan-converting", "Converting\u2026")), tags$td(""))
+        else list(tags$td(class = "plan-res", span(class = "muted", "Waiting")), tags$td(""))
+      } else if (res) {
+        .plan_verdict(b$status[i], b$rows[i], b$trust[i], b$failing_check[i], again = i %in% changed)
+      } else if (cols) {
+        list(tags$td(""), tags$td(""))
+      } else {
         list(tags$td(class = "plan-state",
           if (mine) span(class = "plan-chip plan-mine", "Your choice")
           else span(class = paste("plan-chip", st[1]), title = .plan_hover(r), st[2])))
-      } else {
-        s <- as.character(b$status[i])
-        graded <- .is_graded(s)
-        n_rows <- suppressWarnings(as.integer(b$rows[i]))
-        conf <- as.character(b$trust[i])
-        what <- plain_failing_check(b$failing_check[i])
-        list(
-          tags$td(class = "plan-res",
-            div(class = paste("plan-verdict", paste0("v-", s)), plain_status(s)),
-            if (graded) div(class = "plan-sub",
-              sprintf("%s row%s", if (is.na(n_rows)) "?" else format(n_rows, big.mark = ","),
-                      if (identical(n_rows, 1L)) "" else "s"),
-              " \u00b7 confidence ", span(class = paste0("conf-", conf), conf)),
-            if (again) span(class = "plan-chip plan-mine", "Changed")),
-          tags$td(class = "plan-what",
-            if (is.na(what) || !nzchar(what)) span(class = "muted", "\u2014") else what))
       }
-      tags$tr(class = paste(c("plan-row", st[1], if (mine) "plan-chosen", if (res) "plan-openable",
-                              if (res && identical(open, i)) "plan-open"), collapse = " "),
+      openable <- res && !running
+      tags$tr(class = paste(c("plan-row", st[1], if (mine) "plan-chosen", if (openable) "plan-openable",
+                              if (openable && identical(open, i)) "plan-open",
+                              if (in_run) "plan-in-run"), collapse = " "),
         `data-gen` = p$gen, `data-row` = i,
-        tabindex = if (res) "0" else NULL,
-        title = if (res) "Click for this file's full result" else NULL,
+        tabindex = if (openable) "0" else NULL,
+        title = if (openable) "Click for this file's full result" else NULL,
         tags$td(class = "plan-file", title = r$name, r$name),
         tags$td(class = "plan-kind", kind),
         tpl_cell, tail)
     })
-    head_cells <- if (res) list(tags$th("Result"), tags$th("What to check"))
+    head_cells <- if (cols) list(tags$th("Result"), tags$th("What to check"))
                   else list(tags$th(""))
-    tbl <- tags$table(class = paste("plan-table", if (res) "plan-has-res"),
+    tbl <- tags$table(class = paste("plan-table", if (cols) "plan-has-res"),
       tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Suggested template"), head_cells)),
       tags$tbody(trs))
-    top <- if (res) {
+    top <- if (running) {
+      n <- length(run$rows); nd <- NROW(live$done)
+      a <- suppressWarnings(as.integer(live$ahead))
+      say <- if (identical(live$state, "queued")) {
+        if (is.na(a) || a <= 0L) "Starting\u2026"
+        else sprintf("Waiting for a free slot - %d conversion%s ahead of yours. Yours starts as soon as one finishes.",
+                     a, if (a == 1L) "" else "s")
+      } else sprintf("Converting %d of %d%s", min(n, max(1L, as.integer(live$i))), n,
+                     if (!is.na(live$file)) paste0(" - ", live$file) else "")
+      div(class = "plan-top plan-running",
+        div(class = "plan-progress",
+          p(class = "plan-head", say),
+          div(class = "plan-bar", div(class = "plan-bar-fill",
+            style = sprintf("width:%d%%", as.integer(round(100 * nd / max(1L, n))))))))
+    } else if (res) {
       s <- batch_summary(b); k <- stats::setNames(s$n, s$status)
       say <- function(x, word) if (isTRUE(k[[x]] > 0L)) sprintf("%d %s", k[[x]], word) else NULL
       bits <- Filter(Negate(is.null), list(say("ok", "converted"), say("needs_review", "need a check"),
@@ -3372,7 +3411,10 @@ server <- function(input, output, session) {
         else sprintf(paste("We've suggested a template for each of these %d files.",
                            "Please check they're right, then press Convert."), nrow(rows)))
     }
-    foot <- if (res) {
+    foot <- if (running) {
+      p(class = "muted plan-foot",
+        "Each file's result appears here as soon as it is done. You can keep reading this page while it works.")
+    } else if (res) {
       p(class = "muted plan-foot",
         if (length(changed))
           sprintf("%d changed - press Convert to read %s again. The rest keep their results.",
@@ -3380,7 +3422,7 @@ server <- function(input, output, session) {
         else if (is.na(open)) "Click a file for its full result. Not the template you expected? Change it and press Convert."
         else sprintf("Showing %s below. Click another file to see its result.", rows$name[open]))
     }
-    div(class = "plan", top, div(class = "plan-scroll", tbl), foot)
+    div(class = paste("plan", if (running) "plan-is-running"), top, div(class = "plan-scroll", tbl), foot)
   })
 
   cv_res <- reactiveVal(NULL)
@@ -3414,9 +3456,36 @@ server <- function(input, output, session) {
     slot$cancel <- function() {
       h <- isolate(slot$handle())
       if (!is.null(h)) safe(job_reap(h))
-      slot$close_bar(); slot$ctx <- NULL; slot$handle(NULL)
+      slot$close_bar(); slot$ctx <- NULL; slot$handle(NULL); slot$live(NULL)
     }
-    slot$start <- function(task, paths, outdir, message, finish, args = list()) {
+    # LIVE STATE FOR A SCREEN THAT SHOWS ITS OWN PROGRESS. A case folder is not put
+    # behind the full-screen overlay: the Convert table shows each file waiting,
+    # converting, and then its verdict the moment it exists (job_done_rows), so the
+    # page stays readable for the minutes a big case takes. `live` is what it reads:
+    # list(state, ahead, i, n, file, done), NULL when nothing is in flight. Set only
+    # when something CHANGED, so the table is not redrawn twice a second for nothing.
+    slot$live <- reactiveVal(NULL)
+    slot$live_update <- function(h, st) {
+      cur <- isolate(slot$live()) %||% list()
+      done <- cur$done
+      if (identical(st, "queued")) {
+        nw <- list(state = "queued", ahead = job_queue_ahead(h), i = 0L, n = cur$n,
+                   file = NA_character_, done = done)
+      } else {
+        got <- safe(job_done_rows(h, have = slot$ctx$have %||% integer(0)), NULL)
+        if (!is.null(got) && length(got$idx)) {
+          slot$ctx$have <- c(slot$ctx$have, got$idx)
+          done <- if (is.null(done)) got$rows else rbind(done, got$rows)
+        }
+        p <- job_progress(h)
+        nw <- list(state = "running", ahead = 0L, i = p$i %||% 0L, n = p$n %||% cur$n,
+                   file = p$file %||% NA_character_, done = done)
+      }
+      if (!identical(nw, cur)) slot$live(nw)
+    }
+    # `overlay = FALSE`: no progress panel (and so no full-screen overlay); the
+    # caller's screen reads `live` instead.
+    slot$start <- function(task, paths, outdir, message, finish, args = list(), overlay = TRUE) {
       slot$cancel()
       # A CONVERSION THAT CANNOT EVEN BE STARTED IS A FAILED CONVERSION, not a
       # failed app. job_start() writes the job's folder and its arguments to disk
@@ -3441,9 +3510,14 @@ server <- function(input, output, session) {
       # polls instead of for the length of one blocking call -- so the centred
       # "converting" overlay (www/app.css, body.ss-run, which follows
       # .progress-message) looks and behaves exactly as before.
-      slot$bar <- Progress$new(session)
-      slot$bar$set(message = message, value = 0.15, detail = "Starting\u2026")
-      slot$ctx <- list(finish = finish)
+      if (isTRUE(overlay)) {
+        slot$bar <- Progress$new(session)
+        slot$bar$set(message = message, value = 0.15, detail = "Starting\u2026")
+      } else {
+        slot$live(list(state = "queued", ahead = NA_integer_, i = 0L, n = length(paths),
+                       file = NA_character_, done = NULL))
+      }
+      slot$ctx <- list(finish = finish, have = integer(0))
       slot$handle(h)
       invisible(h)
     }
@@ -3454,6 +3528,7 @@ server <- function(input, output, session) {
       st <- job_poll(h)
       if (st %in% c("queued", "running")) {
         job_say(slot$bar, h, st)
+        if (is.null(slot$bar) && !is.null(isolate(slot$live()))) slot$live_update(h, st)
         invalidateLater(JOB_POLL_MS, session)
         return()
       }
@@ -3461,7 +3536,7 @@ server <- function(input, output, session) {
       # Read the result BEFORE reaping: reaping deletes the folder it is in.
       res <- if (identical(st, "done")) job_result(h) else NULL
       if (is.null(res)) res <- job_failed_result(h)
-      slot$close_bar(); slot$ctx <- NULL; slot$handle(NULL)
+      slot$close_bar(); slot$ctx <- NULL; slot$handle(NULL); slot$live(NULL)
       safe(job_reap(h))
       if (is.function(fin)) fin(res)
     })
@@ -3746,12 +3821,24 @@ server <- function(input, output, session) {
                        type = "warning", duration = 12)
     invisible(ok)
   }
+  # .case_converting() -- TRUE, and says so, while a case folder is converting.
+  # The page is no longer behind an overlay while a case runs (its table shows the
+  # progress), so another way into a conversion -- the toolkit's re-run after a
+  # save, a sample -- is reachable mid-case. Starting one would supersede the case
+  # in the same slot AND reclaim the scratch folder it is writing into. So it waits.
+  .case_converting <- function() {
+    if (is.null(isolate(cv_slot$live()))) return(FALSE)
+    notify_once("cv_case_busy", paste("A case is converting - its results are filling in on Convert.",
+      "Try again when it has finished."), type = "warning", duration = 8)
+    TRUE
+  }
   # run_conversion -- the whole convert-a-file flow (session dir, convert, state,
   # upload capture), shared by the Convert button and "Try it on a sample".
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
   run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL,
                              include_user = FALSE, upload_id = NULL) {
+    if (.case_converting()) return(invisible(NULL))
     old <- isolate(cv_dir())
     sess <- tempfile("cv_")   # guaranteed-unique per session/process (no cross-user bleed)
     dir.create(sess, showWarnings = FALSE, recursive = TRUE)
@@ -3951,6 +4038,7 @@ server <- function(input, output, session) {
   # scratch folder and their outputs are written over in place; every other row
   # keeps its result and its files, and the new results are merged into the table.
   run_batch <- function(files, forced = NULL, rows = NULL) {
+    if (.case_converting()) return(invisible(NULL))
     forced <- as.character(forced %||% rep(NA_character_, NROW(files)))
     b_old <- isolate(cv_batch())
     again <- !is.null(rows) && length(rows) && !is.null(b_old) && nrow(b_old) == NROW(files) &&
@@ -3987,6 +4075,7 @@ server <- function(input, output, session) {
       cv_dir(sess)
     }
     who <- who_now(); n <- length(paths)
+    cv_run(list(gen = gen, rows = rows))
     # A 50-file case must not look frozen, and it must not freeze the eight other
     # analysts either - a case folder blocks for far longer than one statement, so
     # it is the same one process per job, once for the whole case. ONE job, not one
@@ -3999,13 +4088,15 @@ server <- function(input, output, session) {
     # parsed rows -- so they are dropped below, per file, the moment that write is
     # done. Anything convert_batch does not itself take goes to convert_statement(),
     # which has no `...`, so a stray argument here fails every file in the case.
-    cv_slot$start("batch", paths, sess,
+    # overlay = FALSE: the Convert table shows this case's progress row by row
+    cv_slot$start("batch", paths, sess, overlay = FALSE,
       message = sprintf("Converting %d file%s\u2026", n, if (n == 1L) "" else "s"),
       args = list(templates_dir = TEMPLATES_DIR,
         user_templates_dir = if (USE_USER_TEMPLATES) USER_TEMPLATES_DIR else NULL,
         requested_by = who, logdir = LOGDIR,
         force_templates = forced),
       finish = function(b) {
+        cv_run(NULL)
         # A case that never came back is not an empty case. Say so on the verdict
         # card rather than draw a table of nothing.
         if (!is.data.frame(b)) return(show_result(b, NULL, NA_character_))
@@ -4165,6 +4256,7 @@ server <- function(input, output, session) {
     # WAITS FOR THE TABLE. Converting before the files are checked would skip the
     # one look this table exists to give -- it is a second or two, and it says so.
     busy <- !is.null(cv_plan_busy())
+    conv <- !is.null(cv_slot$live())     # a case converting: its table shows the progress
     # The button says what it is about to do. Twelve files selected and a button
     # marked "Convert" leaves the user to wonder whether it means all of them.
     # Worked out HERE, not in an observer beside it: this re-renders when the table
@@ -4180,7 +4272,8 @@ server <- function(input, output, session) {
                                           if (length(ch) == 1L) "" else "s")
              else sprintf("Convert all %d again", n)
     }
-    if (who && got && !busy)
+    if (conv) lab <- "Converting\u2026"
+    if (who && got && !busy && !conv)
       return(actionButton("cv_go", lab, class = "btn-primary btn-lg btn-block"))
     tagList(
       actionButton("cv_go", lab,
@@ -4190,6 +4283,7 @@ server <- function(input, output, session) {
         if (!got && !who) "Choose a file above, and enter your QID."
         else if (!got) "Choose a file above."
         else if (!who) "Enter your QID above - it records who ran this conversion."
+        else if (conv) "Each file's result fills in on the right as it finishes."
         else "Checking your files - a moment."))
   })
   outputOptions(output, "cv_go_btn", suspendWhenHidden = FALSE)
@@ -4208,6 +4302,7 @@ server <- function(input, output, session) {
                   type = "message", duration = 4)
       return()
     }
+    if (.case_converting()) return()
     # TOO MANY FILES IS REFUSED BEFORE ANY WORK STARTS, and says the number. The size
     # limit is per REQUEST, so a folder of hundreds of small statements passed it and
     # then converted one after another inside a single job -- no way to stop it, and

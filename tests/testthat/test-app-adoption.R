@@ -475,7 +475,7 @@ test_that("a file that converted nothing carries no confidence grade anywhere", 
   expect_false(any(graded(c("unsupported", "failed", "", NA))))
   # the batch table blanks the grade with it, and the card's own rule is the same
   # the case table only grades a row that converted, with the card's own rule
-  blk <- .app_block(.app_src(), "output\\$cv_plan <- renderUI", 120L)
+  blk <- .app_block(.app_src(), "\\.plan_verdict <- function", 20L)
   expect_match(blk, "graded <- \\.is_graded\\(s\\)")
   expect_match(blk, "if \\(graded\\) div\\(class = \"plan-sub\"")
   expect_match(.app_block(.app_src(), "output\\$cv_status <- renderUI", 45L),

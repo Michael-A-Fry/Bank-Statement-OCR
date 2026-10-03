@@ -419,7 +419,8 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
     convert = do.call(convert_statement, c(list(paths[1]), args)),
     batch = {
       do.call(convert_batch, c(list(paths), args,
-                               list(progress = .job_progress_writer(jobdir))))
+                               list(progress = .job_progress_writer(jobdir),
+                                    done = .job_done_writer(jobdir))))
     },
     audit = {
       # The maintainer's bulk audit: a picture of a folder. IT AUDITS; IT DOES NOT
@@ -440,6 +441,39 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
   p <- file.path(jobdir, "progress")
   function(i, n, f) safe(cat(sprintf("%d/%d %s\n", i, n, basename(f)),
                              file = p, append = TRUE))
+}
+
+# ...and each file's VERDICT the moment it exists. One small file per finished file
+# (`done_00003.rds`: that file's row of convert_batch's frame, no transactions),
+# written under a temporary name and renamed into place, so the parent never reads
+# half a file. The parent reads them with job_done_rows() while the case is still
+# running, which is what lets the Convert table fill in row by row.
+.job_done_writer <- function(jobdir) {
+  if (is.null(jobdir)) return(NULL)
+  function(i, n, f, row) safe({
+    p <- file.path(jobdir, sprintf("done_%05d.rds", as.integer(i)))
+    tmp <- paste0(p, ".tmp")
+    row$k <- as.integer(i)
+    saveRDS(row, tmp)
+    file.rename(tmp, p)
+  })
+}
+
+# job_done_rows(handle, have) -> list(idx, rows): the per-file verdicts written so
+# far that are not in `have` (positions already read), as one data frame with the
+# file's position in `k`. Empty when there are none yet, or the job is not a batch.
+job_done_rows <- function(j, have = integer(0)) {
+  none <- list(idx = integer(0), rows = NULL)
+  if (is.null(j$dir) || !dir.exists(j$dir)) return(none)
+  f <- list.files(j$dir, "^done_[0-9]+[.]rds$")
+  if (!length(f)) return(none)
+  idx <- as.integer(sub("^done_([0-9]+)[.]rds$", "\\1", f))
+  new <- !(idx %in% have)
+  if (!any(new)) return(none)
+  got <- lapply(file.path(j$dir, f[new]), function(p) safe(readRDS(p), NULL))
+  ok <- !vapply(got, is.null, logical(1))
+  if (!any(ok)) return(none)
+  list(idx = idx[new][ok], rows = do.call(rbind, got[ok]))
 }
 
 # job_start(input_path, outdir, ...) -> a job handle.

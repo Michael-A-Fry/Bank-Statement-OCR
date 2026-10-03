@@ -448,7 +448,7 @@ test_that("the Convert screen has a per-file template table and no global picker
     expect_false(any(grepl(gone, code)), info = gone)
   # a plain dropdown per row -- a native select, nothing to learn
   blk <- .src_block(src, "output\\$cv_plan <- renderUI", 80L)
-  expect_match(blk, ".plan_select\\(p\\$gen, i, ch, first, sel, r\\$name\\)")
+  expect_match(blk, ".plan_select\\(p\\$gen, i, ch, first, sel, r\\$name, locked = running\\)")
   expect_match(.src_block(src, "\\.plan_select <- function", 10L), "tags\\$select\\(class = \"plan-pick\"")
   # only templates that can read THIS kind of file are offered
   expect_match(blk, "template_choices\\(tset, r\\$format\\)")
@@ -891,7 +891,7 @@ test_that("filling the table never holds the server, and Convert waits for it", 
   # Convert is greyed while files are checked, and refuses a press that arrives anyway
   btn <- .src_block(src, "output\\$cv_go_btn <- renderUI", 25L)
   expect_match(btn, "busy <- !is\\.null\\(cv_plan_busy\\(\\)\\)")
-  expect_match(btn, "if \\(who && got && !busy\\)")
+  expect_match(btn, "if \\(who && got && !busy && !conv\\)")
   go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 20L)
   expect_match(go, "if \\(!is\\.null\\(isolate\\(cv_plan_busy\\(\\)\\)\\)\\)")
   # too many files is said in the table, before anything is checked
@@ -2093,8 +2093,10 @@ test_that("feedback is asked only about a conversion, and never in the proof gly
 # the clean files from the merely-uncomplaining ones without opening all thirty.
 test_that("the batch table grades a file with the same word its own card uses", {
   src <- .ui_src()
-  blk <- .src_block(src, "output\\$cv_plan <- renderUI", 120L)
-  expect_match(blk, "conf <- as\\.character\\(b\\$trust\\[i\\]\\)")
+  blk <- .src_block(src, "\\.plan_verdict <- function", 20L)
+  expect_match(blk, "conf <- as\\.character\\(conf\\)")
+  expect_match(.src_block(src, "output\\$cv_plan <- renderUI", 140L),
+               "\\.plan_verdict\\(b\\$status\\[i\\], b\\$rows\\[i\\], b\\$trust\\[i\\]")
   expect_match(blk, "confidence \", span\\(class = paste0\\(\"conf-\", conf\\), conf\\)")
   # the card prints res$trust$level, and convert_batch really carries it per file
   expect_match(.ui_block(src, "output\\$cv_headline <- renderUI", 45L),

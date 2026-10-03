@@ -194,7 +194,15 @@ converting again replaces them with corrected figures.
 
 ## Batch runs
 
-Select several files and Convert. The results arrive **in the same table** you
+Select several files and Convert. **While it runs, the table is the progress** — a
+bar and *Converting 3 of 12 - march.pdf* above it, and each row going from *Waiting*
+to *Converting…* to its result the moment that file is done. Nothing covers the
+page, so you can read the first results while the rest are still converting. The
+templates and the Convert button are locked until it finishes; if the server is
+busy with other people's work, the table says how many conversions are ahead of
+yours.
+
+When it finishes, the results are **in the same table** you
 checked the templates in — one row per file, no second table. Above it, one
 summary line (*3 converted · 2 need a check · 1 with no template yet*) and
 **Download everything**: one zip with every file's Excel, CSV and JSON.

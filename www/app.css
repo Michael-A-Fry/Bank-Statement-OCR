@@ -297,6 +297,16 @@ td.plan-res{min-width:170px}
 td.plan-res .plan-chip{margin-top:4px}
 td.plan-what{color:var(--ink);min-width:140px}
 table.plan-has-res td.plan-tpl{min-width:190px}
+/* a case converting: the table IS the progress -- a bar, and each row's state */
+.plan-progress{flex:1;min-width:240px}
+.plan-bar{height:6px;background:var(--line);border-radius:999px;overflow:hidden;margin:8px 0 2px}
+.plan-bar-fill{height:100%;background:var(--brand);border-radius:999px;transition:width .4s ease}
+.plan-converting{color:var(--brand);font-weight:700}
+.plan-converting::before{content:'';display:inline-block;width:11px;height:11px;margin-right:7px;
+  vertical-align:-1px;border:2px solid var(--brand-line);border-top-color:var(--brand);border-radius:50%;
+  animation:plan-spin .8s linear infinite}
+@keyframes plan-spin{to{transform:rotate(360deg)}}
+td.plan-tpl select[disabled]{background:var(--bg);color:var(--slate);cursor:not-allowed}
 /* a phone: each file is a small card -- name and type on one line, then the
    dropdown full width, then its chip -- rather than a table wider than the screen */
 @media (max-width:767px){

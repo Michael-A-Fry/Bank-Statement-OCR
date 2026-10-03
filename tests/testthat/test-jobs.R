@@ -670,3 +670,27 @@ test_that("a queued analyst is TOLD to wait, in words, with a number", {
   # and with nothing in front, it does not say "0 conversions ahead of yours"
   expect_match(blk, "Yours starts in a moment", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# The parent reads each finished file's verdict while the case is still running.
+test_that("a batch job leaves one verdict per finished file, and they read back once", {
+  jd <- tempfile("tjobdone_"); dir.create(jd)
+  od <- tempfile("tjobout_"); dir.create(od)
+  src <- .csv_fixture(); skip_if_not(file.exists(src))
+  p2 <- file.path(od, "copy.csv"); file.copy(src, p2)
+  b <- job_run_task("batch", c(src, p2),
+    list(outdir = od, templates_dir = templates_dir(), user_templates_dir = "does_not_exist",
+         logdir = .tlog(), formats = "csv"), jobdir = jd)
+  expect_true(all(file.exists(file.path(jd, c("done_00001.rds", "done_00002.rds")))))
+  h <- new.env(); h$dir <- jd
+  got <- job_done_rows(h)
+  expect_identical(sort(got$idx), 1:2)
+  expect_identical(got$rows$k[order(got$rows$k)], 1:2)
+  expect_identical(got$rows$status[order(got$rows$k)], b$status)
+  # already read -> nothing new; a folder that is gone -> nothing, not an error
+  expect_length(job_done_rows(h, have = 1:2)$idx, 0L)
+  h2 <- new.env(); h2$dir <- file.path(jd, "gone")
+  expect_length(job_done_rows(h2)$idx, 0L)
+  # never a half-written file: written under .tmp and renamed into place
+  expect_length(list.files(jd, "[.]tmp$"), 0L)
+})
