@@ -171,3 +171,22 @@ test_that("the bank-on-the-page tie-break reaches the table too", {
   expect_identical(id$state, "close")
   expect_identical(id$runner_up, "anz_x")
 })
+
+test_that("the hover on a suggestion is a sentence, never a template id and a score", {
+  # det$detail is the LOG line -- "matched anz_everyday_csv (score 9/9)". The
+  # customer-facing screens never show an id and a fraction; the hover is the
+  # same fact in words, naming the template the way the dropdown does.
+  ts <- .id_tset()
+  p <- .id_csv("anz.csv", .ID_ANZ)
+  id <- identify_file(p, ts, "anz.csv")
+  expect_identical(id$state, "sure")
+  expect_false(grepl("anz_everyday_csv", id$detail, fixed = TRUE))
+  expect_false(grepl("[0-9]+/[0-9]+|score", id$detail))
+  expect_match(id$detail, "matches the ANZ everyday template", fixed = TRUE)
+  # a tie names both, in words
+  twin <- ts[["anz_everyday_csv"]]; twin$id <- "anz_twin"; twin$statement_type <- "twin"
+  tie <- identify_file(p, c(ts, list(anz_twin = twin)), "anz.csv")
+  expect_identical(tie$state, "tie")
+  expect_false(grepl("anz_twin|anz_everyday_csv", tie$detail))
+  expect_match(tie$detail, "fit this file equally well", fixed = TRUE)
+})

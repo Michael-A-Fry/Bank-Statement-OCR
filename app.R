@@ -3229,12 +3229,18 @@ server <- function(input, output, session) {
     if (length(ch)) ch else NULL
   }
 
-  # What each state says, in her words. The detector's own sentence is the hover.
+  # What each state says, in her words, with the reason as the hover.
+  #
+  # A SUGGESTION TO CHECK, NOT A VERDICT. "Recognised" / "Not recognised" read as
+  # the tool marking its own homework, and the column was where she went looking
+  # for "is it right?". It is the tool's suggestion, the analyst confirms it --
+  # "here's a helpful suggestion, please check that the templates selected are
+  # correct" -- and the words say exactly that.
   .PLAN_STATE <- list(
-    sure        = c("plan-ok",   "Recognised"),
-    close       = c("plan-warn", "Close call - check it"),
-    tie         = c("plan-warn", "Two fit - check it"),
-    none        = c("plan-bad",  "Not recognised"),
+    sure        = c("plan-ok",   "Suggested"),
+    close       = c("plan-warn", "Suggested - please check"),
+    tie         = c("plan-warn", "Two fit - please check"),
+    none        = c("plan-bad",  "No suggestion - please choose"),
     scanned     = c("plan-info", "Scanned"),
     unreadable  = c("plan-bad",  "Can't be read"),
     unsupported_type = c("plan-bad", "Not a file type this reads"),
@@ -3345,7 +3351,7 @@ server <- function(input, output, session) {
     head_cells <- if (res) list(tags$th("Result"), tags$th("What to check"))
                   else list(tags$th(""))
     tbl <- tags$table(class = paste("plan-table", if (res) "plan-has-res"),
-      tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Template"), head_cells)),
+      tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Suggested template"), head_cells)),
       tags$tbody(trs))
     top <- if (res) {
       s <- batch_summary(b); k <- stats::setNames(s$n, s$status)
@@ -3361,16 +3367,17 @@ server <- function(input, output, session) {
           downloadButton("cv_batch_dl", "\u2b73 Download everything", class = "btn-primary"))
     } else {
       p(class = "plan-head",
-        if (ran_here && one) "Wrong template? Choose the right one and press Convert again."
-        else if (one) "Check the template, then press Convert."
-        else sprintf("Check the template for each of these %d files, then press Convert.", nrow(rows)))
+        if (ran_here && one) "Not the template you expected? Choose another and press Convert again."
+        else if (one) "We've suggested a template. Please check it's right, then press Convert."
+        else sprintf(paste("We've suggested a template for each of these %d files.",
+                           "Please check they're right, then press Convert."), nrow(rows)))
     }
     foot <- if (res) {
       p(class = "muted plan-foot",
         if (length(changed))
           sprintf("%d changed - press Convert to read %s again. The rest keep their results.",
                   length(changed), if (length(changed) == 1L) "it" else "them")
-        else if (is.na(open)) "Click a file for its full result. Wrong template? Change it and press Convert."
+        else if (is.na(open)) "Click a file for its full result. Not the template you expected? Change it and press Convert."
         else sprintf("Showing %s below. Click another file to see its result.", rows$name[open]))
     }
     div(class = "plan", top, div(class = "plan-scroll", tbl), foot)
@@ -4333,8 +4340,8 @@ server <- function(input, output, session) {
       h4(style = "margin-top:4px", "Convert a bank statement"),
       p("Upload a statement on the left - a ", tags$b("PDF"), ", ", tags$b("CSV"),
         " or ", tags$b("Excel"), " file - and click ", tags$b("Convert"), "."),
-      p(class = "muted", "Each file's template is found for you and shown before anything converts,",
-        "so a wrong one can be changed first. A layout the tool hasn't seen points you to ",
+      p(class = "muted", "We suggest a template for each file and show it before anything converts,",
+        "so you can check it first. A layout the tool hasn't seen points you to ",
         to_tmpl, "."),
       # First visit, nothing to upload yet? One click shows the whole payoff on
       # a bundled specimen statement (public, synthetic - not anyone's real data).

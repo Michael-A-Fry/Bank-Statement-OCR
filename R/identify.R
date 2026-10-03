@@ -97,6 +97,22 @@ identify_file <- function(path, templates, name = basename(path)) {
     # review -- so that template IS the guess, and the row says it is a close call
     out$guess <- tied[1]; out$runner_up <- tied[2]; out$state <- "tie"
   }
+  # The hover, in words. det$detail is the LOG line ("matched anz_everyday_pdf
+  # (score 3/3)") -- a template id and a fraction, which the customer-facing screens
+  # never show. Only "none" has a plain sentence of its own (detail_plain).
+  nm <- function(id) {
+    t <- if (!is.na(id)) templates[[id]] else NULL
+    if (is.null(t)) as.character(id) else sub(" statement$", "", template_display_name(t))
+  }
+  out$detail <- switch(out$state,
+    sure  = sprintf("The wording on this file matches the %s template.", nm(out$guess)),
+    close = sprintf(paste("The wording matches %s, and %s nearly as well. Check it is the",
+                          "right one - left as it is, the result is held for a second look."),
+                    nm(out$guess), nm(out$runner_up)),
+    tie   = sprintf(paste("%s and %s fit this file equally well. Check which is right -",
+                          "left as it is, the result is held for a second look."),
+                    nm(out$guess), nm(out$runner_up)),
+    out$detail)
   out
 }
 

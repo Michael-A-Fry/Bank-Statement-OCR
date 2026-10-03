@@ -13,6 +13,22 @@ finding id.
 
 ---
 
+## 1.18.1
+
+**The template column is a suggestion to check, not a verdict.**
+
+"We shouldn't think of it like 'oh that's not the right bank' but more like hey
+here's a helpful suggestion, please check that the templates selected are correct."
+
+- Column *Suggested template*; heading "We've suggested a template for each of these
+  N files. Please check they're right, then press Convert."
+- Chips: *Suggested* · *Suggested - please check* · *Two fit - please check* ·
+  *No suggestion - please choose* (was *Recognised* / *Close call* / *Not recognised*).
+- After a run: "Not the template you expected? Change it and press Convert."
+- The hover on a chip is a sentence ("The wording on this file matches the ANZ
+  everyday template.") — it was the detector's log line, a template id and a score
+  fraction, which no customer-facing screen shows.
+
 ## 1.18.0
 
 **One table: the files, their templates, and — once converted — their results.**

@@ -9,17 +9,18 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    Up to **200 MB**. Pick several at once — up to **50**, from as many banks as
    you like — to do a whole case folder in one go; the button then reads
    *Convert N files*.
-3. **Check the table that appears.** One row per file: its name, what kind of file
-   it is (*PDF · 12 pages*, *Scanned PDF*, *CSV*, *Excel*), and **the template it
-   will be read with**, already filled in. If a row is wrong, change its dropdown —
-   the dropdown only offers templates that can read that kind of file, grouped by
-   bank. The chip beside each row says how sure the tool is:
+3. **Check the suggested templates.** A table appears with one row per file: its
+   name, what kind of file it is (*PDF*, *Scanned PDF*, *CSV*, *Excel*, with the page
+   count), and **the template we suggest reading it with**, already filled in.
+   Please check each one is right. If it is not, change its dropdown — it only
+   offers templates that can read that kind of file, grouped by bank. The chip
+   beside each row says how the suggestion was made (hover over it for more):
 
    | Chip | What it means | Do |
    |---|---|---|
-   | **Recognised** | One template clearly fits. | Nothing. |
-   | **Close call - check it** / **Two fit - check it** | Another template nearly fits, or fits just as well. The one shown is the one it will use; the result will be held for a second look. | Glance at it. Change it if it is wrong. |
-   | **Not recognised** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
+   | **Suggested** | The wording on the file matches this template. | Check it, and carry on. |
+   | **Suggested - please check** / **Two fit - please check** | Another template fits nearly as well, or just as well. Left as it is, the result is held for a second look. | Check it is the right one. Change it if not. |
+   | **No suggestion - please choose** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
    | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
    | **Your choice** | You changed this row. That file is read with exactly the template you chose. | — |
    | **Can't be read** | The file is damaged, empty, or not a table. Hover over it for why. | Get a fresh copy of the file. |
@@ -40,7 +41,7 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    read as a picture, and the progress panel says how long to expect.
 6. Read the verdict, then **Download** Excel, CSV or JSON.
 
-**Wrong template after all?** The table stays at the top of the page. Change that
+**Not the template you expected?** The table stays at the top of the page. Change that
 file's row and press **Convert** again. On a case folder only the files you changed
 are converted again — the button says so (*Convert 1 changed file*) — and the rest
 keep their results.
