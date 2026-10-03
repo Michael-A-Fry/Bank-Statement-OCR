@@ -177,6 +177,17 @@ exists after OCR, and OCR-ing a case to fill a table would hold the server for
 minutes. Files are identified one per tick (`invalidateLater`), so the single R
 process serves other analysts between them.
 
+**It is one table, before and after.** Once a case has converted, the same rows
+carry the result (worst first) and a click opens that file's result below; there
+is no second results table. The dropdowns are plain `<select>`s, not Shiny inputs:
+a change is one event (`cv_plan_pick`) recorded per row on the server
+(`cv_plan_picks`), so a redraw can never lose or revive a choice. **Convert
+again** re-reads only the rows whose *reading* changed — the template each row will
+be read with plus that template's content hash (`plan_expected`) — and merges
+those results into their own rows (`run_batch(rows=)`); a template saved, hidden
+or deleted re-identifies the files first, so a row never shows a guess detection
+no longer makes.
+
 ### Status, decided in `convert.R`
 
 ```

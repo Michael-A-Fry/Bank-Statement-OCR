@@ -121,6 +121,9 @@ template_choices <- function(templates, format) {
   bank[is.na(bank) | !nzchar(bank)] <- "Other"
   lab <- vapply(ts, function(t) {
     nm <- safe(template_display_name(t), NULL) %||% t$id %||% "template"
+    # every choice here is a statement, and a closed dropdown has room for ~25
+    # characters: "ANZ everyday", not "ANZ everyday statement" cut off mid-word
+    nm <- sub(" statement$", "", nm)
     if (identical(t$origin %||% "default", "user")) paste(nm, "(built here)") else nm
   }, character(1))
   # two templates with the same bank and type (a variant, a correction) would read

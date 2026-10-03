@@ -13,6 +13,37 @@ finding id.
 
 ---
 
+## 1.18.0
+
+**One table: the files, their templates, and — once converted — their results.**
+
+Asked: "Should it output the results in the same table? And allow you to click
+through to the individual results and/or download all?" It already did both, in a
+*second* table listing the same files again under the first. Now there is one.
+
+- After Convert the same rows carry the **Result** (verdict, rows, confidence) and
+  **What to check**, worst first. **Click a row** to open that file's full result
+  underneath; the open row is highlighted. **Download everything** (one zip) sits
+  above the table with the one-line tally.
+- **Convert again converts only what would come out differently.** Change a row and
+  it is marked *Changed*; the button reads *Convert 1 changed file*, converts that
+  one, and merges its result into its own row — the rest keep theirs. A row also
+  counts as changed when a newly added template now recognises it or its template
+  was edited (each row's reading is its template plus that template's content
+  hash). Nothing changed: *Convert all N again*. This replaces ticking rows.
+- **A template saved, hidden or deleted re-checks the files**, so a row never shows
+  a guess detection no longer makes. (Fixed: the 1.17.0 table kept its first
+  guesses until the files were chosen again.)
+- **Choices are kept on the server**, per row. The dropdowns are plain selects, so a
+  redraw — a row opened, a re-check — can never lose a choice or bring back one
+  from the previous upload.
+- **New files replace what the page is about**: choosing them clears the last case's
+  results and the result open under them.
+- Removed: the DataTables results table, its fold, its tick-boxes, search and paging
+  (fifty files at most, worst first). The single-file result's link now asks
+  "Something in the wrong column?" — the wrong *bank* is the table's job.
+- Dropdown labels drop the word "statement" ("ANZ everyday"), so they fit.
+
 ## 1.17.0
 
 **Every upload gets a table: each file, what it is, and the template it will be read

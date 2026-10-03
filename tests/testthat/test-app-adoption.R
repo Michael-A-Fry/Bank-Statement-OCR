@@ -474,8 +474,10 @@ test_that("a file that converted nothing carries no confidence grade anywhere", 
   expect_true(all(graded(c("ok", "needs_review"))))
   expect_false(any(graded(c("unsupported", "failed", "", NA))))
   # the batch table blanks the grade with it, and the card's own rule is the same
-  expect_match(.app_block(.app_src(), "output\\$cv_batch <- renderDT", 4L),
-               "b\\$trust\\[!\\.is_graded\\(b\\$status\\)\\] <- NA_character_")
+  # the case table only grades a row that converted, with the card's own rule
+  blk <- .app_block(.app_src(), "output\\$cv_plan <- renderUI", 120L)
+  expect_match(blk, "graded <- \\.is_graded\\(s\\)")
+  expect_match(blk, "if \\(graded\\) div\\(class = \"plan-sub\"")
   expect_match(.app_block(.app_src(), "output\\$cv_status <- renderUI", 45L),
                'graded <- st %in% c\\("ok", "needs_review"\\)')
 })
@@ -492,7 +494,7 @@ test_that("too many files is refused at the door, with the number", {
   # (the Convert table says the same number earlier still, when the files are chosen)
   go <- substring(src, regexpr("observeEvent(input$cv_go, {", src, fixed = TRUE))
   cap <- regexpr("nrow(f) > MAX_BATCH_FILES", go, fixed = TRUE)
-  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced)", go, fixed = TRUE)
+  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced, rows = again)", go, fixed = TRUE)
   expect_true(cap > 0 && run > 0)
   expect_lt(cap, run)
   # the number is configurable, and the control says it

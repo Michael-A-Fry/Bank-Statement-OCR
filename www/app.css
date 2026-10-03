@@ -273,12 +273,30 @@ td.plan-state{white-space:nowrap}
 .plan-chip.plan-warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink)}
 .plan-chip.plan-bad{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}
 .plan-chip.plan-mine{background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand)}
-tr.plan-warn td.plan-tpl select,tr.plan-bad td.plan-tpl select{border-color:var(--warn-line)}
-details.plan-fold>summary{cursor:pointer;color:var(--brand);font-weight:700;font-size:13.5px;list-style:none;padding:2px 0}
-details.plan-fold>summary::-webkit-details-marker{display:none}
-details.plan-fold>summary::before{content:'\25B8  '}
-details.plan-fold[open]>summary::before{content:'\25BE  '}
-details.plan-fold[open]>summary{margin-bottom:8px}
+tr.plan-warn:not(.plan-chosen) td.plan-tpl select,tr.plan-bad:not(.plan-chosen) td.plan-tpl select{border-color:var(--warn-line)}
+/* ...and once it has converted, the same rows carry the result */
+.plan-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 6px}
+.plan-top .plan-head{margin:0}
+.plan-tally{margin:2px 0 0}
+.plan-foot{margin:8px 0 0;font-size:13px}
+.plan-note{color:var(--brand);font-size:12px;font-weight:600;margin-top:3px}
+tr.plan-openable{cursor:pointer}
+tr.plan-openable:hover td{background:var(--brand-tint)}
+tr.plan-openable:focus{outline:2px solid var(--brand-line);outline-offset:-2px}
+tr.plan-open td{background:var(--brand-tint);box-shadow:inset 0 -2px 0 var(--brand)}
+tr.plan-open td.plan-file::before{content:'\25B8  ';color:var(--brand)}
+td.plan-res{min-width:170px}
+.plan-verdict{font-weight:700}
+.plan-verdict.v-ok{color:var(--ok)}
+.plan-verdict.v-needs_review{color:var(--warn-ink)}
+.plan-verdict.v-unsupported,.plan-verdict.v-failed{color:var(--bad)}
+.plan-sub{color:var(--slate);font-size:12.5px;margin-top:2px}
+.conf-high{color:var(--ok);font-weight:700}
+.conf-medium{color:#8a6d00;font-weight:700}
+.conf-low{color:var(--bad);font-weight:700}
+td.plan-res .plan-chip{margin-top:4px}
+td.plan-what{color:var(--ink);min-width:140px}
+table.plan-has-res td.plan-tpl{min-width:190px}
 /* a phone: each file is a small card -- name and type on one line, then the
    dropdown full width, then its chip -- rather than a table wider than the screen */
 @media (max-width:767px){

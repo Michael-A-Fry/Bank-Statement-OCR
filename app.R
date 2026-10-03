@@ -528,19 +528,23 @@ ui <- fluidPage(
       "$(document).on('keyup', '#adm_pw', function(e){
          if (e.key === 'Enter') { $(this).trigger('change'); $('#adm_login').click(); }
        });")),
-    # The Convert table: a row whose template has been CHANGED says so at once. The
-    # chip beside it describes the tool's guess ("Recognised"), and left as it was it
-    # would sit beside a template the tool did not pick. Client-side only -- the
-    # server reads the dropdown itself when Convert is pressed (plan_forced).
+    # The Convert table (cv_plan). Its dropdowns are plain <select>s, not Shiny
+    # inputs, so a change is sent as ONE event naming the upload and the row, and the
+    # server records it (cv_plan_picks). A click on a row that has a result opens that
+    # result -- but never a click that was really on the dropdown in it. Enter does
+    # the same for somebody on the keyboard.
     tags$script(HTML(
-      "$(document).on('change', 'td.plan-tpl select', function(){
-         var chip = $(this).closest('tr').find('.plan-chip');
-         if (!chip.attr('data-was')) chip.attr('data-was', chip.text())
-                                         .attr('data-was-class', chip.attr('class'));
-         var guess = $(this).attr('data-guess') || '';
-         if ($(this).val() !== guess && $(this).val() !== '')
-           chip.text('Your choice').attr('class', 'plan-chip plan-mine');
-         else chip.text(chip.attr('data-was')).attr('class', chip.attr('data-was-class'));
+      "$(document).on('change', 'select.plan-pick', function(){
+         Shiny.setInputValue('cv_plan_pick', {gen: parseInt($(this).attr('data-gen'), 10),
+           row: parseInt($(this).attr('data-row'), 10), value: $(this).val()}, {priority: 'event'});
+       });
+       $(document).on('click', 'tr.plan-openable', function(e){
+         if ($(e.target).closest('select,option,a,button,input,label').length) return;
+         Shiny.setInputValue('cv_plan_open', {gen: parseInt($(this).attr('data-gen'), 10),
+           row: parseInt($(this).attr('data-row'), 10)}, {priority: 'event'});
+       });
+       $(document).on('keydown', 'tr.plan-openable', function(e){
+         if (e.key === 'Enter' && e.target === this) $(this).trigger('click');
        });")),
     # Loading feedback: a real animation, not just the grey-out. A busy pill shows
     # whenever Shiny is working (convert, X-ray render, any recompute); recalculating
@@ -705,10 +709,6 @@ ui <- fluidPage(
           # the moment the files are chosen, before anything converts, and every row's
           # template is a plain dropdown. See "THE CONVERT TABLE" in the server.
           uiOutput("cv_plan"),
-          conditionalPanel("output.cv_has_batch == true",
-            uiOutput("cv_batch_summary"),
-            DTOutput("cv_batch"),
-            uiOutput("cv_batch_open")),
           uiOutput("cv_status"),
           uiOutput("cv_headline"),   # the verdict, in her words
           uiOutput("cv_downloads"),  # the payoff, right under it
@@ -3058,6 +3058,12 @@ server <- function(input, output, session) {
   # row -- the file, what kind of file it is, and the template it will be read with,
   # in a plain dropdown already set to the guess. Convert reads the table.
   #
+  # ONE TABLE, BEFORE AND AFTER. Once a case folder has converted, the SAME rows carry
+  # the result -- what came out, how sure, what to check -- worst first, and a click
+  # on a row opens that file's full result below it. There is no second results
+  # table listing the same files again ("If single table you think will be better
+  # then absolutely!"). One file is the same table with one row, its result below.
+  #
   # THE TWO RULES THAT MAKE IT SAFE.
   #  1. A row LEFT ON ITS GUESS is converted by ordinary detection, not forced. The
   #     guess IS detection's answer on the same input (identify_file), so the file
@@ -3068,6 +3074,25 @@ server <- function(input, output, session) {
   #     A case folder holds several banks; one override for all of it could only
   #     ever be right for some of them.
   #
+  # THE CHOICES LIVE HERE, ON THE SERVER (cv_plan_picks), not in the dropdowns. A
+  # dropdown is a plain <select>, not a Shiny input: a change arrives as one event
+  # (cv_plan_pick, the script beside #adm_pw's) and is recorded against its row. So
+  # a redraw -- a row opened, a template saved, a re-check -- can never lose a
+  # choice, and a dropdown left over from the last upload can never be read as this
+  # one's. Per row: NA = untouched (follows the guess, whatever the guess becomes),
+  # "" = "detect it" chosen outright, an id = that template.
+  #
+  # CONVERT AGAIN RE-READS WHAT WOULD COME OUT DIFFERENTLY, AND NOTHING ELSE. A row's
+  # "reading" is the template it will be read with plus that template's content
+  # hash (plan_expected). After a run, a row whose reading has changed -- its
+  # template changed by hand, a new template now recognises it, or the template it
+  # uses was edited -- is converted again and the rest keep their results. With
+  # nothing changed, Convert runs every file again.
+  #
+  # A TEMPLATE SAVED, HIDDEN OR DELETED IS A NEW ANSWER FROM DETECTION, so the files
+  # are checked again (plan_start_check) -- otherwise a row would go on showing a
+  # guess that detection no longer makes, and rule 1 would read it with another.
+  #
   # NEVER HOLDS THE SERVER. One file is identified per tick, then the event loop
   # gets the process back (invalidateLater) before the next, so other analysts are
   # served between files. A text PDF identifies at about a millisecond a page (a
@@ -3075,20 +3100,31 @@ server <- function(input, output, session) {
   # SAID to be a scan rather than OCR'd -- its template is found while it converts.
   plan_env <- new.env(parent = emptyenv())
   plan_env$gen <- 0L; plan_env$rows <- NULL; plan_env$i <- 0L; plan_env$tset <- NULL
-  cv_plan      <- reactiveVal(NULL)  # list(gen, rows, too_many) once every file is checked
-  cv_plan_busy <- reactiveVal(NULL)  # list(gen, n) while files are being checked
-  cv_plan_done <- reactiveVal(0L)    # how many of them so far (for the screen only)
-  cv_plan_ran  <- reactiveVal(-1L)   # the gen most recently converted
+  cv_plan       <- reactiveVal(NULL)          # list(gen, rows, too_many) once every file is checked
+  cv_plan_busy  <- reactiveVal(NULL)          # list(gen, n) while files are being checked
+  cv_plan_done  <- reactiveVal(0L)            # how many of them so far (for the screen only)
+  cv_plan_picks <- reactiveVal(character(0))  # per row: NA / "" / a template id
+  cv_plan_ran   <- reactiveVal(NULL)          # list(gen, expected): each row's reading when last converted
 
-  # The input id of row i's dropdown. The generation is in it so a dropdown left
-  # over from the previous upload can never be read as this upload's choice.
-  plan_input_id <- function(gen, i) sprintf("cv_tpl_%d_%d", as.integer(gen), as.integer(i))
+  plan_start_check <- function() {
+    plan_env$i <- 0L
+    # The SAME template set the conversion will load (USE_USER_TEMPLATES decides,
+    # exactly as convert_args / run_batch do), read once for the whole upload.
+    plan_env$tset <- isolate(cv_pick_templates())
+    cv_plan_done(0L)
+    cv_plan_busy(list(gen = plan_env$gen, n = nrow(plan_env$rows)))
+  }
 
   observeEvent(input$cv_file, {
     f <- input$cv_file
     plan_env$gen <- plan_env$gen + 1L
     plan_env$i <- 0L; plan_env$rows <- NULL
-    cv_plan(NULL); cv_plan_done(0L)
+    cv_plan(NULL); cv_plan_done(0L); cv_plan_ran(NULL); cv_plan_picks(character(0))
+    # New files replace what the page is about: the last case's rows, and the result
+    # open under them, belong to files that are no longer chosen.
+    if (!is.null(cv_batch()) || !is.null(cv_res())) {
+      show_result(); cv_batch_row(NA_integer_); cv_batch(NULL)
+    }
     if (is.null(f) || !NROW(f)) { cv_plan_busy(NULL); return() }
     # Too many is said HERE, before anything is checked -- the Convert button refuses
     # the same number for the same reason.
@@ -3102,11 +3138,13 @@ server <- function(input, output, session) {
       format = NA_character_, pages = NA_integer_, state = "checking",
       guess = NA_character_, runner_up = NA_character_, detail = NA_character_,
       stringsAsFactors = FALSE)
-    # The SAME template set the conversion will load (USE_USER_TEMPLATES decides,
-    # exactly as convert_args / run_batch do), read once for the whole upload.
-    plan_env$tset <- cv_pick_templates()
-    cv_plan_busy(list(gen = plan_env$gen, n = nrow(f)))
+    cv_plan_picks(rep(NA_character_, nrow(f)))
+    plan_start_check()
   }, ignoreNULL = FALSE)
+
+  observeEvent(cv_pick_templates(), {
+    if (!is.null(plan_env$rows) && nrow(plan_env$rows)) plan_start_check()
+  }, ignoreInit = TRUE)
 
   # One file per tick. Reads cv_plan_busy and nothing it writes on the way, so it is
   # re-run by the timer and not straight away inside the same flush.
@@ -3136,24 +3174,59 @@ server <- function(input, output, session) {
     if (!is.null(isolate(cv_plan_busy()))) invalidateLater(1, session)
   })
 
-  # plan_forced(f) -> one entry per uploaded file: NA = "detect it" (left on its
-  # guess, or no choice made), an id = "read it with exactly this template". Read
-  # at the moment Convert is pressed. A table that is not THIS upload's (still
-  # checking, or the names do not line up) forces nothing, which is detection --
-  # the behaviour before the table existed.
-  plan_forced <- function(f) {
-    n <- NROW(f); out <- rep(NA_character_, n)
-    p <- isolate(cv_plan())
-    if (is.null(p) || is.null(p$rows) || !identical(p$rows$name, as.character(f$name)))
-      return(out)
-    for (i in seq_len(n)) {
-      v <- isolate(input[[plan_input_id(p$gen, i)]])
-      if (is.null(v) || !nzchar(v)) next
-      g <- p$rows$guess[i]
-      if (!is.na(g) && identical(v, g)) next       # rule 1: left on its guess
-      out[i] <- v                                  # rule 2: changed -> forced
-    }
-    out
+  # A dropdown changed. Recorded against its row of THIS upload, and nothing else.
+  observeEvent(input$cv_plan_pick, {
+    v <- input$cv_plan_pick; p <- cv_plan()
+    i <- suppressWarnings(as.integer(v$row %||% NA)[1])
+    if (is.null(p) || is.null(p$rows) || !identical(suppressWarnings(as.integer(v$gen %||% NA)[1]), p$gen) ||
+        is.na(i) || i < 1L || i > nrow(p$rows)) return()
+    pk <- cv_plan_picks(); length(pk) <- nrow(p$rows)
+    pk[i] <- as.character(v$value %||% "")[1]
+    cv_plan_picks(pk)
+  })
+  # A row clicked: that file's full result, below the table.
+  observeEvent(input$cv_plan_open, {
+    v <- input$cv_plan_open; p <- cv_plan()
+    i <- suppressWarnings(as.integer(v$row %||% NA)[1])
+    if (is.null(p) || !identical(suppressWarnings(as.integer(v$gen %||% NA)[1]), p$gen) || is.na(i)) return()
+    open_batch_row(i)
+  })
+
+  # plan_effective(p, picks) -> per row: "" = read it by detection, an id = read it
+  # with exactly that template. Rule 1 and rule 2, in one place.
+  plan_effective <- function(p, picks) {
+    n <- NROW(p$rows); length(picks) <- n
+    vapply(seq_len(n), function(i) {
+      v <- picks[i]; g <- p$rows$guess[i]
+      if (is.na(v) || !nzchar(v) || (!is.na(g) && identical(v, g))) "" else v
+    }, character(1))
+  }
+  # plan_expected(p, picks, tset) -> per row, the reading it will get: the template
+  # it will be read with, and that template's content. Equal = the same answer.
+  plan_expected <- function(p, picks, tset) {
+    eff <- plan_effective(p, picks)
+    id <- ifelse(nzchar(eff), eff, ifelse(is.na(p$rows$guess), "", p$rows$guess))
+    vapply(id, function(x) {
+      t <- if (nzchar(x)) tset[[x]] else NULL
+      paste0(x, "@", if (is.null(t)) "" else safe(template_sha256(t), ""))
+    }, character(1), USE.NAMES = FALSE)
+  }
+  # plan_changed() -> the rows whose reading has changed since they were converted
+  # (none before the first run).
+  plan_changed <- function() {
+    p <- cv_plan(); ran <- cv_plan_ran()
+    if (is.null(p) || is.null(p$rows) || is.null(ran) || !identical(ran$gen, p$gen))
+      return(integer(0))
+    now <- plan_expected(p, cv_plan_picks(), cv_pick_templates())
+    which(is.na(ran$expected) | now != ran$expected)
+  }
+  # plan_again() -> the rows Convert will run now on a case folder: the changed ones
+  # when this case has results to keep, otherwise NULL (= every file).
+  plan_again <- function() {
+    n <- NROW(input$cv_file); b <- cv_batch()
+    if (n <= 1L || is.null(b) || nrow(b) != n) return(NULL)
+    ch <- plan_changed()
+    if (length(ch)) ch else NULL
   }
 
   # What each state says, in her words. The detector's own sentence is the hover.
@@ -3176,12 +3249,27 @@ server <- function(input, output, session) {
     if (!is.na(r$detail)) r$detail else NULL
   }
 
+  # .plan_select(gen, i, choices, first, selected, name) -- the row's dropdown: a
+  # plain <select> (see "THE CHOICES LIVE HERE"), the templates grouped by bank.
+  .plan_select <- function(gen, i, choices, first, selected, name) {
+    opt <- function(v, lab) tags$option(value = v,
+      selected = if (identical(v, selected)) NA else NULL, lab)
+    tags$select(class = "plan-pick", `data-gen` = gen, `data-row` = i,
+      `aria-label` = sprintf("Template for %s", name),
+      opt("", first),
+      lapply(names(choices), function(bank) {
+        g <- choices[[bank]]
+        tags$optgroup(label = bank,
+          lapply(seq_along(g), function(k) opt(unname(g[k]), names(g)[k])))
+      }))
+  }
+
   output$cv_plan <- renderUI({
-    b <- cv_plan_busy()
-    if (!is.null(b))
+    busy <- cv_plan_busy()
+    if (!is.null(busy))
       return(div(class = "plan plan-busy",
-        sprintf("Checking %d of %d file%s\u2026", min(b$n, cv_plan_done() + 1L), b$n,
-                if (b$n == 1L) "" else "s")))
+        sprintf("Checking %d of %d file%s\u2026", min(busy$n, cv_plan_done() + 1L), busy$n,
+                if (busy$n == 1L) "" else "s")))
     p <- cv_plan(); if (is.null(p)) return(NULL)
     if (isTRUE(p$too_many > 0L))
       return(div(class = "plan note-bad", sprintf(paste(
@@ -3189,59 +3277,103 @@ server <- function(input, output, session) {
         "convert the rest after."), p$too_many, MAX_BATCH_FILES, MAX_BATCH_FILES)))
     rows <- p$rows; if (is.null(rows) || !nrow(rows)) return(NULL)
     tset <- cv_pick_templates()
-    ran <- identical(cv_plan_ran(), p$gen)
+    picks <- cv_plan_picks(); length(picks) <- nrow(rows)
+    eff <- plan_effective(p, picks)
     one <- nrow(rows) == 1L
-    trs <- lapply(seq_len(nrow(rows)), function(i) {
+    ran <- cv_plan_ran(); ran_here <- !is.null(ran) && identical(ran$gen, p$gen)
+    changed <- plan_changed()
+    b <- cv_batch()
+    res <- !one && !is.null(b) && nrow(b) == nrow(rows)   # this case's results are in
+    open <- cv_batch_row()
+    # worst first once there are results -- the files that need work at the top and
+    # grouped by what went wrong (BATCH_STATUSES is worst-LAST, so a status's
+    # position in it is its severity; one the screen has no words for sorts first)
+    ord <- seq_len(nrow(rows))
+    if (res) {
+      sev <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+      ord <- order(-sev, as.character(b$failing_check), ord)
+    }
+    trs <- lapply(ord, function(i) {
       r <- rows[i, ]
       st <- .PLAN_STATE[[r$state]] %||% .PLAN_STATE$unreadable
-      kind <- if (!is.na(r$pages)) sprintf("%s \u00b7 %d page%s", r$kind, r$pages,
-                                          if (r$pages == 1L) "" else "s") else r$kind
+      # the kind, and under it the page count -- two short lines, not one long one
+      # that takes the width the template dropdown needs
+      kind <- tagList(r$kind, if (!is.na(r$pages)) div(class = "plan-sub",
+        sprintf("%d page%s", r$pages, if (r$pages == 1L) "" else "s")))
       pickable <- !(r$state %in% c("unreadable", "unsupported_type"))
-      mine <- FALSE
       ch <- if (pickable) template_choices(tset, r$format) else list()
-      first <- switch(r$state, none = "Choose a template\u2026",
-                      scanned = "Find it while converting", "Detect automatically")
-      ctl <- if (pickable && length(ch)) {
-        rid <- plan_input_id(p$gen, i)
-        # A re-render (a template saved meanwhile) keeps what she chose.
-        keep <- isolate(input[[rid]])
-        sel <- if (!is.null(keep)) keep else if (!is.na(r$guess)) r$guess else ""
-        # data-guess lets the page mark a changed row "Your choice" the moment it
-        # changes (the script beside #adm_pw's); `mine` does it on a re-render.
-        mine <- nzchar(sel) && !identical(sel, if (is.na(r$guess)) "" else r$guess)
-        htmltools::tagQuery(
-          selectInput(rid, NULL, choices = c(stats::setNames("", first), ch),
-                      selected = sel, width = "100%", selectize = FALSE)
-        )$find("select")$addAttrs(`data-guess` = if (is.na(r$guess)) "" else r$guess)$allTags()
-      } else if (pickable) {
-        span(class = "muted", "No template reads this kind of file yet")
-      } else span(class = "muted", "\u2014")
-      tags$tr(class = paste("plan-row", st[1]),
+      # (a scan's is detected too -- while it converts; its chip and hover say so)
+      first <- if (identical(r$state, "none")) "Choose a template\u2026" else "Detect automatically"
+      sel <- if (!is.na(picks[i])) picks[i] else if (!is.na(r$guess)) r$guess else ""
+      mine <- nzchar(eff[i])
+      ctl <- if (pickable && length(ch)) .plan_select(p$gen, i, ch, first, sel, r$name)
+             else if (pickable) span(class = "muted", "No template reads this kind of file yet")
+             else span(class = "muted", "\u2014")
+      tpl_cell <- tags$td(class = "plan-tpl", ctl,
+        if (res && mine) div(class = "plan-note", "your choice"))
+      again <- i %in% changed
+      tail <- if (!res) {
+        list(tags$td(class = "plan-state",
+          if (mine) span(class = "plan-chip plan-mine", "Your choice")
+          else span(class = paste("plan-chip", st[1]), title = .plan_hover(r), st[2])))
+      } else {
+        s <- as.character(b$status[i])
+        graded <- .is_graded(s)
+        n_rows <- suppressWarnings(as.integer(b$rows[i]))
+        conf <- as.character(b$trust[i])
+        what <- plain_failing_check(b$failing_check[i])
+        list(
+          tags$td(class = "plan-res",
+            div(class = paste("plan-verdict", paste0("v-", s)), plain_status(s)),
+            if (graded) div(class = "plan-sub",
+              sprintf("%s row%s", if (is.na(n_rows)) "?" else format(n_rows, big.mark = ","),
+                      if (identical(n_rows, 1L)) "" else "s"),
+              " \u00b7 confidence ", span(class = paste0("conf-", conf), conf)),
+            if (again) span(class = "plan-chip plan-mine", "Changed")),
+          tags$td(class = "plan-what",
+            if (is.na(what) || !nzchar(what)) span(class = "muted", "\u2014") else what))
+      }
+      tags$tr(class = paste(c("plan-row", st[1], if (mine) "plan-chosen", if (res) "plan-openable",
+                              if (res && identical(open, i)) "plan-open"), collapse = " "),
+        `data-gen` = p$gen, `data-row` = i,
+        tabindex = if (res) "0" else NULL,
+        title = if (res) "Click for this file's full result" else NULL,
         tags$td(class = "plan-file", title = r$name, r$name),
         tags$td(class = "plan-kind", kind),
-        tags$td(class = "plan-tpl", ctl),
-        tags$td(class = "plan-state",
-          if (mine) span(class = "plan-chip plan-mine", `data-was` = st[2],
-                         `data-was-class` = paste("plan-chip", st[1]), "Your choice")
-          else span(class = paste("plan-chip", st[1]),
-                    title = .plan_hover(r), st[2])))
+        tpl_cell, tail)
     })
-    lead <- if (ran) {
-      if (one) "Wrong template? Choose the right one and press Convert again."
-      else "Wrong template for a file? Change it here and press Convert again."
-    } else if (one) "Check the template, then press Convert."
-      else sprintf("Check the template for each of these %d files, then press Convert.", nrow(rows))
-    tbl <- tags$table(class = "plan-table",
-      tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Template"), tags$th(""))),
+    head_cells <- if (res) list(tags$th("Result"), tags$th("What to check"))
+                  else list(tags$th(""))
+    tbl <- tags$table(class = paste("plan-table", if (res) "plan-has-res"),
+      tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Template"), head_cells)),
       tags$tbody(trs))
-    # A case folder that has already run folds away, so its results are not pushed
-    # off the screen by thirty dropdowns -- one click opens it again.
-    if (ran && !one)
-      return(div(class = "plan", tags$details(class = "plan-fold",
-        tags$summary(sprintf("Files and templates (%d) - %s", nrow(rows),
-                             "change one and press Convert again")),
-        div(class = "plan-scroll", tbl))))
-    div(class = "plan", p(class = "plan-head", lead), div(class = "plan-scroll", tbl))
+    top <- if (res) {
+      s <- batch_summary(b); k <- stats::setNames(s$n, s$status)
+      say <- function(x, word) if (isTRUE(k[[x]] > 0L)) sprintf("%d %s", k[[x]], word) else NULL
+      bits <- Filter(Negate(is.null), list(say("ok", "converted"), say("needs_review", "need a check"),
+        say("unsupported", "with no template yet"), say("failed", "could not be read")))
+      div(class = "plan-top",
+        div(p(class = "plan-head", sprintf("%d files", nrow(rows))),
+            # paste0, not a second argument: the tag builder joins children with a
+            # space, so the tally would read "...yet ." with a gap before the stop.
+            p(class = "muted plan-tally", paste0(paste(unlist(bits), collapse = "  \u00b7  "), "."))),
+        if (length(.batch_outputs(b)))
+          downloadButton("cv_batch_dl", "\u2b73 Download everything", class = "btn-primary"))
+    } else {
+      p(class = "plan-head",
+        if (ran_here && one) "Wrong template? Choose the right one and press Convert again."
+        else if (one) "Check the template, then press Convert."
+        else sprintf("Check the template for each of these %d files, then press Convert.", nrow(rows)))
+    }
+    foot <- if (res) {
+      p(class = "muted plan-foot",
+        if (length(changed))
+          sprintf("%d changed - press Convert to read %s again. The rest keep their results.",
+                  length(changed), if (length(changed) == 1L) "it" else "them")
+        else if (is.na(open)) "Click a file for its full result. Wrong template? Change it and press Convert."
+        else sprintf("Showing %s below. Click another file to see its result.", rows$name[open]))
+    }
+    div(class = "plan", top, div(class = "plan-scroll", tbl), foot)
   })
 
   cv_res <- reactiveVal(NULL)
@@ -3383,7 +3515,7 @@ server <- function(input, output, session) {
   # caller already knows the new template must take part even where the
   # deployment has user-built templates switched off.
   # The template, when there is one, is the file's own row of the Convert table
-  # (plan_forced) or the template the result on screen was read with -- never one
+  # (plan_effective) or the template the result on screen was read with -- never one
   # setting shared by every file, which is what the old picker was.
   convert_args <- function(forced_rows = NULL, force_tpl = NULL, include_user = FALSE) {
     use_user <- USE_USER_TEMPLATES || !is.null(force_tpl) || isTRUE(include_user)
@@ -3805,30 +3937,49 @@ server <- function(input, output, session) {
     }, character(1), USE.NAMES = FALSE)
   }
 
-  # `forced`: one entry per file from the Convert table (plan_forced) -- NA reads
+  # `forced`: one entry per file from the Convert table (plan_effective) -- NA reads
   # that file by detection, an id reads it with exactly that template.
-  run_batch <- function(files, forced = NULL) {
+  # `rows`: CONVERT AGAIN -- only these files of the case already on screen (the
+  # rows whose reading changed, plan_again). Their copies are already in this case's
+  # scratch folder and their outputs are written over in place; every other row
+  # keeps its result and its files, and the new results are merged into the table.
+  run_batch <- function(files, forced = NULL, rows = NULL) {
     forced <- as.character(forced %||% rep(NA_character_, NROW(files)))
-    old <- isolate(cv_dir())
-    sess <- tempfile("cvb_")
-    dir.create(sess, showWarnings = FALSE, recursive = TRUE)
-    nms <- .unique_names(files$name)
-    paths <- file.path(sess, nms)
-    file.copy(as.character(files$datapath), paths, overwrite = TRUE)
-    # Stop whatever this session had running before its folder is reclaimed: it is
-    # a separate process, and it is still writing in there.
-    cv_slot$cancel()
-    if (!is.null(old) && nzchar(old) && !identical(old, sess) && dir.exists(old))
-      safe(unlink(old, recursive = TRUE))
-    safe(sweep_temp_dirs(keep_hours = 24,
-                         exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
+    b_old <- isolate(cv_batch())
+    again <- !is.null(rows) && length(rows) && !is.null(b_old) && nrow(b_old) == NROW(files) &&
+             all(file.exists(as.character(b_old$file[rows])))
+    gen <- plan_env$gen
+    if (again) {
+      sess <- isolate(cv_dir())
+      paths <- as.character(b_old$file[rows]); nms <- basename(paths)
+      forced <- forced[rows]
+      cv_slot$cancel()
+      # the file open below may be one being re-read; its old result must not sit
+      # under the table while the new one is made
+      show_result(); cv_batch_row(NA_integer_)
+    } else {
+      rows <- seq_len(NROW(files))
+      old <- isolate(cv_dir())
+      sess <- tempfile("cvb_")
+      dir.create(sess, showWarnings = FALSE, recursive = TRUE)
+      nms <- .unique_names(files$name)
+      paths <- file.path(sess, nms)
+      file.copy(as.character(files$datapath), paths, overwrite = TRUE)
+      # Stop whatever this session had running before its folder is reclaimed: it is
+      # a separate process, and it is still writing in there.
+      cv_slot$cancel()
+      if (!is.null(old) && nzchar(old) && !identical(old, sess) && dir.exists(old))
+        safe(unlink(old, recursive = TRUE))
+      safe(sweep_temp_dirs(keep_hours = 24,
+                           exclude = c(sess, dirname(isolate(guided())$path %||% "."))))
+      # No file is open yet -- and nothing is converted yet either. show_result()
+      # with nothing in it says exactly that, and clears every per-file piece of
+      # state in one place rather than leaving any of it pointing at the statement
+      # whose scratch folder the sweep above has just deleted.
+      show_result(); cv_batch_row(NA_integer_); cv_batch(NULL)
+      cv_dir(sess)
+    }
     who <- who_now(); n <- length(paths)
-    # No file is open yet -- and nothing is converted yet either. show_result()
-    # with nothing in it says exactly that, and clears every per-file piece of
-    # state in one place rather than leaving any of it pointing at the statement
-    # whose scratch folder the sweep above has just deleted.
-    show_result(); cv_batch_row(NA_integer_); cv_batch(NULL)
-    cv_dir(sess)
     # A 50-file case must not look frozen, and it must not freeze the eight other
     # analysts either - a case folder blocks for far longer than one statement, so
     # it is the same one process per job, once for the whole case. ONE job, not one
@@ -3841,7 +3992,8 @@ server <- function(input, output, session) {
     # parsed rows -- so they are dropped below, per file, the moment that write is
     # done. Anything convert_batch does not itself take goes to convert_statement(),
     # which has no `...`, so a stray argument here fails every file in the case.
-    cv_slot$start("batch", paths, sess, message = sprintf("Converting %d files\u2026", n),
+    cv_slot$start("batch", paths, sess,
+      message = sprintf("Converting %d file%s\u2026", n, if (n == 1L) "" else "s"),
       args = list(templates_dir = TEMPLATES_DIR,
         user_templates_dir = if (USE_USER_TEMPLATES) USER_TEMPLATES_DIR else NULL,
         requested_by = who, logdir = LOGDIR,
@@ -3881,6 +4033,19 @@ server <- function(input, output, session) {
         # the screen's copy; this is what takes it off again.)
         show_result()
         cv_batch_row(NA_integer_)
+        # Recorded above whatever happens; DRAWN only while these are still the files
+        # chosen. (The converting overlay covers the page, so new files cannot
+        # normally be picked mid-run -- this is the guard for when they are.)
+        if (!identical(plan_env$gen, gen)) return(invisible(NULL))
+        # Convert again: the new results take their rows' places, column by column
+        # (`[<-` on a list column keeps a NULL feed verdict as an element).
+        if (again) {
+          bb <- isolate(cv_batch())
+          if (!is.null(bb) && nrow(bb) >= max(rows) && identical(names(bb), names(b))) {
+            for (col in names(b)) bb[[col]][rows] <- b[[col]]
+            b <- bb
+          }
+        }
         cv_batch(b)
       })
   }
@@ -3907,37 +4072,6 @@ server <- function(input, output, session) {
     cv_batch_row(as.integer(i))
     invisible(TRUE)
   }
-  # WHICH ROW IS OPEN, AND WHICH ROWS ARE TICKED, ARE TWO DIFFERENT QUESTIONS.
-  # The table is multi-select now (see cv_batch), so "the selection" is a set --
-  # but opening a file's result is still one click on one row, and DT's own
-  # _row_last_clicked is exactly that click. Reading the selection instead would
-  # leave the first file of a tick-list open while the person ticks the tenth.
-  observeEvent(input$cv_batch_row_last_clicked, {
-    i <- suppressWarnings(as.integer(input$cv_batch_row_last_clicked)[1])
-    if (!is.na(i)) open_batch_row(i)
-  })
-
-  # The one line above the table: what came out of the whole case. Counted from
-  # batch_summary(), which lists every status even at zero, so "0 could not be
-  # read" is a fact the tally states rather than one a reader has to infer.
-  output$cv_batch_summary <- renderUI({
-    b <- cv_batch(); req(b)
-    s <- batch_summary(b); n <- stats::setNames(s$n, s$status)
-    say <- function(k, word) if (isTRUE(n[[k]] > 0L)) sprintf("%d %s", n[[k]], word) else NULL
-    bits <- Filter(Negate(is.null), list(
-      say("ok", "converted"),
-      say("needs_review", "need a check"),
-      say("unsupported", "with no template yet"),
-      say("failed", "could not be read")))
-    if (!length(bits)) bits <- list("nothing to convert")
-    div(style = "margin:2px 0 10px",
-      h4(style = "margin:0 0 2px", sprintf("%d files", nrow(b))),
-      # paste0, not a second argument: shiny's tag builder joins children with a
-      # space, so the tally read "2 with no template yet ." with a gap before it.
-      p(class = "muted", style = "margin:0",
-        paste0(paste(unlist(bits), collapse = "  -  "), ".")))
-  })
-
   # .is_graded(status) -- IS THERE ANY WORK TO BE CONFIDENT ABOUT? A run that
   # produced nothing has no confidence grade: "low" beside "No template for this
   # statement yet" reads as a warning about the file rather than a plain statement
@@ -3948,153 +4082,25 @@ server <- function(input, output, session) {
   # skims to pick which of thirty files to open first.
   .is_graded <- function(status) as.character(status %||% "") %in% c("ok", "needs_review")
 
-  # THE TABLE. Sorting is the whole point of it, so the two columns worth sorting
-  # by sort by MEANING, not by spelling: "Result" orders worst-first off the
-  # engine's own status order (BATCH_STATUSES), not alphabetically, and the table
-  # opens on that order with the failure kind as the tie-break -- so the pile that
-  # needs work is already at the top and already grouped.
-  output$cv_batch <- renderDT({
-    b <- cv_batch(); req(b)
-    b$trust[!.is_graded(b$status)] <- NA_character_   # nothing converted, nothing to grade
-    dash <- function(v) { v <- as.character(v); v[is.na(v) | !nzchar(v)] <- "-"; v }
-    # BATCH_STATUSES is worst-LAST, so a status's position in it IS its severity:
-    # ok 1 ... failed 4, and anything the engine has learned to say since 5, which
-    # sorts to the very top because a verdict this screen has no wording for is the
-    # one a person most needs to look at. Sorted DESCENDING below. (It used to be
-    # this same match() subtracted from one-past-the-end and then sorted ascending
-    # -- the same order written as a double negative, with the nomatch value
-    # load-bearing by accident.)
-    severity <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
-    disp <- data.frame(
-      File = basename(b$file),
-      Result = vapply(b$status, plain_status, character(1), USE.NAMES = FALSE),
-      Bank = dash(b$bank),
-      Rows = suppressWarnings(as.integer(b$rows)),
-      # THE SAME GRADE THE SINGLE-FILE CARD PRINTS. convert_batch() has carried
-      # `trust` all along and this table threw it away, so the row for a file read
-      # `Converted successfully` with `-` under What to check, while opening that
-      # very row said "Converted - 11 transactions read - confidence: medium /
-      # Read cleanly. Something could not be proven". Two gradings of one file,
-      # the more confident one on the screen built for skimming - and on a
-      # thirty-file case there was no way to tell the clean files from the
-      # merely-uncomplaining ones without opening all thirty.
-      #
-      # The word is the card's word, not a second vocabulary: cv_headline prints
-      # `res$trust$level` and so does this -- INCLUDING when the card prints none
-      # (blanked above, .is_graded).
-      Confidence = dash(b$trust),
-      # plain_failing_check() lives in ui_labels.R with the other wording maps: the
-      # engine carries its own CODE ("check:balance_reconciliation") so it never has
-      # to read a UI file off disk, and the words are added here.
-      `What to check` = dash(plain_failing_check(b$failing_check)),
-      order = severity,
-      check.names = FALSE, stringsAsFactors = FALSE)
-    # DataTables counts columns from zero, and the two that matter are addressed
-    # by NAME rather than by a literal: adding Confidence in the middle shifted
-    # every index below it, and a hard-coded 5 would have hidden the wrong column
-    # and sorted the table on the wrong key with nothing to notice it.
-    at <- function(nm) which(names(disp) == nm) - 1L
-    # MULTI-SELECT, because the job a thirty-file case ends in is "three of these
-    # failed, fix the template, run those three again". Single-select made that
-    # thirty row-clicks and thirty separate downloads; the re-run path itself has
-    # existed all along (run_batch takes any list of files). Clicking one row still
-    # opens it -- that is _row_last_clicked, above -- so nothing anybody already
-    # does changes; ticking several now also means something.
-    datatable(disp, rownames = FALSE, selection = "multiple",
-      options = list(
-        # No scrollX: it makes DataTables clone the header into the scroll body,
-        # and the clone's sort arrows render as a stack of triangles over the last
-        # column. Six short columns fit without it.
-        pageLength = 15,
-        order = list(list(at("order"), "desc"), list(at("What to check"), "asc")),
-        columnDefs = list(list(visible = FALSE, targets = at("order")),
-                          # Clicking "Result" sorts on the hidden severity key, and
-                          # DataTables' default first click is ASCENDING - which on
-                          # this key puts the CLEAN files on top, on the very click
-                          # meant to gather the failures. The table exists to group
-                          # what went wrong, so worst-first is the first click.
-                          list(orderData = at("order"), targets = at("Result"),
-                               orderSequence = list("desc", "asc"))))) |>
-      formatStyle("Confidence", fontWeight = "bold",
-                  color = styleEqual(c("high", "medium", "low"),
-                                     c(PALETTE$ok, "#8a6d00", PALETTE$bad)))
-  })
-
   # WHAT A CASE FOLDER IS ACTUALLY FOR, ONCE THE TABLE HAS BEEN READ.
   #
   # "Thirty files, three failed: no way to re-run just those three and no way to
   # download the other twenty-seven." The deliverable for a 30-file case was 30
   # row-clicks and 30 separate downloads, and after building the template the
   # three failures needed, the only way to use it was to upload the whole case
-  # again. Both answers were already sitting there -- run_batch takes any list of
-  # files, and every converted file's outputs are on disk in one folder -- so this
-  # is two actions over what exists, not a new pipeline.
+  # again. Both answers are now in the Convert table itself: change a row's
+  # template (or add the template it needed) and Convert re-reads exactly the rows
+  # whose reading changed (plan_again, run_batch's `rows`), and "Download
+  # everything" sits above the table.
   #
-  # THEY ONLY APPEAR WITH SOMETHING TO ACT ON: the re-run needs ticked rows and
-  # says so where the ticking happens, and the download needs a file that was
-  # actually written. A control that cannot do anything is worse than no control.
+  # THE DOWNLOAD ONLY APPEARS WITH SOMETHING IN IT: a control that cannot do
+  # anything is worse than no control.
   .batch_outputs <- function(b) {
     if (is.null(b)) return(character(0))
     p <- unlist(lapply(b$result, function(r) as.character(r$outputs %||% character(0))))
     p <- unique(p[nzchar(p)])
     p[file.exists(p)]
   }
-  output$cv_batch_open <- renderUI({
-    b <- cv_batch(); req(b)
-    sel <- as.integer(input$cv_batch_rows_selected %||% integer(0))
-    sel <- sel[!is.na(sel) & sel >= 1L & sel <= nrow(b)]
-    outs <- .batch_outputs(b)
-    actions <- div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0 0",
-      if (length(sel))
-        actionButton("cv_batch_again",
-                     sprintf("Convert %s again", if (length(sel) == 1L) "this file"
-                             else sprintf("these %d files", length(sel))),
-                     class = "btn-default")
-      else span(class = "muted", style = "font-size:13px",
-                "Tick the files you want to convert again."),
-      if (length(outs))
-        downloadButton("cv_batch_dl", "\u2b73 Download everything", class = "btn-primary"))
-    i <- cv_batch_row()
-    if (is.na(i))
-      return(tagList(p(class = "muted", style = "margin:8px 0 0",
-                       "Click a row for that file's full result."), actions))
-    tagList(actions,
-      div(style = "margin:16px 0 2px;padding-top:12px;border-top:1px solid var(--line)",
-        h4(style = "margin:0", sprintf("Showing: %s", basename(b$file[i])))))
-  })
-  # THE SAME ENGINE CALL, ON FEWER FILES. run_batch copies the paths it is given
-  # into a fresh scratch folder, so handing it the ticked rows' files is exactly
-  # what dropping those files into the picker would have done -- one code path, and
-  # a re-run and a first run of the same file can never disagree.
-  observeEvent(input$cv_batch_again, {
-    b <- cv_batch(); req(b)
-    if (!.identity_ok()) return()
-    sel <- as.integer(input$cv_batch_rows_selected %||% integer(0))
-    sel <- sel[!is.na(sel) & sel >= 1L & sel <= nrow(b)]
-    if (!length(sel)) {
-      notify_once("cv_batch_again", "Tick the files you want to convert again first.",
-                  type = "warning", duration = 6)
-      return()
-    }
-    clear_notice("cv_batch_again")
-    paths <- as.character(b$file[sel])
-    keep <- file.exists(paths)
-    if (!any(keep)) {
-      showNotification("Those files are no longer on this server - upload them again.",
-                       type = "error", duration = 10)
-      return()
-    }
-    # SAID, NEVER SILENT: a case whose scratch folder has been reclaimed under it
-    # would otherwise re-run fewer files than were ticked with nothing to show it.
-    if (!all(keep))
-      showNotification(sprintf("%d of those files are no longer on this server, so only the rest are being converted again.",
-                               sum(!keep)), type = "warning", duration = 10)
-    # ...each with the template that was chosen for it the first time
-    run_batch(data.frame(name = basename(paths[keep]), datapath = paths[keep],
-                         stringsAsFactors = FALSE),
-              forced = vapply(sel[keep], function(i) .chosen_tpl(b, i) %||% NA_character_,
-                              character(1)))
-  })
   # ONE FILE HOLDING THE WHOLE CASE. The zip is built from the outputs already on
   # disk, so it carries exactly what the per-file buttons carry, and its name is
   # the case's own scratch handle rather than "download.zip".
@@ -4157,6 +4163,16 @@ server <- function(input, output, session) {
     # Worked out HERE, not in an observer beside it: this re-renders when the table
     # finishes checking, and an observer's label would be lost to the re-render.
     lab <- if (n > 1L) sprintf("Convert %d files", n) else "Convert"
+    # ...and after a run, what pressing it again will do: only the files whose
+    # reading has changed, or (nothing changed) every one of them again.
+    p <- cv_plan(); ran <- cv_plan_ran()
+    if (!busy && !is.null(p) && !is.null(ran) && identical(ran$gen, p$gen)) {
+      ch <- plan_again()
+      lab <- if (n <= 1L) "Convert again"
+             else if (length(ch)) sprintf("Convert %d changed file%s", length(ch),
+                                          if (length(ch) == 1L) "" else "s")
+             else sprintf("Convert all %d again", n)
+    }
     if (who && got && !busy)
       return(actionButton("cv_go", lab, class = "btn-primary btn-lg btn-block"))
     tagList(
@@ -4199,10 +4215,23 @@ server <- function(input, output, session) {
       return()
     }
     # Each file with ITS row of the Convert table: detection where the row was left
-    # on its guess, exactly the chosen template where it was changed.
-    forced <- plan_forced(f)
-    cv_plan_ran(isolate(cv_plan())$gen %||% -1L)
-    if (nrow(f) > 1L) run_batch(f, forced)
+    # on its guess, exactly the chosen template where it was changed. A table that is
+    # not THIS upload's (the names do not line up) forces nothing, which is detection
+    # -- the behaviour before the table existed.
+    p <- isolate(cv_plan()); picks <- isolate(cv_plan_picks())
+    mine <- !is.null(p) && !is.null(p$rows) && identical(p$rows$name, as.character(f$name))
+    eff <- if (mine) plan_effective(p, picks) else rep("", nrow(f))
+    forced <- ifelse(nzchar(eff), eff, NA_character_)
+    # On a case that has already run, only the rows whose reading has changed.
+    again <- isolate(plan_again())
+    rows <- again %||% seq_len(nrow(f))
+    if (mine) {
+      ran <- isolate(cv_plan_ran())
+      e <- if (!is.null(ran) && identical(ran$gen, p$gen)) ran$expected else rep(NA_character_, nrow(f))
+      e[rows] <- plan_expected(p, picks, isolate(cv_pick_templates()))[rows]
+      cv_plan_ran(list(gen = p$gen, expected = e))
+    }
+    if (nrow(f) > 1L) run_batch(f, forced, rows = again)
     else run_conversion(f$datapath[1], f$name[1],
                         force_tpl = if (is.na(forced[1])) NULL else forced[1])
   })
@@ -5399,7 +5428,10 @@ server <- function(input, output, session) {
     # same words for the door, and the question named for the document in hand.
     ask <- if (identical(res$kind, "tables")) "A table missing, or reading the wrong columns?"
            else if (identical(res$kind, "form")) "A value missing, or reading the wrong thing?"
-           else "Not the right bank?"
+           # Not a question about the BANK any more: the wrong bank is the Convert
+           # table's row, directly above. What this door fixes is HOW the statement
+           # was read -- its columns -- in the template toolkit.
+           else "Something in the wrong column?"
     quiet <- div(style = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 12px;color:var(--muted);font-size:13px",
       span(ask),
       actionLink("cv_edit_go", "Adjust how this was read"))

@@ -435,21 +435,25 @@ test_that("the Convert screen has a per-file template table and no global picker
                  "It picked the wrong template", "bank_choice", "tpl_choice\\b",
                  "input\\$cv_bank_quick", "input\\$cv_template\\b"))
     expect_false(any(grepl(gone, code)), info = gone)
-  # the table sits at the top of the result area, above the case-folder table
-  i_plan  <- grep('uiOutput\\("cv_plan"\\)', src)
-  i_batch <- grep('DTOutput\\("cv_batch"\\)', src)
-  i_main  <- grep("mainPanel\\(", src)[1]
+  # the table sits at the top of the result area, above the result it opens
+  i_plan   <- grep('uiOutput\\("cv_plan"\\)', src)
+  i_status <- grep('uiOutput\\("cv_status"\\)', src)
+  i_main   <- grep("mainPanel\\(", src)[1]
   expect_length(i_plan, 1L)
-  expect_true(i_main < i_plan && i_plan < i_batch[1])
+  expect_true(i_main < i_plan && i_plan < min(i_status))
   expect_length(grep("output\\$cv_plan <- renderUI", src), 1L)
+  # ONE table: the old second results table, its fold and its tick-boxes are gone
+  for (gone in c('DTOutput\\("cv_batch"\\)', "cv_batch <- renderDT", "cv_batch_summary",
+                 "cv_batch_open", "cv_batch_again", "row_last_clicked", "plan-fold"))
+    expect_false(any(grepl(gone, code)), info = gone)
   # a plain dropdown per row -- a native select, nothing to learn
   blk <- .src_block(src, "output\\$cv_plan <- renderUI", 80L)
-  expect_match(blk, "selectInput\\(rid, NULL, choices = c\\(stats::setNames\\(\"\", first\\), ch\\)")
-  expect_match(blk, "selectize = FALSE")
+  expect_match(blk, ".plan_select\\(p\\$gen, i, ch, first, sel, r\\$name\\)")
+  expect_match(.src_block(src, "\\.plan_select <- function", 10L), "tags\\$select\\(class = \"plan-pick\"")
   # only templates that can read THIS kind of file are offered
   expect_match(blk, "template_choices\\(tset, r\\$format\\)")
   # ...from the same set the conversion loads
-  expect_match(joined, "plan_env\\$tset <- cv_pick_templates\\(\\)")
+  expect_match(joined, "plan_env\\$tset <- isolate\\(cv_pick_templates\\(\\)\\)")
 })
 
 # ---------------------------------------------------------------------------
@@ -590,8 +594,9 @@ test_that("a batch is more files in the same picker, not a second screen", {
   expect_length(grep('uiOutput\\("cv_go_btn"\\)', src), 1L)
   expect_length(grep('output\\$cv_go_btn <- renderUI', src), 1L)
   expect_false(grepl('tabPanel\\("Batch"', joined))
-  # the batch panel is rendered on Convert, above the result it opens
-  i_batch <- grep('DTOutput\\("cv_batch"\\)', src)
+  # the case table is rendered on Convert, above the result it opens -- and it is
+  # the Convert table itself, not a second one (see "ONE TABLE, BEFORE AND AFTER")
+  i_batch <- grep('uiOutput\\("cv_plan"\\)', src)
   i_status <- grep('uiOutput\\("cv_status"\\)', src)
   expect_length(i_batch, 1L)
   expect_true(i_batch < min(i_status))
@@ -606,9 +611,9 @@ test_that("the QID is asked once for the whole batch, before it starts", {
   src <- .ui_src()
   i_go   <- grep("observeEvent\\(input\\$cv_go, \\{", src)
   expect_length(i_go, 1L)
-  blk <- src[i_go:(i_go + 45)]
+  blk <- src[i_go:(i_go + 75)]
   i_qid   <- grep("\\.identity_ok\\(\\)", blk)[1]
-  i_batch <- grep("run_batch\\(f, forced\\)", blk)[1]
+  i_batch <- grep("run_batch\\(f, forced, rows = again\\)", blk)[1]
   expect_false(is.na(i_qid) || is.na(i_batch))
   expect_true(i_qid < i_batch, info = "the batch starts before who-ran-this is settled")
   # ...and the gate really is the QID question
@@ -669,47 +674,28 @@ test_that("the result page's state has exactly one definition", {
   expect_false(grepl('DTOutput("cv_batch_txns")', joined, fixed = TRUE))
 })
 
-test_that("the batch table sorts by what went wrong, by meaning not by spelling", {
-  # Sorting IS the feature: every file that failed the same way must gather
-  # together so they can be fixed together. Alphabetical order on the verdict
-  # would scatter them ("Could not read" before "No template"), so the verdict
-  # column sorts off the engine's own worst-last status order instead.
+test_that("the case table puts what went wrong first, by meaning not by spelling", {
+  # Every file that failed the same way must gather together so they can be fixed
+  # together. Alphabetical order on the verdict would scatter them ("Could not
+  # read" before "No template"), so the rows are ordered off the engine's own
+  # worst-last status order, with the failure kind as the tie-break.
   #
-  # The hidden sort key used to be `length(BATCH_STATUSES) + 1L - match(...)`
-  # sorted ASCENDING -- a subtraction whose only job was to turn a descending sort
-  # into an ascending one. It is now match() sorted DESCENDING: the same order with
-  # the arithmetic taken out. Asserted as an ORDER, not as a spelling, so the two
-  # cannot be mistaken for each other again.
-  #
-  # The column POSITIONS are no longer written as literals. A Confidence column
-  # was added in the middle of this frame, which shifted every index below it, and
-  # a hard-coded `5` would have hidden the wrong column and sorted the table on the
-  # wrong key with nothing on screen to notice it. They are addressed by name.
+  # The table used to be a DataTable with a hidden sort key, column indexes and a
+  # click direction to get right; it is now the Convert table carrying its results,
+  # and the order is simply the order the rows are drawn in. Asserted as an ORDER.
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
-  expect_match(blk, "BATCH_STATUSES", fixed = TRUE)
-  expect_match(blk, "orderData", fixed = TRUE)          # verdict sorts by severity
-  expect_match(blk, "failing_check", fixed = TRUE)      # the failure kind is a column
-  expect_match(blk, "severity <- match\\(b\\$status, BATCH_STATUSES")
-  expect_match(blk, 'at <- function\\(nm\\) which\\(names\\(disp\\) == nm\\) - 1L')
-  expect_match(blk, 'order = list\\(list\\(at\\("order"\\), "desc"\\), list\\(at\\("What to check"\\), "asc"\\)\\)')
-  expect_match(blk, 'visible = FALSE, targets = at\\("order"\\)')
+  blk <- .src_block(src, "output\\$cv_plan <- renderUI", 120L)
+  expect_match(blk, "sev <- match\\(b\\$status, BATCH_STATUSES, nomatch = length\\(BATCH_STATUSES\\) \\+ 1L\\)")
+  expect_match(blk, "ord <- order\\(-sev, as\\.character\\(b\\$failing_check\\), ord\\)")
+  expect_match(blk, "trs <- lapply\\(ord, function\\(i\\)")
   expect_false(grepl("length(BATCH_STATUSES) + 1L -", blk, fixed = TRUE))
-  # ...and no bare integer target survives, which is the whole point of at()
-  expect_false(grepl("targets = 5", blk, fixed = TRUE))
-  # the table is sortable and clickable at all
-  # WAS: selection = "single". Register J7 ("thirty files, three failed: no way to
-  # re-run just those three") names single-select as the fault - the deliverable
-  # for a 30-file case was 30 row-clicks and 30 downloads. Clicking one row still
-  # opens it (DT's _row_last_clicked); ticking several now means something too.
-  expect_match(blk, 'selection = "multiple"', fixed = TRUE)
-  # the engine's order really is worst-last, which is what descending re-reads
+  # the engine's order really is worst-last, which -sev re-reads
   expect_identical(BATCH_STATUSES, c("ok", "needs_review", "unsupported", "failed"))
-  # ...and the key it builds really does put the worst first when sorted that way,
-  # with an unrecognised verdict at the very top (nobody has words for it yet)
-  key <- match(c("ok", "failed", "needs_review", "something_new", "unsupported"),
-               BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
-  expect_identical(c("ok", "failed", "needs_review", "something_new", "unsupported")[order(-key)],
+  # ...and the key really does put the worst first, with an unrecognised verdict at
+  # the very top (nobody has words for it yet)
+  st <- c("ok", "failed", "needs_review", "something_new", "unsupported")
+  key <- match(st, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+  expect_identical(st[order(-key)],
                    c("something_new", "failed", "unsupported", "needs_review", "ok"))
 })
 
@@ -864,21 +850,25 @@ test_that("a row left on its guess is detected; a row that was changed is forced
   # its thin-margin review hold, which a forced template skips. Rule 2: a changed
   # row is read with exactly the chosen template, file by file.
   src <- .ui_src()
-  blk <- .src_block(src, "plan_forced <- function\\(f\\)", 18L)
-  expect_match(blk, "if \\(!is\\.na\\(g\\) && identical\\(v, g\\)\\) next")
-  expect_match(blk, "out\\[i\\] <- v")
+  blk <- .src_block(src, "plan_effective <- function\\(p, picks\\)", 8L)
+  expect_match(blk, 'if \\(is\\.na\\(v\\) \\|\\| !nzchar\\(v\\) \\|\\| \\(!is\\.na\\(g\\) && identical\\(v, g\\)\\)\\) "" else v')
   # a table that is not THIS upload's forces nothing
-  expect_match(blk, "identical\\(p\\$rows\\$name, as\\.character\\(f\\$name\\)\\)")
-  # the generation is in every dropdown's id, so last upload's choice is never read
-  expect_match(paste(src, collapse = "\n"),
-               'plan_input_id <- function\\(gen, i\\) sprintf\\("cv_tpl_%d_%d"')
+  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 60L)
+  expect_match(go, "identical\\(p\\$rows\\$name, as\\.character\\(f\\$name\\)\\)")
+  # THE CHOICES LIVE ON THE SERVER, per row of THIS upload: a pick from another
+  # upload's table (another generation) is ignored, never applied
+  pk <- .src_block(src, "observeEvent\\(input\\$cv_plan_pick, \\{", 10L)
+  expect_match(pk, "identical\\(suppressWarnings\\(as\\.integer\\(v\\$gen %\\|\\|% NA\\)\\[1\\]\\), p\\$gen\\)")
+  expect_match(pk, "pk\\[i\\] <- as\\.character\\(v\\$value %\\|\\|% \"\"\\)\\[1\\]")
+  # and the dropdowns are not Shiny inputs, so a redraw cannot lose or revive one
+  expect_false(grepl("selectInput(rid", paste(src, collapse = "\n"), fixed = TRUE))
 })
 
 test_that("every file's choice reaches the engine, single file and case folder alike", {
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 40L)
-  expect_match(go, "forced <- plan_forced\\(f\\)")
-  expect_match(go, "run_batch\\(f, forced\\)")
+  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 60L)
+  expect_match(go, "eff <- if \\(mine\\) plan_effective\\(p, picks\\)")
+  expect_match(go, "run_batch\\(f, forced, rows = again\\)")
   expect_match(go, "force_tpl = if \\(is\\.na\\(forced\\[1\\]\\)\\) NULL else forced\\[1\\]")
   expect_match(joined, "force_templates = forced\\)")
   # convert_args takes the template it is GIVEN; nothing global is read any more
@@ -1400,17 +1390,6 @@ test_that("the sample button converts with a template that is actually loaded", 
 
 
 # ---- what the adversarial review found in this sweep -------------------------
-test_that("the batch Result column gathers the FAILURES on the first click", {
-  # orderData points column 1 at the hidden severity key, and DataTables' default
-  # first click is ASCENDING - which on that key puts the CLEAN files on top, on
-  # the very click meant to gather what went wrong. The initial order was right
-  # and the old test only checked the initial order, so the inversion was
-  # invisible. Pin the click direction, not just the opening state.
-  blk <- .ui_block(.ui_src(), "output\\$cv_batch <- renderDT", 72L)
-  expect_match(blk, 'orderSequence = list\\("desc", "asc"\\)')
-  expect_match(blk, 'orderData = at\\("order"\\), targets = at\\("Result"\\)')
-})
-
 test_that("the stored-window banner stops claiming the boxes are empty once they are not", {
   # It returned EARLY, so it both stated something false the moment the user
   # picked a date, and hid the backwards warning for exactly the templates the
@@ -2114,8 +2093,9 @@ test_that("feedback is asked only about a conversion, and never in the proof gly
 # the clean files from the merely-uncomplaining ones without opening all thirty.
 test_that("the batch table grades a file with the same word its own card uses", {
   src <- .ui_src()
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
-  expect_match(blk, "Confidence = dash\\(b\\$trust\\)")
+  blk <- .src_block(src, "output\\$cv_plan <- renderUI", 120L)
+  expect_match(blk, "conf <- as\\.character\\(b\\$trust\\[i\\]\\)")
+  expect_match(blk, "confidence \", span\\(class = paste0\\(\"conf-\", conf\\), conf\\)")
   # the card prints res$trust$level, and convert_batch really carries it per file
   expect_match(.ui_block(src, "output\\$cv_headline <- renderUI", 45L),
                "res\\$trust\\$level")
@@ -2228,7 +2208,9 @@ test_that("the door back is one control, on all three kinds, and it is not a new
   # ...and it asks the question that route actually has
   expect_match(blk, "A table missing, or reading the wrong columns\\?")
   expect_match(blk, "A value missing, or reading the wrong thing\\?")
-  expect_match(blk, "Not the right bank\\?")
+  expect_match(blk, "Something in the wrong column\\?")
+  # the wrong BANK is the Convert table's job now, not this link's
+  expect_false(grepl("Not the right bank?", blk, fixed = TRUE))
   # THE TWO HALF-WORKING CONTROLS IT REPLACES ARE GONE, not left beside it.
   expect_false(grepl("cv_goto_report", joined, fixed = TRUE))
   expect_false(grepl("cv_goto_templates", joined, fixed = TRUE))
@@ -2320,29 +2302,37 @@ test_that("a high-severity diagnosis nobody can fix with a template takes the he
 
 test_that("a case folder can re-run the files that failed and hand back the rest", {
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  # the table can be ticked, and one click still OPENS a row
-  blk <- .ui_block(src, "output\\$cv_batch <- renderDT", 72L)
-  expect_match(blk, 'selection = "multiple"', fixed = TRUE)
-  expect_match(joined, "observeEvent\\(input\\$cv_batch_row_last_clicked")
-  # THE RE-RUN IS THE SAME ENGINE CALL, on fewer files -- never a second pipeline
-  re <- .ui_block(src, "observeEvent\\(input\\$cv_batch_again", 40L)
-  expect_match(re, "run_batch\\(data\\.frame\\(name = basename\\(paths\\[keep\\]\\)")
-  # it refuses with a reason rather than doing nothing when nothing is ticked
-  expect_match(re, "Tick the files you want to convert again first")
-  # ...and it is never silent about converting fewer files than were ticked
-  expect_match(re, "no longer on this server, so only the rest")
-  # the same QID gate every other conversion goes through
-  expect_match(re, "\\.identity_ok\\(\\)")
+  # a row with a result OPENS that file's result -- one click, on the row itself,
+  # never on the dropdown in it
+  expect_match(joined, "observeEvent\\(input\\$cv_plan_open, \\{")
+  expect_match(joined, "closest\\('select,option,a,button,input,label'\\)\\.length\\) return;")
+  # CONVERT AGAIN re-reads the rows whose reading changed -- a template changed by
+  # hand, a new template that now recognises the file, or an edited template -- and
+  # nothing else. It is the same engine call, on fewer files.
+  ex <- .src_block(src, "plan_expected <- function\\(p, picks, tset\\)", 8L)
+  expect_match(ex, "template_sha256\\(t\\)")
+  again <- .src_block(src, "plan_again <- function\\(\\)", 6L)
+  expect_match(again, "if \\(length\\(ch\\)\\) ch else NULL")
+  rb <- .src_block(src, "run_batch <- function\\(files, forced = NULL, rows = NULL\\)", 60L)
+  expect_match(rb, "paths <- as\\.character\\(b_old\\$file\\[rows\\]\\)")
+  expect_match(rb, "all\\(file\\.exists\\(as\\.character\\(b_old\\$file\\[rows\\]\\)\\)\\)")
+  # ...and merges the new results into their own rows, the rest untouched
+  expect_match(joined, "for \\(col in names\\(b\\)\\) bb\\[\\[col\\]\\]\\[rows\\] <- b\\[\\[col\\]\\]")
+  # the button says which: only the changed files, or all of them again
+  btn <- .src_block(src, "output\\$cv_go_btn <- renderUI", 40L)
+  expect_match(btn, 'sprintf\\("Convert %d changed file%s"')
+  expect_match(btn, 'sprintf\\("Convert all %d again", n\\)')
+  # a template saved, hidden or deleted re-checks the files
+  expect_match(joined, "observeEvent\\(cv_pick_templates\\(\\), \\{")
   # ONE FILE FOR THE WHOLE CASE, built from the outputs already on disk
   dl <- .ui_block(src, "output\\$cv_batch_dl <- downloadHandler", 30L)
   expect_match(dl, "\\.batch_outputs\\(cv_batch\\(\\)\\)")
   expect_match(dl, "zip::zip")
   # a host that cannot pack a zip says so in a file that opens, never a broken one
   expect_match(dl, "could not be packed into one file")
-  # and neither control renders with nothing to act on
-  op <- .ui_block(src, "output\\$cv_batch_open <- renderUI", 30L)
-  expect_match(op, "if \\(length\\(sel\\)\\)")
-  expect_match(op, "if \\(length\\(outs\\)\\)")
+  # and the button only appears with something in it, above the table
+  expect_match(.src_block(src, "output\\$cv_plan <- renderUI", 160L),
+               'if \\(length\\(\\.batch_outputs\\(b\\)\\)\\)\\s+downloadButton\\("cv_batch_dl"')
 })
 
 test_that("the verdict card's headline is the diagnosis, not the generic template line", {

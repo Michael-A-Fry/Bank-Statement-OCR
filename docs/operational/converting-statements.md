@@ -20,7 +20,7 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    | **Recognised** | One template clearly fits. | Nothing. |
    | **Close call - check it** / **Two fit - check it** | Another template nearly fits, or fits just as well. The one shown is the one it will use; the result will be held for a second look. | Glance at it. Change it if it is wrong. |
    | **Not recognised** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
-   | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts. | Nothing — or choose one if you know it. |
+   | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
    | **Your choice** | You changed this row. That file is read with exactly the template you chose. | — |
    | **Can't be read** | The file is damaged, empty, or not a table. Hover over it for why. | Get a fresh copy of the file. |
 
@@ -41,8 +41,9 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 6. Read the verdict, then **Download** Excel, CSV or JSON.
 
 **Wrong template after all?** The table stays at the top of the page. Change that
-file's row and press **Convert** again. (On a case folder it folds away under
-*Files and templates* once it has run — one click opens it.)
+file's row and press **Convert** again. On a case folder only the files you changed
+are converted again — the button says so (*Convert 1 changed file*) — and the rest
+keep their results.
 
 Everything the tool *proved* stays on the page under the verdict: the summary
 cards, the strip of ticks, your transactions — and, in one disclosure headed **Checks & detail (for review)**,
@@ -192,16 +193,28 @@ converting again replaces them with corrected figures.
 
 ## Batch runs
 
-Select several files and Convert. You get one summary line and a table, one row
-per file. **Click a row** to open that file's full result — the same verdict,
-checks, transactions and downloads as converting it alone.
+Select several files and Convert. The results arrive **in the same table** you
+checked the templates in — one row per file, no second table. Above it, one
+summary line (*3 converted · 2 need a check · 1 with no template yet*) and
+**Download everything**: one zip with every file's Excel, CSV and JSON.
 
-Six columns: **File**, **Result**, **Bank**, **Rows**, **Confidence**, **What to
-check**. It opens worst-first — the files that need work are already at the top
-and already grouped by what went wrong — and clicking **Result** re-sorts by
-severity, not alphabetically. **Confidence** is the same word the single-file
-card prints, so on a thirty-file case you can tell the *high* files from the
-merely-uncomplaining *medium* ones without opening any of them.
+Each row gains a **Result** — the verdict, then its row count and **confidence**
+underneath — and **What to check**. The rows re-order worst-first, so the files
+that need work are at the top and grouped by what went wrong. **Confidence** is the
+same word the single-file card prints, so on a thirty-file case you can tell the
+*high* files from the merely-uncomplaining *medium* ones without opening any of
+them.
+
+**Click a row** (anywhere but its dropdown) to open that file's full result
+underneath — the same verdict, checks, transactions and downloads as converting
+it alone. The open row is highlighted.
+
+**Converting again.** Change a row's template and it is marked **Changed**; the
+button becomes *Convert 1 changed file* and converts only that one — the rest keep
+their results. A file also counts as changed when a template you have just added
+now recognises it, or the template it uses has been edited, so after building a
+missing template you convert exactly the files it was missing for. With nothing
+changed, the button reads *Convert all N again*.
 
 ## Good habits
 
