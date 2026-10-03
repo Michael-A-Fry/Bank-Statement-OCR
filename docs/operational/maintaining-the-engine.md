@@ -3,13 +3,13 @@
 For the **one analyst who owns this tool** — the person who inherits it, not a
 software engineer. Everything here is a copy-paste command or a file copy.
 
-Day-to-day upkeep (Health, requests, dictionaries, tidying logs) is
+Day-to-day upkeep (Banks, Automatic reading, Words, Health, tidying logs) is
 [admin-and-maintenance.md](admin-and-maintenance.md). This page is the three
 things that page does not cover:
 
 1. [Run the test suite on the server](#1-run-the-test-suite-on-the-server)
 2. [Re-apply an engine parameter after an update](#2-re-apply-an-engine-parameter-after-an-update)
-3. [Promote a template to proven](#3-promote-a-template-to-proven)
+3. [Add a statement to the test suite](#3-add-a-statement-to-the-test-suite)
 
 The rules everything here serves are in
 [../context/charter.md](../context/charter.md). Read it once — it is one page,
@@ -20,9 +20,9 @@ and it is what tells you whether a change is allowed.
 ## 1. Run the test suite on the server
 
 The suite is the guarantee. Green means the engine still honours every promise:
-verbatim descriptions, no silent drops, and every shipped
-template still parsing its golden file. Run it after **any** change to `R\`,
-`templates\` or the dictionaries, and after every update.
+verbatim descriptions, no silent drops, nothing automatic unless the arithmetic
+proved it, and every golden statement still read figure for figure. Run it after
+**any** change to `R\` or the dictionaries, and after every update.
 
 ### `Rscript` on its own will not work
 
@@ -58,7 +58,7 @@ skipped: 0
 ### Reading it
 
 - **`failed` or `errors` above 0** — stop. Something is genuinely broken. Do not
-  promote a template or ship the change. The failing test names the file and the
+  ship the change. The failing test names the file and the
   expectation.
 - **`skipped` above 0** — **not** a clean bill of health. A skip means a test
   never ran, almost always because a tool is missing (Tesseract/Poppler for the
@@ -70,14 +70,21 @@ skipped: 0
   particular total. The `files` / `tests` / `passed` figures grow every time a
   test is added, so a higher total than last time is normal and healthy; a
   noticeably *lower* one means something did not run, and is worth chasing —
-  unless scope was deliberately removed, which is what happened at 1.9.0 and is
-  the only reason the figures below are lower than 1.8.1's.
+  unless scope was deliberately removed, which is what happened at 1.9.0 and
+  again at 2.0.0 (templates retired: ten test files went with the code they
+  tested).
 
-The last full run measured **73 files, 1,038 tests, 5,591 passing assertions,
-0 failed, 0 errors** — taken on 2026-10-03, at `VERSION` 1.23.1, on R 4.3.3,
-with 1 skipped: one split test needs a Westpac bundle that lives in
-`samples/_private_staging/` and is deliberately not committed. Treat it as a
-floor to compare against, not a target to match.
+The last full run measured **67 files, 1,052 tests, 5,527 passing assertions**
+— taken on 2026-10-03, at `VERSION` 2.0.0 while it was being built, on R 4.3.3,
+with `BSO_ALLOW_SKIPS=1`. **It was not a clean board: 181 failed and 46
+errors**, all in files then still being rewritten (`test-app-ui.R` 171,
+`test-app-adoption.R` 24, `test-seams.R` 13, `test-deployment-docs.R` 8,
+`test-deployment.R` 4, `test-docs-truth.R` 4, `test-generalisation.R` 1 — the last
+one a real engine fault left failing on purpose, see
+[`../context/outstanding-work.md`](../context/outstanding-work.md)). The screen
+files were re-run on their own afterwards and pass. **Replace this paragraph with
+the first clean full run of 2.0.0 before it goes to the server**; until then,
+treat the figures as a count of what exists, not as a floor that passed.
 
 **After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the
 buttons:** `node tools/ui/check.mjs` drives the Convert screen in a real browser
@@ -91,9 +98,12 @@ enforced by the operating system rather than merely bookkept.
 
 ## How long a big statement takes
 
-Measured at 1.10.0 on this build (R 4.3.3, poppler 24.02.0, four cores), on synthetic
+Measured at 1.10.0 (R 4.3.3, poppler 24.02.0, four cores), on synthetic
 statements that reconcile exactly — `tools/synth/make_bench.py` draws them,
-`tools/synth/bench.R` times them:
+`tools/synth/bench.R` timed them. **Not yet re-measured on 2.0.0**: `bench.R`
+still calls the retired template functions and does not run until it is rewritten
+for the automatic reader, and the reader does more work per page than the old
+template parse did. Treat the table as the 1.x figure:
 
 | pages | rows | total | per page | peak extra memory | wrong figures |
 |---|---|---|---|---|---|
@@ -118,20 +128,34 @@ Two things to know when a number here looks wrong:
   machine: tesseract is OpenMP-parallel, and three concurrent *scans* on four cores
   had not finished a single page after ten minutes.
 
-### A SCAN is 55 times slower, and that is the number that matters
+### A scan: about 2 seconds a page since 2.0.0
 
 | | per page | 120 pages |
 |---|---|---|
-| digital PDF (a text layer) | 0.17 s | ~20 seconds |
-| **scanned PDF (OCR)** | **9.3 s** | **~19 minutes** |
+| digital PDF (a text layer) | 0.17 s (1.x) | ~20 seconds |
+| **scanned PDF (OCR), 2.0.0** | **2.0 s mean, 3.6 s worst** | **~4 minutes** |
+| scanned PDF (OCR), 1.23.1 | 31.5 s mean, 174 s worst | over an hour |
 
-Measured on a rasterised specimen: 3 pages, 27.8 s, OCR confidence 81, and it detected
-and parsed correctly -- the quality is fine, it is only slow. tesseract dominates it.
+Measured on 2026-10-03 over 29 scanned pages of the realistic dev set, with one
+Tesseract thread and other work loading the machine (so the 1.23.1 figures, if
+anything, flatter the old code). Two faults made 1.x slow, and both are fixed:
 
-Nineteen minutes behind a screen that says "Converting statement..." is
-indistinguishable from a hung tool, so `conversion_estimate()` probes the file first
-(pdfinfo for the page count, the first three pages' text for the scan test -- 0.05 s on
-a 400-page file) and the wait is stated up front. It says nothing under half a minute.
+- **The contrast stretch on nearly blank pages.** The darkest 2% of pixels were
+  made black. On a last page with under 2% ink that point landed in the paper
+  grain, so Tesseract read thousands of junk words at confidence 17 for 84 s
+  instead of 0.9 s. The stretch now never goes past halfway between the darkest
+  ink and the paper (`R/ocr_preprocess.R`).
+- **Tesseract's threads.** It starts one thread per core and spins while waiting
+  on them, so three pages read at once had not finished after 300 s. It now runs
+  one thread unless `OMP_THREAD_LIMIT` is already set (`R/ocr.R`).
+
+Each Tesseract run is also stopped at 60 s. A page whose every reading ran out of
+time comes back blank and is named in `input$meta$ocr_timed_out`; see
+[`../context/outstanding-work.md`](../context/outstanding-work.md) for why that
+page still needs a check of its own.
+
+`conversion_estimate()` still probes the file first (pdfinfo for the page count,
+the first three pages' text for the scan test) so a long wait is stated up front.
 
 ### Several analysts at once
 
@@ -175,7 +199,7 @@ tool converts bank statements and nothing else — so seven test files and the
 engine modules under them went with them. Nothing stopped running that still has
 code behind it.
 
-**That run was clean, and it is the first one that was.** For a long time the
+**The 1.x board was made clean once, and how it was matters.** For a long time the
 board carried five red lines, explained here and elsewhere as "the environment,
 not the code". That explanation was wrong, and wrong in the worst available way:
 four of the five were **test bugs**, the engine was correct throughout, and a
@@ -195,7 +219,7 @@ used to appear in the app folder after every suite run. It no longer does.
 line is a finding. Do not inherit an explanation for one from anybody, including
 this page.
 
-19 tests skipped on that box, all of them needing tesseract/poppler or a fixture
+19 tests skipped on the box that run was made on, all of them needing tesseract/poppler or a fixture
 those tools generate. On a box **with** the OCR tools installed they should pass
 too; if they do not, that is a real finding.
 
@@ -219,15 +243,11 @@ failure so a scheduled task can watch it without anybody reading it:
 |---|---|
 | **Settings** | did `config\config.yaml` parse, and was every setting in it understood |
 | **Admin** | is Admin still shut behind the placeholder password shipped in the example file |
-| **Templates** | how many bank statement / form / report templates loaded — **and how many were refused, with the reason** |
-| **Folders** | can this account really write to `logs\`, `uploads\`, `requests\`, the three `templates\*_user\` folders and the feed folder |
+| **Templates** | **out of date at 2.0.0.** It still loads the retired templates, so a healthy 2.0.0 server reports `FAIL` here. It needs a **Layouts** check instead (the learned-layout store readable, each bank folder listed); until it is rewritten, ignore this line and prove the server by converting the sample statement ([release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) §10) |
+| **Folders** | can this account really write to `logs\`, `uploads\`, `requests\` and the feed folder (and, once rewritten, `templates\layouts\` and `logs\tracking\`) |
 | **Scans** | is tesseract/poppler still installed, or has scanned-statement reading gone away |
 
-It reads and changes nothing, so run it whenever. **Templates is the one to read
-twice.** A template that stops validating after an update used to simply vanish —
-gone from Admin, gone from detection, no message anywhere — and the statements it
-used to read quietly became "no template for this statement yet". This is the
-line that says so.
+It reads and changes nothing, so run it whenever.
 
 
 **Check the `files` figure first.** If it is not the number of
@@ -275,41 +295,40 @@ defaults — send it back to whoever builds the package.
 
 ---
 
-## 3. Promote a template to proven
+## 3. Add a statement to the test suite
 
-**Proven is a gate, not a label.** Only templates in `templates\statements\` feed the Qlik
-dashboards ([connecting-qlik.md](connecting-qlik.md)), and only a template with a
-golden test can prove it still parses what it claims to. A template dropped into
-`templates\statements\` **without** a golden test fails the suite's guard test on purpose —
-that guard is what stops an untested layout reaching the dashboards.
+There is nothing to promote any more. A layout becomes **proven** on the server,
+by three statements that prove themselves or by an admin's **Confirm** on Admin ->
+Banks, and it reaches the dashboards by the same arithmetic as every other
+reading ([connecting-qlik.md](connecting-qlik.md) §3). No code, file or test is
+involved.
 
-So promotion is two moves, never one:
-
-1. **Move the YAML** from `templates\statements_user\<id>.yaml` to
-   `templates\statements\<id>.yaml`.
-2. **Give it a fixture and a golden snapshot**, and run the suite.
+What the suite still needs, occasionally, is a **golden statement**: a small
+synthetic statement whose right answer is pinned, so that a change to the reader
+that breaks it fails the board. Add one when a real statement shape went wrong
+and was fixed, so it cannot come back.
 
 | Step | Delimited (CSV/TSV) or Excel | PDF |
 |---|---|---|
-| Fixture | a small **synthetic** export under `samples\raw\<bank>\` | a synthetic one-page PDF from `tests\testthat\fixtures\make_pdf_fixtures.R` |
-| Golden | `tests\testthat\expected\<id>.csv` from the engine's own parse — **read it by eye first** | same |
-| Test | `tests\testthat\test-<id>.R` using `expect_statement_ok(...)` | an entry in `PDF_GOLDENS` in `tests\testthat\test-pdf_template_goldens.R` |
-| Prove | the suite (§1): the new template passes **and no other bank breaks** | same |
+| Fixture | a small **synthetic** export under `samples\raw\<bank>\` | a synthetic PDF from `tests\testthat\fixtures\make_pdf_fixtures.R` |
+| Golden | `tests\testthat\expected\<name>.csv` — **read it by eye first** | same |
+| Test | `tests\testthat\test-<name>.R`, asserting the automatic reader reads the golden (`expect_auto_read_golden(...)` in `tests\testthat\helper.R`) | an entry in `PDF_GOLDENS` in `tests\testthat\test-pdf_template_goldens.R` |
+| Prove | the suite (§1): the new test passes **and nothing else breaks** | same |
 
-Step by step, both paths:
-[`tests/HOWTO-add-template-test.md`](../../tests/HOWTO-add-template-test.md).
+Step by step:
+[`tests/HOWTO-add-template-test.md`](../../tests/HOWTO-add-template-test.md)
+(written for templates; its fixture and golden steps still apply, and its test
+step is being rewritten for the automatic reader).
 
 **Never use a real customer statement as a fixture.** Fixtures are committed and
 travel with the package. Invent the people, the accounts and the figures, and
 make the invented statement reconcile (opening + transactions = printed closing)
-so the test exercises the checks too.
+so the test exercises the proof too.
 
-If the template you are promoting was saved as a correction of a shipped one it
-carries a `refines:` line naming the original. Decide whether you are promoting
-it alongside the original or replacing it; two templates with the same
-fingerprint and no `refines:` between them tie on every statement.
-
-After promotion, tell the team: it starts feeding Qlik on the next conversion.
+**How accurate it is** is measured outside the suite, on the synthetic test sets
+in `tools/synth/` with their answer keys (`score_auto.R`, `score_convert.R`;
+[`tools/synth/README.md`](../../tools/synth/README.md)). Those run on the
+development machine, not the server.
 
 ---
 
@@ -323,6 +342,7 @@ After promotion, tell the team: it starts feeding Qlik on the next conversion.
 | How does a statement get from upload to dashboard, and which module owns each step? | [../context/how-it-fits-together.md](../context/how-it-fits-together.md) |
 | What does the data contract guarantee? | [../context/architecture/build-contract.md](../context/architecture/build-contract.md) |
 | What does each numeric threshold do? | [../context/engine-parameters.md](../context/engine-parameters.md) |
-| What does the engine not handle yet? | [../context/edge-cases.md](../context/edge-cases.md) |
+| What does the engine not handle yet? | [../context/edge-cases.md](../context/edge-cases.md) · [../context/outstanding-work.md](../context/outstanding-work.md) |
+| How does automatic reading work, and what did the product owner decide? | [../context/auto-reading-spec.md](../context/auto-reading-spec.md) |
 | What is planned, and what was deliberately not built? | [../context/roadmap.md](../context/roadmap.md) · [../context/engine-audit.md](../context/engine-audit.md) |
 | Getting the irreplaceable folders off the box | [backup-and-restore.md](backup-and-restore.md) |

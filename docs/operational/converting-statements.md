@@ -1,247 +1,225 @@
 # Converting a statement
 
-The everyday job: turn a statement into clean, checked, downloadable data.
+The everyday job: turn a statement into clean, checked data you can download.
+
+Since 2.0.0 there are no templates to choose. You check the **bank**. The tool
+reads each statement from what is printed on it and **proves** the reading with
+the statement's own arithmetic. A statement it cannot prove is shown to you, with
+the reason, on **Please check**.
 
 ## Do it
 
 1. Open `http://<server-name>:8100` and go to **Convert**.
-2. **Browse** and pick the file — `.csv`, `.tsv`, `.tdv`, `.xlsx` or `.pdf`.
-   Up to **200 MB**. Pick several at once — up to **50**, from as many banks as
-   you like — to do a whole case folder in one go; the button then reads
-   *Convert N files*.
-3. **Check the suggested templates.** A table appears with one row per file: its
-   name, what kind of file it is (*PDF*, *Scanned PDF*, *CSV*, *Excel*, with the page
-   count), and **the template we suggest reading it with**, already filled in.
-   Please check each one is right. If it is not, change its dropdown — it only
-   offers templates that can read that kind of file, grouped by bank. The chip
-   beside each row says how the suggestion was made (hover over it for more):
+2. **Browse** and pick the file: `.csv`, `.tsv`, `.tdv`, `.xlsx` or `.pdf`, up
+   to **200 MB**. You can pick up to **50** at once, from as many banks as you
+   like, to do a whole case folder in one go.
+3. **Check the bank.** A table appears with one row per file. Each row shows the
+   file's name, its type (*PDF*, *Scanned PDF*, *CSV*, *Tab-delimited*, *Excel*,
+   with the page count) and its **bank**, already filled in from the statement
+   itself. The tool looks first for the account holder's own account number in
+   the official bank branch register, then for the bank's legal name, website,
+   0800 number and brand words. The note under the dropdown says how sure it is:
 
-   | Chip | What it means | Do |
+   | Note | What it means | Do |
    |---|---|---|
-   | **Suggested** | The wording on the file matches this template. | Check it, and carry on. |
-   | **Chosen before** | Someone chose this template for a statement laid out like this one before, and it converted. Hover to see what the wording alone would suggest. | Check it, and carry on. |
-   | **Suggested - please check** / **Two fit - please check** | Another template fits nearly as well, or just as well. Left as it is, the result is held for a second look. | Check it is the right one. Change it if not. |
-   | **No suggestion - please choose** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
-   | **Reading the scan…** | A picture of a statement. Its first two pages are being read as pictures (a few seconds each) to suggest a template. You do not have to wait: pressing Convert stops the reading, and the template is found while it converts. | Nothing. |
-   | **Suggested from the scan** | Those first pages clearly match this template; left as it is, the file is read with it. | Check it, and carry on. |
-   | **Scanned** | A picture of a statement whose first pages settle nothing (or could not be read), so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
-   | **Scanned - can't be read here** | This server has no OCR software, so a scan cannot be read at all. | Ask whoever looks after the tool, or get a text PDF / CSV / Excel export from the bank. |
-   | **Your choice** | You changed this row. That file is read with exactly the template you chose. | — |
-   | **Can't be read** | The file is damaged, empty, or not a table. Hover over it for why. | Get a fresh copy of the file. |
+   | **From the statement** | The statement says clearly which bank issued it. | Nothing. |
+   | **From the scan** | The same, for a scan, once its first pages have been read. | Nothing. |
+   | **Please check the bank** | The evidence is thin or points two ways. | Make sure the bank is right. |
+   | **Please choose the bank** | The statement does not say. | Choose it. A statement that proves itself still converts without a bank, but nothing is learned from it. |
+   | **Reading the scan...** | A scan's first two pages are being read as pictures, a few seconds each. You do not have to wait: Convert stops this, and the bank is worked out during the conversion. | Nothing. |
+   | **Scanned - can't be read here** | This server has no scan-reading software. | Ask whoever looks after the tool, or get a text PDF or an export from the bank. |
+   | **Can't be read** | The file is damaged, empty or not a table. Hover over it to see why. | Get a fresh copy. |
+   | **your choice** | You changed this row. | - |
 
-   A row you leave alone is read exactly as the table says, with every check the
-   tool runs. A row you change is read with the template you chose — the checks
-   still run on it, so a wrong choice still shows up as a failed check, never as
-   a clean result.
-4. **Type your QID.** Six letters or numbers — your
-   staff ID, e.g. `AB1234`. It is what the audit trail records as who ran this
-   conversion, so **Convert does nothing until it is filled in**. You are asked
-   once per session; after that the page just says *Recording as AB1234*, with a
-   **change** link beside it for when somebody else takes the keyboard.
+   The dropdown lists the NZ banks and every bank the tool has learned.
+   **Another bank - type its name...** is for a bank that is not listed. It
+   refuses anything that looks like an account number, because the bank name is
+   kept in logs and folder names.
 
-   If there is no QID box at all, the server already knows who you are and the
-   tool does not ask.
-5. Click **Convert**. A scanned PDF takes tens of seconds a page — it is being
-   read as a picture, and the progress panel says how long to expect.
-6. Read the verdict, then **Download** Excel, CSV or JSON.
+   **Change the bank only if it is wrong.** A bank you leave alone is worked out
+   again from the whole statement while it converts.
+4. **Type your QID**: six letters or numbers, your staff ID, for example `AB1234`.
+   The audit trail records it as the person who ran this conversion, so
+   **Convert does nothing until it is filled in**. You are asked once per
+   session. After that the page says *Recording as AB1234*, with a **change**
+   link for when somebody else takes the keyboard. If there is no QID box at
+   all, the server already knows who you are.
+5. Click **Convert**. A scanned PDF takes a few seconds a page.
+6. Read the outcome, then **Download** Excel, CSV or JSON.
 
-**Not the template you expected?** The table stays at the top of the page. Change that
-file's row and press **Convert** again. On a case folder only the files you changed
-are converted again — the button says so (*Convert 1 changed file*) — and the rest
-keep their results.
+## The four outcomes
 
-Everything the tool *proved* stays on the page under the verdict: the summary
-cards, the strip of ticks, your transactions — and, in one disclosure headed **Checks & detail (for review)**,
-the **Checks**, the **Diagnostics** and the **Field coverage**. That disclosure
-opens itself whenever a check has failed or the run needs review, so on the runs
-that need reading it is already open.
-
-One link goes further in, **Show me how it read this**, and it holds three
-things and no more: **See it on the page** (the statement with the columns drawn
-on it — PDF only), the charts, and the template it used. It appears only on a run
-that produced transactions, it opens itself on a flagged run too, and once you
-click it either way it stays that way for the rest of your session.
-
-## The verdict
-
-There are four outcomes. The **Result** column of the batch table prints them in
-exactly these words:
+Once a file has converted, its row shows the **layout** that read it and the
+**outcome**. A layout is the tool's name for one bank design it has learned,
+for example *ANZ layout 1: Date | Description | Money out | Money in | Balance*.
+It is marked *(new)* when this statement started it.
 
 | Outcome | What it means | Do |
 |---|---|---|
-| **Converted successfully** | Matched a template, parsed, and every check that ran, passed. | Download it. |
-| **Converted - please double-check it** | You have the data, and the tool wants a second pair of eyes on it. Usually a check **failed**; it can also mean the file looks like several statements bundled together, or that another template nearly fitted it too. | Read **Checks**, then **Diagnostics**, in **Checks & detail (for review)** under your transactions — on a result like this it is already open. Compare the flagged rows against the statement. |
-| **No template for this statement yet** | Nothing recognised this layout. | [Add a template](adding-a-bank-template.md). If the card instead reads **More than one template fits - pick which one**, two templates fit equally well: pick one and it converts — and tell the maintainer, because that is a duplicate to retire. |
-| **Could not read this file** | The file itself is the problem — empty, wrong type, password-protected, a scan with no OCR available. | The message says which. |
+| **Proven** | Every running-balance step adds up to the cent, or opening + every transaction = closing and the printed totals agree. No other reading of the columns adds up. | Download it. |
+| **Matches a learned layout** | The statement prints no running balance, so its own arithmetic cannot prove it. It matches a layout of this bank that other statements have already proved, and nothing on it contradicts the reading. | Download it. Spot checks pick these twice as often. |
+| **Please check: *reason*** | You have the data, but the reading is not proven. The reason says why, usually naming a row and a page: *The balance does not add up at row 4 (page 1)*. | Click **Please check ->** in the row (see below). |
+| **Couldn't read: *reason*** | Nothing usable was read, or the file could not be opened. | The reason says why. |
 
-**Converting one file at a time, the clean result is worded differently**, and it
-is the one you will see most. Instead of *Converted successfully* the card counts
-the rows and states the confidence level:
+A conversion that a person confirmed reads **Confirmed on Please check**, or
+**Proven with the columns you drew**. Its card is amber, not green, because a
+person vouched for it rather than the arithmetic.
 
-> **Converted — 7 transactions read · confidence: medium**
+You should never see `needs_review`, `unsupported`, `layout_match` or a check's
+internal name on screen. The engine's codes stay in the logs. If a raw code does
+appear, that is a bug, so report it.
 
-Same outcome, same row of the table above; it just says more, because on a single
-file there is room to. The other three read as printed above on both screens (the
-double-check headline picks up the same ` · confidence:` suffix on the card).
+### Which bank? A pick the statement disagrees with
 
-**A check that *could not be checked* does not change the headline.** A clean PDF
-routinely has two or three checks with nothing to run against, and it still comes
-back as a clean conversion — because nothing about it failed. What carries the
-missing proof is the **confidence level**, which is capped at *medium* for exactly
-that reason, and the checks table, which names each absence and why. An absence of
-proof is never dressed up as a problem, and never dressed up as a pass either.
+If you picked one bank and the statement clearly names another, the row says
+**Which bank? The statement looks like Westpac**. The result shows a note with
+two buttons, **It is ASB** and **It is Westpac**. The figures are not affected:
+they come from the statement's arithmetic, not from the bank. **Nothing is
+learned from that statement until you answer**, so one wrong pick cannot teach
+one bank's layout to another.
 
-You should never see `needs_review`, `unsupported` or a check's internal name on
-screen; the engine's codes stay in the logs. If a raw code does appear, that is a
-bug — report it.
+## Please check
 
-## The confidence level
+Please check opens by itself under the result of any statement that did not
+prove. On a proven statement it is one quiet link, **See how it was read**.
 
-| | Meaning |
-|---|---|
-| **high** | Opening balance + every transaction = the closing balance. Completeness is proven arithmetically. |
-| **medium** | Clean, but something could not be *proved* — usually there is no balance to prove it against. |
-| **low** | A check failed. Do not rely on the figures until you know why. |
+- **A PDF:** the page, with each column it found drawn over it and labelled
+  (*Date*, *Description*, *Money out*, *Money in*, *Balance*). The page chooser
+  doubles as a strip of ticks: **✓** the balance adds up on that page, **✗** it
+  does not, **-** nothing to check.
+- **A CSV or Excel file:** a table of the file's headings and what each was read
+  as.
+- **What each column of figures is:** one dropdown per column. The choices are
+  *Money out*, *Money in*, *Amount (+ in, - out)*, *Balance* and *Not money in
+  or out*.
+- **The checks that did not hold**, each in a sentence with the row and page.
 
-**A PDF or an Excel file can never reach "high", however perfect it is.** High
-needs a count of physical source lines to prove no row was lost, and only a
-delimited file (CSV/TSV) has one — the check *No row failed to read* is the one
-that reports it. On a PDF, "medium" is the ceiling and is the normal, healthy
-result — read it as "clean, and here is the one thing nobody could prove", not as
-a warning. The card says so itself under a medium PDF verdict, so you do not have
-to remember it.
+Then one of three things:
 
-## The strip of ticks under the figures
+1. **The reading is wrong. Fix it.** Set the dropdown for the column that is
+   wrong and press **Re-read**. It says at once whether the reading now proves.
+   If it does, it converts, and the fix is **learned** for that bank, so the
+   next statement like this one is read right without you.
+2. **The reading is right. Press This is right.** The conversion becomes yours,
+   *Confirmed on Please check*, and goes to the dashboards on your word. It is
+   **refused** when the statement's own arithmetic contradicts the reading: a
+   balance step that does not add up, an opening and closing that do not agree,
+   or printed totals that disagree. A confirm only teaches the tool after an
+   admin accepts it.
+3. **Nothing fits. Draw the columns yourself.** This is the last resort, for
+   this file only. The editor starts from the columns that were found, page by
+   page. **Set** or **Remove** a column, or use one page's columns on every page,
+   then **Re-read with these columns**. Columns you draw are never learned.
 
-Between the summary cards and your transactions is a row of coloured pills — the
-checks a forensic reviewer would ask about, on the page whether they passed or
-not, so a clean run *shows* its proof instead of merely not complaining. There is
-a key printed under them:
+You changed a dropdown and it made things worse? **Undo my changes** puts the
+reading back as it was. It is offered on any reading made with your fix, even
+after you open another file and come back.
+
+On a **bundle** (one file holding several statements), a statement picker shows
+which statement you are fixing. A fix goes to that statement only.
+
+**A fix that does not prove** applies to this one file and is held for an admin
+(Admin -> Banks). One person's word never teaches the tool on its own.
+
+## Amounts filled in from the balance
+
+When an amount cannot be read (a black box over it, a smudge on a scan) but the
+running balances either side say exactly what it must be, the tool fills it in.
+The row is **shaded** in your transactions table, and the Flags column says
+*worked out from the balance column, not read from the amount*. Such a statement
+**always goes to Please check**, because one of its figures was worked out
+rather than read. Check each shaded amount against the statement before relying
+on it.
+
+## Spot checks
+
+If an admin has turned spot checks on, some proven conversions carry a **Spot
+check** card: *Compare a few dates and amounts in the table below with the
+statement. Are they right?* Answer **They're right**, **Something is wrong** or
+**I can't tell**. Which statements are picked depends on the file itself, so the
+same statement is always picked or never picked. The answers are counted on the
+Admin page. They are how the unit knows how often the tool is right, beyond what
+arithmetic can prove.
+
+## Under the result
+
+Everything the tool proved stays on the page under the verdict: the summary
+cards, the strip of ticks, your transactions, and one disclosure headed **Checks
+& detail (for review)**, which holds the **Checks**, the **Diagnostics** and the
+**Field coverage**. That disclosure opens itself whenever a check has failed or
+the run needs a person, so on the runs that need reading it is already open.
+**Show the charts** opens the money-in, money-out and balance charts. Once you
+open them, they stay open for the rest of your session.
+
+### The strip of ticks under the figures
+
+Between the summary cards and your transactions is a row of coloured pills, the
+checks a forensic reviewer would ask about, with a key under them:
 
 > ✓ = checked and passed · ✗ = a problem · – = could not be checked (why, in
 > Checks below)
 
-Five are always there when they apply: *Opening + transactions = closing
-balance*, *No row failed to read*, *Money in / money out is the right way round*,
-*Each running balance follows from the last*, *Row dates could be read*. **Any
-other check that failed is added to the end**, so the strip can never be
-all-clear while something failed. A grey dash is not a pass and not a fault — it
-is the check that had nothing to run against, and the Checks table below says
-which.
+A grey dash is not a pass and not a fault. It is a check that had nothing to run
+against, and the Checks table says which.
 
-These three marks mean what the tool proved. **They are not the buttons you rate
-the conversion with** — that control is words only (*Correct* · *Minor issues* ·
-*Wrong*), deliberately, so one mark never stands for both what the tool found and
-what you think.
+### Reading the Checks table
 
-## Reading the Checks table
+Five columns: **Check**, **Result**, **Expected**, **Read** and **Detail**.
+**The Detail column carries the sentence, so read it, not just the result word.**
+The Result column says one of four things:
 
-Five columns: **Check**, **Result**, **Expected**, **Read**, **Detail**. Expected
-and Read are the two numbers the result is a verdict on, and **the Detail column
-is the one that carries the sentence — read it, not just the result word.**
+- **OK**: the check ran and passed.
+- **Problem**: the check ran and failed. The detail names the rows.
+- **could not be checked**: the check did not run. The detail says why, for
+  example no opening balance printed. This is an absence of proof, not an error.
+- **for information**: a count, not a verdict. *Scan / OCR read quality* is
+  one.
 
-The Result column says one of four things, and the fourth is the one people miss:
-
-- **OK** — the check ran and passed.
-- **Problem** — the check ran and failed. The detail names the rows.
-- **could not be checked** — the check **did not run**. The detail says why: no
-  opening balance printed, no running-balance column, no statement period, no
-  independent source-line count. This is not an error and not a pass; it is an
-  absence of proof, and it is why the confidence level is capped at medium.
-- **for information** — the row is a **count**, not a verdict. One check is like
-  this: *Scan / OCR read quality* (how many pages were machine-read, and the worst
-  page's confidence). There is nothing for it to pass or fail, so it is never
-  dressed as a pass — and never as a failure to run either, which is what they
-  used to read as on a statement that really had been OCR'd.
-
-There is no fifth thing, and in particular there is no silent one: every check
-that exists for your statement is in this table with one of those four words
-beside it.
-
-**On a run that produced no transactions there is no table**, and that is not the
-same as an empty one. *Could not read this file* and *No template for this
-statement yet* both mean nothing was extracted, so there was nothing to check —
-the Checks heading carries a sentence in place of the table saying exactly that,
-and Field coverage says the same. A blank table would be indistinguishable from
-one that failed to draw; a sentence is not.
-
-Two checks pass on less than their name suggests, and their detail is the only
-place that says so:
-
-- **Row count** — with no printed count on the statement (most statements) it
-  degrades to "at least one row was parsed". The detail says *no stated count*
-  when that happened.
-- **Row dates could be read** — passes when *at least one* date parsed. The
-  detail gives the real figure, e.g. "1 of 500 row date(s) read". A statement
-  where nearly every date is missing can still show this check as passed.
+These are the reconciliation checks the workbook's `Checks` sheet holds. The
+reader's own checks, which decide whether a reading is proven, are the ones
+listed on Please check.
 
 ## What you download
 
 | | Contains |
 |---|---|
-| **Excel `.xlsx`** | Six sheets: `Transactions`, `Summary` (the statement header), `Checks` (every check + the confidence level), `Provenance` (which source line or page position each row came from), `Diagnostics`, `Metadata`. |
+| **Excel `.xlsx`** | Six sheets: `Transactions`, `Summary` (the statement header), `Checks`, `Provenance` (which source line or page position each row came from), `Diagnostics`, `Metadata`. |
 | **CSV** | The `Transactions` table only. |
-| **JSON** | Everything: build stamp, header, transactions, extras, checks, trust, diagnostics, provenance, metadata. |
+| **JSON** | Everything, including the build stamp: the engine version, the learned layouts' state and the layout it matched. Any conversion can be re-run and gives the same answer. |
 
 ## Rating the conversion
 
-*Was this conversion correct?* sits under the result on any run that produced
-figures. Three choices — **Correct**, **Minor issues**, **Wrong** — in words, not
-marks, and **nothing is pre-selected**: it is the one question only you can
-answer, so the tool will not answer it for you. Submit with none chosen and it
-says so rather than recording anything.
+*Was this conversion correct?* sits under the result. Three choices, **Correct**,
+**Minor issues** and **Wrong**, and **nothing is pre-selected**. Marking a result
+**Wrong** immediately pulls back the figures that run sent to the dashboards, and
+the screen says how many rows that was.
 
-Marking a result **Wrong** does more than log an opinion: it immediately pulls
-back the figures that run produced, so nothing downstream can keep using them,
-and the screen tells you how many rows that was. Fixing the template and
-converting again replaces them with corrected figures.
+## A whole case folder
 
-## Batch runs
+Select several files and Convert. **While it runs, the table is the progress**:
+a bar, *Converting 3 of 12*, and each row going from *Waiting* to
+*Converting...* to its outcome as soon as that file is done. **Stop** ends it.
+On a first run the table goes back to how it was, and nothing from the run is
+kept.
 
-Select several files and Convert. **While it runs, the table is the progress** — a
-bar and *Converting 3 of 12 - march.pdf* above it, and each row going from *Waiting*
-to *Converting…* to its result the moment that file is done. Nothing covers the
-page, so you can read the first results while the rest are still converting. The
-templates and the Convert button are locked until it finishes; if the server is
-busy with other people's work, the table says how many conversions are ahead of
-yours. **Stop** ends it: on a first run the table goes back to how it was before
-Convert, and nothing from the run is kept. Stopped while converting changed files
-again, those files are marked *Stopped - press Convert* and left out of Download
-everything (they may already have been partly rewritten); the rest keep their
-results.
+When it finishes, a summary line sits above the table, with **Download
+everything**: one zip with every file's Excel, CSV and JSON. The rows re-order
+worst first, so the files that need a person are at the top. **Click a row** to
+open that file's full result underneath. **Please check ->** in a row opens the
+file and scrolls to the check.
 
-When it finishes, the results are **in the same table** you
-checked the templates in — one row per file, no second table. Above it, one
-summary line (*3 converted · 2 need a check · 1 with no template yet*) and
-**Download everything**: one zip with every file's Excel, CSV and JSON.
-
-Each row gains a **Result** — the verdict, then its row count and **confidence**
-underneath — and **What to check**. The rows re-order worst-first, so the files
-that need work are at the top and grouped by what went wrong. **Confidence** is the
-same word the single-file card prints, so on a thirty-file case you can tell the
-*high* files from the merely-uncomplaining *medium* ones without opening any of
-them.
-
-**Click a row** (anywhere but its dropdown) to open that file's full result
-underneath — the same verdict, checks, transactions and downloads as converting
-it alone. The open row is highlighted.
-
-**Converting again.** Change a row's template and it is marked **Changed**; the
-button becomes *Convert 1 changed file* and converts only that one — the rest keep
-their results. A file also counts as changed when a template you have just added
-now recognises it, or the template it uses has been edited, so after building a
-missing template you convert exactly the files it was missing for. With nothing
-changed, the button reads *Convert all N again*.
+**Converting again.** Change a row's bank and the button becomes *Convert 1
+changed file*. It converts only that one, and the rest keep their results.
+With nothing changed, it reads *Convert all N again*.
 
 ## Good habits
 
-- Prefer a bank's **CSV/Excel export** over its PDF when one exists. It is exact,
-  and it is the only path that can prove completeness.
-- On a PDF, glance at **Show me how it read this** → **See it on the page**.
-  Green rows were kept; amber dashed rows were skipped but look like
-  transactions. A page with a lot of amber is a template with a band in the wrong
-  place.
-- Nobody sees anyone else's upload or result. The tool reads
-  only what is visible and never derives a hidden value.
+- Prefer a bank's **CSV or Excel export** over its PDF when one exists. It is
+  exact.
+- When a statement goes to Please check, read the reason first. It names the
+  row, and the row is usually the answer.
+- Nobody sees anyone else's upload or result. The tool reads only what is
+  visible on the statement and never makes up a figure. A figure worked out
+  from the balance is always marked as worked out.
 
-Something looks wrong → [when-something-goes-wrong.md](when-something-goes-wrong.md).
+Something looks wrong? See [when-something-goes-wrong.md](when-something-goes-wrong.md).

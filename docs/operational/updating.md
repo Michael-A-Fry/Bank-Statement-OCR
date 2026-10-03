@@ -1,13 +1,18 @@
 # Updating to a new version
 
 Same as building it the first time: build a fresh package on the internet PC,
-drop it on the server. Settings, templates, taught words, logs and the installed
-R are all kept.
+drop it on the server. Settings, learned bank layouts, taught words, logs and the
+installed R are all kept.
+
+> **Going from 1.23.1 to 2.0.0?** Do not use this page alone. 2.0.0 deletes eight
+> engine files and the template folders, and a copy-over never deletes anything:
+> the old files would stay, and the app would still load them. Follow
+> [release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md).
 
 ## Steps
 
 0. **Take a backup off the box first.** Five minutes, and it is the only thing
-   that protects your templates, taught words and metadata if the update or the
+   that protects your learned layouts, taught words and metadata if the update or the
    server goes wrong — [backup-and-restore.md](backup-and-restore.md).
 1. **On the internet PC:** get the new app folder, double-click
    `make-bundle.bat`. Check its last lines for `MISSING` before you carry it
@@ -20,13 +25,12 @@ R are all kept.
    command, the exact line in
    [maintaining-the-engine.md](maintaining-the-engine.md) §1. It prints the
    version it is running and one line per check: the settings file parsed, an
-   admin password is set, how many bank statement / form / report templates
-   loaded **and how many were refused**, every folder it must write to is
-   writable, the scan-reading software is still installed. A **refused** template
-   is one that used to work and has stopped validating — it would otherwise just
-   have vanished from detection with no message anywhere.
+   admin password is set, every folder it must write to is writable, the
+   scan-reading software is still installed. (At 2.0.0 its *Templates* line is
+   out of date and reports `FAIL` on a healthy server; see
+   [maintaining-the-engine.md](maintaining-the-engine.md) §1.)
 5. **Re-apply any `R\params.R` change you had made** (see below), then convert
-   one statement you know reconciles and confirm it still does.
+   one statement you know is proven and confirm it still is.
 6. **Check the new version is actually stamped on the output.** Open that
    conversion's `.json` download and look at `build.engine_version` near the top.
    It should read the version you just shipped. It is the same value written into
@@ -48,17 +52,23 @@ that the package does not carry it — not anything clever in the copy.
 |---|---|
 | `config\config.yaml` | `R\` — **including `R\params.R`** |
 | `dictionaries\labels.yaml`, `dictionaries\lexicon.yaml` | `app.R`, `ui_content.R`, `ui_labels.R`, `run.R` |
-| everything in the three `templates\*_user\` folders | `templates\statements\`, `templates\statements_seed\`, `templates\fields\`, `templates\documents\` |
-| `logs\`, `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
+| `templates\layouts\` (every learned layout) | `templates\README.md` |
+| `logs\` (including `logs\tracking\`), `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
 | `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml` |
 
 One detail worth knowing, because it is the one that could bite: the package
-*does* contain `templates\statements_user\`, `templates\fields_user\` and
-`templates\documents_user\` folders, but the only file in each is that folder's own
-`README.md`. Your saved templates survive because nothing in the package shares
-their filenames — so if a `.yaml` is ever added to one of them in the source, a
-server template of the same name would be replaced by it. Your backup is what
-makes that recoverable ([backup-and-restore.md](backup-and-restore.md)).
+carries the whole `templates\` folder. Your learned layouts survive because the
+source has no `templates\layouts\` in it. But if the PC that builds the package
+has learned layouts of its own (from testing), they would travel in the package
+**under the same names** (`anz\anz_1@v1.yaml`) and replace the server's. At
+2.0.0, `scripts\bundle-offline.R` does not yet leave that folder out, so check
+the package has no `templates\layouts\` before you carry it. Your backup is
+what makes a mistake recoverable ([backup-and-restore.md](backup-and-restore.md)).
+
+**A copy-over replaces files but never deletes one.** A release that removes a
+file from `R\` therefore needs that file deleted by hand, or the app still loads
+it. The release's entry in [`../../CHANGELOG.md`](../../CHANGELOG.md) says when.
+2.0.0 is the first release that does.
 
 The package ships only `labels.example.yaml` / `lexicon.example.yaml`, which seed
 a brand-new install and are ignored once your own files exist. `RUN-ME.bat` also
@@ -68,7 +78,7 @@ missing — so even deleting the whole folder and pasting a fresh one keeps your
 settings and taught words.
 
 That copy is **on the same machine** and does not survive losing the server. For
-that, and for your templates and metadata, use
+that, and for your learned layouts and metadata, use
 [backup-and-restore.md](backup-and-restore.md).
 
 ## If you are merging two folders by hand instead
@@ -82,13 +92,13 @@ The short version: a dev folder is not a package. The package build is what
 renames `dictionaries\*.yaml` to `*.example.yaml`, and that rename is the only
 reason a folder-replace cannot wipe your taught words. A hand copy skips it.
 
-### If a dictionary or a template does get clobbered
+### If a dictionary does get clobbered
 
 Every save first writes the previous contents beside the file:
-`dictionaries\labels.yaml.bak`, `dictionaries\lexicon.yaml.bak`, and now a
-`.yaml.bak` beside every template saved in the three `templates\*_user\` folders
-as well. Close the app, copy the `.bak` over the `.yaml` (dropping the `.bak`),
-start it again. One level of history, not many.
+`dictionaries\labels.yaml.bak` and `dictionaries\lexicon.yaml.bak`. Close the
+app, copy the `.bak` over the `.yaml` (dropping the `.bak`), start it again. One
+level of history, not many. Learned layouts need no `.bak`: a layout file is
+never edited, only added to.
 
 ### Re-applying an `R\params.R` change
 
@@ -116,7 +126,8 @@ parameters the rest of the engine now expects. Full procedure:
 
 Going back is its own page, because the app folder is the easy half:
 [rolling-back.md](rolling-back.md). Copying the old bundle over the folder takes
-ten minutes and leaves your settings, dictionaries, templates and logs alone.
+ten minutes and leaves your settings, dictionaries, learned layouts and logs
+alone.
 
 What does **not** come back with it is the Qlik feed. Every conversion the bad
 version published is already in `feed\transactions\`, and if Qlik has reloaded

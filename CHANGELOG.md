@@ -13,6 +13,223 @@ finding id.
 
 ---
 
+## 2.0.0
+
+**Templates are gone. You pick a bank, and the tool reads each statement from
+its content and proves the reading with the statement's own arithmetic.**
+
+This is the automatic reading in
+[`docs/context/auto-reading-spec.md`](docs/context/auto-reading-spec.md), built
+to the decisions in its section 2. The major version changes because anything
+built on templates stops working: the shipped and team-built templates, *Add a
+template*, guided setup, the template library and the old Qlik gate settings.
+The server needs files deleted as well as copied. Use the
+[hand-carry list](docs/operational/release-2.0.0-hand-carry.md), not a plain
+copy-over.
+
+### What changes for the people using it
+
+- **Convert asks for the bank, and fills it in itself.** Each file's row shows
+  its bank, taken from the statement: the holder's own account number in the
+  official Payments NZ branch register, then the bank's legal name, website,
+  phone number and brand words. The row says *From the statement*, *Please
+  choose the bank* or *Please check the bank*. Change it only if it is wrong.
+- **There is nothing else to choose.** The tool works out which columns are the
+  date, the description, money out, money in and the balance from what is
+  printed in them. It then accepts the reading only when the arithmetic proves
+  it: every running-balance step adds up to the cent, and no other reading of
+  the columns does. Without a running balance, opening plus movements must
+  equal closing, and any printed totals must agree.
+- **Four outcomes per file**, in the table and on the result:
+  - **Proven**: download it.
+  - **Matches a learned layout**: no balance to prove it, but it matches a
+    layout the tool has already proven for that bank.
+  - **Please check**: the reading is shown with the reason, such as "the balance
+    does not add up at row 14 (page 2)".
+  - **Couldn't read**: the reason is shown.
+- **Please check replaces the template toolkit.** For a PDF it shows the page
+  with the found columns drawn and labelled, and a tick or cross for each page.
+  For a CSV or Excel file it shows each heading and what it was read as. Each
+  column of figures has a dropdown (money out, money in, amount, balance, not
+  money). After changing one, press **Re-read**, which says at once whether the
+  reading now proves. **This is right** confirms a reading, but is refused when
+  a balance, opening/closing or printed-totals check contradicts it. **Draw the
+  columns yourself** stays as the last resort.
+- **A wrong bank pick is caught.** When the statement clearly names another
+  bank, a *Which bank?* note offers both. Nothing is learned until a person has
+  answered it.
+- **An amount filled in from the running balance** is shaded, marked in the
+  Flags column, and sends the statement to Please check.
+- **Spot checks**, off by default. When an admin turns them on, the same
+  statement is always picked or never picked. Statements matched to a layout
+  with no balance of their own are picked twice as often. The answer is
+  *They're right*, *Something is wrong* or *I can't tell*.
+
+### What changes for the admin
+
+- **Admin has four tabs:**
+  - **Banks:** each bank's learned layouts, with Confirm, Rename and Retire; the
+    fixes waiting for an admin, with Accept and Discard; and **Train a bank**.
+  - **Automatic reading:** the counts against the 95% target, with no personal
+    data, and a summary to carry off.
+  - **Words:** unchanged.
+  - **Health:** names layouts instead of templates.
+- **How the tool learns** (spec section 6):
+  - Only a proven reading teaches.
+  - A new design starts **provisional**. It becomes **proven** after three
+    statements prove it, or when an admin confirms it.
+  - A fix on Please check that then proves is learned at once.
+  - A fix that does not prove, or a plain *This is right*, applies to that file
+    only and is held under Banks for an admin. One person's word never teaches
+    the tool on its own.
+  - Columns drawn by hand are never learned.
+  - Every change writes a new version of a layout file and never edits one. So
+    an admin can undo anything, and every output carries `layouts_state`, the
+    learned state it was read with.
+- **Qlik gate:** a statement feeds the dashboards when it is *ok* and was
+  proven, matched a proven layout, or was confirmed by a person.
+  - `feed.min_trust`, `require_status_ok`, `allowed_template_origins` and
+    `template_allowlist` are gone.
+  - The feed columns `template_id` and `template_origin` keep their names (Qlik
+    needs stable fields). They now carry the layout and that basis.
+  - The manifest's `template_sha256` is replaced by `layouts_state`.
+- **New server state to back up:** `templates\layouts\` (the learned layouts)
+  and `logs\tracking\` (the counts).
+- **Bank reference data:** two new files ship in `dictionaries\`,
+  `nz_bank_branches.csv` and `nz_banks.yaml`.
+
+### The numbers
+
+**Zero silently wrong figures on every set measured.** All of these are
+synthetic statements with an answer key, converted end to end through
+`convert_statement`. The figures were read back from the CSV it writes
+(`tools/synth/score_convert.R`):
+
+| Set | Read automatically and right | Automatic and WRONG | Please check, reading right | Please check, needs fixing | Couldn't read |
+|---|---|---|---|---|---|
+| Realistic dev set, text PDFs (128) | **121 (94.5%)** | **0** | 0 | 7 | 0 |
+| Realistic dev set, CSV (7) | 4 | **0** | 3 | 0 | 0 |
+| Realistic dev set, Excel (5) | 5 | **0** | 0 | 0 | 0 |
+| Realistic dev set, scans (15) | 12 (80%) | **0** | 1 | 1 | 1 |
+| Adversarial corpus (43), trained | 31 | **0** | 8 | 3 | 1 |
+| Offset sweep (26), trained | 22 | **0** | 0 | 1 | 3 |
+
+- The text PDF, CSV and Excel results were identical with nothing learned
+  (cold) and with each bank trained, case for case. In the trained run the store
+  learned 46 layouts and proved 28 of them, and 83 conversions matched a learned
+  layout.
+- The 1.23.1 baseline on the same 128 PDFs was **0** with the shipped templates,
+  and 32 with a template drafted for each file, of which 3 came back "ok" but
+  wrong.
+- **Scans are about 15 times faster:** 2.0 s a page on average (3.6 s at most),
+  against 31.5 s (174 s at most) before. Two faults caused the slowness:
+  - The contrast stretch turned the paper grain of nearly blank pages into
+    thousands of junk words.
+  - Tesseract ran one thread per core, and the threads competed with each
+    other.
+- No file anywhere contains `-0.00`.
+- In the test suite, no account number reaches the run log, tracking, layout
+  files or metadata.
+
+### What is not done, and what is not yet known
+
+- **The acceptance tests have not been run.** The realistic holdout set and the
+  100-statement green-flag set are held back to be scored once, independently.
+  Every number above is from sets the build was developed against.
+- **The 95% target is not met yet:**
+  - Text PDFs: 94.5%.
+  - Scans: 80%.
+  - CSV: 4 of 7 automatic. The other 3 have no balance, so a person is asked.
+  - Ruled table lines on scans are the main remaining OCR loss.
+- **Release blockers:**
+  - `scripts\health-check.R`, `audit-statement.R` and `bulk-audit.R` still use
+    templates.
+  - `scripts\bundle-offline.R` loses the two bank reference files, and would
+    ship any layouts learned on the build PC.
+  - The full suite was last run part-way through the build: 67 files, 1,052
+    tests, 5,527 passing, 181 failed and 46 errors. The failures were in files
+    still being rewritten. The release needs a clean full run.
+- **Engine faults found and not yet fixed.** None of these produced a wrong
+  figure on the test sets. The first two could:
+  - **A Kiwibank export with two date columns:** the dates taken depend on the
+    column order. The same statement is proven with its Effective dates in one
+    order and its Transaction dates in the other (`test-generalisation.R`,
+    deliberately left failing).
+  - **A scanned page that times out** (60 s) is read as blank. If it is the
+    last page, the rest could still prove. It needs a check in `auto_read`.
+  - **Exports that go to Please check with the wrong figures shown:** the ASB
+    export's `Unique Id` is read as a balance; a card export with a
+    foreign-currency row reads the wrong columns; Xero exports take the ID as
+    the description.
+  - **"Co-operative Bank" as typed** does not match `coop`.
+  - **The "proved by at least 2 different accounts" rule** for promoting a
+    layout is only approximated.
+  - **A no-balance layout does not settle day-month against month-day.**
+  - **A loan statement's summary box** is taken for a second statement, and
+    Please check then advises splitting the file.
+- **Not built from the spec:**
+  - Merging or moving layouts between banks.
+  - Clicking a gap on Please check to split or join a column.
+  - A reversed-sign role for card statements.
+  - Reading another account's mini-statement as a separate account (decided
+    3 Oct).
+
+### Hand-carry list
+
+The step-by-step version, with the checks to run afterwards, is
+[`docs/operational/release-2.0.0-hand-carry.md`](docs/operational/release-2.0.0-hand-carry.md).
+In short:
+
+- **Back up first**, including `templates\statements_user\`. 2.0.0 no longer
+  reads it, and the backup becomes its only copy. Copy `R\params.R` aside; it
+  is unchanged in 2.0.0.
+- **Delete:**
+  - `R\column_fit.R`, `R\column_profile.R`, `R\detect.R`, `R\draft.R`,
+    `R\learned.R`, `R\templates.R`, `R\wizard_auto.R`, `R\wizard_detect.R`.
+    The app loads every file in `R\`, so these would replace new functions with
+    old ones.
+  - `templates\statements\`, `templates\statements_seed\` and
+    `templates\statements_user\` (after the backup).
+  - `tests\testthat\test-column-fit.R`, `test-column_profile.R`,
+    `test-detect.R`, `test-draft.R`, `test-draft_excel.R`, `test-learned.R`,
+    `test-templates.R`, `test-user_templates.R`, `test-wizard_auto.R`,
+    `test-wizard_detect.R`.
+- **Add:**
+  - `R\auto_read.R`, `R\auto_read_pdf.R`, `R\auto_read_prove.R`,
+    `R\auto_read_tabular.R`, `R\bank_identity.R`, `R\fixes.R`, `R\layouts.R`,
+    `R\tracking.R`.
+  - `dictionaries\nz_bank_branches.csv` and `dictionaries\nz_banks.yaml`. These
+    are reference data and safe to copy. Never copy `labels.yaml` or
+    `lexicon.yaml`.
+  - `tests\testthat\fixtures\templates\` (the 13 old templates, as test
+    material), `tests\testthat\helper-statements.R`, `test-auto-read.R`,
+    `test-bank-identity.R`, `test-layouts.R`, `test-tracking.R`.
+- **Replace:**
+  - `R\analytics.R`, `audit.R`, `batch.R`, `batch_audit.R`, `config.R`,
+    `convert.R`, `diagnose.R`, `feed.R`, `identify.R`, `jobs.R`,
+    `normalise.R`, `ocr.R`, `ocr_preprocess.R`, `outputs.R`,
+    `parse_pdf_table.R`, `read_input.R`, `read_pdf.R`, `split.R`, `util.R`.
+  - `app.R`, `ui_labels.R`, `ui_content.R`, `run.R`, `VERSION`,
+    `www\app.css`, `config\config.example.yaml`, `templates\README.md`,
+    `README.md`, `CHANGELOG.md`.
+  - The whole `docs\` folder.
+  - The whole `tests\` folder (51 test files changed).
+
+  Simplest: replace `R\`, `tests\` and `docs\` whole, then put `R\params.R`
+  back.
+- **Edit `config\config.yaml` by hand.** Remove:
+  - `app.user_templates_default`.
+  - `paths.templates`, `user_templates`, `fields`, `user_fields`, `docs`,
+    `user_docs` and `learned_choices`.
+  - `feed.require_status_ok`, `min_trust`, `allowed_template_origins` and
+    `template_allowlist`.
+- **Created by the app, back them up from day one:** `templates\layouts\` and
+  `logs\tracking\`.
+- **Not carried:** `tools\` (development only).
+- **Blocked until fixed:** `scripts\health-check.R`, `audit-statement.R`,
+  `bulk-audit.R` and `bundle-offline.R` (see above). Each joins this list once
+  it is fixed.
+
 ## 1.23.1
 
 - A file the Convert table cannot open says why on hover ("This PDF could not be

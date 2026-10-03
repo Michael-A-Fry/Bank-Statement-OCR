@@ -1,56 +1,75 @@
 # Roadmap
 
-One prioritised backlog, deliberately short. Value is discounted by the ongoing
-maintenance an item adds, because a codebase that is hard to maintain is a failed
-one. The rule that keeps this small — **a new bank is a YAML template, never new
-code** — wins every ranking argument below.
+One prioritised backlog, deliberately short. Each item's value is weighed
+against the maintenance it adds, because a codebase that is hard to maintain has
+failed. The rule that keeps this list small changed at 2.0.0. It used to be "a
+new bank is a YAML template". It is now **a new bank is a pile of its
+statements**: the tool reads them from their content, proves each with its own
+arithmetic, and learns the bank's layouts. It needs no code and no template.
 
-_Last updated 2026-07-27. Test-suite figures quoted anywhere in the docs are a
-measurement, not a promise; the current ones come from the last full run, printed
-by `tests/run_tests.R` and recorded in
+_Last updated 2026-10-03, at 2.0.0. Test-suite figures quoted anywhere in the
+docs are a measurement, not a promise. The current ones come from the last full
+run, printed by `tests/run_tests.R` and recorded in
 [`../operational/maintaining-the-engine.md`](../operational/maintaining-the-engine.md)._
 
-## Backlog — highest value first
+## Backlog, highest value first
 
 | # | Item | Value | Effort | Maintenance | Why here |
 |---|------|-------|--------|-------------|----------|
-| 1 | **Validation & adoption** — watch a real non-technical analyst build a template end to end on a real statement | ★★★★★ | ● | ~zero | The engine is built; the open question is *adoption*. Proving "an analyst adds a bank by pointing and clicking" on a real person with a real file is the highest-value move left. It also settles whether drawing PDF column bands is the actual bottleneck — which is the evidence that would un-park template synthesis ([engine-audit.md](engine-audit.md)). Observation and small fixes, not a new subsystem. |
-| 2 | **Air-gapped Windows dry-run** | ★★★★ | ●● | low | Prove the real deployment: copy the folder onto a locked-down offline Windows box, `RUN-ME.bat`, set the password, open the port, register the task. De-risks the install before it is in front of users. Deployment proof, not code. |
-| 3 | **More bank templates as real files arrive** (pure YAML) | ★★★★ | ● | ~zero | SBS, TSB, Co-op, Heartland, and more per-bank PDFs — each a template plus one golden test, no engine change. This **is** the simple-scaling win. Gated only on receiving a real sample. |
+| 1 | **The independent acceptance run.** Score the realistic holdout set and the 100-statement green-flag set once, and have someone try to break the reader (metamorphic tests, missing pages, swapped columns). | 5 | 1 | none | Spec section 11, step 3. Every 2.0.0 figure so far comes from sets the build was developed against. This is the gate the product owner approves on. |
+| 2 | **Close the release blockers.** Fix `scripts/health-check.R`, `audit-statement.R`, `bulk-audit.R` and `bundle-offline.R`, then get a clean full suite run. | 5 | 2 | low | Without these the server cannot prove it is fit to convert, and the package route loses the bank reference data. See the 2.0.0 entry in [`../../CHANGELOG.md`](../../CHANGELOG.md). |
+| 3 | **The engine faults that could give a wrong figure.** Pick between two date columns by heading or content, never by position. Treat a scanned page whose OCR timed out as missing. | 5 | 2 | low | The only two found that could let a proven reading carry the wrong dates or miss rows. Both are in [outstanding-work.md](outstanding-work.md). |
+| 4 | **Reach 95% on each class.** Text PDFs are at 94.5%, scans at 80% and CSV at 4 of 7 on the dev set. The biggest remaining loss on scans is ruled table lines. | 4 | 3 | medium | The product owner's target (spec section 2). Measure against the dev set after every change, and never move AUTO_WRONG off zero to get there. |
+| 5 | **Train each bank on the server, and run spot checks from day one.** | 4 | 1 | none | Spec section 9: about 300 clean spot checks are needed to say "under 1% wrong", and about 500 statements to say "at least 95% automatic". Only the server can produce those numbers. |
 
-`★` = value to the forensic-accounting job · `●` = build effort.
+Value and effort are scored 1 (least) to 5 (most).
 
-**Sequence: validation → dry-run → templates as they arrive.** The engine is
-done. Nothing on this list adds an R module.
+**Sequence: acceptance run, then blockers, then the two faults, then the rest.**
+Nothing goes to the server before items 1 to 3 are done.
 
 ## Killed - do not re-propose without new evidence
 
-**Local-ML learning loop.** Both of its headline uses already ship,
-deterministically, and are already on screen in Admin:
+**Local-ML learning loop.** Both of its main uses already ship,
+deterministically, and both are on screen in Admin -> Health:
 
-- *template-drift detection* → `template_drift()` in `R/analytics.R` — a sustained
-  drop in a template's clean-run rate, surfaced in Admin → Health;
-- *unseen-layout clustering* → `unsupported_clusters()` in `R/analytics.R` — every
-  unsupported/failed run grouped by layout signature, biggest gap first, with the
-  closest template and an example file.
+- *layout-drift detection*: `layout_drift()` in `R/analytics.R`. It reports a
+  sustained drop in the share of a learned layout's statements that prove
+  themselves.
+- *unseen-layout clustering*: `unsupported_clusters()` in `R/analytics.R`. Every
+  run that read nothing is grouped by layout signature, biggest group first,
+  with an example file.
 
-A model would replace two auditable, testable functions with a probabilistic one
-that answers the same questions less defensibly — against the charter's explicit
-**not machine learning / not a guesser** clause, and against guardrail 5 below.
-The unbuilt ideas from that item are parked with their reasons and their
-un-parking conditions in [engine-audit.md](engine-audit.md).
+Automatic reading did not bring the model back. What the tool "learns" is a
+versioned record of readings that its own arithmetic proved. It holds no
+weights, and every item can be traced to the statements that proved it and
+undone by an admin. A model would replace auditable, testable functions with a
+probabilistic one that answers the same questions less defensibly. That goes
+against the charter's explicit **not machine learning / not a guesser** clause,
+and against guardrail 5 below. The unbuilt ideas from that item are parked with
+their reasons and their un-parking conditions in
+[engine-audit.md](engine-audit.md).
+
+**Templates, in any form.** Hand-drawn column bands, fingerprint phrases, the
+template library and the guided setup were retired at 2.0.0 on measured
+evidence. On the realistic dev set the shipped templates read 0 of 128 PDFs, and
+a template drafted for each file read 32. Automatic reading reads 121, with no
+automatic answer wrong (spec section 9.1).
 
 ## Simplicity guardrails (protect these, always)
 
-1. **A new bank = a YAML template, never new code.** If a change would force
-   per-bank R code, redesign it as a template option or a named transform.
-2. **Two extraction strategies only** — positional bands, and anchored/regex.
-   Resist a third paradigm unless it clearly earns its keep.
-3. **Be sceptical of the interactive subsystems** (above all the visual band
-   editor). They carry the maintenance weight; keep them *writing templates*,
-   never holding their own logic.
-4. **R modules stay small and single-concern** — one job each. The current set is
-   mapped in [architecture/build-contract.md](architecture/build-contract.md) §1,
-   and a test fails if that map and `R/` disagree in either direction.
-5. **Docs and config are cheap; code is expensive.** Bias to YAML plus a short
-   doc over another module.
+1. **A new bank needs no code and no template.** If supporting a statement would
+   need per-bank R code, the reader is missing something general. Fix it there,
+   and measure the fix on every test set.
+2. **Geometry proposes, arithmetic decides.** Nothing becomes automatic because
+   a heading, a layout or a person said so. It becomes automatic only when the
+   statement's own figures prove it, and no other reading does.
+3. **Be sceptical of the interactive subsystems** (above all Please check and the
+   column editor). They carry the maintenance weight. Keep them feeding the
+   reader (`overrides$roles`, `overrides$columns`), never holding their own
+   logic.
+4. **R modules stay small and single-concern**, one job each. The current set is
+   mapped in [architecture/build-contract.md](architecture/build-contract.md)
+   section 1, and a test fails if that map and `R/` disagree in either
+   direction.
+5. **Docs and config are cheap; code is expensive.** Prefer a setting and a
+   short doc to another module.

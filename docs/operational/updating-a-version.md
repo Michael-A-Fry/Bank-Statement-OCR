@@ -4,14 +4,18 @@ You have two folders: **dev** (the new version) and **prod** (the one people use
 This page moves dev into prod without destroying what prod has learned.
 
 **The whole risk is one idea:** prod contains work that exists in no other folder —
-every template your team built and every word Admin has taught it. Dev contains
+every bank layout the tool has learned there and every word Admin has taught it. Dev contains
 placeholder copies of some of those files, **under the same names**. Copy the
 wrong one and it is replaced silently. Nothing errors. The tool just quietly gets
 worse.
 
 (The package route — `make-bundle.bat` on the internet PC, replace the whole
-folder — cannot get this wrong and is the one to use when you have it:
-[updating.md](updating.md).)
+folder — is the one to use when you have it: [updating.md](updating.md).)
+
+**Going from 1.23.1 to 2.0.0?** That update also *deletes* files, which neither
+route does by itself. Follow
+[release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) instead of this page's
+steps 4 and 5.
 
 ---
 
@@ -21,9 +25,9 @@ folder — cannot get this wrong and is the one to use when you have it:
 |---|---|
 | **`dictionaries\labels.yaml`**<br>**`dictionaries\lexicon.yaml`** | **The dangerous pair.** Dev has these two files under these exact names — they are the shipped starting vocabularies. In prod the same names hold every wording and marker your team has taught it. Overwrite them and statements that reconciled last week stop reconciling, weeks before anyone connects the two. |
 | `config\config.yaml` | Prod's settings: port, admin password, feed folder. Dev's copy (if it has one) is a developer's. |
-| `templates\statements_user\`<br>`templates\fields_user\`<br>`templates\documents_user\` | Every template your team built in the app — bank layouts, form fields, report pullers. Dev has only a `README.md` in each, so copying the *folder* is survivable — but never delete-and-replace one. |
-| **any `.yaml.bak` or `.yaml.*.part`** in those folders or in `dictionaries\` | Prod's undo. Every save now writes the previous contents beside the file first — templates as well as dictionaries — so a `.bak` is one step of history for a template that exists nowhere else. A `.part` is a save that died half-way; leave it for whoever is diagnosing that. |
-| `logs\` | The audit trail. `logs\metadata\` is kept forever and cannot be recreated. |
+| `templates\layouts\` | Every bank layout the tool has learned in prod, and the fixes waiting for an admin (`.pending\`). A dev folder may have its own `templates\layouts\` from testing, **with the same file names** (`anz\anz_1@v1.yaml`): copy it and prod's learning is overwritten by a developer's. |
+| **any `.yaml.bak` or `.yaml.*.part`** in `dictionaries\` | Prod's undo. Every save writes the previous contents beside the file first, so a `.bak` is one step of history. A `.part` is a save that died half-way; leave it for whoever is diagnosing that. |
+| `logs\` | The audit trail. `logs\metadata\` is kept forever and cannot be recreated, and `logs\tracking\` holds the automatic-reading counts. |
 | `uploads\` | Copies of real client statements. |
 | `feed\` | What Qlik reads. |
 | `requests\` | "None of these fits" raises from analysts. |
@@ -34,13 +38,13 @@ folder — cannot get this wrong and is the one to use when you have it:
 | File | Rule |
 |---|---|
 | `R\params.R` | The engine's numeric thresholds — the one code file a maintainer edits. It sits inside `R\`, so **dragging the whole `R\` folder reverts every value you set.** If the release did not change it, do not copy it. If it did, open both side by side and re-apply your values by hand. |
-| `templates\statements\` | Curated templates. Copying replaces same-named files. A template you **promoted** in prod but never put in dev survives (nothing shares its name) — but check first. |
+| `dictionaries\nz_banks.yaml`<br>`dictionaries\nz_bank_branches.csv` | The bank reference data. These two **are** product (unlike `labels.yaml` and `lexicon.yaml` beside them): copy them when the release changed them. |
 
 ## Everything else is the product — copy all of it
 
 ```
 app.R   ui_content.R   ui_labels.R   run.R   RUN-ME.bat   VERSION
-R\ (except params.R)   scripts\   www\   templates\statements_seed\
+R\ (except params.R)   scripts\   www\   templates\README.md
 config\config.example.yaml   docs\   tests\   samples\
 README.md   CHANGELOG.md
 ```
@@ -91,20 +95,17 @@ are easy to leave behind and both are silent when you do:
    ```
 
    It prints the version it is about to run and one line per check — the settings
-   file parsed, an admin password is set, how many bank statement / form / report
-   templates loaded **and how many were refused**, every folder it must write to
-   is writable, and the scan-reading software is still installed. `PASS` on the
-   last line means all of it passed. It reads and changes nothing, so it is safe
-   to run at any time.
-
-   A **refused** template is the one to read twice: it is a template that used to
-   work, has stopped validating, and would otherwise simply have vanished from
-   detection with no message anywhere.
+   file parsed, an admin password is set, every folder it must write to is
+   writable, and the scan-reading software is still installed. `PASS` on the last
+   line means all of it passed. It reads and changes nothing, so it is safe to run
+   at any time. (At 2.0.0 its *Templates* line is out of date and reports `FAIL`
+   on a healthy server; see
+   [maintaining-the-engine.md](maintaining-the-engine.md) §1.)
 
 7. **Start prod** — `RUN-ME.bat`, or the scheduled task. No internet needed and
    nothing is reinstalled, so it is quick.
 
-8. **Convert a statement you know reconciles.** It still reconciles, and its
+8. **Convert a statement you know is proven.** It is still proven, and its
    `.json` download reads the **new** `build.engine_version`. That is the one
    check health-check cannot make for you: it proves the engine and
    `dictionaries\` came through together, and that `VERSION` travelled.

@@ -18,8 +18,8 @@ accord loses work.
 
 | Ask | How | Read it as |
 |---|---|---|
-| Did **several unrelated banks** break at once? | Convert one statement from each of two banks that worked last week | Two banks = the build. One bank = that bank's template. |
-| Did the **template** change too? | Compare `template_sha256` in the two `logs\runs\<run_id>.json` records — the old good one and today's bad one | Different hash = somebody edited or promoted that template. **That is your answer; do not roll back.** Fix the template. |
+| Did **several unrelated banks** break at once? | Convert one statement from each of two banks that worked last week | Two banks = the build. One bank = that bank's learned layouts, or a change in how the bank prints its statements. |
+| Did the **learned state** change too? | Compare `layouts_state` and `layout` in the two `logs\runs\<run_id>.json` records — the old good one and today's bad one | A different `layouts_state` means something was learned, confirmed, accepted or retired in between. If the bad figure came from a layout match (`outcome` `layout_match`), look at that layout on Admin -> Banks first. **Retiring a bad layout is the fix; do not roll back the build for it.** |
 | Did the **build** change? | Compare `engine_version` in the same two records | Same version and different figures on 1.4.0 or later is a finding in itself — [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) §4 |
 | Is it the **file**? | Was it a scan? | OCR quality varies statement to statement and is not a version problem |
 
@@ -39,18 +39,19 @@ last two bundles for exactly this. If all you have is a copy of the live folder,
 read the warning at the end of this section before you touch anything.
 
 1. **Stop the app.** `Ctrl-C`, or end the scheduled task.
-2. **Rescue anything promoted since the update.** `templates\statements\` **is**
-   in the bundle, so it is replaced by the rollback. If a template was promoted to
-   proven since the update, copy `templates\statements\<id>.yaml` somewhere safe
-   now — and its golden test with it if you added one.
+2. **Leave `templates\layouts\` alone.** It is not in the bundle, so the
+   rollback does not touch it, and the version you go back to (if it is 2.0.0 or
+   later) reads it as before.
 3. **Do not delete the current folder.** Its `logs\` are the evidence of what the
    bad version did, and section 4 needs them.
 4. **Copy the old bundle over the app folder** and choose **Replace the files in
    the destination** — exactly the update procedure
    ([updating.md](updating.md) §2), with an older bundle. Only the files the
-   bundle carries are replaced; `config\`, `dictionaries\`, `templates\statements_user\`,
-   `templates\fields_user\`, `templates\documents_user\`, `logs\`, `uploads\` and
-   `feed\` are not in it and are not touched.
+   bundle carries are replaced; `config\`, `dictionaries\`, `templates\layouts\`,
+   `logs\`, `uploads\` and `feed\` are not in it and are not touched. **A copy
+   never deletes a file**, so if the newer version *added* files to `R\`, delete
+   them too, or the app loads them alongside the old code. Rolling 2.0.0 back to
+   1.x is that case, and it has its own section below.
 5. **Re-apply your `R\params.R` values by hand** if you had any. `R\` is in the
    bundle, so the rollback overwrote them just as the update did
    ([maintaining-the-engine.md](maintaining-the-engine.md) §2).
@@ -69,23 +70,49 @@ and convert one statement you know reconciles.
 
 > **If all you kept is a copy of the whole live folder, do not restore it
 > wholesale.** That copy contains its own snapshot of `dictionaries\`,
-> `templates\statements_user\` and `config\config.yaml` as they were on the day you took it.
-> Putting it back reverts every word Admin has taught the tool and every template
-> your team has built since — the two things
+> `templates\layouts\` and `config\config.yaml` as they were on the day you took it.
+> Putting it back reverts every word Admin has taught the tool and every layout
+> it has learned since — the things
 > [backup-and-restore.md](backup-and-restore.md) calls irreplaceable — and
 > `RUN-ME.bat` will then overwrite its own `%LOCALAPPDATA%\StatementStudio`
 > backup with the stale copies, taking the safety net with it. Instead: copy the
-> current `dictionaries\`, `templates\statements_user\`, `templates\fields_user\`,
-> `templates\documents_user\` and `config\config.yaml` out of the live folder first,
-> restore, and put them back before you start the app.
+> current `dictionaries\`, `templates\layouts\`, `logs\tracking\` and
+> `config\config.yaml` out of the live folder first, restore, and put them back
+> before you start the app.
+
+### Rolling 2.0.0 back to 1.23.1
+
+2.0.0 removed templates and changed the engine's files, so going back is more
+than a copy-over:
+
+1. Stop the app. Keep the 2.0.0 folder's `logs\` (section 4 needs them) and
+   copy `templates\layouts\` and `logs\tracking\` somewhere safe: they are
+   what 2.0.0 learned, and you want them if you go forward again.
+2. **Delete the files 2.0.0 added to `R\`**: `auto_read.R`, `auto_read_pdf.R`,
+   `auto_read_prove.R`, `auto_read_tabular.R`, `bank_identity.R`, `fixes.R`,
+   `layouts.R`, `tracking.R`. Simplest: delete `R\` and `tests\` and let the
+   1.23.1 bundle put its own back (2.0.0's new tests would fail on 1.23.1),
+   then put `R\params.R` back. `dictionaries\nz_banks.yaml` and
+   `nz_bank_branches.csv` can stay; 1.23.1 ignores them.
+3. Copy the 1.23.1 bundle over the folder. That brings back
+   `templates\statements\` and `templates\statements_seed\`, and the 1.23.1
+   tests.
+4. **Restore `templates\statements_user\` from the backup taken before the
+   2.0.0 update** ([release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) §1).
+   It is not in any bundle, and without it every template your team built is
+   gone.
+5. Put back the 1.x feed settings in `config\config.yaml` if you removed them
+   (`feed.min_trust`, `allowed_template_origins`...); 1.23.1 falls back to its
+   defaults without them.
+6. Start it and check the version as below.
 
 ## 3. What the rollback costs you
 
 | Kept — none of this is in the bundle | Lost — all of this is |
 |---|---|
 | `config\config.yaml` — your settings | every fix and change in the newer version |
-| `dictionaries\` — every wording and marker taught in Admin | any template **promoted** into `templates\statements\` since the update (step 2 rescues it) |
-| `templates\statements_user\`, `templates\fields_user\`, `templates\documents_user\` — every template built in the app | any `R\params.R` value you re-applied after the update (step 5) |
+| `dictionaries\` — every wording and marker taught in Admin | any `R\params.R` value you re-applied after the update (step 5) |
+| `templates\layouts\` — every layout the tool has learned | for a rollback to 1.x: everything learned since 2.0.0 stops being used (it is kept, not read) |
 | `logs\` — the whole audit trail, including `logs\metadata\` | |
 | `uploads\` — the kept copies of the statements | |
 | `feed\` — **including the rows the bad version published** | |
