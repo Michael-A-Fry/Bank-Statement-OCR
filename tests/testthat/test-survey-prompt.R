@@ -50,10 +50,12 @@ test_that("the prompt still tells the assistant to withhold client details", {
 
 test_that("the prompt asks for every amount style the engine can actually be told", {
   txt <- .survey_text()
-  # .VALID_SIGN is the engine's list. Add a style there and this fails until the
-  # prompt learns to ask about it -- which is the point: a survey that cannot
-  # describe a style the engine supports sends us back to the statement.
-  for (style in .VALID_SIGN)
+  # .LAYOUT_MONEY (R/layouts.R) is the engine's list of the money styles a layout
+  # can have. Add a style there and this fails until the prompt learns to ask
+  # about it -- which is the point: a survey that cannot describe a style the
+  # engine supports sends us back to the statement.
+  expect_gte(length(.LAYOUT_MONEY), 5L)
+  for (style in .LAYOUT_MONEY)
     expect_true(grepl(style, txt, fixed = TRUE),
                 info = paste("survey prompt never mentions amount style:", style))
 })

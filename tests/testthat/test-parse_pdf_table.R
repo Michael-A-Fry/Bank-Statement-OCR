@@ -51,11 +51,6 @@ test_that("PDF parser splits debit/credit columns and injects the period year", 
   expect_equal(tx$balance, c(95.50, 1095.50))
 })
 
-test_that("the two-column PDF template validates", {
-  expect_length(validate_template(c(.tmpl, list(
-    min_score = 1, fingerprint = list(page_contains_all = list("Withdrawals"))))), 0)
-})
-
 test_that("a row is kept only with a real amount; type codes don't break the date", {
   # Westpac-style: a type code (DC) after the date, a date-only header line, and
   # a real transaction. Date band must exclude the type code; the header line has
@@ -302,18 +297,6 @@ test_that("metadata_regions pins a header value the label engine misses", {
   expect_equal(h$closing_balance, 1234.56)           # the box pins it
   # the pinned box must NOT invent a transaction row
   expect_equal(nrow(parse_pdf_table(input, tmpl)$transactions), 1L)
-})
-
-test_that("metadata_regions validates: good passes, malformed / unknown rejected", {
-  base <- c(.tmpl, list(min_score = 1, fingerprint = list(page_contains_all = list("Withdrawals"))))
-  ok <- base
-  ok$table$metadata_regions <- list(
-    closing_balance = list(page = 1, x_min = 195, x_max = 265, y_min = 115, y_max = 132))
-  expect_length(validate_template(ok), 0)
-  bad1 <- base; bad1$table$metadata_regions <- list(closing_balance = list(x_min = 195))  # no x_max
-  expect_true(any(grepl("metadata_regions.closing_balance", validate_template(bad1))))
-  bad2 <- base; bad2$table$metadata_regions <- list(total_spend = list(x_min = 1, x_max = 2))  # unknown
-  expect_true(any(grepl("metadata_regions.total_spend", validate_template(bad2))))
 })
 
 # ---- amount_sign: type_dc on a PDF template --------------------------------

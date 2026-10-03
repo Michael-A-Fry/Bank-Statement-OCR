@@ -149,9 +149,19 @@ test_that(".pdf_ink returns one entry per page, not one for the document", {
   expect_true(all(vapply(ink, function(p) nrow(p$strokes) > 0L, logical(1))))
 })
 
+test_that("the automatic reader honours a drawn minus on every page, figure for figure", {
+  f <- .ink_pdf("signed_minus_as_ink_3page")
+  truth <- jsonlite::fromJSON(sub("[.]pdf$", ".truth.json", f))
+  skip_if_not(is.data.frame(truth$rows), "specimen came without its answer key")
+  rd <- auto_read(read_input(f))
+  want <- ifelse(is.na(truth$rows$credit), -truth$rows$debit, truth$rows$credit)
+  expect_equal(rd$transactions$amount, want)
+  expect_identical(rd$transactions$date, truth$rows$date)
+})
+
 test_that("a drawn minus is honoured on page 3 as well as page 1", {
   f <- .ink_pdf("signed_minus_as_ink_3page")
-  tp <- load_templates(templates_dir())
+  tp <- fixture_templates()
   input <- read_input(f)
   expect_true(isTRUE(input$meta$ink_scan_ok))
   expect_identical(as.integer(input$meta$ink_scan_pages), 3L)

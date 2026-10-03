@@ -1,4 +1,5 @@
-# Golden-file + guarantee tests for the ASB everyday CSV template.
+# Golden-file + guarantee tests for the ASB everyday CSV export: the table reader
+# with the fixture template, and the automatic reader with none.
 # The ASB FastNet export carries a metadata preamble (Created date; Bank/Branch/
 # Account; From/To date; Avail Bal; Ledger Balance) before the real header row
 # `Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount`.
@@ -6,22 +7,22 @@
 FIXTURE  <- "samples/raw/asb/asb_transaction_export_01.csv"
 EXPECTED <- "tests/testthat/expected/asb_everyday_csv.csv"
 
-test_that("detection picks asb_everyday_csv unambiguously past the preamble", {
-  templates <- load_templates(templates_dir())
-  input <- read_input(fixture(FIXTURE))
-  det <- detect_statement(input, templates, hint_bank = "ASB")
-  expect_true(det$matched)
-  expect_identical(det$template_id, "asb_everyday_csv")
-  expect_gte(det$score, templates[["asb_everyday_csv"]]$min_score)
+test_that("the automatic reader reads past the preamble and never converts it alone", {
+  # No running balance and no totals, so nothing on the export proves the reading:
+  # it must go to a person, with the statement's own dates, amounts and memos.
+  # (The reader currently also takes the Unique Id column for a balance, which the
+  # arithmetic then refuses; that is why "unread" is allowed here. Balance is not
+  # compared for that reason.)
+  expect_auto_read_golden(FIXTURE, EXPECTED, outcomes = c("check", "unread"),
+                          fields = c("date", "amount", "direction", "description"))
 })
 
 test_that("parsed core table equals the golden snapshot", {
-  expect_statement_ok(FIXTURE, EXPECTED,
-                      template_id = "asb_everyday_csv", bank = "ASB")
+  expect_statement_ok(FIXTURE, EXPECTED, template_id = "asb_everyday_csv")
 })
 
 test_that("descriptions are verbatim, dates ISO and amounts signed", {
-  res <- parse_fixture(FIXTURE, bank = "ASB")
+  res <- parse_fixture(FIXTURE, "asb_everyday_csv")
   tx <- res$parsed$transactions
   # verbatim descriptions (hyphens/digits/spaces preserved byte-for-byte)
   expect_identical(tx$description, c(
@@ -40,7 +41,7 @@ test_that("descriptions are verbatim, dates ISO and amounts signed", {
 })
 
 test_that("no rows dropped past the preamble and no false flags", {
-  res <- parse_fixture(FIXTURE, bank = "ASB")
+  res <- parse_fixture(FIXTURE, "asb_everyday_csv")
   expect_equal(nrow(res$parsed$transactions), 4L)
   expect_true(all(res$parsed$transactions$flags == ""))
   expect_false(any(grepl("malformed|redacted", res$parsed$transactions$flags)))
@@ -49,7 +50,7 @@ test_that("no rows dropped past the preamble and no false flags", {
 })
 
 test_that("reconciliation KPIs are deterministic and non-failing", {
-  res <- parse_fixture(FIXTURE, bank = "ASB")
+  res <- parse_fixture(FIXTURE, "asb_everyday_csv")
   k <- res$recon$kpis
   expect_false(any(k$status == "fail"))
   expect_equal(k$status[k$name == "transaction_count"], "pass")
@@ -67,14 +68,14 @@ test_that("reconciliation KPIs are deterministic and non-failing", {
 
 FIXTURE_03 <- "samples/raw/asb/asb_transaction_export_03.csv"
 
-test_that("the 2025 ASB export detects as ASB and reads EVERY date", {
-  templates <- load_templates(templates_dir())
+test_that("the 2025 ASB export reads EVERY date, with the template and without", {
   input <- read_input(fixture(FIXTURE_03))
-  det <- detect_statement(input, templates)
-  expect_true(det$matched)
-  expect_identical(det$template_id, "asb_everyday_csv")
+  rd <- auto_read(input)
+  expect_false(rd$outcome %in% AUTO_OUTCOMES)
+  expect_identical(rd$transactions$date, c("2025-10-13", "2025-10-17"))
+  expect_equal(rd$transactions$amount, c(-50.00, -88.39))
 
-  tx <- parse_statement(input, templates[["asb_everyday_csv"]])$transactions
+  tx <- parse_statement(input, fixture_template("asb_everyday_csv"))$transactions
   expect_identical(tx$date, c("2025-10-13", "2025-10-17"))
   expect_identical(tx$date_raw, c("13/10/2025", "17/10/2025"))   # raw kept verbatim
   expect_false(any(is.na(tx$date)))
@@ -85,11 +86,9 @@ test_that("the 2025 ASB export detects as ASB and reads EVERY date", {
 
 test_that("the 2014 export still reads under the SAME multi-format template", {
   # the whole point of the list: one template, both eras, neither guessed.
-  templates <- load_templates(templates_dir())
-  expect_identical(as.character(templates[["asb_everyday_csv"]]$columns$date$format),
-                   c("%Y/%m/%d", "%d/%m/%Y"))
-  tx <- parse_statement(read_input(fixture(FIXTURE)),
-                        templates[["asb_everyday_csv"]])$transactions
+  t <- fixture_template("asb_everyday_csv")
+  expect_identical(as.character(t$columns$date$format), c("%Y/%m/%d", "%d/%m/%Y"))
+  tx <- parse_statement(read_input(fixture(FIXTURE)), t)$transactions
   expect_identical(tx$date, c("2014-12-20", "2014-12-21", "2014-12-22", "2014-12-23"))
 })
 
@@ -97,8 +96,7 @@ test_that("a date column no candidate format reads comes back NA, never guessed"
   # Fail closed: swap in a template whose candidates cannot read this file at all.
   # Every date must be NA (with the raw preserved) and dates_readable must FAIL --
   # not a plausible reading under some other format.
-  templates <- load_templates(templates_dir())
-  t <- templates[["asb_everyday_csv"]]
+  t <- fixture_template("asb_everyday_csv")
   t$columns$date$format <- list("%b %d %Y", "%Y-%m-%d")
   p <- parse_statement(read_input(fixture(FIXTURE_03)), t)
   expect_true(all(is.na(p$transactions$date)))
@@ -112,15 +110,15 @@ test_that("the spreadsheet padding rows are not emitted as phantom transactions"
   # become 24 empty transactions, every one flagged 'malformed' -- which buries a
   # genuinely malformed row and puts 24 invented rows in the accountant's workbook.
   input <- read_input(fixture(FIXTURE_03))
-  templates <- load_templates(templates_dir())
-  p <- parse_statement(input, templates[["asb_everyday_csv"]])
+  t <- fixture_template("asb_everyday_csv")
+  p <- parse_statement(input, t)
   expect_equal(nrow(p$transactions), 2L)
   expect_true(all(p$transactions$flags == ""))
   # the omission is STATED, not silent, and excluded from the completeness proof
   # so it compares like with like.
   expect_equal(p$padding_line_count, 24L)
   expect_equal(p$source_line_count, 2L)
-  k <- reconcile(p, templates[["asb_everyday_csv"]])$kpis
+  k <- reconcile(p, t)$kpis
   expect_equal(k$status[k$name == "no_unparsed_rows"], "pass")
   expect_equal(k$status[k$name == "dates_readable"], "pass")
 })
@@ -139,27 +137,25 @@ test_that("the spreadsheet padding rows are not emitted as phantom transactions"
 
 FIXTURE_TDV <- "samples/raw/asb/asb_transaction_export_02.tdv"
 
-test_that("the tab-delimited ASB export detects as ASB with a full score", {
-  templates <- load_templates(templates_dir())
-  det <- detect_statement(read_input(fixture(FIXTURE_TDV)), templates)
-  expect_true(det$matched)
-  expect_identical(det$template_id, "asb_everyday_csv")
-  expect_gte(det$score, templates[["asb_everyday_csv"]]$min_score)
+test_that("the automatic reader reads the tab-delimited twin exactly as the comma one", {
+  tdv <- auto_read(read_input(fixture(FIXTURE_TDV)))
+  csv <- auto_read(read_input(fixture(FIXTURE)))
+  expect_identical(tdv$outcome, csv$outcome)
+  expect_identical(tdv$transactions, csv$transactions)
+  expect_identical(tdv$transactions$date, c("2014-12-20", "2014-12-21", "2014-12-22", "2014-12-23"))
 })
 
 test_that("the .tdv parses to the SAME golden table as its comma twin", {
   # the strongest statement of the guarantee: same statement, same separator-
   # independent result, compared against the golden the CSV already had.
-  expect_statement_ok(FIXTURE_TDV, EXPECTED,
-                      template_id = "asb_everyday_csv", bank = "ASB")
+  expect_statement_ok(FIXTURE_TDV, EXPECTED, template_id = "asb_everyday_csv")
 })
 
 test_that("the wrong separator can never 'sort of' work", {
   # resolve_delimiter must reject a candidate outright rather than fall back to a
   # partial split: a tab-delimited header split on commas is ONE field, which can
   # never carry all seven fingerprinted column names.
-  templates <- load_templates(templates_dir())
-  t <- templates[["asb_everyday_csv"]]
+  t <- fixture_template("asb_everyday_csv")
   hdr_tab   <- "Date\tUnique Id\tTran Type\tCheque Number\tPayee\tMemo\tAmount"
   hdr_comma <- "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount"
   expect_identical(resolve_delimiter(hdr_tab, t), "\t")

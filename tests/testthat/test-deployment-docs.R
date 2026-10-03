@@ -164,13 +164,19 @@ test_that("updating.md tells the truth about what a folder-replace keeps", {
   expect_match(txt, "params.R", fixed = TRUE)              # overwritten -- must be re-applied
 })
 
-# THE THREE LIVE-STATE FOLDERS, in one place. A page that stops naming one of
-# these is a page that stops telling somebody to protect it, and the failure is
-# silent in the way that matters: the update works, the app starts, and a year of
-# somebody's work is gone. Named here once so the assertions below cannot drift
-# apart from each other.
-.DEP_USER_DIRS <- c("templates\\statements_user", "templates\\fields_user",
-                    "templates\\documents_user")
+# THE LIVE-STATE FOLDERS, in one place: every bank layout the tool has learned
+# (paths$layouts), and the automatic-reading tracking the Admin page and the gate
+# are read from (paths$tracking). A page that stops naming one of these is a page
+# that stops telling somebody to protect it, and the failure is silent in the way
+# that matters: the update works, the app starts, and every layout learned since
+# the server went live is gone. Named here once so the assertions below cannot
+# drift apart from each other.
+.DEP_USER_DIRS <- c("templates\\layouts", "logs\\tracking")
+
+test_that("the live-state folders named here are the ones the engine writes", {
+  p <- .config_defaults()$paths
+  expect_setequal(gsub("\\\\", "/", .DEP_USER_DIRS), c(p$layouts, p$tracking))
+})
 
 test_that("the hand-copy page warns about the copy that overwrites taught words", {
   # The bundle is safe: bundle-offline.R renames dictionaries/*.yaml to
@@ -198,7 +204,7 @@ test_that("the hand-copy page warns about the copy that overwrites taught words"
 })
 
 test_that("a backup-and-restore procedure exists and names every irreplaceable path", {
-  # The three *_user folders, dictionaries/ and logs/metadata/ are the accumulated
+  # The learned layouts, dictionaries/ and logs/metadata/ are the accumulated
   # value of the tool and exist nowhere else; the only documented backup used to
   # be config.yaml, to the SAME machine. documents_user/ arrived with
   # mode: document and was missed here once -- a folder that is not in this list
@@ -313,18 +319,18 @@ test_that("the roadmap's local-ML item is gone and the audit records why", {
   expect_false(grepl("| 4 | **Local-ML learning loop**", road, fixed = TRUE))  # not in the backlog
   expect_match(road, "Killed - do not re-propose", fixed = TRUE)               # recorded, with the reason
   expect_false(grepl("local-ML loop (only once", road, fixed = TRUE))          # nor in the sequence
-  expect_match(road, "template_drift", fixed = TRUE)
+  expect_match(road, "layout_drift", fixed = TRUE)
   expect_match(road, "unsupported_clusters", fixed = TRUE)
 
   audit <- .dep_read("docs/context/engine-audit.md")
-  expect_match(audit, "SHIPPED (`template_drift()`", fixed = TRUE)
+  expect_match(audit, "SHIPPED (`layout_drift()`", fixed = TRUE)
   expect_match(audit, "SHIPPED (`unsupported_clusters()`", fixed = TRUE)
   expect_match(audit, "Parked", fixed = TRUE)
   expect_match(audit, "Template synthesis from two examples", fixed = TRUE)
   expect_match(audit, "second reader", fixed = TRUE)
 
   # ...and the functions the docs now cite really are there, deterministically.
-  expect_true(is.function(template_drift))
+  expect_true(is.function(layout_drift))
   expect_true(is.function(unsupported_clusters))
 })
 

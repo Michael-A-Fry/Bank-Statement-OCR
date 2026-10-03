@@ -14,18 +14,6 @@
   base
 }
 
-test_that("a statement dated outside the template's effective range is noted (P2-9)", {
-  parsed <- list(transactions = .mk_tx(1),
-                 header = list(period_start = "01/06/2025", period_end = "30/06/2025"))
-  tmpl <- list(id = "t", effective_from = "2018-01-01", effective_to = "2020-12-31")
-  d <- build_diagnostics("ok", parsed = parsed, metadata = list(template = tmpl))
-  expect_true(any(d$category == "date_out_of_range"))     # soft caution raised
-  # in-range -> no such note (a normal statement is unaffected).
-  tmpl2 <- list(id = "t", effective_from = "2018-01-01", effective_to = NULL)
-  d2 <- build_diagnostics("ok", parsed = parsed, metadata = list(template = tmpl2))
-  expect_false(any(d2$category == "date_out_of_range"))
-})
-
 test_that("failing KPIs map to actionable fixes, most severe first", {
   parsed <- list(transactions = .mk_tx(2, date = c("2025-01-01", "2025-01-02"),
                                        amount = c(-5, -5), flags = c("", "")))
@@ -42,10 +30,14 @@ test_that("failing KPIs map to actionable fixes, most severe first", {
   expect_equal(d$severity[1], "high")
 })
 
-test_that("unsupported and failed produce actionable diagnostics", {
-  du <- build_diagnostics("unsupported", det = list(detail = "closest bnz score 2/3"))
-  expect_equal(du$category, "unknown_format")
-  expect_match(du$how_to_fix, "toolkit", ignore.case = TRUE)
+test_that("unread, unproven and failed produce actionable diagnostics", {
+  du <- build_diagnostics("unsupported", reading = list(why = "No line on any page prints a date with a figure beside it."))
+  expect_equal(du$category, "not_read")
+  expect_match(du$detail, "No line on any page", fixed = TRUE)
+  expect_match(du$how_to_fix, "Please check", fixed = TRUE)
+  dn <- build_diagnostics("needs_review", reading = list(why = "2 different readings of the columns all fit the arithmetic."))
+  expect_equal(dn$category, "not_proven")
+  expect_equal(dn$fix_owner, "reading")
   df <- build_diagnostics("failed", messages = "cannot read file")
   expect_equal(df$category, "unreadable")
 })
@@ -60,45 +52,14 @@ test_that("malformed / unparsed rows are diagnosed", {
   expect_true(any(d$category == "amount_parse"))
 })
 
-# The Diagnostics table is customer-facing, and the unknown_format row printed the
-# detection LOG line into it: "closest anz_everyday_pdf score 2/3 (missing
-# 'Transaction type and details')". A template id and a fraction are exactly what
-# the operational guide tells the analyst to report as a bug when they appear on a
-# screen. Same evidence, in words; the id and the score stay in the run log.
-test_that("the unknown-layout diagnostic carries no template id and no score", {
-  out <- tempfile("diagplain_"); dir.create(out)
-  res <- convert_statement(fixture("samples/raw/anz/anz_card_summary_sample.pdf"),
-                           outdir = out, templates_dir = templates_dir(), logdir = out)
-  expect_identical(res$status, "unsupported")
-  d <- res$diagnostics
-  detail <- d$detail[d$category == "unknown_format"]
-  expect_length(detail, 1L)
-  expect_false(grepl("anz_creditcard_csv", detail, fixed = TRUE))   # no id
-  expect_false(grepl("score", detail, ignore.case = TRUE))          # no metric
-  expect_match(detail, "ANZ creditcard statement", fixed = TRUE)    # the human name
-  expect_match(detail, "TransactionDate", fixed = TRUE)             # the missing wording
-  # ...and the id + score are NOT lost -- they are in the run log, where they belong
-  expect_match(res$run_log$detect_detail, "anz_creditcard_csv", fixed = TRUE)
-  expect_match(res$run_log$detect_detail, "score", fixed = TRUE)
-})
-
-test_that("a caller that builds a det by hand still gets its detail through", {
-  # build_diagnostics has callers that assemble a det themselves (the batch audit,
-  # the tests above); they carry no detail_plain and must not lose their message.
-  d <- build_diagnostics("unsupported", det = list(detail = "closest bnz score 2/3"))
-  expect_equal(d$detail, "closest bnz score 2/3")
-})
-
-# A tie now converts, so the reviewer is holding figures from ONE of the tied
-# templates. The tie list alone does not say which -- and that is the first thing
-# needed to check the figures against the right template.
-test_that("the ambiguous-template diagnostic names the template that was used", {
-  d <- build_diagnostics("needs_review",
-    metadata = list(tied = c("a_csv", "b_csv"), tied_used = "a_csv"))
-  row <- d[d$category == "ambiguous_template", , drop = FALSE]
-  expect_equal(nrow(row), 1L)
-  expect_match(row$detail, "it was read with a_csv", fixed = TRUE)
-  expect_match(row$detail, "a_csv, b_csv", fixed = TRUE)
+test_that("a derived amount, a refused fix and a disputed bank are each said", {
+  d <- build_diagnostics("needs_review", reading = list(why = "x", derived = 2L, fix_error = "no such column",
+                                                        bank_why = "You picked ANZ, but...", bank_blocked = TRUE))
+  expect_true(all(c("derived_amounts", "fix_not_applied", "bank_check") %in% d$category))
+  expect_match(d$detail[d$category == "derived_amounts"], "2 amount", fixed = TRUE)
+  expect_equal(d$severity[d$category == "bank_check"], "medium")
+  d2 <- build_diagnostics("ok", reading = list(bank_why = "Using ANZ, as picked."))
+  expect_equal(d2$severity[d2$category == "bank_check"], "info")
 })
 
 test_that("clean statement yields a single 'none' diagnostic", {
@@ -114,8 +75,8 @@ test_that("clean statement yields a single 'none' diagnostic", {
 test_that("convert_statement attaches diagnostics and writes a Diagnostics sheet", {
   out <- tempfile("diag_out_")
   res <- convert_statement(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv"),
-                           bank = "Kiwibank", outdir = out,
-                           templates_dir = templates_dir(), logdir = tempfile("log_"))
+                           bank = "Kiwibank", outdir = out, logdir = tempfile("log_"),
+                           layouts_dir = tempfile("ly_"), tracking_dir = NA)
   expect_true(is.data.frame(res$diagnostics))
   skip_if_not(requireNamespace("openxlsx", quietly = TRUE))
   wb <- openxlsx::loadWorkbook(res$outputs[["xlsx"]])
@@ -134,7 +95,7 @@ test_that("an inverted-direction warning is its own category, not an unread-amou
                          recon = recon)
   expect_true("amount_direction" %in% d$category)
   expect_false("amount_parse" %in% d$category)
-  expect_equal(unname(.DIAG_FIX_OWNER[["amount_direction"]]), "template")
+  expect_equal(unname(.DIAG_FIX_OWNER[["amount_direction"]]), "reading")
   # ...and a genuinely unreadable amount still raises amount_parse
   d2 <- build_diagnostics("needs_review",
     parsed = list(transactions = .mk_tx(2, amount = c(-5, NA), flags = c("", ""))),
@@ -144,9 +105,9 @@ test_that("an inverted-direction warning is its own category, not an unread-amou
 })
 
 test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly", {
-  d <- build_diagnostics("unsupported", det = list(detail = "no match"))
+  d <- build_diagnostics("unsupported", reading = list(why = "no table"))
   expect_true("fix_owner" %in% names(d))
-  expect_equal(d$fix_owner[d$category == "unknown_format"], "template")
+  expect_equal(d$fix_owner[d$category == "not_read"], "reading")
   # a multi-statement bundle is an input fix
   d2 <- build_diagnostics("ok", parsed = list(transactions =
       data.frame(row_id=1L, date="2025-01-01", date_raw="x", description="a", amount=-1,
@@ -155,20 +116,19 @@ test_that("diagnostics carry a 'who fixes this' owner and it classifies sensibly
         other_party=NA_character_, type=NA_character_, currency="NZD", flags="",
         stringsAsFactors=FALSE)),
     recon = list(kpis=NULL),
-    metadata = list(multi = list(likely_multiple = TRUE, reasons = "2 periods")))
+    metadata = list(bundle_unsplit = TRUE, multi = list(likely_multiple = TRUE, reasons = "2 periods")))
   expect_equal(d2$fix_owner[d2$category == "multiple_statements"], "input")
-  expect_match(diag_fix_owner_label("template"), "toolkit")
+  expect_match(diag_fix_owner_label("reading"), "Please check")
   expect_match(diag_fix_owner_label("escalate"), "Developer")
 })
 
 # .diag_fix_owner used to be a switch() with a default of "escalate". Four live
 # categories had quietly fallen off the end of it and were being triaged as
 # "Developer - engine gap", the most expensive possible answer -- including
-# date_format_mismatch, whose own how-to-fix text tells the analyst to change the
-# template's date format in the toolkit. These pin the owners so the routing
-# cannot drift back.
+# date_format_mismatch, whose own how-to-fix text sends the analyst to check the
+# dates. These pin the owners so the routing cannot drift back.
 test_that("categories that a person can fix are NOT triaged as an engine gap", {
-  expect_equal(.diag_fix_owner("date_format_mismatch"), "template")  # fix it in the toolkit
+  expect_equal(.diag_fix_owner("date_format_mismatch"), "reading")   # check it on Please check
   expect_equal(.diag_fix_owner("scanned_no_ocr"), "input")           # rescan / install OCR
   expect_equal(.diag_fix_owner("ocr_confidence_unknown"), "input")   # rescan / check the image
   # ...and the one that genuinely IS a maintainer's problem still says so: the
@@ -200,29 +160,24 @@ test_that("every diagnostic category has a declared owner, and none is dead", {
   expect_equal(sort(setdiff(names(.DIAG_FIX_OWNER), raised)), character(0))
   # every owner is one of the five the label map can render
   expect_true(all(.DIAG_FIX_OWNER %in%
-    c("template", "input", "review", "none", "escalate")))
+    c("reading", "input", "review", "none", "escalate")))
   expect_false(any(is.na(diag_fix_owner_label(unname(.DIAG_FIX_OWNER)))))
 })
 
-# A scan we could not machine-read must never be reported as an unknown layout.
-# With no text and no word boxes every template scores 0, so the generic
-# "no template matched -- closest X, missing 'TransactionDate'" message used to
-# fire and send the analyst to build a template for a page with no readable text.
+# A scan we could not machine-read must never be reported as a reading to check:
+# with no text there is nothing to set roles on.
 test_that("a scan with no OCR tooling says so, and names the admin fix (#54)", {
-  det <- list(matched = FALSE, template_id = NA_character_,
-              detail = "closest anz_creditcard_csv score 0/4 (missing 'TransactionDate')")
-  d <- build_diagnostics("unsupported", det = det,
+  d <- build_diagnostics("unsupported", reading = list(why = "The PDF has no readable text on any page."),
          metadata = list(scanned_no_ocr = 3L, ocr_tools = FALSE))
   expect_true("scanned_no_ocr" %in% d$category)
-  expect_false("unknown_format" %in% d$category)          # the misleading line is suppressed
+  expect_false("not_read" %in% d$category)                # the misleading line is suppressed
   row <- d[d$category == "scanned_no_ocr", , drop = FALSE]
   expect_match(row$detail[1], "scan")
   expect_match(row$how_to_fix[1], "Tesseract")            # names the actual cause
-  expect_match(row$how_to_fix[1], "NOT help")             # and stops the wild goose chase
 })
 
 test_that("a scan WITH OCR tooling blames quality, not the install (#54)", {
-  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "x"),
+  d <- build_diagnostics("unsupported", reading = list(why = "x"),
          metadata = list(scanned_no_ocr = 1L, ocr_tools = TRUE))
   row <- d[d$category == "scanned_no_ocr", , drop = FALSE]
   expect_equal(nrow(row), 1L)
@@ -280,14 +235,14 @@ test_that("a bank's own statement engine raises nothing (#46 noise guard)", {
   expect_equal(d2$category, "none")
 })
 
-test_that("provenance is reported even when no template matched (#46)", {
-  # An unrecognised file is exactly when "what wrote this?" is worth knowing.
-  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
+test_that("provenance is reported even when nothing was read (#46)", {
+  # An unreadable statement is exactly when "what wrote this?" is worth knowing.
+  d <- build_diagnostics("unsupported", reading = list(why = "no table"),
          metadata = list(pdf_doc = .mk_doc(producer = "Ghostscript 9.55",
                                            created = "2020-01-01 00:00:00",
                                            modified = "2020-01-01 00:00:00")))
   expect_true("document_provenance" %in% d$category)
-  expect_true("unknown_format" %in% d$category)   # the real problem still leads
+  expect_true("not_read" %in% d$category)         # the real problem still leads
   expect_equal(d$severity[1], "high")             # info never outranks it
 })
 
@@ -320,9 +275,9 @@ test_that("provenance also reaches diagnostics from the parsed header (#46)", {
   expect_true("document_provenance" %in% d$category)
 })
 
-test_that("an ordinary unsupported layout still gets the template advice (#54 guard)", {
-  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
+test_that("an ordinary unread statement still gets the Please check advice (#54 guard)", {
+  d <- build_diagnostics("unsupported", reading = list(why = "no table"),
          metadata = list(scanned_no_ocr = 0L, ocr_tools = TRUE))
-  expect_true("unknown_format" %in% d$category)
+  expect_true("not_read" %in% d$category)
   expect_false("scanned_no_ocr" %in% d$category)
 })

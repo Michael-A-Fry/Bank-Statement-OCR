@@ -5,7 +5,7 @@
 # never crash the whole statement.
 
 .bnz_tmpl <- function() {
-  load_templates(templates_dir())[["bnz_everyday_csv"]]
+  fixture_templates()[["bnz_everyday_csv"]]
 }
 
 test_that("safe_readlines transcodes non-UTF-8 input, keeping descriptions verbatim (P2-5)", {

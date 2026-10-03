@@ -4,8 +4,8 @@
 # .normalise_date_str(s) -- fold the human spellings of a date onto the canonical
 # form the strptime codes expect. For PARSING/DETECTION ONLY -- the raw cell is
 # always kept verbatim elsewhere. This is the SINGLE source of truth shared by
-# parse_date and the wizard's detect_date_format, so the reader and the detector
-# can never disagree about what a date looks like. It:
+# parse_date and the automatic reader's date typing, so the two can never disagree
+# about what a date looks like. It:
 #   * drops a leading weekday word     "Tuesday 12 October" -> "12 October"
 #   * drops ordinal suffixes           "12th October" / "21st" -> "12 October" / "21"
 #   * drops the connective "of"        "12 of October" -> "12 October"
@@ -355,4 +355,124 @@ parse_amount <- function(x, style = "signed", opts = list()) {
 # apostrophes, ampersands, unicode, or any interior character.
 clean_description <- function(x) {
   trimws(as.character(x))
+}
+
+# ---- vocabularies the table reader and the lexicon share -------------------------
+
+# Candidate date formats: strptime code, plain label, and a shape regex so a
+# 2-digit year is never mistaken for a 4-digit one. Ordered by auto-detect
+# priority: unambiguous / year-bearing forms first, the ambiguous US order after
+# the day/month default, and the YEAR-LESS forms ("2 Dec") last -- those take the
+# year from the statement period (works on PDF statements; see parse_pdf_table).
+wd_date_table <- function() list(
+  # numeric, with a year
+  list(fmt = "%d/%m/%Y", label = "31/12/2025  (day/month/year)",             rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$"),
+  list(fmt = "%d/%m/%y", label = "31/12/25  (day/month/2-digit year)",       rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{2}$"),
+  list(fmt = "%Y-%m-%d", label = "2025-12-31  (year-month-day, ISO)",        rx = "^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$"),
+  list(fmt = "%d-%m-%Y", label = "31-12-2025  (day-month-year)",             rx = "^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$"),
+  list(fmt = "%d-%m-%y", label = "31-12-25  (day-month-2-digit year)",       rx = "^[0-9]{1,2}-[0-9]{1,2}-[0-9]{2}$"),
+  list(fmt = "%d.%m.%Y", label = "31.12.2025  (day.month.year)",             rx = "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{4}$"),
+  list(fmt = "%d.%m.%y", label = "31.12.25  (day.month.2-digit year)",       rx = "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{2}$"),
+  list(fmt = "%Y/%m/%d", label = "2025/12/31  (year/month/day)",             rx = "^[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}$"),
+  list(fmt = "%m/%d/%Y", label = "12/31/2025  (US month/day/year)",          rx = "^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$"),
+  # month-name, with a year
+  list(fmt = "%d %b %Y", label = "31 Dec 2025  (day month-name year)",       rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{4}$"),
+  list(fmt = "%d %B %Y", label = "31 December 2025  (day full-month year)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{4}$"),
+  list(fmt = "%d %b %y", label = "31 Dec 25  (day month-name 2-digit year)", rx = "^[0-9]{1,2} [A-Za-z]{3,9} [0-9]{2}$"),
+  list(fmt = "%d-%b-%Y", label = "31-Dec-2025  (day-month-name-year)",       rx = "^[0-9]{1,2}-[A-Za-z]{3,9}-[0-9]{4}$"),
+  list(fmt = "%b %d, %Y", label = "Dec 31, 2025  (US month-name day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
+  list(fmt = "%B %d, %Y", label = "December 31, 2025  (US full-month day, year)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}, ?[0-9]{4}$"),
+  # YEAR-LESS: the year comes from the statement period, not the cell. Ordinal
+  # suffixes ("12th"), a leading weekday ("Tue 12 Oct") and the connective "of"
+  # ("12 of October") are folded away by .normalise_date_str before these match,
+  # so "12th October" and "12 October" are the same format to the tool.
+  list(fmt = "%d %b", label = "2 Dec  (day + month-name, e.g. 12th October; year from the statement)",  rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
+  list(fmt = "%d %B", label = "2 December  (day + full month; year from the statement)", rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
+  list(fmt = "%b %d", label = "Oct 12  (month-name + day; year from the statement)",   rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
+  list(fmt = "%B %d", label = "October 12  (full month + day; year from the statement)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
+  list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE)
+)
+
+# Field-name patterns: the words a spreadsheet heading uses for each canonical
+# field. Kept as the lexicon's built-in `field_name_patterns` (R/lexicon.R).
+wd_field_patterns <- function() list(
+  # Kept deliberately conservative: word-bounded or exact where a loose match
+  # could hit the wrong column ("Money In" must not become the amount).
+  date = "date|\\bday\\b", amount = "amount|value|^money$|^sum$",
+  description = "payee|description|details|memo|narrative|narration",
+  particulars = "particulars", code = "^code$|analysis",
+  reference = "reference|unique", type = "type",
+  other_party = "other party|counterparty", balance = "balance|^running$"
+)
+
+# The lexicon's built-in `fingerprint_brand_words` (R/lexicon.R): bank and product
+# words that name the issuer rather than a customer.
+.FP_BRAND_DEFAULT <- c("bank", "card", "mastercard", "visa", "amex", "eftpos",
+  "account", "statement", "everyday", "savings", "cheque", "current", "credit",
+  "debit", "platinum", "gold", "classic", "standard", "airpoints", "rewards",
+  "business", "personal", "transaction", "summary", "loan", "mortgage",
+  "kiwibank", "westpac", "anz", "asb", "bnz", "tsb", "sbs", "rabobank",
+  "heartland", "co-operative", "cooperative")
+
+# ---- a template's own choices, resolved against the file ----------------------------
+
+# resolve_date_format(values, formats) -> the ONE declared format that reads EVERY
+# non-empty value, or NA_character_ when none of them does.
+#
+# WHY a template may declare a LIST of candidate formats: the same bank, the same
+# export, the same header row -- and two different date styles across eras. ASB's
+# FastNet CSV writes "2014/12/20" in one export and "13/10/2025" in another, so
+# pinning one format made the other detect confidently and then return EVERY date
+# NA (dates_readable = fail).
+#
+# WHY it is all-or-nothing: reading some rows under one format and the rest under
+# another is precisely the silently-wrong outcome the charter forbids -- "13/10"
+# and "10/13" are both readable, and a per-row mixture would swap day and month
+# with nothing to show for it. So a candidate only wins if it reads the WHOLE
+# column, the first such candidate (declaration order) wins so the result is
+# deterministic, and "none of them fits" returns NA so the caller fails closed
+# rather than guessing.
+resolve_date_format <- function(values, formats) {
+  fmts <- trimws(as.character(unlist(formats %||% character(0))))
+  fmts <- fmts[!is.na(fmts) & nzchar(fmts)]
+  if (!length(fmts)) return(NA_character_)
+  if (length(fmts) == 1L) return(fmts[1])       # the ordinary case, behaviour unchanged
+  v <- as.character(unlist(values))
+  v <- v[!is.na(v) & nzchar(trimws(v))]
+  if (!length(v)) return(fmts[1])               # nothing to judge on -> as declared
+  for (f in fmts) if (all(!is.na(parse_date(v, f)$iso))) return(f)
+  NA_character_
+}
+
+# resolve_delimiter(header_line, template) -> the ONE declared delimiter to read
+# this file with. Like the date format above, a template MAY declare a LIST -- the
+# same bank publishing the same export as CSV and as tab-delimited (ASB FastNet
+# ships both: asb_transaction_export_01.csv and asb_transaction_export_02.tdv,
+# byte-identical layout, different separator). Pinning one meant the other's header
+# never split into columns at all, so it scored 0 and came back "unsupported".
+#
+# THE ALL-OR-NOTHING RULE, and why it is this one: a candidate wins only if the
+# header row, split by it, contains EVERY column name the template's fingerprint
+# names. Splitting a tab-delimited line on commas yields ONE field, so it can never
+# satisfy that -- the wrong separator is rejected outright rather than "sort of"
+# working. The test deliberately looks at the HEADER ONLY: making it depend on the
+# data rows would let a single ragged row (which the reader is built to isolate and
+# flag) reject the correct delimiter and pick a catastrophic one. When no candidate
+# satisfies it, the FIRST declared delimiter is used, so a file the template does
+# not fit reads badly and fails its checks rather than reading half right.
+# A single declared delimiter short-circuits: every existing template is untouched.
+resolve_delimiter <- function(header_line, template) {
+  d <- as.character(unlist(template$delimiter %||% ","))
+  d <- d[!is.na(d) & nzchar(d)]
+  if (!length(d)) return(",")
+  if (length(d) == 1L) return(d[1])            # the ordinary case, behaviour unchanged
+  need <- trimws(as.character(unlist(template$fingerprint$header_contains_all %||% character(0))))
+  need <- need[!is.na(need) & nzchar(need)]
+  hl <- as.character(header_line)[1]
+  if (!length(need) || is.na(hl) || !nzchar(hl)) return(d[1])
+  for (delim in d) {
+    fields <- trimws(as.character(.record_fields(hl, delim)))
+    if (all(tolower(need) %in% tolower(fields))) return(delim)
+  }
+  d[1]
 }

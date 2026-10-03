@@ -4,8 +4,10 @@ test_that("load_config returns complete defaults when no file is present", {
   old <- Sys.getenv("BSO_ADMIN_PASSWORD"); Sys.unsetenv("BSO_ADMIN_PASSWORD")
   on.exit(if (nzchar(old)) Sys.setenv(BSO_ADMIN_PASSWORD = old))
   cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  expect_equal(cfg$paths$templates, "templates/statements")
-  expect_equal(cfg$paths$user_templates, "templates/statements_user")
+  expect_equal(cfg$paths$layouts, "templates/layouts")
+  expect_equal(cfg$paths$tracking, "logs/tracking")
+  expect_equal(cfg$auto_reading$spot_check_rate, 0)   # spot checks off by default
+  expect_null(cfg$paths$templates)                     # statement templates are gone
   expect_equal(cfg$app$admin_password, "changeme")
   expect_true(isTRUE(cfg$feed$enabled))          # feed on by default
 })
@@ -17,13 +19,16 @@ test_that("a partial config file deep-merges over the defaults", {
   writeLines(c("app:",
                "  admin_password: s3cret",
                "paths:",
-               "  templates: proven_only"), p)
+               "  layouts: D:/learned",
+               "auto_reading:",
+               "  spot_check_rate: 0.05"), p)
   cfg <- load_config(p)
   expect_equal(cfg$app$admin_password, "s3cret")            # overridden
-  expect_equal(cfg$paths$templates, "proven_only")          # overridden
+  expect_equal(cfg$paths$layouts, "D:/learned")             # overridden
+  expect_equal(cfg$auto_reading$spot_check_rate, 0.05)      # overridden
   expect_equal(cfg$paths$logs, "logs")                      # default preserved
   expect_equal(cfg$app$title, "Statement Studio")           # default preserved
-  expect_equal(cfg$feed$min_trust, "medium")                # default feed gate preserved
+  expect_true(isTRUE(cfg$feed$enabled))                     # default feed preserved
 })
 
 test_that("the BSO_ADMIN_PASSWORD env var overrides the file", {
@@ -38,38 +43,9 @@ test_that("the bundled example config is valid YAML and parses", {
   ex <- fixture("config/config.example.yaml")
   skip_if_not(file.exists(ex))
   cfg <- load_config(ex)
-  expect_equal(cfg$paths$templates, "templates/statements")
+  expect_equal(cfg$paths$layouts, "templates/layouts")
+  expect_equal(cfg$auto_reading$spot_check_rate, 0)
   expect_equal(cfg$app$port, 8100)
-})
-
-# ---------------------------------------------------------------------------
-# #18 -- a template built in the app must actually take part in detection.
-# The product's central promise ("build it once, that bank converts automatically
-# from then on") is FALSE whenever this default is off, because the only opt-in is
-# a tick-box buried in a collapsed "It picked the wrong bank?" panel. Governance is
-# not what this switch protects: what reaches Qlik is gated on template ORIGIN in
-# R/feed.R, which this does not touch.
-test_that("templates built in the app are included in detection by default (#18)", {
-  old <- Sys.getenv("BSO_ADMIN_PASSWORD"); Sys.unsetenv("BSO_ADMIN_PASSWORD")
-  on.exit(if (nzchar(old)) Sys.setenv(BSO_ADMIN_PASSWORD = old))
-  cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  expect_true(isTRUE(cfg$app$user_templates_default))
-  # ...and the Qlik gate is untouched by it: proven templates only, as before.
-  expect_identical(unlist(cfg$feed$allowed_template_origins), "default")
-})
-
-test_that("the shipped default agrees with what the UI copy promises (#18)", {
-  ui <- fixture("ui_content.R")
-  skip_if_not(file.exists(ui))
-  txt <- paste(readLines(ui, warn = FALSE), collapse = " ")
-  promised <- grepl("converts automatically", txt) || grepl("just works", txt)
-  cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  if (promised) expect_true(isTRUE(cfg$app$user_templates_default))
-  # the example file must not quietly contradict the built-in default either
-  ex <- fixture("config/config.example.yaml")
-  skip_if_not(file.exists(ex))
-  expect_identical(isTRUE(load_config(ex)$app$user_templates_default),
-                   isTRUE(cfg$app$user_templates_default))
 })
 
 # ---------------------------------------------------------------------------
@@ -152,17 +128,15 @@ test_that("upload retention is a config key with a finite default", {
 # logical reads as FALSE -- and in YAML `'true'`, `"yes"` and `1` are a string or
 # a number. Quoting a value is the most ordinary thing a person editing YAML in
 # Notepad does, and it silently moved the deployment to the WEAKER reading:
-# feed.require_status_ok off publishes unreconciled figures, feed.enabled off
-# stops the dashboards gaining data at all. Neither said anything.
+# feed.enabled off stops the dashboards gaining data at all, and nothing said so.
 # ---------------------------------------------------------------------------
 
 test_that("yes/no settings survive being quoted, and never fail to the weaker reading", {
   p <- file.path(tempdir(), "cfg_flags.yaml")
-  writeLines(c("feed:", "  enabled: 'true'", "  require_status_ok: \"yes\"",
-               "  include_review_feed: 1", "app:", "  user_templates_default: 'on'"), p)
+  writeLines(c("feed:", "  enabled: 'true'", "  include_review_feed: 1",
+               "metadata:", "  retain_forever: \"yes\""), p)
   cfg <- load_config(p, refresh = TRUE)
-  for (v in list(cfg$feed$enabled, cfg$feed$require_status_ok,
-                 cfg$feed$include_review_feed, cfg$app$user_templates_default)) {
+  for (v in list(cfg$feed$enabled, cfg$feed$include_review_feed, cfg$metadata$retain_forever)) {
     expect_true(is.logical(v))
     expect_true(isTRUE(v))
   }
@@ -171,25 +145,22 @@ test_that("yes/no settings survive being quoted, and never fail to the weaker re
 
 test_that("a real off is still off, in every spelling", {
   p <- file.path(tempdir(), "cfg_flags_off.yaml")
-  writeLines(c("feed:", "  enabled: false", "  require_status_ok: 'no'",
-               "  include_review_feed: 0"), p)
+  writeLines(c("feed:", "  enabled: false", "  include_review_feed: 'no'"), p)
   cfg <- load_config(p, refresh = TRUE)
   expect_false(cfg$feed$enabled)
-  expect_false(cfg$feed$require_status_ok)
   expect_false(cfg$feed$include_review_feed)
   expect_null(config_error(cfg))
 })
 
 test_that("a yes/no setting that is neither keeps the default AND says so", {
   p <- file.path(tempdir(), "cfg_flags_junk.yaml")
-  writeLines(c("feed:", "  require_status_ok: maybe"), p)
+  writeLines(c("feed:", "  enabled: maybe"), p)
   cfg <- load_config(p, refresh = TRUE)
-  # the built-in default is TRUE, and the SAFE reading is the one that keeps the
-  # gate on -- guessing "off" would publish unreconciled figures on a typo.
-  expect_true(cfg$feed$require_status_ok)
+  # the built-in default is in force, never a guess
+  expect_true(cfg$feed$enabled)
   err <- config_error(cfg)
   expect_false(is.null(err))
-  expect_match(err, "feed.require_status_ok")
+  expect_match(err, "feed.enabled")
   expect_match(err, "not yes or no")
 })
 
@@ -204,185 +175,43 @@ test_that("a settings SECTION of the wrong shape does not stop the app starting"
     cfg <- expect_no_error(load_config(p, refresh = TRUE))
     expect_true(is.list(cfg$app)); expect_true(is.list(cfg$feed))
     expect_identical(cfg$app$admin_password, .DEFAULT_ADMIN_PASSWORD)
-    expect_true(cfg$feed$require_status_ok)          # governance back at its default
+    expect_true(cfg$feed$enabled)                    # back at its default
     expect_match(config_error(cfg) %||% "", "not a group of settings")
   }
 })
 
 # ---------------------------------------------------------------------------
-# MOVING SEVEN FOLDERS ON A SERVER NOBODY LOGS INTO
-#
-# The consolidation is free in a repository and not free under a deployment: two
-# of the folders hold every bank layout and every report puller somebody built on
-# the box, and they exist nowhere else. The code does the move so a person does
-# not have to, which means the code has to be the careful one.
-# ---------------------------------------------------------------------------
-
-.mig_fake <- function() {
-  root <- tempfile("mig"); dir.create(root)
-  for (d in c("templates", "templates_user", "templates_seed"))
-    dir.create(file.path(root, d), recursive = TRUE)
-  w <- function(rel, txt = "id: x") writeLines(txt, file.path(root, rel))
-  w("templates/anz.yaml"); w("templates/asb.yaml")
-  w("templates_user/beth_bank.yaml")
-  w("templates_seed/anz_loan.yaml")
-  root
-}
-
-test_that("every old template folder is moved under templates/", {
-  root <- .mig_fake()
-  said <- migrate_template_layout(root)
-  expect_gt(length(said), 0)
-  for (p in c("templates/statements/anz.yaml", "templates/statements/asb.yaml",
-              "templates/statements_user/beth_bank.yaml",
-              "templates/statements_seed/anz_loan.yaml"))
-    expect_true(file.exists(file.path(root, p)), info = p)
-  # and nothing is left in the old places
-  expect_false(file.exists(file.path(root, "templates_user/beth_bank.yaml")))
-})
-
-test_that("running it again does nothing and says nothing", {
-  root <- .mig_fake()
-  migrate_template_layout(root)
-  expect_identical(migrate_template_layout(root), character(0))
-  # a folder that never had the old layout is silent from the start
-  fresh <- tempfile("fresh"); dir.create(file.path(fresh, "templates", "statements"),
-                                         recursive = TRUE)
-  expect_identical(migrate_template_layout(fresh), character(0))
-})
-
-test_that("a name clash is left alone and SAID, never resolved silently", {
-  # The destination file is somebody's work too. Overwriting it to finish a tidy-up
-  # is the one outcome nothing can undo, so the move refuses and reports instead --
-  # every time it runs, until a person deals with it.
-  root <- .mig_fake()
-  dir.create(file.path(root, "templates", "statements_user"), recursive = TRUE)
-  writeLines("id: already here", file.path(root, "templates", "statements_user",
-                                           "beth_bank.yaml"))
-  said <- migrate_template_layout(root)
-  expect_true(any(grepl("LEFT IN PLACE", said, fixed = TRUE)))
-  expect_true(any(grepl("beth_bank.yaml", said, fixed = TRUE)))
-  expect_equal(readLines(file.path(root, "templates", "statements_user",
-                                   "beth_bank.yaml")), "id: already here")
-  expect_true(file.exists(file.path(root, "templates_user", "beth_bank.yaml")))
-  expect_true(any(grepl("LEFT IN PLACE", migrate_template_layout(root), fixed = TRUE)))
-})
-
-test_that("an emptied folder is left with a note in it, not deleted", {
-  # Somebody will go looking for templates_user\. Finding nothing reads as "my
-  # templates are gone"; finding a sentence reads as "they moved".
-  root <- .mig_fake()
-  migrate_template_layout(root)
-  note <- file.path(root, "templates_user", "MOVED.txt")
-  expect_true(file.exists(note))
-  expect_match(paste(readLines(note), collapse = "\n"),
-               "templates\\statements_user\\", fixed = TRUE)
-  # the emptied folder itself survives the move, so the note can be found in it
-  expect_true(dir.exists(file.path(root, "templates_user")))
-})
-
-test_that("a settings file naming the old folders is read as naming the new ones", {
-  # The file WINS over the defaults -- that is the point of a settings file, and
-  # here it would be a trap: the folders have moved, so a config still saying
-  # templates_user would point at an empty one and every template the team built
-  # would vanish from the app with nothing said.
-  d <- tempfile("cfg"); dir.create(d)
-  p <- file.path(d, "config.yaml")
-  writeLines(c("paths:", "  templates: templates",
-               "  user_templates: templates_user"), p)
-  cfg <- load_config(p)
-  expect_equal(cfg$paths$templates, "templates/statements")
-  expect_equal(cfg$paths$user_templates, "templates/statements_user")
-})
-
-test_that("a path somebody chose on purpose is never rewritten", {
-  d <- tempfile("cfg2"); dir.create(d)
-  p <- file.path(d, "config.yaml")
-  writeLines(c("paths:", "  user_templates: D:\\shared\\team_templates"), p)
-  expect_equal(load_config(p)$paths$user_templates, "D:\\shared\\team_templates")
-})
-
-# ---------------------------------------------------------------------------
-# K3: THE TWO SETTINGS THAT DECIDE WHAT REACHES QLIK WERE NEVER VALIDATED.
-#
-# Coercion covered five booleans. feed.min_trust and feed.allowed_template_origins
-# had no check at all, and both fail closed -- which is right -- SILENTLY, which is
-# not. Measured before the fix: `min_trust: meduim` fell through .trust_ok()'s
-# switch() to its high-only branch, so every clean medium statement was withheld
-# and the dashboards went flat; `allowed_template_origins: [Default]` returned
-# withheld:not_proven on every conversion because the gate compares against the
-# lowercase "default" it stamps itself. Nothing said either. Admin reported the
-# runs in green as handled as intended.
-test_that("a misspelt feed setting keeps the built-in default AND is reported", {
+# A word setting that is not one of its words keeps the built-in default AND is
+# reported, in the banner the startup warning and Admin already shout.
+test_that("a misspelt word setting keeps the built-in default AND is reported", {
   p <- tempfile(fileext = ".yaml")
-  writeLines(c("feed:", "  min_trust: meduim"), p)
+  writeLines(c("metadata:", "  level: ful"), p)
   cfg <- load_config(p)
-  # the built-in default is in force -- never the weaker reading
-  expect_identical(cfg$feed$min_trust, "medium")
-  expect_true(.trust_ok("medium", cfg$feed$min_trust))
-  # ...and it is SAID, in the banner the startup warning and Admin already shout
+  expect_identical(cfg$metadata$level, "full")
   err <- config_error(cfg)
   expect_false(is.null(err))
-  expect_match(err, "feed.min_trust", fixed = TRUE)
-  expect_match(err, "high, medium or any", fixed = TRUE)
-  # a proven, clean, medium statement reaches the dashboard again
-  g <- .feed_gate(list(status = "ok", trust = list(level = "medium"), template_id = "t"),
-                  cfg, proven = TRUE)
-  expect_identical(g$reason, "accepted")
+  expect_match(err, "metadata.level", fixed = TRUE)
+  # ...and one only in the wrong CASE is simply read, and stays silent
+  writeLines(c("metadata:", "  level: Standard"), p)
+  cfg2 <- load_config(p, refresh = TRUE)
+  expect_identical(cfg2$metadata$level, "standard")
+  expect_null(config_error(cfg2))
 })
 
-test_that("an unrecognised template origin keeps the default and is reported", {
-  p <- tempfile(fileext = ".yaml")
-  writeLines(c("feed:", "  allowed_template_origins: [defualt]"), p)
-  cfg <- load_config(p)
-  expect_identical(unlist(cfg$feed$allowed_template_origins), "default")
-  expect_match(config_error(cfg), "allowed_template_origins", fixed = TRUE)
-})
-
-# A value that is only in the wrong CASE is not a mistake anybody needs telling
-# about -- nobody meant anything else by `Default` -- so it is simply read, and
-# the banner stays quiet.
-test_that("an origin typed in the wrong case is read, not refused, and stays silent", {
-  p <- tempfile(fileext = ".yaml")
-  writeLines(c("feed:", "  min_trust: HIGH", "  allowed_template_origins: [Default, User]"), p)
-  cfg <- load_config(p)
-  expect_identical(cfg$feed$min_trust, "high")
-  expect_setequal(unlist(cfg$feed$allowed_template_origins), c("default", "user"))
-  expect_null(config_error(cfg))
-  g <- .feed_gate(list(status = "ok", trust = list(level = "high"), template_id = "t"),
-                  cfg, proven = TRUE)
-  expect_identical(g$reason, "accepted")
-})
-
-test_that("a settings file with nothing wrong in it says nothing at all", {
-  p <- tempfile(fileext = ".yaml")
-  writeLines(c("feed:", "  min_trust: any", "  enabled: true",
-               "metadata:", "  level: standard"), p)
-  cfg <- load_config(p)
-  expect_null(config_error(cfg))
-  expect_identical(cfg$feed$min_trust, "any")
-  expect_identical(cfg$metadata$level, "standard")
-})
-
-# The boolean and the enum faults are reported TOGETHER, in one banner, because
-# an operator fixing a settings file wants every reason at once.
 test_that("bad yes/no values and bad word values are reported in the one sentence", {
   p <- tempfile(fileext = ".yaml")
-  writeLines(c("feed:", "  enabled: 'sometimes'", "  min_trust: meduim"), p)
+  writeLines(c("feed:", "  enabled: 'sometimes'", "metadata:", "  level: meduim"), p)
   cfg <- load_config(p)
   err <- config_error(cfg)
   expect_match(err, "feed.enabled", fixed = TRUE)
-  expect_match(err, "feed.min_trust", fixed = TRUE)
+  expect_match(err, "metadata.level", fixed = TRUE)
   expect_true(isTRUE(cfg$feed$enabled))          # both back to the built-in default
-  expect_identical(cfg$feed$min_trust, "medium")
+  expect_identical(cfg$metadata$level, "full")
 })
 
 # ---------------------------------------------------------------------------
-# K4: ALL THREE TEMPLATE SAVERS DID A BARE write_yaml -- no backup, no atomic
-# write, no way back from one bad save. The DICTIONARIES have had a .bak on every
-# save for a long time; templates, which backup-and-restore.md calls "the
-# accumulated value of the tool" and which exist nowhere else on an offline box,
-# got nothing.
+# K4: a YAML save must never cost what it replaces: a backup, an atomic write,
+# and a way back from one bad save (dictionaries, a person's held fix).
 test_that("save_yaml_safely keeps the previous version and never leaves a part file", {
   d <- tempfile("sv_"); dir.create(d)
   on.exit(unlink(d, recursive = TRUE), add = TRUE)
@@ -397,10 +226,9 @@ test_that("save_yaml_safely keeps the previous version and never leaves a part f
   expect_equal(length(list.files(d, pattern = "part")), 0L)
 })
 
-# The backup and the temp file must be invisible to every template loader, or a
-# save would double the library and a half-written file could be read as a
-# template. All three loaders list "*.yaml"/"*.yml".
-test_that("neither the backup nor the temp file can ever be loaded as a template", {
+# The backup and the temp file must be invisible to anything listing "*.yaml", or
+# a half-written file could be read as the real one.
+test_that("neither the backup nor the temp file can ever be listed as a YAML file", {
   d <- tempfile("sv2_"); dir.create(d)
   on.exit(unlink(d, recursive = TRUE), add = TRUE)
   p <- file.path(d, "acme.yaml")

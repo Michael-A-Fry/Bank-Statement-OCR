@@ -1,33 +1,25 @@
-# templates\ — every template, in one place
+# templates\ - the bank layouts the tool has learned
 
-A **template** is what tells the tool how to read one bank statement layout:
-where the columns are, what the dates look like, which words identify it.
-Nothing here is code. Every file is a `.yaml` an analyst can read, and almost all
-of them are written by the app rather than by hand.
+Statement templates are gone. The tool now reads every statement from its
+**content** and proves the reading with the statement's own arithmetic (the
+running balance; opening plus movements equals closing). Nobody draws columns or
+picks a template any more: you pick the **bank** (the tool pre-fills it from the
+statement) and convert.
 
-There are three folders and they answer one question: **who wrote the template**.
+What the tool remembers about each bank lives here, in `layouts\`:
 
-| Folder | Who | Rules |
+| Folder | What | Rules |
 |---|---|---|
-| `statements\` | **The team.** Curated, tested, shipped in the package. | A template here must be valid: an invalid one is a hard error, not a skip. This is the only folder that feeds the Qlik dashboards. |
-| `statements_user\` | **Whoever built it in the app**, on the box. | Never overwritten by an update. Never reaches Qlik. An invalid one is skipped with a reason, so a single bad file cannot stop everybody else converting. **Irreplaceable — back these up** (`..\docs\operational\backup-and-restore.md`). |
-| `statements_seed\` | Nobody yet. **Unfinished skeletons**, positions not set. | **Not loaded by the app at all.** A seed is a head start for a person, not a template. |
+| `layouts\<bank>\` | **Learned layouts**, one folder per bank. Each file is one version of one layout: `<bank>_<n>@v<version>.yaml`. | Written by the tool, never by hand. A layout starts **provisional** and becomes **proven** after three statements prove themselves (or an admin confirms it). A change never edits a file: it writes the next version, so every output can be traced to exactly what had been learned when it was made. **Irreplaceable - back it up** with the logs (`..\docs\operational\backup-and-restore.md`). |
+| `layouts\.pending\` | A person's fix the arithmetic could not prove, held for an admin to confirm or discard. | Never read as a layout. Applies to the one file it was made on until an admin confirms it. |
 
-A curated template always wins an id clash, so a user template can never quietly
-shadow a team-blessed one.
+The folder is created the first time a statement is learned, so a fresh install
+has only this README. Where it lives is the `paths: layouts:` setting in
+`config\config.yaml`.
 
-## Promoting one
+An admin can confirm, rename or retire any learned layout on **Admin -> Banks**;
+retiring keeps the files, so nothing already issued changes.
 
-Move the `.yaml` up from `statements_user\` into `statements\`, and add a golden
-test in the same move: only `statements\` feeds the dashboards, and a template
-dropped in there without a test fails the suite on purpose.
-
-- The recipe: `..\tests\HOWTO-add-template-test.md`
-- Who does it, and what to check first:
-  `..\docs\operational\maintaining-the-engine.md` §3
-
-## Which folder does a change go in?
-
-Almost never one you edit by hand. Templates are built on the app's **Add a
-template** tab and saved into `statements_user\` for you. Editing the YAML
-directly is the maintainer's path, not the analyst's.
+The templates that used to ship in `statements\` now live in
+`tests\testthat\fixtures\templates\`, as test material for the engine's table
+reader only. The app does not read them.

@@ -578,27 +578,31 @@ test_that("the one-page deployment guide says the things that actually stop it",
 # THE PROMISE AN UPDATE RESTS ON
 #
 # docs/operational/updating.md tells the operator that copying a new package over
-# the app folder cannot touch a template their team built. That is not a property
-# of the copy -- "replace the files in the destination" replaces whatever names
-# match. It is true only because the package ships the three templates/*_user/
-# folders holding NOTHING BUT a README.md, so no filename can collide.
+# the app folder cannot touch what their server has learned. That is not a
+# property of the copy -- "replace the files in the destination" replaces whatever
+# names match, and learned layout files are named by bank and number (anz_1@v3),
+# so a layout learned on the build machine would land on a server's own layout of
+# the same name. It is true only while the package carries NO learned layout.
 #
-# One .yaml committed into any of them breaks that for every deployment at once,
+# One learned layout left in the tree breaks that for every deployment at once,
 # silently, at the next update. .gitignore blocks it; this asserts it, because a
 # rule only a .gitignore knows is a rule nothing checks -- and `git add -f` and a
-# fresh clone with a stale ignore file both walk straight past one.
+# fresh clone with a stale ignore file both walk straight past one. It also
+# catches a test that converts without a sandbox and so learns into the tree.
 # ---------------------------------------------------------------------------
-test_that("no template is committed into a folder the server owns", {
+test_that("no learned layout sits in the folder the server owns", {
   root <- engine_root()
-  for (d in c("statements_user")) {
-    p <- file.path(root, "templates", d)
-    expect_true(dir.exists(p), info = paste("missing folder:", d))
-    stray <- setdiff(list.files(p), "README.md")
-    expect_identical(stray, character(0),
-      info = paste0("templates/", d, "/ must hold only README.md -- ",
-                    "anything else is replaced onto a server's own templates at ",
-                    "the next update. Found: ", paste(stray, collapse = ", ")))
-  }
+  rel <- .config_defaults()$paths$layouts
+  expect_identical(rel, "templates/layouts")
+  p <- file.path(root, rel)
+  stray <- setdiff(list.files(p, recursive = TRUE, all.files = TRUE), "README.md")
+  expect_identical(stray, character(0),
+    info = paste0(rel, "/ must hold nothing a package would carry -- anything ",
+                  "there is replaced onto a server's own layouts at the next ",
+                  "update. Found: ", paste(stray, collapse = ", ")))
+  ign <- readLines(file.path(root, ".gitignore"), warn = FALSE)
+  expect_true(any(grepl("^/?templates/layouts/", ign)),
+              info = ".gitignore does not keep learned layouts out of the repository")
 })
 
 test_that("every kind of template lives under templates/, and nowhere else", {
@@ -608,19 +612,17 @@ test_that("every kind of template lives under templates/, and nowhere else", {
   root <- engine_root()
   at_root <- list.dirs(root, recursive = FALSE, full.names = FALSE)
   expect_identical(grep("template", at_root, value = TRUE), "templates")
-  # and every configured template path points inside it
+  # and the configured learned-layout store points inside it
   cfg <- load_config(path = file.path(tempdir(), "definitely_absent.yaml"))
-  for (k in c("templates", "user_templates"))
-    expect_match(cfg$paths[[k]], "^templates/", info = k)
+  expect_match(cfg$paths$layouts, "^templates/")
 })
 
 # ---------------------------------------------------------------------------
 # K5: THERE WAS NO HEALTH CHECK AN OPERATOR COULD RUN AFTER AN UPDATE.
 #
 # Nothing on the box answered, in one command: did the settings file parse; is the
-# admin password still the shipped placeholder; how many templates of each kind
-# loaded AND HOW MANY WERE REFUSED and why; can the app write to its folders; is
-# the scan-reading software installed. Each had its own answer somewhere -- a
+# admin password still the shipped placeholder; can the learned layouts be read;
+# can the app write to its folders; is the scan-reading software installed. Each had its own answer somewhere -- a
 # console warning at boot, a banner inside Admin, an R warning nobody sees -- and
 # two of them could only be found by opening a browser on a server nobody logs
 # into.
@@ -652,9 +654,13 @@ test_that("the health check answers every question and exits non-zero on a failu
   # added after the first five because each names a way the server can be WRONG
   # while looking fine: Identity (whether a name in the audit log can be stood
   # behind) and Signs (whether a minus drawn as ink can be seen at all).
-  for (area in c("Settings", "Admin", "Identity", "Templates", "Folders",
+  for (area in c("Settings", "Admin", "Identity", "Layouts", "Folders",
                  "Scans", "Signs"))
     expect_match(r$text, area, fixed = TRUE, info = area)
+  # statement templates are retired: a check that still asks for them FAILS a
+  # healthy server, so an operator learns to ignore the one command meant to warn
+  expect_false(grepl("Templates", r$text, fixed = TRUE))
+  expect_false(grepl("could not find function", r$text, fixed = TRUE))
   expect_match(r$text, "PASS", fixed = TRUE)
   # PASS/FAIL and nothing else -- a third state is one nobody knows what to do with
   expect_false(grepl("WARN", r$text, fixed = TRUE))
@@ -674,36 +680,10 @@ test_that("the health check FAILS, and says which, on the shipped placeholder pa
 
 test_that("the health check FAILS, and names the reason, on a settings file it cannot use", {
   r <- .hc_run(c("app:", "  admin_password: a-real-password",
-                 "feed:", "  min_trust: meduim"))
+                 "metadata:", "  level: fulll"))
   expect_equal(r$status, 1L)
   expect_match(r$text, "FAIL  Settings")
-  expect_match(r$text, "min_trust", fixed = TRUE)
-})
-
-# K-loaderrors: attr(x, "load_errors") was computed by the template loader and read
-# by NOTHING, so a template that stopped validating after an update simply
-# vanished -- gone from Admin, gone from detection, no message anywhere, and the
-# statements it used to read quietly became "no template for this statement yet".
-# This is the one place on the box that reads it.
-test_that("the health check names every template that was refused, and why", {
-  # Its own folder, pointed at through the settings file, so this never writes
-  # into the running copy's template library -- the suite shares this tree.
-  d <- tempfile("hcuser_"); dir.create(d)
-  on.exit(unlink(d, recursive = TRUE), add = TRUE)
-  cfg <- c("app:", "  admin_password: a-real-password",
-           "paths:", paste0("  user_templates: ", d))
-  expect_match(.hc_run(cfg)$text, "none were refused")          # nothing wrong yet
-
-  # A half-written template: enough to be a YAML file with an id, not enough to
-  # be a statement template. The loader skips it and records why.
-  writeLines(c("id: zz_health_check_probe", "bank: Probe",
-               "statement_type: test", "format: delimited", "version: 1"),
-             file.path(d, "zz_health_check_probe.yaml"))
-  r <- .hc_run(cfg)
-  expect_equal(r$status, 1L)
-  expect_match(r$text, "refused and NOT in use")
-  expect_match(r$text, "zz_health_check_probe", fixed = TRUE)   # WHICH one
-  expect_match(r$text, "columns")                               # and WHY
+  expect_match(r$text, "metadata.level", fixed = TRUE)
 })
 
 test_that("the health check changes nothing on the server it is checking", {

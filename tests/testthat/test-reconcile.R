@@ -97,12 +97,18 @@ test_that("running_balance_continuity FAILS on a broken balance column", {
 })
 
 test_that("running_balance_continuity fail branch via a real fixture", {
-  templates <- load_templates(templates_dir())
+  t <- fixture_template("kiwibank_everyday_csv")
   input <- read_input(fixture("tests/testthat/fixtures/kiwibank_broken_balance.csv"))
-  p <- parse_statement(input, templates[["kiwibank_everyday_csv"]])
-  r <- reconcile(p, templates[["kiwibank_everyday_csv"]])
+  p <- parse_statement(input, t)
+  r <- reconcile(p, t)
   expect_equal(r$kpis$status[r$kpis$name == "running_balance_continuity"], "fail")
   expect_equal(r$trust$level, "low")
+  # ...and the automatic reader, given the same file, never calls it proven: the
+  # broken step is a failed check, named by its row.
+  rd <- auto_read(input)
+  expect_false(rd$outcome %in% AUTO_OUTCOMES)
+  expect_false(rd$checks$ok[rd$checks$check == "balance_chain"])
+  expect_match(rd$why, "row 2")
 })
 
 test_that("a signed statement with one-sign amounts and no balance fails direction (P2-10)", {
@@ -247,9 +253,7 @@ test_that("the both-missing balance detail does not deny a balance column that i
 # A real conversion, end to end: the kiwibank export is the file the untrue
 # sentence was found on.
 test_that("a real statement with a balance column is not told it has none", {
-  out <- tempfile("reconbal_"); dir.create(out)
-  res <- convert_statement(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv"),
-                           outdir = out, templates_dir = templates_dir(), logdir = out)
+  res <- convert_sandbox()(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv"))
   k <- res$kpis
   expect_false(grepl("no running-balance column",
                      k$detail[k$name == "balance_reconciliation"], fixed = TRUE))
@@ -356,8 +360,7 @@ test_that("the skipped-row count says how many of them looked like transactions"
 
 # The real statement the wording was found on.
 test_that("a real PDF's skipped-row sentence is complete and code-free", {
-  tpl <- load_templates(templates_dir())[["tutorial_everyday_pdf"]]
-  skip_if(is.null(tpl))
+  tpl <- fixture_template("tutorial_everyday_pdf")
   p <- parse_statement(read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf")), tpl)
   k <- reconcile(p, tpl)$kpis
   d <- k$detail[k$name == "no_unparsed_rows"]
@@ -547,16 +550,14 @@ test_that("a real PDF with a wrong date band really does produce actionable skip
   # PARSER produces it on a real file, so the defence cannot die while the suite
   # stays green -- which is exactly how a prose-matching version of it would have.
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  b <- readLines(file.path(templates_dir(), "tutorial_everyday_pdf.yaml"))
-  b <- b[!grepl("^sample: true", b)]
+  b <- readLines(file.path(fixture_templates_dir(), "tutorial_everyday_pdf.yaml"))
   # Move ONLY the date band off its column. Every row then has a real amount and
   # an unreadable date -> date_unparsed, the actionable case. (Moving every band
   # instead gives "no date and no amount", which is a heading, not actionable --
   # that case yields zero rows and is caught by the unsupported path instead.)
   b <- sub("date:.*x_min: 28.*", "date:        {x_min: 2,   x_max: 9}", b)
-  d <- tempfile("tpl_datewrong_"); dir.create(d)
-  writeLines(b, file.path(d, "t.yaml"))
-  tpl <- load_templates(d, strict = FALSE)[[1]]
+  tpl <- yaml::yaml.load(paste(b, collapse = "\n"))
+  expect_identical(tpl$table$columns$date$x_min, 2L)     # the band really moved
   inp <- read_input(fixture("samples/raw/tutorial/sample_everyday_statement.pdf"))
   ps <- parse_statement(inp, tpl, meta = extract_metadata(inp))
   expect_gt(ps$actionable_skip_count, 0L)

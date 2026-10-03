@@ -50,7 +50,6 @@ local({
 
   res <- convert_statement(
     path = file, bank = bank, outdir = outdir,
-    templates_dir = file.path(root, "templates", "statements"),
     requested_by = "cli",
     logdir = file.path(root, "logs")
   )
@@ -63,7 +62,8 @@ local({
   # so a failed run prints one too -- and it has a log record to match.
   cat(sprintf("run id:      %s\n", res$run_id %||% NA))
   cat(sprintf("status:      %s\n", res$status))
-  cat(sprintf("template:    %s\n", res$template_id %||% NA))
+  cat(sprintf("bank:        %s\n", res$bank$display %||% NA))
+  cat(sprintf("reading:     %s (layout %s)\n", res$outcome %||% NA, res$run_log$layout %||% "none"))
   cat(sprintf("trust:       %s (score %s)\n",
               res$trust$level %||% NA, res$trust$score %||% NA))
   if (!is.null(res$kpis)) {

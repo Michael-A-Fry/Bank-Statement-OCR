@@ -1,4 +1,5 @@
-# THE INVARIANT (N30): no row a PDF template KEEPS may read as a summary line.
+# THE INVARIANT (N30): no row a PDF reading KEEPS may read as a summary line --
+# whether the automatic reader found the columns or a fixture template drew them.
 #
 # An opening/closing balance, a carried-forward or a total is not a transaction.
 # When one is kept anyway the output does not merely lose data -- it GAINS a
@@ -13,7 +14,7 @@
 # made the description non-empty but WRONG, so the raw line -- which said "Opening
 # balance" all along -- was never consulted.
 #
-# SCOPE: PDF templates only. .PDF_SUMMARY_LABELS is the PDF reader's vocabulary and
+# SCOPE: PDF readings only. .PDF_SUMMARY_LABELS is the PDF reader's vocabulary and
 # no other reader applies it. The delimited/Excel goldens (xero_standard_csv,
 # excel_generic_xlsx) legitimately carry an "Opening balance" row, because there it
 # is a real row of the source file with its own amount, not a printed summary line
@@ -21,14 +22,15 @@
 # readers do not have.
 
 # ---------------------------------------------------------------------------
-# 1. THE NET: every shipped PDF fixture, parsed for real.
+# 1. THE NET: every PDF fixture, read for real -- by the automatic reader, which is
+#    how every statement is now read, and by its fixture template.
 #
 # On today's fixtures this is a REGRESSION net, not the proof: their summary lines
 # are already excluded by other conditions too (the Westpac fixture's OPENING
 # BALANCE line carries a balance but no debit/credit amount, so it fails the
 # has-amount test as well). Deleting the summary guard alone does not trip it. The
 # case with teeth is section 2 -- but the net is what catches the NEXT bank, whose
-# summary line does carry a money-column amount, on the day its template ships.
+# summary line does carry a money-column amount.
 # ---------------------------------------------------------------------------
 PDF_SUMMARY_FIXTURES <- list(
   list(id = "anz_everyday_pdf",        fx = "tests/testthat/fixtures/anz_everyday_pdf_sample.pdf"),
@@ -39,38 +41,43 @@ PDF_SUMMARY_FIXTURES <- list(
   list(id = "anz_investmentfunds_pdf", fx = "samples/raw/anz/anz_investmentfunds_statement_guide_sample.pdf")
 )
 
+# .expect_no_summary_rows(parsed, label) -- the invariant on one parse.
+.expect_no_summary_rows <- function(parsed, label) {
+  tx <- parsed$transactions
+  raw <- parsed$provenance$raw
+  expect_gt(nrow(tx), 0)            # an empty parse would satisfy this vacuously
+  bad <- vapply(seq_len(nrow(tx)),
+                function(i) .pdf_is_summary(tx$description[i], raw[i]), logical(1))
+  expect_identical(which(bad), integer(0),
+    info = sprintf("%s kept summary line(s): %s", label, paste(raw[bad], collapse = " // ")))
+}
+
 for (.g in PDF_SUMMARY_FIXTURES) local({
   g <- .g
+  test_that(sprintf("the automatic reader keeps no summary line as a transaction (%s)",
+                    basename(g$fx)), {
+    skip_if_not(requireNamespace("pdftools", quietly = TRUE))
+    skip_if_not(file.exists(fixture(g$fx)))
+    rd <- auto_read(read_input(fixture(g$fx)))
+    .expect_no_summary_rows(rd$parsed, g$fx)
+  })
   test_that(sprintf("%s keeps no summary line as a transaction (%s)",
                     g$id, basename(g$fx)), {
     skip_if_not(requireNamespace("pdftools", quietly = TRUE))
     skip_if_not(file.exists(fixture(g$fx)))
-    res <- parse_fixture(g$fx)
-    tx <- res$parsed$transactions
-    raw <- res$parsed$provenance$raw
-    expect_gt(nrow(tx), 0)            # an empty parse would satisfy this vacuously
-    bad <- vapply(seq_len(nrow(tx)),
-                  function(i) .pdf_is_summary(tx$description[i], raw[i]), logical(1))
-    expect_identical(which(bad), integer(0),
-      info = sprintf("%s kept summary line(s): %s", g$fx,
-                     paste(raw[bad], collapse = " // ")))
+    .expect_no_summary_rows(parse_fixture(g$fx, g$id)$parsed, g$fx)
   })
 })
 
-# The guard: a new PDF template cannot be shipped without being subjected to the
-# invariant. Same shape as the golden-snapshot guard in test-pdf_template_goldens.R
-# -- if this fails, add the template and its fixture above; do not delete the test.
-test_that("every shipped PDF template is covered by the summary-line invariant", {
-  tdir <- templates_dir()
-  skip_if_not(dir.exists(tdir))
-  ids <- sub("\\.ya?ml$", "", basename(list.files(tdir, pattern = "\\.ya?ml$")))
-  is_pdf <- vapply(ids, function(id) {
-    tpl <- tryCatch(yaml::yaml.load_file(file.path(tdir, paste0(id, ".yaml"))),
-                    error = function(e) NULL)
-    identical(tpl$format %||% "delimited", "pdf")
-  }, logical(1))
+# The guard: no PDF fixture template escapes the invariant. Same shape as the
+# golden-snapshot guard in test-pdf_template_goldens.R -- if this fails, add the
+# template and its fixture above; do not delete the test.
+test_that("every PDF fixture template is covered by the summary-line invariant", {
+  tp <- fixture_templates()
+  is_pdf <- vapply(tp, function(t) identical(t$format %||% "delimited", "pdf"), logical(1))
+  expect_gt(sum(is_pdf), 0L)
   covered <- unique(vapply(PDF_SUMMARY_FIXTURES, function(g) g$id, character(1)))
-  expect_identical(setdiff(ids[is_pdf], covered), character(0))
+  expect_identical(setdiff(names(tp)[is_pdf], covered), character(0))
 })
 
 # ---------------------------------------------------------------------------

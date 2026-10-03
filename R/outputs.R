@@ -146,9 +146,9 @@ display_transactions <- function(transactions, extras = NULL) {
 }
 
 # write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
-# `build` is the provenance stamp (engine version + template content hash) the
-# orchestrator passes in; it goes into the JSON -- the full-record output -- so a
-# figure can always be traced back to the build and template that produced it.
+# `build` is the provenance stamp (engine version, learned-state id, layout,
+# outcome, proof) the orchestrator passes in; it goes into the JSON -- the
+# full-record output -- so a figure can always be traced back to what produced it.
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
                           diagnostics = NULL, metadata = NULL, build = NULL) {
@@ -180,7 +180,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
       openxlsx::writeData(wb, "Metadata", metadata_df(metadata))
     }
     # Byte-reproducibility (guarantee 11.4): openxlsx stamps docProps/core.xml
-    # with the wall-clock time, so identical input+template would otherwise yield
+    # with the wall-clock time, so an identical reading would otherwise yield
     # differing xlsx bytes. Pin the created timestamp to a fixed constant before
     # saving so the same input always produces the same file.
     wb$core <- .deterministic_core(wb$core)
@@ -199,7 +199,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
     json_path <- file.path(outdir, paste0(basename, ".json"))
     # engine_version is stamped even when no `build` is supplied, so EVERY JSON
     # names the build that wrote it (a constant per install -- the file stays
-    # byte-reproducible). template_sha256 only appears when a template ran.
+    # byte-reproducible); the rest of the stamp is whatever the caller passes.
     full <- list(
       build = utils::modifyList(list(engine_version = engine_version()),
                                 as.list(build %||% list())),

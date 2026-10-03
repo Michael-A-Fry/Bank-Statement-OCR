@@ -1,9 +1,11 @@
-# audit.R -- a SAFE-TO-SHARE structural audit of a statement, for improving
-# templates and the engine without ever leaking PII. Every piece of real text is
+# audit.R -- a SAFE-TO-SHARE structural audit of a statement, for improving the
+# reader without ever leaking PII. Every piece of real text is
 # MASKED to its shape only: letters -> x/X (by case), digits -> 9, punctuation and
 # spaces kept. So "Coffee Shop 12" -> "Xxxxxx Xxxx 99", "1,234.56" -> "9,999.99",
 # "17 Sep" -> "99 Xxx". No merchant names, no amounts, no account numbers, no dates
-# survive -- only the LAYOUT, FORMATS and POSITIONS a template needs.
+# survive -- only the LAYOUT, FORMATS and POSITIONS the reader worked from, and
+# what it made of them (its outcome and the NAMES of the checks that failed --
+# never its sentences, which can quote a line of the statement).
 
 # mask_text(x) -- shape-only mask. Unicode-aware (accented letters are masked too,
 # via \p{}), so NOTHING real survives.
@@ -55,23 +57,23 @@ mask_text <- function(x) {
   if (length(rows)) do.call(rbind, rows) else data.frame()
 }
 
-# statement_audit(path, templates) -> a structured, PII-free audit list.
-statement_audit <- function(path, templates = NULL) {
-  root <- Sys.getenv("ENGINE_ROOT", ".")
-  if (is.null(templates))
-    templates <- safe(load_template_set(file.path(root, "templates", "statements"),
-                                        file.path(root, "templates", "statements_user")), list())
+# statement_audit(path, layouts_dir) -> list: the statement read exactly as a
+# conversion reads it (bank_identify, that bank's learned layouts, auto_read) but
+# with no side effects -- no outputs, no run log, nothing learned -- and every
+# value masked to its shape.
+statement_audit <- function(path, layouts_dir = NULL) {
   input <- safe(read_input(path), NULL)
   if (is.null(input)) return(list(error = "could not read the file"))
   meta <- safe(extract_metadata(input), list())
-  det  <- safe(detect_statement(input, templates), list(matched = FALSE))
-  tmpl <- if (isTRUE(det$matched)) templates[[det$template_id]] else NULL
-  parsed <- if (!is.null(tmpl)) safe(parse_statement(input, tmpl), NULL) else NULL
-  recon  <- if (!is.null(parsed)) safe(reconcile(parsed, tmpl), NULL) else NULL
+  ident <- bank_identify(input)
+  bank <- bank_pick(ident, NULL)$bank
+  layouts <- if (!is.null(layouts_dir) && !is.na(bank)) layouts_load(layouts_dir, bank) else list()
+  rd <- auto_read(input, layouts, bank)
+  tmpl <- rd$template
+  parsed <- rd$parsed; recon <- rd$recon
 
-  # redaction map: counts + positions only (no text)
-
-  # word layout sample (page 1), masked -- for building a template from scratch
+  # Page-1 word layout, MASKED: positions + text shapes for the first words, so a
+  # reviewer can see where the reader looked without seeing what was printed.
   wl <- NULL
   wbp <- input$words %||% list()
   w1 <- if (length(wbp)) wbp[[1]] else NULL
@@ -83,33 +85,35 @@ statement_audit <- function(path, templates = NULL) {
                      w = round(w1$width[seq_len(k)]), text = mask_text(w1$text[seq_len(k)]),
                      stringsAsFactors = FALSE)
   }
+  ck <- rd$checks
+  sig <- tmpl$signature %||% list()
 
   list(
     file_type   = tolower(tools::file_ext(path)),
     sha256_10   = substr(safe(file_sha256(path), NA_character_), 1, 10),
-    format      = tmpl$format %||% (if (identical(input$kind, "pdf")) "pdf" else input$meta$ext %||% "?"),
+    format      = input$kind %||% "?",
     pages       = input$meta$page_count %||% NA_integer_,
     max_page_pt = round(meta$max_page_pt %||% NA_real_),
     ocr_pages   = input$meta$ocr_pages %||% 0L,
     ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_,
-    detected    = list(matched = isTRUE(det$matched),
-                       template = det$template_id %||% NA_character_,
-                       score = det$score %||% NA, detail = det$detail %||% NA_character_,
+    bank        = list(institution = ident$institution %||% NA_character_,
+                       confidence = ident$confidence %||% "unknown",
                        n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA),
+    reading     = list(outcome = rd$outcome %||% "unread", proof = rd$proof$kind %||% "none",
+                       layout = rd$matched_layout %||% NA_character_,
+                       roles = paste(unlist(sig$roles), collapse = " | "),
+                       checks_failed = if (is.data.frame(ck)) ck$check[ck$ok %in% FALSE] else character(0),
+                       candidates = if (is.data.frame(rd$candidates)) rd$candidates$source else character(0)),
     period_shape = list(start = mask_text(meta$period_start), end = mask_text(meta$period_end)),
-    # A template may declare SEVERAL candidate date formats; this is a one-line
-    # description, so show them all rather than emitting a vector into a scalar field.
-    date_format  = paste(tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
-                         collapse = " | "),
-    amount_sign  = tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_,
+    date_format  = sig$date_format %||% NA_character_,
+    amount_sign  = sig$money_style %||% NA_character_,
     row_count    = if (!is.null(parsed)) nrow(parsed$transactions) else 0L,
     flags_summary = if (!is.null(parsed)) {
       fl <- unlist(strsplit(paste(parsed$transactions$flags, collapse = ","), ","))
       fl <- fl[nzchar(fl)]; if (length(fl)) as.list(table(fl)) else list()
     } else list(),
     kpis         = if (!is.null(recon)) recon$kpis[, c("name", "status")] else NULL,
-    trust        = if (!is.null(recon)) list(level = recon$trust$level,
-                      reasons = recon$trust$reasons) else NULL,
+    trust        = if (!is.null(recon)) list(level = recon$trust$level) else NULL,
     rows_masked  = if (!is.null(tmpl) && identical(tmpl$format, "pdf")) .audit_rows(input, tmpl) else NULL,
     words_masked = wl
   )
@@ -126,9 +130,12 @@ format_audit <- function(a) {
   add(sprintf("- format: %s, pages: %s, max page: %s pt", a$format, a$pages, a$max_page_pt))
   add(sprintf("- OCR: %s page(s), min confidence %s", a$ocr_pages,
               if (is.na(a$ocr_min_confidence)) "n/a" else sprintf("%.0f%%", a$ocr_min_confidence)))
-  add(sprintf("- detected template: %s (matched=%s, score=%s)",
-              a$detected$template, a$detected$matched, a$detected$score))
-  add(sprintf("- periods seen: %s, accounts seen: %s", a$detected$n_periods, a$detected$n_accounts))
+  add(sprintf("- bank: %s (%s confidence)", a$bank$institution %||% "not identified", a$bank$confidence))
+  add(sprintf("- periods seen: %s, accounts seen: %s", a$bank$n_periods, a$bank$n_accounts))
+  add(sprintf("- reading: %s (proof: %s; layout: %s)", a$reading$outcome, a$reading$proof, a$reading$layout))
+  add(sprintf("- column roles: %s", if (nzchar(a$reading$roles)) a$reading$roles else "none found"))
+  if (length(a$reading$checks_failed))
+    add(sprintf("- checks failed: %s", paste(a$reading$checks_failed, collapse = ", ")))
   add(sprintf("- period shape: %s .. %s", a$period_shape$start %||% "NA", a$period_shape$end %||% "NA"))
   add(sprintf("- date format: %s, amount style: %s", a$date_format %||% "NA", a$amount_sign %||% "NA"))
   add(sprintf("- rows parsed: %d", a$row_count))
@@ -138,8 +145,7 @@ format_audit <- function(a) {
     add("\n## KPI statuses (no values)")
     for (i in seq_len(nrow(a$kpis))) add(sprintf("- %s: %s", a$kpis$name[i], a$kpis$status[i]))
   }
-  if (!is.null(a$trust)) add(sprintf("\n- trust: %s\n  - %s", a$trust$level,
-      paste(a$trust$reasons, collapse = "\n  - ")))
+  if (!is.null(a$trust)) add(sprintf("\n- trust: %s", a$trust$level))
   if (!is.null(a$rows_masked) && nrow(a$rows_masked)) {
     add("\n## Row shapes (first rows; masked) - spot dropped/odd rows here")
     add("```")
@@ -147,7 +153,7 @@ format_audit <- function(a) {
     add("```")
   }
   if (!is.null(a$words_masked) && nrow(a$words_masked)) {
-    add("\n## Page-1 word layout (masked) - for building a template")
+    add("\n## Page-1 word layout (masked)")
     add("```")
     add(paste(capture.output(print(a$words_masked, row.names = FALSE)), collapse = "\n"))
     add("```")

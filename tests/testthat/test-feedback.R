@@ -47,8 +47,9 @@ test_that("read_feedback on a missing log is an empty frame, not an error", {
 test_that("convert_statement stamps a run_id that feedback can reference", {
   fx <- fixture("samples/raw/bnz/bnz_transaction_export_01.csv")
   skip_if_not(file.exists(fx))
-  out <- tempfile("cv_"); ld <- tempfile("l_")
-  res <- convert_statement(fx, outdir = out, templates_dir = templates_dir(), logdir = ld)
+  cv <- convert_sandbox()
+  ld <- file.path(sandbox_dir(cv), "logs")
+  res <- cv(fx)
   expect_true(nzchar(res$run_id))
   # one record per run, findable by run_id (concurrency-safe, no shared append)
   runs <- read_runs(ld)
@@ -77,7 +78,7 @@ test_that("many concurrent runs/feedback each get their own file (no collisions)
 # ---------------------------------------------------------------------------
 
 .fb_result <- function(run_id = "deadbeef01-20260101000000") list(
-  status = "ok", template_id = "bnz_everyday_csv", kind = "statement", run_id = run_id,
+  status = "ok", template_id = "bnz_1@1", feed_basis = "proven", kind = "statement", run_id = run_id,
   trust = list(level = "high"),
   header = list(source_file = "s.csv", source_sha256 = "deadbeef0123456789",
                 bank = "BNZ", statement_type = "everyday", template_version = 1,
@@ -89,7 +90,7 @@ test_that("many concurrent runs/feedback each get their own file (no collisions)
 
 test_that("a 'wrong' verdict withdraws that run's rows from the accepted feed", {
   cfg <- .fb_cfg(); ld <- tempfile("fb_")
-  write_feed(.fb_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(.fb_result(), cfg, ts = "t")
   tx <- file.path(cfg$feed$feed_dir, "transactions")
   rv <- file.path(cfg$feed$feed_dir, "review")
   expect_length(list.files(tx), 1)
@@ -121,7 +122,7 @@ test_that("a 'wrong' verdict withdraws that run's rows from the accepted feed", 
 test_that("'correct' and 'minor_issues' never retract anything", {
   for (v in c("correct", "minor_issues")) {
     cfg <- .fb_cfg(); ld <- tempfile("fb_")
-    write_feed(.fb_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+    write_feed(.fb_result(), cfg, ts = "t")
     rec <- submit_feedback("deadbeef01-20260101000000", v, logdir = ld, config = cfg)
     expect_true(is.na(rec$retracted_files), info = v)   # not attempted, not "0"
     expect_length(list.files(file.path(cfg$feed$feed_dir, "transactions")), 1)
@@ -132,8 +133,8 @@ test_that("retraction only touches the run that was reported, and is idempotent"
   cfg <- .fb_cfg(); ld <- tempfile("fb_")
   a <- .fb_result("run-A")
   b <- .fb_result("run-B"); b$header$source_sha256 <- "cafebabe9876543210"
-  write_feed(a, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
-  write_feed(b, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(a, cfg, ts = "t")
+  write_feed(b, cfg, ts = "t")
   expect_length(list.files(file.path(cfg$feed$feed_dir, "transactions")), 2)
 
   submit_feedback("run-A", "wrong", logdir = ld, config = cfg)
@@ -149,12 +150,11 @@ test_that("retraction only touches the run that was reported, and is idempotent"
 
 test_that("a re-convert after a retraction restores the row (reversible)", {
   cfg <- .fb_cfg(); ld <- tempfile("fb_")
-  write_feed(.fb_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.fb_result(), cfg, ts = "t1")
   submit_feedback("deadbeef01-20260101000000", "wrong", logdir = ld, config = cfg)
   expect_length(list.files(file.path(cfg$feed$feed_dir, "transactions")), 0)
 
-  write_feed(.fb_result("deadbeef01-20260102000000"), cfg, ts = "t2",
-             proven_ids = "bnz_everyday_csv")
+  write_feed(.fb_result("deadbeef01-20260102000000"), cfg, ts = "t2")
   expect_length(list.files(file.path(cfg$feed$feed_dir, "transactions")), 1)
   expect_length(list.files(file.path(cfg$feed$feed_dir, "review")), 0)  # stale copy cleared
 })

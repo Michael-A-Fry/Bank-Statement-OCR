@@ -470,7 +470,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   }
   if (is.null(rd) && !is.null(rl$best)) { rd <- rl$best; basis <- "broken" }
   if (is.null(rd)) {
-    vr <- .ar_vote_roles(K, hroles)
+    # Nothing adds up either way: what is shown is the person's roles when given,
+    # else the headings' and the position's vote.
+    vr <- if (!is.null(ctx$roles)) list(roles = ctx$roles, by = "person") else .ar_vote_roles(K, hroles)
     if (is.null(vr)) return(fail("Found the table but could not tell which column of figures is which."))
     am <- .ar_amounts(V, vr$roles, "S", isTRUE(ctx$liab$liability))
     b <- which(vr$roles == "balance")

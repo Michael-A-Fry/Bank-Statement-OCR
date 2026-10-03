@@ -315,7 +315,11 @@
 # chosen, and why. `texts` (each row's words) only ever vote, on the one question
 # the arithmetic cannot answer: which way round a reading and its negation go.
 # `only` -- the figure roles a person gave on Please check: just that assignment is
-# tried, and the arithmetic still settles its sign convention, account type and order.
+# tried, and the arithmetic still settles its sign convention and order. The
+# account type is the statement's own (liab_ev), never the arithmetic's choice
+# here: money in and out swapped, read as a card instead of an account, adds up
+# just as well, so a swapped fix would otherwise "prove" itself with every sign
+# inverted.
 .ar_roles <- function(V, anchors, liab_ev, decimal = "auto", heading_roles = NULL, texts = NULL,
                       only = NULL) {
   K <- ncol(V$S); n <- nrow(V$S)
@@ -329,6 +333,7 @@
     convs <- if (length(a)) c("S", if (!col_signed[a]) "U", if (!col_signed[a] && !col_marked[a] && b > 0L) "B") else "S"
     for (conv in convs) for (liab in c(FALSE, TRUE)) {
       if (liab && conv %in% c("U", "B")) next
+      if (!is.null(only) && liab != isTRUE(liab_ev$liability)) next
       am <- .ar_amounts(V, roles, conv, liab)
       na_rows <- sum(is.na(am$A))
       if (na_rows > max(1, floor(0.1 * n))) next
@@ -452,6 +457,32 @@
   agree <- one & ((inw & A > 0) | (outw & A < 0))
   c("for" = sum(agree), against = sum(one & !agree))
 }
+
+# .wa_money_role(label) -- what the statement's own column heading calls this money
+# column. The debit / credit wordings come from the LEXICON, so a bank that writes
+# "Paid out" / "Money in" is taught in the dictionary, never in code. NA means the
+# heading did not say, or said both -- the caller then falls back to position.
+.wa_money_role <- function(label) {
+  s <- tolower(trimws(label %||% ""))
+  if (!nzchar(s)) return(NA_character_)
+  rx <- function(cat, dflt) paste(safe(as.character(lex(cat)), dflt), collapse = "|")
+  d <- grepl(rx("amount_style_debit_headers",  c("debit", "withdrawal")), s)
+  cr <- grepl(rx("amount_style_credit_headers", c("credit", "deposit")), s)
+  if (grepl("balance", s)) return("balance")
+  if (d && !cr) return("debit")
+  if (cr && !d) return("credit")
+  if (grepl("amount|value", s)) return("amount")
+  NA_character_
+}
+
+# .wa_positional_roles(n) -- the money columns labelled by POSITION, for a
+# statement whose header row could not be read. Three money columns is the
+# money-out / money-in / balance shape every NZ retail statement in this repo
+# uses. Four or more, with nothing on the page saying which is which, is a guess
+# -- and the tool is not a guesser, so it returns NULL and the caller says so.
+.wa_positional_roles <- function(n) switch(as.character(n),
+  "1" = "amount", "2" = c("amount", "balance"),
+  "3" = c("debit", "credit", "balance"), NULL)
 
 # .ar_vote_roles(K, heading_roles) -- what to SHOW when the arithmetic cannot decide
 # (no running balance and no printed totals): the headings' own words, else the

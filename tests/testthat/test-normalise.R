@@ -150,16 +150,7 @@ test_that("parse_date NEVER silently invents a year (P0-1)", {
     c("2025-08-13", "2025-09-01", NA, NA))
 })
 
-test_that("detect_date_format agrees with the strict reader (no format it'd reject)", {
-  # A column of 4-digit-year dates must resolve to the 4-digit format, never the
-  # 2-digit "%y" the reader would now reject -- detector and reader share one
-  # strict validation, so they can never disagree.
-  expect_equal(detect_date_format(c("13/08/2025", "01/09/2025")), "%d/%m/%Y")
-  expect_equal(detect_date_format(c("13/08/25", "01/09/25")),     "%d/%m/%y")
-  expect_equal(detect_date_format(c("12th October 2025")),        "%d %b %Y")
-})
-
-test_that(".normalise_date_str is the shared fold used by reader and detector", {
+test_that(".normalise_date_str is the shared fold the reader uses", {
   expect_equal(.normalise_date_str("12th October"),       "12 October")
   expect_equal(.normalise_date_str("12th of October"),    "12 October")
   expect_equal(.normalise_date_str("Tuesday 12 October"), "12 October")
@@ -294,4 +285,55 @@ test_that("normalising dashes does not make a positive amount negative", {
   # ...and a lone dash is still no number at all, not zero
   expect_true(is.na(.num("−")))
   expect_true(is.na(.num("-")))
+})
+
+# ---------------------------------------------------------------------------
+# A template's own choices resolved against the file (moved here from the retired
+# template loader): the table reader still reads a template list, and a template
+# may declare more than one date format or separator for one layout.
+# ---------------------------------------------------------------------------
+
+test_that("resolve_date_format picks the ONE format that reads the whole column", {
+  fmts <- c("%Y/%m/%d", "%d/%m/%Y")
+  expect_identical(resolve_date_format(c("2014/12/20", "2014/12/21"), fmts), "%Y/%m/%d")
+  expect_identical(resolve_date_format(c("13/10/2025", "17/10/2025"), fmts), "%d/%m/%Y")
+  # blanks are not evidence either way and must not veto a candidate
+  expect_identical(resolve_date_format(c("13/10/2025", "", NA, "  "), fmts), "%d/%m/%Y")
+  # a single declared format resolves to itself, whatever the data says
+  expect_identical(resolve_date_format(c("nonsense"), "%d/%m/%Y"), "%d/%m/%Y")
+  # nothing to judge on -> the first declared candidate (deterministic)
+  expect_identical(resolve_date_format(character(0), fmts), "%Y/%m/%d")
+  expect_identical(resolve_date_format(c("", NA), fmts), "%Y/%m/%d")
+})
+
+test_that("resolve_date_format refuses a MIXED column rather than guessing", {
+  # one format reads rows 1-2, the other row 3: reading them under different
+  # formats would be plausible and wrong, so it fails closed (NA).
+  mixed <- c("2014/12/20", "2014/12/21", "13/10/2025")
+  expect_true(is.na(resolve_date_format(mixed, c("%Y/%m/%d", "%d/%m/%Y"))))
+  expect_true(is.na(resolve_date_format(c("13/10/2025"), character(0))))
+})
+
+test_that("resolve_delimiter is all-or-nothing and leaves single-delimiter templates alone", {
+  tmpl <- function(delimiter = ",") list(delimiter = delimiter,
+    fingerprint = list(header_contains_all = c("Date", "Amount", "Particulars")))
+  one <- tmpl()
+  expect_identical(resolve_delimiter("anything at all", one), ",")
+  expect_identical(resolve_delimiter(NA_character_, one), ",")
+  multi <- tmpl(c(",", "\t"))
+  expect_identical(resolve_delimiter("Date\tAmount\tParticulars", multi), "\t")
+  expect_identical(resolve_delimiter("Date,Amount,Particulars", multi), ",")
+  # only SOME of the named columns -> first declared, never a partial split
+  expect_identical(resolve_delimiter("Date\tAmount", multi), ",")
+  expect_identical(resolve_delimiter("", multi), ",")
+  expect_identical(resolve_delimiter("Date,Amount", tmpl(NULL)), ",")
+})
+
+test_that("every date format the lexicon offers round-trips through parse_date", {
+  for (e in wd_date_table()) {
+    v <- sub("  .*$", "", e$label)                      # the example in the label
+    iso <- if (isTRUE(e$yearless)) parse_date(paste(v, "2025"), paste(e$fmt, "%Y"))$iso
+           else parse_date(v, e$fmt)$iso
+    expect_false(is.na(iso), info = e$fmt)
+  }
 })

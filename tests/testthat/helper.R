@@ -1,14 +1,16 @@
 # helper.R -- shared test helpers.
 #
-# expect_statement_ok(fixture_path, expected_csv_path, template_id, bank)
-# parses a fixture through the engine and compares the core Transactions table
-# to a golden CSV snapshot stored under tests/testthat/expected/.
+# Statement templates are retired from the product (auto-reading-spec section 10):
+# the automatic reader is the only way a statement is read. The shipped templates
+# live on as TEST MATERIAL under fixtures/templates/, because a fixed set of boxes
+# is still the sharpest way to test the table reader (parse_pdf_table,
+# parse_statement, reconcile) that the automatic reader assembles its rows with.
 #
-# Pattern for adding a new template test (see tests/HOWTO-add-template-test.md):
-#   1. Add templates/statements/<id>.yaml and a fixture under samples/raw/<bank>/.
-#   2. Generate the golden CSV from the engine's own parse, eyeball it.
-#   3. Save it to tests/testthat/expected/<id>.csv.
-#   4. test-<id>.R: expect_statement_ok("<fixture>", "<expected>", "<id>", "<BANK>").
+# Two kinds of golden test, one golden CSV each (tests/testthat/expected/):
+#   expect_statement_ok(fixture, expected, template_id)  the table reader, with the
+#     fixture template, reproduces the golden byte for byte;
+#   expect_auto_read_golden(fixture, expected, outcomes)  the automatic reader, given
+#     no template, reads the same statement to the same figures.
 
 engine_root <- function() {
   r <- Sys.getenv("ENGINE_ROOT", "")
@@ -19,14 +21,22 @@ engine_root <- function() {
 
 fixture <- function(rel) file.path(engine_root(), rel)
 
-# WHERE THE TEMPLATES ARE, in one place. Every template lives under templates/,
-# one folder per kind (see templates/README.md). Tests ask these functions rather
-# than spelling the path out, so the next time the layout moves it moves here and
-# nowhere else -- which is the whole reason the last move touched forty files.
-.templates_root <- function() file.path(engine_root(), "templates")
-templates_dir      <- function() file.path(.templates_root(), "statements")
-user_templates_dir <- function() file.path(.templates_root(), "statements_user")
-seed_templates_dir <- function() file.path(.templates_root(), "statements_seed")
+# WHERE THE FIXTURE TEMPLATES ARE, in one place, so the next move touches one line.
+fixture_templates_dir <- function() file.path(engine_root(), "tests", "testthat", "fixtures", "templates")
+
+# fixture_templates() -> every fixture template, named by id. The engine no longer
+# loads templates, so this is the whole loader: the YAML as written.
+fixture_templates <- function() {
+  fs <- sort(list.files(fixture_templates_dir(), pattern = "\\.ya?ml$", full.names = TRUE))
+  tp <- lapply(fs, yaml::read_yaml)
+  stats::setNames(tp, vapply(tp, function(t) t$id, ""))
+}
+
+fixture_template <- function(id) {
+  t <- fixture_templates()[[id]]
+  testthat::expect_false(is.null(t), info = paste("no fixture template:", id))
+  t
+}
 
 # read_core_csv -- read a golden/core CSV back with the exact core column types
 # so comparisons are type-stable.
@@ -36,36 +46,49 @@ read_core_csv <- function(path) {
   coerce_core(df)
 }
 
-# parse_fixture -- detect + parse a fixture, returning the parsed object.
+# parse_fixture(fixture_rel, template_id) -- parse a fixture with a fixture template.
 # The fixture is parsed ONCE and the same parsed object is reconciled: parsing is
 # deterministic, so a second parse only cost time -- and it meant `recon` was
 # computed from a different object than the one the test then asserts on.
-parse_fixture <- function(fixture_rel, bank = NULL, statement_type = NULL) {
-  templates <- load_templates(templates_dir())
+parse_fixture <- function(fixture_rel, template_id) {
+  template <- fixture_template(template_id)
   input <- read_input(fixture(fixture_rel))
-  det <- detect_statement(input, templates, hint_bank = bank,
-                          hint_type = statement_type)
-  testthat::expect_true(det$matched,
-    info = sprintf("detection failed for %s: %s", fixture_rel, det$detail))
-  template <- templates[[det$template_id]]
   parsed <- parse_statement(input, template)
-  list(detection = det, template = template,
-       parsed = parsed,
+  list(template = template, input = input, parsed = parsed,
        recon = reconcile(parsed, template))
 }
 
-# expect_statement_ok -- core comparison against a golden CSV snapshot.
-expect_statement_ok <- function(fixture_path, expected_csv_path,
-                                template_id = NULL, bank = NULL,
-                                statement_type = NULL) {
-  res <- parse_fixture(fixture_path, bank = bank, statement_type = statement_type)
-  if (!is.null(template_id)) {
-    testthat::expect_identical(res$detection$template_id, template_id)
-  }
+# expect_statement_ok -- the table reader, with the fixture template, against the
+# golden CSV snapshot.
+expect_statement_ok <- function(fixture_path, expected_csv_path, template_id) {
+  res <- parse_fixture(fixture_path, template_id)
   got <- coerce_core(res$parsed$transactions)
   exp <- read_core_csv(fixture(expected_csv_path))
   testthat::expect_equal(got, exp)
   invisible(res)
+}
+
+# expect_auto_read_golden(fixture_rel, expected_rel, outcomes, fields) -- the
+# automatic reader, given no template and nothing learned, reads the statement to
+# the golden's figures. `outcomes` is what the reader may decide: a statement
+# nothing on it proves goes to a person ("check"), and that is right, but its
+# figures must still be the statement's. Whatever `outcomes` allows, an automatic
+# outcome (proven / layout_match) with any figure off the golden fails: that is
+# the silently wrong answer the product must never give.
+AUTO_OUTCOMES <- c("proven", "layout_match")
+expect_auto_read_golden <- function(fixture_rel, expected_rel, outcomes,
+                                    fields = c("date", "amount", "direction", "balance", "description"),
+                                    layouts = list(), bank = NULL) {
+  rd <- auto_read(read_input(fixture(fixture_rel)), layouts = layouts, bank = bank)
+  testthat::expect_true(rd$outcome %in% outcomes,
+    info = sprintf("%s read as %s: %s", fixture_rel, rd$outcome, rd$why))
+  exp <- read_core_csv(fixture(expected_rel))
+  got <- coerce_core(rd$transactions)
+  testthat::expect_equal(nrow(got), nrow(exp), info = fixture_rel)
+  if (nrow(got) == nrow(exp)) {
+    for (f in fields) testthat::expect_equal(got[[f]], exp[[f]], info = paste(fixture_rel, f))
+  }
+  invisible(rd)
 }
 
 # .src_block(src, pat, n) -- the block of app.R that starts at the first line

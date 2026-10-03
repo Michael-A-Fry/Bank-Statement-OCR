@@ -1,7 +1,7 @@
 # The externalised recognition vocabularies (R/lexicon.R): built-in defaults must
 # equal what the engine shipped with (zero regression), the file EXTENDS/overrides
 # per category, an invalid entry fails safe, and one edit plumbs a new vocabulary
-# (a bank writing "cow"/"horse" for debit/credit) through detection + drafting +
+# (a bank writing "cow"/"horse" for debit/credit) through the automatic reader and
 # parsing with no code change.
 
 .with_lexicon <- function(text, code) {
@@ -48,30 +48,24 @@ test_that("one lexicon edit teaches the WHOLE engine a new debit/credit vocabula
            "03/06/2025,cow,12.00,Lunch")
   tf <- tempfile(fileext = ".csv"); writeLines(csv, tf)
 
-  # WITHOUT the lexicon entry, the drafter can't infer the indicator -> signed.
+  # WITHOUT the lexicon entry, the reader can't tell what the words mean -> signed,
+  # every figure as printed.
   clear_lexicon_cache()
-  d0 <- draft_template(tf, bank = "ZooBank")
-  expect_identical(d0$amount_sign, "signed")
+  rd0 <- auto_read(read_input(tf))
+  expect_identical(rd0$template$amount_sign, "signed")
+  expect_equal(rd0$transactions$amount, c(4.50, 2000.00, 12.00))
 
-  # WITH cow/horse in the lexicon, detection + drafting + parsing all recognise it.
+  # WITH cow/horse in the lexicon, the reader and the parse both recognise them.
   .with_lexicon(c("debit_markers: [cow]", "credit_markers: [horse]"), {
-    d1 <- draft_template(tf, bank = "ZooBank")
-    expect_identical(d1$amount_sign, "type_dc")
-    expect_identical(d1$type_debit_value, "cow")
-    expect_identical(d1$type_credit_value, "horse")
-    tx <- draft_preview(tf, d1)
+    rd1 <- auto_read(read_input(tf))
+    expect_identical(rd1$template$amount_sign, "type_dc")
+    expect_identical(toupper(rd1$template$type_debit_value), "COW")
+    expect_identical(toupper(rd1$template$type_credit_value), "HORSE")
     # cow rows are money OUT (negative), horse rows money IN (positive).
-    expect_equal(tx$amount, c(-4.50, 2000.00, -12.00))
+    expect_equal(rd1$transactions$amount, c(-4.50, 2000.00, -12.00))
+    # nothing on the file proves it (no balance, no totals): a person still looks
+    expect_false(rd1$outcome %in% AUTO_OUTCOMES)
   })
-})
-
-# The drafter's brand vocabulary is documented as dictionary-driven ("teach it a
-# new bank in YAML, never in code"). It only works if the category is registered.
-test_that("fingerprint_brand_words is a real, admin-extendable category", {
-  expect_true("fingerprint_brand_words" %in% names(lexicon_categories()))
-  d <- lex("fingerprint_brand_words")
-  expect_true(is.character(d) && length(d) > 0)
-  expect_true("bank" %in% tolower(d))
 })
 
 # The PDF summary-line vocabulary (R/parse_pdf_table.R) is documented as

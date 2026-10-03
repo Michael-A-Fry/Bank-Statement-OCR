@@ -67,56 +67,24 @@ test_that("amend_log_record fails CLOSED on a missing or ambiguous run id", {
   expect_null(rec$attested_by)
 })
 
-# #24 -- after a save the app re-converted with the template FORCED by id, which
-# short-circuits detection, so the one moment it could prove the new template
-# auto-detects was the one moment it never tested it. recognition_summary is the
-# pure half of the real check (app.R runs detect_statement and passes the result).
-test_that("recognition_summary says plainly when the new template WILL be found", {
-  r <- recognition_summary(list(matched = TRUE, template_id = "beth_bank_pdf"), "beth_bank_pdf")
-  expect_true(isTRUE(r$ok))
-  expect_match(r$headline, "recognised automatically")
-  expect_match(r$detail, "beth_bank_pdf", fixed = TRUE)
-})
-
-test_that("recognition_summary warns when another template still wins", {
-  r <- recognition_summary(list(matched = TRUE, template_id = "anz_everyday_pdf"), "beth_bank_pdf")
-  expect_false(isTRUE(r$ok))
-  expect_match(r$headline, "anz_everyday_pdf", fixed = TRUE)
-  # the cure that actually separates them: a phrase ONLY this bank prints (and, when
-  # the statement is to hand, the line that prints it -- see test-detect.R)
-  expect_match(r$detail, "ONLY this bank prints", fixed = TRUE)
-})
-
-test_that("recognition_summary warns when nothing matches, and says why", {
-  r <- recognition_summary(list(matched = FALSE, template_id = NA_character_,
-                                detail = "no template met its min_score"), "beth_bank_pdf")
-  expect_false(isTRUE(r$ok))
-  expect_match(r$headline, "NOT recognised")
-  expect_match(r$detail, "no template met its min_score", fixed = TRUE)
-})
-
-test_that("recognition_summary never implies a pass when the check could not run", {
-  r <- recognition_summary(NULL, "beth_bank_pdf")
-  expect_true(is.na(r$ok))                     # NOT TRUE, and not FALSE either
-  expect_match(r$headline, "could not check")
-})
-
-# #25 -- the toolkit's plain-English fingerprint box. A phrase is matched against
-# the page text character for character, so a trailing space or a stray blank line
-# is the difference between a template that recognises the bank and one that never
-# matches -- and that is not something a non-technical user can debug.
-test_that("fingerprint_phrases cleans what was typed without changing it", {
-  expect_identical(fingerprint_phrases("Everyday Account Statement"),
-                   "Everyday Account Statement")
-  expect_identical(fingerprint_phrases("  Bank of Somewhere  \n\n Statement of Account \n"),
-                   c("Bank of Somewhere", "Statement of Account"))
-  # order is kept (the first phrase is the most distinctive one the drafter found)
-  expect_identical(fingerprint_phrases("B\nA"), c("B", "A"))
-  # a phrase added twice is not two conditions
-  expect_identical(fingerprint_phrases("A\nA\n A "), "A")
-  # nothing typed is nothing claimed -- never a phantom empty phrase
-  expect_identical(fingerprint_phrases(""), character(0))
-  expect_identical(fingerprint_phrases("   \n  \n"), character(0))
-  expect_identical(fingerprint_phrases(NULL), character(0))
-  expect_identical(fingerprint_phrases(NA), character(0))
+# The record says WHAT produced the answer -- engine build, learned state, layout,
+# outcome, proof -- so any past conversion can be re-run and gives the same
+# answer; and it never holds the account number, only the bank.
+test_that("every run record is stamped with what produced it, and no account number", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  acct <- nz_test_account()
+  r <- cv(proven_csv(acct))
+  rec <- jsonlite::fromJSON(file.path(d, "logs", "runs", paste0(r$run_id, ".json")))
+  for (f in c("engine_version", "reader_version", "layouts_state", "outcome", "proof_kind",
+              "institution", "bank_code", "learn_action", "feed_basis"))
+    expect_true(f %in% names(rec), info = f)
+  expect_identical(rec$requested_by, "tester")
+  expect_false(grepl(strsplit(acct, "-")[[1]][3],
+                     paste(readLines(file.path(d, "logs", "runs", paste0(r$run_id, ".json"))), collapse = ""),
+                     fixed = TRUE))
+  # a failed run is recorded too, with its stamp
+  f <- cv(file.path(tempdir(), "no_such_statement.csv"))
+  rec2 <- jsonlite::fromJSON(file.path(d, "logs", "runs", paste0(f$run_id, ".json")))
+  expect_identical(rec2$status, "failed")
+  expect_identical(rec2$engine_version, engine_version())
 })

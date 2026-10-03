@@ -34,8 +34,7 @@ test_that("unsupported_clusters groups by signature and ranks by count", {
     status = c("unsupported","unsupported","unsupported","ok","failed"),
     layout_signature = c("sigA","sigA","sigB","sigX","sigA"),
     layout_hint = c("date | amount","date | amount","txn | debit | credit","x","date | amount"),
-    closest_template = c("anz_everyday_csv","anz_everyday_csv","asb_everyday_csv","ok_tmpl","anz_everyday_csv"),
-    detect_detail = rep("closest ... (missing 'Card')", 5),
+    reason = c("No table", "No table", "Nothing adds up", "", "No table"),
     source_file = c("a.pdf","b.pdf","c.csv","d.csv","e.pdf"),
     ts = c("2026-01-01","2026-01-02","2026-01-03","2026-01-04","2026-01-05"),
     stringsAsFactors = FALSE)
@@ -43,31 +42,32 @@ test_that("unsupported_clusters groups by signature and ranks by count", {
   expect_equal(nrow(cl), 2L)                       # sigA (3: 2 unsupported + 1 failed) + sigB (1)
   expect_equal(cl$count[1], 3L)                    # sigA ranked first
   expect_equal(cl$signature[1], "sigA")
-  expect_equal(cl$closest_template[1], "anz_everyday_csv")
+  expect_equal(cl$why[1], "No table")              # the commonest reason in the cluster
 })
 
-test_that("template_usage summarises matched runs and flagged feedback", {
+test_that("layout_usage summarises runs per learned layout and flagged feedback", {
   runs <- data.frame(
     status = c("ok","needs_review","ok","unsupported"),
-    detected_template = c("bnz_everyday_csv","bnz_everyday_csv","asb_everyday_csv", NA),
+    layout = c("bnz_1@2","bnz_1@3","asb_1@1", NA),
     trust_level = c("high","low","medium", NA),
     stringsAsFactors = FALSE)
-  fb <- data.frame(template_id = c("bnz_everyday_csv","bnz_everyday_csv","asb_everyday_csv"),
+  fb <- data.frame(template_id = c("bnz_1@2","bnz_1@3","asb_1@1"),
                    flagged = c(TRUE, FALSE, TRUE), stringsAsFactors = FALSE)
-  tu <- template_usage(runs, fb)
-  bnz <- tu[tu$template == "bnz_everyday_csv", ]
+  tu <- layout_usage(runs, fb)
+  bnz <- tu[tu$layout == "bnz_1", ]                # a layout's versions are one layout
   expect_equal(bnz$n, 2L)
   expect_equal(bnz$needs_review, 1L)
   expect_equal(bnz$low_trust, 1L)
   expect_equal(bnz$flagged_feedback, 1L)
-  expect_false(any(is.na(tu$template)))            # the unsupported (NA template) is excluded
+  expect_false(any(is.na(tu$layout)))              # the unread run (no layout) is excluded
 })
 
 test_that("analytics functions are safe on empty logs", {
   e <- data.frame()
   expect_equal(nrow(runs_overview(e)), 0L)
   expect_equal(nrow(unsupported_clusters(e)), 0L)
-  expect_equal(nrow(template_usage(e)), 0L)
+  expect_equal(nrow(layout_usage(e)), 0L)
+  expect_equal(nrow(layout_drift(e)), 0L)
   expect_equal(nrow(feed_health(e)), 0L)
   expect_equal(nrow(feed_write_failures(e)), 0L)
   expect_equal(nrow(read_feed_log(tempfile("nofeed_"))), 0L)
@@ -110,16 +110,20 @@ test_that("feed_health treats a healthy log as having no failures", {
 test_that("end-to-end: a converted unsupported file is reportable from the log", {
   skip_if_not(requireNamespace("jsonlite", quietly = TRUE))
   ld <- tempfile("al_"); out <- tempfile("ao_")
-  # a CSV that matches no template -> unsupported, logged
+  # a CSV the reader cannot read as a statement -> unsupported, logged
   f <- file.path(tempdir(), "weird_unknown_layout.csv")
   writeLines(c("Wibble,Wobble,Splunge", "1,2,3"), f)
-  convert_statement(f, outdir = out, templates_dir = templates_dir(), logdir = ld)
+  convert_statement(f, outdir = out, logdir = ld, layouts_dir = tempfile("al_ly_"), tracking_dir = NA)
   runs <- read_runs(ld)
   expect_true(nrow(runs) >= 1)
   cl <- unsupported_clusters(runs)
   expect_true(nrow(cl) >= 1)
   expect_true(cl$count[1] >= 1)
-  expect_match(cl$layout[1], "wibble")             # layout hint from the header
+  expect_true(nzchar(cl$why[1]))                   # the reader's reason
+  expect_identical(cl$example_file[1], basename(f))
+  # No heading row was found, so no hint is kept: the first line of a file the
+  # reader could not read may be a preamble naming the account and its holder.
+  expect_false(grepl("wibble", tolower(paste(cl$layout[1])), fixed = TRUE))
 })
 
 # ---------------------------------------------------------------------------
@@ -128,14 +132,14 @@ test_that("end-to-end: a converted unsupported file is reportable from the log",
 # Health was one statement-shaped test -- status ok AND no failed check AND trust
 # is not low -- and a report carries no trust level at all, so `trust != "low"`
 # was NA, the whole vector was NA, both percentages were NA, and Admin rendered
-# one row of NAs for any other-route template with six or more runs. A screen
-# that says nothing about a template is worse than one that says it is fine: the
-# admin reads it as "nothing to see" and it means "never measured".
+# one row of NAs for any other-route row with six or more runs. A screen that says
+# nothing is worse than one that says it is fine: the admin reads it as "nothing
+# to see" and it means "never measured".
 # ---------------------------------------------------------------------------
 
-# .an_runs(kind, ...) -- n run records for one template, of one kind.
+# .an_runs(kind, ...) -- n run records for one layout, of one kind.
 .an_runs <- function(kind, status, n = 10, ...) {
-  d <- data.frame(detected_template = rep("t1", n),
+  d <- data.frame(layout = rep("t_1@1", n),
                   ts = sprintf("2026-03-%02dT00:00:00Z", seq_len(n)),
                   kind = rep(kind, n), status = status,
                   trust_level = rep(NA_character_, n),
@@ -166,10 +170,8 @@ test_that("run_healthy is never NA, whatever route the run took", {
   expect_false(any(run_healthy(frm)))
 })
 
-test_that("a statement's health test is exactly what it always was", {
-  # The only route with arithmetic behind it: its bar must not move because two
-  # other routes arrived.
-  s <- data.frame(detected_template = rep("t1", 3), ts = c("a", "b", "c"),
+test_that("a statement logged before automatic reading is judged as it was then", {
+  s <- data.frame(layout = rep("t_1@1", 3), ts = c("a", "b", "c"),
                   status = c("ok", "ok", "needs_review"),
                   kpi_fail_count = c(0L, 1L, 0L),
                   trust_level = c("high", "high", "low"), stringsAsFactors = FALSE)
@@ -178,36 +180,45 @@ test_that("a statement's health test is exactly what it always was", {
   expect_false("kind" %in% names(s))
 })
 
-test_that("template_drift reports a report template instead of a row of NAs", {
+test_that("an automatic reading is healthy only when the arithmetic proved it", {
+  s <- data.frame(layout = rep("t_1@1", 4), ts = c("a", "b", "c", "d"),
+                  status = c("ok", "ok", "ok", "needs_review"),
+                  outcome = c("proven", "layout_match", "check", "check"),
+                  kpi_fail_count = 0L, trust_level = "high", stringsAsFactors = FALSE)
+  # the third was ok because a person confirmed it: not the layout's own health
+  expect_identical(run_healthy(s), c(TRUE, TRUE, FALSE, FALSE))
+})
+
+test_that("layout_drift reports a drifting layout instead of a row of NAs", {
   # six clean runs then four where the tables stopped being found by heading
   r <- .an_runs("tables", c(rep("ok", 6), rep("needs_review", 4)),
                 unclaimed_words = c(rep(0L, 6), rep(4L, 4)),
                 weak_tables = c(rep(0L, 6), rep(2L, 4)))
-  d <- template_drift(r, recent_frac = 0.4, min_runs = 6)
+  d <- layout_drift(r, recent_frac = 0.4, min_runs = 6)
   expect_equal(nrow(d), 1L)
-  expect_identical(d$template[1], "t1")
+  expect_identical(d$layout[1], "t_1")
   expect_false(anyNA(d))                       # THE FAULT: every cell was NA
   expect_equal(d$earlier_ok_pct[1], 100)
   expect_equal(d$recent_ok_pct[1], 0)
   expect_true(d$drop[1] >= 25)
 })
 
-test_that("a healthy report template is not reported as drifting", {
+test_that("a healthy layout is not reported as drifting", {
   r <- .an_runs("tables", rep("ok", 10), unclaimed_words = rep(0L, 10),
                 weak_tables = rep(0L, 10))
-  expect_equal(nrow(template_drift(r)), 0L)
+  expect_equal(nrow(layout_drift(r)), 0L)
 })
 
-test_that("one report run does not turn a template's low-trust count into NA", {
+test_that("one report run does not turn a layout's low-trust count into NA", {
   # `NA == "low"` is NA, so a single form or report run -- neither of which
   # records a trust level, because neither has any reconciliation to be confident
   # about -- made this whole count NA and Admin printed a row that said nothing.
   mixed <- data.frame(
-    detected_template = c("t1", "t1", "t1"), ts = c("a", "b", "c"),
+    layout = c("t_1@1", "t_1@1", "t_1@2"), ts = c("a", "b", "c"),
     kind = c("statement", "statement", "tables"),
     status = c("ok", "needs_review", "ok"),
     trust_level = c("high", "low", NA_character_), stringsAsFactors = FALSE)
-  u <- template_usage(mixed)
+  u <- layout_usage(mixed)
   expect_equal(nrow(u), 1L)
   expect_false(anyNA(u))
   expect_equal(u$low_trust[1], 1L)         # the one statement that WAS graded low

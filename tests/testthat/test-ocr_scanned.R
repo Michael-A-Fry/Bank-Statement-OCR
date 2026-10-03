@@ -1,8 +1,8 @@
-# End-to-end OCR test: a genuinely NON-SELECTABLE (image-only) statement must
-# parse into transactions and reconcile, using the same template as the
-# text-layer version. sample_everyday_scanned.pdf is the tutorial statement
-# rasterised (0 extractable text). Skips where system tesseract/poppler are
-# absent (the OCR path is optional).
+# End-to-end OCR test: a genuinely NON-SELECTABLE (image-only) statement must be
+# read by the automatic reader into the same transactions as its text-layer
+# version, and proven by its own arithmetic. sample_everyday_scanned.pdf is the
+# tutorial statement rasterised (0 extractable text). Skips where system
+# tesseract/poppler are absent (the OCR path is optional).
 
 SCAN <- "samples/raw/tutorial/sample_everyday_scanned.pdf"
 
@@ -25,24 +25,21 @@ test_that("a scanned (image-only) statement OCRs into positioned word boxes", {
   expect_type(wb$ocr_conf, "double")
   expect_true(any(!is.na(wb$ocr_conf)))
   expect_true(all(wb$ocr_conf >= 0 & wb$ocr_conf <= 100, na.rm = TRUE))
-  templates <- load_templates(templates_dir())
-  lay <- inspect_pdf_layout(inp, templates[["tutorial_everyday_pdf"]])
+  # ...and through the reading's own columns into the X-ray overlay.
+  rd <- auto_read(inp)
+  lay <- inspect_pdf_layout(inp, rd$template)
   lw <- lay$pages[["2"]]$words
   expect_true("ocr_conf" %in% names(lw))
   expect_true(any(!is.na(lw$ocr_conf)))
 })
 
-test_that("a scanned statement parses AND reconciles like the text version", {
+test_that("a scanned statement is read and proven like the text version", {
   skip_if_not(ocr_available())
   skip_if_not(file.exists(fixture(SCAN)))
-  templates <- load_templates(templates_dir())
-  inp <- read_input(fixture(SCAN))
-  det <- detect_statement(inp, templates)
-  expect_true(det$matched)
-  expect_identical(det$template_id, "tutorial_everyday_pdf")
-  parsed <- parse_statement(inp, templates[["tutorial_everyday_pdf"]])
-  tx <- parsed$transactions
-  expect_gte(nrow(tx), 10)
+  rd <- auto_read(read_input(fixture(SCAN)))
+  expect_identical(rd$outcome, "proven")
+  tx <- rd$transactions
+  expect_equal(nrow(tx), 12L)
   # reconciles to the same closing balance the text-layer version does
   expect_equal(round(1250.00 + sum(tx$amount, na.rm = TRUE), 2), 2716.50)
 })
@@ -60,19 +57,12 @@ test_that("a slightly rotated rescan converts or flags - never wrong silently", 
   magick::image_write(rot, vpdf, format = "pdf", density = "200x200")
   on.exit(unlink(vpdf), add = TRUE)
 
-  templates <- load_templates(templates_dir())
-  inp <- read_input(vpdf)
-  det <- detect_statement(inp, templates)
-  expect_true(det$matched)
-  parsed <- parse_statement(inp, templates[["tutorial_everyday_pdf"]])
-  recon <- reconcile(parsed, templates[["tutorial_everyday_pdf"]])
-  tx <- parsed$transactions
-  correct <- nrow(tx) == 12 &&
+  rd <- auto_read(read_input(vpdf))
+  tx <- rd$transactions
+  correct <- is.data.frame(tx) && nrow(tx) == 12 &&
     isTRUE(abs(1250.00 + sum(tx$amount, na.rm = TRUE) - 2716.50) < 0.005)
-  flagged <- identical(recon$trust$level, "low") || any(recon$kpis$status == "fail")
-  # The forbidden outcome is quiet wrongness: either the numbers are right, or
-  # the run must be flagged for review.
-  expect_true(correct || flagged)
-  # And the deskew fix should make it genuinely convert, not just fail loudly.
-  expect_gte(nrow(tx), 10)
+  # The forbidden outcome is quiet wrongness: an automatic reading must be right.
+  if (rd$outcome %in% c("proven", "layout_match")) expect_true(correct)
+  # And the deskew should make it genuinely convert, not just ask.
+  expect_identical(rd$outcome, "proven")
 })

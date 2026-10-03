@@ -15,7 +15,8 @@
 # ---- token shapes --------------------------------------------------------------
 
 # A money figure as one printed word: optional bracket and sign, optional currency
-# glyph (an ASCII-only negated class, the same reason as .WA_MONEY), digits with
+# glyph (an ASCII-only negated class, so a source file with a literal pound or
+# euro sign cannot change meaning under another encoding), digits with
 # optional thousands groups, EXACTLY two decimals after a point or a comma, and an
 # optional closing bracket, trailing sign or glued marker ("150.00CR"). Units,
 # rates, references and times never have that shape.

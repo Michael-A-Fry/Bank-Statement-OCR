@@ -1,21 +1,31 @@
-# Tests for the cross-bank Xero-standard import template (one template, many banks).
+# Tests for the cross-bank Xero-standard import (one layout, many banks): the
+# table reader with the fixture template, and the automatic reader with none.
 
-test_that("Xero-standard import is detected for every bank's export", {
-  tp <- load_templates(templates_dir())
-  for (b in c("anz", "asb", "bnz", "kiwibank", "westpac")) {
-    f <- fixture(sprintf("samples/raw/%s/%s_xero_import_sample_01.csv", b, b))
+XERO_BANKS <- c("anz", "asb", "bnz", "kiwibank", "westpac")
+xero_fixture <- function(b) sprintf("samples/raw/%s/%s_xero_import_sample_01.csv", b, b)
+
+test_that("the automatic reader proves every bank's Xero export, figure for figure", {
+  # Each export carries a running balance, so the arithmetic proves the reading;
+  # the figures must then be exactly the ones the fixture template reads.
+  t <- fixture_template("xero_standard_csv")
+  for (b in XERO_BANKS) {
+    f <- fixture(xero_fixture(b))
     skip_if_not(file.exists(f))
-    det <- detect_statement(read_input(f), tp)
-    expect_identical(det$template_id, "xero_standard_csv")
+    input <- read_input(f)
+    rd <- auto_read(input)
+    expect_identical(rd$outcome, "proven", info = b)
+    want <- parse_statement(input, t)$transactions
+    for (fld in c("date", "amount", "direction", "balance"))
+      expect_equal(rd$transactions[[fld]], want[[fld]], info = paste(b, fld))
   }
 })
 
 test_that("debit/credit column drives the sign; balance continuity holds", {
-  tp <- load_templates(templates_dir())
-  f <- fixture("samples/raw/anz/anz_xero_import_sample_01.csv")
+  t <- fixture_template("xero_standard_csv")
+  f <- fixture(xero_fixture("anz"))
   skip_if_not(file.exists(f))
-  parsed <- parse_statement(read_input(f), tp[["xero_standard_csv"]])
-  recon <- reconcile(parsed, tp[["xero_standard_csv"]])
+  parsed <- parse_statement(read_input(f), t)
+  recon <- reconcile(parsed, t)
   tx <- parsed$transactions
   expect_equal(nrow(tx), 8L)
   expect_equal(tx$amount[tx$description == "Payroll deposit"], 4850.00)   # credit -> +

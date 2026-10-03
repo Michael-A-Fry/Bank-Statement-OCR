@@ -31,26 +31,26 @@ test_that("debit+credit columns count as amount being mapped", {
   expect_equal(cov$verdict[cov$field == "amount"], "populated")
 })
 
-test_that("template_drift flags a template whose health recently dropped", {
-  # 6 earlier healthy 'ok' runs, then 4 recent 'needs_review' -> drift
+test_that("layout_drift flags a learned layout whose health recently dropped", {
+  # 6 earlier runs the arithmetic proved, then 4 recent ones sent to a person ->
+  # drift (a bank changed its print and the layout stopped proving)
   runs <- data.frame(
-    detected_template = rep("bnz_everyday_csv", 10),
+    layout = c(rep("bnz_1@v1", 3), rep("bnz_1@v2", 7)),   # versions are one layout
     ts = sprintf("2026-01-%02d", 1:10),
     status = c(rep("ok", 6), rep("needs_review", 4)),
-    kpi_fail_count = c(rep(0, 6), rep(1, 4)),
-    trust_level = c(rep("high", 6), rep("low", 4)),
+    outcome = c(rep("proven", 6), rep("check", 4)),
     stringsAsFactors = FALSE)
-  d <- template_drift(runs, recent_frac = 0.4, min_runs = 6)
+  d <- layout_drift(runs, recent_frac = 0.4, min_runs = 6)
   expect_equal(nrow(d), 1L)
-  expect_equal(d$template[1], "bnz_everyday_csv")
+  expect_equal(d$layout[1], "bnz_1")
   expect_true(d$drop[1] >= 25)
 })
 
-test_that("template_drift ignores a consistently healthy template", {
-  runs <- data.frame(detected_template = rep("asb_everyday_csv", 10),
+test_that("layout_drift ignores a consistently healthy layout", {
+  runs <- data.frame(layout = rep("asb_2@v1", 10),
     ts = sprintf("2026-02-%02d", 1:10), status = rep("ok", 10),
-    kpi_fail_count = rep(0, 10), trust_level = rep("high", 10), stringsAsFactors = FALSE)
-  expect_equal(nrow(template_drift(runs)), 0L)
+    outcome = rep(c("proven", "layout_match"), 5), stringsAsFactors = FALSE)
+  expect_equal(nrow(layout_drift(runs)), 0L)
 })
 
 test_that("rollup_logs archives old run files and keeps recent ones", {

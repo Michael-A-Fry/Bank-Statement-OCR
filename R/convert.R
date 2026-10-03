@@ -123,13 +123,13 @@ log_run <- function(logdir, result) {
   # matching lines scattered through prose, and is not a table anywhere.
   r <- rle(n)
   if (any(r$lengths[r$values >= 2L] >= 2L)) return(TRUE)
-  # ONE record has nothing to repeat, so the shape cannot decide it -- and the
-  # two candidates are indistinguishable byte for byte: a header-only export, or
-  # a sentence with a comma in it. Fall back to the narrowest a statement table
-  # can be, which is the closest thing to a fact available here. Counted over
-  # records that carry CONTENT, so a trailing newline cannot cost a header-only
-  # export its one fallback.
-  sum(n > 0L) == 1L && max(n) >= .MIN_TABLE_FIELDS
+  # A header with NO rows under it has nothing to repeat, so the shape cannot
+  # decide it -- and the two candidates are indistinguishable byte for byte: a
+  # header-only export (an empty period, perhaps under a preamble), or a sentence
+  # with a comma in it. Fall back to the narrowest a statement table can be, on
+  # the LAST record that carries content (a header is never followed by prose;
+  # a trailing newline cannot cost a header-only export its one fallback).
+  n[max(which(n > 0L))] >= .MIN_TABLE_FIELDS
 }
 
 .unreadable_reason <- function(input) {
@@ -298,12 +298,22 @@ log_run <- function(logdir, result) {
   list(reading = rd, changes = changes)
 }
 
-# .read_statement(input, layouts, bank, overrides) -> list(reading, fix). One
-# statement, read from its content against the bank's layouts; then, when the
-# person sent a fix, read again with it. `fix` is NULL without one, else
-# list(kind, proven, changes) or list(kind, error).
-.read_statement <- function(input, layouts, bank, overrides) {
+# .figures(reading) -- a reading's figures as one string: dates and amounts.
+.figures <- function(rd) {
+  tx <- rd$transactions
+  if (!is.data.frame(tx) || !nrow(tx)) return("")
+  paste(tx$date, sprintf("%.2f", round(tx$amount, 2) + 0), collapse = "|")
+}
+
+# .read_statement(input, layouts, bank, overrides, unless_auto) -> list(reading,
+# fix). One statement, read from its content against the bank's layouts; then,
+# when the person sent a fix, read again with it. `fix` is NULL without one, else
+# list(kind, proven, changes) or list(kind, error). `unless_auto`: the fix is
+# meant for another statement of a bundle, so one this statement's own reading
+# already converts is left alone.
+.read_statement <- function(input, layouts, bank, overrides, unless_auto = FALSE) {
   base <- auto_read(input, layouts, bank)
+  if (unless_auto && base$outcome %in% .AUTO) return(list(reading = base, fix = NULL))
   has_roles <- length(overrides$roles) > 0L
   has_boxes <- NROW(overrides$columns) > 0L
   if (!has_roles && !has_boxes) return(list(reading = base, fix = NULL))
@@ -311,9 +321,23 @@ log_run <- function(logdir, result) {
   if (has_roles) {
     o <- .override_roles(base, overrides$roles)
     if (!is.null(o$error)) return(list(reading = base, fix = list(kind = "roles", error = o$error)))
-    rd <- auto_read(input, list(), bank, list(roles = o$roles))
-    changes <- o$changes; kind <- "roles"
+    # Roles the person leaves as shown still settle something when the reading was
+    # not proven (which of two readings that both add up is meant); on a proven
+    # reading they change nothing, and nothing is read again.
+    if (length(o$changes) || !identical(base$outcome, "proven")) {
+      rd <- auto_read(input, list(), bank, list(roles = o$roles))
+      changes <- o$changes; kind <- "roles"
+      # A fix that reads different figures from a reading the arithmetic already
+      # proved has not proved anything: both add up, so the statement cannot say
+      # which is right, and the proven one is not overruled on one person's word.
+      if (identical(base$outcome, "proven") && identical(rd$outcome, "proven") &&
+          !identical(.figures(rd), .figures(base))) {
+        rd$outcome <- "check"
+        rd$why <- "The roles given read different figures from a reading the statement's own arithmetic already proved, and both add up, so neither is proven."
+      }
+    }
   }
+  if (!has_boxes && is.na(kind)) return(list(reading = base, fix = NULL))
   if (has_boxes) {
     bx <- tryCatch(.override_boxes(input, rd, overrides$columns),
                    error = function(e) list(error = paste0("The edited columns could not be read (", conditionMessage(e), ").")))
@@ -321,6 +345,32 @@ log_run <- function(logdir, result) {
     rd <- bx$reading; changes <- c(changes, bx$changes); kind <- "boxes"
   }
   list(reading = rd, fix = list(kind = kind, proven = identical(rd$outcome, "proven"), changes = changes))
+}
+
+# .unit_overrides(overrides, i, k, pages) -> list(ov, unless_auto) or list(error):
+# the part of a person's fix meant for statement i of a k-statement file, whose
+# pages in the file are `pages`. A fix sent for one statement of a bundle must not
+# re-read the others: their columns carry the same field names, and a proven
+# statement re-read with another's roles would be broken by it. So a fix names its
+# statement (`overrides$statement`), or else applies only to the statements that
+# did not convert on their own. Box pages are the FILE's pages, as the screen
+# draws them, renumbered here to the statement's own.
+.unit_overrides <- function(overrides, i, k, pages) {
+  if (is.null(overrides) || k <= 1L) return(list(ov = overrides, unless_auto = FALSE))
+  st <- suppressWarnings(as.integer(unlist(overrides$statement)))
+  if (length(st) && (anyNA(st) || any(st < 1L | st > k)))
+    return(list(error = sprintf("The fix names a statement this file does not hold (it holds %d).", k)))
+  if (length(st) && !(i %in% st)) return(list(ov = NULL, unless_auto = FALSE))
+  ov <- overrides
+  b <- tryCatch(as.data.frame(ov$columns, stringsAsFactors = FALSE), error = function(e) NULL)
+  if (NROW(b) && "page" %in% names(b)) {
+    pg <- suppressWarnings(as.integer(b$page))
+    b <- b[is.na(pg) | pg %in% pages, , drop = FALSE]
+    b$page <- match(suppressWarnings(as.integer(b$page)), pages)
+    ov$columns <- if (nrow(b)) b else NULL
+    if (!length(ov$roles) && is.null(ov$columns)) return(list(ov = NULL, unless_auto = FALSE))
+  }
+  list(ov = ov, unless_auto = !length(st))
 }
 
 # ---- spot checks --------------------------------------------------------------------
@@ -355,7 +405,18 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
 
 # ---- the outcome of one file ----------------------------------------------------------
 
+# .log_scrub(x) -- a sentence fit for the run log. The reader's reasons can quote
+# a line of the statement ("The dated line "..." is not part of any row"), and a
+# quoted line can hold a name or an account number; the person sees the whole
+# sentence on screen, the log keeps it without the quote or any long number.
+.log_scrub <- function(x) {
+  x <- gsub("\"[^\"]*\"", "\"...\"", as.character(x))
+  gsub("[0-9][0-9 -]{3,}[0-9]", "#", x, perl = TRUE)
+}
+
 .AUTO <- c("proven", "layout_match")
+# The reader's checks that, failing, say the figures are WRONG rather than unproven.
+.CONTRADICTIONS <- c("balance_chain", "chain_across_pages", "opening_closing", "printed_totals")
 
 # .zero_unsigned(df) -- a zero printed in the money-out column is read as a
 # money-out zero (the reader keeps its direction); in the files it is 0.00, never
@@ -367,6 +428,36 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
     if (any(z)) df[[nm]][z] <- 0
   }
   df
+}
+
+# .from_header(input, template) -- a CSV or workbook handed on from its
+# column-heading row: the metadata capture and the layout hint read the first
+# line (a sheet's first row) as the headings, and an export's first line can be a
+# preamble naming the account and its holder. Attribute `header_found` says
+# whether the reader's heading row was found; where it was not, a CSV keeps no
+# lines and a workbook no heading names, rather than a preamble's.
+.from_header <- function(input, template) {
+  if (!(input$kind %||% "") %in% c("delimited", "excel")) return(input)
+  hd <- tolower(trimws(as.character(unlist(template$fingerprint$header_contains_all))))
+  has_all <- function(l) length(hd) > 0L && all(vapply(hd, grepl, NA, x = l, fixed = TRUE))
+  at <- integer(0)
+  if (identical(input$kind, "delimited")) {
+    ln <- input$lines %||% character(0)
+    at <- which(vapply(tolower(ln), has_all, NA))
+    input$lines <- if (length(at)) ln[at[1]:length(ln)] else character(0)
+  } else if (is.data.frame(input$table)) {
+    tb <- input$table
+    rows <- c(list(names(tb)), lapply(seq_len(nrow(tb)), function(i) as.character(unlist(tb[i, ]))))
+    at <- which(vapply(rows, function(r) has_all(tolower(paste(r[!is.na(r)], collapse = "\t"))), NA))
+    if (length(at)) {
+      nm <- rows[[at[1]]]
+      nm[is.na(nm)] <- ""
+      input$table <- tb[setdiff(seq_len(nrow(tb)), seq_len(at[1] - 1L)), , drop = FALSE]
+      names(input$table) <- nm
+    } else names(input$table) <- sprintf("column%d", seq_along(tb))
+  }
+  attr(input, "header_found") <- length(at) > 0L
+  input
 }
 
 # .unit_sha(sha, i, k) -- the fingerprint one statement is counted by as evidence
@@ -413,14 +504,23 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
   tdir <- if (is.null(tracking_dir)) safe(tracking_dir(cfg), NULL) else tracking_dir
   if (isTRUE(is.na(tdir))) tdir <- NULL
   result <- new_result(status = "failed", messages = character(0))
+  # A bank is a name; one holding a long number is an account number typed into
+  # the bank box, and the bank names the layout folder, the layout ids and the
+  # run log. It is not used, and the bank is taken from the statement instead.
+  bank_in <- safe(as.character(bank %||% NA_character_)[1], NA_character_)
+  bank_numbered <- !is.na(bank_in) && grepl("[0-9][0-9 -]{3,}[0-9]", bank_in)
+  if (bank_numbered) bank <- NULL
   # The stamp: what produced this answer, for the run log, the JSON and the feed.
+  # The learned state and the picked bank are known before the file is opened, so
+  # even a file that cannot be read says what it was converted against.
   stamp <- list(engine_version = engine_version(), reader_version = AUTO_READ_VERSION,
-                layouts_state = "unknown", layout = NA_character_, outcome = "unread",
-                proof_kind = "none", institution = NA_character_, bank_code = NA_character_,
-                bank_confidence = NA_character_, kind = NA_character_)
+                layouts_state = if (is.null(ldir)) "unknown" else safe(layouts_state_id(ldir), "unknown"),
+                layout = NA_character_, outcome = "unread",
+                proof_kind = "none", institution = safe(.layout_slug(bank_pick(list(), bank)$bank), NA_character_),
+                bank_code = NA_character_, bank_confidence = NA_character_, kind = NA_character_)
   facts <- list(rows = 0L, learn = character(0), statements = 1L, multi = FALSE, fix = NA_character_,
                 pages = NA_integer_, period_start = NA_character_, period_end = NA_character_, n_accounts = NA_integer_,
-                layout_sig = NA_character_, layout_hint = NA_character_, reason = NA_character_)
+                layout_sig = NA_character_, layout_hint = NA_character_, reason = NA_character_, tracked = FALSE)
 
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
@@ -431,9 +531,6 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     stamp$kind <- if (identical(input$kind, "pdf") && isTRUE(any(input$page_ocr))) "scan" else input$kind
     meta <- extract_metadata(input)
     multi <- detect_multiple_statements(input, meta)
-    lsig <- safe(layout_signature(input), list(signature = NA_character_, hint = NA_character_))
-    facts$layout_sig <- lsig$signature %||% NA_character_
-    facts$layout_hint <- lsig$hint %||% NA_character_
 
     # ---- the bank: the person's pick, pre-filled and checked from the document ----
     ident <- bank_identify(input)
@@ -445,17 +542,48 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     stamp$bank_code <- if (!is.na(ident$bank_code %||% NA) && grepl("^[0-9]{2}$", ident$bank_code)) ident$bank_code else NA_character_
     stamp$bank_confidence <- ident$confidence %||% "unknown"
     layouts <- if (!is.na(bank_slug) && !is.null(ldir)) layouts_load(ldir, bank_id) else list()
+    # Stamped again beside the load: reading the file (OCR) can take long enough
+    # for another conversion to learn in between.
     stamp$layouts_state <- if (is.null(ldir)) "unknown" else layouts_state_id(ldir)
-    learn_ok <- !is.na(bank_slug) && !is.null(ldir) && !isTRUE(pick$block_learning)
+    # A bank in question -- the statement names another bank, confidently or
+    # enough to ask -- teaches nothing until the person keeps their pick: a layout
+    # learned under the wrong bank would be handed to that bank's statements.
+    bank_held <- !is.na(bank_slug) && (isTRUE(pick$block_learning) || isTRUE(pick$ask))
+    learn_ok <- !is.na(bank_slug) && !is.null(ldir) && !bank_held
 
     # ---- read: the whole file, or each statement of a bundle on its own ----
     segs <- bundle_segments(input, meta)
     units <- if (is.null(segs)) list(list(input = input, pages = seq_along(input$pages %||% input$words %||% 1L)))
              else lapply(segs, function(pg) list(input = .subinput_pages(input, pg), pages = pg))
-    reads <- lapply(units, function(u) .read_statement(u$input, layouts, bank_name, overrides))
+    k <- length(units)
+    reads <- lapply(seq_len(k), function(i) {
+      uo <- .unit_overrides(overrides, i, k, units[[i]]$pages)
+      if (!is.null(uo$error)) {
+        rd <- .read_statement(units[[i]]$input, layouts, bank_name, NULL)
+        return(list(reading = rd$reading, fix = list(kind = "statement", error = uo$error)))
+      }
+      .read_statement(units[[i]]$input, layouts, bank_name, uo$ov, uo$unless_auto)
+    })
     readings <- lapply(reads, `[[`, "reading")
-    k <- length(readings)
     facts$statements <- k
+    # Bundles are identified statement by statement (spec section 5): one that
+    # names another bank than the pick never teaches the picked bank's layouts.
+    # Even weakly: the person kept one bank for the whole file, so their word does
+    # not cover a statement that points elsewhere.
+    unit_bank <- vapply(seq_len(k), function(i) {
+      if (k == 1L || is.na(bank_slug)) return(NA_character_)
+      u <- bank_identify(units[[i]]$input)
+      if (!is.na(u$institution %||% NA) && !identical(u$institution, bank_slug))
+        as.character(u$display %||% u$institution)[1] else NA_character_
+    }, "")
+    # No running balance and no totals: the reading stands only on a learned
+    # layout's word, and that word is the picked bank's. With the bank in
+    # question it is not taken without a person.
+    for (i in seq_len(k)) if (identical(readings[[i]]$outcome, "layout_match") && (bank_held || !is.na(unit_bank[i]))) {
+      readings[[i]]$outcome <- "check"
+      readings[[i]]$why <- sprintf(paste("No running balance or totals are printed, so only a learned layout of %s reads it,",
+                                         "and the statement looks like another bank's; confirm the bank first."), bank_name)
+    }
     if (k > 1L) {
       comb <- bundle_combine(readings, segs, length(input$pages %||% input$words))
       parsed <- comb$parsed; recon <- comb$recon
@@ -466,6 +594,9 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     has_rows <- !is.null(parsed) && is.data.frame(parsed$transactions) && nrow(parsed$transactions) > 0L
     fixes <- lapply(reads, `[[`, "fix")
     fix_err <- unique(unlist(lapply(fixes, function(f) f$error)))
+    # A fix sent for a bundle that reached none of its statements is said, not dropped.
+    if (k > 1L && (length(overrides$roles) || NROW(overrides$columns)) && all(vapply(fixes, is.null, NA)))
+      fix_err <- c(fix_err, "it reached none of this file's statements (each already proves itself, or the boxes are on other pages), so say which statement it is for.")
     fix_kind <- unique(unlist(lapply(fixes, function(f) f$kind)))
     facts$fix <- if (length(fix_kind)) fix_kind[1] else NA_character_
     # The whole file's reading: the weakest statement's.
@@ -481,6 +612,16 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     }
     first_bad <- which(!(outcomes %in% .AUTO))[1]
     reason <- if (!is.na(first_bad)) why_of(first_bad) else lead$why %||% ""
+    # A spreadsheet's layout hint is its column headings, from the heading row the
+    # reader found: the first line or row can be a preamble naming the account and
+    # its holder, and the hint is kept in the run log for good. Without a found
+    # heading row there is no hint.
+    hdr_input <- .from_header(input, lead$template)
+    lsig <- if (isFALSE(attr(hdr_input, "header_found"))) list(signature = NA_character_, hint = NA_character_)
+            else safe(layout_signature(hdr_input), list(signature = NA_character_, hint = NA_character_))
+    lsig$hint <- .log_scrub(lsig$hint %||% NA_character_)
+    facts$layout_sig <- lsig$signature %||% NA_character_
+    facts$layout_hint <- lsig$hint %||% NA_character_
 
     # ---- the status ----
     ocr_pages <- suppressWarnings(as.integer(input$meta$ocr_pages %||% 0L)); if (is.na(ocr_pages)) ocr_pages <- 0L
@@ -490,25 +631,41 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     # is no evidence of a good read either.
     ocr_poor <- ocr_pages > 0L && (!is.finite(ocr_conf) || ocr_conf < PARAM_OCR_PAGE_MIN_CONF)
     derived <- if (has_rows) sum(grepl("amount_from_balance", parsed$transactions$flags, fixed = TRUE)) else 0L
-    box_proven <- identical(facts$fix, "boxes") && all(vapply(fixes, function(f) isTRUE(f$proven), logical(1)))
+    box_fixed <- any(vapply(fixes, function(f) identical(f$kind, "boxes") && is.null(f$error), logical(1)))
     status <- if (!has_rows || all(outcomes == "unread")) "unsupported"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
     if (identical(status, "needs_review") && all(outcomes %in% .AUTO) && ocr_poor)
       reason <- sprintf("The figures add up, but the scan was read with low confidence (%s), so a date or a word may be misread.",
                         if (is.finite(ocr_conf)) sprintf("%.0f%%", ocr_conf) else "not measured")
-    confirmed <- isTRUE(confirm) && identical(status, "needs_review") && !("unread" %in% outcomes)
-    basis <- if (identical(status, "ok")) { if (box_proven) "person" else if (all(outcomes == "layout_match")) "layout_match" else "proven" }
+    # A person can vouch for a reading the arithmetic could not PROVE, never for one
+    # it CONTRADICTS: a balance that does not add up says the figures are wrong.
+    contra <- unlist(lapply(readings, function(r) {
+      ck <- r$checks
+      if (is.data.frame(ck)) ck$why[ck$check %in% .CONTRADICTIONS & ck$ok %in% FALSE] else NULL
+    }))
+    # Nor for a reading the fix sent with it was meant to change: the reading on
+    # screen is not the one the person vouched for.
+    confirmed <- isTRUE(confirm) && identical(status, "needs_review") && !("unread" %in% outcomes) &&
+                 !length(contra) && !length(fix_err)
+    refused <- isTRUE(confirm) && identical(status, "needs_review") && !confirmed
+    basis <- if (identical(status, "ok")) { if (box_fixed) "person" else if (all(outcomes == "layout_match")) "layout_match" else "proven" }
              else if (confirmed) "person" else "none"
     if (confirmed) { status <- "ok"; stamp$proof_kind <- "person" }
 
     # ---- learning: only what the arithmetic proved (spec section 6) ----
     learn <- vector("list", k)
     held <- NULL
+    # The layouts this file has already counted towards. A bundle is nearly always
+    # one account's statements, and a layout is proven by statements of different
+    # accounts (spec section 6), so one file is one piece of evidence per layout.
+    credited <- character(0)
     for (i in seq_len(k)) {
       r <- readings[[i]]; f <- fixes[[i]]
       learn[[i]] <- if (!learn_ok) list(action = "none", why = if (is.na(bank_slug)) "No bank was given, so nothing is learned."
                                          else if (is.null(ldir)) "No layout store is set up, so nothing is learned." else pick$why)
+        else if (!is.na(unit_bank[i]))
+          list(action = "none", why = sprintf("Statement %d looks like %s, not %s, so nothing is learned from it.", i, unit_bank[i], bank_name))
         else if (!is.null(f$error)) list(action = "none", why = "The fix could not be read, so nothing is learned.")
         else if (identical(f$kind, "roles") && isTRUE(f$proven)) {
           # A person's fix that the arithmetic then proves teaches straight away.
@@ -519,11 +676,18 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         }
         else if (identical(f$kind, "boxes"))
           list(action = "none", why = "Edited column boxes apply to this file only: a layout does not remember positions.")
-        else if (identical(r$outcome, "proven") && is.null(f))
-          layout_learn(r, pick, .unit_sha(sha, i, k), ldir)
+        else if (identical(r$outcome, "proven") && is.null(f)) {
+          m <- if (length(credited)) layout_match(r$template$signature, layouts_load(ldir, bank_id)) else NULL
+          if (!is.null(m) && m$id %in% credited)
+            list(action = "none", ref = m$ref, id = m$id,
+                 why = sprintf("Another statement of this file already counts towards layout %s; one file is one piece of evidence.", m$id))
+          else layout_learn(r, pick, .unit_sha(sha, i, k), ldir)
+        }
         else list(action = "none", why = "Only a reading the arithmetic proved teaches a layout.")
-      # One person's word the arithmetic could not back waits for an admin.
-      if (learn_ok && is.null(f$error) && !identical(f$kind, "boxes") && !(r$outcome %in% .AUTO) &&
+      if (!is.na(learn[[i]]$id %||% NA)) credited <- c(credited, learn[[i]]$id)
+      # One person's word the arithmetic could not back waits for an admin -- but
+      # only a reading the arithmetic does not CONTRADICT ("check", never "unread").
+      if (learn_ok && is.na(unit_bank[i]) && is.null(f$error) && !identical(f$kind, "boxes") && identical(r$outcome, "check") &&
           ((identical(f$kind, "roles") && !isTRUE(f$proven)) || confirmed) && is.list(r$template))
         held <- c(held, fix_hold(r$template, bank_id, if (confirmed && is.null(f)) "confirm" else "roles", who, ldir)$id)
     }
@@ -536,6 +700,9 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     if (has_rows) {
       parsed$transactions <- .zero_unsigned(parsed$transactions)
       parsed$extras <- .zero_unsigned(parsed$extras)
+      # A card's 0.00 closing balance turned round is -0 too, and the JSON writes it so.
+      parsed$header[] <- lapply(parsed$header, function(v) { if (is.double(v)) v[!is.na(v) & v == 0] <- 0; v })
+      recon$kpis <- .zero_unsigned(recon$kpis)
       parsed$header$bank <- bank_name
       parsed$header$institution <- bank_slug
     }
@@ -544,7 +711,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     diag <- build_diagnostics(status, parsed = parsed, recon = recon,
       reading = list(outcome = worst, why = reason, derived = derived, fix_error = fix_err,
                      bank_why = if (isTRUE(pick$ask) || pick_mismatch) pick$why else NULL,
-                     bank_blocked = isTRUE(pick$block_learning) && !is.na(bank_slug)),
+                     bank_blocked = bank_held || any(!is.na(unit_bank))),
       metadata = list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
                       faint_minus_signs = input$meta$faint_minus_signs %||% 0L,
                       # Did the sign-from-ink scan RUN? Only askable of a PDF; a
@@ -574,12 +741,21 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     else if (identical(status, "ok"))
       status_message("ok", sprintf("%d row(s); %s", n, if (k > 1L) sprintf("%d statements, each proven on its own.", k) else lead$why))
     else if (identical(status, "needs_review"))
-      status_message("needs_review", reason, "check the reading, then confirm it or set the columns' roles")
-    else status_message("unsupported", reason, "check the columns on Please check, or set the file aside")
+      status_message("needs_review", sub("[.]$", "", reason), "check the reading, then confirm it or set the columns' roles")
+    else status_message("unsupported", sub("[.]$", "", reason), "check the columns on Please check, or set the file aside")
     if (derived > 0L)
       msg <- c(msg, sprintf("%d amount(s) could not be read and were filled in from the running balance; they are marked amount_from_balance in the flags column.", derived))
     if (length(fix_err)) msg <- c(sprintf("The fix was not applied: %s", fix_err[1]), msg)
+    if (refused) msg <- c(if (length(contra))
+      sprintf("This reading cannot be confirmed: the statement's own arithmetic contradicts it (%s) Set the columns' roles instead.", contra[1])
+      else if (length(fix_err)) "This reading cannot be confirmed: the fix sent with it was not applied, so it is not the reading you meant. Correct the fix, then confirm."
+      else "This reading cannot be confirmed: part of the statement could not be read. Set the columns' roles instead.", msg)
     if (isTRUE(pick$ask) || pick_mismatch) msg <- c(msg, pick$why)
+    if (any(!is.na(unit_bank)))
+      msg <- c(msg, sprintf("Statement %d looks like %s, not %s; nothing is learned from it.",
+                            which(!is.na(unit_bank))[1], unit_bank[!is.na(unit_bank)][1], bank_name))
+    if (bank_numbered)
+      msg <- c(msg, "The bank given held a long number, like an account number, so it was not used; the bank was taken from the statement.")
 
     result$status <- status
     result$template_id <- stamp$layout %||% NA_character_
@@ -589,22 +765,34 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     result$bank <- list(bank = bank_id, display = bank_name, institution = ident$institution %||% NA_character_,
                         identified_display = ident$display %||% NA_character_, bank_code = stamp$bank_code,
                         confidence = stamp$bank_confidence, why = pick$why, ask = isTRUE(pick$ask),
-                        block_learning = isTRUE(pick$block_learning))
+                        block_learning = bank_held)
+    # Column pages are the FILE's pages, as the screen draws them and as a box fix
+    # names them; a statement of a bundle is read on its own pages 1..n.
+    file_cols <- function(i) {
+      cl <- readings[[i]]$columns
+      if (!is.data.frame(cl) || !nrow(cl) || !("page" %in% names(cl))) return(cl)
+      cl$page <- units[[i]]$pages[cl$page]
+      cl
+    }
     result$reading <- lapply(seq_len(k), function(i) {
       r <- readings[[i]]
       list(outcome = r$outcome, why = r$why, pages = units[[i]]$pages, proof = r$proof, checks = r$checks,
-           candidates = r$candidates, columns = r$columns, matched_layout = r$matched_layout,
+           candidates = r$candidates, columns = file_cols(i), matched_layout = r$matched_layout,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
            transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]])
     })
-    result$columns <- readings[[1]]$columns
+    result$columns <- file_cols(1L)
     result$learn <- learn
     result$fix_held <- held
     result$person <- list(confirmed = confirmed, by = if (confirmed || length(fix_kind)) who else NA_character_,
                           fix = facts$fix, fix_proven = if (length(fix_kind)) all(vapply(fixes, function(f) isTRUE(f$proven), logical(1))) else NA)
     result$derived <- derived
-    result$spot_check <- basis %in% c("proven", "layout_match") &&
-      .spot_pick(sha, cfg$auto_reading$spot_check_rate %||% 0)
+    # A statement with no balance and no totals that converts on a proven layout's
+    # word (layout_match) has no arithmetic of its own behind it, so it is
+    # spot-checked twice as often (spec section 2).
+    rate <- suppressWarnings(as.numeric(cfg$auto_reading$spot_check_rate %||% 0)[1])
+    if (identical(basis, "layout_match")) rate <- min(1, 2 * rate)
+    result$spot_check <- basis %in% c("proven", "layout_match") && .spot_pick(sha, rate)
     result$trust <- recon$trust %||% list(level = "low", score = 0, reasons = reason)
     result$kpis <- recon$kpis
     result$header <- parsed$header %||% list()
@@ -631,16 +819,17 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         tf$layout_version <- as.integer(sub("^.*@v?", "", r$learned_layout))
       }
       tf$learn_action <- learn[[i]]$action %||% "none"
-      if (length(f$changes)) { tf$event <- "correction"; tf$correction <- f$changes }
+      if (!is.null(f$kind) && is.null(f$error)) { tf$event <- "correction"; tf$correction <- f$changes }
       if (confirmed) { tf$event <- "confirm"; tf$proof_kind <- "person" }
       suppressWarnings(track_record(tf, tdir))
     }
+    facts$tracked <- TRUE
 
     # LOCAL-ONLY metadata capture, built where every artifact is in scope and
     # written after the run log below. NEVER enters the feed.
     result$metadata_capture <- safe(capture_metadata(list(
       run_id = run_id, ts = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
-      requested_by = who, sha = sha, input = input, parsed = parsed, recon = recon,
+      requested_by = who, sha = sha, input = hdr_input, parsed = parsed, recon = recon,
       meta = meta, multi = multi, template = lead$template, status = status,
       layout_sig = lsig, coverage = result$coverage,
       elapsed_ms = as.numeric(difftime(Sys.time(), t0, units = "secs")) * 1000), cfg), NULL)
@@ -659,6 +848,14 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
   result <- outcome
   result$run_id <- run_id
   result$stamp <- stamp
+  # A file that could not be read is a statement the tool did not read: counted,
+  # or the Admin page's automatic rate would leave out every failure.
+  if (!is.null(tdir) && !isTRUE(facts$tracked))
+    safe(suppressWarnings(track_record(Filter(Negate(is.null), list(
+      event = "convert", engine_version = stamp$engine_version, state_id = stamp$layouts_state,
+      institution = if (is.na(stamp$institution)) NULL else stamp$institution,
+      kind = if (is.na(stamp$kind)) NULL else stamp$kind, rows = 0L, outcome = "unread",
+      proof_kind = "none", learn_action = "none")), tdir)))
 
   # ---- run log: one file per run (concurrency-safe, no shared append) ----
   # BUILT here, WRITTEN by log_run(). The bank is its institution id and two-digit
@@ -684,7 +881,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     learn_action = paste(facts$learn, collapse = ","),
     person_fix = facts$fix,
     spot_check = isTRUE(result$spot_check),
-    reason = facts$reason,
+    reason = .log_scrub(facts$reason),
     layout_signature = facts$layout_sig,
     layout_hint = facts$layout_hint,
     engine_version = stamp$engine_version,
@@ -701,7 +898,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     period_end = facts$period_end,
     n_accounts = facts$n_accounts,
     multiple_statements = facts$multi,
-    message = paste(result$messages, collapse = " | ")
+    message = .log_scrub(paste(result$messages, collapse = " | "))
   )
   if (isTRUE(log)) log_run(logdir, result)
 

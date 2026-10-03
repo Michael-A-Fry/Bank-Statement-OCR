@@ -135,7 +135,13 @@
     if (!length(t)) return("empty")
     if (j == tt$dj) return("date")
     if (all(t %in% c("date", "serial")) && mean(nzchar(T[, j])) >= 0.9) return("date2")
-    if (all(t %in% c("money", "serial"))) return("money")
+    if (all(t %in% c("money", "serial"))) {
+      # A whole number printed with leading zeros ("007", "0012345") in a column
+      # with no decimals anywhere is a code or a reference, never money.
+      v <- tt$m[rows, j]; v <- v[nzchar(v)]
+      if (any(grepl("^0[0-9]+$", v)) && !any(grepl("[.,][0-9]", v))) return("text")
+      return("money")
+    }
     if (all(t == "marker")) return("marker")
     "text"
   }, "")
@@ -296,7 +302,7 @@
   }
   if (is.null(rd) && !is.null(rl$best)) { rd <- rl$best; basis <- "broken" }
   if (is.null(rd)) {
-    vr <- .ar_vote_roles(length(mcols), hroles)
+    vr <- if (!is.null(ctx$roles)) list(roles = ctx$roles, by = "person") else .ar_vote_roles(length(mcols), hroles)
     if (is.null(vr)) return(fail("Found the table but could not tell which column of figures is which."))
     am <- .ar_amounts(V, vr$roles, "S", isTRUE(ctx$liab$liability))
     b <- which(vr$roles == "balance")
@@ -347,7 +353,12 @@
   txt <- which(kind == "text")
   extras <- list(); fields <- stats::setNames(rep(NA_character_, ncol(tt$m)), seq_len(ncol(tt$m)))
   if (length(txt)) {
+    # The description is the text column with the most print -- among those that
+    # hold words: an account-number column ("This Party Account") is long but is
+    # never the description.
     chars <- vapply(txt, function(j) sum(nchar(tt$m[rows, j])), 0)
+    worded <- vapply(txt, function(j) any(grepl("[A-Za-z]", tt$m[rows, j])), NA)
+    if (any(worded)) chars[!worded] <- -1
     desc <- txt[which.max(chars)]
     cols$description <- list(source = hn[desc]); fields[as.character(desc)] <- "description"
     k <- 0L

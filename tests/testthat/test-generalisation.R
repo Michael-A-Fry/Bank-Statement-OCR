@@ -16,12 +16,15 @@
 # helper.R and tests/testthat/expected/). Every variant is one fixed,
 # deterministic transformation; nothing here uses random numbers.
 #
+# Every variant is converted COLD -- nothing learned, no template -- by the
+# automatic reader, so a perturbation can only be survived by reading the file's
+# content, never by remembering its bytes.
+#
 # Two genuine engine bugs surfaced while building this suite (a UTF-8 BOM or a
 # case-changed header silently nulled the date column while status stayed
-# "ok"). Both are now FIXED in the engine - safe_readlines() strips a leading
-# BOM, detection and field mapping match case-insensitively where unambiguous,
-# and the dates_readable check makes zero-readable-dates impossible to pass
-# silently - and every former skip below is a live positive assertion.
+# "ok"). Both are FIXED - safe_readlines() strips a leading BOM, and a zero-
+# readable-dates file can never pass silently - and every former skip below is a
+# live positive assertion.
 
 # ---- minimal quote-aware CSV line helpers (test-local; engine is a black box) ----
 
@@ -141,8 +144,7 @@
 # ---- sample registry ----
 # hdr_idx: the physical line the unperturbed sample's header sits on. Every
 # sample here has the header on line 1 EXCEPT the ASB export, which carries a
-# metadata preamble first (see templates/asb_everyday_csv.yaml preamble
-# .header_regex); .hdr_idx() below locates it the same way.
+# metadata preamble first; .hdr_idx() below finds its header line.
 
 .base_lines <- function(rel_path) readLines(fixture(rel_path), warn = FALSE, encoding = "UTF-8")
 
@@ -171,10 +173,15 @@ SAMPLES <- list(
     path = "samples/raw/asb/asb_transaction_export_01.csv", bank = "ASB",
     date_field = "Date", description_field = "Memo",
     golden = read_core_csv(fixture("tests/testthat/expected/asb_everyday_csv.csv"))),
+  # The Kiwibank export prints two dates a row, and which one the reader takes
+  # is not something the arithmetic decides (test-kiwibank_everyday_csv.R holds
+  # it to one of the file's own columns). Its expected dates are the unperturbed
+  # file's reading, which no perturbation may move.
   kiwibank_everyday_csv = list(
     path = "samples/raw/kiwibank/kiwibank_transaction_01.csv", bank = "Kiwibank",
     date_field = "Transaction Date", description_field = "Description",
-    golden = read_core_csv(fixture("tests/testthat/expected/kiwibank_everyday_csv.csv"))),
+    golden = within(read_core_csv(fixture("tests/testthat/expected/kiwibank_everyday_csv.csv")),
+      date <- auto_read(read_input(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv")))$transactions$date)),
   westpac_everyday_csv = list(
     path = "samples/raw/westpac/westpac_transaction_export_01.csv", bank = "Westpac",
     date_field = "Date", description_field = "Description",
@@ -184,12 +191,10 @@ SAMPLES <- list(
 # ---- run + assert ----
 
 # .convert_variant(path, bank) -- the real engine entry point, csv-only output
-# (keeps the suite fast; the contract only needs the core table).
+# (keeps the suite fast; the contract only needs the core table), in a fresh
+# sandbox each time so no variant learns from another.
 .convert_variant <- function(path, bank) {
-  convert_statement(path, bank = bank, formats = "csv",
-                    outdir = tempfile("gen_out_"),
-                    templates_dir = templates_dir(),
-                    logdir = tempfile("gen_log_"))
+  convert_sandbox()(path, bank = bank, formats = "csv")
 }
 
 # .expect_contract(res, golden) -- the generalisation contract itself.
@@ -209,12 +214,8 @@ SAMPLES <- list(
 }
 
 # ==== 1. reordered columns =================================================
-# header_contains_all fingerprints are sets, and every field is looked up by
-# NAME (not position) downstream, so reordering should never change the
-# result. The one exception -- ASB's preamble.header_regex is anchored to the
-# literal, ordered header text -- is exercised here too: it correctly fails to
-# locate the header at all and reports "unsupported", which still satisfies
-# the contract (disjunction branch b), so no special-casing is needed.
+# The reader types every column by its content, not its position, so reordering
+# should never change the result.
 test_that("reordered columns convert identically or are honestly flagged", {
   for (sample_id in names(SAMPLES)) {
     s <- SAMPLES[[sample_id]]
@@ -237,10 +238,8 @@ test_that("an extra unknown column converts identically or is honestly flagged",
 })
 
 # ==== 3. preamble line above the header =====================================
-# ASB already tolerates an export preamble (header_regex scans for the header
-# rather than assuming line 1); everything else has preamble: null, so an
-# extra line pushes their header off line 1 and detection correctly reports
-# "unsupported" rather than mis-reading the preamble text as data.
+# The reader finds the heading row wherever it is, so a preamble line must
+# never be read as data.
 test_that("a preamble line above the header converts identically or is honestly flagged", {
   for (sample_id in names(SAMPLES)) {
     s <- SAMPLES[[sample_id]]
@@ -284,11 +283,8 @@ test_that("a quoted field containing the delimiter converts identically or is ho
 })
 
 # ==== 6. trailing empty lines + footer line =================================
-# The blank lines are silently ignored (no_unparsed_rows only counts non-empty
-# physical lines), but "End of statement" is a non-empty line with far fewer
-# fields than the header, so it is parsed as one extra malformed row. That
-# correctly fails no_unparsed_rows and downgrades every sample to
-# needs_review -- honest flagging, not silent corruption.
+# The blank lines are ignored; "End of statement" is a non-empty line with no
+# date and no figure, which must never become a row.
 test_that("trailing blank lines and a footer line convert identically or are honestly flagged", {
   for (sample_id in names(SAMPLES)) {
     s <- SAMPLES[[sample_id]]
@@ -300,34 +296,18 @@ test_that("trailing blank lines and a footer line convert identically or are hon
 })
 
 # ==== 7. header case change (date column) ===================================
-# Column lookup is case-insensitive where it is unambiguous: detection's
-# fingerprint scoring (R/detect.R .score_template) and field mapping
-# (R/parse.R .pick) both fall back to a UNIQUE case-insensitive match, so a
-# bank flipping its header casing ("Date" -> "DATE") converts identically.
-# ASB is the one exception: its header-location regex is anchored and
-# case-sensitive, so the case change stops the header being found at all and
-# the file is correctly reported "unsupported" - fails closed, never silently
-# wrong.
-test_that("a case-changed date header is honestly flagged (ASB fails closed)", {
-  s <- SAMPLES[["asb_everyday_csv"]]
-  lines <- .base_lines(s$path)
-  hdr_idx <- .hdr_idx("asb_everyday_csv", lines)
-  variant <- .uppercase_header_field(lines, hdr_idx, s$date_field)
-  res <- .convert_variant(.write_lines_tmp(variant), s$bank)
-  .expect_contract(res, s$golden, info = "asb_everyday_csv")
-  testthat::expect_identical(res$status, "unsupported")
-})
-
-test_that("a case-changed date header converts identically (all non-ASB samples)", {
-  for (sample_id in setdiff(names(SAMPLES), "asb_everyday_csv")) {
+# A date column is a date column by its content, so a bank flipping its header
+# casing ("Date" -> "DATE") converts identically.
+test_that("a case-changed date header converts identically or is honestly flagged", {
+  for (sample_id in names(SAMPLES)) {
     s <- SAMPLES[[sample_id]]
     lines <- .base_lines(s$path)
     hdr_idx <- .hdr_idx(sample_id, lines)
     variant <- .uppercase_header_field(lines, hdr_idx, s$date_field)
     res <- .convert_variant(.write_lines_tmp(variant), s$bank)
     .expect_contract(res, s$golden, info = sample_id)
-    # The dates themselves must survive the case change - the old bug matched
-    # the template but silently blanked every date while status stayed "ok".
+    # The dates themselves must survive the case change - the old bug read the
+    # file but silently blanked every date while status stayed "ok".
     if (identical(res$status, "ok"))
       testthat::expect_equal(read_core_csv(res$outputs[["csv"]])$date, s$golden$date,
                              info = sample_id)
@@ -337,15 +317,19 @@ test_that("a case-changed date header converts identically (all non-ASB samples)
 # ==== the never-silently-wrong safety net ===================================
 # Even when a date column IS found, its values may not parse (wrong format for
 # this file, corrupted export). Zero readable dates must never leave as a
-# clean "ok": the dates_readable check fails and the run is flagged.
+# clean "ok": the dates_readable check fails and the run is flagged. BOTH of the
+# BNZ export's date columns (Date, Processed Date) are spoiled, or the reader
+# would rightly take the dates from the one left.
 test_that("a file whose dates cannot be parsed is flagged, never a clean ok", {
   s <- SAMPLES[["bnz_everyday_csv"]]
   lines <- .base_lines(s$path)
   hdr_idx <- .hdr_idx("bnz_everyday_csv", lines)
+  dcols <- match(c("Date", "Processed Date"), .csv_split(lines[hdr_idx]))
+  expect_false(anyNA(dcols))
   out <- lines
   for (i in seq_along(lines)) {
     if (i <= hdr_idx || !nzchar(trimws(lines[i]))) next
-    f <- .csv_split(lines[i]); f[1] <- "not-a-date"; out[i] <- .csv_join(f)
+    f <- .csv_split(lines[i]); f[dcols] <- "not-a-date"; out[i] <- .csv_join(f)
   }
   res <- .convert_variant(.write_lines_tmp(out), s$bank)
   testthat::expect_false(identical(res$status, "ok"))

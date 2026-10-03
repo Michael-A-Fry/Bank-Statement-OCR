@@ -1,70 +1,56 @@
-# identify.R -- WHAT A FILE IS, AND WHICH TEMPLATE THE CONVERSION WILL PICK, before
-# anything is converted.
+# identify.R -- WHAT A FILE IS, AND WHICH BANK ISSUED IT, before anything is
+# converted.
 #
-# Asked for in these words: "we NEED a backup to be able to specify that isn't a
-# tiny little click 'did it do it wrong'. I want it to pre fill a table with the
-# upload, its type, and its guessed template with easy dropdown to change it. Same
-# thing for single statement." The Convert screen calls identify_file() once per
-# uploaded file and shows the answer in a row the analyst can change before pressing
-# Convert -- so a wrong pick is caught BEFORE the run, not discovered after it.
+# The Convert screen calls identify_file() once per uploaded file and shows the
+# answer in a row the analyst can change before pressing Convert: the file's kind
+# and pages, and its BANK, pre-filled from the statement itself (bank_identify,
+# R/bank_identity.R -- the holder's account number in the official branch
+# register, then the bank's legal name, website, phone and brand words). The bank
+# is the only choice there is: which of that bank's learned layouts fits is
+# decided by the reader at conversion, from the statement's content.
 #
-# THE GUESS IS THE CONVERSION'S OWN ANSWER, NOT AN APPROXIMATION OF IT. A table that
-# says "ANZ" and a conversion that then reads the file as Westpac is worse than no
-# table. So the guess is made by the SAME detect_statement() on the SAME input:
-#   - a text PDF: convert_statement's input$pages IS pdftools::pdf_text() (read_pdf
-#     keeps the raw text layer for every page with a text layer), and detection
-#     reads nothing else of a PDF -- page text for the phrases, page 1 for the bank
-#     name. The expensive parts of a read (word boxes, the ink scan, OCR) are not
-#     inputs to detection and are skipped: a 400-page PDF identifies in under a
-#     second where it converts in forty.
-#   - CSV / TSV / Excel: read_input() itself. Those reads are cheap already.
-#   - the file NAME the conversion will see (filename_regex is a tie-breaker), not
-#     the upload's temporary path.
-# The caller passes the same template set the conversion will load.
+#   - a text PDF: its text layer only (pdftools::pdf_text). The expensive parts of
+#     a read (word boxes, the ink scan, OCR) are not needed to name the bank, so a
+#     400-page PDF identifies in about a second.
+#   - CSV / TSV / Excel: read_input() itself; those reads are cheap already.
 #
-# A SCANNED PDF IS SAID TO BE ONE, AND NOT GUESSED. Its text only exists after OCR,
-# at about nine seconds a page, and OCR-ing a case folder to fill in a table would
-# hold the server for minutes. It is detected while it converts, exactly as now --
-# and the analyst can still choose its template in the same row.
+# A SCANNED PDF IS SAID TO BE ONE. Its text only exists after OCR, at seconds a
+# page, so its bank is found by a background job (identify_scan, R/jobs.R task
+# "identify_scans") and the row fills in when it is done.
+#
+# Convert should be given the bank only when the person CHANGED it: left alone,
+# conversion pre-fills it from the full reading of the statement itself.
 #
 # Never throws: a file it cannot open is a row that says so.
 
-# The template FORMAT that can read a file of this extension. A PDF template cannot
-# read a CSV, so the row's dropdown offers only the templates that could.
+# The reader that can read a file of this extension.
 .IDENT_FORMAT <- c(pdf = "pdf", csv = "delimited", tsv = "delimited",
                    tdv = "delimited", txt = "delimited",
                    xlsx = "excel", xlsm = "excel")
 
-# identify_file(path, templates, name) -> list
-#   ext        lower-case extension of `name`
-#   format     the template format that can read it ("pdf" / "delimited" / "excel")
-#   kind       "PDF", "Scanned PDF", "CSV", "Tab-delimited", "Excel" -- for the screen
-#   pages      page count (PDF only, else NA)
-#   state      sure | close | tie | none | scanned | unreadable | unsupported_type
-#   guess      the template id the conversion will use when the row is left alone
-#              (NA for none / scanned / unreadable)
-#   runner_up  the template that came closest behind it (NA when none)
-#   detail     the detector's own line, for a tooltip; never the headline
-#   key        the layout key a remembered choice is filed under (R/learned.R)
-#   det_guess  detection's own answer, before any remembered choice
-#
-# `learned` is the table of remembered choices (learned_load). A remembered choice
-# for this layout REPLACES detection's guess and the row says so (state "learned");
-# Convert reads that row with exactly that template unless she changes it, because
-# the table must never show one template and read with another.
-identify_file <- function(path, templates, name = basename(path), learned = NULL) {
+# identify_file(path, name) -> list
+#   ext          lower-case extension of `name`
+#   format       "pdf" / "delimited" / "excel"
+#   kind         "PDF", "Scanned PDF", "CSV", "Tab-delimited", "Excel" -- for the screen
+#   pages        page count (PDF only, else NA)
+#   state        ready | scanned | scanned_no_ocr | unreadable | unsupported_type
+#   bank         the institution id the statement names (dictionaries/nz_banks.yaml), or NA
+#   bank_display the bank as people know it ("ANZ"), or NA
+#   bank_code    the holder account's two-digit bank code, or NA (never the number)
+#   confidence   high | medium | low | unknown -- how sure the pre-fill is
+#   ask          TRUE when the statement does not settle the bank and a person should pick
+#   detail       one plain sentence for a tooltip: why this bank, or why none
+identify_file <- function(path, name = basename(path)) {
   ext <- tolower(tools::file_ext(as.character(name %||% "")[1]))
   fmt <- unname(.IDENT_FORMAT[ext])
   out <- list(ext = ext, format = if (length(fmt) && !is.na(fmt)) fmt else NA_character_,
-              kind = .ident_kind(ext, FALSE), pages = NA_integer_,
-              state = "none", guess = NA_character_, runner_up = NA_character_,
-              detail = NA_character_, key = NA_character_, key_hint = NA_character_,
-              key_banks = NA_character_, det_guess = NA_character_)
+              kind = .ident_kind(ext, FALSE), pages = NA_integer_, state = "ready",
+              bank = NA_character_, bank_display = NA_character_, bank_code = NA_character_,
+              confidence = "unknown", ask = TRUE, detail = NA_character_)
   if (is.na(out$format)) { out$state <- "unsupported_type"; return(out) }
-  if (!length(path) || is.na(path) || !file.exists(path)) {
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !file.exists(path)) {
     out$state <- "unreadable"; return(out)
   }
-
   input <- if (identical(out$format, "pdf")) {
     tx <- safe(suppressMessages(pdftools::pdf_text(path)), NULL)
     if (is.null(tx) || !length(tx)) {
@@ -92,62 +78,22 @@ identify_file <- function(path, templates, name = basename(path), learned = NULL
     out$detail <- "This file could not be opened - it may be damaged, or not really the type its name says."
     return(out)
   }
-  # The conversion refuses some files BEFORE detection (a CSV with no table in it,
-  # an empty workbook). Saying "matched BNZ" about one of those would be the table
-  # promising a conversion that is never going to happen -- measured on two of the
-  # suite's own fixtures before this line existed. Same check, same words.
-  why <- safe(.unreadable_reason(input, templates), NULL)
+  # The conversion refuses some files before reading (a CSV with no table in it,
+  # an empty workbook). Same check, same words.
+  why <- safe(.unreadable_reason(input), NULL)
   if (!is.null(why)) { out$state <- "unreadable"; out$detail <- why; return(out) }
-  # filename_regex sees the name the conversion will see, not the upload's temp path
-  input$path <- file.path(dirname(path), as.character(name)[1])
+  .ident_bank(out, bank_identify(input))
+}
 
-  det <- safe(detect_statement(input, templates), NULL)
-  if (is.null(det)) { out$state <- "unreadable"; return(out) }
-  out$detail <- as.character(det$detail_plain %||% det$detail %||% NA_character_)[1]
-  tied <- as.character(det$tied %||% character(0))
-  if (isTRUE(det$matched)) {
-    out$guess <- det$template_id
-    out$runner_up <- as.character(det$runner_up %||% NA_character_)[1]
-    # the conversion's own "thin margin" rule (convert_statement): won by one
-    # phrase over a template that also fitted means it will be held for review
-    thin <- is.finite(det$margin %||% Inf) && det$margin <= 1 && !is.na(out$runner_up) &&
-            !isTRUE(det$bank_clear)
-    out$state <- if (thin) "close" else "sure"
-  } else if (length(tied) >= 2L) {
-    # the conversion reads a tie with the first tied template and holds the run for
-    # review -- so that template IS the guess, and the row says it is a close call
-    out$guess <- tied[1]; out$runner_up <- tied[2]; out$state <- "tie"
-  }
-  # The hover, in words. det$detail is the LOG line ("matched anz_everyday_pdf
-  # (score 3/3)") -- a template id and a fraction, which the customer-facing screens
-  # never show. Only "none" has a plain sentence of its own (detail_plain).
-  nm <- function(id) {
-    t <- if (!is.na(id)) templates[[id]] else NULL
-    if (is.null(t)) as.character(id) else sub(" statement$", "", template_display_name(t))
-  }
-  out$detail <- switch(out$state,
-    sure  = sprintf("The wording on this file matches the %s template.", nm(out$guess)),
-    close = sprintf(paste("The wording matches %s, and %s nearly as well. Check it is the",
-                          "right one - left as it is, the result is held for a second look."),
-                    nm(out$guess), nm(out$runner_up)),
-    tie   = sprintf(paste("%s and %s fit this file equally well. Check which is right -",
-                          "left as it is, the result is held for a second look."),
-                    nm(out$guess), nm(out$runner_up)),
-    out$detail)
-  # A CHOICE MADE BEFORE, for a statement laid out like this one.
-  k <- safe(learned_key(input, out$format, templates), NULL)
-  if (!is.null(k)) {
-    out$key <- k$key; out$key_hint <- k$hint
-    out$key_banks <- paste(k$banks, collapse = " | ")
-  }
-  out$det_guess <- out$guess
-  lt <- learned_lookup(learned, out$key, templates, out$format)
-  if (!is.na(lt) && !identical(lt, out$guess)) {
-    out$guess <- lt; out$state <- "learned"; out$runner_up <- NA_character_
-    out$detail <- paste0("Chosen for a statement laid out like this one before. ",
-      if (!is.na(out$det_guess)) sprintf("On its wording alone the suggestion would be %s.", nm(out$det_guess))
-      else "Nothing matches it on its wording alone.")
-  }
+# .ident_bank(out, ident) -- the bank fields of a row, from bank_identify().
+.ident_bank <- function(out, ident) {
+  pick <- bank_pick(ident, NULL)
+  out$bank <- as.character(pick$bank %||% NA_character_)[1]
+  out$bank_display <- if (is.na(out$bank)) NA_character_ else as.character(ident$display %||% out$bank)[1]
+  out$bank_code <- as.character(ident$bank_code %||% NA_character_)[1]
+  out$confidence <- as.character(ident$confidence %||% "unknown")[1]
+  out$ask <- isTRUE(pick$ask)
+  out$detail <- as.character(pick$why %||% ident$why %||% NA_character_)[1]
   out
 }
 
@@ -157,82 +103,52 @@ identify_file <- function(path, templates, name = basename(path), learned = NULL
          xlsx = , xlsm = "Excel", toupper(ext))
 }
 
-# template_choices(templates, format) -> named character vector, or a named list of
-# them grouped by bank, for a selectInput. Only templates that can read this FORMAT.
-# Labelled with the template's own display name; a template built here says so,
-# because "the one Sam built last week" is how an analyst knows it.
-template_choices <- function(templates, format) {
-  if (!length(templates)) return(list())
-  keep <- vapply(templates, function(t)
-    identical(t$format %||% "delimited", format), logical(1))
-  ts <- templates[keep]
-  if (!length(ts)) return(list())
-  ids <- names(ts)
-  bank <- vapply(ts, function(t) as.character(t$bank %||% "Other")[1], character(1))
-  bank[is.na(bank) | !nzchar(bank)] <- "Other"
-  lab <- vapply(ts, function(t) {
-    nm <- safe(template_display_name(t), NULL) %||% t$id %||% "template"
-    # every choice here is a statement, and a closed dropdown has room for ~25
-    # characters: "ANZ everyday", not "ANZ everyday statement" cut off mid-word
-    nm <- sub(" statement$", "", nm)
-    if (identical(t$origin %||% "default", "user")) paste(nm, "(built here)") else nm
-  }, character(1))
-  # two templates with the same bank and type (a variant, a correction) would read
-  # as one choice twice; the id is what tells them apart
-  dup <- lab %in% lab[duplicated(lab)]
-  lab[dup] <- sprintf("%s (%s)", lab[dup], ids[dup])
-  o <- order(tolower(bank), tolower(lab))
-  ids <- ids[o]; bank <- bank[o]; lab <- lab[o]
-  split_ids <- split(stats::setNames(ids, lab), factor(bank, levels = unique(bank)))
-  lapply(split_ids, function(v) v)
+# bank_choices(dir) -> named character vector (label = display name, value = id)
+# for the Bank dropdown: every New Zealand bank in dictionaries/nz_banks.yaml,
+# plus any bank the layout store holds that the list does not know (a bank named
+# by hand on this box). Sorted by name, without regard to case.
+bank_choices <- function(dir = layouts_dir()) {
+  ref <- safe(.bi_ref(), NULL)
+  ids <- if (is.null(ref)) character(0) else names(ref$display)
+  lab <- if (is.null(ref)) character(0) else vapply(ids, function(i) as.character(ref$display[[i]])[1], "")
+  lb <- safe(layouts_banks(dir), NULL)
+  if (is.data.frame(lb) && nrow(lb)) {
+    extra <- !(lb$slug %in% ids)
+    ids <- c(ids, lb$slug[extra]); lab <- c(lab, lb$bank[extra])
+  }
+  if (!length(ids)) return(character(0))
+  o <- order(tolower(lab), ids, method = "radix")
+  stats::setNames(ids[o], lab[o])
 }
 
-# identify_scan(path, templates, name) -> list(state, guess, detail) for a SCANNED
-# PDF: its first two pages are read as pictures (OCR, a few seconds each) and
-# detection runs on that. TWO, not one: measured on the tutorial scan, page 1 is the
-# summary (balances, address) and the column headings a template looks for start on
-# page 2, so page 1 alone matched nothing.
+# identify_scan(path, name) -> list(state, bank, bank_display, bank_code,
+# confidence, ask, detail) for a SCANNED PDF: its first two pages are read as
+# pictures (OCR, a few seconds each) and the bank is identified from them. TWO,
+# not one: page 1 is often the summary and the holder's account number or the
+# bank's legal name can sit on page 2.
 #
-# It is slow enough to run in a background job (R/jobs.R, task "identify_scans"),
-# never in the app's own process, and it only ever SUGGESTS when page 1 alone is a
-# clear match -- no close call, no tie. A suggestion made from two pages cannot be
-# promised to equal detection over every page once they are all read, so unlike a
-# text PDF's guess it is not left to detection: a row left on it is read with exactly
-# that template (state "scan_sure"), and the row says the suggestion came from the scan.
-#   scan_sure       the first pages clearly match `guess`
-#   scanned         they were read but settle nothing; detected while it converts
+# Slow enough to run in a background job (R/jobs.R, task "identify_scans"), never
+# in the app's own process.
+#   scan_ready      the first pages were read; the bank fields say what they show
+#   scanned         they could not be read; the bank is found while it converts
 #   scanned_no_ocr  this server has no OCR software
-identify_scan <- function(path, templates, name = basename(path)) {
-  out <- list(state = "scanned", guess = NA_character_, detail = NA_character_)
+identify_scan <- function(path, name = basename(path)) {
+  out <- list(state = "scanned", bank = NA_character_, bank_display = NA_character_,
+              bank_code = NA_character_, confidence = "unknown", ask = TRUE, detail = NA_character_)
   if (!isTRUE(safe(ocr_available(), FALSE))) { out$state <- "scanned_no_ocr"; return(out) }
   np <- suppressWarnings(as.integer(safe(pdftools::pdf_info(path)$pages, 1L)))
   np <- if (length(np) && !is.na(np) && np >= 1L) min(2L, np) else 1L
-  txt <- vapply(seq_len(np), function(pg) {
-    r <- safe(ocr_pdf_page(path, pg), NULL)
-    if (is.null(r) || !isTRUE(r$ok) || !length(r$text)) "" else paste(r$text, collapse = "\n")
-  }, character(1))
+  pg <- lapply(seq_len(np), function(p) safe(ocr_pdf_page(path, p), NULL))
+  txt <- vapply(pg, function(r) if (is.null(r) || !isTRUE(r$ok) || !length(r$text)) "" else paste(r$text, collapse = "\n"), "")
   if (!any(nzchar(trimws(txt)))) {
-    out$detail <- "The scan could not be read as a picture; the template is found while it converts."
+    out$detail <- "The scan could not be read as a picture; the bank is found while it converts."
     return(out)
   }
-  input <- list(kind = "pdf", pages = txt, path = file.path(dirname(path), as.character(name)[1]))
-  det <- safe(detect_statement(input, templates), NULL)
-  nm <- function(id) {
-    t <- if (!is.na(id)) templates[[id]] else NULL
-    if (is.null(t)) as.character(id) else sub(" statement$", "", template_display_name(t))
-  }
-  if (isTRUE(det$matched)) {
-    thin <- is.finite(det$margin %||% Inf) && det$margin <= 1 &&
-            !is.na(det$runner_up %||% NA) && !isTRUE(det$bank_clear)
-    if (!thin) {
-      out$state <- "scan_sure"; out$guess <- det$template_id
-      out$detail <- sprintf(paste("Read from the first pages of the scan: the wording matches the %s template.",
-                                  "Left as it is, the file is read with this template."), nm(det$template_id))
-      return(out)
-    }
-    out$detail <- "The first pages fit more than one template closely, so the template is found while it converts."
-    return(out)
-  }
-  out$detail <- "The first pages were read, but no template matches them; the template is found while it converts."
+  words <- lapply(pg, function(r) if (is.null(r) || !isTRUE(r$ok)) NULL else r$words)
+  input <- list(kind = "pdf", pages = txt, words = words,
+                page_height = vapply(pg, function(r) as.numeric(r$height %||% NA_real_)[1], 0),
+                path = file.path(dirname(path), as.character(name)[1]))
+  out <- .ident_bank(out, bank_identify(input))
+  out$state <- "scan_ready"
   out
 }

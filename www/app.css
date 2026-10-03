@@ -35,13 +35,18 @@ hr{border-top-color:var(--line)}
    hand-rolled inline in two places, which is how two panels drift apart. */
 .note{padding:8px 12px;background:#eef4ff;border:1px solid #d6e2ff;border-radius:6px}
 /* .note-bad -- the same panel in the "something on this box is wrong" colours,
-   for the one line at the top of Admin naming a template that would not load.
+   for a fact a person must act on (a settings file that did not load, a re-read
+   that still does not prove).
    Same shape as .note deliberately: it is the same kind of statement, about a
    worse fact, and a second hand-rolled inline style is how two panels drift. */
 .note-bad{padding:8px 12px;background:var(--bad-bg);border:1px solid var(--bad-line);
   border-radius:6px}
 .note-bad p{margin:0 0 4px}
 .note-bad ul{margin:0 0 4px 18px;padding:0}
+/* .note-warn -- the same panel for a question only a person can answer (which bank) */
+.note-warn{padding:8px 12px;background:var(--warn-bg);border:1px solid var(--warn-line);
+  border-radius:6px;color:var(--ink)}
+.note-warn p{margin:0 0 6px}
 .modal-lg{width:95%;max-width:1240px}
 .modal-content{border-radius:12px}
 /* header */
@@ -249,18 +254,19 @@ select.form-control{padding-right:30px}
 .btn-warning:hover,.btn-warning:focus{background:#e2ebf7;border-color:var(--brand);color:var(--brand-dark)}
 .btn-danger{background:#fff;border:1px solid var(--bad-line);color:var(--bad)}
 .btn-danger:hover,.btn-danger:focus{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
-/* the Convert table: one row per file, its type, and the template it will use */
+/* the Convert table: one row per file, its type and its bank, then its layout and outcome */
 .plan{margin:0 0 16px;padding:12px 14px;background:var(--surface);border:1px solid var(--line);
   border-radius:var(--r);box-shadow:var(--sh-1)}
 .plan-busy{color:var(--slate);font-weight:600}
 .plan-head{margin:0 0 8px;font-weight:700;color:var(--ink);font-size:14.5px}
-.plan-scroll{max-height:420px;overflow:auto}
+.plan-scroll{max-height:560px;overflow:auto}
 table.plan-table{width:100%;border-collapse:collapse;font-size:13.5px}
 table.plan-table th{text-align:left;color:var(--slate);text-transform:uppercase;font-size:11.5px;
   letter-spacing:.4px;font-weight:700;padding:6px 8px;border-bottom:1px solid var(--line-2);
   position:sticky;top:0;background:var(--surface)}
 table.plan-table td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-td.plan-file{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+/* a long file name wraps rather than pushing the outcome off the side of the table */
+td.plan-file{min-width:120px;max-width:240px;overflow-wrap:anywhere;font-weight:600}
 td.plan-kind{white-space:nowrap;color:var(--slate)}
 td.plan-tpl{min-width:270px}
 td.plan-tpl .form-group{margin:0}
@@ -280,23 +286,28 @@ tr.plan-warn:not(.plan-chosen) td.plan-tpl select,tr.plan-bad:not(.plan-chosen) 
 .plan-tally{margin:2px 0 0}
 .plan-foot{margin:8px 0 0;font-size:13px}
 .plan-note{color:var(--brand);font-size:12px;font-weight:600;margin-top:3px}
+.plan-note.plan-note-warn{color:var(--warn-ink)}
 tr.plan-openable{cursor:pointer}
 tr.plan-openable:hover td{background:var(--brand-tint)}
 tr.plan-openable:focus{outline:2px solid var(--brand-line);outline-offset:-2px}
 tr.plan-open td{background:var(--brand-tint);box-shadow:inset 0 -2px 0 var(--brand)}
 tr.plan-open td.plan-file::before{content:'\25B8  ';color:var(--brand)}
-td.plan-res{min-width:170px}
+td.plan-res{min-width:150px}
 .plan-verdict{font-weight:700}
-.plan-verdict.v-ok{color:var(--ok)}
-.plan-verdict.v-needs_review{color:var(--warn-ink)}
-.plan-verdict.v-unsupported,.plan-verdict.v-failed{color:var(--bad)}
+.plan-verdict.o-ok{color:var(--ok)}
+.plan-verdict.o-warn{color:var(--warn-ink)}
+.plan-verdict.o-bad{color:var(--bad)}
+/* the reader's reason under the outcome, kept to two lines; the whole sentence is the hover */
+.plan-why{color:var(--slate);font-size:12.5px;margin-top:2px;line-height:1.35;max-width:420px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+a.plan-check{display:inline-block;margin-top:4px;font-weight:700;font-size:12.5px}
+td.plan-layout{color:var(--slate);font-size:12.5px;min-width:120px;max-width:240px}
 .plan-sub{color:var(--slate);font-size:12.5px;margin-top:2px}
 .conf-high{color:var(--ok);font-weight:700}
 .conf-medium{color:#8a6d00;font-weight:700}
 .conf-low{color:var(--bad);font-weight:700}
 td.plan-res .plan-chip{margin-top:4px}
-td.plan-what{color:var(--ink);min-width:140px}
-table.plan-has-res td.plan-tpl{min-width:190px}
+table.plan-has-res td.plan-tpl{min-width:150px}
 /* a case converting: the table IS the progress -- a bar, and each row's state */
 .plan-progress{flex:1;min-width:240px}
 .plan-bar{height:6px;background:var(--line);border-radius:999px;overflow:hidden;margin:8px 0 2px}
@@ -307,16 +318,26 @@ table.plan-has-res td.plan-tpl{min-width:190px}
   animation:plan-spin .8s linear infinite}
 @keyframes plan-spin{to{transform:rotate(360deg)}}
 td.plan-tpl select[disabled]{background:var(--bg);color:var(--slate);cursor:not-allowed}
-/* a phone: each file is a small card -- name and type on one line, then the
-   dropdown full width, then its chip -- rather than a table wider than the screen */
-@media (max-width:767px){
+/* a phone, a tablet or a narrow window: each file is a small card -- name and type
+   on one line, then the dropdown full width, then its chip -- rather than a table
+   wider than its panel (measured: the five columns of a converted case scroll
+   sideways below 1200px, where the panel beside the file picker is under 760px) */
+@media (max-width:1199px){
   table.plan-table thead{display:none}
   table.plan-table,table.plan-table tbody,table.plan-table tr,table.plan-table td{display:block;width:100%}
   table.plan-table tr{padding:8px 0;border-bottom:1px solid var(--line)}
   table.plan-table td{border:0;padding:2px 0}
-  td.plan-file,td.plan-kind{display:inline-block;width:auto;max-width:100%;margin-right:8px}
+  table.plan-table td.plan-file,table.plan-table td.plan-kind{display:inline-block;width:auto;max-width:100%;margin-right:8px}
+  td.plan-kind .plan-sub{display:inline;margin-left:4px}
   td.plan-tpl{min-width:0}
+  /* the column headings are hidden, so the layout says what it is */
+  table.plan-table td.plan-layout{max-width:none}
+  td.plan-layout:not(:empty)::before{content:'Layout: ';font-weight:600}
   .plan-scroll{max-height:none}
+  /* the open file: one bar down its card, not a line under every cell of it */
+  tr.plan-open td{box-shadow:none}
+  tr.plan-open{background:var(--brand-tint);box-shadow:inset 3px 0 0 var(--brand);padding-left:10px}
+  td.plan-file{max-width:100%}
 }
 /* tables (DT) */
 table.dataTable{font-size:13.5px}
@@ -374,33 +395,6 @@ a.hub-card-quiet{background:var(--bg)}
 .hub-card-kicker{color:var(--brand);letter-spacing:.7px;font-size:11.5px}
 .hub-card-title{font-size:18px} .hub-card-body{color:var(--slate);font-size:13.5px}
 .hub-card-go{color:var(--brand)}
-/* The builder's one-sentence instruction, pinned to the top of the WINDOW.
-   The document image is 840px tall and the panel beside it is longer, so the
-   work is done scrolled down -- and a sentence at the top of the page is then
-   off screen, which is the same as not being written at all. */
-.rb-sticky{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0 0;
-  margin:0 0 2px;
-  /* IT MUST NOT EAT THE DRAG IT IS ASKING FOR.
-     The banner floats over the top of the page image as you scroll, which is the
-     whole point of it -- but an opaque floating strip also swallows every
-     mousedown that lands in it. Any drag started in the top inch of the visible
-     page did nothing at all, silently, which is one of the ways "click and drag
-     just stopped working" happens to somebody who has scrolled. The strip is
-     transparent to the pointer; the controls inside it are not. */
-  pointer-events:none}
-.rb-sticky > div{box-shadow:var(--sh-2)}
-.rb-sticky button, .rb-sticky a, .rb-sticky input, .rb-sticky select{pointer-events:auto}
-
-/* SAVE IS WHAT TO DO NEXT, SO IT LOOKS LIKE IT.
-   "Save - this needs to be more prominent / draw in the user to know what to do
-   next." It was one more button of the same size and colour as the six others on
-   the screen. It is now full width, taller than anything else in the builder, and
-   the only control carrying a shadow -- which is the whole of what "prominent"
-   can mean without inventing a colour the design system does not have. */
-.rb-save{display:block;width:100%;font-weight:700;letter-spacing:.2px;
-  padding:12px 16px;box-shadow:var(--sh-2)}
-.rb-save:hover,.rb-save:focus{box-shadow:var(--sh-2)}
-
 /* WHERE THE TOOL TELLS YOU SOMETHING.
    Shiny puts notifications in the bottom-right corner, which on a screen whose
    work is a document on the left and a panel on the right is the one place
@@ -435,5 +429,16 @@ a.hub-card-quiet{background:var(--bg)}
    (measured: 142px past the right edge at phone width, from the checks/transactions) */
 div.dataTables_wrapper{max-width:100%;overflow-x:auto}
 /* a long button label wraps on a phone instead of poking out of its card (measured:
-   'Open that template and fix its columns' ran 1px past a 390px screen) */
+   a long label ran 1px past a 390px screen) */
 @media (max-width:767px){.btn{white-space:normal;max-width:100%}}
+/* Please check: the page with the columns found drawn on it, a tick per page, and
+   what each column of figures is */
+.check-panel{margin:0 0 16px;padding:14px 16px;background:var(--surface);border:1px solid var(--warn-line);
+  border-left:5px solid var(--warn);border-radius:var(--r-lg);box-shadow:var(--sh-1)}
+.check-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
+.tick{font-weight:700}
+.tick-ok{color:var(--ok)} .tick-bad{color:var(--bad)} .tick-none{color:var(--muted)}
+p.tick-line{margin:6px 0 10px;font-size:13px;font-weight:600}
+.ck-role .form-group{margin-bottom:8px}
+.spot-check p{margin:0 0 6px}
+@media (max-width:767px){.check-panel{padding:10px}}

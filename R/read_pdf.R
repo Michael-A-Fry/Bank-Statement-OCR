@@ -160,6 +160,11 @@ read_pdf <- function(path,
   words <- vector("list", np)
   ocr_flags <- rep(FALSE, np)
   ocr_conf <- rep(NA_real_, np)
+  # What the OCR safety nets did on each page (R/ocr.R), and the pages whose every
+  # reading ran out of time. A timed-out page is blank here, so it has to be
+  # CARRIED: a statement missing a page of rows must never pass as complete.
+  ocr_note <- rep("", np)
+  ocr_timed_out <- logical(np)
 
   # OCR is attempted whenever the page's TEXT is effectively empty/sparse -- not
   # only when there are zero word boxes. That covers a scanned transaction page
@@ -200,6 +205,8 @@ read_pdf <- function(path,
     if (needs_ocr_p && !ocr_tools) scanned_no_ocr[p] <- TRUE
     if (ocr_ready && needs_ocr_p) {
       res <- ocr_pdf_page(path, p)
+      ocr_note[p] <- res$note %||% ""
+      ocr_timed_out[p] <- isTRUE(res$timed_out)
       if (isTRUE(res$ok)) {
         ocr_flags[p] <- TRUE
         ocr_conf[p] <- res$conf %||% NA_real_
@@ -242,6 +249,8 @@ read_pdf <- function(path,
     ink_scan_pages = ink_pages,
     ocr = ocr_flags,
     ocr_conf = ocr_conf,
+    ocr_note = ocr_note,
+    ocr_timed_out = which(ocr_timed_out),
     # Pages that ARE scans but could not be machine-read because the OCR tools are
     # not installed on this machine. Non-zero means the statement was read blind:
     # diagnose turns it into a loud, specific message so the cause is never mistaken

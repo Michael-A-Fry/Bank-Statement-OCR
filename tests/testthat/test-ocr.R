@@ -135,3 +135,78 @@ test_that("ocr_pdf_page leaves no scratch folder behind", {
   invisible(ocr_pdf_page(pdf, 1))
   expect_identical(length(Sys.glob(file.path(tempdir(), "imgscratch_*"))), before)
 })
+
+# --- Speed and the safety nets ----------------------------------------------
+
+# A picture that is nothing but speckle: Tesseract takes tens of seconds over it.
+# Written as a PGM by hand, so no image package is needed.
+.ocr_noise_pgm <- function(w = 2000L, h = 2000L) {
+  f <- tempfile("noise_", fileext = ".pgm")
+  set.seed(7)
+  con <- file(f, "wb")
+  writeBin(charToRaw(sprintf("P5\n%d %d\n255\n", w, h)), con)
+  writeBin(as.raw(sample(c(0L, 255L), w * h, replace = TRUE, prob = c(0.3, 0.7))), con)
+  close(con)
+  f
+}
+
+test_that("a Tesseract run past its time limit is stopped and says so", {
+  skip_if_not(ocr_available(), "tesseract/poppler not installed")
+  f <- .ocr_noise_pgm()
+  on.exit(unlink(f), add = TRUE)
+  t0 <- Sys.time()
+  r <- .tesseract_tsv(f, seconds = 1L)
+  expect_lt(as.numeric(difftime(Sys.time(), t0, units = "secs")), 15)
+  expect_true(r$timed_out)
+  expect_null(r$tsv)          # half a page read is worse than none
+})
+
+test_that("tesseract runs on one thread unless the caller chose otherwise", {
+  skip_if_not(ocr_available(), "tesseract/poppler not installed")
+  keep <- Sys.getenv("OMP_THREAD_LIMIT", unset = NA_character_)
+  on.exit(if (is.na(keep)) Sys.unsetenv("OMP_THREAD_LIMIT") else
+            Sys.setenv(OMP_THREAD_LIMIT = keep), add = TRUE)
+  Sys.unsetenv("OMP_THREAD_LIMIT")
+  invisible(.tesseract("--version"))
+  expect_identical(Sys.getenv("OMP_THREAD_LIMIT", unset = NA_character_), NA_character_)
+  Sys.setenv(OMP_THREAD_LIMIT = "3")
+  invisible(.tesseract("--version"))
+  expect_identical(Sys.getenv("OMP_THREAD_LIMIT"), "3")
+})
+
+test_that("a cleaned picture that reads as noise is replaced by the render", {
+  skip_if_not(ocr_available(), "tesseract/poppler not installed")
+  pdf <- fixture("samples/raw/tutorial/sample_everyday_scanned.pdf")
+  skip_if_not(file.exists(pdf))
+  prefix <- tempfile("best_")
+  system2("pdftoppm", c("-gray", "-r", "300", "-f", "2", "-l", "2", pdf, prefix),
+          stdout = FALSE, stderr = FALSE)
+  raw <- Sys.glob(paste0(prefix, "*.pgm"))[1]
+  noise <- .ocr_noise_pgm(600L, 600L)
+  on.exit(unlink(c(raw, noise), force = TRUE), add = TRUE)
+  rd <- .ocr_best_reading(noise, raw, "eng", 300L)
+  expect_gt(rd$median, 80)
+  expect_match(rd$note, "read without image clean-up")
+  # A good cleaned picture is used as it is, with nothing to say.
+  rd2 <- .ocr_best_reading(raw, raw, "eng", 300L)
+  expect_identical(rd2$note, "")
+  expect_equal(rd2$median, rd$median)
+})
+
+test_that("the page text is rebuilt line by line from the word boxes' TSV", {
+  tsv <- data.frame(level = c(1, 5, 5, 5, 5, 5),
+                    block_num = c(0, 1, 1, 1, 2, 2), par_num = c(0, 1, 1, 1, 1, 1),
+                    line_num = c(0, 1, 1, 2, 1, 1), conf = c(-1, 96, 95, 90, 91, 92),
+                    text = c(NA, "Opening", "balance", "12.00", "Closing", ""),
+                    stringsAsFactors = FALSE)
+  expect_identical(.ocr_tsv_lines(tsv), c("Opening balance", "12.00", "Closing"))
+  expect_identical(.ocr_tsv_lines(NULL), character(0))
+})
+
+test_that("read_pdf reports pages OCR could not finish (none on a normal scan)", {
+  skip_if_not(ocr_available(), "tesseract/poppler not installed")
+  r <- read_pdf(fixture("samples/raw/tutorial/sample_everyday_scanned.pdf"))
+  expect_identical(r$ocr_timed_out, integer(0))
+  expect_length(r$ocr_note, r$page_count)
+  expect_true(all(r$ocr))
+})

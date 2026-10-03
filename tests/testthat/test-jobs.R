@@ -24,7 +24,15 @@
   }
 }
 
-.csv_fixture <- function() fixture("samples/raw/anz/anz_transaction_export_01.csv")
+# A statement the arithmetic proves (helper-statements.R), so a clean conversion
+# comes back "ok"; one file per session, so every job reads the same bytes.
+.csv_fixture <- function() {
+  p <- file.path(tempdir(), "jobs_proven_statement.csv")
+  if (!file.exists(p)) file.copy(proven_csv(), p)
+  p
+}
+# A throwaway layout store per job, so no test learns into the install.
+.tly <- function() tempfile("tjobly_")
 
 # A throwaway run-log folder per test. The suite must never write into the real
 # logs/runs/: those records are the audit trail a conversion is defended from, and
@@ -112,7 +120,7 @@ test_that("over the cap, jobs QUEUE and say how many are in front", {
   hs <- lapply(1:5, function(i) {
     od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = templates_dir(),
+              layouts_dir = .tly(), tracking_dir = NA,
               logdir = .tlog(), requested_by = "TSTJOB")
   })
   states <- vapply(hs, function(h) h$state, character(1))
@@ -139,7 +147,7 @@ test_that("polling ANY job moves the queue on, not just the busy ones", {
   job_set_max_concurrent(1L)
   mk <- function() { od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = templates_dir(),
+              layouts_dir = .tly(), tracking_dir = NA,
               logdir = .tlog(), requested_by = "TSTJOB") }
   a <- mk(); b <- mk()
   expect_identical(c(a$state, b$state), c("running", "queued"))
@@ -162,7 +170,7 @@ test_that("a child that dies saying nothing comes back FAILED, with a readable r
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   # wait for a real process, then kill it the way the OOM killer would
   t0 <- Sys.time()
@@ -215,7 +223,7 @@ test_that("a child that runs cleanly leaves no output of its own", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   st <- .await(list(h), 240)
   expect_identical(unname(st), "done")            # a clean CSV converts
@@ -306,7 +314,7 @@ test_that("stopping a conversion stops the OCR binary it started", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(scan, od, task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   comm <- function(p) safe(suppressWarnings(
     readLines(file.path("/proc", as.character(p), "comm"), warn = FALSE)[1]), NA_character_)
@@ -366,7 +374,7 @@ test_that("reaping a job stops its process and forgets it", {
   .jobs_reset()
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   d <- h$dir
   expect_true(dir.exists(d))
@@ -392,7 +400,7 @@ test_that("the child hands its reader cache back, so the app does not re-read th
   expect_length(ls(.INPUT_CACHE), 0L)
   od <- tempfile("tjob_"); dir.create(od)
   h <- job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   expect_identical(.await(list(h), 240), "done")
   expect_length(ls(.INPUT_CACHE), 0L)            # nothing yet -- the child has it
@@ -421,7 +429,7 @@ test_that("N simultaneous jobs on one statement produce identical output files",
   hs <- lapply(seq_len(n), function(i) {
     od <- tempfile("tjob_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = templates_dir(),
+              layouts_dir = .tly(), tracking_dir = NA,
               logdir = ld, requested_by = "TSTJOB")
   })
   expect_true(all(vapply(hs, function(h) identical(h$state, "running"), logical(1))))
@@ -430,7 +438,7 @@ test_that("N simultaneous jobs on one statement produce identical output files",
 
   # 1. every one of them converted, and read the same statement the same way
   expect_identical(vapply(rs, function(r) r$status, character(1)), rep("ok", n))
-  expect_length(unique(vapply(rs, function(r) r$template_id, character(1))), 1L)
+  expect_length(unique(vapply(rs, function(r) r$outcome, character(1))), 1L)
 
   # 2. the OUTPUT BYTES are identical -- the charter's determinism promise, held
   #    across processes running at the same second on the same file
@@ -458,7 +466,7 @@ test_that("a batch job reports per-file progress the screen can read", {
   paths <- file.path(sess, sprintf("case_%d.csv", 1:3))
   for (p in paths) file.copy(.csv_fixture(), p)
   h <- job_start(paths, sess, task = "batch", root = engine_root(),
-                 templates_dir = templates_dir(),
+                 layouts_dir = .tly(), tracking_dir = NA,
                  logdir = .tlog(), requested_by = "TSTJOB")
   seen <- list()
   t0 <- Sys.time()
@@ -530,7 +538,7 @@ test_that("a server fault is never reported as a fault in the analyst's file", {
   # (b) the job's OWN arguments file is damaged -- a torn write on a full disk.
   od2 <- tempfile("tjob_"); dir.create(od2)
   h2 <- job_start(.csv_fixture(), od2, task = "convert", root = engine_root(),
-                  templates_dir = templates_dir(), logdir = .tlog())
+                  layouts_dir = .tly(), tracking_dir = NA, logdir = .tlog())
   writeLines("not an rds at all", file.path(h2$dir, "args.rds"))
   expect_identical(.await(list(h2), 120), "failed")
   expect_identical(job_failure(h2)$kind, "broken")
@@ -621,7 +629,7 @@ test_that("the cap is enforced by the OS, not just bookkept, and load changes no
   hs <- lapply(seq_len(N), function(i) {
     od <- tempfile("tconc_"); dir.create(od)
     job_start(.csv_fixture(), od, task = "convert", root = engine_root(),
-              templates_dir = templates_dir(),
+              layouts_dir = .tly(), tracking_dir = NA,
               logdir = .tlog(), requested_by = "TSTCONC")
   })
 
@@ -679,7 +687,7 @@ test_that("a batch job leaves one verdict per finished file, and they read back 
   src <- .csv_fixture(); skip_if_not(file.exists(src))
   p2 <- file.path(od, "copy.csv"); file.copy(src, p2)
   b <- job_run_task("batch", c(src, p2),
-    list(outdir = od, templates_dir = templates_dir(), user_templates_dir = "does_not_exist",
+    list(outdir = od, layouts_dir = .tly(), tracking_dir = NA,
          logdir = .tlog(), formats = "csv"), jobdir = jd)
   expect_true(all(file.exists(file.path(jd, c("done_00001.rds", "done_00002.rds")))))
   h <- new.env(); h$dir <- jd

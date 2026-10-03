@@ -2,14 +2,18 @@
 
 XLSX_FIX <- "samples/raw/synthetic/synthetic_excel_01.xlsx"
 
-test_that("an Excel statement is detected and parsed", {
+test_that("the automatic reader proves an Excel statement to the golden figures", {
   skip_if_not(requireNamespace("readxl", quietly = TRUE))
   skip_if_not(file.exists(fixture(XLSX_FIX)))
-  tp <- load_templates(templates_dir())
+  expect_auto_read_golden(XLSX_FIX, "tests/testthat/expected/excel_generic_xlsx.csv",
+                          outcomes = "proven")
+})
+
+test_that("an Excel statement is parsed by the table reader", {
+  skip_if_not(requireNamespace("readxl", quietly = TRUE))
+  skip_if_not(file.exists(fixture(XLSX_FIX)))
   input <- read_input(fixture(XLSX_FIX))
-  det <- detect_statement(input, tp)
-  expect_identical(det$template_id, "excel_generic_xlsx")
-  tx <- parse_statement(input, tp[["excel_generic_xlsx"]])$transactions
+  tx <- parse_statement(input, fixture_template("excel_generic_xlsx"))$transactions
   expect_equal(nrow(tx), 5L)
   expect_equal(tx$amount[tx$description == "Salary"], 3200.00)
   expect_equal(tx$amount[grepl("Groceries", tx$description)], -184.55)
@@ -20,10 +24,15 @@ test_that("an Excel statement is detected and parsed", {
 test_that("an Excel statement converts end-to-end", {
   skip_if_not(requireNamespace("readxl", quietly = TRUE))
   skip_if_not(file.exists(fixture(XLSX_FIX)))
-  out <- tempfile("xl_out_")
-  res <- convert_statement(fixture(XLSX_FIX), outdir = out,
-                           templates_dir = templates_dir(), logdir = tempfile("l_"))
-  expect_identical(res$template_id, "excel_generic_xlsx")
-  expect_true(res$status %in% c("ok", "needs_review"))
+  res <- convert_sandbox()(fixture(XLSX_FIX))
+  expect_identical(res$status, "ok")
+  expect_identical(res$outcome, "proven")
+  expect_identical(res$feed_basis, "proven")
   expect_true(file.exists(res$outputs[["xlsx"]]))
+  # the figures read back from the file it wrote are the golden's
+  got <- utils::read.csv(res$outputs[["csv"]], stringsAsFactors = FALSE)
+  exp <- read_core_csv(fixture("tests/testthat/expected/excel_generic_xlsx.csv"))
+  expect_identical(got$date, exp$date)
+  expect_equal(got$amount, exp$amount)
+  expect_equal(got$balance, exp$balance)
 })

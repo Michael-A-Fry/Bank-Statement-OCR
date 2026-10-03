@@ -78,26 +78,25 @@ test_that("every result status has plain-English wording", {
 # nineteen rows of `date_year_inferred`, in the cells a forensic reviewer checks
 # figures in. FLAG_PLAIN is the wording; this is the seam that keeps it honest.
 #
-# The authoritative set is the two files that WRITE the column: R/parse.R for the
-# flags every path can emit, R/parse_pdf_table.R for the PDF-only ones. Read off
-# the emission sites themselves rather than off a doc table, so a token the engine
-# starts or stops emitting shows up here and not on screen.
+# The authoritative set is the files that WRITE the column: R/parse.R for the
+# flags every path can emit, R/parse_pdf_table.R for the PDF-only ones, and the
+# automatic reader (R/auto_read*.R), which flags the rows whose date it carried
+# down or whose sign the balance settled. Read off the emission sites themselves
+# rather than off a doc table, so a token the engine starts or stops emitting
+# shows up here and not on screen.
 .row_flag_tokens <- function() {
-  # R/split.R too: a bundle tags the rows of any statement whose OWN columns did not
-  # fit (`columns_misaligned`), and that flag reaches the same workbook column as the
-  # rest. A scan that only looked at the two parsers called it a dead entry.
-  src <- c(.src("R/parse.R"), .src("R/parse_pdf_table.R"), .src("R/split.R"))
+  ar <- list.files(file.path(engine_root(), "R"), pattern = "^auto_read.*[.]R$")
+  src <- c(.src("R/parse.R"), .src("R/parse_pdf_table.R"),
+           unlist(lapply(file.path("R", ar), .src)))
   # the delimited path appends with `f <- c(f, "malformed")`; the PDF path with
-  # `f <- add(f, cond, "no_date")`
-  hits <- unlist(regmatches(src, gregexpr('(c\\(f,\\s*|add\\(f,[^,]+,\\s*)"[a-z_]+"', src)))
+  # `f <- add(f, cond, "no_date")`; the reader with `.ar_addflag(f, cond, "tok")`
+  hits <- unlist(regmatches(src, gregexpr(
+    '(c\\(f,\\s*|add\\(f,[^,]+,\\s*|\\.ar_addflag\\(f,[^"]+)"[a-z_]+"', src)))
   toks <- sub('^.*"([a-z_]+)"$', "\\1", hits)
   # ...and the PDF path SEEDS the column with the two a redacted or unreadable row
   # carries, which no add() call names.
   seed <- grep('ifelse\\(malformed, "malformed", ""\\)', src)
-  # ...and split.R appends its flag by pasting, not by add()/c()
-  paste_tok <- unlist(regmatches(src, gregexpr('"columns_misaligned"', src)))
-  unique(c(toks, if (length(seed)) "malformed" else character(0),
-           if (length(paste_tok)) "columns_misaligned" else character(0)))
+  unique(c(toks, if (length(seed)) "malformed" else character(0)))
 }
 
 test_that("every row flag the engine can emit has plain-English wording", {
@@ -232,15 +231,16 @@ test_that("no check label claims more than its KPI proves", {
 # THE GOVERNED FEED. write_feed() decides whether a conversion's figures reach the
 # Qlik dashboards, records the verdict in the manifest and its own log -- and the
 # person who ran the conversion was never told. The quiet case is the dangerous
-# one: a clean statement read by a template SHE built is withheld ("not_proven"),
-# which is correct governance and was completely invisible on screen.
+# one: a statement read but not proven, or confirmed by nobody, is withheld
+# ("not_proven"), which is correct governance and was completely invisible on screen.
 test_that("every reason the feed gate can give has plain-English wording", {
   L <- .ui_labels()
   src <- .src("R/feed.R")
   # every literal reason .feed_gate() returns, plus the statuses it interpolates
   literal <- unique(unlist(regmatches(src, gregexpr("\"(accepted|withheld:[a-z_]+)\"", src))))
   literal <- gsub("\"", "", literal)
-  expect_true(length(literal) >= 4L)
+  # the gate's own two verdicts; the scan must not go quiet
+  expect_true(all(c("accepted", "withheld:not_proven") %in% literal))
   statuses <- paste0("withheld:", c("failed", "unsupported", "needs_review"))
   for (r in c(literal, statuses)) {
     p <- L$plain_feed(list(reason = r, gate_result = r))

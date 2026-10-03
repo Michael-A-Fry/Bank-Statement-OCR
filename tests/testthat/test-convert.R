@@ -1,120 +1,318 @@
-# test-convert.R -- the orchestrator's own contracts (R/convert.R):
-#   * WHICH template a tie is actually read with, and what the workbook is stamped
-#     with as a result;
-#   * a file the reader could not read is reported as unreadable, never as a
-#     layout nobody has taught the tool yet;
+# test-convert.R -- the front door's own contracts (R/convert.R):
+#   * bank first: the bank is pre-filled from the statement, a confident
+#     disagreement with the person's pick blocks learning and says so;
+#   * the reader's outcome decides the status (proven -> ok, check ->
+#     needs_review, unread -> unsupported), and every output is stamped with what
+#     produced it -- never with an account number;
+#   * learning only from what the arithmetic proved; a person's fix that proves
+#     teaches at once, one that does not applies to the file only;
+#   * a file the reader could not read is reported as unreadable;
 #   * the front door really does never throw, for any argument at all.
 
-# .tie_dir(...) -- three templates over the shipped ANZ export, arranged so the
-# GLOBAL top scorer is NOT one of the tied candidates:
-#   aaa_toplayout_csv  wants 3 phrases, finds 2, min_score 3 -> highest score,
-#                      but INELIGIBLE (it never met its own threshold)
-#   b_/c_tiedlayout_csv want 2 phrases, find 2, min_score 2 -> both eligible, tied
-# detect_statement then returns template_id = aaa_... (the closest, for reporting)
-# and tied = c(b_..., c_...). Those are different sets, and reading with the first
-# one stamped a bank on the workbook that no screen ever named.
-.tie_dir <- function() {
-  d <- tempfile("convtie_"); dir.create(d)
-  writeLines(c(
-    "id: aaa_toplayout_csv", "bank: TOPBANK", "statement_type: everyday",
-    "format: delimited", "version: 1", "min_score: 3", "fingerprint:",
-    "  header_contains_all: [Type, Details, NotOnThisPage]",
-    'delimiter: ","', "columns:",
-    '  date: {source: Date, format: "%d/%m/%Y"}',
-    "  amount: {source: Amount}", "  description: {source: Details}",
-    "amount_sign: signed", "currency: NZD"), file.path(d, "a.yaml"))
-  for (v in c("b", "c")) writeLines(c(
-    sprintf("id: %s_tiedlayout_csv", v), sprintf("bank: %sBANK", toupper(v)),
-    "statement_type: everyday", "format: delimited", "version: 1", "min_score: 2",
-    "fingerprint:", "  header_contains_all: [Particulars, Reference]",
-    'delimiter: ","', "columns:",
-    '  date: {source: Date, format: "%d/%m/%Y"}',
-    "  amount: {source: Amount}", "  description: {source: Details}",
-    "amount_sign: signed", "currency: NZD"), file.path(d, paste0(v, ".yaml")))
-  d
-}
-
-# THE CARDINAL ONE. An ambiguous match used to convert with det$template_id -- the
-# top scorer over ALL templates -- while the screen listed det$tied, the templates
-# that met their own min_score. When those differ, the workbook, the CSV and the
-# JSON were stamped with a bank the reviewer was never shown, and the balance
-# reconciled cleanly, so nothing looked wrong. A wrong figure that LOOKS right.
-test_that("a tie is read with one of the templates the screen names", {
-  d <- .tie_dir(); out <- tempfile("convtieout_"); dir.create(out)
-  src <- fixture("samples/raw/anz/anz_transaction_export_01.csv")
-
-  det <- detect_statement(read_input(src), load_templates(d, strict = FALSE))
-  expect_false(det$matched)
-  expect_setequal(det$tied, c("b_tiedlayout_csv", "c_tiedlayout_csv"))
-  expect_false(det$template_id %in% det$tied)      # the shape that made this possible
-
-  res <- convert_statement(src, outdir = out, templates_dir = d, logdir = out)
-  expect_identical(res$status, "needs_review")
-  expect_true(res$template_id %in% res$detect$tied)
-  # ...and the bank stamped on the outputs is that template's bank, not the
-  # ineligible top scorer's
-  expect_identical(res$header$bank, "BBANK")
-  expect_false(identical(res$header$bank, "TOPBANK"))
-  # deterministic: same input + same templates -> same template chosen
-  res2 <- convert_statement(src, outdir = out, templates_dir = d, logdir = out)
-  expect_identical(res2$template_id, res$template_id)
+test_that("a statement the arithmetic proves converts ok, stamped, and is learned", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  acct <- nz_test_account()
+  r <- cv(proven_csv(acct))
+  expect_identical(r$status, "ok")
+  expect_identical(r$outcome, "proven")
+  expect_identical(r$feed_basis, "proven")
+  expect_identical(r$bank$bank, "bnz")                  # pre-filled from the statement
+  expect_identical(r$bank$confidence, "high")
+  expect_equal(nrow(r$feed_rows), 5L)
+  # the stamp, on the result, the run log and the JSON
+  expect_identical(r$run_log$engine_version, engine_version())
+  expect_identical(r$run_log$outcome, "proven")
+  expect_identical(r$run_log$proof_kind, "chain")
+  expect_identical(r$run_log$institution, "bnz")
+  expect_identical(r$run_log$bank_code, "02")
+  expect_identical(r$run_log$layouts_state, "empty")    # nothing learned before it
+  expect_identical(r$run_log$learn_action, "created")
+  js <- jsonlite::fromJSON(r$outputs[["json"]])
+  expect_identical(js$build$outcome, "proven")
+  expect_identical(js$build$institution, "bnz")
+  # a provisional layout was started, and the next conversion is stamped with it
+  expect_length(layouts_load(file.path(d, "layouts"), "bnz"), 1L)
+  r2 <- cv(proven_csv(acct))
+  expect_false(identical(r2$run_log$layouts_state, "empty"))
+  expect_identical(r2$run_log$learn_action, "none")      # the same statement counts once
+  # never the account number: not in the run log, the tracking, or a layout
+  body <- strsplit(acct, "-")[[1]][3]
+  for (sub in c("logs", "tracking", "layouts"))
+    expect_false(grepl(body, every_file_text(file.path(d, sub)), fixed = TRUE), info = sub)
 })
 
-test_that("the tie message names the template that was USED, then the alternatives", {
-  d <- .tie_dir(); out <- tempfile("convtiemsg_"); dir.create(out)
-  res <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
-                           outdir = out, templates_dir = d, logdir = out)
-  m <- paste(as.character(res$messages), collapse = " ")
-  # IN WORDS. This message renders on the verdict card, beside "Read as: BBANK
-  # everyday statement" -- five raw ids used to print there, on the one card the
-  # charter's interface rule is strictest about.
-  expect_match(m, "it was read as BBANK everyday statement", fixed = TRUE)
-  expect_match(m, "CBANK everyday statement", fixed = TRUE)  # the alternative is still named
-  expect_false(grepl("_csv", m, fixed = TRUE))               # and no template id at all
-  # the diagnostic (the maintainer's evidence trail) still carries the ids
-  cats <- as.character(res$diagnostics$category)
-  expect_true("ambiguous_template" %in% cats)
-  expect_match(res$diagnostics$detail[cats == "ambiguous_template"][1],
-               "read with b_tiedlayout_csv", fixed = TRUE)
+test_that("a zero printed in money out is written 0.00, never -0.00", {
+  cv <- convert_sandbox()
+  r <- cv(proven_csv())
+  csv <- utils::read.csv(r$outputs[["csv"]], colClasses = "character")
+  fee <- csv[csv$description == "Account fee", ]
+  expect_false(grepl("^-", fee$amount))
+  expect_equal(as.numeric(fee$amount), 0)
+  js <- paste(readLines(r$outputs[["json"]]), collapse = "\n")
+  expect_false(grepl("-0[,}\\s]|-0[.]0", js, perl = TRUE))
 })
 
-# Two set-ups of the SAME layout is the common tie, and they share a display name
-# -- so "worth a check against the alternative: BBANK everyday statement" would
-# repeat what she was just told, against a template she cannot tell apart.
-test_that("a tie between duplicates of one layout does not name a twin", {
-  d <- tempfile("convdup_"); dir.create(d); out <- tempfile("convdupout_"); dir.create(out)
-  for (v in c("b", "c")) writeLines(c(
-    sprintf("id: %s_duplayout_csv", v), "bank: BBANK", "statement_type: everyday",
-    "format: delimited", "version: 1", "min_score: 2",
-    "fingerprint:", "  header_contains_all: [Particulars, Reference]",
-    'delimiter: ","', "columns:",
-    '  date: {source: Date, format: "%d/%m/%Y"}',
-    "  amount: {source: Amount}", "  description: {source: Details}",
-    "amount_sign: signed", "currency: NZD"), file.path(d, paste0(v, ".yaml")))
-  res <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
-                           outdir = out, templates_dir = d, logdir = out)
-  m <- paste(as.character(res$messages), collapse = " ")
-  expect_match(m, "the same layout is set up more than once", fixed = TRUE)
-  expect_false(grepl("worth a check against the alternative", m, fixed = TRUE))
-  expect_false(grepl("_csv", m, fixed = TRUE))
+test_that("a statement nothing proves goes to a person, with the reader's reason", {
+  cv <- convert_sandbox()
+  r <- cv(unproven_csv(), bank = "ANZ")
+  expect_identical(r$status, "needs_review")
+  expect_identical(r$outcome, "check")
+  expect_identical(r$feed_basis, "none")
+  expect_true(nzchar(r$reason))
+  expect_match(paste(r$messages, collapse = " "), sub("[.]$", "", r$reason), fixed = TRUE)
+  expect_true("not_proven" %in% r$diagnostics$category)
+  expect_identical(r$run_log$learn_action, "none")      # nothing proven, nothing learned
+  expect_length(r$fix_held, 0L)
 })
 
-test_that("no engine code reaches the verdict card on a clean or an empty read", {
-  out <- tempfile("convname_"); dir.create(out)
-  ok <- convert_statement(fixture("samples/raw/anz/anz_transaction_export_01.csv"),
-                          outdir = out, templates_dir = templates_dir(), logdir = out)
-  expect_match(paste(ok$messages, collapse = " "), "matched ANZ everyday statement", fixed = TRUE)
-  expect_false(grepl("anz_everyday_csv", paste(ok$messages, collapse = " "), fixed = TRUE))
-  # ...and the template that matched the wording and read nothing says so by name
-  hdr <- tempfile("asbempty_", fileext = ".csv")
-  writeLines(c("Created date / time : 24 December 2014 / 19:38:14",
-               "From date 20141220", "To date 20141224",
-               "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount"), hdr)
-  e <- convert_statement(hdr, outdir = out, templates_dir = templates_dir(), logdir = out)
-  expect_identical(e$status, "unsupported")
-  expect_match(paste(e$messages, collapse = " "),
-               "ASB everyday statement matches the wording", fixed = TRUE)
-  expect_false(grepl("asb_everyday_csv", paste(e$messages, collapse = " "), fixed = TRUE))
+test_that("a person confirming a reading converts it for that file only", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  r <- cv(unproven_csv(), bank = "ANZ", confirm = TRUE)
+  expect_identical(r$status, "ok")
+  expect_identical(r$feed_basis, "person")
+  expect_identical(r$run_log$proof_kind, "person")
+  expect_identical(r$run_log$learn_action, "none")      # never learned on one person's word
+  expect_length(layouts_load(file.path(d, "layouts"), "anz"), 0L)
+  # ...it is held for an admin instead
+  held <- fixes_pending(file.path(d, "layouts"))
+  expect_equal(nrow(held), 1L)
+  expect_identical(held$kind, "confirm")
+  ev <- jsonlite::fromJSON(readLines(list.files(file.path(d, "tracking"), full.names = TRUE)[1])[1])
+  expect_identical(ev$event, "confirm")
+  expect_identical(ev$proof_kind, "person")
+  # an admin accepting it makes it a proven layout of the bank
+  ok <- fix_accept(held$id, file.path(d, "layouts"), by = "admin")
+  expect_true(ok$ok)
+  expect_length(layouts_load(file.path(d, "layouts"), "anz"), 1L)
+  expect_equal(nrow(fixes_pending(file.path(d, "layouts"))), 0L)
+})
+
+test_that("confirming cannot make a statement whose balance does not add up ok", {
+  cv <- convert_sandbox()
+  bad <- write_statement_csv(c("Date,Details,Amount,Balance",
+    "14/04/2025,Salary,2500.00,3500.00", "15/04/2025,Rent,-1200.00,2300.00",
+    "17/04/2025,Coffee,-4.50,2200.00", "18/04/2025,Bread,-3.00,2197.00"))
+  r <- cv(bad, bank = "ANZ", confirm = TRUE)
+  expect_false(identical(r$status, "ok"))
+  expect_identical(r$feed_basis, "none")
+  expect_match(r$messages[1], "cannot be confirmed", fixed = TRUE)
+  expect_length(r$fix_held, 0L)
+})
+
+test_that("a picked bank the statement contradicts blocks learning, and says so", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  p <- proven_csv()
+  r <- cv(p, bank = "ANZ")
+  expect_identical(r$status, "ok")                      # the figures are still proven
+  expect_identical(r$run_log$learn_action, "none")
+  expect_true(r$bank$block_learning)
+  expect_true("bank_check" %in% r$diagnostics$category)
+  expect_match(paste(r$messages, collapse = " "), "Nothing will be learned", fixed = TRUE)
+  expect_length(layouts_load(file.path(d, "layouts")), 0L)
+  # once the person confirms the pick, it is learned under the bank they chose
+  r2 <- cv(p, bank = "ANZ", bank_confirmed = TRUE)
+  expect_identical(r2$run_log$learn_action, "created")
+  expect_length(layouts_load(file.path(d, "layouts"), "anz"), 1L)
+})
+
+test_that("a person's roles that then prove are learned straight away", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  p <- ambiguous_csv()
+  r0 <- cv(p, bank = "Rimu Bank")
+  expect_identical(r0$outcome, "check")                 # two readings both add up
+  expect_setequal(r0$columns$field[r0$columns$kind == "money"], c("debit", "credit", "balance"))
+  r1 <- cv(p, bank = "Rimu Bank", overrides = list(roles = c(debit = "debit", credit = "credit")))
+  expect_identical(r1$status, "ok")
+  expect_identical(r1$outcome, "proven")
+  expect_identical(r1$run_log$learn_action, "corrected")
+  ly <- layouts_load(file.path(d, "layouts"), "Rimu Bank")
+  expect_length(ly, 1L)
+  expect_identical(ly[[1]]$layout$status, "proven")
+  expect_identical(ly[[1]]$layout$origin, "corrected")
+  # ...so the next statement of that design converts on its own
+  r2 <- cv(ambiguous_csv(), bank = "Rimu Bank")
+  expect_identical(r2$status, "ok")
+  expect_false(is.na(r2$run_log$layout))
+})
+
+test_that("a fix that breaks the arithmetic is neither proven, learned nor held", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  r <- cv(proven_csv(), overrides = list(roles = c(debit = "credit", credit = "debit")))
+  expect_false(identical(r$status, "ok"))
+  expect_identical(r$feed_basis, "none")
+  expect_identical(r$run_log$learn_action, "none")
+  expect_length(r$fix_held, 0L)
+  expect_length(layouts_load(file.path(d, "layouts")), 0L)
+  expect_equal(nrow(fixes_pending(file.path(d, "layouts"))), 0L)
+})
+
+test_that("a fix that cannot be read is refused in words and changes nothing", {
+  cv <- convert_sandbox()
+  r <- cv(proven_csv(), overrides = list(roles = c(description = "debit")))
+  expect_identical(r$status, "ok")                      # the statement's own reading stands
+  expect_true("fix_not_applied" %in% r$diagnostics$category)
+  expect_match(r$messages[1], "The fix was not applied", fixed = TRUE)
+  for (bad in list(c(debit = "balance", credit = "balance"), c(debit = "spending"), c("credit")))
+    expect_true(!is.null(.override_roles(list(template = list(auto = list(roles = c("debit", "credit", "balance")))), bad)$error))
+})
+
+test_that("each statement of a bundle is read and proven on its own", {
+  cv <- convert_sandbox()
+  r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"), bank = "ANZ")
+  expect_identical(r$status, "ok")
+  expect_equal(r$metadata$split$n_statements, 2L)
+  expect_setequal(unique(r$feed_rows$statement_index), 1:2)
+  expect_identical(vapply(r$reading, `[[`, "", "outcome"), c("proven", "proven"))
+  expect_identical(r$run_log$statements, 2L)
+})
+
+test_that("spot checks are off by default and picked deterministically when on", {
+  cv <- convert_sandbox()
+  expect_false(cv(proven_csv())$spot_check)
+  expect_true(.spot_pick(strrep("0", 64), 1))
+  expect_false(.spot_pick(strrep("f", 64), 0.5))
+  expect_false(.spot_pick(NA_character_, 1))
+  d <- tempfile("spot_"); dir.create(d)
+  res <- list(stamp = list(layouts_state = "empty", outcome = "proven", proof_kind = "chain",
+                           kind = "delimited", institution = "bnz", layout = "bnz_1@2"))
+  expect_true(isTRUE(spot_check_record(res, "right", d)))
+  line <- jsonlite::fromJSON(readLines(list.files(d, full.names = TRUE)[1])[1])
+  expect_identical(line$event, "spot_check")
+  expect_identical(line$spot_check, "right")
+  expect_identical(line$layout_id, "bnz_1")
+})
+
+test_that("the run log keeps the reason without quoting the statement", {
+  expect_identical(.log_scrub('The dated line "22 Feb TOTARA 12-3456-7890123-00" on page 1.'),
+                   'The dated line "..." on page 1.')
+  expect_identical(.log_scrub("account 0123456 moved 743.63"), "account # moved 743.63")
+})
+
+# ---- found by the independent review of the engine --------------------------
+
+# A statement whose preamble names ANZ's legal entity: identified with MEDIUM
+# confidence, which asks rather than blocks in bank_pick().
+anz_named_csv <- function(balance = TRUE) write_statement_csv(c(
+  "ANZ Bank New Zealand Limited",
+  if (balance) c("Date,Details,Amount,Balance", "13/04/2025,Opening balance,,1000.00",
+                 "14/04/2025,Salary,2500.00,3500.00", "15/04/2025,Rent,-1200.00,2300.00",
+                 "17/04/2025,Coffee,-4.50,2295.50")
+  else c("Date,Details,Amount", "14/05/2025,Salary,2600.00", "15/05/2025,Rent,-1250.00",
+         "19/05/2025,Coffee,-5.50", "21/05/2025,Power,-130.00")))
+
+test_that("a statement that names another bank teaches nothing until the pick is kept", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  p <- anz_named_csv()
+  r <- cv(p, bank = "Westpac")
+  expect_identical(r$bank$confidence, "medium")
+  expect_identical(r$status, "ok")                      # proven figures still convert
+  expect_identical(r$run_log$learn_action, "none")      # ...but never into Westpac's layouts
+  expect_true(r$bank$block_learning)
+  expect_length(layouts_load(file.path(d, "layouts")), 0L)
+  expect_identical(cv(p, bank = "Westpac", bank_confirmed = TRUE)$run_log$learn_action, "created")
+})
+
+test_that("a statement with nothing to add up is not converted on another bank's layout", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  shape <- function() write_statement_csv(c("Date,Details,Amount", "14/04/2025,Salary,2500.00",
+                                            "15/04/2025,Rent,-1200.00", "17/04/2025,Coffee,-4.50"))
+  cv(shape(), bank = "Westpac", confirm = TRUE)          # a person vouches; an admin accepts
+  expect_true(fix_accept(fixes_pending(file.path(d, "layouts"))$id[1], file.path(d, "layouts"))$ok)
+  expect_identical(cv(shape(), bank = "Westpac")$outcome, "layout_match")
+  r <- cv(anz_named_csv(balance = FALSE), bank = "Westpac")
+  expect_identical(r$status, "needs_review")            # Westpac's layout, ANZ's statement
+  expect_identical(r$feed_basis, "none")
+  expect_match(r$reason, "confirm the bank first", fixed = TRUE)
+  r2 <- cv(anz_named_csv(balance = FALSE), bank = "Westpac", bank_confirmed = TRUE)
+  expect_identical(r2$outcome, "layout_match")
+})
+
+test_that("a confirm sent with a fix that could not be applied is refused", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  r <- cv(unproven_csv(), bank = "ANZ", confirm = TRUE, overrides = list(roles = c(nosuch = "debit")))
+  expect_identical(r$status, "needs_review")
+  expect_identical(r$feed_basis, "none")
+  expect_false(.feed_gate(r)$accept)
+  expect_match(r$messages[1], "cannot be confirmed", fixed = TRUE)
+  expect_equal(nrow(fixes_pending(file.path(d, "layouts"))), 0L)
+})
+
+test_that("a fix for one statement of a bundle leaves the others alone", {
+  cv <- convert_sandbox()
+  b <- fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf")
+  swap <- list(roles = c(debit = "credit", credit = "debit"))
+  r <- cv(b, bank = "ANZ", overrides = c(swap, list(statement = 2L)))
+  expect_identical(r$reading[[1]]$outcome, "proven")    # untouched
+  expect_null(r$reading[[1]]$fix)
+  expect_identical(r$reading[[2]]$fix$kind, "roles")
+  expect_false(identical(r$status, "ok"))
+  # a fix naming no statement goes only to statements that did not convert; here
+  # none, and that is said rather than dropped
+  r2 <- cv(b, bank = "ANZ", overrides = swap)
+  expect_identical(r2$status, "ok")
+  expect_match(r2$messages[1], "reached none of this file's statements", fixed = TRUE)
+  r3 <- cv(b, bank = "ANZ", overrides = c(swap, list(statement = 9L)))
+  expect_match(r3$messages[1], "does not hold", fixed = TRUE)
+  expect_true(all(vapply(r3$reading, function(x) identical(x$outcome, "proven"), NA)))
+})
+
+test_that("one bundle counts once towards a layout", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"), bank = "ANZ")
+  expect_identical(r$run_log$learn_action, "created,none")
+  ly <- layouts_load(file.path(d, "layouts"), "anz")
+  expect_length(ly, 1L)
+  expect_length(ly[[1]]$layout$proved_by, 1L)
+})
+
+test_that("a file that cannot be read is still stamped and tracked", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  junk <- tempfile("junk_", fileext = ".pdf"); writeBin(as.raw(1:200), junk)
+  r <- cv(junk, bank = "ANZ")
+  expect_identical(r$status, "failed")
+  expect_identical(r$run_log$layouts_state, "empty")
+  expect_identical(r$run_log$institution, "anz")
+  ev <- jsonlite::fromJSON(readLines(list.files(file.path(d, "tracking"), full.names = TRUE)[1])[1])
+  expect_identical(ev$outcome, "unread")
+  expect_identical(ev$institution, "anz")
+})
+
+test_that("a workbook's preamble never reaches the run log or the metadata", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  acct <- nz_test_account()
+  x <- tempfile("wb_", fileext = ".xlsx")
+  rows <- rbind(c(paste("BNZ account", acct, "- MS A EXAMPLE"), NA, NA, NA), NA,
+                c("Txn Date", "Narrative", "Amt (NZD)", "Running Bal"),
+                c("13/04/2025", "Opening balance", NA, "1000.00"), c("14/04/2025", "Salary", "2500.00", "3500.00"),
+                c("15/04/2025", "Rent", "-1200.00", "2300.00"), c("17/04/2025", "Coffee", "-4.50", "2295.50"))
+  openxlsx::write.xlsx(as.data.frame(rows), x, colNames = FALSE)
+  r <- cv(x)
+  expect_identical(r$status, "ok")
+  logs <- every_file_text(file.path(d, "logs"))
+  expect_false(grepl(strsplit(acct, "-")[[1]][3], logs, fixed = TRUE))
+  expect_false(grepl("EXAMPLE", logs, ignore.case = TRUE))
+  expect_match(r$run_log$layout_hint, "narrative", fixed = TRUE)
+})
+
+test_that("a bank given as an account number is not used", {
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  acct <- nz_test_account()
+  r <- cv(proven_csv(acct), bank = acct)
+  expect_identical(r$bank$bank, "bnz")                  # taken from the statement instead
+  expect_true(is.na(r$run_log$bank_hint))
+  expect_match(paste(r$messages, collapse = " "), "long number", fixed = TRUE)
+  body <- strsplit(acct, "-")[[1]][3]
+  for (sub in c("logs", "tracking", "layouts"))
+    expect_false(grepl(body, paste(c(every_file_text(file.path(d, sub)), list.files(file.path(d, sub), recursive = TRUE)),
+                                   collapse = "\n"), fixed = TRUE), info = sub)
+})
+
+test_that("the front door never throws, for any argument at all", {
+  for (p in list(1L, NULL, NA, c("a", "b"), "/no/such/file.pdf", list(1))) {
+    r <- convert_statement(p, outdir = tempfile(), logdir = tempfile(), layouts_dir = tempfile(), tracking_dir = NA)
+    expect_identical(r$status, "failed")
+    expect_true(nzchar(r$run_id))
+  }
 })
 
 # ---------------------------------------------------------------------------
@@ -144,7 +342,7 @@ test_that("a file the reader cannot read is reported as unreadable, not as a new
   empty <- tempfile("empty_", fileext = ".csv"); file.create(empty)
 
   for (p in c(junk, prose, empty)) {
-    r <- convert_statement(p, outdir = out, templates_dir = templates_dir(), logdir = out)
+    r <- convert_statement(p, outdir = out, logdir = out, layouts_dir = file.path(out, "ly"), tracking_dir = NA)
     expect_identical(r$status, "failed", info = basename(p))
     expect_true("unreadable" %in% as.character(r$diagnostics$category), info = basename(p))
     expect_false("unknown_format" %in% as.character(r$diagnostics$category), info = basename(p))
@@ -154,63 +352,54 @@ test_that("a file the reader cannot read is reported as unreadable, not as a new
   }
 })
 
-test_that("a statement that IS readable still converts exactly as before", {
+test_that("a statement that IS readable still converts", {
   out <- tempfile("convgood_"); dir.create(out)
   r <- convert_statement(fixture("samples/raw/kiwibank/kiwibank_transaction_01.csv"),
-                         outdir = out, templates_dir = templates_dir(), logdir = out)
+                         outdir = out, logdir = out, layouts_dir = file.path(out, "ly"), tracking_dir = NA)
   expect_identical(r$status, "ok")
   expect_equal(nrow(r$feed_rows), 4L)
   # a header-only export is "matched the wording, read nothing" -- NOT unreadable:
   # it separates into fields, so there is a table there, it is simply empty.
   hdr <- tempfile("hdronly_", fileext = ".csv")
   writeLines("Type,Details,Particulars,Code,Reference,Amount,Date,ForeignCurrencyAmount,ConversionCharge", hdr)
-  h <- convert_statement(hdr, outdir = out, templates_dir = templates_dir(), logdir = out)
+  h <- convert_statement(hdr, outdir = out, logdir = out, layouts_dir = file.path(out, "ly"), tracking_dir = NA)
   expect_identical(h$status, "unsupported")
   expect_false("unreadable" %in% as.character(h$diagnostics$category))
 })
 
-# "Holds no table" is judged against the separators the INSTALLED TEMPLATES
-# declare, so teaching the tool a bank that separates some other way stays a YAML
-# edit (charter: a new bank is a template, never new code) and can never turn that
-# bank's export into "could not be read".
-test_that("what counts as separated is read off the templates, not hard-coded", {
+# "Holds no table" is judged against the four separators the reader itself tries.
+test_that("the separators the reader tries are the ones that make a table", {
   spaced <- tempfile("spaced_", fileext = ".txt")
   writeLines(c("Date Amount Details", "01/04/2025 -4.50 COFFEE"), spaced)
-  input <- read_input(spaced)
-  shipped <- load_template_set(templates_dir(), NULL)
-  expect_false(is.null(.unreadable_reason(input, shipped)))       # nothing separates it
-  with_spacer <- c(list(spacer = list(id = "spacer", delimiter = " ")), shipped)
-  expect_null(.unreadable_reason(input, with_spacer))             # ...until a template says so
-  # the four fallbacks every reader has are always accepted
+  expect_false(is.null(.unreadable_reason(read_input(spaced))))   # nothing separates it
   for (sep in c(",", "\t", ";", "|")) {
     p <- tempfile("sep_", fileext = ".csv")
     writeLines(paste("Date", "Amount", "Details", sep = sep), p)
-    expect_null(.unreadable_reason(read_input(p), shipped), info = sep)
+    expect_null(.unreadable_reason(read_input(p)), info = sep)
   }
 })
 
 # What makes a file a table is a REPEATED SHAPE, not a separator character. These
 # are the files a character test cannot tell apart from a statement.
 test_that("a table is a repeated shape, read the way the reader will read it", {
-  shipped <- load_template_set(templates_dir(), NULL)
   wr <- function(txt) { p <- tempfile("shape_", fileext = ".csv"); writeLines(txt, p); p }
   # the 6-line preamble is not a table; the header and its rows below it are
   expect_null(.unreadable_reason(
-    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv")), shipped))
-  # the same export with no transactions in the period: nothing repeats, but a
-  # template names the header line it is looking straight at
+    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv"))))
+  # the same export with no transactions in the period: nothing repeats, but the
+  # last line is a header wide enough to be one
   expect_null(.unreadable_reason(read_input(wr(c(
     "Created date / time : 24 December 2014 / 19:38:14",
     "Bank 12; Branch 3456; Account 7890123-45-00",
     "From date 20141220",
-    "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount"))), shipped))
+    "Date,Unique Id,Tran Type,Cheque Number,Payee,Memo,Amount")))))
   # A QUOTED comma is part of a payee, not a field boundary. Counted blind, this
   # file reads 3 then 4 then 3 fields -- no shape at all -- and a real ASB export
   # ("Acme, Inc.") would have been called unreadable.
   expect_null(.unreadable_reason(read_input(wr(c(
     "Date,Payee,Amount",
     '2014/12/23,"Acme, Inc.",5678.90',
-    "2014/12/24,Bob Ltd,-3.80"))), shipped))
+    "2014/12/24,Bob Ltd,-3.80")))))
 })
 
 # ---------------------------------------------------------------------------
@@ -222,15 +411,20 @@ test_that("a table is a repeated shape, read the way the reader will read it", {
 test_that("the CLI prints a run id that names the record it just wrote", {
   root <- engine_root()
   out <- tempfile("cliout_"); dir.create(out)
+  # A throwaway config: the CLI must not learn into, or track into, the install.
+  cfg <- file.path(out, "config.yaml")
+  writeLines(c("paths:", sprintf("  layouts: %s", file.path(out, "layouts")),
+               sprintf("  tracking: %s", file.path(out, "tracking"))), cfg)
   rc <- file.path(R.home("bin"), "Rscript")
   txt <- suppressWarnings(system2(rc, c(shQuote(file.path(root, "run.R")),
     shQuote(file.path(root, "samples/raw/anz/anz_transaction_export_01.csv")), '""',
-    shQuote(out)), stdout = TRUE, stderr = FALSE))
+    shQuote(out)), stdout = TRUE, stderr = FALSE, env = paste0("BSO_CONFIG=", cfg)))
   skip_if(!length(txt), "Rscript produced no output")
   line <- grep("^run id:", txt, value = TRUE)
   expect_length(line, 1L)
   id <- trimws(sub("^run id:", "", line))
   expect_true(nzchar(id))
+  expect_length(grep("^reading:", txt), 1L)
   # the whole point: that id opens the record the procedure asks for
   rec <- file.path(root, "logs", "runs", paste0(id, ".json"))
   expect_true(file.exists(rec))
@@ -256,18 +450,17 @@ test_that("the CLI prints a run id that names the record it just wrote", {
 # because neither of them cares where a blank line was.
 # ---------------------------------------------------------------------------
 test_that("blank lines still scatter prose - a note to self is not a table", {
-  shipped <- load_template_set(templates_dir(), NULL)
   wr <- function(txt) { p <- tempfile("blank_", fileext = ".txt"); writeLines(txt, p); p }
   # the note that was read as a statement layout
   note <- c("Hi Beth,", "", "Use the transaction export, not the PDF.", "",
             "Thanks", "Michael")
-  expect_false(is.null(.unreadable_reason(read_input(wr(note)), shipped)))
+  expect_false(is.null(.unreadable_reason(read_input(wr(note)))))
   # a sign-off separated from a greeting by a paragraph break, same shape
   expect_false(is.null(.unreadable_reason(read_input(wr(
-    c("Morning Beth,", "", "Statement attached.", "", "Regards,", "Tim"))), shipped)))
+    c("Morning Beth,", "", "Statement attached.", "", "Regards,", "Tim"))))))
   # ...and end to end it is UNREADABLE, not a layout nobody has built yet
   r <- convert_statement(wr(note), outdir = tempfile("blankout_"),
-                         templates_dir = templates_dir(), logdir = tempfile("blanklog_"))
+                         logdir = tempfile("blanklog_"), layouts_dir = tempfile("blankly_"), tracking_dir = NA)
   expect_identical(r$status, "failed")
   expect_true("unreadable" %in% as.character(r$diagnostics$category))
   expect_false("unknown_format" %in% as.character(r$diagnostics$category))
@@ -277,73 +470,29 @@ test_that("the case the earlier round protected is still a table", {
   # THE LINE THIS FIX MUST NOT CROSS. Two adjacent records that split the same way
   # ARE a table, however narrow -- test-forms.R depends on this one coming back
   # `unsupported` (a layout with no template), never `failed`.
-  shipped <- load_template_set(templates_dir(), NULL)
   wr <- function(txt) { p <- tempfile("tab_", fileext = ".csv"); writeLines(txt, p); p }
-  expect_null(.unreadable_reason(read_input(wr(c("a,b", "1,2"))), shipped))
+  expect_null(.unreadable_reason(read_input(wr(c("a,b", "1,2")))))
   # a real export with a blank line in the middle of its rows is still a table:
   # the run either side of the gap is what proves it
   expect_null(.unreadable_reason(read_input(wr(
     c("Date,Payee,Amount", "2026-01-01,A,1.00", "", "2026-01-02,B,2.00",
-      "2026-01-03,C,3.00"))), shipped))
+      "2026-01-03,C,3.00")))))
   # a header-only export with a trailing newline keeps its one-record fallback
   expect_null(.unreadable_reason(read_input(wr(
-    c("Date,Unique Id,Tran Type,Payee,Memo,Amount", ""))), shipped))
+    c("Date,Unique Id,Tran Type,Payee,Memo,Amount", "")))))
   # the shipped preamble export is unaffected
   expect_null(.unreadable_reason(
-    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv")), shipped))
+    read_input(fixture("samples/raw/asb/asb_transaction_export_01.csv"))))
 })
 
 test_that("every delimited sample in the corpus is still read as a table", {
   # The blast radius, measured rather than argued: whatever the shape test now
   # sees, no real bank export may become "could not be read".
-  shipped <- load_template_set(templates_dir(), NULL)
   files <- list.files(file.path(engine_root(), "samples", "raw"),
                       pattern = "\\.(csv|tsv|txt)$", recursive = TRUE, full.names = TRUE)
   skip_if(length(files) == 0)
-  bad <- Filter(function(f) !is.null(.unreadable_reason(read_input(f), shipped)), files)
+  bad <- Filter(function(f) !is.null(.unreadable_reason(read_input(f))), files)
   expect_identical(basename(bad), character(0),
                    info = paste("newly unreadable:", paste(basename(bad), collapse = ", ")))
 })
 
-# ---------------------------------------------------------------------------
-# N1xx: THE SAVE CONFIRMATION SPOKE THE CARD'S LANGUAGE IN IDS.
-# The verdict card two inches to the left says "Read as: SAMPLE BANK statement";
-# the save confirmation said, twice, sample_bank_statement_pdf. An id is a
-# maintainer's handle -- an accountant cannot check a figure against it, and the
-# charter's interface rule forbids putting an engine code in front of her.
-# ---------------------------------------------------------------------------
-test_that("recognition_summary names templates in words when it can", {
-  tset <- list(
-    sample_bank_statement_pdf = list(id = "sample_bank_statement_pdf", bank = "SAMPLE BANK"),
-    sample_bank_twin_pdf      = list(id = "sample_bank_twin_pdf", bank = "SAMPLE BANK"),
-    anz_everyday_pdf          = list(id = "anz_everyday_pdf", bank = "ANZ",
-                                     statement_type = "everyday"))
-  sid <- "sample_bank_statement_pdf"
-  # it is the SAME wording the card uses, which is the whole point
-  expect_identical(template_display_name(tset[[sid]]), "SAMPLE BANK statement")
-
-  ok <- recognition_summary(list(matched = TRUE, template_id = sid), sid, tset)
-  expect_match(ok$detail, "SAMPLE BANK statement", fixed = TRUE)
-  expect_false(grepl(sid, ok$detail, fixed = TRUE))
-
-  lost <- recognition_summary(list(matched = TRUE, template_id = "anz_everyday_pdf"), sid, tset)
-  expect_match(lost$headline, "ANZ everyday statement", fixed = TRUE)
-  expect_false(grepl("anz_everyday_pdf", lost$headline, fixed = TRUE))
-
-  tie <- recognition_summary(list(matched = FALSE, tied = c(sid, "sample_bank_twin_pdf")),
-                             sid, tset)
-  expect_false(grepl("sample_bank_twin_pdf", paste(tie$headline, tie$detail), fixed = TRUE))
-  expect_match(tie$headline, "SAMPLE BANK statement", fixed = TRUE)
-})
-
-test_that("recognition_summary falls back to the id rather than naming nothing", {
-  # No template set to look in -> there is no name to be had, and a confirmation
-  # that named NOTHING would be worse than one naming a handle. This is also what
-  # keeps every existing caller working unchanged.
-  r <- recognition_summary(list(matched = TRUE, template_id = "beth_bank_pdf"), "beth_bank_pdf")
-  expect_match(r$detail, "beth_bank_pdf", fixed = TRUE)
-  # a set that simply does not hold the id behaves the same way
-  r2 <- recognition_summary(list(matched = TRUE, template_id = "beth_bank_pdf"),
-                            "beth_bank_pdf", list(other = list(id = "other", bank = "X")))
-  expect_match(r2$detail, "beth_bank_pdf", fixed = TRUE)
-})

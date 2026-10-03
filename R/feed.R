@@ -1,8 +1,9 @@
 # feed.R -- the analytics feed Qlik loads for dashboards.
 #
 # Accountants convert in the Shiny app; write_feed() is called as a side-effect of
-# each conversion and, IF the result clears the governance gate (reconciled +
-# proven/curated template), writes a flat, fully-stamped transactions CSV that a
+# each conversion and, IF the result clears the governance gate (the statement's
+# own arithmetic proved the reading, or a person confirmed it), writes a flat,
+# fully-stamped transactions CSV that a
 # Qlik folder connection loads. A one-row manifest is written for EVERY conversion
 # (accepted or withheld) so coverage is never silent. Concurrency-safe: one file per
 # statement (content-hash keyed) / per run, never a shared append.
@@ -13,7 +14,7 @@
 #
 # WHO CALLS IT: the Convert button only (app.R), which is the one place a person
 # has looked at the verdict. Admin's bulk re-audit and the CLI scripts deliberately
-# do NOT feed -- they exist to test templates over piles of files, and publishing
+# do NOT feed -- they exist to test the reader over piles of files, and publishing
 # those runs would put rows nobody reviewed into org-wide dashboards.
 #
 # WHERE ROWS GO: feed/transactions (accepted) and feed/review (withheld) are two
@@ -27,14 +28,15 @@
 # A wildcard load concatenates two CSVs only when their field sets match EXACTLY;
 # differ by one column and Qlik invents a synthetic key instead, quietly splitting
 # the dashboard's totals in two. The old feed built its header from whatever the
-# conversion happened to produce, so adding a bank template -- the charter's cheap
-# path -- changed the column SET (26 vs 28 columns in two committed feed files)
+# conversion happened to produce, so a bank with one more column changed the
+# column SET (26 vs 28 columns in two committed feed files)
 # and, because display_transactions() splices debit/credit next to `amount`, the
 # ORDER too.
 #
 # So: every feed row now starts with these columns, in this order, always present
-# (empty where a statement doesn't have that field). Named template extras are
-# APPENDED after them, keeping their own names -- an extra is real captured data
+# (empty where a statement doesn't have that field). A statement's own extra
+# columns are
+# kept in their own table, keeping their own names -- an extra is real captured data
 # and must stay identifiable, never collapsed into extra_1..n. Qlik concatenates
 # the fixed part cleanly and a per-bank extra simply arrives as a mostly-null
 # field, which is exactly what it is.
@@ -46,6 +48,10 @@
 # -- and a Qlik expression grouping by date had no way of knowing. Every writer
 # now stamps UTC (R/util.R), and this column says so in its own name so that a
 # dashboard cannot mistake it for the analyst's wall clock.
+# template_id and template_origin keep their names (a renamed column is a new
+# field to Qlik, and splits the table): they now carry the learned layout the
+# reading matched (id@version) and the gate's basis (proven / layout_match /
+# person / none).
 FEED_CONTEXT_COLUMNS <- c(
   "run_id", "converted_ts_utc", "source_file", "source_sha256", "bank",
   "statement_type", "template_id", "template_version", "template_origin",
@@ -109,46 +115,23 @@ FEED_CORE_COLUMNS <- c(
   !file.exists(path)
 }
 
-# .trust_ok(level, min_trust) -- does the trust level meet the floor? An NA / blank
-# level coalesces to the LOWEST trust (fail-closed -> withheld), never letting an
-# `if (NA)` throw inside the gate (which safe() would swallow, silently dropping
-# both the feed row and the manifest).
-.trust_ok <- function(level, min_trust) {
-  level <- tolower(level %||% "")
-  if (length(level) != 1 || is.na(level) || !nzchar(level)) level <- "low"
-  min_trust <- tolower(min_trust %||% "high")
-  switch(min_trust,
-    any    = TRUE,
-    medium = level %in% c("high", "medium"),
-    level == "high")                       # default: high only
-}
-
-# .feed_gate(result, cfg, proven) -- decide accept/withhold + the reason.
-# The gate is deliberately MACHINE-ONLY: no human can wave a conversion through,
-# because "governed analytics" means the dashboard's contents are a function of
-# the checks, not of who was in a hurry. A conversion that should be in the feed
-# but isn't gets there by fixing the template (then re-converting), which is the
-# durable fix and leaves an audit trail.
-.feed_gate <- function(result, cfg, proven) {
-  status <- result$status %||% "failed"
-  origin <- if (isTRUE(proven)) "default" else "user"
-  allowed <- unlist(cfg$feed$allowed_template_origins %||% list("default"))
-  allowlist <- unlist(cfg$feed$template_allowlist %||% list())
-  tid <- (result$template_id %||% NA_character_)[1]
-  if (isTRUE(cfg$feed$require_status_ok) && !identical(status, "ok"))
-    return(list(accept = FALSE, reason = paste0("withheld:", status), origin = origin))
-  # min_trust is a documented, one-line config knob (config/config.example.yaml);
-  # 'medium' ships as the default because a clean statement with no running
-  # balance column can never reach 'high', and withholding every one of those
-  # would empty the feed for whole banks. Raise it to 'high' for balance-proven
-  # only -- the gate itself does not decide policy, the config does.
-  if (!.trust_ok(result$trust$level, cfg$feed$min_trust))
-    return(list(accept = FALSE, reason = "withheld:low_trust", origin = origin))
-  if (!(origin %in% allowed))
-    return(list(accept = FALSE, reason = "withheld:not_proven", origin = origin))
-  if (length(allowlist) && !(tid %in% allowlist))
-    return(list(accept = FALSE, reason = "withheld:not_in_allowlist", origin = origin))
-  list(accept = TRUE, reason = "accepted", origin = origin)
+# .feed_gate(result) -- decide accept/withhold + the reason (spec section 2: the
+# feed's one forced change). A statement reaches the dashboards when the
+# automatic reader PROVED it with the statement's own arithmetic, or it matched a
+# layout already proven, or a person on Please check confirmed it as right
+# (result$feed_basis, R/convert.R). Everything else is withheld, with the reason,
+# into the review table. `origin` is the basis, stamped on every row
+# (template_origin) so a dashboard can tell a proven figure from a confirmed one.
+FEED_BASES <- c("proven", "layout_match", "person")
+.feed_gate <- function(result) {
+  status <- as.character(result$status %||% "failed")[1]
+  basis <- as.character(result$feed_basis %||% "none")[1]
+  if (is.na(basis)) basis <- "none"
+  if (!identical(status, "ok"))
+    return(list(accept = FALSE, reason = paste0("withheld:", status), origin = basis))
+  if (!(basis %in% FEED_BASES))
+    return(list(accept = FALSE, reason = "withheld:not_proven", origin = basis))
+  list(accept = TRUE, reason = "accepted", origin = basis)
 }
 
 # .feed_core_frame(rows) -- the FIXED transaction half of a feed row set: every
@@ -159,7 +142,7 @@ FEED_CORE_COLUMNS <- c(
 #
 # THE EXTRAS USED TO BE APPENDED HERE, AND THAT SPLIT THE DASHBOARD. The comment
 # above FEED_CONTEXT_COLUMNS explains that a wildcard `LOAD *` concatenates only
-# on an EXACT field-set match -- and then this function appended each template's
+# on an EXACT field-set match -- and then this function appended each statement's
 # own extras, so a card statement carrying fx_amount / conversion_charge produced
 # a 32-column file among 30-column ones. Measured on the real feed folder: 17
 # files at 30 columns, 2 at 32. Qlik does not merge those; it makes a second
@@ -178,14 +161,14 @@ FEED_CORE_COLUMNS <- c(
   as.data.frame(core, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
-# .feed_extra_cols(rows) -- the template's own named columns, if any.
+# .feed_extra_cols(rows) -- the statement's own extra columns, if any.
 .feed_extra_cols <- function(rows)
   setdiff(names(rows), c(FEED_CONTEXT_COLUMNS, FEED_CORE_COLUMNS, .DISPLAY_DROP_COLS))
 
-# .feed_extras_frame(rows) -- a template's extras, carried in their own table
+# .feed_extras_frame(rows) -- a statement's extras, carried in their own table
 # rather than widening the transactions one. Keyed by row_id so a dashboard that
 # wants fx_amount can join it back, and named verbatim because an extra is real
-# captured data and must stay identifiable. NULL when the template has none,
+# captured data and must stay identifiable. NULL when the statement has none,
 # which is the ordinary case and writes no file at all.
 .feed_extras_frame <- function(rows) {
   rows <- as.data.frame(rows, stringsAsFactors = FALSE, check.names = FALSE)
@@ -202,7 +185,7 @@ FEED_CORE_COLUMNS <- c(
 # WHY: R/split.R deliberately nulls the COMBINED header's account_number and
 # widens the period to the whole bundle, because one value cannot describe five
 # statements. The feed flattens the header onto EVERY row, so the moment a
-# template opts into auto-split the dashboard would gain rows with no account
+# bundle is split the dashboard would gain rows with no account
 # number and a twelve-month period -- plausible, and wrong. Each row carries the
 # `statement_index` it came from, and result$metadata$split$statements holds that
 # statement's own anchors, so stamp those instead. Anything the split summary
@@ -240,8 +223,7 @@ FEED_CORE_COLUMNS <- c(
 # suffix), $written and $feed_file. `result` is the convert_statement() return.
 # `ts` is the ISO timestamp to stamp (pass it in so the call stays deterministic
 # in tests; defaults to now).
-write_feed <- function(result, config = load_config(), ts = NULL,
-                       proven_ids = NULL, logdir = NULL) {
+write_feed <- function(result, config = load_config(), ts = NULL, logdir = NULL) {
   if (!isTRUE(config$feed$enabled)) return(invisible(NULL))
   # STATEMENTS ONLY, AND THIS IS THE GATE THAT MAKES THAT TRUE.
   # "form" (labelled values) and "tables" (the multi-table document extractor,
@@ -274,13 +256,8 @@ write_feed <- function(result, config = load_config(), ts = NULL,
     return(invisible(NULL))
   }
 
-  # "Proven" = the template is one of the curated/tested set (paths$templates).
-  if (is.null(proven_ids))
-    proven_ids <- tryCatch(names(load_templates(config$paths$templates, strict = FALSE)),
-                           error = function(e) character(0))
   tid <- (result$template_id %||% NA_character_)[1]
-  proven <- !is.na(tid) && tid %in% proven_ids
-  gate <- .feed_gate(result, config, proven)
+  gate <- .feed_gate(result)
 
   fdir <- config$feed$feed_dir %||% "feed"
   tx_dir  <- file.path(fdir, "transactions"); runs_dir <- file.path(fdir, "runs")
@@ -340,10 +317,10 @@ write_feed <- function(result, config = load_config(), ts = NULL,
       wrote <- .atomic_write_csv(stamped, f)
       if (isTRUE(wrote)) { tx_written <- f; tx_state <- "written" }
       else { tx_state <- "write_failed"; tx_why <- attr(wrote, "why") %||% NA_character_ }
-      # A template's own extra columns travel in their own folder, keyed by
+      # A statement's own extra columns travel in their own folder, keyed by
       # run_id + row_id, so the transactions table keeps ONE field set for ever
       # and Qlik can still join fx_amount back if a dashboard wants it. Written
-      # only when the template actually has extras, so the folder stays absent on
+      # only when the statement actually has extras, so the folder stays absent on
       # an ordinary deployment rather than filling with empty files. A failure
       # here must not fail the run: the figures are already safely in the
       # transactions table, so it is recorded and carried, not raised.
@@ -414,10 +391,10 @@ write_feed <- function(result, config = load_config(), ts = NULL,
     period_start = h$period_start %||% NA_character_, period_end = h$period_end %||% NA_character_,
     gate_result = gate_result,
     feed_file = if (!is.na(tx_written)) basename(tx_written) else NA_character_,
-    # build provenance: which engine build + which template CONTENT produced these
+    # build provenance: which engine build and which learned state produced these
     # figures, so a dashboard number can be reproduced years later.
     engine_version = engine_version(),
-    template_sha256 = result$run_log$template_sha256 %||% NA_character_,
+    layouts_state = result$stamp$layouts_state %||% NA_character_,
     stringsAsFactors = FALSE)
   # Key the manifest by the statement's CONTENT hash (like the transactions file),
   # not the per-run id: a re-convert then OVERWRITES its own manifest row instead

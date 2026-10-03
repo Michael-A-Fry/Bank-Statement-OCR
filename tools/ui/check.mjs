@@ -1,19 +1,29 @@
 // check.mjs -- press the buttons. Drives the real app in a real browser and FAILS
-// (exit code 1) when the Convert screen does not do what it says it does.
+// (exit code 1) when a screen does not do what it says it does.
 //
 //     cd tools/ui && npm install           # once, on a machine with internet
 //     node check.mjs                       # starts the app itself, checks, stops it
 //
 // WHY THIS EXISTS. The R suite reads app.R as text: it can prove a line is there,
-// never that the screen works. Every change to the Convert table was proven by a
-// browser drive like this one -- and those drives lived and died in one session.
-// This keeps them. DEV-TIME ONLY: tools/ is not in the offline bundle
-// (scripts/bundle-offline.R copies an explicit list), and nothing here runs on the
-// server, which has no Node.
+// never that the screen works. This keeps the browser drives that prove it.
+// DEV-TIME ONLY: tools/ is not in the offline bundle (scripts/bundle-offline.R
+// copies an explicit list), and nothing here runs on the server, which has no Node.
+//
+// The tour: the Convert table (banks pre-filled, changed, a new bank named), a case
+// converted with its progress in the table, every outcome, click-through, the table
+// at desktop, laptop and tablet width, Please check on a spreadsheet (Re-read wrong,
+// Undo, Re-read right, This is right) and on a PDF (the page, its ticks, the column
+// editor with a box drawn and saved), Download everything, a single file with a bank
+// the statement disagrees with, scans, Stop, and every Admin tab -- Banks (confirm,
+// rename, retire, a held fix, training with another bank's statement in the pile),
+// Automatic reading (the spot-check rate, a spot check answered, the carry-off
+// summary), Words and Health -- each at desktop and phone width. Last, the app's own
+// console: an R error or warning there fails the run.
 //
 // Options (environment):
 //   PORT=7911            the port to start the app on (default 7911)
-//   APP_URL=http://...   check an app that is ALREADY running; nothing is started
+//   APP_URL=http://...   check an app that is ALREADY running; nothing is started,
+//                        and nothing that writes to an install's data is pressed
 //   CHROMIUM_PATH=...    a Chromium to use instead of Playwright's own
 //   OUT=dir              where screenshots go (default tools/ui/out)
 import { chromium } from 'playwright';
@@ -28,6 +38,7 @@ const ROOT = path.resolve(HERE, '..', '..');
 const PORT = Number(process.env.PORT || 7911);
 const URL_ = process.env.APP_URL || `http://127.0.0.1:${PORT}/`;
 const OUT = path.resolve(process.env.OUT || path.join(HERE, 'out'));
+const LIVE = !!process.env.APP_URL;
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -48,7 +59,25 @@ function makeFiles() {
   cp('anz_everyday_pdf_sample.pdf', 'anz_march.pdf');
   cp('asb_everyday_pdf_sample.pdf', 'asb_march.pdf');
   cp('westpac_everyday_pdf_sample.pdf', 'westpac_march.pdf');
-  cp('anz_creditcard_fx.csv', 'anz_card.csv');
+  // A BNZ export whose preamble names the holder's account, so the bank is filled
+  // in from the statement; the account number is made by the check-digit rule from
+  // a register branch (tests/testthat/helper-statements.R), never anyone's real one.
+  const acct = execFileSync('Rscript', ['-e',
+    'suppressMessages({for (f in list.files("R", "[.]R$", full.names = TRUE)) source(f)}); ' +
+    'source("tests/testthat/helper-statements.R"); cat(nz_test_account())'], { cwd: ROOT }).toString().trim();
+  const w = (name, lines) => fs.writeFileSync(path.join(d, name), lines.join('\n') + '\n');
+  w('bnz_export.csv', [`BNZ - Transactions - ${acct}`, 'Period 13/04/2025 to 30/04/2025',
+    'Date,Description,Debit,Credit,Balance', '13/04/2025,Opening balance,,,1000.00',
+    '14/04/2025,Salary,,2500.00,3500.00', '15/04/2025,Rent,1200.00,,2300.00',
+    '16/04/2025,Account fee,0.00,,2300.00', '17/04/2025,Coffee,4.50,,2295.50',
+    '18/04/2025,Groceries,85.20,,2210.30']);
+  // Adds up two ways round, and nothing on it says which: a person decides.
+  w('ambiguous.csv', ['Date,Narrative,Col A,Col B,Col C', '13/04/2025,Opening balance,,,1000.00',
+    '14/04/2025,Item one,,2500.00,3500.00', '15/04/2025,Item two,1200.00,,2300.00',
+    '17/04/2025,Item three,4.50,,2295.50', '18/04/2025,Item four,85.20,,2210.30']);
+  // No balance and no totals: nothing on it can prove which column is which.
+  w('unproven.csv', ['Date,Details,Amount', '14/04/2025,Salary,2500.00', '15/04/2025,Rent,-1200.00',
+    '17/04/2025,Coffee,-4.50']);
   fs.writeFileSync(path.join(d, 'mystery_export.csv'), 'colA;colB;colC\n1;2;3\n4;5;6\n');
   // a picture of a page with no text layer -- what a scanner produces
   execFileSync('Rscript', ['-e', `grDevices::pdf(${JSON.stringify(path.join(d, 'scanned_letter.pdf'))}); ` +
@@ -61,30 +90,32 @@ function makeFiles() {
 }
 
 // ---- the app: started here unless APP_URL says one is running -------------------
-// Started with a THROWAWAY config (BSO_CONFIG): its logs, uploads, feed and the
-// remembered template choices all go to a temporary folder, so a check never
-// writes into a real install's data and every run starts from nothing learned.
+// Started with a THROWAWAY config (BSO_CONFIG): its logs, uploads, feed, learned
+// layouts and tracking all go to a temporary folder, so a check never writes into
+// a real install's data and every run starts from nothing learned.
 const ADMIN_PW = 'ui-check-' + process.pid;
+let appLog = '';           // everything the app wrote to its console, checked at the end
 function makeConfig() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bso-ui-cfg-'));
   const p = s => JSON.stringify(path.join(d, s));
   fs.writeFileSync(path.join(d, 'config.yaml'), [
     'paths:', `  logs: ${p('logs')}`, `  uploads: ${p('uploads')}`, `  requests: ${p('requests')}`,
-    `  learned_choices: ${p('learned.json')}`, 'feed:', `  feed_dir: ${p('feed')}`, ''].join('\n'));
+    `  layouts: ${p('layouts')}`, `  tracking: ${p('tracking')}`,
+    'feed:', `  feed_dir: ${p('feed')}`, ''].join('\n'));
   return path.join(d, 'config.yaml');
 }
 async function startApp() {
-  if (process.env.APP_URL) return null;
+  if (LIVE) return null;
   const env = { ...process.env, BSO_CONFIG: makeConfig(), BSO_ADMIN_PASSWORD: ADMIN_PW };
   const app = spawn('Rscript', ['-e', `shiny::runApp(${JSON.stringify(ROOT)}, port = ${PORT}, launch.browser = FALSE)`],
                     { cwd: ROOT, detached: true, stdio: ['ignore', 'ignore', 'pipe'], env });
-  let log = ''; app.stderr.on('data', b => { log += b; });
+  app.stderr.on('data', b => { appLog += b; });
   for (let t = 0; t < 120; t++) {
     try { if ((await fetch(URL_)).ok) return app; } catch { /* not up yet */ }
-    if (app.exitCode !== null) throw new Error('the app exited while starting:\n' + log.slice(-2000));
+    if (app.exitCode !== null) throw new Error('the app exited while starting:\n' + appLog.slice(-2000));
     await sleep(1000);
   }
-  throw new Error('the app did not answer within two minutes:\n' + log.slice(-2000));
+  throw new Error('the app did not answer within two minutes:\n' + appLog.slice(-2000));
 }
 const stopApp = app => { if (app) try { process.kill(-app.pid); } catch { /* gone */ } };
 
@@ -103,11 +134,12 @@ const rows = page => page.evaluate(() => [...document.querySelectorAll('tr.plan-
   const q = c => ((tr.querySelector(c) || {}).innerText || '').replace(/\s+/g, ' ').trim();
   const sel = tr.querySelector('select');
   return { file: q('.plan-file'), kind: q('.plan-kind'), value: sel ? sel.value : null,
-           chip: q('.plan-state'), result: q('.plan-res'), what: q('.plan-what'),
-           open: tr.classList.contains('plan-open') };
+           chip: q('td.plan-tpl .plan-chip') || q('td.plan-tpl .plan-note'), layout: q('.plan-layout'),
+           result: q('.plan-res'), open: tr.classList.contains('plan-open') };
 }));
 const button = page => page.$eval('#cv_go', e => e.innerText.trim());
 const byFile = (rs, f) => rs.find(r => r.file === f) || {};
+const text = (page, sel) => page.$eval(sel, e => e.innerText).catch(() => '');
 async function pick(page, file, value) {
   await page.evaluate(([f, v]) => {
     const tr = [...document.querySelectorAll('tr.plan-row')].find(t => t.querySelector('.plan-file').innerText === f);
@@ -120,7 +152,40 @@ async function clickIn(page, file, cell) {
     .find(t => t.querySelector('.plan-file').innerText === f).querySelector(c), [file, cell]);
   await h.asElement().click(); await sleep(2500);
 }
+// a selectInput is a selectize control: set it the way a person picking does
+async function selectize(page, id, value) {
+  await page.evaluate(([i, v]) => { const el = document.getElementById(i); el.selectize.setValue(v); }, [id, value]);
+  await sleep(700);
+}
+// press Convert once it can be pressed; if it never can, say what the page says why
+async function go(page) {
+  const ok = await waitFor(page, () => { const b = document.querySelector('#cv_go'); return b && !b.classList.contains('disabled'); }, 60000);
+  if (!ok) throw new Error('Convert never became pressable: ' + await text(page, '#cv_go_btn'));
+  await page.click('#cv_go');
+}
 const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png'), fullPage: true });
+// the QID is asked once a session, unless the host has a sign-in: wait for the box
+// (or for the line saying who is recorded), fill it, and wait for it to be taken
+async function setQid(page) {
+  await waitFor(page, () => !!document.querySelector('#cv_qid') || /Recording as/.test(document.body.innerText), 15000);
+  const q = await page.$('#cv_qid');
+  if (q) { await q.fill('UI0001'); await waitFor(page, () => /Recording as/.test(document.body.innerText), 10000); }
+}
+async function freshConvert(ctx) {
+  const p = await ctx.newPage();
+  await p.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
+  await p.click('a[data-value="Convert"]'); await sleep(600);
+  await setQid(p);
+  return p;
+}
+// wait for the result of a re-read on Please check: a new message under its buttons
+async function rereadDone(page, before) {
+  await waitIdle(page);
+  await waitFor(page, b => { const m = document.querySelector('#cv_ck_msg'); return m && m.innerText.trim() && m.innerText !== b; },
+                120000, before);
+  await sleep(800);
+  return text(page, '#cv_ck_msg');
+}
 
 // ---- the checks ----------------------------------------------------------------------
 async function run(browser, D) {
@@ -131,42 +196,51 @@ async function run(browser, D) {
   await page.goto(URL_, { waitUntil: 'networkidle' }); await sleep(2000);
   await page.click('a[data-value="Convert"]'); await sleep(800);
   check('the landing page explains itself before any file is chosen',
-        (await page.$eval('#cv_empty', e => e.innerText)).includes('Convert a bank statement'));
-  const qid = await page.$('#cv_qid'); if (qid) { await qid.fill('UI0001'); await sleep(800); }
+        (await text(page, '#cv_empty')).includes('Convert a bank statement'));
+  check('no template is mentioned anywhere on Convert',
+        !/template/i.test(await page.evaluate(() => document.querySelector('.tab-pane.active').innerText)));
+  await setQid(page);
 
-  // 1. six files from four banks: a suggestion each
-  const six = ['anz_march.pdf', 'asb_march.pdf', 'westpac_march.pdf', 'anz_card.csv',
-               'mystery_export.csv', 'scanned_letter.pdf'];
+  // 1. six files: a bank each, filled in from the statement where it says
+  const six = ['anz_march.pdf', 'bnz_export.csv', 'ambiguous.csv', 'unproven.csv', 'mystery_export.csv', 'scanned_letter.pdf'];
   await page.setInputFiles('#cv_file', six.map(f => path.join(D, f)));
   check('the table appears once the files are checked',
         await waitFor(page, () => document.querySelectorAll('tr.plan-row').length === 6, 60000));
-  // a scan's first pages are read in the background; wait for that to settle
-  await waitFor(page, () => ![...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 120000);
+  await waitFor(page, () => !document.querySelector('td.plan-tpl .plan-chip') ||
+    ![...document.querySelectorAll('td.plan-tpl .plan-chip')].some(c => c.innerText.includes('Reading the scan')), 120000);
   await sleep(600);
   let r = await rows(page);
-  eq('each file gets the template detection will use',
-     six.map(f => byFile(r, f).value),
-     ['anz_everyday_pdf', 'asb_everyday_pdf', 'westpac_everyday_pdf', 'anz_creditcard_csv', '', '']);
-  eq('the chips say how each suggestion was made', six.map(f => byFile(r, f).chip),
-     ['Suggested', 'Suggested', 'Suggested', 'Suggested', 'No suggestion - please choose', 'Scanned']);
+  eq('the bank is filled in from the statement where it says', byFile(r, 'bnz_export.csv').value, 'bnz');
+  eq('...and says where it came from', byFile(r, 'bnz_export.csv').chip, 'From the statement');
+  eq('a statement that names no bank asks for one', [byFile(r, 'anz_march.pdf').value, byFile(r, 'anz_march.pdf').chip],
+     ['', 'Please choose the bank']);
   check('a scan is said to be one', byFile(r, 'scanned_letter.pdf').kind.startsWith('Scanned PDF'));
-  check('the landing text gives way to the table',
-        !((await page.$eval('#cv_empty', e => e.innerText)) || '').includes('Convert a bank statement'));
+  check('every bank dropdown offers the NZ banks and a new one',
+        await page.evaluate(() => [...document.querySelectorAll('select.plan-pick')].every(s =>
+          [...s.options].some(o => o.value === 'anz') && [...s.options].some(o => o.value === '__new__'))));
+  check('...and only banks: not the register\'s "a business that banks through ANZ"',
+        await page.evaluate(() => [...document.querySelectorAll('select.plan-pick option')].every(o => !/banks through/.test(o.text))));
+  check('the landing text gives way to the table', !(await text(page, '#cv_empty')).includes('Convert a bank statement'));
   eq('the button counts the files', await button(page), 'Convert 6 files');
 
-  // 2. two rows changed by hand
-  await pick(page, 'westpac_march.pdf', 'asb_everyday_pdf');
-  await pick(page, 'mystery_export.csv', 'anz_everyday_csv');
+  // 2. banks changed by hand, and a bank the list does not have
+  await pick(page, 'anz_march.pdf', 'anz');
+  await pick(page, 'unproven.csv', 'kiwibank');
+  await pick(page, 'mystery_export.csv', '__new__');
+  check('"Another bank" asks for its name', await waitFor(page, () => !!document.querySelector('#cv_new_bank'), 10000));
+  await page.fill('#cv_new_bank', '01-0102-0123456-00'); await page.click('#cv_new_bank_ok'); await sleep(900);
+  check('...refuses an account number for a name', (await text(page, '#cv_new_bank_msg')).includes('account number'));
+  await page.fill('#cv_new_bank', 'Smith Credit Union'); await page.click('#cv_new_bank_ok'); await sleep(1200);
   r = await rows(page);
-  eq('a changed row says so', [byFile(r, 'westpac_march.pdf').chip, byFile(r, 'mystery_export.csv').chip],
-     ['Your choice', 'Your choice']);
-  await shot(page, '1-suggested');
+  eq('a changed row says so', [byFile(r, 'anz_march.pdf').chip, byFile(r, 'unproven.csv').chip], ['your choice', 'your choice']);
+  eq('...and the named bank is the row\'s bank', byFile(r, 'mystery_export.csv').value, 'Smith Credit Union');
+  await shot(page, '01-convert-banks');
 
   // 3. convert: the case's progress is IN the table -- no overlay hiding the page --
   //    and the results arrive in the same rows, worst first
-  await page.click('#cv_go');
+  await go(page);
   const seen = { overlay: false, header: new Set(), cells: new Set(), button: new Set(), locked: false };
-  for (let t = 0; t < 600; t++) {
+  for (let t = 0; t < 900; t++) {
     const s = await page.evaluate(() => ({
       overlay: document.body.classList.contains('ss-run'),
       running: !!document.querySelector('.plan-running'),
@@ -188,113 +262,185 @@ async function run(browser, D) {
   check('rows show their own state while the case runs',
         [...seen.cells].some(c => /^(Waiting|Converting)/.test(c)), JSON.stringify([...seen.cells]));
   check('Convert is locked while it runs', seen.button.has('Converting\u2026'), JSON.stringify([...seen.button]));
-  check('the dropdowns are locked while it runs', seen.locked);
+  check('the bank dropdowns are locked while it runs', seen.locked);
   check('every row carries its result',
         await waitFor(page, () => document.querySelectorAll('tr.plan-openable').length === 6, 300000));
   r = await rows(page);
-  eq('worst first', r.map(x => x.file).slice(0, 3), ['scanned_letter.pdf', 'mystery_export.csv', 'westpac_march.pdf']);
-  check('a row read with the template chosen for it says it was',
-        byFile(r, 'westpac_march.pdf').result.includes('5 rows'), byFile(r, 'westpac_march.pdf').result);
+  const word = f => byFile(r, f).result.split(':')[0].replace(/ \d+ rows?$/, '').trim();
+  eq('each file has its outcome in plain words', six.map(word),
+     ['Proven', 'Proven', 'Please check', 'Please check', "Couldn't read", "Couldn't read"]);
+  check('a reason is given where a person has something to do',
+        byFile(r, 'ambiguous.csv').result.includes('readings') && byFile(r, 'unproven.csv').result.length > 20,
+        JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
+  check('the layout learned from a proven statement is named', /ANZ layout 1.*\(new\)/.test(byFile(r, 'anz_march.pdf').layout),
+        byFile(r, 'anz_march.pdf').layout);
+  check('worst first', r.slice(0, 2).every(x => word(x.file) === "Couldn't read"), JSON.stringify(r.map(x => x.file)));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
   check('Download everything is above the table', !!(await page.$('#cv_batch_dl')));
   eq('the button offers to convert them all again', await button(page), 'Convert all 6 again');
-  await shot(page, '2-results');
+  check('a row that needs a person offers Please check',
+        await page.evaluate(() => ['ambiguous.csv', 'unproven.csv'].every(f => [...document.querySelectorAll('tr.plan-row')]
+          .some(t => t.querySelector('.plan-file').innerText === f && t.querySelector('a.plan-check')))));
+  check('...and never one that proved itself', await page.evaluate(() => [...document.querySelectorAll('tr.plan-row')]
+          .filter(t => /^Proven/.test(t.querySelector('.plan-res').innerText)).every(t => !t.querySelector('a.plan-check'))));
+  await shot(page, '02-convert-results');
+  //    a converted case fits its panel at every width: a table at desktop, a card
+  //    per file below that -- never an outcome cut off behind a sideways scroll
+  for (const w of [1440, 1280, 1024, 800]) {
+    await page.setViewportSize({ width: w, height: 900 }); await sleep(700);
+    eq(`the converted case needs no sideways scroll at ${w}px`,
+       await page.evaluate(() => { const s = document.querySelector('.plan-scroll'); return s.scrollWidth - s.clientWidth; }), 0);
+  }
+  await shot(page, '02b-convert-results-tablet');
+  await page.setViewportSize({ width: 1440, height: 900 }); await sleep(700);
 
   // 4. click through -- and a click on a dropdown is not a click on the row
   await clickIn(page, 'anz_march.pdf', '.plan-file');
   r = await rows(page);
   eq('a clicked row opens', r.filter(x => x.open).map(x => x.file), ['anz_march.pdf']);
   check('its result is shown below',
-        (await page.$eval('#cv_headline', e => e.innerText)).includes('6 transactions read'));
-  await clickIn(page, 'asb_march.pdf', 'select'); await page.keyboard.press('Escape'); await sleep(600);
+        (await text(page, '#cv_headline')).includes('Proven \u2014 6 transactions read'), await text(page, '#cv_headline'));
+  await clickIn(page, 'bnz_export.csv', 'select'); await page.keyboard.press('Escape'); await sleep(600);
   eq('a click on a dropdown does not open its row', (await rows(page)).filter(x => x.open).map(x => x.file),
      ['anz_march.pdf']);
-  await shot(page, '3-click-through');
 
-  // 5. convert again: only what changed
-  const before = Object.fromEntries((await rows(page)).map(x => [x.file, x.result]));
-  await pick(page, 'westpac_march.pdf', 'westpac_everyday_pdf');
+  // 5. PLEASE CHECK, on a PDF: the page, the columns drawn on it, a tick per page
+  await page.click('#cv_ck_toggle'); await sleep(2500);
+  check('a proven PDF can still show how it was read', !!(await page.$('#cv_ck_plot img')));
+  check('each page carries its balance tick', (await text(page, '#cv_ck_pages')).includes('Page 1 \u2713'),
+        await text(page, '#cv_ck_pages'));
+  check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
+  check('one dropdown per column of figures', (await page.$$('select[id^="cv_ck_role_"]')).length === 3);
+  await shot(page, '03-please-check-pdf');
+  //    the last resort: drawing the columns by hand
+  await page.click('#cv_ck_editor');
+  check('the column editor opens on the page', await waitFor(page, () => !!document.querySelector('#ed_plot img'), 30000));
+  await sleep(1000);
+  await shot(page, '04-column-editor');
+  const box = await (await page.$('#ed_plot img')).boundingBox();
+  await selectize(page, 'ed_field', 'debit');
+  const X = pt => box.x + box.width * pt / 595;
+  const Y = Math.min(box.y + 250, 850);    // the mouse works in the window, and the page is taller
+  await page.mouse.move(X(287), Y);
+  await page.mouse.down();
+  for (let k = 1; k <= 12; k++) { await page.mouse.move(X(287 + k * 9.6), Y + k); await sleep(40); }
+  await page.mouse.up(); await sleep(2200);
+  await page.click('#ed_set'); await sleep(1200);
+  check('a drawn box is set as the column', (await text(page, '#ed_msg')).includes('Money out set on page 1'),
+        await text(page, '#ed_msg'));
+  await page.click('#ed_save');
+  const boxed = await rereadDone(page, '');
+  check('the drawn columns are read again and still have to prove themselves',
+        boxed.startsWith('Proven with the columns you drew'), boxed);
+  check('...and say they apply to this file only', boxed.includes('this file only'));
+
+  // 6. PLEASE CHECK, on a spreadsheet: Re-read wrong, Re-read right
+  await page.click('tr.plan-row:has(td.plan-file:text-is("ambiguous.csv")) a.plan-check'); await sleep(3000);
+  check('Please check opens from the row', (await text(page, '#cv_check')).startsWith('Please check'));
+  check('...with the reason', (await text(page, '#cv_check')).includes('readings of the columns'));
+  check('a spreadsheet shows its columns by heading', (await text(page, '#cv_ck_table')).includes('Col A'));
+  await sleep(1500);
+  check('nothing on the result page, its checks and its field coverage included, says "template"',
+        !/template/i.test(await page.evaluate(() => document.querySelector('.tab-pane.active').innerText)));
+  check('...and no flag or message shows an engine code', !/amount_from_balance|sum\(amount\)|_[a-z]+_/.test(
+        await page.evaluate(() => document.querySelector('#cv_status').innerText + document.querySelector('#cv_check').innerText)));
+  check('an untouched reading offers no Undo', !(await page.$('#cv_ck_undo')));
+  await shot(page, '05-please-check-csv');
+  await selectize(page, 'cv_ck_role_debit', 'credit'); await selectize(page, 'cv_ck_role_credit', 'debit');
+  await page.click('#cv_ck_reread');
+  const wrong = await rereadDone(page, '');
+  check('a wrong reading is said not to prove, at once', wrong.startsWith('Still not proven'), wrong);
+  //    the way back: Undo reads it again as it was first found -- still there after
+  //    another file was opened and this one opened again
+  await clickIn(page, 'bnz_export.csv', '.plan-file');
+  await clickIn(page, 'ambiguous.csv', '.plan-file');
+  check('a reading made with a person\'s change offers Undo, even after leaving it', !!(await page.$('#cv_ck_undo')));
+  await page.click('#cv_ck_undo');
+  const undone = await rereadDone(page, '');
+  check('Undo reads it as the tool first found it', undone.startsWith('Your changes are undone'), undone);
+  check('...and then offers no Undo', !(await page.$('#cv_ck_undo')));
   r = await rows(page);
-  check('a row changed after the run is marked Changed', byFile(r, 'westpac_march.pdf').result.includes('Changed'));
-  eq('the button says only the changed file will run', await button(page), 'Convert 1 changed file');
-  await page.click('#cv_go'); await waitIdle(page);
-  await waitFor(page, () => document.querySelectorAll('tr.plan-openable').length === 6, 300000);
+  eq('...and the row is back to Please check', word('ambiguous.csv'), 'Please check');
+  await selectize(page, 'cv_ck_role_debit', 'debit'); await selectize(page, 'cv_ck_role_credit', 'credit');
+  await page.click('#cv_ck_reread');
+  const right = await rereadDone(page, undone);
+  check('the right roles prove it, and it says so', right.startsWith('Proven'), right);
   r = await rows(page);
-  check('the other five keep their results',
-        r.filter(x => x.file !== 'westpac_march.pdf').every(x => before[x.file] === x.result));
-  check('the changed one has its new result', !byFile(r, 'westpac_march.pdf').result.includes('Changed'));
+  eq('...and the row is updated in place', word('ambiguous.csv'), 'Proven');
+  await shot(page, '06-reread-proven');
+  //    This is right, on a statement nothing on it can prove
+  await page.click('tr.plan-row:has(td.plan-file:text-is("unproven.csv")) a.plan-check'); await sleep(3000);
+  await page.click('#cv_ck_confirm');
+  const conf = await rereadDone(page, '');
+  check('"This is right" converts it as read and holds it for an admin', conf.startsWith('Confirmed') && conf.includes('admin'), conf);
+  r = await rows(page);
+  eq('...and the row says who decided', word('unproven.csv'), 'Confirmed on Please check');
+  check('a reading a person vouched for does not wear the proven green',
+        await page.evaluate(() => { const v = document.querySelector('#cv_headline .verdict');
+          return !!v && v.classList.contains('verdict-medium') && /a person confirmed it/.test(v.innerText); }),
+        await text(page, '#cv_headline'));
 
-  // 5b. LEARNING. mystery_export.csv was read with a template chosen by hand, and it
-  //     produced transactions -- so a statement laid out like it is now suggested
-  //     that template ("Chosen before"), and the Admin can see and forget it.
-  if (!process.env.APP_URL) {
-    const page2 = await ctx.newPage();
-    await page2.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
-    await page2.click('a[data-value="Convert"]'); await sleep(600);
-    await page2.setInputFiles('#cv_file', [path.join(D, 'mystery_export.csv')]);
-    await waitFor(page2, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
-    let m = (await rows(page2))[0] || {};
-    eq('a layout corrected before is suggested what it was corrected to', [m.value, m.chip],
-       ['anz_everyday_csv', 'Chosen before']);
-    // the Admin sees it, and can forget it
-    const adm = await ctx.newPage();
-    await adm.goto(URL_ + '?admin', { waitUntil: 'networkidle' }); await sleep(1500);
-    await adm.click('a[data-value="Admin"]'); await sleep(800);
-    await adm.fill('#adm_pw', ADMIN_PW); await adm.click('#adm_login'); await sleep(2500);
-    const lrn = await adm.$$eval('#adm_learned tbody tr', t => t.map(r => r.innerText.replace(/\s+/g, ' ')));
-    check('the Admin can see what was learned', lrn.length === 1 && lrn[0].includes('ANZ everyday'), JSON.stringify(lrn));
-    await adm.click('#adm_learned tbody tr'); await sleep(500);
-    await adm.click('#adm_learned_forget'); await sleep(2000);
-    check('...and forget it', (await adm.$eval('#adm_learned', e => e.innerText)).includes('Nothing remembered yet'));
-    await shot(adm, '5-admin-learned');
-    await adm.close();
-    await page2.setInputFiles('#cv_file', []); await sleep(500);
-    await page2.setInputFiles('#cv_file', [path.join(D, 'mystery_export.csv')]);
-    await waitFor(page2, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
-    m = (await rows(page2))[0] || {};
-    eq('once forgotten, it is suggested on its wording again', m.chip, 'No suggestion - please choose');
-    await page2.close();
-  } else console.log('SKIP  learning checks (APP_URL: not touching a real install\'s memory)');
+  // 7. download everything
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);
+  const zp = path.join(OUT, 'case.zip'); await dl.saveAs(zp);
+  let entries = -1;
+  try { entries = execFileSync('unzip', ['-Z1', zp]).toString().trim().split('\n').length; } catch { /* no unzip */ }
+  check('Download everything holds every converted file\'s outputs',
+        entries === 12 || (entries === -1 && fs.statSync(zp).size > 10000), `entries ${entries}`);
 
-  // 5c. SCANS. A scan's first pages are read in the background: its row says so,
-  //     then suggests the template if they clearly match one -- and the conversion
-  //     reads it with that template.
+  // 8. one file, read as a bank the statement disagrees with
+  await page.setInputFiles('#cv_file', [path.join(D, 'bnz_export.csv')]);
+  await waitFor(page, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
+  check('one file is a one-row table', (await text(page, '.plan-head')).startsWith('Check the bank'));
+  check('choosing new files cleared the last case', (await page.$$('tr.plan-openable')).length === 0);
+  await pick(page, 'bnz_export.csv', 'anz');
+  await go(page); await waitIdle(page);
+  check('its result is below the table', (await text(page, '#cv_headline')).includes('5 transactions read'));
+  check('a statement that names another bank asks which is right', (await text(page, '#cv_bank_note')).includes('Which bank?'),
+        await text(page, '#cv_bank_note'));
+  check('...in a plain sentence, with no grade and the bank named once',
+        /looks like BNZ: /.test(await text(page, '#cv_bank_note')) && !/confidence\)|BNZ: BNZ/.test(await text(page, '#cv_bank_note')),
+        await text(page, '#cv_bank_note'));
+  check('...and the row says it too', (await rows(page))[0].chip === 'Which bank? The statement looks like BNZ',
+        (await rows(page))[0].chip);
+  eq('the one row carries its outcome too', word('bnz_export.csv'), 'Proven');
+  eq('the button says again', await button(page), 'Convert again');
+  await shot(page, '07-bank-question');
+  await page.click('#cv_bank_use'); await waitIdle(page); await sleep(1500);
+  check('...and answering it reads it again as that bank', !(await text(page, '#cv_bank_note')).includes('Which bank?'));
+  eq('...with the table showing the same bank', (await rows(page))[0].value, 'bnz');
+
+  // 9. SCANS: the first pages are read in the background to find the bank
   {
-    const ps = await ctx.newPage();
-    await ps.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
-    await ps.click('a[data-value="Convert"]'); await sleep(600);
-    const q2 = await ps.$('#cv_qid'); if (q2) { await q2.fill('UI0001'); await sleep(800); }   // a new session asks again
+    const ps = await freshConvert(ctx);
     await ps.setInputFiles('#cv_file', [path.join(D, 'anz_scan.pdf'), path.join(D, 'scanned_letter.pdf')]);
     await waitFor(ps, () => document.querySelectorAll('tr.plan-row').length === 2, 60000);
-    const reading = await waitFor(ps, () => [...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 5000);
-    check('a scan says it is being read', reading);
-    await waitFor(ps, () => ![...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 120000);
-    await sleep(600);
+    check('a scan says it is being read', await waitFor(ps, () => [...document.querySelectorAll('td.plan-tpl .plan-chip')]
+      .some(c => c.innerText.includes('Reading the scan')), 8000));
+    await waitFor(ps, () => ![...document.querySelectorAll('td.plan-tpl .plan-chip')].some(c => c.innerText.includes('Reading the scan')), 180000);
     const sr = await rows(ps);
-    eq('a scan that clearly matches is suggested its template', [byFile(sr, 'anz_scan.pdf').value, byFile(sr, 'anz_scan.pdf').chip],
-       ['anz_everyday_pdf', 'Suggested from the scan']);
-    eq('a scan that matches nothing stays "Scanned"', byFile(sr, 'scanned_letter.pdf').chip, 'Scanned');
-    await shot(ps, '6-scans');
-    await ps.click('#cv_go'); await waitIdle(ps);
+    check('a scan whose pages were read asks for its bank like any other file',
+          byFile(sr, 'anz_scan.pdf').chip === 'Please choose the bank', byFile(sr, 'anz_scan.pdf').chip);
+    await pick(ps, 'anz_scan.pdf', 'anz');
+    await go(ps); await waitIdle(ps);
     await waitFor(ps, () => document.querySelectorAll('tr.plan-openable').length === 2, 300000);
-    check('...and is converted with it', byFile(await rows(ps), 'anz_scan.pdf').result.startsWith('Converted successfully'),
-          byFile(await rows(ps), 'anz_scan.pdf').result);
+    const s2 = await rows(ps);
+    check('...and is converted', byFile(s2, 'anz_scan.pdf').result.length > 0, byFile(s2, 'anz_scan.pdf').result);
+    console.log(`        (the scan: ${byFile(s2, 'anz_scan.pdf').result})`);
+    await shot(ps, '08-scans');
     await ps.close();
   }
 
-  // 5d. STOP. A long case can be stopped; a first run stopped leaves the table as it
+  // 10. STOP. A long case can be stopped; a first run stopped leaves the table as it
   //     was before Convert, with nothing kept.
   {
     for (const n of [1, 2, 3]) fs.copyFileSync(path.join(D, 'anz_scan.pdf'), path.join(D, `scan_${n}.pdf`));
-    const pz = await ctx.newPage();
-    await pz.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
-    await pz.click('a[data-value="Convert"]'); await sleep(600);
-    const q3 = await pz.$('#cv_qid'); if (q3) { await q3.fill('UI0001'); await sleep(800); }
+    const pz = await freshConvert(ctx);
     await pz.setInputFiles('#cv_file', [1, 2, 3].map(n => path.join(D, `scan_${n}.pdf`)));
     await waitFor(pz, () => document.querySelectorAll('tr.plan-row').length === 3, 60000); await sleep(500);
-    await pz.click('#cv_go');
+    await go(pz);
     check('a running case offers Stop', await waitFor(pz, () => !!document.querySelector('#cv_stop'), 30000));
-    await waitFor(pz, () => [...document.querySelectorAll('td.plan-res')].some(td => td.innerText.startsWith('Converted')), 120000);
+    await sleep(3000);
     await pz.click('#cv_stop'); await sleep(2500);
     check('Stop ends the run', !(await pz.$('.plan-running')) && !(await pz.$('#cv_stop')));
     check('...and leaves the table as it was before Convert', (await pz.$$('td.plan-res')).length === 0);
@@ -302,80 +448,127 @@ async function run(browser, D) {
     await pz.close();
   }
 
-  // 6. download everything
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);
-  const zp = path.join(OUT, 'case.zip'); await dl.saveAs(zp);
-  let entries = -1;
-  try { entries = execFileSync('unzip', ['-Z1', zp]).toString().trim().split('\n').length; } catch { /* no unzip */ }
-  check('Download everything holds every converted file\'s outputs',
-        entries === 15 || (entries === -1 && fs.statSync(zp).size > 10000), `entries ${entries}`);
-
-  // 7. one file
-  await page.setInputFiles('#cv_file', [path.join(D, 'asb_march.pdf')]);
-  await waitFor(page, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
-  check('one file is a one-row table',
-        (await page.$eval('.plan-head', e => e.innerText)).startsWith("We've suggested a template."));
-  check('choosing new files cleared the last case', (await page.$$('tr.plan-openable')).length === 0);
-  await page.click('#cv_go'); await waitIdle(page);
-  check('its result is below the table',
-        (await page.$eval('#cv_headline', e => e.innerText)).includes('5 transactions read'));
-  eq('...and the table offers to try another template', await page.$eval('.plan-head', e => e.innerText),
-     'Not the template you expected? Choose another and press Convert again.');
-  eq('the button says again', await button(page), 'Convert again');
-  await pick(page, 'asb_march.pdf', 'anz_everyday_pdf');
-  await page.click('#cv_go'); await waitIdle(page);
-  check('a wrong template is never a clean result',
-        (await page.$eval('#cv_status', e => e.innerText)).includes('read nothing'));
-  await shot(page, '4-single');
-
-  // 8. EVERY OTHER SCREEN: About, Add a template (with a statement in the toolkit),
-  //    and each Admin tab -- at desktop and phone width. Nothing may draw an error
-  //    where its content should be (DT does exactly that when an extension is
-  //    missing: Admin's template list once read "The extension RowGroup does not
-  //    exist"), push the page sideways, or put an error in the console.
-  if (!process.env.APP_URL) {
-    const tp = await ctx.newPage();
-    const terr = [];
-    tp.on('pageerror', e => terr.push('PAGEERROR ' + String(e).slice(0, 160)));
-    tp.on('console', m => { if (m.type() === 'error') terr.push('CONSOLE ' + m.text().slice(0, 160)); });
-    await tp.goto(URL_ + '?admin', { waitUntil: 'networkidle' }); await sleep(1500);
-    const screen = async name => {
-      await sleep(1500);
-      const drawnErr = await tp.evaluate(() => [...document.querySelectorAll('.shiny-output-error, .tab-pane.active .shiny-output-error-validation')]
-        .filter(e => e.offsetParent !== null && !e.classList.contains('shiny-output-error-validation')).map(e => e.innerText.slice(0, 120)));
-      check(`${name}: nothing draws an error`, drawnErr.length === 0, JSON.stringify(drawnErr));
-      await tp.setViewportSize({ width: 390, height: 900 }); await sleep(700);
-      const o = await tp.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      check(`${name}: fits a phone`, o === 0, `overflow ${o}px`);
-      await tp.setViewportSize({ width: 1440, height: 900 }); await sleep(500);
-      await shot(tp, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-'));
-    };
-    await tp.click('a[data-value="About"]'); await screen('About');
-    await tp.click('a[data-value="Add a template"]'); await sleep(800);
-    const gf = await tp.$('#main_tabs ~ .tab-content .tab-pane.active input[type=file]');
-    if (gf) {
-      await gf.setInputFiles(path.join(D, 'anz_march.pdf'));
-      check('the toolkit opens on a statement', await waitFor(tp, () => !!document.querySelector('.modal-dialog'), 30000));
-      await screen('Toolkit');
-      await tp.evaluate(() => { const c = [...document.querySelectorAll('.modal-footer button')].find(b => /cancel/i.test(b.innerText)); if (c) c.click(); });
-      await sleep(1500);
-    }
-    await tp.click('a[data-value="Admin"]'); await sleep(800);
-    await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
-    check('Admin lists the templates', (await tp.$$('#adm_tpl_overview tbody tr')).length >= 5);
-    await screen('Admin Templates');
-    const health = await tp.$('.tab-pane.active a[data-value="Health"]');
-    if (health) { await health.click(); await screen('Admin Health'); }
-    eq('no console or script errors on any screen', terr, []);
-    await tp.close();
+  // 11. EVERY OTHER SCREEN: About, and each Admin tab -- at desktop and phone width.
+  //     Nothing may draw an error where its content should be, push the page
+  //     sideways, or put an error in the console.
+  const tp = await ctx.newPage();
+  const terr = [];
+  tp.on('pageerror', e => terr.push('PAGEERROR ' + String(e).slice(0, 160)));
+  tp.on('console', m => { if (m.type() === 'error') terr.push('CONSOLE ' + m.text().slice(0, 160)); });
+  await tp.goto(URL_ + '?admin', { waitUntil: 'networkidle' }); await sleep(1500);
+  const screen = async (pg, name) => {
+    await sleep(1500);
+    const drawnErr = await pg.evaluate(() => [...document.querySelectorAll('.shiny-output-error')]
+      .filter(e => e.offsetParent !== null && !e.classList.contains('shiny-output-error-validation')).map(e => e.innerText.slice(0, 120)));
+    check(`${name}: nothing draws an error`, drawnErr.length === 0, JSON.stringify(drawnErr));
+    await pg.setViewportSize({ width: 390, height: 900 }); await sleep(700);
+    const o = await pg.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    check(`${name}: fits a phone`, o === 0, `overflow ${o}px`);
+    await shot(pg, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-') + '-phone');
+    await pg.setViewportSize({ width: 1440, height: 900 }); await sleep(500);
+    await shot(pg, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-'));
+  };
+  await tp.click('a[data-value="About"]');
+  check('About describes reading by bank, not templates',
+        !/template/i.test(await tp.evaluate(() => document.querySelector('.tab-pane.active').innerText)));
+  await screen(tp, 'About');
+  await tp.click('a[data-value="Admin"]'); await sleep(800);
+  await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
+  check('Admin opens on Banks', (await text(tp, '#adm_banks')).includes('ANZ'), await text(tp, '#adm_banks'));
+  check('nothing was learned under a bank nobody chose',
+        !/FALSE|TRUE|\bNA\b/.test(await text(tp, '#adm_banks')), await text(tp, '#adm_banks'));
+  if (!LIVE) {
+    // a bank's layouts: confirm, rename, retire, and back
+    await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
+    check('a bank lists its learned layouts', (await tp.$$('#adm_layouts tbody tr')).length >= 1);
+    await tp.click('#adm_layouts tbody tr'); await sleep(600);
+    await tp.click('#adm_layout_confirm'); await sleep(2000);
+    check('Confirm makes a layout proven', (await text(tp, '#adm_layout_msg')).includes('confirmed') &&
+          (await text(tp, '#adm_layouts tbody tr')).includes('proven'), await text(tp, '#adm_layout_msg'));
+    await tp.click('#adm_layouts tbody tr'); await sleep(500);
+    await tp.fill('#adm_layout_name', 'Everyday account'); await tp.click('#adm_layout_rename'); await sleep(2000);
+    check('Rename names it everywhere', (await text(tp, '#adm_layouts tbody tr')).includes('Everyday account'),
+          await text(tp, '#adm_layout_msg'));
+    await tp.click('#adm_layouts tbody tr'); await sleep(500);
+    await tp.click('#adm_layout_retire'); await sleep(2000);
+    check('Retire takes it out of use, and stays on screen', (await text(tp, '#adm_layouts tbody tr')).includes('retired'));
+    await tp.click('#adm_layouts tbody tr'); await sleep(500);
+    await tp.click('#adm_layout_confirm'); await sleep(2000);
+    check('...and Confirm brings it back', (await text(tp, '#adm_layouts tbody tr')).includes('proven'));
+    // the fix a person confirmed, held for an admin
+    check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
+    await tp.click('#adm_fixes tbody tr'); await sleep(500);
+    await tp.click('#adm_fix_accept'); await sleep(2000);
+    check('...and Accept makes it a proven layout', (await text(tp, '#adm_fix_msg')).startsWith('Accepted'), await text(tp, '#adm_fix_msg'));
+    // training a bank: many statements, read in the background, then the report
+    await selectize(tp, 'adm_train_bank', 'westpac');
+    // ...one of them a BNZ export that says so: it proves itself, and teaches
+    // Westpac nothing, and the report says which and why
+    await tp.setInputFiles('#adm_train_files', [path.join(D, 'westpac_march.pdf'), path.join(D, 'asb_march.pdf'),
+                                                path.join(D, 'bnz_export.csv')]);
+    await sleep(2500);
+    await tp.click('#adm_train_go');
+    check('training reports what it found',
+          await waitFor(tp, () => /layouts? from 3 statements/.test((document.querySelector('#adm_train_status') || {}).innerText || ''), 300000),
+          await text(tp, '#adm_train_status'));
+    check('...and lists another bank\'s statement as needing a look, with the reason',
+          /1 needs a look/.test(await text(tp, '#adm_train_status')) &&
+          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
+          await text(tp, '#adm_train_status'));
+    console.log(`        (training: ${(await text(tp, '#adm_train_status')).split('\n')[0]})`);
   }
+  await screen(tp, 'Admin Banks');
+  await tp.click('a[data-value="Automatic reading"]'); await sleep(1500);
+  check('Automatic reading counts what was read', /Statements read\s*\d+/i.test(await text(tp, '#adm_ar_head')),
+        await text(tp, '#adm_ar_head'));
+  check('...the automatic rate per kind of file', (await text(tp, '#adm_ar_kinds')).includes('PDF'));
+  check('...and never counts a reading as "proven by" a check it failed',
+        (await text(tp, '#adm_ar_proof')).includes('Checked against') && !(await text(tp, '#adm_ar_proof')).includes('Proven by'));
+  if (!LIVE) {
+    // spot checks: off by default; switched on, a conversion asks for one
+    eq('spot checks are off by default', await tp.$eval('#adm_spot_rate', e => e.value), '0');
+    await tp.fill('#adm_spot_rate', '100'); await tp.click('#adm_spot_save'); await sleep(1500);
+    check('the admin sets the spot-check rate', (await text(tp, '#adm_spot_msg')).startsWith('Saved'), await text(tp, '#adm_spot_msg'));
+    const sp = await freshConvert(ctx);
+    await sp.click('#cv_try_sample'); await waitIdle(sp);
+    check('a conversion picked for a spot check asks for one', (await text(sp, '#cv_spot')).includes('Spot check'),
+          await text(sp, '#cv_spot'));
+    await shot(sp, '09-spot-check');
+    await sp.click('#cv_spot_right'); await sleep(1500);
+    check('...and records the answer', (await text(sp, '#cv_spot')).includes('recorded'));
+    await sp.close();
+    await tp.fill('#adm_spot_rate', '0'); await tp.click('#adm_spot_save'); await sleep(1200);
+    await tp.click('#adm_ar_refresh'); await sleep(2000);
+    check('the spot check is counted', (await text(tp, '#adm_ar_spot')).includes('1 spot check answered: 1 right'),
+          await text(tp, '#adm_ar_spot'));
+  }
+  const [sdl] = await Promise.all([tp.waitForEvent('download', { timeout: 30000 }), tp.click('#adm_ar_export')]);
+  const sjp = path.join(OUT, 'automatic-reading-summary.json'); await sdl.saveAs(sjp);
+  let sj = {}; try { sj = JSON.parse(fs.readFileSync(sjp, 'utf8')); } catch { /* not JSON */ }
+  check('the carry-off summary is counts only', String(sj.what || '').includes('counts only') && Number.isInteger(sj.statements),
+        String(sj.what));
+  await screen(tp, 'Admin Automatic reading');
+  await tp.click('a[data-value="Words"]'); await screen(tp, 'Admin Words');
+  await tp.click('a[data-value="Health"]'); await sleep(1500);
+  check('Health names layouts, not templates', !/template/i.test(await tp.evaluate(() =>
+    document.querySelector('#adm_tabs + .tab-content .tab-pane.active').innerText)));
+  await screen(tp, 'Admin Health');
+  eq('no console or script errors on any Admin screen', terr, []);
+  await tp.close();
 
-  // 9. a phone
+  // 12. a phone
   await page.setViewportSize({ width: 390, height: 900 }); await sleep(800);
-  eq('nothing pushes the page sideways on a phone',
+  eq('nothing pushes the Convert page sideways on a phone',
      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0);
-  eq('no script errors on the page', errs, []);
+  await shot(page, '10-convert-phone');
+  eq('no script errors on the Convert page', errs, []);
   await ctx.close();
+  // THE SERVER'S SIDE OF IT: an error an observer swallowed, or a warning, shows
+  // only in the R console -- the screen can look fine over it.
+  if (!LIVE) {
+    const bad = appLog.split('\n').filter(l => /^(Error|Warning)|^\s*New names:/.test(l));
+    eq('the app\'s console has no errors or warnings', bad, []);
+  }
 }
 
 // ---- main -------------------------------------------------------------------------

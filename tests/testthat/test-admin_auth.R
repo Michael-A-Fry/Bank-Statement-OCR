@@ -11,12 +11,29 @@ test_that("every admin action observer re-checks admin_ok() server-side (P1-2)",
   src <- readLines(app, warn = FALSE)
   starts <- grep("observeEvent\\(input\\$adm_", src)
   expect_true(length(starts) > 5)                 # sanity: we found the handlers
+  gate <- "req\\(admin_ok\\(\\)\\)"
+  # The gate must open the handler: its first lines, read from the handler's OWN
+  # block, so a neighbour's gate a few lines further down can never vouch for it.
+  bare <- gsub("#.*$", "", gsub('"[^"]*"', "", src))   # a brace in a string or comment is not code
+  opens_gated <- function(i) {
+    k <- i:min(i + 4L, length(src))
+    depth <- cumsum(nchar(gsub("[^{(]", "", bare[k])) - nchar(gsub("[^})]", "", bare[k])))
+    end <- which(depth <= 0)[1]                          # the handler's own block ends here
+    if (!is.na(end)) k <- k[seq_len(end)]
+    grepl(gate, paste(src[k], collapse = " "))
+  }
+  # A handler may hand straight to a helper that opens with the gate itself
+  # (`observeEvent(input$adm_x, .helper(...))`); that helper is held to the same rule.
+  defs <- grep("^\\s*[.A-Za-z_][.A-Za-z0-9_]* <- function\\(", src)
+  gated <- sub("^\\s*([.A-Za-z_][.A-Za-z0-9_]*) <- function.*$", "\\1",
+               src[defs[vapply(defs, opens_gated, NA)]])
   unguarded <- character(0)
   for (i in starts) {
     if (grepl("input\\$adm_login", src[i])) next  # the login handler IS the gate
-    window <- paste(src[i:min(i + 4L, length(src))], collapse = " ")
-    if (!grepl("req\\(admin_ok\\(\\)\\)", window))
-      unguarded <- c(unguarded, trimws(src[i]))
+    if (opens_gated(i)) next
+    call <- sub("^.*observeEvent\\(input\\$adm_[A-Za-z0-9_]+,\\s*([.A-Za-z_][.A-Za-z0-9_]*)\\(.*$", "\\1", src[i])
+    if (!identical(call, src[i]) && call %in% gated) next
+    unguarded <- c(unguarded, trimws(src[i]))
   }
   expect_identical(unguarded, character(0))
 })

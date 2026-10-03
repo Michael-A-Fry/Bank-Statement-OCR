@@ -113,11 +113,14 @@ test_that("a scan on a machine with no OCR tools reaches input$meta (#54 wiring)
   expect_gte(res$inp$meta$scanned_no_ocr, 1L)
   expect_false(res$inp$meta$ocr_tools_available)
   # ...and that is exactly what convert_statement hands build_diagnostics.
-  d <- build_diagnostics("unsupported", det = list(matched = FALSE, detail = "no match"),
+  d <- build_diagnostics("unsupported",
+         reading = list(outcome = "unread", why = "No line on any page prints a date with a figure beside it."),
          metadata = list(scanned_no_ocr = res$inp$meta$scanned_no_ocr %||% 0L,
                          ocr_tools = res$inp$meta$ocr_tools_available %||% TRUE))
   expect_true("scanned_no_ocr" %in% d$category)
-  expect_false("unknown_format" %in% d$category)
+  # the scan is the reason, not the reading: "not read" would send the person to
+  # fix columns on a page that has no text at all
+  expect_false("not_read" %in% d$category)
 })
 
 test_that("a readable PDF reports no un-OCR-able scan pages", {

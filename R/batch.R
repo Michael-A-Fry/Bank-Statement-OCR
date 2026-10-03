@@ -10,8 +10,8 @@
 # analyst discovering at file 4 that files 5-30 never ran.
 #
 # NOTHING NEW HAPPENS PER FILE. Every file goes through convert_statement() --
-# same detection, same reconciliation, same outputs, same ONE run-log record as a
-# single conversion. There is no batch pipeline, only a loop, so a batch answer
+# same reading, same proof, same learning, same outputs, same ONE run-log record
+# as a single conversion. There is no batch pipeline, only a loop, so a batch answer
 # and a single-file answer for the same statement cannot disagree.
 
 # The statement-index tag an auto-split run puts on every KPI name
@@ -22,21 +22,26 @@
 .STATEMENT_TAG <- "[[:space:]]*\\[statement [0-9]+\\]$"
 
 # .failing_check(res) -- the SINGLE most useful thing that went wrong, as the
-# engine's own CODE prefixed with the map that words it. FOUR tiers, most useful
-# first; a converted-and-clean file gets NA, because nothing went wrong.
+# engine's own CODE prefixed with the map that words it. Most useful first; a
+# converted-and-clean file gets NA, because nothing went wrong.
 #
-# The CODE, not the sentence: the words are UI copy (CHECK_PLAIN / DIAG_PLAIN /
-# STATUS_PLAIN in ui_labels.R) that the screen already has loaded, and
-# test-seams.R holds those maps to every code the engine can emit. Sorting --
-# gathering every file that failed the same way so one fix clears them all -- is
-# what this column is for, and codes sort just as well. The prefix says WHICH
+# The CODE, not the sentence: the words are UI copy (ui_labels.R) that the screen
+# already has loaded, and sorting -- gathering every file that failed the same way
+# so one fix clears them all -- is what this column is for. The prefix says WHICH
 # map, because a code appearing in two of them would render the wrong sentence.
-#
-# THE OTHER TWO ROUTES HAVE NO MAP, so tier 0 puts the WORDS here instead of a
-# code: plain_failing_check falls an unrecognised entry back to itself verbatim,
-# which is what makes a phrase safe here and a code not. See .other_route_check.
 .failing_check <- function(res) {
   if (identical(res$status, "ok")) return(NA_character_)
+
+  # 0. The reader's own hard check that failed (R/auto_read.R): the exact reason
+  #    the statement did not prove itself, from the first statement that did not.
+  for (rd in res$reading %||% list()) {
+    if ((rd$outcome %||% "unread") %in% c("proven", "layout_match")) next
+    ck <- rd$checks
+    if (is.data.frame(ck) && nrow(ck)) {
+      fail <- ck$check[ck$ok %in% FALSE]
+      if (length(fail)) return(paste0("reading:", fail[1]))
+    }
+  }
 
   # 1. A failing reconciliation check is the most useful answer there is: it names
   #    the thing that did not add up, and reconcile() lists checks in report
@@ -58,8 +63,8 @@
     if (length(hit)) return(paste0("diag:", hit[1]))
   }
 
-  # 3. Nothing specific to point at -- a template that won by a hair, say. Say the
-  #    verdict rather than leave the cell empty and lose the file at the bottom.
+  # 3. Nothing specific to point at. Say the verdict rather than leave the cell
+  #    empty and lose the file at the bottom.
   st <- as.character(res$status %||% NA_character_)[1]
   if (is.na(st) || !nzchar(st)) NA_character_ else paste0("status:", st)
 }
@@ -79,17 +84,17 @@
 # verbatim rather than replaced with a tidy phrase.
 .failed_result <- function(why) {
   list(status = "failed", template_id = NA_character_, kind = "statement",
-       messages = status_message("failed", why,
-                                 "check the file is readable and matches a template"))
+       messages = status_message("failed", why, "check the file opens and is a statement"))
 }
 
 # convert_batch(paths, ..., progress) -> data.frame, one row per file.
 #
 #   file           the path exactly as it was given (so the analyst can find it)
 #   status         ok | needs_review | unsupported | failed
-#   bank           the bank the matched template names; NA when nothing matched
-#   template_id    the template that was USED; NA unless the file converted
-#   chosen         the template the analyst CHOSE for it; NA when it was detected
+#   outcome        proven | layout_match | check | unread (the reader's own word)
+#   bank           the bank the file was read as (institution id); NA when none
+#   chosen         the bank the analyst CHOSE for it; NA when taken from the file
+#   layout         the learned layout the reading matched (id@version), else NA
 #   rows           how many transactions came out
 #   trust          high | medium | low -- as the run log records it
 #   failing_check  what went wrong, as the engine code the screen words (above)
@@ -104,23 +109,20 @@
 # unchanged. It has no `...` of its own, so an argument THIS function does not
 # take lands there and fails every file with "unused argument".
 #
-# `force_templates` -- ONE TEMPLATE PER FILE, as chosen in the Convert table: a
-# character vector the same length as `paths`, where NA or "" means "detect it"
-# and an id means "read this file with exactly that template". A case folder holds
-# statements from several banks, so one override for the whole case (the only kind
-# there used to be) could only ever be right for some of them. A length that does
-# not match the files is refused outright: lined up wrongly, every template would
-# land on its neighbour's statement.
+# `banks` -- ONE BANK PER FILE, as set in the Convert table: a character vector the
+# same length as `paths`, where NA or "" means "take it from the statement". A case
+# folder holds statements from several banks, so one bank for the whole case could
+# only ever be right for some of them. A length that does not match the files is
+# refused outright: lined up wrongly, every bank would land on its neighbour's
+# statement. `overrides` -- likewise one per file (a list, NULL for none), for
+# reading files again with the fixes made on Please check.
 #
 # `done(i, n, file, row)` is called just AFTER file i, with that file's row of the
 # frame below minus `result` (a few short fields, never the transactions) -- so a
-# screen can show each file's verdict the moment it exists rather than all of them
-# when the last one finishes. Same rules as `progress`: a plain callback, and one
-# that errors is ignored.
-#
-# `progress(i, n, file)` is called just BEFORE file i is converted -- a plain
-# callback, not a Shiny call, so a folder can be run from the R console. One that
-# errors is ignored: a broken progress bar must not cost a case its run.
+# screen can show each file's verdict the moment it exists. `progress(i, n, file)`
+# is called just BEFORE file i. Both are plain callbacks, so a folder can be run
+# from the R console, and one that errors is ignored: a broken progress bar must
+# not cost a case its run.
 #
 # `result` is the WHOLE object, rows included, so a 50-file case holds fifty
 # tables. Trimming is the caller's, because only the caller knows when it has
@@ -128,20 +130,23 @@
 # them and marks the result `dropped_feed_rows` -- that word order on purpose:
 # `$` partially matches, so `feed_rows_dropped` would make res$feed_rows return
 # the marker instead of NULL and a stated drop would read as data).
-convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL, done = NULL) {
+convert_batch <- function(paths, ..., banks = NULL, overrides = NULL, progress = NULL, done = NULL) {
   paths <- as.character(paths %||% character(0))
   n <- length(paths)
-  ft <- as.character(force_templates %||% character(0))
-  if (length(ft) && length(ft) != n)
-    stop(sprintf("force_templates has %d entries for %d files", length(ft), n), call. = FALSE)
+  bk <- as.character(banks %||% character(0))
+  if (length(bk) && length(bk) != n)
+    stop(sprintf("banks has %d entries for %d files", length(bk), n), call. = FALSE)
+  if (length(overrides) && length(overrides) != n)
+    stop(sprintf("overrides has %d entries for %d files", length(overrides), n), call. = FALSE)
   args <- list(...)
 
   out <- data.frame(
     file          = paths,
     status        = rep(NA_character_, n),
+    outcome       = rep(NA_character_, n),
     bank          = rep(NA_character_, n),
-    template_id   = rep(NA_character_, n),
     chosen        = rep(NA_character_, n),
+    layout        = rep(NA_character_, n),
     rows          = rep(NA_integer_,   n),
     trust         = rep(NA_character_, n),
     failing_check = rep(NA_character_, n),
@@ -152,19 +157,17 @@ convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL, d
   for (i in seq_len(n)) {
     if (is.function(progress)) safe(progress(i, n, paths[i]))
     a <- args
-    if (length(ft) && !is.na(ft[i]) && nzchar(ft[i])) {
-      a$force_template <- ft[i]; out$chosen[i] <- ft[i]
+    if (length(bk) && !is.na(bk[i]) && nzchar(bk[i])) {
+      a$bank <- bk[i]; out$chosen[i] <- bk[i]
     }
+    if (length(overrides) && !is.null(overrides[[i]])) a$overrides <- overrides[[i]]
     res <- tryCatch(do.call(convert_statement, c(list(paths[i]), a)),
                     error = function(e) .failed_result(conditionMessage(e)))
 
-    out$status[i] <- as.character(res$status %||% "failed")[1]
-    out$bank[i]   <- as.character(res$header$bank %||% NA_character_)[1]
-    # The engine keeps the CLOSEST template on an unsupported result -- evidence
-    # for whoever builds the missing one, but here a template id beside an
-    # unsupported row reads as "this template was used". The run log blanks it for
-    # that reason, so take the log's answer rather than re-derive the rule.
-    out$template_id[i]   <- as.character(res$run_log$detected_template %||% NA_character_)[1]
+    out$status[i]        <- as.character(res$status %||% "failed")[1]
+    out$outcome[i]       <- as.character(res$run_log$outcome %||% NA_character_)[1]
+    out$bank[i]          <- as.character(res$run_log$institution %||% NA_character_)[1]
+    out$layout[i]        <- as.character(res$run_log$layout %||% NA_character_)[1]
     out$rows[i]          <- .rows_of(res)
     out$trust[i]         <- as.character(res$trust$level %||% NA_character_)[1]
     out$failing_check[i] <- .failing_check(res)

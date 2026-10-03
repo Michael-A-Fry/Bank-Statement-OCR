@@ -1,14 +1,15 @@
-# The Qlik analytics feed writer: the governance gate (reconciled + proven), the
-# flat stamped transactions, and the always-written per-run manifest.
+# The Qlik analytics feed writer: the governance gate (proven by the statement's
+# own arithmetic, matched to a proven layout, or confirmed by a person), the flat
+# stamped transactions, and the always-written per-run manifest.
 
 .mk_rows <- function() data.frame(
   row_id = 1:2, date = c("2026-01-01", "2026-01-02"),
   description = c("A", "B"), amount = c(-5, 9), code = c("007", "008"),
   stringsAsFactors = FALSE)
 
-.mk_result <- function(status = "ok", trust = "high", tid = "bnz_everyday_csv",
-                       rows = .mk_rows()) {
-  list(status = status, template_id = tid, kind = "statement",
+.mk_result <- function(status = "ok", trust = "high", tid = "bnz_1@2",
+                       rows = .mk_rows(), basis = if (identical(status, "ok")) "proven" else "none") {
+  list(status = status, template_id = tid, kind = "statement", feed_basis = basis,
        run_id = "deadbeef01-20260101000000",
        trust = list(level = trust),
        header = list(source_file = "s.csv", source_sha256 = "deadbeef0123456789",
@@ -32,8 +33,7 @@
 
 test_that("a reconciled, proven conversion is written to the feed (accepted)", {
   cfg <- .cfg()
-  g <- write_feed(.mk_result(), cfg, ts = "2026-01-01T00:00:00Z",
-                  proven_ids = "bnz_everyday_csv")
+  g <- write_feed(.mk_result(), cfg, ts = "2026-01-01T00:00:00Z")
   expect_true(g$accept)
   expect_true(g$written)
   tx  <- list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)
@@ -48,9 +48,9 @@ test_that("a reconciled, proven conversion is written to the feed (accepted)", {
   expect_identical(man$gate_result, "accepted")
 })
 
-test_that("a draft (non-proven) template is withheld, never in the dashboard table", {
+test_that("a reading nobody proved or confirmed is withheld, never in the dashboard table", {
   cfg <- .cfg()
-  g <- write_feed(.mk_result(), cfg, ts = "t", proven_ids = character(0))  # nothing proven
+  g <- write_feed(.mk_result(basis = "none"), cfg, ts = "t")
   expect_false(g$accept)
   expect_identical(g$reason, "withheld:not_proven")
   expect_length(list.files(file.path(cfg$feed$feed_dir, "transactions")), 0)  # NOT in the feed
@@ -60,19 +60,29 @@ test_that("a draft (non-proven) template is withheld, never in the dashboard tab
   expect_identical(man$gate_result, "withheld:not_proven")
 })
 
-test_that("needs_review and low trust are withheld", {
+test_that("proven, a proven layout's match, and a person's confirmation are each fed", {
+  for (b in c("proven", "layout_match", "person")) {
+    cfg <- .cfg()
+    g <- write_feed(.mk_result(basis = b), cfg, ts = "t")
+    expect_true(g$accept, info = b)
+    df <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)[1])
+    expect_identical(unique(df$template_origin), b)     # every row says on what basis
+  }
+})
+
+test_that("needs_review is withheld whatever its basis, and trust no longer gates", {
   cfg <- .cfg()
-  expect_identical(write_feed(.mk_result(status = "needs_review"), cfg, ts = "t",
-                              proven_ids = "bnz_everyday_csv")$reason, "withheld:needs_review")
+  expect_identical(write_feed(.mk_result(status = "needs_review", basis = "proven"), cfg, ts = "t")$reason,
+                   "withheld:needs_review")
+  # a proven statement is fed on its proof, not a confidence grade
   cfg2 <- .cfg()
-  expect_identical(write_feed(.mk_result(trust = "low"), cfg2, ts = "t",
-                              proven_ids = "bnz_everyday_csv")$reason, "withheld:low_trust")
+  expect_identical(write_feed(.mk_result(trust = "low"), cfg2, ts = "t")$reason, "accepted")
 })
 
 test_that("the manifest is always written, even when withheld (coverage never silent)", {
   cfg <- .cfg()
   r <- .mk_result(status = "unsupported"); r$feed_rows <- NULL; r$header$row_count <- 0L
-  write_feed(r, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(r, cfg, ts = "t")
   expect_length(list.files(file.path(cfg$feed$feed_dir, "runs")), 1)
 })
 
@@ -83,24 +93,24 @@ test_that("re-converting flips the feed folder, never leaving a stale row (P1-3)
 
   # accepted first -> lands in transactions/.
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   expect_true(file.exists(tx(cfg))); expect_false(file.exists(rev(cfg)))
 
-  # same statement re-converted but now withheld (template no longer proven):
+  # same statement re-converted but now withheld (no longer proven):
   # the accepted row MUST be gone, not left feeding the dashboard.
-  write_feed(.mk_result(), cfg, ts = "t2", proven_ids = character(0))
+  write_feed(.mk_result(basis = "none"), cfg, ts = "t2")
   expect_false(file.exists(tx(cfg)))                 # stale accepted row removed
   expect_true(file.exists(rev(cfg)))                 # now in review instead
 
   # and back again: withheld -> accepted must clear the review row.
-  write_feed(.mk_result(), cfg, ts = "t3", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t3")
   expect_true(file.exists(tx(cfg)))
   expect_false(file.exists(rev(cfg)))                # stale review row removed
 })
 
 test_that("feed CSVs are written atomically -- no partial/temp files linger (P2-12)", {
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   all_files <- list.files(cfg$feed$feed_dir, recursive = TRUE)
   expect_true(length(all_files) > 0)
   expect_false(any(grepl("\\.part$", all_files)))     # temp renamed away, never left behind
@@ -109,21 +119,23 @@ test_that("feed CSVs are written atomically -- no partial/temp files linger (P2-
   expect_equal(nrow(utils::read.csv(tx[1], stringsAsFactors = FALSE)), 2)
 })
 
-test_that("an NA trust level fails closed to withheld, never errors in the gate (P3-e)", {
-  cfg <- .cfg()
-  g <- write_feed(.mk_result(trust = NA_character_), cfg, ts = "t",
-                  proven_ids = "bnz_everyday_csv")
-  expect_false(g$accept)                              # NA trust -> lowest -> withheld
-  # the manifest is still written (coverage never silent), not dropped by an error.
-  expect_length(list.files(file.path(cfg$feed$feed_dir, "runs")), 1)
+test_that("a missing or NA basis fails closed to withheld, never errors in the gate (P3-e)", {
+  for (b in list(NA_character_, NULL)) {
+    cfg <- .cfg()
+    r <- .mk_result(); r$feed_basis <- b
+    g <- write_feed(r, cfg, ts = "t")
+    expect_false(g$accept)
+    # the manifest is still written (coverage never silent), not dropped by an error.
+    expect_length(list.files(file.path(cfg$feed$feed_dir, "runs")), 1)
+  }
 })
 
 test_that("the manifest is keyed by content hash -- a re-convert doesn't double-count (P3-d)", {
   cfg <- .cfg()
   r1 <- .mk_result(); r1$run_id <- "run-A-0001"
   r2 <- .mk_result(); r2$run_id <- "run-B-0002"   # same statement (same sha), new run
-  write_feed(r1, cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
-  write_feed(r2, cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  write_feed(r1, cfg, ts = "t1")
+  write_feed(r2, cfg, ts = "t2")
   runs <- list.files(file.path(cfg$feed$feed_dir, "runs"), full.names = TRUE)
   expect_length(runs, 1)                             # one manifest row per statement
   expect_identical(utils::read.csv(runs[1], stringsAsFactors = FALSE)$run_id, "run-B-0002")  # latest wins
@@ -131,7 +143,7 @@ test_that("the manifest is keyed by content hash -- a re-convert doesn't double-
 
 test_that("feed.enabled = false is a no-op", {
   cfg <- .cfg(); cfg$feed$enabled <- FALSE
-  expect_null(write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv"))
+  expect_null(write_feed(.mk_result(), cfg, ts = "t"))
   expect_false(dir.exists(cfg$feed$feed_dir))
 })
 
@@ -153,11 +165,16 @@ test_that("a leading-zero code and an at-sign description reach the feed verbati
     "02/01/26,10.00,Dairy Refund,TEST CITY,000001,0000042,POS,11-1111-1111111-00,---,,\"00\",1001,\"11-1111\",02/01/26"), src)
 
   out <- tempfile("cv_"); ld <- tempfile("l_")
-  res <- convert_statement(src, outdir = out, templates_dir = templates_dir(), logdir = ld)
+  # Two rows and no balance prove nothing (the reader even takes the batch number
+  # for a figure), so a person says which column is the amount and confirms it.
+  res <- convert_statement(src, bank = "BNZ", outdir = out, logdir = ld, layouts_dir = tempfile("ly_"),
+                           tracking_dir = NA, confirm = TRUE,
+                           overrides = list(roles = c(balance = "amount", amount = "other")))
   expect_equal(res$status, "ok")
+  expect_equal(res$feed_basis, "person")
 
   cfg <- .cfg()
-  g <- write_feed(res, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  g <- write_feed(res, cfg, ts = "t")
   expect_true(isTRUE(g$accept) && isTRUE(g$written))
   fd <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)[1])
 
@@ -183,8 +200,9 @@ test_that("a leading-zero code and an at-sign description reach the feed verbati
 # F1-58: one fixed field set, so Qlik's wildcard LOAD concatenates cleanly.
 # ---------------------------------------------------------------------------
 
-test_that("the feed's core columns are identical and in order for every proven template", {
-  ids <- sub("\\.ya?ml$", "", basename(list.files(templates_dir(), pattern = "\\.ya?ml$")))
+test_that("the feed's core columns are identical and in order for every golden statement", {
+  ids <- sub("\\.ya?ml$", "", basename(list.files(file.path(engine_root(), "tests", "testthat", "fixtures", "templates"),
+                                                   pattern = "\\.ya?ml$")))
   expect_true(length(ids) > 0)
   for (id in ids) {
     g <- fixture(file.path("tests", "testthat", "expected", paste0(id, ".csv")))
@@ -205,33 +223,29 @@ test_that("the feed's core columns are identical and in order for every proven t
 # before the fix: 17 files at 30 columns, 2 at 32. The extras now travel in their
 # own table; the assertion is inverted to match, and the extras are still checked
 # for -- just in the place they now live.
-test_that("templates with different extras write the SAME transactions field set", {
+test_that("statements with different extra columns write the SAME transactions field set", {
   fixed <- c(FEED_CONTEXT_COLUMNS, FEED_CORE_COLUMNS)
-  feed_of <- function(fx, tid) {
-    out <- tempfile("cv_"); ld <- tempfile("l_")
-    res <- convert_statement(fixture(fx), outdir = out, templates_dir = templates_dir(),
-                             logdir = ld)
+  feed_of <- function(fx) {
+    res <- convert_statement(fixture(fx), outdir = tempfile("cv_"), logdir = tempfile("l_"),
+                             layouts_dir = tempfile("ly_"), tracking_dir = NA)
     cfg <- .cfg()
-    write_feed(res, cfg, ts = "t", proven_ids = tid)
+    write_feed(res, cfg, ts = "t")
     f <- list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)
     if (!length(f)) f <- list.files(file.path(cfg$feed$feed_dir, "review"), full.names = TRUE)
     list(head = names(.read_feed(f[1])),
          extras = list.files(file.path(cfg$feed$feed_dir, "extras"), full.names = TRUE))
   }
-  # bnz has NO extras; anz_creditcard declares card / posted_date / fx_amount.
-  a <- feed_of("samples/raw/bnz/bnz_transaction_export_01.csv", "bnz_everyday_csv")
-  b <- feed_of("samples/raw/anz/anz_creditcard_01.csv", "anz_creditcard_csv")
+  # the card export carries columns beyond the core (foreign amounts, a second date)
+  a <- feed_of("samples/raw/bnz/bnz_transaction_export_01.csv")
+  b <- feed_of("samples/raw/anz/anz_creditcard_01.csv")
   # THE POINT: byte-for-byte the same field set, so Qlik makes one table.
   expect_identical(a$head, fixed)
   expect_identical(b$head, fixed)
-  expect_identical(a$head, b$head)
-  # ...and the extras are not lost. They keep their own names (never extra_1..n),
-  # in their own table, joinable on run_id + row_id.
-  expect_length(a$extras, 0L)                       # no extras -> no file at all
+  # ...and the extras are not lost: their own table, joinable on run_id + row_id.
   expect_length(b$extras, 1L)
   ex <- names(.read_feed(b$extras[1]))
   expect_true(all(c("run_id", "row_id") %in% ex))
-  expect_true(all(c("card", "posted_date", "fx_amount") %in% ex))
+  expect_gt(length(setdiff(ex, c("run_id", "row_id"))), 0L)
 })
 
 # ---------------------------------------------------------------------------
@@ -240,14 +254,13 @@ test_that("templates with different extras write the SAME transactions field set
 
 test_that("every feed row carries its own gate_result, accepted or withheld", {
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t")
   acc <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)[1])
   expect_true("gate_result" %in% names(acc))
   expect_identical(unique(acc$gate_result), "accepted")
 
   cfg2 <- .cfg()
-  write_feed(.mk_result(status = "needs_review"), cfg2, ts = "t",
-             proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(status = "needs_review"), cfg2, ts = "t")
   rev <- .read_feed(list.files(file.path(cfg2$feed$feed_dir, "review"), full.names = TRUE)[1])
   expect_identical(unique(rev$gate_result), "withheld:needs_review")
   # the two tables are NOT field-identical by accident -- the verdict distinguishes
@@ -267,7 +280,7 @@ test_that("a failed feed write is reported, never recorded as a clean accept", {
   # portable equivalent -- root ignores permission bits, a non-directory never is.
   writeLines("not a directory", file.path(cfg$feed$feed_dir, "transactions"))
 
-  g <- write_feed(.mk_result(), cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  g <- write_feed(.mk_result(), cfg, ts = "t")
   expect_true(g$accept)                    # the gate DID accept it...
   expect_false(g$written)                  # ...and the feed did not receive it
   expect_identical(g$gate_result, "accepted:write_failed")
@@ -290,23 +303,23 @@ test_that("a successful write happens BEFORE the stale sibling is removed", {
   # Ordering matters: unlinking first meant a transient write failure left the
   # statement with no row in either folder and nothing saying so.
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   tx <- file.path(cfg$feed$feed_dir, "transactions", "deadbeef01234567.csv")
   expect_true(file.exists(tx))
   before <- readLines(tx)
 
   # re-convert, still accepted: the file is replaced in place, never absent.
-  write_feed(.mk_result(), cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t2")
   expect_true(file.exists(tx))
   expect_false(identical(before, readLines(tx)))   # genuinely rewritten (new ts)
 })
 
 test_that("the feed log records every conversion's feed outcome (health is visible)", {
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   r2 <- .mk_result(status = "needs_review"); r2$run_id <- "cafebabe02-2026"
   r2$header$source_sha256 <- "cafebabe0123456789"
-  write_feed(r2, cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  write_feed(r2, cfg, ts = "t2")
   fl <- read_feed_log(cfg$paths$logs)
   expect_equal(nrow(fl), 2L)
   hh <- feed_health(fl)
@@ -318,7 +331,7 @@ test_that("the feed log records every conversion's feed outcome (health is visib
 test_that("a statement with no content hash is refused loudly, not silently", {
   cfg <- .cfg()
   r <- .mk_result(); r$header$source_sha256 <- NA_character_
-  expect_null(write_feed(r, cfg, ts = "t", proven_ids = "bnz_everyday_csv"))
+  expect_null(write_feed(r, cfg, ts = "t"))
   fl <- read_feed_log(cfg$paths$logs)
   expect_equal(nrow(fl), 1L)
   expect_identical(fl$gate_result[1], "skipped:no_source_hash")
@@ -341,7 +354,7 @@ test_that("split rows are stamped with THEIR statement's period and account", {
     list(index = 2L, period_start = "2026-02-01", period_end = "2026-02-28",
          account_number = "12-3456-7890123-01"))))
   cfg <- .cfg()
-  write_feed(r, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(r, cfg, ts = "t")
   fd <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)[1])
   expect_identical(fd$statement_index, c("1", "2"))
   expect_identical(fd$period_start, c("2026-01-01", "2026-02-01"))
@@ -359,7 +372,7 @@ test_that("a split summary missing a field falls back to the header, never guess
     list(index = 1L, period_start = "2026-01-01", period_end = "2026-01-31"),
     list(index = 2L, period_start = "2026-02-01", period_end = "2026-02-28"))))
   cfg <- .cfg()
-  write_feed(r, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(r, cfg, ts = "t")
   fd <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "transactions"), full.names = TRUE)[1])
   expect_identical(fd$period_start, c("2026-01-01", "2026-02-01"))
   expect_identical(fd$account_number, c("", ""))
@@ -369,22 +382,16 @@ test_that("a split summary missing a field falls back to the header, never guess
 # F1-45: which build produced this figure?
 # ---------------------------------------------------------------------------
 
-test_that("the manifest stamps the engine build and the template content hash", {
-  fx <- fixture("samples/raw/bnz/bnz_transaction_export_01.csv")
-  skip_if_not(file.exists(fx))
-  out <- tempfile("cv_"); ld <- tempfile("l_")
-  res <- convert_statement(fx, outdir = out, templates_dir = templates_dir(), logdir = ld)
+test_that("the manifest stamps the engine build and the learned state", {
+  cv <- convert_sandbox()
+  res <- cv(proven_csv())
   cfg <- .cfg()
-  write_feed(res, cfg, ts = "t", proven_ids = "bnz_everyday_csv")
+  write_feed(res, cfg, ts = "t")
   man <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "runs"), full.names = TRUE)[1])
   expect_identical(man$engine_version, engine_version())
-  expect_true(nzchar(man$template_sha256) && !identical(man$template_sha256, "NA"))
-  # the hash is of the template CONTENT, so an edited YAML is a different template
-  # even at the same declared version.
-  tpl <- load_templates(templates_dir())[["bnz_everyday_csv"]]
-  expect_identical(man$template_sha256, template_sha256(tpl))
-  edited <- tpl; edited$min_score <- 99
-  expect_false(identical(template_sha256(edited), template_sha256(tpl)))
+  expect_identical(man$layouts_state, res$run_log$layouts_state)
+  expect_identical(man$gate_result, "accepted")
+  expect_identical(man$template_origin, "proven")
 })
 
 # ---------------------------------------------------------------------------
@@ -423,35 +430,34 @@ test_that(".removed() reports the truth when a feed file will not go", {
 
 test_that("a stale accepted row that could not be deleted is reported, not hidden", {
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   tx <- file.path(cfg$feed$feed_dir, "transactions", "deadbeef01234567.csv")
   expect_true(file.exists(tx))
   .undeletable(tx)
 
-  # re-convert, now below the trust floor: the run is WITHHELD, its review row is
+  # re-convert, now held for a person: the run is WITHHELD, its review row is
   # written -- and the accepted row is still being loaded by Qlik.
-  cfg$feed$min_trust <- "high"
-  g <- write_feed(.mk_result(trust = "low"), cfg, ts = "t2", proven_ids = "bnz_everyday_csv")
+  g <- write_feed(.mk_result(status = "needs_review"), cfg, ts = "t2")
   expect_false(g$accept)
   expect_true(g$written)                                  # the review row DID go
   expect_true(file.exists(tx))                            # ...and the old one stayed
-  expect_identical(g$gate_result, "withheld:low_trust:stale_row_kept")
+  expect_identical(g$gate_result, "withheld:needs_review:stale_row_kept")
 
   # the Qlik QA table says it too, so the coverage row is not quietly "withheld"
   man <- .read_feed(list.files(file.path(cfg$feed$feed_dir, "runs"), full.names = TRUE)[1])
-  expect_identical(man$gate_result, "withheld:low_trust:stale_row_kept")
+  expect_identical(man$gate_result, "withheld:needs_review:stale_row_kept")
 
   # and the log, which lives with the app rather than on the share, names WHERE
   fl <- read_feed_log(cfg$paths$logs)
   last <- fl[nrow(fl), , drop = FALSE]
-  expect_identical(as.character(last$gate_result), "withheld:low_trust:stale_row_kept")
+  expect_identical(as.character(last$gate_result), "withheld:needs_review:stale_row_kept")
   expect_match(as.character(last$detail), "could not be removed")
   expect_match(as.character(last$detail), "transactions")
 })
 
 test_that("retract_feed never reports rows withdrawn that are still on the dashboard", {
   cfg <- .cfg()
-  write_feed(.mk_result(), cfg, ts = "t1", proven_ids = "bnz_everyday_csv")
+  write_feed(.mk_result(), cfg, ts = "t1")
   tx <- file.path(cfg$feed$feed_dir, "transactions", "deadbeef01234567.csv")
   expect_true(file.exists(tx))
 
@@ -480,21 +486,21 @@ test_that("retract_feed never reports rows withdrawn that are still on the dashb
 })
 
 # ---------------------------------------------------------------------------
-# The governance gate must not be switchable off by a quote character.
+# The governance gate is not a setting: nothing in config.yaml can switch it off.
 # ---------------------------------------------------------------------------
 
-test_that("a quoted yes/no in config.yaml cannot switch the status gate off", {
+test_that("no setting in config.yaml can switch the gate off", {
   p <- file.path(tempdir(), "cfg_feed_flags.yaml")
-  # `require_status_ok: 'true'` is what a person editing YAML in Notepad writes and
-  # reads back as ON. isTRUE() read it as OFF, and a needs_review conversion was
-  # written to feed/transactions stamped `accepted`.
-  writeLines(c("feed:", "  require_status_ok: 'true'"), p)
+  # the old knobs, written the way someone would to loosen the gate
+  writeLines(c("feed:", "  require_status_ok: false", "  min_trust: any",
+               "  allowed_template_origins: [default, user]"), p)
   cfg <- load_config(p, refresh = TRUE)
   cfg$feed$feed_dir <- tempfile("feed"); cfg$paths$logs <- tempfile("feedlog")
-  g <- write_feed(.mk_result(status = "needs_review"), cfg, ts = "t",
-                  proven_ids = "bnz_everyday_csv")
+  g <- write_feed(.mk_result(status = "needs_review"), cfg, ts = "t")
   expect_false(g$accept)
   expect_identical(g$gate_result, "withheld:needs_review")
+  g2 <- write_feed(.mk_result(basis = "none"), cfg, ts = "t")
+  expect_false(g2$accept)
   expect_equal(length(list.files(file.path(cfg$feed$feed_dir, "transactions"))), 0L)
 })
 
@@ -502,11 +508,11 @@ test_that("a quoted yes/no in config.yaml cannot switch the status gate off", {
 # ONE FIELD SET, FOR EVER. Qlik's wildcard `LOAD *` concatenates two CSVs only
 # when their field sets match EXACTLY; differ by one column and it builds a
 # SECOND table, and the unit's dashboard totals are quietly short by whatever is
-# in it. The feed used to append each template's own extras to the transactions
+# in it. The feed used to append each statement's own extras to the transactions
 # row, so a card statement carrying fx_amount produced a 32-column file among
 # 30-column ones -- measured on the real feed folder as 17 files at 30 and 2 at
 # 32, i.e. already split in production before anyone had converted a second bank.
-test_that("a template's extra columns cannot change the feed's field set", {
+test_that("a statement's extra columns cannot change the feed's field set", {
   plain <- data.frame(row_id = 1:2, date = c("2026-01-01", "2026-01-02"),
                       description = c("a", "b"), amount = c(-1, 2),
                       stringsAsFactors = FALSE)

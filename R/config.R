@@ -125,7 +125,8 @@
     # SPOT CHECKS: the share of AUTOMATIC conversions marked for a person to
     # eyeball (result$spot_check), 0 to 1. Off by default (product owner's
     # decision); an admin turns it on. The arithmetic proves the figures; a spot
-    # check is what measures everything it cannot reach.
+    # check is what measures everything it cannot reach. A statement converted on
+    # a proven layout with no arithmetic of its own is picked at twice this rate.
     spot_check_rate = 0
   ),
   retention = list(
@@ -201,7 +202,9 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 # file above.
 .coerce_flags <- function(cfg, defaults = .config_defaults()) {
   bad <- character(0)
-  for (sec in unique(vapply(.FLAG_SETTINGS, `[[`, "", 1L))) {
+  # Every section of the defaults is a group of settings; a mis-indented file can
+  # turn one into a bare value, and the first `cfg$app$...` would then stop the app.
+  for (sec in names(defaults)) {
     if (!is.null(cfg[[sec]]) && !is.list(cfg[[sec]])) {
       cfg[[sec]] <- defaults[[sec]]
       bad <- c(bad, sprintf("the whole '%s:' section (it is not a group of settings)", sec))

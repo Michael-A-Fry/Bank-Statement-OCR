@@ -1,24 +1,27 @@
-# Golden-file + guarantee tests for the Westpac everyday CSV template.
+# Golden-file + guarantee tests for the Westpac everyday CSV export: the table reader
+# with the fixture template, and the automatic reader with none.
 
 FIXTURE  <- "samples/raw/westpac/westpac_transaction_export_01.csv"
 EXPECTED <- "tests/testthat/expected/westpac_everyday_csv.csv"
 
-test_that("detection picks westpac_everyday_csv unambiguously", {
-  templates <- load_templates(templates_dir())
-  input <- read_input(fixture(FIXTURE))
-  det <- detect_statement(input, templates, hint_bank = "Westpac")
-  expect_true(det$matched)
-  expect_identical(det$template_id, "westpac_everyday_csv")
-  expect_gte(det$score, templates[["westpac_everyday_csv"]]$min_score)
+test_that("the automatic reader reads the export to the golden figures, and asks", {
+  # No balance and no totals: nothing proves the reading, so a person looks. The
+  # export has two text columns a row (Other Party, Description); the reader takes
+  # Other Party as the description and keeps the other as an extra column, so the
+  # description is held to the file rather than to the golden.
+  rd <- expect_auto_read_golden(FIXTURE, EXPECTED, outcomes = "check",
+                                fields = c("date", "amount", "direction", "balance"))
+  raw <- utils::read.csv(fixture(FIXTURE), stringsAsFactors = FALSE, check.names = FALSE)
+  expect_identical(rd$transactions$description, raw[["Other Party"]])
+  expect_identical(rd$parsed$extras$text1, raw[["Description"]])
 })
 
 test_that("parsed core table equals the golden snapshot", {
-  expect_statement_ok(FIXTURE, EXPECTED,
-                      template_id = "westpac_everyday_csv", bank = "Westpac")
+  expect_statement_ok(FIXTURE, EXPECTED, template_id = "westpac_everyday_csv")
 })
 
 test_that("descriptions are verbatim and amounts signed", {
-  res <- parse_fixture(FIXTURE, bank = "Westpac")
+  res <- parse_fixture(FIXTURE, "westpac_everyday_csv")
   tx <- res$parsed$transactions
   expect_identical(tx$description,
                    c("ONLINE BANKING", "EFTPOS TRANSACTION",
@@ -40,7 +43,7 @@ test_that("descriptions are verbatim and amounts signed", {
 })
 
 test_that("no rows dropped and no false malformed/redaction flags", {
-  res <- parse_fixture(FIXTURE, bank = "Westpac")
+  res <- parse_fixture(FIXTURE, "westpac_everyday_csv")
   expect_equal(nrow(res$parsed$transactions), 4L)
   expect_true(all(res$parsed$transactions$flags == ""))
   # provenance covers every row
@@ -48,7 +51,7 @@ test_that("no rows dropped and no false malformed/redaction flags", {
 })
 
 test_that("reconciliation KPIs are deterministic and non-failing", {
-  res <- parse_fixture(FIXTURE, bank = "Westpac")
+  res <- parse_fixture(FIXTURE, "westpac_everyday_csv")
   k <- res$recon$kpis
   expect_false(any(k$status == "fail"))
   expect_equal(k$status[k$name == "transaction_count"], "pass")

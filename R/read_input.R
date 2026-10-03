@@ -124,6 +124,8 @@ read_pdf_input <- function(path,
     ink_scan_pages = pdf$ink_scan_pages %||% 0L,
     ocr = pdf$ocr,
     ocr_conf = pdf$ocr_conf,
+    ocr_note = pdf$ocr_note,
+    ocr_timed_out = pdf$ocr_timed_out %||% integer(0),
     # Pages that ARE scans but could not be machine-read, and whether the OCR tools
     # exist on this machine. read_pdf works both out; they have to be CARRIED, or
     # the "this is a scan we couldn't read" diagnostic can never fire on a real
@@ -189,6 +191,11 @@ read_input <- function(path) {
     input$meta$ocr_pages <- sum(ocr)
     on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
     input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
+    # Pages OCR could not finish in time (left blank) and what the OCR safety nets
+    # did per page (R/ocr.R): a reader must not call a statement complete while a
+    # page of it went unread.
+    input$meta$ocr_timed_out <- x$ocr_timed_out %||% integer(0)
+    input$meta$ocr_notes <- x$ocr_note %||% character(0)
     # Scan-but-unreadable accounting (see read_pdf_input). convert_statement reads
     # these two straight off input$meta to raise the scanned_no_ocr diagnostic, so
     # a gap here silently turns that loud message back into a misleading

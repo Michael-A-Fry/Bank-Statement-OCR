@@ -19,8 +19,8 @@ blank_to_na <- function(x) {
 }
 
 # locate_header(lines, template) -- single source of truth for finding the
-# header row of a delimited statement (used by BOTH detection and the reader so
-# they can never disagree). Honours an optional preamble.header_regex; otherwise
+# header row of a delimited statement (used by the reader and by the metadata
+# capture, so they can never disagree). Honours an optional preamble.header_regex; otherwise
 # the first non-empty line. Agreed no-match behaviour: when a preamble regex is
 # supplied but matches no line, return NA_integer_ (no header found) so callers
 # treat the input as unrecognised rather than guessing line 1.
@@ -34,6 +34,29 @@ locate_header <- function(lines, template) {
   nz <- which(nzchar(trimws(lines)))
   if (length(nz)) nz[1] else NA_integer_
 }
+
+# .header_fields(lines, template) -- locate the header row (via the shared
+# locate_header, so every caller agrees on where it is) and split it into trimmed
+# field names.
+.header_fields <- function(lines, template) {
+  if (length(lines) == 0) return(character(0))
+  hidx <- locate_header(lines, template)
+  if (is.na(hidx)) return(character(0))
+  # resolve_delimiter: a template may declare SEVERAL separators for one layout
+  # (ASB publishes the same export as CSV and as tab-delimited). Resolved from the
+  # header line here and from the SAME header line in read_delimited, so the two
+  # can never disagree about how the file splits.
+  delim <- resolve_delimiter(lines[hidx], template)
+  fields <- utils::read.table(text = lines[hidx], sep = delim, quote = "\"",
+                              stringsAsFactors = FALSE, colClasses = "character",
+                              header = FALSE, check.names = FALSE,
+                              comment.char = "")[1, , drop = TRUE]
+  trimws(as.character(unlist(fields)))
+}
+
+# .enc_safe(x) -- text made valid UTF-8 (anything that is not is dropped), so
+# measuring or writing it can never fail on a file's stray bytes.
+.enc_safe <- function(x) iconv(as.character(x), from = "", to = "UTF-8", sub = "")
 
 # file_sha256(path) -- deterministic content hash. openssl when available, otherwise
 # digest. BOTH COMPUTE SHA-256, so the value does not depend on which one is installed:
@@ -287,11 +310,9 @@ local_time_text <- function(x) {
 # save_yaml_safely(x, path) -- write a YAML file so that ONE bad save cannot cost
 # the accumulated value of the tool.
 #
-# WHY: the dictionaries have had a .bak on every save for a long time (see
-# yaml_append_phrase above). The TEMPLATES -- which backup-and-restore.md calls
-# "the accumulated value of the tool", months of somebody's work that exists
-# nowhere else on an offline box -- were written with a bare yaml::write_yaml.
-# That is one call with two ways to lose a template: it truncates the target
+# WHY: a bare yaml::write_yaml is one call with two ways to lose a file that may
+# exist nowhere else on an offline box (a person's held fix, R/fixes.R): it
+# truncates the target
 # before it writes, so an error or a full disk part-way through leaves a file that
 # no longer parses AND no copy of what it used to say; and there is no way back
 # from a save that wrote perfectly valid YAML the person did not mean.
@@ -300,8 +321,7 @@ local_time_text <- function(x) {
 #   1. copy the existing file to <path>.bak         -- one save's worth of undo
 #   2. write a temp file in the SAME folder         -- a failure never touches <path>
 #   3. rename the temp over <path>                  -- atomic on a same-volume move
-# A reader (a conversion loading templates) therefore sees the old file or the new
-# one, never a half-written one.
+# A reader therefore sees the old file or the new one, never a half-written one.
 #
 # Returns TRUE/FALSE with attr "reason" -- one plain sentence a screen can show as
 # it stands, so the engine and the screen cannot disagree about why a save failed.
@@ -313,8 +333,8 @@ save_yaml_safely <- function(x, path) {
   if (file.exists(path) && !isTRUE(safe(file.copy(path, paste0(path, ".bak"),
                                                   overwrite = TRUE), FALSE)))
     return(structure(FALSE, reason = "could not keep a copy of the previous version, so nothing was changed"))
-  # The temp and the backup both end in something no template loader looks for
-  # (they all list "*.yaml"/"*.yml"), so neither can ever be loaded as a template.
+  # The temp and the backup both end in something no loader looks for (they list
+  # "*.yaml"/"*.yml"), so neither can ever be read as the real file.
   tmp <- paste0(path, ".", Sys.getpid(), ".part")
   # Warnings are caught as well as errors, for the reason .atomic_write_csv gives
   # in R/feed.R: on a read-only share file() WARNS and the write returns normally,
@@ -346,149 +366,6 @@ status_message <- function(status, why, needs = NULL) {
 # safe(expr, default) -- evaluate `expr`, returning `default` on any error.
 safe <- function(expr, default = NULL) {
   tryCatch(expr, error = function(e) default)
-}
-
-# fingerprint_phrases(text) -> the identifying phrases typed in the toolkit's
-# "a distinctive phrase printed on this statement" box, one per line.
-#
-# Trimmed, blanks dropped, order kept, duplicates dropped. A fingerprint phrase is
-# matched against the page text CHARACTER FOR CHARACTER, so a stray trailing space
-# or a blank line is the difference between a template that recognises the bank and
-# one that never matches anything -- which is precisely the failure the analyst
-# cannot debug. Pure, and in R/ rather than app.R, so the suite can hold it to that.
-fingerprint_phrases <- function(text) {
-  s <- as.character(text %||% "")[1]
-  if (is.na(s)) return(character(0))
-  ph <- trimws(strsplit(s, "\n", fixed = TRUE)[[1]])
-  unique(ph[!is.na(ph) & nzchar(ph)])
-}
-
-# .saved_name(id, templates) -- a template said in the words the person holding
-# the statement can check ("SAMPLE BANK statement"), never its id.
-#
-# WHY: the card two inches to the left of this message already says "Read as:
-# SAMPLE BANK statement", while the save confirmation said, twice, Saved
-# "sample_bank_statement_pdf" ... it matched yours ("sample_bank_statement_pdf").
-# An id is a maintainer's handle -- an accountant cannot check a figure against
-# it, and the charter's interface rule forbids putting an engine code in front of
-# her. One screen must not speak two languages about the same template.
-#
-# The id remains the fallback, and deliberately: when no template set is supplied
-# there is no name to be had, and a save confirmation that named NOTHING would be
-# worse than one naming a handle. Callers on a customer-facing screen pass the
-# set they already loaded (app.R) and get words.
-.saved_name <- function(id, templates = NULL) {
-  id <- trimws(as.character(id %||% NA_character_)[1])
-  if (is.na(id) || !nzchar(id)) return(id)
-  t <- if (is.list(templates) && !is.null(templates[[id]])) templates[[id]] else NULL
-  nm <- if (is.null(t)) NA_character_ else safe(template_display_name(t), NA_character_)
-  nm <- as.character(nm %||% NA_character_)[1]
-  if (!is.na(nm) && nzchar(nm)) nm else id
-}
-
-# recognition_summary(det, saved_id, templates) -> list(ok, headline, detail).
-#
-# Turns a REAL detection result into the one sentence the analyst needs after
-# saving a template: "will this statement be recognised on its own next time?".
-#
-# WHY it matters: after a save the app re-converts with the new template FORCED by
-# id, which short-circuits detection entirely -- so the one moment the app could
-# prove the fingerprint works was the one moment it never tested it, and templates
-# whose fingerprint could never match shipped looking fine. The caller now runs a
-# genuine detect_statement() over the whole template set and passes the result
-# here. `ok`: TRUE = recognised as this template, FALSE = it will not be, NA =
-# the check itself could not run (say so, never imply a pass).
-#
-# It lives here, not in app.R, because app.R is not sourced by the test suite --
-# a pure helper in R/ is a helper the suite can actually hold to its word.
-#
-# `templates` is the template SET the caller already loaded. Given it, every
-# template named below is named in WORDS (see .saved_name); without it they are
-# named by id, as they always were. It is optional rather than required so that
-# adding it could not break a caller, and it defaults to the old behaviour rather
-# than to silence -- a confirmation that named no template at all would be worse
-# than one naming a handle.
-#
-# `input` is the statement it was built from. Given it, the advice to add "a phrase
-# only this bank prints" names one: the line on THIS statement that prints the
-# template's bank (.bank_line_on_page). Advice she can act on beats advice she has
-# to interpret, and the line is one she can see on the page in front of her.
-recognition_summary <- function(det, saved_id, templates = NULL, input = NULL) {
-  sid <- trimws(as.character(saved_id %||% NA_character_)[1])
-  nm  <- function(id) .saved_name(id, templates)
-  phrase <- if (!is.null(input) && !is.null(templates[[sid]]))
-    safe(.bank_line_on_page(input, templates[[sid]]), NA_character_) else NA_character_
-  only_this_bank <- if (!is.na(phrase) && nzchar(phrase))
-    sprintf("add a phrase ONLY this bank prints - for example \"%s\", which is printed on this statement", phrase)
-    else "add a phrase ONLY this bank prints"
-  if (is.null(det) || !is.list(det))
-    return(list(ok = NA,
-      headline = "Saved - but we could not check whether this statement will be recognised next time.",
-      detail = paste("Upload it again on Convert to find out. If it comes back as",
-                     "\"no template for this statement yet\", open the toolkit and set an",
-                     "identifying phrase that is really printed on the page.")))
-  got <- trimws(as.character(det$template_id %||% NA_character_)[1])
-  if (isTRUE(det$matched) && !is.na(got) && identical(got, sid)) {
-    # WON, BUT BY A WHISKER. The conversion holds a thin win for review
-    # (convert_statement's thin-margin rule), so "recognised automatically" alone
-    # would be followed by every statement like this one coming back "please
-    # double-check it" with nothing having warned her.
-    ru <- as.character(det$runner_up %||% NA_character_)[1]
-    thin <- is.finite(det$margin %||% Inf) && isTRUE(det$margin <= 1) && !is.na(ru) &&
-            !isTRUE(det$bank_clear)
-    if (thin)
-      return(list(ok = TRUE,
-        headline = sprintf("Recognised next time - but \"%s\" fits this statement nearly as well.", nm(ru)),
-        detail = paste0("So each statement like this one is read with yours and held for a quick ",
-                        "check, because the tool cannot be sure which was meant. To settle it, ",
-                        only_this_bank, ".")))
-    return(list(ok = TRUE,
-      headline = "Next time, a statement like this one is recognised automatically.",
-      detail = sprintf("We re-checked it against every template and it matched yours (\"%s\") on its own, with nothing forced.", nm(sid))))
-  }
-  if (isTRUE(det$matched))
-    return(list(ok = FALSE,
-      headline = sprintf("Careful: this statement is still recognised as \"%s\", not your new template.", nm(got)),
-      detail = paste0("Your template was saved, but another one wins on this file, so next ",
-                     "time it would be read with that other template. Open the toolkit again ",
-                     "and ", only_this_bank, " - or use the existing template if it is the right one.")))
-  why <- trimws(as.character(det$detail %||% "")[1])
-  # A TIE IS NOT A TYPO, and it used to be diagnosed as one: the headline said the
-  # template was not recognised and the lead sentence sent the analyst back to
-  # retype an identifying phrase that "is not printed on the page exactly as
-  # typed". On a tie that phrase IS printed on the page -- it is printed for both
-  # templates, which is the whole problem -- so she would retype something already
-  # correct, and the charter forbids the other reading of that advice (a third
-  # template would tie too). The real cause leads, and the cure is the one that
-  # actually separates them.
-  tied <- as.character(det$tied %||% character(0))
-  # Set-differenced by ID (the identity), then said in NAMES. A tie is most often
-  # the same layout set up twice, so two ids can share one display name; the names
-  # are deduped so the sentence cannot list the same words twice, and the count
-  # that leads the headline is the count of ids -- how many templates there really
-  # are is the fact she needs, and it is the one a maintainer will act on.
-  others <- setdiff(tied, sid)
-  other_names <- unique(vapply(others, nm, character(1), USE.NAMES = FALSE))
-  if (length(tied) >= 2 && length(others))
-    return(list(ok = FALSE,
-      headline = if (length(others) == 1L)
-        sprintf("Saved - but \"%s\" fits this statement exactly as well as yours.", other_names[1])
-        else sprintf("Saved - but %d other templates fit this statement exactly as well as yours.",
-                     length(others)),
-      detail = paste0(
-        "Nothing on this file tells them apart, so the tool cannot know which one you ",
-        "meant. It still converts: it picks the tested template, reads the statement ",
-        "and holds the run for a check, so no figures are lost. To settle it, ",
-        only_this_bank, " - that breaks the tie in its favour - or retire the duplicate (",
-        paste(other_names, collapse = ", "), "). Do not build a third: it would tie too.")))
-  list(ok = FALSE,
-    headline = "Saved - but this statement is NOT recognised by it yet.",
-    detail = paste0(
-      "Next time you upload a statement like this one it would still come back as ",
-      "\"no template for this statement yet\". Almost always the identifying phrase ",
-      "is not printed on the page exactly as typed. Open the toolkit again and set a ",
-      "phrase you can see on the statement.",
-      if (nzchar(why) && !is.na(why)) sprintf(" (The detector said: %s)", why) else ""))
 }
 
 # current_user() -- the OS-authenticated logged-in user (Windows %USERNAME%,

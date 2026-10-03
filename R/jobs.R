@@ -422,22 +422,23 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
                                list(progress = .job_progress_writer(jobdir),
                                     done = .job_done_writer(jobdir))))
     },
-    # The Convert table's suggestion for each SCANNED file: page 1 read as a picture
-    # and matched (identify_scan). Seconds a file, so never in the app's process; one
-    # verdict file per scan as it is read (the same done writer a case uses), so each
-    # row fills in as soon as its page is read.
+    # The Convert table's bank for each SCANNED file: its first pages read as
+    # pictures and the bank identified from them (identify_scan). Seconds a file,
+    # so never in the app's process; one verdict file per scan as it is read (the
+    # same done writer a case uses), so each row fills in as soon as it is read.
     identify_scans = {
-      tmpl <- load_template_set(args$templates_dir, args$user_templates_dir)
       nm <- as.character(args$names %||% basename(paths))
       pw <- .job_progress_writer(jobdir); dw <- .job_done_writer(jobdir)
       out <- vector("list", length(paths))
       for (i in seq_along(paths)) {
         if (is.function(pw)) pw(i, length(paths), paths[i])
-        r <- safe(identify_scan(paths[i], tmpl, nm[i]), NULL) %||% list(state = "scanned")
+        r <- safe(identify_scan(paths[i], nm[i]), NULL) %||% list(state = "scanned")
         out[[i]] <- r
         if (is.function(dw)) dw(i, length(paths), paths[i],
           data.frame(state = as.character(r$state %||% "scanned")[1],
-                     guess = as.character(r$guess %||% NA_character_)[1],
+                     bank = as.character(r$bank %||% NA_character_)[1],
+                     bank_display = as.character(r$bank_display %||% NA_character_)[1],
+                     confidence = as.character(r$confidence %||% "unknown")[1],
                      detail = as.character(r$detail %||% NA_character_)[1],
                      stringsAsFactors = FALSE))
       }
@@ -446,8 +447,7 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
     audit = {
       # The maintainer's bulk audit: a picture of a folder. IT AUDITS; IT DOES NOT
       # CONVERT. Converting a pile of files is Convert's case folder.
-      tmpl <- load_template_set(args$templates_dir, args$user_templates_dir)
-      list(audit = batch_audit(paths, templates = tmpl), converted = NULL)
+      list(audit = batch_audit(paths, layouts_dir = args$layouts_dir), converted = NULL)
     },
     stop(sprintf("no such job task: '%s'", as.character(task)[1])))
 }

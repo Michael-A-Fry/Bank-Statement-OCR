@@ -1,9 +1,10 @@
-# Template `extras:` mapping + the `fx` flag (build-contract sections 2, 5, 9).
+# A template's `extras:` mapping + the `fx` flag (build-contract sections 2, 5, 9),
+# read with the fixture templates (tests/testthat/fixtures/templates/).
 # Per-bank extra columns declared in YAML must be populated, keyed by row_id,
 # and never silently dropped; a populated foreign-currency amount sets `fx`.
 
 test_that("declared extras are populated per row and keyed by row_id", {
-  templates <- load_templates(templates_dir())
+  templates <- fixture_templates()
   input <- read_input(fixture("samples/raw/anz/anz_creditcard_01.csv"))
   p <- parse_statement(input, templates[["anz_creditcard_csv"]])
   ex <- p$extras
@@ -17,7 +18,7 @@ test_that("declared extras are populated per row and keyed by row_id", {
 })
 
 test_that("a populated ForeignCurrencyAmount sets the fx flag", {
-  templates <- load_templates(templates_dir())
+  templates <- fixture_templates()
   input <- read_input(fixture("tests/testthat/fixtures/anz_creditcard_fx.csv"))
   p <- parse_statement(input, templates[["anz_creditcard_csv"]])
   # row 2 carries a foreign-currency amount
@@ -27,7 +28,7 @@ test_that("a populated ForeignCurrencyAmount sets the fx flag", {
 })
 
 test_that("a template with no extras block yields an empty extras frame", {
-  templates <- load_templates(templates_dir())
+  templates <- fixture_templates()
   input <- read_input(fixture("samples/raw/bnz/bnz_transaction_export_01.csv"))
   p <- parse_statement(input, templates[["bnz_everyday_csv"]])
   expect_equal(nrow(p$extras), 0L)

@@ -34,71 +34,6 @@
 }
 
 # ---------------------------------------------------------------------------
-# #18 -- a template someone builds here must actually take part in detection.
-# It once did not: nothing in the app ever ticked "include user-created
-# templates", so a template Beth built was ignored unless she found a tick-box
-# inside a collapsed panel. The tick-box itself is now gone -- whether a
-# colleague's template counts is not a question to put to the person converting a
-# statement -- so the invariant is stronger: they are ON, from config, with
-# nothing to find.
-test_that("templates built here take part in detection with nothing to switch on (#18)", {
-  src <- paste(.app_src(), collapse = "\n")
-  # one deployment setting, read once, defaulting ON
-  expect_match(src, "USE_USER_TEMPLATES <- isTRUE\\(CONFIG\\$app\\$user_templates_default %\\|\\|% TRUE\\)")
-  expect_match(src, "if \\(USE_USER_TEMPLATES\\) templates\\(\\) else proven_templates\\(\\)")
-  # and NO per-conversion control anywhere -- that is the whole point
-  expect_false(grepl("cv_user_templates", src, fixed = TRUE))
-  expect_false(grepl("cv_use_user_tpl", src, fixed = TRUE))
-})
-
-# ---------------------------------------------------------------------------
-# #24 -- the save-then-reconvert used force_tpl = saved_id, and R/convert.R
-# short-circuits a forced template past detection. The save must run a REAL
-# detection pass and report it.
-test_that("a successful save runs a real detection pass and reports it (#24)", {
-  src <- .app_src()
-  save_block <- .app_block(src, 'observeEvent\\(input\\$g_save', 80L)
-  expect_match(save_block, "detect_statement\\(")        # detection actually runs
-  expect_match(save_block, "recognition_summary\\(")     # ...and is turned into words
-  # forcing is now the FALLBACK, not the default: it must be conditional on the
-  # detection verdict, never an unconditional force that hides the answer.
-  expect_false(grepl("force_tpl = saved_id[,)]", save_block))
-  expect_match(save_block, "force_tpl = if \\(isTRUE\\(recog\\$ok\\)\\)")
-})
-
-test_that("the post-save conversion can see user templates before the tick lands (#24)", {
-  src <- paste(.app_src(), collapse = "\n")
-  # updateCheckboxInput only reaches the browser after the observer returns, so the
-  # conversion that demonstrates the new template must include them explicitly --
-  # otherwise it would convert without the template it just saved.
-  expect_match(src, "include_user = TRUE", fixed = TRUE)
-  # a deployment CAN switch user templates off; the conversion that demonstrates a
-  # just-saved template must still see it, or the save appears not to have worked.
-  expect_match(src, "USE_USER_TEMPLATES \\|\\| !is.null\\(force_tpl\\) \\|\\| isTRUE\\(include_user\\)")
-})
-
-# ---------------------------------------------------------------------------
-# #25 -- a too-generic PDF fingerprint refuses the save, and the only place to fix
-# it was the raw YAML box on the Advanced tab: a hard stop at the last step of the
-# flow for a non-technical user.
-test_that("the identifying phrase is editable in plain English on the Simple tab (#25)", {
-  src <- .app_src()
-  joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'textAreaInput\\("g_fp"')
-  expect_match(joined, "A distinctive phrase printed on this statement", fixed = TRUE)
-  # it is on SIMPLE, not Advanced: the box appears before the Advanced tabPanel
-  i_fp  <- grep('textAreaInput\\("g_fp"', src)[1]
-  i_adv <- grep('"Advanced", br\\(\\)', src)[1]
-  expect_true(!is.na(i_fp) && !is.na(i_adv) && i_fp < i_adv)
-  # pre-filled from phrases actually found on her statement, not typed from memory
-  expect_match(joined, "fp_candidates", fixed = TRUE)
-  expect_match(joined, "header_phrases\\(read_input\\(path\\)")
-  # and it feeds the template build + shows the same verdict the save would give
-  expect_match(joined, "fingerprint_text = input\\$g_fp")
-  expect_match(joined, 'output\\$g_fp_msg')
-})
-
-# ---------------------------------------------------------------------------
 # #47 -- the UI claimed a sign-in it does not have. On the shipped one-server
 # deployment the "detected" identity is the account the SERVER process runs as,
 # which is identical for the whole department.
@@ -234,34 +169,6 @@ test_that("the launcher script warns too - that is how the server is started (#6
   expect_match(txt, "admin_password_is_default", fixed = TRUE)
 })
 
-# A template may declare several candidate date formats (templates/asb_everyday_csv.yaml
-# does, so it can read both ASB exports). The Simple tab is one dropdown showing the
-# first candidate, so merely opening the toolkit and pressing Save must NOT write that
-# single value back and silently narrow the template again.
-test_that("the guided editor cannot narrow a multi-format template on save", {
-  app <- file.path(engine_root(), "app.R")
-  skip_if_not(file.exists(app))
-  src <- paste(readLines(app, warn = FALSE), collapse = "\n")
-  expect_true(grepl("\\.datefmt_unchanged <- function", src))
-  # both write sites (pdf table + delimited columns) must consult the guard
-  writes <- length(gregexpr("!\\.datefmt_unchanged\\(tmpl, datefmt\\)", src)[[1]])
-  expect_gte(writes, 2L)
-  # and the dropdown must show a single value, never the whole vector
-  expect_true(grepl("gv_datefmt <- function\\(tmpl\\) as\\.character\\(gv_datefmt_all\\(tmpl\\)\\)\\[1\\]", src))
-})
-
-# ---------------------------------------------------------------------------
-# INVARIANT 17, THE OTHER HALF: the STRING LITERALS, not just the names.
-#
-# test-app-ui.R already refuses a non-ASCII character in an R NAME, because in a
-# C locale the parser cannot read the file at all. That guard deliberately let
-# VALUES through -- and app.R carried 40 of them, including the pound and euro
-# signs in cur_symbol(). They are not decoration: a GBP statement now really does
-# reach that switch, and the file is read on an air-gapped Windows box whose
-# locale is not ours. A literal glyph also depends on the file staying UTF-8
-# through every editor, mail client and zip it passes on the way to that box,
-# while an escape is seven ASCII characters meaning the same thing everywhere.
-#
 # BYTES, not characters, and the whole file including comments: this has to fail
 # for the same reason the deployment fails, which is a byte the parser cannot
 # read where it stands.
@@ -451,37 +358,6 @@ test_that("the checks are not behind the evidence toggle, and the feed line is g
   expect_true(i_toggle > grep('conditionalPanel\\("output\\.cv_has_txns == true",\\s*$', src)[1])
 })
 
-# A heading is a promise about what is under it. "See it on the page" sat outside
-# the is-this-a-PDF test, so every CSV and Excel conversion printed it over a
-# single sentence explaining that there is no page.
-test_that("the page heading renders only where there is a page", {
-  src <- .app_src()
-  i_head <- grep('h4\\("See it on the page"\\)', src)
-  i_pdf  <- grep('conditionalPanel\\("output\\.ix_is_pdf == true"', src)
-  expect_length(i_head, 1L)
-  expect_true(length(i_pdf) >= 1 && i_pdf[1] < i_head)     # inside the PDF branch
-  # and the non-PDF branch says what IS true instead of pointing at a picture
-  blk <- .app_block(src, 'conditionalPanel\\("output\\.ix_is_pdf != true"', 4L)
-  expect_match(blk, "no page picture for a CSV or Excel export")
-})
-
-# The case-folder table graded a file the verdict card deliberately leaves
-# ungraded: "No template for this statement yet | - | 0 | low", a confidence
-# score for a conversion that never happened, in the column a reviewer skims to
-# decide which of thirty files to open.
-test_that("a file that converted nothing carries no confidence grade anywhere", {
-  graded <- .app_fun(".is_graded")
-  expect_true(all(graded(c("ok", "needs_review"))))
-  expect_false(any(graded(c("unsupported", "failed", "", NA))))
-  # the batch table blanks the grade with it, and the card's own rule is the same
-  # the case table only grades a row that converted, with the card's own rule
-  blk <- .app_block(.app_src(), "\\.plan_verdict <- function", 20L)
-  expect_match(blk, "graded <- \\.is_graded\\(s\\)")
-  expect_match(blk, "if \\(graded\\) div\\(class = \"plan-sub\"")
-  expect_match(.app_block(.app_src(), "output\\$cv_status <- renderUI", 45L),
-               'graded <- st %in% c\\("ok", "needs_review"\\)')
-})
-
 test_that("too many files is refused at the door, with the number", {
   # The size limit is per REQUEST, so a folder of hundreds of small statements passed
   # it and then converted one after another inside a single job -- no way to stop it,
@@ -494,11 +370,23 @@ test_that("too many files is refused at the door, with the number", {
   # (the Convert table says the same number earlier still, when the files are chosen)
   go <- substring(src, regexpr("observeEvent(input$cv_go, {", src, fixed = TRUE))
   cap <- regexpr("nrow(f) > MAX_BATCH_FILES", go, fixed = TRUE)
-  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced, rows = again, learn = learn)", go, fixed = TRUE)
+  run <- regexpr("if (nrow(f) > 1L) run_batch(f, eff, rows = again)", go, fixed = TRUE)
   expect_true(cap > 0 && run > 0)
   expect_lt(cap, run)
   # the number is configurable, and the control says it
   expect_match(src, "files at a time", fixed = TRUE)
   cfg <- paste(readLines(file.path(engine_root(), "R", "config.R"), warn = FALSE), collapse = "\n")
   expect_match(cfg, "max_batch_files", fixed = TRUE)
+})
+
+# A file that read nothing has no outcome to grade: the case table says "Couldn't
+# read" with the reader's reason, the same words its own card uses, and offers
+# Please check only where there are columns to look at.
+test_that("a file that converted nothing is said to be unread, in the card's own words", {
+  src <- .app_src()
+  blk <- .app_block(src, "output\\$cv_plan <- renderUI", 200L)
+  expect_match(blk, "plain_outcome\\(res_i\\$status, res_i\\$outcome, res_i\\$feed_basis, res_i\\$reason")
+  expect_match(blk, "has_cols <- any\\(")
+  expect_match(.app_block(src, "output\\$cv_status <- renderUI", 30L),
+               "plain_outcome\\(st, res\\$outcome, res\\$feed_basis, res\\$reason\\)")
 })

@@ -16,7 +16,7 @@ test_that("a wrong-year-format template still reads year-less dates via the fall
   skip_if_not(requireNamespace("pdftools", quietly = TRUE), "pdftools not installed")
   pdf <- fixture("samples/raw/tutorial/sample_everyday_statement.pdf")
   skip_if_not(file.exists(pdf), "tutorial sample not present")
-  tpls <- load_templates(templates_dir())
+  tpls <- fixture_templates()
   tmpl <- tpls[["tutorial_everyday_pdf"]]
   skip_if_not(!is.null(tmpl), "tutorial template not present")
 
@@ -49,7 +49,7 @@ test_that("the WRONG year-less variant (month-day for a day-month table) still r
   skip_if_not(requireNamespace("pdftools", quietly = TRUE), "pdftools not installed")
   pdf <- fixture("samples/raw/tutorial/sample_everyday_statement.pdf")
   skip_if_not(file.exists(pdf), "tutorial sample not present")
-  tpls <- load_templates(templates_dir())
+  tpls <- fixture_templates()
   tmpl <- tpls[["tutorial_everyday_pdf"]]
   skip_if_not(!is.null(tmpl), "tutorial template not present")
 

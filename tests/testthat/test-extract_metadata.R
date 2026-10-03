@@ -269,9 +269,7 @@ test_that("overlapping periods move nothing at all", {
 test_that("metadata reaches the convert result and the workbook", {
   skip_if_not(requireNamespace("pdftools", quietly = TRUE))
   skip_if_not(file.exists(fixture(IF_META_PDF)))
-  out <- tempfile("md_out_")
-  res <- convert_statement(fixture(IF_META_PDF), outdir = out,
-                           templates_dir = templates_dir(), logdir = tempfile("l_"))
+  res <- convert_sandbox()(fixture(IF_META_PDF))
   expect_false(is.null(res$metadata))
   expect_equal(res$metadata$pages_actual, 3L)
   skip_if_not(requireNamespace("openxlsx", quietly = TRUE))

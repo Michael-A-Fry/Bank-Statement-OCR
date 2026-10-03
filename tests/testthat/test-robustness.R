@@ -38,14 +38,6 @@ test_that("a European template's decimal_mark reads dot-thousands correctly", {
   expect_equal(us, c(1234.56, 1.234))
   # default (auto) is unchanged
   expect_equal(parse_amount(c("1,234.56", "1.234"), "signed")$value, c(1234.56, 1.234))
-  # the template field is validated
-  base <- list(id = "eu", bank = "EU", statement_type = "e", format = "delimited",
-    version = 1, currency = "EUR", amount_sign = "signed", min_score = 1,
-    fingerprint = list(header_contains_all = list("Datum")),
-    columns = list(date = list(source = "Datum", format = "%d.%m.%Y"),
-      amount = list(source = "Betrag"), description = list(source = "Text")))
-  expect_length(validate_template(c(base, list(decimal_mark = "comma"))), 0)
-  expect_true(length(validate_template(c(base, list(decimal_mark = "franc")))) > 0)
 })
 
 # ---- dates: ordinals + Sept, raw kept verbatim ----------------------------
@@ -208,9 +200,6 @@ test_that("a Visa PDF parses unsigned charges/CR payments and drops the balance 
   expect_equal(nrow(tx), 2L)                          # closing-balance row excluded
   expect_equal(tx$amount, c(-4.50, 500))              # charge negative, CR payment positive
   expect_identical(tx$direction, c("debit", "credit"))
-  # distinctive multi-word fingerprint (a bare "Visa" is now rejected as generic)
-  expect_length(validate_template(c(tmpl, list(min_score = 1,
-    fingerprint = list(page_contains_all = list("Visa Card Statement"))))), 0)  # 'unsigned' validates
 })
 
 # ---- delimited: debit_credit_cols malformed detection ---------------------

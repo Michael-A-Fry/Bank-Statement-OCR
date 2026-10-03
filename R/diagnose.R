@@ -218,11 +218,14 @@ build_diagnostics <- function(status, messages = character(0), reading = NULL,
     add("amounts", "derived_amounts", "medium",
         sprintf("%d amount(s) could not be read and were filled in from the running balance (flag amount_from_balance)", nd),
         "Check each marked amount against the statement before relying on it: it is arithmetic on two printed balances, not a figure read from the page.")
-  if (!is.null(reading$bank_why))
-    add("bank", "bank_check", if (isTRUE(reading$bank_blocked)) "medium" else "info", reading$bank_why,
-        if (isTRUE(reading$bank_blocked))
-          "Nothing is learned from this statement until you confirm which bank issued it. Pick the right bank and convert again."
-        else "Check the bank picked for this file is the one that issued it.")
+  # Two calls, two literal severities: a category whose severity is computed
+  # cannot be audited by reading this file (test-diagnose.R scans for the shape).
+  if (!is.null(reading$bank_why) && isTRUE(reading$bank_blocked))
+    add("bank", "bank_check", "medium", reading$bank_why,
+        "Nothing is learned from this statement until you confirm which bank issued it. Pick the right bank and convert again.")
+  else if (!is.null(reading$bank_why))
+    add("bank", "bank_check", "info", reading$bank_why,
+        "Check the bank picked for this file is the one that issued it.")
 
   if (!is.null(metadata)) {
     # A file that looks like several statements but could not be split with

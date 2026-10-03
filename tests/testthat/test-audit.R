@@ -1,5 +1,6 @@
 # Tests for the safe-to-share statement audit (R/audit.R) -- the PII guarantee is
-# the point: nothing real may survive masking.
+# the point: nothing real may survive masking, and the reader's own sentences
+# (which can quote a line of the statement) are never in it.
 
 test_that("mask_text leaves NO real letter or digit, only shape", {
   expect_equal(mask_text(c("Countdown 47.20", "17 Sep 2024", "12-3456-7890123-00")),
@@ -20,17 +21,23 @@ test_that("the audit report contains no real transaction text", {
   writeLines(c("Date,Amount,Payee",
                "2024-01-05,-12.50,SECRETMERCHANTNAME",
                "2024-01-06,99.99,ANOTHERSECRET"), csv)
-  tmpl <- list(id = "t", bank = "T", statement_type = "e", format = "delimited",
-    version = 1, currency = "NZD", amount_sign = "signed", min_score = 1,
-    fingerprint = list(header_contains_all = list("Payee")),
-    columns = list(date = list(source = "Date", format = "%Y-%m-%d"),
-      amount = list(source = "Amount"), description = list(source = "Payee")))
-  a <- statement_audit(csv, templates = list(t = tmpl))
+  a <- statement_audit(csv)
   rep <- format_audit(a)
+  expect_identical(a$reading$outcome, "check")        # read, and nothing proves it
+  expect_match(rep, "reading: check", fixed = TRUE)
+  expect_match(rep, "checks failed:", fixed = TRUE)    # names only, never the sentences
   expect_false(grepl("SECRETMERCHANTNAME", rep))    # no real description leaks
   expect_false(grepl("ANOTHERSECRET", rep))
   expect_false(grepl("12.50|99.99", rep))           # no real amount leaks
   expect_true(grepl("safe to share", rep))
+})
+
+test_that("an audit of a statement naming its account never carries the number", {
+  acct <- nz_test_account()
+  a <- format_audit(statement_audit(proven_csv(acct)))
+  expect_false(grepl(strsplit(acct, "-")[[1]][3], a, fixed = TRUE))
+  expect_match(a, "bank: bnz (high confidence)", fixed = TRUE)
+  expect_match(a, "reading: proven", fixed = TRUE)
 })
 
 # The audit's "row shapes" table is the report a reviewer opens to work out why a

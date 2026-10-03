@@ -9,37 +9,12 @@
 # (needs_review, balance_reconciliation, ...) stay in the logs; a non-technical
 # user only ever sees these sentences.
 STATUS_PLAIN <- c(
-  ok           = "Converted successfully",
-  needs_review = "Converted - please double-check it",
-  # NOT "this statement". `unsupported` is reached only after all three pipelines
-  # have said they cannot tell what the file is, so the headline naming it a
-  # statement is the screen asserting the one fact nobody has. It is also the
-  # first line read on a report somebody has just dropped in, above a card that
-  # then offers both kinds of template.
-  unsupported  = "No template recognised this document yet",
+  ok           = "Converted",
+  needs_review = "Please check",
+  # Read, but nothing usable came out: the reader's reason says why, and Please
+  # check is where the columns can still be set.
+  unsupported  = "Couldn't read this statement",
   failed       = "Could not read this file")
-# "unsupported" covers two OPPOSITE situations, and one headline cannot say both.
-# Nothing fit -> a layout we have genuinely never seen, so go and build a template.
-# Two or more fit equally AND the one the tool used read nothing -> we already HAVE
-# templates for this statement, and the screen must not tell the analyst to build a
-# third; it offers the pick instead (cv_tie_pick).
-#
-# ONLY on that path. An ordinary tie CONVERTS: R/convert.R picks deterministically
-# (tested over hand-built), reads the statement and holds it at needs_review. This
-# headline was replacing "Converted - please double-check it" on those runs and
-# demanding a pick from a screen that had no picker on it, while the confidence
-# grade the engine had already computed was thrown away beside it.
-STATUS_PLAIN_AMBIGUOUS <- "More than one template fits - pick which one"
-# THE OTHER of those two opposite situations, and the one that went unsaid for
-# longer. A template's identifying wording DID match, and that template then read
-# nothing off the page. "No template recognised this document yet" is simply
-# false there, and the card's own body said so directly underneath it - the
-# engine's sentence names the template and says it fits. Two statements, one
-# screen, one of them a lie, and the bigger type was carrying it.
-#
-# It says WHAT HAPPENED, not what to do: the door underneath (cv_teach_go_empty)
-# already opens that template, and the diagnostics row carries the cure.
-STATUS_PLAIN_MATCHED_EMPTY <- "A template fits this document but read nothing from it"
 # ONE entry per check reconcile() can emit (R/reconcile.R -- the list at the
 # bottom of that file is the authoritative set). A check with no entry here shows
 # its raw code on screen, which is the moment a forensic reviewer stops trusting
@@ -81,10 +56,10 @@ plain_check <- function(x) {
 }
 # `unmapped` SAID "not on this statement", AND THAT IS A CLAIM ABOUT THE FILE the
 # verdict is in no position to make. field_coverage() (R/coverage.R) reads the
-# TEMPLATE: `unmapped` means this template has no column wired to this field, and
+# READING: `unmapped` means the reading has no column wired to this field, and
 # says nothing whatever about what the page prints. westpac.pdf prints the column
-# headings TYPE, NAME OF OTHER PARTY and TRANSACTION PARTICULARS, and its template
-# deliberately folds all three into one `description` band -- so all three fields
+# headings TYPE, NAME OF OTHER PARTY and TRANSACTION PARTICULARS, and a reading
+# can fold all three into one `description` column -- so all three fields
 # came back `unmapped` and the screen told a forensic reviewer that a statement in
 # her hand did not have columns she could read off it. Two different facts, and
 # the row asserted the one it cannot know.
@@ -94,6 +69,13 @@ plain_check <- function(x) {
 COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
                     empty = "empty (check the mapping)",
                     unmapped = "not read as its own column")
+# ...and the NOTE beside it. The engine's own note (R/coverage.R) still speaks of
+# the "template" that mapped a field, a word retired from every screen, and says
+# "doesn't include it" -- the claim about the file the verdict above stopped making.
+# A `partial` note is kept: it counts the blank rows, which is all it says.
+COVERAGE_NOTE_PLAIN <- c(
+  empty    = "Read as a column, but every row is blank - the column may be in the wrong place.",
+  unmapped = "Not printed on this statement, or printed inside another column.")
 # How a single check came out (the `status` column of the KPI table). Lived inline
 # in app.R, which meant one of the five wording maps was somewhere else; all five
 # are here now, and test-seams.R holds each to the values the engine really emits.
@@ -126,18 +108,17 @@ INFORMATIONAL_CHECKS <- c("ocr_confidence")
 # per category the engine can raise -- the authoritative set is .DIAG_FIX_OWNER
 # in R/diagnose.R, and test-seams.R fails the suite if this map falls behind it.
 DIAG_PLAIN <- c(
-  unknown_format          = "layout not recognised",
-  ambiguous_template      = "more than one template fits",
-  matched_but_empty       = "matched the wording, read no transactions",
+  not_proven              = "the arithmetic did not prove the reading",
+  not_read                = "nothing usable was read",
+  fix_not_applied         = "the fix could not be applied",
+  derived_amounts         = "amounts filled in from the balance",
+  bank_check              = "the bank needs confirming",
   account_number_shape    = "the account number does not look right",
   sign_scan_unavailable   = "the sign-on-the-page check could not run",
-  column_bands            = "a column is not where the template says",
   unreadable              = "file could not be read",
-  template_unavailable    = "the template chosen for it is not available",
-  scanned_no_ocr         = "a scan with no readable text",
+  scanned_no_ocr          = "a scan with no readable text",
   document_provenance     = "what the PDF says about itself",
   multiple_statements     = "several statements in one file",
-  page_orientation        = "the pages are the wrong way round",
   sign_from_ink           = "a minus sign the page draws rather than prints",
   combined_statement      = "several accounts in one statement",
   mixed_currency          = "more than one currency",
@@ -147,10 +128,8 @@ DIAG_PLAIN <- c(
   balance_break           = "running balance jumps",
   row_count               = "row count doesn't match",
   # Three different situations share this one code: dates outside the statement
-  # period, dates outside the matched template's declared valid range, and a year
-  # inferred from a stray number on the page. "outside the period" described only
-  # the first, so the other two read as a headline about something that hadn't
-  # happened. The detail always says which; the headline now covers all three.
+  # period, dates outside a layout's known range, and a year inferred from a stray
+  # number on the page. The detail always says which; the headline covers all three.
   date_out_of_range       = "date range doesn't look right",
   date_format_mismatch    = "dates in a different style than expected",
   row_parse               = "rows didn't parse",
@@ -165,44 +144,81 @@ DIAG_PLAIN <- c(
   ocr                     = "page(s) machine-read (OCR)",
   ocr_confidence_unknown  = "scan quality unknown",
   none                    = "no issues found")
-
-# THE DIAGNOSTICS TABLE, IN WORDS THAT ARE TRUE OF THE ROUTE THE RUN ACTUALLY TOOK.
-#
-# build_diagnostics() is one function serving all three routes, so its remedies are
-# written in statement vocabulary. Driven in a browser, a report the tool did not
-# recognise came back carrying: "Add a template for this layout in the template
-# toolkit" (that is the STATEMENT toolkit, and this route does not have one), "The
-# closest match and the missing columns are in the detail" (the report detector
-# reports neither, and "the detail" is the column the sentence is sitting in), and
-# -- on a document the person had just told the tool is not a statement -- a row
-# headed "several accounts in one statement" warning that its running balances may
-# not be continuous. A report has no running balance; the same screen says so two
-# inches higher.
-#
-# THREE MAPS, AND ONLY THE WORDING MOVES. No row is added, dropped or re-graded:
-# a diagnostic the engine raised is still raised, still at its own severity, still
-# with its own detail. Only the sentence changes, and only for the codes named here.
-#   DIAG_FIX_PLAIN -- replaces "How to fix", because the engine's own wording for
-#                     these codes is wrong for the person reading this screen.
-# Anything not named keeps the engine's words verbatim.
-DIAG_FIX_PLAIN <- c(
-  unknown_format = paste("Set this layout up on the Add a template tab: upload this statement",
-                         "and point at what you want out of it."))
-
-# plain_diag(x) / diag_for_route(d) -- the diagnostics frame with its wording put
-# right for the screen. `d` is the engine's frame (category / severity / detail /
-# how_to_fix / ...). Returns `d` unchanged when there is nothing to say.
 plain_diag <- function(x) plain_label(x, DIAG_PLAIN)
-diag_for_route <- function(d) {
-  if (!is.data.frame(d) || !nrow(d) || !("category" %in% names(d))) return(d)
-  cat_ <- as.character(d$category)
-  if ("how_to_fix" %in% names(d)) {
-    d$how_to_fix <- as.character(d$how_to_fix)
-    hit <- cat_ %in% names(DIAG_FIX_PLAIN)
-    if (any(hit)) d$how_to_fix[hit] <- unname(DIAG_FIX_PLAIN[cat_[hit]])
+
+# The automatic reader's own hard checks (R/auto_read*.R), each named for what it
+# establishes when it holds. Shown beside a tick or a cross on Please check, in
+# the case table as "Failed: ...", and counted on Admin -> Automatic reading.
+# ONE entry per check the reader can report; test-batch.R holds this map to the
+# tracking allowlist (R/tracking.R), so a new check cannot reach the screen as a
+# raw code.
+READING_CHECK_PLAIN <- c(
+  rows_read          = "Transaction rows were read",
+  rows_match_columns = "Every row the columns show was read",
+  pages_with_rows    = "Every page with transactions gave rows",
+  words_used_once    = "Every word sits in exactly one column",
+  lines_accounted    = "Every line with a figure is a row or a summary line",
+  dates_settled      = "The dates read one way only",
+  dated_lines_used   = "Every dated line was used",
+  pages_complete     = "The pages are all there",
+  balance_chain      = "The running balance adds up row to row",
+  chain_across_pages = "The running balance carries across pages",
+  opening_closing    = "Opening balance + movements = closing balance",
+  printed_totals     = "The printed totals agree",
+  dates_readable     = "Every date reads",
+  dates_in_order     = "The dates run in order",
+  dates_in_period    = "Every date is inside the statement period",
+  signs_settled      = "Money in and money out are settled",
+  no_derived_amounts = "No amount was filled in from the balance",
+  amounts_read       = "Every amount reads",
+  unique             = "Only one reading of the columns fits",
+  rows_proven        = "Every row is inside a step that adds up",
+  reader_agrees      = "The table reader agrees with the arithmetic",
+  dates_carried      = "Dates carried down from the row above")
+plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
+
+# ---------------------------------------------------------------------------
+# THE OUTCOME OF A FILE, in the phrases the Convert table and the verdict card
+# share (spec section 4). plain_outcome(status, outcome, basis, reason, fix) ->
+# list(cls, word, why): `cls` is the colour (ok / warn / bad), `word` the phrase,
+# `why` the reader's reason when a person has something to do, else "". `basis`
+# is the result's feed_basis: how an `ok` reading earned it.
+OUTCOME_PLAIN <- c(
+  proven       = "Proven",
+  layout_match = "Matches a learned layout",
+  person       = "Confirmed on Please check",
+  boxes        = "Proven with the columns you drew",
+  check        = "Please check",
+  unread       = "Couldn't read")
+plain_outcome <- function(status, outcome = NA, basis = NA, reason = NA, fix = NA) {
+  one <- function(v) { v <- as.character(v %||% NA)[1]; if (is.na(v)) "" else v }
+  st <- one(status); b <- one(basis); why <- trimws(one(reason))
+  if (identical(st, "ok")) {
+    key <- if (identical(b, "person")) { if (identical(one(fix), "boxes")) "boxes" else "person" }
+           else if (identical(b, "layout_match")) "layout_match" else "proven"
+    return(list(cls = "ok", word = unname(OUTCOME_PLAIN[key]), why = ""))
   }
-  d
+  if (identical(st, "needs_review"))
+    return(list(cls = "warn", word = unname(OUTCOME_PLAIN["check"]), why = why))
+  list(cls = "bad", word = unname(OUTCOME_PLAIN["unread"]), why = why)
 }
+
+# The roles a column of figures can be given on Please check, as R/convert.R
+# takes them (overrides$roles), in the words the person chooses from.
+ROLE_PLAIN <- c(debit = "Money out", credit = "Money in", amount = "Amount (+ in, - out)",
+                balance = "Balance", other = "Not money in or out")
+# plain_column(field) -- a found column's name as the page labels it: the reader
+# calls a figure column it cannot place other1, other2 and a spare text column
+# text1, text2.
+plain_column <- function(field) vapply(as.character(field), function(f) {
+  if (is.na(f)) return("")
+  n <- sub("^(other|text)", "", f)
+  if (grepl("^other[0-9]*$", f)) return(trimws(paste("Other figure", n)))
+  if (grepl("^text[0-9]*$", f)) return(trimws(paste("Text", n)))
+  lab <- c(debit = "Money out", credit = "Money in", date2 = "Second date", weekday = "Day")[f]
+  if (!is.na(lab)) unname(lab) else cv_friendly_cols(f)
+}, character(1), USE.NAMES = FALSE)
+
 # ROW FLAGS -> plain words. A flag is how one ROW says something is true of it
 # ("this value arrived hidden", "the year came from the statement, not this
 # line"). Both transaction tables mapped their column HEADERS through
@@ -210,23 +226,23 @@ diag_for_route <- function(d) {
 # one table a forensic reviewer checks figures in read `ocr_low_conf` and
 # `date_year_inferred` -- engine codes, on the screen she is meant to trust.
 #
-# ONE entry per token the engine can emit. R/parse.R (all paths) and
-# R/parse_pdf_table.R (the PDF-only ones) are the authoritative pair, and
-# test-seams.R reads the tokens back off those two files, so this map cannot
-# fall behind the engine or keep an entry the engine has stopped emitting.
+# ONE entry per token the engine can emit: R/parse.R (all paths),
+# R/parse_pdf_table.R (the PDF-only ones) and R/auto_read.R (the reader's own:
+# a date carried down, a sign the balance decided).
 #
 # Each says what is TRUE of the row, never what to do about it: the row is one
 # cell wide, and the advice belongs to the check or diagnostic that owns it.
 FLAG_PLAIN <- c(
-  columns_misaligned = "this statement's columns did not line up - check this row",
   amount_from_balance = "worked out from the balance column, not read from the amount",
+  sign_from_balance  = "money in or out decided by the running balance",
+  date_carried       = "date carried down from the row above (printed once for the day)",
   malformed          = "the amount could not be read as a number",
   fx                 = "carries a foreign-currency amount",
   date_unresolved    = "a date was printed but could not be read",
   date_year_inferred = "year taken from the statement, not from this line",
   no_date            = "no date of its own was printed",
   date_alt_format    = "date read in a different style than expected",
-  forced             = "added by hand from See it on the page",
+  forced             = "kept as a row though no amount could be read on it",
   row_stitched       = "re-joined from two half-rows",
   row_text_merged    = "wrapped description reassembled",
   ocr_low_conf       = "machine-read, and the scan was unsure of a character")
@@ -244,31 +260,11 @@ plain_flags <- function(x) vapply(as.character(x), function(e) {
 plain_status <- function(s) { s <- s %||% "?"; v <- STATUS_PLAIN[s]; if (is.na(v)) toupper(s) else unname(v) }
 plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, out) }
 
-# ---------------------------------------------------------------------------
-# ONE NAME FOR THE ONE SKIP THAT MEANS SOMETHING. The engine divides skipped PDF
-# rows in two (R/parse_pdf_table.R): headings, notes, wrapped lines and summary
-# lines, which every healthy statement skips, and the ACTIONABLE ones -- a row
-# shaped like a transaction that would not read. Two screens named that second
-# set in two different vocabularies, and on a real Westpac statement they named
-# two different SETS: the verdict card said "N of the M row(s) the reader
-# examined look like transactions and could not be read" from the engine's count,
-# while See-it-on-the-page drew 26 amber boxes on page 1 against the engine's 2
-# and legended them "skipped row that looks like a transaction" -- with the table
-# underneath telling the reader those same rows were "treated as a heading, note
-# or wrapped line". One screen saying both things about one row is how a reviewer
-# learns to disbelieve the screen.
-#
-# The wording lives here so the layer name, the key and the table heading cannot
-# drift apart; WHICH rows it applies to is never decided on this text -- that is
-# pdf_reason_actionable() in the engine, off the reason CODE.
-UNREAD_ROW_PLAIN_LAYER <- "Rows that look like transactions but weren't read"
-UNREAD_ROW_PLAIN_KEY   <- "row that looks like a transaction and could not be read"
-
 # plain_failing_check(x) -- the batch table's "What to check" column, in words.
 #
 # convert_batch() (R/batch.R) carries the engine's own CODE with the map that
-# words it as a prefix: "check:balance_reconciliation", "diag:unknown_format",
-# "status:needs_review". The engine deliberately does NOT do this translation --
+# words it as a prefix: "reading:balance_chain", "check:balance_reconciliation",
+# "diag:not_proven", "status:needs_review". The engine deliberately does NOT do this translation --
 # it used to read this very file off disk with sys.source() to get the wording,
 # for a bare-console caller that does not exist. The words belong here, with the
 # other four wording maps, and only the app has them loaded.
@@ -277,9 +273,10 @@ UNREAD_ROW_PLAIN_KEY   <- "row that looks like a transaction and could not be re
 # that appeared in two of them would render the wrong sentence with nothing to
 # notice it -- so the map is named rather than guessed.
 #
-# "Failed: " on a check because CHECK_PLAIN words a check as what it PROVES ("Row
-# dates could be read"), for use beside a separate pass/fail column. This table
-# has no such column, so the bare phrase would say the OPPOSITE of what happened.
+# "Failed: " on a check because CHECK_PLAIN and READING_CHECK_PLAIN word a check
+# as what it PROVES ("Row dates could be read"), for use beside a separate
+# pass/fail column. This table has no such column, so the bare phrase would say
+# the OPPOSITE of what happened.
 #
 # NOT plain_check(): that re-appends "(statement N)", and batch.R strips that tag
 # precisely so a split bundle's files group together under one kind of failure.
@@ -289,6 +286,7 @@ plain_failing_check <- function(x) vapply(x, function(e) {
   if (is.na(e)) return(NA_character_)
   code <- sub("^[^:]*:", "", e)
   switch(sub(":.*$", "", e),
+         reading = paste0("Failed: ", plain_label(code, READING_CHECK_PLAIN)),
          check  = paste0("Failed: ", plain_label(code, CHECK_PLAIN)),
          diag   = plain_label(code, DIAG_PLAIN),
          status = plain_label(code, STATUS_PLAIN),
@@ -296,44 +294,30 @@ plain_failing_check <- function(x) vapply(x, function(e) {
 }, character(1), USE.NAMES = FALSE)
 
 # ---------------------------------------------------------------------------
-# The governed feed, said out loud. write_feed() (R/feed.R) decides whether a
-# conversion's rows reach the Qlik dashboards, records the verdict in the feed
-# manifest and its own log -- and, until now, the person who ran the conversion
-# was never told. So a clean statement read by a template SHE built was withheld
-# ("not_proven") with nothing on screen saying so, and she had every reason to
-# believe her figures were on the dashboard. One entry per reason .feed_gate()
-# can return; test-seams.R fails the suite if the engine grows one this map
-# doesn't have.
+# The governed feed, said out loud (Admin -> Health, where a maintainer can act on
+# it). write_feed() (R/feed.R) decides whether a conversion's rows reach the Qlik
+# dashboards: only an `ok` reading that the statement's own arithmetic proved, that
+# matched a proven layout, or that a person confirmed on Please check. One entry
+# per reason .feed_gate() can return; test-seams.R fails the suite if the engine
+# grows one this map doesn't have.
 #
-# `why` may be "" -- the line already says it, and cv_feed drops an empty one. It
-# is not a place to restate the verdict in longer words.
-# `withheld:needs_review` used to promise "Fix what is flagged above and convert
-# again, and it goes through". Passing the checks clears only the FIRST gate: a
-# statement read by a template built here is then withheld again as `not_proven`
-# (R/feed.R, allowed_template_origins), which only a data analyst can change. An
-# unconditional promise about a conditional gate is the one thing this note exists
-# to stop, so it states the rule and stops there.
+# `why` may be "" -- the line already says it. It is not a place to restate the
+# verdict in longer words.
 FEED_PLAIN <- list(
   accepted = list(
     ok = TRUE, line = "Sent to the dashboards.", why = ""),
   `withheld:needs_review` = list(
     ok = FALSE, line = "Held back from the dashboards - it needs checking first.",
-    why = "Only conversions that pass every check are published."),
+    why = "Only readings that were proven, or confirmed on Please check, are published."),
   `withheld:unsupported` = list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
-    why = "No template read this document, so there are no transactions to publish."),
+    why = "Nothing usable was read from this statement, so there are no transactions to publish."),
   `withheld:failed` = list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
     why = "The file could not be read."),
-  `withheld:low_trust` = list(
-    ok = FALSE, line = "Held back from the dashboards - the confidence level is below what they accept.",
-    why = ""),
   `withheld:not_proven` = list(
-    ok = FALSE, line = "Held back from the dashboards - it was read by a template built here.",
-    why = "Only shipped, tested templates feed them. Your download is complete; ask your data analyst to promote the template."),
-  `withheld:not_in_allowlist` = list(
-    ok = FALSE, line = "Held back from the dashboards - this template isn't on their list.",
-    why = "Ask your data analyst to add it."))
+    ok = FALSE, line = "Held back from the dashboards - nothing proved this reading.",
+    why = "Only readings the statement's own arithmetic proved, or a person confirmed, feed them. Your download is complete; ask your data analyst if it should feed them."))
 FEED_PLAIN_UNKNOWN <- list(
   ok = FALSE, line = "Held back from the dashboards.",
   why = "The feed recorded a reason this screen doesn't have wording for; it is in the feed log.")
@@ -387,7 +371,7 @@ CV_COL_LABELS <- c(
   statement_index = "Statement #")
 # The fallback here is load-bearing, and `[[` was quietly the wrong bracket for
 # it: on a NAMED CHARACTER VECTOR, x[["not_a_name"]] does not return NULL, it
-# THROWS. So any column the map had not met -- a template's `extras` (fx_amount,
+# THROWS. So any column the map had not met -- a reading's extra columns (fx_amount,
 # conversion_charge), or the statement_index an auto-split bundle adds -- took
 # the whole transactions table down with a subscript error, and the payoff of the
 # page rendered as nothing at all. Single brackets give NA for a name that is not

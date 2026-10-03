@@ -840,3 +840,61 @@ test_that("metamorphic: one page's table set further right reads the same", {
   p2 <- paste0("        ", c(ar_head[3], ar_rows[5:8]))
   expect_right_or_flagged(auto_read(ar_pdf(p1, p2)), ar_want)
 })
+
+# ---- a person's roles (opts$roles, from Please check) ---------------------------------------
+
+test_that("a person's roles are read on their own and still have to add up", {
+  base <- auto_read(ar_pdf(c(ar_head, ar_rows)))
+  expect_equal(base$outcome, "proven")
+  expect_identical(base$template$auto$roles, c("debit", "credit", "balance"))
+  # the same roles, given by a person: read on their own, proven by the arithmetic
+  same <- auto_read(ar_pdf(c(ar_head, ar_rows)), opts = list(roles = c("debit", "credit", "balance")))
+  expect_equal(same$outcome, "proven")
+  expect_identical(same$candidates$source, "content")       # no layout or repair stands in
+  expect_equal(round(same$transactions$amount, 2), ar_want)
+  # money out and in swapped: read as an ordinary account (the statement's own
+  # type), the balance does not add up -- never "proven" with every sign inverted
+  sw <- auto_read(ar_pdf(c(ar_head, ar_rows)), opts = list(roles = c("credit", "debit", "balance")))
+  expect_false(ar_auto(sw))
+  # roles for the wrong number of columns are refused in words
+  bad <- auto_read(ar_pdf(c(ar_head, ar_rows)), opts = list(roles = c("amount", "balance")))
+  expect_false(ar_auto(bad))
+  expect_match(bad$why, "roles given are for 2", fixed = TRUE)
+})
+
+test_that("with nothing to add up, the reading shown is the person's roles", {
+  csv <- function(lines) { p <- tempfile(fileext = ".csv"); writeLines(lines, p); read_input(p) }
+  inp <- csv(c("Date,Details,Amount,Batch", "14/04/2025,Salary,2500.00,1001", "15/04/2025,Rent,-1200.00,1002",
+               "16/04/2025,Bread,-3.50,1003"))
+  rd <- auto_read(inp, opts = list(roles = c("amount", "other")))
+  expect_equal(rd$outcome, "check")
+  expect_equal(rd$transactions$amount, c(2500, -1200, -3.5))
+})
+
+test_that("a code or reference printed with leading zeros is never a figure", {
+  p <- tempfile(fileext = ".csv")
+  writeLines(c("Date,Details,Code,Amount,Balance",
+               "13/04/2025,Opening balance,,,1000.00",
+               "14/04/2025,Salary,007,2500.00,3500.00",
+               "15/04/2025,Rent,0012345,-1200.00,2300.00",
+               "17/04/2025,Bread,000001,-3.50,2296.50"), p)
+  rd <- auto_read(read_input(p))
+  expect_equal(rd$outcome, "proven")
+  expect_identical(rd$template$auto$roles, c("amount", "balance"))
+  expect_identical(rd$transactions$code, c("007", "0012345", "000001"))
+})
+
+test_that("an account-number column is never the description", {
+  p <- tempfile(fileext = ".csv")
+  writeLines(c("Date,Amount,Payee,This Party Account",
+               "14/04/2025,2500.00,Salary,11-1111-1111111-00",
+               "15/04/2025,-1200.00,Rent,11-1111-1111111-00"), p)
+  rd <- auto_read(read_input(p))
+  expect_identical(rd$transactions$description, c("Salary", "Rent"))
+})
+
+test_that("a page cut out of a bundle is read again from its own page of the file", {
+  inp <- ar_pdf(c(ar_head, ar_rows), c(ar_head, ar_rows), c(ar_head, ar_rows))
+  expect_identical(.ar_file_page(inp, 2L), 2L)
+  expect_identical(.ar_file_page(.subinput_pages(inp, 3L), 1L), 3L)
+})
