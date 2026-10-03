@@ -4,12 +4,7 @@
 > described below are no longer filled in (the code that produced them is gone,
 > and the blocks are now always empty; removing them is open in
 > `outstanding-work.md`). `template_id` in a record now names the reading's
-> candidate or the learned layout, and `template_origin` the feed basis. The
-> automatic reader's bank identification never stores the account number, not
-> even as a hash, because a hash of a NZ account number is reversible (a branch
-> has about 10^7 possible numbers). **The metadata capture still stores one**
-> (`account_hash`, an unsalted SHA-256, below): that is now an open finding in
-> `outstanding-work.md`. The suggestion queue is on **Admin -> Words**, not Admin -> Templates.
+> candidate or the learned layout, and `template_origin` the feed basis. The suggestion queue is on **Admin -> Words**, not Admin -> Templates.
 
 Every conversion can save a rich, structured record of **how it went** — the
 layout it matched, how cleanly it parsed, what the detector saw, how it

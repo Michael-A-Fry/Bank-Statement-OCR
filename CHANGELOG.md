@@ -133,6 +133,11 @@ synthetic statements with an answer key, converted end to end through
 
 ### What is not done, and what is not yet known
 
+Everything the build's reviews found, fixed and open, is recorded as N193 to N229
+in [`docs/context/findings-register.md`](docs/context/findings-register.md). The
+open items are ranked in
+[`docs/context/outstanding-work.md`](docs/context/outstanding-work.md).
+
 - **The acceptance tests have not been run.** The realistic holdout set and the
   100-statement green-flag set are held back to be scored once, independently.
   Every number above is from sets the build was developed against.

@@ -18,10 +18,8 @@
 # holder position (labelled, outside the transaction rows, never after To/From),
 # and a bank name counts only outside the transaction table.
 #
-# PRIVACY. The account number is parsed, looked up and dropped inside this file.
-# Nothing returned, logged or stored carries it, its branch or a hash of it (a
-# branch has ~10^7 bodies, so a hash is reversible): only the two-digit bank code
-# and the institution leave.
+# The account number is parsed, looked up and dropped inside this file: only the
+# two-digit bank code and the institution leave it.
 #
 # Never throws: a failure is an "unknown" result that says so.
 

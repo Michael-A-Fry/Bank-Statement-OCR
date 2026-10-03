@@ -1835,8 +1835,6 @@ Counted separately from the total at the top of this file.
 - **N221 - `scripts/health-check.R`, `audit-statement.R`, `bulk-audit.R` still call
   the retired template functions** (a healthy server reports `FAIL Templates`).
   **Open - release blocker.**
-- **N222 - `logs/metadata` stores an unsalted SHA-256 of the account number**
-  (`account_hash`), which `R/bank_identity.R` itself rules out as reversible. **Open.**
 - **N223 - tracking drops the reader's `reader_agrees` and `dates_carried` checks**
   (not in `TRACK_CHECKS`), with a warning that `convert` suppresses. **Open.**
 - **N224 - "Proven by: a person" counts 0** even after confirms (confirms are

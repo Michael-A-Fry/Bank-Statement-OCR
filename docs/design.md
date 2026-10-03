@@ -222,8 +222,7 @@ then the legal name, website, 0800 number and SWIFT code; then masthead brand
 words. Payee account numbers and bank names inside the transactions are ignored,
 because ANZ, ASB, Westpac and TSB all appear as payees. **The account number is
 parsed, looked up and dropped inside that file**: nothing returned, logged or
-stored carries it, its branch, or a hash of it (a branch has about 10^7 bodies, so
-a hash would be reversible).
+stored carries it or its branch.
 
 `bank_pick(identified, chosen, confirmed)` combines that with the person's pick.
 When the statement names a different bank from the pick with medium or high

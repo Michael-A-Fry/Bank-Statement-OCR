@@ -67,14 +67,9 @@ its finding id in `findings-register.md`.
    **N216** "Co-operative Bank" as a name. **N225** `matched_layout` empty when a
    proven reading also matches a layout.
 
-**Privacy:**
-
-9. **N222** `logs/metadata` keeps an unsalted SHA-256 of the account number
-   (`account_hash`). Drop it, or key it with a server secret.
-
 **What the screens and Admin say:**
 
-10. **N219** a loan summary box read as a second statement (wrong "split this
+9. **N219** a loan summary box read as a second statement (wrong "split this
     file" advice). **N226** misleading reason for newest-first exports. **N227**
     unread files cluster as one. **N223** tracking drops two reader checks.
     **N224** "Proven by: a person" counts 0. **N229** `config.example.yaml` names
