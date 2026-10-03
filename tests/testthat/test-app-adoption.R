@@ -479,3 +479,20 @@ test_that("a file that converted nothing carries no confidence grade anywhere", 
   expect_match(.app_block(.app_src(), "output\\$cv_status <- renderUI", 45L),
                'graded <- st %in% c\\("ok", "needs_review"\\)')
 })
+
+test_that("too many files is refused at the door, with the number", {
+  # The size limit is per REQUEST, so a folder of hundreds of small statements passed
+  # it and then converted one after another inside a single job -- no way to stop it,
+  # and the first file's result invisible until the last finished. There was no count
+  # cap at all. Refusing at the door costs one re-drag; refusing halfway costs the run.
+  src <- paste(readLines(file.path(engine_root(), "app.R"), warn = FALSE), collapse = "\n")
+  expect_match(src, "MAX_BATCH_FILES <- suppressWarnings", fixed = TRUE)
+  expect_match(src, "nrow(f) > MAX_BATCH_FILES", fixed = TRUE)
+  # refused BEFORE the work: the guard must come before run_batch in the handler
+  expect_lt(regexpr("nrow(f) > MAX_BATCH_FILES", src, fixed = TRUE),
+            regexpr("if (nrow(f) > 1L) run_batch(f)", src, fixed = TRUE))
+  # the number is configurable, and the control says it
+  expect_match(src, "files at a time", fixed = TRUE)
+  cfg <- paste(readLines(file.path(engine_root(), "R", "config.R"), warn = FALSE), collapse = "\n")
+  expect_match(cfg, "max_batch_files", fixed = TRUE)
+})

@@ -13,6 +13,19 @@ finding id.
 
 ---
 
+## 1.15.0
+
+**A multi-file upload now has a file-count limit, because it had none.**
+
+`max_upload_mb` is enforced per **request**, so a folder of hundreds of small
+statements passed the size check and then converted one after another inside a single
+job — with no way to stop it, and the first file's result invisible until the last one
+finished. `app.max_batch_files` (default **50**, which is `R/batch.R`'s own "a case
+folder is 10–50 statements" with room) refuses the upload **before any work starts**
+and says the number. The upload control states the limit next to the size limit.
+
+Refusing at the door costs the user one re-drag. Refusing halfway costs them the run.
+
 ## 1.14.0
 
 **No wrong figure reaches a download unmarked.**

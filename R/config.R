@@ -22,6 +22,11 @@
     # Biggest statement a user may upload, in MB. Shiny's own default is 5 MB, which
     # rejects the scanned PDFs this tool exists to read, so we set our own.
     max_upload_mb  = 200,
+    # Most files one upload may carry. There was NO count cap: 200 MB is per request,
+    # so five hundred small statements passed the size check and then converted one
+    # after another in a single job with no way to stop it. A case folder is 10-50
+    # statements (R/batch.R says so); 50 is that, with room.
+    max_batch_files = 50L,
     # Whether Convert's "Include user-created templates" box starts TICKED.
     # TRUE, because the product's promise is "build a template once and that bank
     # converts automatically from then on" -- with this off, a template Beth builds

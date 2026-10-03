@@ -95,6 +95,11 @@ if (ADMIN_PW_UNSET)
 # here (and in scripts/run_app.R, which is how the server actually starts) from one
 # config key so a site can tune it without touching code.
 MAX_UPLOAD_MB <- suppressWarnings(as.numeric(CONFIG$app$max_upload_mb %||% 200))
+# HOW MANY FILES, not just how many megabytes. The size limit is per REQUEST, so a
+# folder of five hundred small statements passed it and then converted one after
+# another inside a single job, with no progress for the first one and no way to stop.
+MAX_BATCH_FILES <- suppressWarnings(as.integer(CONFIG$app$max_batch_files %||% 50L))
+if (!is.finite(MAX_BATCH_FILES) || MAX_BATCH_FILES < 1L) MAX_BATCH_FILES <- 50L
 # Do templates built HERE take part in detection? A deployment decision, read once
 # -- never a tick-box on the Convert page. Whether a colleague's template counts
 # is not a question to put to the person converting a statement, and the tick-box
@@ -656,7 +661,7 @@ ui <- fluidPage(
           # person is looking for what is broken rather than for the empty box
           # eight inches above it.
           uiOutput("cv_go_btn"),
-          helpText(sprintf("Up to %g MB.", MAX_UPLOAD_MB)),
+          helpText(sprintf("Up to %g MB, %d files at a time.", MAX_UPLOAD_MB, MAX_BATCH_FILES)),
           # Everything most people never need is one obvious click away, so the
           # default view is simply: file, name, Convert.
           tags$details(class = "adv-bank",
@@ -4017,6 +4022,19 @@ server <- function(input, output, session) {
       return()
     }
     if (!.identity_ok()) return()
+    # TOO MANY FILES IS REFUSED BEFORE ANY WORK STARTS, and says the number. The size
+    # limit is per REQUEST, so a folder of hundreds of small statements passed it and
+    # then converted one after another inside a single job -- no way to stop it, and
+    # the first file's result not visible until the last one finished. Refusing at the
+    # door costs the user one re-drag; refusing halfway costs them the whole run.
+    if (nrow(f) > MAX_BATCH_FILES) {
+      notify_once("cv_toomany", sprintf(
+        paste("%d files selected, and this tool takes %d at a time. Convert them in",
+              "batches of %d or fewer - every file still gets its own result and its",
+              "own checks, so splitting the folder changes nothing about the answers."),
+        nrow(f), MAX_BATCH_FILES, MAX_BATCH_FILES), type = "warning", duration = 12)
+      return()
+    }
     if (nrow(f) > 1L) run_batch(f) else run_conversion(f$datapath[1], f$name[1])
   })
 
