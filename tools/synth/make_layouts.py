@@ -540,7 +540,7 @@ BANK = [
     T("D", 2, ("r", 60, 340), "DD {utility} {custno}"),
     T("D", 2, ("r", 90, 1650), "BILL PAYMENT {council} INV {inv}"),
     T("D", 2, ("mult", 20, 400, 20), "ATM WITHDRAWAL {atm} {time}"),
-    T("D", 1, ("fixed", 5.00), "MONTHLY ACCOUNT FEE", cat="fee"),
+    T("D", 1, ("fixed", 5.00), "MONTHLY ACCOUNT FEE", cat="mfee"),
     T("D", 1, ("r", 0.25, 4.5), "OVERSEAS TXN FEE", cat="fee"),
     T("D", 2, ("r", 50, 2500), "TFR TO {acct}"),
     T("D", 1, ("r", 28, 260), "DD {insurer} POLICY {invno}"),
@@ -644,7 +644,7 @@ TYPED = [
     TY("D", 2, ("r", 60, 340), "DD", "{utility} {custno}"),
     TY("D", 2, ("r", 90, 1650), "BP", "{council} INV {inv}"),
     TY("D", 2, ("mult", 20, 400, 20), "ATM", "{atm} {time}"),
-    TY("D", 1, ("fixed", 5.00), "FEE", "MONTHLY ACCOUNT FEE", cat="fee"),
+    TY("D", 1, ("fixed", 5.00), "FEE", "MONTHLY ACCOUNT FEE", cat="mfee"),
     TY("D", 2, ("r", 50, 2500), "TFR", "TO {acct}"),
     TY("C", 3, ("r", 1800, 6200), "DC", "{employer} SALARY", cat="salary"),
     TY("C", 1, ("r", 0.15, 24), "INT", "CREDIT INTEREST", cat="interest"),
@@ -670,7 +670,7 @@ PCR = [
     P("D", 2, ("r", 380, 760), "{landlord}", "RENT", "WK {wk}"),
     P("D", 2, ("r", 60, 340), "{utility}", "{custno}", "INV {inv}"),
     P("D", 2, ("mult", 20, 400, 20), "ATM", "{atm}", "{time}"),
-    P("D", 1, ("fixed", 5.00), "ACCOUNT FEE", "", "", cat="fee"),
+    P("D", 1, ("fixed", 5.00), "ACCOUNT FEE", "", "", cat="mfee"),
     P("D", 2, ("r", 35, 190), "{telco}", "MOBILE", "REF {ref}"),
     P("D", 2, ("fx",), "VISA {online}", "USD {fx}", "{card4}"),
     P("C", 3, ("r", 1800, 6200), "SALARY", "{employer}", "PAY {ddmm}", cat="salary"),
@@ -696,7 +696,7 @@ PAYEE_PCR = [
     P("D", 2, ("r", 380, 760), "RENT", "WK {wk}", "{ref}", payee="{landlord}"),
     P("D", 2, ("r", 60, 340), "{custno}", "POWER", "INV {inv}", payee="{utility}"),
     P("D", 2, ("mult", 20, 400, 20), "ATM", "{atm}", "{time}", payee="ATM WITHDRAWAL"),
-    P("D", 1, ("fixed", 5.00), "", "", "", payee="ACCOUNT FEE", cat="fee"),
+    P("D", 1, ("fixed", 5.00), "", "", "", payee="ACCOUNT FEE", cat="mfee"),
     P("D", 2, ("r", 35, 190), "MOBILE", "", "REF {ref}", payee="{telco}"),
     P("C", 3, ("r", 1800, 6200), "SALARY", "", "PAY {ddmm}", payee="{employer}", cat="salary"),
     P("C", 1, ("r", 0.15, 24), "", "", "", payee="CREDIT INTEREST", cat="interest"),
@@ -709,7 +709,8 @@ CATALOGS = {"bank": BANK, "card": CARD, "card_fx": CARD_FX, "biz": BIZ, "savings
 
 # At most this many of a category per statement: four salaries in one month is not
 # a statement anybody receives.
-CAPS = {"salary": 2, "wages": 4, "payment": 2, "interest": 2, "rwt": 1, "ird": 1}
+CAPS = {"salary": 2, "wages": 4, "payment": 2, "interest": 2, "rwt": 1, "ird": 1, "mfee": 1}
+FEE_CATS = ("fee", "mfee")
 
 FX_RATE = {"USD": (5600, 6300), "AUD": (8800, 9300), "GBP": (4400, 4800)}
 
@@ -1674,7 +1675,7 @@ def summary_rows(L, st, keys):
         elif key == "tot_c":
             v = mag(sum(r["credit"] or 0 for r in sr), L["thousands"], L["dollar"])
         elif key == "fees":
-            v = mag(sum(r["amt"] for r in sr if r["cat"] == "fee"), L["thousands"], L["dollar"])
+            v = mag(sum(r["amt"] for r in sr if r["cat"] in FEE_CATS), L["thousands"], L["dollar"])
         elif key == "rate":
             v = st["segs"][seg]["cfg"]["rate_text"] or L["rate_text"]
         elif key == "limit":
@@ -1927,7 +1928,7 @@ def draw_after(sh, L, st, y):
     sz = L["size"]
     rows = st["rows"]
     vals = {
-        "fees": sum(r["amt"] for r in rows if r["cat"] == "fee"),
+        "fees": sum(r["amt"] for r in rows if r["cat"] in FEE_CATS),
         "interest": sum(r["amt"] for r in rows if r["cat"] == "interest"),
         "rwt": sum(r["amt"] for r in rows if r["cat"] == "rwt"),
         "count": len(rows),
@@ -1949,7 +1950,7 @@ def draw_segblock(sh, L, st, seg, y):
     sr = [r for r in st["rows"] if r["seg"] == seg]
     cfg = st["segs"][seg]["cfg"]
     vals = {
-        "fees": mag(sum(r["amt"] for r in sr if r["cat"] == "fee"), L["thousands"], L["dollar"]),
+        "fees": mag(sum(r["amt"] for r in sr if r["cat"] in FEE_CATS), L["thousands"], L["dollar"]),
         "interest": mag(sum(r["amt"] for r in sr if r["cat"] == "interest"), L["thousands"],
                         L["dollar"]),
         "rate": cfg["rate_text"] or "0.00% p.a.",
@@ -2784,7 +2785,7 @@ def asb_csv_export(S):
                    ("Memo", "ref"), ("Amount", "amount")],
                   S.v("yyyy/mm/dd", "yyyymmdd"), S.v(1, 2), catalog="typed",
                   preamble=["Created date / time : 03 October 2026 / 10:15:00",
-                            "Bank 12; Branch {acct}", "From date {p0}", "To date {p1}",
+                            "Account {acct}", "From date {p0}", "To date {p1}",
                             "Avail Bal : {close}", "Ledger Balance : {close}", ""],
                   note="Seven preamble lines (with balances in them) before the header.",
                   features=["signed"])
