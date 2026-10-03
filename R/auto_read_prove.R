@@ -314,9 +314,12 @@
 # and keep the ones the arithmetic allows. Returns the candidates that pass, the one
 # chosen, and why. `texts` (each row's words) only ever vote, on the one question
 # the arithmetic cannot answer: which way round a reading and its negation go.
-.ar_roles <- function(V, anchors, liab_ev, decimal = "auto", heading_roles = NULL, texts = NULL) {
+# `only` -- the figure roles a person gave on Please check: just that assignment is
+# tried, and the arithmetic still settles its sign convention, account type and order.
+.ar_roles <- function(V, anchors, liab_ev, decimal = "auto", heading_roles = NULL, texts = NULL,
+                      only = NULL) {
   K <- ncol(V$S); n <- nrow(V$S)
-  roles_list <- .ar_role_candidates(K)
+  roles_list <- if (!is.null(only)) list(as.character(only)) else .ar_role_candidates(K)
   res <- list()
   col_signed <- vapply(seq_len(K), function(j) any(V$SK[, j] %in% c("-lead", "-trail", "()", "+"), na.rm = TRUE), logical(1))
   col_marked <- vapply(seq_len(K), function(j) any(V$SK[, j] %in% c("CR", "DR", "OD"), na.rm = TRUE), logical(1))

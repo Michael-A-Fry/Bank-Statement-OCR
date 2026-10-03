@@ -20,6 +20,11 @@
 #
 # Never throws: an error becomes "unread" with the reason. Deterministic: the same
 # input and layouts give the same reading.
+#
+# opts$roles -- a person's fix from Please check: the roles of the figure columns,
+# left to right (debit, credit, amount, balance, other), as the reading's own
+# template$auto$roles lists them. Only that assignment is read; the arithmetic
+# still has to prove it, and no learned layout or repair stands in for it.
 
 AUTO_READ_VERSION <- "1.0.0"
 
@@ -121,7 +126,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     w <- input$words[[p]]
     cf <- suppressWarnings(stats::median(as.numeric(w$ocr_conf), na.rm = TRUE))
     if (is.null(w) || !isTRUE(cf < .AR_OCR_NOISE_CONF)) next
-    r <- safe(ocr_pdf_page(path, p, preprocess = FALSE), NULL)
+    r <- safe(ocr_pdf_page(path, .ar_file_page(input, p), preprocess = FALSE), NULL)
     if (is.null(r) || !isTRUE(r$ok) || is.null(r$words) || !nrow(r$words)) next
     cf2 <- suppressWarnings(stats::median(as.numeric(r$words$ocr_conf), na.rm = TRUE))
     if (!isTRUE(cf2 > cf)) next
@@ -132,6 +137,14 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     notes <- c(notes, sprintf("Page %d of the scan read as noise (confidence %.0f) and was read again without image clean-up (confidence %.0f).", p, cf, cf2))
   }
   list(input = input, notes = notes)
+}
+
+# .ar_file_page(input, p) -- page p of this input as a page of the file on disk: a
+# statement cut out of a bundle (.subinput_pages) carries its pages' numbers in
+# the file as page_map, so a page read again from the picture is the right one.
+.ar_file_page <- function(input, p) {
+  pm <- input$page_map
+  if (length(pm) >= p) as.integer(pm[p]) else as.integer(p)
 }
 
 # .ar_upright(w, pw, ph) -- a page set on its side (a /Rotate the text layer does
@@ -228,6 +241,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ctx <- .ar_pdf_context(input)
   ctx$notes <- ro$notes
   ctx$bank <- bank
+  ctx$roles <- opts$roles
   base <- .ar_pdf_pages(ctx)
   model <- .ar_model(base, list())
   # The account type is read from the print OUTSIDE the transaction rows: an
@@ -235,6 +249,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ctx$liab <- .ar_liability_evidence(if (is.null(model)) ctx$pages_text else .ar_outside_text(model))
   cands <- list()
   cands[["content"]] <- .ar_pdf_attempt(ctx, base, list(), "content", model = model)
+  # A person's roles are read on their own: no layout or repair stands in for them.
+  if (!is.null(ctx$roles)) return(.ar_decide(cands, list(), ctx))
   # Each layout handed in, registered to this document: its conventions on the
   # columns found here. A layout whose conventions are the content reading's own
   # (when the arithmetic chose them) would read the same figures, so it is not
@@ -354,7 +370,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
              y0 = (cd$rows$y[i] - 3) * sy, y1 = (cd$rows$y1[i] + 3) * sy)
     key <- as.character(p)
     if (is.null(pics[[key]])) {
-      safe(system2("pdftoppm", c("-png", "-r", 300, "-f", p, "-l", p, path, paste0(prefix, "_p", p)),
+      fp <- .ar_file_page(ctx$input, p)
+      safe(system2("pdftoppm", c("-png", "-r", 300, "-f", fp, "-l", fp, path, paste0(prefix, "_p", p)),
                    stdout = FALSE, stderr = FALSE), 1L)
       pics[[key]] <- Sys.glob(paste0(prefix, "_p", p, "*.png"))[1]
     }
@@ -437,7 +454,11 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!is.null(forced)) {
     rl <- .ar_forced_reading(V, model$anchors, forced, ctx$decimal)
     if (is.null(rl$chosen)) return(fail(rl$why))
-  } else rl <- .ar_roles(V, model$anchors, ctx$liab, ctx$decimal, hroles, texts = model$rows$raw)
+  } else {
+    if (!is.null(ctx$roles) && length(ctx$roles) != K)
+      return(fail(sprintf("The roles given are for %d column(s) of figures; this statement shows %d.", length(ctx$roles), K)))
+    rl <- .ar_roles(V, model$anchors, ctx$liab, ctx$decimal, hroles, texts = model$rows$raw, only = ctx$roles)
+  }
   rd <- rl$chosen
   basis <- if (!is.null(rd)) "arithmetic" else "none"
   if (is.null(rd) && rl$n_distinct > 1L) {

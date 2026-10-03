@@ -222,9 +222,11 @@
   md <- safe(extract_metadata(list(kind = input$kind, pages = pre_text[nzchar(pre_text)], meta = list(),
                                    path = input$path)), NULL)
   ctx <- list(input = input, g = g, tt = tt, md = md, bank = bank,
-              liab = .ar_liability_evidence(pre_text), decimal = "auto")
+              liab = .ar_liability_evidence(pre_text), decimal = "auto", roles = opts$roles)
   cands <- list()
   cands[["content"]] <- .ar_tab_attempt(ctx, "content")
+  # A person's roles are read on their own: no layout stands in for them.
+  if (!is.null(ctx$roles)) return(.ar_decide(cands, list(), ctx))
   seen <- if (identical(cands$content$basis, "arithmetic")) .ar_conv_key(cands$content$rd) else ""
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
@@ -278,8 +280,13 @@
   if (!is.null(forced)) {
     rl <- .ar_forced_reading(V, anchors, forced, ctx$decimal)
     if (is.null(rl$chosen)) return(fail(rl$why))
-  } else rl <- .ar_roles(V, anchors, ctx$liab, ctx$decimal, hroles,
-                         texts = if (any(kind == "text")) apply(tt$m[rows, kind == "text", drop = FALSE], 1, paste, collapse = " "))
+  } else {
+    if (!is.null(ctx$roles) && length(ctx$roles) != length(mcols))
+      return(fail(sprintf("The roles given are for %d column(s) of figures; this file has %d.", length(ctx$roles), length(mcols))))
+    rl <- .ar_roles(V, anchors, ctx$liab, ctx$decimal, hroles,
+                    texts = if (any(kind == "text")) apply(tt$m[rows, kind == "text", drop = FALSE], 1, paste, collapse = " "),
+                    only = ctx$roles)
+  }
   rd <- rl$chosen
   basis <- if (!is.null(rd)) "arithmetic" else "none"
   if (is.null(rd) && rl$n_distinct > 1L) {
