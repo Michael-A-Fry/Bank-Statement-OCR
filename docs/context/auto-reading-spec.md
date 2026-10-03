@@ -42,6 +42,7 @@ layout is quicker and surer. Templates as you know them today are retired.
 | Old editor | The "Add a template" builder and guided setup are removed. The drag-the-boxes column editor stays, reachable only from Please check, as the last resort. |
 | Spot checks | Built, but off by default; an admin can turn them on and set the rate. |
 | Qlik feed | Not part of this change. It keeps working as a downstream export; the one forced change is its gate: "curated template" no longer exists, so a statement feeds Qlik when it was proven or a person confirmed it. |
+| Other accounts on the page | A statement pack can print another account's own transactions (a linked savings or term-deposit mini-statement). Each such table is read as a SEPARATE account: labelled with its account, proven by its own balance, never mixed into the main account. Schedules, pending items, rate and fee tables are not transactions and are ignored. (Product owner, 3 Oct 2026.) |
 | Heading vs arithmetic | Where a heading says one thing and the arithmetic proves another (card and loan accounts run backwards), the arithmetic wins and a note is recorded. (Default; the product owner can overrule.) |
 
 ## 3. Why today's tool fails (root cause, measured)
