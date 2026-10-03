@@ -130,7 +130,7 @@ about_html <- function() HTML('
 <h3>How a conversion flows</h3>
 <div class="steps">
   <div class="step"><b>Upload</b>Your bank&#39;s export - PDF, CSV or Excel - on Convert.</div>
-  <div class="step"><b>Detect</b>The statement is matched to a saved template automatically.</div>
+  <div class="step"><b>Suggest</b>Each file is shown with the template we suggest - check it, change it if it is wrong.</div>
   <div class="step"><b>Extract</b>Date, description, amount, balance - read verbatim, never edited.</div>
   <div class="step"><b>Check</b>Opening + transactions vs closing balance; anything off is flagged with the reason.</div>
   <div class="step"><b>Download</b>Excel or CSV - and rate the result so the team sees what works.</div>
