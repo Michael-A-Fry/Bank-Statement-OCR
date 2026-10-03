@@ -898,3 +898,58 @@ test_that("a page cut out of a bundle is read again from its own page of the fil
   expect_identical(.ar_file_page(inp, 2L), 2L)
   expect_identical(.ar_file_page(.subinput_pages(inp, 3L), 1L), 3L)
 })
+
+# ---- other tables in the pack ------------------------------------------------------------------
+# Measured on a real ANZ home-loan pack: page 1 printed an "Upcoming automatic
+# payments" table (a date and an amount on each line) before the statement, and the
+# "every page with transactions gave rows" check held a fully proven statement back.
+
+ar_cover <- c("Kauri Bank                         Statement of Accounts", "",
+  "Upcoming automatic payments",
+  "Account number      Payee            Frequency       Payment date      Payment amount",
+  "01-0001-0000001-00  Sam Checking     WEEKLY             21 Feb 26              125.00",
+  "                    Debit            WEEKLY             23 Feb 26              125.00",
+  "                    Go               WEEKLY             26 Feb 26              300.00")
+
+test_that("another table's dated figures on a cover page do not hold back a proven statement", {
+  rd <- auto_read(ar_pdf(ar_cover, c(ar_head, ar_rows)))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), ar_want)
+  expect_true(isTRUE(ok_of(rd, "other_tables")))
+})
+
+test_that("another table is set aside only when the printed opening and closing balances add up", {
+  # Without the opening and closing lines nothing confirms the lines elsewhere are
+  # not this statement's missing rows, so a person looks.
+  rd <- auto_read(ar_pdf(ar_cover, c(ar_head, ar_rows[2:7])))
+  expect_false(ar_auto(rd))
+  expect_false(isTRUE(ok_of(rd, "other_tables")))
+})
+
+test_that("a scanned page whose OCR timed out is never read as proven", {
+  inp <- ar_pdf(c(ar_head, ar_rows))
+  inp$meta$ocr_timed_out <- 2L
+  rd <- auto_read(inp)
+  expect_equal(rd$outcome, "check")
+  expect_false(ok_of(rd, "ocr_complete"))
+})
+
+test_that("a totals line printing the balance stands as the closing balance", {
+  # ANZ prints "Totals at end of period" with the withdrawals total and the balance,
+  # and no line called "Closing balance". With the cover page's other table set
+  # aside, that balance is what confirms no rows are missing.
+  h <- c("Kauri Bank                         Statement period 19 Aug 2026 to 19 Aug 2026", "",
+         "Date     Details                          Withdrawals     Deposits      Balance")
+  rows <- c("19 Aug   Opening balance                                                19,477.46 OD",
+            "19 Aug   DD VET                                     157.00                19,634.46 OD",
+            "19 Aug   AP GO EXPENSES                             300.00                19,934.46 OD",
+            "19 Aug   DD DEBIT TRANSFER                           30.00                19,964.46 OD",
+            "         Totals at end of period                   $487.00       $0.00   $19,964.46 OD")
+  rd <- auto_read(ar_pdf(ar_cover, c(h, rows)))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), c(-157, -300, -30))
+  expect_true(isTRUE(ok_of(rd, "opening_closing")))
+  # The same figure wrong in the totals line breaks the chain: a person looks.
+  bad <- rows; bad[5] <- sub("19,964.46", "19,999.99", bad[5], fixed = TRUE)
+  expect_false(ar_auto(auto_read(ar_pdf(ar_cover, c(h, bad)))))
+})

@@ -32,6 +32,17 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   t0 <- proc.time()[["elapsed"]]
   rd <- tryCatch(.ar_read(input, layouts %||% list(), bank, opts %||% list()),
     error = function(e) .ar_unread(paste0("The reader stopped on this file (", conditionMessage(e), ").")))
+  # A scanned page whose OCR ran out of time comes back blank. If it was the last
+  # page, the rows that were read can still add up on their own, so nothing above
+  # would notice the missing rows: such a reading is never automatic.
+  to <- input$meta$ocr_timed_out %||% integer(0)
+  if (length(to) && rd$outcome %in% c("proven", "layout_match")) {
+    why <- sprintf("Page %s of the scan could not be read in time, so rows may be missing.",
+                   paste(to, collapse = ", "))
+    rd$outcome <- "check"; rd$why <- why
+    rd$checks <- rbind(rd$checks, data.frame(check = "ocr_complete", ok = FALSE, why = why,
+                                             stringsAsFactors = FALSE))
+  }
   rd$secs <- round(proc.time()[["elapsed"]] - t0, 3)
   rd$engine <- AUTO_READ_VERSION
   rd
@@ -734,8 +745,30 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     cnt <- table(m$line); ln <- as.integer(names(cnt)[cnt >= 2L])
     sum(!pg$lines$summary[match(ln, pg$lines$line)] & !pg$lines$footer[match(ln, pg$lines$line)])
   }
+  # A dated line with a figure belongs to THIS statement's table only when its date
+  # sits in the statement's date column and a figure in one of its figure columns.
+  # Otherwise it is another table on the page -- a cover page's "upcoming automatic
+  # payments", an account overview -- which is not a row this statement lost.
+  # (Measured on a real ANZ home-loan pack: page 1's upcoming-payments table held a
+  # proven 3-row statement back as "page 1 gave no rows".) Lines set aside this way
+  # are allowed only when the printed opening and closing balances confirm nothing
+  # is missing (checked below, after the arithmetic).
+  fits <- function(pg, l) {
+    s <- model$shift[pg$page]
+    ph <- pg$ph[pg$ph$line == l, , drop = FALSE]
+    d <- ph[ph$kind == "date", , drop = FALSE]
+    if (!nrow(d) || !any(abs(d$x - s - model$dcol$x) <= 2 * model$tol)) return(FALSE)
+    m <- ph[ph$kind == "money" & ph$standalone, , drop = FALSE]
+    if (!nrow(m)) return(FALSE)
+    any(vapply(model$cols, function(cl) any(m$x - s <= cl$x1 + 0.5 & m$x1 - s >= cl$x - 0.5), logical(1)))
+  }
+  own_seeds <- function(pg) { s <- .ar_seed_lines(pg); s[vapply(s, function(l) fits(pg, l), logical(1))] }
+  other <- unlist(lapply(Filter(Negate(is.null), model$pgs), function(pg) {
+    s <- setdiff(.ar_seed_lines(pg), own_seeds(pg))
+    if (length(s)) sprintf("page %d", pg$page)
+  }))
   shaped <- which(vapply(model$pgs, function(pg) !is.null(pg) &&
-                           (length(.ar_seed_lines(pg)) > 0L || figure_lines(pg) >= 3L), logical(1)))
+                           (length(own_seeds(pg)) > 0L || figure_lines(pg) >= 3L), logical(1)))
   miss <- setdiff(shaped, unique(post$page))
   add("pages_with_rows", !length(miss), if (!length(miss)) "Every page with transactions gave rows."
       else sprintf("Page %s prints transaction lines but gave no rows.", paste(miss, collapse = ", ")))
@@ -747,7 +780,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     if (is.null(pg)) return(NULL)
     used <- c(model$rows$line[model$rows$page == pg$page],
               vapply(Filter(function(a) a$page == pg$page, model$anchors), function(a) a$line, 0))
-    s <- setdiff(.ar_seed_lines(pg), used)
+    s <- setdiff(own_seeds(pg), used)
     if (length(s)) sprintf("page %d (\"%s\")", pg$page, substr(pg$lines$raw[match(s[1], pg$lines$line)], 1, 40))
   }))
   add("lines_accounted", !length(stray), if (!length(stray)) "Every dated line with a figure is a row or a summary line."
@@ -771,8 +804,16 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   # is the cause.
   ra <- .ar_reader_agrees(model, rd, tx)
   cd <- .ar_carried_dates_ok(tx, post$page)
+  # Transaction-shaped lines from another table were set aside above; that is safe
+  # only when the statement's own printed opening and closing balances add up with
+  # the rows read, so a page of this statement's rows cannot be among them.
+  ot <- if (!length(other)) list(ok = NA, why = "No other table on the pages looks like transactions.")
+        else if (isTRUE(ar$checks$opening_closing$ok))
+          list(ok = TRUE, why = sprintf("Lines on %s look like transactions but belong to another table; the opening and closing balances confirm none of this statement's rows are among them.", other[1]))
+        else list(ok = FALSE, why = sprintf("Lines on %s look like transactions but sit outside this statement's columns, and no printed opening and closing balance confirms they are not missing rows.", other[1]))
   ar$checks <- c(ck, ar$checks, list(reader_agrees = list(ok = ra$ok, why = ra$why),
-                                     dates_carried = list(ok = cd$ok, why = cd$why)))
+                                     dates_carried = list(ok = cd$ok, why = cd$why),
+                                     other_tables = ot))
   ar
 }
 

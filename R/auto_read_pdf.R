@@ -478,6 +478,13 @@
   rest <- setdiff(as.integer(names(sup)), dmain)
   rest <- rest[sup[as.character(rest)] >= 0.5 * sup[as.character(dmain)]]
   rest <- rest[vapply(rest, function(g) min(dph$xs[dg == g]) > dcol$x1 || max(dph$x1s[dg == g]) < dcol$x, logical(1))]
+  # A second date COLUMN (a processed or value date) is printed on the same lines as
+  # the transaction date. Dates in another place on OTHER lines are another table
+  # -- a cover page's upcoming payments -- and must not shape this one's columns.
+  rest <- rest[vapply(rest, function(g) {
+    gl <- unique(dk[dg == g]); ml <- unique(dk[dg == dmain])
+    length(intersect(gl, ml)) >= 0.5 * length(gl)
+  }, logical(1))]
   if (length(rest)) {
     g2 <- rest[order(-sup[as.character(rest)], vapply(rest, function(g) min(dph$xs[dg == g]), 0))][1]
     date2 <- list(x = min(dph$xs[dg == g2]), x1 = max(dph$x1s[dg == g2]))

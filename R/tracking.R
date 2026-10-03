@@ -38,7 +38,8 @@ TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_u
                   "lines_accounted", "dates_settled", "dated_lines_used", "pages_complete",
                   "balance_chain", "chain_across_pages", "opening_closing", "printed_totals",
                   "dates_readable", "dates_in_order", "dates_in_period", "signs_settled",
-                  "no_derived_amounts", "amounts_read", "unique", "rows_proven")
+                  "no_derived_amounts", "amounts_read", "unique", "rows_proven",
+                  "reader_agrees", "dates_carried", "other_tables", "ocr_complete")
 # The reader's repair steps (the "repair:<step>" candidates of R/auto_read.R).
 TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift")
 
