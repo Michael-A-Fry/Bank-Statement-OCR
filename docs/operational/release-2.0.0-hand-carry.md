@@ -100,6 +100,11 @@ If you would rather copy file by file, the `R\` changes are:
 | `config\config.example.yaml` | The template settings are gone. `paths: layouts`, `paths: tracking` and `auto_reading: spot_check_rate` are new. |
 | `templates\README.md` | Now describes the learned-layout store. |
 | `README.md`, `CHANGELOG.md` | The 2.0.0 description. |
+| `scripts\health-check.R` | Its **Templates** line is now **Layouts**: how many learned layouts each bank has, proven or provisional, and any layout file it could not read. It also checks that `templates\layouts\` and `logs\tracking\` can be written to. The 1.23.1 copy reports `FAIL Templates` on a healthy 2.0.0 server. |
+| `scripts\audit-statement.R`, `scripts\bulk-audit.R` | They audit with the automatic reader and this server's learned layouts. The 1.23.1 copies stop with an error. `bulk-audit.R` no longer writes `audit-drafts\`. |
+| `scripts\run_app.R` | The call to the retired template migration is gone. |
+| `scripts\bundle-offline.R` | Used on the build PC, not the server, but carried so the next package is built right: it ships the bank reference files (section 5) and never ships `templates\layouts\`. |
+| `RUN-ME.bat` | A comment only. Nothing it does has changed. |
 
 ## 5. Add these two reference files to `dictionaries\`
 
@@ -118,11 +123,11 @@ from the one picked can no longer be caught.
 These are the words your team has taught the tool. The rule in
 [updating-a-version.md](updating-a-version.md) has not changed.
 
-**The package route currently loses these two files.** `scripts\bundle-offline.R`
-ships the dictionaries folder as `*.example.yaml` copies only. It renames
-`nz_banks.yaml` to `nz_banks.example.yaml`, and it leaves
-`nz_bank_branches.csv` out because the file is not YAML. Until that script is
-fixed, copy both files by hand even when you use a package.
+A package built with `make-bundle.bat` carries both files under these names,
+so on the package route they arrive with everything else. Only `labels.yaml`
+and `lexicon.yaml` travel as `*.example.yaml` seeds. The package's
+`offline\manifest.txt` has a `bank_list:` line that says whether both
+travelled.
 
 ## 6. Edit `config\config.yaml` by hand
 
@@ -172,43 +177,35 @@ reading**.
 `tools\` (the test-set generators and scorers, and the browser check),
 `.claude\`, and anything under `samples\_private_staging\`.
 
-## 9. Not ready yet: these block the release, and their owners have them
+## 9. After the copy: prove it
 
-Check that each of these has been fixed in the tree you carry. Until it is,
-the step that depends on it does not work.
-
-| File | Problem | What it breaks |
-|---|---|---|
-| `scripts\health-check.R` | It still loads templates, so a healthy 2.0.0 server reports `FAIL Templates`. | The "is it fit to convert" check after the update. Until it is fixed, use the conversion check in section 10. |
-| `scripts\audit-statement.R`, `scripts\bulk-audit.R` | They call the 1.x audit with templates and fail. | The command-line audits. Admin's *Check a pile of files at once* works. |
-| `scripts\bundle-offline.R` | It ships `templates\` whole, so any `templates\layouts\` on the build PC would travel and overwrite the server's layouts of the same name. It also loses the two reference files (section 5). | The package route. |
-| `scripts\run_app.R` | It still calls a template migration that now does nothing. | Nothing. It is untidy, not broken. |
-
-When these scripts are fixed, they join this list under section 4.
-
-## 10. After the copy: prove it
-
-1. **Start the app** with `RUN-ME.bat` or the scheduled task.
-2. **Convert the sample statement**
+1. **Ask the box whether it is fit to convert:** `scripts\health-check.R`
+   ([maintaining-the-engine.md](maintaining-the-engine.md) §1 has the command
+   line). Every line must say `PASS`. On a server that has learned nothing
+   yet, **Layouts** says so, and that is a pass. This needs the 2.0.0 copy of
+   the script (section 4).
+2. **Start the app** with `RUN-ME.bat` or the scheduled task.
+3. **Convert the sample statement**
    `samples\raw\tutorial\sample_everyday_statement.pdf`. It must come back
    **Proven** with **12 transactions**. Leave the bank empty: it is a made-up
    bank, and the row asks you to choose one.
-3. **Open its JSON download.** `build.engine_version` must read `2.0.0`. The
+4. **Open its JSON download.** `build.engine_version` must read `2.0.0`. The
    build stamp also shows `layouts_state`, which is `empty` on a server that
    has learned nothing yet.
-4. **Open Admin.** The tabs are **Banks**, **Automatic reading**, **Words** and
+5. **Open Admin.** The tabs are **Banks**, **Automatic reading**, **Words** and
    **Health**. Banks is empty until a statement has been learned.
-5. **Run the test suite**
+6. **Run the test suite**
    ([maintaining-the-engine.md](maintaining-the-engine.md) §1). It must end
    `failed: 0`, `errors: 0`, `skipped: 0`.
-6. **Train each bank** before people rely on it: Admin -> Banks -> *Train a
+7. **Train each bank** before people rely on it: Admin -> Banks -> *Train a
    bank*, with every statement you have for that bank
    ([adding-a-bank-template.md](adding-a-bank-template.md)). A bank with no
    training still converts. Every statement that proves itself converts at
    once. Training is what lets the statements with no balance of their own
    convert without a person.
-7. **Turn on spot checks** if the unit wants them from day one: Admin ->
+8. **Turn on spot checks** if the unit wants them from day one: Admin ->
    Automatic reading -> *Spot-check rate*. They are off by default.
 
-If step 2 or step 3 fails, stop and roll back ([rolling-back.md](rolling-back.md))
-before anything real is converted.
+A `FAIL` in step 1 names what to fix; fix it before you go on. If step 3 or
+step 4 fails, stop and roll back ([rolling-back.md](rolling-back.md)) before
+anything real is converted.

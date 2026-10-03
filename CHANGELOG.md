@@ -147,10 +147,6 @@ open items are ranked in
   - CSV: 4 of 7 automatic. The other 3 have no balance, so a person is asked.
   - Ruled table lines on scans are the main remaining OCR loss.
 - **Release blockers:**
-  - `scripts\health-check.R`, `audit-statement.R` and `bulk-audit.R` still use
-    templates.
-  - `scripts\bundle-offline.R` loses the two bank reference files, and would
-    ship any layouts learned on the build PC.
   - The full suite was last run part-way through the build: 67 files, 1,052
     tests, 5,527 passing, 181 failed and 46 errors. The failures were in files
     still being rewritten. The release needs a clean full run.
@@ -217,6 +213,11 @@ In short:
   - `app.R`, `ui_labels.R`, `ui_content.R`, `run.R`, `VERSION`,
     `www\app.css`, `config\config.example.yaml`, `templates\README.md`,
     `README.md`, `CHANGELOG.md`.
+  - `scripts\health-check.R` (a **Layouts** check in place of Templates),
+    `audit-statement.R` and `bulk-audit.R` (the reader's audit with the learned
+    layouts), `run_app.R`, `bundle-offline.R` (ships the bank reference files
+    under their own names, never `templates\layouts\`), and `RUN-ME.bat` (a
+    comment only).
   - The whole `docs\` folder.
   - The whole `tests\` folder (51 test files changed).
 
@@ -231,9 +232,6 @@ In short:
 - **Created by the app, back them up from day one:** `templates\layouts\` and
   `logs\tracking\`.
 - **Not carried:** `tools\` (development only).
-- **Blocked until fixed:** `scripts\health-check.R`, `audit-statement.R`,
-  `bulk-audit.R` and `bundle-offline.R` (see above). Each joins this list once
-  it is fixed.
 
 ## 1.23.1
 

@@ -38,19 +38,17 @@ its finding id in `findings-register.md`.
 
 **Release blockers (the server cannot be updated safely without them):**
 
-3. **N220 - `scripts/bundle-offline.R`**: ship `dictionaries/nz_banks.yaml` and
-   `nz_bank_branches.csv` as they are (they are product, not live state), and leave
-   `templates/layouts/` out of the package.
-4. **N221 - `scripts/health-check.R`** needs a *Layouts* check instead of
-   *Templates*; `audit-statement.R` and `bulk-audit.R` need the reader's audit
-   signatures (`statement_audit(path, layouts_dir)`, `batch_audit(paths,
-   layouts_dir)`); `run_app.R` should drop its `migrate_template_layout` call.
+3. **N220 - `scripts/bundle-offline.R`**: **fixed.** The bank list ships as it is
+   (product, not live state), and `templates/layouts/` is left out of the package.
+4. **N221 - `scripts/health-check.R`**, `audit-statement.R`, `bulk-audit.R`,
+   `run_app.R`: **fixed.** A *Layouts* check replaces *Templates*; the audits use
+   `statement_audit(path, layouts_dir)` and `batch_audit(paths, layouts_dir)`;
+   `.gitignore` keeps `/templates/layouts/` out.
 5. **A clean full suite run.** The last one (2026-10-03, mid-build) had 181 failed
    and 46 errors in files then being rewritten. Known still-red at the time of
    writing: `test-docs-truth.R` asserts the removed `ix_plot` page view and the
    "Show me how it read this" toggle (now "Show the charts"); `test-seams.R`
-   looks for screens that were removed; `test-deployment.R` waits on N221 and
-   `.gitignore` (`/templates/layouts/`).
+   looks for screens that were removed.
 6. **The held-back acceptance run**: the realistic holdout and the green-flag set,
    scored once, independently (spec section 11 step 3).
 

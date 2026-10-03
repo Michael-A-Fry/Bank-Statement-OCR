@@ -236,16 +236,18 @@ set "R_LIBS_SITE="
 "R-runtime\bin\x64\Rscript.exe" scripts\health-check.R
 ```
 
-Five checks, one line each, `PASS` or `FAIL`, and a non-zero exit code on any
+Seven checks, one line each, `PASS` or `FAIL`, and a non-zero exit code on any
 failure so a scheduled task can watch it without anybody reading it:
 
 | Check | Answers |
 |---|---|
 | **Settings** | did `config\config.yaml` parse, and was every setting in it understood |
 | **Admin** | is Admin still shut behind the placeholder password shipped in the example file |
-| **Templates** | **out of date at 2.0.0.** It still loads the retired templates, so a healthy 2.0.0 server reports `FAIL` here. It needs a **Layouts** check instead (the learned-layout store readable, each bank folder listed); until it is rewritten, ignore this line and prove the server by converting the sample statement ([release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) §10) |
-| **Folders** | can this account really write to `logs\`, `uploads\`, `requests\` and the feed folder (and, once rewritten, `templates\layouts\` and `logs\tracking\`) |
+| **Identity** | which address the app listens on, and whether a forwarded identity header will be believed ([who-is-using-it.md](who-is-using-it.md)). It states the setting and never fails |
+| **Layouts** | how many learned layouts each bank has in use, and how many of them are proven or still provisional. It **fails** on any layout file it could not read (cut short, renamed or edited by hand), and names the file and the reason: the tool is converting without that layout. Nothing learned yet is a pass |
+| **Folders** | can this account really write to `logs\`, `uploads\`, `requests\`, `templates\layouts\`, `logs\tracking\` and the feed folder |
 | **Scans** | is tesseract/poppler still installed, or has scanned-statement reading gone away |
+| **Signs** | is `pdftocairo` installed, without which a minus drawn as ink, or printed in the background colour, cannot be seen |
 
 It reads and changes nothing, so run it whenever.
 

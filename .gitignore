@@ -85,13 +85,19 @@ package-lock.json
 /feed/
 make-bundle.log
 
-# Templates built in the app live in the three templates/*_user/ folders. They are
-# SERVER state, not product: the package ships those folders holding nothing but a
-# README, and that is the entire reason a folder-replace update cannot overwrite a
-# template somebody built -- the package shares no filename with one. A .yaml
-# committed here would silently break that promise for every deployment at once,
-# so it cannot be committed by accident. (test-deployment.R asserts the same
-# thing, because a rule only a .gitignore knows is a rule nothing checks.)
+# The bank layouts the tool learns live in templates/layouts/ (paths: layouts),
+# with the fixes held for an admin in templates/layouts/.pending/. They are SERVER
+# state, not product, and they are named the same on every machine (anz/anz_1@v1.yaml):
+# one committed here would ship in the next package and replace a server's own
+# layout of the same name at the update after that, for every deployment at once.
+# A developer's test conversions learn into this folder, so it cannot be
+# committed by accident. (test-deployment.R asserts the same thing, and
+# scripts/bundle-offline.R refuses to ship one, because a rule only a .gitignore
+# knows is a rule nothing checks.)
+/templates/layouts/
+
+# The 1.x template folders (retired in 2.0.0). A box updated from 1.x can still
+# hold templates somebody built in them; they stay out of the repository too.
 /templates/statements_user/*
 /templates/fields_user/*
 /templates/documents_user/*

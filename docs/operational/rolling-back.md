@@ -47,8 +47,10 @@ read the warning at the end of this section before you touch anything.
 4. **Copy the old bundle over the app folder** and choose **Replace the files in
    the destination** — exactly the update procedure
    ([updating.md](updating.md) §2), with an older bundle. Only the files the
-   bundle carries are replaced; `config\`, `dictionaries\`, `templates\layouts\`,
-   `logs\`, `uploads\` and `feed\` are not in it and are not touched. **A copy
+   bundle carries are replaced; `config\`, the taught words in `dictionaries\`
+   (`labels.yaml`, `lexicon.yaml`), `templates\layouts\`, `logs\`, `uploads\`
+   and `feed\` are not in it and are not touched. (The bank list in
+   `dictionaries\` is in a 2.x bundle, so it goes back with the version.) **A copy
    never deletes a file**, so if the newer version *added* files to `R\`, delete
    them too, or the app loads them alongside the old code. Rolling 2.0.0 back to
    1.x is that case, and it has its own section below.

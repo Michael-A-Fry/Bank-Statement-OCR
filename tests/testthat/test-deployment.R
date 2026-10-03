@@ -225,6 +225,67 @@ test_that("the pruning is proved, not just attempted", {
   expect_identical(e$never_ship_keep, "samples/_private_staging/README.md")
 })
 
+# ------------------------------- what this PC learned stays on this PC
+
+test_that("no learned layout or held fix travels inside the bundle", {
+  # Layout files are named the same on every machine (anz/anz_1@v1.yaml), so one
+  # learned on the build PC while testing would replace a server's own layout of
+  # the same name at the next folder-replace update. templates/ ships; its
+  # layouts/ store must not.
+  fake <- .bo_fake_repo()
+  dir.create(file.path(fake, "templates", "layouts", "anz"), recursive = TRUE)
+  dir.create(file.path(fake, "templates", "layouts", ".pending"), recursive = TRUE)
+  writeLines("layout: {}", file.path(fake, "templates", "layouts", "anz", "anz_1@v1.yaml"))
+  writeLines("held: fix", file.path(fake, "templates", "layouts", ".pending", "anz_0123456789ab.yaml"))
+  b <- .bo_build(fake)
+  expect_false(dir.exists(file.path(b$dist, "templates", "layouts")))
+  expect_true(file.exists(file.path(b$dist, "templates", "t.yaml")))   # the rest still ships
+  expect_match(b$out, "learned layouts excluded", fixed = TRUE)
+  man <- readLines(file.path(b$dist, "offline", "manifest.txt"), warn = FALSE)
+  expect_match(grep("^  layouts:", man, value = TRUE), "excluded", fixed = TRUE)
+  # A store kept elsewhere inside the app (paths: layouts) is not pruned on a
+  # guess -- the build stops and names it.
+  fake2 <- .bo_fake_repo()
+  dir.create(file.path(fake2, "samples", "learned", "bnz"), recursive = TRUE)
+  writeLines("layout: {}", file.path(fake2, "samples", "learned", "bnz", "bnz_2@v3.yaml"))
+  expect_error(.bo_build(fake2), "learned layouts would have shipped")
+  # ...and the shape it looks for is the one R/layouts.R writes.
+  e <- .bo_preamble()
+  expect_true(grepl(e$learned_file_re, "the_co_operative_bank_12@v3.yaml"))
+  expect_false(grepl(e$learned_file_re, "anz_everyday_pdf.yaml"))      # a fixture template
+})
+
+# ---------------------------- the bank list is product; taught words are not
+
+test_that("the bank list ships under its own names, the taught words only as seeds", {
+  # R/bank_identity.R reads dictionaries/nz_banks.yaml AND nz_bank_branches.csv by
+  # those names. Both used to go through the .example rename meant for the taught
+  # words: the list arrived as nz_banks.example.yaml, the register (not YAML) not
+  # at all, and an install built from the package recognised no statement's bank.
+  e <- .bo_preamble()
+  for (f in e$dict_reference)
+    expect_true(file.exists(file.path(.dep2_root(), "dictionaries", f)), info = f)
+  fake <- .bo_fake_repo()
+  for (f in e$dict_reference) writeLines("reference", file.path(fake, "dictionaries", f))
+  writeLines("an Admin save's undo", file.path(fake, "dictionaries", "labels.yaml.bak"))
+  b <- .bo_build(fake)
+  expect_setequal(list.files(file.path(b$dist, "dictionaries"), all.files = TRUE, no.. = TRUE),
+                  c("labels.example.yaml", "lexicon.example.yaml", e$dict_reference))
+  man <- readLines(file.path(b$dist, "offline", "manifest.txt"), warn = FALSE)
+  expect_false(grepl("MISSING", grep("^  bank_list:", man, value = TRUE)))
+  expect_match(b$out, "labels.yaml.bak", fixed = TRUE)   # left behind, and said so
+  # RUN-ME.bat must not treat them as taught words: restoring its backup over a
+  # new release's register would bring the old one back.
+  called <- trimws(sub("^\\s*call :dictOne\\s+", "",
+                       grep("^\\s*call :dictOne\\s", .dep2_lines("RUN-ME.bat"), value = TRUE)))
+  expect_length(intersect(called, e$dict_reference), 0L)
+  # Without them the build still finishes, and says what it costs, twice.
+  b2 <- .bo_build(.bo_fake_repo())
+  man2 <- readLines(file.path(b2$dist, "offline", "manifest.txt"), warn = FALSE)
+  expect_match(grep("^  bank_list:", man2, value = TRUE), "MISSING", fixed = TRUE)
+  expect_match(b2$out, "recognises NO statement's bank", fixed = TRUE)
+})
+
 # ------------------------------ B4: the two halves must keep naming the same files
 
 test_that("every script RUN-ME.bat runs exists, in the repo or in the bundle", {
@@ -667,6 +728,29 @@ test_that("the health check answers every question and exits non-zero on a failu
   # and the verdict is a number a scheduled task can act on
   expect_true(r$status %in% c(0L, 1L))
   if (grepl("\nFAIL", r$text)) expect_equal(r$status, 1L) else expect_equal(r$status, 0L)
+})
+
+test_that("the health check counts each bank's layouts and FAILS on a file it cannot read", {
+  # layouts_load() skips a layout file it cannot use and says why on
+  # attr(, "problems") -- and nothing else in the product reads that. The
+  # reader then converts without the layout, and nothing says so but this.
+  store <- normalizePath(tempfile("layouts_"), winslash = "/", mustWork = FALSE)
+  dir.create(store)
+  on.exit(unlink(store, recursive = TRUE), add = TRUE)
+  p <- proven_csv()
+  learned <- layout_learn(auto_read(read_input(p), list(), "bnz"), "bnz", file_sha256(p), store)
+  expect_identical(learned$action, "created")
+  cfg <- c("app:", "  admin_password: a-real-password", "paths:", paste0("  layouts: ", store))
+  r <- .hc_run(cfg)
+  expect_match(r$text, "PASS  Layouts")
+  expect_match(r$text, "BNZ 1 (0 proven, 1 provisional)", fixed = TRUE)
+  # a layout file copied in by hand and cut short
+  writeLines(c("layout:", "  id: bnz_2"), file.path(store, "bnz", "bnz_2@v1.yaml"))
+  r <- .hc_run(cfg)
+  expect_equal(r$status, 1L)
+  expect_match(r$text, "FAIL  Layouts")
+  expect_match(r$text, "bnz_2@v1.yaml", fixed = TRUE)    # which file, in words
+  expect_match(r$text, "BNZ 1 (", fixed = TRUE)          # and the good one still counted
 })
 
 test_that("the health check FAILS, and says which, on the shipped placeholder password", {

@@ -9,18 +9,19 @@
 #
 # WHY IT EXISTS: nothing on the box could answer, in one place, the five questions
 # an operator has after an update -- did the settings file parse, is Admin still
-# shut behind the shipped placeholder password, how many templates loaded AND HOW
-# MANY WERE REFUSED, can the app write to the folders it needs, and is the OCR
-# software still installed. Each one had its own answer somewhere (a warning at
-# startup, a banner inside Admin, an R warning nobody sees) and two of them could
-# only be found by opening a browser on a server nobody logs into.
+# shut behind the shipped placeholder password, how many learned layouts can be
+# read AND WHICH FILES WERE REFUSED, can the app write to the folders it needs, and
+# is the OCR software still installed. Each one had its own answer somewhere (a
+# warning at startup, a banner inside Admin, an R warning nobody sees) and two of
+# them could only be found by opening a browser on a server nobody logs into.
 #
-# The refusals are the reason this is not a nicety. All three template loaders
-# already work out exactly why they skipped a template and hand the reasons back
-# on attr(x, "load_errors") -- and NOTHING in the product read that attribute, so a
-# template that stopped validating after an update simply vanished: gone from
-# Admin, gone from detection, no message anywhere, and the statements it used to
-# read quietly became "no template for this statement yet".
+# The refusals are the reason this is not a nicety. layouts_load() (R/layouts.R)
+# already works out exactly why it skipped a layout file -- cut short, renamed by
+# hand, no valid status -- and hands the reasons back on attr(x, "problems"), and
+# NOTHING else in the product reads that attribute. So a layout file that stops
+# loading simply vanishes: gone from Admin -> Banks, gone from matching, no
+# message anywhere, and the statements it used to vouch for quietly go back to
+# needing their own arithmetic, or a person.
 #
 # KEEP IT SHORT. It is read under pressure, by somebody who has just been told the
 # tool is down. One line per check, in one screen, no numbers nobody can act on.
@@ -97,28 +98,36 @@ say(TRUE, "Identity", paste0(
   else if (.loopback) sprintf("'%s' is believed when the shared secret matches, and nothing can reach this app except through the proxy", .hdr)
   else sprintf("'%s' is believed when the shared secret matches - but this app is reachable WITHOUT the proxy, so set app.bind_host to 127.0.0.1 (see docs/operational/who-is-using-it.md)", .hdr)))
 
-# ---- 3. the templates, loaded AND refused ------------------------------------
+# ---- 3. the learned layouts, readable AND refused ----------------------------
 p <- cfg$paths %||% list()
-# Each loader is asked for the reasons it skipped a template. The curated
-# statement set is loaded strictly, so it STOPS rather than returning reasons --
-# that message is a refusal too, and it is the one that takes the whole set down.
-.load <- function(expr) {
-  v <- tryCatch(expr, error = function(e) structure(list(), stopped = conditionMessage(e)))
-  list(n = length(v),
-       why = c(as.character(attr(v, "load_errors") %||% character(0)),
-               as.character(attr(v, "stopped") %||% character(0))))
+# One question per bank: how many layouts it has in use, and how many of those
+# are proven (by enough of its own statements, or by an admin) rather than still
+# provisional. Retired layouts are counted only when there are some. A store
+# that does not exist yet is not a fault -- it is created the first time a
+# statement is proven -- so a new install passes here with nothing learned.
+# Any file layouts_load() had to skip is a FAIL, named with its reason, because
+# the reader is working without it and nothing else will say so.
+ldir <- tryCatch(layouts_dir(cfg), error = function(e) "templates/layouts")
+lys <- tryCatch(layouts_load(ldir, include_retired = TRUE),
+                error = function(e) structure(list(), problems = conditionMessage(e)))
+refused <- as.character(attr(lys, "problems") %||% character(0))
+banks <- tryCatch(layouts_banks(ldir), error = function(e) data.frame())
+in_use <- if (nrow(banks)) sum(banks$layouts) else 0L
+learned <- if (!dir.exists(ldir)) {
+  sprintf("nothing learned yet (%s is made the first time a statement is proven)", ldir)
+} else if (!nrow(banks)) {
+  sprintf("nothing learned yet in %s", ldir)
+} else {
+  per_bank <- vapply(seq_len(nrow(banks)), function(i) with(banks[i, ], sprintf(
+    "%s %d (%d proven, %d provisional%s)", bank, layouts, proven, provisional,
+    if (retired > 0L) sprintf(", %d retired", retired) else "")), character(1))
+  sprintf("%d in use for %d bank%s - %s", in_use, nrow(banks),
+          if (nrow(banks) == 1L) "" else "s", paste(per_bank, collapse = ", "))
 }
-kinds <- list(
-  "bank statement" = .load(load_template_set(p$templates %||% "templates/statements",
-                                             p$user_templates %||% "templates/statements_user",
-                                             include_hidden = TRUE)))
-counted <- paste(vapply(names(kinds), function(k) sprintf("%d %s", kinds[[k]]$n, k),
-                        character(1)), collapse = ", ")
-refused <- unlist(lapply(kinds, `[[`, "why"), use.names = FALSE)
-say(!length(refused), "Templates", sprintf("%s; %s", counted,
-    if (!length(refused)) "none were refused"
-    else sprintf("%d refused and NOT in use - %s", length(refused),
-                 paste(refused, collapse = "; "))))
+say(!length(refused), "Layouts", sprintf("%s; %s", learned,
+    if (!length(refused)) "no file was refused"
+    else sprintf("%d file%s refused and NOT in use - %s", length(refused),
+                 if (length(refused) == 1L) "" else "s", paste(refused, collapse = "; "))))
 
 # ---- 4. the folders it has to write to ---------------------------------------
 # Tested by really writing, because "the folder is there" and "this account may
@@ -139,9 +148,14 @@ say(!length(refused), "Templates", sprintf("%s; %s", counted,
   unlink(f)
   ok && !file.exists(f)
 }
+# The learned-layout store and the tracking folder are on the list because the
+# app writes to both as it converts: a store it cannot write to learns nothing
+# from a proven statement, and tracking it cannot write leaves Admin's counts
+# short. Neither stops a conversion, so neither is noticed there.
 folders <- c(p$logs %||% "logs", p$uploads %||% "uploads", p$requests %||% "requests",
-             p$user_templates %||% "templates/statements_user",
+             ldir, tryCatch(tracking_dir(cfg), error = function(e) "logs/tracking"),
              cfg$feed$feed_dir %||% "feed")
+folders <- folders[!is.na(folders)]          # tracking: NA is "switched off", not a folder
 bad_folders <- folders[!vapply(folders, .writable, logical(1))]
 say(!length(bad_folders), "Folders",
     if (!length(bad_folders)) sprintf("all %d can be written to", length(folders))

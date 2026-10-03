@@ -1831,10 +1831,14 @@ Counted separately from the total at the top of this file.
   card advises splitting a single statement. **Open.**
 - **N220 - `scripts/bundle-offline.R` ships `nz_banks.yaml` as an example file and
   leaves `nz_bank_branches.csv` out**, so a packaged server cannot identify banks;
-  it would also ship a build PC's `templates/layouts/`. **Open - release blocker.**
+  it would also ship a build PC's `templates/layouts/`. **Fixed:** the bank list
+  ships under its own names; `templates/layouts/` is pruned and the build stops if
+  a learned layout or held fix is anywhere else in the bundle.
 - **N221 - `scripts/health-check.R`, `audit-statement.R`, `bulk-audit.R` still call
   the retired template functions** (a healthy server reports `FAIL Templates`).
-  **Open - release blocker.**
+  **Fixed:** a *Layouts* check (per-bank counts, unreadable files fail by name);
+  the audits pass `layouts_dir`; `run_app.R` no longer calls
+  `migrate_template_layout`.
 - **N223 - tracking drops the reader's `reader_agrees` and `dates_carried` checks**
   (not in `TRACK_CHECKS`), with a warning that `convert` suppresses. **Open.**
 - **N224 - "Proven by: a person" counts 0** even after confirms (confirms are

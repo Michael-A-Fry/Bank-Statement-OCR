@@ -25,10 +25,8 @@ installed R are all kept.
    command, the exact line in
    [maintaining-the-engine.md](maintaining-the-engine.md) §1. It prints the
    version it is running and one line per check: the settings file parsed, an
-   admin password is set, every folder it must write to is writable, the
-   scan-reading software is still installed. (At 2.0.0 its *Templates* line is
-   out of date and reports `FAIL` on a healthy server; see
-   [maintaining-the-engine.md](maintaining-the-engine.md) §1.)
+   admin password is set, every learned layout can be read, every folder it
+   must write to is writable, the scan-reading software is still installed.
 5. **Re-apply any `R\params.R` change you had made** (see below), then convert
    one statement you know is proven and confirm it still is.
 6. **Check the new version is actually stamped on the output.** Open that
@@ -54,24 +52,28 @@ that the package does not carry it — not anything clever in the copy.
 | `dictionaries\labels.yaml`, `dictionaries\lexicon.yaml` | `app.R`, `ui_content.R`, `ui_labels.R`, `run.R` |
 | `templates\layouts\` (every learned layout) | `templates\README.md` |
 | `logs\` (including `logs\tracking\`), `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
-| `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml` |
+| `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml`, and the bank list: `dictionaries\nz_banks.yaml`, `dictionaries\nz_bank_branches.csv` |
 
 One detail worth knowing, because it is the one that could bite: the package
-carries the whole `templates\` folder. Your learned layouts survive because the
-source has no `templates\layouts\` in it. But if the PC that builds the package
-has learned layouts of its own (from testing), they would travel in the package
-**under the same names** (`anz\anz_1@v1.yaml`) and replace the server's. At
-2.0.0, `scripts\bundle-offline.R` does not yet leave that folder out, so check
-the package has no `templates\layouts\` before you carry it. Your backup is
-what makes a mistake recoverable ([backup-and-restore.md](backup-and-restore.md)).
+carries the `templates\` folder, and the PC that builds it may have learned
+layouts of its own (from testing), **under the same names** as the server's
+(`anz\anz_1@v1.yaml`). They would replace the server's. So
+`scripts\bundle-offline.R` leaves `templates\layouts\` out, and refuses to build
+at all if a learned layout or a held fix is anywhere else in the folder;
+`offline\manifest.txt` records it on its `layouts:` line. Your backup is what
+makes any other mistake recoverable
+([backup-and-restore.md](backup-and-restore.md)).
 
 **A copy-over replaces files but never deletes one.** A release that removes a
 file from `R\` therefore needs that file deleted by hand, or the app still loads
 it. The release's entry in [`../../CHANGELOG.md`](../../CHANGELOG.md) says when.
 2.0.0 is the first release that does.
 
-The package ships only `labels.example.yaml` / `lexicon.example.yaml`, which seed
-a brand-new install and are ignored once your own files exist. `RUN-ME.bat` also
+Of the taught words, the package ships only `labels.example.yaml` /
+`lexicon.example.yaml`, which seed a brand-new install and are ignored once your
+own files exist. The bank list (`nz_banks.yaml`, `nz_bank_branches.csv`) is
+product, not taught words: it ships under its own names and an update replaces
+it. `RUN-ME.bat` also
 keeps a copy of `config.yaml` and both dictionaries under
 `%LOCALAPPDATA%\StatementStudio` and restores them if the folder's copies are
 missing — so even deleting the whole folder and pasting a fresh one keeps your
@@ -89,8 +91,9 @@ different job with a different trap, and it has its own short page:
 copied, and the seven steps.
 
 The short version: a dev folder is not a package. The package build is what
-renames `dictionaries\*.yaml` to `*.example.yaml`, and that rename is the only
-reason a folder-replace cannot wipe your taught words. A hand copy skips it.
+renames `dictionaries\labels.yaml` and `lexicon.yaml` to `*.example.yaml`, and
+that rename is the only reason a folder-replace cannot wipe your taught words. A
+hand copy skips it.
 
 ### If a dictionary does get clobbered
 

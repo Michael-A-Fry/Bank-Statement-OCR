@@ -176,7 +176,8 @@ A live picture from the run and feedback logs. Press **Refresh from logs** first
 spot-check rate), never vocabulary.
 
 Both dictionaries are **your** state, not shipped files. An update never
-overwrites them ([updating.md](updating.md)). Each save first writes the
+overwrites them ([updating.md](updating.md)). The bank list beside them is the
+opposite: it ships with the tool, and an update replaces it. Each save first writes the
 previous contents beside the file as `….yaml.bak`, and both are on the short
 list to copy off the box ([backup-and-restore.md](backup-and-restore.md)).
 
@@ -191,9 +192,9 @@ immediately.
 
 - **Is the server fit to convert?** `scripts\health-check.R`, one command, after
   every update. The exact command line is in
-  [maintaining-the-engine.md](maintaining-the-engine.md) §1. (At 2.0.0 it still
-  checks templates and reports a false `FAIL`; see the release notes in
-  [release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) §9.)
+  [maintaining-the-engine.md](maintaining-the-engine.md) §1. Its **Layouts**
+  line counts each bank's learned layouts and fails on any layout file that
+  can no longer be read.
 - **Look at Automatic reading weekly.** Watch the share read automatically for
   each kind of file, the checks that failed, and the spot-check answers. A
   single *wrong* spot-check answer is a finding.

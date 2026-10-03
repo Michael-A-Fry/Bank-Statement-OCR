@@ -145,9 +145,13 @@ goto :eof
 :dictSync
 rem  dictionaries\labels.yaml and dictionaries\lexicon.yaml are the wordings and
 rem  recognition markers the TEAM taught the tool through Admin. They are live
-rem  state, not shipped files: the bundle carries only *.example.yaml, so replacing
-rem  the app folder on an update cannot revert them (statements that reconciled
-rem  last week would quietly stop reconciling). Same three rules as config:
+rem  state, not shipped files: the bundle carries them only as *.example.yaml, so
+rem  replacing the app folder on an update cannot revert them (statements that
+rem  reconciled last week would quietly stop reconciling). The bank list beside
+rem  them (nz_banks.yaml, nz_bank_branches.csv) is product, not taught words: it
+rem  ships under its own names and an update replaces it, so it is not synced
+rem  here - a backup restored over it would bring back an old register.
+rem  Same three rules as config:
 rem   - none here + a backup exists -> restore it   (keeps the taught words)
 rem   - none here + no backup       -> seed from the shipped .example.yaml
 rem   - present                     -> refresh the backup

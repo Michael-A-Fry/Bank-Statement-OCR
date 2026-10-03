@@ -6,10 +6,15 @@
 #
 #     StatementStudio-offline/
 #       RUN-ME.bat          <- the only thing you run on the server (double-click)
-#       app.R  R/  templates/  ...   the app itself
+#       app.R  R/  templates/  ...   the app itself (never templates/layouts/: the
+#                                        layouts a machine learned stay on it)
 #       config/config.example.yaml       seeds only if the server has no config yet
-#       dictionaries/*.example.yaml      ditto -- the server's taught words are LIVE
+#       dictionaries/labels.example.yaml, lexicon.example.yaml
+#                                        ditto -- the server's taught words are LIVE
 #                                        state and are never overwritten by an update
+#       dictionaries/nz_banks.yaml, nz_bank_branches.csv
+#                                        the bank list: reference data, shipped under
+#                                        its own name, so an update replaces it
 #       offline/
 #         repo/             all R packages (+ every dependency) as Windows binaries
 #         prereqs/          the R, Poppler and Tesseract installers
@@ -60,6 +65,24 @@ pkgs <- c("shiny", "DT", "yaml", "jsonlite", "openxlsx", "readxl",
 never_ship      <- c("samples/_private_staging", "tests/testthat/logs")
 never_ship_keep <- "samples/_private_staging/README.md"   # explains the empty folder
 
+# The learned layouts are SERVER STATE, never product. Every layout file is named
+# by bank, number and version (anz/anz_1@v3.yaml), the same names on every
+# machine, so a layout this PC learned while testing would land on a server's own
+# layout of the same name at the next "replace the files" update -- and replace
+# it, silently. The store sits inside templates/, which the bundle ships, so it is
+# pruned, and then PROVEN gone in section 1: no file shaped like a learned layout
+# (or a fix held for an admin in .pending/) may be anywhere in the bundle, whatever
+# folder paths: layouts points at on this PC.
+never_ship_state <- "templates/layouts"
+learned_file_re  <- "^[a-z0-9_]+_[0-9]+@v[1-9][0-9]*[.]yaml$"   # R/layouts.R's file names
+held_fix_re      <- "(^|/)[.]pending/[a-z0-9_]+[.]yaml$"         # R/fixes.R's held fixes
+
+# dictionaries/ holds two kinds of file, which an update must treat in opposite
+# ways (section 1 says how). These are the REFERENCE kind: the bank list
+# R/bank_identity.R reads to tell which bank issued a statement. It needs both
+# files, under exactly these names.
+dict_reference <- c("nz_banks.yaml", "nz_bank_branches.csv")
+
 # The bundle IS the product. These are the parts without which it is not a
 # runnable install at all, as opposed to one missing a capability.
 # VERSION is on this list, not merely in app_items: engine_version() reads it and
@@ -93,23 +116,24 @@ options(timeout = 600)
 # Deliberately no source-control or hidden dotfiles in the shipped folder: it is a
 # plain product folder, nothing more.
 #
-# NOT in this list, deliberately: `dictionaries`. Those two files (labels.yaml,
+# NOT in this list, deliberately: `dictionaries`. Two of its files (labels.yaml,
 # lexicon.yaml) are LIVE state on the server -- Admin writes them every time the
 # team teaches the tool a new wording or recognition marker. Shipping them would
 # mean a routine "replace the files in the destination" update silently reverts
 # every word the team taught it, and statements that reconciled last week quietly
 # stop reconciling. Same reason config.yaml is deleted from the dist below; the
 # dist carries *.example.yaml instead and RUN-ME.bat seeds them only if absent.
+# The folder's other two files, the bank list, are product and ship under their
+# own names. Each kind is copied file by file, after the prune below.
 # "www" carries app.css. Shiny serves that folder from disk, so leaving it out of
 # this list does not fail the build or the tests -- it ships an install that runs
 # perfectly and looks completely unstyled, which is the kind of break nobody finds
 # until it is in front of someone. test-deployment-docs.R pins it.
-# "templates" is now ONE folder holding all seven (statements, statements_user,
-# statements_seed, fields, fields_user, documents, documents_user), so copying it
-# carries every kind. The `_user` folders inside it hold nothing but a README in
-# the source -- which is exactly what makes an update safe: the package shares no
-# filename with a template built on the server, so a folder-replace cannot touch
-# one. See templates/README.md and docs/operational/updating-a-version.md.
+# "templates" carries the README that maps the learned-layout store, and nothing
+# else of the product's since 2.0.0. On a PC that has converted anything it ALSO
+# holds the store itself (templates/layouts/), which must never travel: pruned
+# below with the private data, and proven gone. See templates/README.md and
+# docs/operational/updating-a-version.md.
 app_items <- c("R", "templates",
                "config", "scripts", "www",
                "tests", "samples", "docs",
@@ -152,6 +176,22 @@ if (length(left)) stop(sprintf(paste0(
   "  from '%s' and rebuild."), paste(left, collapse = ", "), dist))
 cat(sprintf("  private staging excluded (%s)\n", paste(never_ship, collapse = ", ")))
 
+# The same for what this PC has learned: prune the store, then prove that no
+# learned layout and no held fix is left anywhere in the bundle. One that is still
+# here lives somewhere else on this PC (paths: layouts in its config.yaml), and
+# deleting files from an unknown folder is not this script's call -- so it stops
+# and names them instead.
+for (np in never_ship_state) unlink(file.path(dist, np), recursive = TRUE)
+shipped <- list.files(dist, recursive = TRUE, all.files = TRUE)
+learned <- shipped[grepl(learned_file_re, basename(shipped)) | grepl(held_fix_re, shipped)]
+if (length(learned)) stop(sprintf(paste0(
+  "learned layouts would have shipped inside this bundle: %s\n",
+  "  A layout belongs to the machine that learned it. Shipped, it would replace a\n",
+  "  server's own layout of the same name at the next update. Move those files out\n",
+  "  of %s (they are this PC's, not the product's) and rebuild."),
+  paste(learned, collapse = ", "), app_root))
+cat(sprintf("  learned layouts excluded (%s)\n", paste(never_ship_state, collapse = ", ")))
+
 # ...and every essential part actually ARRIVED. file.copy() reports failure by
 # return value, which the loop above discards, so "copied N items" counts attempts,
 # not successes: a full disk or a locked file otherwise yields a bundle with no app
@@ -174,24 +214,52 @@ if (file.exists(file.path(dist, "config", "config.yaml")))
   stop("config/config.yaml could not be removed from the bundle. It holds the admin\n",
        "  password and must never ship. Close whatever has it open, then rebuild.")
 
-# Dictionaries: ship EXAMPLES ONLY, for exactly the same reason as config.yaml.
-# The repo's dictionaries/*.yaml are the shipped starting vocabularies; on the
-# server the same filenames are Admin-edited live state. Copy each one to
-# <name>.example.yaml so RUN-ME.bat can seed a first install, while an update
-# leaves the server's taught words untouched.
+# Dictionaries: two kinds of file, and an update must treat them in opposite ways.
+#
+# TAUGHT WORDS (labels.yaml, lexicon.yaml -- every .yaml here that is not the bank
+# list): ship EXAMPLES ONLY, for exactly the same reason as config.yaml. The
+# repo's copies are the shipped starting vocabularies; on the server the same
+# filenames are Admin-edited live state. Copy each one to <name>.example.yaml so
+# RUN-ME.bat can seed a first install, while an update leaves the server's taught
+# words untouched.
+#
+# REFERENCE DATA (dict_reference, the bank list): ship under the LIVE name, so an
+# update replaces it. Nobody edits it on the server -- a maintainer refreshes the
+# branch register and the release carries it -- so there is nothing of the
+# server's to protect, and a stale register is the thing to avoid. It used to go
+# through the rename above, which made nz_banks.yaml invisible to the app and left
+# nz_bank_branches.csv out altogether (not .yaml), so no statement's bank could be
+# recognised on an install built from the package.
+#
+# Anything else here (a .bak an Admin save left behind, a stray file) is neither,
+# stays on this PC, and is named on the console so a new file is not lost quietly.
 dict_src <- file.path(app_root, "dictionaries")
-dict_shipped <- 0L        # recorded in the manifest: no seeds is a real gap
+dict_shipped <- 0L          # taught-word seeds; recorded in the manifest: none is a real gap
+ref_shipped  <- character(0)  # bank-list files that arrived; recorded in the manifest too
 if (dir.exists(dict_src)) {
   dir.create(file.path(dist, "dictionaries"), recursive = TRUE, showWarnings = FALSE)
   dfiles <- list.files(dict_src, pattern = "\\.ya?ml$", full.names = TRUE)
   dfiles <- dfiles[!grepl("\\.example\\.ya?ml$", dfiles)]   # don't double-suffix
+  dfiles <- dfiles[!(basename(dfiles) %in% dict_reference)]  # shipped live, below
   for (d in dfiles)
     file.copy(d, file.path(dist, "dictionaries",
                            sub("\\.(ya?ml)$", ".example.\\1", basename(d))),
               overwrite = TRUE, copy.date = TRUE)
   dict_shipped <- length(dfiles)
-  cat(sprintf("  dictionaries shipped as %d example file(s) (server keeps its own)\n",
+  # Checked by what arrived, not by what was attempted: the app needs both files.
+  for (r in dict_reference[file.exists(file.path(dict_src, dict_reference))])
+    file.copy(file.path(dict_src, r), file.path(dist, "dictionaries", r),
+              overwrite = TRUE, copy.date = TRUE)
+  ref_shipped <- dict_reference[file.exists(file.path(dist, "dictionaries", dict_reference))]
+  left_out <- setdiff(list.files(dict_src, all.files = TRUE, no.. = TRUE),
+                      c(basename(dfiles), dict_reference))
+  cat(sprintf("  dictionaries: %d taught-word file(s) shipped as examples (server keeps its own)\n",
               dict_shipped))
+  cat(sprintf("  bank list shipped live (an update replaces it): %s\n",
+              if (length(ref_shipped)) paste(ref_shipped, collapse = ", ") else "NONE"))
+  if (length(left_out))
+    cat(sprintf("  left out of dictionaries/ (neither taught words nor the bank list): %s\n",
+                paste(left_out, collapse = ", ")))
 }
 
 # Force every shipped .bat to CRLF so cmd.exe runs it reliably, regardless of how
@@ -346,9 +414,17 @@ man <- c(
   sprintf("  app_payload:   %s", if (length(missing)) sprintf("INCOMPLETE -- not in the repo: %s", paste(missing, collapse = ", "))
           else sprintf("complete (%d items)", copied)),
   sprintf("  dictionaries:  %s", if (dict_shipped > 0L)
-          sprintf("%d starting vocabulary file(s)", dict_shipped)
+          sprintf("%d starting vocabulary file(s), as *.example.yaml", dict_shipped)
           else "MISSING (a brand-new install starts with no taught wordings)"),
+  sprintf("  bank_list:     %s", if (all(dict_reference %in% ref_shipped))
+          sprintf("%s (shipped live -- an update replaces them)", paste(dict_reference, collapse = " + "))
+          else sprintf(paste("MISSING %s (no statement's bank is recognised: every one asks",
+                             "a person to pick it, and a statement naming another bank",
+                             "than the one picked cannot be caught)"),
+                       paste(setdiff(dict_reference, ref_shipped), collapse = " + "))),
   sprintf("  private_data:  excluded (%s) -- real statements never travel", paste(never_ship, collapse = ", ")),
+  sprintf("  layouts:       excluded (%s) -- a server's own learned layouts are never replaced",
+          paste(never_ship_state, collapse = ", ")),
   "", "packages (name version) -- every file in offline/repo:")
 zips <- list.files(repo_path, pattern = "\\.zip$", recursive = TRUE)
 man <- c(man, if (length(zips)) sort(sub("^(.+)_([^_]+)\\.zip$", "\\1 \\2", basename(zips)))
@@ -378,6 +454,17 @@ if (!isTRUE(got_poppler) || !isTRUE(got_tesseract)) {
   cat("***      Poppler   github.com/oschwartz10612/poppler-windows/releases\n")
   cat("***      Tesseract github.com/UB-Mannheim/tesseract/wiki\n")
   cat("***      then re-run make-bundle.bat, or copy them in and rebuild.\n")
+  cat("***********************************************************************\n")
+}
+# The same for the bank list: nothing fails without it, and that is the trouble.
+# Every conversion still runs, asking a person for the bank each time.
+if (!all(dict_reference %in% ref_shipped)) {
+  cat("\n***********************************************************************\n")
+  cat(sprintf("*** WARNING -- this bundle has no %s.\n",
+              paste(setdiff(dict_reference, ref_shipped), collapse = " or ")))
+  cat("*** An install built from it recognises NO statement's bank: every\n")
+  cat("*** conversion asks a person to pick one.\n")
+  cat(sprintf("*** Fix: put both files back in %s and rebuild.\n", dict_src))
   cat("***********************************************************************\n")
 }
 cat("\nNext: copy the whole 'StatementStudio-offline' folder to the server and\n")

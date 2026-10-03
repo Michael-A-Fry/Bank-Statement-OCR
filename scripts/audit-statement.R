@@ -8,6 +8,11 @@
 #
 # Output defaults to <name>.audit.md next to where you run it. Read it, confirm it
 # is safe, then share it. See docs/operational/when-something-goes-wrong.md.
+#
+# The statement is read the way a conversion on this install reads it: the bank
+# worked out from the statement, then the automatic reader with the layouts this
+# install has learned for that bank. Those are only READ -- nothing is learned,
+# written or logged -- so it is safe to run on the live server.
 
 .self_dir <- function() {
   a <- commandArgs(FALSE); m <- grep("^--file=", a, value = TRUE)
@@ -22,8 +27,12 @@ path <- args[1]
 if (!file.exists(path)) { cat("file not found:", path, "\n"); quit(status = 1) }
 out <- if (length(args) >= 2) args[2] else paste0(tools::file_path_sans_ext(basename(path)), ".audit.md")
 
-tmpls <- load_template_set(file.path(root, "templates", "statements"),
-                           file.path(root, "templates", "statements_user"))
-writeLines(format_audit(statement_audit(path, templates = tmpls)), out)
+# The settings and the learned layouts are this install's, wherever this is run
+# from: paths in config.yaml are relative to the app folder, not to the console.
+cfg  <- load_config(if (nzchar(Sys.getenv("BSO_CONFIG"))) Sys.getenv("BSO_CONFIG")
+                    else file.path(root, "config", "config.yaml"))
+ldir <- layouts_dir(cfg)
+if (!grepl("^([A-Za-z]:)?[/\\\\]", ldir)) ldir <- file.path(root, ldir)
+writeLines(format_audit(statement_audit(path, layouts_dir = ldir)), out)
 cat("Wrote safe audit ->", normalizePath(out), "\n")
 cat("It contains NO PII (shapes only). Read it, then share it.\n")

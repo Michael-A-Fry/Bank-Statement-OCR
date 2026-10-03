@@ -95,12 +95,11 @@ are easy to leave behind and both are silent when you do:
    ```
 
    It prints the version it is about to run and one line per check — the settings
-   file parsed, an admin password is set, every folder it must write to is
-   writable, and the scan-reading software is still installed. `PASS` on the last
-   line means all of it passed. It reads and changes nothing, so it is safe to run
-   at any time. (At 2.0.0 its *Templates* line is out of date and reports `FAIL`
-   on a healthy server; see
-   [maintaining-the-engine.md](maintaining-the-engine.md) §1.)
+   file parsed, an admin password is set, every learned layout can be read, every
+   folder it must write to is writable, and the scan-reading software is still
+   installed. `PASS` on the last line means all of it passed. It reads and changes
+   nothing, so it is safe to run at any time
+   ([maintaining-the-engine.md](maintaining-the-engine.md) §1 lists every check).
 
 7. **Start prod** — `RUN-ME.bat`, or the scheduled task. No internet needed and
    nothing is reinstalled, so it is quick.

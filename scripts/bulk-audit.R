@@ -1,11 +1,19 @@
 #!/usr/bin/env Rscript
 # bulk-audit.R -- point this at a FOLDER of statements (any bank, any variant,
-# selectable OR scanned) and get ONE safe-to-share report: what parses, the
-# unsupported layouts clustered biggest-gap-first, editable DRAFT templates for
-# those gaps, and a feature-gap summary. No PII ever leaves your machine.
+# selectable OR scanned) and get ONE safe-to-share report: how many the automatic
+# reader proves on its own, which it does not, the ones it cannot read clustered
+# by layout biggest-gap-first, and which of its checks fail most. No PII ever
+# leaves your machine.
 #
-#   Rscript scripts/bulk-audit.R <folder>            # -> bulk-audit.md + audit-drafts/
+#   Rscript scripts/bulk-audit.R <folder>            # -> bulk-audit.md
 #   Rscript scripts/bulk-audit.R <folder> report.md
+#
+# It reads, and changes nothing: each file goes through the bank identification
+# and the automatic reader with the layouts this install has learned for that
+# bank, and nothing is converted, logged or learned -- a pile nobody chose to
+# train on must not teach the tool. (It used to write a draft template per gap
+# into audit-drafts/. Templates are gone since 2.0.0; a bank is trained on
+# Admin -> Banks instead.)
 #
 # Large scanned batches take a while (each scanned page is OCR'd). Text PDFs / CSV
 # / Excel are fast.
@@ -28,18 +36,17 @@ paths <- list.files(folder, recursive = TRUE, full.names = TRUE,
 if (!length(paths)) { cat("no statements found under", folder, "\n"); quit(status = 1) }
 cat(sprintf("Auditing %d file(s) under %s ...\n", length(paths), folder))
 
-tmpls <- load_template_set(file.path(root, "templates", "statements"),
-                           file.path(root, "templates", "statements_user"))
-b <- batch_audit(paths, templates = tmpls)
+# The settings and the learned layouts are this install's, wherever this is run
+# from: paths in config.yaml are relative to the app folder, not to the console.
+cfg  <- load_config(if (nzchar(Sys.getenv("BSO_CONFIG"))) Sys.getenv("BSO_CONFIG")
+                    else file.path(root, "config", "config.yaml"))
+ldir <- layouts_dir(cfg)
+if (!grepl("^([A-Za-z]:)?[/\\\\]", ldir)) ldir <- file.path(root, ldir)
+b <- batch_audit(paths, layouts_dir = ldir)
 writeLines(format_batch_audit(b), out)
 
-# write each recommended draft to audit-drafts/<id>.yaml so you can edit + Save
-ddir <- "audit-drafts"; dir.create(ddir, showWarnings = FALSE)
-for (r in b$recommendations) {
-  id <- gsub("[^A-Za-z0-9_]+", "_", r$draft_id %||% paste0("draft_", substr(r$signature, 1, 6)))
-  writeLines(r$draft_yaml, file.path(ddir, paste0(id, ".yaml")))
-}
 g <- b$feature_gaps
-cat(sprintf("\nDone. %d parsed, %d unsupported across %d layouts. %d draft template(s) written to %s/.\n",
-    g$total - g$unsupported, g$unsupported, g$distinct_gap_layouts, length(b$recommendations), ddir))
+cat(sprintf("\nDone. %d statement(s): %s. %d not read, across %d distinct layout(s).\n",
+    g$total, paste(sprintf("%s %s", names(g$by_outcome), unlist(g$by_outcome)), collapse = ", "),
+    g$unread, g$distinct_gap_layouts))
 cat("Safe report ->", normalizePath(out), "  (no PII - read it, then share it)\n")
