@@ -38,6 +38,10 @@ layout is quicker and surer. Templates as you know them today are retired.
 | No balance, no totals | Once its layout is proven, such a statement may convert automatically, counted as its own class and spot-checked more heavily. |
 | Scans | Same pass mark as everything else: 95%. |
 | Derived amounts | An unreadable or removed amount that the running balance fixes is filled, marked derived, and the statement goes to Please check. |
+| Analyst fixes | A fix on Please check is learned straight away when the corrected reading then proves out; an unprovable fix applies to that file only until an admin confirms it. |
+| Old editor | The "Add a template" builder and guided setup are removed. The drag-the-boxes column editor stays, reachable only from Please check, as the last resort. |
+| Spot checks | Built, but off by default; an admin can turn them on and set the rate. |
+| Qlik feed | Not part of this change. It keeps working as a downstream export; the one forced change is its gate: "curated template" no longer exists, so a statement feeds Qlik when it was proven or a person confirmed it. |
 | Heading vs arithmetic | Where a heading says one thing and the arithmetic proves another (card and loan accounts run backwards), the arithmetic wins and a note is recorded. (Default; the product owner can overrule.) |
 
 ## 3. Why today's tool fails (root cause, measured)
@@ -226,7 +230,17 @@ counts only.
 
 ### 9.1 Baseline
 
-_Filled in when the baseline run finishes._
+Today's tool on the realistic dev set (128 text PDFs, 7 CSV, 5 Excel), every
+figure scored against the answer key:
+
+| Today's route | Text PDFs read perfectly | CSV / Excel | Came back "ok" but wrong |
+|---|---|---|---|
+| Shipped templates, auto-detect | 0 of 128 | 0 / 0 | 0 |
+| Auto-drafted template per file, untouched | 32 of 128 (25%) | 0 / 0 | **3** |
+
+The auto-drafted route got 1,408 of 3,886 figures right and added 1,413 wrong
+or extra ones. Scans were not scored: today's OCR route stalled for over 20
+minutes on a single scanned page.
 
 ## 10. What changes in the code
 
