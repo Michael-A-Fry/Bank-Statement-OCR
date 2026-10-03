@@ -494,7 +494,7 @@ test_that("too many files is refused at the door, with the number", {
   # (the Convert table says the same number earlier still, when the files are chosen)
   go <- substring(src, regexpr("observeEvent(input$cv_go, {", src, fixed = TRUE))
   cap <- regexpr("nrow(f) > MAX_BATCH_FILES", go, fixed = TRUE)
-  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced, rows = again)", go, fixed = TRUE)
+  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced, rows = again, learn = learn)", go, fixed = TRUE)
   expect_true(cap > 0 && run > 0)
   expect_lt(cap, run)
   # the number is configurable, and the control says it

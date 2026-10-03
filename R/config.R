@@ -87,7 +87,10 @@
     lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",
     requests       = "requests",
-    logs           = "logs"
+    logs           = "logs",
+    # the template chosen for each layout before (R/learned.R) -- beside the
+    # templates built here, in the one folder an update never replaces
+    learned_choices = "templates/statements_user/_learned_choices.json"
   ),
   feed = list(
     # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny

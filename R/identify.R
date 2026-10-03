@@ -45,13 +45,21 @@
 #              (NA for none / scanned / unreadable)
 #   runner_up  the template that came closest behind it (NA when none)
 #   detail     the detector's own line, for a tooltip; never the headline
-identify_file <- function(path, templates, name = basename(path)) {
+#   key        the layout key a remembered choice is filed under (R/learned.R)
+#   det_guess  detection's own answer, before any remembered choice
+#
+# `learned` is the table of remembered choices (learned_load). A remembered choice
+# for this layout REPLACES detection's guess and the row says so (state "learned");
+# Convert reads that row with exactly that template unless she changes it, because
+# the table must never show one template and read with another.
+identify_file <- function(path, templates, name = basename(path), learned = NULL) {
   ext <- tolower(tools::file_ext(as.character(name %||% "")[1]))
   fmt <- unname(.IDENT_FORMAT[ext])
   out <- list(ext = ext, format = if (length(fmt) && !is.na(fmt)) fmt else NA_character_,
               kind = .ident_kind(ext, FALSE), pages = NA_integer_,
               state = "none", guess = NA_character_, runner_up = NA_character_,
-              detail = NA_character_)
+              detail = NA_character_, key = NA_character_, key_hint = NA_character_,
+              key_banks = NA_character_, det_guess = NA_character_)
   if (is.na(out$format)) { out$state <- "unsupported_type"; return(out) }
   if (!length(path) || is.na(path) || !file.exists(path)) {
     out$state <- "unreadable"; return(out)
@@ -114,6 +122,20 @@ identify_file <- function(path, templates, name = basename(path)) {
                           "left as it is, the result is held for a second look."),
                     nm(out$guess), nm(out$runner_up)),
     out$detail)
+  # A CHOICE MADE BEFORE, for a statement laid out like this one.
+  k <- safe(learned_key(input, out$format, templates), NULL)
+  if (!is.null(k)) {
+    out$key <- k$key; out$key_hint <- k$hint
+    out$key_banks <- paste(k$banks, collapse = " | ")
+  }
+  out$det_guess <- out$guess
+  lt <- learned_lookup(learned, out$key, templates, out$format)
+  if (!is.na(lt) && !identical(lt, out$guess)) {
+    out$guess <- lt; out$state <- "learned"; out$runner_up <- NA_character_
+    out$detail <- paste0("Chosen for a statement laid out like this one before. ",
+      if (!is.na(out$det_guess)) sprintf("On its wording alone the suggestion would be %s.", nm(out$det_guess))
+      else "Nothing matches it on its wording alone.")
+  }
   out
 }
 

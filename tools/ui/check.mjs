@@ -57,10 +57,23 @@ function makeFiles() {
 }
 
 // ---- the app: started here unless APP_URL says one is running -------------------
+// Started with a THROWAWAY config (BSO_CONFIG): its logs, uploads, feed and the
+// remembered template choices all go to a temporary folder, so a check never
+// writes into a real install's data and every run starts from nothing learned.
+const ADMIN_PW = 'ui-check-' + process.pid;
+function makeConfig() {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bso-ui-cfg-'));
+  const p = s => JSON.stringify(path.join(d, s));
+  fs.writeFileSync(path.join(d, 'config.yaml'), [
+    'paths:', `  logs: ${p('logs')}`, `  uploads: ${p('uploads')}`, `  requests: ${p('requests')}`,
+    `  learned_choices: ${p('learned.json')}`, 'feed:', `  feed_dir: ${p('feed')}`, ''].join('\n'));
+  return path.join(d, 'config.yaml');
+}
 async function startApp() {
   if (process.env.APP_URL) return null;
+  const env = { ...process.env, BSO_CONFIG: makeConfig(), BSO_ADMIN_PASSWORD: ADMIN_PW };
   const app = spawn('Rscript', ['-e', `shiny::runApp(${JSON.stringify(ROOT)}, port = ${PORT}, launch.browser = FALSE)`],
-                    { cwd: ROOT, detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
+                    { cwd: ROOT, detached: true, stdio: ['ignore', 'ignore', 'pipe'], env });
   let log = ''; app.stderr.on('data', b => { log += b; });
   for (let t = 0; t < 120; t++) {
     try { if ((await fetch(URL_)).ok) return app; } catch { /* not up yet */ }
@@ -204,6 +217,38 @@ async function run(browser, D) {
   check('the other five keep their results',
         r.filter(x => x.file !== 'westpac_march.pdf').every(x => before[x.file] === x.result));
   check('the changed one has its new result', !byFile(r, 'westpac_march.pdf').result.includes('Changed'));
+
+  // 5b. LEARNING. mystery_export.csv was read with a template chosen by hand, and it
+  //     produced transactions -- so a statement laid out like it is now suggested
+  //     that template ("Chosen before"), and the Admin can see and forget it.
+  if (!process.env.APP_URL) {
+    const page2 = await ctx.newPage();
+    await page2.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
+    await page2.click('a[data-value="Convert"]'); await sleep(600);
+    await page2.setInputFiles('#cv_file', [path.join(D, 'mystery_export.csv')]);
+    await waitFor(page2, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
+    let m = (await rows(page2))[0] || {};
+    eq('a layout corrected before is suggested what it was corrected to', [m.value, m.chip],
+       ['anz_everyday_csv', 'Chosen before']);
+    // the Admin sees it, and can forget it
+    const adm = await ctx.newPage();
+    await adm.goto(URL_ + '?admin', { waitUntil: 'networkidle' }); await sleep(1500);
+    await adm.click('a[data-value="Admin"]'); await sleep(800);
+    await adm.fill('#adm_pw', ADMIN_PW); await adm.click('#adm_login'); await sleep(2500);
+    const lrn = await adm.$$eval('#adm_learned tbody tr', t => t.map(r => r.innerText.replace(/\s+/g, ' ')));
+    check('the Admin can see what was learned', lrn.length === 1 && lrn[0].includes('ANZ everyday'), JSON.stringify(lrn));
+    await adm.click('#adm_learned tbody tr'); await sleep(500);
+    await adm.click('#adm_learned_forget'); await sleep(2000);
+    check('...and forget it', (await adm.$eval('#adm_learned', e => e.innerText)).includes('Nothing remembered yet'));
+    await shot(adm, '5-admin-learned');
+    await adm.close();
+    await page2.setInputFiles('#cv_file', []); await sleep(500);
+    await page2.setInputFiles('#cv_file', [path.join(D, 'mystery_export.csv')]);
+    await waitFor(page2, () => document.querySelectorAll('tr.plan-row').length === 1, 30000); await sleep(600);
+    m = (await rows(page2))[0] || {};
+    eq('once forgotten, it is suggested on its wording again', m.chip, 'No suggestion - please choose');
+    await page2.close();
+  } else console.log('SKIP  learning checks (APP_URL: not touching a real install\'s memory)');
 
   // 6. download everything
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);

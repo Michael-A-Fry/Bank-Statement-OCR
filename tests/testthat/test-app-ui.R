@@ -613,7 +613,7 @@ test_that("the QID is asked once for the whole batch, before it starts", {
   expect_length(i_go, 1L)
   blk <- src[i_go:(i_go + 75)]
   i_qid   <- grep("\\.identity_ok\\(\\)", blk)[1]
-  i_batch <- grep("run_batch\\(f, forced, rows = again\\)", blk)[1]
+  i_batch <- grep("run_batch\\(f, forced, rows = again, learn = learn\\)", blk)[1]
   expect_false(is.na(i_qid) || is.na(i_batch))
   expect_true(i_qid < i_batch, info = "the batch starts before who-ran-this is settled")
   # ...and the gate really is the QID question
@@ -851,7 +851,12 @@ test_that("a row left on its guess is detected; a row that was changed is forced
   # row is read with exactly the chosen template, file by file.
   src <- .ui_src()
   blk <- .src_block(src, "plan_effective <- function\\(p, picks\\)", 8L)
-  expect_match(blk, 'if \\(is\\.na\\(v\\) \\|\\| !nzchar\\(v\\) \\|\\| \\(!is\\.na\\(g\\) && identical\\(v, g\\)\\)\\) "" else v')
+  # untouched -> detection; changed to "detect" -> detection; left on the guess ->
+  # detection; anything else -> exactly that template. (A row whose suggestion was
+  # chosen BEFORE is the one exception: left alone it is read with that choice.)
+  expect_match(blk, 'if \\(is\\.na\\(v\\)\\) return\\(if \\(learned\\) g else ""\\)')
+  expect_match(blk, 'if \\(!nzchar\\(v\\)\\) return\\(""\\)')
+  expect_match(blk, 'if \\(!is\\.na\\(g\\) && identical\\(v, g\\)\\) return\\(if \\(learned\\) g else ""\\)')
   # a table that is not THIS upload's forces nothing
   go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 60L)
   expect_match(go, "identical\\(p\\$rows\\$name, as\\.character\\(f\\$name\\)\\)")
@@ -868,7 +873,7 @@ test_that("every file's choice reaches the engine, single file and case folder a
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
   go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 60L)
   expect_match(go, "eff <- if \\(mine\\) plan_effective\\(p, picks\\)")
-  expect_match(go, "run_batch\\(f, forced, rows = again\\)")
+  expect_match(go, "run_batch\\(f, forced, rows = again, learn = learn\\)")
   expect_match(go, "force_tpl = if \\(is\\.na\\(forced\\[1\\]\\)\\) NULL else forced\\[1\\]")
   expect_match(joined, "force_templates = forced\\)")
   # convert_args takes the template it is GIVEN; nothing global is read any more
@@ -886,7 +891,7 @@ test_that("filling the table never holds the server, and Convert waits for it", 
   src <- .ui_src()
   # one file per tick, then the event loop gets the process back
   obs <- .src_block(src, "One file per tick", 36L)
-  expect_match(obs, "identify_file\\(rows\\$datapath\\[i\\], plan_env\\$tset, rows\\$name\\[i\\]\\)")
+  expect_match(obs, "identify_file\\(rows\\$datapath\\[i\\], plan_env\\$tset, rows\\$name\\[i\\],\\s+learned = plan_env\\$learned\\)")
   expect_match(obs, "invalidateLater\\(1, session\\)")
   # Convert is greyed while files are checked, and refuses a press that arrives anyway
   btn <- .src_block(src, "output\\$cv_go_btn <- renderUI", 25L)
@@ -2315,7 +2320,7 @@ test_that("a case folder can re-run the files that failed and hand back the rest
   expect_match(ex, "template_sha256\\(t\\)")
   again <- .src_block(src, "plan_again <- function\\(\\)", 6L)
   expect_match(again, "if \\(length\\(ch\\)\\) ch else NULL")
-  rb <- .src_block(src, "run_batch <- function\\(files, forced = NULL, rows = NULL\\)", 60L)
+  rb <- .src_block(src, "run_batch <- function\\(files, forced = NULL, rows = NULL, learn = NULL\\)", 60L)
   expect_match(rb, "paths <- as\\.character\\(b_old\\$file\\[rows\\]\\)")
   expect_match(rb, "all\\(file\\.exists\\(as\\.character\\(b_old\\$file\\[rows\\]\\)\\)\\)")
   # ...and merges the new results into their own rows, the rest untouched

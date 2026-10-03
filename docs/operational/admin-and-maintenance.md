@@ -57,6 +57,18 @@ Every layout the tool can read, of **all three kinds**: bank statements, forms
 - **What the team said about these conversions** — every rating anyone has left,
   newest first, beside the templates it is about. Click a row to select that
   template below.
+- **Templates chosen before, by layout** — what the tool has learned. When
+  someone changes a suggested template on Convert and that conversion reads
+  transactions, the choice is remembered for statements laid out the same way and
+  suggested next time (the row says *Chosen before*). The list shows the layout
+  (its column headings), which known bank's name was printed on it, the template,
+  who chose it, when, and how often. Click a row and **Forget the selected choice**
+  to go back to suggesting on the wording alone. A choice is also forgotten by
+  itself when someone switches that layout back to what the wording suggests and
+  it converts. Nothing about a customer is stored — column headings, a bank name
+  from the template list, and a hash. It lives in
+  `templates\statements_user\_learned_choices.json`, so it is backed up with the
+  templates built here and survives an update.
 - **Near-duplicate bank statement templates — consolidate the pile**: statement
   templates that read a statement identically but were drafted more than once.
 - **Words the tool looks for** — the label dictionary; see below.

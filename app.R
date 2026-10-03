@@ -170,6 +170,9 @@ TEMPLATES_DIR      <- CONFIG$paths$templates       # curated, team-maintained (p
 USER_TEMPLATES_DIR <- CONFIG$paths$user_templates  # templates accountants create via guided setup
 LOGDIR             <- CONFIG$paths$logs            # run log + feedback log live together, next to the app
 UPLOADS_DIR        <- CONFIG$paths$uploads         # every uploaded statement + its lifecycle status (local-only)
+# The template chosen for each layout before (R/learned.R): team knowledge, kept with
+# the templates built here, in the one folder an update never replaces.
+LEARNED_PATH       <- CONFIG$paths$learned_choices %||% file.path(USER_TEMPLATES_DIR, "_learned_choices.json")
 REQUESTS_DIR       <- CONFIG$paths$requests        # "none of these fits -- tell our team" raises (local-only)
 # mode:document templates -- a report carrying many tables of different shapes.
 # %||% so a settings file written before this existed still starts: an absent path
@@ -929,6 +932,18 @@ ui <- fluidPage(
           helpText("Every rating left on a conversion, newest first - click a row to pick that template below."),
           DTOutput("adm_tpl_feedback"),
           br(),
+          # WHAT THE TOOL HAS LEARNED (R/learned.R). When someone changes a
+          # suggested template and the conversion reads transactions, the choice is
+          # remembered for that layout and suggested next time ("Chosen before" on
+          # Convert). Visible here, and forgettable, because a remembered choice
+          # nobody can see is a rule nobody can question.
+          h4("Templates chosen before, by layout"),
+          helpText(paste("When someone changes a suggested template and it converts, the choice is",
+                         "remembered for statements laid out the same way and suggested next time.",
+                         "Click a row and Forget it to go back to suggesting on the wording alone.")),
+          DTOutput("adm_learned"),
+          actionButton("adm_learned_forget", "Forget the selected choice", class = "btn-default"),
+          br(), br(),
           fluidRow(
             column(5,
               selectizeInput("adm_tpl_pick", "Preview / edit a template", choices = NULL,
@@ -1551,6 +1566,38 @@ server <- function(input, output, session) {
   cv_pick_templates <- reactive({
     if (USE_USER_TEMPLATES) templates() else proven_templates()
   })
+  # ---- Admin: templates chosen before, by layout (R/learned.R) ----
+  adm_learned_bump <- reactiveVal(0)
+  adm_learned <- reactive({ adm_learned_bump(); tpl_bump(); safe(learned_load(LEARNED_PATH), NULL) })
+  output$adm_learned <- renderDT({
+    req(admin_ok())
+    d <- adm_learned()
+    if (is.null(d) || !nrow(d))
+      return(datatable(data.frame(Note = paste("Nothing remembered yet. A choice is remembered when someone",
+                                               "changes a suggested template and it converts.")),
+                       rownames = FALSE, selection = "none", options = list(dom = "t")))
+    nice <- function(x) { v <- safe(friendly_tpl(x), NA_character_); if (is.na(v)) x else v }
+    disp <- data.frame(
+      Layout = ifelse(is.na(d$hint) | !nzchar(d$hint), "-", d$hint),
+      `Bank printed` = ifelse(is.na(d$banks) | !nzchar(d$banks), "(none we know)", d$banks),
+      Template = vapply(d$template, nice, character(1), USE.NAMES = FALSE),
+      `Chosen by` = ifelse(is.na(d$by), "-", d$by),
+      `Last used` = ifelse(is.na(d$last), "-", sub("T", " ", d$last)),
+      Times = d$times, check.names = FALSE, stringsAsFactors = FALSE)
+    datatable(disp, rownames = FALSE, selection = "single",
+              options = list(pageLength = 10, dom = "tip", order = list(list(4L, "desc"))))
+  })
+  observeEvent(input$adm_learned_forget, {
+    req(admin_ok())
+    d <- adm_learned(); i <- input$adm_learned_rows_selected
+    if (is.null(d) || !nrow(d) || !length(i)) {
+      showNotification("Click a row first, then Forget.", type = "warning"); return() }
+    safe(learned_forget(LEARNED_PATH, d$key[i[1]]))
+    adm_learned_bump(adm_learned_bump() + 1)
+    showNotification("Forgotten. Statements laid out like that one are suggested on their wording again.",
+                     type = "message", duration = 6)
+  })
+
   # ---- Admin: template overview / preview / edit ----
   # The management view shows ALL templates, hidden ones included, so a parked
   # draft can be found and un-hidden.
@@ -3112,6 +3159,7 @@ server <- function(input, output, session) {
     # The SAME template set the conversion will load (USE_USER_TEMPLATES decides,
     # exactly as convert_args / run_batch do), read once for the whole upload.
     plan_env$tset <- isolate(cv_pick_templates())
+    plan_env$learned <- safe(learned_load(LEARNED_PATH), NULL)   # choices made before
     cv_plan_done(0L)
     cv_plan_busy(list(gen = plan_env$gen, n = nrow(plan_env$rows)))
   }
@@ -3138,7 +3186,8 @@ server <- function(input, output, session) {
       datapath = as.character(f$datapath), kind = NA_character_,
       format = NA_character_, pages = NA_integer_, state = "checking",
       guess = NA_character_, runner_up = NA_character_, detail = NA_character_,
-      stringsAsFactors = FALSE)
+      key = NA_character_, key_hint = NA_character_, key_banks = NA_character_,
+      det_guess = NA_character_, stringsAsFactors = FALSE)
     cv_plan_picks(rep(NA_character_, nrow(f)))
     plan_start_check()
   }, ignoreNULL = FALSE)
@@ -3155,7 +3204,8 @@ server <- function(input, output, session) {
       rows <- plan_env$rows
       i <- plan_env$i + 1L
       if (!is.null(rows) && i <= nrow(rows)) {
-        id <- safe(identify_file(rows$datapath[i], plan_env$tset, rows$name[i]), NULL) %||%
+        id <- safe(identify_file(rows$datapath[i], plan_env$tset, rows$name[i],
+                                 learned = plan_env$learned), NULL) %||%
           list(state = "unreadable", kind = toupper(tools::file_ext(rows$name[i])))
         rows$kind[i]      <- as.character(id$kind %||% NA_character_)[1]
         rows$format[i]    <- as.character(id$format %||% NA_character_)[1]
@@ -3164,6 +3214,10 @@ server <- function(input, output, session) {
         rows$guess[i]     <- as.character(id$guess %||% NA_character_)[1]
         rows$runner_up[i] <- as.character(id$runner_up %||% NA_character_)[1]
         rows$detail[i]    <- as.character(id$detail %||% NA_character_)[1]
+        rows$key[i]       <- as.character(id$key %||% NA_character_)[1]
+        rows$key_hint[i]  <- as.character(id$key_hint %||% NA_character_)[1]
+        rows$key_banks[i] <- as.character(id$key_banks %||% NA_character_)[1]
+        rows$det_guess[i] <- as.character(id$det_guess %||% NA_character_)[1]
         plan_env$rows <- rows; plan_env$i <- i
         cv_plan_done(i)
       }
@@ -3195,11 +3249,19 @@ server <- function(input, output, session) {
 
   # plan_effective(p, picks) -> per row: "" = read it by detection, an id = read it
   # with exactly that template. Rule 1 and rule 2, in one place.
+  #
+  # A row whose suggestion was CHOSEN BEFORE (state "learned") is the exception to
+  # rule 1: detection would not pick that template -- that is why it was chosen --
+  # so left alone it is read with exactly that template, as the table shows.
   plan_effective <- function(p, picks) {
     n <- NROW(p$rows); length(picks) <- n
     vapply(seq_len(n), function(i) {
       v <- picks[i]; g <- p$rows$guess[i]
-      if (is.na(v) || !nzchar(v) || (!is.na(g) && identical(v, g))) "" else v
+      learned <- identical(p$rows$state[i], "learned") && !is.na(g)
+      if (is.na(v)) return(if (learned) g else "")
+      if (!nzchar(v)) return("")
+      if (!is.na(g) && identical(v, g)) return(if (learned) g else "")
+      v
     }, character(1))
   }
   # plan_expected(p, picks, tset) -> per row, the reading it will get: the template
@@ -3239,6 +3301,7 @@ server <- function(input, output, session) {
   # correct" -- and the words say exactly that.
   .PLAN_STATE <- list(
     sure        = c("plan-ok",   "Suggested"),
+    learned     = c("plan-ok",   "Chosen before"),
     close       = c("plan-warn", "Suggested - please check"),
     tie         = c("plan-warn", "Two fit - please check"),
     none        = c("plan-bad",  "No suggestion - please choose"),
@@ -3338,7 +3401,10 @@ server <- function(input, output, session) {
       # (a scan's is detected too -- while it converts; its chip and hover say so)
       first <- if (identical(r$state, "none")) "Choose a template\u2026" else "Detect automatically"
       sel <- if (!is.na(picks[i])) picks[i] else if (!is.na(r$guess)) r$guess else ""
-      mine <- nzchar(eff[i])
+      # "Your choice" means she changed it HERE; a choice remembered from before is
+      # its own chip ("Chosen before"), though both are read as chosen
+      mine <- if (identical(r$state, "learned")) !is.na(picks[i]) && !identical(picks[i], r$guess)
+              else nzchar(eff[i])
       # locked while a case converts: a choice made mid-run would apply to nothing
       ctl <- if (pickable && length(ch)) .plan_select(p$gen, i, ch, first, sel, r$name, locked = running)
              else if (pickable) span(class = "muted", "No template reads this kind of file yet")
@@ -3836,8 +3902,34 @@ server <- function(input, output, session) {
   # upload capture), shared by the Convert button and "Try it on a sample".
   # record = FALSE skips the Admin uploads capture (the bundled sample is not a
   # team statement to pick up).
+  # .learn_from(l, res, who) -- what this conversion teaches the memory (see
+  # R/learned.R). Only a conversion that read transactions teaches anything: a
+  # template forced onto a file it could not read is not a lesson.
+  #   read with a template detection would NOT pick -> remember it for this layout;
+  #   read with detection's own answer               -> forget any choice remembered
+  #     for this layout. She went back to what the wording says, and it worked, so
+  #     the old correction is wrong now -- left in place it would go on suggesting
+  #     the template she has just stopped using. (Measured: a Westpac file read
+  #     once with ASB's template, then switched back, kept suggesting ASB.)
+  .learn_from <- function(l, res, who) {
+    if (is.null(l) || is.null(res) || is.na(l$key %||% NA)) return(invisible(NULL))
+    if (!(as.character(res$status %||% "")[1] %in% c("ok", "needs_review"))) return(invisible(NULL))
+    if (!isTRUE(safe(.rows_of(res), 0L) > 0L)) return(invisible(NULL))
+    # left to detection with nothing to compare it to: detection's own result, not a
+    # correction -- nothing to learn
+    if (!nzchar(l$template %||% "") && is.na(l$det %||% NA)) return(invisible(NULL))
+    used <- if (nzchar(l$template %||% "")) l$template else as.character(res$template_id %||% NA)[1]
+    if (is.na(used) || !nzchar(used)) return(invisible(NULL))
+    if (!is.na(l$det %||% NA) && identical(used, l$det)) {
+      known <- safe(learned_load(LEARNED_PATH), NULL)
+      if (!is.null(known) && l$key %in% known$key) safe(learned_forget(LEARNED_PATH, l$key))
+      return(invisible(NULL))
+    }
+    safe(learned_record(LEARNED_PATH, l$key, used, format = l$format, hint = l$hint,
+                        banks = l$banks %||% "", by = who))
+  }
   run_conversion <- function(srcpath, name, record = TRUE, force_tpl = NULL,
-                             include_user = FALSE, upload_id = NULL) {
+                             include_user = FALSE, upload_id = NULL, learn = NULL) {
     if (.case_converting()) return(invisible(NULL))
     old <- isolate(cv_dir())
     sess <- tempfile("cv_")   # guaranteed-unique per session/process (no cross-user bleed)
@@ -3886,6 +3978,7 @@ server <- function(input, output, session) {
       finish = function(res) {
         # Complete the audit record with the attested vs detected identity split.
         stamp_identity(res$run_id %||% NA_character_)
+        .learn_from(learn, res, who)
         # Capture the upload + its outcome so a failed/abandoned new format is a
         # 2-second pickup in Admin -> Uploads (the file is saved for a safe re-audit).
         uid <- if (record) safe(record_upload(src, name = name, requested_by = who,
@@ -4037,7 +4130,7 @@ server <- function(input, output, session) {
   # rows whose reading changed, plan_again). Their copies are already in this case's
   # scratch folder and their outputs are written over in place; every other row
   # keeps its result and its files, and the new results are merged into the table.
-  run_batch <- function(files, forced = NULL, rows = NULL) {
+  run_batch <- function(files, forced = NULL, rows = NULL, learn = NULL) {
     if (.case_converting()) return(invisible(NULL))
     forced <- as.character(forced %||% rep(NA_character_, NROW(files)))
     b_old <- isolate(cv_batch())
@@ -4110,6 +4203,7 @@ server <- function(input, output, session) {
         for (i in seq_len(n)) {
           res <- b$result[[i]]
           stamp_identity(res$run_id %||% NA_character_)
+          if (length(learn) >= rows[i]) .learn_from(learn[[rows[i]]], res, who)
           b$upload_id[i] <- safe(record_upload(paths[i], name = nms[i], requested_by = who,
             status = res$status %||% "failed", run_id = res$run_id %||% NA_character_,
             template = res$template_id %||% NA_character_,
@@ -4333,9 +4427,18 @@ server <- function(input, output, session) {
       e[rows] <- plan_expected(p, picks, isolate(cv_pick_templates()))[rows]
       cv_plan_ran(list(gen = p$gen, expected = e))
     }
-    if (nrow(f) > 1L) run_batch(f, forced, rows = again)
+    # Every row's choice is offered to the memory (R/learned.R); .learn_from decides,
+    # once the conversion has produced transactions, whether it was a correction to
+    # remember or a return to detection's own answer that undoes an old one.
+    learn <- if (mine) lapply(seq_len(nrow(f)), function(i) {
+      k <- p$rows$key[i]
+      if (is.na(k)) return(NULL)
+      list(key = k, template = eff[i], det = p$rows$det_guess[i], format = p$rows$format[i],
+           hint = p$rows$key_hint[i], banks = p$rows$key_banks[i])
+    }) else NULL
+    if (nrow(f) > 1L) run_batch(f, forced, rows = again, learn = learn)
     else run_conversion(f$datapath[1], f$name[1],
-                        force_tpl = if (is.na(forced[1])) NULL else forced[1])
+                        force_tpl = if (is.na(forced[1])) NULL else forced[1], learn = learn[[1]])
   })
 
   # "Try it on a sample": convert the bundled specimen statement, so the very

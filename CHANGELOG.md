@@ -13,6 +13,38 @@ finding id.
 
 ---
 
+## 1.21.0
+
+**The tool learns from corrections.**
+
+When someone changes a suggested template on Convert and that conversion reads
+transactions, the choice is remembered for statements laid out the same way, and
+the next one is suggested that template — the row says *Chosen before*, and its
+hover says what the wording alone would have suggested.
+
+- **What "laid out the same way" means** (`R/learned.R`, `learned_key`): the file's
+  format, its layout signature (the column headings), and which *known* banks'
+  names are printed in its header or footer. The bank part is not optional: two
+  banks printing the same column headings share a layout signature — the collision
+  behind "33% auto-pick" — so keyed on that alone, one bank's correction would be
+  suggested for the other.
+- **Nothing about a customer is stored**: column headings, a bank name from the
+  template list, a hash. Tested: no customer word from the file reaches it.
+- **Only what worked is learned.** A template forced onto a file it could not read
+  teaches nothing. A layout switched back to what its wording suggests, and
+  converted, **forgets** the old choice (measured: a Westpac file read once with
+  ASB's template and then switched back kept suggesting ASB until this rule).
+- A remembered template that has been deleted, or cannot read that kind of file, is
+  not suggested. A row *Chosen before* and left alone is read with that template, so
+  the table and the conversion never disagree.
+- **Admin → Templates → Templates chosen before, by layout**: every remembered
+  choice (layout, bank printed, template, who, when, how often), with **Forget**.
+- Stored in `templates/statements_user/_learned_choices.json` (`paths.learned_choices`):
+  backed up with the templates built here and untouched by an update.
+- `tools/ui/check.mjs` now starts the app on a throwaway config (`BSO_CONFIG`), so a
+  check never writes into a real install's logs, uploads, feed or memory; it checks
+  the learn → Admin → Forget round trip (39 checks).
+
 ## 1.20.0
 
 **A case folder converts in front of you, file by file.**

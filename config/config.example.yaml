@@ -58,6 +58,9 @@ paths:
   uploads: uploads
   requests: requests
   logs: logs
+  # Templates chosen before, by layout (Admin -> Templates -> "Templates chosen before").
+  # Kept beside the templates built here, in the folder an update never replaces.
+  learned_choices: templates/statements_user/_learned_choices.json
 
 retention:
   # A copy of every converted statement is kept under uploads/<id>/ so a format

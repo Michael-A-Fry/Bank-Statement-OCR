@@ -23,6 +23,7 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   templates.R           load + validate declarative per-bank YAML templates
   detect.R              deterministic fingerprint scoring -> template match
   identify.R            the Convert table's row per file: its kind and the template detection will pick
+  learned.R             the template chosen for a layout before, remembered and suggested next time
   normalise.R           parse_date / parse_amount / clean_description (verbatim)
   labels.R              label dictionary + matcher (single labelled values)
   lexicon.R             externalised recognition vocabularies (admin-editable)

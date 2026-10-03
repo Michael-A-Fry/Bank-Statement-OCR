@@ -10,7 +10,7 @@ Five minutes, once a week, and before every update. It is a folder copy.
 
 | Path (inside the app folder) | What you lose without it |
 |---|---|
-| `templates\statements_user\` | Every layout your team taught the tool. Rebuilding one means finding the original statement again and redoing the whole toolkit session. **This is the accumulated value of the tool.** |
+| `templates\statements_user\` | Every layout your team taught the tool. Rebuilding one means finding the original statement again and redoing the whole toolkit session. **This is the accumulated value of the tool.** It also holds `_learned_choices.json`: which template the team chose for each layout (Admin → Templates → *Templates chosen before*). |
 | `templates\fields_user\` | The same, for form / IRD labelled-value templates. |
 | `templates\documents_user\` | The same, for the report / document pullers built on **Add a template → anything else** — the tables and figures somebody drew out of a report by hand. |
 | `dictionaries\` | `labels.yaml` + `lexicon.yaml` — every wording and marker taught in Admin. Losing these crashes nothing: statements that reconciled last week quietly stop reconciling, which is worse. |

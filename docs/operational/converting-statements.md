@@ -19,6 +19,7 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    | Chip | What it means | Do |
    |---|---|---|
    | **Suggested** | The wording on the file matches this template. | Check it, and carry on. |
+   | **Chosen before** | Someone chose this template for a statement laid out like this one before, and it converted. Hover to see what the wording alone would suggest. | Check it, and carry on. |
    | **Suggested - please check** / **Two fit - please check** | Another template fits nearly as well, or just as well. Left as it is, the result is held for a second look. | Check it is the right one. Change it if not. |
    | **No suggestion - please choose** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
    | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
