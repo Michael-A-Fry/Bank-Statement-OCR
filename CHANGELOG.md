@@ -13,6 +13,55 @@ finding id.
 
 ---
 
+## 1.12.0
+
+**The app crashed its session on every single page load, and nobody could see it.**
+
+One orphaned line sat at the top level of `server()` — `length(rb$tables) > 0L ||
+length(rb$pairs) > 0L`, debris from a deleted function; `rb$tables` and `rb$pairs`
+appear nowhere else in the file. Reading a `reactiveValues` field outside a reactive
+consumer is **fatal**, so the server body aborted there, `bank_choice()` (defined
+further down) never came into existence, and an observer above it failed too. The
+websocket closed ~300 ms after load, Shiny greyed the page out behind its
+disconnected overlay, and the "Working…" pill latched on because the last event was
+`shiny:busy` with no `shiny:idle` ever following.
+
+**Users saw a greyed-out screen that said "Working…" forever.** That is the whole UI.
+
+**Why 996 tests missed it.** Every app test reads `app.R` as *text*. Booting and
+checking for HTTP 200 does not catch it either — the HTTP response is the static
+page, and the server function does not run until a **websocket** opens.
+`shiny::testServer()` does not catch it (tried: MockShinySession evaluates the body
+inside a reactive context, so the error never fires). It took driving a real browser
+at the app with Playwright.
+
+Two guards now, and both were verified by re-introducing the bug:
+
+- **no statement at the top level of `server()` may discard its value.** A statement
+  whose head is an operator can only produce a value, and at statement level that
+  value goes nowhere. Harmless code never looks like that; orphaned code does.
+- the UI sweep itself is a documented dev procedure, because the static guard cannot
+  see everything a browser can.
+
+**Also found by the sweep, and fixed:**
+
+- **money was not formatted in the transactions table** — straight out of the CSV a
+  figure rendered as R printed it, so the same screen showed `-12.4`, `3120` and
+  `2,398.15`. The one column an analyst checks against the paper statement was the
+  one column that did not look like it. Now always to the cent, display only (the
+  CSV and XLSX keep the raw numeric, because a thousands separator in a
+  machine-readable export is how a figure stops being a number on the way into Qlik).
+- **the tagline still said "Statements and documents in"** — the tool has read bank
+  statements and nothing else since 1.9.0.
+
+**Confirmed working by driving it, not by reading it:** the click-and-drag column
+box persists after mouse-up (78×281px, stable past 3.5s) and labels itself "this
+whole column"; assigning a column updates the preview; conversion runs with a
+centred progress overlay and lands on the result card with downloads, KPI tiles and
+plain-English checks. Zero JavaScript errors on every route.
+
+Suite 71 files / 997 tests / 5,361 passing / 0 failed.
+
 ## 1.11.0
 
 **The tool no longer withholds readable text, and it is twice as fast.**

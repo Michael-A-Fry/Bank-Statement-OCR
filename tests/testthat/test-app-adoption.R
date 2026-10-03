@@ -341,6 +341,71 @@ test_that("no function name is defined in two files, and none twice in one file"
                  paste(twice, collapse = ", ")))
 })
 
+# ---------------------------------------------------------------------------
+# NO STATEMENT IN server() MAY THROW ITS VALUE AWAY.
+#
+# THE BUG THIS EXISTS FOR CRASHED EVERY SINGLE PAGE LOAD, and it had been doing so
+# for at least the length of a long session before anyone saw it. One orphaned line
+# sat at the top level of the server body:
+#
+#     length(rb$tables) > 0L || length(rb$pairs) > 0L
+#
+# Debris from a deleted function: `rb$tables` and `rb$pairs` appear nowhere else in
+# the file. Reading a reactiveValues field outside a reactive consumer is a FATAL
+# error, so the server body aborted there -- which also meant `bank_choice` (defined
+# further down) never came into existence, and an observer above it then failed too.
+# The websocket closed about 300ms after load and Shiny greyed the page out behind
+# its disconnected overlay, with the "Working..." pill latched on because the last
+# event anyone saw was `shiny:busy` and no `shiny:idle` ever followed.
+#
+# WHY NOTHING CAUGHT IT. Every app test in this suite reads app.R as TEXT. Booting
+# the app and checking for HTTP 200 does not catch it either: the HTTP response is
+# the static page, and the server function does not run until a WEBSOCKET session
+# opens. `shiny::testServer()` does not catch it either -- it was tried, and
+# MockShinySession evaluates the body inside a reactive context, so the error never
+# fires. It took driving a real browser at the app to see it.
+#
+# This guard is the part that can run anywhere, every time: a statement at the top
+# level of the server body whose head is an operator can only produce a value, and
+# at statement level that value goes nowhere. Harmless code never looks like this;
+# orphaned code does. Verified to catch the original line.
+.server_body_statements <- function(path) {
+  ex <- parse(path, keep.source = TRUE)
+  srv <- NULL
+  for (e in ex) {
+    if (is.call(e) && length(e) >= 3 && identical(as.character(e[[1]]), "<-") &&
+        identical(as.character(e[[2]]), "server") &&
+        is.call(e[[3]]) && identical(as.character(e[[3]][[1]]), "function")) {
+      srv <- e[[3]][[3]]; break
+    }
+  }
+  srv
+}
+
+test_that("no statement in server() is an expression whose value is discarded", {
+  srv <- .server_body_statements(file.path(engine_root(), "app.R"))
+  expect_false(is.null(srv), info = "server <- function(...) not found in app.R")
+  expect_true(is.call(srv) && identical(as.character(srv[[1]]), "{"))
+  stmts <- as.list(srv)[-1]
+  expect_gt(length(stmts), 50L)              # the scan must not go quiet
+  inert <- c("||", "&&", "|", "&", "==", "!=", "<", ">", "<=", ">=",
+             "+", "-", "*", "/", "^", "%%", "%in%", ":")
+  dead <- character(0)
+  for (s in stmts) {
+    if (is.symbol(s)) { dead <- c(dead, paste0("bare symbol `", as.character(s), "`")); next }
+    if (is.call(s)) {
+      fn <- tryCatch(as.character(s[[1]])[1], error = function(e) "")
+      if (fn %in% inert)
+        dead <- c(dead, paste(utils::head(deparse(s), 1), collapse = " "))
+    }
+  }
+  expect_identical(dead, character(0),
+    info = paste("statement(s) in server() that can only discard their value --",
+                 "orphaned code, and a reactive read among them is a FATAL that",
+                 "closes the session on every page load:",
+                 paste(dead, collapse = "; ")))
+})
+
 test_that("the loader really does source all of R/, which is what the guard assumes", {
   # The guard above is only worth having if its file list matches what actually runs.
   # app.R loads EVERY file in R/ in one line; if that ever becomes a hand-written list,

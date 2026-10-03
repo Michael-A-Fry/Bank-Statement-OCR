@@ -563,7 +563,7 @@ ui <- fluidPage(
   div(class = "app-header",
     span(class = "app-mark"),
     span(class = "app-title", "Statement Studio"),
-    span(class = "app-tagline", "Statements and documents in \u2014 clean, checked data out.")),
+    span(class = "app-tagline", "Bank statements in \u2014 clean, checked data out.")),
   tabsetPanel(
     id = "main_tabs", selected = "Convert",
     # ---- About: the "what is this and why can I rely on it" page - one promise,
@@ -2744,7 +2744,6 @@ server <- function(input, output, session) {
     # itself and stand down. The reconciliation has to run both ways round.
     brush_at = NULL,
     preview = NULL, outputs = character(0))
-    length(rb$tables) > 0L || length(rb$pairs) > 0L
 
   # ---- X-ray, shown inline on the Convert tab (no separate upload/section).
   # Derived from the conversion result: read the converted file with its matched
@@ -5067,8 +5066,23 @@ server <- function(input, output, session) {
     # `ocr_low_conf` and `date_year_inferred` in the cells of the table she is
     # checking figures in. Same map both tables use (ui_labels.R, FLAG_PLAIN).
     if ("flags" %in% names(df)) df$flags <- plain_flags(df$flags)
-    datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
-              options = list(pageLength = 10, scrollX = TRUE))
+    # MONEY IS SHOWN TO THE CENT, ALWAYS. Straight out of the CSV a figure renders
+    # as R printed it -- "-12.4", "3120", "2398.15" -- so the one column an analyst
+    # checks against the paper statement was the one column that did not look like
+    # the paper statement. Three different shapes for three amounts on the same
+    # screen is not a style complaint: it makes a line-by-line eyeball check slower
+    # and a transposed digit easier to miss.
+    #
+    # DISPLAY ONLY. The downloaded CSV/XLSX keep the unformatted numeric, because a
+    # thousands separator in a machine-readable export is how a figure stops being a
+    # number on the way into Qlik.
+    dt <- datatable(df, rownames = FALSE, colnames = cv_friendly_cols(names(df)),
+                    options = list(pageLength = 10, scrollX = TRUE))
+    money <- intersect(c("amount", "debit", "credit", "balance", "fee",
+                         "fx_amount", "running_balance"), names(df))
+    money <- money[vapply(df[money], is.numeric, logical(1))]
+    if (length(money)) dt <- DT::formatRound(dt, columns = money, digits = 2)
+    dt
   })
 
   # need_file(p) -- a download with nothing to give tells the user (a toast) and
