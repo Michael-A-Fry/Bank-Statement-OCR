@@ -1,5 +1,5 @@
 # gallery_dump.R -- for each case, record what the automatic reader picked
-# it picked (columns per page, roles), what it decided and why, which checks
+# (columns per page, roles), what it decided and why, which checks
 # failed, and where its figures differ from the answer key.
 #   Rscript tools/synth/gallery_dump.R <engine_dir> <cases.tsv> <out_dir>
 # cases.tsv: case, set, kind, path, cache (a saved read_input() .rds, or empty).
