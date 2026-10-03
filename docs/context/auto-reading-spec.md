@@ -271,3 +271,75 @@ as test material if useful). Most tests built around templates are rewritten.
   numbers are usually visible, and one or two of the bad cases seen in use.
   They make the test sets look like the real ones.
 * Approval of this specification, which starts the build.
+
+---
+
+## Appendix A. Internal contracts (for the build)
+
+These are the shapes the parts agree on, so they can be built in parallel. A
+template list in today's schema stays the in-memory form of a layout: the
+table reader, reconciliation and outputs keep working on it unchanged.
+
+### A1. The reader -- `R/auto_read.R`
+
+`auto_read(input, layouts = list(), bank = NULL, opts = list())` -> a *reading*:
+
+| Field | Meaning |
+|---|---|
+| `outcome` | `"proven"`, `"layout_match"`, `"check"` or `"unread"` (section 4) |
+| `why` | one plain sentence a person reads |
+| `template` | the candidate that produced the result, as a template list (format pdf / delimited / excel), with `table$columns` and, for PDFs, `table$columns_by_page` (one column list per page, NULL for pages with no table). Carries `signature` (A3). |
+| `parsed`, `recon` | `parse_statement()` and `reconcile()` output for that candidate |
+| `transactions` | `parsed$transactions` (columns include `date` ISO and signed `amount`) |
+| `proof` | `kind` (`chain`, `totals`, `layout`, `none`), `links`, `held`, `unique`, `pages_with_rows`, `pages_used`, `derived` (count of amounts filled from the balance) |
+| `checks` | data.frame(check, ok, why): every hard check of step 8 |
+| `candidates` | data.frame(source, passed, why): `content`, `layout:<id>@<version>`, `repair:<step>` |
+| `columns` | data.frame(page, field, kind, x_min, x_max, ink_min, ink_max, heading): what was found, for the screens and tracking |
+| `matched_layout` | `"<id>@<version>"` of the bank layout the reading matched, or NULL |
+
+`parse_pdf_table()` gains one thing: when `template$table$columns_by_page[[p]]`
+exists it is used for page p instead of `table$columns`. Nothing else about the
+reader changes.
+
+Rules: deterministic; never throws (an error becomes `unread` with the reason);
+"proven" only when every check in step 8 passes and the reading is unique;
+derived amounts force `check`; a page with transaction-shaped lines that
+contributed no rows forces `check`.
+
+### A2. Bank identity -- `R/bank_identity.R`
+
+`bank_identify(input)` -> `list(institution, bank_code, confidence = high |
+medium | low | unknown, why, evidence = data.frame(kind, institution, strength,
+zone))`. Never returns or stores an account number. Data shipped with the tool:
+`data/nz_bank_branches.csv` (bank_code, branch, institution) from the Payments NZ
+register, and `data/nz_banks.yaml` (institution, display name, legal names
+current and former, domains, phone numbers, SWIFT, brand words, agency family).
+`bank_pick(identified, chosen)` -> what to use and whether learning is blocked.
+
+### A3. Layouts -- `R/layouts.R`
+
+A layout is a template list plus a `layout` block: `bank`, `status`
+(provisional / proven / retired), `version`, `created`, `proved_by` (sha256 of
+each statement that proved it), `origin` (auto / confirmed / corrected),
+`signature` (kind, roles in order, date format, money style, balance frequency,
+heading tokens, producer, relative column positions). Stored at
+`<paths$layouts>/<bank_slug>/<id>@v<version>.yaml`; a change writes a new
+version, never edits one. Retiring keeps the file.
+
+`layouts_load(dir, bank = NULL)`, `layout_match(signature, layouts)`,
+`layout_learn(reading, bank, file_sha, dir)` -> action (`created`,
+`evidence_added`, `promoted`, `none`), `layout_confirm()`, `layout_retire()`,
+`layouts_state_id(dir)` -> the learned-state version stamped on every output.
+
+### A4. Tracking -- `R/tracking.R`
+
+`track_record(fields, path)` writes one JSON line through an allowlist of named,
+typed fields (no free text); `track_summary(path)` -> counts for the Admin page
+and the carry-off summary.
+
+### A5. Measuring -- `tools/synth/score_auto.R`
+
+Fixed before the reader exists. Outcome matrix per statement: `auto_right`,
+`AUTO_WRONG` (must be zero), `check_right`, `check_wrong`, `unread`. Modes:
+`cold` (nothing learned) and `trained` (bank by bank, proven layouts handed
+forward).
