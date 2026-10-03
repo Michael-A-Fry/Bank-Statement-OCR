@@ -13,6 +13,17 @@ finding id.
 
 ---
 
+## 1.23.1
+
+- A file the Convert table cannot open says why on hover ("This PDF could not be
+  opened - it may be damaged, password-protected, or not really a PDF") instead of
+  nothing; the engine's own lower-case reasons are shown as sentences.
+- About: step two is "Suggest — each file is shown with the template we suggest;
+  check it, change it if it is wrong", not "matched automatically".
+- Measured at the 50-file limit: the table fills in 3.8 s, the case converts in 15 s
+  with rows updating as it goes, a row opens in 0.8 s, no errors. An Excel export,
+  an empty CSV and an upper-case `.PDF` all identify as their conversion reads them.
+
 ## 1.23.0
 
 **A converting case can be stopped.**

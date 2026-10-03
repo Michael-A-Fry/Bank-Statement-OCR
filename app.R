@@ -3429,7 +3429,9 @@ server <- function(input, output, session) {
     if (identical(r$state, "scanned") && is.na(r$detail))
       return(paste("This file is a picture of a statement. Its text only exists once it",
                    "has been read as a picture, so its template is found while it converts."))
-    if (!is.na(r$detail)) r$detail else NULL
+    # the engine's own reasons start lower-case ("this file is empty - ..."); a hover
+    # is a sentence
+    if (!is.na(r$detail)) paste0(toupper(substr(r$detail, 1, 1)), substring(r$detail, 2)) else NULL
   }
 
   # .plan_select(gen, i, choices, first, selected, name) -- the row's dropdown: a

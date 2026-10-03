@@ -67,7 +67,11 @@ identify_file <- function(path, templates, name = basename(path), learned = NULL
 
   input <- if (identical(out$format, "pdf")) {
     tx <- safe(suppressMessages(pdftools::pdf_text(path)), NULL)
-    if (is.null(tx) || !length(tx)) { out$state <- "unreadable"; return(out) }
+    if (is.null(tx) || !length(tx)) {
+      out$state <- "unreadable"
+      out$detail <- "This PDF could not be opened - it may be damaged, password-protected, or not really a PDF."
+      return(out)
+    }
     out$pages <- length(tx)
     chars <- nchar(gsub("[[:space:]]", "", paste(tx, collapse = ""), useBytes = TRUE),
                    type = "bytes")
@@ -83,7 +87,11 @@ identify_file <- function(path, templates, name = basename(path), learned = NULL
   } else {
     safe(read_input(path), NULL)
   }
-  if (is.null(input)) { out$state <- "unreadable"; return(out) }
+  if (is.null(input)) {
+    out$state <- "unreadable"
+    out$detail <- "This file could not be opened - it may be damaged, or not really the type its name says."
+    return(out)
+  }
   # The conversion refuses some files BEFORE detection (a CSV with no table in it,
   # an empty workbook). Saying "matched BNZ" about one of those would be the table
   # promising a conversion that is never going to happen -- measured on two of the

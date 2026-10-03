@@ -78,7 +78,10 @@ test_that("a file the conversion would refuse is never promised a template", {
   expect_match(r$messages, id$detail, fixed = TRUE)
   # a damaged PDF
   junk <- tempfile(fileext = ".pdf"); writeBin(as.raw(sample(0:255, 500, TRUE)), junk)
-  expect_identical(identify_file(junk, ts, "junk.pdf")$state, "unreadable")
+  jk <- identify_file(junk, ts, "junk.pdf")
+  expect_identical(jk$state, "unreadable")
+  # ...and says why, so its row's hover is not empty
+  expect_match(jk$detail, "could not be opened", fixed = TRUE)
   # a missing file
   expect_identical(identify_file(file.path(tempdir(), "gone.pdf"), ts, "gone.pdf")$state, "unreadable")
 })
