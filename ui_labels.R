@@ -65,9 +65,7 @@ CHECK_PLAIN <- c(
   dates_readable             = "Row dates could be read",
   account_number             = "Account number is a well-formed NZ account number",
   no_unparsed_rows           = "No row failed to read",
-  redaction_summary          = "Redactions found",
-  ocr_confidence             = "Scan / OCR read quality",
-  redaction_scan             = "Nothing hidden under a redaction was read")
+  ocr_confidence             = "Scan / OCR read quality")
 # plain_check(names) -- CHECK_PLAIN, but aware of auto-split. An auto-split run
 # tags every KPI "<name> [statement 2]", which matches nothing in the map, so a
 # split bundle showed RAW CODES for every check on the page. Strip the tag, look
@@ -122,7 +120,7 @@ RESULT_PLAIN <- c(pass = "OK", fail = "Problem", na = "could not be checked")
 # engine without the suite saying so -- and app.R still prefers a real
 # `informational` column if the engine ever starts exposing one.
 RESULT_PLAIN_INFO <- "for information"
-INFORMATIONAL_CHECKS <- c("redaction_summary", "ocr_confidence")
+INFORMATIONAL_CHECKS <- c("ocr_confidence")
 # Diagnostics 'category' codes -> plain words for the customer-facing table
 # (the codes themselves stay in the logs / workbook Diagnostics sheet). ONE entry
 # per category the engine can raise -- the authoritative set is .DIAG_FIX_OWNER
@@ -162,8 +160,6 @@ DIAG_PLAIN <- c(
   # happened - on the one line a forensic accountant acts on.
   amount_direction        = "money in / out may be the wrong way round",
   completeness_unverified = "completeness not auto-verified",
-  redaction               = "redactions found and kept",
-  redaction_unverified    = "hidden text could not be checked",
   low_ocr_confidence      = "scan read with low confidence",
   ocr                     = "page(s) machine-read (OCR)",
   ocr_confidence_unknown  = "scan quality unknown",
@@ -221,7 +217,6 @@ diag_for_route <- function(d) {
 # Each says what is TRUE of the row, never what to do about it: the row is one
 # cell wide, and the advice belongs to the check or diagnostic that owns it.
 FLAG_PLAIN <- c(
-  redacted           = "hidden on the statement - no value was derived",
   amount_from_balance = "worked out from the balance column, not read from the amount",
   malformed          = "the amount could not be read as a number",
   fx                 = "carries a foreign-currency amount",

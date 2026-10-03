@@ -41,7 +41,7 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
         pages = NA_integer_, detected = FALSE, template = NA_character_, bank = NA_character_,
         status = "unreadable", n_rows = 0L,
         n_periods = NA, n_accounts = NA,
-        redacted = 0L, amount_style = NA_character_, date_format = NA_character_,
+        amount_style = NA_character_, date_format = NA_character_,
         trust = NA_character_, signature = NA_character_, layout_hint = "",
         stringsAsFactors = FALSE)
       next
@@ -81,7 +81,6 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
       bank = bank_v, status = status,
       n_rows = if (!is.null(parsed)) nrow(parsed$transactions) else 0L,
       n_periods = meta$n_periods %||% NA, n_accounts = meta$n_accounts %||% NA,
-      redacted = sum(input$meta$redactions$redacted_words %||% 0L),
       amount_style = amt_style, date_format = dt_fmt,
       trust = if (!is.null(recon)) recon$trust$level else NA_character_,
       signature = sig,
@@ -131,7 +130,6 @@ batch_audit <- function(paths, templates = NULL, max_recommendations = 8L) {
     date_formats = tallyNA(per$date_format),
     banks = tallyNA(per$bank),
     scanned = sum(grepl("scanned", per$kind)),
-    with_redactions = sum(per$redacted > 0, na.rm = TRUE),
     multi_account = sum(per$n_accounts > 1, na.rm = TRUE),
     multi_period = sum(per$n_periods > 1, na.rm = TRUE),
     unsupported = nrow(uns), distinct_gap_layouts = nrow(clusters))
@@ -147,8 +145,8 @@ format_batch_audit <- function(b) {
   add(sprintf("**%d statements.** Status: %s.", g$total,
       paste(sprintf("%s=%s", names(g$by_status), g$by_status), collapse = ", ")))
   add(sprintf("Kinds: %s.", paste(sprintf("%s=%s", names(g$by_kind), g$by_kind), collapse = ", ")))
-  add(sprintf("Scanned (OCR): %d &middot; with redactions: %d &middot; multi-account: %d &middot; multi-period: %d",
-      g$scanned, g$with_redactions, g$multi_account, g$multi_period))
+  add(sprintf("Scanned (OCR): %d &middot; multi-account: %d &middot; multi-period: %d",
+      g$scanned, g$multi_account, g$multi_period))
   add("\n## What's already covered")
   add(sprintf("- amount styles seen: %s", paste(sprintf("%s(%s)", names(g$amount_styles), g$amount_styles), collapse = ", ")))
   add(sprintf("- date formats seen: %s", paste(sprintf("%s(%s)", names(g$date_formats), g$date_formats), collapse = ", ")))

@@ -56,47 +56,13 @@ PARAM_MAX_PAGES   <- 100L         # above this a conversion is worth warning abo
 # Seconds per page, MEASURED at 1.10.0 on this build (tools/synth/bench.R and a
 # rasterised 3-page specimen). The two differ by 55x, which is the whole reason the
 # estimate exists: a long DIGITAL statement is a non-event, a long SCAN is an hour.
-#   digital: 400 pages / 12,000 rows in 69.5s, flat at 0.17 s/page
+#   digital: 400 pages / 12,000 rows in 37.6s, flat at 0.09 s/page
 #   scanned: 3 pages in 27.8s, 9.3 s/page, and tesseract dominates it
 # Re-measure after any change to reading or parsing; the figures are in
 # docs/operational/maintaining-the-engine.md.
-PARAM_SECS_PER_PAGE      <- 0.17
+PARAM_SECS_PER_PAGE      <- 0.09
 PARAM_SECS_PER_SCAN_PAGE <- 9.3
 PARAM_MAX_PAGE_PT <- 2880         # a page dimension over this (40 in) can break render/OCR
-
-# ---- redaction detection ---------------------------------------------------
-# The occlusion scan renders each page to greyscale, calls a pixel "dark" below
-# DARK_LEVEL (0 black .. 255 white), then flags a word whose box is OCC_THRESH-or-
-# more filled with dark pixels as drawn-over. Together they decide "is this word
-# hidden under a box?"; VECTOR_DPI is the render resolution for that scan.
-PARAM_REDACT_DARK_LEVEL <- 60L    # greyscale value below which a pixel counts as dark
-PARAM_REDACT_OCC_THRESH <- 0.70   # a word box at/above this dark-fill is occluded
-# Render dpi for the digital vector-box scan. 100 is ~2x faster than 150 on the
-# cold read and measured-equivalent for detection: a solid redaction box reads a
-# dark-fill of 1.0 at any dpi (huge margin over the 0.70 gate), and the highest
-# fill among VISIBLE words stays well under it (anti-aliasing lightens thin glyph
-# strokes slightly MORE at lower dpi, so the false-positive margin is preserved).
-# Don't drop below ~72 without re-checking the small-redaction (min_area_pt) margin.
-PARAM_REDACT_VECTOR_DPI <- 100L   # render dpi for the digital vector-box scan
-# A WORD UNDER AN OPAQUE BOX IS FLAT, WHATEVER COLOUR THE BOX IS. The dark-pixel
-# test above asks "is this word black"; this one asks "can this word still be SEEN",
-# which is the question that actually matters and the one a darkness test gets wrong
-# in a specific and common way: a WHITE box over live text hides it completely and
-# is not dark. Measured on a specimen with the same account number covered four ways
-# -- black, white, grey, yellow -- the darkness test flagged the black box and
-# MISSED the other three, all of which hide the number entirely.
-#
-# Visible text is dark strokes on a lighter ground, so the greyscale range inside
-# its box is wide. A word under an opaque fill of any colour is a flat patch and its
-# range collapses. Below this value the word is treated as hidden.
-#
-# THE NUMBER COMES FROM MEASUREMENT, with a wide margin either side:
-#   covered words (all four colours) ........  0
-#   lowest VISIBLE word on a real statement .. 23  (a huge watermark word box)
-#   lowest visible across the shipped PDF fixtures . 247
-# 16 sits clear of both. Too high and a faint watermark is called a redaction,
-# withholding legible text -- the opposite failure, and just as bad.
-PARAM_REDACT_FLAT_SPREAD <- 16L
 
 # .plausible_year(y) -- is a 4-digit year within the trusted window? Vectorised.
 .plausible_year <- function(y) {
@@ -126,9 +92,16 @@ PARAM_REDACT_FLAT_SPREAD <- 16L
 # both stay in step. (Order matters: earlier formats win on an ambiguous 2-digit
 # year, so keep the sequence as-is.)
 .plausible_period_date <- function(s) {
+  # LENGTH ONE, OR NOTHING. A NULL or empty `s` made as.Date() return Date(0), so
+  # `!is.na(d)` was logical(0), `&&` folded that to NA, and `if (NA)` threw "missing
+  # value where TRUE/FALSE needed" -- from inside a date helper, three frames below a
+  # metadata read that had quietly failed. The guard costs one line and the error it
+  # replaces cost an hour.
+  s <- as.character(s %||% NA)
+  if (length(s) != 1L || is.na(s) || !nzchar(trimws(s))) return(as.Date(NA))
   for (f in c("%d %b %Y", "%d %B %Y", "%d %b %y", "%d %B %y",
               "%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")) {
-    d <- suppressWarnings(as.Date(s, f))
+    d <- suppressWarnings(as.Date(trimws(s), f))
     if (!is.na(d) && .plausible_year(format(d, "%Y"))) return(d)
   }
   as.Date(NA)

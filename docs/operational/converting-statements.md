@@ -124,10 +124,9 @@ The Result column says one of four things, and the fourth is the one people miss
   opening balance printed, no running-balance column, no statement period, no
   independent source-line count. This is not an error and not a pass; it is an
   absence of proof, and it is why the confidence level is capped at medium.
-- **for information** — the row is a **count**, not a verdict. Two checks are
-  like this: *Redactions found* (how many rows carried a redaction) and *Scan /
-  OCR read quality* (how many pages were machine-read, and the worst page's
-  confidence). There is nothing for them to pass or fail, so they are never
+- **for information** — the row is a **count**, not a verdict. One check is like
+  this: *Scan / OCR read quality* (how many pages were machine-read, and the worst
+  page's confidence). There is nothing for it to pass or fail, so it is never
   dressed as a pass — and never as a failure to run either, which is what they
   used to read as on a statement that really had been OCR'd.
 
@@ -194,7 +193,7 @@ merely-uncomplaining *medium* ones without opening any of them.
   Green rows were kept; amber dashed rows were skipped but look like
   transactions. A page with a lot of amber is a template with a band in the wrong
   place.
-- Nobody sees anyone else's upload or result. The tool never un-redacts: it reads
+- Nobody sees anyone else's upload or result. The tool reads
   only what is visible and never derives a hidden value.
 
 Something looks wrong → [when-something-goes-wrong.md](when-something-goes-wrong.md).

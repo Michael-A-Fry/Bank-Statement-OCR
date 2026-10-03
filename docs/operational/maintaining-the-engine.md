@@ -20,7 +20,7 @@ and it is what tells you whether a change is allowed.
 ## 1. Run the test suite on the server
 
 The suite is the guarantee. Green means the engine still honours every promise:
-verbatim descriptions, honoured redactions, no silent drops, and every shipped
+verbatim descriptions, no silent drops, and every shipped
 template still parsing its golden file. Run it after **any** change to `R\`,
 `templates\` or the dictionaries, and after every update.
 
@@ -73,7 +73,7 @@ skipped: 0
   unless scope was deliberately removed, which is what happened at 1.9.0 and is
   the only reason the figures below are lower than 1.8.1's.
 
-The last full run measured **73 files, 1,023 tests, 5,479 passing assertions,
+The last full run measured **71 files, 996 tests, 5,356 passing assertions,
 0 failed, 0 errors** — taken on 2026-10-02, at `VERSION` 1.10.0, on R 4.3.3,
 with 1 skipped: one split test needs a Westpac bundle that lives in
 `samples/_private_staging/` and is deliberately not committed. Treat it as a
@@ -92,10 +92,10 @@ statements that reconcile exactly — `tools/synth/make_bench.py` draws them,
 
 | pages | rows | total | per page | peak extra memory | wrong figures |
 |---|---|---|---|---|---|
-| 30 | 900 | 10.7 s | 0.36 s | ~6 MB | 0 |
-| 100 | 3,000 | 17.0 s | 0.17 s | ~2 MB | 0 |
-| 200 | 6,000 | 33.6 s | 0.17 s | ~3 MB | 0 |
-| 400 | 12,000 | 69.5 s | 0.17 s | ~16 MB | 0 |
+| 30 | 900 | 5.7 s | 0.19 s | ~6 MB | 0 |
+| 100 | 3,000 | 10.2 s | 0.10 s | ~2 MB | 0 |
+| 200 | 6,000 | 18.8 s | 0.09 s | ~2 MB | 0 |
+| 400 | 12,000 | 37.6 s | 0.09 s | ~5 MB | 0 |
 
 **It is linear in pages and flat per page**, which is the property that matters: a
 statement twice the size takes twice as long and no more. Memory is negligible, so
@@ -158,6 +158,11 @@ Re-run the benchmark after any change to reading, parsing or the diagnostics, an
 compare against the table. Two of the four stages were rewritten on the strength of
 it: the sign scan was reading the whole document once per call, and the drift check
 was 46% of a 100-page conversion before it was capped to eight sampled pages.
+
+**They fell again at 1.11.0, and that is also correct.** The redaction-suppression
+machinery was deleted — nothing withholds readable text any more — so two test files
+and about twenty-five test blocks went with it, along with two KPIs and two
+diagnostics. Nothing stopped running that still has code behind it.
 
 **The figures fell between 1.8.1 and 1.9.0, and that is correct.** 1.9.0 removed
 the form (`mode: fields`) and report (`mode: document`) routes entirely — the

@@ -800,10 +800,9 @@ ui <- fluidPage(
                       checkboxGroupInput("ix_layers", "Show on the page",
                         choices = c("Columns" = "cols", "Kept transaction rows" = "kept",
                                     stats::setNames("skipped", UNREAD_ROW_PLAIN_LAYER),
-                                    "Redactions" = "redact",
                                     "Balances / dates / account" = "meta",
                                     "Faint box on every word" = "words"),
-                        selected = c("cols", "kept", "skipped", "redact", "meta", "words"),
+                        selected = c("cols", "kept", "skipped", "meta", "words"),
                         inline = TRUE))),
                   plotOutput("ix_plot", height = "640px"),
                   uiOutput("ix_legend"),
@@ -1306,7 +1305,7 @@ ui <- fluidPage(
               helpText(HTML(paste0(
                 "Every conversion can save a rich, structured record of <b>how it went</b> ",
                 "(the layout it matched, how cleanly it parsed, detection scores, ",
-                "reconciliation outcomes, OCR / redaction signals). It is stored on <b>this ",
+                "reconciliation outcomes, OCR signals). It is stored on <b>this ",
                 "machine only</b> under <code>logs/metadata/</code>, kept forever, and ",
                 "<b>never enters the Qlik feed</b>. <b>No statement content is stored</b> - ",
                 "only structure, counts and quality signals; any account number is stored ",
@@ -1339,7 +1338,7 @@ ui <- fluidPage(
                       # helpText at the top of this same disclosure already states:
                       # stored on this machine only, no statement content stored,
                       # account numbers hashed. (Words sweep, cut 37.)
-                      "redaction detail, and timing."))))))
+                      "and timing."))))))
           )
         )
       )
@@ -2016,7 +2015,6 @@ server <- function(input, output, session) {
     "the heading of a money-OUT column"              = "amount_style_debit_headers",
     "the heading of a money-IN column"               = "amount_style_credit_headers",
     "the balance is overdrawn"                       = "overdrawn_markers",
-    "a value has been redacted / blacked out"        = "redaction_markers",
     "a word that appears in a table's heading row"   = "header_keywords",
     "a bank or brand name, not a customer's name"    = "fingerprint_brand_words")
   output$adm_word_kind_ui <- renderUI({
@@ -2066,7 +2064,7 @@ server <- function(input, output, session) {
   # nothing on screen resolving it. The level decides; every category is captured
   # within it, which is exactly what the built-in default has always been.
   .ADM_META_CATS <- c("layout", "parse_quality", "detection", "reconciliation",
-                      "multi_statement", "novelty", "template_hints", "ocr", "redaction")
+                      "multi_statement", "novelty", "template_hints", "ocr")
   observeEvent(input$adm_meta_save, {
     req(admin_ok())
     lvl <- input$adm_meta_level %||% "full"
@@ -2272,8 +2270,8 @@ server <- function(input, output, session) {
     tagList(
       p(strong(sprintf("%d statements: ", g$total)),
         paste(sprintf("%s=%s", names(g$by_status), g$by_status), collapse = ", ")),
-      p(sprintf("scanned %d \u00b7 with redactions %d \u00b7 multi-account %d \u00b7 multi-period %d \u00b7 unsupported %d across %d layouts",
-        g$scanned, g$with_redactions, g$multi_account, g$multi_period, g$unsupported, g$distinct_gap_layouts)),
+      p(sprintf("scanned %d \u00b7 multi-account %d \u00b7 multi-period %d \u00b7 unsupported %d across %d layouts",
+        g$scanned, g$multi_account, g$multi_period, g$unsupported, g$distinct_gap_layouts)),
       p(class = "muted", sprintf("amount styles: %s | date formats: %s | banks: %s",
         none(g$amount_styles), none(g$date_formats), none(g$banks))))
   })
@@ -2287,7 +2285,7 @@ server <- function(input, output, session) {
                             pageLength = 10, dom = "tp"), rownames = FALSE)
   output$adm_ba_files_tbl <- renderDT({
     b <- adm_ba(); req(b)
-    b$per_file[, c("idx", "kind", "status", "template", "bank", "n_rows", "redacted", "amount_style", "date_format", "trust")]
+    b$per_file[, c("idx", "kind", "status", "template", "bank", "n_rows", "amount_style", "date_format", "trust")]
   }, options = list(pageLength = 15, dom = "tip"), rownames = FALSE)
   output$adm_ba_recs <- renderUI({
     b <- adm_ba(); if (is.null(b) || !length(b$recommendations))
@@ -2842,7 +2840,7 @@ server <- function(input, output, session) {
   ix_layers_now <- reactive({
     v <- input$ix_layers
     if (is.null(v)) return(if (isTRUE(ix_layers_bound())) character(0)
-                           else c("cols", "kept", "skipped", "redact", "meta", "words"))
+                           else c("cols", "kept", "skipped", "meta", "words"))
     as.character(v)
   })
   # .ix_unread(rows) -- of a page's visual rows, which ones LOOK like transactions
@@ -2901,7 +2899,6 @@ server <- function(input, output, session) {
        any(vapply(P$bands, function(b) !is.null(b$x_min) && !is.null(b$x_max), logical(1))))
     n_kept <- sum(rows$kept %in% TRUE)
     n_skip <- sum(.ix_unread(rows))
-    has_red <- any(w$redacted %in% TRUE)
     ml <- if (!is.null(st$meta_loc)) st$meta_loc[[ix_page_now()]] else NULL
     has_meta <- (!is.null(ml) && any(ml$found %in% TRUE)) || length(P$meta_regions %||% list()) > 0
     tagList(strong("Legend"),
@@ -2911,7 +2908,6 @@ server <- function(input, output, session) {
       if ("kept" %in% layers && n_kept > 0) sw(PALETTE$ok, "transaction row (kept)"),
       if ("skipped" %in% layers && n_skip > 0) sw(PALETTE$warn, UNREAD_ROW_PLAIN_KEY, dashed = TRUE),
       if ("meta" %in% layers && has_meta) sw(PALETTE$meta, "balance / account details"),
-      if ("redact" %in% layers && has_red) sw(PALETTE$bad, "redaction (not read)", fill = pal_fill("bad", "22")),
       if (has_ocr) sw(PALETTE$warn, "machine-read word the tool is unsure about - double-check it",
                       fill = pal_fill("warn", "40")))
   })
@@ -2951,11 +2947,6 @@ server <- function(input, output, session) {
       sel <- w[!is.na(w$column), , drop = FALSE]
       if (nrow(sel)) rect(sel$x, sel$y, sel$x + sel$width, sel$y + sel$height,
                           border = pal[sel$column], lwd = 1.3)
-    }
-    if ("redact" %in% layers) {
-      red <- w[w$redacted %in% TRUE, , drop = FALSE]
-      if (nrow(red)) rect(red$x, red$y, red$x + red$width, red$y + red$height,
-                          border = PALETTE$bad, col = pal_fill("bad", "22"), lwd = 1)
     }
     if ("cols" %in% layers) for (nm in names(P$bands)) { b <- P$bands[[nm]]
       if (!is.null(b$x_min) && !is.null(b$x_max)) {
@@ -4635,9 +4626,6 @@ server <- function(input, output, session) {
     # Both counts are in it. (Words sweep, cut 13.)
     k <- res$kpis
     if (!is.null(k) && "name" %in% names(k)) {
-      nred <- suppressWarnings(as.integer(k$actual[k$name == "redaction_summary"][1]))
-      if (isTRUE(nred > 0)) chips <- c(chips, list(chip(
-        sprintf("%d redacted row(s) honoured - hidden values stay hidden", nred))))
     }
     if (length(cv_forced())) chips <- c(chips, list(chip(
       sprintf("%d row(s) added by hand - flagged 'forced' in the output", length(cv_forced())),

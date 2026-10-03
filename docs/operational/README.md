@@ -55,7 +55,7 @@ The things that change live in **data and config, not code**.
 | A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Templates → Words the tool looks for** |
 | A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Templates → Words the tool knows to look for** |
 | A deployment setting (port, admin password, the Qlik feed gate, paths) | `config\config.yaml` | admin — annotated example in `config\config.example.yaml` |
-| A numeric engine threshold (year window, OCR DPI, row tolerance, redaction darkness) | `R\params.R` | maintainer — [../context/engine-parameters.md](../context/engine-parameters.md) |
+| A numeric engine threshold (year window, OCR DPI, row tolerance, seconds per page) | `R\params.R` | maintainer — [../context/engine-parameters.md](../context/engine-parameters.md) |
 
 The first three need no code and are done in the running app. Which tier to use,
 and why, is in [admin-and-maintenance.md](admin-and-maintenance.md).

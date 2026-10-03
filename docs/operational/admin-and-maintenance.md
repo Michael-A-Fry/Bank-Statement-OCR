@@ -123,7 +123,7 @@ tiers with a clear precedence: **template > lexicon > built-in default.**
 | Tier | Holds | Where | Edited in |
 |---|---|---|---|
 | **Template** | facts about one bank — its columns, date format, fingerprint, its debit marker | `templates\*.yaml` | the toolkit ([adding-a-bank-template.md](adding-a-bank-template.md)) |
-| **Lexicon** | the generic vocabulary the engine *tries* when detecting, drafting and parsing — debit/credit markers, money and date shapes, summary-line labels, redaction markers | `dictionaries\lexicon.yaml` | **Admin → Templates → Words the tool knows to look for** |
+| **Lexicon** | the generic vocabulary the engine *tries* when detecting, drafting and parsing — debit/credit markers, money and date shapes, summary-line labels | `dictionaries\lexicon.yaml` | **Admin → Templates → Words the tool knows to look for** |
 | **Label dictionary** | the wordings for single labelled values — "opening balance" vs "balance brought forward" vs "starting balance" | `dictionaries\labels.yaml` | **Admin → Templates → Words the tool looks for** |
 | **Built-in defaults** | what ships in code; the lexicon falls back to these | `R/lexicon.R` | maintainer only |
 

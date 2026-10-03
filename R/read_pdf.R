@@ -1,130 +1,20 @@
-# read_pdf.R -- PDF text + word-box reader (pdftools) with a forensic redaction
-# guard. Extraction only: this surfaces page text, positioned word boxes, and
-# detected sections. Full per-bank PDF transaction-table parsing is future work.
+# read_pdf.R -- PDF text + word-box reader (pdftools + poppler). Extraction only:
+# page text, positioned word boxes, detected sections, and the signs that are drawn
+# on the page rather than printed in the text layer.
 #
-# FORENSIC RULE (build-contract section 11.2): text hidden under a redaction
-# overlay must NEVER be emitted. Any word covered by a redaction -- whether the
-# source already carries a redaction marker in its text layer, or a rectangle
-# overlay sits on top of it -- is replaced by REDACTED_TOKEN and its underlying
-# text is discarded before anything leaves this module. Over-redaction (dropping
-# a word on any overlap) is the deliberate, safe failure mode.
-
-# Reuse the canonical token from parse.R when co-sourced; fall back otherwise so
-# this file is usable on its own.
-if (!exists("REDACTION_TOKEN")) REDACTION_TOKEN <- "[REDACTED]"
-
-# ---------------------------------------------------------------------------
-# Redaction markers already present in the text layer.
+# IT DOES NOT WITHHOLD ANYTHING. There was a redaction guard here that replaced any
+# word it judged hidden -- by marker glyph, by a supplied rectangle, or by
+# rasterising the page and testing whether the word came out solid -- with a
+# "[REDACTED]" token, discarding the real text before anything downstream saw it.
+# It is gone. This tool reads a document it has been given; whether the sender
+# redacted it competently is not its problem, and an analyst who can see a figure in
+# a PDF viewer but not in the spreadsheet has been handed a worse copy of their own
+# evidence.
 #
-# A specimen/source PDF may bake a redaction directly into its extractable text
-# (a run of block glyphs, an explicit [REDACTED], a long XXXX mask, etc.). These
-# heuristics catch those. This list is intentionally a template -- extend it as
-# new marker conventions are encountered.
-# ---------------------------------------------------------------------------
-# Block/shade glyphs commonly used to visually blank out text. Kept as a
-# separate vector so the pattern is built with explicit UTF-8 encoding (this
-# engine runs in a C locale where raw multibyte regex literals are unreliable).
-#
-# WRITTEN AS \u ESCAPES, not as the glyphs themselves. The comment above already
-# said the C locale cannot be trusted with multibyte literals, and then spelt
-# these ten out in raw bytes anyway -- bytes that also have to survive every
-# editor, mail client and zip between here and an air-gapped Windows box. An
-# escape is seven ASCII characters meaning the same thing everywhere, and it
-# produces byte-identical strings. They are consumed as an ALTERNATION and
-# matched with useBytes (see pdf_redaction_markers / .matches_marker below),
-# which is what keeps them working whatever the locale.
-.PDF_BLOCK_GLYPHS <- c("\u2588", "\u2593", "\u2592", "\u2591", "\u25a0",
-                       "\u25ac", "\u25ae", "\u2580", "\u2584", "\u2588")
-
-pdf_redaction_markers <- function() {
-  # marker regexes + the block/shade glyphs come from the lexicon (admin/ML
-  # extendable), so a new redaction convention is one edit, not a code change.
-  glyphs <- unique(lex("redaction_block_glyphs"))
-  block_run <- paste0("(?:", paste(glyphs, collapse = "|"), "){1,}")
-  c(lex("redaction_markers"), block_run)
-}
-
-# .matches_marker(text, markers) -- logical vector: does each string contain a
-# redaction marker? Matched at the byte level (useBytes) so block glyphs match
-# reliably even under a C locale, where re-encoding would mangle multibyte runs.
-.matches_marker <- function(text, markers) {
-  text <- as.character(text)
-  hit <- rep(FALSE, length(text))
-  for (m in markers) {
-    hit <- hit | grepl(m, text, perl = TRUE, useBytes = TRUE)
-  }
-  hit & !is.na(text)
-}
-
-# ---------------------------------------------------------------------------
-# Rectangle-overlay detection HOOK.
-#
-# detect_overlay_redactions(words, rects) flags every word box that overlaps a
-# supplied redaction rectangle. `rects` is a data.frame with columns
-# x0, y0, x1, y1 (top-left origin, matching pdftools word coordinates) OR NULL.
-#
-# >>> WHERE REAL IMAGE-RECTANGLE DETECTION PLUGS IN <<<
-# pdftools does not expose vector fill operators or a rasteriser, and tesseract
-# is not installed in this environment, so `rects` is currently supplied by the
-# caller (or a per-bank template) rather than derived automatically. A true
-# implementation would populate `rects` by either:
-#   (a) parsing the PDF content stream for filled rectangles (`re` + `f`/`F`
-#       operators) whose fill colour is near-black and whose area is large
-#       enough to hide text; or
-#   (b) rendering each page to a raster (pdftools::pdf_render_page) and detecting
-#       solid opaque rectangles via connected-component analysis, then mapping
-#       raster pixels back to PDF points.
-# Both feed the SAME `rects` structure consumed here, so the guard below does not
-# change when that detector is added -- only the source of `rects` does.
-# ---------------------------------------------------------------------------
-detect_overlay_redactions <- function(words, rects = NULL) {
-  n <- nrow(words)
-  if (is.null(rects) || nrow(rects) == 0 || n == 0) return(rep(FALSE, n))
-  wx0 <- words$x
-  wy0 <- words$y
-  wx1 <- words$x + words$width
-  wy1 <- words$y + words$height
-  covered <- rep(FALSE, n)
-  for (r in seq_len(nrow(rects))) {
-    rx0 <- rects$x0[r]; ry0 <- rects$y0[r]
-    rx1 <- rects$x1[r]; ry1 <- rects$y1[r]
-    # axis-aligned overlap (any overlap => covered; conservative on purpose)
-    overlap <- (wx0 < rx1) & (wx1 > rx0) & (wy0 < ry1) & (wy1 > ry0)
-    covered <- covered | overlap
-  }
-  covered
-}
-
-# ---------------------------------------------------------------------------
-# The redaction guard.
-#
-# apply_redaction_guard(words, rects, markers) -> words with:
-#   * a logical `redacted` column,
-#   * every redacted word's `text` overwritten with REDACTION_TOKEN and its
-#     ORIGINAL text discarded (never retained anywhere in the returned object).
-# This is the single choke point every emitted PDF word passes through.
-# ---------------------------------------------------------------------------
-apply_redaction_guard <- function(words, rects = NULL,
-                                  markers = pdf_redaction_markers()) {
-  words <- as.data.frame(words, stringsAsFactors = FALSE)
-  if (nrow(words) == 0) {
-    words$redacted <- logical(0)
-    return(words)
-  }
-  by_marker  <- .matches_marker(words$text, markers)
-  by_overlay <- detect_overlay_redactions(words, rects)
-  redacted <- by_marker | by_overlay
-  # Discard the underlying text of every redacted word BEFORE returning it.
-  words$text[redacted] <- REDACTION_TOKEN
-  words$redacted <- redacted
-  words
-}
-
-# ---------------------------------------------------------------------------
-# Reconstruct page text from (already guarded) word boxes. Used whenever a page
-# carried any redaction, because pdftools::pdf_text reads the raw text layer and
-# would leak text sitting under an overlay. Deterministic: words grouped into
-# lines by rounded y, ordered by x.
+# A value that is genuinely GONE still leaves an empty cell, and that cell is
+# recovered from the running balance (`amount_from_balance`, parse_pdf_table.R) --
+# which the old guard actively BLOCKED, because it excluded any row it had marked
+# redacted from the derivation.
 # ---------------------------------------------------------------------------
 words_to_text <- function(words, line_tol = PARAM_PDF_ROW_TOL) {
   if (nrow(words) == 0) return("")
@@ -179,7 +69,7 @@ detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
 # read_pdf(path, redaction_rects, markers, anchors) -> list(
 #   pages        character[]  per-page text (redaction-safe),
 #   words        list<df>     per-page guarded word boxes (x,y,width,height,
-#                             space,text,redacted,ocr_conf),
+#                             space,text,ocr_conf),
 #   page_count   integer,
 #   sections     data.frame   detected section anchors,
 #   redactions   data.frame   per-page redacted-word counts,
@@ -190,14 +80,10 @@ detect_pdf_sections <- function(pages_text, anchors = pdf_section_anchors()) {
 # integer), each element a data.frame(x0,y0,x1,y1). This is the structure the
 # rectangle-overlay detector documented above will populate automatically.
 # ---------------------------------------------------------------------------
-read_pdf <- function(path, redaction_rects = NULL,
-                     markers = pdf_redaction_markers(),
-                     anchors = pdf_section_anchors(),
-                     scan_vector = TRUE, vector_dpi = PARAM_REDACT_VECTOR_DPI) {
+read_pdf <- function(path,
+                     anchors = pdf_section_anchors()) {
   empty <- list(pages = character(0), words = list(), page_count = NA_integer_,
                 sections = detect_pdf_sections(character(0)),
-                redactions = data.frame(page = integer(0), redacted_words = integer(0),
-                                        stringsAsFactors = FALSE),
                 ocr = logical(0),
                 ocr_conf = numeric(0),
                 doc_info = .pdf_doc_info(NULL),
@@ -272,12 +158,8 @@ read_pdf <- function(path, redaction_rects = NULL,
 
   pages <- character(np)
   words <- vector("list", np)
-  red_counts <- integer(np)
   ocr_flags <- rep(FALSE, np)
   ocr_conf <- rep(NA_real_, np)
-  # Pages whose vector-redaction scan could NOT run (no rasteriser) -> surfaced as
-  # a loud "redactions not verified" warning downstream, never a silent clean pass.
-  red_scan_incomplete <- rep(FALSE, np)
 
   # OCR is attempted whenever the page's TEXT is effectively empty/sparse -- not
   # only when there are zero word boxes. That covers a scanned transaction page
@@ -297,123 +179,40 @@ read_pdf <- function(path, redaction_rects = NULL,
 
   for (p in seq_len(np)) {
     wp <- word_list[[p]]
-    rects_p <- .rects_for_page(redaction_rects, p)
     if (is.null(wp) || nrow(wp) == 0) {
-      # No word boxes -> emit raw text as-is; a marker sweep still applies so
-      # baked-in redaction tokens never survive even without geometry.
-      txt <- raw_text[[p]]
-      for (m in markers) txt <- gsub(m, REDACTION_TOKEN, txt,
-                                     perl = TRUE, useBytes = TRUE)
-      pages[p] <- txt
-      words[[p]] <- apply_redaction_guard(
-        data.frame(width = integer(0), height = integer(0), x = integer(0),
-                   y = integer(0), space = logical(0), text = character(0),
-                   stringsAsFactors = FALSE), NULL, markers)
-      red_counts[p] <- 0L
+      # No word boxes -> the raw text layer as it stands. Nothing is rewritten: if
+      # the page says it, the page says it.
+      pages[p] <- raw_text[[p]]
+      words[[p]] <- data.frame(width = integer(0), height = integer(0),
+                               x = integer(0), y = integer(0), space = logical(0),
+                               text = character(0), stringsAsFactors = FALSE)
     } else {
-      wp <- as.data.frame(wp, stringsAsFactors = FALSE)
-      guarded <- apply_redaction_guard(wp, rects_p, markers)
-      words[[p]] <- guarded
-      n_red <- sum(guarded$redacted)
-      red_counts[p] <- n_red
-      # If ANY redaction touched this page, do NOT trust the raw text layer
-      # (it exposes text under overlays); rebuild the page from guarded boxes.
-      pages[p] <- if (n_red > 0) words_to_text(guarded) else raw_text[[p]]
+      words[[p]] <- as.data.frame(wp, stringsAsFactors = FALSE)
+      pages[p] <- raw_text[[p]]
     }
 
-    # OCR fallback. Tesseract reads only VISIBLE pixels, so any redaction painted
-    # on the page is inherently unreadable, and the OCR word boxes go through the
-    # SAME redaction guard. Each OCR'd page is flagged so downstream knows the
-    # text was machine-read, not extracted.
-    # Pass the DIGITAL word boxes so the decision routes on their presence, not a
-    # flat char count: a genuine digital page (word boxes present) is never OCR'd
-    # even if pdf_text came back empty, while a scanned page carrying only a thin
-    # text stamp (few/no word boxes) still gets OCR'd.
-    # Ask the router regardless of tooling, so an un-OCR-able scan is RECORDED
-    # rather than passing as an empty page.
+    # OCR fallback. Routed on the WORD BOXES, not a flat character count: a genuine
+    # digital page (boxes present) is never OCR'd even if pdf_text came back empty,
+    # while a scanned page carrying only a thin text stamp (few or no boxes) still
+    # gets OCR'd. The router is asked regardless of whether the tools exist, so an
+    # un-OCR-able scan is RECORDED rather than passing as a blank page.
     needs_ocr_p <- ocr_router && isTRUE(page_needs_ocr(pages[p], words[[p]]))
     if (needs_ocr_p && !ocr_tools) scanned_no_ocr[p] <- TRUE
     if (ocr_ready && needs_ocr_p) {
       res <- ocr_pdf_page(path, p)
       if (isTRUE(res$ok)) {
-        otxt <- paste(res$text, collapse = "\n")
-        for (m in markers) otxt <- gsub(m, REDACTION_TOKEN, otxt,
-                                        perl = TRUE, useBytes = TRUE)
         ocr_flags[p] <- TRUE
         ocr_conf[p] <- res$conf %||% NA_real_
         # OCR word boxes live in the (deskewed) render frame -> report that frame's
         # point size as this page's dimensions, so band normalisation stays aligned.
         if (!is.null(res$width) && is.finite(res$width) && res$width > 0)   page_width[p]  <- res$width
         if (!is.null(res$height) && is.finite(res$height) && res$height > 0) page_height[p] <- res$height
-        if (!is.null(res$words) && nrow(res$words)) {
-          # Auto-detected rasterised redactions (solid black boxes) are added to
-          # any caller-supplied rects, then any VISIBLE row a box covers has its
-          # blacked cell marked [REDACTED] so that partial row keeps its visible
-          # data (flagged), never dropped. Fully-hidden rows have no visible anchor
-          # and simply do not appear -- we never guess how many a block hid.
-          auto_rects <- res$dark_rects
-          all_rects <- if (!is.null(auto_rects) && nrow(auto_rects)) {
-            base_rects <- if (is.null(rects_p)) NULL else rects_p[, c("x0","y0","x1","y1"), drop = FALSE]
-            rbind(base_rects, auto_rects)
-          } else rects_p
-          guarded_ocr <- apply_redaction_guard(res$words, all_rects, markers)
-          if (!is.null(auto_rects) && nrow(auto_rects) &&
-              exists("inject_redaction_tokens", mode = "function"))
-            guarded_ocr <- inject_redaction_tokens(guarded_ocr, auto_rects,
-                                                   row_tol = PARAM_PDF_ROW_TOL)
-          words[[p]] <- guarded_ocr
-          nred_ocr <- sum(guarded_ocr$redacted)
-          red_counts[p] <- nred_ocr
-          # Keep pages[p] consistent with the guarded OCR boxes, so an overlay
-          # redaction reaches the metadata/section text too (parity with the
-          # text-layer path above).
-          pages[p] <- if (nred_ocr > 0) words_to_text(guarded_ocr) else otxt
-        } else {
-          pages[p] <- otxt
-        }
-      }
-    }
-
-    # Digital vector-redaction guard. A page with a full text layer never triggers
-    # OCR, so a solid rectangle DRAWN over still-present text (a vector redaction)
-    # would leak the text under it -- pdf_text/pdf_data read the layer, not the
-    # picture. Rasterise the page and mark any word whose rendered box is ~solid
-    # dark as redacted, the same visibility test the scanned path uses, here at
-    # word granularity. Skipped when the page was OCR'd (already covered) or off.
-    # SKIPPED WHEN THE RENDERER SAYS THERE IS NOTHING ON THIS PAGE THAT COULD HIDE
-    # ANYTHING (see .ink_fills). `ink_ok` is required, so a page is only skipped when
-    # the ink list is known to line up with the document; without that, every page is
-    # scanned exactly as before. Erring towards scanning is the only safe direction --
-    # a page wrongly skipped would leak blacked-out text.
-    can_hide <- !ink_ok || p > ink_pages ||
-      suppressWarnings(as.integer(ink[[p]]$fills %||% 1L)) > 0L
-    if (scan_vector && !ocr_flags[p] && isTRUE(can_hide)) {
-      gp <- words[[p]]
-      if (!is.null(gp) && nrow(gp) > 0) {
-        occ <- detect_occluded_words(path, p, gp, page_width[p], page_height[p],
-                                     dpi = vector_dpi)
-        if (isTRUE(occ$ok)) {
-          new_hits <- occ$occluded & !(gp$redacted %in% TRUE)
-          if (any(new_hits)) {
-            gp$text[new_hits] <- REDACTION_TOKEN
-            gp$redacted <- gp$redacted | occ$occluded
-            words[[p]] <- gp
-            red_counts[p] <- sum(gp$redacted %in% TRUE)
-            pages[p] <- words_to_text(gp)      # rebuild text WITHOUT the hidden words
-          }
-        } else {
-          red_scan_incomplete[p] <- TRUE       # loud fallback: couldn't verify
-        }
+        if (!is.null(res$words) && nrow(res$words)) words[[p]] <- res$words
+        pages[p] <- paste(res$text, collapse = "\n")
       }
     }
   }
-  # LOUD fallback: if any page could not be rasterised to check for vector
-  # redactions, say so once -- the visible text on those pages is NOT
-  # redaction-verified and must be treated with caution, never assumed clean.
-  if (any(red_scan_incomplete))
-    warning(sprintf(paste0("read_pdf: could not rasterise %d page(s) to verify ",
-      "vector redactions; visible text on those pages is not redaction-checked"),
-      sum(red_scan_incomplete)), call. = FALSE)
+
 
   # Words-frame contract: every page's words carry a per-word `ocr_conf` column
   # -- Tesseract's 0-100 word confidence on an OCR page, NA on a text-layer page
@@ -432,10 +231,6 @@ read_pdf <- function(path, redaction_rects = NULL,
     page_width = page_width,
     page_height = page_height,
     sections = detect_pdf_sections(pages, anchors),
-    redactions = data.frame(page = seq_len(np), redacted_words = red_counts,
-                            scan_incomplete = red_scan_incomplete,
-                            stringsAsFactors = FALSE),
-    redaction_scan_incomplete = sum(red_scan_incomplete),
     # Signs this page carried as INK rather than as text, and signs the text layer
     # carried that the page does not SHOW. Both are facts about the document worth
     # telling a reviewer, even though the figures are now right.
@@ -532,25 +327,6 @@ read_pdf <- function(path, redaction_rects = NULL,
   out
 }
 
-# .rects_for_page(redaction_rects, p) -- fetch the rectangle data.frame for page
-# `p` from a named-by-page list, or NULL.
-.rects_for_page <- function(redaction_rects, p) {
-  if (is.null(redaction_rects)) return(NULL)
-  if (is.data.frame(redaction_rects)) {
-    # a single flat data.frame with a `page` column
-    if ("page" %in% names(redaction_rects)) {
-      sub <- redaction_rects[redaction_rects$page == p, , drop = FALSE]
-      if (nrow(sub) == 0) return(NULL)
-      return(sub[, c("x0", "y0", "x1", "y1"), drop = FALSE])
-    }
-    return(redaction_rects)
-  }
-  key <- as.character(p)
-  if (!is.null(redaction_rects[[key]])) return(redaction_rects[[key]])
-  if (length(redaction_rects) >= p && !is.null(redaction_rects[[p]]))
-    return(redaction_rects[[p]])
-  NULL
-}
 
 # ---------------------------------------------------------------------------
 # MEASURED AND NOT DONE: float word boxes.
@@ -661,42 +437,9 @@ read_pdf <- function(path, redaction_rects = NULL,
     per_page <- if (length(surf) >= 2) surf[-1] else svg
   }
   lapply(per_page, function(pg) list(strokes = .ink_strokes(pg),
-                                     faint = .ink_faint(pg),
-                                     fills = .ink_fills(pg)))
+                                     faint = .ink_faint(pg)))
 }
 
-# .ink_fills(pg) -- how many FILLED SHAPES or images this page draws. Nothing is
-# measured about them; the count exists only to answer "could anything on this page be
-# hiding text?", and 0 means no.
-#
-# WHY THAT QUESTION IS WORTH ASKING. The vector-redaction scan rasterises a page and
-# checks whether each word's box came out solid -- the only thing that catches a box
-# DRAWN over text that is still in the text layer, which would otherwise leak
-# blacked-out text into the spreadsheet. It also costs one external rasterisation PER
-# PAGE: measured, about 11 of the 14.6 seconds that reading a 100-page statement took,
-# and all of it wasted on the overwhelming majority of statements, which have no
-# redactions at all.
-#
-# A word can only be hidden by something painted over it, and everything that can be
-# painted over it is either a filled path or an image. Both are in the renderer's own
-# output, which has already been produced in ONE pass for the sign check -- so the
-# question is answered for free, and a page that draws neither does not need
-# rasterising. Measured on the fixtures: the two redaction fixtures have 4 and 2
-# filled paths, a real ANZ statement and a 30-page synthetic have NONE.
-#
-# CONSERVATIVE BY CONSTRUCTION. This may only ever say "there is nothing here"; if the
-# renderer is unavailable or the page count does not line up, read_pdf scans every
-# page exactly as before. A false "nothing here" would leak redacted text, so the test
-# is for the PRESENCE of paint and never for its absence.
-.ink_fills <- function(pg) {
-  pats <- c('<path[^>]*fill="rgb[(]', "<image", "<pattern", '<use[^>]*mask=')
-  n <- 0L
-  for (rx in pats) {
-    hit <- gregexpr(rx, pg, perl = TRUE)[[1]]
-    if (hit[1] > 0) n <- n + length(hit)
-  }
-  n
-}
 
 # .ink_strokes(pg) -> data.frame(x0, x1, y, len, linewidth) for the HORIZONTAL
 # strokes on one page, in word coordinates (y measured down from the page top).

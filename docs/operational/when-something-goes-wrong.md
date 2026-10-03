@@ -36,7 +36,7 @@ Five columns: **Where**, **What**, **Severity**, **Detail**, **How to fix**.
   `rows 4,9,12`, `rows 1,2 (date)`, `rows 3 (amount)`. The rest name a stage:
   `file`, `upload`, `document`, `detection`, `template`, `template period`,
   `parse`, `rows`, `dates`, `completeness`, `balance check`, `running balance`,
-  `amount direction`, `currency`, `redactions`, `pages (OCR)`, `OCR text`, or a
+  `amount direction`, `currency`, `pages (OCR)`, `OCR text`, `signs`, or a
   bare `check`. On a run with nothing at all to note it is a bare `-`. On a file
   the tool split into several statements, each row's *Where* carries
   `[statement 2]` on the end so you can tell which one it is about.
@@ -58,11 +58,11 @@ Every phrase the *What* column can print, and what it means for you:
 | layout not recognised · more than one template fits · matched the wording, read no transactions · the balance doesn't add up · running balance jumps · row count doesn't match · rows didn't parse · dates couldn't be read · dates in a different style than expected · date range doesn't look right · amounts couldn't be read · money in / out may be the wrong way round | **Yours, and it is most problems.** Open the toolkit on this file, change the one setting the *How to fix* sentence names, watch the preview, Save. |
 | file could not be read · a scan with no readable text · several statements in one file · unusually large file · unusually large page · scan read with low confidence · scan quality unknown · completeness not auto-verified | **The file's.** Back to whoever supplied it: one statement per file, a cleaner scan at a higher DPI, a standard page size, or the bank's CSV/Excel export instead of the PDF. |
 | several accounts in one statement · more than one currency · page(s) machine-read (OCR) | **A look, not a fix.** The figures were extracted. Read the *How to fix* sentence and give the data the glance it asks for. |
-| redactions found and kept · what the PDF says about itself · no issues found | **Nothing.** Stated for the record. |
+| what the PDF says about itself · no issues found | **Nothing.** Stated for the record. |
 | hidden text could not be checked | **Stop.** The tool could not prove that text under a black box stayed hidden. **Do not release this output.** It is not the file's fault and not yours — the server is missing its image reader. Tell the maintainer. |
 
-**"info" does not mean "nothing to do".** Nine kinds of row are *info* severity
-and three of them still ask you for something:
+**"info" does not mean "nothing to do".** Eight kinds of row are *info* severity
+and two of them still ask you for something:
 
 - *several accounts in one statement* — **info**, and its *How to fix* ends
   "review per account". If transactions from more than one account are mixed,
@@ -72,8 +72,6 @@ and three of them still ask you for something:
   values against the image".
 - *more than one currency* — **info**, and it asks you to confirm how the
   foreign-currency lines are handled downstream.
-- *redactions found and kept* — **info**, and it really does say "No action
-  needed".
 - *what the PDF says about itself* — **info**, and it says "No action — this is
   recorded, not a problem", then adds one conditional: if the origin of the
   document matters to this case, compare those details against the copy the bank
@@ -118,7 +116,7 @@ Both of those are *Converted successfully*, confidence **medium** — with rows 
 this table. Read the *How to fix* sentence, not the row count and not the
 severity word:
 
-- **info** is a note. It is not always "nothing to do" — see the nine kinds
+- **info** is a note. It is not always "nothing to do" — see the eight kinds
   above. On the 311-row PDF, one of the two info rows asks you to review per
   account.
 - **medium** on *completeness not auto-verified* is the same fact the confidence
@@ -202,7 +200,6 @@ letters to `x`/`X` by case, digits to `9`, so `Countdown 47.20 on 17 Sep` become
   each row or only in the period line.
 - How direction is shown: a minus sign, separate in/out columns, a `DR`/`CR`
   suffix, a `D`/`C` column.
-- Any redactions: which column, roughly where.
 - Anything unusual: several accounts in one file, summary rows inside the amount
   column, running-balance resets, foreign-currency lines.
 

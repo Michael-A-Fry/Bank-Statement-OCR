@@ -50,11 +50,6 @@
 # copy only "treat their visible text with caution". Same defect, same pages, same
 # risk -- so which warning you got depended on nothing but whether the caller
 # happened to pass `recon`. The stronger wording is the correct one for both.
-.FIX_REDACTION_UNVERIFIED <- paste(
-  "The tool could not confirm that text hidden under a redaction box stayed hidden on",
-  "every page. Do NOT release this output: check those pages against the source PDF",
-  "first. A working image rasteriser (see the offline prereqs) removes this warning.")
-
 .DIAG_FIX_OWNER <- c(
   # the analyst fixes it in the template toolkit
   unknown_format          = "template",
@@ -88,13 +83,10 @@
   combined_statement      = "review",
   mixed_currency          = "review",
   # stated for the record; nobody has to do anything
-  redaction               = "none",
   ocr                     = "none",
   document_provenance     = "none",
   none                    = "none",
-  # a genuine engine/install gap: the page could not be rasterised, so the tool
-  # cannot prove nothing is hidden under a box. Only a maintainer can fix that.
-  redaction_unverified    = "escalate")
+  none                    = "none")
 
 # .diag_fix_owner(category) -- look the owner up. An unknown category defaults to
 # escalate (fail safe: surface it, don't hide it).
@@ -194,15 +186,7 @@
   # forensic accountant acts on. Same code, same file, two different defects.
   amount_direction = list(
     where = "amount direction", category = "amount_direction", severity = "high",
-    how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."),
-  # Had no entry, so the gravest verdict the engine can reach -- the redaction scan
-  # did not finish, so blacked-out text may have been read and emitted -- was
-  # rendered with the fallback below: category reconciliation_mismatch, owner
-  # "template", advice "review this check against the source statement". It told the
-  # analyst to adjust their column mapping about a possible PII leak.
-  redaction_scan = list(
-    where = "redactions", category = "redaction_unverified", severity = "high",
-    how_to_fix = .FIX_REDACTION_UNVERIFIED))
+    how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."))
 
 .KPI_DIAGNOSIS_FALLBACK <- list(
   where = "check", category = "reconciliation_mismatch", severity = "medium",
@@ -541,7 +525,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       sprintf("%d date(s) could not be read", length(dbad)),
       "The date-format mapping is likely wrong for these rows. Set the correct format in the template toolkit (e.g. day/month/year).")
 
-    abad <- which(is.na(tx$amount) & !grepl("redacted", tx$flags %||% ""))
+    abad <- which(is.na(tx$amount))
     if (length(abad)) add(sprintf("rows %s (amount)", .rng(abad)), "amount_parse", "high",
       sprintf("%d amount(s) could not be read", length(abad)),
       "The amount style/format is wrong: check the amount style (signed vs D/C vs debit/credit columns) and the thousands/decimal separators.")
@@ -551,22 +535,6 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     if (length(cur) > 1) add("currency", "mixed_currency", "info",
       sprintf("multiple currencies present: %s", paste(cur, collapse = ", ")),
       "Foreign-currency lines are present. Confirm downstream handling of non-base currencies.")
-
-    red <- which(grepl("redacted", tx$flags %||% ""))
-    if (length(red)) add(sprintf("rows %s", .rng(red)), "redaction", "info",
-      sprintf("%d redacted value(s), kept as shown", length(red)),
-      "Redactions are intentional; values are left as [REDACTED]. No action needed.")
-
-    # The header signal, for callers that pass no `recon` (build_diagnostics is
-    # called without one in places). When the redaction_scan KPI ran it has
-    # ALREADY said this, in more detail, from the same header field -- and two
-    # rows both headed "do NOT release this output" read as two separate leaks.
-    # One fact, reported once, by whichever source got here first.
-    rsi <- suppressWarnings(as.integer(parsed$header$redaction_scan_incomplete %||% NA))
-    if (!is.na(rsi) && rsi > 0 && !("redaction_unverified" %in% raised))
-      add("redactions", "redaction_unverified", "high",
-          sprintf("%d page(s) could not be checked for hidden (drawn-over) text", rsi),
-          .FIX_REDACTION_UNVERIFIED)
 
     ocrp <- suppressWarnings(as.integer(parsed$header$ocr_pages %||% NA))
     if (!is.na(ocrp) && ocrp > 0) add("pages (OCR)", "ocr", "info",

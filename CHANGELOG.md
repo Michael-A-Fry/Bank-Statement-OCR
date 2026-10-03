@@ -13,6 +13,64 @@ finding id.
 
 ---
 
+## 1.11.0
+
+**The tool no longer withholds readable text, and it is twice as fast.**
+
+**1,376 lines deleted.** Everything that found text under a black box and replaced it
+with `[REDACTED]` is gone: the marker-glyph and overlay-rectangle detectors, the
+per-page rasterised occlusion scan, the token injector, two KPIs
+(`redaction_summary`, `redaction_scan`), two diagnostics (`redaction`,
+`redaction_unverified`), the X-ray's redaction layer, `R/detect_redaction.R` entirely,
+and the `PARAM_REDACT_*` constants.
+
+The reasoning is the operator's, and it stands: this tool reads a document it has been
+given, and whether the sender redacted it competently is not its problem. A figure an
+analyst can read in a PDF viewer but not in the spreadsheet is a **worse copy of their
+own evidence**, which they will then transcribe by hand. `docs/context/charter.md`
+carried the opposite promise — "honour redactions absolutely" — and now records the
+reversal and why, rather than contradicting the code.
+
+**The half that mattered got better, not worse.** A value genuinely *gone* from a file
+still leaves an empty cell, and that cell is recovered from the running balance:
+`balance[i] - balance[i-1]` **is** the amount. The old guard **blocked** that path — it
+excluded any row it had marked redacted from the derivation — so deleting it switched
+the recovery on.
+
+**And it was most of the remaining runtime.** The occlusion scan rasterised pages
+through an external process:
+
+| pages | 1.9.0 | 1.10.0 | **1.11.0** |
+|---|---|---|---|
+| 100 | 49.8 s | 17.0 s | **10.2 s** |
+| 400 | — | 69.5 s | **37.6 s** |
+
+0.09 s/page, flat, 0 wrong figures at every size. Five times faster than where this
+session started.
+
+**Four real breaks the cull caused, all found by the suite, all worth recording**
+because each was silent:
+
+- `read_pdf_input()` kept a stale `markers = markers` argument, and `safe()` turned
+  the missing name into an **empty read** — every PDF returned zero pages and
+  detection fell through to a CSV template. Second time this session `safe()` has
+  hidden a missing name.
+- a regex that deleted the lexicon's redaction entries also ate
+  `period_connectives` on the same line, so `lex()` threw and `extract_metadata()`
+  failed — *also* behind a `safe()`.
+- two `list(..., )` trailing commas (in `parse_pdf_table.R` and `config.R`) left an
+  empty argument, which parses and then misbehaves.
+- `.plausible_period_date()` had a latent length-0 bug that turned the above into
+  "missing value where TRUE/FALSE needed" from three frames below the real cause.
+  Guarded now.
+
+A blunt first pass at the tests also destroyed all 129 blocks of `test-app-ui.R` by
+matching the word "redacted" anywhere in a file; it was reverted and redone by
+subject. The suite is the only reason any of this was visible.
+
+Suite 71 files / 996 tests / 5,356 passing / 0 failed. Corpus 43 cases, 41 clean, 0
+fabricated.
+
 ## 1.10.0
 
 **A wrong figure that was live on every multi-page statement, and the tool is now

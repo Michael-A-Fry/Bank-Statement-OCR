@@ -21,7 +21,7 @@ test_that("read_pdf extracts pages and word boxes from a real specimen", {
                     ignore.case = TRUE))
   # per-page word boxes carry positional geometry
   w1 <- pdf$words[[1]]
-  expect_true(all(c("x", "y", "width", "height", "text", "redacted") %in%
+  expect_true(all(c("x", "y", "width", "height", "text", "ocr_conf") %in%
                     names(w1)))
   expect_gt(nrow(w1), 0L)
   # a clean specimen must not be spuriously redacted
@@ -42,7 +42,6 @@ test_that("read_input wires .pdf through read_pdf (extraction only)", {
   expect_identical(input$kind, "pdf")
   expect_gte(input$meta$page_count, 1L)
   expect_equal(length(input$words), input$meta$page_count)
-  expect_s3_class(input$meta$redactions, "data.frame")
 })
 
 # ---- Document provenance (pdf_info) ---------------------------------------
@@ -130,88 +129,6 @@ test_that("a readable PDF reports no un-OCR-able scan pages", {
 
 # ---- Forensic redaction guard --------------------------------------------
 
-test_that("overlay redaction removes covered text and never leaks it", {
-  # Synthetic page: three words, a redaction rectangle sitting over the middle
-  # one ("SECRET99"). Coordinates use pdftools' top-left origin.
-  words <- data.frame(
-    width  = c(50, 50, 50),
-    height = c(10, 10, 10),
-    x      = c(70, 130, 70),
-    y      = c(100, 100, 120),
-    space  = c(TRUE, FALSE, FALSE),
-    text   = c("Balance", "SECRET99", "Total"),
-    stringsAsFactors = FALSE
-  )
-  rects <- data.frame(x0 = 125, y0 = 95, x1 = 190, y1 = 112)
-
-  guarded <- apply_redaction_guard(words, rects)
-
-  # the covered word is flagged and rewritten
-  expect_true(guarded$redacted[2])
-  expect_false(any(guarded$redacted[c(1, 3)]))
-  expect_identical(guarded$text[2], REDACTION_TOKEN)
-  # the hidden text is gone from the word table entirely
-  expect_false(any(grepl("SECRET", guarded$text)))
-  # ...and from any reconstructed page text
-  expect_false(grepl("SECRET", words_to_text(guarded)))
-  # visible words are untouched (verbatim)
-  expect_identical(guarded$text[c(1, 3)], c("Balance", "Total"))
-})
-
-test_that("text-layer redaction markers are honoured without geometry", {
-  words <- data.frame(
-    width = c(50, 50, 50), height = c(10, 10, 10),
-    x = c(70, 70, 70), y = c(100, 120, 140), space = c(FALSE, FALSE, FALSE),
-    text = c("Owner", "████", "[REDACTED]"),
-    stringsAsFactors = FALSE
-  )
-  guarded <- apply_redaction_guard(words)
-  expect_equal(guarded$redacted, c(FALSE, TRUE, TRUE))
-  expect_identical(guarded$text[2], REDACTION_TOKEN)
-  expect_identical(guarded$text[3], REDACTION_TOKEN)
-})
-
-test_that("overlay detector is conservative on partial overlap", {
-  # A rectangle clipping only the edge of a word must still redact it.
-  words <- data.frame(width = 60, height = 12, x = 100, y = 200,
-                      space = FALSE, text = "ACCOUNT12345",
-                      stringsAsFactors = FALSE)
-  rects <- data.frame(x0 = 150, y0 = 205, x1 = 300, y1 = 260) # clips right edge
-  guarded <- apply_redaction_guard(words, rects)
-  expect_true(guarded$redacted[1])
-  expect_false(grepl("ACCOUNT", guarded$text[1]))
-})
-
-test_that("read_input threads redaction_rects into the PDF pipeline", {
-  # Guarantee 11.2 in production: read_input must forward overlay rectangles so
-  # text under a drawn redaction is dropped before it leaves the reader.
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  rects <- data.frame(page = 1, x0 = 60, y0 = 130, x1 = 500, y1 = 175)
-  input <- read_input(fixture(SAMPLE_PDF), redaction_rects = rects)
-  expect_identical(input$kind, "pdf")
-  expect_gt(input$meta$redactions$redacted_words[1], 0L)
-  w1 <- input$words[[1]]
-  expect_true(all(w1$text[w1$redacted] == REDACTION_TOKEN))
-  # a plain read_input (no rects) leaves this clean specimen unredacted
-  plain <- read_input(fixture(SAMPLE_PDF))
-  expect_equal(sum(plain$meta$redactions$redacted_words), 0L)
-})
-
-test_that("read_pdf rebuilds page text from guarded boxes when redacted", {
-  # Drive the full read_pdf path with an injected rectangle so a real page's
-  # emitted text is proven to exclude text under the overlay. The rectangle
-  # covers the top-left region of page 1 where the header words sit.
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  rects <- data.frame(page = 1, x0 = 60, y0 = 130, x1 = 500, y1 = 175)
-  pdf <- read_pdf(fixture(SAMPLE_PDF), redaction_rects = rects)
-  expect_gt(pdf$redactions$redacted_words[1], 0L)
-  # every covered word became the token; none of the covered originals remain
-  w1 <- pdf$words[[1]]
-  covered <- w1$redacted
-  expect_true(all(w1$text[covered] == REDACTION_TOKEN))
-  expect_true(any(covered))
-})
-
 # ---------------------------------------------------------------------------
 # A BOX OVER TEXT HIDES IT WHATEVER COLOUR THE BOX IS.
 #
@@ -232,63 +149,6 @@ test_that("read_pdf rebuilds page text from guarded boxes when redacted", {
 # on a lighter ground, so its greyscale range is wide; a word under an opaque fill of
 # any colour is a flat patch and the range collapses.
 # ---------------------------------------------------------------------------
-
-test_that("a box over text is caught whatever colour it is", {
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  skip_if_not(requireNamespace("magick", quietly = TRUE))
-  f <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
-  skip_if_not(file.exists(f))
-  pdf <- read_pdf(f)
-  txt <- paste(pdf$pages, collapse = " ")
-
-  # EVERY covered number is gone from the text the engine will use. Not "most":
-  # one that survives is one that reaches a spreadsheet invisibly.
-  for (n in c("0043217", "0043218", "0043219", "0043220"))
-    expect_false(grepl(n, txt, fixed = TRUE),
-                 info = paste("a covered account number survived:", n))
-  expect_equal(sum(pdf$redactions$redacted_words) > 0L, TRUE)
-
-  # ...and the one NOTHING covers is untouched. A guard that hid everything would
-  # pass the half of this test above and be useless.
-  expect_true(grepl("0099999", txt, fixed = TRUE))
-  expect_true(grepl("CLEAR", txt, fixed = TRUE))
-})
-
-test_that("a shaded table header is not a redaction", {
-  # The failure that would be worse than the gap. A grey band behind its own column
-  # names is a filled rectangle covering them, and flagging it would withhold the
-  # header of every statement that shades one.
-  #
-  # An earlier attempt read the DRAW ORDER out of the page's vector ink instead, and
-  # got this exactly wrong on a real ANZ statement, which paints light background
-  # panels after most of its text: 162 words on a clean page called redacted.
-  # Rendering the page and looking at it needs no such reasoning -- the composite IS
-  # the answer. (See "MEASURED AND NOT DONE" in R/read_pdf.R.)
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  skip_if_not(requireNamespace("magick", quietly = TRUE))
-  f <- fixture("tests/testthat/fixtures/redaction_shaded_header.pdf")
-  skip_if_not(file.exists(f))
-  txt <- paste(read_pdf(f)$pages, collapse = " ")
-
-  # the shaded header survives, word for word
-  for (w in c("Date", "Transaction", "Withdrawals", "Balance"))
-    expect_true(grepl(w, txt, fixed = TRUE), info = paste("shaded header word lost:", w))
-  # so does the ordinary row under it, figures included
-  expect_true(grepl("EFTPOS RIVERSIDE DAIRY", txt, fixed = TRUE))
-  expect_true(grepl("1,996.10", txt, fixed = TRUE))
-  # and the genuine white-box redaction in the same file is still caught
-  expect_false(grepl("0043217", txt, fixed = TRUE))
-})
-
-test_that("a real statement with light background panels is not redacted", {
-  # The regression that matters: this fixture paints ten large light-grey panels and
-  # is completely clean. It is the file that proved the vector-draw-order approach
-  # wrong, so it is the file that has to stay at zero.
-  skip_if_not(requireNamespace("pdftools", quietly = TRUE))
-  pdf <- read_pdf(fixture(SAMPLE_PDF))
-  expect_equal(sum(pdf$redactions$redacted_words), 0L)
-  expect_true(grepl("CARD SUMMARY", paste(pdf$pages, collapse = " "), ignore.case = TRUE))
-})
 
 # ---------------------------------------------------------------------------
 # HOW LONG IS THIS GOING TO TAKE?

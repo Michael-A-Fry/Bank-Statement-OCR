@@ -182,28 +182,6 @@ test_that("categories that a person can fix are NOT triaged as an engine gap", {
 # A failing KPI with no entry in .KPI_DIAGNOSIS gets the deliberately vague
 # fallback -- which was what the redaction-scan failure, the gravest verdict the
 # engine can reach, was being rendered with.
-test_that("a failed redaction scan is diagnosed as a redaction problem, not a template one", {
-  tx <- data.frame(row_id = 1L, date = "2025-01-01", date_raw = "x", description = "a",
-    amount = -1, amount_raw = "-1", direction = "debit", balance = NA_real_,
-    balance_raw = NA_character_, particulars = NA_character_, code = NA_character_,
-    reference = NA_character_, other_party = NA_character_, type = NA_character_,
-    currency = "NZD", flags = "", stringsAsFactors = FALSE)
-  kpis <- data.frame(name = "redaction_scan", status = "fail", expected = "0",
-    actual = "2", discrepancy = "2",
-    detail = "the redaction scan could not complete on 2 page(s)",
-    stringsAsFactors = FALSE)
-  d <- build_diagnostics("needs_review",
-    parsed = list(transactions = tx, header = list(redaction_scan_incomplete = 0L)),
-    recon = list(kpis = kpis, trust = list(completeness_verified = TRUE)))
-  row <- d[d$where == "redactions", ]
-  expect_equal(nrow(row), 1L)
-  expect_equal(row$category, "redaction_unverified")
-  expect_equal(row$severity, "high")
-  expect_equal(row$fix_owner, "escalate")          # not "template"
-  expect_match(row$how_to_fix, "Do NOT release")
-  expect_false(grepl("Review this check against the source", row$how_to_fix))
-})
-
 # The guard that makes the drift above impossible to repeat: every category the
 # file can actually raise must have a declared owner, and the table must not carry
 # entries for categories nothing raises (a dead row reads as coverage it isn't).

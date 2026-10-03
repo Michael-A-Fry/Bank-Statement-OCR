@@ -86,17 +86,22 @@ read_excel_input <- function(path) {
 }
 
 # read_pdf_input(path) -- PDF reader delegating to read_pdf() (R/read_pdf.R):
-# page text, positioned + redaction-guarded word boxes, detected sections, and a
-# per-page redaction summary. Extraction only -- never crashes; degrades to an
-# empty structure when pdftools is missing or the file is unreadable.
-read_pdf_input <- function(path, redaction_rects = NULL,
-                           markers = pdf_redaction_markers(),
+# page text, positioned word boxes and detected sections. Extraction only -- never
+# crashes; degrades to an empty structure when pdftools is missing or the file is
+# unreadable.
+#
+# THAT `safe()` IS SHARP. It turned a stale argument -- `markers = markers`, left
+# behind when the redaction guard was deleted -- into a silent EMPTY READ: every PDF
+# returned zero pages, detection fell through to a CSV template, and the suite lit up
+# with hundreds of errors a long way from the cause. It is the second time in one
+# session that safe() has hidden a missing name (see .field_from_region). Keep the
+# call's arguments minimal, and never add one here without running a real PDF through.
+read_pdf_input <- function(path,
                            anchors = pdf_section_anchors()) {
-  pdf <- safe(read_pdf(path, redaction_rects = redaction_rects,
-                       markers = markers, anchors = anchors), NULL)
+  pdf <- safe(read_pdf(path, anchors = anchors), NULL)
   if (is.null(pdf)) {
     return(list(pages = NULL, words = list(), page_count = NA_integer_,
-                sections = NULL, redactions = NULL))
+                sections = NULL))
   }
   list(
     pages = if (isTRUE(pdf$ok)) pdf$pages else NULL,
@@ -105,8 +110,6 @@ read_pdf_input <- function(path, redaction_rects = NULL,
     page_width = pdf$page_width,
     page_height = pdf$page_height,
     sections = pdf$sections,
-    redactions = pdf$redactions,
-    redaction_scan_incomplete = pdf$redaction_scan_incomplete %||% 0L,
     # Signs read from the ink rather than the text layer, and signs the text layer
     # claimed that the page does not show (.apply_ink_signs, R/read_pdf.R). CARRIED
     # for the same reason scanned_no_ocr below is: a count that stops here can
@@ -151,7 +154,7 @@ read_pdf_input <- function(path, redaction_rects = NULL,
 # ALREADY sits (belt-and-braces alongside the automatic detection of rasterised
 # black boxes), so any text a supplied box covers is not emitted; NULL relies on
 # the text-layer marker sweep and the scanned-page black-box detector.
-read_input <- function(path, redaction_rects = NULL) {
+read_input <- function(path) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))
   sha <- file_sha256(path)
@@ -159,7 +162,7 @@ read_input <- function(path, redaction_rects = NULL) {
   # caller's CURRENT file (identical bytes, but a fresh temp path in the GUI) so
   # any downstream re-read of $path still resolves. Only when no redaction_rects
   # were supplied (those change what text is emitted, so they bypass the cache).
-  cacheable <- is.null(redaction_rects) && !is.null(sha) && !is.na(sha)
+  cacheable <- !is.null(sha) && !is.na(sha)
   if (cacheable && exists(sha, envir = .INPUT_CACHE, inherits = FALSE)) {
     cached <- get(sha, envir = .INPUT_CACHE, inherits = FALSE)
     cached$path <- path
@@ -179,7 +182,7 @@ read_input <- function(path, redaction_rects = NULL) {
     input$meta$preamble <- x$preamble %||% character(0)
   } else if (ext == "pdf") {
     input$kind <- "pdf"
-    x <- read_pdf_input(path, redaction_rects = redaction_rects)
+    x <- read_pdf_input(path)
     input$pages <- x$pages
     input$words <- x$words
     input$page_width <- x$page_width
@@ -187,12 +190,10 @@ read_input <- function(path, redaction_rects = NULL) {
     input$page_ocr <- x$ocr    # per-page: was this page machine-read (OCR)?
     input$meta$page_count <- x$page_count
     input$meta$sections <- x$sections
-    input$meta$redactions <- x$redactions
     ocr <- x$ocr %||% logical(0); conf <- x$ocr_conf %||% numeric(0)
     input$meta$ocr_pages <- sum(ocr)
     on_conf <- conf[which(ocr)]; on_conf <- on_conf[!is.na(on_conf)]
     input$meta$ocr_min_conf <- if (length(on_conf)) min(on_conf) else NA_real_
-    input$meta$redaction_scan_incomplete <- x$redaction_scan_incomplete %||% 0L
     # Scan-but-unreadable accounting (see read_pdf_input). convert_statement reads
     # these two straight off input$meta to raise the scanned_no_ocr diagnostic, so
     # a gap here silently turns that loud message back into a misleading

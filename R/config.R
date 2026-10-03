@@ -128,8 +128,7 @@
       multi_statement = TRUE,   # #statements / #periods / #accounts / boundary signals
       novelty        = TRUE,    # unmapped columns + unrecognised tokens (ML-feedback signal)
       template_hints = TRUE,    # per-column profiles + suggested mapping (draft-a-template signal)
-      ocr            = TRUE,     # OCR pages + confidence stats
-      redaction      = TRUE      # redaction counts + scan completeness
+      ocr            = TRUE      # OCR pages + confidence stats
     ),
     retain_forever = TRUE       # exempt metadata from log rollup (never archived / deleted)
   ),

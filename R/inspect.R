@@ -96,7 +96,6 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     if (is.null(w) || !nrow(w)) return(list(region = region_p, bands = cols_p,
       words = .empty_words(), rows = .empty_rows(), meta_regions = .page_meta(p, s)))
     w <- as.data.frame(w, stringsAsFactors = FALSE)
-    if (is.null(w$redacted)) w$redacted <- FALSE
     cx <- w$x + w$width / 2
     inreg <- .in_region(w, region_p)
     colassign <- vapply(seq_len(nrow(w)), function(i)
@@ -104,7 +103,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
     # ocr_conf: per-word OCR confidence (0-100) on a machine-read page, NA on a
     # text-layer page -- always present so the app can shade doubtful words.
     words <- data.frame(x = w$x, y = w$y, width = w$width, height = w$height,
-      text = as.character(w$text), redacted = as.logical(w$redacted),
+      text = as.character(w$text),
       in_region = inreg, column = colassign,
       ocr_conf = suppressWarnings(as.numeric(w$ocr_conf %||% rep(NA_real_, nrow(w)))),
       stringsAsFactors = FALSE)
@@ -119,9 +118,6 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
         rg <- rw[grp == g, , drop = FALSE]
         dcell <- .pdf_cell(rg, cols_p$date)
         d_ok <- !is.na(dcell) && !is.na(parse_date(.first_n_date(dcell, date_fmt), date_fmt)$iso)
-        redacted_date <- any(rg$redacted[
-          (rg$x + rg$width / 2) >= (cols_p$date$x_min %||% Inf) &
-          (rg$x + rg$width / 2) <= (cols_p$date$x_max %||% -Inf)])
         # Apply the ENGINE's full keep predicate, not just the date test: a dated
         # line still has to carry a money amount AND not be a summary line, or the
         # reader drops it. pdf_keep_row IS that predicate -- the one the reader
@@ -129,8 +125,8 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
         rec <- list(amount = .pdf_cell(rg, cols_p$amount), debit = .pdf_cell(rg, cols_p$debit),
                     credit = .pdf_cell(rg, cols_p$credit), description = .pdf_cell(rg, cols_p$description),
                     raw = paste(rg$text[order(rg$x)], collapse = " "))
-        date_ok <- isTRUE(d_ok) || isTRUE(redacted_date)   # for the skipped-reason text
-        natural_keep <- pdf_keep_row(rec, style, d_ok, redacted_date, keep_dateless)
+        date_ok <- isTRUE(d_ok)                            # for the skipped-reason text
+        natural_keep <- pdf_keep_row(rec, style, d_ok, keep_dateless)
         # A row the user forced in (from the skipped list) is painted kept here too,
         # so the X-ray reflects exactly what the reader now emits.
         forced <- .forced_band_hit(p, min(rg$y), max(rg$y + rg$height), fr_p)
@@ -208,7 +204,7 @@ inspect_pdf_layout <- function(input, template, force_rows = NULL) {
 }
 
 .empty_words <- function() data.frame(x = numeric(0), y = numeric(0), width = numeric(0),
-  height = numeric(0), text = character(0), redacted = logical(0),
+  height = numeric(0), text = character(0),
   in_region = logical(0), column = character(0), ocr_conf = numeric(0),
   stringsAsFactors = FALSE)
 .empty_rows <- function() data.frame(x0 = numeric(0), y0 = numeric(0), x1 = numeric(0),

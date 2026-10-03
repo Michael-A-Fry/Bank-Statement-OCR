@@ -1627,7 +1627,7 @@ test_that("a page number the document does not have is corrected in the box", {
 
 test_that("the X-ray key names only what is drawn on this page", {
   blk <- .ui_block(.ui_src(), "output\\$ix_legend <- renderUI", 40L)
-  for (cond in c("n_kept > 0", "n_skip > 0", "has_red", "has_meta"))
+  for (cond in c("n_kept > 0", "n_skip > 0", "has_meta"))
     expect_true(grepl(cond, blk, fixed = TRUE), info = cond)
   # ...and the column names in the key are the reader's, matching the page itself
   expect_match(blk, "cv_friendly_cols\\(nm\\)")
@@ -2302,8 +2302,8 @@ test_that("a high-severity diagnosis nobody can fix with a template takes the he
   # the file itself, and an engine gap: neither is mended by drawing boxes
   expect_equal(bd(list(diagnostics = mk("scanned_no_ocr", "high", "input")))$category,
                "scanned_no_ocr")
-  expect_equal(bd(list(diagnostics = mk("redaction_unverified", "high", "escalate")))$category,
-               "redaction_unverified")
+  expect_equal(bd(list(diagnostics = mk("sign_scan_unavailable", "high", "escalate")))$category,
+               "sign_scan_unavailable")
   # a TEMPLATE fault is deliberately NOT blocking -- a template is exactly the fix
   expect_null(bd(list(diagnostics = mk("matched_but_empty", "high", "template"))))
   # ...nor is anything below high, nor the explicit no-issues row

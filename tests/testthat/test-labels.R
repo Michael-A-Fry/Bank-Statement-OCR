@@ -195,12 +195,15 @@ test_that("the scan really does catch a byte, so a clean board means something",
 
 test_that("the glyphs that were escaped are still THERE, as escapes", {
   # A file that passed the scan by DELETING the character it needed would be worse
-  # than the one it replaced. R/labels.R must still strip an en dash and a minus,
-  # and R/read_pdf.R must still know its block glyphs.
+  # than the one it replaced. R/labels.R must still strip an en dash and a minus.
+  #
+  # R/read_pdf.R used to be checked here too, for the block glyphs its redaction
+  # markers were built from. Those are gone with the guard -- nothing withholds
+  # readable text now -- so there is no glyph left in that file to hold in place.
   lab <- paste(readLines(file.path(engine_root(), "R/labels.R"), warn = FALSE), collapse = "\n")
   for (esc in c("\\\\u2013", "\\\\u2212")) expect_match(lab, esc)
   rp <- paste(readLines(file.path(engine_root(), "R/read_pdf.R"), warn = FALSE), collapse = "\n")
-  for (esc in c("\\\\u2588", "\\\\u25a0")) expect_match(rp, esc)
+  expect_false(grepl("[^\x01-\x7f]", rp, useBytes = TRUE))   # and it stays pure ASCII
 })
 
 # ---------------------------------------------------------------------------

@@ -142,14 +142,6 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   # normalisation consistent with where the words actually are.
   bw <- tryCatch({ ii <- magick::image_info(magick::image_read(box_img)); c(ii$width, ii$height) * 72 / dpi },
                  error = function(e) c(NA_real_, NA_real_))
-  # Rasterised-redaction detection: solid black rectangles a scanner captured as
-  # image (a real blacked-out value) leave no OCR word behind, so find them by
-  # pixels here -- in the SAME box-image frame the word boxes use -- and hand the
-  # regions back so read_pdf can reconstruct the hidden cells as [REDACTED]
-  # (preserved + flagged) instead of silently losing the row.
-  dark_rects <- if (exists("detect_dark_regions", mode = "function"))
-    tryCatch(detect_dark_regions(magick::image_read(box_img), scale = 72 / dpi),
-             error = function(e) NULL) else NULL
   # Page-mean confidence from the SAME box-image words the PER-WORD flags use, so
   # the reported ocr_min_confidence can never diverge from the per-cell confidences
   # (the text pass runs on a separately upscaled/deskewed image whose mean differs).
@@ -161,7 +153,7 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   }
   list(text = txt, words = words, ok = length(txt) > 0L,
        conf = box_conf,
-       width = bw[1], height = bw[2], dark_rects = dark_rects)
+       width = bw[1], height = bw[2])
 }
 
 # .text_bad_ratio(s) -- fraction of characters that are UNTRUSTWORTHY: the Unicode

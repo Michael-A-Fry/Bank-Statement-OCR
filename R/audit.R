@@ -5,16 +5,14 @@
 # "17 Sep" -> "99 Xxx". No merchant names, no amounts, no account numbers, no dates
 # survive -- only the LAYOUT, FORMATS and POSITIONS a template needs.
 
-# mask_text(x) -- shape-only mask. Unicode-aware (accented letters are masked
-# too, via \p{}), so NOTHING real survives. Preserves the [REDACTED] token.
+# mask_text(x) -- shape-only mask. Unicode-aware (accented letters are masked too,
+# via \p{}), so NOTHING real survives.
 mask_text <- function(x) {
   x <- as.character(x)
-  red <- !is.na(x) & grepl("REDACT", toupper(x))
   out <- gsub("\\p{Ll}", "x", x, perl = TRUE)              # lowercase letter -> x
   out <- gsub("\\p{Lu}", "X", out, perl = TRUE)            # uppercase letter -> X
   out <- gsub("\\p{Lt}|\\p{Lo}|\\p{Lm}", "X", out, perl = TRUE)  # any other letter -> X
   out <- gsub("\\p{N}", "9", out, perl = TRUE)             # any number -> 9
-  out[red] <- "[REDACTED]"
   out[is.na(x)] <- NA_character_
   out
 }
@@ -58,12 +56,12 @@ mask_text <- function(x) {
 }
 
 # statement_audit(path, templates) -> a structured, PII-free audit list.
-statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
+statement_audit <- function(path, templates = NULL) {
   root <- Sys.getenv("ENGINE_ROOT", ".")
   if (is.null(templates))
     templates <- safe(load_template_set(file.path(root, "templates", "statements"),
                                         file.path(root, "templates", "statements_user")), list())
-  input <- safe(read_input(path, redaction_rects = redaction_rects), NULL)
+  input <- safe(read_input(path), NULL)
   if (is.null(input)) return(list(error = "could not read the file"))
   meta <- safe(extract_metadata(input), list())
   det  <- safe(detect_statement(input, templates), list(matched = FALSE))
@@ -72,8 +70,6 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
   recon  <- if (!is.null(parsed)) safe(reconcile(parsed, tmpl), NULL) else NULL
 
   # redaction map: counts + positions only (no text)
-  red <- input$meta$redactions
-  red_total <- if (!is.null(red)) sum(red$redacted_words) else 0L
 
   # word layout sample (page 1), masked -- for building a template from scratch
   wl <- NULL
@@ -106,8 +102,6 @@ statement_audit <- function(path, templates = NULL, redaction_rects = NULL) {
     date_format  = paste(tmpl$table$date_format %||% tmpl$columns$date$format %||% NA_character_,
                          collapse = " | "),
     amount_sign  = tmpl$table$amount_sign %||% tmpl$amount_sign %||% NA_character_,
-    redactions   = list(total_words = red_total,
-                        per_page = if (!is.null(red)) red$redacted_words else integer(0)),
     row_count    = if (!is.null(parsed)) nrow(parsed$transactions) else 0L,
     flags_summary = if (!is.null(parsed)) {
       fl <- unlist(strsplit(paste(parsed$transactions$flags, collapse = ","), ","))
@@ -137,8 +131,6 @@ format_audit <- function(a) {
   add(sprintf("- periods seen: %s, accounts seen: %s", a$detected$n_periods, a$detected$n_accounts))
   add(sprintf("- period shape: %s .. %s", a$period_shape$start %||% "NA", a$period_shape$end %||% "NA"))
   add(sprintf("- date format: %s, amount style: %s", a$date_format %||% "NA", a$amount_sign %||% "NA"))
-  add(sprintf("- redacted words: %d total (per page: %s)", a$redactions$total_words,
-              paste(a$redactions$per_page, collapse = ", ")))
   add(sprintf("- rows parsed: %d", a$row_count))
   if (length(a$flags_summary))
     add(sprintf("- flags: %s", paste(sprintf("%s=%s", names(a$flags_summary), a$flags_summary), collapse = ", ")))

@@ -1,10 +1,13 @@
 # Tests for the safe-to-share statement audit (R/audit.R) -- the PII guarantee is
 # the point: nothing real may survive masking.
 
-test_that("mask_text leaves NO real letter or digit, keeps shape + [REDACTED]", {
+test_that("mask_text leaves NO real letter or digit, only shape", {
   expect_equal(mask_text(c("Countdown 47.20", "17 Sep 2024", "12-3456-7890123-00")),
                c("Xxxxxxxxx 99.99", "99 Xxx 9999", "99-9999-9999999-99"))
-  expect_identical(mask_text("[REDACTED]"), "[REDACTED]")
+  # There used to be an exemption here that passed "[REDACTED]" through unmasked.
+  # Nothing writes that token any more -- the engine no longer rewrites readable
+  # text -- and an exemption in a PII mask has to earn its place, so it is gone.
+  expect_identical(mask_text("[REDACTED]"), "[XXXXXXXX]")
   expect_identical(mask_text(NA_character_), NA_character_)
   # accented / non-ASCII letters must also be masked (Unicode-aware)
   m <- mask_text("O'Connér & Søns 12")
@@ -59,23 +62,4 @@ test_that("the audit sees the same visual rows the reader does (dense lines)", {
   expect_equal(nrow(parse_pdf_table(input, tmpl)$transactions), 8L)  # ...and per read row
   expect_true(all(shapes$date == "99/99/9999"))        # cells still masked to shape
   expect_true(all(shapes$amount == "9.99"))
-})
-
-test_that("a PDF row whose DATE is redacted is KEPT with its amount, not dropped", {
-  w <- data.frame(stringsAsFactors = FALSE,
-    text = c("[REDACTED]","COFFEE","4.50", "[REDACTED]","RENT","89.00", "17","Sep","PAY","500.00"),
-    x = c(50,150,415, 50,150,415, 45,60,150,415),
-    y = c(40,40,40,   60,60,60,   80,80,80,80),
-    width = c(30,45,25, 30,40,30, 14,16,30,30), height = rep(10,10))
-  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
-    pages = c("period from 1 Sep 2024 to 30 Sep 2024"), words = list(w), meta = list(page_count = 1L))
-  tmpl <- list(id = "s", bank = "S", statement_type = "e", format = "pdf", version = 1,
-    currency = "NZD", table = list(row_tol = 3, date_format = "%d %b", amount_sign = "signed",
-    columns = list(date = list(x_min = 40, x_max = 110), description = list(x_min = 110, x_max = 360),
-      amount = list(x_min = 360, x_max = 470))))
-  tx <- parse_pdf_table(input, tmpl)$transactions
-  expect_equal(nrow(tx), 3L)                              # nothing silently dropped
-  expect_equal(tx$amount, c(4.50, 89.00, 500))           # redacted-date rows keep their amount
-  expect_true(all(grepl("redacted", tx$flags[1:2])))     # and are flagged
-  expect_true(all(is.na(tx$date[1:2])))                  # date unknown (was hidden)
 })

@@ -81,17 +81,22 @@ down this page.
 | Broken running balance | ✅ | `kiwibank_broken_balance` fixture → KPI **fails**, flagged (not "fixed") |
 | No balance column | ✅ | KPI reports `na` with reason, trust stays medium |
 | Opening/closing balance reconciliation | 🟡 | KPI implemented; runs when header carries opening+closing (needs a source that supplies them) |
-| Redacted amount mid‑statement | ✅ | `bnz_redacted_amount` → `[REDACTED]` + `redacted` flag, row kept |
+| Redacted amount mid‑statement | ✅ | the cell reads as whatever is in the file; if it is genuinely empty the amount is derived from the balance delta (`amount_from_balance`) and the row is kept |
 | No silent drops (completeness) | ✅ | `no_unparsed_rows` KPI proves every data row became a transaction |
 | Reversals / duplicates / out‑of‑order dates | 🟡 | preserved verbatim; not *flagged* as such yet (design: an optional advisory KPI) |
 | Subtotals / carried‑forward lines interleaved - **PDF** | ⛔ | this is the "gap in the middle of a block" case; needs the PDF parser + real sample |
 
 ## F. Redaction (forensic‑critical)
 
-**The tool never redacts anything.** Statements ARRIVE already redacted (by
-whoever sent them); the reader only pulls what is visible. The requirement is
-that a redaction must not *break* the read - never that we reconstruct or
-estimate what is hidden. Expected outcomes:
+**The tool never redacts anything, and it no longer withholds anything either.**
+Statements arrive however the sender sent them; the reader pulls what is in the
+document. The requirement is only that a redaction must not *break* the read.
+
+The suppression machinery that used to live here — marker glyphs, overlay
+rectangles, a per-page rasterised occlusion scan — is deleted; see
+[charter.md](charter.md) for the decision. What a redaction still costs is the
+amount cell itself, and that is recovered from the running balance. Expected
+outcomes:
 
 - **Part of a row hidden** (e.g. amount blacked, date/description still visible):
   the row is recorded with its visible cells, the hidden cell is `[REDACTED]`

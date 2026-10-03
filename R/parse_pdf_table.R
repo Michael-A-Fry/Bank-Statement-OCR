@@ -46,14 +46,14 @@
 # see no digit and DROP the whole transaction -- silently losing a row that was
 # really there. Kept this way, the row survives, its amount is nulled, and it is
 # flagged redacted -- hidden, never lost.
-.has_money <- function(x) { x <- as.character(x); grepl("[0-9]", x, perl = TRUE, useBytes = TRUE) | grepl("REDACT", x, ignore.case = TRUE, perl = TRUE, useBytes = TRUE) }
+.has_money <- function(x) grepl("[0-9]", as.character(x), perl = TRUE, useBytes = TRUE)
 # .has_real_money -- a VISIBLE money value: a digit that is NOT a redaction token.
 # Used for the keep decision's evidence test: a row is only a transaction when it
 # still shows a real date or a real amount. A cell that is only [REDACTED] does
 # NOT count -- we never invent a transaction out of a redaction (the statement
 # arrives already redacted; our job is to read what is there, not guess what is
 # hidden). A row with a redacted amount is still kept when its DATE is real.
-.has_real_money <- function(x) { x <- as.character(x); grepl("[0-9]", x, perl = TRUE, useBytes = TRUE) & !grepl("REDACT", x, ignore.case = TRUE, perl = TRUE, useBytes = TRUE) }
+.has_real_money <- function(x) grepl("[0-9]", as.character(x), perl = TRUE, useBytes = TRUE)
 
 # =============================== THE BAND FRAME ==============================
 # THE one coordinate space every stored band lives in. Defined here, once.
@@ -421,7 +421,7 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 #   date_ok       -- the date cell parsed to a real date
 #   date_redacted -- the date cell was HIDDEN (present but blacked out)
 #   keep_dateless -- template opt-in for shared-date statements (see keep_dateless_rows)
-pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
+pdf_keep_row <- function(rec, style, date_ok,
                          keep_dateless = FALSE) {
   if (.pdf_is_summary(rec$description, rec$raw)) return(FALSE)
   if (!.pdf_has_amount(rec, style)) return(FALSE)   # must carry an amount slot
@@ -429,7 +429,7 @@ pdf_keep_row <- function(rec, style, date_ok, date_redacted = FALSE,
   # No real date: only REAL evidence in the money column can make it a transaction.
   # We never fabricate a row out of a redaction alone.
   real_amt <- .pdf_real_amount(rec, style)
-  (isTRUE(date_redacted) && real_amt) || (isTRUE(keep_dateless) && real_amt)
+  isTRUE(keep_dateless) && real_amt
 }
 
 # .pdf_row_reason(rec, style, date_ok) -- WHY a visual row is NOT kept as a
@@ -837,7 +837,6 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     if (cacheable) assign(key, v, envir = .dok_cache)
     v
   }
-  .redacted_cell <- function(v) !is.na(v) && grepl("REDACT", toupper(as.character(v)))
   # KEEP RULE. A row is a transaction when it still shows REAL evidence -- a real
   # date OR a real amount -- and carries an amount slot (real, or redacted so the
   # value is merely hidden) and is not a summary line. The statement ARRIVES
@@ -866,7 +865,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # branch here now automatically changes what the X-ray paints and what
   # row_coverage counts, so the reader and the diagnostic can never disagree again.
   .is_txn <- function(r)
-    pdf_keep_row(r, style, .date_ok(r$date), .redacted_cell(r$date), keep_dateless)
+    pdf_keep_row(r, style, .date_ok(r$date), keep_dateless)
 
   # Split-row recovery: some statements render one transaction's cells on slightly
   # different baselines, so the DATE and the AMOUNT land in DIFFERENT visual rows (a
@@ -878,7 +877,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # carried-forward line (which keeps its own date) is never merged, and the
   # stitched row is flagged (row_stitched) for review.
   if (length(recs) > 1) {
-    d_ok  <- vapply(recs, function(r) .date_ok(r$date) || .redacted_cell(r$date), logical(1))
+    d_ok  <- vapply(recs, function(r) .date_ok(r$date), logical(1))
     has_a <- vapply(recs, .has_amount, logical(1))
     d_txt <- vapply(recs, function(r) !is.na(r$date) && nzchar(trimws(r$date)), logical(1))
     date_only <- function(k) d_ok[k] && !has_a[k] && !.is_summary(recs[[k]])
@@ -1000,7 +999,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
           next
         }
       }
-      if (nzchar(line_txt) && !money_here && !.date_ok(r$date) && !.redacted_cell(r$date) &&
+      if (nzchar(line_txt) && !money_here && !.date_ok(r$date) &&
           !.is_summary(r) && !.is_footer_noise(line_txt) && close) {
         # NOTHING on a merged line may be dropped. Descriptions are VERBATIM, and a
         # continuation line's words are part of the description that was printed --
@@ -1142,16 +1141,6 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # cell) -> the value is genuinely unknown and is nulled. `redacted` (the row
   # flag) is broader: any of date/amount/description hidden marks the row, but a
   # row whose DATE was redacted still keeps its real amount.
-  amt_redacted <- if (n == 0) logical(0) else if (identical(style, "debit_credit_cols"))
-    grepl("REDACTED", getc("debit"), ignore.case = TRUE) |
-    grepl("REDACTED", getc("credit"), ignore.case = TRUE)
-  else grepl("REDACTED", getc("amount"), ignore.case = TRUE)
-  # The row flag fires when ANY cell was hidden -- date, amount, description,
-  # balance, particulars, reference, account, code, type -- so a redaction of any
-  # field is never silent. Read it off the row's raw text (which already carries
-  # the [REDACTED] token for every guarded word) rather than a hand-listed subset.
-  redacted <- if (n == 0) logical(0) else
-    (amt_redacted | grepl("REDACT", getc("raw"), ignore.case = TRUE))
   # ---- A HOLE THE PAGE CAN FILL ITSELF ---------------------------------------
   #
   # A statement that prints a running balance carries its own answer key: the
@@ -1189,7 +1178,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     suppressWarnings(as.numeric(.num(md$opening_balance %||% NA_character_, dec)))[1],
     balance[-n])
   from_balance <- if (n == 0) logical(0) else {
-    derivable <- is.na(amt$value) & !amt_redacted & !redacted &
+    derivable <- is.na(amt$value) &
       has_bal & !is.na(balance) & !is.na(prev_bal)
     d <- round(balance - prev_bal, 2)
     ok <- derivable & is.finite(d) & abs(d) >= 0.005
@@ -1208,7 +1197,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # Computed AFTER the balance derivation above, so a hole the page filled itself
   # is not also reported as an unreadable amount: the row has a usable figure, and
   # `amount_from_balance` is the flag that says where it came from.
-  malformed <- if (n == 0) logical(0) else (is.na(amt$value) & !redacted)
+  malformed <- if (n == 0) logical(0) else is.na(amt$value)
   # date_unresolved: kept despite an unknown year (see .date_ok) -- date_iso is NA
   # but the transaction is preserved. Marked so trust/review reflect the gap. A
   # user-forced row whose date simply didn't parse (date_iso NA) is flagged the
@@ -1248,7 +1237,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   flags <- if (n == 0) character(0) else {
     add <- function(base, cond, tok)
       ifelse(cond, ifelse(nzchar(base), paste0(base, ",", tok), tok), base)
-    f <- ifelse(redacted, "redacted", ifelse(malformed, "malformed", ""))
+    f <- ifelse(malformed, "malformed", "")
     f <- add(f, date_unresolved, "date_unresolved")
     f <- add(f, date_year_inferred, "date_year_inferred")  # year guessed from free page text
     f <- add(f, no_date_kept, "no_date")        # shared-date row kept with a blank date
@@ -1263,7 +1252,6 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     f <- add(f, from_balance, "amount_from_balance")
     f
   }
-  if (n > 0) amt$value[amt_redacted] <- NA_real_   # only null when the AMOUNT was hidden
 
   core <- coerce_core(data.frame(
     row_id = seq_len(n), date = date_iso, date_raw = date_raw, description = description,
@@ -1325,8 +1313,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # nothing in between carried it.
     pdf_doc = input$meta$pdf_doc,
     ocr_pages = input$meta$ocr_pages %||% 0L,
-    ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_,
-    redaction_scan_incomplete = input$meta$redaction_scan_incomplete %||% 0L)
+    ocr_min_confidence = input$meta$ocr_min_conf %||% NA_real_)
 
   pages_v <- if (n == 0) integer(0) else vapply(recs, function(r) as.integer(r$page), integer(1))
   provenance <- data.frame(row_id = seq_len(n),

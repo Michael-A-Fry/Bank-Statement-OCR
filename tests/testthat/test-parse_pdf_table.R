@@ -176,88 +176,6 @@ test_that("split-row recovery does NOT merge a carried-forward line with a real 
   expect_false(any(grepl("row_stitched", tx$flags)))      # nothing was stitched
 })
 
-test_that("partial redactions keep the row (null+flag); a wholly-redacted row does not appear", {
-  # Statements ARRIVE already redacted; the reader records what is still visible.
-  # A PARTIALLY-redacted transaction (date, amount or balance hidden but a real
-  # date or amount still showing) is kept: the hidden value is NULLED (never
-  # fabricated) and the row is flagged. A row that is WHOLLY redacted has no real
-  # date or amount, so it is not a transaction -- it simply does not appear, and we
-  # never guess it was there. Neighbours above/below are untouched.
-  R <- "[REDACTED]"
-  words <- data.frame(stringsAsFactors = FALSE,
-    text  = c("05","Jan","COFFEE","-40.00","955.50",  # y=40 clean baseline row
-              R,"SHOP","-10.00","945.50",              # y=70 DATE redacted
-              "07","Jan","RENT",R,"935.50",            # y=100 AMOUNT redacted
-              "08","Jan","BILL","-5.00",R,             # y=130 BALANCE redacted
-              R,R,R,R),                                # y=160 WHOLE row redacted
-    x     = c(45,60,110,415,490,   45,110,415,490,   45,60,110,415,490,
-              45,60,110,415,490,   45,110,415,490),
-    y     = c(40,40,40,40,40,      70,70,70,70,       100,100,100,100,100,
-              130,130,130,130,130, 160,160,160,160),
-    width = c(12,16,45,34,30,      55,45,34,30,       12,16,45,34,30,
-              12,16,45,34,30,      55,45,34,30),
-    height = rep(10, 23))
-  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
-    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
-    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
-  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
-
-  # 4 partial rows recorded; the wholly-redacted 5th row does NOT appear.
-  expect_equal(nrow(tx), 4L)
-  isred <- grepl("redacted", tx$flags, ignore.case = TRUE)
-
-  # row 1: clean -> no redaction flag, values intact
-  expect_false(isred[1])
-  expect_equal(tx$amount[1], -40.00); expect_equal(tx$balance[1], 955.50)
-
-  # row 2: DATE hidden -> row kept (real amount), date_iso NA, amount preserved, flagged
-  expect_true(isred[2])
-  expect_true(is.na(tx$date[2]))
-  expect_equal(tx$amount[2], -10.00)                      # a redacted DATE never loses the amount
-
-  # row 3: AMOUNT hidden -> row kept (real date), amount NULLED (not fabricated), flagged
-  expect_true(isred[3])
-  expect_true(is.na(tx$amount[3]))
-  expect_equal(tx$balance[3], 935.50)
-
-  # row 4: BALANCE hidden -> balance NULLED, amount intact, flagged
-  expect_true(isred[4])
-  expect_true(is.na(tx$balance[4]))
-  expect_equal(tx$amount[4], -5.00)
-
-  # row 5 was WHOLLY redacted (no real date, no real amount) -> not a transaction,
-  # so it is absent. We never fabricate a row from redaction alone.
-  expect_equal(sum(is.na(tx$date) & is.na(tx$amount) & is.na(tx$balance)), 0L)
-})
-
-test_that("redacting the date of an EDGE transaction keeps it (never dropped)", {
-  # Safety invariant: a redaction that covers the date of the FIRST (or last) real
-  # transaction must NOT drop it -- redaction may only null values and add flags,
-  # never change which rows are kept (except to preserve a row whose date/amount
-  # was hidden). This is the exact case a position-based "promotion guard" would
-  # get wrong: with the first row's date blacked out, the remaining real dates all
-  # sit BELOW it, so a span heuristic would demote and silently lose a real
-  # transaction. We keep it instead -- silent loss of a real row is the worst
-  # forensic outcome, worse than a visible, flagged over-count elsewhere.
-  R <- "[REDACTED]"
-  words <- data.frame(stringsAsFactors = FALSE,
-    text  = c(R,"COFFEE","-40.00","955.50",       # y=40 FIRST row, date redacted (edge)
-              "06","Jan","SHOP","-10.00","945.50", # y=70 real
-              "07","Jan","RENT","-5.00","940.50"), # y=100 real
-    x     = c(45,110,415,490,   45,60,110,415,490,   45,60,110,415,490),
-    y     = c(40,40,40,40,       70,70,70,70,70,       100,100,100,100,100),
-    width = c(55,45,34,30,       12,16,45,34,30,       12,16,45,34,30),
-    height= rep(10, 14))
-  input <- list(kind = "pdf", path = tempfile(fileext = ".pdf"),
-    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(words),
-    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
-  tx <- parse_pdf_table(input, .simple_tmpl())$transactions
-  expect_equal(nrow(tx), 3L)                              # the edge row is NOT lost
-  expect_true(is.na(tx$date[1]))                          # its hidden date is NA
-  expect_equal(tx$amount[1], -40.00)                      # its visible amount survives
-  expect_true(grepl("redacted", tx$flags[1], ignore.case = TRUE))  # and it is flagged
-})
-
 test_that("a differently-sized page normalises to the reference (scan/scale fix)", {
   # Same statement, two physical sizes. A template has no explicit ref -> defaults
   # to A4; the A4 page is untouched and the 2x page is normalised back to it, so
@@ -384,35 +302,6 @@ test_that("metadata_regions pins a header value the label engine misses", {
   expect_equal(h$closing_balance, 1234.56)           # the box pins it
   # the pinned box must NOT invent a transaction row
   expect_equal(nrow(parse_pdf_table(input, tmpl)$transactions), 1L)
-})
-
-test_that("a redacted header field is honest: text shows [REDACTED], money stays NA", {
-  # A redaction overlay can cover a HEADER value (account number, opening balance),
-  # not just the transaction table. The extracted header must never silently drop
-  # the field or invent a number: a text field surfaces the [REDACTED] token
-  # (present-but-hidden) and a money field is NA (unknown), never fabricated.
-  R <- "[REDACTED]"
-  mk <- function(acct, ob) data.frame(stringsAsFactors = FALSE,
-    text  = c("Account", acct, "Opening", "Balance", ob, "05","Jan","COFFEE","-40.00","955.50"),
-    x     = c(45,140,45,100,200,   45,60,110,415,490),
-    y     = c(12,12,24,24,24,      60,60,60,60,60),
-    width = c(50,90,50,45,60,      12,16,45,34,30),
-    height= rep(10, 10))
-  tmpl <- .simple_tmpl()
-  tmpl$table$metadata_regions <- list(
-    account_number  = list(page = 1, x_min = 120, x_max = 260, y_min = 8,  y_max = 20),
-    opening_balance = list(page = 1, x_min = 150, x_max = 300, y_min = 20, y_max = 34))
-  mkinput <- function(w) list(kind = "pdf", path = tempfile(fileext = ".pdf"),
-    pages = c("Statement period 1 Jan 2026 to 31 Jan 2026"), words = list(w),
-    page_width = 595.28, page_height = 841.89, meta = list(page_count = 1L))
-
-  clean  <- parse_pdf_table(mkinput(mk("1234567", "500.00")), tmpl)$header
-  redact <- parse_pdf_table(mkinput(mk(R, R)), tmpl)$header
-
-  expect_equal(clean$account_number, "1234567")        # sanity: read correctly when visible
-  expect_equal(clean$opening_balance, 500.00)
-  expect_true(grepl("REDACT", redact$account_number))  # hidden text is surfaced, not dropped
-  expect_true(is.na(redact$opening_balance))           # hidden money is NA, never invented
 })
 
 test_that("metadata_regions validates: good passes, malformed / unknown rejected", {

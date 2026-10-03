@@ -149,8 +149,6 @@ to work out. The result names which.</dd>
 <dt>Low confidence</dt><dd>A check <b>failed</b>. The result names which one and by how much.</dd>
 <dt>Field coverage</dt><dd>Which fields are populated, which came back empty (maybe a wrong column), which aren&#39;t on this statement at all.</dd>
 <dt>Diagnostics</dt><dd>When anything is off: where, why, and how to fix it.</dd>
-<dt>Redactions</dt><dd>A redacted cell stays <code>[REDACTED]</code> and its row is kept. Nothing
-hidden is filled in.</dd>
 </dl>
 <p class="muted" style="margin-top:14px">Deeper how-to - drawing PDF columns, every way statements
 differ - lives in the guide on the Add-a-template tab.

@@ -297,23 +297,6 @@ test_that("inspect's kept count equals the reader's row count (keep_dateless)", 
   expect_equal(.xr_kept(input, on), 3L)                             # X-ray now paints 3
 })
 
-test_that("inspect's kept count equals the reader's row count (redacted date)", {
-  R <- "[REDACTED]"
-  words <- data.frame(stringsAsFactors = FALSE,
-    text  = c(R,"COFFEE","-40.00","955.50",           # date hidden, real amount -> kept
-              "06","Jan","SHOP","-10.00","945.50",
-              R,R,R,R),                                # wholly redacted -> never a transaction
-    x     = c(45,110,415,490,   45,60,110,415,490,   45,110,415,490),
-    y     = c(40,40,40,40,      70,70,70,70,70,      100,100,100,100),
-    width = c(55,45,34,30,      12,16,45,34,30,      55,45,34,30),
-    height= rep(10, 13))
-  # the X-ray reads redaction off the word-level `redacted` column
-  words$redacted <- grepl("REDACT", words$text)
-  input <- .xr_input(words)
-  expect_equal(nrow(parse_pdf_table(input, .xr_tmpl())$transactions), 2L)
-  expect_equal(.xr_kept(input, .xr_tmpl()), 2L)
-})
-
 test_that("inspect's kept count equals the reader's row count (stitched split rows)", {
   # One transaction per pair, staggered so the date and the amount land in
   # DIFFERENT visual rows. The reader stitches them; the overlay used to show both

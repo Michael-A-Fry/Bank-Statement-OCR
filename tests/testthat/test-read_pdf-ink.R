@@ -197,36 +197,6 @@ test_that("ink that does not line up with the document is not applied at all", {
 # already in the renderer's output, produced in ONE pass for the sign check. So a page
 # that draws neither needs no rasterising, and the question costs nothing.
 
-test_that(".ink_fills finds the paint on a redacted page and none on a clean one", {
-  overlay <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
-  clean   <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
-  skip_if_not(file.exists(overlay) && file.exists(clean))
-  io <- .pdf_ink(overlay); ic <- .pdf_ink(clean)
-  expect_false(is.null(io)); expect_false(is.null(ic))
-  expect_gt(as.integer(io[[1]]$fills), 0L)      # four boxes, measured
-  expect_identical(as.integer(ic[[1]]$fills), 0L)
-})
-
-test_that("the skip is for the PRESENCE of paint, never for its absence", {
-  # A page wrongly skipped leaks redacted text, so the gate may only ever say "there
-  # is nothing here". Without a usable ink list -- no pdftocairo, or a page count that
-  # does not line up -- every page must be scanned exactly as before.
-  src <- paste(readLines(file.path(engine_root(), "R", "read_pdf.R"), warn = FALSE),
-               collapse = "\n")
-  expect_match(src, "can_hide <- !ink_ok || p > ink_pages ||", fixed = TRUE)
-  expect_match(src, "ink[[p]]$fills %||% 1L", fixed = TRUE)   # default: assume paint
-})
-
-test_that("a box over text is still caught with the gate in place", {
-  # The gate is only safe if it changes nothing about what gets FOUND. This is the
-  # overlay fixture that the colour-blind-detection work was built on.
-  f <- fixture("tests/testthat/fixtures/redaction_overlay_colours.pdf")
-  skip_if_not(file.exists(f))
-  input <- read_input(f)
-  txt <- paste(unlist(input$pages %||% input$text %||% ""), collapse = " ")
-  expect_match(txt, "REDACTED", fixed = TRUE)
-})
-
 test_that("a statement read WITHOUT the sign scan says so, loudly", {
   # The reason this is severity `high` and owner `escalate`: both ink faults are
   # invisible to the text layer, in OPPOSITE directions, and on a statement with no

@@ -110,8 +110,8 @@ test_that("a row's flags render as words, and an unknown one is never dropped", 
   expect_identical(L$plain_flags(c("", NA)), c("", ""))
   expect_identical(L$plain_flags("ocr_low_conf"), unname(L$FLAG_PLAIN[["ocr_low_conf"]]))
   # several on one row, in the order the engine wrote them
-  expect_identical(L$plain_flags("redacted,date_year_inferred"),
-                   paste(unname(L$FLAG_PLAIN[["redacted"]]),
+  expect_identical(L$plain_flags("malformed,date_year_inferred"),
+                   paste(unname(L$FLAG_PLAIN[["malformed"]]),
                          unname(L$FLAG_PLAIN[["date_year_inferred"]]), sep = "; "))
   # a flag this screen has no wording for is still a fact about that row
   expect_identical(L$plain_flags("something_new"), "something_new")
@@ -192,7 +192,7 @@ test_that("the screen's list of informational checks is the engine's list", {
     end <- j[j > i[1]]; end <- if (length(end)) min(end) - 1L else length(src)
     any(grepl("informational = TRUE", src[i[1]:end], fixed = TRUE))
   }, names(L$CHECK_PLAIN))
-  expect_gte(length(from_engine), 2L)                 # the scan must not go quiet
+  expect_gte(length(from_engine), 1L)                 # the scan must not go quiet
   expect_setequal(from_engine, L$INFORMATIONAL_CHECKS)
   # and they really do come back as "na", which is why they needed their own word
   expect_true(all(from_engine %in% names(L$CHECK_PLAIN)))
@@ -210,10 +210,9 @@ test_that("no check label claims more than its KPI proves", {
   expect_false(grepl("every row", L$CHECK_PLAIN[["no_unparsed_rows"]], ignore.case = TRUE))
   # transaction_count degrades to n > 0 when the statement prints no count.
   expect_false(grepl("matches", L$CHECK_PLAIN[["transaction_count"]], ignore.case = TRUE))
-  # redaction_summary is sum(grepl("redacted", flags)) -- honouring is proved by
-  # redaction_scan, which is a different check with its own row.
-  expect_false(grepl("honoured", L$CHECK_PLAIN[["redaction_summary"]], ignore.case = TRUE))
-  expect_match(L$CHECK_PLAIN[["redaction_scan"]], "redaction")
+  # ocr_confidence is a COUNT and a worst-page figure, not a verdict, so its
+  # wording must not read as a pass.
+  expect_false(grepl("passed|correct", L$CHECK_PLAIN[["ocr_confidence"]], ignore.case = TRUE))
   # ...and the figures the verdict rests on are on screen, so a generous pass is
   # verifiable rather than silent.
   src <- .src("app.R")
@@ -343,26 +342,6 @@ test_that("marking a conversion wrong says what happened to the figures", {
 # ONE FACT, REPORTED ONCE. A failing redaction_scan KPI and the header signal both
 # raise `redaction_unverified` from the same header field; two rows each headed
 # "do NOT release this output" read as two separate leaks.
-test_that("a failed redaction scan is reported once, whether or not recon is passed", {
-  tx <- data.frame(row_id = 1L, date = "2025-01-01", date_raw = "1/1/25",
-    description = "a", amount = -1, amount_raw = "-1", direction = "debit",
-    balance = NA_real_, balance_raw = NA_character_, particulars = NA_character_,
-    code = NA_character_, reference = NA_character_, other_party = NA_character_,
-    type = NA_character_, currency = "NZD", flags = "", stringsAsFactors = FALSE)
-  parsed <- list(transactions = tx, header = list(redaction_scan_incomplete = 2L))
-  recon <- reconcile(parsed, NULL)
-  with_recon <- build_diagnostics("needs_review", parsed = parsed, recon = recon)
-  expect_equal(sum(with_recon$category == "redaction_unverified"), 1L)
-  # Assert on the DETAIL, not the cure. Both raise sites now share one cure
-  # constant, so "Do NOT release" no longer distinguishes them and an assertion on
-  # it would pass whichever row survived -- a green test checking nothing.
-  expect_match(with_recon$detail[with_recon$category == "redaction_unverified"][1],
-               "the redaction scan could not complete")
-  # a caller that passes no recon still gets told (build_diagnostics has such callers)
-  no_recon <- build_diagnostics("needs_review", parsed = parsed)
-  expect_equal(sum(no_recon$category == "redaction_unverified"), 1L)
-})
-
 # ---------------------------------------------------------------------------
 # THE DICTIONARIES ARE DOCUMENTATION. Both are hand-maintained files whose
 # comments explain themselves; a whole-file YAML dump silently deletes all of it.

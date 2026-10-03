@@ -263,7 +263,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
                               user_templates_dir = "templates/statements_user",
                               requested_by = NULL,
                               formats = c("xlsx", "csv", "json"),
-                              logdir = "logs", redaction_rects = NULL,
+                              logdir = "logs",
                               force_template = NULL, force_rows = NULL,
                               log = TRUE) {
   # NOTHING THAT TOUCHES `path` HAPPENS OUTSIDE THE FUNNEL. docs/design.md and
@@ -309,7 +309,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
     templates <- load_template_set(templates_dir, user_templates_dir)
-    input <- read_input(path, redaction_rects = redaction_rects)
+    input <- read_input(path)
     # THE FILE ITSELF COULD NOT BE READ. That is not the same answer as "we have
     # never seen this layout", and it must never be given the same one: a corrupt
     # PDF and a note-to-self .txt both came back as "No template read this

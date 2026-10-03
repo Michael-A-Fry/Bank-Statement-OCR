@@ -16,9 +16,11 @@ test_that("tuning constants hold their shipped values", {
   expect_identical(PARAM_STATED_COUNT_MAX, 100000L)
   expect_identical(PARAM_MAX_PAGES, 100L)
   expect_identical(PARAM_MAX_PAGE_PT, 2880)
-  expect_identical(PARAM_REDACT_DARK_LEVEL, 60L)
-  expect_identical(PARAM_REDACT_OCC_THRESH, 0.70)
-  expect_identical(PARAM_REDACT_VECTOR_DPI, 100L)
+  expect_identical(PARAM_SECS_PER_PAGE, 0.09)
+  expect_identical(PARAM_SECS_PER_SCAN_PAGE, 9.3)
+  # The PARAM_REDACT_* constants that used to be asserted here are gone with the
+  # occlusion scan: nothing withholds readable text any more.
+  expect_false(any(grepl("^PARAM_REDACT", ls(envir = globalenv()))))
 })
 
 test_that(".plausible_year accepts the trusted window and rejects outside it", {

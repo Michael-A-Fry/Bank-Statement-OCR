@@ -42,13 +42,14 @@ test_that("each check is one builder returning a single KPI row (or NULL)", {
   expect_true(one_row(.kpi_dates_within_period(tx, h, n)))
   expect_true(one_row(.kpi_dates_readable(tx, n)))
   expect_true(one_row(.kpi_no_unparsed_rows(p, tx, n)))
-  expect_true(one_row(.kpi_redaction_summary(tx)))
   # the three that are raised only when there IS something to say
   expect_null(.kpi_amount_direction(tx, list(amount_sign = "signed")))
   expect_null(.kpi_ocr_confidence(h))
-  expect_null(.kpi_redaction_scan(h))
+  expect_null(.kpi_account_number(h))          # this header carries no account number
+  # ...and that one DOES return a single row when there is one to judge
+  expect_true(one_row(.kpi_account_number(list(account_number = "01-0234-0123456-00"))))
   # ...and every builder's row carries the .kpi() column set reconcile() rbinds
-  expect_named(.kpi_redaction_summary(tx),
+  expect_named(.kpi_dates_readable(tx, n),
                c("name", "status", "expected", "actual", "discrepancy", "detail",
                  "informational"))
   # the internal `informational` flag never leaves reconcile()
@@ -299,7 +300,6 @@ test_that("an 'na' check reports no expected/actual figures", {
   expect_true(is.na(.kpi("anything", "na", expected = 9, actual = 9)$actual))
   # INFORMATIONAL rows are not checks that could not run -- their figure is the
   # whole point of the row, and the screen gives them their own word.
-  expect_equal(as.integer(k$actual[k$name == "redaction_summary"]), 0L)
   expect_equal(as.integer(
     .kpi("anything", "na", actual = 9, informational = TRUE)$actual), 9L)
   # and a check that DID run still shows both figures
@@ -404,21 +404,6 @@ test_that("a transaction_count with no printed count declares what it proved", {
 })
 
 # ---- redaction_scan: an incomplete scan may have leaked hidden text ---------
-test_that("an incomplete redaction scan FAILS a KPI (it never reached reconcile before)", {
-  clean <- .parsed(.tx(c(-10, 40)), header = list(redaction_scan_incomplete = 0L),
-                   source_line_count = 2)
-  expect_false("redaction_scan" %in% reconcile(clean)$kpis$name)   # nothing to report
-
-  leak <- .parsed(.tx(c(-10, 40)), header = list(redaction_scan_incomplete = 2L),
-                  source_line_count = 2)
-  r <- reconcile(leak)
-  row <- r$kpis[r$kpis$name == "redaction_scan", ]
-  expect_equal(row$status, "fail")             # drives needs_review + feed withholding
-  expect_equal(as.integer(row$actual), 2L)
-  expect_match(row$detail, "hidden under a redaction box")
-  expect_equal(r$trust$level, "low")
-})
-
 # ---- inferred year: a guessed year must never read as proven ----------------
 test_that("date_year_inferred caps trust and states where the year came from", {
   # The reader can take a year from a stray 4-digit number in free page text when

@@ -223,11 +223,10 @@ capture_metadata <- function(ctx, config = load_config()) {
     # rows the engine could NOT fully read -- the sharpest training signal.
     unparsed_dates <- if (n > 0) sum(is.na(tx$date) & !is.na(tx$date_raw) &
                                        nzchar(trimws(as.character(tx$date_raw)))) else 0L
-    unparsed_amounts <- if (n > 0) sum(is.na(tx$amount) & !grepl("redacted", flags)) else 0L
+    unparsed_amounts <- if (n > 0) sum(is.na(tx$amount)) else 0L
     rec$parse_quality <- list(
       row_count       = n,
       malformed_rows  = sum(grepl("malformed", flags)),
-      redacted_rows   = sum(grepl("redacted", flags)),
       unparsed_dates  = unparsed_dates,     # date cell present but unreadable
       unparsed_amounts = unparsed_amounts,  # amount cell present but unreadable
       amount_sign     = tmpl$amount_sign %||% tmpl$table$amount_sign %||% NA_character_,
@@ -340,14 +339,6 @@ capture_metadata <- function(ctx, config = load_config()) {
       low_conf_cells = if (n > 0) sum(grepl("ocr_low_conf", tx$flags %||% "")) else 0L)
   }
 
-  # ---- redaction ----
-  if (.meta_on(config, "redaction")) {
-    rr <- if (n > 0) sum(grepl("redacted", tx$flags %||% "")) else 0L
-    si <- suppressWarnings(as.integer(h$redaction_scan_incomplete %||% 0L))
-    if (rr > 0 || (!is.na(si) && si > 0)) rec$redaction <- list(
-      redacted_rows   = rr,
-      scan_incomplete = if (is.na(si)) 0L else si)
-  }
 
   if (.meta_at_least(level, "full") && !is.null(ctx$elapsed_ms))
     rec$elapsed_ms <- round(as.numeric(ctx$elapsed_ms))

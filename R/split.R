@@ -114,11 +114,6 @@
   # ocr_min_conf is deliberately NOT narrowed to this segment: the input keeps only
   # a whole-document minimum, so every segment inherits it. Conservative on purpose
   # -- the OCR caveat can then only over-warn, never under-warn.
-  if (!is.null(m$redactions) && is.data.frame(m$redactions) && "page" %in% names(m$redactions)) {
-    rd <- m$redactions[m$redactions$page %in% pages, , drop = FALSE]
-    if (nrow(rd)) rd$page <- match(rd$page, pages)   # renumber to the segment's frame
-    m$redactions <- rd
-  }
   sub$meta <- m
   sub
 }

@@ -38,7 +38,6 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
 R/   -- OCR and image handling
   ocr.R                 system Tesseract, driven from R
   ocr_preprocess.R      pre-OCR image conditioning (magick)
-  detect_redaction.R    rasterised (solid black box) redaction detection
   inspect.R             "See it on the page" geometry
 R/   -- templates without code (the wizard + drafting)
   draft.R               draft a template from a single file

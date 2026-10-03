@@ -3,7 +3,7 @@
 # SHAPE OF THIS FILE, and where to add things:
 #   * one `.kpi_*()` builder per check. Each takes only what it needs, and returns
 #     ONE .kpi() row -- or NULL when the check does not apply to this statement
-#     (`amount_direction`, `ocr_confidence` and `redaction_scan` are only raised
+#     (`amount_direction` and `ocr_confidence` are only raised
 #     when there is something to say).
 #   * `.reconcile_trust()` turns the finished KPI table into the trust level,
 #     score and reasons.
@@ -27,8 +27,8 @@
 # it holds for every check, including the next one written.
 #
 # INFORMATIONAL rows are exempt: their `actual` is the fact they exist to report
-# (redacted row count, OCR confidence), the table gives them their own word
-# rather than "could not be checked", and app.R reads the redaction count off it.
+# (OCR confidence), the table gives them their own word rather than "could not be
+# checked".
 #
 # AN `expected` MUST BE SOMETHING THE REVIEWER CAN CHECK. It may be a figure the
 # STATEMENT PRINTS, or a plain target for the rows we produced (0, ">0", n). It
@@ -99,7 +99,7 @@
   if (is.na(opening) && !is.na(closing) && n > 0 && !is.na(bal[1]) && !is.na(tx$amount[1])) {
     opening <- bal[1] - tx$amount[1]; derived <- c(derived, "opening")
   }
-  # Which rows have no readable amount? One blank / unreadable / redacted amount is
+  # Which rows have no readable amount? One blank or unreadable amount is
   # enough to make the total unprovable, so name them: "it didn't reconcile" is
   # useless to a reviewer who cannot see WHICH figure is missing.
   na_amt <- if (n > 0) which(is.na(tx$amount)) else integer(0)
@@ -175,7 +175,7 @@
 }
 
 # 2. running_balance_continuity: balance[i] == balance[i-1] + amount[i].
-# A blank/redacted MIDDLE balance must not open a blind window: skipping both
+# A blank MIDDLE balance must not open a blind window: skipping both
 # pairs around an NA balance lets a real break hide inside the gap (100, NA, 130
 # with amounts 0/+20/+5 would wrongly "pass" -- 130 should be 125). Instead
 # BRIDGE the gap: carry the last known-good balance plus the running sum of the
@@ -222,7 +222,7 @@
   }
   detail <- sprintf("%d discontinuity(ies)", bad)
   if (unverifiable > 0)
-    detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank/redacted)",
+    detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank)",
                       detail, unverifiable)
   # A row whose amount was DERIVED from these balances satisfies this check by
   # construction, so it is not evidence. Say how many, and when that is every row
@@ -375,7 +375,7 @@
        detail = if (d_ok == n) sprintf("all %d row date(s) read", n)
                 else if (d_ok > 0)
                   sprintf(paste0("%d of %d row date(s) could not be read - the date format is ",
-                                 "wrong for those rows, or the date was blank/redacted"),
+                                 "wrong for those rows, or the date was blank"),
                           n - d_ok, n)
                 else "no row dates could be read - the date column mapping or format is wrong")
 }
@@ -556,14 +556,6 @@
                    "completeness."))
 }
 
-# 6. redaction_summary: informational count of redacted rows.
-.kpi_redaction_summary <- function(tx) {
-  redacted <- sum(grepl("redacted", tx$flags))
-  .kpi("redaction_summary", "na", expected = NA, actual = redacted,
-       discrepancy = NA, detail = sprintf("%d redacted row(s)", redacted),
-       informational = TRUE)
-}
-
 # 7. ocr_confidence: informational -- was any page machine-read (OCR), and how
 # confident was the worst page? OCR is never 100% accurate, so this must be
 # visible to a forensic reviewer alongside the confidence figure. It does not
@@ -578,27 +570,6 @@
        discrepancy = NA,
        detail = "machine-read (OCR) text is not guaranteed 100% accurate -- verify amounts and descriptions against the source PDF",
        informational = TRUE)
-}
-
-# 8. redaction_scan: did the occlusion scan actually finish on every page?
-# The scan is the ONLY thing that proves text under a redaction box stayed
-# hidden. When it could not complete, the reader falls back to the raw text
-# layer -- so words the sender blacked out may have been emitted verbatim. The
-# header carried that fact all the way here and NOTHING read it: the run said
-# "Converted successfully", trust was uncapped, and the feed accepted a file
-# that may contain hidden text. Honouring redactions is absolute, so this FAILS
-# (routing to needs_review and withholding the feed) rather than warning quietly.
-# NULL (nothing raised) when the scan was clean, so a good run changes nothing.
-.kpi_redaction_scan <- function(h) {
-  scan_incomplete <- suppressWarnings(as.integer(h$redaction_scan_incomplete %||% 0L))
-  if (is.na(scan_incomplete)) scan_incomplete <- 0L
-  if (scan_incomplete <= 0) return(NULL)
-  .kpi("redaction_scan", "fail", expected = 0, actual = scan_incomplete,
-       discrepancy = scan_incomplete,
-       detail = sprintf(paste0("the redaction scan could not complete on %d page(s), so text ",
-                               "hidden under a redaction box may have been read and emitted - ",
-                               "do NOT release this output; check those pages against the ",
-                               "source PDF before use"), scan_incomplete))
 }
 
 # ---- deterministic trust -----------------------------------------------------
@@ -806,9 +777,7 @@ reconcile <- function(parsed, template = NULL) {
     dates_readable             = .kpi_dates_readable(tx, n),
     account_number             = .kpi_account_number(h),
     no_unparsed_rows           = .kpi_no_unparsed_rows(parsed, tx, n),
-    redaction_summary          = .kpi_redaction_summary(tx),
-    ocr_confidence             = .kpi_ocr_confidence(h),
-    redaction_scan             = .kpi_redaction_scan(h))
+    ocr_confidence             = .kpi_ocr_confidence(h))
   rows <- Filter(Negate(is.null), rows)
 
   kpis <- do.call(rbind, rows)

@@ -52,8 +52,13 @@ test_that("a confirmed bundle splits, tags rows, and rolls trust to the weakest"
   # each statement's dates took ITS OWN period year/month
   expect_equal(sb$parsed$transactions$date,
                c("2026-01-05", "2026-01-06", "2026-02-03", "2026-02-10"))
-  # KPIs are stacked per statement
-  expect_true(all(grepl("\\[statement 1\\]", sb$recon$kpis$name[1:7])))
+  # KPIs are stacked per statement, statement 1's block first. Counted from the
+  # table rather than hard-wired to a number of checks: the check LIST changes
+  # (two redaction checks were removed with the suppression machinery), and a
+  # hard-coded 1:7 silently tested the wrong rows rather than failing.
+  n1 <- sum(grepl("\\[statement 1\\]", sb$recon$kpis$name))
+  expect_gt(n1, 3L)
+  expect_true(all(grepl("\\[statement 1\\]", sb$recon$kpis$name[seq_len(n1)])))
   expect_true(any(grepl("\\[statement 2\\]", sb$recon$kpis$name)))
   # per-statement summary present
   expect_equal(length(sb$statements), 2L)

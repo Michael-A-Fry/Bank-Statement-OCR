@@ -47,12 +47,6 @@
   safe(extract_metadata(shim), NULL)
 }
 
-REDACTION_TOKEN <- "[REDACTED]"
-
-.is_redacted <- function(x) {
-  x <- as.character(x)
-  !is.na(x) & grepl("REDACTED", x, ignore.case = TRUE)
-}
 
 # parse_statement(input, template) -> list(transactions, extras, header, provenance)
 parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
@@ -177,8 +171,6 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
   # ---- flags ----
   flags <- vapply(seq_len(n), function(i) {
     f <- character(0)
-    amt_red <- .is_redacted(a$raw[i]) || .is_redacted(description[i])
-    if (amt_red) f <- c(f, "redacted")
     fc <- if (i <= length(reader$field_counts)) reader$field_counts[i] else NA_integer_
     exp <- reader$expected_fields
     # An amount that did not come out as a number is malformed WHETHER the cell held
@@ -186,16 +178,13 @@ parse_statement <- function(input, template, force_rows = NULL, meta = NULL) {
     # guard used to exempt a genuinely BLANK amount cell, so such a row carried no
     # flag whatsoever while the PDF path flags the same row -- and a row with no
     # amount is exactly a row whose money cannot be totalled, i.e. the completeness
-    # proof is broken and nothing said so. A REDACTED amount is still not malformed:
-    # it was read correctly and is deliberately withheld (amt_red above).
-    malformed <- (!is.na(fc) && !is.na(exp) && fc != exp) ||
-                 (is.na(a$value[i]) && !amt_red)
+    # proof is broken and nothing said so.
+    malformed <- (!is.na(fc) && !is.na(exp) && fc != exp) || is.na(a$value[i])
     if (malformed) f <- c(f, "malformed")
     if (isTRUE(fx_present[i])) f <- c(f, "fx")
     paste(f, collapse = ",")
   }, character(1))
   # redacted amounts must not carry a derived value.
-  a$value[.is_redacted(a$raw)] <- NA_real_
 
   core <- data.frame(
     row_id = seq_len(n), date = date_iso, date_raw = date_raw,

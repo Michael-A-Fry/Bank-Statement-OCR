@@ -35,7 +35,7 @@ Dominant input: **genuinely mixed, heavy on PDFs** (both text-layer and scanned/
   non-technical analyst adds a bank in minutes.
 - **Prove completeness.** Reconcile (opening + transactions = printed closing);
   flag anything that can't be proven.
-- **Honour redactions absolutely; keep descriptions verbatim; deterministic**
+- **Read what is readable; keep descriptions verbatim; deterministic**
   (same input + template ⇒ identical output).
 - **Governed analytics.** Only clean, reconciled conversions from proven templates
   reach the Qlik dashboards.
@@ -48,8 +48,22 @@ Dominant input: **genuinely mixed, heavy on PDFs** (both text-layer and scanned/
   not do bookkeeping or treat categorisation as financial truth.
 - **Not the system of record** — it converts and feeds; it is not the durable
   archive or source of truth for statements.
-- **Not a redactor / de-identifier** — statements arrive already redacted; it only
-  ever reads what is visible and never hides or reveals.
+- **Not a redactor / de-identifier** — and that cuts both ways. Statements arrive
+  however the sender chose to send them. The tool reads what is in the document and
+  does not withhold it.
+
+  This reverses an earlier clause, "honour redactions absolutely", and the reversal
+  was the operator's call: whether a sender redacted competently is not this tool's
+  problem, and a figure that is readable in a PDF viewer but blanked in the
+  spreadsheet hands an analyst a worse copy of their own evidence — which they will
+  then transcribe by hand, badly. The machinery that suppressed such text (marker
+  glyphs, overlay rectangles, a per-page rasterised occlusion scan) is deleted, not
+  disabled.
+
+  What survives is the half that was actually load-bearing: a value genuinely GONE
+  from the file leaves an empty cell, and that cell is recovered from the running
+  balance — `balance[i] - balance[i-1]` IS the amount. The old guard blocked that
+  path, so removing it switched the recovery on.
 - **Not a transaction categoriser (today)** — the extraction core never assigns
   categories. Categorisation is a *planned downstream* capability (step 1: recreate
   the existing maintained-keyword logic; step 2: something better), kept out of the
