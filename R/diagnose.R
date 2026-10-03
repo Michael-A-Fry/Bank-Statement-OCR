@@ -4,93 +4,75 @@
 # answer: if the engine can't be fully confident, it says exactly why and what
 # to do about it.
 #
-# build_diagnostics(status, messages, det, parsed, recon) -> data.frame with
-# columns: where, category, severity, detail, how_to_fix (most severe first).
+# build_diagnostics(status, messages, reading, parsed, recon, metadata) ->
+# data.frame with columns: where, category, severity, detail, how_to_fix,
+# fix_owner (most severe first).
 
 .diag_row <- function(where, category, severity, detail, how_to_fix) {
   data.frame(where = where, category = category, severity = severity,
              detail = detail, how_to_fix = how_to_fix, stringsAsFactors = FALSE)
 }
 
-# WHO fixes this, so a lone analyst never wonders whether to draw a box or phone a
+# WHO fixes this, so a lone analyst never wonders whether to click or phone a
 # developer:
-#   template = the analyst, in the wizard (a column/box/date/amount setting)
+#   reading  = the analyst, on Please check (confirm the reading, or set a column's role)
 #   input    = the person who supplied the file (split a bundle, re-export, rescan)
 #   review   = just eyeball the data (expected situation, not an error)
 #   none     = informational, no action
 #   escalate = a genuine engine gap -> send it to a developer (rare)
 #
 # ONE entry per category the engine can raise. A plain lookup table rather than a
-# switch(): adding a diagnostic means adding its line HERE too, and it is obvious at
-# a glance which categories are covered. That matters -- when this was a switch,
-# four live categories had quietly fallen off the end and were being reported as
-# "Developer - engine gap" (see below), including date_format_mismatch, whose own
-# how-to-fix text tells the analyst to change the template. The test
-# "every diagnostic category has a declared owner" (test-diagnose.R) scans this
-# file for the categories actually raised and fails if one is missing here.
-# One fix for one defect: a template whose wording matches but whose columns read
-# nothing. Whether a fallback template rescued the run changes the detail, never
-# the cure -- so the cure is written once.
-.FIX_EMPTY_TEMPLATE <- paste(
-  "Open this statement in the template toolkit with that template and check where the",
-  "columns sit - the usual cause is a column band drawn in the wrong place, or over",
-  "the wrong part of the page. \"See it on the page\" shows what the tool saw.")
+# switch(): adding a diagnostic means adding its line HERE too. The test "every
+# diagnostic category has a declared owner" (test-diagnose.R) scans this file for
+# the categories actually raised and fails if one is missing here.
 
-# Same rule, two more defects that were each written out twice in slightly
-# different words. Both are raised from two places -- a failing reconciliation KPI
-# and a direct check -- and in both the SITUATION differs (and stays in the detail)
-# while the cure does not. So the cure is written once here and used from both.
+# Raised from two places -- a failing reconciliation KPI and a direct check -- so
+# the cure is written once and used from both.
 .FIX_ROW_PARSE <- paste(
-  "Source lines that didn't parse are usually a delimiter/quoting problem, or a",
-  "preamble/footer line read as data. Check those rows, and this template's",
-  "delimiter and header/footer settings in the toolkit.")
+  "Some lines of the file did not read as a whole row. Check those rows against the",
+  "statement on Please check; if the file itself is broken (a stray quote, a",
+  "footer read as a row), ask for a fresh export.")
 
-# The two copies of this one had already drifted apart, which is the whole reason
-# to write a cure once: the KPI copy said "Do NOT release this output", the header
-# copy only "treat their visible text with caution". Same defect, same pages, same
-# risk -- so which warning you got depended on nothing but whether the caller
-# happened to pass `recon`. The stronger wording is the correct one for both.
+.FIX_CHECK_READING <- paste(
+  "Open Please check: the columns found are drawn on the page. If the reading is",
+  "right, confirm it. If a column is wrong, set its role (money out, money in,",
+  "balance) and re-read - a fix that then adds up is learned for this bank.")
+
 .DIAG_FIX_OWNER <- c(
-  # the analyst fixes it in the template toolkit
-  unknown_format          = "template",
-  ambiguous_template      = "template",
-  matched_but_empty       = "template",
-  column_bands            = "template",
-  reconciliation_mismatch = "template",
-  balance_break           = "template",
-  row_count               = "template",
-  row_parse               = "template",
-  date_parse              = "template",
-  date_format_mismatch    = "template",
-  amount_parse            = "template",
-  amount_direction        = "template",
-  date_out_of_range       = "template",
-  # the analyst chooses another template for the file on Convert
-  template_unavailable    = "template",
-  # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
+  # the analyst, on Please check
+  not_proven              = "reading",
+  not_read                = "reading",
+  fix_not_applied         = "reading",
+  derived_amounts         = "reading",
+  bank_check              = "reading",
+  reconciliation_mismatch = "reading",
+  balance_break           = "reading",
+  row_count               = "reading",
+  row_parse               = "reading",
+  date_parse              = "reading",
+  date_format_mismatch    = "reading",
+  amount_parse            = "reading",
+  amount_direction        = "reading",
+  date_out_of_range       = "reading",
   account_number_shape    = "input",
-  # an install/renderer gap, not anything the analyst or the template can fix
   sign_scan_unavailable   = "escalate",
   unreadable              = "input",
   scanned_no_ocr          = "input",
   multiple_statements     = "input",
   oversized               = "input",
   oversized_page          = "input",
-  page_orientation        = "input",
   sign_from_ink           = "review",
   low_ocr_confidence      = "input",
   ocr_confidence_unknown  = "input",
   completeness_unverified = "input",
-  # nothing is wrong; just look at the data
   combined_statement      = "review",
   mixed_currency          = "review",
-  # stated for the record; nobody has to do anything
   ocr                     = "none",
   document_provenance     = "none",
   none                    = "none")
 
-# .diag_fix_owner(category) -- look the owner up. An unknown category defaults to
-# escalate (fail safe: surface it, don't hide it).
+# .diag_fix_owner(category) -- the owner for each category; anything not in the
+# table is a developer's (an engine gap), never silently the analyst's.
 .diag_fix_owner <- function(category) {
   owner <- unname(.DIAG_FIX_OWNER[as.character(category)])
   owner[is.na(owner)] <- "escalate"
@@ -134,10 +116,6 @@
   if (length(hit)) hit[1] else NA_character_
 }
 
-# Verbatim period bounds / effective dates are parsed with the shared
-# .tolerant_date (see R/params.R) -- NA on anything unrecognised so the
-# effective-range check simply skips rather than guessing.
-
 # ---------------------------------------------------------------------------
 # What a FAILING reconciliation check means, and what to do about it: one entry
 # per KPI that can fail (R/reconcile.R). Named fields rather than the positional
@@ -156,17 +134,17 @@
     how_to_fix = "Running balance jumps: a row's amount or sign is likely wrong, or a transaction is missing. Check the rows around the break."),
   transaction_count = list(
     where = "parse", category = "row_count", severity = "high",
-    how_to_fix = "Parsed count doesn't match: the template rows/columns may not fit this file. Re-map it in the template toolkit."),
+    how_to_fix = "The statement states how many transactions it holds and a different number was read. Compare the rows on Please check with the statement: a row is missing or a summary line was read as a row."),
   dates_within_period = list(
     where = "dates", category = "date_out_of_range", severity = "medium",
     how_to_fix = "Dates fall outside the statement period: the date-format mapping may be wrong (day/month vs month/day)."),
   dates_readable = list(
     where = "dates", category = "date_parse", severity = "high",
-    how_to_fix = "No row dates could be read: the template's date column wasn't found in this file (renamed header?) or the date format is wrong. Fix the Date column / format in the template toolkit."),
+    how_to_fix = "Some row dates could not be read. Check the date column on Please check against the statement: the column may be in the wrong place, or the dates printed in an unusual style."),
   no_unparsed_rows = list(
     where = "rows", category = "row_parse", severity = "high",
     how_to_fix = .FIX_ROW_PARSE),
-  # NOT a template fault, which is why it gets its own category. Every other failing
+  # NOT a column fault, which is why it gets its own category. Every other failing
   # check here points at the mapping; this one points at the IMAGE. The account number
   # is the only piece of metadata that can be checked against its own shape, and it is
   # the field that says whose statement this is -- so a misread digit here is a
@@ -175,19 +153,17 @@
     where = "account number", category = "account_number_shape", severity = "medium",
     how_to_fix = paste("Read the account number off the statement image and compare it",
                        "character by character. On a scan this is almost always a misread",
-                       "digit (0/8, 1/7, 5/6) or a lost one. If the image is right and the",
-                       "tool is wrong, the account-number region in the template is picking",
-                       "up a neighbouring character - adjust it in the template toolkit. If",
-                       "the STATEMENT prints it in some form other than the New Zealand",
-                       "2-4-7-2, nothing is wrong with the file and the shape rule should be",
-                       "reported to whoever maintains the templates.")),
+                       "digit (0/8, 1/7, 5/6) or a lost one. If the STATEMENT prints it in",
+                       "some form other than the New Zealand 2-4-7-2, nothing is wrong with",
+                       "the file and the shape rule should be reported to whoever looks",
+                       "after the tool.")),
   # Its own category, not amount_parse. The amounts here were read PERFECTLY -- it
   # is their DIRECTION that may be inverted -- and amount_parse is worded on screen
   # as "amounts couldn't be read", the opposite of what happened, on a card a
   # forensic accountant acts on. Same code, same file, two different defects.
   amount_direction = list(
     where = "amount direction", category = "amount_direction", severity = "high",
-    how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- set the correct amount style (e.g. debit/credit columns, or unsigned) in the template toolkit."))
+    how_to_fix = "Every amount has the same sign and there's no running balance to confirm direction. If this export lists amounts WITHOUT a +/- sign, money-in and money-out are inverted -- check the direction against the statement on Please check before relying on it."))
 
 .KPI_DIAGNOSIS_FALLBACK <- list(
   where = "check", category = "reconciliation_mismatch", severity = "medium",
@@ -200,7 +176,7 @@
   paste0(paste(utils::head(idx, 8), collapse = ","), ",... (", length(idx), " total)")
 }
 
-build_diagnostics <- function(status, messages = character(0), det = NULL,
+build_diagnostics <- function(status, messages = character(0), reading = NULL,
                               parsed = NULL, recon = NULL, metadata = NULL) {
   rows <- list()
   raised <- character(0)          # categories already reported, so nothing is said twice
@@ -209,12 +185,8 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     rows[[length(rows) + 1L]] <<- .diag_row(where, category, severity, detail, how_to_fix)
   }
 
-  # A SCAN WE COULD NOT MACHINE-READ is not an unknown layout, and must never be
-  # reported as one. With no text and no word boxes every template scores 0, so the
-  # generic "no template matched -- closest X, missing 'TransactionDate'" message is
-  # actively misleading: it sends the analyst to build a template for a page that has
-  # no readable text, which can never work. Say what actually happened, and name the
-  # cause -- missing OCR tooling is an ADMIN fix, poor scan quality is not.
+  # A scan we could not machine-read looks identical to a statement the reader
+  # could not make sense of unless it is said.
   no_ocr <- suppressWarnings(as.integer(metadata$scanned_no_ocr %||% 0L))
   if (identical(status, "unsupported") && !is.na(no_ocr) && no_ocr > 0) {
     tools_missing <- !isTRUE(metadata$ocr_tools %||% TRUE)
@@ -223,84 +195,48 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         if (tools_missing)
           paste("This machine has no OCR software installed, so scanned statements cannot be read at all.",
                 "Ask whoever set the tool up to install Tesseract and Poppler (they ship in the offline",
-                "bundle under offline/prereqs). Building a template will NOT help until that is done.")
+                "bundle under offline/prereqs).")
         else
           paste("The scan quality was too low to read. Try a cleaner copy - scan at 300 dpi or higher,",
                 "straight, in good contrast - or ask the bank for a digital (text) PDF."))
-  } else if (identical(status, "unsupported") && !is.null(metadata$matched_empty)) {
-    # The wording matched, the layout did not. "Add a template" is not the fix --
-    # there IS one, its columns just sit in the wrong place. Send the analyst to
-    # the template that failed, not to a blank form.
-    add("template", "matched_but_empty", "high",
-        sprintf("%s matches the wording on this statement but read no transactions from it",
-                metadata$matched_empty),
-        .FIX_EMPTY_TEMPLATE)
   } else if (identical(status, "unsupported")) {
-    # A TIE is not an unknown layout, and "go and add a template" is the wrong
-    # instruction for it: templates that already fit scored the same, so a new one
-    # would simply tie as well and the next conversion would be no better. Same
-    # status, opposite fix -- so say the opposite thing.
-    # detail_plain, not detail: this table is customer-facing, and `detail` is the
-    # log line ("closest anz_everyday_pdf score 2/3 (missing '...')"). The template
-    # id and the fraction stay in the run log and the audit record; the reader gets
-    # the same evidence in words. Falls back to `detail` for callers that build a
-    # det by hand.
-    add("detection", "unknown_format", "high",
-        det$detail_plain %||% det$detail %||% "no template matched this file",
-        paste("Add a template for this layout in the template toolkit (Add a template tab:",
-              "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
-  } else if (identical(status, "failed") && !is.null(metadata$template_unavailable)) {
-    add("template", "template_unavailable", "high",
-        paste(messages, collapse = " "),
-        paste("Choose another template for this file on Convert and convert it again.",
-              "If the template was hidden or deleted on purpose, whoever looks after the tool can say which one replaced it."))
+    add("reading", "not_read", "high", reading$why %||% "Nothing on the file could be read as a statement.",
+        paste(.FIX_CHECK_READING, "If the file is not a bank statement at all, set it aside."))
+  } else if (identical(status, "needs_review") && !is.null(reading$why)) {
+    add("reading", "not_proven", "medium", reading$why, .FIX_CHECK_READING)
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),
         paste("Check the file opens, is the expected type (CSV / PDF / Excel),",
               "and is not password-protected or corrupt."))
   }
+  if (length(reading$fix_error))
+    add("Please check", "fix_not_applied", "high", reading$fix_error[1],
+        "The fix was not applied, so this is the reading without it. Set the roles again on Please check.")
+  nd <- suppressWarnings(as.integer(reading$derived %||% 0L))
+  if (!is.na(nd) && nd > 0L)
+    add("amounts", "derived_amounts", "medium",
+        sprintf("%d amount(s) could not be read and were filled in from the running balance (flag amount_from_balance)", nd),
+        "Check each marked amount against the statement before relying on it: it is arithmetic on two printed balances, not a figure read from the page.")
+  if (!is.null(reading$bank_why))
+    add("bank", "bank_check", if (isTRUE(reading$bank_blocked)) "medium" else "info", reading$bank_why,
+        if (isTRUE(reading$bank_blocked))
+          "Nothing is learned from this statement until you confirm which bank issued it. Pick the right bank and convert again."
+        else "Check the bank picked for this file is the one that issued it.")
 
   if (!is.null(metadata)) {
-    # A tie no longer stops the conversion -- the tested template is used and the
-    # run held for review. The duplicate templates are still a real problem, and
-    # only a maintainer can fix them, so it is raised here rather than put to the
-    # person who just wanted her spreadsheet.
-    if (length(metadata$tied %||% character(0)) >= 2)
-      add("detection", "ambiguous_template", "medium",
-          # Naming the one that was USED matters: the tie list alone does not say
-          # which template these figures came from, and that is the first thing a
-          # reviewer needs in order to check them.
-          sprintf("%s templates fit this statement equally well: %s%s",
-                  length(metadata$tied), paste(metadata$tied, collapse = ", "),
-                  if (!is.null(metadata$tied_used))
-                    sprintf(" - it was read with %s", metadata$tied_used) else ""),
-          paste("The tested one was used and the run held for review. These look like",
-                "near-duplicates of each other: merging or retiring one stops every",
-                "statement of this kind needing a second look."))
-    if (isTRUE(metadata$multi$likely_multiple))
+    # A file that looks like several statements but could not be split with
+    # confidence is read whole, and never taken without a person.
+    if (isTRUE(metadata$bundle_unsplit))
       add("upload", "multiple_statements", "high",
           paste(metadata$multi$reasons, collapse = "; "),
-          "This upload looks like more than one statement bundled together, which corrupts a single parse. Split it into one statement per file and re-run.")
+          paste("This file looks like more than one statement, and where one ends and the next",
+                "begins could not be confirmed, so it was read whole. Split it into one",
+                "statement per file and convert each."))
     else if (isTRUE(metadata$multi$combined_accounts))
       add("upload", "combined_statement", "info",
           sprintf("%d account numbers appear in one statement period", metadata$multi$n_accounts %||% 0L),
           "Looks like a combined statement (several accounts/products, or transfer counterparties named in transactions). If transactions from more than one account are mixed, running balances won't be continuous across them - review per account.")
-    # A LONG STATEMENT IS NOT A PROBLEM, AND THE OLD ADVICE HERE WAS HARMFUL.
-    #
-    # It said "may hit tool limits; split into smaller files if extraction stalls".
-    # Measured at 1.10.0: 400 pages and 12,000 rows convert in 69.5 seconds with ZERO
-    # wrong figures, flat at 0.17s a page, on 16 MB. There is no limit to hit.
-    #
-    # And splitting is the one thing an analyst must NOT do. The running balance is
-    # the strongest check this tool has -- opening plus every transaction equals
-    # closing -- and it only works across the WHOLE statement. Split the file and each
-    # piece has an opening balance nothing printed, so the check that proves the
-    # figures is the thing the advice destroys. The tool was telling people to degrade
-    # their own evidence to fix a problem it does not have.
-    #
-    # It is still worth SAYING, because a long job looks like a stuck one, and on a
-    # scan the number is different by a factor of 55 (9.3s a page against 0.17s).
     p <- suppressWarnings(as.integer(metadata$pages %||% NA))
     if (!is.na(p) && p > PARAM_MAX_PAGES) {
       ocr_p <- suppressWarnings(as.integer(metadata$ocr_pages %||% 0L))
@@ -328,22 +264,6 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
       add("upload", "oversized_page", "medium",
           sprintf("largest page is %.0f pt (> 2880 pt / 40 in)", mp),
           "Pages larger than 40 inches (2880 pt) can break rendering/OCR. Re-export at a standard page size.")
-    # THE PAGE IS THE WRONG SHAPE FOR THE TEMPLATE'S COLUMNS, and that is the whole
-    # reason nothing read. A template's x-bands are stored against a page shape
-    # (portrait A4 unless the template says otherwise); a landscape or rotated page
-    # is not that shape at another size, so the reader refuses to squash it into the
-    # frame (.pdf_orientation_differs, R/parse_pdf_table.R). Said HIGH because
-    # without it the analyst gets an empty table and no reason, and the remedy --
-    # rotate the pages and re-run -- is thirty seconds' work nothing pointed at.
-    #
-    # ONLY WHEN IT ACTUALLY EXPLAINS A FAILURE. A differently shaped page is not by
-    # itself a fault: once the reader stopped squashing them, a LANDSCAPE statement
-    # whose columns still sit at the template's x positions reads every row
-    # correctly (tools/synth/, case page_landscape: 16 of 16). Raising this on a
-    # clean result would put a high-severity warning on a perfect parse, which
-    # teaches the analyst to read past high-severity warnings -- the specific habit
-    # the charter forbids building. So it speaks only when nothing was read.
-    nrows_read <- if (is.data.frame(parsed$transactions)) nrow(parsed$transactions) else 0L
     # THE SIGNS ON THIS PAGE WERE NOT WHERE A SIGN NORMALLY IS. Either a minus was
     # drawn as vector ink and is absent from the text layer, or one was printed in
     # the background colour and is in the text layer but not on the page. The reader
@@ -362,20 +282,10 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
           paste("Nothing to fix - the signs have been read from the page itself.",
                 "If you are checking a figure against the statement by eye, this is",
                 "why a minus may be hard to see."))
-    if (isTRUE(metadata$page_orientation_differs) && nrows_read == 0L)
-      add("upload", "page_orientation", "high",
-          sprintf("the page is %s and this template's columns are %s",
-                  metadata$page_shape %||% "a different shape",
-                  metadata$frame_shape %||% "the other way round"),
-          paste("The columns are set up for the other page orientation, so they",
-                "cannot be placed on this page. Rotate the pages to match and",
-                "re-run; if the statement really is printed this way, set the",
-                "layout up again on the Add a template tab from a page of this",
-                "shape."))
   }
 
-  # PDF document provenance. Raised for EVERY status (a file that didn't even match
-  # a template is exactly when "what wrote this?" is worth knowing), and only when
+  # PDF document provenance. Raised for EVERY status (a file that could not be read
+  # is exactly when "what wrote this?" is worth knowing), and only when
   # there is something to say: the modified time differs from the creation time, or
   # the Producer/Creator names a general-purpose PDF tool. Facts only -- severity
   # info, fix_owner none, no effect on figures, status or trust. Read from either
@@ -406,16 +316,6 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
     }
   }
 
-  # A COLUMN IS NOT WHERE THE TEMPLATE SAYS IT IS. Raised among the template faults
-  # and before the informational rows, because it does not say a figure is wrong -- it
-  # says WHICH COLUMN to look at, which is the thing none of the arithmetic checks can
-  # tell you. R/column_fit.R has the measurement.
-  #
-  # TWO CALLS, TWO LITERAL SEVERITIES, and not one call with a variable: a column the
-  # statement simply does not print is not the same event as a column that has moved,
-  # the instruction for each is the opposite of the other, and a category whose
-  # severity is computed cannot be audited by reading the file (test-diagnose.R scans
-  # for exactly this shape).
   # THE SIGN CHECK DID NOT RUN, which is worth more than it looks. Some banks draw
   # the minus as a stroke of ink, and some print it in the background colour on
   # POSITIVE amounts to keep a column right-aligned. Both are invisible to the text
@@ -436,55 +336,9 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
               "because the balance checks are what would otherwise have caught it."))
   }
 
-  if (!is.null(metadata$column_fit_note)) {
-    if (identical(as.character(metadata$column_fit_severity %||% "medium")[1], "info"))
-      add("template columns", "column_bands", "info",
-          metadata$column_fit_note,
-          paste("Nothing to fix. It is recorded because a column the template expects is",
-                "absent from this statement - and if that column is the running balance,",
-                "the balance checks had nothing to test, so the figures rest on the",
-                "reading alone rather than on arithmetic that confirms it."))
-    else
-      add("template columns", "column_bands", "medium",
-          metadata$column_fit_note,
-          paste("Open the template and move the column edges named above. An offset, where",
-                "one is given, is measured in points from where the template puts them now,",
-                "and the range in brackets is every offset that reads this statement - aim",
-                "for the MIDDLE of that range, not an edge, so the next statement has slack",
-                "too. Re-run this file afterwards: if the balance checks pass, the template",
-                "is right again. Do NOT edit a shipped template in place while other",
-                "statements still read correctly with it - if the bank has changed its",
-                "layout, the older statements still need the older template. Ask whoever",
-                "maintains the templates."))
-  }
-
-  # OUTSIDE the parsed block on purpose. A template that matched the wording and read
-  # NOTHING is the case this diagnostic is worth the most on -- there are no rows to
-  # hang a row-level fault off, and "matched_but_empty" says the template is wrong
-  # without saying which column. This answers that, so it must not depend on a parse
-  # having produced anything.
   if (!is.null(parsed) && !is.null(parsed$transactions)) {
     tx <- parsed$transactions
 
-    # 0. effective_from / effective_to (SOFT signal, P2-9): if the matched template
-    # declares a validity window and this statement's period falls outside it, the
-    # bank may have changed the format. Never a hard filter -- the statement still
-    # parses; this is only a caution so an outdated-format template that matches
-    # newer statements is visible, not silently trusted.
-    tmpl <- metadata$template
-    if (!is.null(tmpl)) {
-      eff_from <- .tolerant_date(tmpl$effective_from); eff_to <- .tolerant_date(tmpl$effective_to)
-      pd <- c(.tolerant_date(parsed$header$period_start), .tolerant_date(parsed$header$period_end))
-      pd <- pd[!is.na(pd)]
-      if (length(pd) && (!is.na(eff_from) || !is.na(eff_to)) &&
-          ((!is.na(eff_from) && any(pd < eff_from)) || (!is.na(eff_to) && any(pd > eff_to))))
-        add("template period", "date_out_of_range", "medium",
-          sprintf("the statement's dates fall outside this template's declared valid range (%s to %s)",
-                  tmpl$effective_from %||% "any", tmpl$effective_to %||% "any"),
-          "The bank may have changed this statement's format since this template was made. Check the columns still line up; if the layout differs, build an updated template.")
-    }
-
-    # 1. Failing reconciliation KPIs -> a fix per check.
     if (!is.null(recon) && !is.null(recon$kpis)) {
       k <- recon$kpis
       fails <- k[k$status == "fail", , drop = FALSE]
@@ -518,23 +372,23 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
 
     dalt <- which(grepl("date_alt_format", tx$flags %||% ""))
     if (length(dalt)) add(sprintf("rows %s (date)", .rng(dalt)), "date_format_mismatch", "medium",
-      sprintf("%d date(s) were written in a different style than the template declares", length(dalt)),
-      "Rows like '17 Sep' were read with the year taken from the statement period. Update the template's date format in the toolkit to make this explicit.")
+      sprintf("%d date(s) were written in a different style from the rest of the column", length(dalt)),
+      "Rows like '17 Sep' were read with the year taken from the statement period. Check those dates against the statement.")
 
     dyi <- which(grepl("date_year_inferred", tx$flags %||% ""))
     if (length(dyi)) add(sprintf("rows %s (date)", .rng(dyi)), "date_out_of_range", "medium",
       sprintf("%d date(s) took their YEAR from a number in the page text, not a statement period", length(dyi)),
-      "The statement showed day+month only and no readable period, so the year was inferred from a single 4-digit number on the page (which could be a footer/copyright year). Confirm the year is right, or add the statement period to the template.")
+      "The statement showed day+month only and no readable period, so the year was inferred from a single 4-digit number on the page (which could be a footer/copyright year). Confirm the year is right.")
 
     dbad <- which(is.na(tx$date) & !is.na(tx$date_raw) & nzchar(tx$date_raw %||% ""))
     if (length(dbad)) add(sprintf("rows %s (date)", .rng(dbad)), "date_parse", "medium",
       sprintf("%d date(s) could not be read", length(dbad)),
-      "The date-format mapping is likely wrong for these rows. Set the correct format in the template toolkit (e.g. day/month/year).")
+      "These dates are printed in a style that did not read. Check them against the statement on Please check.")
 
     abad <- which(is.na(tx$amount))
     if (length(abad)) add(sprintf("rows %s (amount)", .rng(abad)), "amount_parse", "high",
       sprintf("%d amount(s) could not be read", length(abad)),
-      "The amount style/format is wrong: check the amount style (signed vs D/C vs debit/credit columns) and the thousands/decimal separators.")
+      "Check these rows on Please check: the amount column may be in the wrong place, or the figures printed in an unusual style.")
 
     # 3. Informational context.
     cur <- unique(tx$currency[!is.na(tx$currency)])
@@ -572,7 +426,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
 # diag_fix_owner_label(owner) -- plain-language "who fixes this" for display.
 diag_fix_owner_label <- function(owner) {
   unname(c(
-    template = "You - adjust the template (toolkit)",
+    reading  = "You - check the reading (Please check)",
     input    = "You - fix the file (split / re-export / rescan)",
     review   = "You - review the data (expected, not an error)",
     none     = "No action",

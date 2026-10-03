@@ -27,14 +27,6 @@
     # after another in a single job with no way to stop it. A case folder is 10-50
     # statements (R/batch.R says so); 50 is that, with room.
     max_batch_files = 50L,
-    # Whether Convert's "Include user-created templates" box starts TICKED.
-    # TRUE, because the product's promise is "build a template once and that bank
-    # converts automatically from then on" -- with this off, a template Beth builds
-    # is excluded from auto-detection and the promise is false. Governance is NOT
-    # served by this switch: what reaches Qlik is gated on template ORIGIN in
-    # R/feed.R (feed.allowed_template_origins), which is unaffected by it. Set it
-    # false only if your team wants to opt in to its own templates each time.
-    user_templates_default = TRUE,
     # ---- WHO IS USING THIS, and whether the app may believe the answer --------
     #
     # A reverse proxy that authenticates against the organisation's directory can
@@ -75,25 +67,15 @@
     # procedure for moving to loopback once a proxy is in front.
     bind_host = "0.0.0.0"
   ),
-  # EVERY TEMPLATE LIVES UNDER templates/. Folders used to sit at the root of the
-  # app (templates, templates_user, templates_seed) and a person had to already
-  # know the naming convention to tell which was which. They are now one folder
-  # with a README that is the map. The SEPARATION is unchanged and load bearing:
-  # curated vs user is the Qlik governance gate. See templates/README.md.
   paths = list(
-    templates      = "templates/statements",       # PROVEN / curated statements
-    user_templates = "templates/statements_user",  # analyst drafts (Shiny only, NEVER Qlik)
     dictionary     = "dictionaries/labels.yaml",
     lexicon        = "dictionaries/lexicon.yaml",  # engine recognition vocabularies
     uploads        = "uploads",
     requests       = "requests",
     logs           = "logs",
-    # the template chosen for each layout before (R/learned.R) -- beside the
-    # templates built here, in the one folder an update never replaces
-    learned_choices = "templates/statements_user/_learned_choices.json",
     # every bank layout the automatic reader has learned (R/layouts.R), one
     # folder per bank. Learned on the box from statements nobody else has, so
-    # it is irreplaceable in the same way the analysts' templates are.
+    # it is irreplaceable: back it up with the logs.
     layouts        = "templates/layouts",
     # automatic-reading tracking (R/tracking.R): one JSON line per event, a
     # file per month, counts and codes only -- never statement content.
@@ -101,19 +83,13 @@
   ),
   feed = list(
     # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny
-    # app; each result is written here (gated) as a side-effect, and a Qlik folder
-    # connection + scheduled reload turns it into org-wide dashboards. Only
-    # reconciled conversions from PROVEN (curated) templates reach the dashboard
-    # table -- the governance gate -- so unvetted output never becomes org data.
+    # app; each result is written here as a side-effect, and a Qlik folder
+    # connection + scheduled reload turns it into org-wide dashboards. Only a
+    # statement the arithmetic proved (or that matched a proven layout), or that a
+    # person confirmed, reaches the dashboard table -- the governance gate
+    # (R/feed.R) -- so an unchecked reading never becomes org data.
     enabled                  = TRUE,       # write the feed on each conversion
     feed_dir                 = "feed",
-    require_status_ok        = TRUE,       # only clean conversions (status == ok)
-    # high | medium | any. 'medium' (default) accepts every CLEAN conversion; 'high'
-    # accepts ONLY balance-proven ones (opening + txns = printed closing) -- stricter,
-    # but a clean statement with no running balance is 'medium' and would be withheld.
-    min_trust                = "medium",
-    allowed_template_origins = list("default"),  # 'default' = curated/proven; add 'user' to include drafts
-    template_allowlist       = list(),     # optional: restrict to specific template ids
     include_review_feed      = TRUE,       # also write withheld runs to feed/review (separate table)
     # HOW LONG A ROW STAYS LOADABLE. One CSV per statement is written here and
     # nothing ever removed one, while Qlik loads the folder with a wildcard -- so
@@ -138,14 +114,19 @@
     capture  = list(            # per-category switches (each applies within its level)
       layout         = TRUE,    # layout signature, format, column/page shape
       parse_quality  = TRUE,    # row/flag/coverage/fill stats, misses, value shapes
-      detection      = TRUE,    # scores, margin, candidates, eligibility
       reconciliation = TRUE,    # KPI outcomes, trust, balance anchors, discontinuities
       multi_statement = TRUE,   # #statements / #periods / #accounts / boundary signals
       novelty        = TRUE,    # unmapped columns + unrecognised tokens (ML-feedback signal)
-      template_hints = TRUE,    # per-column profiles + suggested mapping (draft-a-template signal)
       ocr            = TRUE      # OCR pages + confidence stats
     ),
     retain_forever = TRUE       # exempt metadata from log rollup (never archived / deleted)
+  ),
+  auto_reading = list(
+    # SPOT CHECKS: the share of AUTOMATIC conversions marked for a person to
+    # eyeball (result$spot_check), 0 to 1. Off by default (product owner's
+    # decision); an admin turns it on. The arithmetic proves the figures; a spot
+    # check is what measures everything it cannot reach.
+    spot_check_rate = 0
   ),
   retention = list(
     # Every converted statement is copied byte-for-byte into uploads/<id>/ so a
@@ -162,33 +143,8 @@
 
 # admin_password_is_default(cfg) -- TRUE while the shipped placeholder (or a blank)
 # is still the admin password. The app uses this to REFUSE the Admin tab rather
-# than serve template deletion, the shared dictionary and the analytics-feed
+# than serve the learned layouts, the shared dictionary and the analytics-feed
 # settings behind a password that is printed in the example file and the docs.
-# .modernise_template_paths(cfg) -- a settings file written before the templates
-# were consolidated names the OLD folders, and the file WINS over the defaults.
-# That is the point of a settings file, and here it would be a trap: the folders
-# are moved on start, so a config still pointing at templates_user\ points at an
-# empty folder, and every template the team built disappears from the app with
-# nothing said. It is settings, so nothing errors -- the app just has no
-# templates.
-#
-# Only EXACT legacy names are rewritten. A site that set a genuinely custom path
-# (D:\shared\templates) has made a decision, and nothing here overrides it.
-.LEGACY_TEMPLATE_PATHS <- list(
-  templates      = c("templates",             "templates/statements"),
-  user_templates = c("templates_user",        "templates/statements_user")
-)
-.modernise_template_paths <- function(cfg) {
-  for (k in names(.LEGACY_TEMPLATE_PATHS)) {
-    v <- cfg$paths[[k]]
-    if (!length(v) || !is.character(v)) next
-    old <- .LEGACY_TEMPLATE_PATHS[[k]][1]
-    if (identical(gsub("\\\\", "/", trimws(v[1])), old))
-      cfg$paths[[k]] <- .LEGACY_TEMPLATE_PATHS[[k]][2]
-  }
-  cfg
-}
-
 admin_password_is_default <- function(cfg = load_config()) {
   pw <- trimws(as.character(cfg$app$admin_password %||% .DEFAULT_ADMIN_PASSWORD)[1])
   is.na(pw) || !nzchar(pw) || identical(pw, .DEFAULT_ADMIN_PASSWORD)
@@ -207,9 +163,6 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 # and quoting a value is the most ordinary thing a person editing YAML in Notepad
 # does. The result was silent and one-directional:
 #
-#   feed.require_status_ok: 'true'  -> the status gate switched OFF, so conversions
-#                                      the tool itself flags as needing review were
-#                                      written to feed/transactions marked accepted
 #   feed.enabled: 'true'            -> the feed switched OFF, and the dashboards
 #                                      simply stopped gaining data
 #
@@ -218,8 +171,7 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 # BUILT-IN DEFAULT (never the weaker reading) and is reported through config_error,
 # which the startup warning and the Admin banner already shout about.
 .FLAG_SETTINGS <- list(
-  c("app", "user_templates_default"),
-  c("feed", "enabled"), c("feed", "require_status_ok"),
+  c("feed", "enabled"),
   c("feed", "include_review_feed"),
   c("metadata", "retain_forever"))
 .FLAG_TRUE  <- c("true", "yes", "on", "y", "t", "1")
@@ -274,27 +226,11 @@ config_error <- function(cfg) attr(cfg, "config_error", exact = TRUE)
 }
 
 # ---- settings that are one of a SHORT LIST of words -------------------------
-# The same defect as the yes/no settings above, and the same cure. Validation
-# covered five booleans; the two settings that decide what reaches the Qlik
-# dashboards were never checked at all, and BOTH fail closed and SILENTLY:
-#
-#   feed.min_trust: meduim            -> .trust_ok() falls through its switch() to
-#                                        the "high only" branch, so every clean
-#                                        medium statement is withheld and the
-#                                        dashboards stop gaining data
-#   allowed_template_origins: [Default] -> the gate compares against the lowercase
-#                                        "default" it stamps itself, so every
-#                                        conversion returns withheld:not_proven
-#
-# Failing closed is right. Failing closed silently is not: Admin reported both as
-# "handled as intended" in green while the dashboards went flat. So a value that
-# is only in the wrong CASE is simply read (nobody meant anything else by
-# `Default`), and a value that is not in the list at all keeps the built-in
-# default -- never a weaker one -- and is reported through the same banner the
-# yes/no settings already use.
+# The same defect as the yes/no settings above, and the same cure: a value that is
+# only in the wrong CASE is simply read (nobody meant anything else by `Full`), and
+# a value that is not in the list at all keeps the built-in default -- never a
+# weaker one -- and is reported through the same banner.
 .ENUM_SETTINGS <- list(
-  list(key = c("feed", "min_trust"),                values = c("high", "medium", "any")),
-  list(key = c("feed", "allowed_template_origins"), values = c("default", "user"), many = TRUE),
   list(key = c("metadata", "level"),                values = c("off", "standard", "full")))
 
 # .coerce_enums(cfg, defaults) -> cfg, carrying attr "enum_error". Shaped exactly
@@ -400,7 +336,7 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
         attr(c0, "config_error") <- sprintf("%s could not be read: %s", path,
                                             conditionMessage(fromfile))
       } else if (is.list(fromfile)) {
-        c0 <- .modernise_template_paths(.coerce_flags(.deep_merge(c0, fromfile)))
+        c0 <- .coerce_flags(.deep_merge(c0, fromfile))
         fe <- attr(c0, "flag_error", exact = TRUE)
         if (!is.null(fe)) {
           attr(c0, "flag_error") <- NULL
@@ -424,103 +360,4 @@ load_config <- function(path = .config_path(), refresh = FALSE) {
   envpw <- Sys.getenv("BSO_ADMIN_PASSWORD", "")
   if (nzchar(envpw)) cfg$app$admin_password <- envpw
   cfg
-}
-
-# ---------------------------------------------------------------------------
-# THE OLD TEMPLATE LAYOUT, MOVED ONCE, ON A SERVER NOBODY CAN LOG INTO EASILY
-#
-# Templates used to live in seven folders at the root of the app. They now live
-# in one, templates/, with a folder per kind. Renaming folders in a repository is
-# free; renaming them under a running deployment is not, because two of those
-# folders hold work that exists nowhere else -- every bank layout and every
-# report puller somebody built on the box.
-#
-# So the code does the move rather than a person, once, on the first start after
-# an update, and says so in logs\startup.log. The alternative -- reading both the
-# old and the new location forever -- keeps working but never converges: two
-# places to look, two places to back up, and a folder that quietly stops being
-# read the day somebody tidies it.
-#
-# RULES, because this touches irreplaceable files:
-#   * it MOVES, it never copies-and-deletes and never deletes;
-#   * a destination file that already exists is NEVER overwritten -- the source
-#     is left alone and reported, so a clash is visible rather than resolved;
-#   * an emptied folder is left on disk with a MOVED.txt in it, so somebody who
-#     goes looking for templates_user\ finds a sentence instead of nothing;
-#   * it is idempotent: with nothing to move it does nothing and says nothing.
-# ---------------------------------------------------------------------------
-
-# Old root folder -> new home. The old flat `templates/` is handled separately
-# below, because after the move `templates/` still exists -- it is the parent.
-.TEMPLATE_LAYOUT_MOVES <- list(
-  c("templates_user",        "templates/statements_user"),
-  c("templates_seed",        "templates/statements_seed")
-)
-
-# migrate_template_layout(root) -> character vector of sentences about what
-# happened (empty when there was nothing to do). Caller decides where they go.
-migrate_template_layout <- function(root = ".") {
-  said <- character(0)
-  .yamls <- function(d) list.files(d, pattern = "\\.ya?ml$", full.names = TRUE)
-
-  .move_files <- function(from, to, what) {
-    src <- .yamls(from)
-    if (!length(src)) return(invisible(NULL))
-    dir.create(to, recursive = TRUE, showWarnings = FALSE)
-    moved <- 0L; clashed <- character(0)
-    for (f in src) {
-      dest <- file.path(to, basename(f))
-      if (file.exists(dest)) { clashed <- c(clashed, basename(f)); next }
-      if (isTRUE(suppressWarnings(file.rename(f, dest)))) moved <- moved + 1L
-      else clashed <- c(clashed, basename(f))
-    }
-    if (moved)
-      said <<- c(said, sprintf("moved %d %s%s from %s to %s", moved, what,
-                               if (moved == 1L) "" else "s", .rel(from), .rel(to)))
-    if (length(clashed))
-      said <<- c(said, sprintf(
-        "LEFT IN PLACE in %s (a file of the same name is already in %s): %s",
-        .rel(from), .rel(to), paste(clashed, collapse = ", ")))
-    invisible(NULL)
-  }
-
-  # Say it the way the person reading logs\startup.log sees it: relative to the
-  # app folder. Plain prefix removal, not a regex -- root is a real path and can
-  # hold anything a Windows folder name can.
-  .rel <- function(p) {
-    pre <- paste0(root, "/")
-    p <- if (startsWith(p, pre)) substring(p, nchar(pre) + 1L) else p
-    paste0(gsub("/", "\\\\", p), "\\")
-  }
-
-  .breadcrumb <- function(from, to) {
-    if (!dir.exists(from) || length(.yamls(from))) return(invisible(NULL))
-    note <- file.path(from, "MOVED.txt")
-    if (file.exists(note)) return(invisible(NULL))
-    try(writeLines(c(
-      "This folder has moved.",
-      "",
-      paste0("Everything that was here is now in  ", .rel(to)),
-      "",
-      "Every template now lives under templates\\, one folder per kind, with a",
-      "README.md in templates\\ that says which is which. This folder is empty and",
-      "can be deleted; it is left behind only so that looking for it finds this",
-      "note rather than nothing."), note), silent = TRUE)
-    invisible(NULL)
-  }
-
-  # 1. The old flat templates\ -- .yaml files sitting directly in it. After the
-  #    move there are none, so this cannot run twice.
-  flat <- file.path(root, "templates")
-  if (dir.exists(flat) && length(.yamls(flat)))
-    .move_files(flat, file.path(root, "templates", "statements"), "statement template")
-
-  # 2. The six folders that moved wholesale.
-  for (m in .TEMPLATE_LAYOUT_MOVES) {
-    from <- file.path(root, m[1]); to <- file.path(root, m[2])
-    if (!dir.exists(from)) next
-    .move_files(from, to, "template")
-    .breadcrumb(from, to)
-  }
-  said
 }
