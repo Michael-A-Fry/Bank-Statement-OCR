@@ -77,6 +77,59 @@
   list(score = score, need = length(need), missing = need[!hit], fn = fn)
 }
 
+# .bank_on_page(input, template) -- 1 when the template's OWN BANK NAME is printed
+# in the header or footer of the statement's first page, else 0. A TIE-BREAKER ONLY:
+# like filename_regex it never contributes to the score that decides eligibility, so
+# a template still has to earn its place on content alone.
+#
+# WHY IT EXISTS. Measured: a template built in the toolkit from a "Kowhai Bank of
+# Aotearoa" statement matched four sibling statements PERFECTLY (3 of 3 phrases), and
+# auto-detect picked anz_everyday_pdf on all four -- confidently, matched = TRUE.
+# The shipped ANZ template also scored 3, on GENERIC COLUMN HEADINGS ("Withdrawals",
+# "Deposits") that half the banks in the country print, and the next key was
+# "shipped before hand-built". So a template an analyst builds could never win a
+# tie, generic shipped fingerprints tie with nearly everything, and the one template
+# that actually named the bank lost to one whose bank appears nowhere on the page.
+# That is the shape of "33% auto-pick success with three templates of our own".
+#
+# It strictly IMPROVES the protection the shipped-first rule was written for (a
+# hand-built "anz_v2" beating the tested Westpac template on nothing but its name):
+# on a Westpac statement "Westpac" is on the page and "ANZ" is not, so the tested
+# template still wins -- now for a reason that is about the document.
+#
+# HEADER AND FOOTER ONLY, not the whole page: a transaction reading "TRANSFER TO ANZ
+# 01-..." on a Kowhai statement must not count as evidence the statement is ANZ's.
+# Banks print their name in the letterhead and the legal footer; transactions sit in
+# the middle. The edges are found by CONTENT, not by a line count: the header is what
+# sits above the first line carrying a money figure, the footer what sits below the
+# last one. A fixed "first 12 lines" window reached straight into the transactions
+# on a short page -- a one-row statement put "TRANSFER TO ANZ 400.00" inside its own
+# "header" and handed ANZ the tie.
+.BANK_STOPWORDS <- c("bank", "banking", "nz", "new", "zealand", "of", "the", "and",
+                     "limited", "ltd", "group", "corporation", "sample", "generic",
+                     "statement", "statements", "aotearoa")
+.bank_on_page <- function(input, template) {
+  b <- tolower(as.character(template$bank %||% ""))
+  toks <- unlist(strsplit(gsub("[^a-z0-9 ]", " ", b), "[[:space:]]+"))
+  toks <- toks[nzchar(toks) & !toks %in% .BANK_STOPWORDS & nchar(toks) >= 3L]
+  if (!length(toks)) return(0L)
+  pg <- as.character((input$pages %||% character(0))[1])
+  if (is.na(pg) || !nzchar(pg)) pg <- paste(utils::head(input$lines %||% character(0), 15), collapse = "\n")
+  ln <- trimws(unlist(strsplit(pg %||% "", "\n", fixed = TRUE)))
+  ln <- ln[nzchar(ln)]
+  if (!length(ln)) return(0L)
+  money <- which(grepl("[0-9][0-9,]*\\.[0-9]{2}\\b", ln, perl = TRUE))
+  if (length(money)) {
+    top <- ln[seq_len(money[1] - 1L)]
+    bot <- ln[seq.int(max(money) + 1L, length.out = length(ln) - max(money))]
+  } else {
+    top <- ln; bot <- ln            # no figures at all (a cover page): its two ends
+  }
+  edge <- tolower(paste(c(utils::head(top, 12), utils::tail(bot, 6)), collapse = " "))
+  hit <- vapply(toks, function(t) grepl(paste0("\\b", t, "\\b"), edge, perl = TRUE), logical(1))
+  as.integer(all(hit))
+}
+
 # detect_statement(input, templates, hint_bank, hint_type)
 # -> list(template_id, score, matched, candidates, detail)
 # matched TRUE only if best score >= min_score AND strictly > 2nd best.
@@ -114,6 +167,9 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   # but its name -- a template's FILENAME deciding which figures reach a dashboard.
   defaults <- vapply(ids, function(i)
     as.numeric(!identical(templates[[i]]$origin %||% "default", "user")), numeric(1))
+  # is the template's own bank printed on this statement? (see .bank_on_page)
+  bank_ev <- vapply(ids, function(i)
+    as.numeric(safe(.bank_on_page(input, templates[[i]]), 0L)), numeric(1))
   # ...UNLESS THE HAND-BUILT ONE IS A CORRECTION OF THIS ONE. A template saved from
   # the toolkit after opening a shipped template to fix it carries `refines: <id>`.
   # It is not a rival that happens to score the same -- it exists BECAUSE the
@@ -132,10 +188,10 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
   }
   # order by CONTENT score, then shipped-over-hand-built, then the filename
   # tie-breaker, then id (so the outcome is still fully deterministic).
-  ord <- order(scores, defaults, fns, ids,
-               decreasing = c(TRUE, TRUE, TRUE, FALSE), method = "radix")
+  ord <- order(scores, bank_ev, defaults, fns, ids,
+               decreasing = c(TRUE, TRUE, TRUE, TRUE, FALSE), method = "radix")
   ids <- ids[ord]; scores <- scores[ord]; fns <- fns[ord]; sc <- sc[ord]
-  mins <- mins[ord]; defaults <- defaults[ord]
+  mins <- mins[ord]; defaults <- defaults[ord]; bank_ev <- bank_ev[ord]
 
   # Eligibility is per-candidate: a template is a genuine contender only when it
   # meets its OWN min_score. Ambiguity (best strictly > 2nd) is then judged among
@@ -149,11 +205,12 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
 
   if (any(eligible)) {
     e_ids <- ids[eligible]; e_scores <- scores[eligible]; e_mins <- mins[eligible]
-    e_fns <- fns[eligible]; e_def <- defaults[eligible]
+    e_fns <- fns[eligible]; e_def <- defaults[eligible]; e_bank <- bank_ev[eligible]
     win_id <- e_ids[1]; win_score <- e_scores[1]; win_min <- e_mins[1]
     second <- if (length(e_scores) >= 2) e_scores[2] else -Inf
     second_fn <- if (length(e_fns) >= 2) e_fns[2] else -Inf
     second_def <- if (length(e_def) >= 2) e_def[2] else -Inf
+    second_bank <- if (length(e_bank) >= 2) e_bank[2] else -Inf
     # Unambiguous when the winner's CONTENT score strictly beats the runner-up, OR
     # they tie on content and something PRINCIPLED separates them: a shipped
     # (tested) template over a hand-built one first, then the filename hint. A
@@ -161,8 +218,10 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
     # take the tested one and get on with it, rather than stopping the analyst to
     # choose between a template with a golden test and one without.
     unambiguous <- (win_score > second) ||
-                   (win_score == second && e_def[1] > second_def) ||
-                   (win_score == second && e_def[1] == second_def && e_fns[1] > second_fn)
+                   (win_score == second && e_bank[1] > second_bank) ||
+                   (win_score == second && e_bank[1] == second_bank && e_def[1] > second_def) ||
+                   (win_score == second && e_bank[1] == second_bank &&
+                    e_def[1] == second_def && e_fns[1] > second_fn)
     matched <- unambiguous
     if (matched) {
       detail <- sprintf("matched %s (score %s/%s)", win_id, win_score, win_min)

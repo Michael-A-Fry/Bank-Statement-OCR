@@ -487,3 +487,70 @@ test_that("the toolkit stamps what it was correcting", {
   expect_match(paste(src[(i - 2):(i + 2)], collapse = " "),
                "g\\$default_ids")
 })
+
+# ---------------------------------------------------------------------------
+# A TEMPLATE YOU BUILT MUST BE ABLE TO WIN.
+#
+# Production, with three templates built in the toolkit: auto-pick right about a
+# third of the time. Reproduced: a template drafted from one "Kowhai Bank of
+# Aotearoa" statement matched four sibling statements PERFECTLY (3 of 3 phrases) and
+# auto-detect picked anz_everyday_pdf on all four, confidently. The shipped ANZ
+# template ALSO scored 3 -- on generic column headings that half the banks print --
+# and the next key in the ordering was "shipped before hand-built", so a template an
+# analyst builds could never win a tie. The one template that named the bank lost to
+# one whose bank appears nowhere on the page.
+#
+# The fix is a tie-breaker, ahead of shipped-first: is the template's OWN BANK NAME
+# printed in the statement's header or footer? Never part of the score, so a template
+# still has to earn eligibility on content.
+
+.tie_tpl <- function(bank, origin = "user", phrases = c("Withdrawals", "Deposits", "Balance")) {
+  list(id = paste0(tolower(gsub("[^A-Za-z]", "", bank)), "_", origin), bank = bank,
+       format = "pdf", origin = origin, min_score = length(phrases),
+       fingerprint = list(page_contains_all = as.list(phrases)))
+}
+.tie_input <- function(header) list(
+  pages = paste(c(header, "Statement of Accounts", "Date Details Withdrawals Deposits Balance",
+                  "03 Feb EFTPOS DAIRY 12.40 2,398.15", "TRANSFER TO ANZ 01-0234 400.00 1,998.15",
+                  "Page 1 of 1", paste(header, "Limited")), collapse = "\n"))
+
+test_that("on a tie, the template whose bank is printed on the statement wins", {
+  tpls <- list(anz = .tie_tpl("ANZ", origin = "default"),
+               kow = .tie_tpl("Kowhai Bank", origin = "user"))
+  names(tpls) <- vapply(tpls, function(t) t$id, character(1))
+  det <- detect_statement(.tie_input("Kowhai Bank of Aotearoa"), tpls)
+  expect_true(det$matched)
+  expect_identical(det$template_id, "kowhaibank_user")      # was: anz, the shipped one
+})
+
+test_that("the shipped-first protection still holds where it was written for", {
+  # A hand-built "anz_v2" must not beat the tested Westpac template on a Westpac
+  # statement. Bank evidence decides that one now, for a reason about the document.
+  tpls <- list(.tie_tpl("ANZ", origin = "user"), .tie_tpl("Westpac", origin = "default"))
+  names(tpls) <- vapply(tpls, function(t) t$id, character(1))
+  det <- detect_statement(.tie_input("Westpac New Zealand"), tpls)
+  expect_identical(det$template_id, "westpac_default")
+  # ...and with no bank evidence either way, shipped-first still breaks the tie
+  det2 <- detect_statement(.tie_input("Some Other Bank"), tpls)
+  expect_identical(det2$template_id, "westpac_default")
+})
+
+test_that("a bank named only in a TRANSACTION is not evidence", {
+  # "TRANSFER TO ANZ" sits in the middle of the page. Header and footer only.
+  inp <- list(pages = paste(c("Kowhai Bank of Aotearoa", "Statement of Accounts",
+                              rep("03 Feb EFTPOS 12.40 2,398.15", 10),
+                              "05 Feb TRANSFER TO ANZ 400.00 1,998.15",
+                              rep("06 Feb EFTPOS 9.99 1,988.16", 10),
+                              "Page 1 of 1", "Kowhai Bank of Aotearoa Limited"), collapse = "\n"))
+  expect_identical(.bank_on_page(inp, list(bank = "ANZ")), 0L)
+  expect_identical(.bank_on_page(inp, list(bank = "Kowhai Bank")), 1L)
+})
+
+test_that("generic words in a bank name are not evidence on their own", {
+  # "Bank", "New Zealand", "Limited" are on every NZ statement. A template whose bank
+  # name is made only of those has no distinctive token and gets no evidence.
+  inp <- .tie_input("Kowhai Bank of Aotearoa")
+  expect_identical(.bank_on_page(inp, list(bank = "Bank New Zealand Limited")), 0L)
+  expect_identical(.bank_on_page(inp, list(bank = "")), 0L)
+  expect_identical(.bank_on_page(inp, list(bank = NULL)), 0L)
+})

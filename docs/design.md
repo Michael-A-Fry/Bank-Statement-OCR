@@ -389,9 +389,18 @@ from an invariant that is filed somewhere else.
 
 ## 6. Deliberate decisions a newcomer would otherwise undo
 
-**Detection prefers a shipped template over a hand-built one.**
-`detect.R` orders by content score, then `defaults` (shipped beats user), then the
-filename tie-breaker, then id. It used to fall through to the alphabetical id
+**On a tie, the template whose bank is printed on the statement wins.**
+`detect.R` orders by content score, then `bank_ev` (is the template's own bank name
+in the first page's header or footer — `.bank_on_page`), then `defaults` (shipped
+beats user), then the filename tie-breaker, then id. Bank evidence comes first
+because shipped-first alone meant a hand-built template could never win a tie, and
+shipped fingerprints built on generic column headings tie with nearly everything:
+measured in production as auto-pick right about a third of the time with three
+templates built here (1.16.0). Header and footer are found by content — above the
+first money figure, below the last — so a transaction naming another bank is never
+evidence.
+
+**Then it prefers a shipped template over a hand-built one.** It used to fall through to the alphabetical id
 tie-break, so a hand-built `aaa_bank` beat a tested `westpac_everyday_pdf` on
 nothing but its name — a template's *filename* deciding which figures reach a
 dashboard. A shipped template has a golden test proving it reads that bank

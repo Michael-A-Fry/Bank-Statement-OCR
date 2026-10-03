@@ -13,6 +13,31 @@ finding id.
 
 ---
 
+## 1.16.0
+
+**A template built here can win auto-detect.**
+
+Reported from production: three templates built in the toolkit, and auto-pick right
+about a third of the time. Reproduced: a template drafted from one "Kowhai Bank of
+Aotearoa" statement matched four sibling statements perfectly (3 of 3 phrases) — and
+auto-detect picked `anz_everyday_pdf` on all four, confidently. The shipped ANZ
+template also scored 3, on column headings half the country's banks print
+("Withdrawals", "Deposits"), and the next tie-break was "shipped before hand-built".
+So a hand-built template could never win a tie, and the one template that named the
+bank lost to one whose bank appears nowhere on the page.
+
+- **New tie-breaker, ahead of shipped-first: is the template's own bank printed in
+  the statement's header or footer?** Never part of the score, so a template still
+  has to earn eligibility on content. Generic words ("Bank", "New Zealand",
+  "Limited") are not evidence on their own.
+- **Header and footer are found by content, not a line count**: above the first line
+  carrying a money figure, below the last. A transaction reading "TRANSFER TO ANZ
+  400.00" is never evidence the statement is ANZ's, however short the page.
+- The protection shipped-first was written for is kept and strengthened: a hand-built
+  `anz_v2` still cannot beat the tested Westpac template on a Westpac statement — now
+  because "Westpac" is on the page and "ANZ" is not. With no bank evidence either way,
+  shipped-first still decides.
+
 ## 1.15.0
 
 **A multi-file upload now has a file-count limit, because it had none.**
