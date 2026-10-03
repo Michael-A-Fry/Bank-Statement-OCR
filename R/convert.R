@@ -227,8 +227,67 @@ log_run <- function(logdir, result) {
 #
 # Never throws: a template geometry question must not be able to fail a conversion
 # that otherwise worked.
-.column_fit_note_meta <- function(input, template) {
+# .column_fit_severity(fit) -- medium when the template needs editing, info when it
+# is only recording a column the statement does not print. ONE copy, because the
+# whole-file path and the per-statement path must not drift apart about what counts
+# as a fault.
+.column_fit_severity <- function(fit) {
+  strays <- as.integer(fit$strays %||% 0L) >= .CFIT_MIN_ROWS
+  faulty <- any(!fit$columns$verdict %in% c("fits", "empty")) ||
+    !is.null(fit$shift) ||
+    (strays && any(fit$columns$verdict == "empty" & fit$columns$kind == "money"))
+  if (faulty) "medium" else "info"
+}
+
+.column_fit_note_meta <- function(input, template, statements = NULL) {
   if (length(.page_shape_note(input, template))) return(list())
+
+  # ---- A BUNDLE IS CHECKED STATEMENT BY STATEMENT ------------------------
+  #
+  # Ten statements in one PDF are ten documents, and a bank that re-ran its
+  # composition between two of them moved the columns for the later ones only. Asked
+  # of the whole file at once, this check reports ONE page-wide answer and averages
+  # the drifted statement away -- or, worse, reports an offset that is wrong for
+  # every statement in the file.
+  #
+  # MEASURED: a two-statement bundle whose SECOND statement sits 60pt to the left
+  # produced 7 fabricated figures (the running balance read as the transaction
+  # amount). The arithmetic caught it -- trust low, nothing published -- and the
+  # whole-file check did name the columns, but it could not say WHICH STATEMENT had
+  # moved, which is the one thing an analyst needs in order to fix it. Asked per
+  # segment, it can.
+  #
+  # 40pt did NOT break it, which is the other half worth knowing: the bands absorb
+  # a drift of half a column, so a bundle of slightly-varying statements is the
+  # ordinary case and is read correctly.
+  segs <- NULL
+  if (is.list(statements) && length(statements) > 1L &&
+      exists(".subinput_pages", mode = "function")) {
+    segs <- lapply(statements, function(st) {
+      rg <- suppressWarnings(as.integer(strsplit(as.character(st$pages %||% ""), "-")[[1]]))
+      if (length(rg) != 2L || any(is.na(rg))) return(NULL)
+      list(index = st$index, pages = seq(rg[1], rg[2]))
+    })
+    if (any(vapply(segs, is.null, logical(1)))) segs <- NULL
+  }
+
+  if (!is.null(segs)) {
+    parts <- character(0); worst <- "info"
+    for (sg in segs) {
+      si <- tryCatch(.subinput_pages(input, sg$pages), error = function(e) NULL)
+      if (is.null(si)) next
+      f <- tryCatch(column_fit(si, template), error = function(e) NULL)
+      if (is.null(f)) next
+      n <- tryCatch(column_fit_note(f), error = function(e) NA_character_)
+      if (is.na(n) || !nzchar(n)) next
+      parts <- c(parts, sprintf("statement %d: %s", sg$index, n))
+      if (!identical(.column_fit_severity(f), "info")) worst <- "medium"
+    }
+    if (!length(parts)) return(list())
+    return(list(column_fit_note = paste(parts, collapse = " | "),
+                column_fit_severity = worst))
+  }
+
   fit <- tryCatch(column_fit(input, template), error = function(e) NULL)
   if (is.null(fit)) return(list())
   note <- tryCatch(column_fit_note(fit), error = function(e) NA_character_)
@@ -246,12 +305,8 @@ log_run <- function(logdir, result) {
   # nothing to check, which is the strongest check there is -- but it is not a template
   # error and must not be dressed as one. Ground 3 is what separates the two, and
   # without it a balance column that had moved read as "nothing to fix".
-  strays <- as.integer(fit$strays %||% 0L) >= .CFIT_MIN_ROWS
-  faulty <- any(!fit$columns$verdict %in% c("fits", "empty")) ||
-    !is.null(fit$shift) ||
-    (strays && any(fit$columns$verdict == "empty" & fit$columns$kind == "money"))
   list(column_fit_note = note,
-       column_fit_severity = if (faulty) "medium" else "info")
+       column_fit_severity = .column_fit_severity(fit))
 }
 
 # convert_statement(...) -> result (build-contract sections 6, 7).
@@ -476,7 +531,7 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       }
       diag <- build_diagnostics(status, parsed = parsed, recon = recon,
         metadata = c(.page_shape_note(input, template),
-                .column_fit_note_meta(input, template),
+                .column_fit_note_meta(input, template, sb$statements),
                 list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
                      faint_minus_signs = input$meta$faint_minus_signs %||% 0L,
                      # Did the sign-from-ink scan RUN? Only askable of a PDF, and

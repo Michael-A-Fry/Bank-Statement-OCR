@@ -213,3 +213,52 @@ test_that("column_bands is owned by whoever can edit the template", {
   expect_identical(unname(.diag_fix_owner("column_bands")), "template")
   expect_true("column_bands" %in% names(.DIAG_FIX_OWNER))
 })
+
+# ---------------------------------------------------------------------------
+# TEN STATEMENTS IN ONE PDF ARE TEN DOCUMENTS.
+#
+# A bank that re-ran its composition between two statements in a bundle moved the
+# columns for the later ones only. Asked of the whole file at once, the drift check
+# reports ONE page-wide answer: it averages the drifted statement away, or reports an
+# offset that is wrong for every statement in the file. Asked per segment, it can name
+# the statement that moved -- which is the one thing an analyst needs to fix it.
+#
+# MEASURED on a two-statement bundle whose SECOND statement sits 60pt to the left:
+# 7 fabricated figures (the running balance read as the transaction amount). The
+# arithmetic caught the run -- trust low, nothing published -- but "which statement?"
+# is not something the arithmetic can answer.
+#
+# 40pt did NOT break it, and that is the other half worth knowing: the bands absorb a
+# drift of half a column, so a bundle of slightly-varying statements is the ORDINARY
+# case and is read correctly and silently.
+
+test_that("a bundle is checked statement by statement, and the note names which", {
+  s <- cf_setup()
+  # two segments over the same page, the second one judged against bands that are
+  # 60pt out -- the shape of a bundle whose later statements were composed
+  # differently. .subinput_pages is the engine's own segment reader.
+  skip_if_not(exists(".subinput_pages", mode = "function"))
+  one <- list(list(index = 1L, pages = "1-1"), list(index = 2L, pages = "1-1"))
+  meta <- .column_fit_note_meta(s$input, shift_bands(s$template, 60), one)
+  expect_identical(meta$column_fit_severity, "medium")
+  # every segment that has something to say is named, and named by number
+  expect_match(meta$column_fit_note, "statement 1:")
+  expect_match(meta$column_fit_note, "statement 2:")
+  expect_match(meta$column_fit_note, "|", fixed = TRUE)
+})
+
+test_that("a bundle whose statements all fit says nothing at all", {
+  s <- cf_setup()
+  two <- list(list(index = 1L, pages = "1-1"), list(index = 2L, pages = "1-1"))
+  expect_identical(length(.column_fit_note_meta(s$input, s$template, two)), 0L)
+})
+
+test_that("the severity rule is one function, shared by both paths", {
+  # The whole-file path and the per-statement path must not drift apart about what
+  # counts as a fault, which is why .column_fit_severity exists at all.
+  s <- cf_setup()
+  expect_identical(.column_fit_severity(column_fit(s$input, s$template)), "info")
+  expect_identical(.column_fit_severity(column_fit(s$input, shift_bands(s$template, 60))), "medium")
+  src <- paste(readLines(file.path(engine_root(), "R", "convert.R"), warn = FALSE), collapse = "\n")
+  expect_identical(length(gregexpr(".column_fit_severity <- function", src, fixed = TRUE)[[1]]), 1L)
+})

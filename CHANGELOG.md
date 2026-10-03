@@ -13,6 +13,38 @@ finding id.
 
 ---
 
+## 1.13.0
+
+**A bundle is now checked statement by statement.**
+
+Ten statements in one PDF are ten documents, and a bank that re-ran its composition
+between two of them moved the columns for the later ones only. Asked of the whole
+file at once, the drift check returns **one** page-wide answer: it averages the
+drifted statement away, or reports an offset that is wrong for every statement in
+the file.
+
+Measured on a two-statement bundle whose **second** statement sits 60pt to the left:
+**7 fabricated figures** — the running balance read as the transaction amount. The
+arithmetic caught the run (trust `low`, nothing published) and the whole-file check
+did name the columns, but it could not say *which statement* had moved, which is the
+one thing an analyst needs in order to fix it. It now says:
+
+> statement 2: debit is empty on every row; credit holds something that is not an
+> amount on 5 of the 12 rows; balance is empty on every row; 7 of the 12 rows carry
+> an amount that no amount column covers; every amount column reads correctly with
+> the bands 40pt to the left (anything from 10 to 69pt works)
+
+**40pt did not break it**, which is the other half worth knowing: the bands absorb a
+drift of half a column, so a bundle of slightly-varying statements is the *ordinary*
+case and is read correctly and silently. Only the statement that really moved is
+named.
+
+The severity rule is now one function (`.column_fit_severity`) shared by the
+whole-file and per-statement paths, so they cannot drift apart about what counts as
+a fault — with a test that there is exactly one copy of it.
+
+Suite 71 files / 1,000 tests / 5,369 passing / 0 failed.
+
 ## 1.12.0
 
 **The app crashed its session on every single page load, and nobody could see it.**
