@@ -53,6 +53,10 @@ function makeFiles() {
   // a picture of a page with no text layer -- what a scanner produces
   execFileSync('Rscript', ['-e', `grDevices::pdf(${JSON.stringify(path.join(d, 'scanned_letter.pdf'))}); ` +
     'graphics::plot.new(); graphics::rasterImage(matrix(stats::runif(400), 20), 0, 0, 1, 1); invisible(grDevices::dev.off())']);
+  // ...and a real statement as a scanner would hand it over: the ANZ sample, rendered
+  // to a picture of each page with no text layer left
+  execFileSync('Rscript', ['-e', `im <- magick::image_read_pdf(${JSON.stringify(path.join(fx, 'anz_everyday_pdf_sample.pdf'))}, density = 200); ` +
+    `magick::image_write(magick::image_convert(im, colorspace = 'gray'), ${JSON.stringify(path.join(d, 'anz_scan.pdf'))}, format = 'pdf')`]);
   return d;
 }
 
@@ -136,6 +140,8 @@ async function run(browser, D) {
   await page.setInputFiles('#cv_file', six.map(f => path.join(D, f)));
   check('the table appears once the files are checked',
         await waitFor(page, () => document.querySelectorAll('tr.plan-row').length === 6, 60000));
+  // a scan's first pages are read in the background; wait for that to settle
+  await waitFor(page, () => ![...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 120000);
   await sleep(600);
   let r = await rows(page);
   eq('each file gets the template detection will use',
@@ -249,6 +255,32 @@ async function run(browser, D) {
     eq('once forgotten, it is suggested on its wording again', m.chip, 'No suggestion - please choose');
     await page2.close();
   } else console.log('SKIP  learning checks (APP_URL: not touching a real install\'s memory)');
+
+  // 5c. SCANS. A scan's first pages are read in the background: its row says so,
+  //     then suggests the template if they clearly match one -- and the conversion
+  //     reads it with that template.
+  {
+    const ps = await ctx.newPage();
+    await ps.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
+    await ps.click('a[data-value="Convert"]'); await sleep(600);
+    const q2 = await ps.$('#cv_qid'); if (q2) { await q2.fill('UI0001'); await sleep(800); }   // a new session asks again
+    await ps.setInputFiles('#cv_file', [path.join(D, 'anz_scan.pdf'), path.join(D, 'scanned_letter.pdf')]);
+    await waitFor(ps, () => document.querySelectorAll('tr.plan-row').length === 2, 60000);
+    const reading = await waitFor(ps, () => [...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 5000);
+    check('a scan says it is being read', reading);
+    await waitFor(ps, () => ![...document.querySelectorAll('td.plan-state')].some(td => td.innerText.includes('Reading the scan')), 120000);
+    await sleep(600);
+    const sr = await rows(ps);
+    eq('a scan that clearly matches is suggested its template', [byFile(sr, 'anz_scan.pdf').value, byFile(sr, 'anz_scan.pdf').chip],
+       ['anz_everyday_pdf', 'Suggested from the scan']);
+    eq('a scan that matches nothing stays "Scanned"', byFile(sr, 'scanned_letter.pdf').chip, 'Scanned');
+    await shot(ps, '6-scans');
+    await ps.click('#cv_go'); await waitIdle(ps);
+    await waitFor(ps, () => document.querySelectorAll('tr.plan-openable').length === 2, 300000);
+    check('...and is converted with it', byFile(await rows(ps), 'anz_scan.pdf').result.startsWith('Converted successfully'),
+          byFile(await rows(ps), 'anz_scan.pdf').result);
+    await ps.close();
+  }
 
   // 6. download everything
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);

@@ -73,7 +73,11 @@ identify_file <- function(path, templates, name = basename(path), learned = NULL
                    type = "bytes")
     # the conversion's own threshold for "this page is a picture", per page
     if (chars / length(tx) < PARAM_OCR_MIN_CHARS) {
-      out$kind <- .ident_kind(ext, TRUE); out$state <- "scanned"; return(out)
+      out$kind <- .ident_kind(ext, TRUE)
+      # A scan on a server with no OCR software cannot be read at all -- say so
+      # NOW, in the row, not after a conversion that comes back empty.
+      out$state <- if (isTRUE(safe(ocr_available(), FALSE))) "scanned" else "scanned_no_ocr"
+      return(out)
     }
     list(kind = "pdf", pages = tx)
   } else {
@@ -173,4 +177,54 @@ template_choices <- function(templates, format) {
   ids <- ids[o]; bank <- bank[o]; lab <- lab[o]
   split_ids <- split(stats::setNames(ids, lab), factor(bank, levels = unique(bank)))
   lapply(split_ids, function(v) v)
+}
+
+# identify_scan(path, templates, name) -> list(state, guess, detail) for a SCANNED
+# PDF: its first two pages are read as pictures (OCR, a few seconds each) and
+# detection runs on that. TWO, not one: measured on the tutorial scan, page 1 is the
+# summary (balances, address) and the column headings a template looks for start on
+# page 2, so page 1 alone matched nothing.
+#
+# It is slow enough to run in a background job (R/jobs.R, task "identify_scans"),
+# never in the app's own process, and it only ever SUGGESTS when page 1 alone is a
+# clear match -- no close call, no tie. A suggestion made from two pages cannot be
+# promised to equal detection over every page once they are all read, so unlike a
+# text PDF's guess it is not left to detection: a row left on it is read with exactly
+# that template (state "scan_sure"), and the row says the suggestion came from the scan.
+#   scan_sure       the first pages clearly match `guess`
+#   scanned         they were read but settle nothing; detected while it converts
+#   scanned_no_ocr  this server has no OCR software
+identify_scan <- function(path, templates, name = basename(path)) {
+  out <- list(state = "scanned", guess = NA_character_, detail = NA_character_)
+  if (!isTRUE(safe(ocr_available(), FALSE))) { out$state <- "scanned_no_ocr"; return(out) }
+  np <- suppressWarnings(as.integer(safe(pdftools::pdf_info(path)$pages, 1L)))
+  np <- if (length(np) && !is.na(np) && np >= 1L) min(2L, np) else 1L
+  txt <- vapply(seq_len(np), function(pg) {
+    r <- safe(ocr_pdf_page(path, pg), NULL)
+    if (is.null(r) || !isTRUE(r$ok) || !length(r$text)) "" else paste(r$text, collapse = "\n")
+  }, character(1))
+  if (!any(nzchar(trimws(txt)))) {
+    out$detail <- "The scan could not be read as a picture; the template is found while it converts."
+    return(out)
+  }
+  input <- list(kind = "pdf", pages = txt, path = file.path(dirname(path), as.character(name)[1]))
+  det <- safe(detect_statement(input, templates), NULL)
+  nm <- function(id) {
+    t <- if (!is.na(id)) templates[[id]] else NULL
+    if (is.null(t)) as.character(id) else sub(" statement$", "", template_display_name(t))
+  }
+  if (isTRUE(det$matched)) {
+    thin <- is.finite(det$margin %||% Inf) && det$margin <= 1 &&
+            !is.na(det$runner_up %||% NA) && !isTRUE(det$bank_clear)
+    if (!thin) {
+      out$state <- "scan_sure"; out$guess <- det$template_id
+      out$detail <- sprintf(paste("Read from the first pages of the scan: the wording matches the %s template.",
+                                  "Left as it is, the file is read with this template."), nm(det$template_id))
+      return(out)
+    }
+    out$detail <- "The first pages fit more than one template closely, so the template is found while it converts."
+    return(out)
+  }
+  out$detail <- "The first pages were read, but no template matches them; the template is found while it converts."
+  out
 }

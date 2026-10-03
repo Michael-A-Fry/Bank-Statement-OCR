@@ -13,6 +13,29 @@ finding id.
 
 ---
 
+## 1.22.0
+
+**A scan gets a suggested template too.**
+
+A scanned PDF's text only exists once it is read as a picture, so the Convert
+table used to say "Scanned" and leave the template to the conversion.
+
+- After the quick check, each scan's **first two pages** are read as pictures in a
+  background job (`identify_scan`, job task `identify_scans`; never the app's own
+  process). The row says *Reading the scan…*, then fills in as soon as its pages are
+  read. Two pages, not one: on the tutorial scan page 1 is the summary and the
+  column headings start on page 2.
+- Only a **clear** match is suggested (*Suggested from the scan*) — no close call, no
+  tie — and a row left on it is read with that template, because a suggestion from
+  two pages cannot be promised to equal detection over every page. Measured: a
+  rasterised ANZ statement is suggested ANZ everyday in about 4 s, and its conversion
+  reads it with the same template, `ok`.
+- **Convert does not wait for it**: a press stops the reading and the unread scans are
+  detected while they convert, so no suggestion can arrive after its file converted.
+  New files, or a template saved meanwhile, stop it too.
+- **A scan on a server with no OCR says so in its row** (*Scanned - can't be read
+  here*), instead of failing only after it has been converted.
+
 ## 1.21.0
 
 **The tool learns from corrections.**

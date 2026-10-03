@@ -3155,6 +3155,7 @@ server <- function(input, output, session) {
   cv_run        <- reactiveVal(NULL)          # list(gen, rows): the case converting now, and its rows
 
   plan_start_check <- function() {
+    plan_slot$cancel(); plan_env$scan <- NULL   # a re-check reads the scans again
     plan_env$i <- 0L
     # The SAME template set the conversion will load (USE_USER_TEMPLATES decides,
     # exactly as convert_args / run_batch do), read once for the whole upload.
@@ -3168,6 +3169,7 @@ server <- function(input, output, session) {
     f <- input$cv_file
     plan_env$gen <- plan_env$gen + 1L
     plan_env$i <- 0L; plan_env$rows <- NULL
+    plan_slot$cancel(); plan_env$scan <- NULL
     cv_plan(NULL); cv_plan_done(0L); cv_plan_ran(NULL); cv_plan_picks(character(0))
     # New files replace what the page is about: the last case's rows, and the result
     # open under them, belong to files that are no longer chosen.
@@ -3224,9 +3226,62 @@ server <- function(input, output, session) {
       if (is.null(rows) || plan_env$i >= nrow(rows)) {
         cv_plan(list(gen = b$gen, rows = plan_env$rows, too_many = 0L))
         cv_plan_busy(NULL)
+        plan_scan_start()          # scans: their first pages, read in the background
       }
     })
     if (!is.null(isolate(cv_plan_busy()))) invalidateLater(1, session)
+  })
+
+  # ---- SCANS: a suggestion from their first pages --------------------------------
+  # A scan's text only exists once it is read as a picture (seconds a page), so the
+  # quick check above says "Scanned" and moves on. Then, in a background job (never
+  # this process), each scan's first two pages are read and matched (identify_scan);
+  # each row fills in as its pages are read ("Reading the scan..." -> "Suggested from
+  # the scan"). Only a clear match is suggested, and a row left on it is read with
+  # that template (plan_effective), because a suggestion from two pages cannot be
+  # promised to equal detection over every page. Convert does not wait for it: a
+  # press stops the reading and the unread scans are detected while they convert,
+  # so no suggestion can arrive AFTER the files it was for have been converted.
+  plan_scan_start <- function() {
+    rows <- plan_env$rows
+    i <- which(rows$state == "scanned")
+    if (!length(i) || !isTRUE(safe(ocr_available(), FALSE))) return(invisible(NULL))
+    rows$state[i] <- "scanning"; plan_env$rows <- rows
+    plan_env$scan <- list(gen = plan_env$gen, rows = i)
+    cv_plan(list(gen = plan_env$gen, rows = rows, too_many = 0L))
+    od <- tempfile("scan_"); dir.create(od, showWarnings = FALSE)
+    plan_slot$start("identify_scans", rows$datapath[i], od, overlay = FALSE, message = "",
+      args = list(names = rows$name[i], templates_dir = TEMPLATES_DIR,
+                  user_templates_dir = if (USE_USER_TEMPLATES) USER_TEMPLATES_DIR else NULL),
+      finish = function(res) {
+        # a list per scan when it worked; the failed-job result (a named list) when not
+        plan_scan_apply(if (is.list(res) && is.null(names(res))) res else NULL, final = TRUE)
+      })
+  }
+  # plan_scan_apply(res, final, done) -- put what the scan reading found into the rows
+  # still waiting for it. `done` is the verdicts streamed so far, `res` the job's whole
+  # answer; `final` returns any row still "reading" to plain "Scanned".
+  plan_scan_apply <- function(res = NULL, final = FALSE, done = NULL) {
+    sc <- plan_env$scan
+    if (is.null(sc) || !identical(sc$gen, plan_env$gen) || is.null(plan_env$rows)) return(invisible(NULL))
+    rows <- plan_env$rows
+    upd <- function(k, state, guess, detail) {
+      i <- sc$rows[k]
+      if (is.na(i) || i > nrow(rows) || !identical(rows$state[i], "scanning")) return(invisible(NULL))
+      rows$state[i] <<- as.character(state %||% "scanned")[1]
+      rows$guess[i] <<- as.character(guess %||% NA_character_)[1]
+      rows$detail[i] <<- as.character(detail %||% NA_character_)[1]
+    }
+    if (!is.null(done)) for (j in seq_len(nrow(done))) upd(done$k[j], done$state[j], done$guess[j], done$detail[j])
+    if (!is.null(res)) for (k in seq_along(res)) upd(k, res[[k]]$state, res[[k]]$guess, res[[k]]$detail)
+    if (final) { rows$state[rows$state == "scanning"] <- "scanned"; plan_env$scan <- NULL }
+    plan_env$rows <- rows
+    cv_plan(list(gen = plan_env$gen, rows = rows, too_many = 0L))
+  }
+  observe({
+    lv <- plan_slot$live()
+    if (is.null(lv) || is.null(lv$done) || !NROW(lv$done)) return()
+    isolate(plan_scan_apply(done = lv$done))
   })
 
   # A dropdown changed. Recorded against its row of THIS upload, and nothing else.
@@ -3253,11 +3308,14 @@ server <- function(input, output, session) {
   # A row whose suggestion was CHOSEN BEFORE (state "learned") is the exception to
   # rule 1: detection would not pick that template -- that is why it was chosen --
   # so left alone it is read with exactly that template, as the table shows.
+  # States whose suggestion detection would not reproduce on its own: read with
+  # that suggestion when left alone.
+  .PLAN_PINNED <- c("learned", "scan_sure")
   plan_effective <- function(p, picks) {
     n <- NROW(p$rows); length(picks) <- n
     vapply(seq_len(n), function(i) {
       v <- picks[i]; g <- p$rows$guess[i]
-      learned <- identical(p$rows$state[i], "learned") && !is.na(g)
+      learned <- p$rows$state[i] %in% .PLAN_PINNED && !is.na(g)
       if (is.na(v)) return(if (learned) g else "")
       if (!nzchar(v)) return("")
       if (!is.na(g) && identical(v, g)) return(if (learned) g else "")
@@ -3306,6 +3364,9 @@ server <- function(input, output, session) {
     tie         = c("plan-warn", "Two fit - please check"),
     none        = c("plan-bad",  "No suggestion - please choose"),
     scanned     = c("plan-info", "Scanned"),
+    scanning    = c("plan-info", "Reading the scan\u2026"),
+    scan_sure   = c("plan-ok",   "Suggested from the scan"),
+    scanned_no_ocr = c("plan-bad", "Scanned - can't be read here"),
     unreadable  = c("plan-bad",  "Can't be read"),
     unsupported_type = c("plan-bad", "Not a file type this reads"),
     checking    = c("plan-info", "Checking\u2026"))
@@ -3313,7 +3374,13 @@ server <- function(input, output, session) {
   # The hover on a row's chip: the detector's own sentence where there is one, and
   # for a scan, why it is not guessed.
   .plan_hover <- function(r) {
-    if (identical(r$state, "scanned"))
+    if (identical(r$state, "scanned_no_ocr"))
+      return(paste("This file is a picture of a statement, and this server has no OCR software to",
+                   "read it. Ask whoever looks after the tool, or get a text PDF, CSV or Excel export",
+                   "from the bank."))
+    if (identical(r$state, "scanning"))
+      return("Its first pages are being read as pictures to suggest a template - a few seconds a page.")
+    if (identical(r$state, "scanned") && is.na(r$detail))
       return(paste("This file is a picture of a statement. Its text only exists once it",
                    "has been read as a picture, so its template is found while it converts."))
     if (!is.na(r$detail)) r$detail else NULL
@@ -3403,7 +3470,7 @@ server <- function(input, output, session) {
       sel <- if (!is.na(picks[i])) picks[i] else if (!is.na(r$guess)) r$guess else ""
       # "Your choice" means she changed it HERE; a choice remembered from before is
       # its own chip ("Chosen before"), though both are read as chosen
-      mine <- if (identical(r$state, "learned")) !is.na(picks[i]) && !identical(picks[i], r$guess)
+      mine <- if (r$state %in% .PLAN_PINNED) !is.na(picks[i]) && !identical(picks[i], r$guess)
               else nzchar(eff[i])
       # locked while a case converts: a choice made mid-run would apply to nothing
       ctl <- if (pickable && length(ch)) .plan_select(p$gen, i, ch, first, sel, r$name, locked = running)
@@ -3609,6 +3676,7 @@ server <- function(input, output, session) {
     slot
   }
   cv_slot  <- job_slot()   # converting a statement, a case folder, or a re-check
+  plan_slot <- job_slot()  # reading scans' first pages for the Convert table (identify_scans)
   adm_slot <- job_slot()   # the maintainer's bulk audit (Admin), which is longer still
 
   # WHAT THE WAITING PAGE SAYS. A silent wait is the exact failure this change
@@ -4397,6 +4465,10 @@ server <- function(input, output, session) {
       return()
     }
     if (.case_converting()) return()
+    # scans still being read: stop, and leave them to be detected while they convert
+    if (!is.null(isolate(plan_slot$handle()))) {
+      plan_slot$cancel(); plan_scan_apply(final = TRUE)
+    }
     # TOO MANY FILES IS REFUSED BEFORE ANY WORK STARTS, and says the number. The size
     # limit is per REQUEST, so a folder of hundreds of small statements passed it and
     # then converted one after another inside a single job -- no way to stop it, and

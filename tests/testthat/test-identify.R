@@ -190,3 +190,62 @@ test_that("the hover on a suggestion is a sentence, never a template id and a sc
   expect_false(grepl("anz_twin|anz_everyday_csv", tie$detail))
   expect_match(tie$detail, "fit this file equally well", fixed = TRUE)
 })
+
+# ---------------------------------------------------------------------------
+# SCANS. The quick check only says "Scanned"; then a background job reads the first
+# two pages as pictures and suggests a template if they clearly match one.
+.id_scan_of <- function(fixture_pdf) {
+  out <- tempfile(fileext = ".pdf")
+  im <- magick::image_read_pdf(fixture_pdf, density = 200)
+  magick::image_write(magick::image_convert(im, colorspace = "gray"), out, format = "pdf")
+  out
+}
+
+test_that("a scan of a known statement is suggested the template its conversion uses", {
+  skip_if_not(requireNamespace("magick", quietly = TRUE) && isTRUE(ocr_available()))
+  ts <- .id_tset()
+  scan <- .id_scan_of(file.path(engine_root(), "tests/testthat/fixtures/anz_everyday_pdf_sample.pdf"))
+  expect_identical(identify_file(scan, ts, "scan.pdf")$state, "scanned")   # the quick check
+  s <- identify_scan(scan, ts, "scan.pdf")
+  expect_identical(s$state, "scan_sure")
+  expect_identical(s$guess, "anz_everyday_pdf")
+  expect_identical(s$guess, .id_conv(scan)$template_id)
+  expect_match(s$detail, "Read from the first pages of the scan", fixed = TRUE)
+})
+
+test_that("a scan that matches nothing is left to be detected while it converts", {
+  skip_if_not(isTRUE(ocr_available()))
+  p <- tempfile(fileext = ".pdf")
+  grDevices::pdf(p); graphics::plot.new()
+  graphics::rasterImage(matrix(stats::runif(400), 20), 0, 0, 1, 1); grDevices::dev.off()
+  s <- identify_scan(p, .id_tset(), "noise.pdf")
+  expect_identical(s$state, "scanned")
+  expect_true(is.na(s$guess))
+})
+
+test_that("on a server with no OCR, a scan says so in its row", {
+  p <- tempfile(fileext = ".pdf")
+  grDevices::pdf(p); graphics::plot.new()
+  graphics::rasterImage(matrix(stats::runif(400), 20), 0, 0, 1, 1); grDevices::dev.off()
+  real <- get("ocr_available", envir = globalenv())
+  assign("ocr_available", function() FALSE, envir = globalenv())
+  on.exit(assign("ocr_available", real, envir = globalenv()), add = TRUE)
+  expect_identical(identify_file(p, .id_tset(), "scan.pdf")$state, "scanned_no_ocr")
+  expect_identical(identify_scan(p, .id_tset(), "scan.pdf")$state, "scanned_no_ocr")
+})
+
+test_that("the scan-reading job leaves one verdict per scan as it goes", {
+  skip_if_not(isTRUE(ocr_available()))
+  p <- tempfile(fileext = ".pdf")
+  grDevices::pdf(p); graphics::plot.new()
+  graphics::rasterImage(matrix(stats::runif(400), 20), 0, 0, 1, 1); grDevices::dev.off()
+  jd <- tempfile("tscan_"); dir.create(jd)
+  res <- job_run_task("identify_scans", p,
+    list(names = "noise.pdf", templates_dir = templates_dir(), user_templates_dir = NULL), jobdir = jd)
+  expect_length(res, 1L)
+  expect_identical(res[[1]]$state, "scanned")
+  h <- new.env(); h$dir <- jd
+  got <- job_done_rows(h)
+  expect_identical(got$rows$state, "scanned")
+  expect_identical(got$rows$k, 1L)
+})

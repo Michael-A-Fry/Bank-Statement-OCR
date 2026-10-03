@@ -2759,3 +2759,21 @@ test_that("the shared-secret comparison cannot be timed one character at a time"
   expect_match(blk, "xor")
   expect_false(grepl("identical(got, want)", blk, fixed = TRUE))
 })
+
+# ---------------------------------------------------------------------------
+# SCANS ARE READ IN THE BACKGROUND, IN THEIR OWN SLOT, AND NEVER OUTLIVE CONVERT.
+test_that("a scan's first pages are read off-process, and Convert stops the reading", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # its own job slot: reading a scan never supersedes a conversion, or the reverse
+  expect_match(joined, "plan_slot <- job_slot\\(\\)")
+  st <- .src_block(src, "plan_scan_start <- function\\(\\)", 25L)
+  expect_match(st, 'plan_slot\\$start\\("identify_scans"')
+  expect_false(grepl("cv_slot", st, fixed = TRUE))
+  # a press of Convert stops it, so no suggestion arrives after its file converted
+  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 60L)
+  expect_match(go, "plan_slot\\$cancel\\(\\); plan_scan_apply\\(final = TRUE\\)")
+  # a suggestion from the scan is read with that template if left alone
+  expect_match(joined, '\\.PLAN_PINNED <- c\\("learned", "scan_sure"\\)')
+  # new files, or a re-check, stop it too
+  expect_match(.src_block(src, "plan_start_check <- function\\(\\)", 6L), "plan_slot\\$cancel\\(\\)")
+})

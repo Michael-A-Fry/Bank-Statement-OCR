@@ -22,7 +22,10 @@ The everyday job: turn a statement into clean, checked, downloadable data.
    | **Chosen before** | Someone chose this template for a statement laid out like this one before, and it converted. Hover to see what the wording alone would suggest. | Check it, and carry on. |
    | **Suggested - please check** / **Two fit - please check** | Another template fits nearly as well, or just as well. Left as it is, the result is held for a second look. | Check it is the right one. Change it if not. |
    | **No suggestion - please choose** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
-   | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
+   | **Reading the scan…** | A picture of a statement. Its first two pages are being read as pictures (a few seconds each) to suggest a template. You do not have to wait: pressing Convert stops the reading, and the template is found while it converts. | Nothing. |
+   | **Suggested from the scan** | Those first pages clearly match this template; left as it is, the file is read with it. | Check it, and carry on. |
+   | **Scanned** | A picture of a statement whose first pages settle nothing (or could not be read), so its template is found while it converts (*Detect automatically*). | Nothing — or choose one if you know it. |
+   | **Scanned - can't be read here** | This server has no OCR software, so a scan cannot be read at all. | Ask whoever looks after the tool, or get a text PDF / CSV / Excel export from the bank. |
    | **Your choice** | You changed this row. That file is read with exactly the template you chose. | — |
    | **Can't be read** | The file is damaged, empty, or not a table. Hover over it for why. | Get a fresh copy of the file. |
 

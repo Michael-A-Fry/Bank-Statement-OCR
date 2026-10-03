@@ -422,6 +422,27 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
                                list(progress = .job_progress_writer(jobdir),
                                     done = .job_done_writer(jobdir))))
     },
+    # The Convert table's suggestion for each SCANNED file: page 1 read as a picture
+    # and matched (identify_scan). Seconds a file, so never in the app's process; one
+    # verdict file per scan as it is read (the same done writer a case uses), so each
+    # row fills in as soon as its page is read.
+    identify_scans = {
+      tmpl <- load_template_set(args$templates_dir, args$user_templates_dir)
+      nm <- as.character(args$names %||% basename(paths))
+      pw <- .job_progress_writer(jobdir); dw <- .job_done_writer(jobdir)
+      out <- vector("list", length(paths))
+      for (i in seq_along(paths)) {
+        if (is.function(pw)) pw(i, length(paths), paths[i])
+        r <- safe(identify_scan(paths[i], tmpl, nm[i]), NULL) %||% list(state = "scanned")
+        out[[i]] <- r
+        if (is.function(dw)) dw(i, length(paths), paths[i],
+          data.frame(state = as.character(r$state %||% "scanned")[1],
+                     guess = as.character(r$guess %||% NA_character_)[1],
+                     detail = as.character(r$detail %||% NA_character_)[1],
+                     stringsAsFactors = FALSE))
+      }
+      out
+    },
     audit = {
       # The maintainer's bulk audit: a picture of a folder. IT AUDITS; IT DOES NOT
       # CONVERT. Converting a pile of files is Convert's case folder.
