@@ -623,7 +623,7 @@ def table(C, x, W, title, heads, rows, aligns, intro=None, foot=None, total=None
     elif not compact:
         js = [j for j in range(n) if aligns[j] == "L"]
         if js:
-            wid[js[0]] += iw - need
+            wid[max(js, key=lambda j: nat[j])] += iw - need
         elif n > 1:
             gap += (iw - need) / (n - 1)
     xs, cx = [], x + pad
@@ -1965,15 +1965,21 @@ def flow(S, D, C, Mn):
     need_top = sum(b.h + 12 for b in top_blocks)
     partway = False
     if S["partway"]:
-        doc.new_page("statement", masthead(S, C, rng.choice(PAGE_TITLES)))
         small = [f for f in fill_pool if f not in FULLPAGE]
+        ptitle = rng.choice(PAGE_TITLES)
+        room = doc.bottom - 72
+        keep = []
         for j in range(rng.randint(1, 2)):
             b = mk(small[(fp + j) % len(small)], "front")
-            if doc.room() - b.h - 14 >= 400 + need_top:
-                doc.put(b, gap=14)
-                partway = True
+            if room - b.h - 14 >= 400 + need_top:
+                keep.append(b)
+                room -= b.h + 14
             else:
                 placed.pop()
+        doc.new_page("statement", masthead(S, C, ptitle if keep else None))
+        for b in keep:
+            doc.put(b, gap=14)
+            partway = True
         hdr = stmt_header(S, C, D, Mn, True)
         doc.pages[-1]["y"] += 6
         doc.put(hdr, gap=8)
