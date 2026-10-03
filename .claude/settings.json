@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pdfinfo *)",
+      "mcp__github__search_repositories",
+      "mcp__github__search_issues",
+      "Bash(identify *)",
+      "mcp__Claude_Code_Remote__get_session",
+      "mcp__github__get_file_contents",
+      "mcp__github__issue_read",
+      "Bash(apt list *)",
+      "Bash(R --version)"
+    ]
+  }
+}
