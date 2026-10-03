@@ -6,12 +6,28 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 
 1. Open `http://<server-name>:8100` and go to **Convert**.
 2. **Browse** and pick the file — `.csv`, `.tsv`, `.tdv`, `.xlsx` or `.pdf`.
-   Up to **200 MB**. Pick several at once to do a whole case folder in one go;
-   the button then reads *Convert N files*.
-3. **What is this?** Leave it on **Work it out for me** — that is right almost
-   every time. The other two answers, **A bank or card statement** and
-   **Something else - a report, a form, a letter**, are there for the case where
-   it read a trustee report as a statement, or the other way round.
+   Up to **200 MB**. Pick several at once — up to **50**, from as many banks as
+   you like — to do a whole case folder in one go; the button then reads
+   *Convert N files*.
+3. **Check the table that appears.** One row per file: its name, what kind of file
+   it is (*PDF · 12 pages*, *Scanned PDF*, *CSV*, *Excel*), and **the template it
+   will be read with**, already filled in. If a row is wrong, change its dropdown —
+   the dropdown only offers templates that can read that kind of file, grouped by
+   bank. The chip beside each row says how sure the tool is:
+
+   | Chip | What it means | Do |
+   |---|---|---|
+   | **Recognised** | One template clearly fits. | Nothing. |
+   | **Close call - check it** / **Two fit - check it** | Another template nearly fits, or fits just as well. The one shown is the one it will use; the result will be held for a second look. | Glance at it. Change it if it is wrong. |
+   | **Not recognised** | No template fits this layout. | Choose one, or convert anyway and you will be pointed to [Add a template](adding-a-bank-template.md). |
+   | **Scanned** | A picture of a statement. Its text only exists once it has been read as a picture, so its template is found while it converts. | Nothing — or choose one if you know it. |
+   | **Your choice** | You changed this row. That file is read with exactly the template you chose. | — |
+   | **Can't be read** | The file is damaged, empty, or not a table. Hover over it for why. | Get a fresh copy of the file. |
+
+   A row you leave alone is read exactly as the table says, with every check the
+   tool runs. A row you change is read with the template you chose — the checks
+   still run on it, so a wrong choice still shows up as a failed check, never as
+   a clean result.
 4. **Type your QID.** Six letters or numbers — your
    staff ID, e.g. `AB1234`. It is what the audit trail records as who ran this
    conversion, so **Convert does nothing until it is filled in**. You are asked
@@ -20,11 +36,13 @@ The everyday job: turn a statement into clean, checked, downloadable data.
 
    If there is no QID box at all, the server already knows who you are and the
    tool does not ask.
-5. Leave **Bank** on **Detect automatically**. Only set it if the tool read the
-   statement as the wrong bank. (There is one bank picker, in front. It goes away
-   once you have said this is not a statement.)
-6. Click **Convert**. A scanned PDF takes tens of seconds — it is being OCR'd.
-7. Read the verdict, then **Download** Excel, CSV or JSON.
+5. Click **Convert**. A scanned PDF takes tens of seconds a page — it is being
+   read as a picture, and the progress panel says how long to expect.
+6. Read the verdict, then **Download** Excel, CSV or JSON.
+
+**Wrong template after all?** The table stays at the top of the page. Change that
+file's row and press **Convert** again. (On a case folder it folds away under
+*Files and templates* once it has run — one click opens it.)
 
 Everything the tool *proved* stays on the page under the verdict: the summary
 cards, the strip of ticks, your transactions — and, in one disclosure headed **Checks & detail (for review)**,

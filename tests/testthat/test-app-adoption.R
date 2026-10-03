@@ -488,9 +488,13 @@ test_that("too many files is refused at the door, with the number", {
   src <- paste(readLines(file.path(engine_root(), "app.R"), warn = FALSE), collapse = "\n")
   expect_match(src, "MAX_BATCH_FILES <- suppressWarnings", fixed = TRUE)
   expect_match(src, "nrow(f) > MAX_BATCH_FILES", fixed = TRUE)
-  # refused BEFORE the work: the guard must come before run_batch in the handler
-  expect_lt(regexpr("nrow(f) > MAX_BATCH_FILES", src, fixed = TRUE),
-            regexpr("if (nrow(f) > 1L) run_batch(f)", src, fixed = TRUE))
+  # refused BEFORE the work: the guard must come before run_batch IN THE HANDLER
+  # (the Convert table says the same number earlier still, when the files are chosen)
+  go <- substring(src, regexpr("observeEvent(input$cv_go, {", src, fixed = TRUE))
+  cap <- regexpr("nrow(f) > MAX_BATCH_FILES", go, fixed = TRUE)
+  run <- regexpr("if (nrow(f) > 1L) run_batch(f, forced)", go, fixed = TRUE)
+  expect_true(cap > 0 && run > 0)
+  expect_lt(cap, run)
   # the number is configurable, and the control says it
   expect_match(src, "files at a time", fixed = TRUE)
   cfg <- paste(readLines(file.path(engine_root(), "R", "config.R"), warn = FALSE), collapse = "\n")

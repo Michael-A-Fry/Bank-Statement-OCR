@@ -13,6 +13,43 @@ finding id.
 
 ---
 
+## 1.17.0
+
+**Every upload gets a table: each file, what it is, and the template it will be read
+with — already filled in, and changeable before anything converts.**
+
+Asked for in these words: "we NEED a backup to be able to specify that isn't a tiny
+little click 'did it do it wrong' … pre fill a table with the upload, its type, and
+its guessed template with easy dropdown to change it. Same thing for single
+statement."
+
+- **One row per file**, the moment the files are chosen: name, kind (*PDF · 12
+  pages*, *Scanned PDF*, *CSV*, *Excel*), a plain dropdown set to the template the
+  tool will use, and a chip — *Recognised*, *Close call*, *Two fit*, *Not
+  recognised*, *Scanned*, *Can't be read*, or *Your choice* once changed. The
+  dropdown offers only templates that can read that kind of file, grouped by bank.
+- **The guess is the conversion's own answer, not an approximation.** Same
+  detector, same page text, same template set, same refusals. Measured: 0
+  differences between the table and the template the conversion used, across 54
+  sample files and 43 corpus cases.
+- **A row left alone is detected; a row changed is forced — per file.** Leaving a
+  row keeps every check detection carries (a whisker-thin win is still held for
+  review). A case folder from four banks can have four different templates.
+- **Never holds the server.** One file is identified per tick, then the other
+  analysts are served; a 400-page PDF identifies in under a second. Scans are said
+  to be scans, not OCR'd to fill a table. Convert waits (greyed, and says why) until
+  the table is filled — a second or two.
+- **After a run the table stays** — "Wrong template? Change it and press Convert
+  again." On a case folder it folds away above the results.
+- **Removed:** the *Bank* picker and the *It picked the wrong template?* disclosure.
+  Each gave one answer for every file in the upload.
+- **A chosen template that is not there is refused, not ignored.** It used to fall
+  through to auto-detect without a word — reading the file with exactly the pick the
+  analyst had overruled. Now that file fails with `template_unavailable` and a cure
+  about the template ("choose another"), not about the file.
+- Phone width: the table stacks into one card per file, and the result page's wide
+  tables scroll inside their own box instead of pushing the page 142px sideways.
+
 ## 1.16.0
 
 **A template built here can win auto-detect.**

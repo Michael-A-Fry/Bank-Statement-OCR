@@ -65,6 +65,8 @@
   amount_parse            = "template",
   amount_direction        = "template",
   date_out_of_range       = "template",
+  # the analyst chooses another template for the file on Convert
+  template_unavailable    = "template",
   # whoever supplied the file fixes it (split / re-export / rescan / install OCR)
   account_number_shape    = "input",
   # an install/renderer gap, not anything the analyst or the template can fix
@@ -85,7 +87,6 @@
   # stated for the record; nobody has to do anything
   ocr                     = "none",
   document_provenance     = "none",
-  none                    = "none",
   none                    = "none")
 
 # .diag_fix_owner(category) -- look the owner up. An unknown category defaults to
@@ -248,6 +249,11 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         det$detail_plain %||% det$detail %||% "no template matched this file",
         paste("Add a template for this layout in the template toolkit (Add a template tab:",
               "upload a sample and confirm what it detects). The closest match and the missing columns are in the detail."))
+  } else if (identical(status, "failed") && !is.null(metadata$template_unavailable)) {
+    add("template", "template_unavailable", "high",
+        paste(messages, collapse = " "),
+        paste("Choose another template for this file on Convert and convert it again.",
+              "If the template was hidden or deleted on purpose, whoever looks after the tool can say which one replaced it."))
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),
@@ -501,7 +507,7 @@ build_diagnostics <- function(status, messages = character(0), det = NULL,
         "The engine can't confirm every transaction was captured (nothing to reconcile the total against). Count the rows against the statement, or prefer a CSV/Excel export or a statement that shows a running balance.")
 
     # 2. Row-level parse problems (independent of KPI wiring).
-    # Guarded like the redaction pair below: the KPI and the row-level scan both
+    # Guarded against the KPI raising it first: the KPI and the row-level scan both
     # find the same malformed rows and now share one cure, so without this the
     # reader gets the same instruction twice and reads it as two findings.
     mal <- which(grepl("malformed", tx$flags %||% ""))

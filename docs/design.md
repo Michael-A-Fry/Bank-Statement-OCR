@@ -164,6 +164,19 @@ bulk re-audit and the CLI scripts deliberately do not publish.
 more, so a batch answer and a single-file answer for the same statement cannot
 disagree.
 
+**The Convert table** (`R/identify.R`, `cv_plan` in `app.R`) shows every uploaded
+file with the template it will be read with, before anything converts. Two rules
+keep it honest. A row **left on its guess** is converted by ordinary detection,
+not forced, because the guess *is* detection's answer — `identify_file()` runs the
+same `detect_statement()` on the same page text (`pdf_text`, which is what
+`read_pdf` keeps for every text page) and the same template set, and refuses what
+`convert_statement` would refuse (`.unreadable_reason`). Forcing it instead would
+skip the thin-margin review hold. A row the analyst **changed** is forced, file by
+file (`convert_batch(force_templates=)`). Scans are not guessed: their text only
+exists after OCR, and OCR-ing a case to fill a table would hold the server for
+minutes. Files are identified one per tick (`invalidateLater`), so the single R
+process serves other analysts between them.
+
 ### Status, decided in `convert.R`
 
 ```

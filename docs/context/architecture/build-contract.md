@@ -22,6 +22,7 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   parse_pdf_table.R     PDF word boxes -> transaction table (x-bands / anchors)
   templates.R           load + validate declarative per-bank YAML templates
   detect.R              deterministic fingerprint scoring -> template match
+  identify.R            the Convert table's row per file: its kind and the template detection will pick
   normalise.R           parse_date / parse_amount / clean_description (verbatim)
   labels.R              label dictionary + matcher (single labelled values)
   lexicon.R             externalised recognition vocabularies (admin-editable)
@@ -260,7 +261,9 @@ is rejected by `validate_template` on any other format or with an unknown `on` v
   per event, never an append** (§10). It never overwrites: a clashing id gets a
   `~2` suffix. There is deliberately no `log_event()` / JSONL appender — a shared
   append is the one write that can interleave over SMB.
-- `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates/statements", user_templates_dir="templates/statements_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", redaction_rects=NULL, force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`.
+- `convert_statement(path, bank=NULL, statement_type=NULL, outdir="out", templates_dir="templates/statements", user_templates_dir="templates/statements_user", requested_by=NULL, formats=c("xlsx","csv","json"), logdir="logs", force_template=NULL, force_rows=NULL, log=TRUE) -> result`. **Never throws.** Returns `list(status, template_id, trust, kpis, header, outputs, messages, ...)`. A `force_template` that is not in the loaded set is a `failed` result with the `template_unavailable` diagnostic — never a silent fall-back to detection.
+- `convert_batch(paths, ..., force_templates=NULL, progress=NULL) -> data.frame` — one row per path; `force_templates` is one entry per file (NA / "" = detect), and a length that does not match the files is refused.
+- `identify_file(path, templates, name) -> list(kind, format, pages, state, guess, runner_up, detail)` — the Convert table's row: the template detection will pick, from the same page text and the same detector, without OCR. `state` is `sure | close | tie | none | scanned | unreadable | unsupported_type`.
 
 ## 7. Status model (`result$status`)
 `ok` (matched + parsed + reconciled) · `needs_review` (parsed but a KPI failed

@@ -135,7 +135,9 @@ outcomes:
 |---|---|---|
 | Ambiguous match (two templates tie) | ✅ | a match requires strictly greater than the 2nd best. A tie no longer dead-ends: `R/convert.R` takes the best candidate (tested over hand-built, then deterministic), converts, and holds the run at `needs_review` with the tie named — so the analyst gets her data, full reconciliation still runs, and nothing reaches the dashboards. Only a tie whose winner reads **zero** rows is reported `unsupported`, and that is the one case the screen offers a pick (tested) |
 | No template matches | ✅ | `unsupported` + closest‑match diagnostic |
-| Wrong bank forced by user | ✅ | hint is a hard filter; mismatch → `unsupported`, not a wrong parse |
+| Wrong template chosen by user (Convert table) | ✅ | the file is read with exactly that template and fully reconciled, so a wrong choice shows as failed checks or "read nothing", never as a clean result. A row left on the tool's guess is NOT forced — detection decides, with its thin-margin review hold intact |
+| Chosen template gone by Convert time (hidden / deleted) | ✅ | refused for that file (`template_unavailable`), never silently auto-detected instead; the other files are unaffected |
+| Table guess ≠ conversion's pick | ✅ | cannot happen for a digital file: `identify_file` runs the same `detect_statement` on the same page text and template set (measured: 0 differences across 54 sample files + 43 corpus cases). A scan is not guessed |
 | Any error anywhere | ✅ | wrapped → `failed` with actionable message; one JSON log line per run |
 
 ---

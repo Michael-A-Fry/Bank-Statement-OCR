@@ -317,3 +317,55 @@ test_that("a statement's answer is untouched by any of it", {
   expect_identical(.failing_check(list(status = "needs_review", kpis = kpis)),
                    "check:balance_reconciliation")
 })
+
+# ---------------------------------------------------------------------------
+# ONE TEMPLATE PER FILE -- the Convert table. A case folder holds several banks, so
+# the override has to be per file; one for the whole case could only ever be right
+# for some of them.
+# ---------------------------------------------------------------------------
+
+test_that("each file can be read with its own chosen template; the rest are detected", {
+  dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  .b_write(dir, "c_anz_again.csv", .B_ANZ)
+  paths <- file.path(dir, c("a_anz.csv", "c_anz_again.csv"))
+  b <- .b_run(paths, force_templates = c(NA, "westpac_everyday_csv"))
+  expect_identical(b$chosen, c(NA_character_, "westpac_everyday_csv"))
+  # file 1 detected, exactly as before the table existed
+  expect_identical(b$template_id[1], "anz_everyday_csv")
+  expect_false(grepl("chosen by the user", b$result[[1]]$run_log$detect_detail %||% ""))
+  # file 2 read with the template chosen for it -- not the one detection would pick
+  expect_identical(b$result[[2]]$run_log$detect_detail, "template chosen by the user")
+  expect_identical(b$result[[2]]$run_log$closest_template, "westpac_everyday_csv")
+})
+
+test_that("an empty choice means detect, the same as no choice at all", {
+  dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- file.path(dir, c("a_anz.csv", "b_unknown.csv"))
+  b <- .b_run(paths, force_templates = c("", NA))
+  expect_identical(b$chosen, c(NA_character_, NA_character_))
+  expect_identical(b$status, .b_run(paths)$status)
+})
+
+test_that("a template list that does not line up with the files is refused outright", {
+  # lined up wrongly, every template would land on its neighbour's statement
+  expect_error(convert_batch(c("a.csv", "b.csv"), force_templates = "x"),
+               "1 entries for 2 files")
+})
+
+test_that("a chosen template that is not there fails THAT file, loudly and correctly", {
+  dir <- .b_case(); on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  paths <- file.path(dir, c("a_anz.csv", "a_anz.csv"))
+  b <- .b_run(paths, force_templates = c("no_such_template", NA))
+  # never silently detected instead -- she overruled detection on purpose
+  expect_identical(b$status[1], "failed")
+  expect_match(b$message[1], "not available any more")
+  expect_identical(b$failing_check[1], "diag:template_unavailable")
+  # and the cure is about the template, not "check the file opens"
+  d <- b$result[[1]]$diagnostics
+  expect_identical(d$category[1], "template_unavailable")
+  expect_false(grepl("password", paste(d$how_to_fix, collapse = " ")))
+  # the other file is untouched
+  expect_identical(b$status[2], .b_run(paths[2])$status)
+  # the screen has words for it
+  expect_true("template_unavailable" %in% names(.b_labels()$DIAG_PLAIN))
+})

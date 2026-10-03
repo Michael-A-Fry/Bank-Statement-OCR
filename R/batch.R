@@ -89,6 +89,7 @@
 #   status         ok | needs_review | unsupported | failed
 #   bank           the bank the matched template names; NA when nothing matched
 #   template_id    the template that was USED; NA unless the file converted
+#   chosen         the template the analyst CHOSE for it; NA when it was detected
 #   rows           how many transactions came out
 #   trust          high | medium | low -- as the run log records it
 #   failing_check  what went wrong, as the engine code the screen words (above)
@@ -103,6 +104,14 @@
 # unchanged. It has no `...` of its own, so an argument THIS function does not
 # take lands there and fails every file with "unused argument".
 #
+# `force_templates` -- ONE TEMPLATE PER FILE, as chosen in the Convert table: a
+# character vector the same length as `paths`, where NA or "" means "detect it"
+# and an id means "read this file with exactly that template". A case folder holds
+# statements from several banks, so one override for the whole case (the only kind
+# there used to be) could only ever be right for some of them. A length that does
+# not match the files is refused outright: lined up wrongly, every template would
+# land on its neighbour's statement.
+#
 # `progress(i, n, file)` is called just BEFORE file i is converted -- a plain
 # callback, not a Shiny call, so a folder can be run from the R console. One that
 # errors is ignored: a broken progress bar must not cost a case its run.
@@ -113,15 +122,20 @@
 # them and marks the result `dropped_feed_rows` -- that word order on purpose:
 # `$` partially matches, so `feed_rows_dropped` would make res$feed_rows return
 # the marker instead of NULL and a stated drop would read as data).
-convert_batch <- function(paths, ..., progress = NULL) {
+convert_batch <- function(paths, ..., force_templates = NULL, progress = NULL) {
   paths <- as.character(paths %||% character(0))
   n <- length(paths)
+  ft <- as.character(force_templates %||% character(0))
+  if (length(ft) && length(ft) != n)
+    stop(sprintf("force_templates has %d entries for %d files", length(ft), n), call. = FALSE)
+  args <- list(...)
 
   out <- data.frame(
     file          = paths,
     status        = rep(NA_character_, n),
     bank          = rep(NA_character_, n),
     template_id   = rep(NA_character_, n),
+    chosen        = rep(NA_character_, n),
     rows          = rep(NA_integer_,   n),
     trust         = rep(NA_character_, n),
     failing_check = rep(NA_character_, n),
@@ -131,7 +145,11 @@ convert_batch <- function(paths, ..., progress = NULL) {
 
   for (i in seq_len(n)) {
     if (is.function(progress)) safe(progress(i, n, paths[i]))
-    res <- tryCatch(convert_statement(paths[i], ...),
+    a <- args
+    if (length(ft) && !is.na(ft[i]) && nzchar(ft[i])) {
+      a$force_template <- ft[i]; out$chosen[i] <- ft[i]
+    }
+    res <- tryCatch(do.call(convert_statement, c(list(paths[i]), a)),
                     error = function(e) .failed_result(conditionMessage(e)))
 
     out$status[i] <- as.character(res$status %||% "failed")[1]

@@ -138,7 +138,7 @@ test_that("the R palette and the stylesheet's tokens are the same colours", {
   css <- paste(.css_src(), collapse = "\n")
   for (cls in c("\\.verdict-high", "\\.verdict-medium", "\\.verdict-low", "\\.stat-grid",
                 "\\.dl-hero", "\\.chip-warn", "\\.hub-card-go", "\\.app-header",
-                "details\\.adv-bank", "#ss-busy", "body\\.ss-run", "\\.split-table"))
+                "table\\.plan-table", "#ss-busy", "body\\.ss-run", "\\.split-table"))
     expect_match(css, cls, info = cls)
   # the deployment box runs a C locale: a byte the browser has to guess at in a
   # file served as text/css is a needless way to lose a rule.
@@ -420,58 +420,36 @@ test_that("every check named in the proof strip has plain-English wording", {
 })
 
 # ---------------------------------------------------------------------------
-# THE BANK PICKER IS IN FRONT. It sat inside "It picked the wrong bank?" on the
-# assumption detection usually gets it right. On real statements it does not yet,
-# which makes the override one of the most-used controls on the page - the same
-# frequency argument as the date format. Auto-detect stays the default, so nobody
-# is asked a question they do not have to answer; it is simply visible when they
-# do. This test fails if it is ever hidden again.
-test_that("the bank picker is on the page, not behind a disclosure", {
-  src <- .ui_src()
-  i_bank <- grep('selectInput\\("cv_bank_quick"', src)
-  # WAS: tags$summary("It picked the wrong bank?"). Register L1 ("a form or report
-  # template cannot be forced, anywhere in the product") made that panel serve both
-  # routes, so its summary can no longer name a bank -- on the other route there is
-  # not one. The RULE this test exists for is untouched: the bank picker is in
-  # front of the disclosure, never inside it.
-  i_adv  <- grep('tags\\$summary\\("It picked the wrong template\\?"\\)', src)
-  expect_length(i_bank, 1L)
-  expect_length(i_adv, 1L)
-  expect_true(i_bank < i_adv, info = "the bank picker fell back behind the disclosure")
-  # auto-detect is still the default: the tool answers it unless told otherwise
-  expect_match(paste(src[i_bank:(i_bank + 2)], collapse = " "),
-               '"Detect automatically" = ""', fixed = TRUE)
-})
-
-# REWRITTEN. This used to assert the exact line
-#     bank_choice <- reactive(pick(input$cv_bank_quick) %||% pick(input$cv_bank))
-# as proof that "the visible bank picker reaches the conversion". It did -- but
-# that line was also a BUG, and the test was pinning it in place. There were TWO
-# bank pickers: cv_bank_quick in front, and cv_bank inside "It picked the wrong
-# bank?", with separate state and two spellings of "no bank". Because the front
-# one was read first, a bank chosen inside the disclosure was silently discarded
-# whenever the front one named a different bank -- the tool converted with a bank
-# the user had stopped asking for and never said so. Confirmed in the browser
-# before the fix: front=ANZ + disclosure=ASB left the exact-template list showing
-# ANZ's four templates. The second picker is gone; the rule is now the stronger
-# one it was always trying to express -- ONE control, read in ONE place.
-test_that("there is exactly one bank picker, and it reaches the conversion", {
+# THE CONVERT TABLE REPLACES BOTH ONE-ANSWER-FOR-EVERYTHING CONTROLS.
+# "In prod with 3 x created templates I get no better than 33% success in the auto
+# pick, we NEED a backup to be able to specify that isn't a tiny little click 'did
+# it do it wrong'. I want it to pre fill a table with the upload, its type, and its
+# guessed template with easy dropdown to change it. Same thing for single statement."
+# The Bank picker and the "It picked the wrong template?" disclosure each gave ONE
+# answer for every file in the upload, and a case folder holds several banks. They
+# are gone, entirely -- not hidden, because a hidden control still holds a value.
+test_that("the Convert screen has a per-file template table and no global picker", {
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
-  expect_length(grep("selectInput\\(\"cv_bank", src), 1L)     # one, and it is cv_bank_quick
-  expect_length(grep('selectInput\\("cv_bank_quick"', src), 1L)
-  expect_match(joined, "bank_choice <- reactive\\(pick\\(input\\$cv_bank_quick\\)\\)")
-  # the second picker and its list-builder are gone entirely, not merely unread
-  expect_false(grepl("cv_bank_ui", joined, fixed = TRUE))
-  expect_false(grepl('selectInput("cv_bank"', joined, fixed = TRUE))
-  # ...and with one spelling of "no bank" left, pick() no longer needs the literal
-  # "(auto-detect)" sentinel that only the deleted, unnamed-choices picker produced
-  expect_match(joined, "pick <- function\\(v\\) if \\(is.null\\(v\\) \\|\\| !nzchar\\(v\\)\\) NULL else v")
-  # every remaining control pick() reads uses a NAMED "" choice, so no control can
-  # hand a label through as if it were a value
-  for (id in c("cv_bank_quick", "cv_template")) {
-    i <- grep(sprintf('selectInput\\("%s"', id), src)
-    expect_match(paste(src[i:(i + 2)], collapse = " "), '= ""', fixed = TRUE, info = id)
-  }
+  code <- src[!grepl("^\\s*#", src)]      # the comment saying why they went may name them
+  for (gone in c('selectInput\\("cv_bank_quick"', 'selectInput\\("cv_template"',
+                 "It picked the wrong template", "bank_choice", "tpl_choice\\b",
+                 "input\\$cv_bank_quick", "input\\$cv_template\\b"))
+    expect_false(any(grepl(gone, code)), info = gone)
+  # the table sits at the top of the result area, above the case-folder table
+  i_plan  <- grep('uiOutput\\("cv_plan"\\)', src)
+  i_batch <- grep('DTOutput\\("cv_batch"\\)', src)
+  i_main  <- grep("mainPanel\\(", src)[1]
+  expect_length(i_plan, 1L)
+  expect_true(i_main < i_plan && i_plan < i_batch[1])
+  expect_length(grep("output\\$cv_plan <- renderUI", src), 1L)
+  # a plain dropdown per row -- a native select, nothing to learn
+  blk <- .src_block(src, "output\\$cv_plan <- renderUI", 80L)
+  expect_match(blk, "selectInput\\(rid, NULL, choices = c\\(stats::setNames\\(\"\", first\\), ch\\)")
+  expect_match(blk, "selectize = FALSE")
+  # only templates that can read THIS kind of file are offered
+  expect_match(blk, "template_choices\\(tset, r\\$format\\)")
+  # ...from the same set the conversion loads
+  expect_match(joined, "plan_env\\$tset <- cv_pick_templates\\(\\)")
 })
 
 # ---------------------------------------------------------------------------
@@ -628,9 +606,9 @@ test_that("the QID is asked once for the whole batch, before it starts", {
   src <- .ui_src()
   i_go   <- grep("observeEvent\\(input\\$cv_go, \\{", src)
   expect_length(i_go, 1L)
-  blk <- src[i_go:(i_go + 25)]
+  blk <- src[i_go:(i_go + 45)]
   i_qid   <- grep("\\.identity_ok\\(\\)", blk)[1]
-  i_batch <- grep("run_batch\\(f\\)", blk)[1]
+  i_batch <- grep("run_batch\\(f, forced\\)", blk)[1]
   expect_false(is.na(i_qid) || is.na(i_batch))
   expect_true(i_qid < i_batch, info = "the batch starts before who-ran-this is settled")
   # ...and the gate really is the QID question
@@ -864,24 +842,6 @@ test_that("two uploads with the same name cannot overwrite each other's outputs"
 })
 
 # ---------------------------------------------------------------------------
-# THE TOOL MUST USE WHAT IT ALREADY KNOWS. Choosing a bank and then scrolling a
-# hundred other banks' templates is the interface rule broken in the small: the
-# answer is already on the screen, so the list should not ask again.
-test_that("the exact-template list is narrowed by the bank already chosen", {
-  src <- .ui_src()
-  # the filter, the bank it filters on and the update all sit in ONE observer
-  i <- grep("ov <- template_overview\\(cv_pick_templates\\(\\)\\)", src)
-  expect_length(i, 1L)
-  blk <- paste(src[max(1L, i - 3L):(i + 10L)], collapse = " ")
-  expect_match(blk, "bank <- bank_choice\\(\\)")                      # the same choice
-  expect_match(blk, "ov\\[ov\\$bank %in% bank, , drop = FALSE\\]")    # narrowed by it
-  expect_match(blk, 'updateSelectInput\\(session, "cv_template"')
-  # a selection that no longer belongs to the chosen bank is dropped, never left
-  # hidden and still in force
-  expect_match(blk, 'selected = if \\(keep %in% ch\\) keep else ""')
-})
-
-# ---------------------------------------------------------------------------
 # AN ACTION MUST ACT ON THE THING THAT WAS PICKED. Admin's template picker is
 # rebuilt whenever the template set changes (a save, a hide, a delete). It used
 # to be rebuilt with no `selected`, so selectize fell back to the first option:
@@ -899,30 +859,53 @@ test_that("rebuilding the Admin template picker keeps the template you picked", 
   expect_match(blk, "selected = if \\(!is\\.null\\(keep\\) && keep %in% ids\\) keep else NULL")
 })
 
-test_that("the exact-template picker is called exactly 'Template (optional)'", {
+test_that("a row left on its guess is detected; a row that was changed is forced", {
+  # Rule 1: the guess IS detection's answer, so leaving it means detection -- with
+  # its thin-margin review hold, which a forced template skips. Rule 2: a changed
+  # row is read with exactly the chosen template, file by file.
   src <- .ui_src()
-  i <- grep('selectInput\\("cv_template"', src)
-  expect_length(i, 1L)
-  expect_match(src[i], '"cv_template", "Template \\(optional\\)"')
+  blk <- .src_block(src, "plan_forced <- function\\(f\\)", 18L)
+  expect_match(blk, "if \\(!is\\.na\\(g\\) && identical\\(v, g\\)\\) next")
+  expect_match(blk, "out\\[i\\] <- v")
+  # a table that is not THIS upload's forces nothing
+  expect_match(blk, "identical\\(p\\$rows\\$name, as\\.character\\(f\\$name\\)\\)")
+  # the generation is in every dropdown's id, so last upload's choice is never read
+  expect_match(paste(src, collapse = "\n"),
+               'plan_input_id <- function\\(gen, i\\) sprintf\\("cv_tpl_%d_%d"')
 })
 
-test_that("the bank and the forced template are read in one place", {
-  # Two readings of the same control is how a filter comes to offer a template
-  # the conversion would not have used.
+test_that("every file's choice reaches the engine, single file and case folder alike", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 40L)
+  expect_match(go, "forced <- plan_forced\\(f\\)")
+  expect_match(go, "run_batch\\(f, forced\\)")
+  expect_match(go, "force_tpl = if \\(is\\.na\\(forced\\[1\\]\\)\\) NULL else forced\\[1\\]")
+  expect_match(joined, "force_templates = forced\\)")
+  # convert_args takes the template it is GIVEN; nothing global is read any more
+  ca <- .src_block(src, "convert_args <- function", 8L)
+  expect_match(ca, "force_template = force_tpl, force_rows = forced_rows")
+  expect_false(grepl("bank =", ca))
+  # a re-check of the result on screen is read with the same template it was
+  expect_match(joined, "convert_args\\(forced_rows = cv_forced\\(\\), force_tpl = src\\$force_tpl\\)")
+  expect_match(joined, "list\\(path = src, name = name, force_tpl = force_tpl\\)")
+  expect_match(joined, "force_tpl = \\.chosen_tpl\\(b, i\\)")
+  expect_length(grep("^\\s*convert_args <- function", src), 1L)
+})
+
+test_that("filling the table never holds the server, and Convert waits for it", {
   src <- .ui_src()
-  joined <- paste(src, collapse = "\n")
-  expect_length(grep("bank_choice <- reactive", src), 1L)
-  expect_length(grep("tpl_choice <- reactive", src), 1L)
-  # Both are read in convert_args(), which is the ONE place the front door's
-  # arguments are assembled -- so the single conversion, a whole case folder and
-  # the X-ray's re-run cannot honour different overrides. (This used to be
-  # convert_now(), which assembled them AND ran the conversion; running it is now
-  # a child process's job, and only the assembling is shared.)
-  expect_match(joined, "bank = bank_choice\\(\\)")
-  expect_match(joined, "force_template = force_tpl %\\|\\|% tpl_choice\\(\\)")
-  expect_length(grep("^\\s*convert_args <- function", .ui_src()), 1L)
-  # nothing reads the raw inputs a second time
-  expect_length(grep("input\\$cv_bank_quick", src), 2L)   # the update + bank_choice
+  # one file per tick, then the event loop gets the process back
+  obs <- .src_block(src, "One file per tick", 36L)
+  expect_match(obs, "identify_file\\(rows\\$datapath\\[i\\], plan_env\\$tset, rows\\$name\\[i\\]\\)")
+  expect_match(obs, "invalidateLater\\(1, session\\)")
+  # Convert is greyed while files are checked, and refuses a press that arrives anyway
+  btn <- .src_block(src, "output\\$cv_go_btn <- renderUI", 25L)
+  expect_match(btn, "busy <- !is\\.null\\(cv_plan_busy\\(\\)\\)")
+  expect_match(btn, "if \\(who && got && !busy\\)")
+  go <- .src_block(src, "observeEvent\\(input\\$cv_go, \\{", 20L)
+  expect_match(go, "if \\(!is\\.null\\(isolate\\(cv_plan_busy\\(\\)\\)\\)\\)")
+  # too many files is said in the table, before anything is checked
+  expect_match(paste(src, collapse = "\n"), "if \\(nrow\\(f\\) > MAX_BATCH_FILES\\) \\{\\n\\s*cv_plan_busy\\(NULL\\)")
 })
 
 # ---------------------------------------------------------------------------

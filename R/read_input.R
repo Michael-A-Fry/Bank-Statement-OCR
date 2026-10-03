@@ -137,8 +137,8 @@ read_pdf_input <- function(path,
   )
 }
 
-# .INPUT_CACHE -- read_input can be EXPENSIVE (a scanned PDF is OCR'd and every
-# page is rendered for the redaction scan -- tens of seconds). The GUI reads the
+# .INPUT_CACHE -- read_input can be EXPENSIVE (a scanned PDF is OCR'd -- about nine
+# seconds a page). The GUI reads the
 # SAME uploaded file several times across one flow (convert, then draft, preview,
 # x-ray, guided columns...), so without a cache a scanned statement is OCR'd 4-5x
 # and the front end appears to hang for minutes. read_input is deterministic in the
@@ -148,20 +148,15 @@ read_pdf_input <- function(path,
 .INPUT_CACHE <- new.env(parent = emptyenv())
 .INPUT_CACHE_MAX <- 12L
 
-# read_input(path, redaction_rects) -> list(kind, path, sha256, lines, table,
-# pages, meta). The tool never redacts; statements arrive already redacted.
-# `redaction_rects` is an optional way to tell the reader where a redaction
-# ALREADY sits (belt-and-braces alongside the automatic detection of rasterised
-# black boxes), so any text a supplied box covers is not emitted; NULL relies on
-# the text-layer marker sweep and the scanned-page black-box detector.
+# read_input(path) -> list(kind, path, sha256, lines, table, pages, meta). Every
+# readable word is read: text a redaction failed to hide is text, and it is output.
 read_input <- function(path) {
   if (!file.exists(path)) stop(sprintf("input file not found: %s", path))
   ext <- tolower(tools::file_ext(path))
   sha <- file_sha256(path)
   # Cache hit: same content already parsed. Return it, but point $path at the
   # caller's CURRENT file (identical bytes, but a fresh temp path in the GUI) so
-  # any downstream re-read of $path still resolves. Only when no redaction_rects
-  # were supplied (those change what text is emitted, so they bypass the cache).
+  # any downstream re-read of $path still resolves.
   cacheable <- !is.null(sha) && !is.na(sha)
   if (cacheable && exists(sha, envir = .INPUT_CACHE, inherits = FALSE)) {
     cached <- get(sha, envir = .INPUT_CACHE, inherits = FALSE)

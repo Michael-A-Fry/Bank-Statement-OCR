@@ -383,7 +383,18 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     # force_template: the user picked an exact template on Convert -> skip
     # detection and use it directly (still runs full reconciliation, so a wrong
     # forced pick still surfaces as needs_review, never silently trusted).
-    if (!is.null(force_template) && nzchar(force_template) && !is.null(templates[[force_template]])) {
+    #
+    # A CHOSEN TEMPLATE THAT IS NOT THERE IS REFUSED, NOT IGNORED. This used to fall
+    # through to auto-detect without a word, so an analyst who chose "Kowhai Bank"
+    # for a file got whatever detection picked -- the very pick she had just
+    # overruled -- and nothing said so. It is reachable: the Convert table offers a
+    # template per file, and a template can be hidden or deleted between choosing it
+    # and pressing Convert.
+    if (!is.null(force_template) && nzchar(force_template) && is.null(templates[[force_template]]))
+      stop(structure(class = c("bso_template_unavailable", "error", "condition"),
+        list(message = sprintf("the template chosen for this file (%s) is not available any more",
+                               force_template), call = NULL, template = force_template)))
+    if (!is.null(force_template) && nzchar(force_template)) {
       det <- list(template_id = force_template, matched = TRUE, score = NA_real_,
                   margin = Inf, runner_up = NA_character_,
                   candidates = data.frame(id = force_template, score = NA_real_,
@@ -639,9 +650,18 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
     result
   }, error = function(e) {
     r <- new_result(status = "failed")
-    # NOT "...and matches a template". Everything that lands here failed BEFORE any
-    # template was in play, so pointing at templates sends the reader to build one
-    # for a file the tool could not even open. Same cure as the `unreadable`
+    # The one failure here that is NOT about the file: the template chosen for it is
+    # gone. "Check the file opens" would send her to re-download a good statement.
+    if (inherits(e, "bso_template_unavailable")) {
+      r$messages <- status_message("failed", conditionMessage(e),
+                                   "choose another template for this file and convert it again")
+      r$diagnostics <- build_diagnostics("failed", messages = r$messages,
+                                         metadata = list(template_unavailable = e$template))
+      return(r)
+    }
+    # NOT "...and matches a template". Everything else that lands here failed BEFORE
+    # any template was in play, so pointing at templates sends the reader to build
+    # one for a file the tool could not even open. Same cure as the `unreadable`
     # diagnostic (R/diagnose.R), so the message and the diagnostic say one thing.
     r$messages <- status_message("failed", conditionMessage(e),
                                  "check the file opens, is the type it claims to be, and is not password-protected or damaged")
