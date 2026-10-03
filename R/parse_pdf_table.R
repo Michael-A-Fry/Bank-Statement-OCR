@@ -544,6 +544,23 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   t <- template$table %||% list()
   cols <- t$columns %||% list()
   extras_cols <- t$extras %||% list()
+  # PER-PAGE COLUMNS. The automatic reader (R/auto_read.R) measures every page on
+  # its own, because a page's table can sit a few points left or right of the
+  # last. When table$columns_by_page[[p]] is present it replaces table$columns on
+  # page p -- for the row cells, any extras band it names, and the passes below
+  # that fold wrapped and marker lines -- so each page is read where IT prints.
+  # Absent (every hand-made template), .page_cols() is `cols` and .page_extra()
+  # is the extras band: nothing below changes.
+  cbp <- t$columns_by_page
+  .page_cols <- function(p) {
+    p <- suppressWarnings(as.integer(p))
+    if (is.null(cbp) || length(p) != 1L || is.na(p) || p < 1L || p > length(cbp) ||
+        is.null(cbp[[p]])) cols else cbp[[p]]
+  }
+  .page_extra <- function(p, ef) {
+    pc <- .page_cols(p)
+    if (identical(pc, cols)) extras_cols[[ef]] else (pc[[ef]] %||% extras_cols[[ef]])
+  }
   region <- t$region %||% list()
   row_tol <- suppressWarnings(as.numeric(t$row_tol %||% PARAM_PDF_ROW_TOL)); if (is.na(row_tol)) row_tol <- PARAM_PDF_ROW_TOL
   date_fmt <- t$date_format %||% "%d/%m/%Y"
@@ -622,6 +639,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     for (g in unique(grp)) {
       rw <- w[grp == g, , drop = FALSE]
       ord <- order(rw$x)
+      pc <- .page_cols(p)
       rec <- list(page = p,
         # The row's words in reading order, with their centre-x. Kept so the
         # continuation merge can account for EVERY word on a folded line instead
@@ -629,20 +647,20 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
         .cx = (rw$x + rw$width / 2)[ord], .txt = as.character(rw$text)[ord],
         .y0 = min(rw$y), .y1 = max(rw$y + rw$height),
         .h = suppressWarnings(stats::median(rw$height, na.rm = TRUE)),
-        date = .pdf_cell(rw, cols$date), description = .pdf_cell(rw, cols$description),
-        amount = .pdf_cell(rw, cols$amount), balance = .pdf_cell(rw, cols$balance),
-        debit = .pdf_cell(rw, cols$debit), credit = .pdf_cell(rw, cols$credit),
-        particulars = .pdf_cell(rw, cols$particulars), code = .pdf_cell(rw, cols$code),
-        reference = .pdf_cell(rw, cols$reference), other_party = .pdf_cell(rw, cols$other_party),
-        type = .pdf_cell(rw, cols$type),
+        date = .pdf_cell(rw, pc$date), description = .pdf_cell(rw, pc$description),
+        amount = .pdf_cell(rw, pc$amount), balance = .pdf_cell(rw, pc$balance),
+        debit = .pdf_cell(rw, pc$debit), credit = .pdf_cell(rw, pc$credit),
+        particulars = .pdf_cell(rw, pc$particulars), code = .pdf_cell(rw, pc$code),
+        reference = .pdf_cell(rw, pc$reference), other_party = .pdf_cell(rw, pc$other_party),
+        type = .pdf_cell(rw, pc$type),
         raw = paste(rw$text[order(rw$x)], collapse = " "))
       # lowest OCR confidence across this row's CRITICAL cells (NA on text pages).
-      cc <- c(.cell_minconf(rw, cols$date), .cell_minconf(rw, cols$amount),
-              .cell_minconf(rw, cols$balance), .cell_minconf(rw, cols$debit),
-              .cell_minconf(rw, cols$credit))
+      cc <- c(.cell_minconf(rw, pc$date), .cell_minconf(rw, pc$amount),
+              .cell_minconf(rw, pc$balance), .cell_minconf(rw, pc$debit),
+              .cell_minconf(rw, pc$credit))
       cc <- cc[!is.na(cc)]
       rec$ocr_minconf <- if (length(cc)) min(cc) else NA_real_
-      for (ef in names(extras_cols)) rec[[paste0("x.", ef)]] <- .pdf_cell(rw, extras_cols[[ef]])
+      for (ef in names(extras_cols)) rec[[paste0("x.", ef)]] <- .pdf_cell(rw, .page_extra(p, ef))
       recs[[length(recs) + 1L]] <- rec
     }
   }
@@ -950,7 +968,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     # marker already present, and the real marker printed on the line below would
     # then be dropped instead of applied: a wrong SIGN, silently.
     .marker_rx <- sprintf("(^|[^A-Za-z])(%s)\\s*$", paste(.sign_markers, collapse = "|"))
-    .money_flds <- intersect(c("amount", "debit", "credit", "balance"), names(cols))
+    .money_flds <- intersect(c("amount", "debit", "credit", "balance"),
+                             unique(c(names(cols), unlist(lapply(cbp, names)))))
     # Every word on the line is a marker, and there is at least one. A line with
     # ANYTHING else on it is ordinary text and is left to the description merge --
     # this claims a bare "CR", never a description that happens to contain one.
@@ -983,7 +1002,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
       if (close && .marker_only(r)) {
         moved <- FALSE
         for (fld in .money_flds) {
-          hit <- .pdf_in_band(r$.cx, cols[[fld]])
+          hit <- .pdf_in_band(r$.cx, .page_cols(r$page)[[fld]])
           if (!any(hit)) next
           cur <- recs[[last_txn]][[fld]] %||% NA_character_
           if (is.na(cur) || !grepl("[0-9]", cur)) next
@@ -1019,7 +1038,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
           add <- r[[fld]] %||% NA_character_
           if (!is.na(add) && nzchar(trimws(add))) {
             recs[[last_txn]][[fld]] <- .append_cell(recs[[last_txn]][[fld]], add)
-            own_hit <- own_hit | .pdf_in_band(r$.cx, cols[[fld]])
+            own_hit <- own_hit | .pdf_in_band(r$.cx, .page_cols(r$page)[[fld]])
           }
         }
         # Words no own-column band claimed, still in reading order (.txt is x-sorted).
@@ -1032,7 +1051,7 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
         # the old code already folded whole) stays unflagged -- nothing changed there.
         stray <- if (length(own_hit)) {
           claimed <- own_hit
-          for (fld in descr_cols) claimed <- claimed | .pdf_in_band(r$.cx, cols[[fld]])
+          for (fld in descr_cols) claimed <- claimed | .pdf_in_band(r$.cx, .page_cols(r$page)[[fld]])
           any(!claimed) && any(claimed)
         } else FALSE
         if (isTRUE(stray)) recs[[last_txn]]$.merged_stray <- TRUE
@@ -1133,7 +1152,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     description <- clean_description(getc("description"))
   }
   vb <- function(f) if (n == 0) character(0) else blank_to_na(getc(f))
-  has_bal <- !is.null(cols$balance)
+  has_bal <- !is.null(cols$balance) ||
+    any(vapply(cbp, function(pc) !is.null(pc$balance), logical(1)))
   balance <- if (n == 0 || !has_bal) rep(NA_real_, n) else parse_amount(getc("balance"), "signed", list(decimal = dec))$value
   balance_raw <- if (n == 0 || !has_bal) rep(NA_character_, n) else getc("balance")
 
