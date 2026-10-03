@@ -122,14 +122,30 @@ test_that("a row's flags render as words, and an unknown one is never dropped", 
   expect_identical(L$plain_flags("something_new"), "something_new")
 })
 
-test_that("both transactions tables put the flags through that map", {
+# There were two transactions tables, the Convert result's and the drafted
+# template's preview (g_preview); the preview went with templates in 2.0.0. So
+# the one that is left is named, and every other table on any screen that shows a
+# row's flags is held to the same map, wherever it appears -- a new one cannot
+# print the codes without this failing.
+test_that("every transactions table puts the flags through that map", {
   src <- .src("app.R")
-  for (pat in c("output\\$cv_txns <- renderDT", "output\\$g_preview <- renderDT")) {
-    i <- grep(pat, src)
-    expect_length(i, 1L)
-    blk <- paste(src[i:(i + 26)], collapse = " ")
-    expect_match(blk, "plain_flags\\(", info = pat)
+  i <- grep("output\\$cv_txns <- renderDT", src)
+  expect_length(i, 1L)
+  blk <- paste(src[i:(i + 26)], collapse = " ")
+  expect_match(blk, "plain_flags\\(")
+  # each table render, up to the next output; one that touches `flags` words them
+  starts <- grep("^\\s*output\\$[A-Za-z0-9_]+ <- render(DT|Table)\\(", src)
+  ends <- grep("^\\s*output\\$[A-Za-z0-9_]+ <-", src)
+  expect_gt(length(starts), 5L)                        # the scan must not go quiet
+  shows <- 0L
+  for (s in starts) {
+    e <- ends[ends > s]; e <- if (length(e)) min(e) - 1L else length(src)
+    body <- sub("#.*$", "", src[s:e])
+    if (!any(grepl("flags", body, fixed = TRUE))) next
+    shows <- shows + 1L
+    expect_true(any(grepl("plain_flags(", body, fixed = TRUE)), info = src[s])
   }
+  expect_gte(shows, 1L)                                # cv_txns itself is among them
 })
 
 # The other two small maps, held to the values the engine really emits: a KPI's
@@ -423,28 +439,6 @@ test_that("the Convert screen shows an auto-split bundle statement by statement"
 })
 
 # ---------------------------------------------------------------------------
-# .app_helper(name) -- lift one pure helper OUT of app.R and call it directly.
-# app.R is not a package, so a helper defined inside it cannot be sourced without
-# starting a Shiny app; this reads the file, grows the text one line at a time
-# from the definition until it parses, and evaluates just that.
-# ---------------------------------------------------------------------------
-.app_helper <- function(name) {
-  src <- .src("app.R")
-  env <- new.env(parent = globalenv())
-  lab <- file.path(engine_root(), "ui_labels.R")
-  skip_if_not(file.exists(lab))
-  sys.source(lab, envir = env)
-  i <- grep(sprintf("^\\s*\\Q%s\\E <- function", name), src, perl = TRUE)
-  expect_length(i, 1L)
-  for (j in seq(i[1], min(i[1] + 250L, length(src)))) {
-    f <- tryCatch(eval(parse(text = paste(src[i[1]:j], collapse = "\n"))[[1]], envir = env),
-                  error = function(e) NULL)
-    if (is.function(f)) return(f)
-  }
-  fail(paste("could not lift", name, "out of app.R"))
-}
-
-# ---------------------------------------------------------------------------
 # WHICH SKIPPED ROWS "LOOK LIKE TRANSACTIONS" IS THE ENGINE'S ANSWER, NOT A
 # SEARCH OF ITS PROSE. The X-ray drew its amber boxes, counted its key and sorted
 # its table with grepl("didn't parse|no amount", reason) -- and the heading
@@ -453,48 +447,29 @@ test_that("the Convert screen shows an auto-split bundle statement by statement"
 # real Westpac statement "a skipped row that looks like a transaction" against
 # the engine's 2, and the table beside it called those same rows headings. One
 # screen, two answers, about one row.
-test_that("the X-ray asks the engine which skipped rows look like transactions", {
-  src <- .src("app.R")
-  # The prose search is gone from every one of the three places that had it. Read
-  # off the PARSER's own string tokens, so the comment above .ix_unread that
-  # quotes the old pattern (and should stay) cannot pass for a live search.
+#
+# 2.0.0 retired that screen ("See it on the page"): the page picture is Please
+# check's now, and it draws the columns the reader found, not the rows a template
+# skipped. Its helper (.ix_unread) and its layer and key wording
+# (UNREAD_ROW_PLAIN_LAYER / _KEY) went with it. The engine half -- that
+# pdf_reason_actionable() decides on the code, never on words in the sentence --
+# is held in test-parse_pdf_table.R. What stays here is the screen half: no
+# string in app.R searches that prose, so a screen that asks the question again
+# has to ask the engine; and no wording is left behind for the screen that went.
+test_that("no screen decides from the prose which skipped rows look like transactions", {
+  # Read off the PARSER's own string tokens, so a comment that quotes the old
+  # pattern cannot pass for a live search.
   pd <- utils::getParseData(parse(file.path(engine_root(), "app.R"), keep.source = TRUE))
   lits <- pd$text[pd$terminal & pd$token == "STR_CONST"]
   expect_gt(length(lits), 100L)                          # the scan must not go quiet
   expect_identical(grep("didn't parse\\|no amount", lits, value = TRUE), character(0))
-  expect_gte(length(grep("\\.ix_unread\\(", src)), 4L)   # helper + its three callers
-  unread <- .app_helper(".ix_unread")
-  rows <- data.frame(
-    kept   = c(TRUE, FALSE, FALSE, FALSE, FALSE),
-    reason = c("", .PDF_ROW_REASON_TEXT[["heading_or_note"]],
-               .PDF_ROW_REASON_TEXT[["summary_line"]],
-               .PDF_ROW_REASON_TEXT[["date_unparsed"]],
-               .PDF_ROW_REASON_TEXT[["amount_missing"]]),
-    stringsAsFactors = FALSE)
-  expect_identical(unread(rows), c(FALSE, FALSE, FALSE, TRUE, TRUE))
-  # the heading sentence really does contain the words the old search looked for
+  # the heading sentence really does contain the words the old search looked for,
+  # which is why only the engine's predicate may answer
   expect_true(grepl("no amount", .PDF_ROW_REASON_TEXT[["heading_or_note"]], fixed = TRUE))
-  # and the engine's own predicate agrees, row for row
-  expect_identical(unread(rows),
-                   !rows$kept & pdf_reason_actionable(rows$reason))
-})
-
-test_that("the layer, the key and the engine use one name for that one fact", {
-  L <- .ui_labels()
-  src <- .src("app.R")
-  joined <- paste(src, collapse = "\n")
-  for (nm in c("UNREAD_ROW_PLAIN_LAYER", "UNREAD_ROW_PLAIN_KEY")) {
-    expect_true(nzchar(L[[nm]]))
-    expect_true(grepl(nm, joined, fixed = TRUE))     # the screen really uses it
-  }
-  # "Skipped rows" named a layer that drew only the unread ones, so ticking it and
-  # counting the table's rows gave two different numbers
-  expect_false(grepl('"Skipped rows" = "skipped"', joined, fixed = TRUE))
-  # both say "looks like a transaction", which is the verdict card's phrase for
-  # the same rows (R/reconcile.R, no_unparsed_rows)
-  expect_match(L$UNREAD_ROW_PLAIN_KEY, "looks like a transaction")
-  expect_match(L$UNREAD_ROW_PLAIN_LAYER, "look like transactions")
-  expect_true(any(grepl("look like transactions", .src("R/reconcile.R"))))
+  expect_false(pdf_reason_actionable(.PDF_ROW_REASON_TEXT[["heading_or_note"]]))
+  # no dead wording: the X-ray's layer and key went with the X-ray
+  expect_identical(grep("^UNREAD_ROW_PLAIN", ls(.ui_labels()), value = TRUE), character(0))
+  expect_false(any(grepl(".ix_unread(", .src("app.R"), fixed = TRUE)))
 })
 
 # ---------------------------------------------------------------------------

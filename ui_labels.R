@@ -174,7 +174,9 @@ READING_CHECK_PLAIN <- c(
   unique             = "Only one reading of the columns fits",
   rows_proven        = "Every row is inside a step that adds up",
   reader_agrees      = "The table reader agrees with the arithmetic",
-  dates_carried      = "Dates carried down from the row above")
+  dates_carried      = "Dates carried down from the row above",
+  other_tables       = "Other tables on the page hold none of this statement's rows",
+  ocr_complete       = "Every page of the scan was read")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 
 # ---------------------------------------------------------------------------

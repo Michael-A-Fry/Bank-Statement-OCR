@@ -182,9 +182,9 @@ test_that("the analyst's own pages are reachable from the folder she is handed",
 
 .dt_app <- function() readLines(file.path(.dt_root(), "app.R"), warn = FALSE)
 
-# The lines rendered INSIDE the panel that "Show me how it read this" opens.
-# Found by matching parentheses forward from the conditionalPanel that gates it,
-# so nothing here depends on a line number in the file that moves most.
+# The lines rendered INSIDE the panel that the charts toggle ("Show the charts")
+# opens. Found by matching parentheses forward from the conditionalPanel that
+# gates it, so nothing here depends on a line number in the file that moves most.
 .dt_toggle_region <- function(src = .dt_app()) {
   i <- grep('conditionalPanel("output.cv_detail_open == true"', src, fixed = TRUE)
   if (!length(i)) return(NULL)
@@ -218,24 +218,44 @@ test_that("the analyst's own pages are reachable from the folder she is handed",
   if (!length(lit)) NA_character_ else lit[1]
 }
 
-test_that("no page sends her behind the evidence toggle for something on the page", {
+# The caption on the link that opens that panel ("Show the charts"), read out of
+# app.R for the same reason: it is the phrase a page has to use. NA when the link
+# cannot be found, so the test below fails instead of looking for nothing.
+.dt_toggle_label <- function(src = .dt_app()) {
+  i <- grep("output\\$cv_more_toggle <- renderUI", src)
+  if (!length(i)) return(NA_character_)
+  blk <- paste(src[i[1]:min(length(src), i[1] + 8L)], collapse = " ")
+  m <- regmatches(blk, regexec('actionLink\\("cv_more".*?else "([^"]+)"', blk, perl = TRUE))[[1]]
+  if (length(m) < 2L) NA_character_ else m[2]
+}
+
+# 2.0.0 moved the page picture. It used to sit behind this toggle (the X-ray,
+# `ix_plot`, "See it on the page", under "Show me how it read this"); the toggle
+# is now "Show the charts" and opens only the charts, while the page with the
+# found columns drawn on it is Please check's (`cv_check`, which draws it as
+# `cv_ck_plot`), reached by its own link, "See how it was read", above the
+# result. A page that sends her behind the charts toggle for the picture would
+# now be the wrong instruction.
+test_that("no page sends her behind the charts toggle for something on the page", {
   region <- .dt_toggle_region()
   # A guard that cannot find the control it guards must FAIL, not pass quietly --
   # renaming the conditionalPanel is exactly the change that would move a surface.
   expect_false(is.null(region))
   behind <- if (is.null(region)) character(0) else .dt_outputs(region)
-  expect_true("ix_plot" %in% behind)          # the page picture IS behind it
+  expect_true("cv_trend" %in% behind)          # the charts ARE behind it
+  expect_false("cv_check" %in% behind)         # ...and Please check, with the page, is not
 
   # What a page can name, and the output app.R draws it with. Every value is
   # checked against app.R below, so a renamed output fails here rather than
   # turning this test into a green no-op.
-  surface <- c("See it on the page" = "ix_plot",
-               "the charts"         = "cv_trend",
-               "the analysis"       = "cv_trend",
-               "Checks"             = "cv_kpis",
-               "Diagnostics"        = "cv_diag",
-               "Field coverage"     = "cv_coverage",
-               "field coverage"     = "cv_coverage")
+  surface <- c("See how it was read" = "cv_check",
+               "Please check"        = "cv_check",
+               "the charts"          = "cv_trend",
+               "the analysis"        = "cv_trend",
+               "Checks"              = "cv_kpis",
+               "Diagnostics"         = "cv_diag",
+               "Field coverage"      = "cv_coverage",
+               "field coverage"      = "cv_coverage")
   # No "dashboard" entries: that line is off the customer-facing screen for good.
   # Whether a conversion reaches the org's dashboards is decided by a machine gate
   # the analyst has no part in, so an analyst page must not send her looking for a
@@ -243,7 +263,8 @@ test_that("no page sends her behind the evidence toggle for something on the pag
   # raised in Admin instead.
   expect_identical(setdiff(unname(surface), .dt_outputs(.dt_app())), character(0))
 
-  toggle <- "Show me how it read this"
+  toggle <- .dt_toggle_label()
+  expect_false(is.na(toggle))
   # The CONTAINER is not a surface: "Checks & detail" is the disclosure the
   # checks live in, and naming it beside the toggle is how a page says where the
   # toggle sits. Strip it before looking for "Checks".
@@ -256,7 +277,7 @@ test_that("no page sends her behind the evidence toggle for something on the pag
     txt <- gsub(panel, " ", paste(readLines(p, warn = FALSE), collapse = " "), fixed = TRUE)
     # One claim per sentence; a table cell is its own claim, so a "|" ends one too.
     for (s in unlist(strsplit(txt, "(?<=[.!?])\\s+|\\|", perl = TRUE))) {
-      if (!grepl(toggle, s, fixed = TRUE)) next
+      if (is.na(toggle) || !grepl(toggle, s, fixed = TRUE)) next
       for (ph in names(surface)) {
         if (!grepl(ph, s, fixed = TRUE)) next
         if (!(surface[[ph]] %in% behind))

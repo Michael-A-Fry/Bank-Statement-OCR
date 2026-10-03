@@ -356,11 +356,11 @@ naming the failing row and page) + *what it needs*.
 `dates_settled`, `dated_lines_used`, `pages_complete`, `balance_chain`,
 `chain_across_pages`, `opening_closing`, `printed_totals`, `dates_readable`,
 `dates_in_order`, `dates_in_period`, `signs_settled`, `no_derived_amounts`,
-`amounts_read`, `unique`, `rows_proven`, `reader_agrees`, `dates_carried`. Each has
-wording in `READING_CHECK_PLAIN` (`ui_labels.R`) and, except `reader_agrees` and
-`dates_carried` (see `docs/context/outstanding-work.md`), a place in tracking's
-allowlist (`TRACK_CHECKS`, `R/tracking.R`). A proven reading is one where every
-check holds and **no other reading of the columns does**.
+`amounts_read`, `unique`, `rows_proven`, `reader_agrees`, `dates_carried`,
+`other_tables`, `ocr_complete`. Each has wording in `READING_CHECK_PLAIN`
+(`ui_labels.R`) and a place in tracking's allowlist (`TRACK_CHECKS`,
+`R/tracking.R`). A proven reading is one where every check holds and **no other
+reading of the columns does**.
 
 **The reconciliation KPIs below still run on every reading**, fill the Checks
 table and the trust level, and are what the workbook's `Checks` sheet holds. They
