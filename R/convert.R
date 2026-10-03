@@ -493,7 +493,10 @@ convert_statement <- function(path, bank = NULL, statement_type = NULL,
       # phrase) means a near-duplicate template nearly matched too -- exactly the
       # "matched but maybe the wrong variant" case. Treat it as needs_review so the
       # analyst confirms the template, even when every KPI passes.
-      thin_match <- is.finite(det$margin) && det$margin <= 1 && !is.na(det$runner_up)
+      # ...unless the bank's own name settled it (detect_statement, bank_clear): a
+      # runner-up from another bank whose name is not on the page is not a variant.
+      thin_match <- is.finite(det$margin) && det$margin <= 1 && !is.na(det$runner_up) &&
+                    !isTRUE(det$bank_clear)
       # A CONFIRMED auto-split has handled the bundle (every statement parsed +
       # reconciled on its own), so being multiple is no longer a reason to force
       # review, nor to raise the "split this into one file" diagnostic -- the

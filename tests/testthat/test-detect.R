@@ -554,3 +554,57 @@ test_that("generic words in a bank name are not evidence on their own", {
   expect_identical(.bank_on_page(inp, list(bank = "")), 0L)
   expect_identical(.bank_on_page(inp, list(bank = NULL)), 0L)
 })
+
+# ---------------------------------------------------------------------------
+# SETTLED BY THE BANK'S OWN NAME, AND NOT HELD FOR REVIEW FOR IT.
+# The thin-margin hold exists for near-duplicate VARIANTS of one template. A
+# runner-up from another bank, whose name is not on the page while the winner's is,
+# is not one -- and holding those meant every statement read by a template built
+# here came back "please double-check it", because shipped templates share column
+# headings with nearly everything.
+test_that("a win the bank's name settles is clear; a win between variants is not", {
+  tpls <- list(.tie_tpl("ANZ", origin = "default"), .tie_tpl("Kowhai Bank", origin = "user"))
+  names(tpls) <- vapply(tpls, function(t) t$id, character(1))
+  det <- detect_statement(.tie_input("Kowhai Bank of Aotearoa"), tpls)
+  expect_identical(det$template_id, "kowhaibank_user")
+  expect_identical(det$margin, 0)
+  expect_true(det$bank_clear)
+  # two variants of the SAME bank: both names on the page, so nothing settles it
+  v <- list(.tie_tpl("Kowhai Bank", origin = "default"), .tie_tpl("Kowhai Bank", origin = "user"))
+  v[[2]]$id <- "kowhaibank_v2"; names(v) <- c("kowhaibank_default", "kowhaibank_v2")
+  det2 <- detect_statement(.tie_input("Kowhai Bank of Aotearoa"), v)
+  expect_false(isTRUE(det2$bank_clear))
+  # and convert_statement's hold honours it
+  src <- paste(readLines(file.path(engine_root(), "R", "convert.R"), warn = FALSE), collapse = "\n")
+  expect_match(src, "thin_match <- is\\.finite\\(det\\$margin\\) && det\\$margin <= 1 && !is\\.na\\(det\\$runner_up\\) &&\\s+!isTRUE\\(det\\$bank_clear\\)")
+})
+
+test_that("the line that prints the bank is found, never a transaction naming it", {
+  inp <- .tie_input("Kowhai Bank of Aotearoa")
+  expect_identical(.bank_line_on_page(inp, list(bank = "Kowhai Bank")), "Kowhai Bank of Aotearoa")
+  # "TRANSFER TO ANZ 01-0234 400.00" is a transaction, so ANZ has no line here
+  expect_true(is.na(.bank_line_on_page(inp, list(bank = "ANZ"))))
+  expect_true(is.na(.bank_line_on_page(inp, list(bank = "Bank New Zealand"))))
+})
+
+test_that("a save that wins by a whisker says so, and names the phrase to add", {
+  tset <- list(kowhai_mine = list(id = "kowhai_mine", bank = "Kowhai Bank", statement_type = "everyday"),
+               anz_everyday_pdf = list(id = "anz_everyday_pdf", bank = "ANZ", statement_type = "everyday"))
+  inp <- .tie_input("Kowhai Bank of Aotearoa")
+  thin <- recognition_summary(list(matched = TRUE, template_id = "kowhai_mine", margin = 1,
+                                   runner_up = "anz_everyday_pdf", bank_clear = FALSE),
+                              "kowhai_mine", tset, input = inp)
+  expect_true(thin$ok)
+  expect_match(thin$headline, "fits this statement nearly as well", fixed = TRUE)
+  expect_match(thin$detail, "held for a quick check", fixed = TRUE)
+  expect_match(thin$detail, "\"Kowhai Bank of Aotearoa\", which is printed on this statement", fixed = TRUE)
+  # settled by the bank's name: a plain success, no warning
+  clear <- recognition_summary(list(matched = TRUE, template_id = "kowhai_mine", margin = 0,
+                                    runner_up = "anz_everyday_pdf", bank_clear = TRUE),
+                               "kowhai_mine", tset, input = inp)
+  expect_match(clear$headline, "recognised automatically", fixed = TRUE)
+  # lost to another template: the same named phrase is the cure offered
+  lost <- recognition_summary(list(matched = TRUE, template_id = "anz_everyday_pdf"),
+                              "kowhai_mine", tset, input = inp)
+  expect_match(lost$detail, "Kowhai Bank of Aotearoa", fixed = TRUE)
+})

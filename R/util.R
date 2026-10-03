@@ -408,9 +408,19 @@ fingerprint_phrases <- function(text) {
 # adding it could not break a caller, and it defaults to the old behaviour rather
 # than to silence -- a confirmation that named no template at all would be worse
 # than one naming a handle.
-recognition_summary <- function(det, saved_id, templates = NULL) {
+#
+# `input` is the statement it was built from. Given it, the advice to add "a phrase
+# only this bank prints" names one: the line on THIS statement that prints the
+# template's bank (.bank_line_on_page). Advice she can act on beats advice she has
+# to interpret, and the line is one she can see on the page in front of her.
+recognition_summary <- function(det, saved_id, templates = NULL, input = NULL) {
   sid <- trimws(as.character(saved_id %||% NA_character_)[1])
   nm  <- function(id) .saved_name(id, templates)
+  phrase <- if (!is.null(input) && !is.null(templates[[sid]]))
+    safe(.bank_line_on_page(input, templates[[sid]]), NA_character_) else NA_character_
+  only_this_bank <- if (!is.na(phrase) && nzchar(phrase))
+    sprintf("add a phrase ONLY this bank prints - for example \"%s\", which is printed on this statement", phrase)
+    else "add a phrase ONLY this bank prints"
   if (is.null(det) || !is.list(det))
     return(list(ok = NA,
       headline = "Saved - but we could not check whether this statement will be recognised next time.",
@@ -418,17 +428,30 @@ recognition_summary <- function(det, saved_id, templates = NULL) {
                      "\"no template for this statement yet\", open the toolkit and set an",
                      "identifying phrase that is really printed on the page.")))
   got <- trimws(as.character(det$template_id %||% NA_character_)[1])
-  if (isTRUE(det$matched) && !is.na(got) && identical(got, sid))
+  if (isTRUE(det$matched) && !is.na(got) && identical(got, sid)) {
+    # WON, BUT BY A WHISKER. The conversion holds a thin win for review
+    # (convert_statement's thin-margin rule), so "recognised automatically" alone
+    # would be followed by every statement like this one coming back "please
+    # double-check it" with nothing having warned her.
+    ru <- as.character(det$runner_up %||% NA_character_)[1]
+    thin <- is.finite(det$margin %||% Inf) && isTRUE(det$margin <= 1) && !is.na(ru) &&
+            !isTRUE(det$bank_clear)
+    if (thin)
+      return(list(ok = TRUE,
+        headline = sprintf("Recognised next time - but \"%s\" fits this statement nearly as well.", nm(ru)),
+        detail = paste0("So each statement like this one is read with yours and held for a quick ",
+                        "check, because the tool cannot be sure which was meant. To settle it, ",
+                        only_this_bank, ".")))
     return(list(ok = TRUE,
       headline = "Next time, a statement like this one is recognised automatically.",
       detail = sprintf("We re-checked it against every template and it matched yours (\"%s\") on its own, with nothing forced.", nm(sid))))
+  }
   if (isTRUE(det$matched))
     return(list(ok = FALSE,
       headline = sprintf("Careful: this statement is still recognised as \"%s\", not your new template.", nm(got)),
-      detail = paste("Your template was saved, but another one wins on this file, so next",
-                     "time it would be read with that other template. Open the toolkit again",
-                     "and make the identifying phrase more specific to this bank - or use the",
-                     "existing template if it is the right one.")))
+      detail = paste0("Your template was saved, but another one wins on this file, so next ",
+                     "time it would be read with that other template. Open the toolkit again ",
+                     "and ", only_this_bank, " - or use the existing template if it is the right one.")))
   why <- trimws(as.character(det$detail %||% "")[1])
   # A TIE IS NOT A TYPO, and it used to be diagnosed as one: the headline said the
   # template was not recognised and the lead sentence sent the analyst back to
@@ -455,9 +478,8 @@ recognition_summary <- function(det, saved_id, templates = NULL) {
       detail = paste0(
         "Nothing on this file tells them apart, so the tool cannot know which one you ",
         "meant. It still converts: it picks the tested template, reads the statement ",
-        "and holds the run for a check, so no figures are lost. To settle it, add a ",
-        "phrase to your template that ONLY this bank prints - that breaks the tie in ",
-        "its favour - or retire the duplicate (",
+        "and holds the run for a check, so no figures are lost. To settle it, ",
+        only_this_bank, " - that breaks the tie in its favour - or retire the duplicate (",
         paste(other_names, collapse = ", "), "). Do not build a third: it would tie too.")))
   list(ok = FALSE,
     headline = "Saved - but this statement is NOT recognised by it yet.",

@@ -82,7 +82,9 @@ test_that("recognition_summary warns when another template still wins", {
   r <- recognition_summary(list(matched = TRUE, template_id = "anz_everyday_pdf"), "beth_bank_pdf")
   expect_false(isTRUE(r$ok))
   expect_match(r$headline, "anz_everyday_pdf", fixed = TRUE)
-  expect_match(r$detail, "more specific")
+  # the cure that actually separates them: a phrase ONLY this bank prints (and, when
+  # the statement is to hand, the line that prints it -- see test-detect.R)
+  expect_match(r$detail, "ONLY this bank prints", fixed = TRUE)
 })
 
 test_that("recognition_summary warns when nothing matches, and says why", {

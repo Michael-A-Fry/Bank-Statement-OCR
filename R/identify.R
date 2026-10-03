@@ -90,7 +90,8 @@ identify_file <- function(path, templates, name = basename(path)) {
     out$runner_up <- as.character(det$runner_up %||% NA_character_)[1]
     # the conversion's own "thin margin" rule (convert_statement): won by one
     # phrase over a template that also fitted means it will be held for review
-    thin <- is.finite(det$margin %||% Inf) && det$margin <= 1 && !is.na(out$runner_up)
+    thin <- is.finite(det$margin %||% Inf) && det$margin <= 1 && !is.na(out$runner_up) &&
+            !isTRUE(det$bank_clear)
     out$state <- if (thin) "close" else "sure"
   } else if (length(tied) >= 2L) {
     # the conversion reads a tie with the first tied template and holds the run for

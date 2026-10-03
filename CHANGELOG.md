@@ -13,6 +13,29 @@ finding id.
 
 ---
 
+## 1.19.0
+
+**A template built here wins on its own statements without being held for review.**
+
+1.16.0 let a hand-built template win a tie when its bank's name is printed on the
+statement. It still came out *Converted - please double-check it*: a tie is a margin
+of nought, and the thin-margin rule holds anything won by one phrase or less. That
+rule exists to catch near-duplicate **variants** of one template; a runner-up from
+another bank, whose name is not on the page while the winner's is, is not one.
+
+- **`bank_clear`**: a win settled by the bank's own name is not held for review, in
+  the conversion and in the Convert table ("Suggested", not "please check"). Two
+  variants of the same bank both carry the name, so nothing changes for them.
+- **The save check names the phrase to add.** When a template is saved in the
+  toolkit and still only wins by a whisker, loses, or ties, the advice is no longer
+  "make the phrase more specific" — it names the line on that very statement that
+  prints the bank (e.g. *"Kowhai Bank of Aotearoa"*) as the phrase only this bank
+  prints. A whisker-thin win is now said to be one ("Recognised next time - but ANZ
+  everyday fits this statement nearly as well"), where it used to report plain
+  success and every statement after it came back held.
+- **Audit:** no shipped template gives a close call or a tie on any of the 57
+  sample files; the collisions are between templates built here and shipped ones.
+
 ## 1.18.1
 
 **The template column is a suggestion to check, not a verdict.**

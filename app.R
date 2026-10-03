@@ -7238,8 +7238,9 @@ server <- function(input, output, session) {
         # one load and one answer, not two that can disagree.
         recog <- safe({
           tset <- load_template_set(TEMPLATES_DIR, USER_TEMPLATES_DIR)
-          recognition_summary(detect_statement(read_input(gp), tset), saved_id,
-                              templates = tset)
+          gin <- read_input(gp)
+          recognition_summary(detect_statement(gin, tset), saved_id,
+                              templates = tset, input = gin)
         }, NULL)
         recog <- recog %||% recognition_summary(NULL, saved_id)
         run_conversion(gp, gn, record = FALSE,

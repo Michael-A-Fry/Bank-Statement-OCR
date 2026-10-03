@@ -108,16 +108,19 @@
 .BANK_STOPWORDS <- c("bank", "banking", "nz", "new", "zealand", "of", "the", "and",
                      "limited", "ltd", "group", "corporation", "sample", "generic",
                      "statement", "statements", "aotearoa")
-.bank_on_page <- function(input, template) {
+# .bank_tokens(template) -- the distinctive words of a template's bank name.
+.bank_tokens <- function(template) {
   b <- tolower(as.character(template$bank %||% ""))
   toks <- unlist(strsplit(gsub("[^a-z0-9 ]", " ", b), "[[:space:]]+"))
-  toks <- toks[nzchar(toks) & !toks %in% .BANK_STOPWORDS & nchar(toks) >= 3L]
-  if (!length(toks)) return(0L)
+  toks[nzchar(toks) & !toks %in% .BANK_STOPWORDS & nchar(toks) >= 3L]
+}
+# .page_edge_lines(input) -- the first page's header and footer lines (see above).
+.page_edge_lines <- function(input) {
   pg <- as.character((input$pages %||% character(0))[1])
   if (is.na(pg) || !nzchar(pg)) pg <- paste(utils::head(input$lines %||% character(0), 15), collapse = "\n")
-  ln <- trimws(unlist(strsplit(pg %||% "", "\n", fixed = TRUE)))
+  ln <- trimws(gsub("[[:space:]]+", " ", unlist(strsplit(pg %||% "", "\n", fixed = TRUE))))
   ln <- ln[nzchar(ln)]
-  if (!length(ln)) return(0L)
+  if (!length(ln)) return(character(0))
   money <- which(grepl("[0-9][0-9,]*\\.[0-9]{2}\\b", ln, perl = TRUE))
   if (length(money)) {
     top <- ln[seq_len(money[1] - 1L)]
@@ -125,9 +128,29 @@
   } else {
     top <- ln; bot <- ln            # no figures at all (a cover page): its two ends
   }
-  edge <- tolower(paste(c(utils::head(top, 12), utils::tail(bot, 6)), collapse = " "))
+  unique(c(utils::head(top, 12), utils::tail(bot, 6)))
+}
+.bank_on_page <- function(input, template) {
+  toks <- .bank_tokens(template)
+  if (!length(toks)) return(0L)
+  edge <- tolower(paste(.page_edge_lines(input), collapse = " "))
+  if (!nzchar(edge)) return(0L)
   hit <- vapply(toks, function(t) grepl(paste0("\\b", t, "\\b"), edge, perl = TRUE), logical(1))
   as.integer(all(hit))
+}
+# .bank_line_on_page(input, template) -> the header or footer line that prints the
+# template's bank name, exactly as printed, or NA. It is the phrase to suggest when a
+# template needs something only its bank prints: the analyst can see it on the page,
+# and no other bank's statement carries it.
+.bank_line_on_page <- function(input, template) {
+  toks <- .bank_tokens(template)
+  if (!length(toks)) return(NA_character_)
+  ln <- .page_edge_lines(input)
+  hit <- vapply(ln, function(l) all(vapply(toks, function(t)
+    grepl(paste0("\\b", t, "\\b"), tolower(l), perl = TRUE), logical(1))), logical(1))
+  if (!any(hit)) return(NA_character_)
+  # the shortest such line is the cleanest phrase (a letterhead, not a sentence)
+  cand <- ln[hit]; cand[which.min(nchar(cand))]
 }
 
 # detect_statement(input, templates, hint_bank, hint_type)
@@ -228,8 +251,16 @@ detect_statement <- function(input, templates, hint_bank = NULL, hint_type = NUL
       # margin over the runner-up: a THIN margin (won by 1) means a near-duplicate
       # template nearly matched too, so downstream should treat it as needs-review.
       margin <- if (is.finite(second)) win_score - second else Inf
+      # SETTLED BY THE BANK'S OWN NAME. The winner's bank is printed in the header or
+      # footer and the runner-up's is not: the runner-up is another bank's template
+      # that happens to share column headings, not a near-duplicate variant of this
+      # one -- which is the only thing the thin-margin review hold exists to catch.
+      # Measured in production as every statement read by a template built here
+      # being held "please double-check it", because shipped templates share
+      # "Withdrawals" / "Deposits" with nearly everything.
+      bank_clear <- isTRUE(e_bank[1] > 0) && isTRUE(second_bank == 0)
       return(list(template_id = win_id, score = win_score, matched = TRUE,
-                  margin = margin,
+                  margin = margin, bank_clear = bank_clear,
                   runner_up = if (length(e_ids) >= 2) e_ids[2] else NA_character_,
                   candidates = data.frame(id = ids, score = scores,
                                           stringsAsFactors = FALSE),

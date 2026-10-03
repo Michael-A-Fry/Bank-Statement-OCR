@@ -166,10 +166,10 @@ test_that("the bank-on-the-page tie-break reaches the table too", {
   ts <- list(anz_x = mk("anz_x", "ANZ", "default"), kowhai_x = mk("kowhai_x", "Kowhai Bank", "user"))
   id <- identify_file(p, ts, "kowhai.pdf")
   expect_identical(id$guess, "kowhai_x")
-  # Both scored 3 of 3, so the margin is nought and the conversion holds the run for
-  # review (its thin-margin rule) -- the table says so rather than promising "sure".
-  expect_identical(id$state, "close")
-  expect_identical(id$runner_up, "anz_x")
+  # Both scored 3 of 3 -- but the bank's own name settled it, and the runner-up is
+  # another bank's template, not a variant of this one. So it is a plain suggestion,
+  # and the conversion does not hold it for review either (bank_clear).
+  expect_identical(id$state, "sure")
 })
 
 test_that("the hover on a suggestion is a sentence, never a template id and a score", {

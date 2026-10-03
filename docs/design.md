@@ -424,6 +424,16 @@ templates built here (1.16.0). Header and footer are found by content — above 
 first money figure, below the last — so a transaction naming another bank is never
 evidence.
 
+**A win the bank's name settles is not held for review.** The thin-margin rule
+(won by one phrase or less over an eligible runner-up -> `needs_review`) exists to
+catch near-duplicate *variants* of one template. When the winner's bank is printed
+on the page and the runner-up's is not (`bank_clear`), the runner-up is another
+bank's template sharing column headings, not a variant, and the run is not held.
+Two variants of the same bank both carry the name, so nothing changes for them.
+The toolkit's save check (`recognition_summary`) warns when a new template still
+wins only by a whisker, and names the line on the statement that prints the bank
+as the phrase to add.
+
 **Then it prefers a shipped template over a hand-built one.** It used to fall through to the alphabetical id
 tie-break, so a hand-built `aaa_bank` beat a tested `westpac_everyday_pdf` on
 nothing but its name — a template's *filename* deciding which figures reach a
