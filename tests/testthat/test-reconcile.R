@@ -316,7 +316,7 @@ test_that("an 'na' check reports no expected/actual figures", {
 # That same detail is customer-facing, and it carried two things it should not:
 # a raw KPI name (which the operational guide tells the analyst to report AS A
 # BUG when it appears on screen), and a screen name -- "the Inspect view" -- that
-# is printed on screen as "See it on the page".
+# is printed on screen as "See how it was read".
 test_that("the no_unparsed_rows detail names no engine code and no other screen", {
   p <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
   p$visual_row_count <- 5L; p$skipped_row_count <- 3L; p$actionable_skip_count <- 0L
@@ -325,7 +325,7 @@ test_that("the no_unparsed_rows detail names no engine code and no other screen"
   expect_false(grepl("balance_reconciliation", d, fixed = TRUE))
   expect_match(d, "the balance proof above", fixed = TRUE)
   expect_false(grepl("Inspect view", d, fixed = TRUE))
-  expect_match(d, "See it on the page", fixed = TRUE)
+  expect_match(d, "See how it was read", fixed = TRUE)
   # the same, for the branch with no skipped/visual counts at all
   q <- .parsed(.tx(c(-10, 40)), source_line_count = NA_integer_)
   dq <- reconcile(q)$kpis
@@ -365,7 +365,7 @@ test_that("a real PDF's skipped-row sentence is complete and code-free", {
   k <- reconcile(p, tpl)$kpis
   d <- k$detail[k$name == "no_unparsed_rows"]
   expect_match(d, "None of the skipped rows looked like a transaction.", fixed = TRUE)
-  expect_match(d, "See it on the page", fixed = TRUE)
+  expect_match(d, "See how it was read", fixed = TRUE)
   expect_false(grepl("balance_reconciliation", d, fixed = TRUE))
 })
 
@@ -470,7 +470,7 @@ test_that("a page mostly made of unreadable transaction rows is a FAILURE", {
   expect_match(k$detail, "look like transactions and could not be read")
   # the numbers are stated, so a reviewer can check them on the page
   expect_match(k$detail, "12 of the 31 row", fixed = TRUE)
-  expect_match(k$detail, "See it on the page", fixed = TRUE)   # ONE name for that screen
+  expect_match(k$detail, "See how it was read", fixed = TRUE)   # ONE name for that screen
 })
 
 test_that("a healthy statement's ordinary skips are left alone", {

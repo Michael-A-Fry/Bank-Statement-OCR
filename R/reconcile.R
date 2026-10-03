@@ -480,9 +480,9 @@
   # This IS a threshold, and calling it anything else is how the last one survived
   # being wrong. What makes it safe is not the number, it is that both conditions
   # must hold and that everything under it is still REPORTED: the "na" row below
-  # states the actionable count in words, and See it on the page lists every
-  # skipped row with its reason. The threshold decides whether the run is held
-  # back, not whether the reviewer is told.
+  # states the actionable count in words, and See how it was read shows the
+  # columns on every page. The threshold decides whether the run is held back,
+  # not whether the reviewer is told.
   #
   # It is also strictly NARROWER than the rule it replaces (it adds a condition),
   # so it can only stop a false alarm, never raise a new one -- and narrower is
@@ -520,9 +520,9 @@
       detail = sprintf(paste0("%d of the %d row(s) the reader examined look like transactions and ",
                               "could not be read, against %d that were read - more than a quarter ",
                               "of everything on these pages, and more than were captured. The ",
-                              "template is almost certainly reading the wrong part of the page ",
-                              "(most often the date format, or a column band in the wrong place). ",
-                              "See it on the page shows which rows and why."),
+                              "columns are almost certainly being read from the wrong part of the ",
+                              "page (most often the date format, or a column in the wrong place). ",
+                              "See how it was read shows where the columns were found."),
                        actionable, visual_rows, n)))
   }
   # THE SKIPPED COUNT IS THE MOST ALARMING NUMBER ON THIS ROW, and it sat beside a
@@ -547,8 +547,8 @@
                         "source line count. %d of %d visual row(s) were read as ",
                         "transactions and %d were skipped (headings, summary lines, ",
                         "wrapped text, or a date/amount that could not be read).%s ",
-                        "See it on the page shows every skipped row and why; ",
-                        "completeness otherwise rests on the balance proof above."),
+                        "See how it was read shows where the columns were found on each ",
+                        "page; completeness otherwise rests on the balance proof above."),
                  n, visual_rows, skipped_rows, skip_note)
        else paste0("cannot be proved for this format: the total source line count is ",
                    "not independently known, so rows dropped by column/date filtering ",
