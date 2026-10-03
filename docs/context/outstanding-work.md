@@ -17,6 +17,90 @@ The two routes are equal. Every item is judged against both:
 
 ---
 
+## 2.0.0 - automatic reading: what is open at release (read this first)
+
+Templates were retired at 2.0.0. **Everything below this section was written for
+the 1.x template world.** Items about templates, the builder, forms and reports are
+overtaken: the builder is gone, and forms and reports were removed at 1.9.0. Read
+them as history. The open work now is this list, worst first. Each item carries
+its finding id in `findings-register.md`.
+
+**Could put a wrong figure on an automatic result (fix before release):**
+
+1. **N211 - two date columns chosen by position** (Kiwibank Effective / Transaction
+   date). Choose by heading or content, or send the statement to a person when the
+   two disagree. `test-generalisation.R` is red on purpose until then.
+2. **N212 - a scanned page whose OCR timed out is read as blank.** In `auto_read()`,
+   once the reading is final: if `input$meta$ocr_timed_out` is not empty and the
+   outcome is `proven` or `layout_match`, make it `check` with "Page N of the scan
+   could not be read in time, so rows may be missing", and add a failed row to
+   `checks`. (Proposed by the scan build, not yet applied.)
+
+**Release blockers (the server cannot be updated safely without them):**
+
+3. **N220 - `scripts/bundle-offline.R`**: ship `dictionaries/nz_banks.yaml` and
+   `nz_bank_branches.csv` as they are (they are product, not live state), and leave
+   `templates/layouts/` out of the package.
+4. **N221 - `scripts/health-check.R`** needs a *Layouts* check instead of
+   *Templates*; `audit-statement.R` and `bulk-audit.R` need the reader's audit
+   signatures (`statement_audit(path, layouts_dir)`, `batch_audit(paths,
+   layouts_dir)`); `run_app.R` should drop its `migrate_template_layout` call.
+5. **A clean full suite run.** The last one (2026-10-03, mid-build) had 181 failed
+   and 46 errors in files then being rewritten. Known still-red at the time of
+   writing: `test-docs-truth.R` asserts the removed `ix_plot` page view and the
+   "Show me how it read this" toggle (now "Show the charts"); `test-seams.R`
+   looks for screens that were removed; `test-deployment.R` waits on N221 and
+   `.gitignore` (`/templates/layouts/`).
+6. **The held-back acceptance run**: the realistic holdout and the green-flag set,
+   scored once, independently (spec section 11 step 3).
+
+**Wrong figures a person is shown on Please check (never automatic):**
+
+7. **N213** ASB `Unique Id` read as a balance. **N214** card export with a
+   foreign-currency row reads the wrong columns. **N215** Xero description taken
+   from the ID column.
+
+**Correctness of learning and identity:**
+
+8. **N217** enforce "proved by at least 2 different accounts" for promotion.
+   **N218** settle day-month vs month-day for a proven no-balance layout.
+   **N216** "Co-operative Bank" as a name. **N225** `matched_layout` empty when a
+   proven reading also matches a layout.
+
+**Privacy:**
+
+9. **N222** `logs/metadata` keeps an unsalted SHA-256 of the account number
+   (`account_hash`). Drop it, or key it with a server secret.
+
+**What the screens and Admin say:**
+
+10. **N219** a loan summary box read as a second statement (wrong "split this
+    file" advice). **N226** misleading reason for newest-first exports. **N227**
+    unread files cluster as one. **N223** tracking drops two reader checks.
+    **N224** "Proven by: a person" counts 0. **N229** `config.example.yaml` names
+    Admin tabs that no longer exist. Engine sentences reworded on screen rather
+    than at the source: "sum(amount)", "1 discontinuity(ies)", "(medium
+    confidence)" (`R/bank_identity.R`), "The table reader could not read the rows"
+    (`R/auto_read_tabular.R`), the raw `amount_from_balance` sentence
+    (`R/convert.R`), the coverage notes (`R/coverage.R`), and "Open Please check:
+    the columns found are drawn on the page" said for CSV files too
+    (`R/diagnose.R`). `bank_choices()` should drop the register's stand-in banks
+    itself (the app filters them). `.save_spot_rate` belongs in `R/config.R`.
+
+**Not built from the spec:** merging or moving layouts between banks; splitting or
+joining a column by clicking a gap on Please check; a reversed-sign role for card
+statements; reading another account's mini-statement as a separate account
+(decided 3 Oct 2026).
+
+**Dead code to remove (N228):** `R/inspect.R` and `R/row_coverage.R` (and their
+tests) unless a screen uses them again; `metadata_capture.R`'s `template_hints` and
+`detection` blocks; the lexicon's `fingerprint_brand_words` / `.FP_BRAND_DEFAULT`;
+`record_template_request` in `R/requests.R`; `tools/synth/score.R` and `bench.R`,
+which still call retired template functions. Also correct `R/split.R`'s header,
+which says an unsplittable bundle is never taken without a person.
+
+---
+
 ## 0. THE CRUX: a table is found by its heading, but its COLUMNS are still pinned to the page
 
 > **DONE - commit 34ede16.** `.doc_band_shift()` measures how far this copy prints

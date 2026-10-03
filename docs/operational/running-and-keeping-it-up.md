@@ -200,13 +200,11 @@ The full annotated list is `config\config.example.yaml`.
 | Folder | What is in it |
 |---|---|
 | `config\` | your settings (`config.yaml`) |
-| `templates\statements\`, `templates\fields\`, `templates\documents\` | the shipped, tested templates — one folder per kind, mapped by `templates\README.md` |
-| `templates\statements_user\`, `templates\fields_user\`, `templates\documents_user\` | templates your team made in the app — bank layouts, form fields, report pullers — **irreplaceable**. A `.yaml.bak` beside one is its previous version, written on every save |
-| `templates\statements_seed\` | unfinished drafts that ship with the tool; not used until somebody finishes one |
+| `templates\layouts\` | every bank layout the tool has learned on this server, one folder per bank, and the fixes waiting for an admin (`.pending\`) — **irreplaceable**. Created the first time a statement is learned; mapped by `templates\README.md` |
 | `requests\` | "none of these fits" raises from analysts, worked off **Admin → Health** |
 | `scripts\`, `www\` | the command-line tools (including `health-check.R`) and the stylesheet — product, replaced by every update |
-| `dictionaries\` | the wordings and markers Admin has taught it — **irreplaceable** |
-| `logs\` | one small file per conversion; `logs\startup.log` says why it did or did not start; `logs\metadata\` is kept forever — **irreplaceable** |
+| `dictionaries\` | the wordings and markers Admin has taught it (`labels.yaml`, `lexicon.yaml`) — **irreplaceable**; and the NZ bank reference data that ships with the tool (`nz_banks.yaml`, `nz_bank_branches.csv`) |
+| `logs\` | one small file per conversion; `logs\startup.log` says why it did or did not start; `logs\metadata\` is kept forever and `logs\tracking\` holds the automatic-reading counts — both **irreplaceable** |
 | `feed\` | what the Qlik dashboards load ([connecting-qlik.md](connecting-qlik.md)) |
 | `uploads\` | copies of uploaded statements, deleted after `uploads_keep_days` |
 | `R-runtime\`, `R-lib\`, `offline\` | the private R, its packages, the installer bundle — leave alone |
@@ -226,7 +224,7 @@ Copy the irreplaceable rows off the box regularly —
 | Everything works except scanned PDFs | Poppler/Tesseract not installed — check `offline\manifest.txt`; if `MISSING`, rebuild the package on the internet PC. |
 | Task says it ran and finished, nothing is listening | The task is missing the `/service` argument, so it stopped at a pause. |
 | Nothing comes up and you cannot see why | Read `logs\startup.log` — it names the reason, and it is written even when there is no console. |
-| Something used to work and now does not, and none of the above fits | Run `scripts\health-check.R` before guessing — [maintaining-the-engine.md](maintaining-the-engine.md) §1. It names a settings file that stopped parsing, a folder that stopped being writable, and a template that stopped validating, which is the one nothing else reports. |
+| Something used to work and now does not, and none of the above fits | Run `scripts\health-check.R` before guessing — [maintaining-the-engine.md](maintaining-the-engine.md) §1. It names a settings file that stopped parsing and a folder that stopped being writable. (At 2.0.0 its *Templates* line is out of date; ignore a `FAIL` there.) |
 | Admin will not open with the right password | `app.admin_password` is still `changeme` or blank. Change it and restart. |
 
 More: [when-something-goes-wrong.md](when-something-goes-wrong.md) ·

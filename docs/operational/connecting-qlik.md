@@ -16,10 +16,6 @@ app:
 feed:
   enabled: true
   feed_dir: D:/StatementStudio/feed     # or a UNC share, //fileserver/share/feed
-  min_trust: medium                     # medium (default) = every clean conversion
-  require_status_ok: true
-  allowed_template_origins: [default]   # shipped/tested templates only
-  template_allowlist: []                # optional: restrict to specific ids
   include_review_feed: true             # also write withheld runs, as a separate table
 ```
 
@@ -69,7 +65,7 @@ can never read a half-written CSV.
 Every row starts with these columns, in this order, always present:
 
 ```
-run_id, converted_ts, source_file, source_sha256, bank, statement_type,
+run_id, converted_ts_utc, source_file, source_sha256, bank, statement_type,
 template_id, template_version, template_origin, trust_level, gate_result,
 period_start, period_end, account_number, statement_index,
 row_id, date, description, amount, debit, credit, direction, balance,
@@ -80,7 +76,7 @@ particulars, code, reference, other_party, type, currency, flags
 in that order, always** — which is what lets a wildcard `LOAD *` pull the whole
 folder into one table.
 
-A template's named **extras** (card `fx_amount`, KiwiSaver `units`, …) do **not**
+A statement's named **extras** (card `fx_amount`, KiwiSaver `units`, …) do **not**
 go in it. They are written to `feed/extras/<key>.csv`, keyed by `run_id` and
 `row_id`, and only for the statements that have them — an ordinary deployment
 never grows the folder at all. Load and join it only if a dashboard needs one:
@@ -106,14 +102,23 @@ Qlik concatenates on field set rather than table name, and `transactions` and
 ### Manifest row schema
 
 ```
-run_id, converted_ts, source_file, source_sha256, bank, template_id,
+run_id, converted_ts_utc, source_file, source_sha256, bank, template_id,
 template_origin, status, trust_level, row_count, period_start, period_end,
-gate_result, feed_file, engine_version, template_sha256
+gate_result, feed_file, engine_version, layouts_state
 ```
 
-`engine_version` and `template_sha256` are the reproducibility pair: which build
-and which exact template content produced a figure, so a dashboard number can be
-reproduced years later. They are also how you find every row one bad build
+**`template_id` and `template_origin` kept their names at 2.0.0**, because a
+renamed column is a new field to Qlik and splits the table. They now carry the
+learned layout the reading matched (`anz_1@v3`, or the reading's own id) and the
+**basis** the gate accepted it on: `proven`, `layout_match`, `person` or `none`.
+A dashboard can therefore tell a figure the arithmetic proved from one a person
+vouched for. Rows written before 2.0.0 still carry a template id and `default` or
+`user`.
+
+`engine_version` and `layouts_state` are the reproducibility pair: which build
+and which learned state produced a figure, so a dashboard number can be
+reproduced years later. (Before 2.0.0 the second was `template_sha256`, and old
+manifest rows still have it.) They are also how you find every row one bad build
 published, if you ever have to withdraw a set of them
 ([rolling-back.md](rolling-back.md) §4). **Check `engine_version` on the first
 row that lands** — if it reads `unknown` the `VERSION` file never reached the
@@ -122,30 +127,34 @@ fill up ([go-live-checklist.md](go-live-checklist.md) §2).
 
 ## 3 — The governance gate
 
-A conversion reaches `feed\transactions\` only when **all** of these hold:
+Since 2.0.0 the gate has no settings. A conversion reaches
+`feed\transactions\` only when its status is `ok` **and** its basis is one of:
 
-1. the status is clean (`require_status_ok`),
-2. the confidence level meets `min_trust`,
-3. the template is one of the shipped, tested set (`allowed_template_origins`),
-4. `template_allowlist` is empty, or names that template.
+1. **`proven`**: the statement's own arithmetic proved the reading (every
+   running-balance step, or opening + movements = closing and the printed totals),
+   and no other reading fits;
+2. **`layout_match`**: no balance to prove it by, but it matched a layout of its
+   bank that is already proven;
+3. **`person`**: a person on Please check confirmed the reading as right. That is
+   refused when the statement's own arithmetic contradicts it.
 
-Otherwise it is **withheld**: still recorded in the manifest, optionally copied to
-`review\`. `gate_result` says which rule stopped it — `withheld:not_proven`,
-`withheld:low_trust`, `withheld:needs_review`, `withheld:not_in_allowlist`.
+Everything else is **withheld**: still recorded in the manifest, and copied to
+`review\` when `include_review_feed` is on. `gate_result` says why:
+`withheld:needs_review`, `withheld:unsupported`, `withheld:failed`, or
+`withheld:not_proven`.
 
-The gate is **machine-only**. No human can wave a conversion through; the way in
-is to fix the template and convert again, which is the durable fix and leaves an
-audit trail. The Convert screen states the gate's verdict on every conversion, so
-the person converting is never surprised.
+The settings `min_trust`, `require_status_ok`, `allowed_template_origins` and
+`template_allowlist` were removed with templates. Left in `config.yaml`, they do
+nothing.
 
-Note that the tool **converts** with templates built on this box by default, and
-the gate is on template **origin** — the two are independent by design. An
-analyst gets her bank working immediately; the dashboards still only take the
-proven set.
+A person's confirm is the one way a human puts a reading on the dashboards. It is
+recorded by name (the QID on the run), it is stamped `person` on every row, and it
+is never refused silently: the screen says why when it is.
 
-Only the **Convert button** feeds. Admin's bulk re-audit and the command-line
-scripts deliberately do not: they exist to test templates over piles of files,
-and publishing those runs would put unreviewed rows on org-wide dashboards.
+Only the **Convert button** feeds. Training a bank, Admin's *Check a pile of files
+at once* and the command-line scripts deliberately do not: they read piles of
+files, and publishing those runs would put unreviewed rows on org-wide
+dashboards.
 
 ## 4 — Load it in Qlik
 
@@ -183,19 +192,20 @@ pointing at `app.shiny_url`, opening in a new tab.
 
 ## Check it works
 
-1. Convert a statement with a shipped template → the download works.
+1. Convert `samples\raw\tutorial\sample_everyday_statement.pdf` → it is
+   **Proven**, and the download works.
 2. Reload the Qlik app → those transactions appear, and `Runs` shows the run as
-   `accepted`.
-3. Convert something that does not reconcile, or one read by a template built
-   here → it does **not** appear, and `Runs` shows it `withheld:…`.
+   `accepted`, with `template_origin` `proven`.
+3. Convert something that goes to Please check, for example
+   `samples\raw\anz\anz_transaction_export_01.csv` (no balance to prove it by)
+   → it does **not** appear, and `Runs` shows it `withheld:needs_review`.
 
 ## If Qlik shows nothing
 
 | Symptom | Fix |
 |---|---|
 | Nothing in `feed\transactions\` | Was it a real **Convert-button** upload? Did it clear the gate? Read the `gate_result` column in `feed\runs\*.csv` — it says why. Then check `logs\feed\` for a write failure. |
-| Everything is `withheld:not_proven` | The template is user-built. Promote it ([maintaining-the-engine.md](maintaining-the-engine.md) §3), or add `user` to `feed.allowed_template_origins`. |
-| `withheld:low_trust` | It did not reconcile. Only lower `feed.min_trust` if you genuinely want unreconciled data on dashboards. |
+| Everything is `withheld:needs_review` | The statements are not being proven. Look at Admin -> Automatic reading -> *Checks that failed*; for exports with no balance, train the bank so their layouts are proven ([adding-a-bank-template.md](adding-a-bank-template.md)). |
 | Qlik shows nothing at all | Check the `StatementFeed` connection points at `feed\`, that files exist, and that the reload ran. |
 | Totals split in two | A field set mismatch. Every `transactions` CSV is meant to have the SAME fields, so check whether an old file predates that guarantee (extras used to be appended) - and load `transactions` and `review` as separate tables. |
 | Special characters garbled | `codepage is 65001` on every `LOAD`. |

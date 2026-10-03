@@ -129,13 +129,13 @@ automatically. Somebody has to.**
 ### 4a. Work out which rows they are
 
 `feed\runs\*.csv` is one row per statement and carries both `engine_version` and
-`converted_ts`. In Qlik, the same fields are on the `Runs` table.
+`converted_ts_utc`. In Qlik, the same fields are on the `Runs` table.
 
 - **Filter `engine_version` to the bad version.** That is the whole list, and it
   is why the build stamp is worth checking at go-live.
 - **If `engine_version` reads `unknown`**, the `VERSION` file never reached the
   server and every row on the box carries the same value, good and bad alike. Fall
-  back to `converted_ts` and take everything between the update and the moment you
+  back to `converted_ts_utc` and take everything between the update and the moment you
   stopped conversions in section 1. That window is wider than the real damage, so
   you will withdraw some good rows too — they come back by re-converting.
 - `gate_result` = `accepted` marks the ones that actually reached the dashboards.

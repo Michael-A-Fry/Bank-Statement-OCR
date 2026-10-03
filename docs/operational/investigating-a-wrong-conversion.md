@@ -6,8 +6,9 @@ reading the verdict. This one is about going back to a conversion that already
 happened, reproducing the exact figure, and deciding whose problem it is.
 
 Everything you need is already on the box. Nothing here needs the internet, and
-nothing here changes a stored figure — there is no cell to edit, and the fix is
-always a template correction and a re-run.
+nothing here changes a stored figure — there is no cell to edit. The fix is
+always a corrected reading (a role set on Please check, a layout retired on
+Admin -> Banks, or an engine fix) and a re-run.
 
 ---
 
@@ -25,8 +26,8 @@ on works without it.)
 
 | Where | Table | Use it when |
 |---|---|---|
-| **Admin → Templates** | *What the team said about these conversions* — `ts`, `verdict`, `comment`, `template_id`, `run_id`, and the document it was left on | somebody rated a result **wrong** or **minor issues** in the app |
-| **Admin → Health** | *Uploads* — `ts`, `file_ext`, `status`, `template`, `trust`, `needs_pickup`, `purged`, `run_id` | you know the file or roughly when it was converted |
+| **Admin → Health** | *What the team said about these conversions* — every rating, with the verdict, comment, layout, `run_id`, and the document it was left on | somebody rated a result **wrong** or **minor issues** in the app |
+| **Admin → Health** | *Uploads* — every document converted here, newest first, with its status and `run_id` | you know the file or roughly when it was converted |
 
 If she can only tell you the file name and the day, the Uploads table is the
 route: it lists every statement converted on this server, newest first.
@@ -46,11 +47,13 @@ Notepad. The fields that decide what you do next:
 | Field | What it tells you |
 |---|---|
 | `source_file`, `source_sha256` | which file, and its exact bytes |
-| `detected_template`, `template_origin` | which template ran, and whether it was shipped (`default`) or built in the app (`user`) |
-| `template_version`, `template_sha256` | **which content** of that template ran |
-| `detect_detail` | how it was chosen, e.g. `matched anz_everyday_csv (score 7/6)` |
-| `engine_version` | which build |
-| `status`, `trust_level`, `kpi_fail_count` | the verdict she saw |
+| `institution`, `bank_code`, `bank_confidence`, `bank_hint` | which bank it was read as, how sure the statement made the tool, and what the person picked (`bank_hint`, empty when she left it) |
+| `outcome`, `proof_kind`, `feed_basis` | what the reader decided (`proven`, `layout_match`, `check`, `unread`), what proved it (`chain` = the running balance, `totals`, `layout`, `person`, `none`), and why it fed Qlik or did not |
+| `layout`, `layouts_state` | **which learned layout** it matched (`anz_1@v3`, or empty), and the learned state of the whole store at that moment |
+| `learn_action`, `person_fix` | what it taught the tool (`created`, `evidence_added`, `promoted`...), and whether a person's fix or confirm was applied |
+| `reason` | the reader's sentence, as she saw it (quoted statement text and long numbers are blanked out in the log) |
+| `engine_version`, `reader_version` | which build, and which version of the reader inside it |
+| `status`, `trust_level`, `kpi_fail_count`, `derived_amounts` | the verdict she saw, and how many amounts were filled in from the balance |
 | `row_count`, `pages`, `period_start`, `period_end` | the shape of what was read |
 | `requested_by` | the identity the engine had. The screen amends the record afterwards with `attested_by` (the QID that was typed), `detected_identity` and `identity_source`, so a claim and a proven identity are never the same field |
 
@@ -90,16 +93,18 @@ set "R_LIBS_SITE="
 "R-runtime\bin\x64\Rscript.exe" run.R uploads\<upload_id>\<file> "" out\check
 ```
 
-Usage is `Rscript run.R <file> [bank] [outdir]`. The second argument is a **bank
-hint** — leave it `""` unless you are deliberately forcing detection down one
-bank's templates.
+Usage is `Rscript run.R <file> [bank] [outdir]`. The second argument is the
+**bank**. Give it exactly when the original run had a `bank_hint` (the person
+changed the bank), with the same value; otherwise leave it `""` and the bank is
+taken from the statement, as it was then.
 
 Its first line is the thing you need next:
 
 ```
-run id:      d53202504d-20260727233840-b6e0
+run id:      d53202504d-20261003233840-b6e0
 status:      ok
-template:    anz_everyday_pdf
+bank:        ANZ
+reading:     proven (layout anz_1@v3)
 trust:       medium (score 92)
 ```
 
@@ -114,10 +119,14 @@ investigation leaves a trail too — but it means Admin's Health tab and coverag
 tables will show your check runs alongside the analyst's. They are the ones with
 `cli` as the requester.
 
-Run it **from the app folder**, not from anywhere else: `templates\statements_user\` is
+Run it **from the app folder**, not from anywhere else: `templates\layouts\` is
 resolved relative to the working directory, and a run started somewhere else
-would silently leave out every template built in the app — including, quite
-possibly, the one that produced the figure you are chasing.
+would silently read with no learned layouts at all — so a statement that matched
+a layout (`layout_match`) would come back *Please check* instead.
+
+**A re-run is a conversion, so it can learn.** Re-running the same file adds
+nothing (a statement counts once per layout), and it records one more event in
+`logs\tracking\`. It cannot change the figure you are chasing.
 
 Three things to confirm before you believe the re-run, in this order:
 
@@ -130,21 +139,25 @@ Three things to confirm before you believe the re-run, in this order:
    an answer — carry on to 2 and 3. And if the two stamps are the **same** but
    read `1.3.0` or earlier, that is not proof the same code ran either: see the
    caveat at the end of this section.
-2. **The same template ran.** Compare `detected_template` and `template_sha256`.
-   If the hashes differ, the template has been edited since — *that is already
-   your answer*, and the old figure cannot be reproduced from today's template.
+2. **The same learned state ran.** Compare `layout` and `layouts_state`. A
+   reading **proven** by its own arithmetic (`proof_kind` `chain` or `totals`)
+   does not depend on what was learned, so a different `layouts_state` changes
+   nothing for it. A **layout match** does: if the layout has been retired,
+   corrected or confirmed since, *that is already your answer*. The old figure
+   came from a layout that today's store no longer holds the same way.
 3. **The figures match.** Compare `row_count`, `status`, `trust_level` and the
    figures themselves — the check details the re-run printed against the ones in
    the old record, and if you still have her download, the `Transactions` sheet
    against the new one.
 
-**Compare the figures, not the bytes.** Same input + same template + *same build*
-gives the same bytes, and that is a real guarantee — the suite proves it on every
-run. But two entirely ordinary things break it with nothing wrong at all: the app
-has been updated, or the template has been edited. So:
+**Compare the figures, not the bytes.** Same input + same learned state + *same
+build* gives the same bytes, and that is a real guarantee — the suite proves it on
+every run. But two entirely ordinary things break it with nothing wrong at all: the
+app has been updated, or something has been learned since. So:
 
-- same `engine_version` **and** same `template_sha256` → a byte-for-byte match is
-  the expected outcome, and any difference is a finding. **Read the caveat below
+- same `engine_version` **and** same `layouts_state` (or, for a record written
+  before 2.0.0, the same `template_sha256`) → a byte-for-byte match is the
+  expected outcome, and any difference is a finding. **Read the caveat below
   first**: this holds only when both records were written by **1.4.0 or later**;
 - either one different → the bytes will differ, and that on its own tells you
   nothing. Compare the **figures**: `row_count`, `status`, `trust_level`,
@@ -155,8 +168,13 @@ has been updated, or the template has been edited. So:
   double-check it* to *converted successfully* between two builds is usually a fix
   that is written down there, and the changelog names it.
 
-A re-run that reproduces 11 rows, `ok`, `medium` and the same `template_sha256`
+A re-run that reproduces 11 rows, `ok`, the same outcome and the same figures
 off a newer build has reproduced the figure. It has not failed to.
+
+**A record from 1.x against a 2.0.0 re-run** will differ in almost every field:
+1.x read with a template, 2.0.0 reads from the content. Compare only the figures.
+Where they differ, the 2.0.0 reading is the one its arithmetic proved, or it says
+why it could not.
 
 ### The caveat: before 1.4.0, `engine_version` does not identify a build
 
@@ -190,31 +208,28 @@ for every run. The rule does not apply to any of them; compare the figures and
 the timestamps instead. Fix the cause before it grows:
 [go-live-checklist.md](go-live-checklist.md) §2.
 
-## 5. Template bug, or bad file?
+## 5. A reading fault, a learned layout, or a bad file?
 
 | Symptom in the re-run | Read it as |
 |---|---|
-| `detected_template` names a template for a **different bank** | a fingerprint that is too loose. Fix the phrase or the `min_score` on the template that matched, not on the one that should have. |
-| The right template, but rows missing from the middle of a PDF | a column band in the wrong place. Open the file in the toolkit and look at **See it on the page**: amber dashed rows look like transactions and were skipped. **Template.** |
-| Dates real but wrong (day/month swapped), or a low count on *Row dates could be read* | the date format. **Template.** |
-| Balance out by exactly twice one transaction, or every sign inverted | the amount style, or *which value means money out* on an indicator column. **Template.** |
-| The run was OCR'd (`pages` set, *Scan / OCR read quality* present) and individual digits are wrong | **the file.** Ask for a better scan or the bank's CSV/Excel export. OCR accuracy is not something the engine can improve from here. |
-| A delimited or Excel export reads wrong | never a scan — it is the template or the export itself. Compare the file's own header row against the template's `columns:`. |
-| Everything reconciles and she still says it is wrong | ask which row and which figure. A conversion that reconciles to the cent and reads a description verbatim is usually a disagreement about what the statement means, not about what it says. |
+| `outcome` `layout_match` and the figures are wrong | **a learned layout.** The statement had nothing of its own to prove it, and a layout supplied the reading. Look at that layout on Admin -> Banks. If it is wrong, **Retire** it. Then convert the file again, and it goes to Please check. Record it: a layout that matched wrongly is evidence for the reader's matching rules. |
+| `outcome` `proven` and a figure is wrong | **the most serious finding there is**: the arithmetic proved a wrong reading. Keep the file, the run record and the re-run. It goes to [`../context/findings-register.md`](../context/findings-register.md) at once, and to whoever maintains the engine. |
+| `institution` names a **different bank** from the statement | the bank was picked wrongly, or read wrongly. A **proven** reading's figures are not affected (its own arithmetic proved them, whatever the bank), but a layout match was made against the wrong bank's layouts, and anything learned went to the wrong bank: retire it on Admin -> Banks. |
+| `feed_basis` `person` | a person confirmed it on Please check. Ask her which figure she checked. The confirm is held under Admin -> Banks -> *Fixes waiting for an admin*: **Discard** it. |
+| The run was OCR'd (`pages` set, *Scan / OCR read quality* present) and individual digits are wrong | **the file.** Ask for a better scan or the bank's CSV or Excel export. A misread digit that the balance does not catch is the scan's limit, not something the engine can improve from here. |
+| Everything is proven and she still says it is wrong | ask which row and which figure. A conversion proven to the cent that reads a description verbatim is usually a disagreement about what the statement means, not about what it says. |
 
-A template fix goes back through the toolkit like any other
-([adding-a-bank-template.md](adding-a-bank-template.md)); correcting a shipped
-template saves as `<id>_custom` with a `refines:` line and takes effect on the
-next conversion. Converting the file again is what puts the corrected figures
-back in front of the dashboards — there is no way to publish a withheld run
-without re-running it, and that is deliberate.
+Converting the file again is what puts the corrected figures back in front of the
+dashboards. There is no way to publish a withheld run without re-running it, and
+that is deliberate.
 
 ## 6. Close it out
 
 - Convert the file again in the app so the corrected run is the one on record.
-- If you promoted or edited a shipped template, run the suite
-  ([maintaining-the-engine.md](maintaining-the-engine.md) §1).
-- If the cause was the engine rather than a template, it belongs in
+- If you retired or confirmed a layout, say so in the case notes. The change is
+  a new version in `templates\layouts\`, so the old conversion stays traceable to
+  what was learned then.
+- If the cause was the engine rather than the file or a learned layout, it belongs in
   [`../context/findings-register.md`](../context/findings-register.md) with its
   evidence — that register is what the changelog is built from.
 

@@ -72,7 +72,7 @@ never OCR'd regardless.
 ### PDF table geometry
 | Parameter | Default | Decides |
 |---|---|---|
-| `PARAM_PDF_ROW_TOL` | `3` | Words whose top edges sit within this many points are treated as one visual row. The single most behaviour-affecting geometric knob in PDF parsing; a template can override per-bank with `table.row_tol`. |
+| `PARAM_PDF_ROW_TOL` | `3` | Words whose top edges sit within this many points are treated as one visual row. The single most behaviour-affecting geometric knob in PDF parsing; a reading carries its own `table.row_tol` (a learned layout keeps it). |
 
 ### Plausibility bounds
 | Parameter | Default | Decides |

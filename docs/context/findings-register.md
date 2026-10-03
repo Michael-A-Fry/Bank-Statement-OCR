@@ -1741,3 +1741,119 @@ edit, and drag where I actually want the column, it says nothing was waiting."
 they still had to press was named nowhere in it. It now names the column they had
 selected and the button that arms the drag. The armed-intent model is not the
 fault and did not change; the sentence it fails with was.
+
+## Automatic reading (2.0.0): what the build and its reviews found
+
+Templates were retired at 2.0.0 (`auto-reading-spec.md`). The engine, scan, screen
+and test builds were each followed by a review that drove the real thing: the
+engine on the dev, corpus and offset-sweep sets with the figures read back from
+the CSV written, the screens in a browser the way an analyst uses them. Every
+fixed item below was reproduced first and re-measured after; none of the fixes
+moved a single cell of any test set's outcome matrix, and AUTO_WRONG stayed 0.
+Counted separately from the total at the top of this file.
+
+**Fixed in the engine (`R/convert.R`, review of 3 Oct 2026):**
+
+- **N193 - a statement converted on the wrong bank's layout.** A statement with no
+  balance and no totals came back `ok` on the picked bank's learned layout while the
+  statement named another bank with high confidence. Shown by injection. Now
+  `needs_review`: "confirm the bank first". **Fixed.**
+- **N194 - layouts learned under the wrong bank.** A medium-confidence disagreement
+  (an ANZ statement picked as ASB) asked the person but still learned the layout as
+  ASB's. Learning now waits for `bank_confirmed`. **Fixed.**
+- **N195 - a confirm fed the reading it was meant to change.** A confirm sent with a
+  role fix that failed to apply was fed to Qlik as `ok`, basis `person`, on the
+  unfixed reading. Now refused, with its own message; nothing is fed or held. **Fixed.**
+- **N196 - bundles from different banks.** An ANZ+ASB bundle confirmed as ANZ
+  learned the ASB statement as `anz_2`. Each statement is now identified on its own
+  pages, and one naming another bank never teaches the picked bank. **Fixed.**
+- **N197 - a fix leaked across a bundle.** Roles were applied to every statement, so
+  fixing statement 2 broke statements 1 and 3, which had been proven.
+  `overrides$statement` names the statement; box pages are the file's. **Fixed.**
+- **N198 - one bundle promoted a layout by itself** (three statements counted as
+  three proofs). One file now counts once per layout. **Fixed** (approximates the
+  spec's "two different accounts" rule; see N217).
+- **N199 - holder name and account number in the logs.** A workbook's preamble
+  ("Kiwibank account 38-...-... - MS A EXAMPLE") reached `logs/metadata`, and the
+  run log's `layout_hint` carried the holder name. Both now take the heading row the
+  reader found, or nothing. **Fixed.**
+- **N200 - a bank typed as an account number** would have named the layout folder,
+  the ids and the run log. Not used now; the bank comes from the statement. **Fixed.**
+- **N201 - unreadable files had no stamp and no tracking**, so the Admin rate left
+  them out. **Fixed.**
+- **N202 - `-0` in the JSON, and a stale `layouts_state`** (stamped before a slow
+  OCR read rather than next to the layout load). **Fixed.**
+
+**Fixed in the screens (review of 3 Oct 2026; all in `app.R` / `ui_labels.R`):**
+
+- **N203 - training hid another bank's statement** ("12 proven, 0 need a look" with
+  a Westpac file in a TSB pile). Now listed under "need a look" with the reason. **Fixed.**
+- **N204 - Admin -> Automatic reading counted a failed proof as a proof** ("Proven
+  by: running balance" on a home loan whose balance broke). Reads "Checked
+  against". **Fixed.**
+- **N205 - a person-confirmed reading wore the proven green.** Now amber, and says a
+  person confirmed it. **Fixed.**
+- **N206 - a case row hid a bank mismatch.** The row now says *Which bank?*. **Fixed.**
+- **N207 - a bad Re-read left no way back.** *Undo my changes*. **Fixed.**
+- **N208 - a layout learned under a bank called `FALSE`** (`src$bank` partially
+  matched `src$bank_confirmed`). Exact `[[...]]` lookups. **Fixed.**
+- **N209 - a CSV input overwritten by its own output** (same name, same folder; true
+  in 1.x too). Inputs now go in `in/`. **Fixed.**
+
+**Fixed in the scan path (`R/ocr.R`, `R/ocr_preprocess.R`):**
+
+- **N210 - scans took 18-174 s a page and read junk.** Two faults: the contrast
+  stretch put the black point in the paper grain on nearly blank pages (median
+  confidence 17, about 6,900 junk words); and Tesseract's one-thread-per-core spin.
+  Now 2.0 s a page on average, confidence 95+ on every dev page. **Fixed.**
+
+**Open at release (each also in `outstanding-work.md`):**
+
+- **N211 - two date columns chosen by position.** A Kiwibank export with Effective
+  and Transaction dates is proven on whichever comes first: the same statement gives
+  different dates on an automatic result. Pinned by the deliberately failing
+  `test-generalisation.R`. **Open - could give a wrong date on a proven reading.**
+- **N212 - a scanned page whose OCR timed out is read as blank**, and `auto_read`
+  does not yet force `check` for it. If it is the last page the rest could still
+  prove. **Open - could miss rows on a proven reading.**
+- **N213 - ASB `Unique Id` read as a balance** (whole numbers typed as money):
+  `unread` or `check` with IDs shown as balances. **Open (never automatic).**
+- **N214 - a card export with a foreign-currency row reads the wrong columns**
+  (`Amount` as balance, `ConversionCharge` as amount). **Open (`check`).**
+- **N215 - Xero exports take `unique_id` as the description.** **Open.**
+- **N216 - `bank_pick` does not resolve "Co-operative Bank" to `coop`.** False
+  disagreement on typed names. **Open.**
+- **N217 - the spec's "proved by at least 2 different accounts" is not enforced**
+  (N198 approximates it). **Open.**
+- **N218 - a proven no-balance layout does not settle day-month against
+  month-day**; a statement whose days are all 12 or less never matches. **Open.**
+- **N219 - a loan statement's summary box is taken for a second statement**, and the
+  card advises splitting a single statement. **Open.**
+- **N220 - `scripts/bundle-offline.R` ships `nz_banks.yaml` as an example file and
+  leaves `nz_bank_branches.csv` out**, so a packaged server cannot identify banks;
+  it would also ship a build PC's `templates/layouts/`. **Open - release blocker.**
+- **N221 - `scripts/health-check.R`, `audit-statement.R`, `bulk-audit.R` still call
+  the retired template functions** (a healthy server reports `FAIL Templates`).
+  **Open - release blocker.**
+- **N222 - `logs/metadata` stores an unsalted SHA-256 of the account number**
+  (`account_hash`), which `R/bank_identity.R` itself rules out as reversible. **Open.**
+- **N223 - tracking drops the reader's `reader_agrees` and `dates_carried` checks**
+  (not in `TRACK_CHECKS`), with a warning that `convert` suppresses. **Open.**
+- **N224 - "Proven by: a person" counts 0** even after confirms (confirms are
+  separate events). **Open.**
+- **N225 - a reading proven on its own content that then matches a proven layout
+  leaves `matched_layout` NULL**, so the run log's `layout` is empty and Health
+  undercounts layouts in use. **Open.**
+- **N226 - misleading reason for a newest-first export** ("The dates go backwards
+  at row 3" on a file that is consistently newest-first). **Open.**
+- **N227 - every unread file clusters as one "(unknown)" layout** (no
+  `layout_signature` on an unread run). **Open.**
+- **N228 - dead code left by the retirement:** `R/inspect.R` and `R/row_coverage.R`
+  have no caller outside their tests; `metadata_capture.R`'s `template_hints` and
+  `detection` blocks are always empty; the lexicon's `fingerprint_brand_words` is
+  read by nothing; `requests.R`'s `record_template_request` has no caller.
+  `R/split.R`'s header says an unsplittable bundle is "never taken without a
+  person", which is no longer what `convert.R` does. **Open.**
+- **N229 - `config/config.example.yaml` sends the reader to Admin tabs that no longer
+  exist** ("Admin -> Data capture -> Words the tool knows to look for", "ADMIN ->
+  Insights -> Saved statements - retention"). **Open.**

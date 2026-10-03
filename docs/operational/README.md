@@ -3,9 +3,9 @@
 One page per task, written for analysts rather than developers. Background — how
 it works and why — is in [`../context/`](../context/README.md).
 
-**Converting statements, not running the server?** Only the five *Every day*
+**Converting statements, not running the server?** Only the four *Every day*
 pages below are yours. [`../for-analysts/`](../for-analysts/README.md) is the
-short index that lists just those five, and it is the folder name to hand to
+short index that lists just those four, and it is the folder name to hand to
 somebody new — everything from *Running the server* down is for whoever owns the
 box.
 
@@ -14,7 +14,7 @@ box.
 | I want to… | Page |
 |---|---|
 | Convert a statement and download the result | [converting-statements.md](converting-statements.md) |
-| Teach it a new bank layout, no code | [adding-a-bank-template.md](adding-a-bank-template.md) |
+| Convert a bank or layout the tool has not seen, and train a bank on its statements | [adding-a-bank-template.md](adding-a-bank-template.md) |
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
 | Describe a tricky layout with no client information in it | [survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) |
 
@@ -28,18 +28,19 @@ box.
 | **Let the whole team in, and have the audit trail name the right person** | [who-is-using-it.md](who-is-using-it.md) |
 | Start it, keep it running after reboots, open the firewall port, change a setting | [running-and-keeping-it-up.md](running-and-keeping-it-up.md) |
 | **Ask the box whether it is fit to convert — one command, after every update** | `scripts\health-check.R`, in [maintaining-the-engine.md](maintaining-the-engine.md) §1 |
-| Back up the five irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
+| Back up the irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
 | Update to a new version (build a package, replace the folder) | [updating.md](updating.md) |
+| **Go from 1.23.1 to 2.0.0: every file to update, add or delete** | [release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) |
 | **Merge a dev folder into the live one by hand — and what must never be copied** | [updating-a-version.md](updating-a-version.md) |
 | **Put a bad version back, and deal with what it already sent to Qlik** | [rolling-back.md](rolling-back.md) |
-| Do admin: password, requests, dictionaries, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
+| Do admin: banks and learned layouts, automatic-reading counts, spot checks, dictionaries, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |
 
 ## Owning it (the maintainer)
 
 | I want to… | Page |
 |---|---|
-| Run the test suite on the server, re-apply an `R\params.R` change, promote a template to proven | [maintaining-the-engine.md](maintaining-the-engine.md) |
+| Run the test suite on the server, re-apply an `R\params.R` change, add a statement to the test suite | [maintaining-the-engine.md](maintaining-the-engine.md) |
 | Go back to a conversion somebody says is wrong, and reproduce the figure | [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) |
 | Know what this tool must always do, and must never do | [../context/charter.md](../context/charter.md) — one page, the fixed points |
 | See the whole thing at once: the journey, which module owns each step, where each kind of change goes | [../context/how-it-fits-together.md](../context/how-it-fits-together.md) |
@@ -51,9 +52,10 @@ The things that change live in **data and config, not code**.
 
 | To change | Where | Who, and how |
 |---|---|---|
-| A bank's layout — its columns, date and amount style | `templates\<bank>.yaml` | analyst, in the app — **Add a template**. No code. |
-| A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Templates → Words the tool looks for** |
-| A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Templates → Words the tool knows to look for** |
+| How a bank's statements are read | `templates\layouts\` (learned, never hand-edited) | nobody needs to: proven statements teach it. A person fixes one reading on **Please check**; an admin confirms, retires or trains on **Admin → Banks**. No code. |
+| A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Words** |
+| A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Words** |
+| How often automatic conversions are spot-checked | `config\config.yaml` → `auto_reading: spot_check_rate` | admin — **Admin → Automatic reading** |
 | A deployment setting (port, admin password, the Qlik feed gate, paths) | `config\config.yaml` | admin — annotated example in `config\config.example.yaml` |
 | A numeric engine threshold (year window, OCR DPI, row tolerance, seconds per page) | `R\params.R` | maintainer — [../context/engine-parameters.md](../context/engine-parameters.md) |
 
@@ -70,5 +72,6 @@ and why, is in [admin-and-maintenance.md](admin-and-maintenance.md).
    ([go-live-checklist.md](go-live-checklist.md))
 3. **Use it** — upload a statement, click Convert, download the Excel/CSV/JSON.
    ([converting-statements.md](converting-statements.md))
-4. **Grow it** — when a new bank turns up, teach it the layout in the toolkit.
+4. **Grow it** — when a new bank turns up, convert its statements; to teach it a
+   whole pile at once, train the bank on Admin → Banks.
    ([adding-a-bank-template.md](adding-a-bank-template.md))

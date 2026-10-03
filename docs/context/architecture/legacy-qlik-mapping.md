@@ -1,5 +1,10 @@
 # Legacy "Statement Converter" (Qlik) - schema & enrichment reference
 
+> **At 2.0.0** templates were retired: statements are read from their content and
+> proved by their own arithmetic ([../auto-reading-spec.md](../auto-reading-spec.md)).
+> Where this page says "our templates", read "the automatic reader". The parity
+> reference itself (what the old tool produced) is unchanged.
+
 This is a build reference distilled from the legacy Qlik app that this platform
 replaces (`Statement Converter 300925.qvf`). The Qlik
 app's binary hides its logic, but the full load script is recoverable; the notes

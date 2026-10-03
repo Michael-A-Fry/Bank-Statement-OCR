@@ -1,6 +1,19 @@
 # Automatic reading: the specification
 
-**Status: DRAFT for the product owner's approval. Nothing here is built yet.**
+**Status: APPROVED and BUILT, released as 2.0.0 (3 Oct 2026).** The decisions in
+section 2 are the product owner's and are binding. Built as specified, with these
+exceptions, each listed with its reason in the 2.0.0 entry of `CHANGELOG.md` and
+in `outstanding-work.md`: Admin -> Banks has confirm, rename and retire, but not
+merge or move; Please check fixes a column with a role dropdown and Re-read, but
+does not yet split or join a column by clicking a gap; a layout is promoted by
+three proofs or an admin confirm, and the "at least 2 different accounts" rule is
+only approximated (one file counts once per layout); reading another account's
+mini-statement as a separate account (decided 3 Oct) is not built yet. The
+held-back acceptance run (section 11, step 3) has not been done. Section 9.1 is
+the pre-build baseline; the 2.0.0 figures are in `CHANGELOG.md`. Appendix A was
+the contract the parts were built against; the interfaces as built are in
+`architecture/build-contract.md`.
+
 Written 3 Oct 2026 from the product owner's decisions, three research reports
 (how existing tools find tables; bank identity; engineering practice for
 self-learning tools), a root-cause analysis of today's column finder, and a
@@ -326,8 +339,8 @@ contributed no rows forces `check`.
 `bank_identify(input)` -> `list(institution, bank_code, confidence = high |
 medium | low | unknown, why, evidence = data.frame(kind, institution, strength,
 zone))`. Never returns or stores an account number. Data shipped with the tool:
-`data/nz_bank_branches.csv` (bank_code, branch, institution) from the Payments NZ
-register, and `data/nz_banks.yaml` (institution, display name, legal names
+`dictionaries/nz_bank_branches.csv` (bank_code, branch, institution) from the
+Payments NZ register, and `dictionaries/nz_banks.yaml` (institution, display name, legal names
 current and former, domains, phone numbers, SWIFT, brand words, agency family).
 `bank_pick(identified, chosen)` -> what to use and whether learning is blocked.
 

@@ -5,7 +5,19 @@ research. Every decision below is **closed**, with the evidence that closed it a
 the one thing that would reopen it. If you are about to change one, read its row
 first — most of them were tried the other way and measured.
 
-The short answer to "are we staying with the current architecture?" is **yes, and
+> **Reopened at 2.0.0 (3 Oct 2026).** D2 (per-bank templates), D8 (the tool never
+> re-aims its own columns) and D10 (a template that stops fitting says which
+> column) were reopened by the product owner on new evidence: on 128 realistic
+> statements the shipped templates read none perfectly, and per-file drafted
+> templates read a quarter, three of them "ok" but wrong
+> ([../auto-reading-spec.md](../auto-reading-spec.md) section 9.1). They are
+> superseded by automatic reading, which keeps what those decisions protected:
+> still **not a model** (D2's real point), still **reproducible** (D8's: every
+> output is stamped with the build and the learned state, and a learned layout
+> is never edited), and still **refuse rather than guess** (D6). D1, D3 to D7 and
+> D9 stand. The rest of this page is kept as the record of why each was decided.
+
+The short answer to "are we staying with the current architecture?" was **yes, and
 nothing in it is provisional**. An analyst builds a template for a bank, uses it on
 every statement from that bank, and when a statement stops fitting, the tool now says
 **which column** and either they fix it or they escalate. That last part is the only
@@ -77,7 +89,7 @@ stronger than the running balance.
 > first one right, not on every conversion.
 
 <a name="d2"></a>
-### D2. Per-bank templates. Not a model.
+### D2. Per-bank templates. Not a model. (SUPERSEDED at 2.0.0: still not a model; no templates)
 
 **Decision.** A declared template per bank layout, built by an analyst, versioned,
 and treated as evidence.
@@ -205,7 +217,7 @@ does not run on Windows**, open source or Pro, and **Shiny Server Pro support en
 March 2026**.
 
 <a name="d8"></a>
-### D8. The tool never re-aims its own columns.
+### D8. The tool never re-aims its own columns. (SUPERSEDED at 2.0.0: the reader finds the columns on every statement; reproducibility now rests on the learned-state stamp)
 
 **Decision.** No stage silently adjusts a template. `column_fit` reports an offset; a
 person applies it.
@@ -259,7 +271,7 @@ That is cross-checking with collective knowledge. It just comes from inside the
 document instead of from a second vendor.
 
 <a name="d10"></a>
-### D10. A template that stops fitting says which column.
+### D10. A template that stops fitting says which column. (SUPERSEDED at 2.0.0: the reader says which row and page did not add up)
 
 **Decision.** The template-per-bank architecture stays, and the failure path is
 explicit: the tool names the column, the analyst edits the template or escalates.

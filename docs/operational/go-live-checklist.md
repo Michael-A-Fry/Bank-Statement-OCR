@@ -43,12 +43,22 @@ Nothing later can be traced back to a build without this, and it is silent when
 it is wrong.
 
 **Do:** on the server, browse to `http://localhost:8100`, convert
-`samples\raw\anz\anz_transaction_export_01.csv` (a synthetic specimen that ships
-with the tool — no client data in it), and download the **JSON**.
+`samples\raw\tutorial\sample_everyday_statement.pdf` (a synthetic specimen
+that ships with the tool, from a made-up bank, with no client data in it), and
+download the **JSON**. Leave the bank empty; the row says *Please choose the
+bank*, because the made-up bank is in no register.
 
-It reads as **7 transactions**, bank **ANZ**, confidence **medium** — six
-payments out and one salary in. If that is not what you get, the install is
-wrong, not the statement; go no further.
+It comes back **Proven**, with **12 transactions**: the running balance checks
+on all 12 steps and no other reading of the columns fits.
+
+Then convert `samples\raw\anz\anz_transaction_export_01.csv`, an ANZ export.
+It reads as **7 transactions**, six payments out and one salary in, and comes
+back **Please check**. That is the right answer: the export prints no running
+balance and no totals, so nothing on it can prove the reading, and the tool asks
+rather than guesses.
+
+If either is not what you get, the install is wrong, not the statement. Go no
+further.
 
 **Check:** the third line of that file is `build.engine_version`, and it reads
 **the version you just shipped** — the same value as `app_version` in
@@ -170,8 +180,9 @@ works, and the account the app runs under must be able to write to it. Restart.
 
 **Check, in this order — the first two can both pass while Qlik has nothing:**
 
-1. Convert the ANZ specimen from step 2 again. The Convert page says **"Sent to
-   the dashboards"**.
+1. Convert the sample PDF from step 2 again (the **Proven** one: the ANZ export
+   goes to Please check and is withheld from the dashboards, rightly). The
+   Convert page says **"Sent to the dashboards"**.
 2. On disk, `<feed_dir>\transactions\` gained a `.csv`, and `<feed_dir>\runs\`
    gained one too.
 3. **Reload the Qlik app** and confirm the rows are in it, with the run showing
@@ -196,8 +207,8 @@ looks like.
 The specimen proves the plumbing. **A statement the unit already has an answer
 for** is what proves the tool.
 
-**Do:** pick a statement somebody has previously worked by hand, from a bank with
-a shipped template. Convert it. Download the Excel.
+**Do:** pick a statement somebody has previously worked by hand, ideally one with
+a running balance column. Convert it. Download the Excel.
 
 **Check, by eye, against the paper:**
 
@@ -206,9 +217,10 @@ a shipped template. Convert it. Download the Excel.
 - the **opening and closing balances** on the `Summary` sheet match what is
   printed on the statement;
 - descriptions are **verbatim** — same wording, same punctuation, nothing tidied;
-- the **confidence level** is what the file deserves: *high* only for a CSV/TSV
-  that reconciles, *medium* is the ceiling for any PDF or Excel file and is the
-  normal healthy result there.
+- the **outcome** is what the file deserves: **Proven** for a statement whose
+  running balance or totals add up; **Please check** for one with nothing to
+  prove it by. A Please check is not a failure. Open it, look, and confirm or
+  fix.
 
 A figure that disagrees is a **stop**. Do not go live around it — take it to
 [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md).
@@ -225,8 +237,9 @@ always catch. Some banks draw the minus as a short **line of ink** rather than
 printing it as a character, and some print one in the **background colour** on
 positive amounts to keep a column right-aligned. Both are invisible to the text
 layer, in opposite directions, and on a statement with **no running balance column**
-there is nothing to reconcile against — so the figures come out inverted and every
-check passes.
+there is nothing to reconcile against. Since 2.0.0 such a statement goes to
+Please check unless a proven layout of its bank vouches for it, but that is
+exactly the case where a person confirming it by eye needs to look at the signs.
 
 `pdftocairo` is what reads them. Two ways to be sure it is there:
 
@@ -289,7 +302,7 @@ them needs the app to be idle.
 | Reading | Where | Healthy |
 |---|---|---|
 | People are converting | **Admin → Health**, *Refresh from logs*, *Uploads* | rows, with today's timestamps and more than one QID |
-| Conversions are clean | same page, *Conversions by status* | mostly `ok`; a few `needs_review` is normal, a wall of `unsupported` means a bank has no template yet |
+| Conversions are clean | same page, *Conversions by status*, and **Admin → Automatic reading** | mostly `ok`; some `needs_review` is normal (statements with no balance, until their bank is trained); a wall of `unsupported` is worth a look at *Checks that failed* |
 | The feed is still being written | `<feed_dir>\transactions\` | the file count has grown since step 7 |
 | No feed write has failed | **Admin → Health → Analytics feed** | a green line. It counts the conversions that did not reach the dashboards as intended, so nobody has to go looking |
 | Qlik is current | the Qlik app's last reload time | within its schedule, and its row count has grown |

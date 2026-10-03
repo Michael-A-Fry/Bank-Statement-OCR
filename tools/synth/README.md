@@ -1,48 +1,102 @@
-# tools/synth — the measured corpus
+# tools/synth — the measured test sets
 
-Two scripts. `make_corpus.py` draws adversarial synthetic bank statements, each one
-paired with the exact rows it was drawn from. `score.R` runs the engine over them
-and scores it against that ground truth.
+Synthetic bank statements, each drawn together with the **answer key** it was
+drawn from, and the scorers that measure the engine against them. A golden file
+can only say whether the output has changed; it cannot say whether it is right,
+because it is the reader's own output. These sets can, because the right answer is
+known independently of the reader.
+
+**Nothing here ships to the server.** The offline box runs R only. The generators
+are Python; the scorers are R and use the engine's own functions.
+
+## The sets
+
+| Generator | What it draws | Used for |
+|---|---|---|
+| `make_layouts.py` | The **realistic** set: 8 bank families (ANZ, ASB, BNZ, Westpac, Kiwibank, TSB, Co-operative Bank, the fictional Rimu Bank), about 40 designs, 3-5 statements per design, about 130 text PDFs, 15 scans and 12 CSV/Excel exports per split. `--split dev` to build against, `--split holdout` to score **once**. | the 95% target and AUTO_WRONG, cold and trained |
+| `make_greenflag.py` | The **green flag**: 100 deliberately weird statements (made-up headings in odd places, 1-5 wrapping text columns, every money format, about 10 undecidable on purpose). Held back. | the acceptance test (spec section 9) |
+| `make_decoys.py` | About 80 statements buried among tables that look like transactions (loan schedules, mini-statements, fee tables). Held back. | the noise test |
+| `make_corpus.py` | 43 adversarial cases, one layout pushed until it breaks. | regression |
+| `make_bench.py` | 30 to 400-page statements. | speed |
 
 ```
-python3 tools/synth/make_corpus.py --out /tmp/corpus    # 43 cases, PDF + .truth.json
-Rscript  tools/synth/score.R /tmp/corpus                # the score board
-python3 tools/synth/make_corpus.py --list               # what each case tests
+python3 tools/synth/make_layouts.py --out /tmp/zoo/dev --split dev
+python3 tools/synth/make_corpus.py  --out /tmp/corpus           # 43 cases
+python3 tools/synth/make_layouts.py --split dev --list           # what each case tests
 ```
 
-...and two more for SIZE, because every case above is small and the statements this
-tool is for are not. Before these existed the largest statement ever put through the
-engine was **nine pages**:
+**Never build against a held-back set.** The realistic holdout, the green flag and
+the decoy set are scored once, at the end, by someone who did not build the
+reader. Looking at them while building turns an acceptance test into a dev set.
+
+## The scorers
 
 ```
-python3 tools/synth/make_bench.py --out /tmp/bench      # 30 / 100 / 200 pages
-python3 tools/synth/make_bench.py --out /tmp/bench --pages 400
-Rscript  tools/synth/bench.R /tmp/bench                 # per-stage timings
+Rscript tools/synth/score_auto.R    /tmp/zoo/dev --mode cold    --out auto.csv
+Rscript tools/synth/score_convert.R /tmp/zoo/dev --mode trained --out conv.csv
 ```
 
-`bench.R` times each stage separately and **scores correctness too** -- a fast wrong
-answer is not a result. The measured figures live in
-[maintaining-the-engine.md](../../docs/operational/maintaining-the-engine.md); the
-short version is 0.17 s/page, flat, 0 wrong figures to 400 pages. Two stages were
-rewritten on the strength of it.
+- `score_auto.R` scores the **reader** (`auto_read()`).
+- `score_convert.R` scores **conversion end to end** (`convert_statement()`,
+  with the bank, the layout store and the outputs), and reads the figures back from
+  the CSV it writes, so what is scored is what an analyst downloads. It also
+  counts any `-0.00` written.
 
-`truth.R` holds the truth-file reader both harnesses use. It is one file because
-bench.R was first written with its own copy, read a field the truth does not have,
-and reported **900 of 900 amounts fabricated** on a statement the engine had read
-perfectly -- the same lesson as `money()` printing `abs(x)` below.
+Every statement lands in exactly one cell:
+
+| cell | meaning |
+|---|---|
+| `auto_right` | converted with no person, and every figure right |
+| **`AUTO_WRONG`** | converted with no person, and **any** figure wrong, missing or extra. **This must be 0.** It is the silent failure. |
+| `check_right` | sent to a person; the reading on screen is right |
+| `check_wrong` | sent to a person; the reading on screen needs fixing |
+| `unread` | nothing read; the reason is shown |
+
+A figure is right when its (date, signed amount) pair matches the answer key in
+printed order (the longest common subsequence, so a missing row, an extra row and
+a wrong figure all count against it). A statement the key marks `decidable: false`
+can only be answered right by asking: an automatic answer on one is AUTO_WRONG
+even when its figures happen to be right.
+
+`--mode cold` reads each statement alone with nothing learned. `--mode trained`
+reads bank by bank in file-name order through one layout store per bank, learning
+exactly as the server would.
+
+**The definitions were fixed before the reader was built.** Do not change what
+counts as right to make a number move; change the reader.
+
+The 2.0.0 figures (dev set: 121/128 text PDFs, 4/7 CSV, 5/5 Excel, 12/15 scans
+automatic and right; AUTO_WRONG 0 everywhere) are in the 2.0.0 entry of
+[CHANGELOG.md](../../CHANGELOG.md).
+
+## Pictures of what the reader picked
+
+```
+Rscript tools/synth/gallery_dump.R <engine_dir> <cases.tsv> <out_dir>
+python3 tools/synth/gallery_draw.py <out_dir> <png_dir>
+```
+
+One picture per case: the pages with the columns the reader picked drawn over
+them, and what it decided, why, and where its figures differ from the answer key.
+
+## Retired with templates: `score.R` and `bench.R`
+
+`score.R` (the corpus scored through the shipped templates, with its `FABR` /
+`refus` / `bands` columns) and `bench.R` (per-stage timings) call template
+functions that were removed at 2.0.0, and **do not run** until they are rewritten
+for the automatic reader. Score the corpus with `score_convert.R` meanwhile. The
+history below is what they found, and it still stands.
+
+`truth.R` holds the truth-file reader every harness uses. It is one file because
+`bench.R` was first written with its own copy, read a field the truth does not
+have, and reported **900 of 900 amounts fabricated** on a statement the engine had
+read perfectly.
 
 **Python 3.9 or newer**, plus `reportlab` and `pymupdf`. Tested on **3.11, 3.12 and
-3.13**, which produce **byte-identical ground truth** — so the corpus can be
+3.13**, which produce **byte-identical ground truth**, so a set can be
 regenerated, bisected against, or handed to somebody else and still mean the same
-thing.
-
-> That reproducibility had to be fixed to be true. The per-case seed was
-> `hash(case_name)`, and Python **salts the hash of a string per process** unless
-> `PYTHONHASHSEED` is set — so two runs of the same interpreter produced different
-> figures and 0 of 37 truth files matched between 3.11 and 3.12. Nothing measured was
-> wrong, because each PDF carries its own truth and every score compared like with
-> like; but a corpus you cannot regenerate is one you cannot bisect against. It is
-> `zlib.crc32` now.
+thing. (The per-case seed is `zlib.crc32`, not `hash()`: Python salts the hash of
+a string per process, and once 0 of 37 truth files matched between 3.11 and 3.12.)
 
 ## Why this exists
 
@@ -54,7 +108,7 @@ Every PDF here carries a `.truth.json` written by the generator that drew it, so
 the right answer is known independently of the reader. That is the only way to find
 a **wrong figure**, as opposed to a crash.
 
-## The number that matters
+## The number that mattered (the 1.x corpus scorer)
 
 | column | meaning |
 |---|---|

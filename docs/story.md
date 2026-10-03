@@ -143,10 +143,37 @@ an engine comment, a README beside the templates — has to resolve to a file th
 exists. A sentence about this tool is now a claim it can be held to, which is the
 same rule the figures have always been under.
 
+### Templates were measured, and retired
+
+The argument at the start had been that a bank is a file, not a function, and
+that held for two years. Then it was measured properly. A realistic set of 128
+synthetic statements, from eight bank families and forty designs, was drawn with
+an answer key, written without reading the code it would test. The shipped
+templates read none of them perfectly. A template drafted from each file read a
+quarter of them, and three of those came back "ok" with a wrong figure in them.
+The root cause was not a bad template but the idea of one. A column finder that is
+all or nothing, measures one page, and takes the meaning of a column from its
+heading cannot be made safe by adding more files.
+
+So the product owner decided to start fresh: pick a bank, not a template; read
+each statement from its content; prove the reading with the statement's own
+arithmetic; learn each bank's layouts from the statements that proved them; and
+retire templates at once, with no shadow period. Geometry would only ever
+propose. The arithmetic would decide, and a reading would be called proven only
+when every balance step held and no other reading did. The scoring rules were
+written down before the reader existed, so the reader could be measured and the
+measuring stick could not be adjusted to suit it. On the same 128 statements the
+new reader read 121 automatically and right, and none automatically and wrong.
+The rest went to a person with the reason. Bank identity came from the official
+branch register and the holder's own account number, which is parsed, looked up
+and dropped in one file. Learning became a versioned record that is never edited,
+each output stamped with the state it was read against. That is the forensic
+version of "it learns": every learned item can be traced, reproduced and undone.
+
 ### Where it stands
 
-The engine is finished in the sense that matters: the next steps do not add code.
-Watch a real analyst build a template on a real statement. Prove the install on a
-real locked-down box. Add layouts as real files arrive. Everything the product
-still needs to grow, it grows as a template — which was the whole argument at the
-start, and is the one thing that has not changed since.
+Templates are gone. The next steps are to score the held-back acceptance sets
+once, independently; to close the release blockers; and then to train each bank
+on the server and run spot checks from the first day. What the product needs to
+grow it now grows from statements, with no code and no file a person has to
+write, which is the original argument carried one step further.

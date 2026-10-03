@@ -22,8 +22,8 @@ Copy the app folder to a **data drive**, not the desktop and not a user profile:
 D:\StatementStudio
 ```
 
-**Why it matters:** the folder *is* the install. Settings, templates, logs and
-the dictionaries all live inside it. A profile folder is wiped when a service
+**Why it matters:** the folder *is* the install. Settings, learned bank layouts,
+logs and the dictionaries all live inside it. A profile folder is wiped when a service
 account is recycled; a desktop folder is invisible to a service account
 altogether.
 
@@ -53,7 +53,7 @@ a different confusing failure:
    Local Security Policy → *Local Policies* → *User Rights Assignment* →
    **Log on as a batch job** → add the account.
 2. **Modify** on `D:\StatementStudio` and everything under it — it writes
-   settings, logs, uploads, templates and the feed.
+   settings, logs, uploads, learned layouts (`templates\layouts\`) and the feed.
    ```
    icacls "D:\StatementStudio" /grant "DOMAIN\svc_statementstudio:(OI)(CI)M" /T
    ```

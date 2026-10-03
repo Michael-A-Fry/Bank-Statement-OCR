@@ -1,5 +1,16 @@
 # Local metadata capture — the on-box "ML goldmine"
 
+> **At 2.0.0** templates were retired. The `template_hints` and `detection` blocks
+> described below are no longer filled in (the code that produced them is gone,
+> and the blocks are now always empty; removing them is open in
+> `outstanding-work.md`). `template_id` in a record now names the reading's
+> candidate or the learned layout, and `template_origin` the feed basis. The
+> automatic reader's bank identification never stores the account number, not
+> even as a hash, because a hash of a NZ account number is reversible (a branch
+> has about 10^7 possible numbers). **The metadata capture still stores one**
+> (`account_hash`, an unsalted SHA-256, below): that is now an open finding in
+> `outstanding-work.md`. The suggestion queue is on **Admin -> Words**, not Admin -> Templates.
+
 Every conversion can save a rich, structured record of **how it went** — the
 layout it matched, how cleanly it parsed, what the detector saw, how it
 reconciled, and any OCR / redaction signals. This is the raw material for future
@@ -108,7 +119,7 @@ tokens emitted are a low-cardinality indicator column's short distinct values
 that a description column *can contain* an account-number pattern
 (`AA 99-9999-9999999-99`) without ever storing a real digit.
 
-These "unrecognised" fields feed the suggestion queue in **Admin → Templates**
+These "unrecognised" fields feed the suggestion queue in **Admin → Words**
 (see [`../operational/admin-and-maintenance.md`](../operational/admin-and-maintenance.md)):
 what keeps turning up unrecognised is counted, offered most-frequent-first, a
 human approves one, and the deterministic engine picks it up on the next

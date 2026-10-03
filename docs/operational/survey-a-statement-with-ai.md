@@ -5,10 +5,11 @@ always needs the same handful of facts about how that bank lays its page out.
 This page holds one ready-made prompt you paste into Copilot (or any AI
 assistant) **with the statement attached**. It returns a structured description
 of the layout containing **no client information**, so you can put it in a chat,
-an email or a ticket and get a template built from it.
+an email or a ticket, and whoever maintains the reader can find out why that
+layout does not prove itself.
 
-Some problems can only be solved from real examples — how distinctive a form's
-wording is, how a scanner mangles a particular typeface, what a bank calls its
+Some problems can only be solved from real examples — how a bank prints its
+columns, how a scanner mangles a particular typeface, what a bank calls its
 closing balance. They cannot be fixed from a redacted picture. They can be fixed
 from twenty-five honest descriptions of the page.
 
@@ -25,12 +26,13 @@ One per statement. Numbering the files (`survey-01`, `survey-02`, …) makes a
 batch much easier to work through afterwards.
 
 **If Statement Studio already had a go at the file**, paste what it said as well
-— the message on the Convert page, or the **Diagnostics** table, which is under
+— the reason on the Convert page and on **Please check** (it usually names a row
+and a page), or the **Diagnostics** table, which is under
 your transactions in *Checks & detail (for review)*. Copy the *What* and
 *How to fix* columns as they are printed. Wording like *dates couldn't be read*,
 *row count doesn't match*, *running balance jumps*, *the balance doesn't add up*,
 *amounts couldn't be read*, *rows didn't parse*, *date range doesn't look right*,
-*hidden text could not be checked* or *a scan with no readable text* points
+*the arithmetic did not prove the reading* or *a scan with no readable text* points
 straight at the part of the survey that matters, and saves a round trip. (Those
 are the words the table prints. The engine's own codes stay in the logs and in
 the workbook's Diagnostics sheet, so do not go hunting for them on screen.)
@@ -383,22 +385,25 @@ one sending it, so glance at it.
 
 ## What comes back, and what it turns into
 
-| Survey section | What it configures |
+Since 2.0.0 nobody builds a template from a survey: the tool reads each statement
+from its content. A survey tells the maintainer **why a layout does not prove
+itself**, and what to check the reader against:
+
+| Survey section | What it tells the maintainer |
 |---|---|
-| 2 — fingerprint phrases | `fingerprint:` in the template — how the bank is recognised |
-| 3 — the table | the columns, and for a PDF the column bands you'd otherwise drag by hand |
-| 4 — dates | `date_format` (and whether the year has to be inferred) |
-| 5 — amounts | `amount_sign`, `decimal_mark`, negative handling |
-| 6 — balances | reconciliation, and the **label dictionary** — new wordings for opening/closing balance |
+| 2 — distinctive phrases | how the bank names itself on the page, so its statements are identified (`dictionaries\nz_banks.yaml`: legal names, websites, brand words) |
+| 3 — the table | the columns the reader should have found, in order |
+| 4 — dates | the `date_format` it should have settled on, and whether the year has to be inferred |
+| 5 — amounts | the money style (`amount_sign`, `decimal_mark`), and how negatives are shown |
+| 6 — balances | what the arithmetic had to prove it with, and new wordings for opening/closing balance for the **label dictionary** |
 | 7 — statement info | the header values shown on the result page |
-| 8 — non-transaction lines | the summary-line wordings, so totals aren't counted as transactions |
-| 9 + 10 — awkward bits | the edge-case register, and whichever engine change the batch turns out to need |
+| 8 — non-transaction lines | the summary and total lines, so they are not counted as transactions |
+| 9 + 10 — awkward bits | the edge-case register, and whichever reader change the batch turns out to need |
 
-Sections 1–8 are usually enough to build a working template. Sections **9 and
-10 are the ones worth collecting in bulk**: twenty-five statements' worth of
-"what would break this" is what tells us which engine improvements are actually
-worth making, instead of guessing from one sample.
+Sections **9 and 10 are the ones worth collecting in bulk**: twenty-five
+statements' worth of "what would break this" is what tells us which reader
+improvements are actually worth making, instead of guessing from one sample.
 
-Related: [Teach it a new bank layout](adding-a-bank-template.md) ·
+Related: [A bank or a layout the tool has not seen](adding-a-bank-template.md) ·
 [When something looks wrong](when-something-goes-wrong.md) ·
 [Edge-case register](../context/edge-cases.md)

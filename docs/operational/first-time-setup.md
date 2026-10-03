@@ -9,7 +9,7 @@ You need four things:
    `cran.r-project.org`. R's own installer does not put it on the `PATH`, and it
    does not need to be: `make-bundle.bat` looks under `Program Files\R\` too.
 2. **the app folder on that PC** — the source folder for this tool, holding
-   `make-bundle.bat`, `app.R`, `R\`, `templates\` and `VERSION`. However it
+   `make-bundle.bat`, `app.R`, `R\`, `dictionaries\` and `VERSION`. However it
    reaches you (a copy, a zip, a checkout), unpack it somewhere you can write to
    and work from there. It is not the same thing as the package you build in
    step 1.
@@ -131,8 +131,8 @@ app:
 
 **Until you change it, the Admin tab refuses to open for anybody** — not even
 with the right password typed, because the placeholder is printed in this repo
-and in the example file. Admin manages templates, the shared label dictionary and
-the analytics feed, so it stays shut. The app prints
+and in the example file. Admin manages the learned bank layouts, the shared
+label dictionary and the analytics feed, so it stays shut. The app prints
 `Admin is CLOSED - no admin password is set` at startup while that is the case.
 
 Set it here, or set the `BSO_ADMIN_PASSWORD` environment variable (which wins),

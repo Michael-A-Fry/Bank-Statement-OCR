@@ -4,6 +4,14 @@ Every real-world statement edge case we know of, with an **honest** status and
 how it is (or will be) handled. This is the checklist the engine is measured
 against - "this is real world."
 
+> **Since 2.0.0 there are no templates.** Where a row below says "the template"
+> or names a template key (`delimiter`, `decimal_mark`, `merge_continuation`),
+> the automatic reader now settles that fact from the statement itself, by
+> voting over the whole document and proving the result with the arithmetic.
+> The table reader underneath is the same one, so each mechanism and its test
+> still stand. Section H is rewritten for 2.0.0. What the 2.0.0 reader does not
+> yet handle is in `outstanding-work.md` and the 2.0.0 entry of `CHANGELOG.md`.
+
 **Status key**
 - ✅ **handled + tested** - covered by the engine with a passing test.
 - 🟡 **handled (reader) / partial** - mechanism exists but not proven on a real
@@ -133,24 +141,26 @@ outcomes:
 
 | Case | Status | How |
 |---|---|---|
-| Ambiguous match (two templates tie) | ✅ | a match requires strictly greater than the 2nd best. A tie no longer dead-ends: `R/convert.R` takes the best candidate (tested over hand-built, then deterministic), converts, and holds the run at `needs_review` with the tie named — so the analyst gets her data, full reconciliation still runs, and nothing reaches the dashboards. Only a tie whose winner reads **zero** rows is reported `unsupported`, and that is the one case the screen offers a pick (tested) |
-| No template matches | ✅ | `unsupported` + closest‑match diagnostic |
-| Wrong template chosen by user (Convert table) | ✅ | the file is read with exactly that template and fully reconciled, so a wrong choice shows as failed checks or "read nothing", never as a clean result. A row left on the tool's guess is NOT forced — detection decides, with its thin-margin review hold intact |
-| Chosen template gone by Convert time (hidden / deleted) | ✅ | refused for that file (`template_unavailable`), never silently auto-detected instead; the other files are unaffected |
-| Table guess ≠ conversion's pick | ✅ | cannot happen for a digital file: `identify_file` runs the same `detect_statement` on the same page text and template set (measured: 0 differences across 54 sample files + 43 corpus cases). A scan is not guessed |
+| Two readings of the columns both add up | ✅ | not proven: a reading is proven only when it is the **only** one that passes every check (`unique`). The statement goes to Please check with the reason, and nothing reaches the dashboards (tested, `test-auto-read.R`) |
+| Nothing on the statement can prove the reading (no balance, no totals) | ✅ | Please check, until a layout of that bank proved by other statements matches it; then *Matches a learned layout*, spot-checked at twice the rate |
+| A layout the tool has never seen | ✅ | read from its content like any other; proven -> converts and is learned as a provisional layout. No setup needed |
+| Wrong bank picked by the person | ✅ | the figures come from the statement's arithmetic, not the bank; a confident disagreement blocks learning until a person answers *Which bank?*, and a statement with no arithmetic is not converted on a layout while its bank is in question (tested) |
+| A bank given as an account number | ✅ | not used; the bank is taken from the statement and a message says so (tested) |
+| A bundle of several statements | ✅ | split only when an independent count confirms the boundaries; each statement identified and proven on its own pages. Unsplittable: converts only if every row proves, else Please check with *several statements in one file* |
+| Two date columns (value date and transaction date) | 🟡 | read, but which one becomes `date` currently depends on the column order on one Kiwibank export (a proven reading whose dates differ by a day). Open; the fix is to choose by heading or content, or ask |
+| A scanned page whose OCR runs out of time (60 s) | 🟡 | read as blank and named in `input$meta$ocr_timed_out`; the reader does not yet force Please check for it. Open |
 | Any error anywhere | ✅ | wrapped → `failed` with actionable message; one JSON log line per run |
 
 ---
 
 ## The honest bottom line (updated)
 
-The delimited path, redaction guard and OCR are built and tested. The **PDF
-transaction‑table parser is now built** (declarative `format: pdf`), tested on a
-real populated table, and **mid‑block gaps / headings / annotations are handled**
-by the date‑parse row filter (a row is kept only if its date cell parses).
-**Excel (.xlsx)** and **key‑value (IRD‑style) extraction** are in too, and a
-**visual PDF wizard** creates PDF templates by drawing boxes.
+The delimited, Excel, PDF and OCR paths are built and tested, and since 2.0.0
+every statement is read by the automatic reader: columns from the content, roles
+proved by the arithmetic, nothing automatic unless it proves uniquely. On the
+synthetic dev set none was read automatically and wrongly.
 
-What remains is **data‑gated, not code**: real native export files for more
-banks, and real per‑bank PDF statements to add more `format: pdf` templates -
-each is a YAML + a wizard session, not an engine change.
+What remains is **evidence on real statements**: the held-back acceptance sets,
+and tracking plus spot checks on the server from the first day. A layout that
+does not prove is a reader improvement measured on every test set, not a
+template.

@@ -19,7 +19,8 @@ Plus the **Qlik analysts** who consume the governed analytics feed.
 
 ## Vision (1–3 years)
 The trusted, deterministic **standard** for turning any statement into defensible
-data: every bank layout is just a template, dashboards are fed automatically, there
+data: any bank's statement is read from its content and proved by its own
+arithmetic, dashboards are fed automatically, there
 are **zero silent errors**, and one analyst can run and grow it — no engineer
 required. Over time it expands beyond statements to **all financial documents**
 (IRD forms, summaries, letters) as the org's document-extraction backbone.
@@ -31,19 +32,24 @@ Dominant input: **genuinely mixed, heavy on PDFs** (both text-layer and scanned/
 ## Objectives
 - **Correctness first — never silently wrong.** A wrong figure that looks right is
   the cardinal failure; better to fail or flag loudly than emit a plausible guess.
-- **Any layout via templates, no code.** The template system *is* the product; a
-  non-technical analyst adds a bank in minutes.
+- **Any layout, no code, no template.** You pick the bank; the tool reads each
+  statement from its content, proves the reading with the statement's own
+  arithmetic, and learns each bank's layouts from the statements that proved them.
+  A new bank needs nothing set up. (Amended 3 Oct 2026, when the product owner
+  retired templates: `auto-reading-spec.md` section 2.)
 - **Prove completeness.** Reconcile (opening + transactions = printed closing);
   flag anything that can't be proven.
 - **Read what is readable; keep descriptions verbatim; deterministic**
-  (same input + template ⇒ identical output).
-- **Governed analytics.** Only clean, reconciled conversions from proven templates
-  reach the Qlik dashboards.
+  (same input + same build + same learned state ⇒ identical output).
+- **Governed analytics.** Only conversions the arithmetic proved (or that match a
+  layout already proven, or that a person confirmed) reach the Qlik dashboards.
 - **Air-gapped, pure-R, one-analyst maintainable.**
 
 ## What this is NOT
-- **Not machine learning / not a guesser** — purely deterministic templates + rules;
-  no probabilistic inference of what a value is.
+- **Not machine learning / not a guesser** — purely deterministic rules and
+  arithmetic; no probabilistic inference of what a value is. What the tool "learns"
+  is a versioned record of readings its own arithmetic proved, every item
+  traceable and undoable — never a model.
 - **Not an accounting / general-ledger system** — it extracts and checks; it does
   not do bookkeeping or treat categorisation as financial truth.
 - **Not the system of record** — it converts and feeds; it is not the durable
@@ -78,12 +84,13 @@ This is the cardinal rule for the *screen*, as "never silently wrong" is for the
 feels like helping. Every time the engine learns to notice something subtle, the
 temptation is to put the subtlety in front of the user. That is how a tool that
 replaces "file in, spreadsheet out" ends up asking a forensic accountant which of
-two templates she would like to use.
+two templates she would like to use (and, at 2.0.0, is why templates went).
 
 Applying it:
-- **Can the tool work it out?** Then work it out. Two templates fitting equally
-  well is not a question — pick deterministically (a tested template over a
-  hand-built one), convert, and flag it for review.
+- **Can the tool work it out?** Then work it out. Which column is money out is
+  not a question — the arithmetic answers it. The bank is not a question when the
+  statement says it — it is filled in. Ask only what the statement cannot settle,
+  and say why.
 - **Could this person answer it if asked?** Beth cannot know which column band is
   three points too far left. So do not explain bands to her: do the safe thing, say
   plainly whether she can use the file, and route the problem to whoever can fix it.
@@ -98,7 +105,9 @@ Applying it:
 - **Fail-closed when unsure:** emit `NA` + a flag (or `needs_review`), never a
   plausible guess.
 - **Verbatim content; deterministic format-only normalisation** of dates/amounts per
-  the template's declared rules. No silent content "correction".
+  the formats the reader settled from the whole document. No silent content
+  "correction"; a figure worked out from the balance is always marked as such.
 - **No silent row drops** — completeness is proven, not assumed.
 - Every conversion is logged with a stable run id; nothing that isn't clean +
-  reconciled + from a proven template reaches org dashboards.
+  proven (by the arithmetic, a proven layout, or a person's confirm) reaches org
+  dashboards.
