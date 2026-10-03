@@ -262,9 +262,34 @@ split_bundle <- function(input, template, meta = NULL) {
   if (any(vapply(segs, is.null, logical(1)))) return(NULL)   # a segment wouldn't parse -> refuse
 
   # ---- combine transactions (tagged with the statement they came from) ----
+  #
+  # AND TAGGED WITH WHETHER THEIR OWN COLUMNS FIT. A bundle is many documents, and a
+  # bank that re-ran its composition partway through moved the columns for the later
+  # statements only. Measured on ten statements nudged from -45pt to +30pt: all ten
+  # split correctly and the run was held (trust low), but 27 figures came back WRONG
+  # -- a fabricated 0, a sign inversion -- and every one of those rows looked perfect
+  # on its own line. An analyst who downloads the workbook despite the warning has
+  # nothing on the row to tell them which rows to distrust.
+  #
+  # So the row carries it. `columns_misaligned` is a per-row fact derived from that
+  # segment's OWN column_fit, which is the only check that can see the difference
+  # between statement 3 and statement 7 of one file.
+  #
+  # IT DOES NOT NULL THE FIGURE. The figure is what the reader read, and a reader
+  # that blanks what it read is no use to somebody holding the statement; the flag
+  # says "check this one", the diagnostic says which statement and by how much, and
+  # the trust level keeps it out of the dashboards. Refusing to GUESS and refusing to
+  # SHOW are different things.
+  misfit <- vapply(seq_len(k), function(i) {
+    f <- safe(column_fit(.subinput_pages(input, ranges[[i]]), template), NULL)
+    !is.null(f) && identical(safe(.column_fit_severity(f), "info"), "medium")
+  }, logical(1))
   txs <- lapply(seq_len(k), function(i) {
     t <- segs[[i]]$parsed$transactions
     t$statement_index <- i
+    if (isTRUE(misfit[i]) && nrow(t))
+      t$flags <- ifelse(nzchar(t$flags %||% ""),
+                        paste0(t$flags, ",columns_misaligned"), "columns_misaligned")
     t
   })
   combined_tx <- do.call(rbind, txs)

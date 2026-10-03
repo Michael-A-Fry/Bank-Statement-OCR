@@ -217,6 +217,7 @@ diag_for_route <- function(d) {
 # Each says what is TRUE of the row, never what to do about it: the row is one
 # cell wide, and the advice belongs to the check or diagnostic that owns it.
 FLAG_PLAIN <- c(
+  columns_misaligned = "this statement's columns did not line up - check this row",
   amount_from_balance = "worked out from the balance column, not read from the amount",
   malformed          = "the amount could not be read as a number",
   fx                 = "carries a foreign-currency amount",

@@ -83,15 +83,21 @@ test_that("every result status has plain-English wording", {
 # the emission sites themselves rather than off a doc table, so a token the engine
 # starts or stops emitting shows up here and not on screen.
 .row_flag_tokens <- function() {
-  src <- c(.src("R/parse.R"), .src("R/parse_pdf_table.R"))
+  # R/split.R too: a bundle tags the rows of any statement whose OWN columns did not
+  # fit (`columns_misaligned`), and that flag reaches the same workbook column as the
+  # rest. A scan that only looked at the two parsers called it a dead entry.
+  src <- c(.src("R/parse.R"), .src("R/parse_pdf_table.R"), .src("R/split.R"))
   # the delimited path appends with `f <- c(f, "malformed")`; the PDF path with
   # `f <- add(f, cond, "no_date")`
   hits <- unlist(regmatches(src, gregexpr('(c\\(f,\\s*|add\\(f,[^,]+,\\s*)"[a-z_]+"', src)))
   toks <- sub('^.*"([a-z_]+)"$', "\\1", hits)
   # ...and the PDF path SEEDS the column with the two a redacted or unreadable row
   # carries, which no add() call names.
-  seed <- grep('ifelse\\(redacted, "redacted", ifelse\\(malformed, "malformed", ""\\)\\)', src)
-  unique(c(toks, if (length(seed)) c("redacted", "malformed") else character(0)))
+  seed <- grep('ifelse\\(malformed, "malformed", ""\\)', src)
+  # ...and split.R appends its flag by pasting, not by add()/c()
+  paste_tok <- unlist(regmatches(src, gregexpr('"columns_misaligned"', src)))
+  unique(c(toks, if (length(seed)) "malformed" else character(0),
+           if (length(paste_tok)) "columns_misaligned" else character(0)))
 }
 
 test_that("every row flag the engine can emit has plain-English wording", {

@@ -1178,6 +1178,30 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     suppressWarnings(as.numeric(.num(md$opening_balance %||% NA_character_, dec)))[1],
     balance[-n])
   from_balance <- if (n == 0) logical(0) else {
+    # A ZERO THE BALANCES CONTRADICT IS A MISREAD, NOT A TRANSACTION.
+    #
+    # MEASURED: on a bundle whose statement 5 was composed 12pt to the right -- well
+    # inside the slack a 65pt band has, so nothing else objected -- one amount cell
+    # came back as exactly 0 where the statement said -24.16. The balances either
+    # side were read perfectly and their difference IS -24.16, but the derivation
+    # below only fires on NA, so a fabricated 0 went out while the recovery that
+    # would have fixed it stood by. A wrong figure that looks like a real one is the
+    # worst output this tool can produce, and 0 is the most plausible-looking wrong
+    # figure there is.
+    #
+    # A GENUINE 0.00 TRANSACTION IS NOT TOUCHED, because then the balance does not
+    # move either and there is no contradiction: the test is a zero amount sitting
+    # between two balances that differ, which cannot both be true. Nulling it hands
+    # the row to the derivation immediately below, which supplies the figure the
+    # page itself proves -- so this turns a fabricated figure into a correct one
+    # rather than into a gap.
+    if (any(has_bal)) {
+      d0 <- round(balance - prev_bal, 2)
+      contradicted <- !is.na(amt$value) & abs(amt$value) < 0.005 &
+        has_bal & !is.na(balance) & !is.na(prev_bal) &
+        is.finite(d0) & abs(d0) >= 0.005
+      if (any(contradicted)) amt$value[contradicted] <- NA_real_
+    }
     derivable <- is.na(amt$value) &
       has_bal & !is.na(balance) & !is.na(prev_bal)
     d <- round(balance - prev_bal, 2)

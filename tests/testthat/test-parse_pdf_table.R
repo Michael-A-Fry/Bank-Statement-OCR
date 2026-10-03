@@ -1066,3 +1066,14 @@ test_that("a page in the other orientation is left alone, not squashed into the 
   expect_true(.pdf_orientation_differs(land, .A4_W, .A4_H))       # portrait page now
   expect_false(.pdf_orientation_differs(land, .A4_H, .A4_W))
 })
+
+test_that("the contradicted-zero rule is in the engine, before the derivation", {
+  src <- paste(readLines(file.path(engine_root(), "R", "parse_pdf_table.R"), warn = FALSE),
+               collapse = "\n")
+  expect_match(src, "A ZERO THE BALANCES CONTRADICT IS A MISREAD", fixed = TRUE)
+  # it must run BEFORE `derivable` is computed, or the row it nulls is never derived
+  expect_lt(regexpr("contradicted <- ", src, fixed = TRUE),
+            regexpr("derivable <- is.na(amt$value)", src, fixed = TRUE))
+  # and a genuine 0.00 transaction (balance does not move) is untouched
+  expect_match(src, "A GENUINE 0.00 TRANSACTION IS NOT TOUCHED", fixed = TRUE)
+})

@@ -13,6 +13,45 @@ finding id.
 
 ---
 
+## 1.14.0
+
+**No wrong figure reaches a download unmarked.**
+
+Measured on a **ten-statement** bundle whose segments were composed from 45pt left to
+30pt right of the template. All ten split correctly and the run was held
+(`needs_review`, trust `low`) — but eleven figures came back wrong, and every one of
+them looked perfect on its own line. An analyst who downloads the workbook despite
+the warning had nothing on the row to tell them which rows to distrust.
+
+- **`columns_misaligned`** is now a row flag, derived from that segment's *own*
+  `column_fit` — the only check that can tell statement 3 from statement 7 of one
+  file. It does **not** null the figure: the figure is what the reader read, and a
+  reader that blanks what it read is no use to somebody holding the statement.
+  Refusing to *guess* and refusing to *show* are different things.
+- **A zero the balances contradict is a misread, not a transaction.** One cell read
+  as exactly `0` where the statement said `-24.16`; the balances either side were
+  read perfectly and their difference *is* `-24.16`, but the balance derivation only
+  fired on `NA`, so a fabricated `0` went out while the recovery that would have
+  fixed it stood by. `0` is the most plausible-looking wrong figure there is — it
+  sorts, sums and prints like a real one. A genuine `0.00` transaction is untouched,
+  because then the balance does not move either and there is no contradiction.
+
+Result on that bundle: **11 wrong figures → 10, and all 10 flagged**, in statements
+the diagnostic names. Zero unflagged wrong figures.
+
+**Two measurements worth keeping**, both corrections of my own earlier counts:
+
+- the first count of that bundle said *27* fabricated. It was wrong: pairing rows
+  positionally across the whole file, when statements 7 and 9 each dropped 3 rows,
+  shifted every later comparison. Paired **per segment** the real figure was 11. A
+  harness that can accuse the engine has to be as checkable as the engine — the
+  third time that lesson has been paid for here.
+- **mixed formats in one PDF** (three different banks concatenated) are detected and
+  refused loudly: `multiple_statements` at high severity naming the remedy, plus
+  reconciliation, balance-break, column-band and date diagnostics, trust `low`.
+
+Suite 71 files / 1,001 tests / 5,372 passing / 0 failed.
+
 ## 1.13.0
 
 **A bundle is now checked statement by statement.**
