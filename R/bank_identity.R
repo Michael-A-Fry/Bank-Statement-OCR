@@ -37,6 +37,7 @@
   account_repaired = 50,         # bank code looked misread; the branch says which code
   account_code_masked = 50,      # bank code visible, branch masked or anonymised
   account_code = 40,             # bank code of a number whose branch is not in the register
+  account_code_doubtful = 20,    # bank code of a number whose branch the register gives another code
   legal_name = 80, legal_name_global = 50,
   domain = 60, phone = 60, swift = 60,
   brand = 30)
@@ -57,13 +58,40 @@
   if (any(ok)) cands[ok][1] else NA_character_
 }
 
+# .bi_clean(s) -- page text as plain ASCII, which every later step works on. Dashes
+# become "-", bullets and black boxes become the mask "*" ("12-3456-*******-00"),
+# accented letters lose their accents, anything else non-ASCII becomes a space.
+# Done on iconv's "<xx>" spelling of each byte, because tolower(), chartr() and
+# gsub() stop with "invalid multibyte string" on a bullet when R runs in a
+# non-UTF-8 locale.
+.BI_ASCII_MAP <- local({
+  m <- list("-" = c("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212"),
+            "*" = c("\u2022", "\u25cf", "\u2588", "\u25a0", "\u25aa", "\u00b7"),
+            " " = "\u00a0", "a" = c("\u00e4", "\u0101"), "e" = c("\u00e9", "\u00e8", "\u0113"),
+            "i" = "\u012b", "o" = c("\u00f6", "\u014d"), "u" = c("\u00fc", "\u016b"),
+            "A" = "\u0100", "E" = "\u0112", "I" = "\u012a", "O" = "\u014c", "U" = "\u016a")
+  to <- rep(names(m), lengths(m))
+  from <- vapply(unlist(m), function(ch)
+    paste0("<", as.character(charToRaw(enc2utf8(ch))), ">", collapse = ""), "")
+  stats::setNames(to, from)
+})
+.bi_clean <- function(s) {
+  s <- as.character(s)
+  if (!length(s)) return(s)
+  na <- is.na(s)
+  s <- iconv(enc2utf8(s), "UTF-8", "ASCII", sub = "byte")
+  s[is.na(s)] <- ""
+  for (k in names(.BI_ASCII_MAP)) s <- gsub(k, .BI_ASCII_MAP[[k]], s, fixed = TRUE)
+  s <- gsub("(<[0-9a-f]{2}>)+", " ", s)
+  s[na] <- NA_character_
+  s
+}
+
 # .bi_norm(s) -- the form names are compared in: lower case, punctuation to spaces,
 # "Ltd" = "Limited", "Co-operative" = "Cooperative", so "ANZ Bank New Zealand Ltd."
 # and "ANZ BANK NEW ZEALAND LIMITED" are the same name.
 .bi_norm <- function(s) {
-  s <- tolower(as.character(s))
-  s <- chartr("\u00f6\u00e9\u00e8\u00e4\u00fc\u0101\u0113\u012b\u014d\u016b",
-              "oeeauaeiou", s)
+  s <- tolower(.bi_clean(s))
   s <- gsub("\\bco-?\\s?op", "coop", s, perl = TRUE)
   s <- gsub("[^a-z0-9&]+", " ", s)
   s <- gsub("\\bltd\\b", "limited", s, perl = TRUE)
@@ -202,12 +230,17 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   paste(sort(c(da[diff], db[diff])), collapse = "") %in% .BI_OCR_PAIRS
 }
 
-.BI_SEP <- "[ \\-\u2013]{1,2}"
+.BI_SEP <- "[ -]{1,2}"
 .BI_ACCT_RX <- paste0(
   "(?<![0-9A-Za-z])([0-9OoIlSB]{2})", .BI_SEP,
   "([0-9OoIlSB]{4}|[Xx*]{4}|[0-9]{2}[Xx*]{2})", .BI_SEP,
-  "([0-9OoIlSBXx*\u2022]{7,8})", .BI_SEP,
+  "([0-9OoIlSBXx*]{7,8})", .BI_SEP,
   "([0-9OoIlSB]{2,4})(?![0-9A-Za-z])")
+# OCR sometimes breaks the body in two ("15-9666-1484 100-022"). Only with dashes
+# round the body, so a space-separated number is never split in the wrong place.
+.BI_ACCT_SPLIT_RX <- paste0(
+  "(?<![0-9A-Za-z])([0-9OoIlSB]{2})-([0-9OoIlSB]{4})-",
+  "([0-9OoIlSB]{2,6} [0-9OoIlSB]{1,6})-([0-9OoIlSB]{2,4})(?![0-9A-Za-z])")
 
 # .bi_find_accounts(s) -> data.frame(start, end, code, branch, base, suffix): every
 # NZ-account-shaped run in one string. Letters OCR mistakes for digits are mapped
@@ -216,12 +249,18 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   none <- data.frame(start = integer(0), end = integer(0), code = character(0),
                      branch = character(0), base = character(0), suffix = character(0),
                      stringsAsFactors = FALSE)
-  if (is.na(s) || !nzchar(s)) return(none)
+  if (length(s) != 1 || is.na(s) || !nzchar(s)) return(none)
+  s <- .bi_clean(s)
   m <- gregexpr(.BI_ACCT_RX, s, perl = TRUE)[[1]]
-  if (m[1] < 0) return(none)
+  if (m[1] < 0) {
+    m <- gregexpr(.BI_ACCT_SPLIT_RX, s, perl = TRUE)[[1]]
+    if (m[1] < 0) return(none)
+  }
   cs <- attr(m, "capture.start"); cl <- attr(m, "capture.length")
   out <- lapply(seq_along(m), function(k) {
     part <- substring(s, cs[k, ], cs[k, ] + cl[k, ] - 1L)
+    part[3] <- gsub(" ", "", part[3], fixed = TRUE)
+    if (!nchar(part[3]) %in% 7:8) return(NULL)
     letters <- nchar(gsub("[^OoIlSB]", "", paste(part, collapse = "")))
     if (letters > 2) return(NULL)
     part <- chartr("OoIlSB", "001158", part)
@@ -238,13 +277,20 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # institution, strength, code) or NULL. The number's digits stop here.
 .bi_account_evidence <- function(code, branch, base, suffix, ref) {
   # Strength by the specific case; kind by what the reason will say.
-  shown <- c(account_code_masked = "account_code", account_citibank = "account_unverified")
+  shown <- c(account_code_masked = "account_code", account_code_doubtful = "account_code",
+             account_citibank = "account_unverified")
   row <- function(kind, inst, code)
     data.frame(kind = if (kind %in% names(shown)) shown[[kind]] else kind, institution = inst,
                strength = .BI_STRENGTH[[kind]], code = code, stringsAsFactors = FALSE)
   fam_of_code <- function(cd) if (cd %in% names(ref$code_family)) ref$code_family[[cd]] else NA_character_
   branch_masked <- !grepl("^[0-9]{4}$", branch)
   body_masked <- !grepl("^[0-9]+$", base)
+  # Placeholder numbers from guides and test files (11-1111-1111111-00,
+  # 02-1300-1234567-00) are nobody's account: not even their code says anything.
+  # Judged by the body alone, since real branches include 1111 and 3456.
+  b <- sub("^0+", "", base)
+  if (!body_masked && (grepl("^([0-9])\\1*$", b) || grepl(b, "01234567890123456789", fixed = TRUE)))
+    return(NULL)
   if (branch_masked) {
     f <- fam_of_code(code)
     return(if (is.na(f)) NULL else row("account_code_masked", f, code))
@@ -270,8 +316,10 @@ nz_account_checksum <- function(code, branch, base, suffix) {
     if (isTRUE(ref$pseudo[[inst]])) return(row("account_code", ref$family[[inst]], other))
     return(row("account_repaired", inst, other))
   }
+  # A branch the register gives to another code, beyond repair: the code or the
+  # branch is misread (38 read as 88), so the code is barely evidence.
   f <- fam_of_code(code)
-  if (is.na(f)) NULL else row("account_code", f, code)
+  if (is.na(f)) NULL else row(if (is.na(other)) "account_code" else "account_code_doubtful", f, code)
 }
 
 # ---------------------------------------------------------------------------
@@ -280,15 +328,30 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 
 .BI_MONTHS <- "(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*"
 .BI_DATE_RX <- paste0(
-  "\\b\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b|",
+  "\\b\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}\\b|\\b\\d{4}[/.-]\\d{1,2}[/.-]\\d{1,2}\\b|",
   "\\b\\d{1,2}[ -]", .BI_MONTHS, "\\b|\\b", .BI_MONTHS, " \\d{1,2}\\b|\\b20\\d{2}[01]\\d[0-3]\\d\\b")
 .BI_MONEY_RX <- "(?<![0-9.,])\\(?-?\\$?\\d[0-9,]*\\.\\d{2}(?![0-9%])"
-# A label is an account word in the last two words before the number, so an OCR'd
-# "Account nurnber" still labels it.
-.BI_LABEL_RX <- "(^| )(account|acct|acc|a/c)[^ ]*( [^ ]{1,8})?[ :#.-]*$"
+.BI_FIGURE_RX <- "^\\(?[-+]?\\$?[0-9][0-9,]*(\\.[0-9]{2})?\\)?( ?(cr|dr|od))?-?$"
+.BI_DATE_START_RX <- paste0("^(", .BI_DATE_RX, ")")
+# A label is an account word in the last three words before the number, so an
+# OCR'd "Account nurnber" and "Your account number is" still label it.
+.BI_LABEL_RX <- "(^| )(account|acct|acc|a/c)[^ ]*( [^ ]{1,8}){0,2}[ :#.-]*$"
+# A payment-instruction box ("How to pay", "Ways to pay your card") or a list of
+# the holder's payees and standing payments: every account number in it belongs
+# to whoever is paid.
+.BI_PAYBOX_RX <- paste0(
+  "\\b(how to pay|ways to pay|to pay (your|this|us|by|online|the)|pay (by|online|using|into|us)\\b|",
+  "payment (options|instructions|methods|slip|advice)|remittance|make a payment|",
+  "making (a )?payments?|paying (your|by|us)\\b|",
+  "(automatic|scheduled|regular|future|recurring|bill) payments?\\b|direct (debits?|credits?)\\b|",
+  "standing orders?\\b|payees\\b)")
+# Words that make a labelled number someone else's: a payment's other party, or
+# the account a loan or card is repaid from ("Direct debit account", "Linked
+# account", "Nominated account"), which is usually at another bank.
 .BI_CUE_RX <- paste0("\\b(to|from|tfr|trf|transfer|xfer|payee|payer|other|party|pay|paid|",
                      "payment|payments|ap|dd|dc|bp|ft|ref|reference|particulars|",
-                     "originating|via)\\b")
+                     "originating|via|debit|debited|credited|direct|linked|link|nominated|",
+                     "funding|repayment|repayments|repay|settlement|drawn|beneficiary)\\b")
 
 # .bi_tail(s, n) -- the last n words of s, lower case.
 .bi_tail <- function(s, n = 6L) {
@@ -303,7 +366,7 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # "Account number        01-..." is a label cell and a value cell.
 .bi_lines_words <- function(w) {
   if (is.null(w) || !NROW(w)) return(list())
-  txt <- trimws(as.character(w$text))
+  txt <- trimws(.bi_clean(w$text))
   keep <- !is.na(txt) & nzchar(txt)
   w <- w[keep, , drop = FALSE]; txt <- txt[keep]
   if (!nrow(w)) return(list())
@@ -334,7 +397,7 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # per text line, cells split at runs of 3+ spaces, positions in characters.
 .bi_lines_text <- function(s) {
   if (is.null(s) || is.na(s) || !nzchar(s)) return(list())
-  ln <- strsplit(s, "\r?\n")[[1]]
+  ln <- strsplit(.bi_clean(s), "\r?\n")[[1]]
   out <- list()
   for (k in seq_along(ln)) {
     if (!nzchar(trimws(ln[k]))) next
@@ -374,7 +437,6 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   z <- rep("table", n)
   z[seq_len(st - 1L)] <- ifelse(top[seq_len(st - 1L)], "masthead", "header")
   if (en < n) z[(en + 1L):n] <- "footer"
-  attr(z, "tx") <- tx
   z
 }
 
@@ -396,13 +458,20 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   if (is.na(text) || !nzchar(text)) return(ev)
   hay <- paste0(" ", .bi_norm(text), " ")
   brand_ok <- zone %in% c("masthead", "footer", "preamble")
+  # A logo OCR'd letter by letter ("B N Z") is read as the word it spells; only
+  # for brand words, which are weak anyway.
+  spaced <- paste0(" ", gsub("(?<=\\b[a-z]) (?=[a-z]\\b)", "", trimws(hay), perl = TRUE), " ")
   for (p in ref$patterns) {
     if (p$kind == "brand" && !brand_ok) next
     if (!nzchar(p$needle)) next
     pos <- gregexpr(paste0(" ", p$needle, " "), hay, fixed = TRUE)[[1]]
+    if (pos[1] < 0 && p$kind == "brand" && zone == "masthead") {
+      hay_b <- spaced
+      pos <- gregexpr(paste0(" ", p$needle, " "), hay_b, fixed = TRUE)[[1]]
+    } else hay_b <- hay
     if (pos[1] < 0) next
     for (s in pos) {
-      before <- strsplit(trimws(substr(hay, 1, s)), " ")[[1]]
+      before <- strsplit(trimws(substr(hay_b, 1, s)), " ")[[1]]
       if ("not" %in% utils::tail(before, 6)) next
       if (any(utils::tail(before, 1) %in% p$not_after)) next
       ev <- rbind(ev, .bi_ev(p$kind, p$institution, p$strength, zone, page, NA_character_))
@@ -427,7 +496,50 @@ nz_account_checksum <- function(code, branch, base, suffix) {
       ev <- rbind(ev, .bi_ev("swift", ref$swift$institution[k], .BI_STRENGTH[["swift"]],
                              zone, page, NA_character_))
   }
+  # A bank the list does not know ("Rimu Bank", "Bank of Melbourne", "Tui Credit
+  # Union") at the top or foot of the page: the statement may be that bank's, so
+  # nothing else on it can make the reading sure. Read field by field, so an
+  # export's "Name,Bank,..." heading is not "Name Bank".
+  if (brand_ok && !nrow(ev) &&
+      any(vapply(strsplit(text, "[,;\t|]")[[1]], function(f) .bi_other_bank(.bi_norm(f)), NA)))
+    ev <- .bi_ev("other_bank", NA_character_, 0, zone, page, NA_character_)
+  # An Australian BSB, a UK sort code or "plc": the same names ("Westpac Banking
+  # Corporation", "TSB Bank plc", "The Co-operative Bank p.l.c.") issue
+  # statements outside New Zealand.
+  if (grepl(.BI_FOREIGN_RX, low, perl = TRUE))
+    ev <- rbind(ev, .bi_ev("foreign", NA_character_, 0, zone, page, NA_character_))
   ev
+}
+
+.BI_FOREIGN_RX <- paste0("\\bbsb\\b[ :.#no]*[0-9]{3}[ -]?[0-9]{3}\\b|\\bsort code\\b|",
+                         "\\bp\\.?l\\.?c\\b|\\brouting (number|no)\\b")
+
+# Words that, before "bank", make a phrase that names no bank ("your bank",
+# "internet bank", "a registered bank", "the Reserve Bank").
+.BI_NOT_A_BANK <- c(
+  "the", "your", "our", "any", "another", "other", "this", "that", "each", "every", "all", "own",
+  "its", "their", "and", "for", "from", "with", "not", "non", "same", "different", "internet",
+  "online", "mobile", "phone", "telephone", "digital", "business", "personal", "private",
+  "statement", "registered", "reserve", "central", "trading", "clearing", "issuing", "paying",
+  "receiving", "sending", "overseas", "foreign", "local", "retail", "commercial", "investment",
+  "merchant", "partner", "agency", "member", "savings", "zealand", "new", "food", "data",
+  "blood", "piggy", "time", "energy", "xero", "myob")
+
+# .bi_other_bank(hay) -- TRUE when normalised text names a bank by a "<Name>
+# Bank" / "Bank of <Name>" / "<Name> Credit Union" / "<Name> Building Society"
+# phrase. Called only for lines on which no known bank was found.
+.bi_other_bank <- function(hay) {
+  w <- strsplit(trimws(hay), " ")[[1]]
+  w <- w[nzchar(w)]
+  for (i in seq_along(w)) {
+    nxt <- paste(w[i + 1:2], collapse = " ")
+    lead <- identical(w[i + 1], "bank") || nxt %in% c("credit union", "building society")
+    name <- if (lead) w[i] else if (w[i] == "bank" && identical(w[i + 1], "of")) w[i + 2] else NA
+    if (is.na(name) || nchar(name) < 3 || grepl("[0-9]", name) || name %in% .BI_NOT_A_BANK) next
+    if ("not" %in% utils::tail(w[seq_len(i - 1L)], 6)) next
+    return(TRUE)
+  }
+  FALSE
 }
 
 # .bi_holder_numbers(text, zone, page, ref, need_label, prev = "") -- the account
@@ -441,6 +553,7 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   for (k in seq_len(nrow(acc))) {
     pre <- .bi_tail(substr(text, 1, acc$start[k] - 1L))
     if (!nzchar(pre)) pre <- .bi_tail(prev)
+    else if (grepl("\\b(to|from|pay|payee|payer|other party)[ :]*$", .bi_tail(prev, 3L), perl = TRUE)) next
     if (grepl(.BI_CUE_RX, pre, perl = TRUE)) next
     if (need_label && !grepl(.BI_LABEL_RX, pre, perl = TRUE)) next
     r <- .bi_account_evidence(acc$code[k], acc$branch[k], acc$base[k], acc$suffix[k], ref)
@@ -465,13 +578,44 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   ev <- .bi_ev()
   if (!length(lines)) return(ev)
   zones <- .bi_zones(lines, page_h)
-  tx <- attr(zones, "tx") %||% rep(FALSE, length(lines))
+  txt <- vapply(lines, function(l) l$text, "")
+  # Transaction-shaped lines, wherever the table finder put them: a payee's name
+  # or number on one says nothing about the issuer.
+  tx <- grepl(.BI_DATE_RX, tolower(txt), perl = TRUE) & grepl(.BI_MONEY_RX, txt, perl = TRUE)
+  # Lines carrying a figure: a money amount, or a cell that is only a number
+  # ("100", "1,250 CR"), as rows print amounts without cents.
+  figure <- vapply(lines, function(l) grepl(.BI_MONEY_RX, l$text, perl = TRUE) ||
+                     any(grepl(.BI_FIGURE_RX, tolower(l$cells$text), perl = TRUE)), NA)
+  # A row the table finder missed (amounts without cents, an unusual date): it
+  # starts with a date and carries a figure.
+  dated <- vapply(lines, function(l) grepl(.BI_DATE_START_RX, tolower(l$cells$text[1]), perl = TRUE), NA)
+  y <- vapply(lines, function(l) l$y, 0); lh <- vapply(lines, function(l) l$h, 0)
+  # A description wrapped under its row ("ACCOUNT 12-3456-..." under "DIRECT
+  # DEBIT"): a table line at row spacing below a row or another such line.
+  tl <- which(zones == "table")
+  pitch <- if (length(tl) > 1) stats::median(diff(y[tl])) else max(lh, 1) * 1.2
+  wrapped <- logical(length(lines))
+  for (i in tl[tl > 1])
+    wrapped[i] <- !tx[i] && zones[i - 1L] == "table" && (tx[i - 1L] || wrapped[i - 1L]) &&
+      y[i] - y[i - 1L] <= 1.6 * pitch
+  # A payment-instruction box runs from its heading to the next blank stretch
+  # (a gap of more than two lines) or the table, whichever comes first. A heading
+  # carries no figure: "Direct debits  123.45" is a line of a summary.
+  paybox <- logical(length(lines)); open <- FALSE
+  for (i in seq_along(lines)) {
+    if (open && (zones[i] == "table" || y[i] - y[i - 1L] > 3 * max(lh[i], 1))) open <- FALSE
+    if (zones[i] != "table" && !figure[i] && grepl(.BI_PAYBOX_RX, tolower(txt[i]), perl = TRUE)) open <- TRUE
+    paybox[i] <- open
+  }
   for (i in seq_along(lines)) {
     z <- zones[i]; cells <- lines[[i]]$cells
-    if (z != "table") ev <- rbind(ev, .bi_text_evidence(lines[[i]]$text, z, page, ref))
-    # Inside the table a number counts only on a labelled, non-transaction line (an
-    # account's own heading in a combined statement).
-    if (z == "table" && tx[i]) next
+    if (z != "table" && !tx[i]) ev <- rbind(ev, .bi_text_evidence(txt[i], z, page, ref))
+    if (paybox[i] || (dated[i] && figure[i])) next
+    # Inside the table a number counts only on a labelled line with no figure that
+    # is not part of a row (an account's own heading in a combined statement).
+    # Outside it a summary line can carry a date and a figure beside the holder's
+    # labelled number.
+    if (z == "table" && (figure[i] || wrapped[i])) next
     above <- if (i > 1) lines[[i - 1L]]$cells else NULL
     for (c in seq_len(nrow(cells))) {
       if (!nrow(.bi_find_accounts(cells$text[c])) &&
@@ -514,16 +658,46 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # "This Party Account"); never "Other Party Account".
 .BI_ACCOUNT_COL_RX <- "^(this party )?(account|acct|a/c)( ?(number|no|num|#))?[ .:]*$"
 
+.bi_luhn <- function(s) {
+  d <- rev(as.integer(strsplit(s, "")[[1]]))
+  k <- seq_along(d) %% 2 == 0
+  d[k] <- d[k] * 2
+  d[k] <- d[k] - 9 * (d[k] > 9)
+  sum(d) %% 10 == 0
+}
+
+# .bi_digit_run(s, ref) -- an account printed as one run of digits, in dashed form,
+# or "" when it cannot be read safely. A spreadsheet drops the leading zero of
+# "0109020068389000", leaving 15 digits that also read as 10-9020-0683890-00, so
+# a 15-digit run is used only when exactly one of its two readings is a register
+# branch.
+.bi_digit_run <- function(s, ref) {
+  # A card number (scheme digit 3-6 and a valid Luhn check) is not an account,
+  # though its digits can look like 38-... (NZ accounts carry no Luhn digit).
+  if (grepl("^[3-6]", s) && .bi_luhn(s)) return("")
+  dash <- function(d) paste(substr(d, 1, 2), substr(d, 3, 6), substr(d, 7, 13), substring(d, 14), sep = "-")
+  if (nchar(s) == 16) return(dash(s))
+  cand <- c(dash(s), dash(paste0("0", s)))
+  hit <- vapply(cand, function(d) {
+    p <- strsplit(d, "-")[[1]]
+    paste0(p[1], "-", p[2]) %in% names(ref$branch_inst)
+  }, NA)
+  if (sum(hit) == 1) cand[hit] else ""
+}
+
+# .bi_column_evidence(values, ref) -- an export's account column. The holder's
+# column repeats one number (or a few, for a multi-account export); a column with
+# more than three different numbers is someone else's, whatever its heading says.
 .bi_column_evidence <- function(values, ref) {
-  ev <- .bi_ev()
-  v <- unique(trimws(as.character(values)))
-  v <- utils::head(v[!is.na(v) & nzchar(v)], 50)
-  for (s in v) {
-    if (grepl("^[0-9]{15,16}$", s))
-      s <- paste(substr(s, 1, 2), substr(s, 3, 6), substr(s, 7, 13), substring(s, 14), sep = "-")
-    ev <- rbind(ev, .bi_holder_numbers(s, "column", 1L, ref, need_label = FALSE))
-  }
-  ev
+  if (is.numeric(values)) values <- format(values, scientific = FALSE, trim = TRUE)
+  v <- unique(trimws(.bi_clean(values)))
+  v <- v[!is.na(v) & nzchar(v)]
+  v <- vapply(v, function(s) if (grepl("^[0-9]{15,16}$", s)) .bi_digit_run(s, ref) else s,
+              "", USE.NAMES = FALSE)
+  v <- v[vapply(v, function(s) nrow(.bi_find_accounts(s)) > 0, NA)]
+  if (length(v) > 3) return(.bi_ev())
+  do.call(rbind, c(list(.bi_ev()), lapply(v, .bi_holder_numbers, zone = "column", page = 1L,
+                                          ref = ref, need_label = FALSE)))
 }
 
 .bi_preamble_evidence <- function(preamble, ref) {
@@ -536,18 +710,20 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   ev
 }
 
+# Quiet: a warning about a line would reach the caller's log, and the line can
+# hold account numbers.
 .bi_split_fields <- function(ln, delim) {
-  f <- tryCatch(utils::read.table(text = ln, sep = delim, quote = "\"", header = FALSE,
-                                  colClasses = "character", comment.char = "", fill = TRUE,
-                                  strip.white = TRUE, na.strings = character(0)),
-                error = function(e) NULL)
+  f <- tryCatch(suppressWarnings(utils::read.table(
+         text = ln, sep = delim, quote = "\"", header = FALSE, colClasses = "character",
+         comment.char = "", fill = TRUE, strip.white = TRUE, na.strings = character(0))),
+       error = function(e) NULL)
   if (is.null(f) || !nrow(f)) character(0) else as.character(unlist(f[1, ]))
 }
 
 .bi_delimited_evidence <- function(input, ref) {
-  lines <- as.character(input$lines %||% character(0))
+  # A byte-order mark becomes a leading space, which the field splitter strips.
+  lines <- .bi_clean(input$lines %||% character(0))
   if (!length(lines)) return(.bi_ev())
-  lines[1] <- sub("^\ufeff", "", lines[1])
   first <- utils::head(lines, 40)
   cnt <- vapply(c(",", "\t", ";", "|"), function(d)
     sum(lengths(regmatches(first, gregexpr(d, first, fixed = TRUE)))), 0)
@@ -574,17 +750,17 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 
 .bi_excel_evidence <- function(input, ref) {
   tbl <- input$table
-  pre <- as.character(input$meta$preamble %||% character(0))
+  pre <- .bi_clean(input$meta$preamble %||% character(0))
   # When read_excel_input found no transaction header it hands over the sheet as
   # is: the first row became the column names and the preamble sits in the first
   # rows. Read down to the first row naming a date (the real header), no further.
   if (!length(pre) && is.data.frame(tbl) && ncol(tbl)) {
-    nm <- names(tbl)
+    nm <- .bi_clean(names(tbl))
     pre <- paste(nm[!grepl("^\\.\\.\\.[0-9]+$|^col[0-9]+$", nm)], collapse = " ")
     hdr_found <- grepl("date", tolower(pre))
     for (r in seq_len(min(30L, nrow(tbl)))) {
       if (hdr_found) break
-      cells <- trimws(as.character(unlist(tbl[r, ], use.names = FALSE)))
+      cells <- trimws(.bi_clean(unlist(tbl[r, ], use.names = FALSE)))
       cells <- cells[!is.na(cells) & nzchar(cells)]
       if (any(grepl("date", tolower(cells)))) hdr_found <- TRUE else pre <- c(pre, paste(cells, collapse = " "))
     }
@@ -592,7 +768,7 @@ nz_account_checksum <- function(code, branch, base, suffix) {
   }
   ev <- .bi_preamble_evidence(pre, ref)
   if (is.data.frame(tbl) && ncol(tbl)) {
-    col <- which(grepl(.BI_ACCOUNT_COL_RX, tolower(trimws(names(tbl))), perl = TRUE))
+    col <- which(grepl(.BI_ACCOUNT_COL_RX, tolower(trimws(.bi_clean(names(tbl)))), perl = TRUE))
     if (length(col)) ev <- rbind(ev, .bi_column_evidence(tbl[[col[1]]], ref))
   }
   ev
@@ -611,11 +787,16 @@ nz_account_checksum <- function(code, branch, base, suffix) {
     contact = min(80, mx("domain") + mx("phone") + mx("swift")), brand = mx("brand"))
 }
 
+# Research 5.2 bands. High: decisive, or strong plus another strong or medium
+# signal. Medium: one strong signal, or two that agree and add up to a strong one
+# (a website and the masthead; a masked number's bank code and the masthead).
+# Low: weak signals only, such as a number whose branch is not in the register and
+# a masthead. A contradiction caps the result at medium.
 .bi_band <- function(g, contradicted) {
   v <- sort(g[g > 0], decreasing = TRUE)
   if (!length(v)) return("unknown")
   high <- v[1] >= 100 || (v[1] >= 80 && length(v) >= 2 && v[2] >= 60)
-  medium <- v[1] >= 80 || (length(v) >= 2 && sum(v) >= 60)
+  medium <- v[1] >= 80 || (length(v) >= 2 && v[1] + v[2] >= 80)
   if (high && !contradicted) "high" else if (high || medium) "medium" else "low"
 }
 
@@ -628,7 +809,7 @@ nz_account_checksum <- function(code, branch, base, suffix) {
     account_repaired = sprintf("the account number's branch is %s's (its bank code looks misread)", d),
     account_code = sprintf("the account number's bank code %s is %s's%s", code, d,
                            if (strength < .BI_STRENGTH[["account_code_masked"]])
-                             " (its branch is not in the register)" else ""),
+                             " (its branch is not in the register under that code)" else ""),
     legal_name = sprintf("it names %s's legal entity", d),
     domain = sprintf("it shows %s's website", d),
     phone = sprintf("it shows %s's phone number", d),
@@ -641,14 +822,27 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # Families first (a bank and the banks that clear through it agree with each
 # other), then the most specific institution inside the winning family.
 .bi_decide <- function(ev, ref) {
+  other <- any(ev$kind == "other_bank")
+  foreign <- any(ev$kind == "foreign")
   ev <- ev[!is.na(ev$institution) & ev$strength > 0 & ev$institution %in% names(ref$family), , drop = FALSE]
-  codes <- unique(ev$code[!is.na(ev$code)])
-  out <- function(inst, conf, why, conflict = FALSE)
-    list(institution = inst, confidence = conf, why = why, conflict = conflict,
-         bank_code = if (length(codes) == 1) codes else NA_character_)
+  masked <- .BI_STRENGTH[["account_code_masked"]]
+  # The holder account's bank code: from the strongest number of the bank chosen
+  # (a combined statement can show an 01 and an 06 account, both ANZ's).
+  code_of <- function(e) {
+    e <- e[!is.na(e$code), , drop = FALSE]
+    if (!nrow(e)) NA_character_ else e$code[order(-e$strength)][1]
+  }
+  out <- function(inst, conf, why, conflict = FALSE, code = NA_character_)
+    list(institution = inst, confidence = conf, why = why, conflict = conflict, bank_code = code)
   if (!nrow(ev))
-    return(out(NA_character_, "unknown",
-               "Nothing on the statement identifies the bank: no holder account number and no bank name outside the transactions."))
+    return(out(NA_character_, "unknown", if (other)
+      "The statement names a bank that is not in the bank list, and nothing on it identifies a bank that is." else
+      "Nothing on the statement identifies the bank: no holder account number and no bank name outside the transactions."))
+  if (foreign && !any(ev$kind %in% .BI_ACCOUNT_KINDS))
+    return(out(NA_character_, "low",
+               "The statement looks like one from outside New Zealand (it shows a BSB, a sort code or a UK company name) and shows no New Zealand account number, so its bank names may not mean the New Zealand banks."))
+  all_codes <- unique(ev$code[!is.na(ev$code)])
+  any_code <- if (length(all_codes) == 1) all_codes else NA_character_
   ev$family <- unname(ref$family[ev$institution])
   fams <- sort(unique(ev$family))
   fscore <- vapply(fams, function(f) sum(.bi_groups(ev[ev$family == f, ])), 0)
@@ -661,75 +855,90 @@ nz_account_checksum <- function(code, branch, base, suffix) {
     if (fscore[[r]] == fscore[[top]] || (fmax[[r]] >= 40 && fmax[[top]] >= 40))
       return(out(NA_character_, "low", sprintf(
         "The statement points to two different banks (%s and %s), so a person must decide.",
-        dname(top), dname(r)), conflict = TRUE))
+        dname(top), dname(r)), conflict = TRUE, code = any_code))
   }
   fe <- ev[ev$family == top, , drop = FALSE]
+  fam_code_any <- code_of(fe)
   members <- names(ref$family)[ref$family == top & !ref$pseudo]
   text_score <- function(i) sum(.bi_groups(fe[fe$institution == i & fe$kind %in% .BI_TEXT_KINDS, ]))
-  spec_acc <- fe$institution[fe$kind %in% setdiff(.BI_ACCOUNT_KINDS, "account_code")]
-  acc_members <- setdiff(unique(spec_acc), top)
+  spec_acc <- unique(fe$institution[fe$kind %in% setdiff(.BI_ACCOUNT_KINDS, "account_code")])
+  acc_members <- setdiff(spec_acc, top)
   others <- setdiff(members, top)
   ts <- vapply(others, text_score, 0)
   chosen <- NA_character_
-  if (length(acc_members) > 1)
+  if (length(acc_members) > 1 || (length(acc_members) == 1 && top %in% spec_acc))
     return(out(NA_character_, "low", sprintf(
       "The statement shows account numbers of two banks in %s's family, so a person must decide.",
-      dname(top)), conflict = TRUE))
+      dname(top)), conflict = TRUE, code = fam_code_any))
+  # An agency bank named on a statement whose account sits in its clearing bank's
+  # code: the agency bank issued it (SBS on 03, the Co-operative Bank on 02). When
+  # the register puts the number in the clearing bank's own branch, only the agency
+  # bank's legal name or contact details outweigh it, never a brand word.
+  flip_at <- if (top %in% spec_acc) 60 else 30
   if (length(acc_members) == 1) {
     chosen <- acc_members
     rival_t <- ts[setdiff(names(ts), chosen)]
     if (any(rival_t >= 60))
       return(out(NA_character_, "low", sprintf(
         "The account number is %s's but the statement names %s, so a person must decide.",
-        dname(chosen), dname(names(which.max(rival_t)))), conflict = TRUE))
-  } else if (length(ts) && max(ts) >= 30 && max(ts) > text_score(top)) {
-    # An agency bank named on a statement whose account sits in its clearing bank's
-    # code: the agency bank issued it (SBS on 03, the Co-operative Bank on 02).
+        dname(chosen), dname(names(which.max(rival_t)))), conflict = TRUE, code = fam_code_any))
+  } else if (length(ts) && max(ts) >= flip_at && max(ts) > text_score(top)) {
     best <- names(ts)[ts == max(ts)]
     if (length(best) > 1)
       return(out(NA_character_, "low", sprintf(
         "The statement names two banks in %s's family, so a person must decide.", dname(top)),
-        conflict = TRUE))
+        conflict = TRUE, code = fam_code_any))
     chosen <- best
-  } else if (top %in% fe$institution[fe$kind != "account_code"] ||
-             (length(members) == 1 && any(fe$strength >= .BI_STRENGTH[["account_code_masked"]]))) {
+  } else if (top %in% fe$institution[fe$kind != "account_code"] || length(members) == 1) {
     chosen <- top
-  } else if (all(fe$strength < .BI_STRENGTH[["account_code_masked"]])) {
+  } else if (all(fe$strength < masked)) {
     # A number whose branch is not in the register is a misreading or not a real
     # account (dummy and specimen numbers): its code alone names no bank.
     return(out(NA_character_, "low", sprintf(
-      "The account number's bank code is %s's, but its branch is not in the bank branch register, so it may be misread or not a real account number.",
-      dname(top))))
+      "The account number's bank code is %s's, but its branch is not in the bank branch register under that code, so it may be misread or not a real account number.",
+      dname(top)), code = fam_code_any))
   } else {
     return(out(NA_character_, "low", sprintf(
       "Only the account number's bank code is readable, and %s shares it with other banks.",
-      dname(top))))
+      dname(top)), code = fam_code_any))
   }
   # What supports the chosen bank: its own evidence, the family's bank code, and
   # (for an agency bank) its clearing bank's account number, which proves the
-  # family but not the member.
+  # family but not the member, so it counts no more than a bank code.
   own <- fe[fe$institution == chosen, , drop = FALSE]
   fam_code <- fe[fe$kind == "account_code" & fe$institution != chosen, , drop = FALSE]
   clear_acc <- fe[fe$institution != chosen & fe$kind %in% .BI_ACCOUNT_KINDS &
                     fe$kind != "account_code", , drop = FALSE]
-  clear_acc$strength <- pmin(clear_acc$strength, 60)
+  clear_acc$strength <- pmin(clear_acc$strength, .BI_STRENGTH[["account_code"]])
   sup <- rbind(own, fam_code, clear_acc)
-  # A number that fails its check digits is misread or not real (specimen numbers
-  # are): with nothing else on the page it names no bank.
-  if (all(sup$kind == "account_checksum_failed" |
-          (sup$kind == "account_code" & sup$strength < .BI_STRENGTH[["account_code_masked"]])))
-    return(out(NA_character_, "low", sprintf(
-      "The account number's bank and branch are %s's, but its check digits do not add up, so it may be misread or not a real account number.",
-      dname(chosen))))
-  contradicted <- length(rivals) > 0 || any(ts[setdiff(names(ts), chosen)] >= 30)
+  code <- code_of(sup)
+  # A number that fails its check digits, or whose branch is not in the register,
+  # is misread or not real (specimen numbers are): alone it is only a guess, and
+  # names a bank only where its code belongs to one bank alone.
+  weak <- sup$kind == "account_checksum_failed" | (sup$kind == "account_code" & sup$strength < masked)
+  if (all(weak)) {
+    doubtful <- any(sup$strength == .BI_STRENGTH[["account_code_doubtful"]])
+    guess <- if (length(members) == 1 && !length(rivals) && !other && !foreign && !doubtful)
+      chosen else NA_character_
+    lead <- if (is.na(guess)) "" else sprintf("Possibly %s: ", dname(chosen))
+    why <- if (any(sup$kind == "account_checksum_failed"))
+      sprintf("the account number's bank and branch are %s's, but its check digits do not add up, so it may be misread or not a real account number.", dname(chosen))
+    else sprintf("the account number's bank code is %s's, but its branch is not in the bank branch register under that code, so it may be misread or not a real account number.", dname(chosen))
+    if (!nzchar(lead)) why <- paste0(toupper(substr(why, 1, 1)), substring(why, 2))
+    return(out(guess, "low", paste0(lead, why), code = code))
+  }
+  contradicted <- length(rivals) > 0 || any(ts[setdiff(names(ts), chosen)] >= 30) || other || foreign
   conf <- .bi_band(.bi_groups(sup), contradicted)
   sup <- sup[order(-sup$strength), , drop = FALSE]
   sup <- sup[!duplicated(ifelse(sup$kind %in% .BI_ACCOUNT_KINDS, "account", sup$kind)), , drop = FALSE]
   parts <- vapply(seq_len(min(2, nrow(sup))), function(k)
     .bi_why_part(sup$kind[k], sup$institution[k], ref, sup$code[k], sup$strength[k]), "")
   why <- sprintf("%s: %s.", dname(chosen), paste(parts[nzchar(parts)], collapse = ", and "))
-  if (contradicted) why <- sub("\\.$", "; another bank is also mentioned, outside the transactions.", why)
-  out(chosen, conf, why)
+  if (contradicted) why <- sub("\\.$", if (foreign)
+    "; it also shows signs of a statement from outside New Zealand." else if (other && !length(rivals))
+    "; a bank that is not in the bank list is also named, outside the transactions." else
+    "; another bank is also mentioned, outside the transactions.", why)
+  out(chosen, conf, why, code = code)
 }
 
 # ---------------------------------------------------------------------------
@@ -751,12 +960,16 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 #   institution  id from dictionaries/nz_banks.yaml ("anz", "coop", ...) or NA.
 #   bank_code    the holder account's two-digit bank code, or NA. Never the number.
 #   confidence   "high" | "medium" | "low" | "unknown".
-#   evidence     data.frame(kind, institution, strength, zone).
+#   evidence     data.frame(kind, institution, strength, zone). Kinds "other_bank"
+#                (a bank the list does not know, named at the top or foot of a
+#                page) and "foreign" (a BSB, sort code or "plc") carry institution
+#                NA and strength 0: they only make a reading less sure.
 #   pages        one row per PDF page with its own reading; pages_agree is FALSE
 #                when two pages name different banks (a bundle), and then the
 #                statement as a whole is left to a person.
+#   Warnings are dropped, not passed on: one could quote a line of the statement.
 bank_identify <- function(input) {
-  tryCatch(.bank_identify(input), error = function(e)
+  tryCatch(suppressWarnings(.bank_identify(input)), error = function(e)
     .bi_unknown("The bank could not be worked out because the file could not be examined."))
 }
 
@@ -770,8 +983,9 @@ bank_identify <- function(input) {
   }
   if (!is.list(input) || is.null(input$kind))
     return(.bi_unknown("Nothing was given to identify."))
-  ev <- switch(as.character(input$kind),
-               pdf = .bi_pdf_evidence(input, ref),
+  kind <- as.character(input$kind)[1]
+  ev <- switch(kind,
+               pdf = , scan = .bi_pdf_evidence(input, ref),
                delimited = .bi_delimited_evidence(input, ref),
                excel = .bi_excel_evidence(input, ref),
                .bi_ev())
@@ -779,18 +993,25 @@ bank_identify <- function(input) {
   pages <- data.frame(page = integer(0), institution = character(0), bank_code = character(0),
                       confidence = character(0), stringsAsFactors = FALSE)
   agree <- TRUE
-  if (identical(input$kind, "pdf") && nrow(ev)) {
+  if (kind %in% c("pdf", "scan") && nrow(ev)) {
     for (p in sort(unique(ev$page))) {
       d <- .bi_decide(ev[ev$page == p, , drop = FALSE], ref)
       pages <- rbind(pages, data.frame(page = p, institution = d$institution,
                                        bank_code = d$bank_code, confidence = d$confidence,
                                        stringsAsFactors = FALSE))
     }
-    sure <- pages$institution[!is.na(pages$institution) & pages$confidence %in% c("high", "medium")]
-    if (length(unique(sure)) > 1) {
+    # Two pages that each name a bank with some confidence and name different
+    # banks, or a page that names a bank and another that only hints at a bank
+    # outside its family (a masthead, a guessed number): likely a bundle.
+    named <- pages[!is.na(pages$institution), , drop = FALSE]
+    sure <- named[named$confidence %in% c("high", "medium"), , drop = FALSE]
+    hint <- named[named$confidence == "low", , drop = FALSE]
+    hint <- hint[!ref$family[hint$institution] %in% ref$family[sure$institution], , drop = FALSE]
+    clash <- rbind(sure[!duplicated(sure$institution), , drop = FALSE], hint)
+    clash <- clash[!duplicated(clash$institution), , drop = FALSE]
+    if (nrow(sure) && nrow(clash) > 1) {
       agree <- FALSE
-      first <- pages[!is.na(pages$institution) & pages$confidence %in% c("high", "medium"), ]
-      first <- first[!duplicated(first$institution), ][1:2, ]
+      first <- clash[order(clash$page), , drop = FALSE][1:2, ]
       res <- list(institution = NA_character_, bank_code = NA_character_, confidence = "low",
                   conflict = TRUE, why = sprintf(
                     "The pages disagree about the bank (page %d says %s, page %d says %s), so this may be several statements from different banks.",
@@ -798,7 +1019,7 @@ bank_identify <- function(input) {
                     first$page[2], ref$display[[first$institution[2]]]))
     }
   }
-  evid <- ev[ev$strength > 0, c("kind", "institution", "strength", "zone"), drop = FALSE]
+  evid <- ev[ev$strength > 0 | ev$kind %in% c("other_bank", "foreign"), c("kind", "institution", "strength", "zone"), drop = FALSE]
   evid <- evid[order(-evid$strength, evid$kind, evid$institution, evid$zone), , drop = FALSE]
   evid <- evid[!duplicated(evid[, c("kind", "institution", "zone")]), , drop = FALSE]
   rownames(evid) <- NULL

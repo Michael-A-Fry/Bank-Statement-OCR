@@ -134,12 +134,75 @@ test_that("an agency bank's own register branch and its own name win inside the 
   r <- bank_identify(mk_pdf(statement("Statement", paste("12 EXAMPLE STREET   Account number", coop), tx_rows())))
   expect_equal(r$institution, "coop")
   expect_equal(r$bank_code, "02")
-  # SBS's customers carry Westpac's code: the SBS legal name decides.
+  # SBS's customers carry Westpac's code: the SBS legal name decides. The register
+  # puts the number in Westpac's own branch, so the name alone is not enough to be
+  # sure; the name and SBS's own website together are.
   wp <- acct("03", "0049")
   r2 <- bank_identify(mk_pdf(statement("SBS Bank", paste("12 EXAMPLE STREET   Account number", wp), tx_rows(),
                                        footer = "Southland Building Society, trading as SBS Bank")))
   expect_equal(r2$institution, "sbs")
-  expect_equal(r2$confidence, "high")
+  expect_equal(r2$confidence, "medium")
+  r3 <- bank_identify(mk_pdf(statement("SBS Bank", paste("12 EXAMPLE STREET   Account number", wp), tx_rows(),
+                                       footer = c("Southland Building Society, trading as SBS Bank",
+                                                  "www.sbsbank.co.nz"))))
+  expect_equal(r3$institution, "sbs")
+  expect_equal(r3$confidence, "high")
+  # A brand word alone never moves a number in the clearing bank's own branch to
+  # an agency bank, and it stops the reading from being sure.
+  r4 <- bank_identify(mk_pdf(statement("Westpac", paste("12 EXAMPLE STREET   Account number", wp), tx_rows(),
+                                       footer = "Heartland Bank")))
+  expect_equal(r4$institution, "westpac")
+  expect_equal(r4$confidence, "medium")
+})
+
+test_that("OCR damage: a split body, a letter-spaced logo", {
+  a <- acct("15", "3941")
+  parts <- strsplit(a, "-")[[1]]
+  split <- paste(parts[1], parts[2], paste(substr(parts[3], 1, 4), substring(parts[3], 5)), parts[4], sep = "-")
+  r <- bank_identify(mk_pdf(statement("Statement", paste("12 EXAMPLE STREET   Account number", split), tx_rows())))
+  expect_equal(r$institution, "tsb")
+  expect_equal(r$confidence, "high")
+  r2 <- bank_identify(mk_pdf(statement("B N Z       Visa statement", "12 EXAMPLE STREET", tx_rows())))
+  expect_equal(r2$institution, "bnz")
+  expect_equal(r2$confidence, "low")
+})
+
+test_that("a single-bank code with an unregistered branch is only a low guess", {
+  r <- bank_identify(mk_pdf(statement("Statement", "12 EXAMPLE STREET   Account number 12-9999-4826153-00", tx_rows())))
+  expect_equal(r$institution, "asb")
+  expect_equal(r$confidence, "low")
+  expect_equal(r$bank_code, "12")
+  # 03 is shared by Westpac and the banks that clear through it: no guess.
+  r2 <- bank_identify(mk_pdf(statement("Statement", "12 EXAMPLE STREET   Account number 03-9999-4826153-00", tx_rows())))
+  expect_true(is.na(r2$institution))
+  expect_equal(r2$confidence, "low")
+})
+
+test_that("placeholder numbers in guides and test files are nobody's account", {
+  for (n in c("11-1111-1111111-00", "02-1300-1234567-00", "22-2222-2222222-00"))
+    expect_equal(bank_identify(mk_pdf(statement("Statement", paste("12 EXAMPLE STREET   Account number", n),
+                                                tx_rows())))$confidence, "unknown")
+})
+
+test_that("a payment-instruction box and a payee cell beside a label are not the holder's", {
+  w <- acct("03", "0990", "082")
+  lines <- statement("Kiwibank", "12 EXAMPLE STREET", tx_rows(),
+                     footer = c("How to pay your card", "Internet banking", paste("Account number", w)))
+  r <- bank_identify(mk_pdf(lines))
+  expect_false("westpac" %in% r$evidence$institution)
+  lines2 <- statement("Kiwibank", paste("Pay to:          Account number", w), tx_rows())
+  r2 <- bank_identify(mk_pdf(lines2))
+  expect_false("westpac" %in% r2$evidence$institution)
+})
+
+test_that("a combined statement with two of one bank's codes reports one of them", {
+  p <- statement("ANZ", paste("12 EXAMPLE STREET   Account number", acct("01", "0902")), tx_rows())
+  p <- c(p, "", paste("Account number", acct("06", "0501")), tx_rows())
+  r <- bank_identify(mk_pdf(p))
+  expect_equal(r$institution, "anz")
+  expect_true(r$bank_code %in% c("01", "06"))
+  inp <- mk_pdf(p); inp$kind <- "scan"
+  expect_equal(bank_identify(inp)$institution, "anz")
 })
 
 test_that("a misread bank code is repaired from the branch", {
@@ -189,6 +252,11 @@ test_that("a bundle is identified page by page and disagreement is reported", {
   expect_equal(r$pages$institution, c("anz", "asb"))
   expect_true(is.na(r$institution))
   expect_true(r$needs_decision)
+  # The second statement shows only another bank's masthead: still a bundle.
+  p3 <- statement("Kiwibank", "12 EXAMPLE STREET", tx_rows())
+  r3 <- bank_identify(mk_pdf(p1, p3))
+  expect_false(r3$pages_agree)
+  expect_true(is.na(r3$institution))
   same <- bank_identify(mk_pdf(p1, p1))
   expect_true(same$pages_agree)
   expect_equal(same$institution, "anz")
@@ -268,6 +336,118 @@ test_that("bank_pick: pre-fill, agree, ask, and block learning only when it must
   expect_true(p$ask); expect_true(p$block_learning)
 })
 
+test_that("a payee's number wrapped under its row, or on a row the table finder missed, is not the holder's", {
+  payee <- acct("12", "3456")
+  rows <- tx_rows(c("03 Sep    DIRECT DEBIT                                    100.00                874.90",
+                    paste("          ACCOUNT", payee),
+                    "04 Sep    ONLINE BANKING                                   50.00                824.90",
+                    paste("          ACCT", payee)))
+  r <- bank_identify(mk_pdf(statement("Statement", "12 EXAMPLE STREET", rows)))
+  expect_equal(r$confidence, "unknown")
+  # Amounts without cents and year-first dates: no table is found, but each line
+  # still starts with a date and carries a figure.
+  rows2 <- paste0("2025/09/0", 1:6, "   Online banking acct ", payee, "    100   ", 1000 - 1:6 * 100)
+  r2 <- bank_identify(mk_pdf(statement("Statement", "12 EXAMPLE STREET", rows2)))
+  expect_equal(r2$confidence, "unknown")
+})
+
+test_that("the account a loan or card is repaid from, and a list of payees, are not the holder's", {
+  theirs <- acct("12", "3456")
+  for (lab in c("Direct debit account", "Linked account", "Nominated account", "Funding account",
+                "Your repayment account", "Debit account", "Settlement account")) {
+    r <- bank_identify(mk_pdf(statement("Westpac", paste("12 EXAMPLE STREET      ", lab, theirs), tx_rows(),
+                                        footer = "Westpac New Zealand Limited")))
+    expect_false("asb" %in% r$evidence$institution, info = lab)
+    expect_equal(r$institution, "westpac", info = lab)
+  }
+  lines <- c("Kiwibank", "J SAMPLE", "", "Automatic payments", "Account                    Amount     Frequency",
+             paste(theirs, "      100.00     Weekly"), "", "", "", "Date      Details    Withdrawals   Deposits     Balance",
+             tx_rows())
+  r <- bank_identify(mk_pdf(lines))
+  expect_false("asb" %in% r$evidence$institution)
+})
+
+test_that("bullets, black boxes, dashes and accents are read in any locale", {
+  kb <- acct("38", "9027")
+  p <- strsplit(kb, "-")[[1]]
+  dotted <- paste(p[1], p[2], strrep("\u2022", 7), p[4], sep = "\u2013")
+  r <- bank_identify(mk_pdf(statement("Statement", paste("12 EXAMPLE STREET   Account number", dotted), tx_rows())))
+  expect_equal(r$institution, "kiwibank")
+  expect_equal(r$confidence, "medium")     # bank and branch visible, body masked
+  boxed <- paste(strrep("\u2588", 2), strrep("\u2588", 4), strrep("\u2588", 7), "00", sep = "-")
+  r2 <- bank_identify(mk_pdf(statement("Co\u00f6perative Caf\u00e9", paste("12 EXAMPLE STREET   Account number", boxed),
+                                       tx_rows())))
+  expect_equal(r2$confidence, "unknown")
+  expect_false(grepl("could not be examined", r2$why))
+  expect_equal(.bi_clean(c("a\u2013b \u2022\u2022", NA)), c("a-b **", NA))
+})
+
+test_that("a bank the list does not know, or a foreign statement, keeps the reading unsure", {
+  asb <- acct("12", "3456")
+  r <- bank_identify(mk_pdf(statement("Rimu Bank", paste("12 EXAMPLE STREET   Account number", asb), tx_rows())))
+  expect_equal(r$institution, "asb")
+  expect_equal(r$confidence, "medium")
+  expect_true("other_bank" %in% r$evidence$kind)
+  # Only a code (branch not in the register): no "possibly ASB" guess.
+  r2 <- bank_identify(mk_pdf(statement("Rimu Bank", "12 EXAMPLE STREET   Account number 12-9999-4826153-00", tx_rows())))
+  expect_true(is.na(r2$institution))
+  r3 <- bank_identify(mk_pdf(statement("Rimu Bank", "12 EXAMPLE STREET", tx_rows(), footer = "Rimu Bank of Aotearoa Limited")))
+  expect_equal(r3$confidence, "unknown")
+  expect_match(r3$why, "not in the bank list")
+  # Phrases that name no bank.
+  for (h in c("your bank statement", "internet bank", "the reserve bank of new zealand", "not a registered bank"))
+    expect_false(.bi_other_bank(h), info = h)
+  # An Australian Westpac or a UK TSB statement carries the same names.
+  au <- bank_identify(mk_pdf(statement("Westpac", "BSB 032-000 Account number 123456", tx_rows(),
+                                       footer = "Westpac Banking Corporation")))
+  expect_true(is.na(au$institution))
+  uk <- bank_identify(mk_pdf(statement("TSB", "Sort code 77-12-34", tx_rows(), footer = "TSB Bank plc")))
+  expect_true(is.na(uk$institution))
+})
+
+test_that("a misread code that cannot be repaired names no bank", {
+  # Kiwibank's branch under Bank of China's code 88, with check digits that fail
+  # for 38 too: the number contradicts itself.
+  for (b in 1000001:1000100) if (isFALSE(nz_account_checksum("38", "9027", sprintf("%07d", b), "00"))) break
+  r <- bank_identify(mk_pdf(statement("Statement", sprintf("12 EXAMPLE STREET   Account number 88-9027-%07d-00", b),
+                                      tx_rows())))
+  expect_true(is.na(r$institution))
+  expect_match(r$why, "misread")
+})
+
+test_that("export account columns: many different numbers are payees, digit runs are read safely", {
+  nums <- c(acct("12", "3456"), acct("01", "0902"), acct("38", "9027"), acct("15", "3941"))
+  lines <- c("Date,Amount,Payee,Account", paste0("0", 1:4, "/01/26,-25.00,SHOP,", nums))
+  expect_equal(bank_identify(list(kind = "delimited", lines = lines))$confidence, "unknown")
+  anz <- gsub("-", "", acct("01", "0902", "000"))
+  for (v in list(anz, sub("^0", "", anz), as.numeric(anz))) {
+    tbl <- data.frame(Date = "2025-10-01", `Account Number` = rep(v, 2), Amount = "-5.00", check.names = FALSE)
+    r <- bank_identify(list(kind = "excel", table = tbl, meta = list()))
+    expect_equal(r$institution, "anz")
+    expect_equal(r$bank_code, "01")
+  }
+})
+
+test_that("nothing returned or warned carries the number", {
+  a <- acct("12", "3456")
+  p <- strsplit(a, "-")[[1]]
+  inp <- mk_pdf(statement("ASB", paste("12 EXAMPLE STREET   Account number", a), tx_rows(),
+                          footer = c("ASB Bank Limited", paste("Pay to", acct("01", "0902")))))
+  said <- character(0)
+  r <- withCallingHandlers(bank_identify(inp),
+                           warning = function(w) { said <<- c(said, conditionMessage(w)); invokeRestart("muffleWarning") },
+                           message = function(m) { said <<- c(said, conditionMessage(m)); invokeRestart("muffleMessage") })
+  expect_length(said, 0)
+  expect_equal(r$institution, "asb")
+  # Every value, name and attribute, at any depth.
+  flat <- paste(deparse(r, control = c("keepNA", "keepInteger", "showAttributes")), collapse = " ")
+  expect_false(grepl(p[3], flat, fixed = TRUE))
+  expect_false(grepl(p[2], flat, fixed = TRUE))
+  expect_false(grepl("0902", flat, fixed = TRUE))
+  bad <- bank_identify(list(kind = "delimited", lines = c(paste0("\"Account,", a), "Date,Amount", "\"x,1")))
+  expect_false(grepl(p[3], paste(deparse(bad), collapse = " "), fixed = TRUE))
+})
+
 test_that("the bundled register keeps its promises", {
   br <- utils::read.csv(file.path(engine_root(), "dictionaries", "nz_bank_branches.csv"),
                         colClasses = "character")
@@ -277,4 +457,6 @@ test_that("the bundled register keeps its promises", {
   banks <- yaml::read_yaml(file.path(engine_root(), "dictionaries", "nz_banks.yaml"))$institutions
   expect_true(all(br$institution %in% names(banks)))
   expect_equal(br$institution[br$bank_code == "02" & br$branch == "1242"], "coop")
+  # Branches that may be the Co-operative Bank's say only "BNZ's family".
+  expect_equal(br$institution[br$bank_code == "02" & br$branch %in% c("1243", "1255")], c("bnz_agency", "bnz_agency"))
 })

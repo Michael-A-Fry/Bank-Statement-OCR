@@ -21,7 +21,16 @@
 #   Domains, phones        each bank's own website, Oct 2026.
 #   SWIFT/BIC              each bank's "receive money from overseas" page; codes
 #                          marked "directory" are from third-party directories only.
-#   Branch numbers         dictionaries/nz_bank_branches.csv (Payments NZ register).
+#   Branch numbers         dictionaries/nz_bank_branches.csv: every row of the Payments
+#                          NZ Bank Branch Register of 25 Sep 2026 (last_seen 2026-09-25),
+#                          plus 11 branches since removed, taken from earlier register
+#                          snapshots (Mar 2024, Jan 2026) so older statements still match;
+#                          their last_seen is the last snapshot that listed them. The
+#                          institution column is the code owner, except the agency
+#                          branches the register names (Co-operative Bank, Wise, ...)
+#                          and 02-1243 / 02-1255 ("PC Business/Internet Banking", at the
+#                          Co-operative Bank's address), which are bnz_agency: they may be
+#                          the Co-operative Bank's, so they say only "BNZ's family".
 # Adding a bank: copy an entry, give it a new id, and add its branch rows to the CSV.
 
 meta:

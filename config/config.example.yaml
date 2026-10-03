@@ -61,6 +61,14 @@ paths:
   # Templates chosen before, by layout (Admin -> Templates -> "Templates chosen before").
   # Kept beside the templates built here, in the folder an update never replaces.
   learned_choices: templates/statements_user/_learned_choices.json
+  # Bank layouts the automatic reader has learned (Admin -> Banks), a folder per
+  # bank. Learned here from your own statements, so BACK IT UP with the templates:
+  # it exists nowhere else. Every change is a new file; nothing is edited in place.
+  layouts: templates/layouts
+  # Automatic-reading tracking (Admin -> Automatic reading): one line per event,
+  # a file per month. Codes and counts only -- never names, descriptions,
+  # amounts, dates, account numbers or file names.
+  tracking: logs/tracking
 
 retention:
   # A copy of every converted statement is kept under uploads/<id>/ so a format

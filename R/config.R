@@ -90,7 +90,14 @@
     logs           = "logs",
     # the template chosen for each layout before (R/learned.R) -- beside the
     # templates built here, in the one folder an update never replaces
-    learned_choices = "templates/statements_user/_learned_choices.json"
+    learned_choices = "templates/statements_user/_learned_choices.json",
+    # every bank layout the automatic reader has learned (R/layouts.R), one
+    # folder per bank. Learned on the box from statements nobody else has, so
+    # it is irreplaceable in the same way the analysts' templates are.
+    layouts        = "templates/layouts",
+    # automatic-reading tracking (R/tracking.R): one JSON line per event, a
+    # file per month, counts and codes only -- never statement content.
+    tracking       = "logs/tracking"
   ),
   feed = list(
     # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny

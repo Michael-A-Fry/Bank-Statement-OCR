@@ -11,7 +11,9 @@
 # printed CR / DR / OD settles it, because those words mean the same thing on
 # every statement. When nothing printed settles it, the statement's own account
 # type does: a credit card or loan prints what is OWED, so its plain figures run
-# the other way. That decision is recorded in the proof, never hidden.
+# the other way -- but only when the page agrees (a row's wording or a money
+# heading) and nothing on it says the opposite; otherwise nothing is decided. That
+# decision is recorded in the proof, never hidden.
 
 # ---- anchors: opening, closing, carried balances and totals ------------------------
 
@@ -26,12 +28,15 @@
   "c/f", "c/fwd", "bal c/f", "balance c/fwd", "balance cfwd", "new balance", "ending balance",
   "final balance", "balance at end", "balance at end of period", "closing ledger balance",
   "balance carried forward to next page", "carried forward to next page")
-.AR_TOTAL_RX <- paste0("^(?:(?:sub|grand|page|period|statement|account|running)[- ]?)?totals?",
+.AR_TOTAL_RX <- paste0("^(?:(?:sub|grand|page|period|statement|account|running|closing|opening)[- ]?)?totals?",
   "(?: (?:at|for|of|on|to|this|the)(?: the)?(?: end of)?(?: the)? ",
   "(?:page|period|statement|month|year|day|section|account))?$|",
   "^(?:total )?(?:withdrawals|deposits|credits|debits|payments|purchases|charges|receipts|",
   "money (?:in|out)|paid (?:in|out)|payments (?:in|out))",
-  "(?: (?:&|and) (?:debits|credits|other charges|other debits|other credits|refunds|other))?$")
+  "(?: (?:&|and) (?:debits|credits|other charges|other debits|other credits|refunds|other))?$|",
+  # A section's own total ("Total for card ending 5133 J SAMPLE"): the scope words
+  # come first, so a payee called "Total Fitness" never matches.
+  "^(?:sub[- ]?)?totals? for (?:card|account|cardholder)\\b.*$")
 
 .ar_norm_label <- function(s) {
   s <- tolower(trimws(as.character(s)))
@@ -71,7 +76,7 @@
   if (grepl("withdrawal|debit|purchase|charges|money out|paid out|payments out", s)) return("debit")
   if (grepl("deposit|credit|receipt|money in|paid in|payments in", s)) return("credit")
   if (grepl("payment", s)) return(if (liability) "credit" else "debit")
-  if (grepl("^(?:(?:sub|grand|page|period|statement|account|running)[- ]?)?totals?", s, perl = TRUE)) return("both")
+  if (grepl("^(?:(?:sub|grand|page|period|statement|account|running|closing|opening)[- ]?)?totals?", s, perl = TRUE)) return("both")
   ""
 }
 
@@ -84,6 +89,9 @@
 .AR_LIAB_PHRASES <- c("credit card", "credit limit", "available credit", "minimum payment",
   "minimum repayment", "card limit", "card number", "payment due", "amount owing",
   "visa statement", "mastercard statement", "card statement", "purchase rate", "cash advance")
+# Wordings only a card or loan's own statement prints (an advert for a card says
+# "credit card" and "credit limit", not what is due).
+.AR_LIAB_OWN <- c("minimum payment", "minimum repayment", "payment due", "amount owing", "available credit")
 .ar_liability_evidence <- function(text) {
   s <- tolower(paste(text, collapse = " \n "))
   hits <- .AR_LIAB_PHRASES[vapply(.AR_LIAB_PHRASES, function(p) grepl(p, s, fixed = TRUE), logical(1))]
@@ -117,9 +125,32 @@
 # .ar_anchor_value(text, liab, decimal) -- an anchor's figure in the same terms.
 .ar_anchor_value <- function(text, liab, decimal = "auto") {
   if (is.null(text) || is.na(text)) return(NA_real_)
-  v <- .num(text, decimal)
-  .ar_sem(v, .ar_sign_kind(text), liab)
+  # The role search asks for the same few figures hundreds of times; each is read
+  # once. The cache lives in the lexicon's own cache, so a vocabulary edit (a new
+  # sign word) clears it with everything else read under the old words.
+  fc <- get0("auto_read::figs", envir = .LEXICON_CACHE, inherits = FALSE)
+  if (is.null(fc) || length(ls(fc)) > 5000L) {
+    fc <- new.env(parent = emptyenv()); assign("auto_read::figs", fc, envir = .LEXICON_CACHE)
+  }
+  key <- paste(decimal, text, sep = "\r")
+  hit <- get0(key, envir = fc, inherits = FALSE)
+  if (is.null(hit)) {
+    hit <- list(v = .num(text, decimal), sk = .ar_sign_kind(text))
+    assign(key, hit, envir = fc)
+  }
+  .ar_sem(hit$v, hit$sk, liab)
 }
+
+# A carried balance (brought / carried forward, b/f, c/f, from or to another page)
+# continues ONE chain across a break; an opening or closing balance may start or
+# end one.
+.AR_CARRY_RX <- "forward|fwd|\\b[bc]/f\\b|previous page|next page"
+
+# .ar_section_break(pts, q) -- a printed closing balance followed, at the same
+# place in the table, by a printed opening balance: one account's section ends and
+# the next account's begins (a combined statement). Never a carried balance, so a
+# missing page between a carried-forward and a brought-forward still breaks.
+.ar_section_break <- function(src1, src2) src1 == "close@table" & src2 == "open@table"
 
 # .ar_anchor_points(anchors, n, dir, liab, bal_col, decimal) -- the balances the
 # statement prints OUTSIDE its rows, as chain points: (position in time order,
@@ -127,8 +158,14 @@
 # wherever they are printed. A brought / carried forward line inside the table sits
 # where it is printed. Totals are returned separately.
 .ar_anchor_points <- function(anchors, n, dir, liab, bal_col = 0L, decimal = "auto") {
-  pts <- data.frame(pos = numeric(0), val = numeric(0), src = character(0), stringsAsFactors = FALSE)
-  for (a in anchors) {
+  pos <- numeric(0); val <- numeric(0); src <- character(0)
+  # A bundle of statements prints a summary box (opening, closing) per statement.
+  # Each box's opening then sits where its statement's rows begin, and its closing
+  # where the next statement's begin (or after the last row).
+  box_open <- which(vapply(anchors, function(a) identical(a$class, "open") && !isTRUE(a$in_table), logical(1)))
+  bundle <- length(box_open) > 1L && !identical(dir, "new")
+  for (k in seq_along(anchors)) {
+    a <- anchors[[k]]
     if (!(a$class %in% c("open", "close"))) next
     txt <- if (bal_col > 0L && !is.na(a$figs[bal_col])) a$figs[bal_col] else a$value_text
     # A line printing several figures and none in the balance column is a summary
@@ -137,15 +174,26 @@
     v <- .ar_anchor_value(txt, liab, decimal)
     if (is.na(v)) next
     r <- a$before_rows
-    pos <- if (a$class == "open" && (!a$in_table || r == 0L)) 0
-           else if (a$class == "close" && (!a$in_table || r == n)) n
-           else if (!a$in_table) next
-           else if (identical(dir, "new")) n - r else r
-    if (identical(dir, "new") && a$in_table && a$class == "open" && r == n) pos <- 0
-    if (identical(dir, "new") && a$in_table && a$class == "close" && r == 0L) pos <- n
-    pts[nrow(pts) + 1L, ] <- list(pos, v, paste0(a$class, if (a$in_table) "@table" else "@summary"))
+    if (bundle && !a$in_table) {
+      nxt <- box_open[box_open > k]
+      p <- if (a$class == "open") r else if (length(nxt)) anchors[[nxt[1]]]$before_rows else n
+      pos <- c(pos, min(max(p, 0), n)); val <- c(val, v)
+      src <- c(src, paste0(a$class, "@summary"))
+      next
+    }
+    p <- if (a$class == "open" && (!a$in_table || r == 0L)) 0
+         else if (a$class == "close" && (!a$in_table || r == n)) n
+         else if (!a$in_table) next
+         else if (identical(dir, "new")) n - r else r
+    if (identical(dir, "new") && a$in_table && a$class == "open" && r == n) p <- 0
+    if (identical(dir, "new") && a$in_table && a$class == "close" && r == 0L) p <- n
+    carry <- grepl(.AR_CARRY_RX, .ar_norm_label(a$label), perl = TRUE)
+    # Positions are counted in the model's rows; if the reader produced fewer, a
+    # check elsewhere already fails, and the point must stay on the chain.
+    pos <- c(pos, min(max(p, 0), n)); val <- c(val, v)
+    src <- c(src, paste0(a$class, if (carry) "~carry", if (a$in_table) "@table" else "@summary"))
   }
-  pts
+  data.frame(pos = pos, val = val, src = src, stringsAsFactors = FALSE)
 }
 
 # ---- the chain ---------------------------------------------------------------------------
@@ -157,51 +205,64 @@
 #   uns  rows whose sign is unknown (an unsigned column): the step must be met by
 #        exactly ONE choice of signs, or the sign is left unsettled
 # Returns the steps, the settled signs, and which rows each kind of step covers.
+# Vectorised over the steps: the role search runs this hundreds of times.
 .ar_chain <- function(A, uns, bal, apts, dir) {
   n <- length(A)
   ord <- if (identical(dir, "new")) rev(seq_len(n)) else seq_len(n)
   Ac <- A[ord]; Uc <- uns[ord]; Bc <- bal[ord]
   bq <- which(!is.na(Bc))
-  pts <- rbind(data.frame(pos = bq, val = Bc[bq], src = rep("row", length(bq)), stringsAsFactors = FALSE), apts)
-  pts <- pts[order(pts$pos, pts$src != "row"), , drop = FALSE]
+  pos <- c(bq, apts$pos); val <- c(Bc[bq], apts$val); src <- c(rep("row", length(bq)), apts$src)
+  o <- order(pos, src != "row")
+  pos <- pos[o]; val <- val[o]; src <- src[o]
   signs <- rep(NA_real_, n)
-  L <- nrow(pts) - 1L
-  steps <- data.frame(from = integer(0), to = integer(0), expected = numeric(0), got = numeric(0),
-                      ok = logical(0), unknown = integer(0), ambiguous = logical(0))
-  if (L < 1L) return(list(steps = steps, signs = signs, ord = ord, one_row = integer(0), covered = integer(0)))
-  st <- vector("list", L)
-  covered <- integer(0); one_row <- integer(0)
-  for (q in seq_len(L)) {
-    p1 <- pts$pos[q]; p2 <- pts$pos[q + 1L]
-    expv <- round(pts$val[q + 1L] - pts$val[q], 2)
-    rows <- if (p2 > p1) (p1 + 1L):p2 else integer(0)
-    a <- Ac[rows]; u <- Uc[rows]
-    unk <- sum(is.na(a)); amb <- FALSE; ok <- NA; got <- NA_real_
-    if (!length(rows)) { ok <- abs(expv) < PARAM_MONEY_TOL; got <- 0 }
-    else if (unk == 0L && !any(u)) { got <- round(sum(a), 2); ok <- abs(got - expv) < PARAM_MONEY_TOL }
-    else if (unk == 0L) {
-      fixed <- sum(a[!u]); mags <- abs(a[u])
-      if (length(mags) <= 12L) {
-        sg <- as.matrix(expand.grid(rep(list(c(-1, 1)), length(mags))))
-        tot <- round(fixed + as.numeric(sg %*% mags), 2)
-        sol <- which(abs(tot - expv) < PARAM_MONEY_TOL)
-        ok <- length(sol) >= 1L
-        if (length(sol) == 1L) { signs[ord[rows[u]]] <- sg[sol, ]; got <- expv }
-        else if (length(sol) > 1L) { amb <- TRUE; got <- expv }
-      } else { ok <- FALSE; amb <- TRUE }
-    }
-    if (isTRUE(ok)) { covered <- c(covered, ord[rows]); if (length(rows) == 1L) one_row <- c(one_row, ord[rows]) }
-    st[[q]] <- data.frame(from = as.integer(p1), to = as.integer(p2), expected = expv, got = got,
-                          ok = ok, unknown = unk, ambiguous = amb)
+  L <- length(pos) - 1L
+  if (L < 1L) return(list(steps = data.frame(from = integer(0), to = integer(0), expected = numeric(0),
+                                             got = numeric(0), ok = logical(0), unknown = integer(0),
+                                             ambiguous = logical(0)),
+                          signs = signs, ord = ord, one_row = integer(0), covered = integer(0),
+                          sections = 1L, breaks = numeric(0)))
+  p1 <- pos[-(L + 1L)]; p2 <- pos[-1]
+  expv <- round(val[-1] - val[-(L + 1L)], 2)
+  brk <- p1 == p2 & .ar_section_break(src[-(L + 1L)], src[-1])
+  na <- is.na(Ac); un <- Uc & !na
+  cs <- c(0, cumsum(ifelse(na | un, 0, Ac)))
+  cna <- c(0, cumsum(na)); cun <- c(0, cumsum(un))
+  fixed <- cs[p2 + 1L] - cs[p1 + 1L]
+  unk <- as.integer(cna[p2 + 1L] - cna[p1 + 1L]); nu <- cun[p2 + 1L] - cun[p1 + 1L]
+  got <- round(fixed, 2)
+  ok <- ifelse(unk > 0L, NA, abs(got - expv) < PARAM_MONEY_TOL)
+  amb <- rep(FALSE, L)
+  # Steps with an unsigned figure: exactly one choice of signs must meet them.
+  for (q in which(nu > 0 & unk == 0L)) {
+    rows <- (p1[q] + 1L):p2[q]
+    u <- Uc[rows]; mags <- abs(Ac[rows][u])
+    if (length(mags) > 12L) { ok[q] <- FALSE; amb[q] <- TRUE; next }
+    sg <- as.matrix(expand.grid(rep(list(c(-1, 1)), length(mags))))
+    tot <- round(fixed[q] + as.numeric(sg %*% mags), 2)
+    sol <- which(abs(tot - expv[q]) < PARAM_MONEY_TOL)
+    ok[q] <- length(sol) >= 1L
+    got[q] <- if (length(sol)) expv[q] else NA_real_
+    if (length(sol) == 1L) signs[ord[rows[u]]] <- sg[sol, ] else if (length(sol) > 1L) amb[q] <- TRUE
   }
-  list(steps = do.call(rbind, st), signs = signs, ord = ord, one_row = one_row, covered = unique(covered))
+  ok[brk] <- TRUE; expv[brk] <- 0; got[brk] <- 0
+  good <- which(ok %in% TRUE & p2 > p1)
+  covered <- unique(ord[unlist(lapply(good, function(q) (p1[q] + 1L):p2[q]))])
+  one <- good[p2[good] - p1[good] == 1L]
+  list(steps = data.frame(from = as.integer(p1), to = as.integer(p2), expected = expv, got = got,
+                          ok = ok, unknown = unk, ambiguous = amb),
+       signs = signs, ord = ord, one_row = ord[p2[one]], covered = if (is.null(covered)) integer(0) else covered,
+       sections = 1L + sum(brk), breaks = p1[brk])
 }
 
 # .ar_chain_score(ch) -- the counts a candidate is judged on.
 .ar_chain_score <- function(ch) {
   s <- ch$steps
   if (!nrow(s)) return(c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0))
-  c(links = nrow(s), held = sum(s$ok %in% TRUE & !s$ambiguous), failed = sum(s$ok %in% FALSE),
+  # A step between two balances printed at the same place (a closing balance in the
+  # summary box and again under the table) must agree, but proves no row: it is
+  # not a link.
+  rows <- s$to > s$from
+  c(links = sum(rows), held = sum(s$ok %in% TRUE & !s$ambiguous & rows), failed = sum(s$ok %in% FALSE),
     unknown = sum(is.na(s$ok) & s$unknown > 0), ambiguous = sum(s$ambiguous))
 }
 
@@ -249,9 +310,11 @@
   list(A = A, uns = uns)
 }
 
-# .ar_roles(V, anchors, liab_evidence, opts) -- try every reading and keep the ones
-# the arithmetic allows. Returns the candidates that pass, the one chosen, and why.
-.ar_roles <- function(V, anchors, liab_ev, decimal = "auto", heading_roles = NULL) {
+# .ar_roles(V, anchors, liab_ev, decimal, heading_roles, texts) -- try every reading
+# and keep the ones the arithmetic allows. Returns the candidates that pass, the one
+# chosen, and why. `texts` (each row's words) only ever vote, on the one question
+# the arithmetic cannot answer: which way round a reading and its negation go.
+.ar_roles <- function(V, anchors, liab_ev, decimal = "auto", heading_roles = NULL, texts = NULL) {
   K <- ncol(V$S); n <- nrow(V$S)
   roles_list <- .ar_role_candidates(K)
   res <- list()
@@ -304,18 +367,56 @@
     if (neg) {
       want <- isTRUE(liab_ev$liability)
       pick <- Filter(function(r) identical(r$liab, want), distinct)
+      # The account type says which way round only when the page agrees. A money
+      # heading is the bank's own word on its columns ("Debits" is purchases on a
+      # card too), so one naming them the other way stops it, and one agreeing
+      # settles it. Without such a heading (an "Amount" column), the rows' wording
+      # decides with it: each row that says which way it went (a salary paid in, a
+      # purchase paid out) counts for or against, a card's own statement wording
+      # counts for, and it must win outright. No card word anywhere is no proof of
+      # a bank account -- a card may simply not say so -- and an advert for a
+      # credit card must never flip an everyday statement.
+      if (length(pick) == 1L) {
+        r <- pick[[1]]
+        hr <- heading_roles
+        agree <- length(hr) == length(r$roles) && any(!is.na(hr) & hr %in% c("debit", "credit") & hr == r$roles)
+        if (.ar_heading_flips(hr, r$roles)) pick <- list()
+        else if (!agree) {
+          v <- .ar_desc_votes(texts, r$A)
+          ph <- liab_ev$phrases %||% character(0)
+          support <- (want && length(ph) >= 3L && any(ph %in% .AR_LIAB_OWN)) + v[["for"]]
+          if (support == 0 || v[["against"]] >= support) pick <- list()
+        }
+      }
       if (length(pick) == 1L) {
         distinct <- pick
         note <- if (want) sprintf("the arithmetic holds either way round; the statement declares itself a card or loan (%s), so its plain figures are what is owed",
                                   paste(utils::head(liab_ev$phrases, 3), collapse = ", "))
-                else "the arithmetic holds either way round; nothing declares a card or loan, so plain figures are money in"
+                else "the arithmetic holds either way round; nothing declares a card or loan and the rows agree, so plain figures are money in"
       }
+    }
+  }
+  # A reading that leaves printed balances unexplained proves nothing: when another
+  # reading holds MORE balance steps but breaks somewhere, the statement contradicts
+  # itself, and a reading that calls that balance column "other" (or ignores it)
+  # only hides where. Two rows' figures swapped keep opening + movements =
+  # closing; only the running balance shows it.
+  if (length(distinct) == 1L && length(res)) {
+    hmax <- max(vapply(res, function(r) r$score[["held"]], 0))
+    if (distinct[[1]]$score[["held"]] < hmax) {
+      distinct <- list()
+      note <- "a reading using more of the printed balances does not add up"
     }
   }
   best <- NULL
   if (length(res)) {
     sc <- t(vapply(res, function(r) r$score, numeric(5)))
-    o <- order(-sc[, "held"], sc[, "failed"], sc[, "unknown"], vapply(res, function(r) sum(r$roles == "other"), 0))
+    # Ties (a reading and its negation break in the same places) go to the one the
+    # account type and the headings favour, so the reading shown for checking has
+    # its signs the right way round wherever the statement says which way that is.
+    o <- order(-sc[, "held"], sc[, "failed"], sc[, "unknown"], vapply(res, function(r) sum(r$roles == "other"), 0),
+               vapply(res, function(r) !identical(r$liab, isTRUE(liab_ev$liability)) +
+                        .ar_heading_flips(heading_roles, r$roles), 0))
     best <- res[[o[1]]]
   }
   list(chosen = if (length(distinct) == 1L) distinct[[1]] else NULL,
@@ -323,7 +424,33 @@
        tried = length(res))
 }
 
-# .ar_vote_roles(V, heading_roles) -- what to SHOW when the arithmetic cannot decide
+# .ar_heading_flips(hroles, roles) -- a heading names a column money out where the
+# reading has it money in, or the other way round. Only those two words count: a
+# heading measured over a right-aligned figure column can take in its neighbour's
+# "Balance", so a balance heading is too loose to overrule anything.
+.ar_heading_flips <- function(hroles, roles) {
+  if (is.null(hroles) || length(hroles) != length(roles)) return(FALSE)
+  any(!is.na(hroles) & ((hroles == "debit" & roles == "credit") | (hroles == "credit" & roles == "debit")))
+}
+
+# Description wording that says which way money moved, whatever the account: a
+# vote, never a proof. "Automatic payment" and "direct debit" are left out, as on
+# a card they are the holder paying the card off (money in).
+.AR_IN_WORDS <- "\\b(?:salary|wages|deposit|refund|interest credit|credit interest|payment received|thank you|direct credit|tfr from|transfer from|ird refund)\\b"
+.AR_OUT_WORDS <- "\\b(?:eftpos|pos w/d|atm|withdrawal|purchase|bill payment|fee|fees|tfr to|transfer to|visa debit)\\b"
+
+# .ar_desc_votes(texts, A) -- how many rows' wording agrees with the sign a reading
+# gives them, and how many disagree.
+.ar_desc_votes <- function(texts, A) {
+  t <- tolower(texts %||% character(0))
+  if (length(t) != length(A)) return(c("for" = 0, against = 0))
+  inw <- grepl(.AR_IN_WORDS, t, perl = TRUE); outw <- grepl(.AR_OUT_WORDS, t, perl = TRUE)
+  one <- xor(inw, outw) & !is.na(A) & A != 0
+  agree <- one & ((inw & A > 0) | (outw & A < 0))
+  c("for" = sum(agree), against = sum(one & !agree))
+}
+
+# .ar_vote_roles(K, heading_roles) -- what to SHOW when the arithmetic cannot decide
 # (no running balance and no printed totals): the headings' own words, else the
 # position every NZ retail statement uses. Never a proof.
 .ar_vote_roles <- function(K, heading_roles) {
