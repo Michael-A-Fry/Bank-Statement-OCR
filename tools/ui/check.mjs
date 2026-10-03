@@ -282,6 +282,26 @@ async function run(browser, D) {
     await ps.close();
   }
 
+  // 5d. STOP. A long case can be stopped; a first run stopped leaves the table as it
+  //     was before Convert, with nothing kept.
+  {
+    for (const n of [1, 2, 3]) fs.copyFileSync(path.join(D, 'anz_scan.pdf'), path.join(D, `scan_${n}.pdf`));
+    const pz = await ctx.newPage();
+    await pz.goto(URL_, { waitUntil: 'networkidle' }); await sleep(1500);
+    await pz.click('a[data-value="Convert"]'); await sleep(600);
+    const q3 = await pz.$('#cv_qid'); if (q3) { await q3.fill('UI0001'); await sleep(800); }
+    await pz.setInputFiles('#cv_file', [1, 2, 3].map(n => path.join(D, `scan_${n}.pdf`)));
+    await waitFor(pz, () => document.querySelectorAll('tr.plan-row').length === 3, 60000); await sleep(500);
+    await pz.click('#cv_go');
+    check('a running case offers Stop', await waitFor(pz, () => !!document.querySelector('#cv_stop'), 30000));
+    await waitFor(pz, () => [...document.querySelectorAll('td.plan-res')].some(td => td.innerText.startsWith('Converted')), 120000);
+    await pz.click('#cv_stop'); await sleep(2500);
+    check('Stop ends the run', !(await pz.$('.plan-running')) && !(await pz.$('#cv_stop')));
+    check('...and leaves the table as it was before Convert', (await pz.$$('td.plan-res')).length === 0);
+    eq('...ready to start again', await button(pz), 'Convert 3 files');
+    await pz.close();
+  }
+
   // 6. download everything
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);
   const zp = path.join(OUT, 'case.zip'); await dl.saveAs(zp);

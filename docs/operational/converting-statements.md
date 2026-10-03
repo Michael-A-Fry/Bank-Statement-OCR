@@ -204,7 +204,11 @@ to *Converting…* to its result the moment that file is done. Nothing covers th
 page, so you can read the first results while the rest are still converting. The
 templates and the Convert button are locked until it finishes; if the server is
 busy with other people's work, the table says how many conversions are ahead of
-yours.
+yours. **Stop** ends it: on a first run the table goes back to how it was before
+Convert, and nothing from the run is kept. Stopped while converting changed files
+again, those files are marked *Stopped - press Convert* and left out of Download
+everything (they may already have been partly rewritten); the rest keep their
+results.
 
 When it finishes, the results are **in the same table** you
 checked the templates in — one row per file, no second table. Above it, one

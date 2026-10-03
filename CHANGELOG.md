@@ -13,6 +13,21 @@ finding id.
 
 ---
 
+## 1.23.0
+
+**A converting case can be stopped.**
+
+A case can run for many minutes, and closing the tab was the only way out.
+**Stop** sits beside the progress bar. A first run stopped leaves the table as it was
+before Convert, and nothing from it is recorded or fed. A Convert-again stopped is
+the careful case: the files it was re-reading may already have been written over,
+so their old verdicts are taken out ("Stopped - press Convert to convert it"), they
+are left out of Download everything, and they count as changed so Convert picks
+them up; every other row keeps its result.
+
+Also fixed in passing: the case tally looked a status up with `[[`, which errors when
+no file had it — caught by the browser check before it shipped.
+
 ## 1.22.1
 
 **Admin's template list works on every DT; every screen is now pressed by the

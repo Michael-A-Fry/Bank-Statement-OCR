@@ -3312,6 +3312,34 @@ server <- function(input, output, session) {
     pk[i] <- as.character(v$value %||% "")[1]
     cv_plan_picks(pk)
   })
+  # STOP. A case can run for many minutes, and closing the tab was the only way out.
+  # A first run stopped leaves the table as it was before Convert. A Convert-again
+  # stopped is the careful case: the rows it was re-reading may already have had
+  # their files written over, so their old verdicts no longer describe what is on
+  # disk -- they are taken out (no verdict, nothing in Download everything) and
+  # marked to be converted again. Nothing from a stopped run is recorded or fed.
+  observeEvent(input$cv_stop, {
+    run <- cv_run()
+    if (is.null(cv_slot$live()) || is.null(run)) return()
+    cv_slot$cancel(); cv_run(NULL)
+    p <- cv_plan(); b <- cv_batch()
+    if (!is.null(b) && !is.null(p$rows) && nrow(b) == nrow(p$rows)) {
+      for (i in run$rows) {
+        b$status[i] <- "stopped"; b$rows[i] <- NA_integer_; b$trust[i] <- NA_character_
+        b$failing_check[i] <- NA_character_
+        r <- b$result[[i]]
+        if (is.list(r)) { r$outputs <- character(0); b$result[i] <- list(r) }
+      }
+      cv_batch(b)
+      ran <- cv_plan_ran()
+      if (!is.null(ran)) { ran$expected[run$rows] <- NA_character_; cv_plan_ran(ran) }
+    } else {
+      cv_plan_ran(NULL)        # nothing was converted: back to before Convert
+    }
+    notify_once("cv_stopped", "Stopped. Nothing from that run was kept - press Convert to start again.",
+                type = "message", duration = 6)
+  })
+
   # A row clicked: that file's full result, below the table.
   observeEvent(input$cv_plan_open, {
     v <- input$cv_plan_open; p <- cv_plan()
@@ -3504,6 +3532,9 @@ server <- function(input, output, session) {
         else if (identical(live$state, "running") && identical(as.integer(live$i), as.integer(k)))
           list(tags$td(class = "plan-res", div(class = "plan-converting", "Converting\u2026")), tags$td(""))
         else list(tags$td(class = "plan-res", span(class = "muted", "Waiting")), tags$td(""))
+      } else if (res && identical(as.character(b$status[i]), "stopped")) {
+        list(tags$td(class = "plan-res", span(class = "muted", "Stopped - press Convert to convert it")),
+             tags$td(""))
       } else if (res) {
         .plan_verdict(b$status[i], b$rows[i], b$trust[i], b$failing_check[i], again = i %in% changed)
       } else if (cols) {
@@ -3513,7 +3544,7 @@ server <- function(input, output, session) {
           if (mine) span(class = "plan-chip plan-mine", "Your choice")
           else span(class = paste("plan-chip", st[1]), title = .plan_hover(r), st[2])))
       }
-      openable <- res && !running
+      openable <- res && !running && !identical(as.character(b$status[i]), "stopped")
       tags$tr(class = paste(c("plan-row", st[1], if (mine) "plan-chosen", if (openable) "plan-openable",
                               if (openable && identical(open, i)) "plan-open",
                               if (in_run) "plan-in-run"), collapse = " "),
@@ -3542,12 +3573,16 @@ server <- function(input, output, session) {
         div(class = "plan-progress",
           p(class = "plan-head", say),
           div(class = "plan-bar", div(class = "plan-bar-fill",
-            style = sprintf("width:%d%%", as.integer(round(100 * nd / max(1L, n))))))))
+            style = sprintf("width:%d%%", as.integer(round(100 * nd / max(1L, n))))))),
+        actionButton("cv_stop", "Stop", class = "btn-default"))
     } else if (res) {
       s <- batch_summary(b); k <- stats::setNames(s$n, s$status)
-      say <- function(x, word) if (isTRUE(k[[x]] > 0L)) sprintf("%d %s", k[[x]], word) else NULL
+      # k[x], not k[[x]]: a status no file had is simply absent, and [[ on a missing
+      # name is an error -- which would take the whole table down with it
+      say <- function(x, word) { v <- unname(k[x]); if (isTRUE(v > 0L)) sprintf("%d %s", v, word) else NULL }
       bits <- Filter(Negate(is.null), list(say("ok", "converted"), say("needs_review", "need a check"),
-        say("unsupported", "with no template yet"), say("failed", "could not be read")))
+        say("unsupported", "with no template yet"), say("failed", "could not be read"),
+        say("stopped", "stopped")))
       div(class = "plan-top",
         div(p(class = "plan-head", sprintf("%d files", nrow(rows))),
             # paste0, not a second argument: the tag builder joins children with a

@@ -2793,3 +2793,19 @@ test_that("Admin's template tables do not depend on a DT extension being present
   expect_match(paste(src, collapse = "\n"), 'tags\\$link\\(rel = "icon", type = "image/x-icon", href = "favicon.ico"\\)')
   expect_true(file.exists(file.path(engine_root(), "www", "favicon.ico")))
 })
+
+# ---------------------------------------------------------------------------
+# STOP. A stopped Convert-again must not leave old verdicts beside files it may have
+# written over -- nor zip those files up as if they were the old ones.
+test_that("a stopped case keeps nothing that no longer describes what is on disk", {
+  src <- .ui_src()
+  st <- .src_block(src, "observeEvent\\(input\\$cv_stop, \\{", 30L)
+  expect_match(st, "cv_slot\\$cancel\\(\\); cv_run\\(NULL\\)")
+  expect_match(st, 'b\\$status\\[i\\] <- "stopped"')
+  expect_match(st, "r\\$outputs <- character\\(0\\)")           # out of Download everything
+  expect_match(st, "ran\\$expected\\[run\\$rows\\] <- NA_character_")   # marked to run again
+  expect_match(st, "cv_plan_ran\\(NULL\\)")                     # a first run: back to before
+  # a stopped row is not offered as a result to open
+  expect_match(.src_block(src, "output\\$cv_plan <- renderUI", 160L),
+               'openable <- res && !running && !identical\\(as\\.character\\(b\\$status\\[i\\]\\), "stopped"\\)')
+})
