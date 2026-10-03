@@ -170,11 +170,12 @@
     # period   $487.00   $0.00   $19,964.46 OD", ANZ) states the balance where it
     # stands: a carried balance mid-statement, the closing balance at the end. Used
     # as a balance point; if the figure there were anything else, the chain breaks
-    # and a person looks. Only a totals ROW of the table counts: it sits among the
-    # rows and prints the money columns' totals beside the balance. A summary box's
-    # "Total withdrawals  8,827.73" may line up with the balance column but is not one.
+    # and a person looks. Only a totals ROW of the table counts: it sits among or
+    # under the rows (a gap above "Totals at end of period" is common) and prints
+    # the money columns' totals beside the balance. A summary box's "Total
+    # withdrawals  8,827.73" may line up with the balance column but is not one.
     if (identical(a$class, "total") && bal_col > 0L && !is.na(a$figs[bal_col]) &&
-        isTRUE(a$in_table) && sum(!is.na(a$figs)) >= 2L) a$class <- "close"
+        (isTRUE(a$in_table) || isTRUE(a$under_table)) && sum(!is.na(a$figs)) >= 2L) a$class <- "close"
     if (!(a$class %in% c("open", "close"))) next
     txt <- if (bal_col > 0L && !is.na(a$figs[bal_col])) a$figs[bal_col] else a$value_text
     # A line printing several figures and none in the balance column is a summary

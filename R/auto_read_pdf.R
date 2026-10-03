@@ -660,6 +660,7 @@
         anchors[[length(anchors) + 1L]] <- list(page = p, line = l, y = ln$y[i],
           label = ln$label[i], class = ln$aclass[i], raw = ln$raw[i],
           in_table = !is.null(rg) && l %in% rg$lines, before_rows = row_n,
+          under_table = !is.null(rg) && ln$y[i] >= rg$y0,
           value_text = mon$text[nrow(mon)], n_money = nrow(mon), figs = figs)
         next
       }

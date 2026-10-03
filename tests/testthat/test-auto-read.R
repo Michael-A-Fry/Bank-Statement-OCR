@@ -974,4 +974,21 @@ test_that("a totals line printing the balance stands as the closing balance", {
   # The same figure wrong in the totals line breaks the chain: a person looks.
   bad <- rows; bad[5] <- sub("19,964.46", "19,999.99", bad[5], fixed = TRUE)
   expect_false(ar_auto(auto_read(ar_pdf(ar_cover, c(h, bad)))))
+  # Printed under the table after a gap, it is still the table's totals row.
+  gap <- c(rows[1:4], "", "", rows[5])
+  rd <- auto_read(ar_pdf(ar_cover, c(h, gap)))
+  expect_equal(rd$outcome, "proven")
+  expect_true(isTRUE(ok_of(rd, "opening_closing")))
+})
+
+test_that("a summary box's single total in the balance column is not a closing balance", {
+  # "Total withdrawals 8,827.73" in an account summary above the table lines up with
+  # the balance column; read as a balance it broke every chain it touched.
+  h <- c("Kauri Bank                         Statement period 1 Feb 2026 to 28 Feb 2026", "",
+         "                                                  Total withdrawals      777.27",
+         "                                                  Total deposits       3,122.18", "",
+         "Date     Details                          Withdrawals     Deposits      Balance")
+  rd <- auto_read(ar_pdf(c(h, ar_rows)))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), ar_want)
 })
