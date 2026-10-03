@@ -1,0 +1,263 @@
+# nz_banks.yaml -- who issues NZ bank statements, and how a statement says so.
+#
+# Read by R/bank_identity.R. Each institution lists what the statement itself can
+# show about its issuer: legal names (current and former, with the years they were
+# used), web domains, phone numbers, SWIFT/BIC codes and masthead brand words.
+# `family` is the clearing bank whose bank code the institution's accounts carry
+# (agency banking): an account number in the 02 code is consistent with BNZ and
+# with every bank in BNZ's family, and the statement's own wording decides which.
+#
+# Strength of each kind of evidence is set in R/bank_identity.R, not here.
+#   global: true   -- the legal name is also used outside New Zealand (an
+#                     Australian or UK statement can carry it), so it counts less.
+#   pseudo: true   -- not a statement issuer: an account number in one of these
+#                     register branches tells only the family.
+#   not_after      -- words that, printed just before the name, make it a different
+#                     name ("Reserve Bank of New Zealand" is not BNZ).
+#
+# Sources (all read 3 Oct 2026; see the research note bank_identity.md):
+#   Legal names and dates  RBNZ registers of banks (current, and no longer registered),
+#                          Wayback copies of 30 Sep and 2 Oct 2026.
+#   Domains, phones        each bank's own website, Oct 2026.
+#   SWIFT/BIC              each bank's "receive money from overseas" page; codes
+#                          marked "directory" are from third-party directories only.
+#   Branch numbers         dictionaries/nz_bank_branches.csv (Payments NZ register).
+# Adding a bank: copy an entry, give it a new id, and add its branch rows to the CSV.
+
+meta:
+  updated: "2026-10-03"
+  register_date: "2026-09-25"
+
+institutions:
+  anz:
+    display: ANZ
+    family: anz
+    codes: ["01", "04", "06", "11", "25"]
+    legal_names:
+      - {name: "ANZ Bank New Zealand Limited", from: "2012-10-29"}
+      - {name: "ANZ National Bank Limited", from: "2004-06-28", to: "2012-10-29"}
+      - {name: "ANZ Banking Group (New Zealand) Limited", from: "1987", to: "2004-06-28"}
+      - {name: "The National Bank of New Zealand Limited", to: "2004-06-26", note: "brand used to about 2012; code 06"}
+      - {name: "Post Office Bank Limited", to: "1994-12-01", note: "PostBank; code 11"}
+      - {name: "Countrywide Banking Corporation Limited", to: "1998-11-27", note: "code 25"}
+      - {name: "ANZ New Zealand Investments Limited", note: "KiwiSaver and fund statements"}
+      - {name: "Australia and New Zealand Banking Group Limited", global: true}
+    domains: ["anz.co.nz", "anzinvestments.co.nz"]
+    phones: ["0800 269 296"]
+    swift: ["ANZBNZ22"]
+    brand_words: ["ANZ", "The National Bank", "PostBank"]
+
+  anz_agency:
+    display: "a business that banks through ANZ"
+    family: anz
+    pseudo: true
+
+  bnz:
+    display: BNZ
+    family: bnz
+    codes: ["02", "08"]
+    legal_names:
+      - {name: "Bank of New Zealand", not_after: ["reserve"]}
+    domains: ["bnz.co.nz"]
+    phones: ["0800 275 269"]
+    swift: ["BKNZNZ22"]
+    brand_words: ["BNZ"]
+
+  bnz_agency:
+    display: "a business that banks through BNZ"
+    family: bnz
+    pseudo: true
+
+  coop:
+    display: "The Co-operative Bank"
+    family: bnz
+    codes: ["02"]
+    legal_names:
+      - {name: "The Co-operative Bank Limited", from: "2011-10-26"}
+      - {name: "PSIS Limited", to: "2011-10-26"}
+    domains: ["co-operativebank.co.nz"]
+    phones: ["0800 554 554"]
+    brand_words: ["The Co-operative Bank", "Co-op Bank", "PSIS"]
+
+  wise:
+    display: Wise
+    family: bnz
+    codes: ["02"]
+    legal_names:
+      - {name: "Wise Payments Limited"}
+      - {name: "TransferWise Limited", global: true}
+    domains: ["wise.com"]
+    brand_words: ["TransferWise"]
+
+  kookmin:
+    display: "KB Kookmin Bank"
+    family: bnz
+    codes: ["02"]
+    legal_names:
+      - {name: "Kookmin Bank", global: true, to: "2026-08-24"}
+    brand_words: ["KB Kookmin"]
+
+  baroda:
+    display: "Bank of Baroda"
+    family: bnz
+    codes: ["02"]
+    legal_names:
+      - {name: "Bank of Baroda (New Zealand) Limited"}
+    brand_words: ["Bank of Baroda"]
+
+  awhi:
+    display: "Awhi Credit Union"
+    family: bnz
+    codes: ["02"]
+    legal_names:
+      - {name: "Awhi Credit Union"}
+    brand_words: ["Awhi Credit Union"]
+
+  westpac:
+    display: Westpac
+    family: westpac
+    codes: ["03", "13", "14", "16", "17", "18", "19", "20", "21", "22", "23", "27"]
+    legal_names:
+      - {name: "Westpac New Zealand Limited", from: "2006-10-31"}
+      - {name: "Westpac Banking Corporation", global: true, note: "ran the NZ business before Nov 2006; also the Australian parent"}
+    domains: ["westpac.co.nz"]
+    phones: ["0800 400 600", "0800 888 111"]
+    swift: ["WPACNZ2W"]
+    brand_words: ["Westpac", "WestpacTrust"]
+
+  westpac_agency:
+    display: "a bank or business that banks through Westpac"
+    family: westpac
+    pseudo: true
+
+  sbs:
+    display: "SBS Bank"
+    family: westpac
+    codes: ["03"]
+    legal_names:
+      - {name: "Southland Building Society", from: "2008-10-07"}
+    domains: ["sbsbank.co.nz"]
+    phones: ["0800 727 2265"]
+    brand_words: ["SBS Bank"]
+
+  heartland:
+    display: "Heartland Bank"
+    family: westpac
+    codes: ["03"]
+    legal_names:
+      - {name: "Heartland Bank Limited", from: "2012-12"}
+      - {name: "Heartland Building Society", to: "2013-01"}
+    domains: ["heartland.co.nz"]
+    phones: ["0800 85 20 20"]
+    swift: ["HEATNZ22"]          # directory
+    brand_words: ["Heartland Bank"]
+
+  rabobank:
+    display: Rabobank
+    family: westpac
+    codes: ["03"]
+    legal_names:
+      - {name: "Rabobank New Zealand Limited"}
+      - {name: "Rabo Wrightson Finance Limited", to: "1999"}
+      - {name: "Cooperatieve Rabobank U.A.", global: true}
+    domains: ["rabobank.co.nz"]
+    phones: ["0800 22 44 33", "0800 500 933"]
+    swift: ["RABONZ2W", "RABONZ22"]   # directory
+    brand_words: ["Rabobank", "RaboDirect"]
+
+  nzcu:
+    display: "NZCU credit union"
+    family: westpac
+    codes: ["03"]
+    brand_words: ["NZCU"]
+
+  mufg:
+    display: "MUFG Bank"
+    family: westpac
+    codes: ["03"]
+    legal_names:
+      - {name: "MUFG Bank, Ltd.", global: true}
+      - {name: "The Bank of Tokyo-Mitsubishi UFJ, Ltd.", global: true}
+    brand_words: ["MUFG"]
+
+  warehouse_money:
+    display: "Warehouse Money"
+    family: westpac
+    codes: ["03"]
+    legal_names:
+      - {name: "The Warehouse Financial Services Limited"}
+    brand_words: ["Warehouse Money"]
+
+  asb:
+    display: ASB
+    family: asb
+    codes: ["12", "24"]
+    legal_names:
+      - {name: "ASB Bank Limited"}
+      - {name: "Westland Bank Limited", to: "1994-07-01", note: "code 24"}
+    domains: ["asb.co.nz"]
+    phones: ["0800 803 804"]
+    swift: ["ASBBNZ2A"]
+    brand_words: ["ASB"]
+
+  kiwibank:
+    display: Kiwibank
+    family: kiwibank
+    codes: ["38"]
+    legal_names:
+      - {name: "Kiwibank Limited", from: "2001-11-29"}
+    domains: ["kiwibank.co.nz"]
+    phones: ["0800 113 355"]
+    swift: ["KIWINZ22"]
+    brand_words: ["Kiwibank"]
+
+  tsb:
+    display: TSB
+    family: tsb
+    codes: ["15"]
+    legal_names:
+      - {name: "TSB Bank Limited"}
+      - {name: "Taranaki Savings Bank Limited", to: "1989"}
+    domains: ["tsb.co.nz"]
+    phones: ["0800 872 226"]
+    swift: ["TSBANZ22"]
+    brand_words: ["TSB"]
+
+  hsbc:
+    display: HSBC
+    family: hsbc
+    codes: ["30"]
+    legal_names:
+      - {name: "The Hongkong and Shanghai Banking Corporation Limited", global: true}
+    domains: ["hsbc.co.nz"]
+    swift: ["HSBCNZ2A"]
+    brand_words: ["HSBC"]
+
+  citibank:
+    display: Citibank
+    family: citibank
+    codes: ["31"]
+    legal_names:
+      - {name: "Citibank, N.A.", global: true}
+    brand_words: ["Citibank"]
+
+  ccb:
+    display: "China Construction Bank"
+    family: ccb
+    codes: ["05"]
+    legal_names:
+      - {name: "China Construction Bank (New Zealand) Limited"}
+
+  icbc:
+    display: ICBC
+    family: icbc
+    codes: ["10"]
+    legal_names:
+      - {name: "Industrial and Commercial Bank of China (New Zealand) Limited"}
+
+  boc:
+    display: "Bank of China"
+    family: boc
+    codes: ["88"]
+    legal_names:
+      - {name: "Bank of China (New Zealand) Limited"}
