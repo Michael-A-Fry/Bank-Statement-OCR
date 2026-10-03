@@ -24,6 +24,13 @@ R/   -- the conversion path (input -> parsed -> checked -> written)
   detect.R              deterministic fingerprint scoring -> template match
   identify.R            the Convert table's row per file: its kind and the template detection will pick
   learned.R             the template chosen for a layout before, remembered and suggested next time
+  auto_read.R           automatic reading: the reading pipeline, candidates, outcome (proven / check / unread)
+  auto_read_pdf.R       automatic reading: tokens, cells and the column model found on each PDF page
+  auto_read_prove.R     automatic reading: column roles by arithmetic and the all-or-nothing checks
+  auto_read_tabular.R   automatic reading: CSV and Excel exports, columns by content and headings
+  bank_identity.R       which bank issued a statement, from the holder's account number and its wording
+  layouts.R             each bank's learned layouts: versioned store, matching and learning rules
+  tracking.R            no-personal-data record of what automatic reading did, and its summary
   normalise.R           parse_date / parse_amount / clean_description (verbatim)
   labels.R              label dictionary + matcher (single labelled values)
   lexicon.R             externalised recognition vocabularies (admin-editable)

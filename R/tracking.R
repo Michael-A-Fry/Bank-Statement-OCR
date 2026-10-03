@@ -35,7 +35,7 @@ TRACK_SPOT_CHECKS   <- c("right", "wrong", "cant_tell")
 # it can be tracked; until then it is dropped with a warning, never written raw.
 # test-tracking.R holds both lists to the reader's source, so they cannot drift.
 TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_used_once",
-                  "lines_accounted", "dates_settled",
+                  "lines_accounted", "dates_settled", "dated_lines_used", "pages_complete",
                   "balance_chain", "chain_across_pages", "opening_closing", "printed_totals",
                   "dates_readable", "dates_in_order", "dates_in_period", "signs_settled",
                   "no_derived_amounts", "amounts_read", "unique", "rows_proven")
