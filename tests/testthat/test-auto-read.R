@@ -141,6 +141,28 @@ test_that("the reading fills the whole contract, signature included", {
 
 # ---- roles by arithmetic ------------------------------------------------------------------
 
+test_that("a payee column is words, never a column of figures to choose a money role for", {
+  # Westpac prints "Name of other party" beside its details. Only other1, other2
+  # (figures the reader could not place) are money; other_party is text, so Please
+  # check never offers it a "Money out" dropdown and the layout names it as itself.
+  h <- c("Kauri Bank                         Statement period 1 Feb 2026 to 28 Feb 2026", "",
+         "Date     Party     Details                               Withdrawals     Deposits      Balance")
+  rows <- c(
+    "         Opening balance                                                            1,000.00",
+    "03 Feb   Dairy     EFTPOS RIVERSIDE DAIRY 4410 KHANDALLAH        12.40                  987.60",
+    "05 Feb   Matai     SALARY MATAI HOLDINGS LIMITED FEB                      3,120.00    4,107.60",
+    "09 Feb   Council   DIRECT DEBIT CITY COUNCIL RATES Q3           268.15                3,839.45",
+    "14 Feb   Own       TRANSFER TO SAVINGS ACCOUNT 02 ONLINE        400.00                3,439.45",
+    "21 Feb   Harbour   VISA HARBOUR FUEL STOP 9921 PETONE            96.72                3,342.73",
+    "26 Feb   Kauri     CREDIT INTEREST PAID FOR FEBRUARY                          2.18    3,344.91",
+    "         Closing balance                                                            3,344.91")
+  rd <- auto_read(ar_pdf(c(h, rows)))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(unique(rd$columns$kind[rd$columns$field == "other_party"]), "text")
+  expect_true("other_party" %in% rd$template$signature$roles)
+  expect_false("other" %in% rd$template$signature$roles)
+})
+
 test_that("the arithmetic, not the heading, decides which column is money out", {
   # An opening balance marked CR leaves the arithmetic one way to read the
   # columns, whatever the (swapped) headings say.

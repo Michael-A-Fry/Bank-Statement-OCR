@@ -291,7 +291,7 @@ log_run <- function(logdir, result) {
              checks = ck, candidates = data.frame(source = "person:boxes", passed = proven, why = why, stringsAsFactors = FALSE),
              columns = data.frame(page = ifelse(is.na(pages), 1L, pages), field = b$field,
                                   kind = ifelse(b$field %in% c("date", "date2", "weekday"), "date",
-                                         ifelse(b$field %in% c("debit", "credit", "amount", "balance") | startsWith(b$field, "other"), "money", "text")),
+                                         ifelse(b$field %in% c("debit", "credit", "amount", "balance") | grepl("^other[0-9]*$", b$field), "money", "text")),
                                   x_min = b$x_min, x_max = b$x_max, ink_min = b$x_min, ink_max = b$x_max,
                                   heading = "", stringsAsFactors = FALSE),
              matched_layout = NULL, notes = character(0), engine = AUTO_READ_VERSION)

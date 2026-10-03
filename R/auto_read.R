@@ -581,7 +581,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # .ar_signature_pdf(...) -- the layout signature in the shared contract's shape.
 .ar_signature_pdf <- function(ctx, model, cs, rd, headings, tpl, ref_boxes) {
   roles <- unname(cs$field[!(cs$field %in% c("weekday"))])
-  roles[startsWith(roles, "other")] <- "other"
+  roles[grepl("^other[0-9]*$", roles)] <- "other"
   ink <- ref_boxes[ref_boxes$field %in% cs$field[!(cs$field %in% "weekday")], , drop = FALSE]
   span <- range(c(ink$ink_min, ink$ink_max))
   rel <- round((ink$ink_max - span[1]) / max(1, diff(span)), 2)
@@ -1116,7 +1116,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   cols_df <- do.call(rbind, lapply(seq_along(tpl$boxes), function(p) {
     bx <- tpl$boxes[[p]]; if (is.null(bx)) return(NULL)
     kind <- ifelse(bx$field %in% c("date", "date2", "weekday"), "date",
-              ifelse(bx$field %in% c("debit", "credit", "amount", "balance") | startsWith(bx$field, "other"), "money", "text"))
+              ifelse(bx$field %in% c("debit", "credit", "amount", "balance") | grepl("^other[0-9]*$", bx$field), "money", "text"))
     hd <- vapply(seq_len(nrow(bx)), function(i) .ar_heading_over(headings, bx$ink_min[i] - model$shift[p], bx$ink_max[i] - model$shift[p]), "")
     data.frame(page = p, field = bx$field, kind = kind, x_min = bx$x_min, x_max = bx$x_max,
                ink_min = bx$ink_min, ink_max = bx$ink_max, heading = hd, stringsAsFactors = FALSE)
