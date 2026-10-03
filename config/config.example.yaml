@@ -35,8 +35,8 @@ app:
   # max_concurrent_jobs: 3
 
 paths:
-  dictionary: dictionaries/labels.yaml  # label wordings (Admin -> Label dictionary)
-  lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Data capture -> "Words the tool knows to look for")
+  dictionary: dictionaries/labels.yaml  # label wordings (Admin -> Words)
+  lexicon: dictionaries/lexicon.yaml     # recognition vocabulary (Admin -> Words)
   uploads: uploads
   requests: requests
   logs: logs
@@ -54,7 +54,7 @@ retention:
   # that failed can be picked up and fixed. These are REAL client statements.
   # After this many days the tidy-up deletes the copied file and keeps only the
   # small record of what happened to it. Set 0 to keep the copies indefinitely.
-  # The number is stated on ADMIN -> Insights -> "Saved statements - retention"
+  # The number is stated on Admin -> Health -> "Saved statements - retention"
   # (and on the delete button beside it), so an analyst converting a statement is
   # not shown it. Confirm it against your unit's own retention policy before
   # go-live: docs/operational/go-live-checklist.md step 5. The tidy-up runs at
@@ -62,9 +62,9 @@ retention:
   # already older than the new number the next time the app starts.
   uploads_keep_days: 90
 
-# A `metadata:` block also exists (local-only capture detail). It is normally
-# managed from Admin -> Data capture rather than hand-edited, so it is omitted
-# here; see docs/context/metadata-capture.md for its keys and defaults.
+# A `metadata:` block also exists (local-only capture detail). Its defaults are
+# right for nearly every server, so it is omitted here; Admin -> Health -> "Data
+# capture" says what it records, and docs/context/metadata-capture.md lists its keys.
 
 auto_reading:
   # Spot checks: the share of AUTOMATIC conversions (proven by the statement's own

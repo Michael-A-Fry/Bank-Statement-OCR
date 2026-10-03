@@ -1,5 +1,5 @@
 # lexicon.yaml -- the engine's recognition VOCABULARIES. Edit it here, or in the
-# app under Admin -> Data capture -> "Words the tool knows to look for" (one word
+# app under Admin -> Words -> "Words the tool looks for" (one word
 # at a time in plain English, or this whole file under "Edit the whole vocabulary
 # file"). Every category you DON'T list falls back to the built-in default, so an
 # empty file behaves exactly like the shipped engine.

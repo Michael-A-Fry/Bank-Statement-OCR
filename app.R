@@ -676,9 +676,9 @@ ui <- fluidPage(
           # wording means) and the recognition vocabulary (which words mean money
           # out, money in, a heading, a brand) are the same question asked twice.
           h4("Words the tool looks for"),
-          # NB the WORDING is a navigation anchor: docs/, config.example.yaml and
-          # dictionaries/lexicon.yaml send the reader to "Words the tool knows to
-          # look for", so the phrase stays on the page.
+          # NB the WORDING is a navigation anchor: dictionaries/lexicon.yaml sends
+          # the reader to Admin -> Words -> "Words the tool looks for", so the
+          # phrase stays on the page.
           p(class = "muted", style = "margin:-6px 0 10px;font-size:12.5px",
             "Both lists are taught here: the wordings a labelled value is printed with, and the words the tool knows to look for."),
           # ONE FORM, NOT THREE. The WORD is typed once; "What it means" carries both
@@ -870,9 +870,9 @@ ui <- fluidPage(
                        class = "btn-danger"),
           uiOutput("adm_purge_msg"),
           br(),
-          # NB "Data capture" was a tab; docs/, config.example.yaml and
-          # dictionaries/lexicon.yaml send the reader to "Admin -> Data capture",
-          # so the words stay as the summary of this disclosure.
+          # NB "Data capture" was a tab; config.example.yaml sends the reader to
+          # Admin -> Health -> "Data capture", so the words stay as the summary of
+          # this disclosure.
           tags$details(
             tags$summary(style = "cursor:pointer;font-weight:600;color:var(--brand)",
                          "Data capture - what this server records about its own conversions"),
@@ -4861,21 +4861,25 @@ server <- function(input, output, session) {
     sts <- res$metadata$split$statements
     if (is.null(sts) || !length(sts)) return(NULL)
     cell <- function(v) { v <- as.character(v %||% NA)[1]; if (is.na(v) || !nzchar(v)) "-" else v }
-    hdr <- c("Statement", "Pages", "Period", "Opening", "Closing", "Rows", "Confidence")
+    # Result, not the 1.x trust level: a proven statement read "medium" beside a
+    # Proven headline. The reader's own outcome is what a person acts on.
+    word <- function(o) { o <- as.character(o %||% "unread")[1]
+      unname(OUTCOME_PLAIN[if (o %in% names(OUTCOME_PLAIN)) o else "unread"]) }
+    hdr <- c("Statement", "Pages", "Period", "Opening", "Closing", "Rows", "Result")
     tagList(
       h4(sprintf("The %d statements in this file", length(sts))),
       p(class = "muted", style = "margin:0 0 6px",
         # "a statement_index column" was the engine's own column name, on the
         # customer's screen; the table and the download both head it "Statement #".
-        paste("Each was read and reconciled on its own. The cards above cover the whole file, at the",
-              "weakest statement's confidence; every row you download says which statement it came from.")),
+        paste("Each was read and proven on its own. The cards above cover the whole file;",
+              "every row you download says which statement it came from.")),
       tags$table(class = "split-table",
         tags$thead(tags$tr(lapply(hdr, tags$th))),
         tags$tbody(lapply(sts, function(s) tags$tr(
           tags$td(cell(s$index)), tags$td(cell(s$pages)),
           tags$td(sprintf("%s to %s", cell(s$period_start), cell(s$period_end))),
           tags$td(cell(s$opening_balance)), tags$td(cell(s$closing_balance)),
-          tags$td(cell(s$rows)), tags$td(cell(s$trust_level)))))))
+          tags$td(cell(s$rows)), tags$td(word(s$outcome)))))))
   })
 
   output$cv_trend_note <- renderUI({
