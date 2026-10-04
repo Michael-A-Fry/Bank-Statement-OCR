@@ -791,13 +791,17 @@ test_that("r2 p03 p04 and the stress test's bundle: a closing balance then a new
   }
 })
 
-test_that("r2 stress bundle: a file of several statements, each proven, still goes to a person", {
-  # Split on "Page 1 of 1", each statement proves itself; a statement missing
-  # from either end of the file would leave no trace, so the file is checked.
+# A bundle of statements stays automatic only when they join up: each proven with
+# both ends printed and, in date order, each opening on the previous closing. A
+# statement missing from the middle (or another account's) breaks the join.
+for (.join in c(TRUE, FALSE)) local({
+  joined <- .join
+  test_that(sprintf("r2 stress bundle: statements that %s", if (joined) "join up stay automatic" else "do not join go to a person"), {
   apr <- atk_tx(c("02 Apr", "09 Apr"), c("EFTPOS RIVERSIDE DAIRY", "SALARY MATAI HOLDINGS"), c(20.00, NA), c(NA, 3120))
   s1 <- atk_bal_page(ATK_P1, 1000, c(ATK_MARTOP, ""))
-  s2 <- atk_bal_page(apr, attr(s1, "closing"), c(paste0(atk_rpad("Kauri Bank", 35), "Statement period 1 Apr 2026 to 30 Apr 2026"),
-                                                  "Account number 99-0001-0123410-00"))
+  s2 <- atk_bal_page(apr, attr(s1, "closing") + if (joined) 0 else 250,
+                     c(paste0(atk_rpad("Kauri Bank", 35), "Statement period 1 Apr 2026 to 30 Apr 2026"),
+                       "Account number 99-0001-0123410-00"))
   input <- atk_pdf(c(s1, "", "Page 1 of 1"), c(s2, "", "Page 1 of 1"))
   expect_length(bundle_segments(input), 2L)
   real <- get("read_input", envir = globalenv())
@@ -809,8 +813,9 @@ test_that("r2 stress bundle: a file of several statements, each proven, still go
                          layouts_dir = file.path(d, "layouts"), tracking_dir = file.path(d, "tracking"),
                          requested_by = "tester", formats = "csv")
   expect_identical(vapply(r$reading, function(x) x$outcome, ""), c("proven", "proven"))
-  expect_identical(r$status, "needs_review")
-  expect_match(r$reason, "holds 2 statements", fixed = TRUE)
+  if (joined) expect_identical(r$status, "ok")
+  else { expect_identical(r$status, "needs_review"); expect_match(r$reason, "holds 2 statements", fixed = TRUE) }
+  })
 })
 
 test_that("r2 p17: a statement whose end is not in the file is never proven complete", {

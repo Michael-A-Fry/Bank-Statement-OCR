@@ -159,10 +159,8 @@ test_that("a fix that cannot be read is refused in words and changes nothing", {
 test_that("each statement of a bundle is read and proven on its own", {
   cv <- convert_sandbox()
   r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"), bank = "ANZ")
-  # Each proves itself, but a statement missing from either end of the file would
-  # leave no trace, so the file goes to a person (round 2).
-  expect_identical(r$status, "needs_review")
-  expect_match(r$reason, "holds 2 statements", fixed = TRUE)
+  # Each proves itself and the second opens on the first's closing: they join up.
+  expect_identical(r$status, "ok")
   expect_equal(r$metadata$split$n_statements, 2L)
   expect_setequal(unique(r$feed_rows$statement_index), 1:2)
   expect_identical(vapply(r$reading, `[[`, "", "outcome"), c("proven", "proven"))
@@ -252,7 +250,7 @@ test_that("a fix for one statement of a bundle leaves the others alone", {
   # a fix naming no statement goes only to statements that did not convert; here
   # none, and that is said rather than dropped
   r2 <- cv(b, bank = "ANZ", overrides = swap)
-  expect_identical(r2$status, "needs_review")   # a bundle is always looked at (round 2)
+  expect_identical(r2$status, "ok")
   expect_match(r2$messages[1], "reached none of this file's statements", fixed = TRUE)
   r3 <- cv(b, bank = "ANZ", overrides = c(swap, list(statement = 9L)))
   expect_match(r3$messages[1], "does not hold", fixed = TRUE)
