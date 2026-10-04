@@ -1075,9 +1075,11 @@ bank_pick <- function(identified, chosen = NULL, confirmed = FALSE) {
     return(res(pick, FALSE, FALSE, if (is.na(id) || !identical(id, pick))
       sprintf("Using %s, as picked.", disp(pick)) else
       sprintf("%s agrees with the statement.", disp(pick))))
-  # The confidence decides what happens next (below); it is not shown as a word.
-  msg <- sprintf("You picked %s, but the statement looks like %s: %s",
-                 disp(pick), disp(id), identified$why)
+  # The confidence decides what happens next (below); it is not shown as a word,
+  # and the evidence is not prefixed with the bank's name a second time.
+  ev <- as.character(identified$why %||% "")[1]
+  if (!is.na(ev) && startsWith(ev, paste0(disp(id), ": "))) ev <- substring(ev, nchar(disp(id)) + 3L)
+  msg <- sprintf("You picked %s, but the statement looks like %s: %s", disp(pick), disp(id), ev)
   switch(conf,
     high = res(pick, TRUE, TRUE, paste(msg, "Nothing will be learned until you confirm.")),
     medium = res(pick, TRUE, FALSE, paste(msg, "Please confirm.")),

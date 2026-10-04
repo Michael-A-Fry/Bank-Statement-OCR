@@ -3953,7 +3953,7 @@ server <- function(input, output, session) {
   # note are the "please confirm", so it is not said again.
   .bank_question <- function(why, used, seen) {
     why <- as.character(why %||% "")[1]
-    rx <- "^You picked .*? but the statement looks like .*? \\([a-z]+ confidence\\): "
+    rx <- "^You picked .*? but the statement looks like .*?(?: \\([a-z]+ confidence\\))?: "
     if (is.na(why) || !grepl(rx, why, perl = TRUE) || is.na(seen)) return(why)
     ev <- sub(rx, "", why, perl = TRUE)
     if (startsWith(ev, paste0(seen, ": "))) ev <- substring(ev, nchar(seen) + 3L)
