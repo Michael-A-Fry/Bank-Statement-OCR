@@ -100,10 +100,9 @@ read_delimited <- function(input, template) {
   if (is.na(hidx)) return(empty)
 
   header_line <- lines[hidx]
-  # The delimiter is resolved from the HEADER LINE, exactly as detection resolves
-  # it (R/detect.R .header_fields), so the reader and the detector can never
-  # disagree about how this file splits. A template declaring one delimiter --
-  # every shipped template but ASB -- resolves straight back to it.
+  # The delimiter is resolved from the HEADER LINE, so every reader of the file
+  # agrees on how it splits. A template declaring one delimiter -- every fixture
+  # template but ASB -- resolves straight back to it.
   delim <- resolve_delimiter(header_line, template)
   header_names <- .record_fields(header_line, delim)
   expected_fields <- length(header_names)

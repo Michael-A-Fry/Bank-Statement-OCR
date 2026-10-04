@@ -110,6 +110,9 @@ identify_file <- function(path, name = basename(path)) {
 bank_choices <- function(dir = layouts_dir()) {
   ref <- safe(.bi_ref(), NULL)
   ids <- if (is.null(ref)) character(0) else names(ref$display)
+  # The register's stand-ins ("a business that banks through ANZ") are not banks
+  # a person picks.
+  if (!is.null(ref$pseudo)) ids <- ids[!(ids %in% names(ref$pseudo)[ref$pseudo %in% TRUE])]
   lab <- if (is.null(ref)) character(0) else vapply(ids, function(i) as.character(ref$display[[i]])[1], "")
   lb <- safe(layouts_banks(dir), NULL)
   if (is.data.frame(lb) && nrow(lb)) {

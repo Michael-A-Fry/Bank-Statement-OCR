@@ -1807,55 +1807,51 @@ Counted separately from the total at the top of this file.
   confidence 17, about 6,900 junk words); and Tesseract's one-thread-per-core spin.
   Now 2.0 s a page on average, confidence 95+ on every dev page. **Fixed.**
 
-**Open at release (each also in `outstanding-work.md`):**
+**At release (2.0.0, 4 Oct 2026): all fixed.** Each has a regression test.
 
-- **N211 - two date columns chosen by position.** A Kiwibank export with Effective
-  and Transaction dates is proven on whichever comes first: the same statement gives
-  different dates on an automatic result. Pinned by the deliberately failing
-  `test-generalisation.R`. **Open - could give a wrong date on a proven reading.**
-- **N212 - a scanned page whose OCR timed out is read as blank**, and `auto_read`
-  does not yet force `check` for it. If it is the last page the rest could still
-  prove. **Open - could miss rows on a proven reading.**
-- **N213 - ASB `Unique Id` read as a balance** (whole numbers typed as money):
-  `unread` or `check` with IDs shown as balances. **Open (never automatic).**
-- **N214 - a card export with a foreign-currency row reads the wrong columns**
-  (`Amount` as balance, `ConversionCharge` as amount). **Open (`check`).**
-- **N215 - Xero exports take `unique_id` as the description.** **Open.**
-- **N216 - `bank_pick` does not resolve "Co-operative Bank" to `coop`.** False
-  disagreement on typed names. **Open.**
-- **N217 - the spec's "proved by at least 2 different accounts" is not enforced**
-  (N198 approximates it). **Open.**
+- **N211 - two date columns chosen by position.** **Fixed:** the heading that names
+  the transaction date wins ("Transaction Date" over "Processed / Effective / Value
+  Date"); when no heading decides and the two columns disagree, the statement goes
+  to Please check naming both columns. Reordering columns never changes the reading.
+- **N212 - a scanned page whose OCR timed out is read as blank.** **Fixed:** the
+  reading goes to Please check (`ocr_complete`).
+- **N213 - ASB `Unique Id` read as a balance.** **Fixed:** a long, id-headed or
+  running-sequence column of whole numbers is never money.
+- **N214 - a card export with a foreign-currency row reads the wrong columns.**
+  **Fixed:** foreign/original/conversion amounts are "other" figures; the NZD amount
+  is the amount.
+- **N215 - Xero exports take `unique_id` as the description.** **Fixed:** an id
+  column is never the description while a column of words exists.
+- **N216 - `bank_pick` does not resolve "Co-operative Bank".** **Fixed:** legal
+  names (current and former) match; a leading "The" and trailing "Limited" are
+  ignored.
+- **N217 - "proved by at least 2 different accounts" not enforced.** **Fixed:** a
+  layout keeps short salted marks to tell its proving accounts apart (never a
+  number); CSV/Excel layouts with no account number need an admin confirm.
 - **N218 - a proven no-balance layout does not settle day-month against
-  month-day**; a statement whose days are all 12 or less never matches. **Open.**
-- **N219 - a loan statement's summary box is taken for a second statement**, and the
-  card advises splitting a single statement. **Open.**
+  month-day.** **Fixed:** a proven or confirmed layout settles it when every date
+  reads in its stored format.
+- **N219 - a loan summary box taken for a second statement.** **Fixed:** repeated
+  boxes stating the same figures count once; real bundles still split.
 - **N220 - `scripts/bundle-offline.R` ships `nz_banks.yaml` as an example file and
-  leaves `nz_bank_branches.csv` out**, so a packaged server cannot identify banks;
-  it would also ship a build PC's `templates/layouts/`. **Fixed:** the bank list
-  ships under its own names; `templates/layouts/` is pruned and the build stops if
-  a learned layout or held fix is anywhere else in the bundle.
-- **N221 - `scripts/health-check.R`, `audit-statement.R`, `bulk-audit.R` still call
-  the retired template functions** (a healthy server reports `FAIL Templates`).
-  **Fixed:** a *Layouts* check (per-bank counts, unreadable files fail by name);
-  the audits pass `layouts_dir`; `run_app.R` no longer calls
-  `migrate_template_layout`.
-- **N223 - tracking drops the reader's `reader_agrees` and `dates_carried` checks**
-  (not in `TRACK_CHECKS`), with a warning that `convert` suppresses. **Open.**
-- **N224 - "Proven by: a person" counts 0** even after confirms (confirms are
-  separate events). **Open.**
-- **N225 - a reading proven on its own content that then matches a proven layout
-  leaves `matched_layout` NULL**, so the run log's `layout` is empty and Health
-  undercounts layouts in use. **Open.**
-- **N226 - misleading reason for a newest-first export** ("The dates go backwards
-  at row 3" on a file that is consistently newest-first). **Open.**
-- **N227 - every unread file clusters as one "(unknown)" layout** (no
-  `layout_signature` on an unread run). **Open.**
-- **N228 - dead code left by the retirement:** `R/inspect.R` and `R/row_coverage.R`
-  have no caller outside their tests; `metadata_capture.R`'s `template_hints` and
-  `detection` blocks are always empty; the lexicon's `fingerprint_brand_words` is
-  read by nothing; `requests.R`'s `record_template_request` has no caller.
-  `R/split.R`'s header says an unsplittable bundle is "never taken without a
-  person", which is no longer what `convert.R` does. **Open.**
-- **N229 - `config/config.example.yaml` sends the reader to Admin tabs that no longer
-  exist** ("Admin -> Data capture -> Words the tool knows to look for", "ADMIN ->
-  Insights -> Saved statements - retention"). **Open.**
+  leaves `nz_bank_branches.csv` out.** **Fixed:** the bank list ships under its own
+  names; `templates/layouts/` is pruned and the build stops if a learned layout or
+  held fix is anywhere else in the bundle.
+- **N221 - operational scripts call retired template functions.** **Fixed:** a
+  *Layouts* health check; the audits pass `layouts_dir`; `run_app.R` no longer
+  calls `migrate_template_layout`.
+- **N223 - tracking drops reader checks.** **Fixed:** `reader_agrees`,
+  `dates_carried`, `other_tables` and `ocr_complete` are tracked.
+- **N224 - "Proven by: a person" counts 0.** **Fixed:** confirms are counted.
+- **N225 - `matched_layout` NULL on a proven reading that matches a layout.**
+  **Fixed:** the store's own matcher names it.
+- **N226 - misleading reason for a newest-first export.** **Fixed:** the dates
+  settle the order and the reason says so.
+- **N227 - every unread file clusters as one "(unknown)" layout.** **Fixed:** an
+  unread run carries a content-free shape fingerprint.
+- **N228 - dead code left by the retirement.** **Fixed:** `inspect.R`,
+  `row_coverage.R`, the empty metadata blocks, `record_template_request`,
+  `fingerprint_brand_words` and the old scoring tools are gone; `split.R`'s header
+  says what `convert.R` does.
+- **N229 - `config.example.yaml` names Admin tabs that no longer exist.**
+  **Fixed:** it names Words and Health.

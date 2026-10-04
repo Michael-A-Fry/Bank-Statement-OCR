@@ -22,75 +22,39 @@ The two routes are equal. Every item is judged against both:
 Templates were retired at 2.0.0. **Everything below this section was written for
 the 1.x template world.** Items about templates, the builder, forms and reports are
 overtaken: the builder is gone, and forms and reports were removed at 1.9.0. Read
-them as history. The open work now is this list, worst first. Each item carries
-its finding id in `findings-register.md`.
+them as history.
 
-**Could put a wrong figure on an automatic result (fix before release):**
+**Fixed before release (4 Oct 2026):** every finding the build left open, N211 to
+N229 in `findings-register.md`: the two date columns, the scan time-out, ids and
+foreign-currency columns in exports, the Xero description, the Co-op name, the
+two-account rule, day-month order on a proven layout, the loan summary box, the
+operational scripts and packaging, tracking, Admin counts, unread grouping, dead
+code and the engine's sentences. Each has a regression test.
 
-1. **N211 - two date columns chosen by position** (Kiwibank Effective / Transaction
-   date). Choose by heading or content, or send the statement to a person when the
-   two disagree. `test-generalisation.R` is red on purpose until then.
-2. **N212 - a scanned page whose OCR timed out is read as blank.** In `auto_read()`,
-   once the reading is final: if `input$meta$ocr_timed_out` is not empty and the
-   outcome is `proven` or `layout_match`, make it `check` with "Page N of the scan
-   could not be read in time, so rows may be missing", and add a failed row to
-   `checks`. (Proposed by the scan build, not yet applied.)
+**Still open:**
 
-**Release blockers (the server cannot be updated safely without them):**
-
-3. **N220 - `scripts/bundle-offline.R`**: **fixed.** The bank list ships as it is
-   (product, not live state), and `templates/layouts/` is left out of the package.
-4. **N221 - `scripts/health-check.R`**, `audit-statement.R`, `bulk-audit.R`,
-   `run_app.R`: **fixed.** A *Layouts* check replaces *Templates*; the audits use
-   `statement_audit(path, layouts_dir)` and `batch_audit(paths, layouts_dir)`;
-   `.gitignore` keeps `/templates/layouts/` out.
-5. **A clean full suite run.** The last one (2026-10-03, mid-build) had 181 failed
-   and 46 errors in files then being rewritten. Known still-red at the time of
-   writing: `test-docs-truth.R` asserts the removed `ix_plot` page view and the
-   "Show me how it read this" toggle (now "Show the charts"); `test-seams.R`
-   looks for screens that were removed.
-6. **The held-back acceptance run**: the realistic holdout and the green-flag set,
-   scored once, independently (spec section 11 step 3).
-
-**Wrong figures a person is shown on Please check (never automatic):**
-
-7. **N213** ASB `Unique Id` read as a balance. **N214** card export with a
-   foreign-currency row reads the wrong columns. **N215** Xero description taken
-   from the ID column.
-
-**Correctness of learning and identity:**
-
-8. **N217** enforce "proved by at least 2 different accounts" for promotion.
-   **N218** settle day-month vs month-day for a proven no-balance layout.
-   **N216** "Co-operative Bank" as a name. **N225** `matched_layout` empty when a
-   proven reading also matches a layout.
-
-**What the screens and Admin say:**
-
-9. **N219** a loan summary box read as a second statement (wrong "split this
-    file" advice). **N226** misleading reason for newest-first exports. **N227**
-    unread files cluster as one. **N223** tracking drops two reader checks.
-    **N224** "Proven by: a person" counts 0. **N229** `config.example.yaml` names
-    Admin tabs that no longer exist. Engine sentences reworded on screen rather
-    than at the source: "sum(amount)", "1 discontinuity(ies)", "(medium
-    confidence)" (`R/bank_identity.R`), "The table reader could not read the rows"
-    (`R/auto_read_tabular.R`), the raw `amount_from_balance` sentence
-    (`R/convert.R`), the coverage notes (`R/coverage.R`), and "Open Please check:
-    the columns found are drawn on the page" said for CSV files too
-    (`R/diagnose.R`). `bank_choices()` should drop the register's stand-in banks
-    itself (the app filters them). `.save_spot_rate` belongs in `R/config.R`.
-
-**Not built from the spec:** merging or moving layouts between banks; splitting or
-joining a column by clicking a gap on Please check; a reversed-sign role for card
-statements; reading another account's mini-statement as a separate account
-(decided 3 Oct 2026).
-
-**Dead code to remove (N228):** the lexicon's `fingerprint_brand_words` /
-`.FP_BRAND_DEFAULT`. Also correct `R/split.R`'s header, which says an
-unsplittable bundle is never taken without a person. (The page-overlay and
-row-coverage modules, the metadata record's always-empty template-hint and
-detection blocks, `record_template_request` and the 1.x corpus scorer and bench
-script have been removed.)
+1. **The held-back acceptance run**: the realistic holdout, the green-flag set and
+   the decoy packs, scored once, independently (spec section 11 step 3).
+2. **Stage 4, agreed with the product owner (4 Oct 2026):**
+   - a per-bank readiness view, and one Admin inbox of exceptions only;
+   - automatic spot checks for statements with no balance and no totals on a
+     newly trusted layout (tapering; one "wrong" stops trusting the layout);
+   - a drift guard that stops trusting a layout whose statements start failing;
+   - arithmetic across statements (one statement's closing is the next one's
+     opening; a no-balance export checked against the PDF of the same period);
+   - layout packs between servers (never carrying a layout's account marks);
+   - Please check: the runner-up reading beside the breaking row, a reversed-sign
+     role for cards, splitting or joining a column by clicking a gap;
+   - merging or moving layouts between banks;
+   - the failure loop: where each statement broke, a ranked list of the biggest
+     gaps, an anonymised copy for whoever fixes the reader, a re-run that shows a
+     gap closing, and a drawn-columns fix that teaches once it proves;
+   - reading another account's mini-statement as a separate account (decided
+     3 Oct 2026);
+   - `.save_spot_rate` moves from `app.R` to `R/config.R` with the spot-check work.
+3. **Stress test**: statements of a known layout with something odd about this
+   copy (a skewed or scanned page, pages missing or out of order, stamps,
+   design tweaks), measured and fixed.
 
 ---
 

@@ -1075,8 +1075,9 @@ bank_pick <- function(identified, chosen = NULL, confirmed = FALSE) {
     return(res(pick, FALSE, FALSE, if (is.na(id) || !identical(id, pick))
       sprintf("Using %s, as picked.", disp(pick)) else
       sprintf("%s agrees with the statement.", disp(pick))))
-  msg <- sprintf("You picked %s, but the statement looks like %s (%s confidence): %s",
-                 disp(pick), disp(id), conf, identified$why)
+  # The confidence decides what happens next (below); it is not shown as a word.
+  msg <- sprintf("You picked %s, but the statement looks like %s: %s",
+                 disp(pick), disp(id), identified$why)
   switch(conf,
     high = res(pick, TRUE, TRUE, paste(msg, "Nothing will be learned until you confirm.")),
     medium = res(pick, TRUE, FALSE, paste(msg, "Please confirm.")),

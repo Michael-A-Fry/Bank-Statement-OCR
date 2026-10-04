@@ -12,8 +12,10 @@
 # Each statement's own proof is added confidence but is NOT a substitute for the
 # count check: a running balance is continuous across ANY cut, so a wrongly-placed
 # boundary would still add up within each piece. When the count is not confirmed
-# the file is read whole, and a whole-file reading of something that looks like
-# several statements is never taken without a person (R/convert.R).
+# the file is read whole: R/convert.R accepts that whole-file reading only when the
+# arithmetic proves every row (statements of different accounts break the chain
+# and go to a person), and otherwise sends it to a person with the advice to
+# split the file.
 #
 # Scope: PDF bundles (the format whose boundaries -- page-number resets, repeated
 # header blocks -- are deterministically locatable). A CSV or Excel export is

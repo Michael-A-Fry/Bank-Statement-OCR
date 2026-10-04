@@ -428,7 +428,7 @@
   if (!is.null(turned)) rd <- turned
   tpl <- .ar_tab_template(ctx, tt, rows, kind, mcols, mk, mk_for, rd, dt)
   parsed <- .ar_tab_parse(ctx, tt, rows, kind, mcols, dt, tpl)
-  if (is.null(parsed)) return(fail("The table reader could not read the rows."))
+  if (is.null(parsed)) return(fail("No rows could be read with the columns found."))
   tx <- .ar_settle(parsed$transactions, rd, cells, ctx$decimal, anchors, aligned = TRUE)
   parsed$transactions <- tx
   op <- .ar_opening_value(anchors, rd, ctx$decimal, nrow(tx)); cl <- .ar_closing_value(anchors, rd, ctx$decimal, nrow(tx))
@@ -536,7 +536,8 @@
   if (style == "type_dc") fields[as.character(mk)] <- "type"
   tpl$auto <- list(roles = rd$roles, conv = rd$conv, liab = isTRUE(rd$liab), dir = rd$dir, engine = AUTO_READ_VERSION)
   roles_sig <- unname(fields[!is.na(fields)])
-  roles_sig[startsWith(roles_sig, "other")] <- "other"
+  # only other1, other2 (figures not placed) fold into "other"; other_party is words
+  roles_sig[grepl("^other[0-9]*$", roles_sig)] <- "other"
   sk <- sort(intersect(unique(as.vector(.ar_values(tt$m[rows, mcols, drop = FALSE])$SK)),
                        c("CR", "DR", "OD", "()", "-lead", "-trail", "+")))
   bcol <- which(rd$roles == "balance")

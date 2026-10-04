@@ -1748,8 +1748,7 @@ server <- function(input, output, session) {
     "the heading of a money-OUT column"              = "amount_style_debit_headers",
     "the heading of a money-IN column"               = "amount_style_credit_headers",
     "the balance is overdrawn"                       = "overdrawn_markers",
-    "a word that appears in a table's heading row"   = "header_keywords",
-    "a bank or brand name, not a customer's name"    = "fingerprint_brand_words")
+    "a word that appears in a table's heading row"   = "header_keywords")
   output$adm_word_kind_ui <- renderUI({
     req(admin_ok()); dict_bump()
     keys <- sort(names(safe(load_label_dict(DICT_PATH), list())))
