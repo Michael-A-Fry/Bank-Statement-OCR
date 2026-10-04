@@ -166,7 +166,9 @@
 .count_agrees <- function(k, meta) {
   counts <- meta$n_periods %||% NA
   op <- meta$n_opening_labels %||% NA; cl <- meta$n_closing_labels %||% NA
-  if (isTRUE(op > 1) && isTRUE(cl > 1)) counts <- c(counts, min(op, cl))
+  # Blocks that all state the same two balances are one statement's, printed twice
+  # (a loan summary box and the table's own lines): they count once.
+  if (isTRUE(op > 1) && isTRUE(cl > 1)) counts <- c(counts, meta$n_balance_blocks %||% min(op, cl))
   counts <- counts[!is.na(counts) & counts > 1]
   length(counts) > 0 && any(counts == k)
 }

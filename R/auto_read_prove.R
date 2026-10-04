@@ -161,9 +161,12 @@
   pos <- numeric(0); val <- numeric(0); src <- character(0)
   # A bundle of statements prints a summary box (opening, closing) per statement.
   # Each box's opening then sits where its statement's rows begin, and its closing
-  # where the next statement's begin (or after the last row).
+  # where the next statement's begin (or after the last row). Two boxes are two
+  # statements only when they show it (.ar_separate_boxes); a home loan's summary
+  # box printed again on its next page, or under the table, is one statement's.
   box_open <- which(vapply(anchors, function(a) identical(a$class, "open") && !isTRUE(a$in_table), logical(1)))
-  bundle <- length(box_open) > 1L && !identical(dir, "new")
+  bundle <- length(box_open) > 1L && !identical(dir, "new") &&
+    .ar_separate_boxes(anchors[box_open], n, liab, decimal)
   for (k in seq_along(anchors)) {
     a <- anchors[[k]]
     # A totals line that prints a figure in the balance column ("Totals at end of
@@ -204,6 +207,18 @@
     src <- c(src, paste0(a$class, if (carry) "~carry", if (a$in_table) "@table" else "@summary"))
   }
   data.frame(pos = pos, val = val, src = src, stringsAsFactors = FALSE)
+}
+
+# .ar_separate_boxes(boxes, n, liab, decimal) -- do the opening balances printed
+# outside the table belong to separate statements? Each must start rows of its own
+# (rows between one box and the next, and after the last), and they must not all
+# state the same figure: one statement's summary box repeated -- a home loan's
+# "Loan summary" on every page, or again at the foot -- repeats its own opening,
+# where the next statement of a bundle opens on the balance the last one closed on.
+.ar_separate_boxes <- function(boxes, n, liab, decimal) {
+  at <- vapply(boxes, function(a) as.numeric(a$before_rows %||% 0), 0)
+  v <- vapply(boxes, function(a) .ar_anchor_value(a$value_text, liab, decimal), 0)
+  all(diff(at) > 0) && at[length(at)] < n && !anyNA(v) && length(unique(round(v, 2))) > 1L
 }
 
 # ---- the chain ---------------------------------------------------------------------------
@@ -479,6 +494,10 @@
   d <- grepl(rx("amount_style_debit_headers",  c("debit", "withdrawal")), s)
   cr <- grepl(rx("amount_style_credit_headers", c("credit", "deposit")), s)
   if (grepl("balance", s)) return("balance")
+  # A figure in another currency, or what converting it cost, is not the account's
+  # own movement ("ForeignCurrencyAmount", "Original Amount", "Conversion Charge"):
+  # it is some other figure, never the amount or the balance.
+  if (grepl("foreign|original|conversion|overseas|\\bfx\\b", s)) return("other")
   if (d && !cr) return("debit")
   if (cr && !d) return("credit")
   if (grepl("amount|value", s)) return("amount")

@@ -85,6 +85,9 @@ lexicon_suggestions <- function(logdir = "logs", min_count = 1L, max_records = 2
 # and a worked cow/horse example, and a whole-file rewrite deleted all of it the
 # first time anyone approved a word -- taking the file's own documentation with it.
 lexicon_append <- function(category, values, path = .lexicon_path()) {
+  if (category %in% .LEXICON_RETIRED)
+    return(invisible(structure(FALSE,
+      reason = "the tool no longer reads that kind of word, so there is nothing to teach it")))
   if (!identical(.lexicon_spec()[[category]], "list"))
     return(invisible(structure(FALSE,
       reason = "that kind of vocabulary is edited in the whole-file editor, not one word at a time")))

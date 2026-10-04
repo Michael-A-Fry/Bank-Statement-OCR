@@ -336,6 +336,27 @@ test_that("bank_pick: pre-fill, agree, ask, and block learning only when it must
   expect_true(p$ask); expect_true(p$block_learning)
 })
 
+# N216: "Co-operative Bank" typed without "The" (or the bank's legal name, current or
+# former) was kept as a bank of its own and shown under that name, disagreeing with
+# a statement the register says is the Co-operative Bank's.
+test_that("bank_pick knows the Co-operative Bank by any of its names, and shows its own", {
+  coop <- list(institution = "coop", confidence = "high", why = "The Co-operative Bank: x.",
+               needs_decision = FALSE, pages_agree = TRUE)
+  for (nm in c("coop", "The Co-operative Bank", "Co-operative Bank", "Cooperative Bank", "co-op bank",
+               "The Co-operative Bank Limited", "PSIS Limited", "PSIS")) {
+    p <- bank_pick(coop, nm)
+    expect_identical(p$bank, "coop", info = nm)
+    expect_false(p$ask, info = nm)
+    expect_identical(p$why, "The Co-operative Bank agrees with the statement.", info = nm)
+  }
+  # A different bank picked is still named as the list names the Co-operative Bank.
+  p <- bank_pick(coop, "ASB")
+  expect_match(p$why, "looks like The Co-operative Bank", fixed = TRUE)
+  expect_identical(bank_choices(tempfile("noly_"))[["The Co-operative Bank"]], "coop")
+  # Names are matched whole: another bank's legal name is not a near miss.
+  expect_identical(bank_pick(coop, "Reserve Bank of New Zealand")$bank, "Reserve Bank of New Zealand")
+})
+
 test_that("a payee's number wrapped under its row, or on a row the table finder missed, is not the holder's", {
   payee <- acct("12", "3456")
   rows <- tx_rows(c("03 Sep    DIRECT DEBIT                                    100.00                874.90",

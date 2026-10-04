@@ -405,15 +405,6 @@ wd_field_patterns <- function() list(
   other_party = "other party|counterparty", balance = "balance|^running$"
 )
 
-# The lexicon's built-in `fingerprint_brand_words` (R/lexicon.R): bank and product
-# words that name the issuer rather than a customer.
-.FP_BRAND_DEFAULT <- c("bank", "card", "mastercard", "visa", "amex", "eftpos",
-  "account", "statement", "everyday", "savings", "cheque", "current", "credit",
-  "debit", "platinum", "gold", "classic", "standard", "airpoints", "rewards",
-  "business", "personal", "transaction", "summary", "loan", "mortgage",
-  "kiwibank", "westpac", "anz", "asb", "bnz", "tsb", "sbs", "rabobank",
-  "heartland", "co-operative", "cooperative")
-
 # ---- a template's own choices, resolved against the file ----------------------------
 
 # resolve_date_format(values, formats) -> the ONE declared format that reads EVERY

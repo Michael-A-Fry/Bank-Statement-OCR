@@ -31,32 +31,30 @@
 # (validated); "table" = append format specs; "map" = per-key regex override.
 .lexicon_spec <- function() c(
   header_keywords = "list", layout_stopwords = "list",
-  # Bank / brand words the fingerprint drafter treats as a masthead rather than a
-  # customer's name. Registered here so an unlisted bank can be taught in the
-  # dictionary instead of in code -- without this entry lex() rejects the category
-  # and R/wizard_auto.R silently falls back to its built-in list, which is exactly
-  # the "teach it in YAML, never in code" promise failing quietly.
-  fingerprint_brand_words = "list",
   debit_markers = "list", credit_markers = "list",
   amount_style_debit_headers = "list", amount_style_credit_headers = "list",
   dr_cr_suffix_debit = "list", dr_cr_suffix_credit = "list", overdrawn_markers = "list",
   # Whole-label wordings that mark a PDF line as a SUMMARY (opening/closing balance,
-  # brought/carried forward, a total) rather than a transaction. Registered here for
-  # the same reason as fingerprint_brand_words above: R/parse_pdf_table.R documents
-  # it as dictionary-driven, but an unregistered category is rejected by
-  # validate_lexicon() and missing from the Admin editor's category list -- so the
-  # "teach it in YAML, never in code" promise would fail at the moment an analyst
-  # tried to use it.
+  # brought/carried forward, a total) rather than a transaction. Registered here
+  # because R/parse_pdf_table.R documents it as dictionary-driven, and an
+  # unregistered category is rejected by validate_lexicon() and missing from the
+  # Admin editor's category list -- so the "teach it in YAML, never in code"
+  # promise would fail at the moment an analyst tried to use it.
   summary_line_labels = "list", period_connectives = "list",
   money_regex = "regex", date_regex = "regex", account_regex = "regex", card_regex = "regex",
   date_formats = "table", field_name_patterns = "map")
+
+# Categories the engine once had and no longer reads. `fingerprint_brand_words`
+# fed the retired template drafter (R/wizard_auto.R); bank names are now read by
+# R/bank_identity.R from dictionaries/nz_banks.yaml. A file that still lists one
+# is not an error (validate_lexicon), but nothing more can be taught to it.
+.LEXICON_RETIRED <- c("fingerprint_brand_words")
 
 # Built-in defaults. These MUST equal the values the engine shipped with, so an
 # absent lexicon file is a no-op. The named constants (.HDR_KEYS, .MONEY_RX, ...)
 # live in their own modules and resolve at call time.
 .lexicon_defaults <- function() list(
   header_keywords  = .HDR_KEYS,
-  fingerprint_brand_words = .FP_BRAND_DEFAULT,   # R/wizard_auto.R
   layout_stopwords = .LAYOUT_STOP,
   debit_markers    = c("D", "DR", "DEBIT", "W", "WD", "WITHDRAWAL", "OUT"),
   credit_markers   = c("C", "CR", "CREDIT", "DEP", "DEPOSIT", "IN"),
@@ -164,6 +162,9 @@ validate_lexicon <- function(raw) {
   if (!is.list(raw)) return("lexicon must be a mapping of categories")
   spec <- .lexicon_spec()
   for (cat in names(raw)) {
+    # A category the tool no longer reads is ignored, not refused: a vocabulary
+    # file that taught one before it was retired must still save.
+    if (cat %in% .LEXICON_RETIRED) next
     # `spec` is a named CHARACTER VECTOR, so spec[[cat]] for a name that is not
     # present ERRORS ("subscript out of bounds") before the is.null() test could
     # catch it -- an admin typo in the vocabulary file crashed the validator whose

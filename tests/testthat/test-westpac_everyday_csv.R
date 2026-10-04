@@ -6,14 +6,14 @@ EXPECTED <- "tests/testthat/expected/westpac_everyday_csv.csv"
 
 test_that("the automatic reader reads the export to the golden figures, and asks", {
   # No balance and no totals: nothing proves the reading, so a person looks. The
-  # export has two text columns a row (Other Party, Description); the reader takes
-  # Other Party as the description and keeps the other as an extra column, so the
-  # description is held to the file rather than to the golden.
+  # export has two text columns a row (Other Party, Description); the one the file
+  # heads "Description" is the description, as the golden has it, and Other Party
+  # is the other party -- whichever has more print.
   rd <- expect_auto_read_golden(FIXTURE, EXPECTED, outcomes = "check",
-                                fields = c("date", "amount", "direction", "balance"))
+                                fields = c("date", "amount", "direction", "balance", "description"))
   raw <- utils::read.csv(fixture(FIXTURE), stringsAsFactors = FALSE, check.names = FALSE)
-  expect_identical(rd$transactions$description, raw[["Other Party"]])
-  expect_identical(rd$parsed$extras$text1, raw[["Description"]])
+  expect_identical(rd$transactions$description, raw[["Description"]])
+  expect_identical(rd$transactions$other_party, raw[["Other Party"]])
 })
 
 test_that("parsed core table equals the golden snapshot", {

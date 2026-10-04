@@ -119,40 +119,14 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
        decimal = decimal, pages_text = input$pages %||% character(0))
 }
 
-# A scanned page whose words were read with a median confidence under this is
-# noise, not text (image clean-up can turn a page's paper grain into thousands of
-# junk "words"), and is read again.
-.AR_OCR_NOISE_CONF <- 50
-
-# .ar_reocr(input) -- re-read a scanned page that came back as noise, straight
-# from its picture without the image clean-up; the new reading is kept only when
-# Tesseract is surer of it. Returns the input and a note per page re-read.
-.ar_reocr <- function(input) {
-  notes <- character(0)
-  path <- input$path %||% ""
-  ocr <- as.logical(input$page_ocr %||% logical(0)); ocr[is.na(ocr)] <- FALSE
-  if (!any(ocr) || !nzchar(path) || !file.exists(path) || !isTRUE(safe(ocr_available(), FALSE)))
-    return(list(input = input, notes = notes))
-  for (p in which(ocr)) {
-    w <- input$words[[p]]
-    cf <- suppressWarnings(stats::median(as.numeric(w$ocr_conf), na.rm = TRUE))
-    if (is.null(w) || !isTRUE(cf < .AR_OCR_NOISE_CONF)) next
-    r <- safe(ocr_pdf_page(path, .ar_file_page(input, p), preprocess = FALSE), NULL)
-    if (is.null(r) || !isTRUE(r$ok) || is.null(r$words) || !nrow(r$words)) next
-    cf2 <- suppressWarnings(stats::median(as.numeric(r$words$ocr_conf), na.rm = TRUE))
-    if (!isTRUE(cf2 > cf)) next
-    input$words[[p]] <- r$words
-    if (length(input$pages) >= p) input$pages[p] <- paste(r$text, collapse = "\n")
-    if (isTRUE(r$width > 0)) input$page_width[p] <- r$width
-    if (isTRUE(r$height > 0)) input$page_height[p] <- r$height
-    notes <- c(notes, sprintf("Page %d of the scan read as noise (confidence %.0f) and was read again without image clean-up (confidence %.0f).", p, cf, cf2))
-  }
-  list(input = input, notes = notes)
-}
+# A scanned page that reads as noise (image clean-up turning paper grain into junk
+# "words") is no longer read again here: the OCR step itself keeps whichever of the
+# cleaned and the plain picture reads better (.ocr_best_reading, R/ocr.R).
 
 # .ar_file_page(input, p) -- page p of this input as a page of the file on disk: a
 # statement cut out of a bundle (.subinput_pages) carries its pages' numbers in
-# the file as page_map, so a page read again from the picture is the right one.
+# the file as page_map, so a row read again from the picture (.ar_reocr_rows) is
+# read from the right page.
 .ar_file_page <- function(input, p) {
   pm <- input$page_map
   if (length(pm) >= p) as.integer(pm[p]) else as.integer(p)
@@ -247,10 +221,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     else "The PDF has no readable text on any page."
     return(.ar_unread(why))
   }
-  ro <- .ar_reocr(input)
-  input <- ro$input
   ctx <- .ar_pdf_context(input)
-  ctx$notes <- ro$notes
+  ctx$notes <- character(0)
   ctx$bank <- bank
   ctx$roles <- opts$roles
   base <- .ar_pdf_pages(ctx)
@@ -266,17 +238,22 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   # columns found here. A layout whose conventions are the content reading's own
   # (when the arithmetic chose them) would read the same figures, so it is not
   # read twice.
+  # The same goes for one whose conventions match, when what held the content
+  # reading back is its dates' day-month order and the layout is proven: its own
+  # date style settles that (.ar_layout_date_fmt).
   K <- if (is.null(model)) 0L else length(model$cols)
   seen <- if (identical(cands$content$basis, "arithmetic")) .ar_conv_key(cands$content$rd) else ""
+  dates_open <- "dates_settled" %in% (cands$content$failing %||% character(0))
+  fmts_all <- if (is.null(model)) character(0) else .ar_fmts_all(model$rows$date_fmts)
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
     if (is.null(info) || !(info$kind %in% c("pdf", "scan"))) next
     src <- paste0("layout:", info$ref)
     if (!is.null(cands[[src]])) next
     fig <- info$roles[info$roles %in% c("debit", "credit", "amount", "balance", "other")]
-    if (length(fig) != K || !.ar_layout_near(cands$content$signature, info$sig)) next
+    if (length(fig) != K || !.ar_layout_near(cands$content$signature, info$sig, fmts_all)) next
     ck <- .ar_conv_key(list(roles = fig, conv = info$conv, liab = info$liab, dir = info$dir))
-    if (ck %in% seen) next
+    if (ck %in% seen && !(dates_open && info$proven)) next
     seen <- c(seen, ck)
     cands[[src]] <- .ar_pdf_attempt(ctx, base, list(), src, forced = info, model = model)
     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
@@ -332,15 +309,46 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # document (signature a), whatever roles each gives the columns? Same kind family,
 # date style and column positions within 0.08 of the table's width, and at least
 # half their heading words shared. Only such a layout is worth reading against it.
-.ar_layout_near <- function(a, b) {
+# `fmts`: the formats every date of this document reads under -- a layout whose
+# date style is one of them is the same design, even where the document's own
+# vote went the other way (03/04 reads as 3 April and as 4 March alike).
+.ar_layout_near <- function(a, b, fmts = character(0)) {
   if (is.null(a) || is.null(b)) return(FALSE)
   fam <- function(k) if (k %in% c("pdf", "scan")) "pdf" else k
   if (!identical(fam(a$kind %||% ""), fam(b$kind %||% ""))) return(FALSE)
-  if (!identical(a$date_format, b$date_format)) return(FALSE)
+  if (!identical(a$date_format, b$date_format) && !isTRUE(b$date_format %in% fmts)) return(FALSE)
   ra <- unlist(a$rel_x); rb <- unlist(b$rel_x)
   if (length(ra) != length(rb) || (length(ra) && max(abs(ra - rb)) > 0.08)) return(FALSE)
   ha <- unlist(a$heading_tokens); hb <- unlist(b$heading_tokens)
   !length(ha) || !length(hb) || length(intersect(ha, hb)) >= 0.5 * length(union(ha, hb))
+}
+
+# .ar_fmts_all(fmts) -- the date formats EVERY printed date reads under, from each
+# date's own "fmt|fmt" list ("" or NA: no date on that row).
+.ar_fmts_all <- function(fmts) {
+  fmts <- fmts[!is.na(fmts) & nzchar(fmts)]
+  if (!length(fmts)) character(0) else Reduce(intersect, strsplit(fmts, "|", fixed = TRUE))
+}
+
+# .ar_layout_date_fmt(forced, fmts) -- the date style a PROVEN layout settles this
+# statement's dates with: its own, when every date here reads under it (N218).
+# Day-month and month-day cannot be told apart on a statement whose days are all 12
+# or less, and nothing else on a statement with no running balance tells them
+# apart; the layout was proven on statements where they could be. A provisional
+# layout settles nothing, so such a statement still goes to a person. NULL when the
+# layout does not settle it.
+.ar_layout_date_fmt <- function(forced, fmts) {
+  if (is.null(forced) || !isTRUE(forced$proven)) return(NULL)
+  f <- as.character(unlist(forced$sig$date_format))[1]
+  if (!length(f) || is.na(f) || !nzchar(f) || !(f %in% fmts)) return(NULL)
+  f
+}
+
+# .ar_fmt_words(f) -- a date format as a person says it: "%d/%m/%Y" is
+# "day/month/year".
+.ar_fmt_words <- function(f) {
+  s <- gsub("%d|%e", "day", f); s <- gsub("%m|%b|%B", "month", s); s <- gsub("%Y|%y", "year", s)
+  gsub("%a|%A", "weekday", s)
 }
 
 # .ar_reocr_rows(ctx, cd) -- step 9's re-OCR, aimed by the arithmetic: on a scan,
@@ -495,9 +503,24 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   }
   cs <- .ar_columns(model, rd$roles, headings)
   if (is.null(cs)) return(fail("Found the table but could not measure its columns."))
-  tpl <- .ar_pdf_template(ctx, model, cs, rd, headings)
+  # A proven layout read against this document settles its dates' day-month order.
+  lfmt <- .ar_layout_date_fmt(forced, .ar_fmts_all(model$rows$date_fmts))
+  build <- function(rd) {
+    t <- .ar_pdf_template(ctx, model, cs, rd, headings, dfmt = lfmt)
+    if (!is.null(lfmt)) t$auto$date_by <- forced$ref
+    t
+  }
+  tpl <- build(rd)
   parsed <- .ar_parse_pdf(ctx, model, tpl, rd)
   post <- .ar_post_pdf(ctx, model, tpl, rd, parsed)
+  # An order the arithmetic left open is the dates' to say; read again that way.
+  turned <- .ar_dir_by_dates(rd, model$anchors, post$tx$date, ctx$decimal)
+  if (!is.null(turned)) {
+    rd <- turned
+    tpl <- build(rd)
+    parsed <- .ar_parse_pdf(ctx, model, tpl, rd)
+    post <- .ar_post_pdf(ctx, model, tpl, rd, parsed)
+  }
   ck <- .ar_pdf_checks(ctx, model, cs, tpl, rd, rl, post, basis)
   cd <- .ar_candidate(source, tpl, post, ck, rd, rl, basis, model, cs, headings, ctx)
   cd$hroles <- hroles
@@ -505,6 +528,32 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   cd$chain <- ck$chain
   cd$rows <- model$rows[, c("page", "y", "y1")]
   cd
+}
+
+# .ar_dir_by_dates(rd, anchors, dates, decimal) -- which way round a statement lists
+# its rows, when the arithmetic leaves it open. With no running balance (or one
+# printed balance), and the opening and closing balances printed apart from the
+# rows, every balance step holds or fails exactly alike read either way round, so
+# the reading took oldest first by default -- and a statement listed newest first
+# was then told "the dates go backwards", which they do not. The dates say instead:
+# when every date runs newest first (and not all on one day), the reading is turned
+# round and records that its dates decided it. NULL when nothing changes: the order
+# is the arithmetic's, the dates do not all run newest first, or the signs of an
+# unsigned column hang on the order.
+.ar_dir_by_dates <- function(rd, anchors, dates, decimal) {
+  if (is.null(rd) || !identical(rd$dir, "old") || identical(rd$conv, "B")) return(NULL)
+  n <- length(rd$A)
+  if (n < 2L || length(dates) != n) return(NULL)
+  d <- suppressWarnings(as.Date(dates))
+  if (anyNA(d) || any(diff(d) > 0) || all(diff(d) == 0)) return(NULL)
+  bal <- if (rd$b > 0L) rd$bal else rep(NA_real_, n)
+  if (length(bal) != n) return(NULL)
+  ch <- lapply(c("old", "new"), function(dir) .ar_chain(rd$A, rep(FALSE, n), bal,
+    .ar_anchor_points(anchors, n, dir, isTRUE(rd$liab), rd$b, decimal), dir))
+  if (!identical(.ar_chain_score(ch[[1]]), .ar_chain_score(ch[[2]]))) return(NULL)
+  rd$dir <- "new"; rd$dir_by <- "dates"
+  if (!is.null(rd$chain)) rd$chain <- ch[[2]]
+  rd
 }
 
 # .ar_forced_reading(V, anchors, info, decimal) -- a layout's conventions applied to
@@ -526,11 +575,12 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   list(chosen = rd, n_distinct = 1L, distinct = list(rd), best = rd, note = character(0))
 }
 
-# .ar_pdf_template(ctx, model, cs, rd, headings) -- the candidate as a template list
-# in today's schema, so the table reader, reconciliation and outputs work on it
+# .ar_pdf_template(ctx, model, cs, rd, headings, dfmt) -- the candidate as a template
+# list in today's schema, so the table reader, reconciliation and outputs work on it
 # unchanged. table$columns is the reference page's boxes; table$columns_by_page
-# holds every page's own.
-.ar_pdf_template <- function(ctx, model, cs, rd, headings) {
+# holds every page's own. `dfmt`: a date format settled by a proven layout, used
+# instead of the document's own vote.
+.ar_pdf_template <- function(ctx, model, cs, rd, headings, dfmt = NULL) {
   pages <- sort(unique(model$rows$page))
   ref <- as.integer(names(which.max(table(model$rows$page))))
   boxes <- lapply(seq_len(ctx$np), function(p) if (p %in% pages) .ar_boxes(model, cs, p) else NULL)
@@ -547,7 +597,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   extras_names <- setdiff(names(ref_cols), core_fields)
   # Date format: the one that reads the most dates in the date column.
   fv <- unlist(strsplit(model$rows$date_fmts[nzchar(model$rows$date_fmts)], "|", fixed = TRUE))
-  dfmt <- if (length(fv)) {
+  if (is.null(dfmt)) dfmt <- if (length(fv)) {
     tab <- table(fv); top <- names(tab)[tab == max(tab)]
     order_ref <- vapply(ctx$fmts, `[[`, "", "fmt")
     top[order(match(top, order_ref))][1]
@@ -796,8 +846,12 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     pl <- list(ok = FALSE, why = "The table ends by carrying its balance forward to a page that is not in the file.")
   add("pages_complete", pl$ok, pl$why)
   ds <- .ar_dates_settled(model$rows$date, model$rows$date_fmts, tpl$table$date_format, rd$dir)
-  add("dates_settled", ds, if (ds) "The dates read one way only."
+  by <- tpl$auto$date_by
+  add("dates_settled", ds || !is.null(by), if (ds) "The dates read one way only."
+      else if (!is.null(by)) sprintf("The dates read as day-month and as month-day alike; the proven layout %s reads them as %s.",
+                                     by, .ar_fmt_words(tpl$table$date_format))
       else "The dates read as day-month and as month-day equally well.")
+  ck$dates_settled$by_layout <- !ds && !is.null(by)
   ar <- .ar_arith_checks(tx, post$page, model$anchors, rd, rl, basis, ctx$decimal, ctx$md,
                          two_dates = !is.null(model$date2), strict = any(ctx$ocr))
   # Checked after the arithmetic, so a broken balance is the reason given when it
@@ -995,8 +1049,14 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     back <- vapply(seq_len(n)[-1], function(i) sec[i] == sec[i - 1L] &&
                      (if (identical(rd$dir, "new")) d[i] > d[i - 1L] else d[i] < d[i - 1L]), logical(1))
     ok <- !any(back)
-    add("dates_in_order", ok, if (ok) "The dates run in order." else
-        sprintf("The dates go backwards at row %d.", which(back)[1] + 1L))
+    # Said in the statement's own order: on one listed newest first, a row dated
+    # after the row above it is the one out of place.
+    new <- identical(rd$dir, "new")
+    add("dates_in_order", ok,
+        if (ok) { if (new) "The dates run in order, newest first." else "The dates run in order." }
+        else if (new) sprintf("Row %d is dated after the row above it, but the statement lists the newest transaction first.",
+                              which(back)[1] + 1L)
+        else sprintf("The dates go backwards at row %d.", which(back)[1] + 1L))
   } else add("dates_in_order", NA, "Not every date reads.")
   # Inside the printed period: a bundle of statements prints one period per
   # statement, and a row may fall in any of them.
@@ -1132,17 +1192,25 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
                 direction_note = rl$note %||% character(0))
   why <- if (passed) .ar_proven_why(proof, rd) else if (length(failing)) ck[[failing[1]]]$why
          else "Nothing on the statement adds up to prove the reading."
+  # Dates a proven layout settled are said to be, in the reason itself.
+  if (passed && isTRUE(ck$dates_settled$by_layout)) why <- paste(why, ck$dates_settled$why)
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = post$parsed, tx = post$tx, checks = .ar_checks_df(ck), proof = proof,
        columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
-       no_balance = rd$b == 0L, notes = rl$note %||% character(0))
+       no_balance = rd$b == 0L, notes = rl$note %||% character(0),
+       date_by_layout = isTRUE(ck$dates_settled$by_layout))
 }
 
 .ar_proven_why <- function(proof, rd) {
   base <- if (proof$kind == "chain")
     sprintf("The running balance checks on all %d step(s) and no other reading of the columns fits.", proof$links)
   else "Opening balance plus every movement equals the closing balance, and no other reading fits."
-  if (identical(rd$dir, "new")) base <- paste(base, "The statement lists the newest transaction first.")
+  # Which way round it reads, and what settled that: the running balance (or where
+  # the opening and closing balances sit among the rows), or -- when the arithmetic
+  # holds either way round -- the dates.
+  if (identical(rd$dir, "new")) base <- paste(base, if (identical(rd$dir_by, "dates"))
+    "The statement lists the newest transaction first, as its dates show; the arithmetic holds either way round."
+    else "The statement lists the newest transaction first.")
   base
 }
 
@@ -1191,9 +1259,16 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     cd <- lm[[1]]
     ref <- sub("^layout:", "", cd$source)
     voted <- isTRUE(content$basis == "heading") && !is.null(content$tx) && nrow(content$tx)
-    if (!voted || identical(key(content), key(cd)))
-      return(.ar_finish(cd, "layout_match", sprintf("No running balance or totals are printed; the reading matches the proven layout %s and nothing contradicts it.", ref),
-                        cdf, ref))
+    # The headings' reading must give the same figures. Its dates are not held to
+    # the layout's: both read the same date column, so they differ only where the
+    # day-month order was open, and that is what the proven layout settles.
+    amounts <- function(x) paste(sprintf("%.2f", x$tx$amount), collapse = "|")
+    settled <- isTRUE(cd$date_by_layout)
+    if (!voted || identical(key(content), key(cd)) || (settled && identical(amounts(content), amounts(cd)))) {
+      why <- sprintf("No running balance or totals are printed; the reading matches the proven layout %s and nothing contradicts it.", ref)
+      if (settled) why <- paste(why, cd$checks$why[cd$checks$check == "dates_settled"][1])
+      return(.ar_finish(cd, "layout_match", why, cdf, ref))
+    }
   }
   # Show the most useful reading: the content one when it read rows, else any.
   show <- content
@@ -1288,10 +1363,20 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   TRUE
 }
 
+# .ar_match_layout(cd, layouts) -- the layout handed in that a proven reading is of:
+# the same family by the reader's own test, else by the store's (layout_match,
+# R/layouts.R), which is the one learning files the reading's evidence under. A
+# reading proven on its own content is still that layout in use -- the run log, the
+# tracking and Admin's count of layouts in use need its name -- even when it differs
+# from the layout in a detail the strict test holds to (it lists newest first, a
+# column sits a little further over).
 .ar_match_layout <- function(cd, layouts) {
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
     if (!is.null(info) && .ar_sig_match(cd$signature, info$sig)) return(info$ref)
   }
-  NULL
+  m <- if (length(layouts) && exists("layout_match", mode = "function"))
+    safe(layout_match(cd$signature, layouts), NULL) else NULL
+  ref <- as.character(m$ref %||% "")[1]
+  if (!is.na(ref) && grepl("^[^@]+@v?[0-9]+$", ref)) ref else NULL
 }

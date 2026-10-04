@@ -87,6 +87,14 @@
 # .ar_tab_table(g) -- the transaction table inside the grid: the date column (the
 # column most rows date), the run of rows from the first dated row to the last, the
 # heading row above it, and each column's kind measured on those rows.
+#
+# An export can print two dates a row (Kiwibank: Effective Date and Transaction
+# Date; ANZ cards: TransactionDate and ProcessedDate). Which one is the
+# transaction's is never decided by where the column sits, or reordering the
+# columns would change the reading: the heading that names the transaction date
+# wins; when no heading decides and the two columns give different dates, the one
+# shown is chosen by content and the reading is held back (date_by "open", which
+# fails dates_settled in .ar_tab_attempt).
 .ar_tab_table <- function(g, fmts) {
   m <- g$cells
   ty <- .ar_tab_types(m, fmts)
@@ -99,31 +107,82 @@
     sum(datey[, j] & other)
   }, 0)
   if (max(score) < 1) return(NULL)
-  dj <- which.max(score)
-  other <- if (ncol(m) > 1L) rowSums(has_money[, -dj, drop = FALSE]) > 0 else rep(FALSE, nrow(m))
-  drow <- which(datey[, dj] & other)
-  r0 <- min(drow); r1 <- max(drow)
-  # Rows after the last dated row that carry a figure and name a balance or total
-  # (a closing line printed without a date) belong to the table too.
   lab <- vapply(seq_len(nrow(m)), function(i) {
     txt <- m[i, T[i, ] == "text"]
     .ar_norm_label(paste(txt, collapse = " "))
   }, "")
   acls <- .ar_anchor_class(lab)
-  while (r1 < nrow(m) && nzchar(acls[r1 + 1L]) && any(has_money[r1 + 1L, ])) r1 <- r1 + 1L
-  while (r0 > 1L && nzchar(acls[r0 - 1L]) && any(has_money[r0 - 1L, ])) r0 <- r0 - 1L
-  body <- seq(r0, r1)
-  # The heading row: the nearest row above the table with at least two cells and
-  # no date in the date column.
-  hr <- NA_integer_
-  for (i in rev(seq_len(r0 - 1L))) {
-    if (sum(nzchar(m[i, ])) >= 2L && !datey[i, dj]) { hr <- i; break }
-    if (sum(nzchar(m[i, ])) >= 1L) break
+  span <- function(dj) {
+    other <- if (ncol(m) > 1L) rowSums(has_money[, -dj, drop = FALSE]) > 0 else rep(FALSE, nrow(m))
+    drow <- which(datey[, dj] & other)
+    r0 <- min(drow); r1 <- max(drow)
+    # Rows after the last dated row that carry a figure and name a balance or total
+    # (a closing line printed without a date) belong to the table too.
+    while (r1 < nrow(m) && nzchar(acls[r1 + 1L]) && any(has_money[r1 + 1L, ])) r1 <- r1 + 1L
+    while (r0 > 1L && nzchar(acls[r0 - 1L]) && any(has_money[r0 - 1L, ])) r0 <- r0 - 1L
+    # The heading row: the nearest row above the table with at least two cells and
+    # no date in the date column.
+    hr <- NA_integer_
+    for (i in rev(seq_len(r0 - 1L))) {
+      if (sum(nzchar(m[i, ])) >= 2L && !datey[i, dj]) { hr <- i; break }
+      if (sum(nzchar(m[i, ])) >= 1L) break
+    }
+    list(r0 = r0, r1 = r1, hr = hr, heads = if (!is.na(hr)) m[hr, ] else rep("", ncol(m)))
   }
-  heads <- if (!is.na(hr)) m[hr, ] else rep("", ncol(m))
-  list(m = m, T = T, F = ty$fmts, dj = dj, body = body, hr = hr, heads = heads,
-       acls = acls, lab = lab, pre = if (r0 > 1L) seq_len(r0 - 1L) else integer(0),
-       post = if (r1 < nrow(m)) seq(r1 + 1L, nrow(m)) else integer(0))
+  cand <- which(score == max(score))
+  sp <- span(cand[1])
+  dj <- cand[1]; date_by <- "only"; date_alt <- integer(0); n_differ <- 0L
+  if (length(cand) > 1L) {
+    rk <- vapply(cand, function(j) .ar_date_heading_rank(sp$heads[j]), 0L)
+    best <- cand[rk == max(rk)]
+    if (length(best) == 1L) { dj <- best; date_by <- "heading" }
+    else {
+      body0 <- seq(sp$r0, sp$r1)
+      t0 <- list(m = m, T = T, F = ty$fmts)
+      iso <- lapply(best, function(j) .ar_tab_date(t0, body0, list(), j)$iso)
+      differ <- Reduce(`|`, lapply(iso[-1], function(v) !.ar_same_dates(v, iso[[1]])))
+      n_differ <- sum(differ)
+      # The one shown: the column whose dates come first (a transaction is made
+      # before it is processed), then the heading's words, then the cells' own
+      # print -- never the column's position.
+      first <- vapply(iso, function(v) sum(as.numeric(as.Date(v)), na.rm = TRUE), 0)
+      words <- vapply(best, function(j) tolower(sp$heads[j]), "")
+      cells <- vapply(best, function(j) paste(m[body0, j], collapse = "\r"), "")
+      o <- order(first, words, cells, method = "radix")
+      dj <- best[o[1]]
+      if (n_differ > 0L) { date_by <- "open"; date_alt <- best[o[-1]] } else date_by <- "same"
+    }
+    if (dj != cand[1]) sp <- span(dj)
+  }
+  list(m = m, T = T, F = ty$fmts, dj = dj, body = seq(sp$r0, sp$r1), hr = sp$hr, heads = sp$heads,
+       acls = acls, lab = lab, pre = if (sp$r0 > 1L) seq_len(sp$r0 - 1L) else integer(0),
+       post = if (sp$r1 < nrow(m)) seq(sp$r1 + 1L, nrow(m)) else integer(0),
+       date_by = date_by, date_alt = date_alt, date_differ = n_differ)
+}
+
+# .ar_same_dates(a, b) -- per row, do two columns of ISO dates say the same thing
+# (both blank counts as the same).
+.ar_same_dates <- function(a, b) (is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b)
+
+# .ar_head_words(h) -- a heading as plain lower-case words: "TransactionDate" and
+# "Transaction_Date" are both "transaction date".
+.ar_head_words <- function(h) {
+  s <- gsub("([a-z])([A-Z])", "\\1 \\2", as.character(h %||% ""))
+  trimws(gsub(" +", " ", tolower(gsub("[^A-Za-z]+", " ", s))))
+}
+
+# .ar_date_heading_rank(h) -- how surely a heading names the date a transaction was
+# made: 2 when it says so ("Transaction Date", "TransactionDate", "Date of
+# Transaction"), 1 for a bare "Date", 0 for a date it names as something else
+# ("Processed Date", "Effective Date", "Value Date") or no heading at all.
+.ar_date_heading_rank <- function(h) {
+  s <- .ar_head_words(h)
+  if (grepl(paste0("\\b(?:process|processed|processing|post|posted|posting|effective|value|settle|",
+                   "settled|settlement|entered|entry|cleared|booked|booking|statement|due)\\b"), s, perl = TRUE))
+    return(0L)
+  if (grepl("\\b(?:transaction|transactions|trans|txn|tran|purchase)\\b", s, perl = TRUE)) return(2L)
+  if (s %in% c("date", "dt", "day")) return(1L)
+  0L
 }
 
 # .ar_tab_columns(tt) -- each column's kind on the transaction rows (anchor rows
@@ -140,6 +199,7 @@
       # with no decimals anywhere is a code or a reference, never money.
       v <- tt$m[rows, j]; v <- v[nzchar(v)]
       if (any(grepl("^0[0-9]+$", v)) && !any(grepl("[.,][0-9]", v))) return("text")
+      if (.ar_tab_id_column(v, tt$heads[j])) return("text")
       return("money")
     }
     if (all(t == "marker")) return("marker")
@@ -148,12 +208,45 @@
   kind
 }
 
+# Heading words that name an identifier or a reference number, not money.
+.AR_ID_HEAD_RX <- "\\b(?:id|ids|identifier|unique|uid|ref|reference|serial|cheque|chq|batch|seq|sequence|number|no|num)\\b"
+
+# .ar_tab_id_column(v, heading) -- is a column of plain whole numbers an identifier
+# rather than money? ASB's export prints "Unique Id" 2014122001 on every row, and it
+# was read as the balance. Money prints cents or a money style (a sign, thousands
+# commas); an id prints neither. So: every cell a bare whole number, and either long
+# (8 digits or more: no account moves tens of millions on every row without a single
+# cent), or headed as an id or reference, or counting up or down row by row with 6
+# digits or more (a sequence number). A column of whole amounts headed "Amount" is
+# none of these and stays money.
+.ar_tab_id_column <- function(v, heading = "") {
+  v <- v[nzchar(v)]
+  if (!length(v) || !all(grepl("^[0-9]+$", v))) return(FALSE)
+  nd <- nchar(v)
+  if (all(nd >= 8L)) return(TRUE)
+  if (grepl(.AR_ID_HEAD_RX, .ar_head_words(heading), perl = TRUE)) return(TRUE)
+  x <- as.numeric(v)
+  length(x) >= 3L && all(nd >= 6L) && (all(diff(x) > 0) || all(diff(x) < 0))
+}
+
+# .ar_code_like(v) -- a text column whose every cell is one token holding a digit
+# ("KIWIBANK-20250401-000", a hash, "INV-88321"): an id or a reference, never the
+# description while a column of words exists.
+.ar_code_like <- function(v) {
+  v <- trimws(v[nzchar(v)])
+  length(v) > 0L && all(!grepl("\\s", v) & grepl("[0-9]", v))
+}
+
 # .ar_tab_date(tt, rows, md) -- the date column read under ONE format: the formats
 # every dated cell parses under; when several give different dates, the one whose
 # dates run in order and inside the printed period. Returns the ISO dates, the
 # format, and whether another format would read the column differently and
 # equally well (then the dates are not settled).
-.ar_tab_date <- function(tt, rows, md, j = tt$dj) {
+#
+# `prefer`: the date style of a proven layout read against the file. When the
+# dates are not settled and they read under it, it settles them (N218), and the
+# result says so (by_layout).
+.ar_tab_date <- function(tt, rows, md, j = tt$dj, prefer = NULL) {
   v <- tt$m[rows, j]
   T <- tt$T[rows, j]
   has <- nzchar(v)
@@ -180,6 +273,10 @@
   sc <- vapply(reads, `[[`, 0, "score")
   top <- reads[sc == max(sc)]
   keys <- unique(vapply(top, function(r) paste(r$iso, collapse = "|"), ""))
+  if (length(keys) > 1L && length(prefer) == 1L && !is.na(prefer)) {
+    lay <- Filter(function(r) identical(r$fmt, prefer), top)
+    if (length(lay)) return(list(iso = lay[[1]]$iso, fmt = prefer, ambiguous = FALSE, by_layout = TRUE))
+  }
   list(iso = top[[1]]$iso, fmt = top[[1]]$fmt, ambiguous = length(keys) > 1L)
 }
 
@@ -233,16 +330,21 @@
   cands[["content"]] <- .ar_tab_attempt(ctx, "content")
   # A person's roles are read on their own: no layout stands in for them.
   if (!is.null(ctx$roles)) return(.ar_decide(cands, list(), ctx))
+  # As on a PDF (R/auto_read.R): a layout with the content reading's own
+  # conventions is not read twice, unless the content reading's day-month order is
+  # what held it back and the layout is proven, so its date style settles that.
   seen <- if (identical(cands$content$basis, "arithmetic")) .ar_conv_key(cands$content$rd) else ""
+  dates_open <- "dates_settled" %in% (cands$content$failing %||% character(0))
+  fmts_all <- .ar_fmts_all(tt$F[tt$body, tt$dj])
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
     if (is.null(info) || !(info$kind %in% c("delimited", "excel"))) next
     src <- paste0("layout:", info$ref)
     if (!is.null(cands[[src]])) next
     fig <- info$roles[info$roles %in% c("debit", "credit", "amount", "balance", "other")]
-    if (!.ar_layout_near(cands$content$signature, info$sig)) next
+    if (!.ar_layout_near(cands$content$signature, info$sig, fmts_all)) next
     ck <- .ar_conv_key(list(roles = fig, conv = info$conv, liab = info$liab, dir = info$dir))
-    if (ck %in% seen) next
+    if (ck %in% seen && !(dates_open && info$proven)) next
     seen <- c(seen, ck)
     cands[[src]] <- .ar_tab_attempt(ctx, src, forced = info)
     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
@@ -300,7 +402,15 @@
                       0.5 * identical(isTRUE(r$liab), isTRUE(ctx$liab$liability)), 0)
     rd <- rl$distinct[[which.max(agree)]]; basis <- "ambiguous"
   }
-  if (is.null(rd) && !is.null(rl$best)) { rd <- rl$best; basis <- "broken" }
+  # A reading the balance breaks on, which takes for the balance a column whose own
+  # heading names it something else (an amount, a figure in another currency), is
+  # the arithmetic's failed guess at a balance the file does not print -- a card
+  # export's "Original Amount" beside its NZD amount. The headings' reading is
+  # shown instead, unproven. (A spreadsheet's headings are its own cells, so they
+  # are exact here; on a PDF they are measured, and the broken reading stands.)
+  fake_bal <- !is.null(rl$best) && is.null(ctx$roles) && rl$best$b > 0L &&
+    !is.na(hroles[rl$best$b]) && hroles[rl$best$b] != "balance"
+  if (is.null(rd) && !is.null(rl$best) && !fake_bal) { rd <- rl$best; basis <- "broken" }
   if (is.null(rd)) {
     vr <- if (!is.null(ctx$roles)) list(roles = ctx$roles, by = "person") else .ar_vote_roles(length(mcols), hroles)
     if (is.null(vr)) return(fail("Found the table but could not tell which column of figures is which."))
@@ -311,7 +421,11 @@
                score = c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0))
     basis <- vr$by
   }
-  dt <- .ar_tab_date(tt, rows, ctx$md)
+  # A proven layout read against the file settles its day-month order (N218).
+  dt <- .ar_tab_date(tt, rows, ctx$md, prefer = if (isTRUE(forced$proven)) as.character(unlist(forced$sig$date_format))[1])
+  # An order the arithmetic left open is the dates' to say (R/auto_read.R).
+  turned <- .ar_dir_by_dates(rd, anchors, dt$iso, ctx$decimal)
+  if (!is.null(turned)) rd <- turned
   tpl <- .ar_tab_template(ctx, tt, rows, kind, mcols, mk, mk_for, rd, dt)
   parsed <- .ar_tab_parse(ctx, tt, rows, kind, mcols, dt, tpl)
   if (is.null(parsed)) return(fail("The table reader could not read the rows."))
@@ -329,6 +443,19 @@
                                    else "The table reader read some figures differently from the arithmetic.")
   ckl$checks$dates_settled <- list(ok = !dt$ambiguous, why = if (!dt$ambiguous) "The dates read one way only."
                                    else "The dates read as day-month and as month-day equally well.")
+  if (isTRUE(dt$by_layout))
+    ckl$checks$dates_settled <- list(ok = TRUE, by_layout = TRUE, why = sprintf(
+      "The dates read as day-month and as month-day alike; the proven layout %s reads them as %s.",
+      forced$ref, .ar_fmt_words(dt$fmt)))
+  # Two date columns that give different dates, and no heading saying which is the
+  # transaction's: the one shown is a choice, and a chosen date is never proven.
+  if (identical(tt$date_by, "open")) {
+    nm <- vapply(c(tt$dj, tt$date_alt[1]), function(j)
+      if (nzchar(tt$heads[j])) sprintf("\"%s\"", tt$heads[j]) else sprintf("column %d", j), "")
+    ckl$checks$dates_settled <- list(ok = FALSE, why = sprintf(paste(
+      "The file has two date columns, %s and %s, that give different dates on %d row(s), and",
+      "neither heading says which is the transaction date."), nm[1], nm[2], tt$date_differ))
+  }
   # A row under the heading but before the first dated row, or after the last,
   # that prints a figure where the figures run and names no balance or total is a
   # transaction whose date did not read: never left out quietly.
@@ -353,13 +480,23 @@
   txt <- which(kind == "text")
   extras <- list(); fields <- stats::setNames(rep(NA_character_, ncol(tt$m)), seq_len(ncol(tt$m)))
   if (length(txt)) {
-    # The description is the text column with the most print -- among those that
-    # hold words: an account-number column ("This Party Account") is long but is
-    # never the description.
+    # The description is a text column of words: an account-number column ("This
+    # Party Account") is long but is never the description, and nor is an id or a
+    # hash (a Xero export's "KIWIBANK-20250401-000": one token with digits in every
+    # cell), however long. Among the columns of words, the one the file itself heads
+    # "Description" (or "Details", "Narrative") when there is exactly one, else the
+    # one with the most print. Ties go by the heading's words and then the print,
+    # never by where the column sits.
     chars <- vapply(txt, function(j) sum(nchar(tt$m[rows, j])), 0)
-    worded <- vapply(txt, function(j) any(grepl("[A-Za-z]", tt$m[rows, j])), NA)
+    worded <- vapply(txt, function(j) any(grepl("[A-Za-z]", tt$m[rows, j])) && !.ar_code_like(tt$m[rows, j]), NA)
+    if (!any(worded)) worded <- vapply(txt, function(j) any(grepl("[A-Za-z]", tt$m[rows, j])), NA)
     if (any(worded)) chars[!worded] <- -1
-    desc <- txt[which.max(chars)]
+    named <- worded & grepl("^(?:transaction |txn )?(?:description|details|narrative|narration)$",
+                            vapply(txt, function(j) .ar_head_words(tt$heads[j]), ""), perl = TRUE)
+    if (sum(named) == 1L) chars[named] <- Inf
+    o <- order(-chars, vapply(txt, function(j) tolower(tt$heads[j]), ""),
+               vapply(txt, function(j) paste(tt$m[rows, j], collapse = "\r"), ""), method = "radix")
+    desc <- txt[o[1]]
     cols$description <- list(source = hn[desc]); fields[as.character(desc)] <- "description"
     k <- 0L
     for (j in setdiff(txt, desc)) {
@@ -476,8 +613,11 @@
                 direction_note = rl$note %||% character(0))
   why <- if (passed) .ar_proven_why(proof, rd) else if (length(failing)) ck[[failing[1]]]$why
          else "Nothing in the file adds up to prove the reading."
+  # Dates a proven layout settled are said to be, in the reason itself.
+  if (passed && isTRUE(ck$dates_settled$by_layout)) why <- paste(why, ck$dates_settled$why)
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = parsed, tx = tx, checks = .ar_checks_df(ck), proof = proof,
        columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
-       no_balance = rd$b == 0L, notes = rl$note %||% character(0))
+       no_balance = rd$b == 0L, notes = rl$note %||% character(0),
+       date_by_layout = isTRUE(ck$dates_settled$by_layout))
 }

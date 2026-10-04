@@ -165,11 +165,11 @@ test_that("a leading-zero code and an at-sign description reach the feed verbati
     "02/01/26,10.00,Dairy Refund,TEST CITY,000001,0000042,POS,11-1111-1111111-00,---,,\"00\",1001,\"11-1111\",02/01/26"), src)
 
   out <- tempfile("cv_"); ld <- tempfile("l_")
-  # Two rows and no balance prove nothing (the reader even takes the batch number
-  # for a figure), so a person says which column is the amount and confirms it.
+  # Two rows and no balance prove nothing, so a person looks and confirms the
+  # reading. (The batch number, 1001, is an identifier and never a figure: the one
+  # column of figures is the amount.)
   res <- convert_statement(src, bank = "BNZ", outdir = out, logdir = ld, layouts_dir = tempfile("ly_"),
-                           tracking_dir = NA, confirm = TRUE,
-                           overrides = list(roles = c(balance = "amount", amount = "other")))
+                           tracking_dir = NA, confirm = TRUE)
   expect_equal(res$status, "ok")
   expect_equal(res$feed_basis, "person")
 

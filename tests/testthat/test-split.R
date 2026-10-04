@@ -70,6 +70,33 @@ test_that("unconfirmed boundaries are refused", {
   expect_null(bundle_segments(list(kind = "delimited", lines = c("a,b", "1,2"))))
 })
 
+# N219: a home-loan pack -- the statement (its summary box and its table each print
+# the opening and closing balance) and a rate-change notice, each "Page 1 of 1". The
+# balance wordings appear twice, but state ONE statement's two balances, so they do
+# not confirm a second statement; a real second statement's block states its own.
+test_that("a loan's repeated balance block confirms no second statement; a bundle's still does", {
+  loan <- .sp_bundle()
+  loan$pages <- c(paste("Home loan statement  Statement period from 1 Feb 2026 to 28 Feb 2026",
+                        "Loan summary", "Opening balance 250,000.00 DR", "Closing balance 249,027.40 DR",
+                        "Opening balance            250,000.00 DR", "Closing balance            249,027.40 DR",
+                        "Page 1 of 1", sep = "\n"),
+                  paste("Interest rate change notice", "Your new rate is 5.19% from 1 March 2026.",
+                        "Page 1 of 1", sep = "\n"))
+  m <- extract_metadata(loan)
+  expect_equal(c(m$n_opening_labels, m$n_closing_labels, m$n_balance_blocks), c(2, 2, 1))
+  expect_null(bundle_segments(loan, m))
+  expect_false(any(grepl("block appears", detect_multiple_statements(loan, m)$reasons)))
+  two <- loan
+  two$pages[2] <- paste("Statement  Opening balance 249,027.40 DR", "Closing balance 247,000.00 DR",
+                        "Page 1 of 1", sep = "\n")
+  two$pages[1] <- sub("Opening balance            250,000.00 DR\nClosing balance            249,027.40 DR\n", "",
+                      two$pages[1], fixed = TRUE)
+  m2 <- extract_metadata(two)
+  expect_equal(m2$n_balance_blocks, 2)
+  expect_identical(bundle_segments(two, m2), list(1L, 2L))
+  expect_true(detect_multiple_statements(two, m2)$likely_multiple)
+})
+
 test_that(".segment_starts finds page-1 markers and always includes page 1", {
   expect_equal(.segment_starts(.sp_bundle()), c(1L, 2L))
   # a marker only on a later page still makes page 1 the first segment start

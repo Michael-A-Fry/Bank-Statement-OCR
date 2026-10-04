@@ -1046,12 +1046,17 @@ bank_pick <- function(identified, chosen = NULL, confirmed = FALSE) {
   conf <- identified$confidence %||% "unknown"
   disp <- function(i) if (!is.null(ref) && !is.na(i) && i %in% names(ref$display)) ref$display[[i]] else i
   pick <- if (is.null(chosen) || !length(chosen) || is.na(chosen[1])) "" else trimws(as.character(chosen[1]))
-  # The pick as an id when it names a known bank (by id, display name or brand word).
+  # The pick as an id when it names a known bank: by id, display name, brand word or
+  # legal name (current or former), with a leading "The" and a trailing "Limited"
+  # not counted. "Co-operative Bank", "The Co-operative Bank Limited" and "PSIS
+  # Limited" are all the bank the list calls "The Co-operative Bank", so they are
+  # that bank, shown by that name -- never a second bank that disagrees with it.
   if (nzchar(pick) && !is.null(ref)) {
-    np <- .bi_norm(pick)
-    hit <- names(ref$display)[.bi_norm(names(ref$display)) == np | .bi_norm(ref$display) == np]
+    core <- function(s) sub(" limited$", "", sub("^the ", "", .bi_norm(s)))
+    np <- core(pick)
+    hit <- names(ref$display)[core(names(ref$display)) == np | core(ref$display) == np]
     if (!length(hit)) {
-      br <- Filter(function(p) p$kind == "brand" && p$needle == np, ref$patterns)
+      br <- Filter(function(p) p$kind %in% c("brand", "legal_name") && core(p$needle) == np, ref$patterns)
       hit <- unique(vapply(br, function(p) p$institution, ""))
     }
     if (length(hit) == 1) pick <- hit

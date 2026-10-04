@@ -184,6 +184,40 @@ test_that("a statement listing the newest transaction first proves the other way
   expect_equal(round(rd$transactions$amount, 2), rev(ar_want))
 })
 
+# N226: with no running balance the arithmetic holds read either way round, so the
+# reading took oldest first and told a file listed newest first, consistently,
+# that "the dates go backwards at row 2". The dates settle what the arithmetic
+# leaves open, and every reason says which way round the statement reads and why.
+test_that("newest first with nothing in the arithmetic to say so: the dates say it, and the reasons are true", {
+  h <- c(ar_head[1:2], "Date     Details                          Withdrawals     Deposits")
+  rows <- c("09 Feb   DD CITY COUNCIL RATES                      268.15",
+            "05 Feb   SALARY MATAI HOLDINGS                                  3,120.00",
+            "03 Feb   EFTPOS RIVERSIDE DAIRY                      12.40")
+  rd <- auto_read(ar_pdf(c(h, "         Opening balance          1,000.00", rows, "         Closing balance          3,839.45")))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), c(-268.15, 3120, -12.40))
+  expect_true(rd$template$signature$newest_first)
+  expect_match(rd$why, "newest transaction first, as its dates show", fixed = TRUE)
+  expect_identical(rd$checks$why[rd$checks$check == "dates_in_order"], "The dates run in order, newest first.")
+  # Nothing to add up at all: a person looks, told the real reason, not the order.
+  ex <- auto_read(list(kind = "delimited", path = "", sha256 = NA_character_, meta = list(ext = "csv"),
+                       lines = c("Date,Details,Amount", "19/02/2026,DD CITY COUNCIL RATES,-268.15",
+                                 "15/02/2026,SALARY MATAI HOLDINGS,3120.00", "13/02/2026,EFTPOS RIVERSIDE DAIRY,-12.40")))
+  expect_equal(ex$outcome, "check")
+  expect_false(grepl("backwards", ex$why))
+  expect_true(ok_of(ex, "dates_in_order"))
+  # A row out of place in a newest-first statement is named in its own order.
+  bad <- c(ar_rows[8], rev(ar_rows[2:7]), ar_rows[1])
+  bad[5] <- sub("^09 Feb", "15 Feb", bad[5])
+  rb <- auto_read(ar_pdf(c(ar_head, bad)))
+  expect_false(ar_auto(rb))
+  expect_identical(rb$checks$why[rb$checks$check == "dates_in_order"],
+                   "Row 4 is dated after the row above it, but the statement lists the newest transaction first.")
+  # Oldest first, as ever.
+  ro <- auto_read(ar_pdf(c(ar_head, ar_rows)))
+  expect_identical(ro$checks$why[ro$checks$check == "dates_in_order"], "The dates run in order.")
+})
+
 test_that("a balance printed once per day proves the day's rows together", {
   rows <- ar_rows
   rows[3] <- "05 Feb   SALARY MATAI HOLDINGS                                  3,120.00"
@@ -297,6 +331,48 @@ test_that("a bundle of statements is proven statement by statement", {
   rd <- auto_read(ar_pdf(s1, s2))
   expect_equal(rd$outcome, "proven")
   expect_equal(round(rd$transactions$amount, 2), c(ar_want, -40))
+})
+
+# N219: a home loan prints a "Loan summary" box (opening balance, interest,
+# repayments, closing balance, rate) besides its table's own opening and closing
+# lines, and often again on its next page. Two "opening balance" wordings are not
+# two statements: they state one statement's balance twice.
+ar_loan_box <- c("Kauri Bank                         Home loan statement",
+  "Loan account 12-3456-0123456-90    Statement period 1 Feb 2026 to 28 Feb 2026", "",
+  "Loan summary",
+  "Opening balance                    250,000.00 DR",
+  "Interest charged                     1,027.40",
+  "Repayments                           2,000.00",
+  "Closing balance                    249,027.40 DR",
+  "Interest rate                          5.29%", "",
+  "Date     Details                         Debits      Credits         Balance")
+ar_loan_rows <- c(
+  "         Opening balance                                          250,000.00 DR",
+  "05 Feb   REPAYMENT                                  1,000.00      249,000.00 DR",
+  "19 Feb   REPAYMENT                                  1,000.00      248,000.00 DR",
+  "28 Feb   INTEREST                      1,027.40                   249,027.40 DR",
+  "         Closing balance                                          249,027.40 DR")
+
+test_that("a loan's summary box, printed beside its table or on every page, is one statement", {
+  for (inp in list(ar_pdf(c(ar_loan_box, ar_loan_rows)),
+                   ar_pdf(c(ar_loan_box, ar_loan_rows[1:3]), c(ar_loan_box, ar_loan_rows[4:5])))) {
+    rd <- auto_read(inp)
+    expect_equal(rd$outcome, "proven")
+    expect_equal(round(rd$transactions$amount, 2), c(1000, 1000, -1027.40))
+    m <- extract_metadata(inp)
+    expect_equal(m$n_balance_blocks, 1L)
+    mu <- detect_multiple_statements(inp, m)
+    expect_false(mu$likely_multiple)
+    expect_false(any(grepl("block appears", mu$reasons)))
+    expect_null(bundle_segments(inp, m))
+  }
+  # The box alone, out of the table, never becomes a second statement's.
+  a <- list(list(class = "open", in_table = FALSE, before_rows = 0L, value_text = "250,000.00", figs = NA),
+            list(class = "open", in_table = FALSE, before_rows = 2L, value_text = "250,000.00", figs = NA))
+  expect_false(.ar_separate_boxes(a, 3L, FALSE, "auto"))
+  a[[2]]$value_text <- "248,000.00"
+  expect_true(.ar_separate_boxes(a, 3L, FALSE, "auto"))
+  expect_false(.ar_separate_boxes(a, 2L, FALSE, "auto"))   # the second box starts no rows
 })
 
 test_that("a page set on its side is turned upright", {
@@ -588,6 +664,25 @@ test_that("a proven layout is re-checked as a candidate and named when it matche
   expect_false(is.null(rd$matched_layout))
 })
 
+# N225: a reading proven on its own content, of a design the store already holds,
+# came back with matched_layout NULL whenever it differed from the stored layout in
+# a detail the reader's strict test holds to (here: listed newest first). The run
+# log then named no layout, and Admin's count of layouts in use fell short.
+test_that("a proven reading of a stored layout's design names that layout", {
+  d <- tempfile("ly_"); dir.create(d)
+  first <- auto_read(ar_pdf(c(ar_head, ar_rows)))
+  expect_identical(layout_learn(first, "kauri", paste(rep("ab", 32), collapse = ""), d)$action, "created")
+  stored <- layouts_load(d, "kauri")
+  same <- auto_read(ar_pdf(c(ar_head, ar_rows)), layouts = stored)
+  expect_identical(same$matched_layout, "kauri_1@1")
+  newest <- auto_read(ar_pdf(c(ar_head, ar_rows[8], rev(ar_rows[2:7]), ar_rows[1])), layouts = stored)
+  expect_equal(newest$outcome, "proven")
+  expect_identical(newest$matched_layout, layout_match(newest$template$signature, stored)$ref)
+  expect_identical(newest$matched_layout, "kauri_1@1")
+  # Nothing stored, nothing named.
+  expect_null(auto_read(ar_pdf(c(ar_head, ar_rows)))$matched_layout)
+})
+
 test_that("with no balance and no totals, a matching proven layout gives layout_match", {
   h <- c(ar_head[1:2], "Date     Details                          Withdrawals     Deposits")
   rows <- c("03 Feb   EFTPOS RIVERSIDE DAIRY                      12.40",
@@ -602,6 +697,45 @@ test_that("with no balance and no totals, a matching proven layout gives layout_
   # A provisional layout carries nothing.
   prov <- lay$template; prov$layout <- list(id = "x", version = 1L, status = "provisional", signature = prov$signature)
   expect_equal(auto_read(ar_pdf(c(h, rows)), layouts = list(prov))$outcome, "check")
+})
+
+# N218: on a statement whose days are all 12 or less, 03/02 is 3 February and 2
+# March alike, and with no running balance nothing on the page tells them apart.
+# A PROVEN layout of the design was proven on statements where it could be told,
+# so its stored order settles it; a provisional layout settles nothing.
+test_that("a proven no-balance layout settles day-month against month-day; a provisional one does not", {
+  for (us in c(FALSE, TRUE)) {
+    fm <- function(d) if (us) sprintf("02/%02d/2026", d) else sprintf("%02d/02/2026", d)
+    h <- c(ar_head[1], "", "Date         Details                          Withdrawals     Deposits")
+    row <- function(d, s) paste0(fm(d), s)
+    body <- function(d) c(row(d[1], "   EFTPOS RIVERSIDE DAIRY                      12.40"),
+                          row(d[2], "   SALARY MATAI HOLDINGS                                  3,120.00"),
+                          row(d[3], "   DD CITY COUNCIL RATES                      268.15"))
+    lay <- auto_read(ar_pdf(c(h, "             Opening balance          1,000.00", body(c(3, 15, 19)),
+                              "             Closing balance          3,839.45")))
+    expect_equal(lay$outcome, "proven", info = us)
+    small <- ar_pdf(c(h, body(c(3, 5, 9))))
+    alone <- auto_read(small)
+    expect_equal(alone$outcome, "check", info = us)
+    expect_false(ok_of(alone, "dates_settled"), info = us)
+    rd <- auto_read(small, layouts = list(lay$template))
+    expect_equal(rd$outcome, "layout_match", info = us)
+    expect_equal(rd$transactions$date, c("2026-02-03", "2026-02-05", "2026-02-09"), info = us)
+    expect_match(rd$why, if (us) "reads them as month/day/year" else "reads them as day/month/year", info = us)
+    prov <- lay$template
+    prov$layout <- list(id = "x", version = 1L, status = "provisional", signature = prov$signature)
+    expect_equal(auto_read(small, layouts = list(prov))$outcome, "check", info = us)
+  }
+  # The same in a CSV export.
+  csv <- function(d, open = NULL, close = NULL) list(kind = "delimited", path = "", sha256 = NA_character_,
+    meta = list(ext = "csv"), lines = c("Date,Details,Amount", open,
+      sprintf("02/%02d/2026,%s,%s", d, c("EFTPOS RIVERSIDE", "SALARY MATAI", "DD COUNCIL"), c("-12.40", "3120.00", "-268.15")),
+      close))
+  lay <- auto_read(csv(c(3, 15, 19), ",Opening balance,1000.00", ",Closing balance,3839.45"))
+  expect_equal(lay$outcome, "proven")
+  rd <- auto_read(csv(c(3, 5, 9)), layouts = list(lay$template))
+  expect_equal(rd$outcome, "layout_match")
+  expect_equal(rd$transactions$date, c("2026-02-03", "2026-02-05", "2026-02-09"))
 })
 
 test_that("a layout that would read the figures differently stops a reading being unique", {
@@ -886,11 +1020,15 @@ test_that("a person's roles are read on their own and still have to add up", {
 
 test_that("with nothing to add up, the reading shown is the person's roles", {
   csv <- function(lines) { p <- tempfile(fileext = ".csv"); writeLines(lines, p); read_input(p) }
-  inp <- csv(c("Date,Details,Amount,Batch", "14/04/2025,Salary,2500.00,1001", "15/04/2025,Rent,-1200.00,1002",
-               "16/04/2025,Bread,-3.50,1003"))
+  # (A "Batch" column of 1001, 1002, ... is an identifier, not a figure: the second
+  # figure column here is a fee.)
+  inp <- csv(c("Date,Details,Amount,Fee", "14/04/2025,Salary,2500.00,0.00", "15/04/2025,Rent,-1200.00,0.50",
+               "16/04/2025,Bread,-3.50,0.00"))
   rd <- auto_read(inp, opts = list(roles = c("amount", "other")))
   expect_equal(rd$outcome, "check")
   expect_equal(rd$transactions$amount, c(2500, -1200, -3.5))
+  ids <- csv(c("Date,Details,Amount,Batch", "14/04/2025,Salary,2500.00,1001", "15/04/2025,Rent,-1200.00,1002"))
+  expect_identical(auto_read(ids)$template$auto$roles, "amount")
 })
 
 test_that("a code or reference printed with leading zeros is never a figure", {
@@ -913,6 +1051,139 @@ test_that("an account-number column is never the description", {
                "15/04/2025,-1200.00,Rent,11-1111-1111111-00"), p)
   rd <- auto_read(read_input(p))
   expect_identical(rd$transactions$description, c("Salary", "Rent"))
+})
+
+# ---- which column is which in an export (N211, N213, N214, N215) ----------------------------
+
+# Every column of a CSV, put in another order; the same reading must come back.
+ar_reorder <- function(lines, perm) vapply(lines, function(l) {
+  f <- strsplit(l, ",", fixed = TRUE)[[1]]
+  f <- c(f, rep("", max(0L, length(perm) - length(f))))
+  paste(f[perm], collapse = ",")
+}, "", USE.NAMES = FALSE)
+
+test_that("of two date columns, the one headed as the transaction date is taken, wherever it sits", {
+  # Kiwibank prints Effective Date and Transaction Date; they differ on row 1. The
+  # date column was the first one found, so reversing the columns changed the dates.
+  kb <- c("Account number,Effective Date,Transaction Date,Description,Amount,Balance",
+          "38-8106-0601663-00,2025-08-21,2025-08-22,EFTPOS SUSHI,-9.00,895.69",
+          "38-8106-0601663-00,2025-08-22,2025-08-22,PAY Alice The Bar,-15.00,880.69",
+          "38-8106-0601663-00,2025-08-23,2025-08-23,EFTPOS PAK N SAVE,-42.02,838.67")
+  for (perm in list(1:6, 6:1, c(3, 1, 5, 2, 4, 6))) {
+    rd <- auto_read(ar_csv(ar_reorder(kb, perm)))
+    expect_equal(rd$outcome, "proven", info = paste(perm, collapse = ""))
+    expect_equal(rd$transactions$date, c("2025-08-22", "2025-08-22", "2025-08-23"), info = paste(perm, collapse = ""))
+    expect_equal(rd$parsed$extras$date2, c("2025-08-21", "2025-08-22", "2025-08-23"), info = paste(perm, collapse = ""))
+  }
+  # A card's TransactionDate beats its ProcessedDate; a bare "Date" beats "Processed Date".
+  expect_equal(.ar_date_heading_rank("TransactionDate"), 2L)
+  expect_equal(.ar_date_heading_rank("Date of Transaction"), 2L)
+  expect_equal(.ar_date_heading_rank("Date"), 1L)
+  expect_equal(vapply(c("ProcessedDate", "Effective Date", "Value Date", "Date Processed", ""),
+                      .ar_date_heading_rank, 0L, USE.NAMES = FALSE), rep(0L, 5))
+})
+
+test_that("two date columns that differ, with nothing saying which is the transaction's, go to a person", {
+  two <- c("Date,Details,Date,Amount,Balance",
+           "21/08/2025,EFTPOS SUSHI,22/08/2025,-9.00,895.69",
+           "22/08/2025,PAY Alice,22/08/2025,-15.00,880.69",
+           "23/08/2025,EFTPOS PAK N SAVE,24/08/2025,-42.02,838.67")
+  shown <- NULL
+  for (perm in list(1:5, 5:1, c(3, 2, 1, 4, 5))) {
+    rd <- auto_read(ar_csv(ar_reorder(two, perm)))
+    expect_equal(rd$outcome, "check", info = paste(perm, collapse = ""))
+    expect_false(ok_of(rd, "dates_settled"))
+    expect_match(rd$why, "two date columns, \"Date\" and \"Date\", that give different dates on 2 row\\(s\\)")
+    # What is shown does not depend on where the columns sit.
+    shown <- shown %||% rd$transactions$date
+    expect_equal(rd$transactions$date, shown, info = paste(perm, collapse = ""))
+  }
+  expect_equal(shown, c("2025-08-21", "2025-08-22", "2025-08-23"))   # the earlier: made before processed
+  # Two date columns that agree on every row settle nothing and need nothing.
+  same <- two; same[c(2, 4)] <- c("21/08/2025,EFTPOS SUSHI,21/08/2025,-9.00,895.69", "23/08/2025,EFTPOS PAK N SAVE,23/08/2025,-42.02,838.67")
+  expect_equal(auto_read(ar_csv(ar_reorder(same, 5:1)))$outcome, "proven")
+})
+
+test_that("an id column of long whole numbers is never money", {
+  # ASB prints a Unique Id on every row; read as money, it became the balance.
+  asb <- c("Date,Unique Id,Tran Type,Payee,Memo,Amount,Balance",
+           "2026/02/03,2026020301,POS,RIVERSIDE DAIRY,EFTPOS,-12.40,987.60",
+           "2026/02/05,2026020501,DIRECTDEP,MATAI HOLDINGS,Salary,3120.00,4107.60",
+           "2026/02/09,2026020901,DEBIT,CITY COUNCIL,Rates,-268.15,3839.45")
+  rd <- auto_read(ar_csv(asb))
+  expect_equal(rd$outcome, "proven")
+  expect_identical(rd$template$auto$roles, c("amount", "balance"))
+  expect_equal(round(rd$transactions$amount, 2), c(-12.40, 3120, -268.15))
+  nb <- auto_read(ar_csv(sub(",[0-9.]+$", "", sub("^(.*),Balance$", "\\1", asb))))
+  expect_identical(nb$template$auto$roles, "amount")
+  expect_false("balance" %in% nb$template$auto$fields)
+  expect_true(nb$outcome %in% c("check", "unread"))
+  # The rule, on its own: long, headed as an id, or a running sequence -- and never
+  # a plain column of whole amounts.
+  expect_true(.ar_tab_id_column(c("2014122001", "2014122101")))
+  expect_true(.ar_tab_id_column(c("12", "40"), "Cheque Number"))
+  expect_true(.ar_tab_id_column(c("100234", "100235", "100236")))
+  expect_false(.ar_tab_id_column(c("54", "100", "20"), "Amount"))
+  expect_false(.ar_tab_id_column(c("1500", "2000", "2500"), "Balance"))
+  expect_false(.ar_tab_id_column(c("12.40", "2014122001")))
+})
+
+test_that("in a card export with foreign-currency columns the NZD amount is the amount", {
+  # Original Amount (in its own currency) and a conversion charge sit beside the
+  # NZD amount. Nothing adds up, so a person looks -- at the NZD amounts, with no
+  # foreign figure taken for a balance.
+  fx <- c("Date,Description,Original Amount,Currency,NZD Amount,Conversion Charge",
+          "03/02/2026,RIVERSIDE DAIRY,-12.40,NZD,-12.40,",
+          "05/02/2026,AMAZON US,-30.00,USD,-51.00,-1.31",
+          "09/02/2026,PAYMENT RECEIVED THANK YOU,200.00,NZD,200.00,",
+          "14/02/2026,HARBOUR FUEL,-96.72,NZD,-96.72,")
+  for (perm in list(1:6, 6:1)) {
+    rd <- auto_read(ar_csv(ar_reorder(fx, perm)))
+    expect_equal(rd$outcome, "check", info = paste(perm, collapse = ""))
+    expect_equal(round(rd$transactions$amount, 2), c(-12.40, -51.00, 200, -96.72), info = paste(perm, collapse = ""))
+    expect_false("balance" %in% rd$template$auto$roles, info = paste(perm, collapse = ""))
+  }
+  # ANZ's card export: the foreign amount as text, the charge as a figure.
+  anz <- c("Card,Type,Amount,Details,TransactionDate,ProcessedDate,ForeignCurrencyAmount,ConversionCharge",
+           "4835-****-****-0311,D,12.40,RIVERSIDE DAIRY,03/02/2026,04/02/2026,,",
+           "4835-****-****-0311,D,52.31,AMAZON US,05/02/2026,06/02/2026,30.00 USD,1.31",
+           "4835-****-****-0311,C,200.00,PAYMENT RECEIVED THANK YOU,09/02/2026,09/02/2026,,")
+  rd <- auto_read(ar_csv(anz))
+  expect_identical(rd$template$auto$roles, c("amount", "other"))
+  expect_equal(round(rd$transactions$amount, 2), c(-12.40, -52.31, 200))
+  expect_equal(rd$transactions$date, c("2026-02-03", "2026-02-05", "2026-02-09"))
+  # With a running balance the arithmetic decides, and agrees.
+  bal <- c("Date,Description,Original Amount,Currency,NZD Amount,Balance",
+           ",Opening balance,,,,1000.00",
+           "03/02/2026,RIVERSIDE DAIRY,-12.40,NZD,-12.40,987.60",
+           "05/02/2026,AMAZON US,-30.00,USD,-52.31,935.29",
+           "14/02/2026,PAYMENT RECEIVED THANK YOU,200.00,NZD,200.00,1135.29")
+  rd <- auto_read(ar_csv(bal))
+  expect_equal(rd$outcome, "proven")
+  expect_identical(rd$template$auto$roles, c("other", "amount", "balance"))
+  expect_identical(.wa_money_role("ForeignCurrencyAmount"), "other")
+  expect_identical(.wa_money_role("NZD Amount"), "amount")
+})
+
+test_that("an id or a hash is never the description while a column of words exists", {
+  # A Xero export's unique_id ("KIWIBANK-20250401-000") was longer than any
+  # description, so it was taken for one.
+  xero <- c("transaction_date,description,amount,debit_credit,balance,currency,unique_id,memo",
+            "01/04/2025,Opening balance,0.00,credit,11980.55,NZD,KIWIBANK-20250401-000,Starting balance",
+            "02/04/2025,Payroll deposit,4850.00,credit,16830.55,NZD,KIWIBANK-20250402-001,Payroll ACH",
+            "03/04/2025,Office supplies,312.54,debit,16518.01,NZD,KIWIBANK-20250403-002,Staples invoice 88321")
+  for (perm in list(1:8, 8:1)) {
+    rd <- auto_read(ar_csv(ar_reorder(xero, perm)))
+    expect_equal(rd$transactions$description, c("Opening balance", "Payroll deposit", "Office supplies"),
+                 info = paste(perm, collapse = ""))
+  }
+  # No column headed as the description: the words win over a longer hash.
+  hx <- c("Date,Ref,Narrative,Amount",
+          "03/02/2026,9f3ac81d0b4e7a2265c1,EFTPOS DAIRY,-12.40",
+          "05/02/2026,77ab03e9c1d24f8e90aa,SALARY,3120.00")
+  expect_identical(auto_read(ar_csv(hx))$transactions$description, c("EFTPOS DAIRY", "SALARY"))
+  hy <- sub("Narrative", "Words", hx)
+  expect_identical(auto_read(ar_csv(hy))$transactions$description, c("EFTPOS DAIRY", "SALARY"))
 })
 
 test_that("a page cut out of a bundle is read again from its own page of the file", {

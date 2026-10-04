@@ -280,6 +280,35 @@ extract_metadata <- function(input, dict = default_label_dict()) {
   }
   n_opening_labels <- .count_occ(dict$opening_balance$any_of %||% "opening balance")
   n_closing_labels <- .count_occ(dict$closing_balance$any_of %||% "closing balance")
+  # ...but ONE statement can print its block twice or more: a home loan's "Loan
+  # summary" box (opening balance, interest, repayments, closing balance, rate) and
+  # the table's own first and last lines, or the box again on every page. Those
+  # state the SAME two figures, where a bundle's next statement opens on the balance
+  # the last one closed on. So the figure printed after each wording on its line is
+  # read too: every opening wording stating one figure and every closing wording
+  # another is one statement's block, however often it is printed. A wording with
+  # no figure on its line (a box laid out in columns) leaves the count as it was.
+  .label_figs <- function(phrases) {
+    ph <- unique(tolower(unlist(phrases))); ph <- ph[nzchar(ph)]
+    out <- character(0)
+    for (ln in strsplit(tolower(text), "\n", fixed = TRUE)[[1]]) for (p in ph) {
+      at <- gregexpr(p, ln, fixed = TRUE)[[1]]
+      if (at[1] < 0) next
+      for (k in at) {
+        rest <- substring(ln, k + nchar(p))
+        f <- regmatches(rest, regexpr("[0-9][0-9,]*[.][0-9]{2}", rest))
+        out <- c(out, if (length(f)) gsub(",", "", f, fixed = TRUE) else NA_character_)
+      }
+    }
+    out
+  }
+  n_balance_blocks <- min(n_opening_labels, n_closing_labels)
+  if (n_balance_blocks > 1L) {
+    of <- .label_figs(dict$opening_balance$any_of %||% "opening balance")
+    cf <- .label_figs(dict$closing_balance$any_of %||% "closing balance")
+    if (length(of) && length(cf) && !anyNA(of) && !anyNA(cf) &&
+        length(unique(of)) == 1L && length(unique(cf)) == 1L) n_balance_blocks <- 1L
+  }
 
   # The labelled STATEMENT DATE ("Statement date: 12 October 2026", "Date of
   # issue"). It has been in dictionaries/labels.yaml since the beginning and was
@@ -350,6 +379,9 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     closing_balance = closing_balance,
     n_opening_labels = n_opening_labels,
     n_closing_labels = n_closing_labels,
+    # How many statements' opening/closing blocks those wordings print: one when the
+    # repeats all state the same two figures (see above).
+    n_balance_blocks = n_balance_blocks,
     stated_count    = stated_count
   )
 }
@@ -406,11 +438,15 @@ detect_multiple_statements <- function(input, meta = NULL) {
   }
   # STRONG 3: the whole opening-AND-closing-balance header block repeats. A single
   # statement prints each once; requiring BOTH to repeat avoids a stray mention in
-  # a summary line falsely flagging a normal statement.
+  # a summary line falsely flagging a normal statement. And the repeats must state
+  # different balances: a home loan's summary box beside its table repeats ONE
+  # statement's opening and closing, and is no second statement (n_balance_blocks).
   if (isTRUE(meta$n_opening_labels > 1) && isTRUE(meta$n_closing_labels > 1)) {
-    reasons <- c(reasons, sprintf("the opening/closing-balance block appears %d times",
-      min(meta$n_opening_labels, meta$n_closing_labels)))
-    strong <- TRUE
+    nb <- meta$n_balance_blocks %||% min(meta$n_opening_labels, meta$n_closing_labels)
+    if (isTRUE(nb > 1)) {
+      reasons <- c(reasons, sprintf("the opening/closing-balance block appears %d times", nb))
+      strong <- TRUE
+    }
   }
   # SUPPORTING only: multiple account numbers (transfers/products routinely inflate
   # this on a normal single statement, so it never flags a bundle on its own).

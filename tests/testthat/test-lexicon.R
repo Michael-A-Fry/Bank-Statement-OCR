@@ -105,6 +105,20 @@ test_that("every lexicon category declares BOTH its merge type and its default",
   }
 })
 
+# N228: `fingerprint_brand_words` fed the retired template drafter and nothing reads
+# it now. It is no longer a category, but a vocabulary file that taught it a word
+# before must still save, and teaching it one more says plainly why it cannot.
+test_that("the retired brand-word category is gone, and an old file that lists it still saves", {
+  expect_false("fingerprint_brand_words" %in% names(lexicon_categories()))
+  expect_false("fingerprint_brand_words" %in% names(.lexicon_defaults()))
+  expect_length(validate_lexicon(list(fingerprint_brand_words = list("kauri"), debit_markers = list("cow"))), 0L)
+  f <- tempfile(fileext = ".yaml"); writeLines("debit_markers: [cow]", f)
+  out <- lexicon_append("fingerprint_brand_words", "kauri", f)
+  expect_false(isTRUE(out))
+  expect_match(attr(out, "reason"), "no longer reads")
+  expect_identical(readLines(f), "debit_markers: [cow]")
+})
+
 # An admin typo in the vocabulary file must produce a readable problem, not an
 # R error -- validate_lexicon exists precisely to hand that message back.
 test_that("validate_lexicon reports an unknown category instead of erroring", {
