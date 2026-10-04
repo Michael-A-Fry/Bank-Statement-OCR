@@ -170,7 +170,8 @@ test_that("balance_reconciliation derives a missing closing balance, not 'na'", 
     source_line_count = NA_integer_))
   br <- r$kpis[r$kpis$name == "balance_reconciliation", ]
   expect_equal(br$status, "pass")                 # 100 + (-10+20) == last balance 110
-  expect_true(grepl("derived", br$detail))
+  # ...and says the closing was taken from the last balance, not printed
+  expect_match(br$detail, "the last running balance, as none is printed", fixed = TRUE)
   # no balance column at all -> honestly 'na'
   tx2 <- tx; tx2$balance <- NA_real_
   r2 <- reconcile(list(transactions = tx2,
