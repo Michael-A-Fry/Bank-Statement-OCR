@@ -1,0 +1,802 @@
+diff -ruN snap20/R/auto_read.R nrg_greenflag/proto/R/auto_read.R
+--- snap20/R/auto_read.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_greenflag/proto/R/auto_read.R	2026-10-04 03:17:39.880998062 +0000
+@@ -227,6 +227,17 @@
+   ctx$roles <- opts$roles
+   base <- .ar_pdf_pages(ctx)
+   model <- .ar_model(base, list())
++  # F2d (prototype): nothing on the statement reads as a date. An eight-digit run
++  # ("20250502") is then tried as one -- only when the statement prints its
++  # period, so every such date is checked to fall inside it (check
++  # "compact_dates").
++  if (is.null(model) && !anyNA(c(.plausible_period_date(ctx$md$period_start), .plausible_period_date(ctx$md$period_end)))) {
++    ctx2 <- ctx; ctx2$fmts <- .ar_date_formats(tabular = TRUE)
++    base2 <- .ar_pdf_pages(ctx2); model2 <- .ar_model(base2, list())
++    if (!is.null(model2) && any(grepl("%Y%m%d", model2$rows$date_fmts, fixed = TRUE))) {
++      ctx <- ctx2; ctx$compact_dates <- TRUE; base <- base2; model <- model2
++    }
++  }
+   # The account type is read from the print OUTSIDE the transaction rows: an
+   # everyday account paying off its card ("CREDIT CARD PAYMENT") is not a card.
+   ctx$liab <- .ar_liability_evidence(if (is.null(model)) ctx$pages_text else .ar_outside_text(model))
+@@ -270,6 +281,24 @@
+       cands[["repair:reocr_rows"]] <- .ar_pdf_attempt(ctx2, .ar_pdf_pages(ctx2), list(), "repair:reocr_rows")
+     }
+   }
++  # F1 (prototype): a table that starts or ends on a dateless line printing one
++  # figure (an opening, closing or carried balance under an unknown label) is read
++  # again with those lines as balance anchors.
++  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model)) {
++    alts <- .ar_edge_lines(model)
++    for (k in seq_along(alts)) {
++      pg_e <- .ar_mark_edges(base, alts[[k]])
++      nm <- if (k == 1L) "repair:edge_lines" else paste0("repair:edge_lines", k)
++      cands[[nm]] <- .ar_pdf_attempt(ctx, pg_e, list(), nm)
++    }
++  }
++  # F8 (prototype): opening, closing and totals printed under unknown labels,
++  # named by the arithmetic, then read again under those names.
++  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model)) {
++    named <- safe(.ar_summary_names(model, ctx$decimal, cands$content), NULL)
++    if (length(named))
++      cands[["repair:summary_figures"]] <- .ar_pdf_attempt(ctx, .ar_mark_summaries(base, named), list(), "repair:summary_figures")
++  }
+   if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1)))) {
+     reps <- list(
+       "repair:wider_cells"   = list(thr = 1.6),
+@@ -501,6 +530,9 @@
+                score = c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0), chain = NULL)
+     basis <- vr$by
+   }
++  # F5 (prototype): sign tokens printed beside an unsigned amount sign the rows the
++  # balance could not, once the balance has proven what each token means.
++  if (identical(basis, "arithmetic")) rd <- .ar_indicator_fill(model, rd)
+   cs <- .ar_columns(model, rd$roles, headings)
+   if (is.null(cs)) return(fail("Found the table but could not measure its columns."))
+   # A proven layout read against this document settles its dates' day-month order.
+@@ -812,9 +844,9 @@
+     if (!nrow(m)) return(FALSE)
+     any(vapply(model$cols, function(cl) any(m$x - s <= cl$x1 + 0.5 & m$x1 - s >= cl$x - 0.5), logical(1)))
+   }
+-  own_seeds <- function(pg) { s <- .ar_seed_lines(pg); s[vapply(s, function(l) fits(pg, l), logical(1))] }
++  own_seeds <- function(pg) { s <- .ar_seed_lines(pg, right = isTRUE(model$right_dates)); s[vapply(s, function(l) fits(pg, l), logical(1))] }
+   other <- unlist(lapply(Filter(Negate(is.null), model$pgs), function(pg) {
+-    s <- setdiff(.ar_seed_lines(pg), own_seeds(pg))
++    s <- setdiff(.ar_seed_lines(pg, right = isTRUE(model$right_dates)), own_seeds(pg))
+     if (length(s)) sprintf("page %d", pg$page)
+   }))
+   shaped <- which(vapply(model$pgs, function(pg) !is.null(pg) &&
+@@ -845,6 +877,21 @@
+   if (!isFALSE(pl$ok) && .ar_carried_off_end(model))
+     pl <- list(ok = FALSE, why = "The table ends by carrying its balance forward to a page that is not in the file.")
+   add("pages_complete", pl$ok, pl$why)
++  # F1: every edge line made an anchor must be a balance point of THIS reading
++  # (its one figure in the balance column); otherwise it would be a row lost.
++  # M1: an unlabelled balance line ending the last page reads as a closing balance
++  # and as a balance carried to a page that is missing alike, and with an
++  # unlabelled opening a file cut short shows nothing wrong. Edge lines are used
++  # only when the printed page numbers show the file is complete.
++  eg <- Filter(function(a) startsWith(a$class %||% "", "edge"), model$anchors)
++  if (length(eg)) {
++    eu <- Filter(function(a) !identical(a$class, "edge_skip"), eg)
++    used <- !length(eu) || (rd$b > 0L && all(vapply(eu, function(a) !is.na(a$figs[rd$b]), logical(1))))
++    ok <- used && isTRUE(pl$ok)
++    add("edge_lines", ok, if (ok) sprintf("%d line(s) at the table's edges print only a balance and are read as its opening, closing or carried balance; the page numbers show every page is here.", length(eg))
++        else if (!used) "A line at the table's edge prints one figure that is not in the balance column."
++        else "Lines at the table's edges print only a balance under a label the reader does not know, and no page numbering shows the file is complete.")
++  }
+   ds <- .ar_dates_settled(model$rows$date, model$rows$date_fmts, tpl$table$date_format, rd$dir)
+   by <- tpl$auto$date_by
+   add("dates_settled", ds || !is.null(by), if (ds) "The dates read one way only."
+@@ -865,6 +912,12 @@
+         else if (isTRUE(ar$checks$opening_closing$ok))
+           list(ok = TRUE, why = sprintf("Lines on %s look like transactions but belong to another table; the opening and closing balances confirm none of this statement's rows are among them.", other[1]))
+         else list(ok = FALSE, why = sprintf("Lines on %s look like transactions but sit outside this statement's columns, and no printed opening and closing balance confirms they are not missing rows.", other[1]))
++  if (isTRUE(ctx$compact_dates)) {
++    dp <- ar$checks$dates_in_period$ok
++    ar$checks$compact_dates <- list(ok = isTRUE(dp), why = if (isTRUE(dp))
++      "The dates are printed as eight digits (year, month, day) and every one falls inside the statement period."
++      else "The dates are printed as eight digits and are not all shown to fall inside a printed statement period.")
++  }
+   ar$checks <- c(ck, ar$checks, list(reader_agrees = list(ok = ra$ok, why = ra$why),
+                                      dates_carried = list(ok = cd$ok, why = cd$why),
+                                      other_tables = ot))
+@@ -957,7 +1010,8 @@
+ # here when the rows either side of it still add up. A bundle's statements each
+ # number from 1. NA when no page prints such a label.
+ .ar_page_labels_ok <- function(pages, np) {
+-  rx <- "(?i)\\bpage\\s*:?\\s*([0-9]{1,3})\\s*(?:of|/)\\s*([0-9]{1,3})\\b"
++  # T2 (prototype): also "p.2/3", "Leaf 2 of 3" and "Page 2 (of 3)".
++  rx <- "(?i)(?:\\bpage|\\bleaf|\\bp\\.)\\s*:?\\s*([0-9]{1,3})\\s*\\(?\\s*(?:of|/)\\s*([0-9]{1,3})\\b"
+   lab <- lapply(seq_along(pages), function(p) {
+     m <- regmatches(pages[p], regexec(rx, pages[p], perl = TRUE))[[1]]
+     if (length(m) == 3L) c(p, as.integer(m[2]), as.integer(m[3])) else NULL
+diff -ruN snap20/R/auto_read_pdf.R nrg_greenflag/proto/R/auto_read_pdf.R
+--- snap20/R/auto_read_pdf.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_greenflag/proto/R/auto_read_pdf.R	2026-10-04 03:03:29.768957389 +0000
+@@ -20,12 +20,12 @@
+ # optional thousands groups, EXACTLY two decimals after a point or a comma, and an
+ # optional closing bracket, trailing sign or glued marker ("150.00CR"). Units,
+ # rates, references and times never have that shape.
+-.AR_MONEY_RX <- paste0("^[(]?[-+]?[^0-9A-Za-z[:space:].,'()+-]{0,3}[-+]?",
++.AR_MONEY_RX <- paste0("^[(]?[-+]?(?:(?:NZ|AU|US|CA|HK|SG)[$]|[^0-9A-Za-z[:space:].,'()+-]{0,3})[-+]?",
+                        "(?:[0-9]{1,3}(?:[,.'][0-9]{3})+|[0-9]+)[.,][0-9]{2}[)]?[-+]?",
+                        "(?:[CcDdOo][RrDd])?$")
+ # A function, not a constant: .MONEY_WORDS lives in R/normalise.R, sourced later.
+ .ar_currency <- function() c(.MONEY_WORDS, "$", "NZ$", "AU$", "US$", "\u00a3", "\u20ac")
+-.AR_WEEKDAY_RX <- "^(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day)?[.,]?$"
++.AR_WEEKDAY_RX <- "^(?:mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(?:day)?[.,]?$"  # F2c: Wednesday, Saturday
+ 
+ # .ar_markers() -- the sign words a figure may carry (CR / DR / OD by default),
+ # from the lexicon so a bank's own marker is taught in the dictionary.
+@@ -105,7 +105,7 @@
+   w$marker <- up %in% markers
+   w$cur <- up %in% .ar_currency()
+   w$kind <- "text"; w$phrase <- NA_integer_
+-  ph <- .ar_phrases(w, gap, h, fmts)
++  ph <- .ar_phrases(w, gap, h, fmts, thr)
+   if (nrow(ph)) for (k in seq_len(nrow(ph))) {
+     ix <- ph$i0[k]:ph$i1[k]
+     w$kind[ix] <- ph$kind[k]; w$phrase[ix] <- k
+@@ -179,6 +179,37 @@
+     if (y0[k + 1L] - y1[k] > 1.0 * h || x0[k + 1L] <= dx1[k]) next
+     w$line[w$line == ls[k + 1L]] <- ls[k]
+   }
++  # F6 (prototype): the figures printed on the LAST of a row's wrapped lines
++  # ("03 Jun 2026  J J WIGGINS  re lot 28" / "bagpipe lessons" / "part 1  -515.37
++  # 8,434.71"). Only a dated line that opens with its date and prints no figure,
++  # followed -- each set tight under the one above, all starting right of the date
++  # -- by up to five lines of words only and then a line whose figures stand
++  # apart and that has no date. The FIGURES of that last line move up to the dated
++  # line (its words stay where they are, as wrapped text), so the model and the
++  # table reader both see one row with its date and its figures.
++  has_d <- ls %in% ph$line[ph$kind == "date"]
++  moved <- rep(FALSE, length(ls))
++  for (k in seq_along(ls)) {
++    if (!dfirst[k] || has_m[k] || !any(w$line == ls[k])) next
++    j <- k
++    while (j < length(ls) && j - k <= 6L) {
++      nx <- j + 1L
++      if (y0[nx] - y1[j] > 1.0 * h || x0[nx] <= dx1[k] || has_d[nx]) break
++      if (has_m[nx]) break
++      j <- nx
++    }
++    f <- j + 1L
++    if (j == k || f > length(ls) || moved[f] || !has_sm[f] || has_d[f]) next
++    if (y0[f] - y1[j] > 1.0 * h || x0[f] <= dx1[k]) next
++    if (!any(w$line == ls[k]) || !any(w$line == ls[f])) next
++    fi <- unlist(lapply(which(ph$line == ls[f] & ph$kind == "money"), function(q) ph$i0[q]:ph$i1[q]))
++    if (!length(fi)) next
++    yk <- min(w$y[w$line == ls[k]])
++    w$y1[fi] <- w$y1[fi] - (w$y[fi] - yk)
++    w$y[fi] <- yk
++    w$line[fi] <- ls[k]
++    moved[f] <- TRUE
++  }
+   w
+ }
+ 
+@@ -268,7 +299,7 @@
+ # A date phrase is the longest run of 1-4 close words that parses as a date; a
+ # money phrase is one figure word plus a currency word or sign in front of it, a
+ # space-separated thousands group, and a marker or trailing sign behind it.
+-.ar_phrases <- function(w, gap, h, fmts) {
++.ar_phrases <- function(w, gap, h, fmts, thr_ph = 1.6 * h) {
+   n <- nrow(w)
+   empty <- data.frame(kind = character(0), line = integer(0), i0 = integer(0), i1 = integer(0),
+                       x = numeric(0), x1 = numeric(0), y = numeric(0), text = character(0),
+@@ -313,9 +344,22 @@
+     s <- i; e <- i
+     if (s > 1L && !used[s - 1L] && w$line[s - 1L] == w$line[s] && !is.na(gap[s])) {
+       pv <- w$text[s - 1L]
+-      if (gap[s] <= 0.6 * h && grepl("^[0-9]{1,3},?$", pv) && grepl("^[0-9]{3}[.,][0-9]{2}", w$text[s]))
++      if (gap[s] <= 0.6 * h && grepl("^[0-9]{1,3},?$", pv) && grepl("^[0-9]{3}[.,][0-9]{2}", w$text[s])) {
++        s <- s - 1L
++        # F3 (prototype): more space-separated thousands groups ("1 234 567.89"),
++        # only when the whole run starts a cell (a gutter before it), so a
++        # description ending in a number is never read into the figure.
++        k <- s
++        while (k > 1L && !used[k - 1L] && w$line[k - 1L] == w$line[k] && !is.na(gap[k]) &&
++               gap[k] <= 0.6 * h && grepl("^[0-9]{3}$", w$text[k]) && grepl("^[0-9]{1,3}$", w$text[k - 1L])) k <- k - 1L
++        if (k < s && (k == 1L || w$line[k - 1L] != w$line[k] || is.na(gap[k]) || gap[k] > thr_ph)) s <- k
++      } else if (gap[s] <= 1.2 * h && (w$cur[s - 1L] || pv %in% c("-", "+", "(")))
+         s <- s - 1L
+-      else if (gap[s] <= 1.2 * h && (w$cur[s - 1L] || pv %in% c("-", "+", "(")))
++      # F3 (prototype): a sign word printed BEFORE the figure ("DR 32.22", "cr 5.69"),
++      # only when the two make a cell of their own (a gutter or the line start before
++      # the sign word), so a payee's "DR" is never read as a sign.
++      else if (gap[s] <= 1.2 * h && w$marker[s - 1L] &&
++               (s - 1L == 1L || w$line[s - 2L] != w$line[s - 1L] || is.na(gap[s - 1L]) || gap[s - 1L] > thr_ph))
+         s <- s - 1L
+     }
+     if (e < n && same_next[e] && !used[e + 1L] && !is.na(gap[e + 1L])) {
+@@ -351,7 +395,15 @@
+   out[suf %in% cr] <- "CR"
+   out[suf %in% od] <- "OD"
+   out[!(suf %in% c(cr, od)) & suf %in% markers] <- "DR"
++  # F3 (prototype): a sign word printed before the figure ("DR 32.22").
++  pre <- rep("", length(s))
++  hp <- grepl("^[A-Z]{2}(?![A-Z])", s, perl = TRUE)
++  pre[hp] <- substr(s[hp], 1, 2)
++  pm <- out == "" & !has_m & pre %in% markers
++  out[pm & pre %in% cr] <- "CR"; out[pm & pre %in% od] <- "OD"
++  out[pm & !(pre %in% c(cr, od))] <- "DR"
+   core <- sub("\\s*[A-Z]{2}\\s*$", "", s)
++  core[pm] <- trimws(substring(core[pm], 3))
+   out[out == "" & grepl("^[(].*[)]$", core)] <- "()"
+   out[out == "" & grepl("^[^0-9]*-", core)] <- "-lead"
+   out[out == "" & grepl("-$", core)] <- "-trail"
+@@ -388,13 +440,22 @@
+ # .ar_seed_lines(pg) -- a page's SEED lines: a date with a standalone figure to its
+ # right, on a line that is not a summary line. That is the one shape only a
+ # transaction has; every column is measured from these first.
+-.ar_seed_lines <- function(pg) {
++.ar_seed_lines <- function(pg, right = FALSE) {
+   ph <- pg$ph
+   if (is.null(ph) || !nrow(ph)) return(integer(0))
+   ln <- pg$lines$line[!pg$lines$summary]
+   d <- ph[ph$kind == "date", , drop = FALSE]
+   m <- ph[ph$kind == "money" & ph$standalone, , drop = FALSE]
+   cand <- intersect(intersect(unique(d$line), unique(m$line)), ln)
++  if (isTRUE(right)) {
++    # F4 (prototype): the mirror image -- a table that prints its date LAST, to the
++    # right of every figure on the line, with nothing after it.
++    w <- pg$w
++    return(cand[vapply(cand, function(l) {
++      dx <- max(d$x[d$line == l]); dx1 <- max(d$x1[d$line == l])
++      all(m$x1[m$line == l] < dx) && max(w$x1[w$line == l]) <= dx1 + 0.5
++    }, logical(1))])
++  }
+   cand[vapply(cand, function(l) any(m$x[m$line == l] > min(d$x1[d$line == l])), logical(1))]
+ }
+ 
+@@ -453,7 +514,15 @@
+   scan <- any(vapply(pgs[live], function(pg) isTRUE(pg$ocr), logical(1)))
+   tol <- if (scan) 4 else 3
+   seeds <- lapply(seq_len(np), function(p) if (is.null(pgs[[p]])) integer(0) else .ar_seed_lines(pgs[[p]]))
++  right <- FALSE
++  # F4 (prototype): no line prints a figure right of its date -- try the mirror.
++  if (!sum(lengths(seeds))) {
++    seeds <- lapply(seq_len(np), function(p) if (is.null(pgs[[p]])) integer(0) else .ar_seed_lines(pgs[[p]], right = TRUE))
++    right <- TRUE
++  }
+   if (!sum(lengths(seeds))) return(NULL)
++  # F7 (prototype): rows that drift sideways are set straight first.
++  if (!scan) for (p in live) pgs[[p]] <- .ar_undrift(pgs[[p]], seeds[[p]], tol)
+   shift <- if (isFALSE(opts$shift)) rep(0, np) else .ar_page_shifts(pgs, seeds, tol)
+   if (!is.null(opts$shift_override)) shift <- opts$shift_override
+   # Shifted copies: every measurement below is in the reference page's frame.
+@@ -497,7 +566,7 @@
+   body <- seedkey
+   groups <- NULL
+   for (pass in 1:3) {
+-    groups <- .ar_figure_groups(allph, body, dcol, date2, tol, pgs)
++    groups <- .ar_figure_groups(allph, body, dcol, date2, tol, pgs, right = right)
+     if (is.null(groups) || !length(groups$cols)) return(NULL)
+     reg <- .ar_regions(pgs, allph, groups, seedkey, dcol, tol)
+     nb <- reg$body
+@@ -505,7 +574,9 @@
+     body <- nb
+   }
+   body <- reg$body
+-  .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan)
++  md <- .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan)
++  if (!is.null(md)) md$right_dates <- right
++  md
+ }
+ 
+ # .ar_figure_groups(allph, body, dcol, date2, tol, pgs) -- the figure columns: the
+@@ -515,7 +586,7 @@
+ # figure inside one description can never become a column. And a group where more
+ # lines start a text cell than print a figure ("USD 142.32" in a Code column) is
+ # that text column's, whatever its size.
+-.ar_figure_groups <- function(allph, body, dcol, date2, tol, pgs) {
++.ar_figure_groups <- function(allph, body, dcol, date2, tol, pgs, right = FALSE) {
+   k <- paste(allph$page, allph$line)
+   m <- allph[allph$kind == "money" & allph$standalone & k %in% body, , drop = FALSE]
+   if (!nrow(m)) return(NULL)
+@@ -547,7 +618,7 @@
+   for (gi in sort(unique(g))) {
+     s <- m[g == gi, , drop = FALSE]
+     strong <- sup[as.character(gi)] >= 3
+-    if (!strong && !(min(s$xs) > tx_reach && min(s$xs) > dcol$x1)) next
++    if (!strong && !(min(s$xs) > tx_reach && (min(s$xs) > dcol$x1 || (isTRUE(right) && max(s$x1s) < dcol$x)))) next
+     inside <- tcell$xs <= max(s$x1s) & tcell$x1s >= min(s$xs) & !(tcell$key %in% paste(s$page, s$line))
+     if (length(unique(tcell$key[inside])) >= max(3, sup[as.character(gi)])) next
+     rs <- diff(range(s$x1s)); ls <- diff(range(s$xs))
+@@ -766,6 +837,11 @@
+     near <- left[which.max(fx1[left])]
+     if (min(W$xs[ix]) - fx1[near] <= 3 * h) W$role[ix] <- near
+   }
++  # F2c (prototype): a weekday spelt out in full ("Wednesday, 14 May") is as wide
++  # as the date beside it is narrow, so its band and the date's overlap. It is then
++  # read as part of the date cell (the table reader drops a leading weekday).
++  if (any(W$role == "weekday") && any(W$role == "date") &&
++      max(W$x1s[W$role == "weekday"]) >= min(W$xs[W$role == "date"])) W$role[W$role == "weekday"] <- "date"
+   ids <- unique(W$role)
+   spec <- lapply(ids, function(id) {
+     ix <- which(W$role == id)
+@@ -895,3 +971,180 @@
+   if (!length(out)) return(NULL)
+   do.call(rbind, out)
+ }
++
++# ---- F1 (prototype): unlabelled balance lines at the table's edges ------------------
++
++# .ar_edge_lines(model) -- body rows at the ENDS of each page's table that print
++# exactly one figure and no date: the balance the table starts from or ends on, or
++# one carried over a page break, under a label no dictionary knows ("Treasury at
++# dawn  5,559.05"). They are only CANDIDATES: the reading that uses them must put
++# that one figure in its balance column and the balance chain must hold through
++# it (.ar_anchor_points, check "edge_lines"). Only on a statement that prints a
++# date on every other row: there a dateless line is not a transaction, so making
++# it a chain point can never drop a row. NULL when there are none.
++.ar_edge_lines <- function(model) {
++  R <- model$rows; C <- model$cells
++  n <- nrow(R)
++  if (is.null(R) || n < 3L || isTRUE(model$scan)) return(list())
++  nfig <- rowSums(!is.na(C))
++  cand <- is.na(R$date) & nfig == 1L
++  pages <- sort(unique(R$page))
++  edge <- function(i, cls) list(i = i, page = R$page[i], line = R$line[i], class = cls)
++  fixed <- list(); top <- integer(0)
++  for (p in pages) {
++    ix <- which(R$page == p)
++    if (length(ix) < 2L) next
++    if (p == pages[1]) {
++      # F1b: on the first page, every dateless one-figure line before the first
++      # dated row (a header's summary figures can line up with the balance column).
++      k <- 0L
++      while (k < length(ix) && cand[ix[k + 1L]]) k <- k + 1L
++      if (k > 3L) return(list())
++      top <- ix[seq_len(k)]
++    } else if (cand[ix[1]]) fixed[[length(fixed) + 1L]] <- edge(ix[1], "edge_in")
++    l <- ix[length(ix)]
++    if (cand[l] && !(l %in% top))
++      fixed[[length(fixed) + 1L]] <- edge(l, if (p == pages[length(pages)]) "edge_bottom" else "edge_out")
++  }
++  ei <- c(top, vapply(fixed, `[[`, 0L, "i"))
++  if (!length(ei)) return(list())
++  others <- setdiff(seq_len(n), ei)
++  # Every other row prints its own date: no date is carried down on this statement.
++  if (length(others) < 2L || anyNA(R$date[others])) return(list())
++  if (!length(top)) return(list(fixed))
++  # One alternative per line of the top run as the opening balance (the line next
++  # to the rows first); the others are set aside -- dateless, before every dated
++  # row, they are not transactions. The arithmetic says which, if any, fits.
++  lapply(rev(top), function(j) c(fixed, list(edge(j, "edge_top")),
++                                  lapply(setdiff(top, j), function(q) edge(q, "edge_skip"))))
++}
++
++# .ar_mark_edges(pgs, edges) -- the pages with each edge line made a summary line of
++# its edge class, so the model takes it as an anchor and not as a row.
++.ar_mark_edges <- function(pgs, edges) {
++  for (e in edges) {
++    pg <- pgs[[e$page]]
++    k <- match(e$line, pg$lines$line)
++    if (is.na(k)) next
++    pg$lines$summary[k] <- TRUE
++    pg$lines$aclass[k] <- e$class
++    pgs[[e$page]] <- pg
++  }
++  pgs
++}
++
++# ---- F5 (prototype): a column of sign tokens beside an unsigned amount ---------------
++
++# Pairs whose meaning is the same on every statement: the first word is money in.
++.AR_STD_TOKENS <- list(c("CR", "DR"), c("C", "D"), c("+", "-"), c("IN", "OUT"))
++
++# .ar_indicator_tokens(model) -- per body row, the token printed in a column of
++# two-valued short marks ("C"/"D", "#"/"*", "IN"/"OUT"): the words outside every
++# date and figure phrase, grouped by left edge across the rows; a group qualifies
++# when it holds exactly one short word on every row and exactly two values in all.
++# NA where a row has none; NULL when no such column exists.
++.ar_indicator_tokens <- function(model) {
++  R <- model$rows; n <- nrow(R)
++  if (is.null(R) || n < 4L) return(NULL)
++  tk <- list()
++  for (i in seq_len(n)) {
++    pg <- model$pgs[[R$page[i]]]; w <- pg$w
++    ix <- which(w$line == R$line[i] & (w$kind == "text" | (w$marker & is.na(w$phrase))))
++    ix <- ix[nchar(w$text[ix]) <= 3L | toupper(w$text[ix]) %in% c("IN", "OUT")]
++    if (length(ix)) tk[[length(tk) + 1L]] <- data.frame(row = i, xs = w$x[ix] - model$shift[R$page[i]],
++                                                         text = w$text[ix], stringsAsFactors = FALSE)
++  }
++  if (!length(tk)) return(NULL)
++  tk <- do.call(rbind, tk)
++  g <- .ar_cluster(tk$xs, model$tol)
++  for (k in unique(g)) {
++    s <- tk[g == k, , drop = FALSE]
++    if (anyDuplicated(s$row) || length(unique(s$row)) < n) next
++    if (length(unique(s$text)) != 2L) next
++    out <- rep(NA_character_, n); out[s$row] <- s$text
++    return(out)
++  }
++  NULL
++}
++
++# .ar_indicator_fill(model, rd) -- an unsigned amount column (sign convention "B")
++# whose row signs the running balance settles everywhere but on a few rows (the
++# first row, with no opening balance before it). When a token column runs beside it
++# and the balance-settled rows prove what each token means -- every settled row of
++# one token one way, every settled row of the other the other way, each token seen
++# at least twice, and a standard pair (CR/DR, C/D, +/-, IN/OUT) meaning what it
++# always means -- the token signs the rows the balance left open. Returns rd with
++# those signs filled (rd$sign_by_token lists the rows), or rd unchanged.
++.ar_indicator_fill <- function(model, rd) {
++  if (is.null(rd) || !identical(rd$conv, "B") || is.null(rd$chain)) return(rd)
++  a <- which(rd$roles == "amount"); if (length(a) != 1L) return(rd)
++  n <- nrow(model$rows)
++  sg <- rd$chain$signs[seq_len(n)]
++  mag <- abs(.ar_values(model$cells, "auto")$S[, a])
++  need <- which(is.na(sg) & !is.na(mag) & mag > 0)
++  if (!length(need)) return(rd)
++  tok <- .ar_indicator_tokens(model)
++  if (is.null(tok)) return(rd)
++  vals <- unique(tok[!is.na(tok)])
++  set <- !is.na(sg) & !is.na(tok) & !is.na(mag) & mag > 0
++  meaning <- vapply(vals, function(v) {
++    s <- unique(sg[set & tok == v])
++    if (length(s) != 1L || sum(set & tok == v) < 2L) NA_real_ else s
++  }, 0)
++  if (anyNA(meaning) || meaning[1] == meaning[2]) return(rd)
++  # T1: only a pair whose meaning is the same on every statement (CR/DR, C/D, +/-,
++  # IN/OUT), and the balance must agree with that meaning. A made-up pair would
++  # need its printed legend to agree too (not built); a code column that merely
++  # happens to split the same way on a short table is never taken for signs.
++  up <- toupper(vals)
++  std <- Filter(function(p) setequal(up, p), .AR_STD_TOKENS)
++  if (!length(std) || meaning[match(std[[1]][1], up)] != 1) return(rd)
++  fill <- need[!is.na(tok[need])]
++  if (!length(fill)) return(rd)
++  sg[fill] <- meaning[match(tok[fill], vals)]
++  rd$chain$signs[fill] <- sg[fill]
++  rd$A[fill] <- sg[fill] * mag[fill]
++  rd$sign_by_token <- fill
++  rd
++}
++
++# ---- F7 (prototype): rows that drift sideways down the page --------------------------
++
++# .ar_undrift(pg, seeds, tol) -- a page whose rows are each set a little further
++# right (or left) than the row above: measured on the seed lines from TWO columns
++# at once, the dates' left edges and the right edges of the figures that end each
++# line. Only when both drift the same way at the same rate, steadily (every line
++# within 1pt of the straight line through them), and by more than the column
++# tolerance over the page, is every line moved back by its own seed line's drift
++# (a wrapped line by the drift of the row above it). Otherwise the page is
++# returned untouched.
++.ar_undrift <- function(pg, seeds, tol) {
++  if (is.null(pg) || length(seeds) < 6L) return(pg)
++  ph <- pg$ph
++  ln <- pg$lines[pg$lines$line %in% seeds, , drop = FALSE]
++  ln <- ln[order(ln$y), , drop = FALSE]
++  dx <- vapply(ln$line, function(l) min(ph$x[ph$line == l & ph$kind == "date"]), 0)
++  mx <- vapply(ln$line, function(l) max(ph$x1[ph$line == l & ph$kind == "money" & ph$standalone]), 0)
++  k <- seq_along(dx)
++  fd <- stats::lm.fit(cbind(1, k), dx); fm <- stats::lm.fit(cbind(1, k), mx)
++  sd <- fd$coefficients[2]; sm <- fm$coefficients[2]
++  if (!all(is.finite(c(sd, sm))) || abs(sd) < 0.05 || sign(sd) != sign(sm) ||
++      abs(sd - sm) > 0.2 * max(abs(sd), abs(sm)) || abs(sd) * length(k) <= tol) return(pg)
++  if (max(abs(fd$residuals)) > 1 || max(abs(fm$residuals)) > 1) return(pg)
++  off <- ((dx - dx[1]) + (mx - mx[1])) / 2
++  # every line takes the drift of the nearest seed line at or above it
++  all_l <- pg$lines$line[order(pg$lines$y)]
++  ly <- pg$lines$y[match(all_l, pg$lines$line)]
++  lo <- vapply(ly, function(y) { j <- which(ln$y <= y + 0.5); if (length(j)) off[max(j)] else NA_real_ }, 0)
++  # lines above the first seed (headings, the header) and far below the last are left alone
++  last_y <- max(ln$y1); pitch <- stats::median(diff(ln$y))
++  lo[ly > last_y + 3 * pitch] <- NA
++  shift <- stats::setNames(ifelse(is.na(lo), 0, lo), all_l)
++  s <- shift[as.character(pg$w$line)]
++  pg$w$x <- pg$w$x - s; pg$w$x1 <- pg$w$x1 - s; pg$w$cx <- pg$w$cx - s
++  if (nrow(ph)) { sp <- shift[as.character(ph$line)]; pg$ph$x <- ph$x - sp; pg$ph$x1 <- ph$x1 - sp }
++  pg$lines$x <- pg$lines$x - shift[as.character(pg$lines$line)]
++  pg$lines$x1 <- pg$lines$x1 - shift[as.character(pg$lines$line)]
++  pg$undrift <- unname(sd)
++  pg
++}
+diff -ruN snap20/R/auto_read_prove.R nrg_greenflag/proto/R/auto_read_prove.R
+--- snap20/R/auto_read_prove.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_greenflag/proto/R/auto_read_prove.R	2026-10-04 02:52:56.164937488 +0000
+@@ -169,6 +169,19 @@
+     .ar_separate_boxes(anchors[box_open], n, liab, decimal)
+   for (k in seq_along(anchors)) {
+     a <- anchors[[k]]
++    # F1 (prototype): a balance line known only by where it sits (.ar_edge_lines).
++    # Used only by a reading whose balance column holds its one figure; placed by
++    # its position among the rows in time order; never a section break.
++    if (startsWith(a$class %||% "", "edge")) {
++      if (identical(a$class, "edge_skip") || bal_col == 0L || is.na(a$figs[bal_col])) next
++      v <- .ar_anchor_value(a$figs[bal_col], liab, decimal)
++      if (is.na(v)) next
++      r <- min(max(a$before_rows, 0), n)
++      tp <- if (identical(dir, "new")) n - r else r
++      pos <- c(pos, tp); val <- c(val, v)
++      src <- c(src, paste0(if (tp == 0) "open" else if (tp == n) "close" else "carry", "~edge@table"))
++      next
++    }
+     # A totals line that prints a figure in the balance column ("Totals at end of
+     # period   $487.00   $0.00   $19,964.46 OD", ANZ) states the balance where it
+     # stands: a carried balance mid-statement, the closing balance at the end. Used
+diff -ruN snap20/R/auto_read_summ.R nrg_greenflag/proto/R/auto_read_summ.R
+--- snap20/R/auto_read_summ.R	1970-01-01 00:00:00.000000000 +0000
++++ nrg_greenflag/proto/R/auto_read_summ.R	2026-10-04 03:02:24.057010201 +0000
+@@ -0,0 +1,202 @@
++# auto_read_summ.R -- F8 (prototype): opening, closing and total figures printed
++# under labels no dictionary knows ("Kickoff kitty: 8,968.54", "Sum of departures
++# 4,387.11"), named by the statement's own arithmetic instead of by their words.
++#
++# Nothing here proves anything on its own. It only NAMES lines (opening, closing,
++# money-in total, money-out total); the reading is then made again with those names
++# and must pass every check exactly as a labelled statement must. A name is given
++# only when it is over-determined:
++#   * with a running balance: the opening is the one figure that, with the rows
++#     before the first printed balance, gives that balance (one way only), AND the
++#     closing is the one figure equal to the last balance -- both or neither;
++#   * without one: exactly one figure pair and one reading of the columns satisfy
++#     opening + movements = closing, AND (unless both sit at the table's own edges)
++#     at least one other figure equals a column's total.
++# Lines INSIDE the table that end up unnamed keep it from being read this way: a
++# line that may be a transaction is never set aside.
++
++# .ar_summary_cands(model) -- the figures that may be summaries: lines outside the
++# table that print words and then one figure, ending the line, and no date; and the
++# table's own dateless lines before its first dated row (page 1) or after its last
++# (last page), on a statement that prints a date on every other row.
++.ar_summary_cands <- function(model, decimal) {
++  R <- model$rows; n <- nrow(R)
++  rowkey <- paste(R$page, R$line)
++  out <- list()
++  add <- function(...) out[[length(out) + 1L]] <<- list(...)
++  for (pg in Filter(Negate(is.null), model$pgs)) {
++    p <- pg$page; ln <- pg$lines; ph <- pg$ph; w <- pg$w
++    rg <- model$regions[[as.character(p)]]
++    for (i in seq_len(nrow(ln))) {
++      l <- ln$line[i]
++      if (paste(p, l) %in% rowkey || ln$summary[i] || (!is.null(rg) && l %in% rg$lines)) next
++      m <- ph[ph$line == l & ph$kind == "money", , drop = FALSE]
++      if (nrow(m) != 1L || any(ph$line == l & ph$kind == "date")) next
++      wl <- w[w$line == l, , drop = FALSE]
++      if (max(wl$x1) > m$x1 + 0.5 || !any(wl$kind == "text" & wl$x1 <= m$x)) next
++      v <- .ar_anchor_value(m$text, FALSE, decimal)
++      if (is.na(v)) next
++      add(page = p, line = l, y = ln$y[i], where = "outside", vals = v, figs = NA, i = NA_integer_)
++    }
++  }
++  # The table's own leading and trailing dateless lines.
++  if (n >= 3L) {
++    first_d <- which(!is.na(R$date))[1]; last_d <- utils::tail(which(!is.na(R$date)), 1)
++    lead <- if (!is.na(first_d) && first_d > 1L) seq_len(first_d - 1L) else integer(0)
++    lead <- lead[R$page[lead] == R$page[1]]
++    trail <- if (length(last_d) && last_d < n) (last_d + 1L):n else integer(0)
++    trail <- trail[R$page[trail] == R$page[n]]
++    inner <- setdiff(seq_len(n), c(lead, trail))
++    if ((length(lead) || length(trail)) && length(lead) + length(trail) <= 5L && !anyNA(R$date[inner])) {
++      for (i in c(lead, trail)) {
++        f <- model$cells[i, ]
++        add(page = R$page[i], line = R$line[i], y = R$y[i], where = if (i %in% lead) "top" else "bottom",
++            vals = vapply(f, function(t) if (is.na(t)) NA_real_ else .ar_anchor_value(t, FALSE, decimal), 0),
++            figs = f, i = i)
++      }
++    }
++  }
++  out
++}
++
++# .ar_summary_names(model, decimal, content) -- which candidate lines are the
++# opening, the closing and the column totals, by the arithmetic; NULL when that is
++# not over-determined. Returns list(page, line, class, label) per named line.
++.ar_summary_names <- function(model, decimal, content = NULL) {
++  cands <- .ar_summary_cands(model, decimal)
++  if (length(cands) < 2L) return(NULL)
++  ins <- Filter(function(c) c$where != "outside", cands)
++  table_i <- vapply(ins, function(c) c$i, 0L)
++  n <- nrow(model$rows)
++  rows <- setdiff(seq_len(n), table_i)
++  single <- Filter(function(c) sum(!is.na(c$vals)) == 1L, cands)
++  sval <- function(c) c$vals[!is.na(c$vals)][1]
++  K <- ncol(model$cells)
++  V <- .ar_values(model$cells[rows, , drop = FALSE], decimal)
++  name <- function(c, cls, lab) list(page = c$page, line = c$line, class = cls, label = lab)
++  rdc <- content$rd
++  if (!is.null(rdc) && isTRUE(rdc$b > 0L) && identical(content$basis, "arithmetic") && !length(ins)) {
++    # ---- with a running balance: opening AND closing, each one way only ----
++    bal <- rdc$bal; A <- rdc$A
++    if (length(bal) != n) return(NULL)
++    M <- abs(.ar_values(model$cells, decimal)$S[, which(rdc$roles %in% c("amount", "debit", "credit")), drop = FALSE])
++    ord <- if (identical(rdc$dir, "new")) rev(seq_len(n)) else seq_len(n)
++    t1 <- which(!is.na(bal[ord]))[1]; tn <- utils::tail(which(!is.na(bal[ord])), 1)
++    if (is.na(t1) || !length(tn)) return(NULL)
++    before <- ord[seq_len(t1)]
++    sg <- rdc$chain$signs %||% rep(NA_real_, n)
++    known <- !is.na(A[before]) & !(identical(rdc$conv, "B") & is.na(sg[before]))
++    mags <- rowSums(M[before, , drop = FALSE], na.rm = TRUE)
++    fixed <- sum(A[before][known]); um <- mags[!known]
++    if (length(um) > 8L) return(NULL)
++    combos <- if (length(um)) as.matrix(expand.grid(rep(list(c(-1, 1)), length(um)))) else matrix(0, 1, 0)
++    o_req <- round(bal[ord[t1]] - fixed - as.numeric(combos %*% um), 2)
++    after <- if (tn < n) ord[(tn + 1L):n] else integer(0)
++    if (anyNA(A[after])) return(NULL)
++    c_req <- round(bal[ord[tn]] + sum(A[after]), 2)
++    vs <- vapply(single, sval, 0)
++    o_hit <- which(vapply(vs, function(v) sum(abs(v - o_req) < PARAM_MONEY_TOL), 0) == 1L)
++    c_hit <- which(abs(vs - c_req) < PARAM_MONEY_TOL)
++    if (sum(vapply(vs, function(v) any(abs(v - o_req) < PARAM_MONEY_TOL), logical(1))) != 1L || length(o_hit) != 1L) return(NULL)
++    if (length(c_hit) != 1L || o_hit == c_hit) return(NULL)
++    return(list(name(single[[o_hit]], "open", "opening balance"), name(single[[c_hit]], "close", "closing balance")))
++  }
++  # ---- without a running balance: opening + movements = closing, one way only ----
++  roles_list <- Filter(function(r) !("balance" %in% r), .ar_role_candidates(K))
++  # Which figure is the opening decides which column is money in (opening + in -
++  # out = closing holds just as well with both swapped). Without a balance that
++  # rests on WHERE they are printed: a line above the table's first row and one
++  # below its last, the dates running oldest first (or the mirror, newest first).
++  # A header or a summary box printed opening-before-closing is the same rule on
++  # weaker ground; it is used only when AR_SUMMARY_ORDER is set (a product-owner
++  # decision, see the report).
++  dd <- .ar_rows_iso(model)
++  asc <- length(dd) >= 2L && !anyNA(dd) && all(diff(dd) >= 0) && any(diff(dd) > 0)
++  desc <- length(dd) >= 2L && !anyNA(dd) && all(diff(dd) <= 0) && any(diff(dd) < 0)
++  box_ok <- identical(Sys.getenv("AR_SUMMARY_ORDER"), "1")
++  ordered <- function(a, b) {
++    A <- single[[a]]; B <- single[[b]]
++    if (A$where == "top" && B$where == "bottom") return(asc)
++    if (A$where == "bottom" && B$where == "top") return(desc)
++    box_ok && (A$page < B$page || (A$page == B$page && A$y < B$y))
++  }
++  hits <- list()
++  for (r in roles_list) {
++    am <- .ar_amounts(V, r, "S", FALSE)
++    if (anyNA(am$A)) next
++    net <- round(sum(am$A), 2)
++    for (a in seq_along(single)) for (b in seq_along(single)) {
++      if (a == b || !ordered(a, b)) next
++      if (abs(sval(single[[a]]) + net - sval(single[[b]])) < PARAM_MONEY_TOL)
++        hits[[length(hits) + 1L]] <- list(roles = r, A = am$A, o = a, c = b)
++    }
++  }
++  if (!length(hits)) return(NULL)
++  # Each fit names two figures; every OTHER figure must then be a column total, or
++  # (outside the table only) something else. Two printed totals fit the equation
++  # with the columns swapped (in + (out - in) = out), so the fit kept is the one
++  # that explains the MOST printed figures, every one inside the table among them,
++  # and it must be the only one that does.
++  explain <- function(h) {
++    A <- h$A
++    tin <- round(sum(A[A > 0]), 2); tout <- round(sum(-A[A < 0]), 2)
++    dj <- which(h$roles == "debit"); cj <- which(h$roles == "credit")
++    O <- single[[h$o]]; C <- single[[h$c]]
++    named <- list(name(O, "open", "opening balance"), name(C, "close", "closing balance"))
++    used <- c(paste(O$page, O$line), paste(C$page, C$line))
++    ntot <- 0L; bad <- FALSE
++    for (c in cands) {
++      if (paste(c$page, c$line) %in% used) next
++      v <- c$vals; ok <- FALSE
++      if (sum(!is.na(v)) == 1L) {
++        x <- abs(v[!is.na(v)][1])
++        if (abs(x - tout) < PARAM_MONEY_TOL && abs(x - tin) >= PARAM_MONEY_TOL) {
++          named[[length(named) + 1L]] <- name(c, "total", "total debits"); ok <- TRUE }
++        else if (abs(x - tin) < PARAM_MONEY_TOL && abs(x - tout) >= PARAM_MONEY_TOL) {
++          named[[length(named) + 1L]] <- name(c, "total", "total credits"); ok <- TRUE }
++      } else if (sum(!is.na(v)) == 2L && length(dj) && length(cj) && !is.na(v[dj]) && !is.na(v[cj]) &&
++                 abs(abs(v[dj]) - tout) < PARAM_MONEY_TOL && abs(abs(v[cj]) - tin) < PARAM_MONEY_TOL) {
++        named[[length(named) + 1L]] <- name(c, "total", "totals"); ok <- TRUE
++      }
++      if (ok) ntot <- ntot + 1L
++      else if (c$where != "outside") bad <- TRUE   # a table line that may be a transaction
++    }
++    at_edges <- (O$where == "top" && C$where == "bottom") || (O$where == "bottom" && C$where == "top")
++    list(named = named, n = 2L + ntot, ok = !bad && (at_edges || ntot > 0L),
++         key = paste(c(sprintf("%.2f", A), h$o, h$c), collapse = "|"))
++  }
++  ex <- Filter(function(e) e$ok, lapply(hits, explain))
++  if (!length(ex)) return(NULL)
++  best <- max(vapply(ex, `[[`, 0L, "n"))
++  top <- Filter(function(e) e$n == best, ex)
++  if (length(unique(vapply(top, `[[`, "", "key"))) != 1L) return(NULL)
++  top[[1]]$named
++}
++
++# .ar_mark_summaries(pgs, named) -- the pages with each named line made a summary
++# line of its class, under a label the reader's own tests understand.
++.ar_mark_summaries <- function(pgs, named) {
++  for (e in named) {
++    pg <- pgs[[e$page]]
++    k <- match(e$line, pg$lines$line)
++    if (is.na(k)) next
++    pg$lines$summary[k] <- TRUE
++    pg$lines$aclass[k] <- e$class
++    pg$lines$label[k] <- e$label
++    pgs[[e$page]] <- pg
++  }
++  pgs
++}
++
++# .ar_rows_iso(model) -- the rows' dates as Dates, read under the format most of
++# them read under (year-less ones in a sentinel year: only their order is used).
++.ar_rows_iso <- function(model) {
++  R <- model$rows
++  has <- !is.na(R$date) & nzchar(R$date_fmts)
++  if (!any(has)) return(as.Date(character(0)))
++  fv <- unlist(strsplit(R$date_fmts[has], "|", fixed = TRUE))
++  f <- names(sort(table(fv), decreasing = TRUE))[1]
++  yl <- !grepl("%[Yy]", f)
++  iso <- if (yl) parse_date(paste(R$date[has], "2000"), paste(f, "%Y"))$iso else parse_date(R$date[has], f)$iso
++  as.Date(iso)
++}
+diff -ruN snap20/R/normalise.R nrg_greenflag/proto/R/normalise.R
+--- snap20/R/normalise.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_greenflag/proto/R/normalise.R	2026-10-04 02:49:14.968309582 +0000
+@@ -14,7 +14,10 @@
+ #   * collapses any doubled spaces the removals leave behind
+ .normalise_date_str <- function(s) {
+   s <- trimws(as.character(s))
+-  s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
++  # F2 (prototype): a weekday may be followed by a comma ("Monday, 2 March").
++  s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
++  # F2 (prototype): an apostrophe for the century ("02 Feb '25") is the 2-digit year.
++  s <- gsub("(?<=\\s)'([0-9]{2})$", "\\1", s, perl = TRUE)
+   s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
+   s <- gsub("\\bof\\b", "", s, perl = TRUE, ignore.case = TRUE)
+   s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
+@@ -154,6 +157,8 @@
+   # multibyte character class in a regex, which THROWS under LC_ALL=C -- the locale
+   # this deploys and tests under (see the note above .value_from_line in R/labels.R).
+   s <- gsub(sprintf("\\b(%s)\\b", paste(.MONEY_WORDS, collapse = "|")), " ", s)
++  # F3 (prototype): a currency code glued to its dollar sign ("NZ$317.02").
++  s <- gsub("(^|[^A-Z])(NZ|AU|US|CA|HK|SG)[$]", "\\1 ", s)
+   # any OTHER letter means this cell is carrying words, not a figure
+   if (grepl("[A-Za-z]", s, useBytes = TRUE)) return(TRUE)
+   # two or more separate digit runs means two or more things in one cell, unless
+@@ -205,8 +210,20 @@
+   if (is.na(raw)) return(NA_real_)
+   raw <- .ascii_dashes(trimws(as.character(raw)))
+   if (!nzchar(raw)) return(NA_real_)
++  # F3 (prototype): a sign word printed BEFORE the figure ("DR 32.22", "cr 5.69")
++  # reads as the same word printed after it. A figure carrying one before AND
++  # one after is two signs, and reads as nothing.
++  pre_neg <- NA
++  pm <- regmatches(toupper(raw), regexpr("^[A-Z]{2}(?![A-Z])", toupper(raw), perl = TRUE))
++  if (length(pm) == 1L) {
++    if (grepl(debit_rx, pm)) pre_neg <- TRUE else if (grepl(credit_rx, pm)) pre_neg <- FALSE
++    if (!is.na(pre_neg)) {
++      raw <- trimws(substring(raw, 3))
++      if (!nzchar(raw) || grepl(debit_rx, toupper(raw)) || grepl(credit_rx, toupper(raw))) return(NA_real_)
++    }
++  }
+   if (.money_contaminated(raw, debit_rx, credit_rx)) return(NA_real_)
+-  neg <- FALSE
++  neg <- isTRUE(pre_neg)
+   up <- toupper(raw)
+   if (grepl(debit_rx, up)) neg <- TRUE              # debit / overdrawn balance
+   else if (grepl(credit_rx, up)) neg <- FALSE       # explicit credit -> positive
+@@ -390,7 +407,9 @@
+   list(fmt = "%d %B", label = "2 December  (day + full month; year from the statement)", rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
+   list(fmt = "%b %d", label = "Oct 12  (month-name + day; year from the statement)",   rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
+   list(fmt = "%B %d", label = "October 12  (full month + day; year from the statement)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
+-  list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE)
++  list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE),
++  # F2 (prototype): "1-FEB", "14-Mar" -- day, hyphen, month name; year from the statement.
++  list(fmt = "%d-%b", label = "2-Dec  (day-month-name; year from the statement)", rx = "^[0-9]{1,2}-[A-Za-z]{3,9}$", yearless = TRUE)
+ )
+ 
+ # Field-name patterns: the words a spreadsheet heading uses for each canonical
+diff -ruN snap20/R/parse_pdf_table.R nrg_greenflag/proto/R/parse_pdf_table.R
+--- snap20/R/parse_pdf_table.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_greenflag/proto/R/parse_pdf_table.R	2026-10-04 03:23:32.212957295 +0000
+@@ -611,6 +611,13 @@
+   .first_date <- function(cells) vapply(cells, function(cc) {
+     if (is.na(cc)) return(NA_character_)
+     toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
++    # F2c (prototype): a weekday printed before the date ("Wednesday, 14 May") is
++    # not one of the format's pieces.
++    if (length(toks) > .date_fields && !grepl("%[aA]", date_fmt) &&
++        grepl("^(?:mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(?:day)?[.,]?$", toks[1], ignore.case = TRUE, perl = TRUE)) {
++      toks <- toks[-1]
++      if (length(toks) <= .date_fields) return(paste(toks, collapse = " "))
++    }
+     if (length(toks) <= .date_fields) as.character(cc)
+     else paste(toks[seq_len(.date_fields)], collapse = " ")
+   }, character(1), USE.NAMES = FALSE)

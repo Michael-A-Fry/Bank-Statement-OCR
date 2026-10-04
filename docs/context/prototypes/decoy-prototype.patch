@@ -1,0 +1,566 @@
+diff -ruN snap20/R/auto_read.R nrg_decoy/proto/R/auto_read.R
+--- snap20/R/auto_read.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_decoy/proto/R/auto_read.R	2026-10-04 03:52:10.695392352 +0000
+@@ -258,6 +258,15 @@
+     cands[[src]] <- .ar_pdf_attempt(ctx, base, list(), src, forced = info, model = model)
+     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
+   }
++  # PROTOTYPE: when nothing passed, read the document's table blocks one cluster at
++  # a time (R/auto_read_blocks.R): the statement's own table, with the other tables
++  # set aside, and any other account that proves on its own, kept apart.
++  blk <- NULL
++  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model) &&
++      !isFALSE(opts$blocks) && !nzchar(Sys.getenv("NRG_NO_BLOCKS"))) {
++    blk <- tryCatch(.ar_block_reading(ctx, base), error = function(e) NULL)
++    if (!is.null(blk$pick)) cands[["blocks"]] <- blk$pick
++  }
+   # Repair search: bounded, fixed order, and only when nothing above passed. A
+   # repair that changes nothing on this document (no cell splits differently, no
+   # page was shifted) is not read again.
+@@ -289,7 +298,18 @@
+       }
+     }
+   }
+-  .ar_decide(cands, layouts, ctx)
++  out <- .ar_decide(cands, layouts, ctx)
++  if (!is.null(blk)) {
++    out$other_accounts <- if (out$outcome %in% c("proven", "layout_match")) blk$others else list()
++    out$block_note <- blk$why
++    # Nothing proves: what is shown is the statement's own table read on its own.
++    if (!(out$outcome %in% c("proven", "layout_match")) && !is.null(blk$show$tx) && nrow(blk$show$tx) &&
++        isTRUE(opts$show_blocks)) {
++      sh <- .ar_finish(blk$show, "check", blk$why %||% blk$show$why, out$candidates, NULL)
++      out <- sh
++    }
++  }
++  out
+ }
+ 
+ # .ar_outside_text(model) -- every printed line that is not part of a table region
+@@ -812,13 +832,34 @@
+     if (!nrow(m)) return(FALSE)
+     any(vapply(model$cols, function(cl) any(m$x - s <= cl$x1 + 0.5 & m$x1 - s >= cl$x - 0.5), logical(1)))
+   }
+-  own_seeds <- function(pg) { s <- .ar_seed_lines(pg); s[vapply(s, function(l) fits(pg, l), logical(1))] }
++  aside_of <- function(pg) if (isTRUE(model$block_mode)) model$aside[[as.character(pg$page)]] %||% integer(0) else integer(0)
++  own_seeds <- function(pg) { s <- setdiff(.ar_seed_lines(pg), aside_of(pg)); s[vapply(s, function(l) fits(pg, l), logical(1))] }
++  # PROTOTYPE (block reading): lines printing two or more figures count as this
++  # table's only when two of their figures sit in its figure columns; the rest are
++  # another table's (an account summary, a rate table), set aside under the same
++  # rule as other tables' dated lines.
++  aligned_lines <- function(pg) {
++    m <- pg$ph[pg$ph$kind == "money" & pg$ph$standalone & !(pg$ph$line %in% aside_of(pg)), , drop = FALSE]
++    if (!nrow(m)) return(c(0L, 0L))
++    s <- model$shift[pg$page]
++    col_of <- vapply(seq_len(nrow(m)), function(i) {
++      hit <- which(vapply(model$cols, function(cl) abs(m$x1[i] - s - cl$med_x1) <= model$tol + 1, logical(1)))
++      if (length(hit)) hit[1] else 0L }, 0L)
++    cnt <- table(m$line); ln <- as.integer(names(cnt)[cnt >= 2L])
++    ln <- ln[!pg$lines$summary[match(ln, pg$lines$line)] & !pg$lines$footer[match(ln, pg$lines$line)]]
++    al <- vapply(ln, function(l) length(unique(col_of[m$line == l & col_of > 0L])) >= 2L, logical(1))
++    c(sum(al), sum(!al))
++  }
+   other <- unlist(lapply(Filter(Negate(is.null), model$pgs), function(pg) {
+     s <- setdiff(.ar_seed_lines(pg), own_seeds(pg))
+-    if (length(s)) sprintf("page %d", pg$page)
++    # A set-aside table of figures on the page is another table too.
++    un <- if (isTRUE(model$block_mode)) aligned_lines(pg)[2] >= 3L ||
++      any(pg$ph$kind == "money" & pg$ph$standalone & pg$ph$line %in% aside_of(pg)) else FALSE
++    if (length(s) || un) sprintf("page %d", pg$page)
+   }))
+   shaped <- which(vapply(model$pgs, function(pg) !is.null(pg) &&
+-                           (length(own_seeds(pg)) > 0L || figure_lines(pg) >= 3L), logical(1)))
++                           (length(own_seeds(pg)) > 0L ||
++                              (if (isTRUE(model$block_mode)) aligned_lines(pg)[1] >= 3L else figure_lines(pg) >= 3L)), logical(1)))
+   miss <- setdiff(shaped, unique(post$page))
+   add("pages_with_rows", !length(miss), if (!length(miss)) "Every page with transactions gave rows."
+       else sprintf("Page %s prints transaction lines but gave no rows.", paste(miss, collapse = ", ")))
+@@ -861,8 +902,14 @@
+   # Transaction-shaped lines from another table were set aside above; that is safe
+   # only when the statement's own printed opening and closing balances add up with
+   # the rows read, so a page of this statement's rows cannot be among them.
++  # PROTOTYPE: a combined statement (several accounts, each opened and closed in
++  # the table) is closed the same way when every balance step holds and the chain
++  # starts on a printed opening and ends on a printed closing balance.
++  closed_sections <- isTRUE(model$block_mode) && isTRUE(ar$chain$sections > 1L) && isTRUE(ar$checks$balance_chain$ok) && {
++    ap <- .ar_anchor_points(model$anchors, n, rd$dir, isTRUE(rd$liab), rd$b, ctx$decimal)
++    any(ap$pos == 0 & startsWith(ap$src, "open")) && any(ap$pos == n & startsWith(ap$src, "close")) }
+   ot <- if (!length(other)) list(ok = NA, why = "No other table on the pages looks like transactions.")
+-        else if (isTRUE(ar$checks$opening_closing$ok))
++        else if (isTRUE(ar$checks$opening_closing$ok) || closed_sections)
+           list(ok = TRUE, why = sprintf("Lines on %s look like transactions but belong to another table; the opening and closing balances confirm none of this statement's rows are among them.", other[1]))
+         else list(ok = FALSE, why = sprintf("Lines on %s look like transactions but sit outside this statement's columns, and no printed opening and closing balance confirms they are not missing rows.", other[1]))
+   ar$checks <- c(ck, ar$checks, list(reader_agrees = list(ok = ra$ok, why = ra$why),
+@@ -905,6 +952,7 @@
+     if (is.null(rg) || !nrow(pg$ph)) next
+     used <- c(model$rows$line[model$rows$page == pg$page],
+               vapply(Filter(function(a) a$page == pg$page, model$anchors), function(a) a$line, 0))
++    if (isTRUE(model$block_mode)) used <- c(used, model$aside[[as.character(pg$page)]] %||% integer(0))
+     near <- pg$lines$line[pg$lines$y >= rg$y0 - 2.5 * rg$pitch & pg$lines$y <= rg$y1 + 1.5 * rg$pitch]
+     d <- pg$ph[pg$ph$kind == "date" & abs(pg$ph$x - model$shift[pg$page] - model$dcol$x) <= model$tol &
+                pg$ph$line %in% setdiff(near, used), , drop = FALSE]
+diff -ruN snap20/R/auto_read_blocks.R nrg_decoy/proto/R/auto_read_blocks.R
+--- snap20/R/auto_read_blocks.R	1970-01-01 00:00:00.000000000 +0000
++++ nrg_decoy/proto/R/auto_read_blocks.R	2026-10-04 03:52:10.692463741 +0000
+@@ -0,0 +1,316 @@
++# auto_read_blocks.R -- PROTOTYPE (decoy diagnosis, /tmp/nrg_decoy). Not shipped.
++#
++# A statement pack prints other tables beside the statement's own: rate tables,
++# pending items, schedules, another account's mini-statement. The whole-document
++# column model (.ar_model) takes every dated line with a figure as a row of ONE
++# table, so those tables' rows and columns are mixed in and nothing proves.
++#
++# Here each page is cut into TABLE BLOCKS: runs of dated lines with a figure,
++# with the dateless rows, summary lines and wrapped lines that touch them; a
++# heading, a title, a paragraph or a blank band ends a block. Blocks with the same
++# date column and compatible figure columns form a cluster (one table across its
++# pages). Each cluster is read ON ITS OWN (the other blocks set aside), and the
++# arithmetic decides. The statement's own table is the largest cluster; it is
++# taken only when it proves, and a set-aside table is allowed only when the
++# statement's own printed opening and closing balances close over the rows read.
++# Another cluster that proves on its own is another account: reported separately,
++# labelled, never mixed in.
++
++.AR_BLOCK_MAX_CLUSTERS <- 4L
++.AR_BLOCK_MAX_RUNS <- 6L
++.AR_ACCT_RX <- "\\b(?:[0-9]{2}-[0-9]{4}-[0-9]{7}-[0-9]{2,3}|TD-[0-9]{4,})\\b"
++.AR_OTHER_ACCT_RX <- "(?i)linked account|for information only|not part of this statement|not included in (the|your) (balance|statement)|reported in full on its own|recent activity|activity this period|transactions this period|mini-?statement"
++
++# .ar_blocks(pgs) -- every table block on every page, in document order.
++.ar_blocks <- function(pgs) {
++  out <- list()
++  for (pg in pgs) {
++    if (is.null(pg) || !nrow(pg$ph)) next
++    seeds <- .ar_seed_lines(pg)
++    ln <- pg$lines; ph <- pg$ph; w <- pg$w; h <- pg$h
++    nl <- nrow(ln)
++    is_seed <- ln$line %in% seeds
++    sm <- ph[ph$kind == "money" & ph$standalone, , drop = FALSE]
++    has_money <- ln$line %in% sm$line
++    has_date <- ln$line %in% ph$line[ph$kind == "date"]
++    anchor <- ln$summary & ln$line %in% ph$line[ph$kind == "money"]
++    bodyish <- has_money & !ln$summary
++    sd <- ph[ph$kind == "date" & ph$line %in% seeds, , drop = FALSE]
++    sd <- sd[!duplicated(sd$line), , drop = FALSE]
++    wl <- split(seq_len(nrow(w)), w$line)
++    minx <- vapply(as.character(ln$line), function(l) min(w$x[wl[[l]]]), 0)
++    textonly <- vapply(as.character(ln$line), function(l) !any(w$kind[wl[[l]]] %in% c("money", "date")), logical(1))
++    sx <- which(is_seed)
++    pitch <- if (length(sx) >= 2L) stats::median(diff(ln$y[sx])) else 2 * h
++    pitch <- min(max(pitch, 1.2 * h), 2.4 * h)
++    used <- rep(FALSE, nl)
++    prev_last <- 0L
++    for (i0 in sx) {
++      if (used[i0]) next
++      dx <- sd$x[sd$line == ln$line[i0]][1]; dx1 <- sd$x1[sd$line == ln$line[i0]][1]
++      first <- i0; last <- i0
++      while (first > 1L && !used[first - 1L] && (bodyish[first - 1L] || anchor[first - 1L]) &&
++             !(has_date[first - 1L] && !is_seed[first - 1L] && !anchor[first - 1L]) &&
++             ln$y[first] - ln$y[first - 1L] <= 2.5 * pitch) first <- first - 1L
++      while (last < nl) {
++        nx <- last + 1L
++        if (used[nx]) break
++        cont <- textonly[nx] && !ln$footer[nx] && !ln$summary[nx] && minx[nx] > dx1 + 2 &&
++                ln$y[nx] - ln$y1[last] <= 1.2 * h && !anchor[last]
++        same_dcol <- function() { d2 <- sd$x[sd$line == ln$line[nx]][1]; isTRUE(abs(d2 - dx) <= 3) }
++        row_ok <- (is_seed[nx] && same_dcol()) || (bodyish[nx] && !has_date[nx]) || anchor[nx]
++        ok <- cont || (row_ok && ln$y[nx] - ln$y[last] <= 2.5 * pitch)
++        if (!ok) break
++        last <- nx
++      }
++      while (last > i0 && textonly[last] && !anchor[last]) last <- last - 1L
++      ix <- first:last
++      used[ix] <- TRUE
++      bseeds <- ln$line[ix][is_seed[ix]]
++      m <- sm[sm$line %in% bseeds, , drop = FALSE]
++      e <- if (nrow(m)) { g <- .ar_cluster(m$x1, 2); as.numeric(tapply(m$x1, g, stats::median)) } else numeric(0)
++      out[[length(out) + 1L]] <- list(page = pg$page, lines = ln$line[ix], seeds = bseeds,
++        y0 = ln$y[first], y1 = ln$y1[last], date_x = dx, date_x1 = dx1, edges = sort(e),
++        first_i = first, title = "")
++      prev_last <- last
++    }
++    # Figure tables: runs of the remaining lines that print figures, one of them
++    # two or more figures apart (an account summary, a tax or rate table), with the
++    # total lines under them. Never read as the statement; always set aside, so a
++    # total printed under one is never taken as the statement's own.
++    nfig <- vapply(ln$line, function(l) sum(sm$line == l), 0L)
++    if (nzchar(Sys.getenv("NRG_NO_FIG"))) nfig[] <- 0L
++    i <- 1L
++    while (i <= nl) {
++      if (used[i] || nfig[i] == 0L) { i <- i + 1L; next }
++      j <- i
++      while (j < nl && !used[j + 1L] && nfig[j + 1L] > 0L && ln$y[j + 1L] - ln$y[j] <= 2.5 * pitch) j <- j + 1L
++      ix <- i:j
++      # ... or a list of three or more lines, each with one figure on a shared right
++      # edge and none of them a balance or total line (a fee schedule; a summary
++      # box of opening and closing balances is the statement's own and stays).
++      edge1 <- vapply(ix, function(q) max(sm$x1[sm$line == ln$line[q]]), 0)
++      list1 <- length(ix) >= 3L && !any(ln$summary[ix]) && diff(range(edge1)) <= 2
++      if (any(nfig[ix] >= 2L & !ln$summary[ix]) || list1) {
++        used[ix] <- TRUE
++        out[[length(out) + 1L]] <- list(page = pg$page, lines = ln$line[ix], seeds = integer(0),
++          y0 = ln$y[i], y1 = ln$y1[j], date_x = NA_real_, date_x1 = NA_real_, edges = numeric(0),
++          title = "", figure_only = TRUE)
++      }
++      i <- j + 1L
++    }
++    # The title zone of each dated table: up to 6 lines above it, stopping at any
++    # line of another table (a summary table above is not its title).
++    for (q in seq_along(out)) {
++      b <- out[[q]]
++      if (b$page != pg$page || isTRUE(b$figure_only)) next
++      tz <- integer(0); r <- b$first_i - 1L
++      while (r >= 1L && length(tz) < 6L && !used[r]) { tz <- c(r, tz); r <- r - 1L }
++      out[[q]]$title <- paste(ln$raw[tz], collapse = " / ")
++    }
++  }
++  out
++}
++
++# .ar_block_compat(a, b) -- the same table's columns: the same date column, and the
++# figure columns of one a subset of the other's (a page without deposits prints
++# fewer), allowing one stray figure edge in the smaller.
++.ar_block_compat <- function(core, b, tol = 2) {
++  if (abs(core$date_x - b$date_x) > tol) return(FALSE)
++  ec <- core$edges; eb <- b$edges
++  if (!length(ec) || !length(eb)) return(FALSE)
++  # A table titled as another account's is never a page of this one.
++  if (grepl(.AR_OTHER_ACCT_RX, b$title, perl = TRUE)) return(FALSE)
++  # A block joins the core's table when every figure column it prints is one of the
++  # core's (a page without deposits prints fewer); a table with a column the core
++  # does not have is another table.
++  all(vapply(eb, function(v) any(abs(v - ec) <= 1.5), logical(1)))
++}
++
++# .ar_block_clusters(blocks) -- each block joins the cluster of the largest block it
++# is compatible with; returns the cluster index per block, clusters numbered by
++# size (dated rows), largest first.
++.ar_block_clusters <- function(blocks) {
++  ns <- vapply(blocks, function(b) length(b$seeds), 0)
++  ord <- order(-ns, seq_along(blocks))
++  cl <- integer(length(blocks)); k <- 0L
++  for (i in ord) {
++    if (cl[i]) next
++    k <- k + 1L; cl[i] <- k
++    for (j in ord) if (!cl[j] && .ar_block_compat(blocks[[i]], blocks[[j]])) cl[j] <- k
++  }
++  tot <- tapply(ns, cl, sum)
++  rk <- rank(-tot, ties.method = "first")
++  as.integer(rk[as.character(cl)])
++}
++
++.ar_keep_list <- function(blocks, idx) {
++  out <- list()
++  for (i in idx) { p <- as.character(blocks[[i]]$page); out[[p]] <- c(out[[p]], blocks[[i]]$lines) }
++  out
++}
++
++# .ar_block_runs(members, core) -- the runs of a cluster's blocks (document order)
++# that hold its largest block: the whole cluster first, then shorter runs.
++.ar_block_runs <- function(members, core) {
++  k <- length(members); c0 <- match(core, members)
++  runs <- list()
++  for (len in k:1) for (i in seq_len(k - len + 1L)) {
++    j <- i + len - 1L
++    if (i <= c0 && j >= c0) runs[[length(runs) + 1L]] <- members[i:j]
++  }
++  utils::head(runs, .AR_BLOCK_MAX_RUNS)
++}
++
++# .ar_block_reading(ctx, base) -- read the clusters one at a time. Returns the main
++# candidate (or NULL), the other accounts that prove on their own, and notes.
++.ar_block_reading <- function(ctx, base) {
++  allb <- .ar_blocks(base)
++  fig <- vapply(allb, function(b) isTRUE(b$figure_only), logical(1))
++  figb <- allb[fig]
++  blocks <- allb[!fig]
++  if (length(blocks) < 2L && !length(figb)) return(NULL)
++  if (!length(blocks)) return(NULL)
++  cl <- .ar_block_clusters(blocks)
++  ns <- vapply(blocks, function(b) length(b$seeds), 0)
++  tot <- tapply(ns, cl, sum)
++  if (length(tot) < 2L && !length(figb)) return(NULL)
++  fig_aside <- .ar_keep_list(figb, seq_along(figb))
++  key <- function(cd) if (is.null(cd$tx) || !nrow(cd$tx)) "" else paste(cd$tx$date, sprintf("%.2f", cd$tx$amount), collapse = "|")
++  res <- list()
++  # The largest clusters, and every cluster that prints its own opening or closing
++  # balance (another account's mini-statement is read on its own too).
++  has_ends <- vapply(seq_along(tot), function(k) any(vapply(which(cl == k), function(i) {
++    b <- blocks[[i]]; pg <- base[[b$page]]
++    any(pg$lines$aclass[pg$lines$line %in% b$lines] %in% c("open", "close")) }, logical(1))), logical(1))
++  todo <- sort(unique(c(seq_len(min(.AR_BLOCK_MAX_CLUSTERS, length(tot))), utils::head(which(has_ends), 12L))))
++  for (k in todo) {
++    mem <- which(cl == k)
++    if (sum(ns[mem]) < 2L) next
++    core <- mem[which.max(ns[mem])]
++    best <- NULL; passed <- list(); attempts <- list()
++    # A block of the statement's own design may be set aside only when it is not a
++    # transaction table in its own right: no opening or closing balance printed in
++    # it, and no running balance that steps with its figures (a page of this
++    # statement, or another account printed in the same design, has both).
++    own_table <- list()
++    is_own_table <- function(i) {
++      key <- as.character(i)
++      if (!is.null(own_table[[key]])) return(own_table[[key]])
++      b <- blocks[[i]]; pg <- base[[b$page]]
++      v <- any(pg$lines$aclass[pg$lines$line %in% b$lines] %in% c("open", "close"))
++      if (!v) {
++        mo <- list(keep = .ar_keep_list(blocks, i), aside = .ar_keep_list(blocks, setdiff(seq_along(blocks), i)))
++        for (pp in names(fig_aside)) mo$aside[[pp]] <- c(mo$aside[[pp]], fig_aside[[pp]])
++        cd1 <- tryCatch(.ar_pdf_attempt(ctx, base, mo, "alone", model = .ar_model(base, mo)), error = function(e) NULL)
++        # Every balance step holding (a coincidence in a table of limits or rates
++        # holds one step at most among several that fail).
++        v <- isTRUE(cd1$proof$kind == "chain") && isTRUE(cd1$proof$held >= 1L) &&
++             isTRUE(cd1$proof$held == cd1$proof$links)
++      }
++      own_table[[key]] <<- v
++      v
++    }
++    for (run in .ar_block_runs(mem, core)) {
++      dropped <- setdiff(mem, run)
++      if (length(dropped) && any(vapply(dropped, is_own_table, logical(1)))) {
++        attempts[[length(attempts) + 1L]] <- list(source = sprintf("blocks:%d:%s", k, paste(run, collapse = "+")),
++          failing = "refused", why = "A block of the same design set aside is a transaction table in its own right.")
++        next
++      }
++      aside <- .ar_keep_list(blocks, setdiff(seq_along(blocks), run))
++      for (pp in names(fig_aside)) aside[[pp]] <- c(aside[[pp]], fig_aside[[pp]])
++      mopts <- list(keep = .ar_keep_list(blocks, run), aside = aside)
++      bm <- .ar_model(base, mopts)
++      # The account type (card or loan?) is read from this table's own pages, never
++      # from another table's print or the pack's other pages (a fee schedule's
++      # "Cash advance (credit card)" does not make an everyday account a card).
++      ctx_b <- ctx
++      if (!is.null(bm) && !nzchar(Sys.getenv("NRG_NO_LIAB"))) ctx_b$liab <- .ar_liability_evidence(.ar_block_outside_text(bm))
++      cd <- .ar_pdf_attempt(ctx_b, base, mopts, sprintf("blocks:%d:%s", k, paste(run, collapse = "+")),
++                            model = bm)
++      cd$block_run <- run; cd$cluster <- k
++      # Several accounts in one reading (a combined statement) only from the whole
++      # cluster, and never when a block is titled as another account's.
++      if (isTRUE(cd$passed) && isTRUE((cd$chain$sections %||% 1L) > 1L) &&
++          any(vapply(blocks[run], function(b) grepl(.AR_OTHER_ACCT_RX, b$title, perl = TRUE), logical(1)))) {
++        cd$passed <- FALSE; cd$failing <- c(cd$failing, "sections_mixed")
++        cd$why <- "The table reads as several accounts, and not every one is this statement's."
++      }
++      attempts[[length(attempts) + 1L]] <- list(source = cd$source, failing = cd$failing, why = cd$why)
++      if (isTRUE(cd$passed)) passed[[length(passed) + 1L]] <- cd
++      if (is.null(best) || length(cd$failing %||% 99) < length(best$failing %||% 99)) best <- cd
++    }
++    keys <- unique(vapply(passed, key, ""))
++    shown <- if (length(passed)) passed[[1]] else best
++    run1 <- if (length(passed)) passed[[1]]$block_run[1] else min(mem)
++    res[[k]] <- list(in_period = .ar_in_period_rows(shown$tx, ctx$md), run_title = blocks[[run1]]$title,k = k, size = unname(tot[k]), best = best, passed = passed, unique = length(keys) == 1L,
++                     attempts = attempts,
++                     title = blocks[[core]]$title, first_title = blocks[[min(mem)]]$title,
++                     accts = unique(unlist(regmatches(blocks[[run1]]$title, gregexpr(.AR_ACCT_RX, blocks[[run1]]$title, perl = TRUE)))))
++  }
++  res <- Filter(Negate(is.null), res)
++  if (!length(res)) return(NULL)
++  # The statement's own table is the one with the most rows dated inside the
++  # statement period (a loan schedule runs into the future, a rate history into the
++  # past); then the largest. A tie is not decided.
++  ip <- vapply(res, function(r) r$in_period, 0); sz <- vapply(res, function(r) r$size, 0)
++  o <- order(-ip, -sz)
++  res <- res[o]
++  main <- res[[1]]
++  notes <- character(0)
++  tie <- length(res) > 1L && ip[o[2]] == ip[o[1]] && sz[o[2]] == sz[o[1]]
++  holder <- .ar_holder_numbers(ctx$pages_text)
++  others <- list()
++  for (r in res[-1]) if (length(r$passed) && r$unique) {
++    cd <- r$passed[[1]]
++    others[[length(others) + 1L]] <- list(account = if (length(r$accts)) r$accts[1] else NA_character_,
++      title = r$run_title, rows = nrow(cd$tx), tx = cd$tx, proof = cd$proof, why = cd$why)
++  }
++  pick <- NULL; why <- NULL
++  named <- unique(unlist(regmatches(main$run_title, gregexpr(.AR_ACCT_RX, main$run_title, perl = TRUE))))
++  foreign <- length(named) && length(holder) && !any(named %in% holder)
++  if (length(main$passed) && main$unique && !tie) {
++    if (grepl(.AR_OTHER_ACCT_RX, main$run_title, perl = TRUE) || foreign) {
++      why <- "The table that proves is titled as another account's; which table is this statement's own is not clear."
++    } else {
++      pick <- main$passed[[1]]
++      pick$why <- paste(pick$why, sprintf("Read on its own: %d other table(s) in the file were set aside.",
++                                          length(unique(cl)) - 1L))
++    }
++  } else if (length(main$passed) && !main$unique) {
++    why <- "The statement's table reads more than one way when the other tables are set aside."
++  } else if (tie) why <- "Two tables of the same size each look like the statement's own."
++  list(pick = pick, show = main$best, others = others, why = why, n_blocks = length(blocks),
++       n_clusters = length(tot), clusters = res)
++}
++
++# .ar_block_outside_text(model) -- the print on this table's own pages outside its
++# rows and outside every set-aside table.
++.ar_block_outside_text <- function(model) {
++  pages <- unique(model$rows$page)
++  unlist(lapply(Filter(function(pg) !is.null(pg) && pg$page %in% pages, model$pgs), function(pg) {
++    rg <- model$regions[[as.character(pg$page)]]
++    drop <- c(rg$lines %||% integer(0), model$aside[[as.character(pg$page)]] %||% integer(0))
++    pg$lines$raw[!(pg$lines$line %in% drop)]
++  }))
++}
++
++# .ar_in_period_rows(tx, md) -- how many rows are dated inside the printed period.
++.ar_in_period_rows <- function(tx, md) {
++  if (is.null(tx) || !nrow(tx)) return(0)
++  d <- suppressWarnings(as.Date(tx$date))
++  per <- md$periods %||% list(c(md$period_start %||% NA, md$period_end %||% NA))
++  per <- Filter(function(pp) !is.na(pp[1]) && !is.na(pp[2]) && pp[2] >= pp[1],
++                lapply(per, function(pp) c(.plausible_period_date(pp[1]), .plausible_period_date(pp[2]))))
++  if (!length(per)) return(sum(!is.na(d)))
++  sum(Reduce(`|`, lapply(per, function(pp) !is.na(d) & d >= pp[1] & d <= pp[2])))
++}
++
++# .ar_holder_numbers(pages) -- the account numbers the statement labels as its own
++# ("Account number: 06-2901-5302607-001").
++.ar_holder_numbers <- function(pages) {
++  s <- paste(pages, collapse = "\n")
++  m <- regmatches(s, gregexpr("(?i)\\b(?:account|acct)\\s*(?:number|no\\.?)\\s*:?\\s*[0-9]{2}-[0-9]{4}-[0-9]{7}-[0-9]{2,3}", s, perl = TRUE))[[1]]
++  unique(unlist(regmatches(m, gregexpr(.AR_ACCT_RX, m, perl = TRUE))))
++}
+diff -ruN snap20/R/auto_read_pdf.R nrg_decoy/proto/R/auto_read_pdf.R
+--- snap20/R/auto_read_pdf.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_decoy/proto/R/auto_read_pdf.R	2026-10-04 04:02:35.742274873 +0000
+@@ -453,6 +453,8 @@
+   scan <- any(vapply(pgs[live], function(pg) isTRUE(pg$ocr), logical(1)))
+   tol <- if (scan) 4 else 3
+   seeds <- lapply(seq_len(np), function(p) if (is.null(pgs[[p]])) integer(0) else .ar_seed_lines(pgs[[p]]))
++  # PROTOTYPE: a table block reading keeps only its own blocks' lines.
++  if (!is.null(opts$keep)) seeds <- lapply(seq_len(np), function(p) intersect(seeds[[p]], opts$keep[[as.character(p)]] %||% integer(0)))
+   if (!sum(lengths(seeds))) return(NULL)
+   shift <- if (isFALSE(opts$shift)) rep(0, np) else .ar_page_shifts(pgs, seeds, tol)
+   if (!is.null(opts$shift_override)) shift <- opts$shift_override
+@@ -499,13 +501,16 @@
+   for (pass in 1:3) {
+     groups <- .ar_figure_groups(allph, body, dcol, date2, tol, pgs)
+     if (is.null(groups) || !length(groups$cols)) return(NULL)
+-    reg <- .ar_regions(pgs, allph, groups, seedkey, dcol, tol)
++    reg <- .ar_regions(pgs, allph, groups, seedkey, dcol, tol, keep = opts$keep)
+     nb <- reg$body
+     if (setequal(nb, body)) break
+     body <- nb
+   }
+   body <- reg$body
+-  .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan)
++  m <- .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan, aside = opts$aside,
++                        block_mode = !is.null(opts$keep))
++  if (!is.null(m) && !is.null(opts$keep)) { m$keep <- opts$keep; m$aside <- opts$aside %||% list(); m$block_mode <- TRUE }
++  m
+ }
+ 
+ # .ar_figure_groups(allph, body, dcol, date2, tol, pgs) -- the figure columns: the
+@@ -574,7 +579,7 @@
+ # anchors and wrapped lines that touch them. A heading, a footer or a gap wider
+ # than 2.5 line pitches ends it; a wrapped line must sit tight under the line it
+ # continues. Returns the body line keys and per-page regions.
+-.ar_regions <- function(pgs, allph, groups, seedkey, dcol, tol) {
++.ar_regions <- function(pgs, allph, groups, seedkey, dcol, tol, keep = NULL) {
+   cols <- groups$cols
+   zone_lo <- min(dcol$x, vapply(cols, `[[`, 0, "x"))
+   zone_hi <- max(dcol$x1, vapply(cols, `[[`, 0, "x1"))
+@@ -601,6 +606,10 @@
+       !any(vapply(cols, function(cl) any(w$xs[ix] < cl$x1 & w$x1s[ix] > cl$x), logical(1)))
+     }, logical(1))
+     cont <- textonly & !ln$footer & !ln$summary
++    if (!is.null(keep)) {
++      allowed <- ln$line %in% (keep[[as.character(p)]] %||% integer(0))
++      bodyish <- bodyish & allowed; anchor <- anchor & allowed; cont <- cont & allowed
++    }
+     pitch <- stats::median(diff(ln$y[is_seed | bodyish]))
+     if (!isTRUE(pitch > 0)) pitch <- 2 * pg$h
+     first <- min(which(is_seed)); last <- max(which(is_seed))
+@@ -635,7 +644,8 @@
+ # .ar_finish_model(...) -- everything the prover and the template need, measured
+ # on the final body rows: per-row cells, anchors, text columns, headings, and the
+ # pages' own extents of every column.
+-.ar_finish_model <- function(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan) {
++.ar_finish_model <- function(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan, aside = NULL,
++                             block_mode = FALSE) {
+   cols <- groups$cols
+   K <- length(cols)
+   rows <- list(); anchors <- list(); row_n <- 0L
+@@ -649,8 +659,17 @@
+     # Lines in printed order, so an anchor knows how many rows were printed before
+     # it. Anchors anywhere on the page count (a summary box above the table too);
+     # only those inside the table have a place among the rows.
++    # PROTOTYPE: in a block reading, summary lines inside another (set-aside) table
++    # are that table's, and lines on pages without this table's rows are not its own.
++    al <- aside[[as.character(p)]] %||% integer(0)
++    # A table's closing line can spill onto the next page: there, the summary lines
++    # printed above every other table on that page are still this table's.
++    spill <- block_mode && is.null(rg) && length(reg$regions) &&
++      p == max(as.integer(names(reg$regions))) + 1L
++    spill_y <- if (spill && length(al)) min(ln$y[ln$line %in% al]) else Inf
+     for (i in seq_len(nrow(ln))) {
+       l <- ln$line[i]
++      if (block_mode && (l %in% al || (is.null(rg) && !(spill && ln$y[i] < spill_y)))) next
+       mm <- php[php$line == l, , drop = FALSE]
+       if (ln$summary[i]) {
+         mon <- mm[mm$kind == "money", , drop = FALSE]
+@@ -659,7 +678,7 @@
+           hit <- which(.ar_member(mon, cols[[j]], tol)); if (length(hit)) mon$text[hit[1]] else NA_character_ }, "")
+         anchors[[length(anchors) + 1L]] <- list(page = p, line = l, y = ln$y[i],
+           label = ln$label[i], class = ln$aclass[i], raw = ln$raw[i],
+-          in_table = !is.null(rg) && l %in% rg$lines, before_rows = row_n,
++          in_table = (!is.null(rg) && l %in% rg$lines) || spill, before_rows = row_n,
+           under_table = !is.null(rg) && ln$y[i] >= rg$y0,
+           value_text = mon$text[nrow(mon)], n_money = nrow(mon), figs = figs)
+         next
+@@ -687,6 +706,19 @@
+     }
+   }
+   if (!row_n) return(NULL)
++  # PROTOTYPE (block reading): a total printed outside the table is this statement's
++  # only inside a summary box that also prints an opening or closing balance (a
++  # "Total deposits" in another table's "At a glance" box is that table's).
++  if (block_mode && length(anchors) && !nzchar(Sys.getenv("NRG_NO_BOXTOT"))) {
++    keep_a <- vapply(anchors, function(a) {
++      if (!identical(a$class, "total") || isTRUE(a$in_table)) return(TRUE)
++      pg <- pgs[[a$page]]; ln <- pg$lines; i <- match(a$line, ln$line)
++      lo <- i; while (lo > 1L && ln$y[lo] - ln$y1[lo - 1L] <= 1.2 * pg$h) lo <- lo - 1L
++      hi <- i; while (hi < nrow(ln) && ln$y[hi + 1L] - ln$y1[hi] <= 1.2 * pg$h) hi <- hi + 1L
++      any(ln$aclass[lo:hi] %in% c("open", "close"))
++    }, logical(1))
++    anchors <- anchors[keep_a]
++  }
+   R <- do.call(rbind, lapply(rows, function(r) data.frame(page = r$page, line = r$line, y = r$y,
+     y1 = r$y1, raw = r$raw, date = r$date, date_fmts = r$date_fmts, date2 = r$date2,
+     stringsAsFactors = FALSE)))
+diff -ruN snap20/R/auto_read_prove.R nrg_decoy/proto/R/auto_read_prove.R
+--- snap20/R/auto_read_prove.R	2026-10-04 00:33:33.000000000 +0000
++++ nrg_decoy/proto/R/auto_read_prove.R	2026-10-04 03:52:10.689593546 +0000
+@@ -23,7 +23,9 @@
+   "b/f", "b/fwd", "bal b/f", "balance b/fwd", "balance bfwd", "balance forward", "previous balance",
+   "balance from previous statement", "balance from previous page", "starting balance",
+   "beginning balance", "opening ledger balance", "previous statement balance",
+-  "balance brought forward from previous page", "brought forward from previous page")
++  "balance brought forward from previous page", "brought forward from previous page",
++  # PROTOTYPE: the opening twin of "balance at end of period" (already a closing).
++  if (!nzchar(Sys.getenv("NRG_NO_VOCAB"))) c("balance at start of period", "balance at start"))
+ .AR_CLOSE_EXTRA <- c("closing balance", "balance carried forward", "carried forward", "balance c/f",
+   "c/f", "c/fwd", "bal c/f", "balance c/fwd", "balance cfwd", "new balance", "ending balance",
+   "final balance", "balance at end", "balance at end of period", "closing ledger balance",
+@@ -36,7 +38,9 @@
+   "(?: (?:&|and) (?:debits|credits|other charges|other debits|other credits|refunds|other))?$|",
+   # A section's own total ("Total for card ending 5133 J SAMPLE"): the scope words
+   # come first, so a payee called "Total Fitness" never matches.
+-  "^(?:sub[- ]?)?totals? for (?:card|account|cardholder)\\b.*$")
++  "^(?:sub[- ]?)?totals? for (?:card|account|cardholder)\\b.*$",
++  # PROTOTYPE: a totals row worded "Total movements" (both money columns' totals).
++  if (!nzchar(Sys.getenv("NRG_NO_VOCAB"))) "|^totals? movements?(?: (?:this|for the) period)?$")
+ 
+ .ar_norm_label <- function(s) {
+   s <- tolower(trimws(as.character(s)))
+@@ -150,7 +154,10 @@
+ # place in the table, by a printed opening balance: one account's section ends and
+ # the next account's begins (a combined statement). Never a carried balance, so a
+ # missing page between a carried-forward and a brought-forward still breaks.
+-.ar_section_break <- function(src1, src2) src1 == "close@table" & src2 == "open@table"
++# PROTOTYPE: an account section may also open with a carried wording ("Balance
++# brought forward") right after another section's closing balance.
++.ar_section_break <- function(src1, src2) src1 == "close@table" &
++  src2 %in% c("open@table", if (!nzchar(Sys.getenv("NRG_NO_SECTION"))) "open~carry@table")
+ 
+ # .ar_anchor_points(anchors, n, dir, liab, bal_col, decimal) -- the balances the
+ # statement prints OUTSIDE its rows, as chain points: (position in time order,
