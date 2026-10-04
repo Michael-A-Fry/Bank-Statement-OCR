@@ -191,10 +191,11 @@ them are fixed, each with a regression test. What is left is ranked in
   deposit) is read on its own and kept apart: never in the statement's rows, its
   CSV or the feed, but listed in the workbook's *Other accounts* sheet and the
   JSON, and named on screen.
-- **A file of several statements goes to a person again** (N257). The bundle
-  rule of a7dc3cc let the stress test's bundle with its first or last statement
-  removed, or reordered, through as "ok". Each statement is still proven and
-  still teaches its layout; three holdout bundles now need one look.
+- **A file of several statements stays automatic when its statements join up**
+  (N257): each proven with both ends printed and, in date order, each opening on
+  the previous closing to the cent. One that does not join goes to a person. A
+  file missing a whole statement at its very start or end cannot be detected;
+  every figure it outputs is still right (product owner's decision, 4 Oct 2026).
 - **What still goes to a person on noisy files:** a statement of several accounts;
   one whose only opening is "Balance brought forward" with nothing else to show
   its start; one printing no closing balance; a pack whose other account's table

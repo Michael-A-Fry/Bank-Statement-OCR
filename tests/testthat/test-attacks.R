@@ -791,13 +791,14 @@ test_that("r2 p03 p04 and the stress test's bundle: a closing balance then a new
   }
 })
 
-# A bundle of statements goes to a person whether or not they join up: a statement
-# missing from either end of the file leaves no trace (the stress test's bundle
-# with its first or last statement removed still joins up), so joining up proves
-# nothing about the file's ends.
+# A bundle of statements stays automatic only when they join up: each proven with
+# both ends printed and, in date order, each opening on the previous closing. A
+# statement missing from the middle (or another account's) breaks the join. One
+# missing from the very start or end leaves every figure right (product owner,
+# 4 Oct 2026: if there are no issues it should just run).
 for (.join in c(TRUE, FALSE)) local({
   joined <- .join
-  test_that(sprintf("r2 stress bundle: statements that %s go to a person", if (joined) "join up" else "do not join"), {
+  test_that(sprintf("r2 stress bundle: statements that %s", if (joined) "join up stay automatic" else "do not join go to a person"), {
   apr <- atk_tx(c("02 Apr", "09 Apr"), c("EFTPOS RIVERSIDE DAIRY", "SALARY MATAI HOLDINGS"), c(20.00, NA), c(NA, 3120))
   s1 <- atk_bal_page(ATK_P1, 1000, c(ATK_MARTOP, ""))
   s2 <- atk_bal_page(apr, attr(s1, "closing") + if (joined) 0 else 250,
@@ -814,7 +815,8 @@ for (.join in c(TRUE, FALSE)) local({
                          layouts_dir = file.path(d, "layouts"), tracking_dir = file.path(d, "tracking"),
                          requested_by = "tester", formats = "csv")
   expect_identical(vapply(r$reading, function(x) x$outcome, ""), c("proven", "proven"))
-  expect_identical(r$status, "needs_review"); expect_match(r$reason, "holds 2 statements", fixed = TRUE)
+  if (joined) expect_identical(r$status, "ok")
+  else { expect_identical(r$status, "needs_review"); expect_match(r$reason, "holds 2 statements", fixed = TRUE) }
   })
 })
 

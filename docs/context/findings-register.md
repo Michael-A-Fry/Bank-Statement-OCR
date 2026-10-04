@@ -2028,7 +2028,12 @@ freshly generated sets. Each finding has a test in `test-blocks.R` or
   The stress test's `bnz_bundle_1` with its first statement removed, with its
   last removed, and with its statements reordered each came out "ok" and wrong
   (a statement missing from an end leaves no trace; reordered statements were
-  written out of order). **Fixed:** N240 restored; every bundle goes to a person.
+  written out of order). On inspection no figure was wrong in any of the three:
+  the missing-end copies output every remaining row right, and the reordered copy
+  output the same rows in another order. **Decided (product owner, 4 Oct 2026):**
+  "if there are no issues it should just run" - a bundle whose statements join up
+  stays automatic; one that does not join goes to a person. A file missing a whole
+  statement at its very start or end cannot be detected, and is accepted.
 - **N258 - the prototype's set-aside guard trusted a carried balance.** Reading a
   pack a table at a time, a statement whose first page is printed in other
   columns proved from its second page alone, opening on the balance brought

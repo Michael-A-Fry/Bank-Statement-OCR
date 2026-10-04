@@ -486,6 +486,40 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
   acc[!is.na(acc) & nzchar(trimws(acc))]
 }
 
+# .bundle_date(x) -- a period start as a Date, or NA; never an error (a header date
+# may arrive as text in the statement's own style).
+.bundle_date <- function(x) {
+  x <- as.character(x %||% NA)[1]
+  if (is.na(x) || !nzchar(x)) return(as.Date(NA))
+  for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y")) {
+    d <- as.Date(x, format = f, optional = TRUE)
+    if (!is.na(d)) return(d)
+  }
+  as.Date(NA)
+}
+
+# .bundle_joins(readings) -- do a bundle's statements join up into one unbroken run
+# of the same account? Every statement proven with both its ends printed, each with
+# a period start and an opening and closing balance, and, ordered by period, each
+# opening equal to the previous closing to the cent.
+.bundle_joins <- function(readings) {
+  if (length(readings) < 2L) return(TRUE)
+  one <- function(r) {
+    h <- r$parsed$header %||% list()
+    ck <- r$checks
+    ends <- if (is.data.frame(ck)) ck$ok[ck$check == "ends_printed"] else logical(0)
+    list(proven = identical(as.character(r$outcome %||% "")[1], "proven") && length(ends) == 1L && isTRUE(ends),
+         start = .bundle_date(h$period_start),
+         open = suppressWarnings(as.numeric(h$opening_balance %||% NA)[1]),
+         close = suppressWarnings(as.numeric(h$closing_balance %||% NA)[1]))
+  }
+  st <- lapply(readings, one)
+  if (!all(vapply(st, function(x) x$proven && !is.na(x$start) && is.finite(x$open) && is.finite(x$close), logical(1))))
+    return(FALSE)
+  st <- st[order(vapply(st, function(x) as.numeric(x$start), 0))]
+  all(vapply(seq_len(length(st) - 1L), function(i) abs(st[[i]]$close - st[[i + 1L]]$open) < 0.005, logical(1)))
+}
+
 # convert_statement(path, bank, ...) -> result (build-contract sections 6, 7).
 #   bank            the person's pick (an institution id or name), or NULL to take
 #                   it from the statement (bank_pick); a confident disagreement
@@ -654,21 +688,21 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
     # ONE FILE, SEVERAL STATEMENTS. Each statement of a bundle is read and proven on
-    # its own, but the file as a whole is not proven complete: a statement missing
-    # from the start or the end of the bundle leaves no trace on the pages that
-    # remain (the rest still add up, and still follow on from each other), and
-    # statements out of order would be written out of order. So a person confirms
-    # the file holds every statement it should. (Measured: a7dc3cc let bundles
-    # that join up through automatically, and the stress test's bundle with its
-    # first statement removed, with its last removed, and with its statements
-    # reordered each came out "ok" and wrong.) Each statement's own proof still
-    # teaches its layout.
-    if (k > 1L && identical(status, "ok")) {
+    # its own. The file stays automatic only when the statements also JOIN UP: each
+    # proven with both its ends printed and, in date order, each one opening at the
+    # balance the one before it closed on, to the cent. A statement missing from the
+    # middle, or statements of different accounts, break the join and a person
+    # looks. One missing from the very start or end of the file, or statements
+    # printed in another order, leave every figure right: the output is exactly the
+    # statements the file holds, each proven (the product owner's decision, 4 Oct
+    # 2026: "if there are no issues it should just run"). Each statement's own
+    # proof still teaches its layout.
+    if (k > 1L && identical(status, "ok") && !.bundle_joins(readings)) {
       status <- "needs_review"; worst <- "check"
       stamp$outcome <- "check"; stamp$proof_kind <- "none"
-      reason <- sprintf(paste("This file holds %d statements, and each adds up on its own; but a statement missing from",
-                              "the start or the end of the file would leave no trace on the pages that remain, so",
-                              "confirm the file holds every statement it should."), k)
+      reason <- sprintf(paste("This file holds %d statements, and each adds up on its own; but they do not follow on",
+                              "from each other (a statement may be missing between them, or they may be different",
+                              "accounts), so confirm the file holds every statement it should."), k)
     }
     # Nothing read: the run log carries a structural fingerprint of the file
     # instead (R/layout.R, unread_fingerprint), so Admin -> Health can group the
