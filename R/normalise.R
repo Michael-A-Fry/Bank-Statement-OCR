@@ -14,7 +14,10 @@
 #   * collapses any doubled spaces the removals leave behind
 .normalise_date_str <- function(s) {
   s <- trimws(as.character(s))
-  s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
+  # A weekday may be followed by a comma ("Monday, 2 March").
+  s <- gsub("^(mon|tue|wed|thu|fri|sat|sun)[a-z]*[.,]?\\s+", "", s, perl = TRUE, ignore.case = TRUE)
+  # An apostrophe for the century ("02 Feb '25") stands before a 2-digit year.
+  s <- gsub("(?<=\\s)'([0-9]{2})$", "\\1", s, perl = TRUE)
   s <- gsub("(?<=[0-9])(st|nd|rd|th)\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bof\\b", "", s, perl = TRUE, ignore.case = TRUE)
   s <- gsub("\\bSept\\b", "Sep", s, ignore.case = TRUE)
@@ -154,6 +157,8 @@ parse_date <- function(x, fmt) {
   # multibyte character class in a regex, which THROWS under LC_ALL=C -- the locale
   # this deploys and tests under (see the note above .value_from_line in R/labels.R).
   s <- gsub(sprintf("\\b(%s)\\b", paste(.MONEY_WORDS, collapse = "|")), " ", s)
+  # ...and so is a currency code glued to its dollar sign ("NZ$317.02").
+  s <- gsub("(^|[^A-Z])(NZ|AU|US|CA|HK|SG)[$]", "\\1 ", s)
   # any OTHER letter means this cell is carrying words, not a figure
   if (grepl("[A-Za-z]", s, useBytes = TRUE)) return(TRUE)
   # two or more separate digit runs means two or more things in one cell, unless
@@ -205,8 +210,20 @@ parse_date <- function(x, fmt) {
   if (is.na(raw)) return(NA_real_)
   raw <- .ascii_dashes(trimws(as.character(raw)))
   if (!nzchar(raw)) return(NA_real_)
+  # A sign word printed BEFORE the figure ("DR 32.22", "cr 5.69") reads as the
+  # same word printed after it. A figure carrying one before AND one after is two
+  # signs, and reads as nothing.
+  pre_neg <- NA
+  pm <- regmatches(toupper(raw), regexpr("^[A-Z]{2}(?![A-Z])", toupper(raw), perl = TRUE))
+  if (length(pm) == 1L) {
+    if (grepl(debit_rx, pm)) pre_neg <- TRUE else if (grepl(credit_rx, pm)) pre_neg <- FALSE
+    if (!is.na(pre_neg)) {
+      raw <- trimws(substring(raw, 3))
+      if (!nzchar(raw) || grepl(debit_rx, toupper(raw)) || grepl(credit_rx, toupper(raw))) return(NA_real_)
+    }
+  }
   if (.money_contaminated(raw, debit_rx, credit_rx)) return(NA_real_)
-  neg <- FALSE
+  neg <- isTRUE(pre_neg)
   up <- toupper(raw)
   if (grepl(debit_rx, up)) neg <- TRUE              # debit / overdrawn balance
   else if (grepl(credit_rx, up)) neg <- FALSE       # explicit credit -> positive
@@ -390,7 +407,9 @@ wd_date_table <- function() list(
   list(fmt = "%d %B", label = "2 December  (day + full month; year from the statement)", rx = "^[0-9]{1,2} [A-Za-z]{3,9}$", yearless = TRUE),
   list(fmt = "%b %d", label = "Oct 12  (month-name + day; year from the statement)",   rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
   list(fmt = "%B %d", label = "October 12  (full month + day; year from the statement)", rx = "^[A-Za-z]{3,9} [0-9]{1,2}$", yearless = TRUE),
-  list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE)
+  list(fmt = "%d/%m", label = "2/12  (day/month; year from the statement)",   rx = "^[0-9]{1,2}/[0-9]{1,2}$", yearless = TRUE),
+  # "1-FEB", "14-Mar": day, hyphen, month name; the year from the statement.
+  list(fmt = "%d-%b", label = "2-Dec  (day-month-name; year from the statement)", rx = "^[0-9]{1,2}-[A-Za-z]{3,9}$", yearless = TRUE)
 )
 
 # Field-name patterns: the words a spreadsheet heading uses for each canonical

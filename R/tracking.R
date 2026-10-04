@@ -42,9 +42,12 @@ TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_u
                   "reader_agrees", "dates_carried", "other_tables", "ocr_complete",
                   "year_settled", "table_unbroken", "summary_lines_checked",
                   "rows_once", "one_statement", "rows_between_ends", "one_side_per_row",
-                  "ends_printed", "sections_set_aside", "currency_own", "workbook_plain")
-# The reader's repair steps (the "repair:<step>" candidates of R/auto_read.R).
-TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift")
+                  "ends_printed", "sections_set_aside", "currency_own", "workbook_plain",
+                  "tables_set_aside", "edge_lines", "compact_dates")
+# The reader's repair steps (the "repair:<step>" candidates of R/auto_read.R; a
+# step tried more than one way, "edge_lines2", is recorded under its own name).
+TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift",
+                   "tables_apart", "edge_lines", "summary_figures")
 
 .TRACK_ID_RE   <- "^[a-z][a-z0-9_]{0,39}$"
 # A column role, as the reader and the Please-check screen name them; nothing
@@ -241,7 +244,7 @@ track_reading_fields <- function(reading, bank = NULL, state_id = NULL, pages = 
   ck <- reading$checks
   f$checks_failed <- if (is.data.frame(ck) && nrow(ck)) ck$check[ck$ok %in% FALSE] else character(0)
   src <- if (is.data.frame(reading$candidates)) reading$candidates$source else character(0)
-  f$repairs_tried <- sub("^repair:", "", src[startsWith(src, "repair:")])
+  f$repairs_tried <- unique(sub("[0-9]+$", "", sub("^repair:", "", src[startsWith(src, "repair:")])))
   f$candidates <- length(src)
   if (is.numeric(reading$secs)) f$secs <- reading$secs
   f$derived <- as.integer(reading$proof$derived %||% 0L)

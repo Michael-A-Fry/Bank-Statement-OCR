@@ -24,8 +24,10 @@ R/   -- the conversion path (input -> read -> proven -> written)
   identify.R            the Convert table's row per file: its kind, pages and BANK (pre-filled)
   bank_identity.R       which bank issued a statement, from the holder's account number and its wording
   auto_read.R           automatic reading: the reading pipeline, candidates, outcome (proven / check / unread)
+  auto_read_blocks.R    automatic reading: a statement pack read a table at a time; other accounts kept apart
   auto_read_pdf.R       automatic reading: tokens, cells and the column model found on each PDF page
   auto_read_prove.R     automatic reading: column roles by arithmetic and the all-or-nothing checks
+  auto_read_summ.R      automatic reading: opening, closing and totals under unknown wordings, named by arithmetic
   auto_read_tabular.R   automatic reading: CSV and Excel exports, columns by content and headings
   layouts.R             each bank's learned layouts: versioned store, matching and learning rules
   fixes.R               a person's unproven fix, held for an admin (never learned on its own)
@@ -315,7 +317,7 @@ goes to a person with the *several statements in one file* diagnostic.
 ## 6. Function interfaces (exact signatures)
 - `read_input(path) -> input` : `list(kind, path, sha256, lines=NULL, table=NULL, pages=NULL, words=NULL, meta)`. Dispatch by extension. A scan's pages are OCR'd here; `meta$ocr_timed_out` names any page whose OCR ran out of time (read as blank).
 - `bank_identify(input) -> list(institution, bank_code, confidence = high|medium|low|unknown, why, evidence)`. Never returns or stores an account number. `bank_pick(identified, chosen = NULL, confirmed = FALSE)` -> the bank to use, whether to ask, and `block_learning`.
-- `auto_read(input, layouts = list(), bank = NULL, opts = list()) -> reading` : `outcome` (`proven` / `layout_match` / `check` / `unread`), `why`, `template`, `parsed`, `recon`, `transactions`, `proof`, `checks` (data.frame `check, ok, why`), `candidates`, `columns`, `matched_layout`. Spec Appendix A1 is the field-by-field contract. `opts$roles` carries a person's role fix from Please check.
+- `auto_read(input, layouts = list(), bank = NULL, opts = list()) -> reading` : `outcome` (`proven` / `layout_match` / `check` / `unread`), `why`, `template`, `parsed`, `recon`, `transactions`, `proof`, `checks` (data.frame `check, ok, why`), `candidates`, `columns`, `matched_layout`, `other_accounts` (other accounts' tables read apart: `account`, `title`, `rows`, `tx`, `proof`; never in `transactions`). Spec Appendix A1 is the field-by-field contract. `opts$roles` carries a person's role fix from Please check.
 - `parse_statement(input, template) -> parsed` : `list(transactions, extras, header, provenance)` per schema above (CSV / Excel); `parse_pdf_table()` for a PDF, which takes `template$table$columns_by_page[[p]]` for page `p` when present.
 - `parse_date(x, fmt) -> list(iso, raw)`; `parse_amount(x, style, ...) -> list(value, direction, raw)`; `clean_description(x) -> character` (verbatim-preserving: only `trimws`).
 - `reconcile(parsed, template) -> list(kpis=data.frame, trust=list(level, score, reasons))`. KPI rows: `name, status(pass|fail|na), expected, actual, discrepancy, detail`.

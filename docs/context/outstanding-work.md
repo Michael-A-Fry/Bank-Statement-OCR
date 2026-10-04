@@ -33,14 +33,33 @@ code and the engine's sentences. Each has a regression test.
 
 **Still open:**
 
-1. **Robustness to noise (first, before any server is updated).** The held-back
-   acceptance run (4 Oct 2026, nothing automatic and wrong anywhere) read the
-   realistic holdout well (text PDFs 93%) but only 45 of 100 green-flag PDFs and
-   0 of 80 decoy packs automatically. Decoy: a cover or back page's own table lines
-   up with the statement's columns, so `pages_with_rows` / `rows_match_columns`
-   hold the statement. Green-flag: date and figures on different lines (15), the
-   balance chain breaking (about 20), roles not decided (10). Fix, then measure
-   on freshly generated decoy and green-flag sets (the old ones have been seen).
+1. **Robustness to noise: merged (4 Oct 2026); what is left.** The decoy and
+   green-flag prototypes are in the reader (`docs/context/prototypes/README.md`
+   says what was left out and why). With nothing automatic and wrong anywhere:
+   decoy packs 0 -> 65 of 80 (fresh set 69 of 80), green-flag PDFs 0 -> 69 of 100
+   (fresh 70), green-flag scans 0 -> 2 of 8 (fresh 0); dev, corpus and offset sweep
+   unchanged, holdout 107 -> 110. Still open:
+   - a statement of several accounts (each with its own balances) goes to a
+     person; reading it as one statement in sections, or each account apart, needs
+     a product-owner rule for which rows the statement's output holds;
+   - a file of several statements always goes to a person (N257): nothing yet
+     shows a bundle is complete at both ends;
+   - an opening printed only as "Balance brought forward", with no page numbers or
+     totals, is not a printed start (`ends_printed`), so such packs go to a person;
+   - another account's table printed like the statement's own goes to a person
+     (it may be part of a combined statement);
+   - page numbers in words the reader does not know ("Leaf 2 of 3" is left out:
+     it came from the test generator);
+   - scans: no table-at-a-time reading (OCR can lose a date), and OCR row loss
+     (the green-flag notes' design: the model's own line grouping, column-band
+     re-OCR) is not built;
+   - `AR_SUMMARY_ORDER` (an opening above the closing in a box settles direction)
+     is built but off, waiting on a product-owner decision;
+   - a person's roles fix on Please check reads the file whole, not a table at a
+     time, so it cannot fix a pack whose other tables break the whole reading;
+   - other accounts are named on screen in a message and written to the
+     workbook's *Other accounts* sheet and the JSON, but not shown as tables on
+     Please check.
 2. **Stage 4, agreed with the product owner (4 Oct 2026):**
    - a per-bank readiness view, and one Admin inbox of exceptions only;
    - automatic spot checks for statements with no balance and no totals on a
@@ -55,8 +74,8 @@ code and the engine's sentences. Each has a regression test.
    - the failure loop: where each statement broke, a ranked list of the biggest
      gaps, an anonymised copy for whoever fixes the reader, a re-run that shows a
      gap closing, and a drawn-columns fix that teaches once it proves;
-   - reading another account's mini-statement as a separate account (decided
-     3 Oct 2026);
+   - showing another account's mini-statement on Please check as an account of
+     its own (it is read apart and written out since 4 Oct 2026; decided 3 Oct);
    - `.save_spot_rate` moves from `app.R` to `R/config.R` with the spot-check work.
 3. **Stress test**: statements of a known layout with something odd about this
    copy (a skewed or scanned page, pages missing or out of order, stamps,

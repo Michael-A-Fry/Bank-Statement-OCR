@@ -23,7 +23,9 @@
   "b/f", "b/fwd", "bal b/f", "balance b/fwd", "balance bfwd", "balance forward", "previous balance",
   "balance from previous statement", "balance from previous page", "starting balance",
   "beginning balance", "opening ledger balance", "previous statement balance",
-  "balance brought forward from previous page", "brought forward from previous page")
+  "balance brought forward from previous page", "brought forward from previous page",
+  # The opening twin of "balance at end of period", which is already a closing.
+  "balance at start of period", "balance at start")
 .AR_CLOSE_EXTRA <- c("closing balance", "balance carried forward", "carried forward", "balance c/f",
   "c/f", "c/fwd", "bal c/f", "balance c/fwd", "balance cfwd", "new balance", "ending balance",
   "final balance", "balance at end", "balance at end of period", "closing ledger balance",
@@ -36,7 +38,9 @@
   "(?: (?:&|and) (?:debits|credits|other charges|other debits|other credits|refunds|other))?$|",
   # A section's own total ("Total for card ending 5133 J SAMPLE"): the scope words
   # come first, so a payee called "Total Fitness" never matches.
-  "^(?:sub[- ]?)?totals? for (?:card|account|cardholder)\\b.*$")
+  "^(?:sub[- ]?)?totals? for (?:card|account|cardholder)\\b.*$|",
+  # A totals row worded "Total movements": both money columns' totals on one line.
+  "^totals? movements?(?: (?:this|for the) period)?$")
 
 .ar_norm_label <- function(s) {
   s <- tolower(trimws(as.character(s)))
@@ -169,6 +173,19 @@
     .ar_separate_boxes(anchors[box_open], n, liab, decimal)
   for (k in seq_along(anchors)) {
     a <- anchors[[k]]
+    # A balance line known only by where it sits (.ar_edge_lines). Used only by a
+    # reading whose balance column holds its one figure; placed by its position
+    # among the rows in time order; never a section break.
+    if (startsWith(a$class %||% "", "edge")) {
+      if (identical(a$class, "edge_skip") || bal_col == 0L || is.na(a$figs[bal_col])) next
+      v <- .ar_anchor_value(a$figs[bal_col], liab, decimal)
+      if (is.na(v)) next
+      r <- min(max(a$before_rows, 0), n)
+      tp <- if (identical(dir, "new")) n - r else r
+      pos <- c(pos, tp); val <- c(val, v)
+      src <- c(src, paste0(if (tp == 0) "open" else if (tp == n) "close" else "carry", "~edge@table"))
+      next
+    }
     # A totals line that prints a figure in the balance column ("Totals at end of
     # period   $487.00   $0.00   $19,964.46 OD", ANZ) states the balance where it
     # stands: a carried balance mid-statement, the closing balance at the end. Used
@@ -191,7 +208,7 @@
       nxt <- box_open[box_open > k]
       p <- if (a$class == "open") r else if (length(nxt)) anchors[[nxt[1]]]$before_rows else n
       pos <- c(pos, min(max(p, 0), n)); val <- c(val, v)
-      src <- c(src, paste0(a$class, "@summary"))
+      src <- c(src, paste0(a$class, if (isTRUE(a$named)) "~named", "@summary"))
       next
     }
     p <- if (a$class == "open" && (!a$in_table || r == 0L)) 0
@@ -204,7 +221,10 @@
     # Positions are counted in the model's rows; if the reader produced fewer, a
     # check elsewhere already fails, and the point must stay on the chain.
     pos <- c(pos, min(max(p, 0), n)); val <- c(val, v)
-    src <- c(src, paste0(a$class, if (carry) "~carry", if (a$in_table) "@table" else "@summary"))
+    # "~named": a line named an opening or closing balance only by the arithmetic
+    # (R/auto_read_summ.R), never by its own words.
+    src <- c(src, paste0(a$class, if (carry) "~carry", if (isTRUE(a$named)) "~named",
+                         if (a$in_table) "@table" else "@summary"))
   }
   data.frame(pos = pos, val = val, src = src, stringsAsFactors = FALSE)
 }

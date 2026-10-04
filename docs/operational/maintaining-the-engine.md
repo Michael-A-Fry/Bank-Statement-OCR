@@ -74,11 +74,10 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **66 files, 1,028 tests, 6,184 passing assertions**
+The last full run measured **67 files, 1,067 tests, 6,550 passing assertions**
 — taken on 2026-10-04, at `VERSION` 2.0.0, on R 4.3.3, with skips not allowed:
-**0 failed, 0 errors, 0 skipped**. It is the first clean full run of 2.0.0, taken
-after the fixes for the adversarial attack on the reader (`test-attacks.R`, the
-66th file). Treat the figures as a count of what exists; the pass condition is
+**0 failed, 0 errors, 0 skipped**. It was taken after the noise-robustness
+prototypes were merged (`test-blocks.R`, the 67th file). Treat the figures as a count of what exists; the pass condition is
 still the one above.
 
 **After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the

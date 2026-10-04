@@ -2016,3 +2016,38 @@ reach a wrong automatic result.
 - **N256 - a date centred on its day's group (proven p13).** A print that puts each
   day's date beside the middle row of the day carries the wrong date down to the
   rows above it; the balance proves amounts, not days. Open.
+
+**Found while merging the noise-robustness prototypes (4 Oct 2026).** The two
+prototypes in `docs/context/prototypes/` were ported onto the round 2 reader,
+re-checked against the attack harnesses and the stress test, and measured on
+freshly generated sets. Each finding has a test in `test-blocks.R` or
+`test-attacks.R`.
+
+- **N257 - bundles that join up were let through.** a7dc3cc made a file of
+  several statements automatic when each opened on the previous one's closing.
+  The stress test's `bnz_bundle_1` with its first statement removed, with its
+  last removed, and with its statements reordered each came out "ok" and wrong
+  (a statement missing from an end leaves no trace; reordered statements were
+  written out of order). **Fixed:** N240 restored; every bundle goes to a person.
+- **N258 - the prototype's set-aside guard trusted a carried balance.** Reading a
+  pack a table at a time, a statement whose first page is printed in other
+  columns proved from its second page alone, opening on the balance brought
+  forward, and its first page's rows were dropped. **Fixed:** the closing must be
+  the statement's own printed closing, and a brought-forward opening stands only
+  when its figure is printed nowhere before the table and in no table set aside
+  (other than as an opening balance in words, or on a summary line that also
+  states the closing). Blocks on different pages also join under one page shift.
+- **N259 - a scan or an unreadable page read a table at a time proved from a
+  fragment.** The stress test's `rimu_mainframe_1` faint, skewed and upside-down
+  copies proved one row from page 2's brought-forward and closing balances.
+  **Fixed:** a scan is never read a table at a time, and N258's rule refuses the
+  upside-down text page.
+- **N260 - keyword lists from the test generators.** The prototypes told another
+  account's table by phrases copied from `make_decoys.py`, read page numbers in
+  `make_greenflag.py`'s made-up word ("Leaf 2 of 3") and took the generator's sign
+  marks. **Fixed:** account numbers in a table's title, the lexicon's own markers,
+  and general page-number forms instead (overfitting policy).
+- **N261 - a combined statement split into one account.** Read a table at a time,
+  the first account of a statement of several accounts proved alone and the rest
+  were set aside. **Fixed:** another account's table printed like the statement's
+  own (its columns or its heading row) sends the file to a person.

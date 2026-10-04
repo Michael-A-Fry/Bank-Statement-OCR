@@ -611,6 +611,13 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   .first_date <- function(cells) vapply(cells, function(cc) {
     if (is.na(cc)) return(NA_character_)
     toks <- strsplit(trimws(cc), "[[:space:]]+")[[1]]
+    # A weekday printed before the date ("Wednesday, 14 May") is not one of the
+    # format's pieces.
+    if (length(toks) > .date_fields && !grepl("%[aA]", date_fmt) &&
+        grepl("^(?:mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(?:day)?[.,]?$", toks[1], ignore.case = TRUE, perl = TRUE)) {
+      toks <- toks[-1]
+      if (length(toks) <= .date_fields) return(paste(toks, collapse = " "))
+    }
     if (length(toks) <= .date_fields) as.character(cc)
     else paste(toks[seq_len(.date_fields)], collapse = " ")
   }, character(1), USE.NAMES = FALSE)

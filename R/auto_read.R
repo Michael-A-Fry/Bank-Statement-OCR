@@ -78,7 +78,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
        columns = data.frame(page = integer(0), field = character(0), kind = character(0),
                             x_min = numeric(0), x_max = numeric(0), ink_min = numeric(0),
                             ink_max = numeric(0), heading = character(0)),
-       matched_layout = NULL, notes = character(0))
+       matched_layout = NULL, notes = character(0), other_accounts = list())
 }
 
 # ---- PDF ------------------------------------------------------------------------------------
@@ -282,6 +282,16 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ctx$roles <- opts$roles
   base <- .ar_pdf_pages(ctx)
   model <- .ar_model(base, list())
+  # Nothing on the statement reads as a date: an eight-digit run ("20250502") is
+  # then tried as one (year, month, day), only when the statement prints its
+  # period, so every such date can be checked to fall inside it (compact_dates).
+  if (is.null(model) && !anyNA(c(.plausible_period_date(ctx$md$period_start), .plausible_period_date(ctx$md$period_end)))) {
+    ctx2 <- ctx; ctx2$fmts <- .ar_date_formats(tabular = TRUE)
+    base2 <- .ar_pdf_pages(ctx2); model2 <- .ar_model(base2, list())
+    if (!is.null(model2) && any(grepl("%Y%m%d", model2$rows$date_fmts, fixed = TRUE))) {
+      ctx <- ctx2; ctx$compact_dates <- TRUE; base <- base2; model <- model2
+    }
+  }
   # The account type is read from the statement's OWN title and summary, never
   # from its rows (an everyday account paying off its card, "CREDIT CARD
   # PAYMENT", is not a card) nor from an advert, a back page of general notes or a
@@ -314,6 +324,20 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     cands[[src]] <- .ar_pdf_attempt(ctx, base, list(), src, forced = info, model = model)
     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
   }
+  # A statement pack can print other tables beside the statement's own (rate and
+  # fee tables, an account summary, another account's mini-statement), and read as
+  # one table nothing adds up. When nothing above passed, the pack is read again a
+  # table at a time (R/auto_read_blocks.R): the statement's own table with the
+  # other tables set aside, and any other account's table that proves on its own,
+  # kept apart. Files that read already are never read this way, and nor is a
+  # scan: OCR can lose a line's date, and a table cut into pieces that way can
+  # prove from a fragment.
+  blk <- NULL
+  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model) &&
+      !any(ctx$ocr) && !isFALSE(opts$blocks)) {
+    blk <- safe(.ar_block_reading(ctx, base), NULL)
+    if (!is.null(blk$pick)) cands[["repair:tables_apart"]] <- blk$pick
+  }
   # Repair search: bounded, fixed order, and only when nothing above passed. A
   # repair that changes nothing on this document (no cell splits differently, no
   # page was shifted) is not read again.
@@ -325,6 +349,26 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       ctx2$notes <- c(ctx$notes, fixed$notes)
       cands[["repair:reocr_rows"]] <- .ar_pdf_attempt(ctx2, .ar_pdf_pages(ctx2), list(), "repair:reocr_rows")
     }
+  }
+  # A table that starts or ends on a dateless line printing one figure (an
+  # opening, closing or carried balance under a label no dictionary knows) is read
+  # again with those lines as balance points (.ar_edge_lines; check edge_lines).
+  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model)) {
+    alts <- .ar_edge_lines(model)
+    for (k in seq_along(alts)) {
+      pg_e <- .ar_mark_edges(base, alts[[k]])
+      nm <- if (k == 1L) "repair:edge_lines" else paste0("repair:edge_lines", k)
+      cands[[nm]] <- .ar_pdf_attempt(ctx, pg_e, list(), nm)
+    }
+  }
+  # Opening, closing and totals printed under labels no dictionary knows, named by
+  # the statement's own arithmetic, then read again under those names
+  # (R/auto_read_summ.R). A figure named only by the arithmetic helps prove the
+  # rows but never shows that the statement is complete (ends_printed).
+  if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1))) && !is.null(model)) {
+    named <- safe(.ar_summary_names(model, ctx$decimal, cands$content), NULL)
+    if (length(named))
+      cands[["repair:summary_figures"]] <- .ar_pdf_attempt(ctx, .ar_mark_summaries(base, named), list(), "repair:summary_figures")
   }
   if (!any(vapply(cands, function(cd) isTRUE(cd$passed), logical(1)))) {
     reps <- list(
@@ -345,7 +389,13 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       }
     }
   }
-  .ar_decide(cands, layouts, ctx)
+  out <- .ar_decide(cands, layouts, ctx)
+  # Other accounts' tables are returned only beside a statement read that way, and
+  # never inside its rows. Where the table-at-a-time reading found no statement of
+  # its own, why not is a note for the person.
+  if (!is.null(blk$pick) && out$outcome %in% c("proven", "layout_match")) out$other_accounts <- blk$others
+  else if (!is.null(blk$why)) out$notes <- c(out$notes, blk$why)
+  out
 }
 
 # .ar_own_text(model) -- the lines that describe THIS statement's account: on the
@@ -355,7 +405,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # first one printed), or its opening, closing, previous or new balance. A block
 # with none of these -- a box about the holder's other accounts, an advert -- a
 # block of transaction-shaped lines, and everything below the table or after it
-# are not this account's facts.
+# are not this account's facts. In a table-at-a-time reading the tables set aside
+# (another account's, a fee schedule) are never this account's facts either.
 .ar_own_text <- function(model) {
   fp <- min(model$rows$page)
   acct_rx <- paste(c(safe(lex("account_regex"), .ACCT_RX), safe(lex("card_regex"), .CARD_RX)), collapse = "|")
@@ -365,7 +416,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     ln <- pg$lines
     rg <- model$regions[[as.character(pg$page)]]
     top <- if (pg$page == fp && !is.null(rg)) ln$y[rg$first] else Inf
-    k <- which(ln$y < top)
+    k <- which(ln$y < top & !(ln$line %in% (if (isTRUE(model$block_mode)) model$aside[[as.character(pg$page)]]
+                                            else integer(0))))
     if (!length(k)) next
     gap <- c(Inf, ln$y[k][-1] - ln$y1[k][-length(k)])
     blk <- cumsum(gap > 1.5 * pg$h)
@@ -576,6 +628,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
                score = c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0), chain = NULL)
     basis <- vr$by
   }
+  # Sign marks printed beside an unsigned amount sign the rows the balance could
+  # not, once the balance has shown what each mark means (.ar_indicator_fill).
+  if (identical(basis, "arithmetic")) rd <- .ar_indicator_fill(model, rd)
   cs <- .ar_columns(model, rd$roles, headings)
   if (is.null(cs)) return(fail("Found the table but could not measure its columns."))
   tpl <- .ar_pdf_template(ctx, model, cs, rd, headings)
@@ -938,13 +993,40 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     if (!nrow(m)) return(FALSE)
     any(vapply(model$cols, function(cl) any(m$x - s <= cl$x1 + 0.5 & m$x1 - s >= cl$x - 0.5), logical(1)))
   }
-  own_seeds <- function(pg) { s <- .ar_seed_lines(pg); s[vapply(s, function(l) fits(pg, l), logical(1))] }
+  # A table-at-a-time reading (R/auto_read_blocks.R) sets the pack's other tables
+  # aside: their lines are never this statement's rows.
+  aside_of <- function(pg) if (isTRUE(model$block_mode)) model$aside[[as.character(pg$page)]] %||% integer(0) else integer(0)
+  # A table printing its dates last (right of its figures) has seed lines of that
+  # mirrored shape (.ar_seed_lines(right = TRUE)).
+  seed_lines <- function(pg) .ar_seed_lines(pg, right = isTRUE(model$right_dates))
+  own_seeds <- function(pg) { s <- setdiff(seed_lines(pg), aside_of(pg)); s[vapply(s, function(l) fits(pg, l), logical(1))] }
+  # In a table-at-a-time reading, a line printing two or more figures is this
+  # table's only when two of its figures sit in this table's figure columns; the
+  # rest belong to another table (an account summary, a rate table), and count as
+  # another table's lines, which only the opening and closing balances may excuse.
+  # Returns c(this table's, another table's).
+  aligned_lines <- function(pg) {
+    m <- pg$ph[pg$ph$kind == "money" & pg$ph$standalone & !(pg$ph$line %in% aside_of(pg)), , drop = FALSE]
+    if (!nrow(m)) return(c(0L, 0L))
+    s <- model$shift[pg$page]
+    col_of <- vapply(seq_len(nrow(m)), function(i) {
+      hit <- which(vapply(model$cols, function(cl) abs(m$x1[i] - s - cl$med_x1) <= model$tol + 1, logical(1)))
+      if (length(hit)) hit[1] else 0L }, 0L)
+    cnt <- table(m$line); ln <- as.integer(names(cnt)[cnt >= 2L])
+    ln <- ln[!pg$lines$summary[match(ln, pg$lines$line)] & !pg$lines$footer[match(ln, pg$lines$line)]]
+    al <- vapply(ln, function(l) length(unique(col_of[m$line == l & col_of > 0L])) >= 2L, logical(1))
+    c(sum(al), sum(!al))
+  }
   other <- unlist(lapply(Filter(Negate(is.null), model$pgs), function(pg) {
-    s <- setdiff(.ar_seed_lines(pg), own_seeds(pg))
-    if (length(s)) sprintf("page %d", pg$page)
+    s <- setdiff(seed_lines(pg), own_seeds(pg))
+    # A set-aside table of figures on the page is another table too.
+    un <- if (isTRUE(model$block_mode)) aligned_lines(pg)[2] >= 3L ||
+      any(pg$ph$kind == "money" & pg$ph$standalone & pg$ph$line %in% aside_of(pg)) else FALSE
+    if (length(s) || un) sprintf("page %d", pg$page)
   }))
   shaped <- which(vapply(model$pgs, function(pg) !is.null(pg) &&
-                           (length(own_seeds(pg)) > 0L || figure_lines(pg) >= 3L), logical(1)))
+                           (length(own_seeds(pg)) > 0L ||
+                              (if (isTRUE(model$block_mode)) aligned_lines(pg)[1] >= 3L else figure_lines(pg) >= 3L)), logical(1)))
   miss <- setdiff(shaped, unique(post$page))
   add("pages_with_rows", !length(miss), if (!length(miss)) "Every page with transactions gave rows."
       else sprintf("Page %s prints transaction lines but gave no rows.", paste(miss, collapse = ", ")))
@@ -971,6 +1053,30 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!isFALSE(pl$ok) && .ar_carried_off_end(model))
     pl <- list(ok = FALSE, why = "The table ends by carrying its balance forward to a page that is not in the file.")
   add("pages_complete", pl$ok, pl$why)
+  # Lines at the table's edges read as balances only by where they sit
+  # (.ar_edge_lines: an opening, closing or carried balance under a label no
+  # dictionary knows) must each be a balance point of THIS reading, their one figure
+  # in its balance column; otherwise one could be a row lost. And an unlabelled
+  # balance line ending the last page reads as a closing balance and as a balance
+  # carried to a page that is missing alike, so one at either end of the table is
+  # taken as the statement's end only when the printed page numbers show every page
+  # is in the file, or, with no page numbers printed, when where it sits and what
+  # it says leave no room for a page missing (.ar_edge_ends_ok).
+  eg <- Filter(function(a) startsWith(a$class %||% "", "edge"), model$anchors)
+  if (length(eg)) {
+    eu <- Filter(function(a) !identical(a$class, "edge_skip"), eg)
+    used <- !length(eu) || (rd$b > 0L && all(vapply(eu, function(a) !is.na(a$figs[rd$b]), logical(1))))
+    placed <- if (isTRUE(pl$ok)) list(ok = TRUE) else if (is.na(pl$ok)) .ar_edge_ends_ok(model, eu, ctx$np)
+              else list(ok = FALSE, why = pl$why)
+    ok <- used && isTRUE(placed$ok)
+    add("edge_lines", ok, if (ok) sprintf(paste("%d line(s) at the table's edges print only a balance and are read as its opening,",
+                                                 "closing or carried balance; %s"), length(eg),
+                                           if (isTRUE(pl$ok)) "the page numbers show every page is here."
+                                           else "nothing on the pages says the table goes on past them.")
+        else if (!used) "A line at the table's edge prints one figure that is not in the balance column."
+        else sprintf(paste("A line at the table's edge prints only a balance under a label the reader does not know,",
+                           "and the file may stop short of the statement's end or start: %s"), placed$why))
+  }
   ds <- .ar_dates_settled(model$rows$date, model$rows$date_fmts, tpl$table$date_format, rd$dir,
                           periods = .ar_period_dates(ctx$md))
   add("dates_settled", ds, if (ds) "The dates read one way only."
@@ -996,7 +1102,10 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ar$checks$ends_printed <- if (identical(ar$proof_kind, "none"))
       list(ok = NA, why = "Nothing adds up, so nothing is proven complete; a learned layout reads it, or a person.")
     else .ar_ends_printed(.ar_anchor_points(model$anchors, n, rd$dir, isTRUE(rd$liab), rd$b, ctx$decimal),
-                          ar$checks$printed_totals$ok, pl$ok)
+                          # A total named only because it equals the rows read
+                          # (R/auto_read_summ.R) shows nothing about rows missing.
+                          .ar_totals_ok(Filter(function(a) !isTRUE(a$named), model$anchors), tx, post$page,
+                                        rd, ctx$decimal)$ok, pl$ok)
   # A section of pending, scheduled or uncleared items under its own title is not
   # transactions, whatever the arithmetic says: it was set aside before the
   # columns were measured (.ar_pdf_context). That is safe only where the balances
@@ -1044,9 +1153,60 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
         else if (isTRUE(ar$checks$opening_closing$ok))
           list(ok = TRUE, why = sprintf("Lines on %s look like transactions but belong to another table; the opening and closing balances confirm none of this statement's rows are among them.", other[1]))
         else list(ok = FALSE, why = sprintf("Lines on %s look like transactions but sit outside this statement's columns, and no printed opening and closing balance confirms they are not missing rows.", other[1]))
+  # Dates printed as eight digits are read only inside a printed period.
+  if (isTRUE(ctx$compact_dates)) {
+    dp <- ar$checks$dates_in_period$ok
+    ar$checks$compact_dates <- list(ok = isTRUE(dp), why = if (isTRUE(dp))
+      "The dates are printed as eight digits (year, month, day) and every one falls inside the statement period."
+      else "The dates are printed as eight digits and are not all shown to fall inside a printed statement period.")
+  }
+  # A reading that set the pack's other tables aside (R/auto_read_blocks.R) stands
+  # only on the statement's own printed opening and closing balances adding up over
+  # the rows read: then none of its rows can be among the tables set aside.
+  # The closing must be the statement's own printed closing: a balance carried
+  # forward, or one known only by where it sits or by the arithmetic, could end a
+  # page whose next page was set aside. The opening may be a balance brought
+  # forward (many statements open that way), but only when that figure is printed
+  # nowhere before the table and in no dated table set aside -- other than as an
+  # opening balance in so many words, or on a summary line that also prints this
+  # statement's closing balance (both its ends): a page that prints it before,
+  # whether it reads as a balance carried forward or cannot be read at all, is
+  # where the balance was carried from, and its rows are this statement's.
+  own_ends <- isTRUE(model$block_mode) && !anyNA(tx$amount) && {
+    ap <- .ar_anchor_points(model$anchors, n, rd$dir, isTRUE(rd$liab), rd$b, ctx$decimal)
+    plain <- !grepl("~", ap$src, fixed = TRUE)
+    printed <- plain | grepl("~carry", ap$src, fixed = TRUE) & !grepl("~named|~edge", ap$src)
+    oi <- which(printed & ap$pos == 0 & startsWith(ap$src, "open"))
+    oi <- if (any(plain[oi])) oi[plain[oi]] else oi
+    cl <- ap$val[plain & ap$pos == n & startsWith(ap$src, "close")]
+    from_aside <- length(oi) > 0L && !plain[oi[1]] && length(cl) > 0L && {
+      v <- abs(ap$val[oi[1]]); vc <- abs(cl[length(cl)])
+      r1 <- model$rows[1, ]
+      any(vapply(Filter(Negate(is.null), model$pgs), function(pg) {
+        ln <- pg$lines
+        before <- pg$page < r1$page | (pg$page == r1$page & ln$y < r1$y)
+        says_open <- ln$aclass == "open" & !grepl(.AR_CARRY_RX, ln$label, perl = TRUE)
+        own <- ln$line %in% vapply(Filter(function(a) a$page == pg$page, model$anchors), function(a) a$line, 0)
+        al <- c(model$aside_dated[[as.character(pg$page)]] %||% integer(0), ln$line[before & !says_open & !own])
+        m <- pg$ph[pg$ph$kind == "money" & pg$ph$line %in% al, , drop = FALSE]
+        if (!nrow(m)) return(FALSE)
+        m$v <- abs(.num(m$text, ctx$decimal))
+        hit <- unique(m$line[!is.na(m$v) & abs(m$v - v) < PARAM_MONEY_TOL])
+        both <- vapply(hit, function(l) any(abs(m$v[m$line == l] - vc) < PARAM_MONEY_TOL, na.rm = TRUE), logical(1))
+        any(!both)
+      }, logical(1)))
+    }
+    length(oi) > 0L && length(cl) > 0L && !from_aside &&
+      abs(round(ap$val[oi[1]] + sum(tx$amount) - cl[length(cl)], 2)) < PARAM_MONEY_TOL
+  }
+  ta <- if (!isTRUE(model$block_mode)) list(ok = NA, why = "The file was read as one table.")
+        else if (isTRUE(ar$checks$opening_closing$ok) && own_ends)
+          list(ok = TRUE, why = "Other tables in the file were set aside; the statement's own opening and closing balances add up over the rows read, so none of its rows is among them.")
+        else list(ok = FALSE, why = paste("Other tables in the file were set aside, and the statement's own printed opening and",
+                                          "closing balances do not confirm that none of its rows is among them."))
   ar$checks <- c(ck, ar$checks, list(reader_agrees = list(ok = ra$ok, why = ra$why),
                                      dates_carried = list(ok = cd$ok, why = cd$why),
-                                     other_tables = ot))
+                                     other_tables = ot, tables_set_aside = ta))
   ar
 }
 
@@ -1203,6 +1363,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     if (is.null(rg) || !nrow(pg$ph)) next
     used <- c(model$rows$line[model$rows$page == pg$page],
               vapply(Filter(function(a) a$page == pg$page, model$anchors), function(a) a$line, 0))
+    # Another table set aside in a table-at-a-time reading keeps its own dates.
+    if (isTRUE(model$block_mode)) used <- c(used, model$aside[[as.character(pg$page)]] %||% integer(0))
     near <- pg$lines$line[pg$lines$y >= rg$y0 - 2.5 * rg$pitch & pg$lines$y <= rg$y1 + 1.5 * rg$pitch]
     d <- pg$ph[pg$ph$kind == "date" & abs(pg$ph$x - model$shift[pg$page] - model$dcol$x) <= model$tol &
                pg$ph$line %in% setdiff(near, used), , drop = FALSE]
@@ -1255,7 +1417,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # here when the rows either side of it still add up. A bundle's statements each
 # number from 1. NA when no page prints such a label.
 .ar_page_labels_ok <- function(pages, np) {
-  rx <- "(?i)\\bpage\\s*:?\\s*([0-9]{1,3})\\s*(?:of|/)\\s*([0-9]{1,3})\\b"
+  # "Page 2 of 3", "Page 2/3", "p. 2/3" or "Page 2 (of 3)".
+  rx <- "(?i)(?:\\bpage|\\bp\\.)\\s*:?\\s*([0-9]{1,3})\\s*\\(?\\s*(?:of|/)\\s*([0-9]{1,3})\\b"
   lab <- lapply(seq_along(pages), function(p) {
     m <- regmatches(pages[p], regexec(rx, pages[p], perl = TRUE))[[1]]
     if (length(m) == 3L) c(p, as.integer(m[2]), as.integer(m[3])) else NULL
@@ -1274,6 +1437,48 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (lab[L, 2] + (np - lab[L, 1]) < lab[L, 3])
     return(bad(sprintf("The last page is numbered %d of %d: page(s) after it are missing.", lab[L, 2], lab[L, 3])))
   list(ok = TRUE, why = "The pages are all there, numbered without a gap.")
+}
+
+# Wording that says a table goes on over a page: the carried-balance wordings, and
+# "continued", "overleaf", "over the page". A function: .AR_CARRY_RX lives in
+# R/auto_read_prove.R, sourced after this file.
+.ar_continued_rx <- function() paste0(.AR_CARRY_RX, "|continu|overleaf|over the page|turn over")
+
+# .ar_edge_ends_ok(model, edges, np) -> list(ok, why). With no page numbers printed,
+# an unlabelled balance line at an end of the table (.ar_edge_lines) is the
+# statement's own opening or closing balance only when nothing says otherwise:
+#   * a closing line is the table's last line on the FILE's last page, and a
+#     starting line sits above the table's first row (the chain then holds through
+#     each, so each equals the balance it ends or starts on);
+#   * each prints words, and neither those words nor any line between it and the
+#     page's edge say the table goes on (carried, brought forward, continued);
+#   * its words are not the words of a balance carried between two pages of this
+#     same table (that wording is a carry, wherever it is printed).
+# A file cut short ends on a carried balance, and with no page numbers that line is
+# all that is left to say so; under a wording no dictionary knows, a single page
+# cut out of a longer statement cannot be told from a whole statement.
+.ar_edge_ends_ok <- function(model, edges, np) {
+  lab <- function(a) .ar_norm_label(a$label %||% "")
+  ends <- Filter(function(a) a$class %in% c("edge_top", "edge_bottom"), edges)
+  if (!length(ends)) return(list(ok = TRUE))
+  carry <- unique(vapply(Filter(function(a) a$class %in% c("edge_in", "edge_out"), edges), lab, ""))
+  crx <- .ar_continued_rx()
+  cont <- function(s) grepl(crx, tolower(s), perl = TRUE)
+  for (a in ends) {
+    l <- lab(a); pg <- model$pgs[[a$page]]
+    if (!nzchar(gsub("[^a-z]", "", l)))
+      return(list(ok = FALSE, why = sprintf("the balance line \"%s\" prints no words to say what it is.", substr(a$raw, 1, 40))))
+    if (cont(l) || l %in% carry)
+      return(list(ok = FALSE, why = sprintf("the line \"%s\" is worded as a balance carried between pages.", substr(a$raw, 1, 40))))
+    bottom <- identical(a$class, "edge_bottom")
+    if (bottom && a$page != np)
+      return(list(ok = FALSE, why = sprintf("the table ends on page %d, not on the file's last page.", a$page)))
+    side <- if (bottom) pg$lines$y > a$y else pg$lines$y < a$y
+    if (any(cont(pg$lines$raw[side])))
+      return(list(ok = FALSE, why = sprintf("page %d says the table goes on (\"%s\").", a$page,
+                                            substr(pg$lines$raw[side][cont(pg$lines$raw[side])][1], 1, 40))))
+  }
+  list(ok = TRUE)
 }
 
 # .ar_carried_off_end(model) -- the table's last summary line carries the balance
@@ -1542,7 +1747,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   # closing balance, in a box or in the table, or a totals row printing the
   # balance where it stands -- never a carried balance.
   src <- as.character(pts$src %||% character(0))
-  src <- src[!grepl("~carry", src, fixed = TRUE)]
+  # Nor is a line named a balance only by the arithmetic (R/auto_read_summ.R): a
+  # figure that happens to equal the last balance read says nothing of pages lost.
+  src <- src[!grepl("~carry|~named", src)]
   cls <- sub("[@~].*$", "", src)
   by <- isTRUE(totals_ok) || isTRUE(labels_ok)
   if (!by && !("close" %in% cls))
@@ -1989,7 +2196,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   list(outcome = outcome, why = why, template = tpl, parsed = cd$parsed, recon = recon,
        transactions = cd$tx %||% .ar_empty_tx(), proof = cd$proof, checks = cd$checks,
        candidates = cdf, columns = cd$columns, matched_layout = matched,
-       notes = cd$notes %||% character(0))
+       notes = cd$notes %||% character(0), other_accounts = list())
 }
 
 # ---- layouts --------------------------------------------------------------------------------

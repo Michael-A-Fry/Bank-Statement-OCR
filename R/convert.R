@@ -486,40 +486,6 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
   acc[!is.na(acc) & nzchar(trimws(acc))]
 }
 
-# .bundle_date(x) -- a period start as a Date, or NA; never an error (a header date
-# may arrive as text in the statement's own style).
-.bundle_date <- function(x) {
-  x <- as.character(x %||% NA)[1]
-  if (is.na(x) || !nzchar(x)) return(as.Date(NA))
-  for (f in c("%Y-%m-%d", "%d %b %Y", "%d %B %Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y")) {
-    d <- as.Date(x, format = f, optional = TRUE)
-    if (!is.na(d)) return(d)
-  }
-  as.Date(NA)
-}
-
-# .bundle_joins(readings) -- do a bundle's statements join up into one unbroken run
-# of the same account? Every statement proven with both its ends printed, each with
-# a period start and an opening and closing balance, and, ordered by period, each
-# opening equal to the previous closing to the cent.
-.bundle_joins <- function(readings) {
-  if (length(readings) < 2L) return(TRUE)
-  one <- function(r) {
-    h <- r$parsed$header %||% list()
-    ck <- r$checks
-    ends <- if (is.data.frame(ck)) ck$ok[ck$check == "ends_printed"] else logical(0)
-    list(proven = identical(as.character(r$outcome %||% "")[1], "proven") && length(ends) == 1L && isTRUE(ends),
-         start = .bundle_date(h$period_start),
-         open = suppressWarnings(as.numeric(h$opening_balance %||% NA)[1]),
-         close = suppressWarnings(as.numeric(h$closing_balance %||% NA)[1]))
-  }
-  st <- lapply(readings, one)
-  if (!all(vapply(st, function(x) x$proven && !is.na(x$start) && is.finite(x$open) && is.finite(x$close), logical(1))))
-    return(FALSE)
-  st <- st[order(vapply(st, function(x) as.numeric(x$start), 0))]
-  all(vapply(seq_len(length(st) - 1L), function(i) abs(st[[i]]$close - st[[i + 1L]]$open) < 0.005, logical(1)))
-}
-
 # convert_statement(path, bank, ...) -> result (build-contract sections 6, 7).
 #   bank            the person's pick (an institution id or name), or NULL to take
 #                   it from the statement (bank_pick); a confident disagreement
@@ -688,19 +654,21 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
     # ONE FILE, SEVERAL STATEMENTS. Each statement of a bundle is read and proven on
-    # its own. The file stays automatic only when the statements also JOIN UP: each
-    # proven with both its ends printed, and, in date order, each one opening at the
-    # balance the one before it closed on, to the cent. A statement missing from the
-    # middle, or statements of different accounts, break the join and a person
-    # looks. One missing from the very start or end of the file leaves no trace, but
-    # nothing converted is wrong: the output is exactly the statements the file
-    # holds, each proven. Each statement's own proof still teaches its layout.
-    if (k > 1L && identical(status, "ok") && !.bundle_joins(readings)) {
+    # its own, but the file as a whole is not proven complete: a statement missing
+    # from the start or the end of the bundle leaves no trace on the pages that
+    # remain (the rest still add up, and still follow on from each other), and
+    # statements out of order would be written out of order. So a person confirms
+    # the file holds every statement it should. (Measured: a7dc3cc let bundles
+    # that join up through automatically, and the stress test's bundle with its
+    # first statement removed, with its last removed, and with its statements
+    # reordered each came out "ok" and wrong.) Each statement's own proof still
+    # teaches its layout.
+    if (k > 1L && identical(status, "ok")) {
       status <- "needs_review"; worst <- "check"
       stamp$outcome <- "check"; stamp$proof_kind <- "none"
-      reason <- sprintf(paste("This file holds %d statements, and each adds up on its own; but they do not follow on",
-                              "from each other (a statement may be missing between them, or they may be different",
-                              "accounts), so confirm the file holds every statement it should."), k)
+      reason <- sprintf(paste("This file holds %d statements, and each adds up on its own; but a statement missing from",
+                              "the start or the end of the file would leave no trace on the pages that remain, so",
+                              "confirm the file holds every statement it should."), k)
     }
     # Nothing read: the run log carries a structural fingerprint of the file
     # instead (R/layout.R, unread_fingerprint), so Admin -> Health can group the
@@ -803,9 +771,16 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
                       scanned_no_ocr = input$meta$scanned_no_ocr %||% 0L,
                       ocr_tools = input$meta$ocr_tools_available %||% TRUE,
                       pdf_doc = input$meta$pdf_doc))
+    # Other accounts' tables printed in the file (a linked account, a loan, a term
+    # deposit), each read and proven on its own beside a statement read that way.
+    # They are never the statement's rows: they go to their own output section,
+    # labelled, and the person is told they are there.
+    others <- unlist(lapply(seq_len(k), function(i) lapply(readings[[i]]$other_accounts %||% list(), function(o)
+      list(account = o$account %||% NA_character_, title = o$title %||% NA_character_, statement = i,
+           rows = as.integer(o$rows %||% NROW(o$tx)), transactions = o$tx))), recursive = FALSE)
     if (status %in% c("ok", "needs_review")) {
       result$outputs <- write_outputs(parsed, recon, outdir, base, formats,
-        diagnostics = diag, metadata = meta, build = stamp)
+        diagnostics = diag, metadata = meta, build = stamp, other_accounts = others)
       # The governed feed's ONLY source of transaction values: the table the
       # workbook and CSV show, taken BEFORE the display-only spreadsheet guard, so
       # a feed row and a workbook row hold byte-identical values.
@@ -835,6 +810,10 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
                             which(!is.na(unit_bank))[1], unit_bank[!is.na(unit_bank)][1], bank_name))
     if (bank_numbered)
       msg <- c(msg, "The bank given held a long number, like an account number, so it was not used; the bank was taken from the statement.")
+    if (length(others) && status %in% c("ok", "needs_review"))
+      msg <- c(msg, sprintf(paste("The file also prints %d other account table(s) (%s). They are kept apart from this statement's",
+                                  "rows, in the workbook's Other accounts sheet and the JSON output."), length(others),
+                            paste(vapply(others, function(o) if (!is.na(o$account)) o$account else "unnumbered", ""), collapse = ", ")))
 
     result$status <- status
     result$template_id <- stamp$layout %||% NA_character_
@@ -858,8 +837,10 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       list(outcome = r$outcome, why = r$why, pages = units[[i]]$pages, proof = r$proof, checks = r$checks,
            candidates = r$candidates, columns = file_cols(i), matched_layout = r$matched_layout,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
-           transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]])
+           transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]],
+           other_accounts = r$other_accounts %||% list())
     })
+    result$other_accounts <- others
     result$columns <- file_cols(1L)
     result$learn <- learn
     result$fix_held <- held

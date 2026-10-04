@@ -147,7 +147,7 @@ Everything the build's reviews found is recorded as N193 to N229 in
 them are fixed, each with a regression test. What is left is ranked in
 [`docs/context/outstanding-work.md`](docs/context/outstanding-work.md).
 
-- **Full suite (4 Oct 2026):** 65 files, 1,004 tests, 5,901 passing, 0 failed,
+- **Full suite (4 Oct 2026):** 67 files, 1,067 tests, 6,550 passing, 0 failed,
   0 skipped.
 - **The held-back acceptance run (4 Oct 2026), scored once.** Nothing came out
   automatic and wrong on any set (AUTO_WRONG = 0 everywhere).
@@ -160,18 +160,52 @@ them are fixed, each with a regression test. What is left is ranked in
   | Green-flag: 100 deliberately weird PDFs | 45 of 100 |
   | Decoy: 80 packs with 2-3 front pages, 1-5 back pages and decoy tables | 0 of 80 |
 
-- **Not robust to noise yet.** In the decoy packs a cover or back page's own
-  table often lines up with the statement's columns, so the reader expects rows
-  from that page and holds the statement for a person. In the green-flag set, 15
-  layouts print the date and the figures on different lines, about 20 break the
-  balance chain, and 10 cannot tell which column is which. These go to a person
-  (never wrong), so the tool is safe but far from 95% automatic on noisy files.
-  **Do not deploy 2.0 to a server until this is fixed**; it is the next piece of
-  work, measured on freshly generated sets.
+  The round 2 safety fixes then took the green-flag set to 0 of 100 (made-up
+  wordings for the opening and closing are not printed ends) and the holdout's
+  text PDFs to 107 of 128.
+- **Noise robustness merged (4 Oct 2026).** The two prototypes in
+  [`docs/context/prototypes/`](docs/context/prototypes/README.md) are in the
+  reader: a statement pack is read a table at a time when it does not read whole
+  (the statement's own table with the other tables set aside, allowed only when
+  its own printed opening and closing balances add up over the rows read), and
+  the green-flag families are read (balance lines under unknown wordings at the
+  table's ends, new date and figure shapes, sign-mark columns, wrapped and
+  drifting rows, summary figures named by the arithmetic). Scored with
+  `tools/synth/score_auto.R --mode trained`; AUTO_WRONG = 0 on every set. The
+  fresh sets were generated anew and scored once, never looked into.
+
+  | Set | Before (a7dc3cc) | Now |
+  |---|---|---|
+  | Decoy packs, working set (80) | 0 | 65 |
+  | Decoy packs, fresh (80) | 0 | 69 (86%) |
+  | Green-flag PDFs, working set (100) | 0 | 69 |
+  | Green-flag PDFs, fresh (100) | 0 | 70 |
+  | Green-flag scans, working / fresh (8 each) | 0 / 0 | 2 / 0 |
+  | Dev: PDFs / scans / CSV / Excel | 115 / 12 / 4 / 5 | unchanged |
+  | Holdout: PDFs / scans / CSV / Excel | 107 / 8 / 5 / 4 | 110 / 8 / 5 / 4 |
+  | Corpus / offset sweep | 30 of 43 / 22 of 26 | unchanged |
+  | Stress test, 554 damaged copies (convert) | 281 (round 2) | 283 |
+
+  Convert-level scoring (`score_convert.R`) gives the same counts on the fresh
+  sets. Another account's table in a pack (a linked account, a loan, a term
+  deposit) is read on its own and kept apart: never in the statement's rows, its
+  CSV or the feed, but listed in the workbook's *Other accounts* sheet and the
+  JSON, and named on screen.
+- **A file of several statements goes to a person again** (N257). The bundle
+  rule of a7dc3cc let the stress test's bundle with its first or last statement
+  removed, or reordered, through as "ok". Each statement is still proven and
+  still teaches its layout; three holdout bundles now need one look.
+- **What still goes to a person on noisy files:** a statement of several accounts;
+  one whose only opening is "Balance brought forward" with nothing else to show
+  its start; one printing no closing balance; a pack whose other account's table
+  is printed like the statement's own; pages numbered in words the reader does
+  not know. One optional rule, `AR_SUMMARY_ORDER` (an opening printed above the
+  closing in a box settles which column is money in), is built but OFF until the
+  product owner decides.
 - **Not built from the spec yet (Stage 4, agreed 4 Oct 2026):** merging or
   moving layouts between banks; clicking a gap on Please check to split or join a
-  column; a reversed-sign role for card statements; reading another account's
-  mini-statement as a separate account; and the improvements listed in
+  column; a reversed-sign role for card statements; showing another account's
+  table on Please check as an account of its own; and the improvements listed in
   `outstanding-work.md`.
 
 ### Hand-carry list

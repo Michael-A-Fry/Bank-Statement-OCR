@@ -1294,3 +1294,140 @@ test_that("a summary box's single total in the balance column is not a closing b
   expect_equal(rd$outcome, "proven")
   expect_equal(round(rd$transactions$amount, 2), ar_want)
 })
+
+# ---- odd but readable statements (the green-flag families) ------------------------------
+#
+# Each family is something a real statement prints that the reader did not know:
+# balance lines under wordings no dictionary has, dates and figures in shapes it did
+# not read, columns of sign marks, rows that wrap or drift. Each is read only where
+# the statement's own arithmetic still proves every figure; where it cannot (a file
+# that may be cut short, marks whose meaning nothing shows), a person reads it.
+
+gf_row <- function(d, desc, out = "", inn = "", bal = "", dw = 9) sprintf(paste0("%-", dw, "s%-36s%10s%13s%13s"), d, desc, out, inn, bal)
+gf_rw <- list(c("03 Feb", "EFTPOS RIVERSIDE DAIRY", "12.40", "", "987.60"),
+              c("05 Feb", "SALARY MATAI HOLDINGS", "", "3,120.00", "4,107.60"),
+              c("09 Feb", "DD CITY COUNCIL RATES", "268.15", "", "3,839.45"),
+              c("14 Feb", "TRANSFER TO SAVINGS", "400.00", "", "3,439.45"),
+              c("21 Feb", "VISA HARBOUR FUEL", "96.72", "", "3,342.73"),
+              c("26 Feb", "CREDIT INTEREST", "", "2.18", "3,344.91"))
+gf_title <- c("Kauri Bank                         Statement period 1 Feb 2026 to 28 Feb 2026", "")
+gf_head <- function(dw = 9) c(gf_title, gf_row("Date", "Details", "Withdrawals", "Deposits", "Balance", dw = dw))
+gf_rows <- function(dfun = identity, dw = 9, bal = TRUE)
+  vapply(gf_rw, function(r) gf_row(dfun(r[1]), r[2], r[3], r[4], if (bal) r[5] else "", dw = dw), "")
+gf_open <- function(lab = "Opening balance", dw = 9) gf_row("", lab, "", "", "1,000.00", dw = dw)
+gf_close <- function(lab = "Closing balance", dw = 9) gf_row("", lab, "", "", "3,344.91", dw = dw)
+gf_ok <- function(rd) {
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), ar_want)
+}
+
+test_that("an opening and a closing under wordings no dictionary knows are read by where they sit", {
+  # Page numbers show every page is here.
+  rd <- auto_read(ar_pdf(c(gf_head(), gf_open("Money on hand"), gf_rows(), gf_close("Where things stand"), "", "Page 1 of 1")))
+  gf_ok(rd)
+  expect_true(isTRUE(ok_of(rd, "edge_lines")))
+  expect_true(any(rd$candidates$passed & startsWith(rd$candidates$source, "repair:edge_lines")))
+  # No page numbers: the closing line ends the file's last page and nothing says
+  # the table goes on.
+  gf_ok(auto_read(ar_pdf(c(gf_head(), gf_open("Money on hand"), gf_rows(), gf_close("Where things stand")))))
+})
+
+test_that("an unlabelled last balance that may be carried to a missing page is never the statement's end", {
+  # The page says the table goes on.
+  rd <- auto_read(ar_pdf(c(gf_head(), gf_open("Money on hand"), gf_rows(), gf_close("Where things stand"), "",
+                           "Continued overleaf")))
+  expect_false(ar_auto(rd))
+  # A file cut after page 2 of 3: page 2 ends on the same wording page 1 carried
+  # its balance with.
+  carry <- function(lab, v) gf_row("", lab, "", "", v)
+  p1 <- c(gf_head(), gf_open("Money on hand"), gf_rows()[1:3], carry("Taken over", "3,839.45"))
+  p2 <- c(gf_head(), carry("Taken in", "3,839.45"), gf_rows()[4:5], carry("Taken over", "3,342.73"))
+  p3 <- c(gf_head(), carry("Taken in", "3,342.73"), gf_rows()[6], gf_close("Where things stand"))
+  expect_false(ar_auto(auto_read(ar_pdf(p1, p2))))
+  gf_ok(auto_read(ar_pdf(p1, p2, p3)))
+  # Page numbers that show a page missing settle it whatever the wording.
+  expect_false(ar_auto(auto_read(ar_pdf(c(p1, "Page 1 of 3"), c(p2, "Page 2 of 3")))))
+})
+
+test_that("dates as day-hyphen-month, with a weekday and comma, an apostrophe year, or eight digits", {
+  hy <- function(d) toupper(sub(" ", "-", d))
+  gf_ok(auto_read(ar_pdf(c(gf_head(), gf_open(), gf_rows(hy), gf_close()))))
+  wd <- function(d) paste0("Wednesday, ", d)
+  gf_ok(auto_read(ar_pdf(c(gf_head(20), gf_open(dw = 20), gf_rows(wd, 20), gf_close(dw = 20)))))
+  ap <- function(d) paste0(d, " '26")
+  gf_ok(auto_read(ar_pdf(c(gf_head(12), gf_open(dw = 12), gf_rows(ap, 12), gf_close(dw = 12)))))
+  ymd <- function(d) format(as.Date(paste(d, "2026"), "%d %b %Y"), "%Y%m%d")
+  rd <- auto_read(ar_pdf(c(gf_head(), gf_open(), gf_rows(ymd), gf_close())))
+  gf_ok(rd)
+  expect_true(isTRUE(ok_of(rd, "compact_dates")))
+  expect_equal(as.character(rd$transactions$date[1]), "2026-02-03")
+  expect_equal(.normalise_date_str(c("Mon, 2 March 2026", "02 Feb '25")), c("2 March 2026", "02 Feb 25"))
+})
+
+test_that("a sign word before the figure, and a currency code glued to the dollar sign", {
+  expect_equal(.num(c("DR 32.22", "cr 5.69", "NZ$317.02", "(NZ$12.40)", "DR 5.00 CR")), c(-32.22, 5.69, 317.02, -12.40, NA))
+  am <- function(d, desc, a, b) sprintf("%-13s%-34s%14s%16s", d, desc, a, b)
+  gf_ok2 <- function(rd, want) { expect_equal(rd$outcome, "proven"); expect_equal(round(rd$transactions$amount, 2), want) }
+  want <- c(-12.40, 3120.00, -268.15)
+  gf_ok2(auto_read(ar_pdf(c(gf_title, am("Date", "Details", "Amount", "Balance"), am("", "Opening balance", "", "CR 1,000.00"),
+    am("03 Feb 2026", "EFTPOS RIVERSIDE DAIRY", "DR 12.40", "CR 987.60"),
+    am("05 Feb 2026", "SALARY MATAI HOLDINGS", "CR 3,120.00", "CR 4,107.60"),
+    am("09 Feb 2026", "DD CITY COUNCIL RATES", "DR 268.15", "CR 3,839.45"), am("", "Closing balance", "", "CR 3,839.45")))), want)
+  gf_ok2(auto_read(ar_pdf(c(gf_title, am("Date", "Details", "Amount", "Balance"), am("", "Opening balance", "", "NZ$1,000.00"),
+    am("03 Feb 2026", "EFTPOS RIVERSIDE DAIRY", "(NZ$12.40)", "NZ$987.60"),
+    am("05 Feb 2026", "SALARY MATAI HOLDINGS", "NZ$3,120.00", "NZ$4,107.60"),
+    am("09 Feb 2026", "DD CITY COUNCIL RATES", "(NZ$268.15)", "NZ$3,839.45"), am("", "Closing balance", "", "NZ$3,839.45")))), want)
+})
+
+test_that("a table that prints its dates last, right of its figures", {
+  rr <- function(desc, out = "", inn = "", bal = "", d = "") sprintf("%-30s%10s%12s%12s   %s", desc, out, inn, bal, d)
+  gf_ok(auto_read(ar_pdf(c(gf_title, rr("Details", "Withdrawals", "Deposits", "Balance", "Date"), rr("Opening balance", bal = "1,000.00"),
+    vapply(gf_rw, function(r) rr(r[2], r[3], r[4], r[5], paste0(r[1], " 2026")), ""), rr("Closing balance", bal = "3,344.91")))))
+})
+
+test_that("a column of sign marks signs the rows the balance leaves open, only when the marks are the reader's own", {
+  ind <- function(d, desc, a, m, b) sprintf("%-12s%-34s%10s   %-3s%12s", d, desc, a, m, b)
+  rows <- function(cr, dr) c(ind("03/02/2026", "EFTPOS RIVERSIDE DAIRY", "12.40", dr, "4,987.60"),
+    ind("05/02/2026", "SALARY MATAI HOLDINGS", "3,120.00", cr, "8,107.60"), ind("09/02/2026", "DD CITY COUNCIL RATES", "268.15", dr, "7,839.45"),
+    ind("14/02/2026", "TRANSFER TO SAVINGS", "400.00", dr, "7,439.45"), ind("21/02/2026", "REFUND HARBOUR FUEL", "96.72", cr, "7,536.17"),
+    ind("26/02/2026", "CREDIT INTEREST", "2.18", cr, "7,538.35"), ind("", "Closing balance", "", "", "7,538.35"))
+  hd <- c(gf_title, ind("Date", "Details", "Amount", "C/D", "Balance"))
+  # No opening balance: only the C / D column says which way row 1 went.
+  rd <- auto_read(ar_pdf(c(hd, rows("C", "D"), "", "Page 1 of 1")))
+  expect_equal(rd$outcome, "proven")
+  expect_equal(round(rd$transactions$amount, 2), c(-12.40, 3120.00, -268.15, -400.00, 96.72, 2.18))
+  # Made-up marks the reader does not know: row 1's sign stays open.
+  expect_false(ar_auto(auto_read(ar_pdf(c(hd, rows("K", "Z"), "", "Page 1 of 1")))))
+})
+
+test_that("a row whose figures are printed on the last of its wrapped lines", {
+  w <- c(gf_row("03 Feb", "J J WIGGINS re lot 28"), gf_row("", "bagpipe lessons"), gf_row("", "part 1", "12.40", "", "987.60"))
+  rd <- auto_read(ar_pdf(c(gf_head(), gf_open(), w, gf_rows()[-1], gf_close())))
+  gf_ok(rd)
+  expect_match(rd$transactions$description[1], "WIGGINS")
+})
+
+test_that("rows that drift steadily sideways down the page are set straight", {
+  dr <- vapply(seq_along(gf_rw), function(i) paste0(strrep(" ", i), gf_rows()[i]), "")
+  gf_ok(auto_read(ar_pdf(c(gf_head(), gf_open(), dr, paste0(strrep(" ", 7), gf_close())))))
+})
+
+test_that("summary figures named by the arithmetic: the summary-box order rule is off, and only a header shows completeness", {
+  old <- Sys.getenv("AR_SUMMARY_ORDER", NA); on.exit(if (is.na(old)) Sys.unsetenv("AR_SUMMARY_ORDER") else Sys.setenv(AR_SUMMARY_ORDER = old))
+  box <- c("Money on hand            1,000.00", "Gone out                   777.27", "Come in                  3,122.18",
+           "Where things stand       3,344.91")
+  tbl <- c(gf_row("Date", "Details", "Withdrawals", "Deposits"), gf_rows(bal = FALSE))
+  above <- c(gf_title, box, "", tbl)
+  below <- c(gf_title, tbl, "", "", box)
+  # Off by default: a box printing an opening above a closing does not settle which
+  # column is money in (it waits on a product-owner decision).
+  Sys.unsetenv("AR_SUMMARY_ORDER")
+  expect_false(ar_auto(auto_read(ar_pdf(c(above, "", "Page 1 of 1")))))
+  # Switched on, the names prove the rows. A box over the rows also shows the
+  # statement is whole (a carried balance is never printed there); the same
+  # figures under the rows do not, so page numbers must.
+  Sys.setenv(AR_SUMMARY_ORDER = "1")
+  gf_ok(auto_read(ar_pdf(above)))
+  expect_false(ar_auto(auto_read(ar_pdf(below))))
+  gf_ok(auto_read(ar_pdf(c(below, "", "Page 1 of 1"))))
+})

@@ -145,13 +145,39 @@ display_transactions <- function(transactions, extras = NULL) {
   df
 }
 
+# other_accounts_df(other) -- other accounts' tables found beside a statement
+# (rd$other_accounts, R/auto_read_blocks.R) as one labelled table: which account
+# each row is, then its date, details, amount and balance. NULL when there are
+# none. They are never the statement's rows: the CSV and the Transactions sheet
+# never hold them, only this separate table.
+OTHER_ACCOUNT_COLS <- c("date", "description", "amount", "balance")
+other_accounts_df <- function(other) {
+  rows <- lapply(other %||% list(), function(o) {
+    tx <- o$transactions %||% o$tx
+    if (!is.data.frame(tx) || !nrow(tx)) return(NULL)
+    tx <- as.data.frame(tx, stringsAsFactors = FALSE)
+    for (cc in setdiff(OTHER_ACCOUNT_COLS, names(tx))) tx[[cc]] <- NA
+    data.frame(account = as.character(o$account %||% NA_character_)[1],
+               title = as.character(o$title %||% NA_character_)[1],
+               tx[, OTHER_ACCOUNT_COLS, drop = FALSE], stringsAsFactors = FALSE, row.names = NULL)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (!length(rows)) return(NULL)
+  do.call(rbind, rows)
+}
+
 # write_outputs(parsed, recon, outdir, basename, formats) -> named path vector.
 # `build` is the provenance stamp (engine version, learned-state id, layout,
 # outcome, proof) the orchestrator passes in; it goes into the JSON -- the
 # full-record output -- so a figure can always be traced back to what produced it.
+# `other_accounts`: other accounts' tables printed in the same file, kept apart from
+# the statement's rows: an "Other accounts" sheet and a JSON section of their own,
+# written only when there are some.
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
-                          diagnostics = NULL, metadata = NULL, build = NULL) {
+                          diagnostics = NULL, metadata = NULL, build = NULL,
+                          other_accounts = NULL) {
+  other_df <- other_accounts_df(other_accounts)
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   paths <- character(0)
 
@@ -178,6 +204,10 @@ write_outputs <- function(parsed, recon, outdir, basename,
     if (!is.null(metadata)) {
       openxlsx::addWorksheet(wb, "Metadata")
       openxlsx::writeData(wb, "Metadata", metadata_df(metadata))
+    }
+    if (!is.null(other_df)) {
+      openxlsx::addWorksheet(wb, "Other accounts")
+      openxlsx::writeData(wb, "Other accounts", .spreadsheet_safe(other_df))
     }
     # Byte-reproducibility (guarantee 11.4): openxlsx stamps docProps/core.xml
     # with the wall-clock time, so an identical reading would otherwise yield
@@ -212,6 +242,11 @@ write_outputs <- function(parsed, recon, outdir, basename,
       diagnostics = diagnostics,
       metadata = metadata
     )
+    if (!is.null(other_df))
+      full$other_accounts <- lapply(other_accounts, function(o) list(
+        account = o$account %||% NA_character_, title = o$title %||% NA_character_,
+        rows = as.integer(o$rows %||% NROW(o$transactions %||% o$tx)),
+        transactions = other_accounts_df(list(o))[, OTHER_ACCOUNT_COLS, drop = FALSE]))
     writeLines(jsonlite::toJSON(full, dataframe = "rows", auto_unbox = TRUE,
                                 na = "null", pretty = TRUE), json_path)
     paths["json"] <- json_path
