@@ -365,7 +365,9 @@ naming the failing row and page) + *what it needs*.
 `dates_in_order`, `dates_in_period`, `signs_settled`, `no_derived_amounts`,
 `amounts_read`, `unique`, `rows_proven`, `reader_agrees`, `dates_carried`,
 `other_tables`, `ocr_complete`, `year_settled`, `table_unbroken`,
-`summary_lines_checked`. Each has wording in `READING_CHECK_PLAIN`
+`summary_lines_checked`, `rows_once`, `one_statement`, `rows_between_ends`,
+`one_side_per_row`, `ends_printed`, `sections_set_aside`, `currency_own`,
+`workbook_plain`. Each has wording in `READING_CHECK_PLAIN`
 (`ui_labels.R`) and a place in tracking's allowlist (`TRACK_CHECKS`,
 `R/tracking.R`). A proven reading is one where every check holds and **no other
 reading of the columns does**.

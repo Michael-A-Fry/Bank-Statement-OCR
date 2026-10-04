@@ -60,6 +60,16 @@ statement_date:
   value: date
   where: page1
 
+# The words a statement puts in FRONT of its own period range ("Statement period
+# 1 Mar 2026 to 31 Mar 2026"). A range labelled this way is the period and wins
+# over any other range on the page (an RWT certificate's tax year, a fixed-rate
+# term). The label must be the whole cell in front of the dates, so "Fixed rate
+# for the period ..." is not one. Read by R/extract_metadata.R (.period_labels).
+statement_period:
+  any_of: ["statement period", "period", "statement dates", "statement for the period",
+           "statement from", "period covered", "statement covers"]
+  value: date_range
+
 # Statement period expressed as two LABELLED dates (not a "from X to Y" range) --
 # e.g. Westpac/ASB "Statement Opening date: 10 June 2026 / Closing date: 9 July
 # 2026". Used to fill period_start/end (and the year for day+month-only dates)

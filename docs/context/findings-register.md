@@ -1898,3 +1898,121 @@ case, and each control it ran beside, is a test in `test-attacks.R`.**
   proven path too. **Fixed:** reverted; only the statement settles the order (a
   day over 12, or a printed period only one order fits), otherwise a person
   reads the dates.
+
+**Found by a second attack on the reader (round 2), and by a stress test of
+damaged copies of known statements: 27 attack scripts and seven stress cases
+reached an automatic result with a wrong date, year, amount, sign or row. Each
+fix below is one general rule; each attack case, each stress case written small,
+and the controls beside them are tests in `test-attacks.R` ("r2 ...").**
+
+- **N237 - the year taken from another thing's date.** An RWT certificate's tax
+  year or a loan's fixed-rate term printed above the period became the period; an
+  "Account opening date" or "Loan start date" became its start; a period printed
+  with an en dash was not read at all, so the year came from "Our terms and
+  conditions issued 1 Mar 2025" or a reprint's issue date; and the month-period
+  pattern read "matures on 15 January 2027" + the next line's "Statement" as a
+  January 2027 statement. Every row's year was wrong and the balance proved them.
+  **Fixed:** the labelled statement period wins over any other range on the page
+  and only it is read as a period (`.period_ranges`, labels in `labels.yaml`
+  `statement_period`); a period reads with any dash, "to" or (when labelled) any
+  short punctuation between its dates; only the statement's OWN label gives a date
+  (`.label_starts_phrase`: nothing but "statement" or a determiner may precede it in
+  its phrase); no metadata pattern crosses a line break; unlabelled ranges that
+  disagree leave the year unsettled (`year_settled`).
+- **N238 - a period longer than a year.** A dormant account's statement (1 Oct
+  2024 to 31 Oct 2025) holds every "dd Oct" twice; rows took the first. **Fixed:**
+  a year-less row is settled only when exactly one year puts it inside the period
+  in date order, and it was read in that year; otherwise `year_settled` fails.
+- **N239 - a page or a run of rows counted twice.** A page in the file twice, a
+  statement pasted to itself, a CSV export appended to itself, and the stress
+  test's `bnz_bundle_1__dup_page` all proved. **Fixed:** `rows_once`.
+- **N240 - another statement or account read as one chain.** A closing balance
+  followed by a new opening balance was treated as a section break of one chain,
+  so a second account's rows were proven into the first account's list (and a page
+  missing between two in-table opening/closing pages went unseen). **Fixed:**
+  `one_statement` fails on it. And one FILE holding several statements (split on
+  "Page 1 of N") goes to a person even when each statement proves itself: a
+  statement missing from the start or the end of a bundle leaves no trace on the
+  pages that remain (the stress test's `missing_first` / `missing_last` of
+  `bnz_bundle_1`). Each statement's own proof still teaches its layout. This is
+  the costliest rule of the round: every bundle now needs one look (the dev set's
+  three bundles and three combined statements; 23 automatic stress copies of
+  `bnz_bundle_1`).
+- **N241 - a file that stops before its statement does (or starts after it
+  began).** With no page numbers, the rows that are there chain from the opening
+  balance and nothing missed the last page. **Fixed:** a PDF statement is proven
+  complete only when both its ends are shown -- its opening and closing balance,
+  printed totals the rows match, or "Page N of N" with every page there
+  (`ends_printed`; PDFs only, and only where the arithmetic proves the rows).
+  Cost: one corpus statement (`page_landscape`, no closing balance printed).
+  Requiring the start as well as the end cost nothing on the dev, corpus or
+  offset-sweep sets.
+- **N242 - card wording from another account flipped every sign.** An everyday
+  statement printing a box about the holder's credit card, a card advert in the
+  footer or a back page of card notes was read as a card. **Fixed:** card or loan
+  wording counts only in this account's own title and summary (`.ar_own_text`: the
+  first block, the block with its own account or card number, or with its own
+  opening or closing balance, above the table), never in an advert, another
+  account's box or after the table.
+- **N243 - a totals line read as a row.** A "Turnover" line printing both money
+  out and money in nets to 0.00 and the chain holds. **Fixed:** `one_side_per_row`.
+- **N244 - a held item above the opening balance.** An uncleared deposit or a card
+  hold printed above the in-table opening balance became an unchecked first row.
+  **Fixed:** `rows_between_ends`.
+- **N245 - a pending section that cancels out.** A titled "Pending transactions"
+  block whose items cancel (a pre-authorisation and its release) passed as rows.
+  **Fixed:** a titled pending, scheduled, authorised or uncleared section holding
+  transaction-shaped lines is set aside before the columns are measured; it is
+  automatic only when the balances still add up without it
+  (`sections_set_aside`).
+- **N246 - two date columns chosen by position in a PDF.** The stress test's
+  `anz_visa_2__col_swap` and `kiwibank_card_2__col_swap` (transaction and
+  processed dates swapped) came out proven with processed dates. **Fixed:** the
+  heading that names the transaction date wins (`.ar_date_heading_rank`, the
+  spreadsheet rule of N211); with no heading to decide and different dates,
+  `dates_settled` fails. Position never decides.
+- **N247 - an export with a status, currency or account column (layout path).**
+  "Pending" rows, a USD export, and an all-accounts export matched an everyday
+  layout. **Fixed:** a layout keeps what each other column held (`col_values`:
+  single words such as a status or currency code; for an account column only HOW
+  MANY accounts, never a number), and a file with anything new goes to a person; a
+  row worded as pending does too; and a statement whose own title or summary names
+  another currency is never put out as NZD (`currency_own`).
+- **N248 - workbooks.** A second sheet of dated rows (pending items, another
+  account, a hidden "Data" sheet) or hidden rows (a filtered export) were read as
+  if absent or shown. **Fixed:** `workbook_plain`.
+- **N249 - a trailing summary row (layout path).** "Net movement for period",
+  "Interest earned year to date" and "Closing Balance as at ..." as the last row
+  of a CSV were read as transactions. **Fixed:** with nothing to add up, last rows
+  worded as a total, a balance or a figure for a period are not confirmed.
+- **N250 - a detail line under a once-a-day date (layout path).** Round 1's
+  exception for layouts learned from dates-once-per-day statements let "FOREIGN
+  AMOUNT USD 25.00" and "Day total" lines through. **Fixed:** the exception is
+  removed; with nothing to add up, a row borrowing the date above goes to a person.
+- **N251 - a second table merged in (layout path).** Another account's rows on the
+  next page, a recap of last month's statement on a cover page, and "Recent
+  activity" after the statement were read as the statement's rows. **Fixed:** the
+  lines between the table's parts on different pages must be page furniture
+  (printed on every page, the heading row again, footers); anything else breaks the
+  table (`table_unbroken`).
+
+**Known residual risks, parked (round 2).** Each was judged unrealistic or without
+a clean general rule; spot checks are the backstop. Their attack scripts still
+reach a wrong automatic result.
+
+- **N252 - merchant names fool the wording vote (c01).** A card export sharing an
+  everyday layout, whose only "telling" rows are worded against it ("HOLIDAY PARK
+  DEPOSIT", "PAYMENT THANKYOU"), reads with everyday signs. Open: the wording vote
+  can only ever be a vote.
+- **N253 - amounts in cents (c07).** An export printing minor units ("1850" for
+  18.50) on a layout learned from dollars and cents reads 100 times too large. Open:
+  nothing in such a file says its unit.
+- **N254 - the Excel 1904 date system (c09).** A workbook flagged `date1904` reads
+  every date four years and a day early. Open: rare (old Mac Excel); the flag is
+  in the workbook and could be read later.
+- **N255 - identical headings "Amount (-)" / "Amount (+)" (layout p13).** Kept as
+  words only, both headings are "amount", so a statement with the columns swapped
+  under their own headings matches the layout. Open.
+- **N256 - a date centred on its day's group (proven p13).** A print that puts each
+  day's date beside the middle row of the day carries the wrong date down to the
+  rows above it; the balance proves amounts, not days. Open.

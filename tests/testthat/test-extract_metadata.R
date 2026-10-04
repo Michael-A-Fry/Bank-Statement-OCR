@@ -313,7 +313,10 @@ test_that("a stray date range does NOT widen a single-period statement", {
            "Your fixed loan runs 01/01/2024 to 31/12/2026")
   expect_identical(m$period_start, "01/01/2026")
   expect_identical(m$period_end,   "31/01/2026")
-  expect_false(is.na(m$period_note))          # and it says why it refused
+  # The labelled period wins (round 2): the loan term is not read as a period at
+  # all, so there is nothing to merge or refuse.
+  expect_identical(m$period_source, "labelled")
+  expect_identical(m$n_periods, 1L)
 })
 
 test_that("a shared boundary day is not an overlap", {

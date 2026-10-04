@@ -318,8 +318,12 @@
   pre_text <- apply(tt$m[c(tt$pre, tt$post), , drop = FALSE], 1, function(r) paste(r[nzchar(r)], collapse = " "))
   md <- safe(extract_metadata(list(kind = input$kind, pages = pre_text[nzchar(pre_text)], meta = list(),
                                    path = input$path)), NULL)
-  ctx <- list(input = input, g = g, tt = tt, md = md, bank = bank,
-              liab = .ar_liability_evidence(pre_text), decimal = "auto", roles = opts$roles)
+  # The account type and currency are this account's own facts: read from the
+  # lines above the table (its title and summary), never from lines after it.
+  own_text <- apply(tt$m[tt$pre, , drop = FALSE], 1, function(r) paste(r[nzchar(r)], collapse = " "))
+  own_text <- c(own_text[nzchar(own_text)], input$meta$preamble %||% character(0))
+  ctx <- list(input = input, g = g, tt = tt, md = md, bank = bank, own_text = unique(own_text),
+              liab = .ar_liability_evidence(unique(own_text)), decimal = "auto", roles = opts$roles)
   cands <- list()
   cands[["content"]] <- .ar_tab_attempt(ctx, "content")
   # A person's roles are read on their own: no layout stands in for them.
@@ -426,7 +430,21 @@
   if (!is.na(op)) parsed$header$opening_balance <- op
   if (!is.na(cl)) parsed$header$closing_balance <- cl
   ckl <- .ar_arith_checks(tx, rep(1L, nrow(tx)), anchors, rd, rl, basis, ctx$decimal, ctx$md,
-                          two_dates = any(kind == "date2"))
+                          two_dates = any(kind == "date2"),
+                          two_sided = .ar_two_sided(cells, rd$roles, ctx$decimal, aligned = nrow(cells) == nrow(tx)))
+  ckl$checks$currency_own <- .ar_currency_own(ctx$own_text)
+  # A workbook is read one sheet at a time: a second sheet of dated rows (pending
+  # items, another account, a hidden "Data" sheet) or rows the sheet hides (a
+  # filtered export keeps the rows it does not show) means the rows read may not
+  # be the statement's, or not all of them.
+  if (identical(ctx$input$kind, "excel")) {
+    ds <- suppressWarnings(as.integer(ctx$input$meta$dated_sheets %||% NA)); hr <- suppressWarnings(as.integer(ctx$input$meta$hidden_rows %||% NA))
+    ckl$checks$workbook_plain <- if (isTRUE(ds > 1L))
+        list(ok = FALSE, why = sprintf("The workbook holds %d sheets of dated rows; only one was read, and the others may be pending items, another account or more of this one.", ds))
+      else if (isTRUE(hr > 0L))
+        list(ok = FALSE, why = sprintf("The workbook hides %d row(s); hidden rows are read like any other, so what was read is not what the sheet shows.", hr))
+      else list(ok = TRUE, why = "The workbook holds one sheet of dated rows and hides none.")
+  }
   # The reader's figures must be the reading's: a figure the arithmetic proved and
   # the table reader then read differently is not proven.
   same <- isTRUE(all.equal(unname(round(tx$amount, 2)), unname(round(rd$A, 2))))
@@ -559,10 +577,53 @@
     # The heading over each column, aligned with `roles` ("" where the file prints
     # none): what lets a file with nothing to add up be matched to the layout
     # (.ar_layout_confirms, R/auto_read.R).
-    col_headings = unname(.ar_head_words(tt$heads[!is.na(fields)])))
+    col_headings = unname(.ar_head_words(tt$heads[!is.na(fields)])),
+    # What each column other than the description holds, aligned with `roles`:
+    # "cat:<words>" for a column of single words (a status, a currency code),
+    # "acct:<n>" for a column of account or card numbers (only HOW MANY distinct
+    # ones, never the numbers), "" for anything else. A file with nothing to add
+    # up matches the layout only when these hold no value its statements never
+    # held (.ar_col_values_new, R/auto_read.R).
+    col_values = unname(vapply(which(!is.na(fields)), function(j)
+      if (identical(kind[j], "text") && !identical(unname(fields[as.character(j)]), "description"))
+        .ar_col_value_code(tt$m[rows, j]) else "", "")))
   tpl$id <- paste0("auto_", .ar_hash(paste(unlist(tpl$signature[c("kind", "roles", "date_format", "money_style", "newest_first")]), collapse = "|")))
   tpl$auto$fields <- unname(fields)
   tpl
+}
+
+# .ar_col_value_code(v) -- what one column of a spreadsheet's rows holds, in a form
+# a layout may keep: "acct:<n>" when every cell is an account or card number (n =
+# how many different ones; the numbers themselves are never kept), "cat:<a|b>"
+# when every cell is one word of letters (a status such as "Posted", a currency
+# code such as "NZD"; a blank cell is "-"), at most .AR_CAT_MAX different words,
+# lower case, sorted; "" for anything else (free text, references, names).
+.AR_CAT_MAX <- 6L
+.ar_col_value_code <- function(v) {
+  v <- trimws(as.character(v)); v[is.na(v)] <- ""
+  filled <- v[nzchar(v)]
+  if (!length(filled)) return("")
+  acct <- sprintf("^(?:%s)$", paste(c(safe(lex("account_regex"), .ACCT_RX), safe(lex("card_regex"), .CARD_RX)), collapse = "|"))
+  if (all(grepl(acct, filled, perl = TRUE))) return(sprintf("acct:%d", length(unique(filled))))
+  if (!all(grepl("^[A-Za-z]{1,12}$", filled))) return("")
+  u <- sort(unique(c(tolower(filled), if (any(!nzchar(v))) "-")))
+  if (length(u) > .AR_CAT_MAX) return("")
+  paste0("cat:", paste(u, collapse = "|"))
+}
+
+# .ar_col_value_merge(a, b) -- two statements' codes for one column (learning): the
+# words of both, a column that is free text in either is free text, and a column
+# of account numbers keeps the larger count.
+.ar_col_value_merge <- function(a, b) {
+  a <- a %||% ""; b <- b %||% ""
+  if (!nzchar(a) || !nzchar(b)) return("")
+  if (startsWith(a, "acct:") && startsWith(b, "acct:"))
+    return(sprintf("acct:%d", max(as.integer(sub("acct:", "", a)), as.integer(sub("acct:", "", b)), na.rm = TRUE)))
+  if (startsWith(a, "cat:") && startsWith(b, "cat:")) {
+    u <- sort(unique(c(strsplit(sub("^cat:", "", a), "|", fixed = TRUE)[[1]], strsplit(sub("^cat:", "", b), "|", fixed = TRUE)[[1]])))
+    return(if (length(u) > .AR_CAT_MAX) "" else paste0("cat:", paste(u, collapse = "|")))
+  }
+  ""
 }
 
 # .ar_tab_names(tt) -- one unique, non-empty name per column (the heading, or

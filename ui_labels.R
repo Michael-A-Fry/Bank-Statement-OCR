@@ -179,7 +179,15 @@ READING_CHECK_PLAIN <- c(
   ocr_complete       = "Every page of the scan was read",
   year_settled       = "The year of every date is printed on the statement",
   table_unbroken     = "The table has no pending or scheduled section inside it",
-  summary_lines_checked = "Lines left out as totals are checked by the balances")
+  summary_lines_checked = "Lines left out as totals are checked by the balances",
+  rows_once          = "No page or run of rows is printed twice",
+  one_statement      = "The file holds one statement of one account",
+  rows_between_ends  = "Every row sits between the opening and closing balances",
+  one_side_per_row   = "No row has figures in both money out and money in",
+  ends_printed       = "The statement's end is printed, so no page is missing after it",
+  sections_set_aside = "Pending or scheduled sections were left out and the rest still adds up",
+  currency_own       = "The account is in New Zealand dollars",
+  workbook_plain     = "The workbook has one sheet of transactions and no hidden rows")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 
 # ---------------------------------------------------------------------------

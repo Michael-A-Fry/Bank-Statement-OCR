@@ -110,6 +110,25 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     hm <- suppressWarnings(stats::median(hh, na.rm = TRUE))
     if (isTRUE(hm > 0)) row_tol <- max(PARAM_PDF_ROW_TOL, round(0.45 * hm, 1))
   }
+  # A section titled as pending, scheduled, authorised or uncleared items is not
+  # the statement's transactions, even when its items happen to add up to nothing
+  # (a card pre-authorisation and its release): its lines are set aside before
+  # anything is measured, and the checks then ask whether the balances still add
+  # up without them (sections_set_aside).
+  aside <- list()
+  fmts0 <- .ar_date_formats(); marks0 <- .ar_markers()
+  pt <- tolower(as.character(input$pages %||% character(0)))
+  for (p in seq_len(np)) {
+    w0 <- wl[[p]]
+    if (is.null(w0) || !nrow(w0) || !(p <= length(pt) && grepl(.AR_SECTION_RX, pt[p], perl = TRUE))) next
+    w0$.orig <- seq_len(nrow(w0))
+    pg0 <- .ar_page(w0, p, frame, pw[p], ph[p], row_tol, fmts0, marks0, ocr = isTRUE(ocr[p]))
+    sa <- .ar_pending_sections(pg0)
+    if (!length(sa$orig)) next
+    wl[[p]] <- w0[!(w0$.orig %in% sa$orig), setdiff(names(w0), ".orig"), drop = FALSE]
+    aside <- c(aside, lapply(sa$titles, function(t) list(page = p, raw = t)))
+  }
+  input$words <- wl
   txt <- unlist(lapply(wl, function(w) if (!is.null(w) && nrow(w)) as.character(w$text)))
   core <- txt[grepl(.AR_MONEY_RX, txt, perl = TRUE)]
   ncomma <- sum(grepl(",[0-9]{2}[)]?[-+]?$", core)); ndot <- sum(grepl("[.][0-9]{2}[)]?[-+]?$", core))
@@ -118,7 +137,43 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!is.null(md)) md$periods <- .ar_periods(input$pages, md)
   list(input = input, np = np, pw = pw, ph = ph, frame = frame, ocr = ocr, row_tol = row_tol,
        md = md, fmts = .ar_date_formats(), markers = .ar_markers(),
-       decimal = decimal, pages_text = input$pages %||% character(0))
+       decimal = decimal, pages_text = input$pages %||% character(0), aside = aside)
+}
+
+# .ar_pending_sections(pg) -> list(orig, titles): the words to set aside on one
+# page (by their .orig index) and the section titles. A section starts at a
+# title -- a line of a few words in one cell, naming pending, scheduled, upcoming,
+# authorised or uncleared items -- and runs down to the next title of another
+# kind (a short words-only line at the title's margin, with a blank band above
+# it) or to the foot of the page. It is set aside only when it holds at least one
+# line shaped like a transaction (a date with a figure); a note that merely uses
+# such a word ("There are no pending items") holds none.
+.ar_pending_sections <- function(pg) {
+  none <- list(orig = integer(0), titles = character(0))
+  if (is.null(pg) || !nrow(pg$lines) || is.null(pg$w$.orig)) return(none)
+  ln <- pg$lines[order(pg$lines$y), , drop = FALSE]; w <- pg$w; h <- pg$h
+  per <- lapply(ln$line, function(l) which(w$line == l))
+  wo <- vapply(per, function(ix) length(ix) > 0L && all(w$kind[ix] == "text"), logical(1))
+  nc <- vapply(per, function(ix) sum(w$cell_start[ix]), 0)
+  nw <- lengths(per)
+  lx <- vapply(per, function(ix) if (length(ix)) min(w$x[ix]) else Inf, 0)
+  title <- wo & nc == 1 & nw <= 6L
+  sect <- title & grepl(.AR_SECTION_RX, tolower(ln$raw), perl = TRUE)
+  if (!any(sect)) return(none)
+  seed <- ln$line %in% .ar_seed_lines(pg)
+  gap <- c(Inf, ln$y[-1] - ln$y1[-nrow(ln)])
+  drop <- integer(0); titles <- character(0)
+  i <- 1L
+  while (i <= nrow(ln)) {
+    if (!sect[i]) { i <- i + 1L; next }
+    j <- i + 1L
+    while (j <= nrow(ln) && !(title[j] && !sect[j] && gap[j] > 1.2 * h && lx[j] <= lx[i] + 2 * h)) j <- j + 1L
+    rng <- i:(j - 1L)
+    if (any(seed[rng])) { drop <- c(drop, ln$line[rng]); titles <- c(titles, ln$raw[i]) }
+    i <- j
+  }
+  if (!length(drop)) return(none)
+  list(orig = unique(w$.orig[w$line %in% drop]), titles = titles)
 }
 
 # A scanned page that reads as noise (image clean-up turning paper grain into junk
@@ -160,19 +215,17 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 
 # .ar_periods(pages, md) -- the statement periods a bundle of consecutive
 # statements prints, one per statement: the metadata's own period, plus every
-# other printed range that joins the chain end to start (a shared boundary day
-# allowed). A range that does not join up -- a loan term, a tax year -- is not a
-# statement period and widens nothing.
+# other period range it read that joins the chain end to start (a shared
+# boundary day allowed). Only the ranges the metadata took as periods are
+# looked at (md$period_ranges): when the statement labels its period, a notice's
+# range -- a loan term, a tax year -- is not among them, so it widens nothing
+# even when it happens to end the day before the period starts.
 .ar_periods <- function(pages, md) {
   first <- c(.plausible_period_date(md$period_start), .plausible_period_date(md$period_end))
   if (anyNA(first)) return(list())
-  dash <- paste0("-", intToUtf8(0x2013), intToUtf8(0x2014))
   date_rx <- safe(lex("date_regex"), NULL)
-  conn <- paste(safe(lex("period_connectives"), "to"), collapse = "|")
   if (is.null(date_rx)) return(list(as.character(first)))
-  per_rx <- sprintf("(?:%s)\\s*(?:%s|[%s])\\s*(?:%s)", date_rx, conn, dash, date_rx)
-  txt <- enc2utf8(paste(pages %||% character(0), collapse = "\n"))
-  hits <- unique(regmatches(txt, gregexpr(per_rx, txt, perl = TRUE))[[1]])
+  hits <- unique(as.character(md$period_ranges %||% character(0)))
   pb <- lapply(hits, function(h) {
     ds <- regmatches(h, gregexpr(date_rx, h))[[1]]
     if (length(ds) < 2) return(NULL)
@@ -229,9 +282,13 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ctx$roles <- opts$roles
   base <- .ar_pdf_pages(ctx)
   model <- .ar_model(base, list())
-  # The account type is read from the print OUTSIDE the transaction rows: an
-  # everyday account paying off its card ("CREDIT CARD PAYMENT") is not a card.
-  ctx$liab <- .ar_liability_evidence(if (is.null(model)) ctx$pages_text else .ar_outside_text(model))
+  # The account type is read from the statement's OWN title and summary, never
+  # from its rows (an everyday account paying off its card, "CREDIT CARD
+  # PAYMENT", is not a card) nor from an advert, a back page of general notes or a
+  # box about the holder's other accounts: card wording there describes another
+  # account, and once flipped every sign of an everyday statement.
+  ctx$own_text <- if (is.null(model)) character(0) else .ar_own_text(model)
+  ctx$liab <- .ar_liability_evidence(ctx$own_text)
   cands <- list()
   cands[["content"]] <- .ar_pdf_attempt(ctx, base, list(), "content", model = model)
   # A person's roles are read on their own: no layout or repair stands in for them.
@@ -291,13 +348,44 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   .ar_decide(cands, layouts, ctx)
 }
 
-# .ar_outside_text(model) -- every printed line that is not part of a table region
-# (rows, their wrapped lines and the summary lines among them).
-.ar_outside_text <- function(model) {
-  unlist(lapply(Filter(Negate(is.null), model$pgs), function(pg) {
+# .ar_own_text(model) -- the lines that describe THIS statement's account: on the
+# pages up to the one its table starts on, the lines above the table, in blocks
+# (runs of lines with no blank band between them) that hold the statement's
+# title (the first block of the first page), its own account or card number (the
+# first one printed), or its opening, closing, previous or new balance. A block
+# with none of these -- a box about the holder's other accounts, an advert -- a
+# block of transaction-shaped lines, and everything below the table or after it
+# are not this account's facts.
+.ar_own_text <- function(model) {
+  fp <- min(model$rows$page)
+  acct_rx <- paste(c(safe(lex("account_regex"), .ACCT_RX), safe(lex("card_regex"), .CARD_RX)), collapse = "|")
+  own_num <- NA_character_
+  out <- character(0); first_block <- TRUE
+  for (pg in Filter(function(pg) !is.null(pg) && pg$page <= fp, model$pgs)) {
+    ln <- pg$lines
     rg <- model$regions[[as.character(pg$page)]]
-    pg$lines$raw[!(pg$lines$line %in% (rg$lines %||% integer(0)))]
-  }))
+    top <- if (pg$page == fp && !is.null(rg)) ln$y[rg$first] else Inf
+    k <- which(ln$y < top)
+    if (!length(k)) next
+    gap <- c(Inf, ln$y[k][-1] - ln$y1[k][-length(k)])
+    blk <- cumsum(gap > 1.5 * pg$h)
+    seg_cls <- if (NROW(pg$seg)) pg$seg$line[pg$seg$class %in% c("open", "close")] else integer(0)
+    seeds <- .ar_seed_lines(pg)
+    for (b in unique(blk)) {
+      kk <- k[blk == b]
+      raw <- ln$raw[kk]
+      nums <- unlist(regmatches(raw, gregexpr(acct_rx, raw, perl = TRUE)))
+      if (is.na(own_num) && length(nums)) own_num <- nums[1]
+      # Three or more lines shaped like transactions make a table (rows the
+      # columns did not reach), never a title or a summary.
+      table_like <- sum(ln$line[kk] %in% seeds) >= 3L
+      mine <- !table_like && (first_block || (!is.na(own_num) && own_num %in% nums) ||
+        any(ln$aclass[kk] %in% c("open", "close")) || any(ln$line[kk] %in% seg_cls))
+      first_block <- FALSE
+      if (mine) out <- c(out, raw)
+    }
+  }
+  out
 }
 
 # At most this many of a bank's layouts are read against one document: the ones
@@ -501,9 +589,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     parsed <- .ar_parse_pdf(ctx, model, tpl, rd)
     post <- .ar_post_pdf(ctx, model, tpl, rd, parsed)
   }
-  # Whether this reading carried a date down to a row printed without one. A
-  # layout learned from such a reading prints each day's date once; only such a
-  # layout may stand for a dateless row on a statement nothing adds up on.
+  # Whether this reading carried a date down to a row printed without one (kept
+  # with the layout as a fact about its statements; with nothing to add up, a
+  # dateless row is never confirmed by a layout, whatever it learned).
   tpl$auto$dates_carried <- !is.null(post$tx) && any(grepl("date_carried", post$tx$flags, fixed = TRUE))
   ck <- .ar_pdf_checks(ctx, model, cs, tpl, rd, rl, post, basis)
   cd <- .ar_candidate(source, tpl, post, ck, rd, rl, basis, model, cs, headings, ctx)
@@ -887,9 +975,44 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
                           periods = .ar_period_dates(ctx$md))
   add("dates_settled", ds, if (ds) "The dates read one way only."
       else "The dates read as day-month and as month-day equally well, and nothing on the statement says which.")
+  # Two date columns (a transaction date and a processed date): the heading that
+  # names the transaction date chose the column (.ar_model). With no heading to
+  # say, and the two columns giving different dates, the date shown is a choice.
+  if (identical(model$date_by, "open"))
+    add("dates_settled", FALSE, sprintf(paste(
+      "The statement has two date columns, %s and %s, that give different dates on %d row(s), and",
+      "neither heading says which is the transaction date."), model$date_names[1], model$date_names[2], model$date_differ))
   ar <- .ar_arith_checks(tx, post$page, model$anchors, rd, rl, basis, ctx$decimal, ctx$md,
                          two_dates = !is.null(model$date2), strict = any(ctx$ocr),
-                         yearless = !grepl("%[Yy]", tpl$table$date_format))
+                         yearless = !grepl("%[Yy]", tpl$table$date_format), page_text = ctx$pages_text,
+                         two_sided = .ar_two_sided(model$cells, rd$roles, ctx$decimal, aligned = n == nrow(model$rows)))
+  # The statement's start and end: a PDF can lose its last pages (or its first)
+  # with every row left still adding up. A printed opening and closing balance
+  # the rows must reach, printed totals the rows must match, or "Page N of N"
+  # with every page there shows the rows are all of them. PDFs only: a CSV or a
+  # workbook is not cut off between pages.
+  # (Only where the arithmetic proves the rows: with nothing to add up, a reading
+  # stands on a learned layout's word, never on a proof of completeness.)
+  ar$checks$ends_printed <- if (identical(ar$proof_kind, "none"))
+      list(ok = NA, why = "Nothing adds up, so nothing is proven complete; a learned layout reads it, or a person.")
+    else .ar_ends_printed(.ar_anchor_points(model$anchors, n, rd$dir, isTRUE(rd$liab), rd$b, ctx$decimal),
+                          ar$checks$printed_totals$ok, pl$ok)
+  # A section of pending, scheduled or uncleared items under its own title is not
+  # transactions, whatever the arithmetic says: it was set aside before the
+  # columns were measured (.ar_pdf_context). That is safe only where the balances
+  # still add up without it.
+  sa <- ctx$aside %||% list()
+  ar$checks$sections_set_aside <- if (!length(sa))
+      list(ok = NA, why = "No pending, scheduled or uncleared section is printed.")
+    else if (!identical(ar$proof_kind, "none"))
+      list(ok = TRUE, why = sprintf("The section \"%s\" on page %d is not transactions and was set aside; the balances add up without it.",
+                                    substr(sa[[1]]$raw, 1, 50), sa[[1]]$page))
+    else list(ok = FALSE, why = sprintf(paste(
+      "The section \"%s\" on page %d (pending, scheduled or uncleared items) was set aside as not transactions,",
+      "and nothing on the statement adds up to show which rows are its transactions."), substr(sa[[1]]$raw, 1, 50), sa[[1]]$page))
+  # The output is in New Zealand dollars. A statement whose own title or summary
+  # names another currency is another currency's account.
+  ar$checks$currency_own <- .ar_currency_own(.ar_own_text(model))
   # With nothing to add up, the table's own shape is all that says which lines are
   # this statement's transactions, so it must be one unbroken table. Where the
   # balance or the opening and closing balances are printed, a row that is not the
@@ -900,8 +1023,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       list(ok = TRUE, why = "The table runs unbroken from its first row to its last.")
     else if (arith) list(ok = NA, why = "A title or heading line sits inside the table; the arithmetic accounts for every row around it.")
     else list(ok = FALSE, why = sprintf(paste(
-      "The line \"%s\" on page %d breaks the table (a section such as pending or scheduled payments may follow it),",
-      "and nothing on the statement adds up to show which rows are its transactions."), substr(br[[1]]$raw, 1, 50), br[[1]]$page))
+      "The line \"%s\" on page %d breaks the table (another account, a recap or a section such as pending or",
+      "scheduled payments may follow it), and nothing on the statement adds up to show which rows are its transactions."),
+      substr(br[[1]]$raw, 1, 50), br[[1]]$page))
   sl <- .ar_set_aside_figures(model$anchors, rd$roles)
   ar$checks$summary_lines_checked <- if (!length(sl))
       list(ok = TRUE, why = "No line with a figure in a money column was set aside as a total or summary.")
@@ -1007,6 +1131,51 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       if (grepl(.AR_SECTION_RX, tolower(ln$raw[i]), perl = TRUE) || (words_only && (!tight || over_fig)))
         out[[length(out) + 1L]] <- list(page = p, raw = ln$raw[i])
     }
+  }
+  c(out, .ar_page_separators(model))
+}
+
+# .ar_page_separators(model) -- where the table carries on from one page to a
+# later one, the lines between its two parts (below it on the first page, on any
+# page in between, above it on the next) that are not page furniture. Furniture
+# is what a page prints on every page -- a masthead, a footer, a page number --
+# so a line printed on two or more pages (page numbers aside) is furniture, and
+# so are the table's own heading row printed again, summary lines and footers.
+# Anything else -- another account's number and name, a title such as "Recent
+# activity", a letter -- means the rows after it are another table: a second
+# account, or a recap of the last statement. Each as list(page, raw).
+.ar_page_separators <- function(model) {
+  rp <- sort(as.integer(names(model$regions)))
+  if (length(rp) < 2L) return(list())
+  norm <- function(s) {
+    s <- tolower(gsub("[[:space:]]+", " ", trimws(s)))
+    s <- gsub("\\bpage ?[0-9]+( ?(of|/) ?[0-9]+)?\\b", "page #", s, perl = TRUE)
+    s
+  }
+  live <- Filter(Negate(is.null), model$pgs)
+  seen <- table(unlist(lapply(live, function(pg) unique(norm(pg$lines$raw)))))
+  furniture <- names(seen)[seen >= 2L]
+  hr <- .ar_heading_row(model)
+  hw <- if (!is.null(hr)) unique(tolower(hr$text)) else
+    unique(tolower(unlist(strsplit((.ar_headings(model) %||% data.frame(text = character(0)))$text, " "))))
+  sep <- function(pg, keep) {
+    if (is.null(pg) || !any(keep)) return(list())
+    ln <- pg$lines[keep, , drop = FALSE]
+    bad <- vapply(seq_len(nrow(ln)), function(i) {
+      s <- norm(ln$raw[i])
+      if (!nzchar(s) || s %in% furniture || isTRUE(ln$footer[i]) || isTRUE(ln$summary[i])) return(FALSE)
+      words <- tolower(pg$w$text[pg$w$line == ln$line[i]])
+      !(length(hw) && all(words %in% hw))
+    }, logical(1))
+    lapply(which(bad), function(i) list(page = pg$page, raw = ln$raw[i]))
+  }
+  out <- list()
+  for (k in seq_along(rp)[-1]) {
+    p <- rp[k - 1L]; q <- rp[k]
+    a <- model$regions[[as.character(p)]]; b <- model$regions[[as.character(q)]]
+    out <- c(out, sep(model$pgs[[p]], model$pgs[[p]]$lines$y > a$y1))
+    for (m in seq_len(q - p - 1L)) { pg <- model$pgs[[p + m]]; if (!is.null(pg)) out <- c(out, sep(pg, rep(TRUE, nrow(pg$lines)))) }
+    out <- c(out, sep(model$pgs[[q]], model$pgs[[q]]$lines$y < b$y0))
   }
   out
 }
@@ -1122,11 +1291,38 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # -- the checks every kind of statement shares, on the rows as finally read: the
 # balance chain, opening + movements = closing, printed totals, dates, signs,
 # derived amounts and uniqueness. `strict` (a scan) allows no row outside a step.
+# `page_text` (a PDF's pages) lets a page printed twice be seen; `two_sided` is the
+# rows printing a figure in both money out and money in (.ar_two_sided).
 .ar_arith_checks <- function(tx, page, anchors, rd, rl, basis, decimal, md, two_dates = FALSE,
-                             strict = FALSE, yearless = FALSE) {
+                             strict = FALSE, yearless = FALSE, page_text = NULL, two_sided = integer(0)) {
   n <- nrow(tx)
   ck <- list()
   add <- function(name, ok, why) ck[[name]] <<- list(ok = ok, why = why)
+  # Nothing is counted twice: a page, or a run of rows, printed again (a merged
+  # upload, a re-scan, an export pasted to itself) adds up just as well twice.
+  rp <- .ar_repeats(tx, page, page_text)
+  add("rows_once", rp$ok, rp$why)
+  # One statement of one account: a closing balance and then a new opening balance
+  # inside the table is where another statement or account starts. Each part may
+  # add up on its own, but they are not one account's rows.
+  ei <- .ar_ends_inside(anchors, n)
+  # The same for statements each printing their own summary box (opening and
+  # closing balances above their rows): two or more such boxes that start rows of
+  # their own and state different balances are two or more statements, and a
+  # statement missing from either end of such a file leaves no trace.
+  box_open <- Filter(function(a) identical(a$class, "open") && !isTRUE(a$in_table), anchors)
+  if (isTRUE(ei$sections$ok) && length(box_open) > 1L && .ar_separate_boxes(box_open, n, isTRUE(rd$liab), decimal))
+    ei$sections <- list(ok = FALSE, why = sprintf(paste(
+      "The file holds %d statements, each with its own opening and closing balance. Each may add up on its own, but a",
+      "statement missing from the start or the end of the file would leave no trace, so a person confirms it is complete."),
+      length(box_open)))
+  add("one_statement", ei$sections$ok, ei$sections$why)
+  add("rows_between_ends", ei$between$ok, ei$between$why)
+  # A row that prints a figure in both money out and money in (a "turnover" or
+  # "totals" line read as a row) nets to one movement, and that is not a
+  # transaction anyone made.
+  add("one_side_per_row", !length(two_sided), if (!length(two_sided)) "No row prints a figure in both money out and money in."
+      else sprintf("Row %d prints a figure in both money out and money in, so it is a total or a summary line, not one transaction.", two_sided[1]))
   bal <- if (rd$b > 0L) tx$balance else rep(NA_real_, n)
   apts <- .ar_anchor_points(anchors, n, rd$dir, isTRUE(rd$liab), rd$b, decimal)
   ch <- .ar_chain(tx$amount, rep(FALSE, n), bal, apts, rd$dir)
@@ -1211,12 +1407,27 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   sd <- if (!length(per)) .plausible_period_date(md$statement_date %||% NA) else as.Date(NA)
   yl_rows <- if (yearless) seq_len(n) else which(grepl("date_alt_format", fl, fixed = TRUE))
   stale <- !length(yi) && !is.na(sd) && length(yl_rows) > 0L && !anyNA(d[yl_rows]) && max(d[yl_rows]) < sd - 92
-  add("year_settled", !length(yi) && !stale, if (length(yi))
+  # The page prints date ranges that disagree and labels none as the statement's
+  # period: a year taken from one of them is a guess.
+  unsure <- !length(yi) && !stale && isTRUE(md$period_unsure) && length(yl_rows) > 0L
+  # A period longer than a year (a dormant account's statement, "1 Oct 2024 to
+  # 31 Oct 2025") holds every "dd Oct" twice: the period alone does not settle
+  # such a row's year. Only the order of the rows may (a row known to be in 2025
+  # pins every row after it), and the row must then read in that year.
+  unpinned <- if (!length(yi) && !stale && !unsure && length(per) && length(yl_rows) && !anyNA(d))
+    .ar_year_unpinned(d, yl_rows, per, rd$dir) else integer(0)
+  add("year_settled", !length(yi) && !stale && !unsure && !length(unpinned), if (length(yi))
         sprintf(paste("Row %d's date prints no year, and no statement period or issue date is printed to settle it;",
                       "the only year on the page is in other text, such as a footer."), yi[1])
       else if (stale)
         sprintf(paste("The dates print no year and the statement prints no period, only the date %s; every row would be",
                       "more than three months older than that, so that date does not settle the year."), format(sd, "%d %b %Y"))
+      else if (unsure)
+        paste("The dates print no year, and the statement prints date ranges that disagree without labelling",
+              "any of them as its period, so the year is not settled.")
+      else if (length(unpinned))
+        sprintf(paste("Row %d's date prints no year, and the statement period covers that day in more than one year;",
+                      "nothing on the statement says which year it is."), unpinned[1])
       else "Every date's year is printed with it, or settled by the statement period or the date the statement was issued.")
   if (identical(rd$conv, "B")) {
     uns <- sum(is.na(rd$chain$signs[seq_len(n)]) & !is.na(tx$amount))
@@ -1247,6 +1458,156 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   add("rows_proven", !length(unc), if (!length(unc)) "Every row is inside a step that adds up."
       else sprintf("%d row(s) are outside every balance step (row %d first).", length(unc), unc[1]))
   list(checks = ck, chain = ch, proof_kind = proof_kind, score = sc)
+}
+
+# .ar_repeats(tx, page, page_text) -> list(ok, why). A page whose whole text is
+# another page's (a page printed twice in a merged upload), or a run of two or
+# more rows printed again later with the same dates, details, amounts and
+# balances (a statement or an export pasted to itself), would be counted twice;
+# a run's two copies may not overlap. Two identical coffees in a row are one
+# repeated ROW, not a repeated run, and stay.
+.ar_repeats <- function(tx, page = NULL, page_text = NULL) {
+  n <- nrow(tx)
+  if (length(page_text) && length(page) == n && n) {
+    used <- sort(unique(page[!is.na(page)]))
+    used <- used[used <= length(page_text)]
+    t <- trimws(gsub("[[:space:]]+", " ", as.character(page_text[used])))
+    dup <- which(duplicated(t) & nzchar(t))
+    if (length(dup))
+      return(list(ok = FALSE, why = sprintf("Page %d prints exactly what page %d prints: a page in the file twice would be counted twice.",
+                                            used[dup[1]], used[match(t[dup[1]], t)])))
+  }
+  if (n >= 4L) {
+    num <- function(v) ifelse(is.na(v), "", sprintf("%.2f", round(as.numeric(v), 2)))
+    desc <- tolower(trimws(gsub("[[:space:]]+", " ", ifelse(is.na(tx$description), "", as.character(tx$description)))))
+    key <- paste(ifelse(is.na(tx$date), "", as.character(tx$date)), desc, num(tx$amount), num(tx$balance %||% rep(NA, n)), sep = "|")
+    pos <- split(seq_len(n - 1L), paste(key[-n], key[-1], sep = "\r"))
+    hit <- Filter(function(ix) length(ix) >= 2L && max(ix) - min(ix) >= 2L, pos)
+    if (length(hit)) {
+      ix <- hit[[order(vapply(hit, min, 0L))[1]]]
+      return(list(ok = FALSE, why = sprintf(paste("Rows %d and %d are printed again as rows %d and %d, with the same dates, details and",
+                                                   "amounts: a run of rows in the file twice would be counted twice."),
+                                             ix[1], ix[1] + 1L, max(ix), max(ix) + 1L)))
+    }
+  }
+  list(ok = TRUE, why = "No page and no run of rows is printed twice.")
+}
+
+# .ar_ends_inside(anchors, n) -> list(sections, between), each list(ok, why). An
+# opening or closing balance printed inside the table (never a carried balance)
+# belongs at the table's ends. One with rows on both sides of it means either
+# that a closing balance and a new opening balance meet there -- another
+# statement or account starts (`sections`) -- or that rows are printed before
+# the statement opens or after it closes (a held card payment, an uncleared
+# deposit shown above the opening balance) and are not its rows (`between`).
+.ar_ends_inside <- function(anchors, n) {
+  ok <- list(sections = list(ok = TRUE, why = "The table holds one statement of one account."),
+             between = list(ok = TRUE, why = "Every row sits between the statement's opening and closing balances."))
+  a <- Filter(function(a) isTRUE(a$in_table) && isTRUE(a$class %in% c("open", "close")) &&
+                !grepl(.AR_CARRY_RX, .ar_norm_label(a$label), perl = TRUE), anchors)
+  inner <- Filter(function(a) a$before_rows > 0L && a$before_rows < n, a)
+  if (!length(inner)) return(ok)
+  at <- vapply(inner, function(a) as.numeric(a$before_rows), 0)
+  cls <- vapply(inner, function(a) a$class, "")
+  meet <- intersect(at[cls == "close"], at[cls == "open"])
+  where <- function(a) if (!is.null(a$page) && !is.na(a$page)) sprintf(" (page %d)", as.integer(a$page)) else ""
+  if (length(meet)) {
+    a1 <- inner[[which(at == meet[1])[1]]]
+    ok$sections <- list(ok = FALSE, why = sprintf(paste(
+      "A closing balance is followed by a new opening balance after row %d%s: another statement or account",
+      "starts there. Each part may add up on its own, but they are not one account's rows."), as.integer(meet[1]), where(a1)))
+  }
+  rest <- inner[!(at %in% meet)]
+  if (length(rest)) {
+    a1 <- rest[[1]]
+    ok$between <- list(ok = FALSE, why = if (identical(a1$class, "open"))
+      sprintf(paste("Row(s) are printed above the opening balance%s. A line shown before the statement opens (a held",
+                    "card payment, an uncleared deposit) is not one of its transactions."), where(a1))
+      else sprintf(paste("Row(s) are printed below the closing balance%s. A line shown after the statement closes",
+                         "(a pending item) is not one of its transactions."), where(a1)))
+  }
+  ok
+}
+
+# .ar_ends_printed(pts, totals_ok, labels_ok) -> list(ok, why). A statement is
+# shown complete only when both its ends are printed: its closing balance and its
+# opening balance (the rows must reach both; a carried-forward balance is neither
+# end), or printed totals the rows match, or page numbers "Page N of N" with
+# every page in the file. Otherwise the file may stop before the statement does,
+# or start after it began (a statement listed newest first loses its oldest rows
+# at the foot), and every row left still adds up. (Measured: no statement of the
+# dev, corpus or offset-sweep sets that proves itself prints only one end.)
+.ar_ends_printed <- function(pts, totals_ok, labels_ok) {
+  # The balances the reading's chain uses (.ar_anchor_points): an opening or a
+  # closing balance, in a box or in the table, or a totals row printing the
+  # balance where it stands -- never a carried balance.
+  src <- as.character(pts$src %||% character(0))
+  src <- src[!grepl("~carry", src, fixed = TRUE)]
+  cls <- sub("[@~].*$", "", src)
+  by <- isTRUE(totals_ok) || isTRUE(labels_ok)
+  if (!by && !("close" %in% cls))
+    return(list(ok = FALSE, why = paste("Nothing marks the end of the statement (a closing balance, a totals line, or",
+                                        "\"Page N of N\" with every page there), so pages after the last one in the file could be missing.")))
+  if (!by && !("open" %in% cls))
+    return(list(ok = FALSE, why = paste("Nothing marks the start of the statement (an opening balance, a totals line, or",
+                                        "\"Page 1 of N\" with every page there), so pages before the first one in the file could be missing.")))
+  list(ok = TRUE, why = if (isTRUE(labels_ok)) "The page numbers show every page is in the file."
+       else if (isTRUE(totals_ok)) "The printed totals match the rows, so none is missing."
+       else "The statement's opening and closing balances are printed, and the rows must reach both.")
+}
+
+# .ar_two_sided(cells, roles, decimal, aligned) -- the rows (positions) printing a
+# figure other than zero in both the money-out and the money-in column.
+.ar_two_sided <- function(cells, roles, decimal = "auto", aligned = TRUE) {
+  dj <- which(roles == "debit"); cj <- which(roles == "credit")
+  if (!aligned || !length(dj) || !length(cj) || is.null(cells) || !NROW(cells)) return(integer(0))
+  cells <- as.matrix(cells)
+  dv <- .num(cells[, dj[1]], decimal); cv <- .num(cells[, cj[1]], decimal)
+  which(!is.na(dv) & !is.na(cv) & abs(dv) > 0 & abs(cv) > 0)
+}
+
+# .ar_currency_own(text) -> list(ok, why): the statement's own title and summary
+# (`text`, .ar_own_text) name no currency but New Zealand dollars. The reading is
+# put out in NZD, so a US-dollar account's figures would be labelled NZD.
+.ar_currency_own <- function(text) {
+  s <- toupper(paste(text %||% character(0), collapse = " \n "))
+  other <- setdiff(.MONEY_WORDS, "NZD")
+  hit <- other[vapply(other, function(cc) grepl(sprintf("\\b%s\\b", cc), s, perl = TRUE), logical(1))]
+  if (!length(hit)) return(list(ok = NA, why = "The statement names no currency but New Zealand dollars for its account."))
+  list(ok = FALSE, why = sprintf(paste("The statement's own title or summary names %s, so its account may not be in New Zealand",
+                                       "dollars, and the reading is put out in NZD."), paste(hit, collapse = " and ")))
+}
+
+# .ar_year_unpinned(d, yl, per, dir) -- the rows whose year the statement does not
+# settle, when their dates print no year (`yl`, positions in `d`, the dates as
+# read). Each such row may take any year that puts it inside a printed period;
+# the rows must also run in date order (`dir`). A row is settled when exactly
+# one year is left for it once the order is respected, and it was read in that
+# year; every other year-less row is returned. Rows with no year inside any
+# period are left to dates_in_period.
+.ar_year_unpinned <- function(d, yl, per, dir) {
+  n <- length(d)
+  lo_p <- min(vapply(per, function(p) as.numeric(p[1]), 0)); hi_p <- max(vapply(per, function(p) as.numeric(p[2]), 0))
+  yrs <- seq(as.integer(format(as.Date(lo_p, origin = "1970-01-01"), "%Y")),
+             as.integer(format(as.Date(hi_p, origin = "1970-01-01"), "%Y")))
+  cands <- lapply(seq_len(n), function(i) {
+    if (!(i %in% yl)) return(as.numeric(d[i]))
+    cc <- suppressWarnings(as.Date(paste0(yrs, format(d[i], "-%m-%d"))))
+    cc <- cc[!is.na(cc)]
+    inside <- Reduce(`|`, lapply(per, function(p) cc >= p[1] & cc <= p[2]))
+    sort(as.numeric(cc[inside]))
+  })
+  if (any(lengths(cands) == 0L) || all(lengths(cands) <= 1L)) return(integer(0))
+  o <- if (identical(dir, "new")) rev(seq_len(n)) else seq_len(n)
+  cc <- cands[o]
+  # The earliest each row can be with every row before it in order, and the
+  # latest with every row after it in order: equal only when one year is left.
+  lo <- numeric(n); prev <- -Inf
+  for (k in seq_len(n)) { ok <- cc[[k]][cc[[k]] >= prev]; if (!length(ok)) return(sort(intersect(o, yl))); lo[k] <- min(ok); prev <- lo[k] }
+  hi <- numeric(n); nxt <- Inf
+  for (k in rev(seq_len(n))) { ok <- cc[[k]][cc[[k]] <= nxt]; if (!length(ok)) return(sort(intersect(o, yl))); hi[k] <- max(ok); nxt <- hi[k] }
+  bad <- o[lo != hi | lo != as.numeric(d[o])]
+  sort(intersect(bad, yl))
 }
 
 # .ar_totals_ok(anchors, tx, page, rd, decimal) -- printed totals agree with the rows: each
@@ -1459,9 +1820,11 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 #     layout's (a card's export can share an everyday export's header);
 #   * wording: no row's description says the money went the other way
 #     ("PAYMENT RECEIVED" read as money out);
-#   * dates: no row borrows the date above it, unless the layout was learned from
-#     statements that print each day's date once (an undated detail line with a
-#     figure, "USD 25.00", is otherwise read as a transaction).
+#   * dates: no row borrows the date above it (an undated detail line with a
+#     figure, "USD 25.00", would be read as a transaction), whatever the layout;
+#   * the last rows: none is worded as a total or a balance;
+#   * other columns (a spreadsheet's status, currency or account column): no
+#     value the layout's own statements never held (.ar_col_values_new).
 .ar_layout_confirms <- function(cd, info, ctx) {
   sig <- cd$signature; lsig <- info$sig
   roles <- as.character(unlist(sig$roles))
@@ -1494,12 +1857,31 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       return(sprintf("A figure in the %s column prints %s, which says the money went the other way.",
                      side, .ar_marker_words(k[wrong])))
   }
+  # A spreadsheet's other columns (a status, a currency, an account): no value
+  # the layout's own statements never held. "Pending" in a Status column, "USD" in
+  # a Currency column, or a second account in an Account column says the rows are
+  # not this account's ordinary NZD transactions, and nothing adds up to show it.
+  cvn <- .ar_col_values_new(as.character(unlist(sig$col_values)), as.character(unlist(info$col_values)))
+  if (length(cvn)) {
+    h <- as.character(unlist(sig$col_headings))[cvn[1]]
+    nm <- if (length(h) && !is.na(h) && nzchar(h)) sprintf("\"%s\" column", h) else sprintf("column %d", cvn[1])
+    return(if (startsWith(as.character(unlist(info$col_values))[cvn[1]], "acct:"))
+      sprintf("The %s names more accounts than any of the layout's statements did, so its rows may be several accounts'.", nm)
+      else sprintf(paste("The %s holds a value the layout's statements never held (such as a pending status or another",
+                         "currency), so its rows may not be this account's ordinary transactions."), nm))
+  }
   if (!identical(isTRUE(ctx$liab$liability), isTRUE(info$liab)))
     return(if (isTRUE(ctx$liab$liability))
       "The statement reads as a credit card or loan account and the layout is an everyday account's, so its signs could run the other way."
       else "The layout is a credit card or loan account's and nothing on this statement says it is one, so its signs could run the other way.")
   tx <- cd$tx
   t <- tolower(tx$description %||% rep("", nrow(tx))); t[is.na(t)] <- ""
+  # A row that calls itself pending, authorised, scheduled or uncleared is not yet
+  # a transaction ("PENDING - EFTPOS HARBOUR CAFE").
+  pend <- which(grepl(.AR_SECTION_RX, t, perl = TRUE))
+  if (length(pend))
+    return(sprintf(paste("Row %d's wording (\"%s\") says it is pending or not yet processed, and nothing on the statement",
+                         "adds up to show whether it belongs."), pend[1], substr(tx$description[pend[1]], 1, 40)))
   inw <- grepl(.AR_IN_WORDS, t, perl = TRUE); outw <- grepl(.AR_OUT_WORDS, t, perl = TRUE)
   A <- tx$amount
   one <- xor(inw, outw) & !is.na(A) & A != 0
@@ -1514,11 +1896,61 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (any(rr == "amount") && !any(one))
     return(paste("No row's wording (a salary, a purchase, a payment received) says which way its amounts run,",
                  "and the layout alone cannot: a card's export can share an everyday export's columns."))
+  # A row that borrows the date of the row above may be a detail line of that
+  # row ("FOREIGN AMOUNT USD 25.00", "Day total") rather than a transaction, and
+  # with nothing to add up nothing tells them apart -- whatever the layout's own
+  # statements did with their dates.
   car <- which(grepl("date_carried", tx$flags %||% rep("", nrow(tx)), fixed = TRUE))
-  if (length(car) && !isTRUE(info$carry))
-    return(sprintf(paste("Row %d has no date of its own, and the layout's statements print a date on every row,",
-                         "so the line may be a detail of the row above rather than a transaction."), car[1]))
+  if (length(car))
+    return(sprintf(paste("Row %d has no date of its own, so the line may be a detail of the row above rather than",
+                         "a transaction, and nothing on the statement adds up to tell."), car[1]))
+  # The rows at the foot of the table worded as a total, a balance or a figure
+  # for the period ("Closing balance as at 31/03/2026", "Net movement for period",
+  # "Interest earned year to date") are summary lines printed as rows; with
+  # nothing to add up, nothing accounts for them.
+  last <- .ar_trailing_summary(tx$description)
+  if (length(last))
+    return(sprintf(paste("The last row (\"%s\") is worded as a total or a balance, and nothing on the statement",
+                         "adds up to show whether it is a transaction."), substr(tx$description[last[1]], 1, 40)))
   NULL
+}
+
+# Wording that names a total, a balance or a span of time rather than a payee: a
+# summary line printed as a row. Read only on the last rows of a table.
+.AR_SUMMARY_WORDING_RX <- paste0("\\b(?:totals?|subtotals?|balance|net|summary|turnover)\\b|",
+                                 "\\b(?:as at|to date|year to date|ytd|for (?:the )?(?:period|month|year|day))\\b")
+
+# .ar_trailing_summary(desc) -- the rows at the end of the table, from the last
+# one up, whose wording is a summary's (.AR_SUMMARY_WORDING_RX).
+.ar_trailing_summary <- function(desc) {
+  d <- tolower(ifelse(is.na(desc), "", as.character(desc)))
+  out <- integer(0)
+  for (i in rev(seq_along(d))) {
+    if (!grepl(.AR_SUMMARY_WORDING_RX, d[i], perl = TRUE)) break
+    out <- c(out, i)
+  }
+  out
+}
+
+# .ar_col_values_new(mine, theirs) -- the columns (positions) where this file holds
+# what the layout's statements never did: a word outside a column of words
+# ("cat:"), more account numbers than an account column ever held ("acct:"), or
+# no longer a column of such values at all. A column the layout keeps nothing for
+# ("") asks nothing.
+.ar_col_values_new <- function(mine, theirs) {
+  if (!length(theirs) || length(mine) != length(theirs)) return(integer(0))
+  bad <- vapply(seq_along(theirs), function(j) {
+    t <- theirs[j]; m <- mine[j]
+    if (is.na(t) || !nzchar(t)) return(FALSE)
+    if (startsWith(t, "acct:")) return(!startsWith(m, "acct:") ||
+                                         isTRUE(as.integer(sub("acct:", "", m)) > as.integer(sub("acct:", "", t))))
+    if (startsWith(t, "cat:")) {
+      if (!startsWith(m, "cat:")) return(TRUE)
+      return(!all(strsplit(sub("^cat:", "", m), "|", fixed = TRUE)[[1]] %in% strsplit(sub("^cat:", "", t), "|", fixed = TRUE)[[1]]))
+    }
+    FALSE
+  }, logical(1))
+  which(bad)
 }
 
 # .ar_col_signs(V) -- per figure column, the ways its figures print their sign
@@ -1584,7 +2016,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   list(ref = paste0(id, "@", ver), kind = sig$kind %||% "pdf", roles = unlist(roles), conv = conv,
        liab = isTRUE(au$liab), dir = if (isTRUE(sig$newest_first)) "new" else (au$dir %||% "old"),
        proven = status %in% c("proven", "confirmed"), sig = sig,
-       carry = isTRUE(as.logical(unlist(au$dates_carried))[1]))
+       # The column values every proving statement held (the layout block's, which
+       # learning widens), else the first statement's.
+       col_values = as.character(unlist(ly$layout$signature$col_values %||% sig$col_values)))
 }
 
 # .ar_layout_ref_info(ref, layouts) -- what the layout handed in as "<id>@<version>"

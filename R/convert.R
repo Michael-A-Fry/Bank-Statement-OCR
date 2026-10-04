@@ -653,6 +653,19 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     status <- if (!has_rows || all(outcomes == "unread")) "unsupported"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
+    # ONE FILE, SEVERAL STATEMENTS. Each statement of a bundle is read and proven on
+    # its own, but the file as a whole is not proven complete: a statement missing
+    # from the start or the end of the bundle leaves no trace on the pages that
+    # remain (the rest still add up, and still follow on from each other). So a
+    # person confirms the file holds every statement it should. Each statement's
+    # own proof still teaches its layout.
+    if (k > 1L && identical(status, "ok")) {
+      status <- "needs_review"; worst <- "check"
+      stamp$outcome <- "check"; stamp$proof_kind <- "none"
+      reason <- sprintf(paste("This file holds %d statements, and each adds up on its own; but a statement missing from",
+                              "the start or the end of the file would leave no trace on the pages that remain, so",
+                              "confirm the file holds every statement it should."), k)
+    }
     # Nothing read: the run log carries a structural fingerprint of the file
     # instead (R/layout.R, unread_fingerprint), so Admin -> Health can group the
     # unreadable files by what they look like rather than as one "(unknown)" row.

@@ -154,6 +154,32 @@
   substr(line, p + attr(p, "match.length"), nchar(line))
 }
 
+# .label_starts_phrase(line, term) -- does the label `term` start its phrase on
+# this line? A phrase starts at the line's start, after a colon, after a wide gap
+# (two or more spaces: the next cell of a laid-out page), or after another
+# field's date. Only the word
+# "statement" or a determiner ("your", "this", "the") may stand in front of it
+# inside the phrase: "Statement date", "Your statement date" and "Date issued"
+# are the statement's; "Account opening date", "Loan start date", "Our terms and
+# conditions issued" and "Card issued" name another thing's date.
+.label_starts_phrase <- function(line, term) {
+  lc <- tolower(line); tm <- tolower(term)
+  at <- gregexpr(tm, lc, fixed = TRUE)[[1]]
+  if (at[1] < 0) return(FALSE)
+  for (p in at) {
+    pre <- substr(lc, 1L, p - 1L)
+    cell <- utils::tail(strsplit(pre, "[[:blank:]]{2,}|:|[|]")[[1]], 1L)
+    # A wide gap or a colon right in front of the label starts a new phrase, and
+    # so does another field's date value ("Opening date 1 Jan 26 Closing date").
+    if (!length(cell) || grepl("([[:blank:]]{2,}|:|[|])[[:blank:]]*$", pre)) return(TRUE)
+    if (grepl(sprintf("(?:%s)[[:blank:]]*$", safe(lex("date_regex"), .DATE_RX)), pre, perl = TRUE)) return(TRUE)
+    w <- strsplit(trimws(cell), "[[:blank:]]+")[[1]]
+    w <- w[nzchar(w)]
+    if (!length(w) || all(w %in% c("statement", "your", "this", "the"))) return(TRUE)
+  }
+  FALSE
+}
+
 # match_label(spec, pages, dict) -> list(value, values, raw, matched, n,
 # conflict, term). The generic single-value extractor everything routes through.
 match_label <- function(spec, pages, dict = NULL) {
@@ -179,6 +205,14 @@ match_label <- function(spec, pages, dict = NULL) {
   }
   if (!length(hits)) return(empty)
   ord <- order(hits); hits <- hits[ord]; hit_terms <- hit_terms[ord]
+  # `own`: only a label that starts its phrase names the statement's own value.
+  # "Account opening date 12 Mar 2019" holds "opening date", but the words in
+  # front of it say whose date it is -- the account's, not the statement's.
+  if (isTRUE(spec$own)) {
+    keep <- vapply(seq_along(hits), function(i) .label_starts_phrase(lines[hits[i]], hit_terms[i]), logical(1))
+    hits <- hits[keep]; hit_terms <- hit_terms[keep]
+    if (!length(hits)) return(empty)
+  }
 
   # Prefer a value ON the label line; only if none carry one, look at the next
   # line (label above value). This skips heading/annotation lines cleanly.

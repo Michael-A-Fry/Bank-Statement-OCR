@@ -485,9 +485,35 @@
     gl <- unique(dk[dg == g]); ml <- unique(dk[dg == dmain])
     length(intersect(gl, ml)) >= 0.5 * length(gl)
   }, logical(1))]
+  date_by <- "only"; date_names <- character(0); date_differ <- 0L
   if (length(rest)) {
     g2 <- rest[order(-sup[as.character(rest)], vapply(rest, function(g) min(dph$xs[dg == g]), 0))][1]
+    # Which of the two is the transaction's date is never decided by where the
+    # column sits (swapping the columns would change every date): the heading that
+    # names the transaction date wins ("Transaction date" over "Processed date",
+    # the rule spreadsheets follow, .ar_date_heading_rank). With no heading to
+    # decide, the column whose dates come first is shown (a transaction is made
+    # before it is processed) and, when the two give different dates, the reading
+    # is held back (date_by "open": dates_settled fails).
+    h1 <- .ar_date_col_heading(pgs, dph, dg, dmain); h2 <- .ar_date_col_heading(pgs, dph, dg, g2)
+    r1 <- .ar_date_heading_rank(h1); r2 <- .ar_date_heading_rank(h2)
+    tx_of <- function(g) { v <- dph$text[dg == g]; k <- dk[dg == g]; tapply(v, k, function(z) gsub("[[:space:]]+", " ", z[1])) }
+    t1 <- tx_of(dmain); t2 <- tx_of(g2); both <- intersect(names(t1), names(t2))
+    date_differ <- sum(t1[both] != t2[both])
+    swap <- r2 > r1
+    if (r1 == r2 && date_differ > 0L) {
+      first <- function(g) { f <- strsplit(dph$fmts[dg == g], "|", fixed = TRUE)
+        d <- vapply(seq_along(f), function(i) { fm <- f[[i]][1]
+          iso <- if (grepl("%[Yy]", fm)) parse_date(dph$text[dg == g][i], fm)$iso else parse_date(paste(dph$text[dg == g][i], "2000"), paste(fm, "%Y"))$iso
+          as.numeric(as.Date(iso)) }, 0)
+        sum(d, na.rm = TRUE) }
+      swap <- first(g2) < first(dmain)
+    }
+    if (swap) { tmp <- dmain; dmain <- g2; g2 <- tmp; tmp <- h1; h1 <- h2; h2 <- tmp }
+    dcol <- list(x = min(dph$xs[dg == dmain]), x1 = max(dph$x1s[dg == dmain]))
     date2 <- list(x = min(dph$xs[dg == g2]), x1 = max(dph$x1s[dg == g2]))
+    date_by <- if (r1 != r2) "heading" else if (date_differ > 0L) "open" else "same"
+    date_names <- c(if (nzchar(h1)) sprintf("\"%s\"", h1) else "one", if (nzchar(h2)) sprintf("\"%s\"", h2) else "the other")
   }
   in_dcol <- function(ph) ph$kind == "date" & ph$xs <= dcol$x + tol & ph$xs >= dcol$x - tol
   seedkey <- intersect(seedkey, key(allph$page, allph$line)[in_dcol(allph)])
@@ -505,7 +531,45 @@
     body <- nb
   }
   body <- reg$body
-  .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan)
+  m <- .ar_finish_model(pgs, allph, groups, reg, body, dcol, date2, shift, tol, scan)
+  if (!is.null(m)) { m$date_by <- date_by; m$date_names <- date_names; m$date_differ <- date_differ }
+  m
+}
+
+# .ar_date_col_heading(pgs, dph, dg, g) -- the heading printed over date column g,
+# as plain words: on the first page the column's dates are on, going up from its
+# first date, the nearest line of words only with a word over the column (lines
+# with nothing over the column -- a cardholder's name line, an opening balance in
+# the description -- are passed over, at most three), with any words-only line
+# stacked tight above it that also has a word over the column ("Transaction" over
+# "date"). Only the words whose ink overlaps the column count. "" when none is
+# printed.
+.ar_date_col_heading <- function(pgs, dph, dg, g) {
+  m <- dph[dg == g, , drop = FALSE]
+  p <- min(m$page); pg <- pgs[[p]]
+  if (is.null(pg) || !nrow(pg$lines)) return("")
+  mm <- m[m$page == p, , drop = FALSE]
+  lo <- min(mm$xs) - 2; hi <- max(mm$x1s) + 2
+  ln <- pg$lines[order(pg$lines$y), , drop = FALSE]; w <- pg$w
+  # The top of the first dated line, as the line's own words put it (on a scan a
+  # line's words do not share one top), and never that line itself.
+  y0 <- min(ln$y[ln$line %in% mm$line])
+  over <- function(l) which(w$line == l & w$xs <= hi & w$x1s >= lo)
+  heading_line <- function(l) { ix <- over(l); length(ix) > 0L && all(w$kind[w$line == l] == "text") }
+  pitch <- 2.2 * pg$h; skipped <- 0L; take <- integer(0)
+  for (i in rev(which(ln$y < y0 - 0.5 & !(ln$line %in% mm$line)))) {
+    if (y0 - ln$y[i] > 6 * pitch) break
+    if (heading_line(ln$line[i])) { take <- i; break }
+    # A date or a figure printed over the column: a row of something else, not a heading.
+    if (length(over(ln$line[i])) && any(w$kind[over(ln$line[i])] != "text")) break
+    skipped <- skipped + 1L
+    if (skipped > 3L) break
+  }
+  if (!length(take)) return("")
+  i <- take
+  while (i > 1L && ln$y[i] - ln$y1[i - 1L] <= 1.2 * pg$h && heading_line(ln$line[i - 1L])) { i <- i - 1L; take <- c(i, take) }
+  sel <- unlist(lapply(ln$line[take], over))
+  .ar_head_words(paste(w$text[sel][order(w$y[sel], w$xs[sel])], collapse = " "))
 }
 
 # .ar_figure_groups(allph, body, dcol, date2, tol, pgs) -- the figure columns: the

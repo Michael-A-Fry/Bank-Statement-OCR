@@ -21,12 +21,17 @@ read_excel_input <- function(path) {
     "amount|balance|debit|credit|withdraw|deposit|paid in|paid out|money in|money out|value",
     tolower(v %||% ""))
   best <- NULL
+  # How many sheets hold dated rows with figures. The reader takes ONE sheet, so a
+  # workbook with a second such sheet (pending items, another account, scheduled
+  # payments, a hidden "Data" sheet) is one the reader must not call complete.
+  dated_sheets <- 0L
   for (sh in sheets) {
     raw <- safe(suppressMessages(as.data.frame(
       readxl::read_excel(path, sheet = sh, col_names = FALSE, col_types = "text",
                          n_max = 2000, .name_repair = "minimal"),
       stringsAsFactors = FALSE)))
     if (is.null(raw) || !nrow(raw) || !ncol(raw)) next
+    if (.excel_dated_rows(raw) >= 2L) dated_sheets <- dated_sheets + 1L
     hdr <- NA_integer_
     for (r in seq_len(min(30L, nrow(raw)))) {
       cells <- trimws(as.character(unlist(raw[r, ], use.names = FALSE)))
@@ -41,10 +46,11 @@ read_excel_input <- function(path) {
   }
   # No sheet looked like a transaction table -> old behaviour (sheet 1 as-is),
   # so a plain grid with unusual header names still reads.
+  hidden <- safe(.excel_hidden_rows(path), 0L)
   if (is.null(best)) {
     tbl <- safe(as.data.frame(readxl::read_excel(path, col_types = "text"),
                               stringsAsFactors = FALSE))
-    return(list(table = tbl))
+    return(list(table = tbl, dated_sheets = dated_sheets, hidden_rows = hidden))
   }
   raw <- best$raw
   # Preamble = every row ABOVE the header (bank / account / period / balances a
@@ -82,7 +88,42 @@ read_excel_input <- function(path) {
       tbl[[cn]] <- v
     }
   }
-  list(table = tbl, sheet = best$sheet, header_row = best$hdr, preamble = preamble)
+  list(table = tbl, sheet = best$sheet, header_row = best$hdr, preamble = preamble,
+       dated_sheets = dated_sheets, hidden_rows = hidden)
+}
+
+# .excel_dated_rows(raw) -- how many rows of one sheet (all cells as text) print
+# a date and a figure: a day/month/year date or an Excel date serial beside a
+# number. Two or more such rows make the sheet one that holds transactions.
+.excel_dated_rows <- function(raw) {
+  m <- as.matrix(raw); m[is.na(m)] <- ""
+  m <- trimws(m)
+  dt <- matrix(grepl("^[0-9]{1,4}[-/. ][0-9A-Za-z]{1,9}[-/. ][0-9]{2,4}$", m) |
+                 (grepl("^[0-9]{5}([.][0-9]+)?$", m) & suppressWarnings(as.numeric(m)) >= 36526 &
+                    suppressWarnings(as.numeric(m)) < 51502), nrow(m))
+  dt[is.na(dt)] <- FALSE
+  num <- matrix(grepl("^[-(]?[$]?[0-9][0-9,]*([.][0-9]+)?[)]?$", m), nrow(m))
+  # a figure in a cell other than the date's
+  sum(vapply(seq_len(nrow(m)), function(i) any(dt[i, ]) && sum(num[i, ] & !dt[i, ]) >= 1L, logical(1)))
+}
+
+# .excel_hidden_rows(path) -- how many rows the workbook's sheets hide (hidden, or
+# set to zero height): a filtered export keeps the rows it does not show, and
+# the reader would read them all.
+.excel_hidden_rows <- function(path) {
+  files <- safe(utils::unzip(path, list = TRUE)$Name, character(0))
+  ws <- files[grepl("^xl/worksheets/[^/]+[.]xml$", files)]
+  if (!length(ws)) return(0L)
+  d <- tempfile("xlsx_rows_"); on.exit(unlink(d, recursive = TRUE), add = TRUE)
+  n <- 0L
+  for (f in ws) {
+    x <- safe(utils::unzip(path, files = f, exdir = d), NULL)
+    if (is.null(x) || !length(x)) next
+    s <- paste(readLines(x, warn = FALSE), collapse = "")
+    rows <- regmatches(s, gregexpr("<row [^>]*>", s))[[1]]
+    n <- n + sum(grepl("hidden=\"(1|true)\"|ht=\"0(\\.0+)?\"", rows))
+  }
+  n
 }
 
 # read_pdf_input(path) -- PDF reader delegating to read_pdf() (R/read_pdf.R):
@@ -177,6 +218,8 @@ read_input <- function(path) {
     x <- read_excel_input(path)
     input$table <- x$table
     input$meta$preamble <- x$preamble %||% character(0)
+    input$meta$dated_sheets <- x$dated_sheets %||% NA_integer_
+    input$meta$hidden_rows <- x$hidden_rows %||% NA_integer_
   } else if (ext == "pdf") {
     input$kind <- "pdf"
     x <- read_pdf_input(path)

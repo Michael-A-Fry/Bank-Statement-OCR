@@ -109,6 +109,9 @@ layouts_dir <- function(cfg = load_config()) {
        # after the roles, so a file cut short without it has lost required fields
        # too and is refused as incomplete.
        col_headings = chr(sig$col_headings),
+       # What a spreadsheet's other columns hold ("cat:posted", "acct:1", ""),
+       # aligned with `roles`; no account number is ever among them. Optional too.
+       col_values = chr(sig$col_values),
        date_format = one(sig$date_format, ""),
        money_style = one(sig$money_style, ""),
        sign_markers = .layout_sort(unique(chr(sig$sign_markers))),
@@ -682,6 +685,12 @@ layout_learn <- function(reading, bank, file_sha, dir = layouts_dir(), accounts 
     pb <- c(lb$proved_by, sha)
     sig2 <- lb$signature
     sig2$heading_tokens <- c(sig2$heading_tokens, sig$heading_tokens)
+    # The values each column held, over every statement that proved the layout: a
+    # status column that read "Posted" on one and "Posted" / "Reversed" on another
+    # holds both. A layout from before this was kept has none, and keeps none.
+    cv1 <- as.character(unlist(sig2$col_values)); cv2 <- as.character(unlist(sig$col_values))
+    if (length(cv1) && length(cv1) == length(cv2))
+      sig2$col_values <- vapply(seq_along(cv1), function(j) .ar_col_value_merge(cv1[j], cv2[j]), "")
     # A layout learned before accounts were told apart has no salt yet; its first
     # statement with an account number gives it one. Its earlier proofs are
     # statements whose account is not known.

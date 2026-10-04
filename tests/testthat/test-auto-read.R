@@ -235,7 +235,8 @@ test_that("unsigned amounts take the one sign the balance allows, or none at all
   rows <- c("         Opening balance                                       1,000.00",
             "03 Feb   EFTPOS RIVERSIDE DAIRY                   12.40         987.60",
             "05 Feb   SALARY MATAI HOLDINGS                 3,120.00       4,107.60",
-            "09 Feb   DD CITY COUNCIL RATES                   268.15       3,839.45")
+            "09 Feb   DD CITY COUNCIL RATES                   268.15       3,839.45",
+            "         Closing balance                                       3,839.45")
   rd <- auto_read(ar_pdf(c(h, rows)))
   expect_equal(rd$outcome, "proven")
   expect_equal(round(rd$transactions$amount, 2), c(-12.40, 3120.00, -268.15))
@@ -324,14 +325,18 @@ test_that("a card's sections and its totals line are never rows", {
   expect_equal(round(rd$transactions$amount, 2), c(-50, 200, -50))
 })
 
-test_that("a bundle of statements is proven statement by statement", {
+test_that("a bundle of statements adds up statement by statement, and a person confirms it is whole", {
   box <- function(p0, p1, op, cl) c(paste("Kauri Bank                         Statement period", p0, "to", p1),
     paste("Opening balance", op), paste("Closing balance", cl), "", ar_head[3])
   s1 <- c(box("1 Feb 2026", "28 Feb 2026", "1,000.00", "3,344.91"), ar_rows[2:7])
   s2 <- c(box("1 Mar 2026", "31 Mar 2026", "3,344.91", "3,304.91"),
           "02 Mar   ATM WITHDRAWAL                              40.00                  3,304.91")
   rd <- auto_read(ar_pdf(s1, s2))
-  expect_equal(rd$outcome, "proven")
+  # Every balance step holds, but a statement missing from either end of such a
+  # file would leave no trace (round 2): read whole, it goes to a person.
+  expect_equal(rd$outcome, "check")
+  expect_true(ok_of(rd, "balance_chain"))
+  expect_false(ok_of(rd, "one_statement"))
   expect_equal(round(rd$transactions$amount, 2), c(ar_want, -40))
 })
 
@@ -497,14 +502,19 @@ test_that("without a running balance or totals nothing is proven; the reading is
   expect_equal(rd$proof$kind, "none")
 })
 
-test_that("each account of a combined statement is proven from its own opening to its own closing", {
+test_that("a combined statement's second account is never proven into the first account's rows", {
+  # Each account adds up from its own opening to its own closing, but the reading
+  # is one list of rows under one account: the two are never one chain, and a
+  # person reads it (round 2; reading each account as its own is not built yet).
   acct2 <- c("Online saver",
     "Date     Details                          Withdrawals     Deposits      Balance",
     "         Opening balance                                                  9,000.00",
     "05 Feb   TFR FROM EVERYDAY                                     500.00    9,500.00",
     "         Closing balance                                                  9,500.00")
   rd <- auto_read(ar_pdf(c(ar_head, ar_rows, acct2)))
-  expect_equal(rd$outcome, "proven")
+  expect_equal(rd$outcome, "check")
+  expect_false(ok_of(rd, "one_statement"))
+  expect_true(ok_of(rd, "balance_chain"))
   expect_equal(round(rd$transactions$amount, 2), c(ar_want, 500))
 })
 
@@ -586,7 +596,8 @@ test_that("the account type alone never decides which way round: something on th
             "09 Feb   MAIN ST CAFE                             -20.00         930.00")
   expect_false(ar_auto(auto_read(ar_pdf(c(h, rows)))))
   # One row that says which way it went settles it.
-  rows <- c(rows, "12 Feb   SALARY MATAI HOLDINGS                   300.00       1,230.00")
+  rows <- c(rows, "12 Feb   SALARY MATAI HOLDINGS                   300.00       1,230.00",
+            "         Closing balance                                       1,230.00")
   rd <- auto_read(ar_pdf(c(h, rows)))
   expect_equal(rd$outcome, "proven")
   expect_equal(round(rd$transactions$amount, 2), c(-50, -20, 300))
@@ -946,7 +957,9 @@ test_that("metamorphic: dropping a page of a bundle is caught or still right", {
   skip_if_not(file.exists(p))
   inp <- read_input(p)
   full <- auto_read(inp)
-  expect_equal(full$outcome, "proven")
+  # Read whole, a bundle is never automatic (round 2: one_statement); the rule
+  # below is the one that matters: a page dropped is never an automatic answer.
+  expect_false(ar_auto(full))
   drop2 <- inp
   for (k in c("words", "pages", "page_width", "page_height", "page_ocr")) if (!is.null(drop2[[k]])) drop2[[k]] <- drop2[[k]][-2]
   rd <- auto_read(drop2)
@@ -1224,7 +1237,9 @@ test_that("another table's dated figures on a cover page do not hold back a prov
   rd <- auto_read(ar_pdf(ar_cover, c(ar_head, ar_rows)))
   expect_equal(rd$outcome, "proven")
   expect_equal(round(rd$transactions$amount, 2), ar_want)
-  expect_true(isTRUE(ok_of(rd, "other_tables")))
+  # Titled "Upcoming automatic payments", the cover's table is set aside as a
+  # section of things not yet paid (round 2) before it can count as another table.
+  expect_true(isTRUE(ok_of(rd, "sections_set_aside")) || isTRUE(ok_of(rd, "other_tables")))
 })
 
 test_that("another table is set aside only when the printed opening and closing balances add up", {
