@@ -6,7 +6,8 @@
 #
 # build_diagnostics(status, messages, reading, parsed, recon, metadata) ->
 # data.frame with columns: where, category, severity, detail, how_to_fix,
-# fix_owner (most severe first).
+# fix_owner (most severe first). `reading$kind` is the kind of file (pdf, scan,
+# delimited, excel), which decides how the way to Please check is described.
 
 .diag_row <- function(where, category, severity, detail, how_to_fix) {
   data.frame(where = where, category = category, severity = severity,
@@ -33,10 +34,22 @@
   "statement on Please check; if the file itself is broken (a stray quote, a",
   "footer read as a row), ask for a fresh export.")
 
-.FIX_CHECK_READING <- paste(
-  "Open Please check: the columns found are drawn on the page. If the reading is",
-  "right, confirm it. If a column is wrong, set its role (money out, money in,",
-  "balance) and re-read - a fix that then adds up is learned for this bank.")
+# .fix_check_reading(kind) -- the cure for a reading that needs a person, said for
+# the kind of file. A PDF or a scan has a page, and Please check draws the columns
+# found on it; a CSV or a spreadsheet has no page, and Please check lists its
+# columns by their headings instead. The one sentence used to promise a drawn page
+# for every file, a CSV included.
+.fix_check_reading <- function(kind = NULL) {
+  kind <- as.character(kind %||% NA_character_)[1]
+  where <- if (!is.na(kind) && kind %in% c("pdf", "scan"))
+    "Open Please check: the columns found are drawn on the page."
+  else if (!is.na(kind) && kind %in% c("delimited", "excel"))
+    "Open Please check: the file's columns are listed by their headings, with what each was read as."
+  else "Open Please check to see the columns found."
+  paste(where, "If the reading is right, confirm it. If a column is wrong, set its role",
+        "(money out, money in, balance) and re-read - a fix that then adds up is learned",
+        "for this bank.")
+}
 
 .DIAG_FIX_OWNER <- c(
   # the analyst, on Please check
@@ -201,9 +214,9 @@ build_diagnostics <- function(status, messages = character(0), reading = NULL,
                 "straight, in good contrast - or ask the bank for a digital (text) PDF."))
   } else if (identical(status, "unsupported")) {
     add("reading", "not_read", "high", reading$why %||% "Nothing on the file could be read as a statement.",
-        paste(.FIX_CHECK_READING, "If the file is not a bank statement at all, set it aside."))
+        paste(.fix_check_reading(reading$kind), "If the file is not a bank statement at all, set it aside."))
   } else if (identical(status, "needs_review") && !is.null(reading$why)) {
-    add("reading", "not_proven", "medium", reading$why, .FIX_CHECK_READING)
+    add("reading", "not_proven", "medium", reading$why, .fix_check_reading(reading$kind))
   } else if (identical(status, "failed")) {
     add("file", "unreadable", "high",
         paste(messages, collapse = " "),
@@ -216,7 +229,7 @@ build_diagnostics <- function(status, messages = character(0), reading = NULL,
   nd <- suppressWarnings(as.integer(reading$derived %||% 0L))
   if (!is.na(nd) && nd > 0L)
     add("amounts", "derived_amounts", "medium",
-        sprintf("%d amount(s) could not be read and were filled in from the running balance (flag amount_from_balance)", nd),
+        sprintf("%d amount(s) could not be read and were worked out from the running balance instead; each one is marked in the Flags column", nd),
         "Check each marked amount against the statement before relying on it: it is arithmetic on two printed balances, not a figure read from the page.")
   # Two calls, two literal severities: a category whose severity is computed
   # cannot be audited by reading this file (test-diagnose.R scans for the shape).

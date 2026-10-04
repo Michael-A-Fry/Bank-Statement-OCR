@@ -13,7 +13,7 @@ is not a result.
 
     python3 tools/synth/make_bench.py --out /tmp/bench               # 30/100/200 pages
     python3 tools/synth/make_bench.py --out /tmp/bench --pages 400   # one big one
-    Rscript  tools/synth/bench.R /tmp/bench                          # the timings
+    Rscript  tools/synth/score_convert.R /tmp/bench --out bench.csv   # timings: its secs column
 
 Dev-time only. Nothing here ships to the server, which runs R and poppler alone.
 """

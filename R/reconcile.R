@@ -115,22 +115,31 @@
   n_der <- .n_from_balance(tx)
   if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt) && n_der >= n)
     return(.kpi("balance_reconciliation", "na",
-      detail = sprintf(paste("every one of the %d amount(s) was derived from the",
-                             "running-balance column, so adding them back up only",
-                             "re-states that column and proves nothing"), n)))
+      detail = sprintf(paste("every one of the %d amount(s) was worked out from the",
+                             "running balance, so adding them up only repeats that",
+                             "column and proves nothing"), n)))
   if (!is.na(opening) && !is.na(closing) && n > 0 && !length(na_amt)) {
     expected_close <- opening + sum(tx$amount)
     disc <- round(closing - expected_close, 2)
-    note <- if (length(derived))
-      sprintf(" [%s derived from the running-balance column]", paste(derived, collapse = " & ")) else ""
-    if (n_der > 0)
-      note <- sprintf("%s [%d of %d amount(s) derived from the balance column]", note, n_der, n)
+    # PLAIN WORDS, NOT A FORMULA. This detail is read on screen by staff who are
+    # not engineers ("opening 100.00 + sum(amount) 25.00 vs closing 125.00" was
+    # the engine's shorthand, shown as it was). The figures stay; the sentence
+    # says what they mean, and on a failure leads with the gap.
+    note <- c(if ("opening" %in% derived) "the opening balance is worked out from the first running balance, as none is printed",
+              if ("closing" %in% derived) "the closing balance is the last running balance, as none is printed",
+              if (n_der > 0) sprintf("%d of %d amount(s) were worked out from the running balance, so only the others are checked here", n_der, n))
+    note <- if (length(note)) paste0(" (", paste(note, collapse = "; "), ")") else ""
+    ok <- abs(disc) < PARAM_MONEY_TOL
     return(.kpi(
-      "balance_reconciliation", if (abs(disc) < PARAM_MONEY_TOL) "pass" else "fail",
+      "balance_reconciliation", if (ok) "pass" else "fail",
       expected = round(expected_close, 2), actual = round(closing, 2),
       discrepancy = disc,
-      detail = sprintf("opening %.2f + sum(amount) %.2f vs closing %.2f%s",
-                       opening, sum(tx$amount), closing, note)))
+      detail = if (ok)
+        sprintf("the opening balance %.2f plus the transactions (%+.2f) comes to the closing balance, %.2f%s",
+                opening, sum(tx$amount), closing, note)
+      else
+        sprintf("the opening balance %.2f plus the transactions (%+.2f) comes to %.2f, not the closing balance %.2f - %.2f apart%s",
+                opening, sum(tx$amount), expected_close, closing, abs(disc), note)))
   }
   if (!is.na(opening) && !is.na(closing) && n > 0) {
     # BOTH anchors are printed on the statement -- the strongest completeness proof
@@ -144,9 +153,9 @@
       expected = round(opening + sum(tx$amount, na.rm = TRUE), 2),
       actual = round(closing, 2), discrepancy = NA,
       detail = sprintf(paste0("cannot be proved: %d amount(s) could not be read (%s), ",
-                              "so opening %.2f + every transaction cannot be totalled ",
-                              "against the printed closing %.2f - resolve those amounts, ",
-                              "then re-run"),
+                              "so the opening balance %.2f and the transactions cannot be ",
+                              "added up to check against the printed closing balance %.2f - ",
+                              "fill in those amounts, then convert again"),
                        length(na_amt), .row_list(na_ids), opening, closing)))
   }
   # Honest about WHICH anchor is missing. The old single message claimed there was
@@ -220,20 +229,23 @@
     }
     last_bal <- bi; carry <- 0; gap_unknown <- FALSE   # reset the bridge
   }
-  detail <- sprintf("%d discontinuity(ies)", bad)
+  # Plain words: "1 discontinuity(ies)" was the engine's shorthand, shown as it was.
+  detail <- if (bad > 0)
+    sprintf("the running balance does not follow on at %d row(s): the balance printed is not the one before plus the amount", bad)
+  else "each balance printed is the one before plus the amount"
   if (unverifiable > 0)
-    detail <- sprintf("%s; %d gap(s) unverifiable (a bridged amount was blank)",
+    detail <- sprintf("%s; %d step(s) could not be checked, because an amount between two printed balances is blank",
                       detail, unverifiable)
   # A row whose amount was DERIVED from these balances satisfies this check by
   # construction, so it is not evidence. Say how many, and when that is every row
   # the check has tested nothing and must not report a pass.
   nd <- .n_from_balance(tx)
   if (nd > 0) {
-    detail <- sprintf("%s; %d of %d amount(s) were derived from this column and so prove nothing here",
+    detail <- sprintf("%s; %d of %d amount(s) were worked out from this balance column, so they prove nothing here",
                       detail, nd, n)
     if (n - nd < 2)
       return(.kpi("running_balance_continuity", "na",
-                  detail = sprintf("every amount was derived from the balance column, so there is nothing independent to check here (%d row(s))", n)))
+                  detail = sprintf("every amount was worked out from the running balance, so there is nothing independent to check here (%d row(s))", n)))
   }
   .kpi("running_balance_continuity", if (ok) "pass" else "fail",
        expected = 0, actual = bad, discrepancy = bad, detail = detail)

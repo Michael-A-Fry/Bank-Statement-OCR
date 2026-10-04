@@ -468,6 +468,20 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
   .text_sha256(paste0(sha, "#statement", i))
 }
 
+# .unit_accounts(reading, meta, input) -- the account numbers one statement shows,
+# so the statements that prove a layout can be told apart by account (spec
+# section 6: "from at least 2 different accounts"). The same set the metadata
+# record's account_hash is made from (R/metadata_capture.R): the account number
+# the reading took from the statement, and every account-shaped number printed on
+# it. Handed to layout_learn() in memory only; R/layouts.R keeps a short salted
+# mark of each, never a number. `meta` is the file's extract_metadata() for a
+# single statement, NULL for one statement of a bundle (read from its own pages).
+.unit_accounts <- function(reading, meta, input) {
+  if (is.null(meta)) meta <- safe(extract_metadata(input), list())
+  acc <- as.character(unlist(c(reading$parsed$header$account_number, meta$accounts)))
+  acc[!is.na(acc) & nzchar(trimws(acc))]
+}
+
 # convert_statement(path, bank, ...) -> result (build-contract sections 6, 7).
 #   bank            the person's pick (an institution id or name), or NULL to take
 #                   it from the statement (bank_pick); a confident disagreement
@@ -635,6 +649,16 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     status <- if (!has_rows || all(outcomes == "unread")) "unsupported"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
+    # Nothing read: the run log carries a structural fingerprint of the file
+    # instead (R/layout.R, unread_fingerprint), so Admin -> Health can group the
+    # unreadable files by what they look like rather than as one "(unknown)" row.
+    if (identical(status, "unsupported")) {
+      lsig <- safe(unread_fingerprint(input, stamp$kind, meta$pages_actual,
+                                      lapply(readings, function(r) r$columns), lsig), lsig)
+      lsig$hint <- .log_scrub(lsig$hint %||% NA_character_)
+      facts$layout_sig <- lsig$signature %||% NA_character_
+      facts$layout_hint <- lsig$hint %||% NA_character_
+    }
     if (identical(status, "needs_review") && all(outcomes %in% .AUTO) && ocr_poor)
       reason <- sprintf("The figures add up, but the scan was read with low confidence (%s), so a date or a word may be misread.",
                         if (is.finite(ocr_conf)) sprintf("%.0f%%", ocr_conf) else "not measured")
@@ -657,8 +681,9 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     learn <- vector("list", k)
     held <- NULL
     # The layouts this file has already counted towards. A bundle is nearly always
-    # one account's statements, and a layout is proven by statements of different
-    # accounts (spec section 6), so one file is one piece of evidence per layout.
+    # one account's statements, so one file is one piece of evidence per layout;
+    # layout_learn() then also needs the proofs to come from two accounts it can
+    # tell apart (spec section 6) before a layout is proven.
     credited <- character(0)
     for (i in seq_len(k)) {
       r <- readings[[i]]; f <- fixes[[i]]
@@ -681,7 +706,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
           if (!is.null(m) && m$id %in% credited)
             list(action = "none", ref = m$ref, id = m$id,
                  why = sprintf("Another statement of this file already counts towards layout %s; one file is one piece of evidence.", m$id))
-          else layout_learn(r, pick, .unit_sha(sha, i, k), ldir)
+          else layout_learn(r, pick, .unit_sha(sha, i, k), ldir,
+                            accounts = .unit_accounts(r, if (k == 1L) meta else NULL, units[[i]]$input))
         }
         else list(action = "none", why = "Only a reading the arithmetic proved teaches a layout.")
       if (!is.na(learn[[i]]$id %||% NA)) credited <- c(credited, learn[[i]]$id)
@@ -709,7 +735,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     facts$rows <- if (has_rows && status %in% c("ok", "needs_review")) nrow(parsed$transactions) else 0L
     pick_mismatch <- !is.na(ident$institution %||% NA) && !is.na(bank_slug) && !identical(ident$institution, bank_slug)
     diag <- build_diagnostics(status, parsed = parsed, recon = recon,
-      reading = list(outcome = worst, why = reason, derived = derived, fix_error = fix_err,
+      reading = list(outcome = worst, why = reason, derived = derived, fix_error = fix_err, kind = stamp$kind,
                      bank_why = if (isTRUE(pick$ask) || pick_mismatch) pick$why else NULL,
                      bank_blocked = bank_held || any(!is.na(unit_bank))),
       metadata = list(ink_minus_signs = input$meta$ink_minus_signs %||% 0L,
@@ -744,7 +770,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       status_message("needs_review", sub("[.]$", "", reason), "check the reading, then confirm it or set the columns' roles")
     else status_message("unsupported", sub("[.]$", "", reason), "check the columns on Please check, or set the file aside")
     if (derived > 0L)
-      msg <- c(msg, sprintf("%d amount(s) could not be read and were filled in from the running balance; they are marked amount_from_balance in the flags column.", derived))
+      msg <- c(msg, sprintf("%d amount(s) could not be read and were worked out from the running balance instead; each one is marked in the Flags column.", derived))
     if (length(fix_err)) msg <- c(sprintf("The fix was not applied: %s", fix_err[1]), msg)
     if (refused) msg <- c(if (length(contra))
       sprintf("This reading cannot be confirmed: the statement's own arithmetic contradicts it (%s) Set the columns' roles instead.", contra[1])

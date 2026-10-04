@@ -1,10 +1,11 @@
 # metadata_capture.R -- the LOCAL-ONLY "ML goldmine" capture.
 #
 # Every conversion can emit a rich, structured metadata record describing HOW it
-# went -- the layout it matched, how cleanly it parsed, what the detector saw, how
-# it reconciled, and any OCR / redaction signals. This is the raw material for
-# future on-box analysis and a possible local ML assist (recommend template edits,
-# spot drift, cluster unseen layouts). It is written per-run to
+# went -- its layout signature, how cleanly it parsed, how it reconciled, and any
+# OCR signals. This is the raw material for future on-box analysis (spot drift,
+# cluster unseen layouts). The template-era `detection` and `template_hints`
+# blocks are gone: nothing has filled them since templates were retired at 2.0.0,
+# and no reader of these records used them. It is written per-run to
 # logs/metadata/<run_id>.json (one file per run -- the same concurrency-safe story
 # as the run log) and is KEPT FOREVER.
 #
@@ -154,8 +155,8 @@ metadata_levels <- function() c("off", "standard", "full")
 
 # capture_metadata(ctx, config) -> a named-list metadata record, or NULL when the
 # level is "off". `ctx` bundles the conversion's artifacts:
-#   run_id, ts, requested_by, sha, input, parsed, recon, det, meta, template,
-#   status, elapsed_ms
+#   run_id, ts, requested_by, sha, input, parsed, recon, meta, template,
+#   status, elapsed_ms (and optionally kind, multi, layout_sig, coverage)
 # It NEVER throws (caller wraps in safe() regardless).
 capture_metadata <- function(ctx, config = load_config()) {
   level <- tolower(config$metadata$level %||% "full")
@@ -200,21 +201,6 @@ capture_metadata <- function(ctx, config = load_config()) {
     # G9: the hint, and only the part of it this file is allowed to keep forever.
     if (.meta_at_least(level, "full"))
       rec$layout$hint <- .layout_hint_safe(sig$hint, ctx$input$kind)
-  }
-
-  # ---- detection ----
-  if (.meta_on(config, "detection") && !is.null(ctx$det)) {
-    d <- ctx$det
-    rec$detection <- list(
-      matched   = isTRUE(d$matched),
-      score     = d$score %||% NA_real_,
-      margin    = if (is.null(d$margin) || is.infinite(d$margin %||% Inf)) NA_real_ else d$margin,
-      runner_up = d$runner_up %||% NA_character_)
-    if (.meta_at_least(level, "full") && !is.null(d$candidates) && nrow(d$candidates)) {
-      cand <- utils::head(d$candidates[order(-d$candidates$score), , drop = FALSE], 5L)
-      rec$detection$n_candidates    <- nrow(d$candidates)
-      rec$detection$candidate_scores <- stats::setNames(as.list(cand$score), cand$id)
-    }
   }
 
   # ---- parse quality (incl. the "things we missed") ----
@@ -297,17 +283,6 @@ capture_metadata <- function(ctx, config = load_config()) {
       if (length(unknown)) nov$unrecognised_type_values <- as.list(unknown)  # e.g. "COW","HORSE"
     }
     if (length(nov)) rec$novelty <- nov
-  }
-
-  # ---- template hints: everything needed to DRAFT a template ----
-  # The richest single signal for a statement the engine could NOT match (but
-  # captured for every run at `full`): PII-safe per-source-column profiles
-  # (kind / format / fill / masked shape) plus the engine's own best-guess
-  # mapping, so a human or an AI assistant has ALL the structural detail to build
-  # a template without seeing statement content. See column_profile.R.
-  if (.meta_on(config, "template_hints") && .meta_at_least(level, "full")) {
-    th <- safe(template_hints(ctx$input, tmpl, matched = isTRUE(ctx$det$matched)), NULL)
-    if (!is.null(th) && length(th)) rec$template_hints <- th
   }
 
   # ---- reconciliation ----

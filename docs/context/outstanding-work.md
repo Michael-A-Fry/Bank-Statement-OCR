@@ -85,12 +85,12 @@ joining a column by clicking a gap on Please check; a reversed-sign role for car
 statements; reading another account's mini-statement as a separate account
 (decided 3 Oct 2026).
 
-**Dead code to remove (N228):** `R/inspect.R` and `R/row_coverage.R` (and their
-tests) unless a screen uses them again; `metadata_capture.R`'s `template_hints` and
-`detection` blocks; the lexicon's `fingerprint_brand_words` / `.FP_BRAND_DEFAULT`;
-`record_template_request` in `R/requests.R`; `tools/synth/score.R` and `bench.R`,
-which still call retired template functions. Also correct `R/split.R`'s header,
-which says an unsplittable bundle is never taken without a person.
+**Dead code to remove (N228):** the lexicon's `fingerprint_brand_words` /
+`.FP_BRAND_DEFAULT`. Also correct `R/split.R`'s header, which says an
+unsplittable bundle is never taken without a person. (The page-overlay and
+row-coverage modules, the metadata record's always-empty template-hint and
+detection blocks, `record_template_request` and the 1.x corpus scorer and bench
+script have been removed.)
 
 ---
 
@@ -376,8 +376,8 @@ tool looks for". One file, one editor.
 
 **None of the ~50 R modules is dead code.** Every one was checked for references
 outside its own file and its tests; all are wired in. The engine is not bloated
-with orphans - `R/split.R`, `R/detect_redaction.R`, `R/column_profile.R`,
-`R/row_coverage.R` and the rest all earn their place.
+with orphans - `R/split.R`, `R/detect_redaction.R`, `R/column_profile.R` and the
+rest all earned their place then.
 
 **The bloat is entirely surface.** Screens and options, not code. Any strip that
 deletes engine capability is cutting the wrong thing; any strip that removes a

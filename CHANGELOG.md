@@ -186,15 +186,16 @@ In short:
   is unchanged in 2.0.0.
 - **Delete:**
   - `R\column_fit.R`, `R\column_profile.R`, `R\detect.R`, `R\draft.R`,
-    `R\learned.R`, `R\templates.R`, `R\wizard_auto.R`, `R\wizard_detect.R`.
+    `R\inspect.R`, `R\learned.R`, `R\row_coverage.R`, `R\templates.R`,
+    `R\wizard_auto.R`, `R\wizard_detect.R`.
     The app loads every file in `R\`, so these would replace new functions with
     old ones.
   - `templates\statements\`, `templates\statements_seed\` and
     `templates\statements_user\` (after the backup).
   - `tests\testthat\test-column-fit.R`, `test-column_profile.R`,
-    `test-detect.R`, `test-draft.R`, `test-draft_excel.R`, `test-learned.R`,
-    `test-templates.R`, `test-user_templates.R`, `test-wizard_auto.R`,
-    `test-wizard_detect.R`.
+    `test-detect.R`, `test-draft.R`, `test-draft_excel.R`, `test-inspect.R`,
+    `test-learned.R`, `test-row_coverage.R`, `test-templates.R`,
+    `test-user_templates.R`, `test-wizard_auto.R`, `test-wizard_detect.R`.
 - **Add:**
   - `R\auto_read.R`, `R\auto_read_pdf.R`, `R\auto_read_prove.R`,
     `R\auto_read_tabular.R`, `R\bank_identity.R`, `R\fixes.R`, `R\layouts.R`,
@@ -207,9 +208,10 @@ In short:
     `test-bank-identity.R`, `test-layouts.R`, `test-tracking.R`.
 - **Replace:**
   - `R\analytics.R`, `audit.R`, `batch.R`, `batch_audit.R`, `config.R`,
-    `convert.R`, `diagnose.R`, `feed.R`, `identify.R`, `jobs.R`,
-    `normalise.R`, `ocr.R`, `ocr_preprocess.R`, `outputs.R`,
-    `parse_pdf_table.R`, `read_input.R`, `read_pdf.R`, `split.R`, `util.R`.
+    `convert.R`, `coverage.R`, `diagnose.R`, `feed.R`, `identify.R`, `jobs.R`,
+    `layout.R`, `metadata_capture.R`, `normalise.R`, `ocr.R`,
+    `ocr_preprocess.R`, `outputs.R`, `parse_pdf_table.R`, `read_input.R`,
+    `read_pdf.R`, `reconcile.R`, `requests.R`, `split.R`, `util.R`.
   - `app.R`, `ui_labels.R`, `ui_content.R`, `run.R`, `VERSION`,
     `www\app.css`, `config\config.example.yaml`, `templates\README.md`,
     `README.md`, `CHANGELOG.md`.
@@ -219,7 +221,7 @@ In short:
     under their own names, never `templates\layouts\`), and `RUN-ME.bat` (a
     comment only).
   - The whole `docs\` folder.
-  - The whole `tests\` folder (51 test files changed).
+  - The whole `tests\` folder (52 test files changed).
 
   Simplest: replace `R\`, `tests\` and `docs\` whole, then put `R\params.R`
   back.

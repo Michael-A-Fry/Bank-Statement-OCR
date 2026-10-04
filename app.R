@@ -1796,8 +1796,8 @@ server <- function(input, output, session) {
   # be left contradicting each other (Full, with six categories switched off) with
   # nothing on screen resolving it. The level decides; every category is captured
   # within it, which is exactly what the built-in default has always been.
-  .ADM_META_CATS <- c("layout", "parse_quality", "detection", "reconciliation",
-                      "multi_statement", "novelty", "template_hints", "ocr")
+  .ADM_META_CATS <- c("layout", "parse_quality", "reconciliation",
+                      "multi_statement", "novelty", "ocr")
   observeEvent(input$adm_meta_save, {
     req(admin_ok())
     lvl <- input$adm_meta_level %||% "full"
@@ -4500,9 +4500,10 @@ server <- function(input, output, session) {
     # its first line is the reader's own reason; the engine's message carries the
     # same reason again with what to do, and the card's buttons ARE what to do.
     m <- sub(";\\s*(check the reading, then confirm it or set the columns' roles|check the columns on Please check, or set the file aside)$", "", m)
-    # A flag's CODE named as where to look: the Flags column says it in words.
-    m <- sub("they are marked amount_from_balance in the flags column",
-             "they are shaded in the transactions table and marked in its Flags column", m, fixed = TRUE)
+    # The engine's sentence names the Flags column (R/convert.R); on screen the
+    # rows are also shaded, so say where to look first.
+    m <- sub("each one is marked in the Flags column",
+             "each one is shaded in the transactions table and marked in its Flags column", m, fixed = TRUE)
     # The audit-log gap is rendered by .audit_note() instead, in the same place on
     # both routes and with the card demoted out of green to match it. Left here it
     # was a "needs_review" sentence in the body of a card headed "Converted

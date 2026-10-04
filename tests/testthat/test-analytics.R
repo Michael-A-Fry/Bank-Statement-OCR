@@ -126,6 +126,58 @@ test_that("end-to-end: a converted unsupported file is reportable from the log",
   expect_false(grepl("wibble", tolower(paste(cl$layout[1])), fixed = TRUE))
 })
 
+# N227: every unread file used to cluster as ONE "(unknown)" layout, because an
+# unread run carried no layout signature. It now carries a structural fingerprint
+# (kind, page band, producer, column shape, field count -- no content).
+test_that("unread files are grouped by their shape, not all as one unknown", {
+  skip_if_not(requireNamespace("jsonlite", quietly = TRUE))
+  ld <- tempfile("al_"); out <- tempfile("ao_"); src <- tempfile("as_"); dir.create(src)
+  put <- function(name, lines) { f <- file.path(src, name); writeLines(lines, f); f }
+  files <- c(put("three_a.csv", c("Mr A Person,Acct 12-3456-7654321-00,x", "1,2,3", "4,5,6")),
+             put("three_b.csv", c("Ms B Other,Acct 12-3456-1234567-00,y", "7,8,9", "1,2,3")),
+             put("five.csv", c("a,b,c,d,e", "1,2,3,4,5")))
+  for (f in files) convert_statement(f, outdir = out, logdir = ld, layouts_dir = tempfile("al_ly_"), tracking_dir = NA)
+  runs <- read_runs(ld)
+  expect_true(all(runs$status == "unsupported"))
+  expect_false(anyNA(runs$layout_signature))
+  sig <- stats::setNames(runs$layout_signature, runs$source_file)
+  expect_identical(sig[["three_a.csv"]], sig[["three_b.csv"]])        # one shape, one row
+  expect_false(identical(sig[["three_a.csv"]], sig[["five.csv"]]))
+  cl <- unsupported_clusters(runs)
+  expect_identical(sort(cl$count), c(1L, 2L))
+  expect_match(cl$layout[cl$count == 2L], "CSV, 3 fields a row", fixed = TRUE)
+  # no content: neither the holder's name nor any digit of the account number
+  txt <- tolower(paste(c(cl$layout, runs$layout_hint), collapse = " "))
+  for (w in c("person", "other", "7654321", "1234567", "acct")) expect_false(grepl(w, txt, fixed = TRUE), info = w)
+
+  # runs logged before the fingerprint (no signature) group by kind and pages
+  old <- data.frame(status = "unsupported", layout_signature = NA_character_, layout_hint = NA_character_,
+                    file_kind = c("pdf", "pdf", "scan", "delimited"), pages = c(2L, 3L, 12L, NA),
+                    reason = "x", source_file = c("a.pdf", "b.pdf", "c.pdf", "d.csv"),
+                    ts = sprintf("2026-01-0%d", 1:4), stringsAsFactors = FALSE)
+  co <- unsupported_clusters(old)
+  expect_identical(nrow(co), 3L)
+  expect_identical(co$count[1], 2L)
+  expect_identical(co$layout[1], "PDF, 2-3 pages - no layout recorded")
+  expect_true("scanned PDF, over 10 pages - no layout recorded" %in% co$layout)
+  expect_true("CSV - no layout recorded" %in% co$layout)
+})
+
+test_that("a PDF's fingerprint names its kind, page band, maker and found columns", {
+  input <- list(kind = "pdf", meta = list(pdf_doc = list(producer = "Skia/PDF m141")))
+  cols <- list(data.frame(page = c(1L, 1L, 1L, 2L), kind = c("money", "date", "text", "date"),
+                          x_min = c(400, 30, 90, 30), stringsAsFactors = FALSE))
+  a <- unread_fingerprint(input, "pdf", 4L, cols, list(signature = "empty", hint = ""))
+  expect_match(a$signature, "^[0-9a-f]{12}$")
+  expect_identical(a$hint, "PDF, 4-10 pages, made by skia pdf, columns found: date text figure")
+  # the same design, a longer statement in the same band: the same group
+  expect_identical(unread_fingerprint(input, "pdf", 9L, cols, NULL)$signature, a$signature)
+  # another maker, or no columns found: another group
+  expect_false(identical(unread_fingerprint(list(kind = "pdf", meta = list(pdf_doc = list(producer = "iText 5.5"))),
+                                            "pdf", 4L, cols, NULL)$signature, a$signature))
+  expect_match(unread_fingerprint(input, "scan", 1L, list(), NULL)$hint, "scanned PDF, 1 page, made by skia pdf, no columns found")
+})
+
 # ---------------------------------------------------------------------------
 # L6. ADMIN'S DRIFT AND USAGE TABLES WERE STATEMENT-SHAPED.
 #

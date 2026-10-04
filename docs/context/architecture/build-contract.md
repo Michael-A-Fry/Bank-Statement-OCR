@@ -8,7 +8,7 @@ keeping versioned records of readings its own arithmetic proved, never by fittin
 model. Never crash - return structured status.
 
 ## 1. Directory layout
-`R/` holds **47 single-concern modules**. The core conversion path is the first
+`R/` holds **45 single-concern modules**. The core conversion path is the first
 group; the rest support it. (Every module's own header comment is the authority on
 what it does - this table is the map, not a duplicate spec.)
 
@@ -47,7 +47,6 @@ R/   -- the conversion path (input -> read -> proven -> written)
 R/   -- OCR and image handling
   ocr.R                 system Tesseract, driven from R (one run per page, time-limited)
   ocr_preprocess.R      pre-OCR image conditioning (magick), with a safe contrast stretch
-  inspect.R             page geometry of a template's bands (kept for its tests; no screen calls it since 2.0.0)
 R/   -- layout evidence
   layout.R              stable, PII-light layout fingerprint (clusters what could not be read)
   suggestions.R         the deterministic half of the learning loop for WORDS (Admin -> Words)
@@ -59,10 +58,9 @@ R/   -- operations, evidence and governance
   audit.R               safe-to-share single-statement structural audit
   batch_audit.R         the same over a whole folder, clustered by gap
   coverage.R            "have I set this up right?" self-check
-  row_coverage.R        PII-safe explanation of PDF rows that did not survive (no screen calls it since 2.0.0)
   uploads.R             upload capture + lifecycle
   inbox.R               read-only view of the folder-drop intake
-  requests.R            format requests raised by the team (Admin -> Health)
+  requests.R            the format requests raised in 1.x, for triage on Admin -> Health
   retention.R           what is left on disk, and when it goes away
 
 templates/              templates/README.md: what lives here now
@@ -200,6 +198,9 @@ layout:
   version: 1
   created: "2026-10-03T22:35:46Z"
   proved_by: [<sha256 of each statement that proved it>]
+  accounts:                    # which proofs came from different accounts -- never a number
+    salt: <16 hex, this layout's own>
+    groups: [<4-hex marks of one account's numbers, space-separated>, ...]
   origin: auto                 # auto | confirmed | corrected
   signature:                   # what "the same layout" means -- NO absolute positions
     kind: pdf                  # pdf | scan | delimited | excel
@@ -237,8 +238,13 @@ table reader.
   learned when an output was made.
 - **Only a proven reading teaches** (`layout_learn`). A new design starts
   `provisional`; it becomes `proven` after `LAYOUT_PROVEN_AFTER` (3) statements
-  prove it, or when an admin confirms it (`layout_confirm`). One file counts once
-  per layout, so a bundle cannot promote a layout on its own.
+  from at least `LAYOUT_PROVEN_ACCOUNTS` (2) different accounts prove it, or when
+  an admin confirms it (`layout_confirm`). One file counts once per layout, so a
+  bundle cannot promote a layout on its own. Accounts are told apart by a short
+  salted mark of each account number the statement shows (four hex characters,
+  the layout's own salt), kept in the layout file only; statements whose numbers
+  share a mark count as one account, and a statement with no number found counts
+  towards the three but not as an account. No account number is ever stored.
 - A **person's role fix that then proves** is learned at once, as a corrected
   layout (`layout_correct`). A fix that does not prove, or a plain confirm, applies
   to that file only and is held in `templates/layouts/.pending/` for an admin
@@ -326,7 +332,7 @@ goes to a person with the *several statements in one file* diagnostic.
 - `spot_check_record(result, verdict = "right"|"wrong"|"cant_tell", tracking_dir)`: the person's answer to a spot check.
 - `convert_batch(paths, ..., banks = NULL, overrides = NULL, progress = NULL, done = NULL) -> data.frame(file, status, outcome, bank, chosen, layout, rows, trust, failing_check, message, result)` - a loop over `convert_statement()`; `failing_check` may be `reading:<check>` or `diag:<category>`.
 - `identify_file(path, name) -> list(ext, format, kind, pages, state, bank, bank_display, bank_code, confidence, ask, detail)` - the Convert table's row: the bank the statement names, without OCR. `state` is `ready | scanned | scanned_no_ocr | unreadable | unsupported_type`. `identify_scan(path, name)` does the same for a scan's first pages in a background job. `bank_choices(layouts_dir)` feeds the bank dropdown.
-- Layouts: `layouts_load(dir, bank, include_retired)`, `layouts_banks(dir)`, `layouts_state_id(dir)`, `layout_match(signature, layouts)`, `layout_learn(reading, bank, file_sha, dir)` -> action `created | evidence_added | promoted | none`, `layout_confirm(id, dir, by)`, `layout_correct(id, template, dir, by, bank)`, `layout_retire(id, dir, by)`, `layout_rename(id, name, dir)`, `layout_display_name(layout, bank_display)`.
+- Layouts: `layouts_load(dir, bank, include_retired)`, `layouts_banks(dir)`, `layouts_state_id(dir)`, `layout_match(signature, layouts)`, `layout_learn(reading, bank, file_sha, dir, accounts = NULL)` -> action `created | evidence_added | promoted | none` (`accounts`: the account numbers the statement shows, used in memory only), `layout_confirm(id, dir, by)`, `layout_correct(id, template, dir, by, bank)`, `layout_retire(id, dir, by)`, `layout_rename(id, name, dir)`, `layout_display_name(layout, bank_display)`.
 - Held fixes: `fix_hold(template, bank, kind, by, dir)`, `fixes_pending(dir)`, `fix_accept(id, dir, by)`, `fix_discard(id, dir)`.
 - Tracking: `track_record(fields, path)` (an allowlist of named, typed fields; no free text), `track_summary(path, since)`, `track_export(path, out, since)` (counts only).
 

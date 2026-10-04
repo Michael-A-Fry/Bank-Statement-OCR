@@ -346,6 +346,16 @@ track_summary <- function(path = tracking_dir(), since = NULL) {
   moves <- unlist(lapply(corr, function(r) vapply(r$correction %||% list(), function(m)
     paste0(m$role_from, " -> ", m$role_to), "")))
   times <- vapply(R, function(r) r$ts, "")
+  # A PERSON'S CONFIRM IS ITS OWN EVENT. The statement was counted once, as the
+  # "convert" event that sent it to Please check (its proof kind is what the
+  # reader put it to, never "person"); the confirm that then vouched for it is a
+  # separate "confirm" event, left out of `conv` so the statement is not counted
+  # twice. So "a person" counted 0 however many readings people confirmed. Each
+  # confirm is one statement a person stood behind: counted here, under its own
+  # proof kind, and nowhere else.
+  pk <- .track_count(get(conv, "proof_kind"), TRACK_PROOF_KINDS)
+  conf <- R[ev %in% "confirm"]
+  pk["person"] <- pk["person"] + sum(vapply(conf, function(r) identical(r$proof_kind, "person"), logical(1)))
   list(
     since = s %||% NA_character_,
     first = if (length(times)) min(times) else NA_character_,
@@ -359,7 +369,7 @@ track_summary <- function(path = tracking_dir(), since = NULL) {
     banks = .track_count(bank),
     layouts = .track_count(lay),
     checks_failed = .track_count(get(conv, "checks_failed")),
-    proof_kinds = .track_count(get(conv, "proof_kind"), TRACK_PROOF_KINDS),
+    proof_kinds = pk,
     repairs_tried = .track_count(get(conv, "repairs_tried")),
     with_derived = sum(vapply(conv, function(r) isTRUE((r$derived %||% 0L) > 0L), logical(1))),
     learn_actions = .track_count(get(R, "learn_action")),

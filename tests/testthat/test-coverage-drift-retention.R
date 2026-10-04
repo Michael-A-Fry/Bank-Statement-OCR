@@ -19,8 +19,24 @@ test_that("field_coverage flags present-but-empty vs unmapped vs populated", {
   expect_equal(v("amount"), "populated")
   expect_equal(v("balance"), "empty")        # mapped but every row blank -> the thing to check
   expect_equal(v("particulars"), "unmapped") # not mapped -> fine
-  expect_match(coverage_summary(cov), "present-but-empty")
-  expect_match(coverage_summary(cov), "balance")
+  expect_match(coverage_summary(cov), "1 read as a column but empty (check: balance)", fixed = TRUE)
+})
+
+# The notes and the summary are shown on screen as the engine writes them: plain
+# words, no retired "template", no schema field names.
+test_that("coverage notes and the summary are plain sentences", {
+  tmpl <- list(format = "delimited", columns = list(
+    date = list(source = "D"), amount = list(source = "A"), description = list(source = "P"),
+    balance = list(source = "B"), other_party = list(source = "O")))
+  cov <- field_coverage(list(transactions = .cov_tx()), tmpl)
+  s <- coverage_summary(cov)
+  expect_identical(s, paste("5 field(s) read in full, 2 read as a column but empty (check: balance, other party),",
+                            "4 not read as a column of their own."))
+  txt <- c(s, cov$note)
+  expect_false(any(grepl("template|mapped|present-but-empty|other_party|not on this statement", txt, ignore.case = TRUE)))
+  expect_identical(cov$note[cov$field == "balance"],
+                   "Read as a column, but every row is blank - the column may be in the wrong place.")
+  expect_identical(coverage_summary(NULL), "No fields were read.")
 })
 
 test_that("debit+credit columns count as amount being mapped", {

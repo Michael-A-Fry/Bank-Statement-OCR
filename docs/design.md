@@ -19,7 +19,7 @@ points at them rather than repeating them.
 statement started being read from its content. The ground rules (§1), the
 invariants that survived (§5) and the add-a-check recipe (§8) were carried over
 from the 1.x page, which was checked against the code at 1.3.0 and 1.4.0. At
-2.0.0 `app.R` is about 5,400 lines and `R/` is 47 modules, about 23,000 lines
+2.0.0 `app.R` is about 5,400 lines and `R/` is 45 modules, about 18,000 lines
 between them. Those counts move, so re-measure rather than quote them.
 `docs/context/outstanding-work.md` is the live register of what is still open.
 Line numbers are deliberately absent. Functions and files are named instead, and
@@ -424,17 +424,15 @@ in it. `parse_pdf_table()` still holds the band frame: every stored PDF position
 lives in one coordinate space (`pdf_band_frame()`), and a layout file stores its
 `ref_width` / `ref_height` for exactly that reason.
 
-**`R/inspect.R` and `R/row_coverage.R` have no caller in the app since 2.0.0.**
-They drew the old "See it on the page" view and are kept only by their tests.
-Either give them a screen again or retire them with their tests; do not grow them.
-
 **`app.R` still carries a private palette inlined in `style=` attributes**
 (invariant 18, open as `N46`).
 
-**The reader's sentences reach the screen.** Several engine strings ("sum(amount)",
-"1 discontinuity(ies)", "(medium confidence)") are reworded in `app.R` /
-`ui_labels.R` rather than at the source. Fixing them at the source would let those
-overrides go; the list is in `docs/context/outstanding-work.md`.
+**The reader's sentences reach the screen.** A check's detail, a coverage note
+and a diagnosis are shown as the engine wrote them, to staff who are not
+engineers: write them in plain English at the source (`R/reconcile.R`,
+`R/coverage.R`, `R/diagnose.R`, `R/convert.R`), never as a code or a formula, and
+never rewrite them in `app.R`. The ones still open are in
+`docs/context/outstanding-work.md`.
 
 ---
 

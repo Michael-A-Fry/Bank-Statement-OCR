@@ -17,7 +17,7 @@ are Python; the scorers are R and use the engine's own functions.
 | `make_greenflag.py` | The **green flag**: 100 deliberately weird statements (made-up headings in odd places, 1-5 wrapping text columns, every money format, about 10 undecidable on purpose). Held back. | the acceptance test (spec section 9) |
 | `make_decoys.py` | About 80 statements buried among tables that look like transactions (loan schedules, mini-statements, fee tables). Held back. | the noise test |
 | `make_corpus.py` | 43 adversarial cases, one layout pushed until it breaks. | regression |
-| `make_bench.py` | 30 to 400-page statements. | speed |
+| `make_bench.py` | 30 to 400-page statements. | speed (`score_convert.R` times each statement: its `secs` column) |
 
 ```
 python3 tools/synth/make_layouts.py --out /tmp/zoo/dev --split dev
@@ -79,18 +79,19 @@ python3 tools/synth/gallery_draw.py <out_dir> <png_dir>
 One picture per case: the pages with the columns the reader picked drawn over
 them, and what it decided, why, and where its figures differ from the answer key.
 
-## Retired with templates: `score.R` and `bench.R`
+## Removed at 2.0.0: the 1.x `score.R` and `bench.R`
 
-`score.R` (the corpus scored through the shipped templates, with its `FABR` /
-`refus` / `bands` columns) and `bench.R` (per-stage timings) call template
-functions that were removed at 2.0.0, and **do not run** until they are rewritten
-for the automatic reader. Score the corpus with `score_convert.R` meanwhile. The
-history below is what they found, and it still stands.
+The 1.x corpus scorer (`score.R`, the corpus scored through the shipped templates,
+with its `FABR` / `refus` / `bands` columns) and bench script (`bench.R`,
+per-stage timings) called template functions that were retired at 2.0.0, so they
+were removed rather than left not running. Score the corpus, and time the bench
+statements, with `score_convert.R`. The history below is what they found, and it
+still stands.
 
 `truth.R` holds the truth-file reader every harness uses. It is one file because
-`bench.R` was first written with its own copy, read a field the truth does not
-have, and reported **900 of 900 amounts fabricated** on a statement the engine had
-read perfectly.
+the bench script was first written with its own copy, read a field the truth does
+not have, and reported **900 of 900 amounts fabricated** on a statement the engine
+had read perfectly.
 
 **Python 3.9 or newer**, plus `reportlab` and `pymupdf`. Tested on **3.11, 3.12 and
 3.13**, which produce **byte-identical ground truth**, so a set can be
@@ -115,7 +116,7 @@ a **wrong figure**, as opposed to a crash.
 | `FABR` | **fabricated** — an amount that is not the amount on the page, and is not NA. **This must be 0.** |
 | `refus` | **refused** — the reader could not read the cell, returned NA, and the row carries `malformed`. A gap a reviewer can see. Not the same fault. |
 | `miss` | rows missing or invented. Visible to anyone counting rows. |
-| `bands` | what `column_fit` said about the template's geometry: `-`, `info` or `medium`. Checked **both ways** against `.EXPECT_BANDS` in `score.R` — a case not named there must report `-`. |
+| `bands` | what `column_fit` said about the template's geometry: `-`, `info` or `medium`. Checked **both ways** against the scorer's list of expected cases — a case not named there had to report `-`. |
 
 Scoring *fabricated* and *refused* together hides the only improvement that
 matters. When the contaminated-cell guard went into `.num_one`, this corpus went
@@ -178,7 +179,7 @@ amount drawn as a line — which silently inverts a transaction — is exactly t
 fault worth hunting.
 
 **Nothing here ships to the server.** The offline box runs R only. This writes PDFs
-and JSON; `score.R` reads them with the engine's own functions. The generator is a
+and JSON; `score_convert.R` and `score_auto.R` read them with the engine's own functions. The generator is a
 dev-time tool and the product gains no Python dependency. The shipped regression
 fixtures are still built by R (`tests/testthat/fixtures/make_pdf_fixtures.R`).
 

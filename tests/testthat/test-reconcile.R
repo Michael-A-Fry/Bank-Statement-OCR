@@ -139,7 +139,7 @@ test_that("continuity bridges a blank middle balance, catching a hidden break (P
   # silently passed as verified.
   p3 <- .parsed(.tx(c(0, NA, 5), balance = c(100, NA, 130)), source_line_count = 3)
   det <- reconcile(p3)$kpis$detail[reconcile(p3)$kpis$name == "running_balance_continuity"]
-  expect_match(det, "unverifiable")
+  expect_match(det, "1 step(s) could not be checked", fixed = TRUE)
 })
 
 test_that("no_unparsed_rows does NOT fail on a legitimate multi-line record (P2-2)", {
@@ -747,11 +747,32 @@ test_that("partial derivation still checks, and says how much of it was derived"
   k <- .kpi_balance_reconciliation(tx, list(opening_balance = 100,
                                            closing_balance = 125), 3L)
   expect_identical(k$status, "pass")                    # the read rows are checked
-  expect_match(k$detail, "1 of 3 amount(s) derived", fixed = TRUE)
+  expect_match(k$detail, "1 of 3 amount(s) were worked out from the running balance", fixed = TRUE)
   c2 <- .kpi_running_balance_continuity(tx, 3L)
   expect_identical(c2$status, "pass")
-  expect_match(c2$detail, "1 of 3 amount(s) were derived", fixed = TRUE)
+  expect_match(c2$detail, "1 of 3 amount(s) were worked out from this balance column", fixed = TRUE)
   expect_match(c2$detail, "prove nothing here", fixed = TRUE)
+})
+
+# The two balance checks' details are read on screen by staff who are not
+# engineers: the figures, in a sentence, never the engine's shorthand.
+test_that("the balance checks say what they found in plain words, not a formula", {
+  ok <- .kpi_balance_reconciliation(.tx(c(-10, 40, -5), balance = c(90, 130, 125)),
+                                    list(opening_balance = 100, closing_balance = 125), 3L)
+  expect_identical(ok$detail, "the opening balance 100.00 plus the transactions (+25.00) comes to the closing balance, 125.00")
+  bad <- .kpi_balance_reconciliation(.tx(c(-10, 40, -5), balance = c(90, 130, 125)),
+                                     list(opening_balance = 100, closing_balance = 130), 3L)
+  expect_identical(bad$status, "fail")
+  expect_identical(bad$detail, "the opening balance 100.00 plus the transactions (+25.00) comes to 125.00, not the closing balance 130.00 - 5.00 apart")
+  derived <- .kpi_balance_reconciliation(.tx(c(-10, 40, -5), balance = c(90, 130, 125)),
+                                         list(opening_balance = 100), 3L)
+  expect_match(derived$detail, "the closing balance is the last running balance, as none is printed", fixed = TRUE)
+  rb <- .kpi_running_balance_continuity(.tx(c(0, 20, 5), balance = c(100, 120, 130)), 3L)
+  expect_identical(rb$detail, "the running balance does not follow on at 1 row(s): the balance printed is not the one before plus the amount")
+  expect_identical(.kpi_running_balance_continuity(.tx(c(0, 20, 5), balance = c(100, 120, 125)), 3L)$detail,
+                   "each balance printed is the one before plus the amount")
+  for (d in c(ok$detail, bad$detail, rb$detail))
+    expect_false(grepl("sum(amount)|\\(ies\\)|discontinuit|vs closing", d), info = d)
 })
 
 test_that("a statement whose every amount was derived proves nothing, and says so", {
@@ -775,7 +796,7 @@ test_that("a statement with nothing derived is unchanged, down to the wording", 
   k <- .kpi_balance_reconciliation(tx, list(opening_balance = 100,
                                             closing_balance = 125), 3L)
   expect_identical(k$status, "pass")
-  expect_false(grepl("derived from the balance column", k$detail, fixed = TRUE))
+  expect_false(grepl("worked out from the running balance", k$detail, fixed = TRUE))
   c2 <- .kpi_running_balance_continuity(tx, 3L)
   expect_identical(c2$status, "pass")
   expect_false(grepl("prove nothing", c2$detail, fixed = TRUE))

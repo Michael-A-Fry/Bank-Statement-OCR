@@ -203,9 +203,10 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 }
 
 # .pdf_has_amount(r, style) / .pdf_is_summary(description, raw) -- the amount and
-# summary-line halves of the row KEEP predicate, lifted to module level so the
-# table reader (parse_pdf_table) and the Inspect overlay (inspect_pdf_layout)
-# share ONE definition and can never disagree about which rows are transactions.
+# summary-line halves of the row KEEP predicate, lifted to module level so every
+# caller (the table reader, its row-skip counts, and the automatic reader's
+# summary-line test in R/auto_read_pdf.R) shares ONE definition and none can
+# disagree about which rows are transactions.
 .pdf_has_amount <- function(r, style) {
   .has_money(if (identical(style, "debit_credit_cols"))
     paste(r$debit %||% "", r$credit %||% "") else (r$amount %||% ""))
@@ -377,7 +378,7 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 # .is_footer_noise(s) -- a page footer / running header ("Page 2 of 2", "continued
 # on next page") is NOT a transaction continuation, even though it is a date-less,
 # money-less text line. Module-level so parse_pdf_table (continuation merge) and
-# inspect_pdf_layout (skipped-row reasons) share ONE definition.
+# the automatic reader (R/auto_read_pdf.R) share ONE definition.
 .is_footer_noise <- function(s) {
   s <- tolower(trimws(s %||% ""))
   grepl(paste0("^page\\s+\\d+(\\s+of\\s+\\d+)?$",         # "Page 2 of 2"
@@ -410,13 +411,13 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
 # pdf_keep_row(rec, style, date_ok, date_redacted, keep_dateless) -- THE decision
 # "is this visual row a transaction?", in ONE place.
 #
-# WHY it lives here and not in the reader's closure: the X-ray (inspect_pdf_layout)
-# has to paint EXACTLY the rows the reader keeps, and row_coverage counts what the
-# X-ray paints. When the two carried separate copies of the rule they drifted -- the
-# reader grew a fourth keep branch (keep_dateless_rows) that the X-ray never got, so
-# the reader kept rows the X-ray reported as SKIPPED and row_coverage told the
-# analyst "N row(s) skipped for an unreadable date", prescribing the exact wrong
-# remedy for rows that were never lost. One function, two callers, no drift.
+# WHY it lives here and not in the reader's closure: a second copy of this rule
+# once drifted from the reader's. The old page overlay (retired with templates at
+# 2.0.0) carried its own copy; the reader grew a fourth keep branch
+# (keep_dateless_rows) that the copy never got, so the overlay reported rows the
+# reader KEPT as skipped and told the analyst to fix a date format for rows that
+# were never lost. Whatever else needs to know which rows are transactions calls
+# this, never a copy of it.
 #
 #   date_ok       -- the date cell parsed to a real date
 #   date_redacted -- the date cell was HIDDEN (present but blacked out)
@@ -432,12 +433,6 @@ pdf_keep_row <- function(rec, style, date_ok,
   isTRUE(keep_dateless) && real_amt
 }
 
-# .pdf_row_reason(rec, style, date_ok) -- WHY a visual row is NOT kept as a
-# transaction, in plain words a non-engineer can act on. rec carries the same
-# cells .pdf_has_amount reads; date_ok is whether the date cell parsed (or was
-# redacted). "" means it IS a transaction (kept). Shared by the X-ray so the
-# reason it shows can never drift from the engine's actual keep rule. The
-# continuation case is decided by the caller (it needs the neighbouring row).
 # .pdf_row_code(rec, style, date_ok) -- WHY a visual row is not kept, as a stable
 # CODE. "" means it IS a transaction. The code is what the engine decides on; the
 # sentence a person reads is a lookup below. They used to be the same string, and
@@ -457,22 +452,20 @@ pdf_keep_row <- function(rec, style, date_ok,
 # ACTIONABLE codes: the row looked like a transaction and could not be read. These
 # are the only skips that mean something is WRONG - a heading or a summary line is
 # skipped on every healthy statement. One list, used by the completeness check and
-# by row_coverage, so the two can never disagree about what counts as a problem.
+# by pdf_reason_actionable(), so the two can never disagree about what counts as a
+# problem.
 .PDF_ACTIONABLE_CODES <- c("date_unparsed", "amount_missing")
 
 # The sentence for each code, in words a non-engineer can act on. Reword freely:
 # nothing decides anything on this text -- USE pdf_reason_actionable() below.
+# (rec carries the cells .pdf_has_amount reads; date_ok is whether the date cell
+# parsed or was redacted; the continuation case needs the neighbouring row and is
+# the caller's to decide.)
 .PDF_ROW_REASON_TEXT <- c(
   summary_line    = "summary line (opening / closing balance, carried forward, or a total) - not a transaction",
   heading_or_note = "no date and no amount - treated as a heading, note or wrapped line",
   date_unparsed   = "the date didn't parse - usually the date format in the template is wrong",
   amount_missing  = "no amount in the money column(s) - check the amount / debit / credit bands")
-
-.pdf_row_reason <- function(rec, style, date_ok) {
-  code <- .pdf_row_code(rec, style, date_ok)
-  if (!nzchar(code)) return("")
-  unname(.PDF_ROW_REASON_TEXT[code])
-}
 
 # pdf_reason_actionable(reason) -- given the SENTENCE a skipped row carries, did
 # that row look like a transaction and fail to read? Vectorised; FALSE for a kept
@@ -487,9 +480,7 @@ pdf_keep_row <- function(rec, style, date_ok,
 # on a clean 2-page ANZ statement 52 rows get marked "a skipped row that looks
 # like a transaction" against the engine's 9, and each of the extra 43 carries its
 # own explanation that it is "treated as a heading, note or wrapped line". One
-# screen saying both things about the same row is worse than either alone, and
-# R/row_coverage.R has an explicit guard against this exact substring (see
-# .rowcov_bucket) that the other callers never got.
+# screen saying both things about the same row is worse than either alone.
 #
 # Mapping the sentence back through the table that produced it is exact -- no
 # substring can be shared by accident -- and it means a reword really is free.
@@ -879,9 +870,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # or propagated from a neighbour) and it is flagged `no_date`, so the row is
   # preserved without inventing which date it belongs to.
   keep_dateless <- isTRUE(t$keep_dateless_rows %||% FALSE)
-  # ONE keep rule, shared with the X-ray (pdf_keep_row, module level). Adding a
-  # branch here now automatically changes what the X-ray paints and what
-  # row_coverage counts, so the reader and the diagnostic can never disagree again.
+  # ONE keep rule (pdf_keep_row, module level): a branch added there changes every
+  # caller at once, so the reader and the row-skip counts below can never disagree.
   .is_txn <- function(r)
     pdf_keep_row(r, style, .date_ok(r$date), keep_dateless)
 
@@ -1093,10 +1083,9 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # continuation is skipped on every healthy statement, so counting those tells a
   # reviewer nothing.
   #
-  # WHY it is counted here rather than left to row_coverage(): row_coverage re-parses
-  # the whole PDF, so a completeness check could not use it without doubling the work
-  # on every conversion. The keep decision is being made right here and the reason is
-  # already computed -- counting is free.
+  # WHY it is counted here, as the rows are kept: a separate pass would re-parse
+  # the whole PDF and double the work on every conversion. The keep decision is
+  # being made right here and the reason is already computed -- counting is free.
   actionable_skips <- if (!length(recs)) 0L else
     sum(vapply(seq_along(recs), function(i) {
       if (keep[i]) return(FALSE)

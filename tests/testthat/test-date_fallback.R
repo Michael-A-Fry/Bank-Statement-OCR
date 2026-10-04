@@ -36,13 +36,6 @@ test_that("a wrong-year-format template still reads year-less dates via the fall
   expect_equal(out$transactions$date, base$transactions$date)
   expect_true(all(grepl("date_alt_format", out$transactions$flags)))
   expect_false(any(grepl("date_alt_format", base$transactions$flags)))
-
-  # The X-ray mirror applies the same document-level rule: rows the fallback
-  # reads are painted kept, not listed as "date didn't parse".
-  lay <- inspect_pdf_layout(input, tmpl)
-  kept <- sum(vapply(lay$pages, function(P)
-    if (is.null(P$rows) || !nrow(P$rows)) 0L else sum(P$rows$kept), integer(1)))
-  expect_gte(kept, 12)
 })
 
 test_that("the WRONG year-less variant (month-day for a day-month table) still reads every row", {

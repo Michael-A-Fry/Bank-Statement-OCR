@@ -1,33 +1,17 @@
-# requests.R -- the "none of these fits -- tell our team" escape hatch. When a
-# statement's format matches no dropdown option, the accountant can describe it in
-# plain words and raise it for review. The engine can't teach itself, but nothing
-# is lost: a request is logged for a maintainer to turn into a template.
+# requests.R -- the format requests the team raised in 1.x, for triage on
+# Admin -> Health. In 1.x, when a statement's format matched no template, the
+# accountant could describe it in plain words and raise it for a maintainer to
+# turn into a template. 2.0.0 retired templates and with them the screen that
+# raised a request (its writer, record_template_request, had no caller left and
+# was removed); the requests already on disk can still be read and marked
+# actioned or dismissed here, so none is lost.
 #
-# PII-SAFE BY DESIGN: a request stores ONLY the free-text the user typed plus
+# PII-SAFE BY DESIGN: a request holds ONLY the free text the person typed plus
 # generic, non-identifying context (file extension, the bank label, and which
-# date / amount options were on screen). It NEVER stores statement content, and
-# the UI warns the user to describe the format, not paste statement details. The
-# requests folder is local-only so nothing typed here is ever shared.
+# date / amount options were on screen). It never held statement content. The
+# requests folder is local-only so nothing typed there is ever shared.
 
 .requests_dir <- function(dir = NULL) dir %||% file.path(Sys.getenv("BSO_ROOT", "."), "requests")
-
-# record_template_request(detail, context, requested_by, dir) -> request id.
-# `detail` is the user's description; `context` is a small named list of generic,
-# non-PII fields (file_ext, bank, date_format, amount_style, ...).
-record_template_request <- function(detail, context = list(),
-                                    requested_by = NULL, dir = NULL) {
-  dir <- .requests_dir(dir); dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
-  id <- paste0("req-", format(Sys.time(), "%Y%m%d%H%M%S"), "-",
-               substr(sprintf("%09.0f", abs(sum(utf8ToInt(paste0(detail, ts))))), 1, 4))
-  rec <- list(id = id, ts = ts, requested_by = requested_by %||% "unknown",
-              status = "open", detail = as.character(detail %||% ""),
-              context = context %||% list(),
-              history = list(list(ts = ts, status = "open")))
-  safe(writeLines(jsonlite::toJSON(rec, auto_unbox = TRUE, null = "null", pretty = TRUE),
-                  file.path(dir, paste0(id, ".json"))))
-  id
-}
 
 # set_request_status(id, status, dir) -- triage a request (open/actioned/dismissed).
 set_request_status <- function(id, status, dir = NULL) {

@@ -5,9 +5,7 @@ section 2 are the product owner's and are binding. Built as specified, with thes
 exceptions, each listed with its reason in the 2.0.0 entry of `CHANGELOG.md` and
 in `outstanding-work.md`: Admin -> Banks has confirm, rename and retire, but not
 merge or move; Please check fixes a column with a role dropdown and Re-read, but
-does not yet split or join a column by clicking a gap; a layout is promoted by
-three proofs or an admin confirm, and the "at least 2 different accounts" rule is
-only approximated (one file counts once per layout); reading another account's
+does not yet split or join a column by clicking a gap; reading another account's
 mini-statement as a separate account (decided 3 Oct) is not built yet. The
 held-back acceptance run (section 11, step 3) has not been done. Section 9.1 is
 the pre-build baseline; the 2.0.0 figures are in `CHANGELOG.md`. Appendix A was

@@ -297,7 +297,8 @@ real -55 leaves 14. The centre is better advice than the truth.
 ## 2b. What it costs on a real job
 
 Not a decision, but the thing every decision above has to survive. Measured at 1.10.0
-(`tools/synth/bench.py` + `bench.R`), on statements that reconcile exactly:
+(`tools/synth/make_bench.py` + the 1.x bench script, removed at 2.0.0), on
+statements that reconcile exactly:
 
 | pages | rows | total | per page | wrong figures |
 |---|---|---|---|---|

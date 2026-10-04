@@ -20,17 +20,10 @@ test_that("a scanned (image-only) statement OCRs into positioned word boxes", {
   wb <- inp$words[[2]]
   expect_true(!is.null(wb) && nrow(wb) > 20)    # OCR produced word boxes (was 0)
   expect_true(all(c("x", "y", "width", "height", "text", "ocr_conf") %in% names(wb)))
-  # per-word confidence contract: numeric 0-100 on an OCR page, and it reaches
-  # the X-ray words frame so the app can shade doubtful words.
+  # per-word confidence contract: numeric 0-100 on an OCR page.
   expect_type(wb$ocr_conf, "double")
   expect_true(any(!is.na(wb$ocr_conf)))
   expect_true(all(wb$ocr_conf >= 0 & wb$ocr_conf <= 100, na.rm = TRUE))
-  # ...and through the reading's own columns into the X-ray overlay.
-  rd <- auto_read(inp)
-  lay <- inspect_pdf_layout(inp, rd$template)
-  lw <- lay$pages[["2"]]$words
-  expect_true("ocr_conf" %in% names(lw))
-  expect_true(any(!is.na(lw$ocr_conf)))
 })
 
 test_that("a scanned statement is read and proven like the text version", {

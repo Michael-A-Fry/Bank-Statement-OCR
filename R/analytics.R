@@ -88,8 +88,21 @@ unsupported_clusters <- function(runs) {
   st <- as.character(.col(runs, "status", ""))
   u <- runs[st %in% c("unsupported", "failed"), , drop = FALSE]
   if (!nrow(u)) return(empty)
-  sig <- as.character(.col(u, "layout_signature", "(unknown)"))
-  sig[is.na(sig)] <- "(unknown)"
+  sig <- as.character(.col(u, "layout_signature", NA))
+  hint <- as.character(.col(u, "layout_hint", NA))
+  # N227. A run logged before unread files were fingerprinted (unread_fingerprint,
+  # R/layout.R), or one that failed before anything was read, has no signature or
+  # an "empty" one -- and every such run used to fall into ONE "(unknown)" row.
+  # Grouped instead by the shape the run log does carry: its kind of file and its
+  # page count, said in words where no layout was recorded.
+  none <- is.na(sig) | !nzchar(sig) | sig == "empty"
+  if (any(none)) {
+    shape <- file_shape_label(as.character(.col(u, "file_kind", NA)), .col(u, "pages", NA))
+    sig[none] <- paste("(unknown)", shape[none])
+    blank <- none & (is.na(hint) | !nzchar(trimws(hint)))
+    hint[blank] <- paste0(shape[blank], " - no layout recorded")
+  }
+  u$layout_hint <- hint
   parts <- lapply(split(seq_len(nrow(u)), sig), function(idx) {
     d <- u[idx, , drop = FALSE]
     data.frame(
@@ -98,7 +111,7 @@ unsupported_clusters <- function(runs) {
       why          = .mode(.col(d, "reason", NA)),
       last_seen    = max(as.character(.col(d, "ts", "")), na.rm = TRUE),
       example_file = .col(d, "source_file", "")[1] %||% "",
-      signature    = as.character(.col(d, "layout_signature", "")[1]),
+      signature    = sig[idx[1]],
       stringsAsFactors = FALSE)
   })
   res <- do.call(rbind, parts)

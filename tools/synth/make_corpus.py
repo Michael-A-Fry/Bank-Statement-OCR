@@ -24,7 +24,7 @@ a negative amount drawn as a line, which silently inverts a transaction -- is on
 of the faults worth hunting.
 
 NOTHING HERE SHIPS TO THE SERVER. The offline box runs R only. This writes PDFs
-and JSON; the R harness (tools/synth/score.R) reads them. A subset of the PDFs is
+and JSON; the R harness (tools/synth/score_convert.R) reads them. A subset of the PDFs is
 committed as fixtures, the generator is a dev-time tool, and the product gains no
 Python dependency.
 

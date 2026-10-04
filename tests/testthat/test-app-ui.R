@@ -1261,10 +1261,11 @@ test_that("no screen offers a template any more", {
   lits <- pd$text[pd$terminal & pd$token == "STR_CONST"]
   expect_gt(length(lits), 300L)                          # the scan must not go quiet
   # The only strings left naming one are field and record names the engine keeps
-  # (the feed's template_id column, the upload record's `template` field, a
-  # metadata category), never words on a screen.
+  # (the feed's template_id column, the upload record's `template` field), never
+  # words on a screen. The metadata record's template-hint category went with
+  # the always-empty block it switched (N228).
   said <- grep("template", lits, ignore.case = TRUE, value = TRUE)
-  expect_setequal(gsub('"', "", said), c("template_id", "template_hints", "template"))
+  expect_setequal(gsub('"', "", said), c("template_id", "template"))
   for (gone in c("Add a template", "ts_file", "g_pdf_plot", "adm_tpl_overview", "adm_learned",
                  "cv_teach", "ix_plot", "tutorial_html"))
     expect_false(any(grepl(gone, src, fixed = TRUE)), info = gone)

@@ -9,7 +9,9 @@
 #     id, bank, status (provisional | proven | retired), version, created,
 #     proved_by (sha256 of each statement that proved it), origin (auto |
 #     confirmed | corrected), signature (the shared layout signature), and
-#     optionally name (an admin's rename) and confirmed_by / corrected_by.
+#     optionally accounts (marks that tell the proving accounts apart; never an
+#     account number -- see "Telling accounts apart" below), name (an admin's
+#     rename) and confirmed_by / corrected_by.
 #
 # On disk: <dir>/<bank_slug>/<id>@v<version>.yaml. A file is NEVER edited: every
 # change -- new evidence, a promotion, a confirm, a correction, a rename, a
@@ -19,8 +21,11 @@
 #
 # Every public function returns a result that says what happened; none throws.
 
-# Statements that must prove a new layout before it is trusted without a person.
+# Statements that must prove a new layout before it is trusted without a person,
+# and how many different accounts they must come from (spec section 6: "3 proven
+# statements (from at least 2 different accounts) or an admin confirm").
 LAYOUT_PROVEN_AFTER <- 3L
+LAYOUT_PROVEN_ACCOUNTS <- 2L
 
 # layout_match() thresholds. The soft score is the mean of three parts, each 0..1:
 #   date   1 when the date formats agree, 0 when they differ, 0.5 when unknown;
@@ -179,6 +184,7 @@ layouts_dir <- function(cfg = load_config()) {
   lb$version <- as.integer(version)
   pb <- unique(tolower(as.character(unlist(lb$proved_by))))
   lb$proved_by <- pb[!is.na(pb) & grepl("^[0-9a-f]{64}$", pb)]
+  lb$accounts <- .layout_accounts_norm(lb$accounts)
   lb$signature <- .layout_sig_norm(lb$signature)
   why <- .layout_sig_problem(lb$signature)
   if (!is.null(why)) return(sprintf("%s has %s.", basename(path), why))
@@ -247,10 +253,12 @@ layouts_dir <- function(cfg = load_config()) {
 # .layout_block(...) -- the layout block in a fixed field order, so two writes of
 # the same facts are the same file.
 .layout_block <- function(id, bank, status, version, proved_by, origin, signature,
-                          name = NULL, confirmed_by = NULL, corrected_by = NULL) {
+                          name = NULL, confirmed_by = NULL, corrected_by = NULL, accounts = NULL) {
+  acc <- .layout_accounts_norm(accounts)
+  if (!is.null(acc)) acc$groups <- as.list(acc$groups)
   b <- list(id = id, bank = bank, status = status, version = as.integer(version),
-            created = utc_stamp(), proved_by = as.list(unique(proved_by)), origin = origin,
-            signature = .layout_sig_norm(signature), name = name,
+            created = utc_stamp(), proved_by = as.list(unique(proved_by)), accounts = acc,
+            origin = origin, signature = .layout_sig_norm(signature), name = name,
             confirmed_by = confirmed_by, corrected_by = corrected_by)
   b[!vapply(b, is.null, logical(1))]
 }
@@ -277,6 +285,104 @@ layouts_dir <- function(cfg = load_config()) {
   s <- trimws(gsub("[[:cntrl:]]+", " ", as.character(by %||% NA_character_)[1]))
   if (is.na(s) || !nzchar(s)) NULL else substr(s, 1L, 80L)
 }
+
+# ---- telling accounts apart, without keeping one ----------------------------------------
+#
+# A layout is proven by three statements "from at least 2 different accounts"
+# (spec section 6). Twelve months of ONE account's statements prove only that
+# account's print, and a quirk of it (a product name in a heading, a column only
+# that account has) must not become the bank's layout. So the proofs' accounts
+# must be told apart -- and an account number is never kept: not in a layout file,
+# not in the run log, not in tracking (build contract section 3).
+#
+# What a layout keeps instead is a MARK per number: the first four hex characters
+# of sha256(salt + number). The salt is made the first time the layout records an
+# account and is the layout's own, so a mark cannot be matched against another
+# layout's, another bank's or another server's, and no table of marks can be built
+# in advance. Four hex characters is 65,536 values: tens of thousands of real
+# account numbers share every mark, so even someone holding the salt cannot work
+# back from a mark to a number. A mark never leaves the layout file, and nothing
+# reads it but the counting below. Two different accounts share a mark only about once in
+# 65,536; when they do they count as one, which only makes the layout wait for one
+# more account. That is the safe way for this to be wrong.
+#
+# A statement shows several account numbers -- its own, and payees' in transfers
+# -- and which one is the holder's is decided only inside R/bank_identity.R, which
+# keeps none of them. So a statement's marks are a SET, and two statements are the
+# same account when their sets share any mark: the holder's own number is printed
+# on every statement of the account, so one account's statements always meet,
+# while two accounts that only paid the same payee meet as well and count as one
+# (safe, again). Proofs that meet are kept as one group; a layout's accounts are
+# its groups. A statement on which no account number was found counts towards the
+# statements, never towards the accounts: "could not tell" is not "different".
+LAYOUT_MARK_CHARS <- 4L
+.LAYOUT_MARK_RE <- "^[0-9a-f]{4}$"
+
+# .layout_acct_key(x) -- account numbers as compared: an NZ number's four parts
+# without their leading zeros (a statement may print a 2- or 3-digit suffix and a
+# 6- or 7-digit base for one account), anything else its digits (a masked card's
+# X's kept, since the last four digits are what tell two cards apart). Fewer than
+# six digits is not an account number.
+.layout_acct_key <- function(x) {
+  x <- toupper(trimws(as.character(unlist(x))))
+  x <- x[!is.na(x) & nzchar(x)]
+  if (!length(x)) return(character(0))
+  k <- vapply(x, function(s) {
+    parts <- regmatches(s, gregexpr("[0-9X*]+", s))[[1]]
+    if (length(parts) == 4L && all(grepl("^[0-9]+$", parts)))
+      paste(sub("^0+(?=.)", "", parts, perl = TRUE), collapse = "-")
+    else gsub("[^0-9X]", "", gsub("*", "X", s, fixed = TRUE))
+  }, "", USE.NAMES = FALSE)
+  unique(k[nchar(gsub("[^0-9]", "", k)) >= 6L])
+}
+
+# .layout_marks(numbers, salt) -- the marks of one statement's account numbers,
+# sorted, or none.
+.layout_marks <- function(numbers, salt) {
+  k <- .layout_acct_key(numbers)
+  if (!length(k) || is.null(salt) || is.na(salt)) return(character(0))
+  m <- vapply(k, function(s) substr(.text_sha256(paste0(salt, "|", s)), 1L, LAYOUT_MARK_CHARS), "")
+  .layout_sort(unique(m[!is.na(m) & grepl(.LAYOUT_MARK_RE, m)]))
+}
+
+# .layout_new_salt(id, sha) -- a layout's own salt. Not from sample(): learning
+# must not move the session's random stream (see .layout_lock).
+.layout_new_salt <- function(id, sha) {
+  s <- .text_sha256(paste(id, sha, Sys.getpid(), format(Sys.time(), "%Y%m%d%H%M%OS6")))
+  if (is.na(s)) NA_character_ else substr(s, 1L, 16L)
+}
+
+# .layout_accounts_norm(a) -- a layout's accounts block in one shape:
+# list(salt, groups), each group its marks joined by single spaces, in a fixed
+# order; NULL when it holds nothing usable. Groups are stored as strings because
+# YAML gives a one-mark group back as a bare string and a list of them as a vector.
+.layout_accounts_norm <- function(a) {
+  if (!is.list(a)) return(NULL)
+  salt <- tolower(as.character(unlist(a$salt))[1])
+  if (is.na(salt) || !grepl("^[0-9a-f]{16}$", salt)) return(NULL)
+  g <- lapply(as.character(unlist(a$groups)), function(s) {
+    m <- unique(tolower(strsplit(trimws(s), "[[:space:]]+")[[1]]))
+    .layout_sort(m[!is.na(m) & grepl(.LAYOUT_MARK_RE, m)])
+  })
+  g <- g[lengths(g) > 0L]
+  list(salt = salt, groups = .layout_sort(vapply(g, paste, "", collapse = " ")))
+}
+
+# .layout_accounts_add(acc, marks) -- one more proof's marks: every group they
+# meet is joined into one with them, else they start a group of their own.
+.layout_accounts_add <- function(acc, marks) {
+  if (!length(marks)) return(acc)
+  groups <- lapply(acc$groups, function(s) strsplit(s, " ", fixed = TRUE)[[1]])
+  meet <- vapply(groups, function(g) any(marks %in% g), NA)
+  joined <- .layout_sort(unique(c(marks, unlist(groups[meet]))))
+  rest <- vapply(groups[!meet], paste, "", collapse = " ")
+  acc$groups <- .layout_sort(c(rest, paste(joined, collapse = " ")))
+  acc
+}
+
+# .layout_n_accounts(lb) -- how many different accounts are known to have proved
+# a layout.
+.layout_n_accounts <- function(lb) length(.layout_accounts_norm(lb$accounts)$groups)
 
 # .layout_find(id, dir) -- the latest version of one layout, retired or not.
 # Accepts "anz_3" or "anz_3@v2" (the version part is ignored: changes always
@@ -487,16 +593,20 @@ layout_match <- function(signature, layouts) {
 #     bank and nobody has confirmed which) teaches nothing;
 #   * no matching layout -> a new provisional layout, version 1 ("created");
 #   * a matching provisional layout gains this statement as evidence
-#     ("evidence_added"), and becomes proven at LAYOUT_PROVEN_AFTER distinct
-#     statements ("promoted"); heading words it had not seen are added, since the
-#     arithmetic has just proved which columns they sit over;
+#     ("evidence_added"), and becomes proven ("promoted") once LAYOUT_PROVEN_AFTER
+#     distinct statements from at least LAYOUT_PROVEN_ACCOUNTS accounts the tool
+#     can tell apart have proved it; heading words it had not seen are added,
+#     since the arithmetic has just proved which columns they sit over;
 #   * a matching proven layout needs nothing more, and the same statement read
 #     twice counts once, towards one layout -- both "none", with the layout named;
 #   * a signature that could never match its own design again (see
 #     .layout_sig_problem) teaches nothing.
 # `bank` is a bank name/id or bank_pick()'s result; `file_sha` is the statement's
-# sha256.
-layout_learn <- function(reading, bank, file_sha, dir = layouts_dir()) {
+# sha256. `accounts` is the account numbers the statement shows, as the caller
+# read them: used here, in memory, to tell this statement's account from the
+# others' (see "Telling accounts apart" above) and never written anywhere. NULL
+# or none found: the statement counts, but not as another account.
+layout_learn <- function(reading, bank, file_sha, dir = layouts_dir(), accounts = NULL) {
   out <- function(action, why, ly = NULL) {
     lb <- ly$layout
     list(action = action,
@@ -546,11 +656,14 @@ layout_learn <- function(reading, bank, file_sha, dir = layouts_dir()) {
       n <- max(c(0L, .layout_ordinal(fs$id)), na.rm = TRUE) + 1L
       id <- sprintf("%s_%d", b$slug, n)
       ly <- .layout_template(tpl, id, b$bank, 1L)
-      ly$layout <- .layout_block(id, b$bank, "provisional", 1L, sha, "auto", sig)
+      salt <- .layout_new_salt(id, sha)
+      acc <- .layout_accounts_add(list(salt = salt, groups = character(0)), .layout_marks(accounts, salt))
+      ly$layout <- .layout_block(id, b$bank, "provisional", 1L, sha, "auto", sig,
+                                 accounts = if (length(acc$groups)) acc else NULL)
       ok <- .layout_write(ly, dir)
       if (!isTRUE(ok)) return(out("none", paste("A new layout could not be saved:", attr(ok, "reason") %||% "unknown reason.")))
-      return(out("created", sprintf("A new layout %s was started from this statement; it is provisional until %d statements prove it or an admin confirms it.",
-                                    id, LAYOUT_PROVEN_AFTER), ly))
+      return(out("created", sprintf("A new layout %s was started from this statement; it is provisional until %d statements from %d different accounts prove it, or an admin confirms it.",
+                                    id, LAYOUT_PROVEN_AFTER, LAYOUT_PROVEN_ACCOUNTS), ly))
     }
     old <- lys[[m$id]]
     lb <- old$layout
@@ -561,18 +674,37 @@ layout_learn <- function(reading, bank, file_sha, dir = layouts_dir()) {
     pb <- c(lb$proved_by, sha)
     sig2 <- lb$signature
     sig2$heading_tokens <- c(sig2$heading_tokens, sig$heading_tokens)
-    promote <- length(unique(pb)) >= LAYOUT_PROVEN_AFTER
+    # A layout learned before accounts were told apart has no salt yet; its first
+    # statement with an account number gives it one. Its earlier proofs are
+    # statements whose account is not known.
+    acc <- lb$accounts %||% list(salt = .layout_new_salt(lb$id, sha), groups = character(0))
+    acc <- .layout_accounts_add(acc, .layout_marks(accounts, acc$salt))
+    if (!length(acc$groups)) acc <- lb$accounts
+    n_st <- length(unique(pb))
+    n_acc <- length(acc$groups)
+    promote <- n_st >= LAYOUT_PROVEN_AFTER && n_acc >= LAYOUT_PROVEN_ACCOUNTS
     v <- lb$version + 1L
     ly <- old
     ly$version <- v
     ly$layout <- .layout_block(lb$id, lb$bank, if (promote) "proven" else lb$status, v, pb,
                                lb$origin %||% "auto", sig2, name = lb$name,
-                               confirmed_by = lb$confirmed_by, corrected_by = lb$corrected_by)
+                               confirmed_by = lb$confirmed_by, corrected_by = lb$corrected_by,
+                               accounts = acc)
     ok <- .layout_write(ly, dir)
     if (!isTRUE(ok)) return(out("none", paste("The evidence could not be saved:", attr(ok, "reason") %||% "unknown reason."), old))
     if (promote)
-      return(out("promoted", sprintf("Layout %s is now proven: %d different statements have proved it.", lb$id, length(unique(pb))), ly))
-    out("evidence_added", sprintf("This statement is evidence %d of %d for layout %s.", length(unique(pb)), LAYOUT_PROVEN_AFTER, lb$id), ly)
+      return(out("promoted", sprintf("Layout %s is now proven: %d different statements from %d different accounts have proved it.",
+                                     lb$id, n_st, n_acc), ly))
+    # Enough statements, too few accounts: say what is missing, in words a
+    # person can act on (another account's statement, or an admin's confirm).
+    if (n_st >= LAYOUT_PROVEN_AFTER)
+      return(out("evidence_added", sprintf(paste(
+        "This statement is evidence %d for layout %s, but %s, and a layout is proven only by statements of",
+        "at least %d different accounts. A statement of another account that proves it, or an admin's confirm, will prove it."),
+        n_st, lb$id, if (n_acc == 0L) "no account number could be read on any of its statements"
+                     else "all of its statements are from one account, as far as the tool can tell",
+        LAYOUT_PROVEN_ACCOUNTS), ly))
+    out("evidence_added", sprintf("This statement is evidence %d of %d for layout %s.", n_st, LAYOUT_PROVEN_AFTER, lb$id), ly)
   }, error = function(e) out("none", paste0("Nothing was learned (", conditionMessage(e), ").")))
 }
 
@@ -588,7 +720,7 @@ layout_confirm <- function(id, dir = layouts_dir(), by = NULL) {
       return(sprintf("Layout %s is already confirmed.", lb$id))
     old$layout <- .layout_block(lb$id, lb$bank, "proven", lb$version, lb$proved_by, "confirmed",
                                 lb$signature, name = lb$name, confirmed_by = .layout_person(by),
-                                corrected_by = lb$corrected_by)
+                                corrected_by = lb$corrected_by, accounts = lb$accounts)
     old
   })
 }
@@ -629,7 +761,7 @@ layout_correct <- function(id, template, dir = layouts_dir(), by = NULL, bank = 
     ly$layout <- .layout_block(lb$id, lb$bank, "proven", lb$version, lb$proved_by, "corrected",
                                if (is.null(.layout_sig_problem(sig_new))) sig_new else lb$signature,
                                name = lb$name, confirmed_by = lb$confirmed_by,
-                               corrected_by = .layout_person(by))
+                               corrected_by = .layout_person(by), accounts = lb$accounts)
     ly
   })
 }
@@ -643,7 +775,7 @@ layout_retire <- function(id, dir = layouts_dir(), by = NULL) {
     if (identical(lb$status, "retired")) return(sprintf("Layout %s is already retired.", lb$id))
     old$layout <- .layout_block(lb$id, lb$bank, "retired", lb$version, lb$proved_by, lb$origin,
                                 lb$signature, name = lb$name, confirmed_by = lb$confirmed_by,
-                                corrected_by = lb$corrected_by)
+                                corrected_by = lb$corrected_by, accounts = lb$accounts)
     old
   })
 }
@@ -657,7 +789,7 @@ layout_rename <- function(id, name, dir = layouts_dir()) {
     if (identical(lb$name, nm)) return(sprintf("Layout %s already has that name.", lb$id))
     old$layout <- .layout_block(lb$id, lb$bank, lb$status, lb$version, lb$proved_by, lb$origin,
                                 lb$signature, name = nm, confirmed_by = lb$confirmed_by,
-                                corrected_by = lb$corrected_by)
+                                corrected_by = lb$corrected_by, accounts = lb$accounts)
     old
   })
 }

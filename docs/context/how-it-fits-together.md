@@ -56,7 +56,7 @@ statements and nothing else.
 | Which bank | `R/bank_identity.R` | Only the holder's own account number counts, never a payee's; and the number is dropped inside this file. A confident disagreement with the person's pick blocks learning until they answer. |
 | Reading a statement | `R/auto_read*.R` | Proven only when every check passes **and no other reading fits**. A heading is a vote, never proof. |
 | Learned layouts | `R/layouts.R`, `R/fixes.R` | Only a proven reading teaches. A layout file is never edited; every change is a new version. |
-| PDF tables | `R/parse_pdf_table.R` | Rows are found by their DATE. The keep-rule (`pdf_keep_row`) is shared with `R/inspect.R` and `R/row_coverage.R` (kept for their tests since 2.0.0). |
+| PDF tables | `R/parse_pdf_table.R` | Rows are found by their DATE. The keep-rule (`pdf_keep_row`) is in one place, so nothing can keep a different set of rows from the reader's. |
 | The checks | `R/reconcile.R` | One `.kpi_*()` builder per check; `reconcile()` is the list, in report order. |
 | Explaining a bad run | `R/diagnose.R` | `.DIAG_FIX_OWNER` says WHO fixes each category (you / the file / a developer). |
 | Downloads | `R/outputs.R` | Same table for the workbook and the CSV, built once. |

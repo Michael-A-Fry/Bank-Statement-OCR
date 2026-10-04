@@ -52,6 +52,30 @@ test_that("malformed / unparsed rows are diagnosed", {
   expect_true(any(d$category == "amount_parse"))
 })
 
+# A CSV has no page: the way to Please check promised "the columns found are drawn
+# on the page" for every file, a CSV included.
+test_that("the way to Please check is said for the kind of file", {
+  fix <- function(kind, status = "needs_review")
+    build_diagnostics(status, reading = list(why = "x", kind = kind))$how_to_fix[1]
+  for (k in c("pdf", "scan")) expect_match(fix(k), "drawn on the page", fixed = TRUE, info = k)
+  for (k in c("delimited", "excel")) {
+    expect_false(grepl("page", fix(k), fixed = TRUE), info = k)
+    expect_match(fix(k), "listed by their headings", fixed = TRUE, info = k)
+    expect_false(grepl("page", fix(k, "unsupported"), fixed = TRUE), info = k)
+  }
+  expect_match(fix(NULL), "Open Please check", fixed = TRUE)
+  expect_false(grepl("drawn on the page", fix(NULL), fixed = TRUE))
+  # ...and a derived amount is described in words, never by its flag code
+  d <- build_diagnostics("needs_review", reading = list(why = "x", derived = 1L, kind = "pdf"))
+  expect_false(grepl("amount_from_balance", d$detail[d$category == "derived_amounts"], fixed = TRUE))
+  expect_match(d$detail[d$category == "derived_amounts"], "marked in the Flags column", fixed = TRUE)
+  # the conversion's own message about them, likewise (R/convert.R)
+  src <- readLines(fixture("R/convert.R"), warn = FALSE)
+  said <- grep("could not be read and were", src, value = TRUE, fixed = TRUE)
+  expect_length(said, 1L)
+  expect_false(grepl("amount_from_balance", said, fixed = TRUE))
+})
+
 test_that("a derived amount, a refused fix and a disputed bank are each said", {
   d <- build_diagnostics("needs_review", reading = list(why = "x", derived = 2L, fix_error = "no such column",
                                                         bank_why = "You picked ANZ, but...", bank_blocked = TRUE))

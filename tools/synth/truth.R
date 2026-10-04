@@ -1,10 +1,11 @@
 # truth.R -- reading a `.truth.json`, in ONE place.
 #
-# score.R and bench.R both compare the engine's output against the generator's ground
-# truth, and they must agree about what the truth SAYS or their verdicts are not
+# Every scorer compares the engine's output against the generator's ground truth,
+# and they must agree about what the truth SAYS or their verdicts are not
 # comparable. The truth file records `debit` and `credit`; it never records `amount`.
 #
-# This file exists because of a measured mistake: bench.R was written with its own
+# This file exists because of a measured mistake: the 1.x bench script (removed at
+# 2.0.0 with the template functions it called) was written with its own
 # comparison, read `row$amount` -- a field that does not exist -- and reported 900 of
 # 900 amounts FABRICATED on a 30-page statement the engine had read perfectly. A
 # measuring instrument that can accuse the engine has to be as checkable as the

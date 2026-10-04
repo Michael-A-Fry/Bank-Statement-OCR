@@ -74,9 +74,11 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **67 files, 1,052 tests, 5,527 passing assertions**
+The last full run measured **65 files, 1,023 tests, 5,344 passing assertions**
 — taken on 2026-10-03, at `VERSION` 2.0.0 while it was being built, on R 4.3.3,
-with `BSO_ALLOW_SKIPS=1`. **It was not a clean board: 181 failed and 46
+with `BSO_ALLOW_SKIPS=1`, less the two test files removed since with the code
+they tested (`test-inspect.R` and `test-row_coverage.R`: 29 tests and 183
+passing assertions; the run itself counted 67 files). **It was not a clean board: 181 failed and 46
 errors**, all in files then still being rewritten (`test-app-ui.R` 171,
 `test-app-adoption.R` 24, `test-seams.R` 13, `test-deployment-docs.R` 8,
 `test-deployment.R` 4, `test-docs-truth.R` 4, `test-generalisation.R` 1 — the last
@@ -99,11 +101,12 @@ enforced by the operating system rather than merely bookkept.
 ## How long a big statement takes
 
 Measured at 1.10.0 (R 4.3.3, poppler 24.02.0, four cores), on synthetic
-statements that reconcile exactly — `tools/synth/make_bench.py` draws them,
-`tools/synth/bench.R` timed them. **Not yet re-measured on 2.0.0**: `bench.R`
-still calls the retired template functions and does not run until it is rewritten
-for the automatic reader, and the reader does more work per page than the old
-template parse did. Treat the table as the 1.x figure:
+statements that reconcile exactly — `tools/synth/make_bench.py` draws them, and
+the 1.x bench script timed them (it called the retired template functions and was
+removed at 2.0.0). **Not yet re-measured on 2.0.0**, and the reader does more work
+per page than the old template parse did: run `tools/synth/score_convert.R` over
+the bench statements, whose `secs` column is each statement's time. Treat the
+table as the 1.x figure:
 
 | pages | rows | total | per page | peak extra memory | wrong figures |
 |---|---|---|---|---|---|

@@ -171,6 +171,29 @@ test_that("the summary counts outcomes, kinds, banks, layouts, checks and spot c
   expect_true(is.na(e$automatic_rate))
 })
 
+# N224: Admin's "a person on Please check" counted 0 however many readings people
+# confirmed, because a confirm is its own event and the proof kinds were counted
+# over convert events only.
+test_that("a person's confirm counts under 'a person', without counting the statement twice", {
+  d <- .tk_dir()
+  # sent to Please check (the reader's own proof kind), then confirmed by a person
+  track_record(.tk_convert("2026-10-02T00:00:00Z", outcome = "check", proof_kind = "chain"), d)
+  track_record(.tk_convert("2026-10-02T00:05:00Z", outcome = "check", event = "confirm", proof_kind = "person"), d)
+  track_record(.tk_convert("2026-10-02T01:00:00Z", outcome = "check", proof_kind = "totals"), d)
+  track_record(.tk_convert("2026-10-02T01:05:00Z", outcome = "check", event = "confirm", proof_kind = "person"), d)
+  track_record(.tk_convert("2026-10-02T02:00:00Z"), d)
+  s <- track_summary(d)
+  expect_identical(s$statements, 3L)                     # a confirm is not another statement
+  expect_identical(s$proof_kinds[["person"]], 2L)
+  expect_identical(s$proof_kinds[["chain"]], 2L)
+  expect_identical(s$proof_kinds[["totals"]], 1L)
+  expect_identical(s$events[["confirm"]], 2L)
+  # ...and the carry-off summary says the same
+  out <- tempfile(fileext = ".json")
+  expect_true(isTRUE(track_export(d, out)))
+  expect_identical(jsonlite::fromJSON(out)$proof_kinds$person, 2L)
+})
+
 test_that("torn or hand-edited lines are skipped or cleaned, never counted as written", {
   d <- .tk_dir()
   track_record(.tk_convert("2026-10-01T00:00:00Z"), d)

@@ -30,6 +30,8 @@
 }
 
 .lt_sha <- function(i) paste(rep(sprintf("%02x", i %% 256), 32), collapse = "")
+# A made-up NZ account number per account (none of these is a real account).
+.lt_acct <- function(i) sprintf("12-3456-%07d-00", 1000000L + i)
 .lt_dir <- function() { d <- tempfile("layouts"); dir.create(d); d }
 .lt_files <- function(d) sort(list.files(d, recursive = TRUE))
 
@@ -44,7 +46,7 @@ test_that("an empty store loads as nothing and has a fixed state id", {
 
 test_that("three proven statements make a provisional layout proven, one version file per change", {
   d <- .lt_dir()
-  a1 <- layout_learn(.lt_reading(), "anz", .lt_sha(1), d)
+  a1 <- layout_learn(.lt_reading(), "anz", .lt_sha(1), d, accounts = .lt_acct(1))
   expect_identical(a1$action, "created")
   expect_identical(a1$ref, "anz_1@1")
   expect_identical(a1$status, "provisional")
@@ -52,7 +54,7 @@ test_that("three proven statements make a provisional layout proven, one version
   expect_true(file.exists(v1))
   before <- readLines(v1)
 
-  a2 <- layout_learn(.lt_reading(), "ANZ", .lt_sha(2), d)       # same bank, other spelling
+  a2 <- layout_learn(.lt_reading(), "ANZ", .lt_sha(2), d, accounts = .lt_acct(2))   # same bank, other spelling
   expect_identical(a2$action, "evidence_added")
   expect_identical(a2$ref, "anz_1@2")
 
@@ -60,7 +62,7 @@ test_that("three proven statements make a provisional layout proven, one version
   expect_identical(again$action, "none")
   expect_match(again$why, "already counts")
 
-  a3 <- layout_learn(.lt_reading(), "anz", .lt_sha(3), d)
+  a3 <- layout_learn(.lt_reading(), "anz", .lt_sha(3), d, accounts = .lt_acct(1))
   expect_identical(a3$action, "promoted")
   expect_identical(a3$status, "proven")
 
@@ -337,7 +339,8 @@ test_that("two writers racing for one version: exactly one file, never one repla
                        rel_x = c(0.1, 0.5, 0.8, 1)))
   jobs <- expand.grid(s = 1:5, d = 1:3)
   res <- parallel::mclapply(seq_len(nrow(jobs)), function(i)
-    layout_learn(do.call(.lt_reading, designs[[jobs$d[i]]]), "anz", .lt_sha(i), d2)$action, mc.cores = 6)
+    layout_learn(do.call(.lt_reading, designs[[jobs$d[i]]]), "anz", .lt_sha(i), d2,
+                 accounts = .lt_acct(i))$action, mc.cores = 6)
   acts <- unlist(res)
   expect_identical(sum(acts == "created"), 3L)
   expect_identical(sum(acts == "promoted"), 3L)
@@ -498,6 +501,71 @@ test_that("the state id does not depend on the order files were written", {
   # any change to any file: a new id
   cat("# touched\n", file = f, append = TRUE)
   expect_false(identical(layouts_state_id(b), layouts_state_id(a)))
+})
+
+# N217: "proven after 3 proven statements (from at least 2 different accounts)"
+# (spec section 6). A year of one account's statements proves only that account's
+# print. The accounts are told apart by short salted marks kept in the layout file;
+# an account number is never written anywhere.
+test_that("a layout is proven only by statements of two different accounts, and keeps no number", {
+  d <- .lt_dir()
+  one <- c(.lt_acct(1), "38-9000-7654321-00")          # the holder's number and a payee's
+  expect_identical(layout_learn(.lt_reading(), "anz", .lt_sha(1), d, accounts = one)$action, "created")
+  expect_identical(layout_learn(.lt_reading(), "anz", .lt_sha(2), d, accounts = .lt_acct(1))$action, "evidence_added")
+  # the same account printed with a three-digit suffix: still one account
+  a3 <- layout_learn(.lt_reading(), "anz", .lt_sha(3), d, accounts = "12-3456-1000001-000")
+  expect_identical(a3$action, "evidence_added")
+  expect_identical(a3$status, "provisional")
+  expect_match(a3$why, "all of its statements are from one account")
+  # a statement on which no account number was found tells nothing about accounts
+  a4 <- layout_learn(.lt_reading(), "anz", .lt_sha(4), d)
+  expect_identical(a4$status, "provisional")
+  # another account that only shares a payee with the first counts as the same one:
+  # the safe way to be wrong, since the layout just waits for one more account
+  a5 <- layout_learn(.lt_reading(), "anz", .lt_sha(5), d, accounts = c(.lt_acct(9), "38-9000-7654321-00"))
+  expect_identical(a5$status, "provisional")
+  # a statement of an account with nothing in common: proven
+  a6 <- layout_learn(.lt_reading(), "anz", .lt_sha(6), d, accounts = .lt_acct(2))
+  expect_identical(a6$action, "promoted")
+  expect_match(a6$why, "6 different statements from 2 different accounts", fixed = TRUE)
+
+  # what is on disk: marks and a salt, never a number (nor its long middle part)
+  txt <- paste(unlist(lapply(list.files(d, recursive = TRUE, full.names = TRUE), readLines)), collapse = "\n")
+  for (n in c("1000001", "1000002", "1000009", "7654321", "12-3456", "38-9000"))
+    expect_false(grepl(n, txt, fixed = TRUE), info = n)
+  acc <- layouts_load(d)[["anz_1"]]$layout$accounts
+  expect_match(acc$salt, "^[0-9a-f]{16}$")
+  expect_length(acc$groups, 2L)
+  expect_true(all(grepl("^[0-9a-f]{4}( [0-9a-f]{4})*$", acc$groups)))
+  # the marks are the layout's own: the same account gets other marks in another layout
+  d2 <- .lt_dir()
+  layout_learn(.lt_reading(), "anz", .lt_sha(1), d2, accounts = .lt_acct(2))
+  other <- layouts_load(d2)[["anz_1"]]$layout$accounts
+  expect_false(identical(other$salt, acc$salt))
+  expect_identical(.layout_marks(.lt_acct(2), other$salt), other$groups)
+
+  # admin changes keep what was counted
+  layout_rename("anz_1", "Everyday", d)
+  layout_retire("anz_1", d)
+  expect_identical(layouts_load(d, include_retired = TRUE)[["anz_1"]]$layout$accounts, acc)
+})
+
+test_that("one account's statements need an admin's confirm; a layout from before accounts were counted catches up", {
+  d <- .lt_dir()
+  for (i in 1:4) layout_learn(.lt_reading(), "anz", .lt_sha(i), d, accounts = .lt_acct(1))
+  expect_identical(layouts_load(d)[["anz_1"]]$layout$status, "provisional")
+  expect_true(layout_confirm("anz_1", d)$changed)                  # "or an admin confirm"
+  expect_identical(layouts_load(d)[["anz_1"]]$layout$status, "proven")
+  # a provisional layout learned with no account numbers (as every one was before
+  # accounts were counted): its old proofs count as statements, not as accounts
+  d2 <- .lt_dir()
+  for (i in 1:3) layout_learn(.lt_reading(), "anz", .lt_sha(i), d2)
+  ly <- layouts_load(d2)[["anz_1"]]
+  expect_identical(ly$layout$status, "provisional")
+  expect_null(ly$layout$accounts)
+  expect_match(layout_learn(.lt_reading(), "anz", .lt_sha(4), d2, accounts = .lt_acct(1))$why,
+               "from one account", fixed = TRUE)
+  expect_identical(layout_learn(.lt_reading(), "anz", .lt_sha(5), d2, accounts = .lt_acct(2))$action, "promoted")
 })
 
 test_that("layouts.R and tracking.R are ASCII-only", {

@@ -23,7 +23,8 @@
 # --mode cold     every statement alone, with an empty layout store.
 # --mode trained  bank by bank, in file-name order, through ONE temporary layout
 #                 store per bank: every conversion learns exactly as it would on
-#                 the server (provisional layouts, promoted after three proofs).
+#                 the server (provisional layouts, promoted after three proofs
+#                 from at least two different accounts).
 suppressMessages({ library(yaml); library(jsonlite) })
 Sys.setenv(ENGINE_ROOT = normalizePath("."))
 for (f in list.files("R", "[.]R$", full.names = TRUE)) source(f)

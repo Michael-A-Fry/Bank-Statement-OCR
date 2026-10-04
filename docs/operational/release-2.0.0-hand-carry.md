@@ -55,11 +55,11 @@ update `R\` is to replace the whole folder (section 3).
 
 | Delete | Why |
 |---|---|
-| `R\column_fit.R`, `R\column_profile.R`, `R\detect.R`, `R\draft.R`, `R\learned.R`, `R\templates.R`, `R\wizard_auto.R`, `R\wizard_detect.R` | Retired engine files. Left in place they are still loaded, and they replace new functions with old ones (see above). |
+| `R\column_fit.R`, `R\column_profile.R`, `R\detect.R`, `R\draft.R`, `R\inspect.R`, `R\learned.R`, `R\row_coverage.R`, `R\templates.R`, `R\wizard_auto.R`, `R\wizard_detect.R` | Retired engine files. Left in place they are still loaded, and they replace new functions with old ones (see above). |
 | `templates\statements\` (the whole folder: `anz_creditcard_csv.yaml`, `anz_everyday_csv.yaml`, `anz_everyday_pdf.yaml`, `anz_investmentfunds_pdf.yaml`, `asb_everyday_csv.yaml`, `asb_everyday_pdf.yaml`, `bnz_everyday_csv.yaml`, `excel_generic_xlsx.yaml`, `kiwibank_everyday_csv.yaml`, `tutorial_everyday_pdf.yaml`, `westpac_everyday_csv.yaml`, `westpac_everyday_pdf.yaml`, `xero_standard_csv.yaml`) | The shipped templates. They now live in `tests\testthat\fixtures\templates\` as test material only. |
 | `templates\statements_seed\` (the whole folder) | Unfinished template drafts. Nothing reads them any more. |
 | `templates\statements_user\` (the whole folder, **after** step 1 has backed it up) | Templates built in the app, `_learned_choices.json`, their `.yaml.bak` copies and `README.md`. 2.0.0 reads none of them. Keep the backup off the server. Do not leave the folder in place, because a folder nothing reads gets backed up and restored for years for no reason. |
-| `tests\testthat\test-column-fit.R`, `test-column_profile.R`, `test-detect.R`, `test-draft.R`, `test-draft_excel.R`, `test-learned.R`, `test-templates.R`, `test-user_templates.R`, `test-wizard_auto.R`, `test-wizard_detect.R` | Tests of the retired files. Left in place, they fail the suite on the server. |
+| `tests\testthat\test-column-fit.R`, `test-column_profile.R`, `test-detect.R`, `test-draft.R`, `test-draft_excel.R`, `test-inspect.R`, `test-learned.R`, `test-row_coverage.R`, `test-templates.R`, `test-user_templates.R`, `test-wizard_auto.R`, `test-wizard_detect.R` | Tests of the retired files. Left in place, they fail the suite on the server. |
 
 If the server still has `templates\fields\`, `templates\fields_user\`,
 `templates\documents\` or `templates\documents_user\` from before 1.9.0, they
@@ -73,7 +73,7 @@ safest way, and it carries every deletion above with it:
 | Folder | How |
 |---|---|
 | `R\` | Delete the server's `R\` folder, copy in the new one, then put back the `R\params.R` you saved in step 1.4. |
-| `tests\` | Delete it and copy in the new one. (5 test files are new, 51 are changed and 10 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
+| `tests\` | Delete it and copy in the new one. (5 test files are new, 52 are changed and 12 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
 | `docs\` | Delete it and copy in the new one. Pages were rewritten for 2.0.0. `docs\operational\adding-a-bank-template.md` is now about training a bank, and this page is new. |
 | `www\` | Copy over it. `app.css` changed. |
 
@@ -83,10 +83,11 @@ If you would rather copy file by file, the `R\` changes are:
   `auto_read_tabular.R`, `bank_identity.R`, `fixes.R`, `layouts.R`,
   `tracking.R`.
 - **Changed:** `analytics.R`, `audit.R`, `batch.R`, `batch_audit.R`,
-  `config.R`, `convert.R`, `diagnose.R`, `feed.R`, `identify.R`, `jobs.R`,
-  `normalise.R`, `ocr.R`, `ocr_preprocess.R`, `outputs.R`,
-  `parse_pdf_table.R`, `read_input.R`, `read_pdf.R`, `split.R`, `util.R`.
-- **Deleted:** the eight files in section 2.
+  `config.R`, `convert.R`, `coverage.R`, `diagnose.R`, `feed.R`, `identify.R`,
+  `jobs.R`, `layout.R`, `metadata_capture.R`, `normalise.R`, `ocr.R`,
+  `ocr_preprocess.R`, `outputs.R`, `parse_pdf_table.R`, `read_input.R`,
+  `read_pdf.R`, `reconcile.R`, `requests.R`, `split.R`, `util.R`.
+- **Deleted:** the ten files in section 2.
 - **Unchanged:** every other file, including `params.R`.
 
 ## 4. Replace these single files
