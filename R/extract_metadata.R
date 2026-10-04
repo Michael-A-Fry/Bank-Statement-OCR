@@ -14,6 +14,32 @@
 .all_matches <- function(text, rx, perl = FALSE)
   unique(regmatches(text, gregexpr(rx, text, perl = perl))[[1]])
 
+# .month_period(text) -- a statement period printed as ONE calendar month, tied to
+# the word "statement" ("Statement for December 2025", "Statement period: Dec
+# 2025", "December 2025 statement"), as c(first day, last day) in "%d %B %Y"; NULL
+# when none is printed or when two different months are (a bundle, or a letter
+# naming another statement): then nothing is assumed. A month and year printed
+# anywhere else ("Copyright 2025", "Rates from March 2026") is not a period.
+.month_period <- function(text) {
+  mon <- paste0("(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|",
+                "sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
+  yr <- "((?:19|20)[0-9]{2})"
+  rx <- c(paste0("(?i)\\bstatement\\s+(?:for|of)\\s+(?:the\\s+month\\s+of\\s+)?", mon, ",?\\s+", yr, "\\b"),
+          paste0("(?i)\\bstatement\\s+(?:period|month)\\s*:?\\s*", mon, ",?\\s+", yr, "\\b"),
+          paste0("(?i)\\b", mon, ",?\\s+", yr, "\\s+statement\\b"))
+  hits <- character(0)
+  for (r in rx) for (h in regmatches(text, gregexpr(r, text, perl = TRUE))[[1]]) {
+    g <- regmatches(h, regexec(r, h, perl = TRUE))[[1]]
+    if (length(g) == 3L) hits <- c(hits, paste(substr(tolower(g[2]), 1L, 3L), g[3]))
+  }
+  hits <- unique(hits)
+  if (length(hits) != 1L) return(NULL)
+  start <- suppressWarnings(as.Date(paste("1", hits), "%d %b %Y"))
+  if (is.na(start) || !.plausible_year(format(start, "%Y"))) return(NULL)
+  end <- seq(start, by = "month", length.out = 2L)[2] - 1
+  c(format(start, "%d %B %Y"), format(end, "%d %B %Y"))
+}
+
 # ---- ONE SPAN over several printed periods ----------------------------------
 # One uploaded file often covers SEVERAL printed periods: three monthly sections
 # for one account, or a statement reissued to cover Jan-Mar. Reading only the
@@ -260,6 +286,17 @@ extract_metadata <- function(input, dict = default_label_dict()) {
     if (!is.na(ps$value) && !is.na(pe$value)) {
       period_start <- ps$value; period_end <- pe$value
       if (!length(periods)) periods <- sprintf("%s to %s", ps$value, pe$value)
+    }
+  }
+  # Last fallback: a period named as a calendar month ("Statement for December
+  # 2025", "December 2025 statement"). It is the statement's own word for its
+  # period, so it settles the year of a "03 Dec" row; the statement's issue date
+  # ("Statement date 5 Jan 2026") does not, on its own (R/parse_pdf_table.R).
+  if (is.na(period_start) || is.na(period_end)) {
+    mp <- .month_period(text)
+    if (!is.null(mp)) {
+      period_start <- mp[1]; period_end <- mp[2]
+      if (!length(periods)) periods <- sprintf("%s to %s", mp[1], mp[2])
     }
   }
 

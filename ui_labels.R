@@ -176,7 +176,10 @@ READING_CHECK_PLAIN <- c(
   reader_agrees      = "The table reader agrees with the arithmetic",
   dates_carried      = "Dates carried down from the row above",
   other_tables       = "Other tables on the page hold none of this statement's rows",
-  ocr_complete       = "Every page of the scan was read")
+  ocr_complete       = "Every page of the scan was read",
+  year_settled       = "The year of every date is printed on the statement",
+  table_unbroken     = "The table has no pending or scheduled section inside it",
+  summary_lines_checked = "Lines left out as totals are checked by the balances")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 
 # ---------------------------------------------------------------------------

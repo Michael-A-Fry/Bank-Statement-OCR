@@ -347,8 +347,12 @@ current and former, domains, phone numbers, SWIFT, brand words, agency family).
 A layout is a template list plus a `layout` block: `bank`, `status`
 (provisional / proven / retired), `version`, `created`, `proved_by` (sha256 of
 each statement that proved it), `origin` (auto / confirmed / corrected),
-`signature` (kind, roles in order, date format, money style, balance frequency,
-heading tokens, producer, relative column positions). Stored at
+`signature` (kind, roles in order, the heading over each column in the same
+order, date format, money style, balance frequency, heading tokens, producer,
+relative column positions). A statement with no balance and no totals matches a
+layout only when the statement itself confirms it: the layout's heading over
+every column, no sign, account type or wording the layout does not explain, and
+no row borrowing a date unless the layout prints dates once per day. Stored at
 `<paths$layouts>/<bank_slug>/<id>@v<version>.yaml`; a change writes a new
 version, never edits one. Retiring keeps the file.
 

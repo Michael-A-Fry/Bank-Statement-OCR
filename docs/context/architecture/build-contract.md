@@ -205,6 +205,7 @@ layout:
   signature:                   # what "the same layout" means -- NO absolute positions
     kind: pdf                  # pdf | scan | delimited | excel
     roles: [date, description, debit, credit, balance]
+    col_headings: [date, details, withdrawals, deposits, balance]   # over each column, in order
     date_format: "%d %b"
     money_style: debit_credit_cols
     balance_freq: every
@@ -363,7 +364,8 @@ naming the failing row and page) + *what it needs*.
 `chain_across_pages`, `opening_closing`, `printed_totals`, `dates_readable`,
 `dates_in_order`, `dates_in_period`, `signs_settled`, `no_derived_amounts`,
 `amounts_read`, `unique`, `rows_proven`, `reader_agrees`, `dates_carried`,
-`other_tables`, `ocr_complete`. Each has wording in `READING_CHECK_PLAIN`
+`other_tables`, `ocr_complete`, `year_settled`, `table_unbroken`,
+`summary_lines_checked`. Each has wording in `READING_CHECK_PLAIN`
 (`ui_labels.R`) and a place in tracking's allowlist (`TRACK_CHECKS`,
 `R/tracking.R`). A proven reading is one where every check holds and **no other
 reading of the columns does**.

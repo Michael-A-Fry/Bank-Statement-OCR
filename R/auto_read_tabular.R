@@ -241,12 +241,10 @@
 # every dated cell parses under; when several give different dates, the one whose
 # dates run in order and inside the printed period. Returns the ISO dates, the
 # format, and whether another format would read the column differently and
-# equally well (then the dates are not settled).
-#
-# `prefer`: the date style of a proven layout read against the file. When the
-# dates are not settled and they read under it, it settles them (N218), and the
-# result says so (by_layout).
-.ar_tab_date <- function(tt, rows, md, j = tt$dj, prefer = NULL) {
+# equally well (then the dates are not settled). A learned layout never settles
+# that: its date style is how the bank printed other files, not this one (N218,
+# reverted; see R/auto_read.R).
+.ar_tab_date <- function(tt, rows, md, j = tt$dj) {
   v <- tt$m[rows, j]
   T <- tt$T[rows, j]
   has <- nzchar(v)
@@ -273,10 +271,6 @@
   sc <- vapply(reads, `[[`, 0, "score")
   top <- reads[sc == max(sc)]
   keys <- unique(vapply(top, function(r) paste(r$iso, collapse = "|"), ""))
-  if (length(keys) > 1L && length(prefer) == 1L && !is.na(prefer)) {
-    lay <- Filter(function(r) identical(r$fmt, prefer), top)
-    if (length(lay)) return(list(iso = lay[[1]]$iso, fmt = prefer, ambiguous = FALSE, by_layout = TRUE))
-  }
   list(iso = top[[1]]$iso, fmt = top[[1]]$fmt, ambiguous = length(keys) > 1L)
 }
 
@@ -331,10 +325,8 @@
   # A person's roles are read on their own: no layout stands in for them.
   if (!is.null(ctx$roles)) return(.ar_decide(cands, list(), ctx))
   # As on a PDF (R/auto_read.R): a layout with the content reading's own
-  # conventions is not read twice, unless the content reading's day-month order is
-  # what held it back and the layout is proven, so its date style settles that.
+  # conventions is not read twice.
   seen <- if (identical(cands$content$basis, "arithmetic")) .ar_conv_key(cands$content$rd) else ""
-  dates_open <- "dates_settled" %in% (cands$content$failing %||% character(0))
   fmts_all <- .ar_fmts_all(tt$F[tt$body, tt$dj])
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
@@ -344,7 +336,7 @@
     fig <- info$roles[info$roles %in% c("debit", "credit", "amount", "balance", "other")]
     if (!.ar_layout_near(cands$content$signature, info$sig, fmts_all)) next
     ck <- .ar_conv_key(list(roles = fig, conv = info$conv, liab = info$liab, dir = info$dir))
-    if (ck %in% seen && !(dates_open && info$proven)) next
+    if (ck %in% seen) next
     seen <- c(seen, ck)
     cands[[src]] <- .ar_tab_attempt(ctx, src, forced = info)
     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
@@ -421,8 +413,7 @@
                score = c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0))
     basis <- vr$by
   }
-  # A proven layout read against the file settles its day-month order (N218).
-  dt <- .ar_tab_date(tt, rows, ctx$md, prefer = if (isTRUE(forced$proven)) as.character(unlist(forced$sig$date_format))[1])
+  dt <- .ar_tab_date(tt, rows, ctx$md)
   # An order the arithmetic left open is the dates' to say (R/auto_read.R).
   turned <- .ar_dir_by_dates(rd, anchors, dt$iso, ctx$decimal)
   if (!is.null(turned)) rd <- turned
@@ -442,11 +433,24 @@
   ckl$checks$reader_agrees <- list(ok = same, why = if (same) "The table reader's figures are the ones the arithmetic proved."
                                    else "The table reader read some figures differently from the arithmetic.")
   ckl$checks$dates_settled <- list(ok = !dt$ambiguous, why = if (!dt$ambiguous) "The dates read one way only."
-                                   else "The dates read as day-month and as month-day equally well.")
-  if (isTRUE(dt$by_layout))
-    ckl$checks$dates_settled <- list(ok = TRUE, by_layout = TRUE, why = sprintf(
-      "The dates read as day-month and as month-day alike; the proven layout %s reads them as %s.",
-      forced$ref, .ar_fmt_words(dt$fmt)))
+                                   else "The dates read as day-month and as month-day equally well, and nothing in the file says which.")
+  # A date cell with no year in it ("03 Dec") is given the year of the computer's
+  # clock when it is read, which is a guess: the file has to print the year.
+  if (!is.na(dt$fmt) && !identical(dt$fmt, "excel_serial") && !grepl("%[Yy]", dt$fmt))
+    ckl$checks$year_settled <- list(ok = FALSE, why = paste(
+      "The dates print a day and a month but no year, and the reader does not take the year from anything",
+      "else in a spreadsheet, so the year would be a guess."))
+  # A row named as a total, with a figure where the money runs, is left out of the
+  # transactions; with nothing to add up, nothing shows it was not one (a fuel
+  # purchase from "TOTAL").
+  if (identical(ckl$proof_kind, "none")) {
+    tl <- Filter(function(a) isTRUE(a$in_table) && !(a$class %in% c("open", "close")) &&
+                   any(!is.na(a$figs[which(rd$roles %in% c("debit", "credit", "amount"))])), anchors)
+    if (length(tl))
+      ckl$checks$summary_lines_checked <- list(ok = FALSE, why = sprintf(paste(
+        "Row %d of the file is named as a total and has a figure in a money column, so it was left out,",
+        "and nothing in the file adds up to show it is not a transaction."), as.integer(tl[[1]]$line)))
+  }
   # Two date columns that give different dates, and no heading saying which is the
   # transaction's: the one shown is a choice, and a chosen date is never proven.
   if (identical(tt$date_by, "open")) {
@@ -465,6 +469,7 @@
     else sprintf("Row %d of the file prints a figure but no date, so it is not part of the table.", lost[1]))
   cd <- .ar_tab_candidate(source, tpl, parsed, ckl, rd, rl, basis, tt, kind, ctx)
   cd$hroles <- hroles
+  cd$signs <- .ar_col_signs(V)
   cd
 }
 
@@ -550,7 +555,11 @@
     newest_first = identical(rd$dir, "new"),
     heading_tokens = utils::head(sort(unique(tolower(unlist(regmatches(tt$heads, gregexpr("[A-Za-z]{2,}", tt$heads)))))), 40),
     producer = "", rel_x = round((seq_len(sum(!is.na(fields))) ) / max(1, sum(!is.na(fields))), 2),
-    extras = names(extras %||% list()))
+    extras = names(extras %||% list()),
+    # The heading over each column, aligned with `roles` ("" where the file prints
+    # none): what lets a file with nothing to add up be matched to the layout
+    # (.ar_layout_confirms, R/auto_read.R).
+    col_headings = unname(.ar_head_words(tt$heads[!is.na(fields)])))
   tpl$id <- paste0("auto_", .ar_hash(paste(unlist(tpl$signature[c("kind", "roles", "date_format", "money_style", "newest_first")]), collapse = "|")))
   tpl$auto$fields <- unname(fields)
   tpl
@@ -614,11 +623,8 @@
                 direction_note = rl$note %||% character(0))
   why <- if (passed) .ar_proven_why(proof, rd) else if (length(failing)) ck[[failing[1]]]$why
          else "Nothing in the file adds up to prove the reading."
-  # Dates a proven layout settled are said to be, in the reason itself.
-  if (passed && isTRUE(ck$dates_settled$by_layout)) why <- paste(why, ck$dates_settled$why)
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = parsed, tx = tx, checks = .ar_checks_df(ck), proof = proof,
        columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
-       no_balance = rd$b == 0L, notes = rl$note %||% character(0),
-       date_by_layout = isTRUE(ck$dates_settled$by_layout))
+       no_balance = rd$b == 0L, notes = rl$note %||% character(0))
 }

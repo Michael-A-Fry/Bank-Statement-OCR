@@ -101,7 +101,15 @@ layouts_dir <- function(cfg = load_config()) {
   chr <- function(x) { x <- as.character(unlist(x)); x[!is.na(x)] }
   one <- function(x, d) { x <- as.character(unlist(x)); if (length(x) && !is.na(x[1])) x[1] else d }
   rel <- suppressWarnings(as.numeric(unlist(sig$rel_x)))
-  list(kind = one(sig$kind, ""), roles = chr(sig$roles), date_format = one(sig$date_format, ""),
+  list(kind = one(sig$kind, ""), roles = chr(sig$roles),
+       # The heading over each column, aligned with `roles`. Not one of the fields
+       # a file must hold (.LAYOUT_SIG_FIELDS): a layout written before it existed
+       # still loads and still matches, it just cannot carry a statement that has
+       # nothing to add up (the reader's .ar_layout_confirms). Written straight
+       # after the roles, so a file cut short without it has lost required fields
+       # too and is refused as incomplete.
+       col_headings = chr(sig$col_headings),
+       date_format = one(sig$date_format, ""),
        money_style = one(sig$money_style, ""),
        sign_markers = .layout_sort(unique(chr(sig$sign_markers))),
        balance_freq = one(sig$balance_freq, "none"),

@@ -74,19 +74,12 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **65 files, 1,023 tests, 5,344 passing assertions**
-— taken on 2026-10-03, at `VERSION` 2.0.0 while it was being built, on R 4.3.3,
-with `BSO_ALLOW_SKIPS=1`, less the two test files removed since with the code
-they tested (`test-inspect.R` and `test-row_coverage.R`: 29 tests and 183
-passing assertions; the run itself counted 67 files). **It was not a clean board: 181 failed and 46
-errors**, all in files then still being rewritten (`test-app-ui.R` 171,
-`test-app-adoption.R` 24, `test-seams.R` 13, `test-deployment-docs.R` 8,
-`test-deployment.R` 4, `test-docs-truth.R` 4, `test-generalisation.R` 1 — the last
-one a real engine fault left failing on purpose, see
-[`../context/outstanding-work.md`](../context/outstanding-work.md)). The screen
-files were re-run on their own afterwards and pass. **Replace this paragraph with
-the first clean full run of 2.0.0 before it goes to the server**; until then,
-treat the figures as a count of what exists, not as a floor that passed.
+The last full run measured **66 files, 1,028 tests, 6,184 passing assertions**
+— taken on 2026-10-04, at `VERSION` 2.0.0, on R 4.3.3, with skips not allowed:
+**0 failed, 0 errors, 0 skipped**. It is the first clean full run of 2.0.0, taken
+after the fixes for the adversarial attack on the reader (`test-attacks.R`, the
+66th file). Treat the figures as a count of what exists; the pass condition is
+still the one above.
 
 **After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the
 buttons:** `node tools/ui/check.mjs` drives the Convert screen in a real browser

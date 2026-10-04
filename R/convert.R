@@ -259,19 +259,23 @@ log_run <- function(logdir, result) {
   k <- recon$kpis
   kst <- function(nm) { v <- k$status[k$name == nm]; if (length(v)) v[1] else "na" }
   nd <- sum(grepl("amount_from_balance", tx$flags %||% character(0), fixed = TRUE))
+  # The year is stated, never guessed, here as in the reader (year_settled): a
+  # year taken from a footer would be "proven" by a balance that holds either way.
+  ny <- sum(grepl("date_year_inferred", tx$flags %||% character(0), fixed = TRUE))
   ck <- data.frame(check = c("rows_read", "amounts_read", "no_derived_amounts", "dates_readable",
-                             "balance_chain", "opening_closing", "dates_in_period"),
+                             "balance_chain", "opening_closing", "dates_in_period", "year_settled"),
     ok = c(n > 0L, n > 0L && !anyNA(tx$amount), nd == 0L,
            n > 0L && !anyNA(suppressWarnings(as.Date(tx$date))),
            n > 0L && !anyNA(tx$balance) && kst("running_balance_continuity") == "pass",
-           kst("balance_reconciliation") == "pass", kst("dates_within_period") != "fail"),
+           kst("balance_reconciliation") == "pass", kst("dates_within_period") != "fail", ny == 0L),
     stringsAsFactors = FALSE)
   ck$why <- ifelse(ck$ok, "Holds with the edited columns.", c(
     "The edited columns read no rows.", "Some amounts could not be read in the edited columns.",
     "Some amounts were filled in from the balance.", "Some dates could not be read in the edited columns.",
     "The running balance is not printed on every row, or does not add up, with the edited columns.",
     "Opening balance plus the movements does not reach the printed closing balance.",
-    "Some dates fall outside the statement period.")[seq_len(nrow(ck))])
+    "Some dates fall outside the statement period.",
+    "Some dates print no year, and the only year on the page is in other text, such as a footer.")[seq_len(nrow(ck))])
   proven <- all(ck$ok)
   why <- if (proven) "With the edited columns the running balance holds on every row, from the opening balance to the closing balance."
          else paste("With the edited columns the reading still does not prove itself:", ck$why[!ck$ok][1])

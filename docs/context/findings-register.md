@@ -1829,8 +1829,8 @@ Counted separately from the total at the top of this file.
   layout keeps short salted marks to tell its proving accounts apart (never a
   number); CSV/Excel layouts with no account number need an admin confirm.
 - **N218 - a proven no-balance layout does not settle day-month against
-  month-day.** **Fixed:** a proven or confirmed layout settles it when every date
-  reads in its stored format.
+  month-day.** **Reverted (N236):** a layout cannot say how one file was printed;
+  only the statement settles it.
 - **N219 - a loan summary box taken for a second statement.** **Fixed:** repeated
   boxes stating the same figures count once; real bundles still split.
 - **N220 - `scripts/bundle-offline.R` ships `nz_banks.yaml` as an example file and
@@ -1855,3 +1855,46 @@ Counted separately from the total at the top of this file.
   says what `convert.R` does.
 - **N229 - `config.example.yaml` names Admin tabs that no longer exist.**
   **Fixed:** it names Words and Health.
+
+**Found by an adversarial attack on the reader (after 2.0.0's acceptance run):
+thirteen ways to an automatic result with a wrong figure. All fixed; each attack
+case, and each control it ran beside, is a test in `test-attacks.R`.**
+
+- **N230 - the year guessed.** A December statement issued in January took the
+  issue date's year (Dec 2026 for Dec 2025), on the proven path too; a period
+  printed as a month ("Statement for December 2025") was not read; with no period
+  and no issue date, a copyright footer's year became every row's. **Fixed:** a
+  row is never dated after the issue date; a month named as the statement's
+  period is the period; and a new check, `year_settled`, sends to Please check any
+  reading whose year came from anything but the row's own date, the period or the
+  issue date. An issue date every row would sit more than three months before
+  settles nothing (it is likely a period's first day). A CSV whose dates print no
+  year (read with the clock's year) fails it too, and so do columns a person draws.
+- **N231 - columns swapped under heading words the reader does not know, or under
+  no heading row at all, matched a layout.** **Fixed:** a layout keeps the
+  heading over each column (`col_headings`), and a statement with nothing to add
+  up matches only when every column carries the layout's own heading. A layout
+  file from before this still loads; it just cannot carry such a statement.
+- **N232 - a card export sharing an everyday export's header was read with
+  everyday signs.** **Fixed:** with one column of amounts, the rows' own wording
+  must confirm the layout's signs at least once and never contradict them, and
+  the statement's own card or loan wording must agree with the layout's.
+- **N233 - a reversal printed "268.15 CR" or "268.15-" in the money-out column was
+  read as money out.** **Fixed:** a sign the layout's statements never printed,
+  a column whose figures print their signs differently, or a marker saying the
+  opposite of its column, sends it to Please check.
+- **N234 - pending or scheduled items under the table, and an undated detail
+  line ("FOREIGN AMOUNT USD 25.00"), were read as transactions.** **Fixed:** with
+  nothing to add up, a title, a repeated heading row or a pending / scheduled /
+  upcoming line inside the table fails `table_unbroken`; a row that borrows the
+  date above it needs a layout learned from statements that print dates once
+  per day.
+- **N235 - a real row described "TOTAL FEES" or "TOTAL TRANSACTIONS" was dropped
+  as a summary line.** **Fixed:** a line set aside as a total or summary with a
+  figure in a money column fails `summary_lines_checked` unless the balance or
+  the opening and closing balances account for it.
+- **N236 - a proven layout settled day-month against month-day (N218).** A
+  month/day file, every day 12 or less, came out with every date wrong, on the
+  proven path too. **Fixed:** reverted; only the statement settles the order (a
+  day over 12, or a printed period only one order fits), otherwise a person
+  reads the dates.

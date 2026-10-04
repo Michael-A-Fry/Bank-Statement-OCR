@@ -125,7 +125,7 @@ test_that("the reading fills the whole contract, signature included", {
   expect_true(all(c("page", "field", "kind", "x_min", "x_max", "ink_min", "ink_max", "heading") %in% names(rd$columns)))
   sg <- rd$template$signature
   expect_equal(names(sg), c("kind", "roles", "date_format", "money_style", "sign_markers", "balance_freq",
-                            "newest_first", "heading_tokens", "producer", "rel_x", "extras"))
+                            "newest_first", "heading_tokens", "producer", "rel_x", "extras", "col_headings"))
   expect_equal(sg$kind, "pdf")
   expect_equal(sg$roles, c("date", "description", "debit", "credit", "balance"))
   expect_equal(sg$date_format, "%d %b")
@@ -133,6 +133,8 @@ test_that("the reading fills the whole contract, signature included", {
   expect_equal(sg$balance_freq, "every")
   expect_false(sg$newest_first)
   expect_true(all(c("balance", "deposits", "withdrawals") %in% sg$heading_tokens))
+  # The heading over each column, in the roles' order.
+  expect_equal(sg$col_headings, c("date", "details", "withdrawals", "deposits", "balance"))
   expect_equal(length(sg$rel_x), 5L)
   expect_true(is.character(sg$extras))
   expect_equal(rd$proof$kind, "chain")
@@ -699,14 +701,19 @@ test_that("with no balance and no totals, a matching proven layout gives layout_
   expect_equal(auto_read(ar_pdf(c(h, rows)), layouts = list(prov))$outcome, "check")
 })
 
-# N218: on a statement whose days are all 12 or less, 03/02 is 3 February and 2
-# March alike, and with no running balance nothing on the page tells them apart.
-# A PROVEN layout of the design was proven on statements where it could be told,
-# so its stored order settles it; a provisional layout settles nothing.
-test_that("a proven no-balance layout settles day-month against month-day; a provisional one does not", {
+# N218, reverted: on a statement whose days are all 12 or less, 03/02 is 3 February
+# and 2 March alike, and with no day over 12 nothing in the dates tells them apart.
+# A proven layout once settled it with its own stored order; a month/day file read
+# against a day/month layout then came out with every date wrong, on the proven
+# path too (the running balance holds whichever way the dates are read). Now only
+# the statement settles it -- here, a printed period only one order fits -- and
+# otherwise a person reads the dates, whatever layouts are handed in.
+test_that("a learned layout never settles day-month against month-day; the statement's own period may", {
   for (us in c(FALSE, TRUE)) {
     fm <- function(d) if (us) sprintf("02/%02d/2026", d) else sprintf("%02d/02/2026", d)
+    want <- c("2026-02-03", "2026-02-05", "2026-02-09")
     h <- c(ar_head[1], "", "Date         Details                          Withdrawals     Deposits")
+    h_noper <- c("Kauri Bank", "", h[3])
     row <- function(d, s) paste0(fm(d), s)
     body <- function(d) c(row(d[1], "   EFTPOS RIVERSIDE DAIRY                      12.40"),
                           row(d[2], "   SALARY MATAI HOLDINGS                                  3,120.00"),
@@ -714,19 +721,28 @@ test_that("a proven no-balance layout settles day-month against month-day; a pro
     lay <- auto_read(ar_pdf(c(h, "             Opening balance          1,000.00", body(c(3, 15, 19)),
                               "             Closing balance          3,839.45")))
     expect_equal(lay$outcome, "proven", info = us)
-    small <- ar_pdf(c(h, body(c(3, 5, 9))))
-    alone <- auto_read(small)
-    expect_equal(alone$outcome, "check", info = us)
-    expect_false(ok_of(alone, "dates_settled"), info = us)
-    rd <- auto_read(small, layouts = list(lay$template))
-    expect_equal(rd$outcome, "layout_match", info = us)
-    expect_equal(rd$transactions$date, c("2026-02-03", "2026-02-05", "2026-02-09"), info = us)
-    expect_match(rd$why, if (us) "reads them as month/day/year" else "reads them as day/month/year", info = us)
-    prov <- lay$template
-    prov$layout <- list(id = "x", version = 1L, status = "provisional", signature = prov$signature)
-    expect_equal(auto_read(small, layouts = list(prov))$outcome, "check", info = us)
+    # No period: nothing on the statement says which order, layout or not.
+    small <- ar_pdf(c(h_noper, body(c(3, 5, 9))))
+    for (L in list(list(), list(lay$template))) {
+      rd <- auto_read(small, layouts = L)
+      expect_equal(rd$outcome, "check", info = us)
+      expect_false(isTRUE(ok_of(rd, "dates_settled")), info = us)
+    }
+    # The same rows with a running balance: the arithmetic proves every figure, and
+    # still not the dates.
+    bal <- ar_pdf(c(c(h_noper[1:2], paste0(h[3], "      Balance")),
+                    paste0(fm(3), "   EFTPOS RIVERSIDE DAIRY                      12.40                    987.60"),
+                    paste0(fm(5), "   SALARY MATAI HOLDINGS                                  3,120.00    4,107.60"),
+                    paste0(fm(9), "   DD CITY COUNCIL RATES                      268.15                  3,839.45")))
+    expect_false(ar_auto(auto_read(bal, layouts = list(lay$template))), info = us)
+    # A printed period (February) only one order fits: the statement settles it,
+    # and the dates are read that way.
+    rd <- auto_read(ar_pdf(c(h, body(c(3, 5, 9)))), layouts = list(lay$template))
+    expect_true(isTRUE(ok_of(rd, "dates_settled")), info = us)
+    expect_equal(rd$transactions$date, want, info = us)
+    expect_right_or_flagged(rd, c(-12.40, 3120, -268.15))
   }
-  # The same in a CSV export.
+  # The same in a CSV export with no period: a proven layout settles nothing.
   csv <- function(d, open = NULL, close = NULL) list(kind = "delimited", path = "", sha256 = NA_character_,
     meta = list(ext = "csv"), lines = c("Date,Details,Amount", open,
       sprintf("02/%02d/2026,%s,%s", d, c("EFTPOS RIVERSIDE", "SALARY MATAI", "DD COUNCIL"), c("-12.40", "3120.00", "-268.15")),
@@ -734,8 +750,8 @@ test_that("a proven no-balance layout settles day-month against month-day; a pro
   lay <- auto_read(csv(c(3, 15, 19), ",Opening balance,1000.00", ",Closing balance,3839.45"))
   expect_equal(lay$outcome, "proven")
   rd <- auto_read(csv(c(3, 5, 9)), layouts = list(lay$template))
-  expect_equal(rd$outcome, "layout_match")
-  expect_equal(rd$transactions$date, c("2026-02-03", "2026-02-05", "2026-02-09"))
+  expect_equal(rd$outcome, "check")
+  expect_false(isTRUE(ok_of(rd, "dates_settled")))
 })
 
 test_that("a layout that would read the figures differently stops a reading being unique", {

@@ -43,7 +43,16 @@ copy-over.
 - **Four outcomes per file**, in the table and on the result:
   - **Proven**: download it.
   - **Matches a learned layout**: no balance to prove it, but it matches a
-    layout the tool has already proven for that bank.
+    layout the tool has already proven for that bank, and the statement itself
+    confirms it: the layout's heading over every column, wording that agrees
+    with its signs, and nothing the layout does not explain (a new sign marker,
+    a pending section, a line set aside as a total, a row with no date).
+- **The year is printed, never guessed.** A date printed as day and month takes
+  its year from the statement period (a month such as "Statement for December
+  2025" counts) or the date the statement was issued, and is never later than
+  that date. A year found only in a footer sends the statement to Please check.
+- **Day and month are never taken from a layout.** When every day is 12 or less
+  and no printed period settles which is which, a person reads the dates.
   - **Please check**: the reading is shown with the reason, such as "the balance
     does not add up at row 14 (page 2)".
   - **Couldn't read**: the reason is shown.

@@ -14,7 +14,9 @@
 # Outcomes (section 4):
 #   proven        every hard check passed and exactly one reading passes
 #   layout_match  no running balance and no printed totals, but the reading is a
-#                 proven layout handed in, and nothing contradicts it
+#                 proven layout handed in, and the statement itself confirms it:
+#                 the layout's heading over every column, no sign, account type
+#                 or wording the layout does not explain (.ar_layout_confirms)
 #   check         read, not proven -- the reason is in `why`
 #   unread        nothing usable -- the reason is in `why`
 #
@@ -237,13 +239,10 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   # Each layout handed in, registered to this document: its conventions on the
   # columns found here. A layout whose conventions are the content reading's own
   # (when the arithmetic chose them) would read the same figures, so it is not
-  # read twice.
-  # The same goes for one whose conventions match, when what held the content
-  # reading back is its dates' day-month order and the layout is proven: its own
-  # date style settles that (.ar_layout_date_fmt).
+  # read twice. A layout never settles what the statement itself leaves open,
+  # such as which of day-month and month-day its dates are (see .ar_dates_settled).
   K <- if (is.null(model)) 0L else length(model$cols)
   seen <- if (identical(cands$content$basis, "arithmetic")) .ar_conv_key(cands$content$rd) else ""
-  dates_open <- "dates_settled" %in% (cands$content$failing %||% character(0))
   fmts_all <- if (is.null(model)) character(0) else .ar_fmts_all(model$rows$date_fmts)
   for (ly in layouts) {
     info <- .ar_layout_info(ly)
@@ -253,7 +252,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     fig <- info$roles[info$roles %in% c("debit", "credit", "amount", "balance", "other")]
     if (length(fig) != K || !.ar_layout_near(cands$content$signature, info$sig, fmts_all)) next
     ck <- .ar_conv_key(list(roles = fig, conv = info$conv, liab = info$liab, dir = info$dir))
-    if (ck %in% seen && !(dates_open && info$proven)) next
+    if (ck %in% seen) next
     seen <- c(seen, ck)
     cands[[src]] <- .ar_pdf_attempt(ctx, base, list(), src, forced = info, model = model)
     if (sum(startsWith(names(cands), "layout:")) >= .AR_MAX_LAYOUTS) break
@@ -330,26 +329,14 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!length(fmts)) character(0) else Reduce(intersect, strsplit(fmts, "|", fixed = TRUE))
 }
 
-# .ar_layout_date_fmt(forced, fmts) -- the date style a PROVEN layout settles this
-# statement's dates with: its own, when every date here reads under it (N218).
-# Day-month and month-day cannot be told apart on a statement whose days are all 12
-# or less, and nothing else on a statement with no running balance tells them
-# apart; the layout was proven on statements where they could be. A provisional
-# layout settles nothing, so such a statement still goes to a person. NULL when the
-# layout does not settle it.
-.ar_layout_date_fmt <- function(forced, fmts) {
-  if (is.null(forced) || !isTRUE(forced$proven)) return(NULL)
-  f <- as.character(unlist(forced$sig$date_format))[1]
-  if (!length(f) || is.na(f) || !nzchar(f) || !(f %in% fmts)) return(NULL)
-  f
-}
-
-# .ar_fmt_words(f) -- a date format as a person says it: "%d/%m/%Y" is
-# "day/month/year".
-.ar_fmt_words <- function(f) {
-  s <- gsub("%d|%e", "day", f); s <- gsub("%m|%b|%B", "month", s); s <- gsub("%Y|%y", "year", s)
-  gsub("%a|%A", "weekday", s)
-}
+# A learned layout does NOT settle day-month against month-day. It once did (N218,
+# reverted): a file whose dates really are month/day, every day 12 or less, read
+# against a layout learned as day/month came out with every date wrong, on the
+# proven path too, because the running balance holds whichever way the dates are
+# read. A layout records how this bank's statements were printed; it cannot say
+# how this file was. Only the statement settles it: a day over 12, a printed
+# period only one order fits, or dates that run in order only one way
+# (.ar_dates_settled). Otherwise a person reads the dates.
 
 # .ar_reocr_rows(ctx, cd) -- step 9's re-OCR, aimed by the arithmetic: on a scan,
 # each row whose amount was filled in from the balance, or that alone breaks a
@@ -503,27 +490,25 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   }
   cs <- .ar_columns(model, rd$roles, headings)
   if (is.null(cs)) return(fail("Found the table but could not measure its columns."))
-  # A proven layout read against this document settles its dates' day-month order.
-  lfmt <- .ar_layout_date_fmt(forced, .ar_fmts_all(model$rows$date_fmts))
-  build <- function(rd) {
-    t <- .ar_pdf_template(ctx, model, cs, rd, headings, dfmt = lfmt)
-    if (!is.null(lfmt)) t$auto$date_by <- forced$ref
-    t
-  }
-  tpl <- build(rd)
+  tpl <- .ar_pdf_template(ctx, model, cs, rd, headings)
   parsed <- .ar_parse_pdf(ctx, model, tpl, rd)
   post <- .ar_post_pdf(ctx, model, tpl, rd, parsed)
   # An order the arithmetic left open is the dates' to say; read again that way.
   turned <- .ar_dir_by_dates(rd, model$anchors, post$tx$date, ctx$decimal)
   if (!is.null(turned)) {
     rd <- turned
-    tpl <- build(rd)
+    tpl <- .ar_pdf_template(ctx, model, cs, rd, headings)
     parsed <- .ar_parse_pdf(ctx, model, tpl, rd)
     post <- .ar_post_pdf(ctx, model, tpl, rd, parsed)
   }
+  # Whether this reading carried a date down to a row printed without one. A
+  # layout learned from such a reading prints each day's date once; only such a
+  # layout may stand for a dateless row on a statement nothing adds up on.
+  tpl$auto$dates_carried <- !is.null(post$tx) && any(grepl("date_carried", post$tx$flags, fixed = TRUE))
   ck <- .ar_pdf_checks(ctx, model, cs, tpl, rd, rl, post, basis)
   cd <- .ar_candidate(source, tpl, post, ck, rd, rl, basis, model, cs, headings, ctx)
   cd$hroles <- hroles
+  cd$signs <- .ar_col_signs(V)
   cd$notes <- c(ctx$notes, cd$notes)
   cd$chain <- ck$chain
   cd$rows <- model$rows[, c("page", "y", "y1")]
@@ -575,12 +560,11 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   list(chosen = rd, n_distinct = 1L, distinct = list(rd), best = rd, note = character(0))
 }
 
-# .ar_pdf_template(ctx, model, cs, rd, headings, dfmt) -- the candidate as a template
-# list in today's schema, so the table reader, reconciliation and outputs work on it
+# .ar_pdf_template(ctx, model, cs, rd, headings) -- the candidate as a template list
+# in today's schema, so the table reader, reconciliation and outputs work on it
 # unchanged. table$columns is the reference page's boxes; table$columns_by_page
-# holds every page's own. `dfmt`: a date format settled by a proven layout, used
-# instead of the document's own vote.
-.ar_pdf_template <- function(ctx, model, cs, rd, headings, dfmt = NULL) {
+# holds every page's own.
+.ar_pdf_template <- function(ctx, model, cs, rd, headings) {
   pages <- sort(unique(model$rows$page))
   ref <- as.integer(names(which.max(table(model$rows$page))))
   boxes <- lapply(seq_len(ctx$np), function(p) if (p %in% pages) .ar_boxes(model, cs, p) else NULL)
@@ -597,10 +581,16 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   extras_names <- setdiff(names(ref_cols), core_fields)
   # Date format: the one that reads the most dates in the date column.
   fv <- unlist(strsplit(model$rows$date_fmts[nzchar(model$rows$date_fmts)], "|", fixed = TRUE))
-  if (is.null(dfmt)) dfmt <- if (length(fv)) {
+  dfmt <- if (length(fv)) {
     tab <- table(fv); top <- names(tab)[tab == max(tab)]
     order_ref <- vapply(ctx$fmts, `[[`, "", "fmt")
-    top[order(match(top, order_ref))][1]
+    top <- top[order(match(top, order_ref))]
+    # Where the dates read as day-month and as month-day alike, a printed period
+    # that only one of them falls inside says which (.ar_dates_settled agrees).
+    per <- .ar_period_dates(ctx$md)
+    fit <- vapply(top, function(f) .ar_dates_in_period(model$rows$date, f, per), NA)
+    if (any(fit) && !all(fit)) top <- top[fit]
+    top[1]
   } else "%d/%m/%Y"
   style <- if (any(rd$roles %in% c("debit", "credit"))) "debit_credit_cols"
            else if (identical(rd$conv, "U")) "unsigned" else "signed"
@@ -642,11 +632,59 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     else if (any(sk %in% c("CR", "DR"))) "dr_cr_suffix" else "signed"
   bf <- if (rd$b > 0L) { nb <- sum(!is.na(model$cells[, rd$b])); if (nb == nrow(model$cells)) "every" else if (nb) "some" else "none" } else "none"
   ht <- if (!is.null(headings)) unique(tolower(unlist(regmatches(headings$text, gregexpr("[A-Za-z]{2,}", headings$text))))) else character(0)
+  ref <- as.integer(names(which.max(table(model$rows$page))))
+  ch <- .ar_col_headings(.ar_heading_row(model), model, ink, ref)
   list(kind = if (any(ctx$ocr)) "scan" else "pdf", roles = roles, date_format = tpl$table$date_format,
        money_style = money_style, sign_markers = sk, balance_freq = bf,
        newest_first = identical(rd$dir, "new"),
        heading_tokens = utils::head(sort(ht), 40), producer = as.character(ctx$input$meta$pdf_doc$producer %||% "")[1],
-       rel_x = rel, extras = as.character(names(tpl$table$extras %||% list())))
+       rel_x = rel, extras = as.character(names(tpl$table$extras %||% list())),
+       col_headings = ch)
+}
+
+# .ar_heading_row(model) -- the words of the heading row printed directly over the
+# table, on the first page that has a table: the nearest line above the table's
+# first line, within 2.5 line pitches, printing words only (no date, no figure),
+# with any word-only line stacked tight above it ("Money" over "out"). Shifted to
+# the reference frame. NULL when the line over the table is not such a line: the
+# file prints no heading row there, and its headings confirm nothing.
+.ar_heading_row <- function(model) {
+  for (pg in model$pgs) {
+    if (is.null(pg)) next
+    rg <- model$regions[[as.character(pg$page)]]
+    if (is.null(rg)) next
+    ln <- pg$lines; w <- pg$w
+    words_only <- function(i) { ix <- which(w$line == ln$line[i]); length(ix) > 0L && all(w$kind[ix] == "text") }
+    i <- rg$first - 1L
+    if (i < 1L || ln$y[rg$first] - ln$y[i] > 2.5 * rg$pitch || !words_only(i)) return(NULL)
+    take <- i
+    while (i > 1L && ln$y[i] - ln$y1[i - 1L] <= 1.2 * pg$h && words_only(i - 1L)) { i <- i - 1L; take <- c(i, take) }
+    ix <- which(w$line %in% ln$line[take])
+    s <- model$shift[pg$page]
+    return(data.frame(page = pg$page, y = w$y[ix], xs = w$x[ix] - s, x1s = w$x1[ix] - s,
+                      text = w$text[ix], stringsAsFactors = FALSE))
+  }
+  NULL
+}
+
+# .ar_col_headings(hr, model, boxes, ref) -- the heading over each column, left to
+# right, as plain lower-case words ("" where none is printed). Each heading word
+# belongs to the one column whose box (on the reference page `ref`) holds its
+# centre, so a wide heading never names two columns. A layout keeps these, and a
+# statement with nothing to add up matches it only when every column carries the
+# layout's own heading (.ar_layout_confirms): the same heading words in another
+# order are another statement's columns, not this layout's.
+.ar_col_headings <- function(hr, model, boxes, ref) {
+  n <- NROW(boxes)
+  if (!n) return(character(0))
+  if (is.null(hr) || !nrow(hr)) return(rep("", n))
+  s <- model$shift[ref]
+  lo <- boxes$x_min - s; hi <- boxes$x_max - s
+  cx <- (hr$xs + hr$x1s) / 2
+  vapply(seq_len(n), function(k) {
+    ix <- which(cx >= lo[k] & cx < hi[k])
+    .ar_head_words(paste(hr$text[ix][order(hr$y[ix], hr$xs[ix])], collapse = " "))
+  }, "")
 }
 
 # .ar_parse_pdf(ctx, model, tpl, rd) -- the engine's table reader on this document,
@@ -845,15 +883,32 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!isFALSE(pl$ok) && .ar_carried_off_end(model))
     pl <- list(ok = FALSE, why = "The table ends by carrying its balance forward to a page that is not in the file.")
   add("pages_complete", pl$ok, pl$why)
-  ds <- .ar_dates_settled(model$rows$date, model$rows$date_fmts, tpl$table$date_format, rd$dir)
-  by <- tpl$auto$date_by
-  add("dates_settled", ds || !is.null(by), if (ds) "The dates read one way only."
-      else if (!is.null(by)) sprintf("The dates read as day-month and as month-day alike; the proven layout %s reads them as %s.",
-                                     by, .ar_fmt_words(tpl$table$date_format))
-      else "The dates read as day-month and as month-day equally well.")
-  ck$dates_settled$by_layout <- !ds && !is.null(by)
+  ds <- .ar_dates_settled(model$rows$date, model$rows$date_fmts, tpl$table$date_format, rd$dir,
+                          periods = .ar_period_dates(ctx$md))
+  add("dates_settled", ds, if (ds) "The dates read one way only."
+      else "The dates read as day-month and as month-day equally well, and nothing on the statement says which.")
   ar <- .ar_arith_checks(tx, post$page, model$anchors, rd, rl, basis, ctx$decimal, ctx$md,
-                         two_dates = !is.null(model$date2), strict = any(ctx$ocr))
+                         two_dates = !is.null(model$date2), strict = any(ctx$ocr),
+                         yearless = !grepl("%[Yy]", tpl$table$date_format))
+  # With nothing to add up, the table's own shape is all that says which lines are
+  # this statement's transactions, so it must be one unbroken table. Where the
+  # balance or the opening and closing balances are printed, a row that is not the
+  # statement's breaks them, so these say nothing more there.
+  arith <- !identical(ar$proof_kind, "none")
+  br <- .ar_section_breaks(model)
+  ar$checks$table_unbroken <- if (!length(br))
+      list(ok = TRUE, why = "The table runs unbroken from its first row to its last.")
+    else if (arith) list(ok = NA, why = "A title or heading line sits inside the table; the arithmetic accounts for every row around it.")
+    else list(ok = FALSE, why = sprintf(paste(
+      "The line \"%s\" on page %d breaks the table (a section such as pending or scheduled payments may follow it),",
+      "and nothing on the statement adds up to show which rows are its transactions."), substr(br[[1]]$raw, 1, 50), br[[1]]$page))
+  sl <- .ar_set_aside_figures(model$anchors, rd$roles)
+  ar$checks$summary_lines_checked <- if (!length(sl))
+      list(ok = TRUE, why = "No line with a figure in a money column was set aside as a total or summary.")
+    else if (arith) list(ok = NA, why = "Lines set aside as totals or summaries are checked by the balances the statement prints.")
+    else list(ok = FALSE, why = sprintf(paste(
+      "The line \"%s\" on page %d has a figure in a money column but was set aside as a total or summary,",
+      "and nothing on the statement adds up to show it is not a transaction."), substr(sl[[1]]$raw, 1, 50), sl[[1]]$page))
   # Checked after the arithmetic, so a broken balance is the reason given when it
   # is the cause.
   ra <- .ar_reader_agrees(model, rd, tx)
@@ -871,28 +926,102 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   ar
 }
 
-# .ar_dates_settled(dates, fmts, chosen, dir) -- FALSE when another date format
-# reads every printed date too, gives different dates, and those run in order just
-# as well ("03/04" is 3 April or 4 March): then the order the voting picked is a
-# guess, and a guessed date is never proven.
-.ar_dates_settled <- function(dates, fmts, chosen, dir) {
+# .ar_dates_settled(dates, fmts, chosen, dir, periods) -- FALSE when another date
+# format reads every printed date too, gives different dates, and those run in
+# order just as well ("03/04" is 3 April or 4 March): then the order the voting
+# picked is a guess, and a guessed date is never proven. A printed statement
+# period settles it when the chosen reading falls inside it and the other does not
+# (both read with a printed year, so the period can be compared at all).
+# Nothing else does: a learned layout records how the bank printed its other
+# statements, not how this file was printed.
+.ar_dates_settled <- function(dates, fmts, chosen, dir, periods = list()) {
   has <- !is.na(dates) & nzchar(fmts)
   if (!any(has)) return(TRUE)
   cand <- Reduce(intersect, strsplit(fmts[has], "|", fixed = TRUE))
   alt <- setdiff(cand, chosen)
   if (!length(alt) || !(chosen %in% cand)) return(TRUE)
+  yl <- function(f) !grepl("%[Yy]", f)
   rd_one <- function(f) {
-    yl <- !grepl("%[Yy]", f)
-    iso <- if (yl) parse_date(paste(dates[has], "2000"), paste(f, "%Y"))$iso else parse_date(dates[has], f)$iso
+    iso <- if (yl(f)) parse_date(paste(dates[has], "2000"), paste(f, "%Y"))$iso else parse_date(dates[has], f)$iso
     as.Date(iso)
   }
   inord <- function(d) !anyNA(d) && (if (identical(dir, "new")) all(diff(d) <= 0) else all(diff(d) >= 0))
   d0 <- rd_one(chosen)
+  in0 <- .ar_dates_in_period(dates[has], chosen, periods)
   for (f in alt) {
     d1 <- rd_one(f)
-    if (!identical(d0, d1) && inord(d1)) return(FALSE)
+    if (identical(d0, d1) || !inord(d1)) next
+    if (in0 && !.ar_dates_in_period(dates[has], f, periods)) next
+    return(FALSE)
   }
   TRUE
+}
+
+# .ar_dates_in_period(dates, f, periods) -- do all the printed dates, read under
+# format f, fall inside a printed statement period? FALSE when there is no period,
+# when f prints no year (then the period cannot be compared), or when any date
+# does not read.
+.ar_dates_in_period <- function(dates, f, periods) {
+  dates <- dates[!is.na(dates) & nzchar(dates)]
+  if (!length(periods) || !length(dates) || !grepl("%[Yy]", f)) return(FALSE)
+  d <- as.Date(parse_date(dates, f)$iso)
+  !anyNA(d) && all(Reduce(`|`, lapply(periods, function(pp) d >= pp[1] & d <= pp[2])))
+}
+
+# .ar_period_dates(md) -- the statement periods the metadata holds, each as two
+# Dates (start, end); a bound that does not read as a date leaves its period out.
+.ar_period_dates <- function(md) {
+  per <- md$periods %||% list(c(md$period_start %||% NA, md$period_end %||% NA))
+  Filter(function(pp) !is.na(pp[1]) && !is.na(pp[2]) && pp[2] >= pp[1],
+         lapply(per, function(pp) c(.plausible_period_date(pp[1]), .plausible_period_date(pp[2]))))
+}
+
+# Words that open a section of things that have not happened, or not yet: they are
+# not the statement's transactions, whatever the dates beside them say.
+.AR_SECTION_RX <- paste0("\\b(?:pending|scheduled|upcoming|future|forthcoming|authori[sz]ed|",
+                         "authori[sz]ations?|not yet processed|unprocessed|uncleared)\\b")
+
+# .ar_section_breaks(model) -- lines inside a page's table (between its first row
+# and its last) that are neither a row, a summary line nor a description wrapped
+# under the line above: a title set apart from the rows ("Scheduled payments"),
+# a heading row printed again over the money columns, or any line that names
+# pending, scheduled, upcoming or authorised items. Each is where one table ends
+# and another begins, and the rows under it may not be this statement's. Each as
+# list(page, raw).
+.ar_section_breaks <- function(model) {
+  out <- list()
+  for (pg in Filter(Negate(is.null), model$pgs)) {
+    p <- pg$page
+    rg <- model$regions[[as.character(p)]]
+    rows <- model$rows$line[model$rows$page == p]
+    if (is.null(rg) || length(rows) < 2L) next
+    ln <- pg$lines; w <- pg$w; s <- model$shift[p]
+    used <- c(rows, vapply(Filter(function(a) a$page == p, model$anchors), function(a) a$line, 0))
+    ry <- ln$y[ln$line %in% rows]
+    inner <- which(ln$line %in% rg$lines & !(ln$line %in% used) & ln$y > min(ry) & ln$y < max(ry))
+    for (i in inner) {
+      ix <- which(w$line == ln$line[i])
+      words_only <- all(w$kind[ix] == "text")
+      tight <- i > 1L && ln$y[i] - ln$y1[i - 1L] <= 1.2 * pg$h
+      over_fig <- any(vapply(model$cols, function(cl) any(w$x[ix] - s < cl$x1 & w$x1[ix] - s > cl$x), logical(1)))
+      if (grepl(.AR_SECTION_RX, tolower(ln$raw[i]), perl = TRUE) || (words_only && (!tight || over_fig)))
+        out[[length(out) + 1L]] <- list(page = p, raw = ln$raw[i])
+    }
+  }
+  out
+}
+
+# .ar_set_aside_figures(anchors, roles) -- summary lines inside or under the table
+# (a total, or a wording the table reader drops as a summary) that print a figure
+# in a money column. The table reader leaves them out, so a real transaction
+# described "TOTAL FEES" or "TOTAL" would be lost with them; only the statement's
+# own balances can show it was not one. Opening and closing balances are those
+# balances, so they are not among these.
+.ar_set_aside_figures <- function(anchors, roles) {
+  mv <- which(roles %in% c("debit", "credit", "amount"))
+  if (!length(mv)) return(list())
+  Filter(function(a) (isTRUE(a$in_table) || isTRUE(a$under_table)) && !(a$class %in% c("open", "close")) &&
+           length(a$figs) >= max(mv) && any(!is.na(a$figs[mv])), anchors)
 }
 
 # .ar_dated_lines_left(model) -- lines with a date where the date column runs, from
@@ -994,7 +1123,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
 # balance chain, opening + movements = closing, printed totals, dates, signs,
 # derived amounts and uniqueness. `strict` (a scan) allows no row outside a step.
 .ar_arith_checks <- function(tx, page, anchors, rd, rl, basis, decimal, md, two_dates = FALSE,
-                             strict = FALSE) {
+                             strict = FALSE, yearless = FALSE) {
   n <- nrow(tx)
   ck <- list()
   add <- function(name, ok, why) ck[[name]] <<- list(ok = ok, why = why)
@@ -1060,9 +1189,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   } else add("dates_in_order", NA, "Not every date reads.")
   # Inside the printed period: a bundle of statements prints one period per
   # statement, and a row may fall in any of them.
-  per <- md$periods %||% list(c(md$period_start %||% NA, md$period_end %||% NA))
-  per <- Filter(function(pp) !is.na(pp[1]) && !is.na(pp[2]) && pp[2] >= pp[1],
-                lapply(per, function(pp) c(.plausible_period_date(pp[1]), .plausible_period_date(pp[2]))))
+  per <- .ar_period_dates(md)
   if (length(per) && !anyNA(d)) {
     slack <- if (two_dates) 45 else 0
     inside <- Reduce(`|`, lapply(per, function(pp) d >= pp[1] - slack & d <= pp[2]))
@@ -1070,6 +1197,27 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     add("dates_in_period", !length(out), if (!length(out)) "Every date is inside the statement period."
         else sprintf("Row %d is dated outside the statement period.", out[1]))
   } else add("dates_in_period", NA, "No statement period was read.")
+  # The year is stated, never guessed. A date printed as day and month takes its
+  # year from the printed period or the date the statement was issued; a lone year
+  # found anywhere else on the page (a copyright footer, a letter) is not the
+  # statement's, and every figure can add up to the cent with the year wrong.
+  fl <- tx$flags %||% rep("", n); fl[is.na(fl)] <- ""
+  yi <- which(grepl("date_year_inferred", fl, fixed = TRUE))
+  # With no period printed, the year of a day-and-month date comes from the date
+  # the statement was issued, and no row is dated after it. A statement is issued
+  # soon after its last row; when every such row would be more than three months
+  # older than that date, the "statement date" is not when this statement was
+  # issued (a period's first day, say), and it settles nothing.
+  sd <- if (!length(per)) .plausible_period_date(md$statement_date %||% NA) else as.Date(NA)
+  yl_rows <- if (yearless) seq_len(n) else which(grepl("date_alt_format", fl, fixed = TRUE))
+  stale <- !length(yi) && !is.na(sd) && length(yl_rows) > 0L && !anyNA(d[yl_rows]) && max(d[yl_rows]) < sd - 92
+  add("year_settled", !length(yi) && !stale, if (length(yi))
+        sprintf(paste("Row %d's date prints no year, and no statement period or issue date is printed to settle it;",
+                      "the only year on the page is in other text, such as a footer."), yi[1])
+      else if (stale)
+        sprintf(paste("The dates print no year and the statement prints no period, only the date %s; every row would be",
+                      "more than three months older than that, so that date does not settle the year."), format(sd, "%d %b %Y"))
+      else "Every date's year is printed with it, or settled by the statement period or the date the statement was issued.")
   if (identical(rd$conv, "B")) {
     uns <- sum(is.na(rd$chain$signs[seq_len(n)]) & !is.na(tx$amount))
     add("signs_settled", uns == 0L, if (uns == 0L) "Every unsigned amount's sign is settled by the balance."
@@ -1192,13 +1340,10 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
                 direction_note = rl$note %||% character(0))
   why <- if (passed) .ar_proven_why(proof, rd) else if (length(failing)) ck[[failing[1]]]$why
          else "Nothing on the statement adds up to prove the reading."
-  # Dates a proven layout settled are said to be, in the reason itself.
-  if (passed && isTRUE(ck$dates_settled$by_layout)) why <- paste(why, ck$dates_settled$why)
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = post$parsed, tx = post$tx, checks = .ar_checks_df(ck), proof = proof,
        columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
-       no_balance = rd$b == 0L, notes = rl$note %||% character(0),
-       date_by_layout = isTRUE(ck$dates_settled$by_layout))
+       no_balance = rd$b == 0L, notes = rl$note %||% character(0))
 }
 
 .ar_proven_why <- function(proof, rd) {
@@ -1242,35 +1387,54 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     return(.ar_finish(pick, "proven", pick$why, cdf, .ar_match_layout(pick, layouts)))
   }
   # No running balance and no printed totals: a proven layout handed in may carry
-  # it, when this document matches the layout (same design, same conventions) and
-  # nothing contradicts it -- no heading names a column the other way, the content
-  # reading (when the headings chose it) reads the same figures, and every layout
-  # that qualifies reads the same figures.
+  # it, when this document is of the layout's design and the statement itself
+  # CONFIRMS the layout's conventions (.ar_layout_confirms) -- "nothing contradicts
+  # it" is not enough, since with nothing to add up a reading with money in and
+  # money out swapped contradicts nothing either. Also: no heading names a column
+  # the other way, the content reading (when the headings chose it) reads the same
+  # figures, and every layout that qualifies reads the same figures. A layout of
+  # the design that is refused says why, and that is the reason the person sees.
+  refused <- character(0); refused_cd <- list()
   lm <- Filter(function(cd) {
-    if (!startsWith(cd$source, "layout:") || is.null(cd$tx) || !nrow(cd$tx) || !.ar_layout_match_ok(cd)) return(FALSE)
+    if (!startsWith(cd$source, "layout:") || is.null(cd$tx) || !nrow(cd$tx)) return(FALSE)
     info <- .ar_layout_ref_info(sub("^layout:", "", cd$source), layouts)
+    if (!isTRUE(info$proven) || !identical(cd$proof$kind, "none") || !.ar_sig_match(cd$signature, info$sig)) return(FALSE)
+    no <- function(why) {
+      refused <<- c(refused, sprintf("No running balance or totals are printed, so only the learned layout %s could read it. %s",
+                                     info$ref, why))
+      refused_cd[[length(refused_cd) + 1L]] <<- cd
+      FALSE
+    }
     ht <- list(unlist(cd$signature$heading_tokens), unlist(info$sig$heading_tokens))
     same_words <- !length(ht[[1]]) || !length(ht[[2]]) ||
       length(intersect(ht[[1]], ht[[2]])) >= 0.5 * length(union(ht[[1]], ht[[2]]))
-    isTRUE(info$proven) && .ar_sig_match(cd$signature, info$sig) && same_words &&
-      !.ar_heading_contradicts(cd$hroles, cd$rd$roles)
+    if (!same_words || .ar_heading_contradicts(cd$hroles, cd$rd$roles)) return(FALSE)
+    if (!.ar_layout_match_ok(cd)) {
+      ck <- cd$checks
+      return(no(ck$why[ck$ok %in% FALSE & !(ck$check %in% c("unique", "rows_proven"))][1]))
+    }
+    why <- .ar_layout_confirms(cd, info, ctx)
+    if (!is.null(why)) return(no(why))
+    TRUE
   }, cands)
   if (length(lm) && length(unique(vapply(lm, key, ""))) == 1L) {
     cd <- lm[[1]]
     ref <- sub("^layout:", "", cd$source)
+    # The headings' reading must give the same figures and dates.
     voted <- isTRUE(content$basis == "heading") && !is.null(content$tx) && nrow(content$tx)
-    # The headings' reading must give the same figures. Its dates are not held to
-    # the layout's: both read the same date column, so they differ only where the
-    # day-month order was open, and that is what the proven layout settles.
-    amounts <- function(x) paste(sprintf("%.2f", x$tx$amount), collapse = "|")
-    settled <- isTRUE(cd$date_by_layout)
-    if (!voted || identical(key(content), key(cd)) || (settled && identical(amounts(content), amounts(cd)))) {
-      why <- sprintf("No running balance or totals are printed; the reading matches the proven layout %s and nothing contradicts it.", ref)
-      if (settled) why <- paste(why, cd$checks$why[cd$checks$check == "dates_settled"][1])
+    if (!voted || identical(key(content), key(cd))) {
+      why <- sprintf(paste("No running balance or totals are printed; the reading matches the proven layout %s,",
+                           "and the statement's own headings, wording and dates confirm it."), ref)
       return(.ar_finish(cd, "layout_match", why, cdf, ref))
     }
   }
-  # Show the most useful reading: the content one when it read rows, else any.
+  # A proven layout of this design that the statement did not confirm: its reading
+  # is the one shown, for a person to confirm or put right, with what was not
+  # confirmed as the reason. It is the bank's own reading of the design, where the
+  # content reading had nothing to go on but the headings' words or the columns'
+  # places.
+  if (length(refused)) return(.ar_finish(refused_cd[[1]], "check", refused[1], cdf, NULL))
+  # Otherwise show the most useful reading: the content one when it read rows, else any.
   show <- content
   if (is.null(show$tx) || !nrow(show$tx)) {
     alt <- Filter(function(cd) !is.null(cd$tx) && nrow(cd$tx) > 0, cands)
@@ -1281,6 +1445,91 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   broken <- show$proof$kind != "none" && sc$links >= 2 && sc$held < 0.5 * sc$links
   outcome <- if (broken) "unread" else "check"
   .ar_finish(show, outcome, show$why, cdf, NULL)
+}
+
+# .ar_layout_confirms(cd, info, ctx) -- with nothing to add up, the statement must
+# itself confirm each convention the layout would supply, or a person reads it.
+# NULL when it does; otherwise the sentence saying what does not.
+#   * headings: the heading over every column is the layout's heading for that
+#     column (a statement with no heading row confirms nothing, and nor does a
+#     layout learned without one);
+#   * sign markers: no figure carries a sign the layout's statements never printed
+#     (a "268.15 CR" reversal in the money-out column);
+#   * account type: the statement's own card or loan wording agrees with the
+#     layout's (a card's export can share an everyday export's header);
+#   * wording: no row's description says the money went the other way
+#     ("PAYMENT RECEIVED" read as money out);
+#   * dates: no row borrows the date above it, unless the layout was learned from
+#     statements that print each day's date once (an undated detail line with a
+#     figure, "USD 25.00", is otherwise read as a transaction).
+.ar_layout_confirms <- function(cd, info, ctx) {
+  sig <- cd$signature; lsig <- info$sig
+  roles <- as.character(unlist(sig$roles))
+  money <- roles %in% c("debit", "credit", "amount", "balance", "other")
+  mine <- as.character(unlist(sig$col_headings)); theirs <- as.character(unlist(lsig$col_headings))
+  if (length(mine) != length(roles) || !any(nzchar(mine[money])))
+    return("It prints no heading row over its columns, so nothing on it confirms which column is which.")
+  if (length(theirs) != length(roles) || !all(nzchar(theirs[money])))
+    return("The layout was learned without a heading over each column of figures, so it cannot confirm which column is which.")
+  if (!identical(mine, theirs))
+    return("The headings over its columns are not the layout's, so they do not confirm which column is which.")
+  new <- setdiff(as.character(unlist(sig$sign_markers)), as.character(unlist(lsig$sign_markers)))
+  if (length(new))
+    return(sprintf("Its figures carry %s, which the layout's statements never printed, so the layout cannot say which way they run.",
+                   .ar_marker_words(new)))
+  # A money-out or money-in column is read by its place, whatever sign a figure in
+  # it prints. That is safe only when every figure in the column prints its sign
+  # the same way, and none says the opposite of its column (a CR among the money
+  # out, a minus among the money in): otherwise that figure is a reversal, read
+  # the wrong way round.
+  rr <- cd$rd$roles %||% character(0)
+  for (j in which(rr %in% c("debit", "credit"))) {
+    k <- cd$signs[[j]] %||% character(0)
+    side <- if (rr[j] == "debit") "money-out" else "money-in"
+    if (length(k) > 1L)
+      return(sprintf("In the %s column some figures print %s and others do not, so the layout cannot say which way those run.",
+                     side, .ar_marker_words(setdiff(k, ""))))
+    wrong <- if (rr[j] == "debit") k %in% c("CR", "+") else k %in% c("DR", "OD", "-lead", "-trail", "()")
+    if (any(wrong))
+      return(sprintf("A figure in the %s column prints %s, which says the money went the other way.",
+                     side, .ar_marker_words(k[wrong])))
+  }
+  if (!identical(isTRUE(ctx$liab$liability), isTRUE(info$liab)))
+    return(if (isTRUE(ctx$liab$liability))
+      "The statement reads as a credit card or loan account and the layout is an everyday account's, so its signs could run the other way."
+      else "The layout is a credit card or loan account's and nothing on this statement says it is one, so its signs could run the other way.")
+  tx <- cd$tx
+  t <- tolower(tx$description %||% rep("", nrow(tx))); t[is.na(t)] <- ""
+  inw <- grepl(.AR_IN_WORDS, t, perl = TRUE); outw <- grepl(.AR_OUT_WORDS, t, perl = TRUE)
+  A <- tx$amount
+  one <- xor(inw, outw) & !is.na(A) & A != 0
+  against <- which(one & ((inw & A < 0) | (outw & A > 0)))
+  if (length(against))
+    return(sprintf("Row %d's wording (\"%s\") says the money moved the other way from how the layout reads it.",
+                   against[1], substr(tx$description[against[1]], 1, 40)))
+  # One column of amounts says nothing about which way its signs run except
+  # through the layout, and a card's export can share an everyday export's
+  # columns: the rows' own wording must agree at least once. (Money-out and
+  # money-in columns are named by their headings, confirmed above.)
+  if (any(rr == "amount") && !any(one))
+    return(paste("No row's wording (a salary, a purchase, a payment received) says which way its amounts run,",
+                 "and the layout alone cannot: a card's export can share an everyday export's columns."))
+  car <- which(grepl("date_carried", tx$flags %||% rep("", nrow(tx)), fixed = TRUE))
+  if (length(car) && !isTRUE(info$carry))
+    return(sprintf(paste("Row %d has no date of its own, and the layout's statements print a date on every row,",
+                         "so the line may be a detail of the row above rather than a transaction."), car[1]))
+  NULL
+}
+
+# .ar_col_signs(V) -- per figure column, the ways its figures print their sign
+# ("" for a plain figure, "CR", "-trail", ...), as .ar_values reads them.
+.ar_col_signs <- function(V) lapply(seq_len(ncol(V$SK)), function(j) sort(unique(V$SK[V$has[, j], j])))
+
+# .ar_marker_words(sk) -- sign styles as a person says them.
+.ar_marker_words <- function(sk) {
+  w <- c(CR = "CR", DR = "DR", OD = "OD", "()" = "brackets", "-lead" = "a leading minus",
+         "-trail" = "a trailing minus", "+" = "a plus sign")
+  paste(ifelse(sk %in% names(w), w[sk], sk), collapse = " and ")
 }
 
 # .ar_heading_contradicts(hroles, roles) -- a heading over a column names the
@@ -1334,7 +1583,8 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (identical(status, "retired")) return(NULL)
   list(ref = paste0(id, "@", ver), kind = sig$kind %||% "pdf", roles = unlist(roles), conv = conv,
        liab = isTRUE(au$liab), dir = if (isTRUE(sig$newest_first)) "new" else (au$dir %||% "old"),
-       proven = status %in% c("proven", "confirmed"), sig = sig)
+       proven = status %in% c("proven", "confirmed"), sig = sig,
+       carry = isTRUE(as.logical(unlist(au$dates_carried))[1]))
 }
 
 # .ar_layout_ref_info(ref, layouts) -- what the layout handed in as "<id>@<version>"

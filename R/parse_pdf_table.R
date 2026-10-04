@@ -692,11 +692,18 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   # dictionary as everything else, so it is deterministic and an analyst can widen
   # the wording without a code change. It is tried BEFORE the text scan below,
   # because reading a labelled value beats counting 4-digit numbers on the page.
+  # A statement lists nothing dated after the day it was issued, so the issue date
+  # settles the year only together with that limit: "03 Dec" on a statement dated
+  # 5 Jan 2026 is 3 Dec 2025, never 3 Dec 2026 (a silently wrong year on every row,
+  # and the running balance still adds up). Both years are candidates and
+  # .with_year takes the later one that does not pass the issue date.
   year_from_stmt_date <- FALSE
+  year_cap <- as.Date(NA)
   if (!length(yrs)) {
     sd <- pdate(md$statement_date)
     if (!is.na(sd)) {
-      yrs <- as.integer(format(sd, "%Y")); year_from_stmt_date <- TRUE
+      y <- as.integer(format(sd, "%Y"))
+      yrs <- c(y, y - 1L); year_from_stmt_date <- TRUE; year_cap <- sd
     }
   }
   year_from_text <- FALSE
@@ -708,8 +715,9 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     if (length(cy) == 1L) { yrs <- cy; year_from_text <- TRUE }
   }
   # .with_year(raw, fmt) -- append the period's year to a year-less date string;
-  # with two candidate years (a period spanning New Year) pick the one that
-  # lands the date inside the period.
+  # with two candidate years (a period spanning New Year, or an issue date's year
+  # and the one before) pick the one that lands the date inside the period and
+  # not after the issue date.
   .with_year <- function(raw, fmt) {
     if (!length(yrs)) return(raw)
     bad <- is.na(raw) | !nzchar(trimws(raw))
@@ -717,7 +725,8 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     out <- vapply(raw, function(r) {
       if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
       cand <- suppressWarnings(as.Date(paste(r, yrs), fmt))
-      inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
+      inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1) &
+        (is.na(year_cap) | cand <= year_cap)
       pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
       if (is.na(pick)) pick <- 1L
       paste(r, yrs[pick])
