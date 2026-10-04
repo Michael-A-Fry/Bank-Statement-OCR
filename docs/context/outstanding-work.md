@@ -33,8 +33,14 @@ code and the engine's sentences. Each has a regression test.
 
 **Still open:**
 
-1. **The held-back acceptance run**: the realistic holdout, the green-flag set and
-   the decoy packs, scored once, independently (spec section 11 step 3).
+1. **Robustness to noise (first, before any server is updated).** The held-back
+   acceptance run (4 Oct 2026, nothing automatic and wrong anywhere) read the
+   realistic holdout well (text PDFs 93%) but only 45 of 100 green-flag PDFs and
+   0 of 80 decoy packs automatically. Decoy: a cover or back page's own table lines
+   up with the statement's columns, so `pages_with_rows` / `rows_match_columns`
+   hold the statement. Green-flag: date and figures on different lines (15), the
+   balance chain breaking (about 20), roles not decided (10). Fix, then measure
+   on freshly generated decoy and green-flag sets (the old ones have been seen).
 2. **Stage 4, agreed with the product owner (4 Oct 2026):**
    - a per-bank readiness view, and one Admin inbox of exceptions only;
    - automatic spot checks for statements with no balance and no totals on a

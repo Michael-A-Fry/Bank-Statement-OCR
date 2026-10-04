@@ -133,47 +133,37 @@ synthetic statements with an answer key, converted end to end through
 
 ### What is not done, and what is not yet known
 
-Everything the build's reviews found, fixed and open, is recorded as N193 to N229
-in [`docs/context/findings-register.md`](docs/context/findings-register.md). The
-open items are ranked in
+Everything the build's reviews found is recorded as N193 to N229 in
+[`docs/context/findings-register.md`](docs/context/findings-register.md); all of
+them are fixed, each with a regression test. What is left is ranked in
 [`docs/context/outstanding-work.md`](docs/context/outstanding-work.md).
 
-- **The acceptance tests have not been run.** The realistic holdout set and the
-  100-statement green-flag set are held back to be scored once, independently.
-  Every number above is from sets the build was developed against.
-- **The 95% target is not met yet:**
-  - Text PDFs: 94.5%.
-  - Scans: 80%.
-  - CSV: 4 of 7 automatic. The other 3 have no balance, so a person is asked.
-  - Ruled table lines on scans are the main remaining OCR loss.
-- **Release blockers:**
-  - The full suite was last run part-way through the build: 67 files, 1,052
-    tests, 5,527 passing, 181 failed and 46 errors. The failures were in files
-    still being rewritten. The release needs a clean full run.
-- **Engine faults found and not yet fixed.** None of these produced a wrong
-  figure on the test sets. The first two could:
-  - **A Kiwibank export with two date columns:** the dates taken depend on the
-    column order. The same statement is proven with its Effective dates in one
-    order and its Transaction dates in the other (`test-generalisation.R`,
-    deliberately left failing).
-  - **A scanned page that times out** (60 s) is read as blank. If it is the
-    last page, the rest could still prove. It needs a check in `auto_read`.
-  - **Exports that go to Please check with the wrong figures shown:** the ASB
-    export's `Unique Id` is read as a balance; a card export with a
-    foreign-currency row reads the wrong columns; Xero exports take the ID as
-    the description.
-  - **"Co-operative Bank" as typed** does not match `coop`.
-  - **The "proved by at least 2 different accounts" rule** for promoting a
-    layout is only approximated.
-  - **A no-balance layout does not settle day-month against month-day.**
-  - **A loan statement's summary box** is taken for a second statement, and
-    Please check then advises splitting the file.
-- **Not built from the spec:**
-  - Merging or moving layouts between banks.
-  - Clicking a gap on Please check to split or join a column.
-  - A reversed-sign role for card statements.
-  - Reading another account's mini-statement as a separate account (decided
-    3 Oct).
+- **Full suite (4 Oct 2026):** 65 files, 1,004 tests, 5,901 passing, 0 failed,
+  0 skipped.
+- **The held-back acceptance run (4 Oct 2026), scored once.** Nothing came out
+  automatic and wrong on any set (AUTO_WRONG = 0 everywhere).
+
+  | Set | Automatic and right |
+  |---|---|
+  | Realistic holdout: text PDFs | 119 of 128 (93%) |
+  | Realistic holdout: scans | 8 of 15 |
+  | Realistic holdout: CSV / Excel | 5 of 8 / 4 of 4 |
+  | Green-flag: 100 deliberately weird PDFs | 45 of 100 |
+  | Decoy: 80 packs with 2-3 front pages, 1-5 back pages and decoy tables | 0 of 80 |
+
+- **Not robust to noise yet.** In the decoy packs a cover or back page's own
+  table often lines up with the statement's columns, so the reader expects rows
+  from that page and holds the statement for a person. In the green-flag set, 15
+  layouts print the date and the figures on different lines, about 20 break the
+  balance chain, and 10 cannot tell which column is which. These go to a person
+  (never wrong), so the tool is safe but far from 95% automatic on noisy files.
+  **Do not deploy 2.0 to a server until this is fixed**; it is the next piece of
+  work, measured on freshly generated sets.
+- **Not built from the spec yet (Stage 4, agreed 4 Oct 2026):** merging or
+  moving layouts between banks; clicking a gap on Please check to split or join a
+  column; a reversed-sign role for card statements; reading another account's
+  mini-statement as a separate account; and the improvements listed in
+  `outstanding-work.md`.
 
 ### Hand-carry list
 
