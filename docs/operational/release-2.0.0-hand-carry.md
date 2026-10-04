@@ -1,7 +1,9 @@
-# Release 2.0.0: the hand-carry list
+# Release 2.0.0: the hand-carry list (1.x to 2.0.0)
 
-What the offline server needs changed to go from **1.23.1** to **2.0.0**:
-every file to update, add or delete. Templates are gone in 2.0.0. Each statement
+What the offline server needs changed to go from **1.x** (written against
+1.23.1; the same steps work from any earlier 1.x, because sections 3 and 4
+replace everything the app runs) to **2.0.0** (commit `10665d8`): every file to
+update, add or delete. Templates are gone in 2.0.0. Each statement
 is now read from its content and proved by its own figures, and each bank's
 layouts are learned on the server
 ([../../CHANGELOG.md](../../CHANGELOG.md) has the full entry).
@@ -19,7 +21,51 @@ written. Carry it too, and tell whoever wrote this page.
 
 ---
 
-## Read this first: 2.0.0 cannot simply be copied over 1.23.1
+## The short version (about 20 minutes)
+
+Each step is explained in the section named after it.
+
+1. **Back up** the server, including `templates\statements_user\`; keep the
+   1.x bundle; **stop the app** (section 1).
+2. Copy `R\params.R` aside (section 1).
+3. **Delete** the server's `R\`, `tests\` and `docs\` folders and the old
+   `templates\statements\`, `templates\statements_seed\` and
+   `templates\statements_user\` folders (sections 2, 3).
+4. **Copy in** the new `R\`, `tests\`, `docs\` and `www\` folders, then put
+   `R\params.R` back (section 3).
+5. **Copy over** the single files: `VERSION`, `app.R`, `ui_labels.R`,
+   `ui_content.R`, `run.R`, `RUN-ME.bat`, `README.md`, `CHANGELOG.md`,
+   `config\config.example.yaml`, `templates\README.md` and everything in
+   `scripts\` (section 4).
+6. **Add** `dictionaries\nz_bank_branches.csv` and `dictionaries\nz_banks.yaml`.
+   Do **not** copy `labels.yaml` or `lexicon.yaml` (section 5).
+7. In `config\config.yaml`, **delete** the old template and feed lines listed in
+   section 6. Add nothing.
+8. Add `templates\layouts\` and `logs\tracking\` to the backup (section 7).
+9. **Prove it** (section 9): `scripts\health-check.R` all PASS; the sample
+   statement Proven with 12 transactions; the JSON says `2.0.0`; the test suite
+   ends `failed: 0`, `skipped: 0`.
+10. **Train each bank** from Admin -> Banks (section 9, step 7).
+
+If anything in step 9 fails, stop and roll back ([rolling-back.md](rolling-back.md)).
+
+## What people will notice
+
+- Convert asks for a **bank**, not a template, and fills it in from the
+  statement. Most statements convert with no clicks.
+- A statement the tool cannot prove goes to **Please check**, with the reason in
+  a sentence and a dropdown per column of figures.
+- A file holding several statements is split and each one proven; when they join
+  up (each opens on the previous closing) it needs no clicks.
+- Another account's table printed in the same file (a linked savings account, a
+  loan, a term deposit) is kept apart: it goes to the workbook's *Other accounts*
+  sheet and the JSON, never into the statement's rows, CSV or the Qlik feed.
+- Admin has **Banks** (learned layouts, training, held fixes) and **Automatic
+  reading** (the automatic rate and what failed).
+
+---
+
+## Read this first: 2.0.0 cannot simply be copied over 1.x
 
 The usual update is to copy the new folder over the old one and choose
 **Replace the files in the destination** ([updating.md](updating.md)). That
@@ -73,20 +119,22 @@ safest way, and it carries every deletion above with it:
 | Folder | How |
 |---|---|
 | `R\` | Delete the server's `R\` folder, copy in the new one, then put back the `R\params.R` you saved in step 1.4. |
-| `tests\` | Delete it and copy in the new one. (5 test files are new, 52 are changed and 12 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
+| `tests\` | Delete it and copy in the new one. (20 test files are new, 54 are changed and 12 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
 | `docs\` | Delete it and copy in the new one. Pages were rewritten for 2.0.0. `docs\operational\adding-a-bank-template.md` is now about training a bank, and this page is new. |
 | `www\` | Copy over it. `app.css` changed. |
 
 If you would rather copy file by file, the `R\` changes are:
 
-- **New:** `auto_read.R`, `auto_read_pdf.R`, `auto_read_prove.R`,
-  `auto_read_tabular.R`, `bank_identity.R`, `fixes.R`, `layouts.R`,
-  `tracking.R`.
+- **New:** `auto_read.R`, `auto_read_blocks.R`, `auto_read_pdf.R`,
+  `auto_read_prove.R`, `auto_read_summ.R`, `auto_read_tabular.R`,
+  `bank_identity.R`, `fixes.R`, `layouts.R`, `tracking.R`.
 - **Changed:** `analytics.R`, `audit.R`, `batch.R`, `batch_audit.R`,
-  `config.R`, `convert.R`, `coverage.R`, `diagnose.R`, `feed.R`, `identify.R`,
-  `jobs.R`, `layout.R`, `metadata_capture.R`, `normalise.R`, `ocr.R`,
-  `ocr_preprocess.R`, `outputs.R`, `parse_pdf_table.R`, `read_input.R`,
-  `read_pdf.R`, `reconcile.R`, `requests.R`, `split.R`, `util.R`.
+  `config.R`, `convert.R`, `coverage.R`, `diagnose.R`, `extract_metadata.R`,
+  `feed.R`, `identify.R`, `jobs.R`, `labels.R`, `layout.R`, `lexicon.R`,
+  `metadata_capture.R`, `normalise.R`, `ocr.R`, `ocr_preprocess.R`,
+  `outputs.R`, `parse_pdf_table.R`, `read_delimited.R`, `read_input.R`,
+  `read_pdf.R`, `reconcile.R`, `requests.R`, `split.R`, `suggestions.R`,
+  `util.R`.
 - **Deleted:** the ten files in section 2.
 - **Unchanged:** every other file, including `params.R`.
 
@@ -123,6 +171,13 @@ from the one picked can no longer be caught.
 **Do not copy `dictionaries\labels.yaml` or `dictionaries\lexicon.yaml`.**
 These are the words your team has taught the tool. The rule in
 [updating-a-version.md](updating-a-version.md) has not changed.
+
+2.0.0's `labels.yaml` has one new entry, `statement_period` (the words a
+statement prints in front of its own period, such as "Statement period"). The
+reader has the same wordings built in, so a server keeping its own
+`labels.yaml` needs nothing. Only if your team wants to teach new period
+wordings from Admin -> Words, copy that one block (it is commented in the new
+`labels.yaml`) into the server's file.
 
 A package built with `make-bundle.bat` carries both files under these names,
 so on the package route they arrive with everything else. Only `labels.yaml`
