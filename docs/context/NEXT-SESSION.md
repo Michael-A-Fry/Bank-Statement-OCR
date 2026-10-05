@@ -1,5 +1,45 @@
 # NEXT SESSION -- start here (written 5 Oct 2026)
 
+# FINAL PHASE -- the owner's decisions (5 Oct). This phase is meant to be the LAST. Build exactly this.
+
+SCOPE (day one): the QVF's 11 types ONLY -- ANZ, ANZ Loan, ANZ Visa, ASB Visa, BNZ Visa,
+Kiwibank CC, Kiwibank PDF, Westpac CC (PDF) and BNZ (.xls), Kiwibank, Westpac (Excel).
+Everything else (smaller banks, image-only PDFs, other designs, other exports) comes later.
+
+DONE MEANS: on the owner's REAL statements, every in-scope type reads automatically at least
+as often as the QVF does, 0 automatic-but-wrong, and any new or changed design needs at most
+ONE round of plain questions. Owner runs as many real statements per type as possible.
+
+UNKNOWN DESIGN: ALWAYS ASK ONCE. A statement no recipe recognises is NEVER converted without
+a person: it gets the plain questions on Please check (pre-filled with the automatic
+reader's guess), and the proven answers become a draft recipe. The automatic reader is only
+the drafter. (Drift = same: questions once, new recipe version, old one untouched.)
+Consequence: learned "layouts" are superseded by recipes -- one concept, not two.
+
+ROLLOUT: side by side with the QVF; each type moves over once the new tool matches or beats
+the QVF on real statements; the QVF is retired when all 11 have moved.
+
+RUNS ON: the server now. Laptops (no-install folder) are the long-term goal once the owner
+is confident -- keep everything laptop-friendly (R only, no external installs).
+
+SPEED: a 150-page bundle of a known type in UNDER 1 MINUTE (text PDFs).
+
+OUTPUT: Excel + CSV download (per statement / per case). No Qlik feed requirement.
+Columns: full description as printed + separate type/particulars/code/reference; account
+number and account name filled.
+
+PROGRESS (owner's pain point): the queue showed only "1/5, 2/5" -- never progress WITHIN a
+PDF. Show real progress per file: stage (reading text / OCR / reading the table / checking
+the sums / writing files) and page n of N.
+
+TIMINGS: log the time each step takes, anonymously (no names/numbers/file names in that
+log): per file -- pages, kind, recipe id, seconds per step. Owner can share it so speed
+problems are found from real use.
+
+ACCEPTING A RECIPE: automatic after 3 proofs from 2+ accounts, or an admin sooner.
+TWO RECIPES PROVE: identical figures -> newer recipe; any difference -> ask a person.
+
+
 Paste to the new session: "Read docs/context/NEXT-SESSION.md on branch
 wip/qvf-kit and do the next unchecked step. One step per commit; push after each."
 
