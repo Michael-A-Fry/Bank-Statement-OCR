@@ -62,6 +62,7 @@ R/   -- operations, evidence and governance
   coverage.R            "have I set this up right?" self-check
   uploads.R             upload capture + lifecycle
   inbox.R               read-only view of the folder-drop intake
+  review.R              Admin -> Review: what did not prove, each layout and held fix, on a kept file's page
   requests.R            the format requests raised in 1.x, for triage on Admin -> Health
   retention.R           what is left on disk, and when it goes away
 

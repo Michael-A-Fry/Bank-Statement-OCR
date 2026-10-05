@@ -9,7 +9,9 @@ desktop to tablet width; Please check on a spreadsheet (Re-read wrong, Undo, Re-
 right, This is right) and on a PDF (the page, its ticks, a column drawn in the
 editor); Download everything; a single file whose bank the statement disputes;
 scans; Stop; Admin -> Banks (confirm, rename, retire, a held fix, training a bank
-with another bank's statement in the pile), Automatic reading (the spot-check rate,
+with another bank's statement in the pile), Review (what did not prove, each layout
+and a held fix, each shown on its page with its columns drawn, and decided there),
+Automatic reading (the spot-check rate,
 a spot check answered, the carry-off summary), Words and Health -- each at phone
 width too. Last, it reads the app's own console: an R error or warning there fails
 the run even when every screen looked right.

@@ -1550,7 +1550,9 @@ test_that("Admin -> Banks changes a layout only through the engine, signed in, a
     expect_match(joined, f)
   expect_match(.src_block(src, "\\.fix_act <- function", 6L), "req\\(admin_ok\\(\\)\\)")
   # a rename is a name, never a number that could be an account
-  expect_match(.src_block(src, "observeEvent\\(input\\$adm_layout_rename, \\{", 12L), "\\[0-9\\]\\[0-9 -\\]\\{3,\\}\\[0-9\\]")
+  # (from Banks and from Review alike: both press through .layout_rename_ui)
+  expect_match(.src_block(src, "\\.layout_rename_ui <- function", 12L), "\\[0-9\\]\\[0-9 -\\]\\{3,\\}\\[0-9\\]")
+  expect_match(.src_block(src, "\\.layout_rename_ui <- function", 12L), "req\\(admin_ok\\(\\)\\)")
   # a retired layout stays on screen, so Confirm can bring it back
   expect_match(joined, "layouts_load\\(LAYOUTS_DIR, include_retired = TRUE\\)")
 })
@@ -1767,7 +1769,7 @@ test_that("Admin's uploads table is the whole log, with the layout each was read
   # a saved upload, or a file in failed/, is read again on Convert -- where Please check is
   rr <- .src_block(src, "\\.reread_on_convert <- function", 8L)
   expect_match(rr, 'updateTabsetPanel\\(session, "main_tabs", selected = "Convert"\\)')
-  expect_match(rr, "run_conversion\\(path, name, record = FALSE, upload_id = upload_id\\)")
+  expect_match(rr, "run_conversion\\(path, name, record = FALSE, bank = bank, upload_id = upload_id\\)")
   for (h in c("observeEvent\\(input\\$adm_up_reread, \\{", "observeEvent\\(input\\$adm_inbox_reread, \\{"))
     expect_match(.src_block(src, h, 4L), "req\\(admin_ok\\(\\)\\)", info = h)
 })

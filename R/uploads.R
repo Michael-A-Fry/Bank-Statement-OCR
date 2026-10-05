@@ -102,7 +102,8 @@ read_uploads <- function(dir = NULL) {
     id = character(0), ts = character(0), ts_utc = character(0),
     file_ext = character(0), status = character(0),
     template = character(0), trust = character(0), run_id = character(0),
-    needs_pickup = logical(0), purged = logical(0), stringsAsFactors = FALSE))
+    needs_pickup = logical(0), purged = logical(0), sha256 = character(0),
+    stringsAsFactors = FALSE))
   rows <- lapply(recs, function(f) {
     r <- safe(jsonlite::fromJSON(f, simplifyVector = FALSE), NULL); if (is.null(r)) return(NULL)
     hist_status <- vapply(r$history %||% list(), function(h) h$status %||% "", character(1))
@@ -119,6 +120,9 @@ read_uploads <- function(dir = NULL) {
       # "open it in the toolkit" never looks available for a file that is gone --
       # the record survives, the client's statement does not.
       purged = isTRUE(r$purged),
+      # The content hash, which the run log keeps too (source_sha256): it is how
+      # Admin -> Review finds the kept copy of a file a conversion read.
+      sha256 = as.character(r$sha256 %||% NA_character_),
       stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))

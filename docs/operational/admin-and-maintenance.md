@@ -26,13 +26,14 @@ from the shipped placeholder, Admin refuses to open for anybody.** See
 [first-time-setup.md](first-time-setup.md) §4. Wrong passwords back off: the
 first three tries are free, then each wait doubles, up to five minutes.
 
-## The four tabs
+## The five tabs
 
-An admin has four questions, so there are four tabs:
+An admin has five questions, so there are five tabs:
 
 | Tab | The question |
 |---|---|
 | **Banks** | What has the tool learned, is it right, and how do I teach it more? |
+| **Review** | What did not work, and what does each layout and held fix look like on a real page? |
 | **Automatic reading** | How is it doing? Counts only, plus the spot checks. |
 | **Words** | Which words does it look for? |
 | **Health** | What is failing? Also the uploads, the queues and the housekeeping. |
@@ -82,6 +83,28 @@ Where it is kept: `templates\layouts\<bank>\<layout>@v<version>.yaml`, and held
 fixes in `templates\layouts\.pending\`. **Back it up**
 ([backup-and-restore.md](backup-and-restore.md)). It is learned from your own
 statements and exists nowhere else.
+
+### Review: see it, then decide
+
+Three lists. Click a row and its statement page is shown beside it, with the
+columns drawn the way Please check draws them, under the buttons that decide it.
+
+- **Needs a look**: every file whose newest conversion did not prove itself
+  (Please check, nothing read, or the file failed), newest first, with its name,
+  bank, date and the reason. **Open it on Please check** reads it again on
+  Convert, where it can be set right.
+- **Layouts**: every learned layout, shown on the newest kept statement it read,
+  with **Confirm**, **Retire** and **Rename** beside it.
+- **Held fixes**: each fix waiting for an admin, shown on the file it was held
+  from and read the way the person set it, with **Accept** and **Discard**. An
+  accepted fix's file becomes the new layout's example.
+
+Nothing new is stored. A page can only come from a file the server already keeps:
+an upload (deleted after `retention: uploads_keep_days`) or an original in the
+folder intake's `failed\` or `processed\`. Files used for **Train a bank** are not
+kept, so a layout learned only from them shows *No example kept*, and a file that
+is gone is said to be gone. The file is read again in its own process, and nothing
+is learned or written while it is shown.
 
 ### Automatic reading: how it is doing
 

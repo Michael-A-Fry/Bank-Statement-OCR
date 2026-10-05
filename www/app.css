@@ -442,3 +442,19 @@ p.tick-line{margin:6px 0 10px;font-size:13px;font-weight:600}
 .ck-role .form-group{margin-bottom:8px}
 .spot-check p{margin:0 0 6px}
 @media (max-width:767px){.check-panel{padding:10px}}
+/* Admin -> Review: a list on the left, and beside it the page of the one clicked,
+   with its columns drawn, under the buttons that decide it */
+.rv-pane{padding:12px 14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+/* the page picture shrinks with the screen at once, rather than poking out while
+   it is drawn again at the new width */
+.rv-pane .shiny-plot-output img{max-width:100%;height:auto}
+p.rv-title{margin:0 0 2px;font-size:15px}
+p.rv-why{margin:4px 0 8px;font-size:13.5px}
+p.rv-note{margin:6px 0;font-size:13px}
+.rv-acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.rv-acts .form-group{margin:0}
+.rv-rename{display:flex;gap:8px;align-items:center;flex:1 1 240px;min-width:0}
+.rv-rename .shiny-input-container{flex:1 1 auto;min-width:0}
+.rv-gone{margin-top:8px}
+@media (max-width:767px){.rv-pane{padding:10px;margin-top:10px}}
+td.rv-nowrap{white-space:nowrap}

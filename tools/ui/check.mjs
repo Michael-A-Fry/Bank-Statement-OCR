@@ -16,6 +16,8 @@
 // editor with a box drawn and saved), Download everything, a single file with a bank
 // the statement disagrees with, scans, Stop, and every Admin tab -- Banks (confirm,
 // rename, retire, a held fix, training with another bank's statement in the pile),
+// Review (what did not prove, each layout and a held fix, each SHOWN on its page with
+// its columns drawn; Open it on Please check, Retire, Confirm and Accept from there),
 // Automatic reading (the spot-check rate, a spot check answered, the carry-off
 // summary), Words and Health -- each at desktop and phone width. Last, the app's own
 // console: an R error or warning there fails the run.
@@ -86,6 +88,25 @@ function makeFiles() {
   // to a picture of each page with no text layer left
   execFileSync('Rscript', ['-e', `im <- magick::image_read_pdf(${JSON.stringify(path.join(fx, 'anz_everyday_pdf_sample.pdf'))}, density = 200); ` +
     `magick::image_write(magick::image_convert(im, colorspace = 'gray'), ${JSON.stringify(path.join(d, 'anz_scan.pdf'))}, format = 'pdf')`]);
+  // Two statements with no balance and no totals, drawn here: nothing on them can
+  // prove which column is which, so each goes to a person -- one is confirmed (held
+  // for an admin), the other left for Admin -> Review to show.
+  execFileSync('Rscript', ['-e', `mk <- function(path, month, last, rows) {
+      grDevices::pdf(path, width = 8.27, height = 11.69); graphics::par(mar = c(0, 0, 0, 0))
+      graphics::plot.new(); graphics::plot.window(xlim = c(0, 595), ylim = c(842, 0), xaxs = "i", yaxs = "i")
+      graphics::text(40, 60, "Everyday Account Statement", adj = 0, font = 2, cex = 1.4)
+      graphics::text(40, 90, sprintf("Statement period 1 %s 2025 to %d %s 2025", month, last, month), adj = 0)
+      graphics::text(40, 140, "Date", adj = 0, font = 2); graphics::text(130, 140, "Description", adj = 0, font = 2)
+      graphics::text(520, 140, "Amount", adj = 1, font = 2)
+      for (i in seq_along(rows)) { r <- rows[[i]]; y <- 140 + 22 * i
+        graphics::text(40, y, r[1], adj = 0); graphics::text(130, y, r[2], adj = 0); graphics::text(520, y, r[3], adj = 1) }
+      invisible(grDevices::dev.off()) }
+    mk(${JSON.stringify(path.join(d, 'everyday_april.pdf'))}, "April", 30L, list(c("02/04/2025", "Salary", "2,500.00"),
+       c("05/04/2025", "Rent", "-1,200.00"), c("09/04/2025", "Coffee", "-4.50"), c("14/04/2025", "Groceries", "-85.20"),
+       c("21/04/2025", "Power", "-140.00")))
+    mk(${JSON.stringify(path.join(d, 'everyday_may.pdf'))}, "May", 31L, list(c("02/05/2025", "Salary", "2,500.00"),
+       c("06/05/2025", "Rent", "-1,200.00"), c("12/05/2025", "Books", "-32.00"), c("19/05/2025", "Groceries", "-91.40"),
+       c("27/05/2025", "Phone", "-45.00")))`]);
   return d;
 }
 
@@ -151,6 +172,17 @@ async function clickIn(page, file, cell) {
   const h = await page.evaluateHandle(([f, c]) => [...document.querySelectorAll('tr.plan-row')]
     .find(t => t.querySelector('.plan-file').innerText === f).querySelector(c), [file, cell]);
   await h.asElement().click(); await sleep(2500);
+}
+// click a table's first row once the table has stopped redrawing, and wait until the
+// row is selected: a change elsewhere on the page redraws an Admin table, and a
+// redraw under the click drops the selection the next button acts on
+async function pickRow(page, table) {
+  for (let k = 0; k < 3; k++) {
+    await waitFor(page, t => !document.querySelector(`${t}.recalculating`), 15000, table); await sleep(400);
+    if (!(await page.$(`${table} tbody tr.selected`))) await page.click(`${table} tbody tr`);
+    if (await waitFor(page, t => !!document.querySelector(`${t} tbody tr.selected`), 3000, table)) { await sleep(300); return true; }
+  }
+  return false;
 }
 // a selectInput is a selectize control: set it the way a person picking does
 async function selectize(page, id, value) {
@@ -410,6 +442,27 @@ async function run(browser, D) {
   check('...and answering it reads it again as that bank', !(await text(page, '#cv_bank_note')).includes('Which bank?'));
   eq('...with the table showing the same bank', (await rows(page))[0].value, 'bnz');
 
+  // 8b. two statements nothing on them proves (no balance, no totals): both go to a
+  //     person; one is confirmed there and so held for an admin, and the other is
+  //     left for Admin -> Review to show
+  {
+    const pe = await freshConvert(ctx);
+    await pe.setInputFiles('#cv_file', [path.join(D, 'everyday_april.pdf'), path.join(D, 'everyday_may.pdf')]);
+    await waitFor(pe, () => document.querySelectorAll('tr.plan-row').length === 2, 60000); await sleep(600);
+    await pick(pe, 'everyday_april.pdf', 'tsb'); await pick(pe, 'everyday_may.pdf', 'tsb');
+    await go(pe);
+    await waitFor(pe, () => document.querySelectorAll('tr.plan-openable').length === 2, 300000); await sleep(1000);
+    const er = await rows(pe);
+    eq('a statement nothing on it proves goes to a person',
+       ['everyday_april.pdf', 'everyday_may.pdf'].map(f => byFile(er, f).result.split(':')[0].replace(/ \d+ rows?$/, '').trim()),
+       ['Please check', 'Please check']);
+    await pe.click('tr.plan-row:has(td.plan-file:text-is("everyday_april.pdf")) a.plan-check'); await sleep(3000);
+    await pe.click('#cv_ck_confirm');
+    const held = await rereadDone(pe, '');
+    check('..."This is right" on a PDF holds it for an admin', held.startsWith('Confirmed') && held.includes('admin'), held);
+    await pe.close();
+  }
+
   // 9. SCANS: the first pages are read in the background to find the bank
   {
     const ps = await freshConvert(ctx);
@@ -481,23 +534,24 @@ async function run(browser, D) {
     // a bank's layouts: confirm, rename, retire, and back
     await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
     check('a bank lists its learned layouts', (await tp.$$('#adm_layouts tbody tr')).length >= 1);
-    await tp.click('#adm_layouts tbody tr'); await sleep(600);
+    await pickRow(tp, '#adm_layouts');
     await tp.click('#adm_layout_confirm'); await sleep(2000);
     check('Confirm makes a layout proven', (await text(tp, '#adm_layout_msg')).includes('confirmed') &&
           (await text(tp, '#adm_layouts tbody tr')).includes('proven'), await text(tp, '#adm_layout_msg'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
-    await tp.fill('#adm_layout_name', 'Everyday account'); await tp.click('#adm_layout_rename'); await sleep(2000);
-    check('Rename names it everywhere', (await text(tp, '#adm_layouts tbody tr')).includes('Everyday account'),
+    await pickRow(tp, '#adm_layouts');
+    await tp.fill('#adm_layout_name', 'Everyday account'); await tp.click('#adm_layout_rename');
+    check('Rename names it everywhere', await waitFor(tp, () =>
+          ((document.querySelector('#adm_layouts tbody tr') || {}).innerText || '').includes('Everyday account'), 15000),
           await text(tp, '#adm_layout_msg'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
+    await pickRow(tp, '#adm_layouts');
     await tp.click('#adm_layout_retire'); await sleep(2000);
     check('Retire takes it out of use, and stays on screen', (await text(tp, '#adm_layouts tbody tr')).includes('retired'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
+    await pickRow(tp, '#adm_layouts');
     await tp.click('#adm_layout_confirm'); await sleep(2000);
     check('...and Confirm brings it back', (await text(tp, '#adm_layouts tbody tr')).includes('proven'));
     // the fix a person confirmed, held for an admin
     check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
-    await tp.click('#adm_fixes tbody tr'); await sleep(500);
+    await pickRow(tp, '#adm_fixes');
     await tp.click('#adm_fix_accept'); await sleep(2000);
     check('...and Accept makes it a proven layout', (await text(tp, '#adm_fix_msg')).startsWith('Accepted'), await text(tp, '#adm_fix_msg'));
     // training a bank: many statements, read in the background, then the report
@@ -518,6 +572,95 @@ async function run(browser, D) {
     console.log(`        (training: ${(await text(tp, '#adm_train_status')).split('\n')[0]})`);
   }
   await screen(tp, 'Admin Banks');
+
+  // REVIEW: what did not work, each learned layout and each held fix -- SEEN, the
+  // page with its columns drawn, beside the decision it is for
+  await tp.click('a[data-value="Review"]'); await sleep(2500);
+  const rvRows = id => tp.$$eval(`#${id} tbody tr`, trs => trs.map(t => t.innerText.replace(/\s+/g, ' ').trim()));
+  // A row is opened when the pane beside the list names it. (A list redraws itself
+  // when what it lists changes -- a row can arrive late, or be redrawn under the
+  // click -- so it is found again until the pane says it is open.)
+  const rvHead = { adm_rv_look: '#adm_rv_look_head', adm_rv_layouts: '#adm_rv_lay_head', adm_rv_fixes: '#adm_rv_fix_head' };
+  const rvOpen = async (id, txt) => {
+    const opened = ms => waitFor(tp, ([h, x]) => ((document.querySelector(h) || {}).innerText || '').includes(x), ms, [rvHead[id], txt]);
+    for (let k = 0; k < 5; k++) {
+      if (await opened(500)) return true;
+      await waitFor(tp, ([i, x]) => [...document.querySelectorAll(`#${i} tbody tr`)].some(r => r.innerText.includes(x)), 30000, [id, txt]);
+      try {
+        const el = (await tp.evaluateHandle(([i, x]) => [...document.querySelectorAll(`#${i} tbody tr`)]
+          .find(r => r.innerText.includes(x)), [id, txt])).asElement();
+        if (el) { await el.click({ timeout: 5000 }); if (await opened(15000)) { await sleep(1000); return true; } }
+      } catch { /* redrawn under the click */ }
+    }
+    return false;
+  };
+  // the page, and the line under it once the columns are found (read in the background)
+  const rvDrawn = async px => (await waitFor(tp, p => !!document.querySelector(`#${p}_plot img`), 30000, px)) &&
+    waitFor(tp, p => /^The columns as/.test(((document.querySelector(`#${p}_note`) || {}).innerText || '').trim()), 120000, px);
+  // a part of the tab -- its heading, its list and the page beside it -- as one picture
+  const rvShot = async (heading, name) => {
+    const box = await tp.evaluate(h => {
+      const h4 = [...document.querySelectorAll('h4')].find(e => e.innerText.trim() === h && e.offsetParent);
+      let row = h4; while (row && !(row.classList && row.classList.contains('row'))) row = row.nextElementSibling;
+      const a = h4.getBoundingClientRect(), b = row.getBoundingClientRect();
+      return { x: 0, y: a.top + window.scrollY - 8, width: document.documentElement.clientWidth, height: b.bottom - a.top + 16 };
+    }, heading);
+    await tp.screenshot({ path: path.join(OUT, name + '.png'), fullPage: true, clip: box });
+  };
+  if (!LIVE) {
+    const look = (await rvRows('adm_rv_look')).join('\n');
+    check('Review lists what did not prove: the file, its bank and the reason',
+          /everyday_may\.pdf TSB .*Nothing on the statement proves/.test(look) && look.includes('mystery_export.csv'), look);
+    check('...and not what proved, was set right on Please check, or was confirmed there',
+          !/anz_march\.pdf|ambiguous\.csv|unproven\.csv|everyday_april\.pdf/.test(look), look);
+    check('a click shows its page with the columns drawn', (await rvOpen('adm_rv_look', 'everyday_may.pdf')) &&
+          await rvDrawn('adm_rv_look'), await text(tp, '#adm_rv_look_view'));
+    check('...with the reason, beside the way to fix it', (await text(tp, '#adm_rv_look_head')).includes('Please check: Nothing') &&
+          !!(await tp.$('#adm_rv_look_open')), await text(tp, '#adm_rv_look_head'));
+    await rvShot('Needs a look', 'review-1-needs-a-look');
+    await rvOpen('adm_rv_look', 'mystery_export.csv');
+    check('a spreadsheet nothing was read from says so, in place of a page',
+          await waitFor(tp, () => /No columns were found/.test((document.querySelector('#adm_rv_look_note') || {}).innerText || ''), 60000) &&
+          !(await tp.$('#adm_rv_look_plot')), await text(tp, '#adm_rv_look_view'));
+    // the way to fix it: read again on Convert, with Please check open
+    await rvOpen('adm_rv_look', 'everyday_may.pdf'); await sleep(1000);
+    await tp.click('#adm_rv_look_open');
+    check('"Open it on Please check" reads it again there', await waitFor(tp, () =>
+      /^Please check[\s\S]*Nothing on the statement proves/.test(((document.querySelector('#cv_check') || {}).innerText || '').trim()), 120000),
+      await text(tp, '#cv_check'));
+    await tp.click('a[data-value="Admin"]'); await sleep(1500);
+    // (back on Review its page is drawn again; let it settle before clicking below it)
+    await waitFor(tp, () => !!document.querySelector('#adm_rv_look_plot img'), 30000); await sleep(2000);
+    check('...and back on Review the same file is still the one shown',
+          (await text(tp, '#adm_rv_look_head')).includes('everyday_may.pdf'), await text(tp, '#adm_rv_look_head'));
+    // a learned layout, on a statement it read, beside Confirm, Retire and Rename
+    // (the newest: the scan of the same statement, read on that layout after the PDF)
+    check('a layout is shown on the newest kept statement it read', (await rvOpen('adm_rv_layouts', 'ANZ layout 1')) &&
+          await rvDrawn('adm_rv_lay') && /Example: anz_(scan|march)\.pdf/.test(await text(tp, '#adm_rv_lay_head')),
+          await text(tp, '#adm_rv_lay_view'));
+    await rvShot('Layouts', 'review-2-layouts');
+    await tp.click('#adm_rv_lay_retire'); await sleep(2000);
+    check('Retire there, while looking at it', (await text(tp, '#adm_rv_lay_msg')).includes('retired') &&
+          (await rvRows('adm_rv_layouts')).some(r => r.startsWith('ANZ layout 1') && r.includes('retired')), await text(tp, '#adm_rv_lay_msg'));
+    await tp.click('#adm_rv_lay_confirm'); await sleep(2000);
+    check('...and Confirm there brings it back', (await rvRows('adm_rv_layouts')).some(r => r.startsWith('ANZ layout 1') && r.includes('proven')),
+          await text(tp, '#adm_rv_lay_msg'));
+    await rvOpen('adm_rv_layouts', 'Westpac layout');
+    check('a layout learned only from training says no example is kept, and why',
+          /No example kept\. .*Training keeps no files/.test(await text(tp, '#adm_rv_lay_view')), await text(tp, '#adm_rv_lay_view'));
+    // a held fix, on the file it was held from, read the way the person set it
+    check('a held fix is shown on the file it was held from', (await rvOpen('adm_rv_fixes', 'TSB')) &&
+          await rvDrawn('adm_rv_fix') && (await text(tp, '#adm_rv_fix_head')).includes('Held from everyday_april.pdf'),
+          await text(tp, '#adm_rv_fix_view'));
+    await rvShot('Held fixes', 'review-3-held-fixes');
+    await tp.click('#adm_rv_fix_accept'); await sleep(2500);
+    check('Accept there makes it a proven layout', (await text(tp, '#adm_rv_fix_msg')).startsWith('Accepted: it is now TSB layout'),
+          await text(tp, '#adm_rv_fix_msg'));
+    check('...and that file is the new layout\'s example', (await rvOpen('adm_rv_layouts', 'TSB layout')) &&
+          await rvDrawn('adm_rv_lay') && (await text(tp, '#adm_rv_lay_head')).includes('Example: everyday_april.pdf'),
+          await text(tp, '#adm_rv_lay_view'));
+  }
+  await screen(tp, 'Admin Review');
   await tp.click('a[data-value="Automatic reading"]'); await sleep(1500);
   check('Automatic reading counts what was read', /Statements read\s*\d+/i.test(await text(tp, '#adm_ar_head')),
         await text(tp, '#adm_ar_head'));

@@ -974,6 +974,10 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     feed_basis = result$feed_basis %||% "none",
     learn_action = paste(facts$learn, collapse = ","),
     person_fix = facts$fix,
+    # The fix this run held for an admin (R/fixes.R), by its id -- a bank and a
+    # hash, nothing from the statement. It is what ties a held fix to the file it
+    # was held from, so Admin -> Review can show that file.
+    fix_held = if (length(result$fix_held)) paste(result$fix_held, collapse = ",") else NA_character_,
     spot_check = isTRUE(result$spot_check),
     reason = .log_scrub(facts$reason),
     layout_signature = facts$layout_sig,

@@ -449,6 +449,10 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
       # CONVERT. Converting a pile of files is Convert's case folder.
       list(audit = batch_audit(paths, layouts_dir = args$layouts_dir), converted = NULL)
     },
+    # Admin -> Review: a kept file read again so its columns can be drawn on its
+    # page (R/review.R). Nothing is learned, logged or written.
+    review = review_read(paths[1], bank = args$bank, layouts = args$layouts %||% list(),
+                         roles = args$roles),
     stop(sprintf("no such job task: '%s'", as.character(task)[1])))
 }
 

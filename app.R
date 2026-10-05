@@ -157,6 +157,54 @@ PALETTE <- list(ok = "#0f7a37", bad = "#b3261e", warn = "#b7791f", meta = "#a15c
   graphics::rect(x - w / 2 - 3, 14 - h, x + w / 2 + 3, 14 + h, col = "#ffffffe6", border = col, lwd = 1)
   graphics::text(x, 14, label, col = col, font = 2, cex = 0.85)
 }
+# .ck_col_colour(field, kind) -- the colour of a column on a page picture: what it
+# IS, the same colours the money columns have everywhere (money in green, money
+# out red).
+.ck_col_colour <- function(field, kind) {
+  if (identical(kind, "date")) return("#1d4ed8")
+  if (!identical(kind, "money")) return("#68727d")
+  switch(sub("[0-9]+$", "", field), debit = PALETTE$bad, credit = PALETTE$ok,
+         balance = "#00205b", amount = PALETTE$warn, "#7c3aed")
+}
+# .draw_page_columns(r, cols) -- ONE page picture with its columns drawn on it: the
+# band each column owns (dashed), the ink that was actually read inside it, and the
+# column's name on a chip. `r` is render_page_view()'s page; `cols` a reading's
+# columns, on the file's pages. Please check and Admin -> Review both draw with it,
+# so a page looks the same wherever a person is asked to judge it.
+.draw_page_columns <- function(r, cols) {
+  op <- graphics::par(mar = c(0, 0, 0, 0)); on.exit(graphics::par(op))
+  graphics::plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
+                 xlab = "", ylab = "", axes = FALSE)
+  graphics::rasterImage(r$ras, 0, r$h, r$w, 0)
+  if (!is.data.frame(cols) || !nrow(cols)) return(invisible())
+  cols <- cols[cols$page %in% r$pg, , drop = FALSE]
+  if (!nrow(cols)) {
+    graphics::text(r$w / 2, 30, "No columns were found on this page.", col = PALETTE$bad, font = 2)
+    return(invisible())
+  }
+  for (j in seq_len(nrow(cols))) {
+    cc <- .ck_col_colour(cols$field[j], cols$kind[j])
+    graphics::rect(cols$x_min[j], 0, cols$x_max[j], r$h, border = cc, lwd = 1.6, lty = 2)
+    if (all(is.finite(c(cols$ink_min[j], cols$ink_max[j]))))
+      graphics::rect(cols$ink_min[j], 0, cols$ink_max[j], r$h, col = paste0(cc, "1f"), border = NA)
+    .col_label((cols$x_min[j] + cols$x_max[j]) / 2, plain_column(cols$field[j]), cc)
+  }
+  invisible()
+}
+# .page_plot_height(width, r) -- a page picture's height at the width it is shown:
+# the page's own proportions, so it is never squashed.
+.page_plot_height <- function(width, r) {
+  if (is.null(r) || !is.finite(r$w) || r$w <= 0) 600 else max(300, round(width * r$h / r$w))
+}
+# .ck_columns_table(cols) -- a CSV's or workbook's columns: it has no page to
+# draw, so they are named by their headings, with what each was read as.
+.ck_columns_table <- function(cols) {
+  if (!is.data.frame(cols) || !nrow(cols)) return(p(class = "muted", "No columns were found."))
+  tags$table(class = "split-table",
+    tags$thead(tags$tr(tags$th("Heading in the file"), tags$th("Read as"))),
+    tags$tbody(lapply(seq_len(nrow(cols)), function(j) tags$tr(
+      tags$td(as.character(cols$heading[j] %||% "")), tags$td(plain_column(cols$field[j]))))))
+}
 
 # .audit_gap(res) -- this conversion produced a workbook and NO audit record.
 #
@@ -293,6 +341,13 @@ PALETTE <- list(ok = "#0f7a37", bad = "#b3261e", warn = "#b7791f", meta = "#a15c
   attr(out, "kept_of") <- c(read = nrow(out), total = total)
   out
 }
+
+# .RV_READS -- Admin -> Review's readings of kept files (R/review.R review_read),
+# by file and by how it was read, so opening one again is instant. Per process
+# and small: each holds the columns found and the reader's reason, never a
+# transaction. Emptied when it grows past .RV_READS_MAX.
+.RV_READS <- new.env(parent = emptyenv())
+.RV_READS_MAX <- 40L
 
 # ---- PLEASE CHECK: WHICH PAGES ADD UP ------------------------------------------
 #
@@ -587,8 +642,9 @@ ui <- fluidPage(
       conditionalPanel("output.admin_authed",
       div(style = "text-align:right;margin-bottom:6px",
           actionButton("adm_signout", "Sign out of Admin", class = "btn-default btn-sm")),
-      # ---- FOUR TABS, BECAUSE AN ADMIN HAS FOUR QUESTIONS --------------------
+      # ---- FIVE TABS, BECAUSE AN ADMIN HAS FIVE QUESTIONS --------------------
       #   Banks             what has the tool learned, is it right, and teach it more
+      #   Review            show me what did not work, and each layout and held fix
       #   Automatic reading how is it doing (counts only), and the spot checks
       #   Words             the words it looks for
       #   Health            what is failing, the uploads, the queues, the housekeeping
@@ -639,6 +695,30 @@ ui <- fluidPage(
                                 accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx"))),
             column(3, br(), actionButton("adm_train_go", "Train", class = "btn-primary"))),
           uiOutput("adm_train_status")
+        ),
+        # ---- REVIEW: SEE IT, THEN DECIDE ---------------------------------------
+        # "I can confirm the selected layout but can't actually see it." Each list
+        # opens the statement page with its columns drawn, beside the decision.
+        tabPanel(
+          "Review",
+          br(),
+          h4("Needs a look"),
+          p(class = "muted", "Conversions that did not prove themselves, newest first. Click one to see it."),
+          fluidRow(
+            column(5, DTOutput("adm_rv_look"), uiOutput("adm_rv_look_more")),
+            column(7, uiOutput("adm_rv_look_view"))),
+          tags$hr(),
+          h4("Layouts"),
+          p(class = "muted", "What the tool has learned. Click one to see a statement it read."),
+          fluidRow(
+            column(5, DTOutput("adm_rv_layouts")),
+            column(7, uiOutput("adm_rv_lay_view"))),
+          tags$hr(),
+          h4("Held fixes"),
+          p(class = "muted", "A person's fix the arithmetic could not prove. Click one to see it."),
+          fluidRow(
+            column(5, DTOutput("adm_rv_fixes")),
+            column(7, uiOutput("adm_rv_fix_view")))
         ),
         tabPanel(
           "Automatic reading",
@@ -1379,61 +1459,79 @@ server <- function(input, output, session) {
       vapply(ls, function(l) one(l, "version"), ""),
       stringsAsFactors = FALSE)
     names(d) <- heads
-    datatable(d, rownames = FALSE, selection = "single",
+    sel <- match(isolate(adm_layout_sel()) %||% NA_character_, vapply(ls, function(l) as.character(l$layout$id)[1], ""))
+    datatable(d, rownames = FALSE, selection = list(mode = "single", selected = if (is.na(sel)) NULL else sel),
               options = list(dom = "tip", pageLength = 15, scrollX = TRUE)) |>
       formatStyle("Status", fontWeight = "bold",
         color = styleEqual(c("proven", "provisional", "retired"), c(PALETTE$ok, PALETTE$warn, "#68727d")))
   })
-  # WHICH layout the buttons act on: the selected row of THIS bank's table. Read
-  # fresh on every press, so a redraw between the click and the press cannot point
-  # a Retire at a different layout.
+  # A REDRAW KEEPS THE ROW THE ADMIN CLICKED. This table and the held fixes' redraw
+  # whenever the store changes -- once when a button here changes it, and again a few
+  # seconds later when the store's watcher (layouts_poll) sees the same change -- and
+  # a redraw dropped the selection, so the next Confirm or Accept said "Click a ...
+  # first" about a row just clicked. It is kept by WHAT was clicked (its id), never by
+  # row number, so a redraw that reorders the rows cannot move it to another one.
+  adm_layout_sel <- reactiveVal(NULL)
+  observeEvent(input$adm_layouts_rows_selected, {
+    req(admin_ok())
+    ls <- isolate(adm_bank_layouts()); i <- input$adm_layouts_rows_selected
+    adm_layout_sel(if (length(ls) && length(i) && i[1] <= length(ls)) as.character(ls[[i[1]]]$layout$id)[1] else NULL)
+  }, ignoreNULL = FALSE)
+  # WHICH layout the buttons act on: the one selected in THIS bank's table, found
+  # by its id on every press, so a redraw between the click and the press cannot
+  # point a Retire at a different layout.
   .adm_layout_selected <- function() {
-    ls <- adm_bank_layouts(); i <- input$adm_layouts_rows_selected
-    if (!length(ls) || !length(i) || i[1] > length(ls)) return(NULL)
-    ls[[i[1]]]
+    ls <- adm_bank_layouts(); id <- adm_layout_sel()
+    if (!length(ls) || is.null(id)) return(NULL)
+    Find(function(l) identical(as.character(l$layout$id)[1], id), ls)
   }
   .layout_note <- function(ok, msg) output$adm_layout_msg <- renderUI(
     div(class = if (ok) "ok" else "bad", style = "margin-top:6px", msg))
   # One shape for all three changes: each returns list(ok, changed, ref, why), and
   # the screen says what changed in words -- never "done" over a change that did
-  # not happen.
-  .layout_change_ui <- function(fun, done) {
+  # not happen. `pick` is WHICH layout (on Banks the row selected in its table, on
+  # Review the layout on screen) and `note` where the words go.
+  .layout_change_ui <- function(fun, done, pick = .adm_layout_selected, note = .layout_note) {
     req(admin_ok())
-    ly <- .adm_layout_selected()
-    if (is.null(ly)) { .layout_note(FALSE, "Click a layout in the table first."); return() }
+    ly <- pick()
+    if (is.null(ly)) { note(FALSE, "Click a layout in the table first."); return() }
     nm <- as.character(safe(layout_display_name(ly), ly$layout$id))[1]
     r <- safe(fun(ly$layout$id), list(ok = FALSE, why = "The change could not be made."))
     if (isTRUE(r$ok) && isTRUE(r$changed %||% TRUE)) {
       layouts_bump(isolate(layouts_bump()) + 1L)
-      .layout_note(TRUE, sprintf("%s: %s", nm, done))
-    } else .layout_note(FALSE, sprintf("%s: %s", nm, r$why %||% "nothing changed."))
+      note(TRUE, sprintf("%s: %s", nm, done))
+    } else note(FALSE, sprintf("%s: %s", nm, r$why %||% "nothing changed."))
   }
+  .LAYOUT_CONFIRMED <- "confirmed. It is proven from now on, and statements that match it convert on their own."
+  .LAYOUT_RETIRED <- "retired. It is no longer used to read statements; Confirm brings it back. Conversions already issued are unchanged."
   observeEvent(input$adm_layout_confirm, .layout_change_ui(
-    function(id) layout_confirm(id, LAYOUTS_DIR, by = who_now()),
-    "confirmed. It is proven from now on, and statements that match it convert on their own."))
+    function(id) layout_confirm(id, LAYOUTS_DIR, by = who_now()), .LAYOUT_CONFIRMED))
   observeEvent(input$adm_layout_retire, .layout_change_ui(
-    function(id) layout_retire(id, LAYOUTS_DIR, by = who_now()),
-    "retired. It is no longer used to read statements; Confirm brings it back. Conversions already issued are unchanged."))
-  observeEvent(input$adm_layout_rename, {
+    function(id) layout_retire(id, LAYOUTS_DIR, by = who_now()), .LAYOUT_RETIRED))
+  # .layout_rename_ui(box, pick, note) -- Rename, from either screen: the name typed
+  # in the text box `box`.
+  .layout_rename_ui <- function(box, pick = .adm_layout_selected, note = .layout_note) {
     req(admin_ok())
-    nm <- trimws(input$adm_layout_name %||% "")
-    if (!nzchar(nm)) { .layout_note(FALSE, "Type the new name first."); return() }
+    nm <- trimws(input[[box]] %||% "")
+    if (!nzchar(nm)) { note(FALSE, "Type the new name first."); return() }
     if (grepl("[0-9][0-9 -]{3,}[0-9]", nm)) {
-      .layout_note(FALSE, "A layout's name must not hold a long number - it is shown on every screen and kept in the logs.")
+      note(FALSE, "A layout's name must not hold a long number - it is shown on every screen and kept in the logs.")
       return()
     }
     .layout_change_ui(function(id) layout_rename(id, nm, LAYOUTS_DIR),
-                      sprintf("now named \"%s\".", nm))
-    updateTextInput(session, "adm_layout_name", value = "")
-  })
+                      sprintf("now named \"%s\".", nm), pick, note)
+    updateTextInput(session, box, value = "")
+  }
+  observeEvent(input$adm_layout_rename, .layout_rename_ui("adm_layout_name"))
 
   # ---- fixes held for an admin (R/fixes.R) ----
   adm_fix_bump <- reactiveVal(0L)
   adm_fix_list <- reactive({ req(admin_ok()); adm_fix_bump(); layouts_bump()
     safe(fixes_pending(LAYOUTS_DIR), data.frame()) })
   .FIX_KIND_PLAIN <- c(roles = "columns' roles set, but not proven", confirm = "confirmed as right")
-  output$adm_fixes <- renderDT({
-    f <- adm_fix_list()
+  # .fixes_dt(f, selected) -- the held fixes as a table, the same on Banks and on
+  # Review.
+  .fixes_dt <- function(f, selected = NULL) {
     heads <- c("Bank", "What the person did", "Who", "When")
     if (!is.data.frame(f) || !nrow(f))
       return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
@@ -1443,25 +1541,57 @@ server <- function(input, output, session) {
                     plain_label(f$kind, .FIX_KIND_PLAIN), ifelse(is.na(f$by), "-", f$by),
                     as.character(safe(local_time_text(f$held), f$held)), stringsAsFactors = FALSE)
     names(d) <- heads
-    datatable(d, rownames = FALSE, selection = "single", options = list(dom = "tip", pageLength = 10))
-  })
-  .fix_act <- function(fun, done) {
-    req(admin_ok())
-    f <- adm_fix_list(); i <- input$adm_fixes_rows_selected
-    if (!is.data.frame(f) || !nrow(f) || !length(i) || i[1] > nrow(f)) {
-      output$adm_fix_msg <- renderUI(div(class = "bad", "Click a fix in the table first.")); return()
-    }
-    r <- safe(fun(f$id[i[1]]), list(ok = FALSE, why = "It could not be done."))
-    adm_fix_bump(isolate(adm_fix_bump()) + 1L); layouts_bump(isolate(layouts_bump()) + 1L)
-    output$adm_fix_msg <- renderUI(div(class = if (isTRUE(r$ok)) "ok" else "bad",
-      if (isTRUE(r$ok)) done(r) else r$why %||% "It could not be done."))
+    datatable(d, rownames = FALSE, selection = list(mode = "single", selected = selected),
+              options = list(dom = "tip", pageLength = 10))
   }
+  # the fix selected on Banks, by its id, so a redraw keeps it (see adm_layout_sel)
+  adm_fix_sel <- reactiveVal(NULL)
+  observeEvent(input$adm_fixes_rows_selected, {
+    req(admin_ok())
+    f <- isolate(adm_fix_list()); i <- input$adm_fixes_rows_selected
+    adm_fix_sel(if (is.data.frame(f) && nrow(f) && length(i) && i[1] <= nrow(f)) f$id[i[1]] else NULL)
+  }, ignoreNULL = FALSE)
+  output$adm_fixes <- renderDT({
+    f <- adm_fix_list()
+    sel <- if (is.data.frame(f) && nrow(f)) match(isolate(adm_fix_sel()) %||% NA_character_, f$id) else NA
+    .fixes_dt(f, if (is.na(sel)) NULL else sel)
+  })
+  # .fix_act(fun, done, id, out) -- Accept or Discard one held fix: on Banks the
+  # row selected in its table, on Review the fix on screen (`id`); the words go to
+  # the output `out`.
+  .fix_act <- function(fun, done, id = NULL, out = "adm_fix_msg") {
+    req(admin_ok())
+    f <- adm_fix_list()
+    if (is.null(id)) id <- adm_fix_sel()
+    if (is.null(id) || !is.data.frame(f) || !(id %in% f$id)) {
+      output[[out]] <- renderUI(div(class = "bad", "Click a fix in the table first.")); return(invisible(NULL))
+    }
+    r <- safe(fun(id), list(ok = FALSE, why = "It could not be done."))
+    adm_fix_bump(isolate(adm_fix_bump()) + 1L); layouts_bump(isolate(layouts_bump()) + 1L)
+    output[[out]] <- renderUI(div(class = if (isTRUE(r$ok)) "ok" else "bad",
+      if (isTRUE(r$ok)) done(r) else r$why %||% "It could not be done."))
+    invisible(r)
+  }
+  # .fix_accept_now(id) -- the held fix made a proven layout of its bank. The file
+  # it was held from is that layout's example from now on: its upload record is
+  # filed under the new layout (R/uploads.R `template`, the layout that reads it),
+  # so Review can show the layout on it. Found BEFORE the fix goes.
+  .fix_accept_now <- function(id) {
+    # read fresh: Review's own copy of the run log is kept up to date only while
+    # that tab is open, and Accept can be pressed on Banks
+    src <- safe(.rv_fix_source(id, runs = .adm_history(LOGDIR, "runs", REVIEW_RUNS_MAX),
+                               uploads = read_uploads(UPLOADS_DIR)), NULL)
+    r <- fix_accept(id, LAYOUTS_DIR, by = who_now())
+    if (isTRUE(r$ok) && !is.na(src$upload_id %||% NA_character_))
+      safe(set_upload_status(src$upload_id, src$status %||% "ok", template = r$ref, dir = UPLOADS_DIR))
+    r
+  }
+  .FIX_ACCEPTED <- function(r) sprintf("Accepted: it is now %s, a proven layout.", .layout_name(r$ref) %||% r$ref)
+  .FIX_DISCARDED <- function(r) "Discarded. Nothing was learned from it."
   observeEvent(input$adm_fix_accept, .fix_act(
-    function(id) fix_accept(id, LAYOUTS_DIR, by = who_now()),
-    function(r) sprintf("Accepted: it is now %s, a proven layout.", .layout_name(r$ref) %||% r$ref)))
+    function(id) .fix_accept_now(id), .FIX_ACCEPTED))
   observeEvent(input$adm_fix_discard, .fix_act(
-    function(id) fix_discard(id, LAYOUTS_DIR),
-    function(r) "Discarded. Nothing was learned from it."))
+    function(id) fix_discard(id, LAYOUTS_DIR), .FIX_DISCARDED))
 
   # ---- Train a bank: many statements, one background job --------------------------
   #
@@ -1573,6 +1703,371 @@ server <- function(input, output, session) {
       p(class = "muted", style = "margin:6px 0 0;font-size:12.5px",
         "A statement that needs a look teaches nothing. Convert it on the Convert tab and use Please check to set it right - a fix that then proves is learned."))
   })
+
+  # ---- Admin -> Review: SEE it, then decide (R/review.R) --------------------------
+  #
+  # "How do I go into admin, see what's been run and not worked and actually SEE it
+  # to fix it, accept it or reject it." Three lists -- what did not prove, the
+  # learned layouts, the held fixes -- and each opens its statement page with the
+  # columns drawn the way Please check draws them (.draw_page_columns), beside the
+  # decision it is for. A page comes only from a file this server already keeps (an
+  # upload, or the folder intake's original); when that is gone the screen says so
+  # rather than drawing nothing. The file is read again in its own process (job
+  # task "review"), never in this one, and nothing is learned, logged or written.
+  #
+  # The run log, newest first, watched like the layout store: a conversion somebody
+  # else runs shows up here without a refresh. Watched only while an admin has this
+  # tab open -- the run log is the biggest folder the app keeps, and every open
+  # browser runs this check.
+  rv_runs_poll <- reactivePoll(5000, session,
+    checkFunc = function() if (isTRUE(admin_ok()) && identical(input$adm_tabs, "Review"))
+      .store_stamp(file.path(LOGDIR, "runs")) else "not watched",
+    valueFunc = function() Sys.time())
+  rv_runs <- reactive({
+    req(admin_ok()); rv_runs_poll()
+    tryCatch(.adm_history(LOGDIR, "runs", REVIEW_RUNS_MAX), error = function(e) data.frame())
+  })
+  rv_uploads <- reactive({ req(admin_ok()); rv_runs_poll(); layouts_bump()
+    safe(read_uploads(UPLOADS_DIR), data.frame()) })
+
+  # A PANE: what is on screen beside one of the lists. `want` is the file to show
+  # and how to read it (list(key, path, name, ext, why, read, ...); path NA with
+  # `why` when the file is not kept), `got` its reading once it is back, `page`
+  # the page on screen.
+  .rv_pane <- function() {
+    pn <- list(slot = job_slot(), want = reactiveVal(NULL), got = reactiveVal(NULL), page = reactiveVal(1L))
+    pn$render <- reactive({
+      w <- pn$want(); req(w, !is.na(w$path %||% NA_character_), identical(w$ext, "pdf"))
+      render_page_view(w$path, pn$page(), 100)
+    })
+    pn
+  }
+  rv_look <- .rv_pane(); rv_lay <- .rv_pane(); rv_fix <- .rv_pane()
+  # .rv_key(path, ...) -- a reading's key: the file as it is on disk, and how it is read.
+  .rv_key <- function(path, ...) {
+    if (is.na(path %||% NA_character_)) return(NA_character_)
+    i <- file.info(path)
+    paste(c(path, i$size, as.numeric(i$mtime), ...), collapse = "|")
+  }
+  .rv_ext <- function(path, name = NA_character_)
+    tolower(tools::file_ext(if (!is.na(path %||% NA_character_)) path else (name %||% "")))
+  # .rv_pages(path) -- how many pages a kept PDF has (NA for anything else).
+  .rv_pages <- function(path) {
+    if (is.na(path %||% NA_character_) || !identical(.rv_ext(path), "pdf")) return(NA_integer_)
+    as.integer(safe(pdftools::pdf_length(path), NA_integer_))
+  }
+  # .rv_bank(id, hint, none) -- a run's bank as its name: the bank list's name for
+  # it, else the name the person typed (the run log keeps a bank as its id, which
+  # for a bank named by hand is "smith_credit_union"), else `none`.
+  .rv_bank <- function(id, hint = NA_character_, none = "-") {
+    id <- as.character(id %||% NA_character_)[1]; hint <- as.character(hint %||% NA_character_)[1]
+    if (!is.na(id) && id %in% bank_list()) return(.bank_label(id))
+    if (!is.na(hint) && nzchar(hint)) return(hint)
+    if (!is.na(id) && nzchar(id)) id else none
+  }
+  # .rv_open(pn, w) -- put `w` on screen in pane `pn`, and read its file in the
+  # background unless it has already been read the same way.
+  .rv_open <- function(pn, w) {
+    cur <- isolate(pn$want())
+    if (!is.null(cur) && identical(cur$key, w$key) && !is.na(w$key) && !is.null(isolate(pn$got()))) {
+      pn$want(w); return(invisible(NULL))
+    }
+    pn$slot$cancel(); pn$got(NULL); pn$page(1L); pn$want(w)
+    if (is.na(w$path %||% NA_character_)) return(invisible(NULL))
+    first <- function(rd) review_first_page(rd, isTRUE(w$unproven_first))
+    hit <- get0(w$key, envir = .RV_READS, inherits = FALSE)
+    if (!is.null(hit)) { pn$got(hit); pn$page(first(hit)); return(invisible(NULL)) }
+    pn$slot$start("review", w$path, tempdir(), message = "", overlay = FALSE, args = w$read,
+      finish = function(rd) {
+        if (!identical(isolate(pn$want())$key, w$key)) return(invisible(NULL))
+        if (!is.list(rd) || is.null(rd$units))
+          rd <- list(ok = FALSE, units = list(), why = "It could not be read again just now. Try again in a moment.")
+        else {
+          if (length(ls(.RV_READS)) >= .RV_READS_MAX) rm(list = ls(.RV_READS), envir = .RV_READS)
+          assign(w$key, rd, envir = .RV_READS)
+        }
+        pn$got(rd); pn$page(first(rd))
+      })
+  }
+  # .rv_view(pn, px) -- a pane's frame: what it is, its buttons, what the last
+  # button did, then its page (or a spreadsheet's columns). Drawn again only when
+  # another row is opened, so the picture is not rebuilt while it is looked at.
+  .rv_view <- function(pn, px) {
+    w <- pn$want()
+    if (is.null(w)) return(p(class = "muted rv-note", "Click one in the list to see it."))
+    div(class = "rv-pane",
+      uiOutput(paste0(px, "_head")),
+      uiOutput(paste0(px, "_acts")),
+      uiOutput(paste0(px, "_msg")),
+      if (is.na(w$path %||% NA_character_)) div(class = "note-warn rv-gone", w$why)
+      else tagList(
+        uiOutput(paste0(px, "_pages")),
+        if (identical(w$ext, "pdf")) plotOutput(paste0(px, "_plot"), height = "auto"),
+        uiOutput(paste0(px, "_note"))))
+  }
+  # .rv_outputs(pn, px, said) -- the page chooser, the page with its columns, and
+  # the line under it, for one pane. `said` names whose columns they are.
+  .rv_outputs <- function(pn, px, said) {
+    output[[paste0(px, "_pages")]] <- renderUI({
+      req(admin_ok())
+      w <- pn$want(); req(w, identical(w$ext, "pdf"))
+      n <- suppressWarnings(as.integer(pn$got()$pages %||% w$pages %||% 1L)[1])
+      if (is.na(n) || n <= 1L) return(NULL)
+      pg <- pn$page()
+      ch <- stats::setNames(as.character(seq_len(n)), paste("Page", seq_len(n)))
+      if (n <= 12L) radioButtons(paste0(px, "_page"), NULL, ch, selected = as.character(pg), inline = TRUE)
+      else selectInput(paste0(px, "_page"), NULL, ch, selected = as.character(pg), width = "160px")
+    })
+    observeEvent(input[[paste0(px, "_page")]], {
+      req(admin_ok())
+      pg <- suppressWarnings(as.integer(input[[paste0(px, "_page")]]))
+      if (!is.na(pg) && !identical(pg, isolate(pn$page()))) pn$page(pg)
+    })
+    output[[paste0(px, "_plot")]] <- renderPlot({
+      req(admin_ok())
+      r <- pn$render(); req(r)
+      .draw_page_columns(r, review_columns(pn$got()))
+    }, height = function() .page_plot_height(session$clientData[[paste0("output_", px, "_plot_width")]] %||% 600,
+                                             tryCatch(pn$render(), error = function(e) NULL)))
+    output[[paste0(px, "_note")]] <- renderUI({
+      req(admin_ok())
+      w <- pn$want(); req(w, !is.na(w$path %||% NA_character_))
+      rd <- pn$got()
+      if (is.null(rd)) return(if (!is.null(pn$slot$handle())) p(class = "muted rv-note", "Finding the columns\u2026"))
+      if (!isTRUE(rd$ok)) return(p(class = "bad rv-note", rd$why))
+      cl <- review_columns(rd)
+      tagList(if (!identical(w$ext, "pdf") && !is.null(cl)) .ck_columns_table(cl),
+              p(class = "muted rv-note", if (is.null(cl)) "No columns were found." else said))
+    })
+  }
+  .rv_outputs(rv_look, "adm_rv_look", "The columns as the tool reads it now.")
+  .rv_outputs(rv_lay, "adm_rv_lay", "The columns as this layout reads it.")
+  .rv_outputs(rv_fix, "adm_rv_fix", "The columns as the person set them.")
+  .rv_said <- function(ok, msg) div(class = if (ok) "ok" else "bad", style = "margin:6px 0", msg)
+
+  # 1. NEEDS A LOOK: each file whose newest conversion did not prove, newest first.
+  rv_look_rows <- reactive(review_needs_look(rv_runs()))
+  output$adm_rv_look <- renderDT({
+    req(admin_ok())
+    d <- rv_look_rows()
+    heads <- c("File", "Bank", "When", "Why")
+    if (!nrow(d))
+      return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
+                       rownames = FALSE, selection = "none",
+                       options = dt_none_opts("Nothing needs a look.", dom = "t")))
+    short <- ifelse(nchar(d$reason) > 110, paste0(substr(d$reason, 1, 107), "\u2026"), d$reason)
+    # the date short enough to sit on one line; the pane above the page says it in full
+    when <- format(.parse_stamp(d$ts), "%d %b %Y %H:%M", tz = "")
+    t <- data.frame(d$file, vapply(seq_len(nrow(d)), function(i) .rv_bank(d$bank[i], d$bank_hint[i]), ""),
+                    ifelse(is.na(when), d$ts, when), short, stringsAsFactors = FALSE)
+    names(t) <- heads
+    # NO ROW IS SELECTED BY A REDRAW. The pane beside the list names what is open,
+    # and only a click opens anything: a redraw that selected the open row would
+    # report it back as if clicked, and a redraw worked out a moment before a click
+    # but arriving after it would put the old row back over the one just clicked.
+    datatable(t, rownames = FALSE, selection = "single",
+              options = list(dom = "tip", pageLength = 8,
+                             columnDefs = list(list(className = "rv-nowrap", targets = 2))))
+  })
+  output$adm_rv_look_more <- renderUI({
+    req(admin_ok())
+    k <- attr(rv_runs(), "kept_of")
+    if (is.null(k) || k[["total"]] <= k[["read"]]) return(NULL)
+    p(class = "muted rv-note", sprintf("From the newest %s conversions.", format(k[["read"]], big.mark = ",")))
+  })
+  observeEvent(input$adm_rv_look_rows_selected, {
+    req(admin_ok())
+    d <- isolate(rv_look_rows()); i <- input$adm_rv_look_rows_selected
+    if (!length(i) || i[1] > NROW(d)) return()
+    x <- d[i[1], , drop = FALSE]
+    if (identical(isolate(rv_look$want())$row, x$run_id)) return()
+    k <- review_kept(x$sha, x$file, x$run_id, isolate(rv_uploads()), UPLOADS_DIR, ".", UPLOADS_KEEP_DAYS)
+    bank <- if (is.na(x$bank)) NULL else x$bank
+    .rv_open(rv_look, list(
+      key = .rv_key(k$path, "look", bank, .store_stamp(LAYOUTS_DIR)), row = x$run_id, run = x,
+      path = k$path, name = x$file, ext = .rv_ext(k$path, x$file), why = k$why, upload_id = k$upload_id,
+      pages = .rv_pages(k$path), bank = bank, unproven_first = TRUE,
+      # read now as it would be converted now: the bank it was read as, and that
+      # bank's layouts in use
+      read = list(bank = if (is.null(bank)) NULL else .layout_bank_display(bank, bank),
+                  layouts = if (is.null(bank)) list() else safe(layouts_load(LAYOUTS_DIR, bank), list()))))
+  })
+  output$adm_rv_look_view <- renderUI({ req(admin_ok()); .rv_view(rv_look, "adm_rv_look") })
+  output$adm_rv_look_head <- renderUI({
+    req(admin_ok())
+    w <- rv_look$want(); req(w)
+    x <- w$run
+    o <- plain_outcome(x$status, x$outcome, reason = x$reason)
+    tagList(
+      p(class = "rv-title", strong(x$file),
+        span(class = "muted", sprintf(" - %s, %s", .rv_bank(x$bank, x$bank_hint, "no bank"),
+                                      as.character(safe(local_time_text(x$ts), x$ts))))),
+      p(class = "rv-why", strong(paste0(o$word, ": ")), x$reason))
+  })
+  output$adm_rv_look_acts <- renderUI({
+    req(admin_ok())
+    w <- rv_look$want(); req(w, !is.na(w$path %||% NA_character_))
+    div(class = "rv-acts", actionButton("adm_rv_look_open", "Open it on Please check", class = "btn-primary"))
+  })
+  # ...where a person sets it right: read again on Convert, as the bank it was read
+  # as, with Please check open.
+  observeEvent(input$adm_rv_look_open, {
+    req(admin_ok())
+    w <- isolate(rv_look$want())
+    if (is.null(w) || is.na(w$path %||% NA_character_) || !file.exists(w$path)) {
+      notify_once("adm_rv_open", "That file is no longer kept.", type = "error"); return()
+    }
+    .reread_on_convert(w$path, w$name, upload_id = if (is.na(w$upload_id)) NULL else w$upload_id, bank = w$bank)
+  })
+
+  # 2. LAYOUTS: every learned layout, retired ones too (Confirm brings one back),
+  # each shown on the newest kept file it read.
+  # .rv_proved_by(ly) -- what vouches for a layout: the statements whose arithmetic
+  # proved it, else the person (an accepted fix) or the admin (a confirm).
+  .rv_proved_by <- function(ly) {
+    n <- length(unique(unlist(ly$layout$proved_by)))
+    if (n > 0L) return(sprintf("%d statement%s", n, if (n == 1L) "" else "s"))
+    switch(as.character(ly$layout$origin %||% "")[1], corrected = "a person's fix",
+           confirmed = "an admin", "no statement yet")
+  }
+  output$adm_rv_layouts <- renderDT({
+    req(admin_ok())
+    ls <- lay_all()
+    heads <- c("Layout", "Status", "Proved by")
+    if (!length(ls))
+      return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
+                       rownames = FALSE, selection = "none",
+                       options = dt_none_opts("Nothing has been learned yet.", dom = "t")))
+    d <- data.frame(vapply(ls, function(l) as.character(safe(layout_display_name(l), l$layout$id))[1], ""),
+                    vapply(ls, function(l) as.character(l$layout$status %||% "")[1], ""),
+                    vapply(ls, .rv_proved_by, ""), stringsAsFactors = FALSE)
+    names(d) <- heads
+    # (no row selected by a redraw: see adm_rv_look)
+    datatable(d, rownames = FALSE, selection = "single", options = list(dom = "tip", pageLength = 8)) |>
+      formatStyle("Status", fontWeight = "bold",
+        color = styleEqual(c("proven", "provisional", "retired"), c(PALETTE$ok, PALETTE$warn, "#68727d")))
+  })
+  observeEvent(input$adm_rv_layouts_rows_selected, {
+    req(admin_ok())
+    ls <- isolate(lay_all()); i <- input$adm_rv_layouts_rows_selected
+    if (!length(i) || i[1] > length(ls)) return()
+    ly <- ls[[i[1]]]; id <- ly$layout$id
+    if (identical(isolate(rv_lay$want())$layout_id, id)) return()
+    output$adm_rv_lay_msg <- renderUI(NULL)
+    ex <- review_layout_example(id, isolate(rv_uploads()), UPLOADS_DIR, UPLOADS_KEEP_DAYS)
+    # A retired layout is shown as it read, so it can be judged before Confirm
+    # brings it back (the reader never reads with a retired one).
+    lr <- ly; if (identical(lr$layout$status, "retired")) lr$layout$status <- "provisional"
+    u <- isolate(rv_uploads())
+    .rv_open(rv_lay, list(
+      key = .rv_key(ex$path, "layout", id, paste(unlist(ly$auto$roles %||% ly$layout$signature$roles), collapse = ",")),
+      layout_id = id, path = ex$path, name = if (is.na(ex$path)) NA_character_ else basename(ex$path),
+      when = if (is.na(ex$upload_id)) NA_character_ else u$ts[match(ex$upload_id, u$id)],
+      ext = .rv_ext(ex$path), why = paste("No example kept.", ex$why),
+      pages = .rv_pages(ex$path),
+      read = list(bank = .layout_bank_display(.layout_slug(ly$layout$bank), ly$layout$bank), layouts = list(lr))))
+  })
+  output$adm_rv_lay_view <- renderUI({ req(admin_ok()); .rv_view(rv_lay, "adm_rv_lay") })
+  # the layout on screen, as the store holds it NOW (its status changes under it)
+  .rv_layout_on_screen <- function() {
+    id <- isolate(rv_lay$want())$layout_id
+    if (is.null(id)) NULL else lay_all()[[id]]
+  }
+  output$adm_rv_lay_head <- renderUI({
+    req(admin_ok())
+    w <- rv_lay$want(); req(w)
+    ly <- lay_all()[[w$layout_id]]; req(ly)
+    st <- as.character(ly$layout$status %||% "")[1]
+    tagList(
+      p(class = "rv-title", strong(as.character(safe(layout_display_name(ly), w$layout_id))[1])),
+      p(class = "muted rv-note",
+        sprintf("%s%s, proved by %s.", toupper(substr(st, 1, 1)), substring(st, 2), .rv_proved_by(ly)),
+        if (!is.na(w$path %||% NA_character_))
+          sprintf(" Example: %s%s.", w$name, if (is.na(w$when %||% NA)) "" else paste0(", ", w$when))))
+  })
+  output$adm_rv_lay_acts <- renderUI({
+    req(admin_ok())
+    w <- rv_lay$want(); req(w)
+    div(class = "rv-acts",
+      actionButton("adm_rv_lay_confirm", "Confirm", class = "btn-primary"),
+      actionButton("adm_rv_lay_retire", "Retire", class = "btn-danger"),
+      div(class = "rv-rename",
+        textInput("adm_rv_lay_name", NULL, "", placeholder = "New name", width = "100%"),
+        actionButton("adm_rv_lay_rename", "Rename")))
+  })
+  .rv_lay_note <- function(ok, msg) output$adm_rv_lay_msg <- renderUI(.rv_said(ok, msg))
+  observeEvent(input$adm_rv_lay_confirm, .layout_change_ui(
+    function(id) layout_confirm(id, LAYOUTS_DIR, by = who_now()), .LAYOUT_CONFIRMED,
+    .rv_layout_on_screen, .rv_lay_note))
+  observeEvent(input$adm_rv_lay_retire, .layout_change_ui(
+    function(id) layout_retire(id, LAYOUTS_DIR, by = who_now()), .LAYOUT_RETIRED,
+    .rv_layout_on_screen, .rv_lay_note))
+  observeEvent(input$adm_rv_lay_rename, .layout_rename_ui("adm_rv_lay_name", .rv_layout_on_screen, .rv_lay_note))
+
+  # 3. HELD FIXES: shown on the file each was held from, read with the roles the
+  # person set (or, for "This is right", the reading they confirmed).
+  # .rv_fix_source(id, rec) -- that file: the run that held the fix (the run log's
+  # fix_held, R/review.R review_fix_run), and where its file is kept.
+  .rv_fix_source <- function(id, rec = review_fix_record(id, LAYOUTS_DIR), runs = rv_runs(),
+                             uploads = rv_uploads()) {
+    none <- function(why) list(path = NA_character_, upload_id = NA_character_, status = NA_character_,
+                               name = NA_character_, why = why)
+    if (is.null(rec)) return(none("This fix is no longer waiting."))
+    i <- review_fix_run(rec, runs)
+    if (is.na(i)) return(none("The file it was held from could not be found."))
+    k <- review_kept(runs$source_sha256[i], runs$source_file[i], runs$run_id[i], uploads,
+                     UPLOADS_DIR, ".", UPLOADS_KEEP_DAYS)
+    k$name <- basename(as.character(runs$source_file[i]))
+    k
+  }
+  output$adm_rv_fixes <- renderDT({
+    req(admin_ok())
+    .fixes_dt(adm_fix_list())      # (no row selected by a redraw: see adm_rv_look)
+  })
+  observeEvent(input$adm_rv_fixes_rows_selected, {
+    req(admin_ok())
+    f <- isolate(adm_fix_list()); i <- input$adm_rv_fixes_rows_selected
+    if (!is.data.frame(f) || !length(i) || i[1] > nrow(f)) return()
+    id <- f$id[i[1]]
+    if (identical(isolate(rv_fix$want())$fix_id, id)) return()
+    output$adm_rv_fix_msg <- renderUI(NULL)
+    rec <- review_fix_record(id, LAYOUTS_DIR)
+    src <- .rv_fix_source(id, rec)
+    .rv_open(rv_fix, list(
+      key = .rv_key(src$path, "fix", id), fix_id = id, fix = f[i[1], , drop = FALSE],
+      path = src$path, name = src$name, ext = .rv_ext(src$path, src$name), why = paste("No example kept.", src$why),
+      pages = .rv_pages(src$path),
+      read = list(bank = .layout_bank_display(.layout_slug(rec$bank), rec$bank),
+                  roles = unlist(rec$template$auto$roles))))
+  })
+  output$adm_rv_fix_view <- renderUI({ req(admin_ok()); .rv_view(rv_fix, "adm_rv_fix") })
+  output$adm_rv_fix_head <- renderUI({
+    req(admin_ok())
+    w <- rv_fix$want(); req(w)
+    f <- w$fix
+    tagList(
+      p(class = "rv-title", strong(.bank_label(f$bank) %||% f$bank),
+        span(class = "muted", sprintf(" - %s, by %s, %s", plain_label(f$kind, .FIX_KIND_PLAIN),
+                                      if (is.na(f$by)) "-" else f$by,
+                                      as.character(safe(local_time_text(f$held), f$held))))),
+      if (!is.na(w$path %||% NA_character_)) p(class = "muted rv-note", sprintf("Held from %s.", w$name)))
+  })
+  output$adm_rv_fix_acts <- renderUI({
+    req(admin_ok())
+    w <- rv_fix$want(); req(w)
+    f <- adm_fix_list()
+    # gone once accepted or discarded: there is nothing left to decide
+    if (!is.data.frame(f) || !(w$fix_id %in% f$id)) return(NULL)
+    div(class = "rv-acts",
+      actionButton("adm_rv_fix_accept", "Accept", class = "btn-primary"),
+      actionButton("adm_rv_fix_discard", "Discard", class = "btn-danger"))
+  })
+  observeEvent(input$adm_rv_fix_accept, .fix_act(
+    function(id) .fix_accept_now(id), .FIX_ACCEPTED,
+    id = isolate(rv_fix$want())$fix_id, out = "adm_rv_fix_msg"))
+  observeEvent(input$adm_rv_fix_discard, .fix_act(
+    function(id) fix_discard(id, LAYOUTS_DIR), .FIX_DISCARDED,
+    id = isolate(rv_fix$want())$fix_id, out = "adm_rv_fix_msg"))
 
   # ---- Admin -> Automatic reading (R/tracking.R): counts only ---------------------
   adm_ar_bump <- reactiveVal(0L)
@@ -3798,15 +4293,17 @@ server <- function(input, output, session) {
     if (!.identity_ok()) return()
     run_conversion(SAMPLE_STATEMENT, basename(SAMPLE_STATEMENT), record = FALSE)
   })
-  # .reread_on_convert(path, name, upload_id) -- Admin's "Read it again on Convert":
-  # the saved statement converted afresh on the ordinary result page, where Please
-  # check is. Not recorded again and not fed: the upload is already on record, and
-  # it is the maintainer looking, not a case being worked.
-  .reread_on_convert <- function(path, name, upload_id = NULL) {
+  # .reread_on_convert(path, name, upload_id, bank) -- Admin's "Read it again on
+  # Convert": the saved statement converted afresh on the ordinary result page,
+  # where Please check is. Not recorded again and not fed: the upload is already on
+  # record, and it is the maintainer looking, not a case being worked. `bank`: the
+  # bank it was read as before (Review's "Open it on Please check"), so a fix made
+  # there is learned for that bank.
+  .reread_on_convert <- function(path, name, upload_id = NULL, bank = NULL) {
     if (.case_converting()) return(invisible(NULL))
     updateTabsetPanel(session, "main_tabs", selected = "Convert")
     plan_reset()
-    run_conversion(path, name, record = FALSE, upload_id = upload_id)
+    run_conversion(path, name, record = FALSE, bank = bank, upload_id = upload_id)
   }
   observeEvent(input$ab_go_convert, updateTabsetPanel(session, "main_tabs", selected = "Convert"))
 
@@ -4151,52 +4648,22 @@ server <- function(input, output, session) {
     src <- cv_src(); req(src, file.exists(src$path %||% ""))
     render_page_view(src$path, ck_page(), 100)
   })
-  # The colour of a column on the page: what it IS, the same colours the money
-  # columns have everywhere (money in green, money out red).
-  .ck_col_colour <- function(field, kind) {
-    if (identical(kind, "date")) return("#1d4ed8")
-    if (!identical(kind, "money")) return("#68727d")
-    switch(sub("[0-9]+$", "", field), debit = PALETTE$bad, credit = PALETTE$ok,
-           balance = "#00205b", amount = PALETTE$warn, "#7c3aed")
-  }
+  # The page, and the columns this reading found drawn on it (.draw_page_columns,
+  # which Admin -> Review draws with too).
   output$cv_ck_plot <- renderPlot({
     r <- ck_render(); req(r)
     res <- cv_res(); s <- ck_stmt()
-    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
-    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
-         xlab = "", ylab = "", axes = FALSE)
-    rasterImage(r$ras, 0, r$h, r$w, 0)
-    cols <- res$reading[[s]]$columns
-    if (!is.data.frame(cols) || !nrow(cols)) return(invisible())
-    cols <- cols[cols$page %in% r$pg, , drop = FALSE]
-    if (!nrow(cols)) {
-      text(r$w / 2, 30, "No columns were found on this page.", col = PALETTE$bad, font = 2)
-      return(invisible())
-    }
-    for (j in seq_len(nrow(cols))) {
-      cc <- .ck_col_colour(cols$field[j], cols$kind[j])
-      # the band the column owns, and inside it the ink that was actually read
-      rect(cols$x_min[j], 0, cols$x_max[j], r$h, border = cc, lwd = 1.6, lty = 2)
-      if (all(is.finite(c(cols$ink_min[j], cols$ink_max[j]))))
-        rect(cols$ink_min[j], 0, cols$ink_max[j], r$h, col = paste0(cc, "1f"), border = NA)
-      .col_label((cols$x_min[j] + cols$x_max[j]) / 2, plain_column(cols$field[j]), cc)
-    }
-  }, height = function() {
-    w <- session$clientData$output_cv_ck_plot_width %||% 600
-    r <- tryCatch(ck_render(), error = function(e) NULL)
-    if (is.null(r) || !is.finite(r$w) || r$w <= 0) 600 else max(300, round(w * r$h / r$w))
-  })
+    .draw_page_columns(r, res$reading[[s]]$columns)
+  }, height = function() .page_plot_height(session$clientData$output_cv_ck_plot_width %||% 600,
+                                           tryCatch(ck_render(), error = function(e) NULL)))
   # A CSV or workbook has no page to draw: its columns are named by their headings.
   output$cv_ck_table <- renderUI({
     res <- cv_res(); s <- ck_stmt()
     cols <- res$reading[[s]]$columns
-    if (!is.data.frame(cols) || !nrow(cols)) return(p(class = "muted", "No columns were found."))
+    if (!is.data.frame(cols) || !nrow(cols)) return(.ck_columns_table(cols))
     tagList(
       p(class = "muted", "A CSV or Excel file has no page to draw: these are its columns, by their headings, and what each was read as. The rows read are in the transactions table below."),
-      tags$table(class = "split-table",
-        tags$thead(tags$tr(tags$th("Heading in the file"), tags$th("Read as"))),
-        tags$tbody(lapply(seq_len(nrow(cols)), function(j) tags$tr(
-          tags$td(as.character(cols$heading[j] %||% "")), tags$td(plain_column(cols$field[j])))))))
+      .ck_columns_table(cols))
   })
 
   # .ck_money(res, s) -> the statement's columns of figures: field and heading.
