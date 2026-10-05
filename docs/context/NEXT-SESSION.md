@@ -81,8 +81,7 @@ D11 SCOPE (corrected after owner's challenge): the 11 types are the FINISH LINE 
     long as it passes the clash guard. Drop only the extra OUTPUT fields (loan/fee/event/
     notice models, transaction classes, new value types): output is transactions in
     Excel/CSV. The old "Stage 4" list -> dropped except D7, D9, D10.
-    Admin Review (wip/admin-review) -> trimmed to: needs-a-look list with the page picture,
-    and draft recipes with Accept / Retire.
+    Admin: see D15 (owner: admin must be "simple as f***" -- it is a core deliverable).
 D14 DRAFT RECIPES FROM EVERYTHING WE KNOW: any design we have partial knowledge of gets a
     status: draft recipe -- the 13 old 1.x templates in tests/testthat/fixtures/templates
     (ANZ/ASB/Westpac everyday PDF with x-bands, and CSV exports), the owner's Copilot
@@ -96,6 +95,38 @@ D14 DRAFT RECIPES FROM EVERYTHING WE KNOW: any design we have partial knowledge 
 D12 VERSION: the release is 3.0.0 (recipes), with a 2.x -> 3.0 server update guide.
 D13 FINAL CODE CHECK at the end, focused on the recipe path, the proof, outputs and the
     removal of superseded code (layout learning, the generic reader's auto-convert path).
+
+D15 ADMIN -- RECIPES MUST BE DEAD SIMPLE TO CREATE, MODIFY, ENABLE/DISABLE AND MERGE.
+    Rule: the admin NEVER sees YAML; every change is made while LOOKING at a real page.
+    Admin has 4 tabs:
+      1. NEEDS ATTENTION -- cards with counts: statements needing a look (page picture +
+         Fix -> Please check); draft recipes waiting (Accept / Retire); recipes failing
+         recently = probable drift (Fix); suggested merges (Merge).
+      2. RECIPES -- one row per recipe: bank | name | ON/OFF toggle | statements read |
+         needed help (last 30 days) | draft/proven. Click -> the recipe card.
+      3. WORDS (as now). 4. HEALTH (as now). Banks/layouts tab retired (D1).
+    THE RECIPE CARD (one screen): sample page with columns drawn + numbered; the same plain
+    Please-check questions with this recipe's answers; recognise-by words as chips; version
+    history.
+    CREATE: never a blank form. (a) Please check answers that prove -> "Save as a recipe for
+      <bank> <product>?" (b) Admin -> "New recipe from a statement": upload one -> questions
+      pre-filled by the automatic reader -> Read it -> Save.
+    MODIFY: on the card change an answer, drag a column edge, or click a word on the page to
+      add/remove it as a recognise-by word -> TEST re-reads every statement this recipe read
+      that the server still keeps (uploads retention) and says "23 statements: all still add
+      up, 0 figures changed" -> Save = NEW VERSION (old kept). A change that breaks earlier
+      statements or changes their figures is blocked, with the reason.
+    ENABLE/DISABLE: one toggle; Off = not tried (statements get the questions). Never delete;
+      Retire = Off + hidden.
+    MERGE: offered only when both recipes are checked to read each other's statements
+      identically; one click keeps the one with more proofs, unions recognise words and proof
+      counts, switches the other Off pointing to the survivor.
+    UNDO: version history -> "Use this version".
+    Safety stays automatic: the proof gates every reading; a recipe is never live without
+    proofs (3 from 2+ accounts, or admin Accept). The existing pieces to reuse: the page
+    picture + numbered columns + plain questions (app.R cv_ck_*), the drawn-columns editor
+    (ed_*), wip/admin-review (R/review.R) for the needs-a-look list.
+    Browser checks (tools/ui/check.mjs) must drive every one of these actions end to end.
 
 ## Rules (owner's, still in force)
 - Work branch: claude/bank-statement-ocr-platform-t6n934. Pushing to main allowed when the full suite is green.
