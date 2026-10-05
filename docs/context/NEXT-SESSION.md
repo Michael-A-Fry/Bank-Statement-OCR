@@ -169,18 +169,36 @@ section title mistaken for column headings (Westpac card); summary labels-over-f
 "Current Balance" = closing on cards; dates restart per cardholder section; split on repeated header block;
 account number/name empty in feed. ANZ Visa/ASB Visa cards were NOT written (agent stopped) -- read QVF script lines 4120-5471.
 
-## Steps (tick when done)
-0. [ ] Read docs/context/qvf/FINDINGS.md (fix list + baselines).
-1. [ ] Regenerate lookalikes: for g in docs/context/qvf/gen/make_*.py: python3 $g (check each file's --out / output dir; sets went to scratchpad/qvf/sets/<area>). Baseline-score with tools/synth/score_convert.R --mode cold.
-2. [x] DONE: wip/recipes rebased, own tests 122/0.
-3. [x] DONE: ANZ+ANZ Loan lookalikes 14/15 automatic (was 8/15), 0 wrong; zoo dev/corpus/offsweep unchanged.
-4. [x] DONE: full suite green, merged to work branch and main (3c61147). Next: find why the 1 remaining ANZ lookalike goes to a person (score_convert --out to see which).
-5. [ ] Write recipes for: kiwibank_pdf, westpac_cc, bnz_visa, kiwibank_cc, anz_visa, asb_visa (one per commit, measured on its lookalikes).
-6. [ ] Excel types: bnz/kiwibank/westpac excel recipes (+ OD in number format, "." zero, split by account column).
-7. [ ] Owner's real files (owner uploads; sandbox only, delete after).
-8. [ ] Please check answers -> save a draft recipe for admin to accept.
-9. [ ] wip/admin-review: finish, test, merge.
-10. [ ] Account number + name into feed. Then full code check (task: untested paths).
+## Steps (tick when done) -- ONE step per commit, push after each
+Done already: wip/recipes merged to main (3c61147): recipe reader + ANZ and ANZ Loan
+recipes, 14/15 on lookalikes, 0 wrong, zoo unchanged, suite green. Copilot intake prompt
+on main (docs/context/recipe-intake-prompt.md).
+0. [ ] Read: this file top to bottom, HOW-WE-GOT-HERE.md, qvf/FINDINGS.md.
+1. [ ] Branch from latest main. Regenerate the QVF lookalikes (qvf/gen) and re-score the
+       baseline with score_convert.R --mode cold.
+2. [ ] GATE, part 1: ask the owner to run REAL statements of the 11 types through the
+       CURRENT tool and report counts per type (automatic / needs you / couldn't read);
+       ask for Copilot STATEMENT DESIGN blocks for each type. Continue with 3+ meanwhile.
+3. [ ] Recipe engine changes the decisions need: D3 (all banks' recipes tried; wrong-pick
+       message), two-recipe rule (same figures -> newer; differ -> person), drift = ask once,
+       kind excel/csv (D4), account fields (D5), "always ask once" for unknown designs
+       (automatic reader only pre-fills). Tests for each.
+4. [ ] Recipes, credit cards first: anz_visa, asb_visa, bnz_visa, kiwibank_cc, westpac_cc
+       (one per commit; from Copilot blocks if given, else cards + QVF script lines;
+       each measured on its lookalikes, 0 wrong). Use FINDINGS rules 7-14.
+6. [ ] Recipes, everyday + Excel: kiwibank_pdf, bnz/kiwibank/westpac excel (FINDINGS 15-21).
+7. [ ] GATE, part 2: owner reruns the SAME real files; recipes must raise the automatic
+       count with 0 wrong. If not, STOP and rethink with the owner.
+8. [ ] D16 the accountant's screen (QVF-simple) + D9 progress + D10 timings.
+9. [ ] D15 admin (Needs attention / Recipes / Words / Health; create, modify+Test,
+       toggle, merge, undo) + D14 draft recipes from the 13 old templates and Copilot
+       blocks + D1 layouts retired.
+10. [ ] Speed: 150-page bundle of a known type under 1 minute (make_bench.py); stop failed
+       readings re-reading every page.
+11. [ ] Output: full description + type/particulars/code/reference columns; account
+       number and name; D8 tools/compare-qvf.R for the side-by-side rollout.
+12. [ ] Final code check (D13), full suite, browser checks, version 3.0.0 + server update
+       guide (D12). Push main.
 
 ## If the owner pastes a "STATEMENT DESIGN" block
 It came from docs/context/recipe-intake-prompt.md (on main): Copilot describing a real statement with nothing personal. Write recipes/<bank>_<product>_<kind>.yaml from it, following recipes/anz_everyday_pdf.yaml; build a lookalike from its SAMPLE (tools/synth/make_layouts.py helpers) and prove the recipe reads it automatically with 0 wrong before committing.
