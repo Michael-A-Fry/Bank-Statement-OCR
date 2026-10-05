@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Your transaction details", "Date of transaction", "Transaction detail"]
-  none: ["Air New Zealand Airpoints Low Fee MasterCard", "Card Used", "Date of Transaction", "Transaction Details"]
+  none: ["Account Transactions", "Card Used", "Closing Balance", "Date of Transaction", "Enquiry Period", "Transaction Details", "Transaction Keywords"]
 statement_starts: "Your card type:"
 period:
   label: "Statement period:"

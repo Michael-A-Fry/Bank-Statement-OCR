@@ -114,7 +114,7 @@ def check(d):
     if not d["style"]: p.append("money style not given")
     return p
 
-def recipe_yaml(rid, ds, status="draft"):
+def recipe_yaml(rid, ds, status="draft", extra_none=()):
     d0 = ds[0]
     common = set(d0["all"])
     for d in ds[1:]: common &= set(d["all"])
@@ -124,9 +124,17 @@ def recipe_yaml(rid, ds, status="draft"):
     starts = [(st.pop(), len(ds))] if len(st) == 1 and None not in st else []
     # A "must not appear" phrase can never be one any statement of the design printed.
     seen = set(x for d in ds for x in d["all"] + d["skip"] + d["ends"] + d["header"] + [d["title"], d["starts"] or ""])
-    nones = sorted(set(x for d in ds for x in d["none"]) - seen - set(alls))
+    # In a recipe merged from several statements, one statement's "must not appear"
+    # may be printed by another (CashBack lists "Interest - Purchases"; Low Rate
+    # prints it): only phrases EVERY statement of the design lists are kept.
+    own_none = set(ds[0]["none"])
+    for d in ds[1:]: own_none &= set(d["none"])
+    nones = sorted((own_none | set(extra_none)) - seen - set(alls))
     uniq = lambda xs: list(dict.fromkeys(xs))
-    skip = uniq(x for d in ds for x in d["skip"]); ends = uniq(x for d in ds for x in d["ends"])
+    skip = uniq(x for d in ds for x in d["skip"])
+    # A section heading ("Sundry Account Transactions") is skipped and reading carries
+    # on: rows follow it. It is never also a line that ends the table.
+    ends = uniq(x for d in ds for x in d["ends"] if x not in skip)
     norows = uniq(x for d in ds for x in d["norows"])
     cols, n_text, seen = [], 0, set()
     for head, role, raw in d0["columns"]:
@@ -175,11 +183,24 @@ def main():
         key = (d["bank"], tuple(h.lower() for h in d["header"]), d["date_format"])
         groups.setdefault(key, []).append(d)
     os.makedirs(a.out, exist_ok=True)
+    # What tells a design from its same-bank siblings: each sibling's must-appear
+    # phrases that this design's statements never print become this design's
+    # must-not-appear phrases.
+    def alls_of(ds):
+        c = set(ds[0]["all"])
+        for d in ds[1:]: c &= set(d["all"])
+        return c
+    def seen_of(ds):
+        return set(x for d in ds for x in d["all"] + d["skip"] + d["ends"] + d["header"] + [d["title"], d["starts"] or ""])
+    extra = {}
+    for k, ds in groups.items():
+        sib = [alls_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0]]
+        extra[k] = sorted(set().union(*sib) - seen_of(ds)) if sib else []
     ids = collections.Counter()
     for (bank, hdr, fmt), ds in groups.items():
         base = "%s_%s" % (bank, slug(ds[0]["title"])[:30]); ids[base] += 1
         rid = base if ids[base] == 1 else "%s_%d" % (base, ids[base])
-        open(os.path.join(a.out, rid + ".yaml"), "w").write(recipe_yaml(rid, ds, a.status))
+        open(os.path.join(a.out, rid + ".yaml"), "w").write(recipe_yaml(rid, ds, a.status, extra[(bank, hdr, fmt)]))
         print("recipe %-45s from %d statement(s)" % (rid, len(ds)))
     print("\n%d blocks -> %d draft recipes; %d blocks not converted:" % (len(blocks), len(groups), len(skipped)))
     for i, bank, title, p in skipped: print("  block %d %s %s: %s" % (i, bank, title[:35], "; ".join(p)))

@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Transaction details", "Closing totals", "Your Statement", "Statement Number"]
-  none: ["Particulars / Code / Reference", "Total Withdrawals =", "Transaction Listing for:"]
+  none: ["Account Number :", "Particulars / Code / Reference", "Total Withdrawals =", "Transaction Listing for:"]
 statement_starts: "Your Statement"
 period:
   label: "Period"

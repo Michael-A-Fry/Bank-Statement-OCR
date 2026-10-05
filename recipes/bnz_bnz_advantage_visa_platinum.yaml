@@ -10,7 +10,6 @@ kind: pdf
 status: proven
 recognise:
   all: ["Activity for the period"]
-  none: ["Airpoints Dollars earned this month", "Cash Rewards earned from this month's statement period", "General Payments & Charges", "Interest rate summary information"]
 period:
   label: "Activity for the period"
 table:

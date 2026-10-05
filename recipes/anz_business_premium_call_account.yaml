@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Statement of Accounts", "Transaction type and details"]
-  none: ["Amount in NZ$", "CashBack Rewards Summary", "Composite Statement", "Credit Card Account Number", "Date of Transaction", "Details of Transaction", "Freedom - continued", "Loan Account Statement", "Sundry Account Transactions", "Upcoming automatic payments", "Visa Gold Statement", "Visa Platinum Rewards Statement", "Visa Platinum Statement"]
+  none: ["Amount in NZ$", "Date of Transaction", "Loan Account Statement", "Next Loan Payment Date Due", "Principal Balance", "Summary of total loan fees"]
 statement_starts: "Statement of Accounts"
 period:
   label: "Statement period"
@@ -23,7 +23,7 @@ table:
     debit: {under: "Withdrawals"}
     credit: {under: "Deposits"}
     balance: {under: "Balance"}
-  ends_at: ["Totals at end of page", "Totals at end of period", "Your available credit is", "Payment dates displayed on bank statements are business day dates only", "Available Credit", "Closing Balance"]
+  ends_at: ["Available Credit", "Closing Balance"]
   skip: ["Opening balance", "Balance brought forward from previous page", "No transactions for this period", "Totals at end of page", "Totals at end of period", "Your available credit is", "AP Automatic Payment", "BP Bill Payment", "DC Direct Credit", "ED Electronic Dishonour", "FX Foreign Exchange", "IP International EFTPOS Transaction", "IF International Payment", "AT Automatic Teller Machine", "CQ Cheque/Withdrawal", "DD Direct Debit", "EP EFTPOS Transaction", "IA International Money Machine", "VT Visa Transaction", "Payment dates displayed on bank statements are business day dates only", "Balance Carried Forward", "Standard interest"]
   no_rows: ["No transactions for this period"]
 dates:

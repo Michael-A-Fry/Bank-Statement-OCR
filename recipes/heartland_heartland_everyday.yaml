@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Transaction Summary", "Statement opening balance:", "Statement closing balance:", "Statement for the period :"]
-  none: ["The list of transactions on your account", "Transaction History"]
+  none: ["Arrears Balance", "The list of transactions on your account", "Transaction Date", "Transaction History"]
 statement_starts: "Transaction Summary"
 period:
   label: "Statement for the period :"

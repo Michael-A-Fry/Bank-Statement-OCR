@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Date of Transaction", "Amount in NZ$"]
-  none: ["Interest - Purchases", "Loan Account Statement", "Purchase Interest Rate Changed From", "STATEMENT OF ACCOUNT", "STATEMENT OF LOAN ACCOUNT", "Totals at end of period", "Transaction type and details", "Visa Platinum Rewards Statement"]
+  none: ["Loan Account Statement", "Next Loan Payment Date Due", "Principal Balance", "Statement of Accounts", "Summary of total loan fees", "Transaction type and details"]
 period:
   label: "Statement Period"
 table:
@@ -20,7 +20,7 @@ table:
     date2: {under: "Date Processed"}
     description: {under: "Details of Transaction"}
     amount: {under: "Amount in NZ$"}
-  ends_at: ["Closing Balance:", "Sundry Account Transactions", "CashBack Rewards Summary", "Please note that the amount of", "Monthly CashBack Summary", "Card Total:", "Your account is in credit.", "Please do not pay.", "Thank you.", "Payment Advice", "Minimum Payment Due", "Indicate Amount Paid"]
+  ends_at: ["Closing Balance:", "Please note that the amount of", "Payment Advice", "Minimum Payment Due", "Indicate Amount Paid"]
   skip: ["CashBack Rewards Summary", "Monthly CashBack Summary", "Card Total:", "Your account is in credit.", "Please do not pay.", "Thank you.", "Sundry Account Transactions", "We do not appear to have received the full minimum payment this month.", "The overdue payment showing is required.", "Your account is now two payments in arrears.", "Your balance exceeds your credit limit."]
 dates:
   format: "%d %b"

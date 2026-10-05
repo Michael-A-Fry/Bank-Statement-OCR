@@ -244,7 +244,15 @@ pdf_band_frame_scale <- function(frame, page_w, page_h) {
   "totals?",
   "(sub|grand|page|period|statement|account|running)[-]?\\s*totals?",
   "totals? (at|for|of|on|to)( the)?( end of)?( the)? (page|period|statement|month|year|day|section|account)",
-  "totals? (this|the) (page|period|statement|month|year|day|section|account)")
+  "totals? (this|the) (page|period|statement|month|year|day|section|account)",
+  # The owner's real statements (docs/context/RECIPE_STATEMENTS) print totals lines
+  # the shapes above miss: a side's total over the month ("Total credits this
+  # month:"), with an equals sign ("Total deposits ="), a card's total ("Card
+  # Total:") and a card section's ("Total of new transactions for <cardholder>").
+  # Each names what it totals; a payee is never one of these words.
+  "totals? (withdrawals|deposits|credits|debits|payments|fees|transactions)( (this|for the) (month|period|statement))?( =)?",
+  "card totals?",
+  "totals? of (new|other account) transactions( for .+)?")
 
 # .pdf_summary_rx() -- the compiled whole-label alternation, built ONCE and cached.
 # The cache lives in the LEXICON's own environment so an admin vocabulary edit

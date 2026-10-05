@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Transaction History", "Transaction Date", "Arrears Balance"]
-  none: ["Opening Balance:", "Statement opening balance:", "Transaction Summary"]
+  none: ["Opening Balance:", "Statement closing balance:", "Statement for the period :", "Statement opening balance:", "The list of transactions on your account", "Transaction Summary"]
 statement_starts: "Transaction History"
 table:
   header: ["Transaction Date", "Value Date", "Transaction Description", "Method", "Ref", "Debit", "Credit", "Balance", "Arrears Balance", "Other Party Bank", "Other Ref"]

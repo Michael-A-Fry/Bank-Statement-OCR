@@ -36,6 +36,9 @@ opening_balance:
     - "balance forward"
     - "previous balance"        # credit-card wording
     - "balance from previous statement"
+    - "statement opening balance"
+    - "opening balance as at"
+    - "previous period balance"
   value: money
 
 # On a statement:  Closing balance            $980.40
@@ -50,6 +53,8 @@ closing_balance:
     - "new balance"             # credit-card wording
     - "balance at end"
     - "final balance"
+    - "statement closing balance"
+    - "your closing balance"
   value: money
 
 # On a statement:  Statement date: 3 April 2026

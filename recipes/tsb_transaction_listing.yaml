@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Transaction Listing for:", "Particulars / Code / Reference", "Account Number :", "Total Withdrawals ="]
-  none: ["Carried forward", "Closing totals", "Your Statement"]
+  none: ["Carried forward", "Closing totals", "Statement Number", "Transaction details", "Your Statement"]
 statement_starts: "TRANSLIST"
 table:
   header: ["Date", "Time", "Serial No", "Particulars / Code / Reference", "Withdrawal", "Deposit", "Balance"]

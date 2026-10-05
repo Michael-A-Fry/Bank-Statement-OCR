@@ -435,3 +435,15 @@ test_that("two recipes that both prove: same figures take the newer, different f
   expect_identical(r$outcome, "proven")
   expect_identical(r$matched_recipe, "anz_new@2")
 })
+
+# Many designs print the column headings on the first page only (Heartland, Kiwibank
+# account listings): a page with no heading line continues the page before's
+# columns when it holds dated rows in them; a page of terms is set aside.
+test_that("a page with no heading continues the columns of the page before; a terms page is set aside", {
+  pages <- rc_two_pages()
+  pages[[2]] <- pages[[2]][pages[[2]] != rc_head]
+  pages[[3]] <- c("Terms and conditions", "Please read these terms carefully.")   # unnumbered, as real terms pages are
+  r <- recipe_read(do.call(rc_pdf, pages), rc_anz())
+  expect_identical(r$outcome, "proven")
+  expect_equal(r$transactions$amount, rc_want)
+})

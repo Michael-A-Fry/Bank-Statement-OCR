@@ -996,3 +996,13 @@ test_that("the contradicted-zero rule is in the engine, before the derivation", 
   # and a genuine 0.00 transaction (balance does not move) is untouched
   expect_match(src, "A GENUINE 0.00 TRANSACTION IS NOT TOUCHED", fixed = TRUE)
 })
+
+# Totals lines printed on the owner's real statements (docs/context/RECIPE_STATEMENTS)
+# are summary lines, never transactions; a payee that starts with "Total" still is one.
+test_that("the real statements' totals lines are summary lines; payees named Total are not", {
+  for (s in c("Card Total:", "Total deposits =", "Total withdrawals =", "Total of other account transactions",
+              "Total of new transactions for PERSON A", "Total credits this month:", "Total debits this month:"))
+    expect_true(isTRUE(.pdf_is_summary(s, NULL)), info = s)
+  for (s in c("Total Payments to ACME Ltd", "TOTAL FITNESS GYM", "Total Mobility Taxi"))
+    expect_false(isTRUE(.pdf_is_summary(s, NULL)), info = s)
+})

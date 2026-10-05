@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Date of Transaction", "Transaction Details", "Closing Balance"]
-  none: ["Air New Zealand Airpoints TM Platinum Visa"]
+  none: ["Account Transactions", "Date of transaction", "Enquiry Period", "Transaction Keywords", "Transaction detail", "Your transaction details"]
 period:
   label: "Statement period"
 table:

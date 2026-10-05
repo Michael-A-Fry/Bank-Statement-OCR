@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Loan Account Statement", "Principal Balance", "Summary of total loan fees", "Next Loan Payment Date Due"]
-  none: ["Amount in NZ$", "Date of Transaction", "Details of Transaction"]
+  none: ["Amount in NZ$", "Date of Transaction", "Details of Transaction", "Statement of Accounts", "Transaction type and details"]
 statement_starts: "Loan Account Statement"
 period:
   label: "for the period"

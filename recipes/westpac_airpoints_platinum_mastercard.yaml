@@ -10,7 +10,6 @@ kind: pdf
 status: proven
 recognise:
   all: ["TRANSACTION DATE", "PROCESS DATE"]
-  none: ["American Express", "hotpoints Platinum Mastercard", "hotpoints\u00ae summary"]
 period:
   label: "Statement Period:"
 table:

@@ -10,7 +10,6 @@ kind: pdf
 status: proven
 recognise:
   all: ["Date of Transaction", "Transaction Details", "Amount in NZ$"]
-  none: ["Visa Light Payment Advice"]
 period:
   label: "Account Summary:"
 table:
@@ -22,7 +21,7 @@ table:
     amount: {under: "Amount in NZ$"}
     date2: {under: "Date Processed"}
     balance: {under: "Balance $"}
-  ends_at: ["Carried forward to next page", "Closing Balance", "Purchase interest rate", "Cash advance interest rate", "Terms and Conditions", "Overseas Transaction Margins", "Visa Platinum Payment Advice", "Visa Platinum Rewards Payment Advice"]
+  ends_at: ["Closing Balance", "Terms and Conditions", "Overseas Transaction Margins", "Visa Platinum Payment Advice", "Visa Platinum Rewards Payment Advice"]
   skip: ["Opening Balance", "Carried forward to next page", "Purchase interest rate", "Cash advance interest rate"]
 dates:
   format: "%d %b"

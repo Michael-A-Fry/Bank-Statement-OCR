@@ -430,6 +430,9 @@ recipe_read <- function(input, rc) {
                                                    which(cnt > 1)[1], rc$starts[1])))
     starts <- which(cnt > 0)
   }
+  # No start phrase found (or none named): each statement starts where the page
+  # numbering restarts ("Page 1 of N"), the same signal the file splitter uses.
+  if (!length(starts)) starts <- .segment_starts(input) %||% integer(0)
   if (!length(starts)) starts <- 1L
   starts[1] <- 1L
   ranges <- Map(function(a, b) seq.int(a, b), starts, c(starts[-1] - 1L, np))
@@ -454,7 +457,15 @@ recipe_read <- function(input, rc) {
   per <- .rc_period(pgs, rc)
   md <- .rc_md(md, per)
   sctx$md <- md
-  tabs <- lapply(pgs, function(pg) .rc_page(pg, rc))
+  # A page with no heading line continues the columns of the page before it, when
+  # it holds dated rows in them: many designs print the headings on the first page
+  # only, or open later pages with "<product> - continued". A page that holds no
+  # such rows (terms, a letter, a payment slip) is set aside.
+  tabs <- vector("list", length(pgs)); prev <- NULL
+  for (j in seq_along(pgs)) {
+    tabs[j] <- list(.rc_page(pgs[[j]], rc, prev = prev))
+    if (!is.null(tabs[[j]])) prev <- tabs[[j]]
+  }
   list(ctx = sctx, pgs = pgs, tabs = tabs, per = per, md = md, pages = pages)
 }
 
@@ -536,16 +547,19 @@ recipe_read <- function(input, rc) {
 # whose heading starts at or left of it, and a boundary goes half way across the
 # gutter between two columns' print. A page printed further left or right moves
 # its headings and its print together, so it reads the same.
-.rc_page <- function(pg, rc) {
+.rc_page <- function(pg, rc, prev = NULL) {
   if (is.null(pg) || is.null(pg$lines) || !nrow(pg$lines)) return(NULL)
   cols <- rc$cols; K <- nrow(cols)
   hdr <- if (rc$anchored) .rc_header(pg, rc) else NULL
-  if (rc$anchored && is.null(hdr)) return(NULL)
+  cont <- rc$anchored && is.null(hdr) && !is.null(prev$spans)
+  if (rc$anchored && is.null(hdr) && !cont) return(NULL)
   w <- pg$w; ph <- pg$ph; ln <- pg$lines[order(pg$lines$y), , drop = FALSE]
   h <- pg$h; tol <- max(2, 0.5 * h)
   money_cols <- which(cols$money); text_cols <- which(!cols$money)
   dcol <- which(cols$field == "date")
-  if (rc$anchored) {
+  if (cont) {
+    sp <- prev$spans
+  } else if (rc$anchored) {
     sp <- hdr$spans[match(cols$under, hdr$spans$label), c("x0", "x1")]
   } else {
     sp <- data.frame(x0 = cols$x_min, x1 = cols$x_max)
@@ -621,6 +635,7 @@ recipe_read <- function(input, rc) {
   reg <- data.frame(line = ln$line[keep], y = ln$y[keep], y1 = ln$y1[keep], raw = ln$raw[keep],
                     label = labels[keep], aclass = ln$aclass[keep],
                     kind = kind, stringsAsFactors = FALSE, row.names = NULL)
+  if (cont && !any(reg$kind == "row")) return(NULL)
   bands <- .rc_bands(pg, reg$line[reg$kind == "row"], cols, sp, mph, tol, h, rc$anchored)
   list(page = pg$page, header = hdr, spans = sp, region = reg, bands = bands, mph = mph,
        date_of = date_of, h = h)
