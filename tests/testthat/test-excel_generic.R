@@ -36,3 +36,20 @@ test_that("an Excel statement converts end-to-end", {
   expect_equal(got$amount, exp$amount)
   expect_equal(got$balance, exp$balance)
 })
+
+# BNZ's "Excel" download is the OLD Excel format, .xls. It was refused at the door
+# ("unsupported file extension"), so a team's whole BNZ intake could not be read.
+test_that("an old-style .xls workbook is read like any other Excel file", {
+  f <- file.path(engine_root(), "tests", "testthat", "fixtures", "bnz_export_old_excel.xls")
+  inp <- read_input(f)
+  expect_identical(inp$kind, "excel")
+  expect_true(is.data.frame(inp$table) && nrow(inp$table) > 0L)
+  # whether it hides rows cannot be told from an .xls: not claimed either way
+  expect_true(is.na(inp$meta$hidden_rows))
+  expect_identical(.IDENT_FORMAT[["xls"]], "excel")
+  r <- auto_read(inp)
+  expect_true(r$outcome %in% c("proven", "check", "layout_match", "unread"))
+  ck <- r$checks
+  if (is.data.frame(ck) && "workbook_plain" %in% ck$check)
+    expect_true(is.na(ck$ok[ck$check == "workbook_plain"]) || isFALSE(ck$ok[ck$check == "workbook_plain"]))
+})

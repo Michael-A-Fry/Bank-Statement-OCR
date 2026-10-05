@@ -32,7 +32,7 @@ if (!dir.exists(folder)) { cat("not a folder:", folder, "\n"); quit(status = 1) 
 out <- if (length(args) >= 2) args[2] else "bulk-audit.md"
 
 paths <- list.files(folder, recursive = TRUE, full.names = TRUE,
-                    pattern = "\\.(pdf|csv|tsv|tdv|txt|xlsx|xlsm)$", ignore.case = TRUE)
+                    pattern = "\\.(pdf|csv|tsv|tdv|txt|xlsx|xlsm|xls)$", ignore.case = TRUE)
 if (!length(paths)) { cat("no statements found under", folder, "\n"); quit(status = 1) }
 cat(sprintf("Auditing %d file(s) under %s ...\n", length(paths), folder))
 

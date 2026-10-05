@@ -10,7 +10,7 @@ the reason, on **Please check**.
 ## Do it
 
 1. Open `http://<server-name>:8100` and go to **Convert**.
-2. **Browse** and pick the file: `.csv`, `.tsv`, `.tdv`, `.xlsx` or `.pdf`, up
+2. **Browse** and pick the file: `.csv`, `.tsv`, `.tdv`, `.xlsx`, `.xls` or `.pdf`, up
    to **200 MB**. You can pick up to **50** at once, from as many banks as you
    like, to do a whole case folder in one go.
 3. **Check the bank.** A table appears with one row per file. Each row shows the

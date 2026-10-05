@@ -81,7 +81,7 @@ reading fault from a bad scan.
 
 ## What it does today
 
-- **Reads CSV, TSV, Excel (`.xlsx`) and PDF**, including scanned PDFs. Scans are
+- **Reads CSV, TSV, Excel (`.xlsx`, and the older `.xls`) and PDF**, including scanned PDFs. Scans are
   read as pictures (OCR, about 2 seconds a page) and flagged as such.
 - **Bank first, filled in for you.** The bank is taken from the account holder's
   own account number in the official Payments NZ branch register, then from the

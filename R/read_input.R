@@ -112,6 +112,9 @@ read_excel_input <- function(path) {
 # the reader would read them all.
 .excel_hidden_rows <- function(path) {
   files <- safe(utils::unzip(path, list = TRUE)$Name, character(0))
+  # An old-style .xls is not a zip of XML sheets: whether it hides rows cannot be
+  # told from here, and "none" would be a claim nothing checked.
+  if (!length(files)) return(NA_integer_)
   ws <- files[grepl("^xl/worksheets/[^/]+[.]xml$", files)]
   if (!length(ws)) return(0L)
   d <- tempfile("xlsx_rows_"); on.exit(unlink(d, recursive = TRUE), add = TRUE)
@@ -213,7 +216,9 @@ read_input <- function(path) {
   if (ext %in% c("csv", "tsv", "tdv", "txt")) {
     input$kind <- "delimited"
     input$lines <- safe_readlines(path)
-  } else if (ext %in% c("xlsx", "xlsm")) {
+  } else if (ext %in% c("xlsx", "xlsm", "xls")) {
+    # .xls is the old Excel format, and still what some banks export (BNZ's
+    # "Excel" download is one). The same reader opens both.
     input$kind <- "excel"
     x <- read_excel_input(path)
     input$table <- x$table

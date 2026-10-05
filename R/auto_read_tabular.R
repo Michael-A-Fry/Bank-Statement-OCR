@@ -443,6 +443,8 @@
         list(ok = FALSE, why = sprintf("The workbook holds %d sheets of dated rows; only one was read, and the others may be pending items, another account or more of this one.", ds))
       else if (isTRUE(hr > 0L))
         list(ok = FALSE, why = sprintf("The workbook hides %d row(s); hidden rows are read like any other, so what was read is not what the sheet shows.", hr))
+      else if (is.na(hr))
+        list(ok = NA, why = "The workbook holds one sheet of dated rows; an old-style .xls file cannot show whether it hides any.")
       else list(ok = TRUE, why = "The workbook holds one sheet of dated rows and hides none.")
   }
   # The reader's figures must be the reading's: a figure the arithmetic proved and

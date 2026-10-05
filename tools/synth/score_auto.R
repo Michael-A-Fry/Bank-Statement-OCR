@@ -50,7 +50,7 @@ dir <- a[1]; mode <- opt("--mode", "cold"); outcsv <- opt("--out", ""); only <- 
 }
 
 score_one <- function(path, layouts) {
-  cs <- sub("\\.(pdf|csv|xlsx)$", "", basename(path))
+  cs <- sub("\\.(pdf|csv|xlsx|xls)$", "", basename(path))
   tr <- read_truth(file.path(dir, paste0(cs, ".truth.json")))
   want <- .key(vapply(tr$want, function(r) r$date %||% NA_character_, ""),
                vapply(tr$want, function(r) r$amount, 0))
@@ -79,13 +79,13 @@ score_one <- function(path, layouts) {
     reading = rd)
 }
 
-files <- list.files(dir, "\\.(pdf|csv|xlsx)$", full.names = TRUE)
-files <- files[file.exists(sub("\\.(pdf|csv|xlsx)$", ".truth.json", files))]
+files <- list.files(dir, "\\.(pdf|csv|xlsx|xls)$", full.names = TRUE)
+files <- files[file.exists(sub("\\.(pdf|csv|xlsx|xls)$", ".truth.json", files))]
 if (nzchar(only)) files <- files[grepl(only, basename(files), fixed = TRUE)]
 rows <- list()
 if (identical(mode, "trained")) {
   fam <- vapply(files, function(f) {
-    tr <- jsonlite::fromJSON(sub("\\.(pdf|csv|xlsx)$", ".truth.json", f), simplifyVector = FALSE)
+    tr <- jsonlite::fromJSON(sub("\\.(pdf|csv|xlsx|xls)$", ".truth.json", f), simplifyVector = FALSE)
     paste(tr$bank %||% "?", sep = "/")
   }, "")
   for (b in sort(unique(fam))) {

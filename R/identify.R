@@ -26,7 +26,7 @@
 # The reader that can read a file of this extension.
 .IDENT_FORMAT <- c(pdf = "pdf", csv = "delimited", tsv = "delimited",
                    tdv = "delimited", txt = "delimited",
-                   xlsx = "excel", xlsm = "excel")
+                   xlsx = "excel", xlsm = "excel", xls = "excel")
 
 # identify_file(path, name) -> list
 #   ext          lower-case extension of `name`
@@ -100,7 +100,7 @@ identify_file <- function(path, name = basename(path)) {
 .ident_kind <- function(ext, scanned) {
   if (identical(ext, "pdf")) return(if (isTRUE(scanned)) "Scanned PDF" else "PDF")
   switch(ext, csv = "CSV", tsv = , tdv = "Tab-delimited", txt = "Text",
-         xlsx = , xlsm = "Excel", toupper(ext))
+         xlsx = , xlsm = , xls = "Excel", toupper(ext))
 }
 
 # bank_choices(dir) -> named character vector (label = display name, value = id)

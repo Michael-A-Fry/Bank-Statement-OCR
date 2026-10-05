@@ -499,9 +499,9 @@ ui <- fluidPage(
           # question asked of more files, so it is the same control: pick one and
           # you get its result page; pick twelve and you get a row per file, each
           # of which OPENS that same result page.
-          fileInput("cv_file", "File(s) to convert (.pdf / .csv / .tsv / .xlsx)",
+          fileInput("cv_file", "File(s) to convert (.pdf / .csv / .tsv / .xlsx / .xls)",
                     multiple = TRUE,
-                    accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx")),
+                    accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx", ".xls")),
           helpText(class = "muted", "One statement, or several for a whole case folder."),
           uiOutput("cv_whoami"),
           # OFF UNTIL IT CAN WORK, with the reason under it: a full-width green button
@@ -636,7 +636,7 @@ ui <- fluidPage(
                                      options = list(create = TRUE,
                                                     placeholder = "Pick a bank, or type a new one's name"))),
             column(5, fileInput("adm_train_files", "Its statements", multiple = TRUE,
-                                accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx"))),
+                                accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx", ".xls"))),
             column(3, br(), actionButton("adm_train_go", "Train", class = "btn-primary"))),
           uiOutput("adm_train_status")
         ),
@@ -839,8 +839,8 @@ ui <- fluidPage(
           helpText(HTML("Drop in a pile of statements and get one picture: what the reader proves on its own, and the statements it cannot read <b>grouped by layout, biggest first</b>. Nothing is converted, saved or learned - only shapes and counts, so it is safe to share.")),
           fluidRow(
             column(4,
-              fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx)", multiple = TRUE,
-                        accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx")),
+              fileInput("adm_ba_files", "Statements (.csv / .tsv / .pdf / .xlsx / .xls)", multiple = TRUE,
+                        accept = c(".csv", ".tsv", ".tdv", ".pdf", ".xlsx", ".xls")),
               actionButton("adm_ba_run", "Run", class = "btn-primary"),
               br(), br(),
               uiOutput("adm_ba_report_ui"),

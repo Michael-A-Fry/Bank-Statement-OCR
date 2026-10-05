@@ -65,7 +65,7 @@ on.exit(unlink(work, recursive = TRUE), add = TRUE)
 }
 
 score_one <- function(path, ldir) {
-  cs <- sub("\\.(pdf|csv|xlsx)$", "", basename(path))
+  cs <- sub("\\.(pdf|csv|xlsx|xls)$", "", basename(path))
   tr <- read_truth(file.path(dir, paste0(cs, ".truth.json")))
   want <- .key(vapply(tr$want, function(r) r$date %||% NA_character_, ""),
                vapply(tr$want, function(r) r$amount, 0))
@@ -96,12 +96,12 @@ score_one <- function(path, ldir) {
     why = substr(gsub("[\r\n]+", " ", res$reason %||% ""), 1, 140), stringsAsFactors = FALSE)
 }
 
-files <- list.files(dir, "\\.(pdf|csv|xlsx)$", full.names = TRUE)
-files <- files[file.exists(sub("\\.(pdf|csv|xlsx)$", ".truth.json", files))]
+files <- list.files(dir, "\\.(pdf|csv|xlsx|xls)$", full.names = TRUE)
+files <- files[file.exists(sub("\\.(pdf|csv|xlsx|xls)$", ".truth.json", files))]
 if (nzchar(only)) files <- files[grepl(only, basename(files), fixed = TRUE)]
 if (nzchar(skip)) files <- files[!grepl(skip, basename(files), fixed = TRUE)]
 bank_of <- vapply(files, function(f)
-  jsonlite::fromJSON(sub("\\.(pdf|csv|xlsx)$", ".truth.json", f))$bank %||% "?", "")
+  jsonlite::fromJSON(sub("\\.(pdf|csv|xlsx|xls)$", ".truth.json", f))$bank %||% "?", "")
 rows <- list()
 if (identical(mode, "trained")) {
   for (b in sort(unique(bank_of))) {
