@@ -63,3 +63,27 @@ Build:
    (version n+1 or new id) -> admin accepts in Admin -> Banks. Accept = proven.
 6. Bank stays pre-filled from the statement (no type picking, unlike the QVF); a person
    only picks when the statement does not say. Overriding against the statement is flagged.
+
+## Owner's answers (5 Oct, end of session) -- build to these
+- PRIORITY: credit cards and everyday-account PDFs first (Excel and loans after).
+- REAL SAMPLES: owner will run docs/context/recipe-intake-prompt.md (on main) in Copilot on
+  REAL statements of every type and paste the STATEMENT DESIGN blocks. Build recipes from
+  those (lookalikes only as a fallback), then build a lookalike from each SAMPLE to test.
+- WHO ACCEPTS A NEW/CHANGED RECIPE: automatic after 3 proofs from at least 2 different
+  accounts, or an admin accepts sooner (same rule as layouts today). Until then it is a
+  draft; the file a person fixed converts at once.
+- TWO RECIPES BOTH PROVE: if the figures are EXACTLY the same, use the newer recipe;
+  if they differ in any way, ask a person (show both on Please check).
+- OUTPUT DETAILS: BOTH -- one full description as printed (type code first, like the QVF's
+  "Description as per bank statement") AND separate columns for type, particulars, code,
+  reference where printed. (Today ANZ's 5 detail columns land as text1..text4.)
+- SCANS: true scans very unlikely, BUT 10-15% are "non-selectable" PDFs, mostly smaller
+  banks. Two kinds to handle: (a) no text layer -> OCR (R/ocr.R exists); (b) a text layer
+  that is garbage (fonts without a Unicode map: copy-paste gives symbols) -> must be
+  DETECTED and OCR'd instead, never read as text. Recipes must accept OCR'd words too
+  (today recipes read kind: pdf only -- R/recipes.R:124). Ask owner for one such file via
+  the Copilot prompt (item 3 = pdf-scanned) to see which kind it is.
+- SIZE: huge bundles (150+ pages) are common -> speed is a priority. Recipes avoid the
+  guessing; also stop failed readings re-reading every page up to 7 times
+  (R/auto_read.R .ar_read_pdf repair loop) and measure with tools/synth/make_bench.py.
+- R VERSION for laptop mode: unknown; laptop mode parked until owner checks R.version.string.
