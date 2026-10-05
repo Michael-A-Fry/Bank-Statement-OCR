@@ -227,7 +227,7 @@ test_that("teaching the engine a word does not need YAML, and has one write path
   src <- .ui_src()
   block <- .ui_block(src, "observeEvent\\(input\\$adm_word_add", 44L)
   expect_match(block, "req\\(admin_ok\\(\\)\\)")            # privileged, like every other
-  expect_match(block, "lexicon_append\\(kind, tolower\\(w\\), LEXICON_PATH\\)")
+  expect_match(block, "teach_wording\\(input\\$adm_word_kind")
   expect_false(grepl("writeLines", block, fixed = TRUE))    # no second writer
   # ONE FORM FOR BOTH FILES. There were three teach-a-word forms on this screen --
   # a wording for a labelled value, a word for the recognition vocabulary, and the
@@ -235,8 +235,10 @@ test_that("teaching the engine a word does not need YAML, and has one write path
   # now: the word is typed once, and "What it means" decides which file is
   # written, because which file a wording lives in is a fact about the wording and
   # not a question the person typing it can answer.
-  expect_match(block, "dictionary_append\\(fld, w, path = DICT_PATH\\)")
-  expect_match(block, 'startsWith\\(sel, "dict:"\\)')
+  # The engine picks the file from the meaning (R/words.R), with the clash checks,
+  # so the screen never writes either file itself.
+  expect_false(grepl("dictionary_append|lexicon_append", block))
+  expect_match(paste(src, collapse = "\n"), 'selectInput\\("adm_word_kind", "What it means\\\\u2026", word_meaning_choices\\(blank = TRUE\\)\\)')
   joined <- paste(src, collapse = "\n")
   for (gone in c("adm_dict_field", "adm_dict_phrase", "adm_dict_add",
                  "adm_sugg_tok", "adm_sugg_dir", "adm_sugg_approve"))
@@ -1790,4 +1792,24 @@ test_that("the sample is a statement the reader proves on its own", {
                          tracking_dir = NA, formats = "csv", requested_by = "tester")
   expect_identical(r$status, "ok")
   expect_identical(r$feed_basis, "proven")
+})
+
+# ---------------------------------------------------------------------------
+# Please check: a wording is taught with the statement beside it. Words apply to
+# every statement, so the control is an admin's, checked on the server like every
+# other admin action; and it goes through the same engine function as Admin ->
+# Words, so both screens refuse the same clashes.
+test_that("a wording can be taught from the statement on Please check, by an admin only", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  expect_match(joined, 'if \\(isTRUE\\(admin_ok\\(\\)\\)\\) tags\\$details\\(')
+  expect_match(joined, 'uiOutput\\("cv_ck_teach"\\)')
+  go <- .ui_block(src, "observeEvent\\(input\\$cv_ck_teach_go", 16L)
+  expect_match(go, "req\\(admin_ok\\(\\), cv_res\\(\\)\\)")
+  expect_match(go, "teach_wording\\(input\\$cv_ck_teach_kind")
+  expect_false(grepl("dictionary_append|lexicon_append|writeLines", go))
+  expect_match(go, "\\.reread\\(")                    # read again at once
+  ui <- .ui_block(src, "output\\$cv_ck_teach <- renderUI", 14L)
+  expect_match(ui, "req\\(admin_ok\\(\\)\\)")
+  expect_match(ui, "word_meaning_choices\\(blank = TRUE\\)")
+  expect_match(ui, "create = TRUE")                   # pick from the page, or type it
 })

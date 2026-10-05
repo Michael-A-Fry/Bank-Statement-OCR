@@ -1,18 +1,29 @@
-# dictionaries/labels.yaml -- the shared BASE label dictionary.
+# labels.yaml -- WHAT A FACT ABOUT THE STATEMENT IS CALLED
 #
-# THIS is the single place a maintainer teaches the engine new wording for
-# labelled VALUES. No R code, no per-bank copy/paste. Matching is
-# case-insensitive substring, so "Opening Balance", "opening balance" and
-# "OPENING BALANCE:" all match "opening balance".
+# Each section below is one fact the tool reads off a statement: the opening
+# balance, the closing balance, the statement period and its dates. Under it are
+# the wordings banks print in front of that fact.
 #
-# A field inherits an entry automatically when its name matches a key here
-# (e.g. a template field `opening_balance:` picks up every phrase below). A
-# template can also add its own synonyms inline with `any_of:` or point at a
-# key with `dict:`. Add as many phrases as real statements need -- that is the
-# whole point: the weirdest statement is one more line here, not a code change.
+# EXAMPLE. A statement prints
+#       Kickoff kitty            $1,250.00
+# and "Kickoff kitty" is its opening balance. Add one line under opening_balance:
+#       - "kickoff kitty"
 #
-# value: money (default) | date | date_range | text | regex:<pattern>
+# The easy way is Admin -> Words: type the wording, pick what it means, press
+# Teach it. Or, on Please check, pick the wording from the statement itself. Both
+# put it in the right file and refuse a wording that would clash with another.
+#
+# Rules:
+#   * Case doesn't matter, and part of a line is enough: "balance at start"
+#     matches "Balance at start of period".
+#   * One wording, one meaning. "balance" alone would also match "Closing
+#     balance", so it is refused.
+#   * Words INSIDE the transaction table (DR / CR marks, column headings, a
+#     "Page total" line) are not kept here: they are in lexicon.yaml.
+#
+# value: money | date | date_range -- what kind of figure follows the wording.
 
+# On a statement:  Opening balance          $1,250.00
 opening_balance:
   any_of:
     - "opening balance"
@@ -27,6 +38,7 @@ opening_balance:
     - "balance from previous statement"
   value: money
 
+# On a statement:  Closing balance            $980.40
 closing_balance:
   any_of:
     - "closing balance"
@@ -40,40 +52,26 @@ closing_balance:
     - "final balance"
   value: money
 
-total_credits:
-  any_of: ["total credits", "total deposits", "total money in", "payments in",
-           "total received", "credits", "deposits"]
-  value: money
-
-total_debits:
-  any_of: ["total debits", "total withdrawals", "total money out", "payments out",
-           "total spent", "debits", "withdrawals"]
-  value: money
-
-account_name:
-  any_of: ["account name", "account holder", "customer name", "name of account holder"]
-  value: text
-  where: page1
-
+# On a statement:  Statement date: 3 April 2026
 statement_date:
   any_of: ["statement date", "date of issue", "issue date", "date issued", "issued"]
   value: date
   where: page1
 
-# The words a statement puts in FRONT of its own period range ("Statement period
-# 1 Mar 2026 to 31 Mar 2026"). A range labelled this way is the period and wins
+# On a statement:  Statement period   1 Mar 2026 to 31 Mar 2026
+# The wording must be the whole cell in front of the two dates, so "Fixed rate for
+# the period ..." is not one. A range labelled this way is the period and wins
 # over any other range on the page (an RWT certificate's tax year, a fixed-rate
-# term). The label must be the whole cell in front of the dates, so "Fixed rate
-# for the period ..." is not one. Read by R/extract_metadata.R (.period_labels).
+# term). Read by R/extract_metadata.R (.period_labels).
 statement_period:
   any_of: ["statement period", "period", "statement dates", "statement for the period",
            "statement from", "period covered", "statement covers"]
   value: date_range
 
-# Statement period expressed as two LABELLED dates (not a "from X to Y" range) --
-# e.g. Westpac/ASB "Statement Opening date: 10 June 2026 / Closing date: 9 July
-# 2026". Used to fill period_start/end (and the year for day+month-only dates)
-# when no inline range is found.
+# On a statement:  Opening date: 10 June 2026      Closing date: 9 July 2026
+# The period printed as two LABELLED dates instead of "from X to Y" (Westpac and
+# ASB do this). Used for the period, and for the year of day-and-month dates,
+# when no range is printed.
 statement_start:
   any_of: ["statement opening date", "opening date", "period start", "start date",
            "statement period start", "from date", "opening"]

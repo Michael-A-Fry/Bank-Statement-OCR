@@ -680,7 +680,7 @@ ui <- fluidPage(
           # the reader to Admin -> Words -> "Words the tool looks for", so the
           # phrase stays on the page.
           p(class = "muted", style = "margin:-6px 0 10px;font-size:12.5px",
-            "Both lists are taught here: the wordings a labelled value is printed with, and the words the tool knows to look for."),
+            "Type a word as the statement prints it, then pick what it means - each choice has an example. An admin can also teach one from the statement itself, on Please check."),
           # ONE FORM, NOT THREE. The WORD is typed once; "What it means" carries both
           # files' categories, and the answer decides which file is written, because
           # which file a word lives in is a fact about the word, not a question for
@@ -1764,35 +1764,17 @@ server <- function(input, output, session) {
   dict_bump <- reactiveVal(0)
   # The values the dictionary already knows, offered by name so an admin never has
   # to invent a key. Read from the FILE, so the list can never drift from it.
-  # WHAT IT MEANS -- one list, both files. The labelled values come from the
-  # dictionary FILE, so the list can never drift from it; the markers are the eight
-  # plain word lists the vocabulary holds (a pattern is not offered here at all,
-  # because lexicon_append() refuses one and the whole-file editor is where a
-  # pattern is edited). The answer carries which file it belongs to, so the person
-  # types a word and says what it means, and nothing asks them which of two YAML
-  # files a wording lives in - which is not a question they can answer, and is one
-  # the tool has always known.
-  .ADM_WORD_MARKERS <- c(
-    "money OUT - a debit marker (D, DR, Paid...)"    = "debit_markers",
-    "money IN - a credit marker (C, CR, Recd...)"    = "credit_markers",
-    "the heading of a money-OUT column"              = "amount_style_debit_headers",
-    "the heading of a money-IN column"               = "amount_style_credit_headers",
-    "the balance is overdrawn"                       = "overdrawn_markers",
-    "a word that appears in a table's heading row"   = "header_keywords")
+  # WHAT IT MEANS -- one list, both files. The meanings are the engine's own
+  # (word_meanings(), R/words.R): each in plain words with an example, and each one
+  # the reader acts on. The answer carries which file it belongs to, so nothing
+  # asks the person which of two YAML files a wording lives in - which is not a
+  # question they can answer, and is one the tool has always known. The list used
+  # to be read from the dictionary FILE's keys, and so offered "Total Credits",
+  # "Total Debits" and "Account Name", which nothing had read since templates were
+  # retired: a word taught to one changed nothing, and the screen said "Added".
   output$adm_word_kind_ui <- renderUI({
     req(admin_ok()); dict_bump()
-    keys <- sort(names(safe(load_label_dict(DICT_PATH), list())))
-    fields <- stats::setNames(paste0("dict:", keys),
-                              tools::toTitleCase(gsub("_", " ", keys)))
-    markers <- stats::setNames(paste0("lex:", unname(.ADM_WORD_MARKERS)),
-                               names(.ADM_WORD_MARKERS))
-    choices <- c(
-      if (length(fields)) stats::setNames(list(fields), "It labels one of these values"),
-      stats::setNames(list(markers), "It marks something about a transaction"))
-    tagList(
-      selectInput("adm_word_kind", "What it means\u2026", choices),
-      if (!length(fields))
-        helpText("No label dictionary file was found on this install, so only markers can be taught here."))
+    selectInput("adm_word_kind", "What it means\u2026", word_meaning_choices(blank = TRUE))
   })
   observeEvent(admin_ok(), if (isTRUE(admin_ok())) {
     t <- .load_dict_text()
@@ -1897,42 +1879,30 @@ server <- function(input, output, session) {
     if (!nzchar(w)) {
       output$adm_word_msg <- renderUI(span(class = "bad",
         "Type the word first - exactly as the statement prints it.")); return() }
-    sel <- input$adm_word_kind %||% "lex:debit_markers"
-    # THE ANSWER PICKS THE FILE. A labelled value is a wording in the label
-    # dictionary; a marker is a word in the recognition vocabulary. Both writers
-    # are the engine's own and both insert one line, leaving every comment in the
-    # file where it was.
-    if (startsWith(sel, "dict:")) {
-      fld <- sub("^dict:", "", sel)
-      out <- dictionary_append(fld, w, path = DICT_PATH)
-      ok <- isTRUE(out) && isTRUE(attr(out, "added"))
-      if (isTRUE(out)) {
-        t <- .load_dict_text()
-        updateTextAreaInput(session, "adm_dict_edit", value = t)
-        vocab_seen$dict <- t; vocab_forced$dict <- FALSE
-        dict_bump(isolate(dict_bump()) + 1)
-      }
-      if (ok) updateTextInput(session, "adm_word_text", value = "")
-      output$adm_word_msg <- renderUI(span(class = if (isTRUE(out)) "ok" else "bad",
-        # A refusal is reported in the engine's own words, so the screen and the
-        # reason it was refused for can never say different things.
-        if (ok) sprintf("Added. From the next conversion, \"%s\" is read as %s.",
-                        w, gsub("_", " ", fld))
-        else attr(out, "reason") %||% "Could not add that wording."))
-      return()
-    }
-    kind <- sub("^lex:", "", sel)
-    out <- lexicon_append(kind, tolower(w), LEXICON_PATH)
-    t <- read_file_text(LEXICON_PATH)
-    updateTextAreaInput(session, "adm_lex_edit", value = t)
-    vocab_seen$lex <- t; vocab_forced$lex <- FALSE
-    sugg_bump(isolate(sugg_bump()) + 1)
-    ok <- isTRUE(out)
+    # ONE WRITER, ONE SET OF CHECKS. teach_wording() (R/words.R) picks the file
+    # from the meaning, refuses a wording that would clash with another meaning,
+    # and inserts one line, leaving every comment in the file where it was. A
+    # refusal is reported in the engine's own words, so the screen and the reason
+    # it was refused for can never say different things.
+    out <- teach_wording(input$adm_word_kind %||% "", w, dict_path = DICT_PATH, lex_path = LEXICON_PATH)
+    .words_taught()
+    ok <- isTRUE(out) && isTRUE(attr(out, "added"))
     if (ok) updateTextInput(session, "adm_word_text", value = "")
-    output$adm_word_msg <- renderUI(span(class = if (ok) "ok" else "bad",
-      if (ok) sprintf("Added \"%s\". Every conversion from now on knows it.", w)
-      else attr(out, "reason") %||% "Could not write the vocabulary file - check folder permissions on the dictionaries folder."))
+    output$adm_word_msg <- renderUI(span(class = if (isTRUE(out)) "ok" else "bad",
+      attr(out, "reason") %||% "Could not add that wording."))
   })
+  # .words_taught() -- after a word is taught, from any screen: both whole-file
+  # editors show the file as it now is, and the lists that depend on it refresh.
+  .words_taught <- function() {
+    t <- .load_dict_text()
+    updateTextAreaInput(session, "adm_dict_edit", value = t)
+    vocab_seen$dict <- t; vocab_forced$dict <- FALSE
+    l <- read_file_text(LEXICON_PATH)
+    updateTextAreaInput(session, "adm_lex_edit", value = l)
+    vocab_seen$lex <- l; vocab_forced$lex <- FALSE
+    dict_bump(isolate(dict_bump()) + 1)
+    sugg_bump(isolate(sugg_bump()) + 1)
+  }
   adm_suggestions <- reactive({ sugg_bump()
     safe(lexicon_suggestions(LOGDIR), list(indicator_tokens = data.frame(), unmapped_columns = data.frame())) })
   # THE ROW IS THE CONTROL. Picking a word here fills the box in the form above;
@@ -1986,6 +1956,7 @@ server <- function(input, output, session) {
     if (!length(i) || is.na(i[1]) || i[1] > length(toks)) return()
     tok <- as.character(toks[i[1]])
     updateTextInput(session, "adm_word_text", value = tok)
+    updateSelectInput(session, "adm_word_kind", selected = "")   # the person says what it means
     output$adm_sugg_msg <- renderUI(div(class = "muted", style = "margin-top:6px",
       sprintf("\u201c%s\u201d is in the box above - say what it means and press Teach it.", tok)))
   }, ignoreInit = TRUE)
@@ -4264,7 +4235,53 @@ server <- function(input, output, session) {
       if (.ck_is_pdf(res))
         p(style = "margin-top:10px;font-size:13px",
           "None of these fits? ", actionLink("cv_ck_editor", "Draw the columns yourself"),
-          span(class = "muted", " - the last resort, for this file only.")))
+          span(class = "muted", " - the last resort, for this file only.")),
+      # TEACH IT FROM THE PAGE. A wording the tool did not know (the opening balance
+      # printed as "Kickoff kitty") is taught here, with the statement beside it,
+      # instead of on a separate Admin screen. Words apply to every statement, so
+      # only a signed-in admin sees this; everyone else is never offered a control
+      # they cannot use.
+      if (isTRUE(admin_ok())) tags$details(style = "margin:10px 0",
+        tags$summary(style = "font-weight:600;cursor:pointer", "Teach it a wording from this statement"),
+        uiOutput("cv_ck_teach")))
+  })
+  # The wordings this statement prints in front of a figure or a date that the
+  # tool does not read as anything yet (statement_wordings, R/words.R). Taken from
+  # the page text in this session only; nothing is kept.
+  ck_wordings <- reactive({
+    res <- cv_res(); src <- cv_src(); s <- ck_stmt()
+    req(res, src, file.exists(src$path %||% ""), .ck_is_pdf(res))
+    txt <- safe(pdftools::pdf_text(src$path), character(0))
+    pg <- as.integer(res$reading[[s]]$pages %||% seq_along(txt))
+    pg <- pg[pg >= 1L & pg <= length(txt)]
+    safe(statement_wordings(txt[pg], safe(load_label_dict(DICT_PATH), list()), LEXICON_PATH), character(0))
+  })
+  output$cv_ck_teach <- renderUI({
+    req(admin_ok()); dict_bump()
+    cands <- tryCatch(ck_wordings(), error = function(e) character(0))
+    tagList(
+      selectizeInput("cv_ck_teach_word", "The wording, as the statement prints it",
+        choices = c("", cands), width = "100%",
+        options = list(create = TRUE, placeholder = if (length(cands))
+          "Pick one from this statement, or type it" else "Type it")),
+      selectInput("cv_ck_teach_kind", "What it means", word_meaning_choices(blank = TRUE), width = "100%"),
+      actionButton("cv_ck_teach_go", "Teach it and read again", class = "btn-default"),
+      uiOutput("cv_ck_teach_msg"),
+      p(class = "muted", style = "font-size:12px;margin-top:6px",
+        "It applies to every statement from now on. A wording that would clash with another meaning is refused."))
+  })
+  observeEvent(input$cv_ck_teach_go, {
+    req(admin_ok(), cv_res())
+    w <- trimws(input$cv_ck_teach_word %||% "")
+    out <- teach_wording(input$cv_ck_teach_kind %||% "", w, dict_path = DICT_PATH, lex_path = LEXICON_PATH)
+    output$cv_ck_teach_msg <- renderUI(span(class = if (isTRUE(out)) "ok" else "bad", attr(out, "reason")))
+    if (!isTRUE(out)) return()
+    .words_taught()
+    # read the statement again at once, with the same column roles, so the person
+    # sees straight away what the new wording changed
+    if (isTRUE(attr(out, "added")))
+      .reread(cv_ov(), what = "Reading it again with the new wording\u2026",
+              said = paste(attr(out, "reason"), "This statement has been read again with it."))
   })
   output$cv_ck_msg <- renderUI({
     n <- cv_ck_note(); res <- cv_res()

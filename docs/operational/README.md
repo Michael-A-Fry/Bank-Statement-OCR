@@ -53,8 +53,8 @@ The things that change live in **data and config, not code**.
 | To change | Where | Who, and how |
 |---|---|---|
 | How a bank's statements are read | `templates\layouts\` (learned, never hand-edited) | nobody needs to: proven statements teach it. A person fixes one reading on **Please check**; an admin confirms, retires or trains on **Admin → Banks**. No code. |
-| A wording the tool recognises (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Words** |
-| A recognition marker or pattern (a debit/credit marker word, a money or date shape) | `dictionaries\lexicon.yaml` | admin — **Admin → Words** |
+| What a fact about the statement is called (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Words**, or Please check |
+| What words inside the transaction table mean (a DR / CR mark, a column heading), or a money or date shape | `dictionaries\lexicon.yaml` | admin — **Admin → Words**, or Please check |
 | How often automatic conversions are spot-checked | `config\config.yaml` → `auto_reading: spot_check_rate` | admin — **Admin → Automatic reading** |
 | A deployment setting (port, admin password, the Qlik feed gate, paths) | `config\config.yaml` | admin — annotated example in `config\config.example.yaml` |
 | A numeric engine threshold (year window, OCR DPI, row tolerance, seconds per page) | `R\params.R` | maintainer — [../context/engine-parameters.md](../context/engine-parameters.md) |

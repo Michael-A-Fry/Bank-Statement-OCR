@@ -95,12 +95,18 @@ function makeFiles() {
 // a real install's data and every run starts from nothing learned.
 const ADMIN_PW = 'ui-check-' + process.pid;
 let appLog = '';           // everything the app wrote to its console, checked at the end
+let WORDS_DIR = '';        // the throwaway copies of the two words files
 function makeConfig() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bso-ui-cfg-'));
   const p = s => JSON.stringify(path.join(d, s));
+  // the words files too: a word taught by the check lands in a copy, never in the repo
+  WORDS_DIR = d;
+  for (const f of ['labels.yaml', 'lexicon.yaml'])
+    fs.copyFileSync(path.join(ROOT, 'dictionaries', f), path.join(d, f));
   fs.writeFileSync(path.join(d, 'config.yaml'), [
     'paths:', `  logs: ${p('logs')}`, `  uploads: ${p('uploads')}`, `  requests: ${p('requests')}`,
     `  layouts: ${p('layouts')}`, `  tracking: ${p('tracking')}`,
+    `  dictionary: ${p('labels.yaml')}`, `  lexicon: ${p('lexicon.yaml')}`,
     'feed:', `  feed_dir: ${p('feed')}`, ''].join('\n'));
   return path.join(d, 'config.yaml');
 }
@@ -311,6 +317,7 @@ async function run(browser, D) {
         await text(page, '#cv_ck_pages'));
   check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
   check('one dropdown per column of figures', (await page.$$('select[id^="cv_ck_role_"]')).length === 3);
+  check('someone not signed in as admin is offered no word teaching', !(await page.$('#cv_ck_teach')));
   await shot(page, '03-please-check-pdf');
   //    the last resort: drawing the columns by hand
   await page.click('#cv_ck_editor');
@@ -548,11 +555,46 @@ async function run(browser, D) {
   check('the carry-off summary is counts only', String(sj.what || '').includes('counts only') && Number.isInteger(sj.statements),
         String(sj.what));
   await screen(tp, 'Admin Automatic reading');
-  await tp.click('a[data-value="Words"]'); await screen(tp, 'Admin Words');
+  await tp.click('a[data-value="Words"]'); await sleep(1500);
+  //    one list of meanings, each with an example, and only what the reader reads
+  const kinds = await tp.evaluate(() => Object.values(document.getElementById('adm_word_kind').selectize.options)
+    .filter(o => o.value !== '').map(o => o.label));
+  eq('nothing is picked for the person', await tp.$eval('#adm_word_kind', e => e.value), '');
+  check('every meaning on Words carries an example', kinds.length >= 10 && kinds.every(k => /\(e\.g\. "/.test(k)),
+        JSON.stringify(kinds));
+  check('...and none the reader never reads', !kinds.some(k => /total credits|total debits|account name/i.test(k)),
+        JSON.stringify(kinds));
+  //    a wording that would clash is refused, with the reason; a new one is taught
+  await tp.fill('#adm_word_text', 'balance'); await selectize(tp, 'adm_word_kind', 'opening_balance');
+  await tp.click('#adm_word_add'); await sleep(2000);
+  const clash = await text(tp, '#adm_word_msg');
+  check('a wording that would clash is refused, and says why', /part of "closing balance"/.test(clash), clash);
+  await tp.fill('#adm_word_text', 'Kickoff kitty'); await selectize(tp, 'adm_word_kind', 'opening_balance');
+  await tp.click('#adm_word_add'); await sleep(2000);
+  const taught = await text(tp, '#adm_word_msg');
+  check('a new wording is taught, in plain words', taught.startsWith('From now on'), taught);
+  if (!LIVE) check('...into the words file the server reads',
+    fs.readFileSync(path.join(WORDS_DIR, 'labels.yaml'), 'utf8').includes('"kickoff kitty"'));
+  await screen(tp, 'Admin Words');
   await tp.click('a[data-value="Health"]'); await sleep(1500);
   check('Health names layouts, not templates', !/template/i.test(await tp.evaluate(() =>
     document.querySelector('#adm_tabs + .tab-content .tab-pane.active').innerText)));
   await screen(tp, 'Admin Health');
+  //    an admin teaches a wording with the statement beside it, on Please check
+  await tp.click('a[data-value="Convert"]'); await sleep(800); await setQid(tp);
+  await tp.setInputFiles('#cv_file', [path.join(D, 'anz_march.pdf')]);
+  await waitFor(tp, () => document.querySelectorAll('tr.plan-row').length === 1, 60000);
+  await pick(tp, 'anz_march.pdf', 'anz'); await go(tp); await waitIdle(tp);
+  await clickIn(tp, 'anz_march.pdf', '.plan-file');
+  await tp.click('#cv_ck_toggle'); await sleep(2500);
+  await tp.click('summary:text("Teach it a wording from this statement")'); await sleep(2500);
+  check('an admin can teach a wording from the statement on screen',
+        await waitFor(tp, () => !!document.getElementById('cv_ck_teach_word'), 20000));
+  check('...with nothing drawn as an error', !(await tp.$('#cv_ck_teach .shiny-output-error')));
+  const offered = await tp.evaluate(() => Object.keys(document.getElementById('cv_ck_teach_word').selectize.options)
+    .filter(v => v !== ''));
+  console.log(`        (wordings offered from the ANZ sample: ${JSON.stringify(offered)})`);
+  await shot(tp, 'tour-please-check-teach');
   eq('no console or script errors on any Admin screen', terr, []);
   await tp.close();
 

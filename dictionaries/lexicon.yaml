@@ -1,27 +1,36 @@
-# lexicon.yaml -- the engine's recognition VOCABULARIES. Edit it here, or in the
-# app under Admin -> Words -> "Words the tool looks for" (one word
-# at a time in plain English, or this whole file under "Edit the whole vocabulary
-# file"). Every category you DON'T list falls back to the built-in default, so an
-# empty file behaves exactly like the shipped engine.
+# lexicon.yaml -- WHAT WORDS INSIDE THE TRANSACTION TABLE MEAN
 #
-# How each category merges with the built-in (see R/lexicon.R):
-#   * word lists   -> your entries are ADDED to the built-in (adding "cow" keeps
-#                     "D"/"DR"/...); you cannot delete a built-in this way.
-#   * regexes      -> your value REPLACES the built-in (rejected if it won't compile).
-#   * date_formats -> your entries are APPENDED (tried after the built-ins).
-#   * field_name_patterns -> your entry OVERRIDES the built-in for that field.
+# The marks beside amounts (DR / CR), the headings of the money columns, and the
+# lines in a table that are not transactions. The tool already knows the common
+# ones; this file holds only what has been ADDED to them.
 #
-# Example: a bank that marks its debit/credit column "Paid" / "Recd" (not one of
-# the built-in D / DR / Debit / ... markers). Uncomment to teach the whole engine
-# (detection + drafting + parsing) to recognise them -- no code change:
+# The easy way is Admin -> Words: type the word, pick what it means, press Teach
+# it. Or, on Please check, pick it from the statement itself. Both put it in the
+# right file and refuse a word that would clash with another.
 #
-#   debit_markers:  [Paid]
-#   credit_markers: [Recd]
+# Not kept here: the label in front of ONE fact (opening balance, statement
+# period, closing date) -- that is labels.yaml.
 #
-# The editable categories are NOT listed here on purpose: a hand-copied list goes
-# stale (this one was missing three of them), and a wrong list of "what you can
-# edit" is worse than none. The live list is generated from .lexicon_spec()
-# (R/lexicon.R) in two places you can read instead:
-#   * the Admin "Show built-in defaults" button -- every category with a complete,
-#     valid starting value;
-#   * validate_lexicon(), which refuses to save a category that isn't one.
+# EXAMPLES -- what each list is for, and a word a bank might print. To teach one
+# here, delete the "# " in front of its line, so the line starts at the left edge.
+#
+#   A word marking a row as money out, e.g. a Type column reading "Paid":
+# debit_markers: ["PAID"]
+# dr_cr_suffix_debit: ["PAID"]
+#   A word marking a row as money in, e.g. a Type column reading "Recd":
+# credit_markers: ["RECD"]
+# dr_cr_suffix_credit: ["RECD"]
+#   The heading of a money-out column, e.g. "Spent":
+# amount_style_debit_headers: ["spent"]
+#   The heading of a money-in column, e.g. "Received":
+# amount_style_credit_headers: ["received"]
+#   A line in the table that is not a transaction, e.g. "Balance at foot of page":
+# summary_line_labels: ["balance at foot of page"]
+#
+# How what you add combines with what the tool already knows:
+#   * word lists   -> ADDED to the built-in ones; a built-in word cannot be removed.
+#   * patterns (money_regex, date_regex, ...) -> REPLACE the built-in one, and are
+#     refused if they are not a valid pattern.
+#   * date_formats -> tried after the built-in ones.
+# Every list the file can hold, with the built-in words, is shown by the Admin ->
+# Words "Show built-in defaults" button.

@@ -81,7 +81,14 @@ copy-over.
     fixes waiting for an admin, with Accept and Discard; and **Train a bank**.
   - **Automatic reading:** the counts against the 95% target, with no personal
     data, and a summary to carry off.
-  - **Words:** unchanged.
+  - **Words:** one list of what a wording can mean, each with an example ("Opening
+    balance (e.g. "Balance brought forward")"). It offers only what the reader
+    acts on: "Total credits", "Total debits" and "Account name" are gone, because
+    nothing had read them since templates were retired. A wording that would
+    clash with another meaning is refused, with the reason ("balance" would also
+    catch the "Closing balance" line). An admin can also teach a wording on
+    **Please check**, picking it from the statement on screen; the statement is
+    then read again with it.
   - **Health:** names layouts instead of templates.
 - **How the tool learns** (spec section 6):
   - Only a proven reading teaches.

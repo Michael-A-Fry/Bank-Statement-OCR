@@ -119,7 +119,7 @@ safest way, and it carries every deletion above with it:
 | Folder | How |
 |---|---|
 | `R\` | Delete the server's `R\` folder, copy in the new one, then put back the `R\params.R` you saved in step 1.4. |
-| `tests\` | Delete it and copy in the new one. (20 test files are new, 54 are changed and 12 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
+| `tests\` | Delete it and copy in the new one. (21 test files are new, 54 are changed and 12 are deleted, and the 13 old templates are now fixtures under `tests\testthat\fixtures\templates\`.) |
 | `docs\` | Delete it and copy in the new one. Pages were rewritten for 2.0.0. `docs\operational\adding-a-bank-template.md` is now about training a bank, and this page is new. |
 | `www\` | Copy over it. `app.css` changed. |
 
@@ -127,7 +127,7 @@ If you would rather copy file by file, the `R\` changes are:
 
 - **New:** `auto_read.R`, `auto_read_blocks.R`, `auto_read_pdf.R`,
   `auto_read_prove.R`, `auto_read_summ.R`, `auto_read_tabular.R`,
-  `bank_identity.R`, `fixes.R`, `layouts.R`, `tracking.R`.
+  `bank_identity.R`, `fixes.R`, `layouts.R`, `tracking.R`, `words.R`.
 - **Changed:** `analytics.R`, `audit.R`, `batch.R`, `batch_audit.R`,
   `config.R`, `convert.R`, `coverage.R`, `diagnose.R`, `extract_metadata.R`,
   `feed.R`, `identify.R`, `jobs.R`, `labels.R`, `layout.R`, `lexicon.R`,
@@ -178,6 +178,15 @@ reader has the same wordings built in, so a server keeping its own
 `labels.yaml` needs nothing. Only if your team wants to teach new period
 wordings from Admin -> Words, copy that one block (it is commented in the new
 `labels.yaml`) into the server's file.
+
+The new `labels.yaml` and `lexicon.yaml` also open with a plain explanation and
+examples, and `labels.yaml` no longer lists `total_credits`, `total_debits` or
+`account_name` (nothing read them). A server's own copies keep their old
+headings and those three entries. That is harmless: Admin -> Words no longer
+offers them, and the tool never read them. To have the new explanation on the
+server, copy the comment lines at the top of each new file over the comment
+lines at the top of the server's file. Leave every line that does not start
+with `#` as it is.
 
 A package built with `make-bundle.bat` carries both files under these names,
 so on the package route they arrive with everything else. Only `labels.yaml`

@@ -119,11 +119,29 @@ automatic" with confidence (spec section 9).
 
 ### Words: what it looks for
 
-The label dictionary and the recognition vocabulary in one place, as before.
-Type the word or wording **as the statement prints it** and say what it means
-(an opening balance, a money-out marker...). The answer decides which file it is
-written to. Nothing is ever added automatically, and a backup of the file is
-kept each time.
+Type the word or wording **as the statement prints it** and say what it means.
+Each meaning on the list carries an example:
+
+| What it means | e.g. | Kept in |
+|---|---|---|
+| Opening balance / Closing balance | "Balance brought forward" / "Balance carried forward" | `labels.yaml` |
+| Statement period (the words in front of its two dates) | "Period covered" | `labels.yaml` |
+| The statement's first day / last day / date issued | "Opening date" / "Closing date" / "Date of issue" | `labels.yaml` |
+| A word marking a row as money out / money in | "DR" / "CR" | `lexicon.yaml` |
+| The heading of a money-out / money-in column | "Withdrawals" / "Deposits" | `lexicon.yaml` |
+| A line in the table that is not a transaction | "Page total" | `lexicon.yaml` |
+
+The answer decides which file it is written to; nobody has to know. A wording
+that would clash with another meaning is refused, and the screen says why:
+"balance" alone would also catch the "Closing balance" line, and "DR" already
+means money out. Nothing is ever added automatically, and a backup of the file
+is kept each time.
+
+**From the statement itself.** An admin signed in on the same screen sees
+**Teach it a wording from this statement** on Please check. It offers the
+wordings that statement prints in front of a figure or a date which the tool
+does not read yet, or takes one typed in. Teach it, and the statement is read
+again with it straight away.
 
 - **Words your statements used that the tool didn't recognise**: the suggestion
   queue, harvested from every conversion. Clicking one puts it in the box above.
@@ -167,8 +185,8 @@ A live picture from the run and feedback logs. Press **Refresh from logs** first
 | To change | Where | Edited in |
 |---|---|---|
 | What the tool knows about a bank's layouts | `templates\layouts\` | **Admin -> Banks**: confirm, rename, retire, accept or discard a fix, train. Never by hand. |
-| The wordings for single labelled values ("opening balance" vs "balance brought forward") | `dictionaries\labels.yaml` | **Admin -> Words** |
-| The generic vocabulary: debit/credit markers, money and date shapes, summary-line labels | `dictionaries\lexicon.yaml` | **Admin -> Words** |
+| What a fact about the statement is called ("Balance brought forward" for the opening balance) | `dictionaries\labels.yaml` | **Admin -> Words**, or Please check |
+| What words inside the transaction table mean: DR / CR marks, money column headings, lines that are not transactions; and the money and date shapes | `dictionaries\lexicon.yaml` | **Admin -> Words**, or Please check |
 | The NZ banks themselves: names, legal names, websites, branch register | `dictionaries\nz_banks.yaml`, `dictionaries\nz_bank_branches.csv` | Shipped with the tool. The register is refreshed by a maintainer, never in the app. |
 | Built-in defaults | `R/lexicon.R` | maintainer only |
 
