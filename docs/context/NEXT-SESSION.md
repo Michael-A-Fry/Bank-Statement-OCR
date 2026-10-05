@@ -15,7 +15,7 @@ wip/qvf-kit and do the next unchecked step. One step per commit; push after each
 - main = 8b1ae4b: words screen (one list + clash guard + teach from Please check),
   plain toddler-clear column questions on Please check, speed fixes. Suite 6,645/0/0, browser 125/125.
 - claude/bank-statement-ocr-platform-t6n934 = 36d2209 = main + .xls support (related tests green; full suite not yet run).
-- wip/recipes: recipe reader (R/recipes.R, recipes/, test-recipes.R). UNTESTED, cut off mid-work. Agent's last words: "regression sets unchanged case by case; re-running forced-recipe stress test".
+- wip/recipes: recipe reader (R/recipes.R, recipes/anz_everyday_pdf.yaml + anz_loan_pdf.yaml). MEASURED: own tests 122/0; ANZ lookalikes 14/15 auto_right, 0 wrong (was 8/15). Not yet: full suite, zoo regression. See RECIPES-STATUS.md there.
 - wip/admin-review: Admin Review screen (R/review.R, app.R). UNTESTED, cut off mid-work ("selection-by-id on Banks' two tables").
 - wip/qvf-kit (this branch): docs/context/qvf/ = format cards of the QVF's 11 types, lookalike generators (python, import tools/synth/make_layouts.py), BRIEF.md, recipes-design.md.
 
