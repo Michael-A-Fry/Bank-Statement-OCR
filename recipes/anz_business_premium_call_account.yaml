@@ -32,3 +32,17 @@ dates:
 money:
   style: debit_credit_cols
 order: oldest_first
+types:
+  "AP": "Automatic Payment"
+  "AT": "Automatic Teller Machine"
+  "BP": "Bill Payment"
+  "CQ": "Cheque/Withdrawal"
+  "DC": "Direct Credit"
+  "DD": "Direct Debit"
+  "ED": "Electronic Dishonour"
+  "EP": "EFTPOS Transaction"
+  "FX": "Foreign Exchange"
+  "IA": "International Money Machine"
+  "IF": "International Payment"
+  "IP": "International EFTPOS Transaction"
+  "VT": "Visa Transaction"

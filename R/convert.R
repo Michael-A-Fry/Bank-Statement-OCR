@@ -622,6 +622,17 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       .read_statement(units[[i]]$input, layouts, bank_name, uo$ov, uo$unless_auto)
     })
     readings <- lapply(reads, `[[`, "reading")
+    # Each statement's own account number and name, as its labels print them, for
+    # the output files (after the checks: they prove nothing, they label the rows).
+    for (i in seq_len(k)) if (is.list(readings[[i]]$parsed$header)) {
+      h <- readings[[i]]$parsed$header
+      blank <- function(v) { v <- as.character(v %||% NA_character_)[1]; is.na(v) || !nzchar(trimws(v)) }
+      if (blank(h$account_number) || blank(h$account_name)) {
+        a <- safe(.statement_account(units[[i]]$input), list())
+        if (blank(h$account_number)) readings[[i]]$parsed$header$account_number <- a$number %||% NA_character_
+        if (blank(h$account_name)) readings[[i]]$parsed$header$account_name <- a$name %||% NA_character_
+      }
+    }
     facts$statements <- k
     # Bundles are identified statement by statement (spec section 5): one that
     # names another bank than the pick never teaches the picked bank's layouts.
@@ -813,6 +824,13 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       recon$kpis <- .zero_unsigned(recon$kpis)
       parsed$header$bank <- bank_name
       parsed$header$institution <- bank_slug
+      # No bank picked or found, but recipes proved every statement as one bank's
+      # design: that bank names the files.
+      rbs <- unique(unlist(lapply(readings, function(r) if (identical(r$outcome, "proven")) r$recipe_bank)))
+      if (is.na(bank_name) && length(rbs) == 1L && all(vapply(readings, function(r) identical(r$outcome, "proven"), NA))) {
+        parsed$header$institution <- .layout_slug(rbs)
+        parsed$header$bank <- .layout_bank_display(.layout_slug(rbs), rbs)
+      }
     }
     facts$rows <- if (has_rows && status %in% c("ok", "needs_review")) nrow(parsed$transactions) else 0L
     pick_mismatch <- !is.na(ident$institution %||% NA) && !is.na(bank_slug) && !identical(ident$institution, bank_slug)

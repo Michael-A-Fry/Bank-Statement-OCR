@@ -173,6 +173,26 @@ other_accounts_df <- function(other) {
 # `other_accounts`: other accounts' tables printed in the same file, kept apart from
 # the statement's rows: an "Other accounts" sheet and a JSON section of their own,
 # written only when there are some.
+# .with_accounts(df, parsed) -- the rows with the account number and name each
+# came from, after row_id: a bundle's rows each carry their own statement's
+# (statement_index), so two accounts in one file are never labelled as one.
+.with_accounts <- function(df, parsed) {
+  n <- nrow(df)
+  one <- function(v) as.character(v %||% NA_character_)[1]
+  h <- parsed$header %||% list()
+  num <- rep(one(h$account_number), n); nm <- rep(one(h$account_name), n)
+  si <- suppressWarnings(as.integer(parsed$transactions$statement_index))
+  sts <- parsed$statements
+  if (length(si) == n && length(sts)) {
+    ok <- !is.na(si) & si >= 1L & si <= length(sts)
+    num[ok] <- vapply(si[ok], function(j) one(sts[[j]]$account_number), "")
+    nm[ok] <- vapply(si[ok], function(j) one(sts[[j]]$account_name), "")
+  }
+  acc <- data.frame(account_number = num, account_name = nm, stringsAsFactors = FALSE)
+  at <- match("row_id", names(df)); if (is.na(at)) at <- 0L
+  cbind(df[, seq_len(at), drop = FALSE], acc, df[, setdiff(seq_len(ncol(df)), seq_len(at)), drop = FALSE])
+}
+
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
                           diagnostics = NULL, metadata = NULL, build = NULL,
@@ -184,7 +204,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
   # The human-facing transaction table, built ONCE and shared by the workbook and
   # the CSV, so the two files can never disagree about what was captured.
   sheet_tx <- if (any(c("xlsx", "csv") %in% formats))
-    .spreadsheet_safe(display_transactions(parsed$transactions, parsed$extras))
+    .spreadsheet_safe(.with_accounts(display_transactions(parsed$transactions, parsed$extras), parsed))
 
   if ("xlsx" %in% formats) {
     xlsx_path <- file.path(outdir, paste0(basename, ".xlsx"))

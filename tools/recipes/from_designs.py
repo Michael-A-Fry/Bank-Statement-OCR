@@ -121,6 +121,9 @@ def parse(b):
     neg = re.search(r"d\)\s*(.*?)\s*e\)", mo, re.S); pos = re.search(r"e\)\s*(.*?)\s*f\)", mo, re.S)
     d["negative"] = [x for x in quoted(neg.group(1) if neg else "") if x in ("OD", "DR")]
     d["positive"] = [x for x in quoted(pos.group(1) if pos else "") if x == "CR"]
+    # g) the type codes a description starts with: "DD" = "Direct Debit"
+    g = re.search(r"g\)\s*(.*)$", mo, re.S)
+    d["types"] = [(c, m) for c, m in re.findall(r'"([A-Za-z0-9]{1,6})"\s*=\s*"([^"]+)"', g.group(1) if g else "")]
     o = re.search(r"(oldest_first|newest_first)", S.get("order", ""))
     d["order"] = o.group(1) if o else "oldest_first"
     # a heading word ("Credit") printed again inside the table is the heading, not a
@@ -207,6 +210,12 @@ def recipe_yaml(rid, ds, status="draft", extra_none=(), sib_seen=()):
     if d0["negative"]: L.append("  negative: [%s]" % ", ".join(q(x) for x in d0["negative"]))
     if d0["positive"]: L.append("  positive: [%s]" % ", ".join(q(x) for x in d0["positive"]))
     L.append("order: %s" % d0["order"])
+    types = {}
+    for d in ds:
+        for c, m in d.get("types", []): types.setdefault(c, m)
+    if types:
+        L.append("types:")
+        for c in sorted(types): L.append("  %s: %s" % (json.dumps(c), json.dumps(types[c])))
     return "\n".join(L) + "\n"
 
 def main():

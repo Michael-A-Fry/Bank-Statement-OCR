@@ -119,6 +119,19 @@ test_that("no shipped recipe's must-not-appear wording is printed by its own des
   }
 })
 
+test_that("a recipe's type codes fill the Type column; the description keeps them", {
+  tx <- data.frame(description = c("DD CITY COUNCIL RATES", "EFTPOS RIVERSIDE DAIRY", "BP", "XX SOMETHING"),
+                   type = c(NA, NA, NA, NA), stringsAsFactors = FALSE)
+  out <- .rc_types(tx, list(DD = "Direct Debit", BP = "Bill Payment"))
+  expect_identical(out$type, c("DD", NA, NA, NA))          # a bare code with nothing after it is not a row's type
+  expect_identical(out$description, tx$description)
+  # a Type the table printed stays
+  tx$type[1] <- "Direct Debit"
+  expect_identical(.rc_types(tx, list(DD = "x"))$type[1], "Direct Debit")
+  anz <- Filter(function(r) identical(r$id, "anz_business_premium_call_account"), rc_shipped())[[1]]
+  expect_identical(anz$types$DD, "Direct Debit")
+})
+
 test_that("a file that is not a valid recipe is named and left out, never half-used", {
   d <- rc_tmpdir(); on.exit(unlink(d, recursive = TRUE), add = TRUE)
   rc_write(d, "ok.yaml", rc_valid_yaml("ok_one"))

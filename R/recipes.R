@@ -188,6 +188,12 @@ recipes_default <- function() {
   for (m in pos) if (!isTRUE(.num(paste("1.00", m)) > 0)) return(bad("the engine does not read \"%s\" as a positive figure.", m))
   order <- as.character(y$order %||% "oldest_first")[1]
   if (!(order %in% c("oldest_first", "newest_first"))) return(bad("`order:` must be oldest_first or newest_first."))
+  # types: the transaction-type codes a description starts with ("DD", "BP"),
+  # each with its meaning; the code fills the Type column, the description keeps it.
+  types <- y$types %||% list()
+  if (!is.list(types) || (length(types) && (is.null(names(types)) || any(!nzchar(names(types))) ||
+      any(!grepl("^[A-Za-z0-9]{1,6}$", names(types))))))
+    return(bad("`types:` must name codes of letters or digits, each with its meaning."))
   cols <- data.frame(field = fields, under = under, x_min = xmin, x_max = xmax,
                      money = fields %in% .RECIPE_MONEY, stringsAsFactors = FALSE, row.names = NULL)
   list(id = id, version = ver, ref = paste0(id, "@", ver), bank = bank,
@@ -201,7 +207,7 @@ recipes_default <- function() {
        ends_at = as.character(unlist(tb$ends_at)), skip = as.character(unlist(tb$skip)),
        no_rows = as.character(unlist(tb$no_rows)),
        date_format = dfmt, year = year, style = style, negative = neg, positive = pos,
-       dir = if (identical(order, "newest_first")) "new" else "old")
+       dir = if (identical(order, "newest_first")) "new" else "old", types = types)
 }
 
 # ---- text helpers ---------------------------------------------------------------
@@ -925,6 +931,19 @@ recipe_read <- function(input, rc) {
 }
 
 # .rc_unit(st, rc) -- one statement read, checked and decided.
+# .rc_types(tx, types) -- a row whose description starts with one of the recipe's
+# type codes ("DD 01-2345-... RATES") has that code in its Type column; the
+# description keeps it, as printed. A Type the table itself printed stays.
+.rc_types <- function(tx, types) {
+  if (!length(types) || !NROW(tx) || !("description" %in% names(tx))) return(tx)
+  if (!("type" %in% names(tx))) tx$type <- NA_character_
+  lead <- sub("^([A-Za-z0-9]{1,6})\\s.*$", "\\1", trimws(as.character(tx$description)))
+  hit <- lead %in% names(types) & grepl("^[A-Za-z0-9]{1,6}\\s", trimws(as.character(tx$description))) &
+    (is.na(tx$type) | !nzchar(as.character(tx$type)))
+  tx$type[hit] <- lead[hit]
+  tx
+}
+
 .rc_unit <- function(st, rc) {
   ctx <- st$ctx
   col <- .rc_collect(st, rc)
@@ -944,6 +963,7 @@ recipe_read <- function(input, rc) {
   page <- suppressWarnings(as.integer(sub("^pdf:p", "", parsed$provenance$source_ref %||% character(0))))
   if (!is.null(tx) && nrow(tx)) {
     tx <- .ar_settle(tx, rd, col$cells, ctx$decimal, col$anchors, aligned = nrow(tx) == n)
+    tx <- .rc_types(tx, rc$types)
     parsed$transactions <- tx
     op <- .ar_opening_value(col$anchors, rd, ctx$decimal, nrow(tx))
     cl <- .ar_closing_value(col$anchors, rd, ctx$decimal, nrow(tx))

@@ -392,3 +392,17 @@ test_that("a span is only claimed on screen when one was actually made", {
   expect_match(r, "distinct statement periods found")
   expect_false(grepl("read as one span", r, fixed = TRUE))
 })
+
+test_that("the statement's own account number and name are read only beside their labels", {
+  sa <- function(txt) .statement_account(list(pages = txt))
+  a <- sa("ALEX RIVERA\nAccount number 01-2345-0678901-00      Statement period 1 Feb 2026")
+  expect_identical(a$number, "01-2345-0678901-00")
+  expect_true(is.na(a$name))                      # a name with no label is not guessed
+  # a card, masked as printed, on the line under its label; a named holder
+  b <- sa("Account Name: MATAI HOLDINGS LTD      Statement date 3 May\nCredit Card Account Number\n4XXX XXXX XXXX 1234")
+  expect_identical(b$number, "4XXX XXXX XXXX 1234")
+  expect_identical(b$name, "MATAI HOLDINGS LTD")
+  # an account number with no label beside it may be another account's (a transfer)
+  c <- sa("Opening balance 100.00\nTransfer to 12-3456-1234567-00  50.00")
+  expect_true(is.na(c$number)); expect_true(is.na(c$name))
+})

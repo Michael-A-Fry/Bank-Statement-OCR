@@ -221,7 +221,8 @@ bundle_combine <- function(readings, ranges, npages) {
     list(index = i, pages = sprintf("%d-%d", min(ranges[[i]]), max(ranges[[i]])),
          period_start = h$period_start %||% NA_character_, period_end = h$period_end %||% NA_character_,
          opening_balance = h$opening_balance %||% NA_real_, closing_balance = h$closing_balance %||% NA_real_,
-         account_hash = NA_character_, rows = nrow(r$transactions %||% data.frame()),
+         account_hash = NA_character_, account_number = h$account_number %||% NA_character_,
+         account_name = h$account_name %||% NA_character_, rows = nrow(r$transactions %||% data.frame()),
          outcome = r$outcome %||% "unread", why = r$why %||% NA_character_,
          layout = r$matched_layout %||% NA_character_, recipe = r$matched_recipe %||% NA_character_,
          trust_level = r$recon$trust$level %||% "low", trust_score = r$recon$trust$score %||% 0)
@@ -240,6 +241,7 @@ bundle_combine <- function(readings, ranges, npages) {
   header$period_start    <- period$start
   header$period_end      <- period$end
   header$account_number  <- NA_character_
+  header$account_name    <- NA_character_
   header$opening_balance <- NA_real_
   header$closing_balance <- NA_real_
   header$stated_count    <- NA_integer_

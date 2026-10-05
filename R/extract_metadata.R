@@ -7,6 +7,38 @@
 # .MONEY_RX / .DATE_RX are defined in labels.R (single source of truth).
 .ACCT_RX  <- "[0-9]{2}-[0-9]{4}-[0-9]{6,7}-[0-9]{2,3}"          # NZ bank account
 .CARD_RX  <- "[0-9]{4}[- ]?[0-9X*]{4}[- ]?[0-9X*]{4}[- ]?[0-9]{4}" # masked card
+# .statement_account(input, md) -- the statement's OWN account number and name, as
+# printed on its first two pages, each only beside a label naming it: the number
+# beside "Account number", "Account No.", "Credit Card Account Number" (a masked
+# card as printed); the name beside "Account name", "Account holder", "Name:".
+# Never guessed -- an account number elsewhere on the statement may be another
+# account's (a transfer) -- so NA when no label says. For the output files only;
+# logs keep no name and no number.
+.ACCOUNT_LABEL_RX <- "(?i)\\b(account|acct|a/c|card)\\s*(number|no\\.?|num|#)"
+.ACCOUNT_NAME_RX <- "(?i)\\b(account\\s+name|account\\s+holder|customer\\s+name|name\\s*:)\\s*:?\\s*"
+.statement_account <- function(input) {
+  pages <- as.character(unlist(input$pages %||% character(0)))
+  lines <- trimws(unlist(strsplit(pages[seq_len(min(2L, length(pages)))], "\n", fixed = TRUE)))
+  lines <- lines[!is.na(lines) & nzchar(lines)]
+  rx <- paste0(.ACCT_RX, "|", "[0-9Xx*]{4}[- ]?[0-9Xx*]{4}[- ]?[0-9Xx*]{4}[- ]?[0-9]{3,4}")
+  num <- NA_character_; name <- NA_character_
+  for (i in grep(.ACCOUNT_LABEL_RX, lines, perl = TRUE)) {
+    at <- regexpr(.ACCOUNT_LABEL_RX, lines[i], perl = TRUE)
+    after <- substring(lines[i], at + attr(at, "match.length"))
+    # the value beside the label; on the next line only when nothing follows it
+    s <- if (nzchar(trimws(gsub("[:.#]", "", after)))) after else if (i < length(lines)) lines[i + 1L] else ""
+    m <- regmatches(s, regexpr(rx, s))
+    if (length(m)) { num <- m; break }
+  }
+  for (i in grep(.ACCOUNT_NAME_RX, lines, perl = TRUE)) {
+    at <- regexpr(.ACCOUNT_NAME_RX, lines[i], perl = TRUE)
+    v <- trimws(sub("\\s{2,}.*$", "", substring(lines[i], at + attr(at, "match.length"))))
+    # a name has letters, no account number and no figure, and is not a sentence
+    if (nzchar(v) && grepl("[A-Za-z]", v) && !grepl("[0-9]{3}", v) && nchar(v) <= 60) { name <- v; break }
+  }
+  list(number = num, name = name)
+}
+
 # A statement restarts page numbering, so a "Page 1 of N" is a statement START.
 # Shared with split.R so its boundaries and the count that gates them agree exactly.
 .PAGE1_MARKER_RX <- "[Pp]age\\s+1\\s+of\\s+[0-9]+"

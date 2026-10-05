@@ -72,3 +72,18 @@ test_that("engine_version reads the repo VERSION file (and never errors without 
   expect_identical(rec$engine_version, engine_version())
   expect_identical(rec$layouts_state, "empty")
 })
+
+test_that("every row of the files carries its own statement's account number and name", {
+  tx <- data.frame(row_id = 1:3, date = "2026-02-03", description = c("A", "B", "C"), amount = c(-1, 2, -3),
+                   statement_index = c(1L, 1L, 2L), stringsAsFactors = FALSE)
+  parsed <- list(transactions = tx, header = list(account_number = NA_character_),
+                 statements = list(list(account_number = "01-2345-0678901-00", account_name = "A HOLDER"),
+                                   list(account_number = "12-3456-1234567-00", account_name = NA_character_)))
+  out <- .with_accounts(tx, parsed)
+  expect_identical(names(out)[1:3], c("row_id", "account_number", "account_name"))
+  expect_identical(out$account_number, c("01-2345-0678901-00", "01-2345-0678901-00", "12-3456-1234567-00"))
+  expect_identical(out$account_name, c("A HOLDER", "A HOLDER", NA))
+  # one statement: the header's
+  one <- .with_accounts(tx[, 1:4], list(transactions = tx[, 1:4], header = list(account_number = "03-4567-0890123-00")))
+  expect_identical(unique(one$account_number), "03-4567-0890123-00")
+})
