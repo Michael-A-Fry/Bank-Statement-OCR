@@ -1,0 +1,33 @@
+# Recipe written by tools/recipes/from_designs.py from 7 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: asb_visa_platinum_rewards_statemen
+format: 1
+version: 1
+bank: asb
+title: "Visa Platinum Rewards Statement"
+kind: pdf
+status: proven
+recognise:
+  all: ["Date of Transaction", "Transaction Details", "Amount in NZ$"]
+  none: ["Visa Light Payment Advice"]
+period:
+  label: "Account Summary:"
+table:
+  header: ["Card Used", "Date of Transaction", "Transaction Details", "Amount in NZ$", "Date Processed", "Balance $"]
+  columns:
+    text1: {under: "Card Used"}
+    date: {under: "Date of Transaction"}
+    description: {under: "Transaction Details"}
+    amount: {under: "Amount in NZ$"}
+    date2: {under: "Date Processed"}
+    balance: {under: "Balance $"}
+  ends_at: ["Carried forward to next page", "Closing Balance", "Purchase interest rate", "Cash advance interest rate", "Terms and Conditions", "Overseas Transaction Margins", "Visa Platinum Payment Advice", "Visa Platinum Rewards Payment Advice"]
+  skip: ["Opening Balance", "Carried forward to next page", "Purchase interest rate", "Cash advance interest rate"]
+dates:
+  format: "%d %b"
+  year: period
+money:
+  style: signed
+  positive: ["CR"]
+order: oldest_first

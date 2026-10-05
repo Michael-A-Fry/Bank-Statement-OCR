@@ -1,0 +1,31 @@
+# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: cooperative_electronic_account
+format: 1
+version: 1
+bank: cooperative
+title: "ELECTRONIC ACCOUNT"
+kind: pdf
+status: proven
+recognise:
+  all: ["DATE", "TRANSACTION DETAILS"]
+statement_starts: "ELECTRONIC ACCOUNT"
+period:
+  label: "OPENING BALANCE"
+table:
+  header: ["DATE", "TRANSACTION DETAILS", "FEE TYPE", "AMOUNT", "BALANCE"]
+  columns:
+    date: {under: "DATE"}
+    description: {under: "TRANSACTION DETAILS"}
+    type: {under: "FEE TYPE"}
+    amount: {under: "AMOUNT"}
+    balance: {under: "BALANCE"}
+  ends_at: ["BALANCE CONTINUED OVERLEAF"]
+  skip: ["OPENING BALANCE"]
+dates:
+  format: "%d %b %Y"
+  year: printed
+money:
+  style: signed
+order: oldest_first

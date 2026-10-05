@@ -1,0 +1,30 @@
+# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: westforce_credit_union_everyday_account
+format: 1
+version: 1
+bank: westforce_credit_union
+title: "Everyday Account"
+kind: pdf
+status: proven
+recognise:
+  all: ["Account Statement", "Transaction Description", "Opening Balance:", "Balance as at Statement Ends Date:"]
+statement_starts: "Account Statement"
+period:
+  label: "Statement Begins:"
+table:
+  header: ["Date", "Transaction Description", "Debit", "Credit", "Balance"]
+  columns:
+    date: {under: "Date"}
+    description: {under: "Transaction Description"}
+    debit: {under: "Debit"}
+    credit: {under: "Credit"}
+    balance: {under: "Balance"}
+  ends_at: ["Balance as at Statement Ends Date:", "If you do not agree with these balances please contact our Member Service Team"]
+dates:
+  format: "%d %b %y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: oldest_first

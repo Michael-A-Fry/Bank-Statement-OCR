@@ -155,14 +155,17 @@ test_that("a recipe recognises its own design, and only when it is clearly the b
   # Its words, but not its table heading.
   noh <- rc_one(); noh[noh == rc_head] <- rc_line("Date", "Details", "Debits", "Credits", "Balance")
   expect_null(recipe_recognise(rc_pdf(noh), rcs)$recipe)
-  # The bank picked is another bank's: the recipe is not that bank's.
-  expect_null(recipe_recognise(inp, rcs, bank = "ASB")$recipe)
+  # The bank picked is another bank's: the recipe is still found (a wrong pick never
+  # hides the right recipe), and the mismatch is said in plain words.
+  wrong <- recipe_recognise(inp, rcs, bank = "ASB")
+  expect_identical(wrong$recipe$ref, "anz_everyday_pdf@1")
+  expect_match(wrong$bank_note, "but ASB was chosen", fixed = TRUE)
   expect_identical(recipe_recognise(inp, rcs, bank = "ANZ")$recipe$ref, "anz_everyday_pdf@1")
-  # Two recipes that fit equally well: neither is used.
+  expect_null(recipe_recognise(inp, rcs, bank = "ANZ")$bank_note)
+  # Two recipes that both fit: both are handed on, for each to read the statement.
   twin <- rc_anz(); twin$id <- "anz_twin"; twin$ref <- "anz_twin@1"
   rg <- recipe_recognise(inp, list(rc_anz(), twin))
-  expect_null(rg$recipe)
-  expect_match(rg$why, "equally", fixed = TRUE)
+  expect_length(rg$fits, 2L)
   # A draft is never used to read automatically, and a scan is not a text PDF.
   draft <- rc_anz(); draft$status <- "draft"
   expect_null(recipe_recognise(inp, list(draft))$recipe)
@@ -420,4 +423,15 @@ test_that("statements printing no period start are put in order by their period 
   third <- mk("01 Nov 2019", "30 Nov 2019", 100, 250)
   expect_true(.bundle_joins(list(third, first, second)))
   expect_false(.bundle_joins(list(first, mk("01 Oct 2019", "31 Oct 2019", 90, 100))))
+})
+
+
+# Two recipes that both read a statement and add up: the same figures -> the newest
+# recipe; different figures -> a person decides (owner's rule, 5 Oct).
+test_that("two recipes that both prove: same figures take the newer, different figures go to a person", {
+  inp <- rc_pdf(rc_one())
+  old <- rc_anz(); new <- rc_anz(); new$id <- "anz_new"; new$ref <- "anz_new@2"; new$version <- 2L
+  r <- recipe_first(inp, opts = list(recipes = list(old, new)))
+  expect_identical(r$outcome, "proven")
+  expect_identical(r$matched_recipe, "anz_new@2")
 })

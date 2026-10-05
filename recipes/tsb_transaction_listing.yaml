@@ -1,0 +1,31 @@
+# Recipe written by tools/recipes/from_designs.py from 2 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: tsb_transaction_listing
+format: 1
+version: 1
+bank: tsb
+title: "Transaction Listing"
+kind: pdf
+status: proven
+recognise:
+  all: ["Transaction Listing for:", "Particulars / Code / Reference", "Account Number :", "Total Withdrawals ="]
+  none: ["Carried forward", "Closing totals", "Your Statement"]
+statement_starts: "TRANSLIST"
+table:
+  header: ["Date", "Time", "Serial No", "Particulars / Code / Reference", "Withdrawal", "Deposit", "Balance"]
+  columns:
+    date: {under: "Date"}
+    text1: {under: "Time"}
+    text2: {under: "Serial No"}
+    description: {under: "Particulars / Code / Reference"}
+    debit: {under: "Withdrawal"}
+    credit: {under: "Deposit"}
+    balance: {under: "Balance"}
+  ends_at: ["Total Deposits =", "Total Withdrawals ="]
+dates:
+  format: "%d/%m/%Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: oldest_first

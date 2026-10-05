@@ -42,6 +42,11 @@
 RECIPE_FORMAT <- 1L
 .RECIPE_ID_RX <- "^[a-z][a-z0-9_]{0,39}$"
 .RECIPE_FIELDS <- c("date", "description", "debit", "credit", "amount", "balance")
+# The other columns a statement prints. Naming them keeps their words out of the
+# description (a card's "Date Processed", a "Ref." or "Fee type" column), and
+# particulars / code / reference / other_party / type come out as columns of their
+# own. date2 and text1..text9 are kept as extras.
+.RECIPE_EXTRA_RX <- "^(particulars|code|reference|other_party|type|date2|text[1-9])$"
 .RECIPE_MONEY <- c("debit", "credit", "amount", "balance")
 .RECIPE_STATUS <- c("draft", "proven", "retired")
 
@@ -131,8 +136,9 @@ recipes_default <- function() {
   cl <- tb$columns
   if (!is.list(cl) || !length(cl) || is.null(names(cl))) return(bad("`table: columns:` must name the columns, left to right."))
   fields <- names(cl)
-  if (any(!(fields %in% .RECIPE_FIELDS))) return(bad("column \"%s\" is not one of %s.", fields[!(fields %in% .RECIPE_FIELDS)][1],
-                                                     paste(.RECIPE_FIELDS, collapse = ", ")))
+  okf <- fields %in% .RECIPE_FIELDS | grepl(.RECIPE_EXTRA_RX, fields)
+  if (any(!okf)) return(bad("column \"%s\" is not one of %s, particulars, code, reference, other_party, type, date2 or text1-text9.",
+                            fields[!okf][1], paste(.RECIPE_FIELDS, collapse = ", ")))
   if (anyDuplicated(fields)) return(bad("column \"%s\" is named twice.", fields[duplicated(fields)][1]))
   if (!("date" %in% fields)) return(bad("the columns need a date."))
   if (!("description" %in% fields)) return(bad("the columns need a description."))
@@ -159,7 +165,10 @@ recipes_default <- function() {
   dt <- y$dates %||% list()
   dfmt <- as.character(dt$format %||% "")[1]
   known <- vapply(.ar_date_formats(), `[[`, "", "fmt")
-  if (!(dfmt %in% known)) return(bad("date format \"%s\" is not one the reader knows.", dfmt))
+  # A recipe may also name a plain pattern the shared table leaves out ("17Jun26",
+  # "260517"): it is read only in this recipe's own date column (.rc_date_entry).
+  if (!(dfmt %in% known) && is.null(.rc_date_entry(dfmt)))
+    return(bad("date format \"%s\" is not one the reader knows.", dfmt))
   has_year <- grepl("%[Yy]", dfmt)
   year <- as.character(dt$year %||% (if (has_year) "printed" else "period"))[1]
   if (!(year %in% c("printed", "period"))) return(bad("`dates: year:` must be printed or period."))
@@ -286,8 +295,6 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL) {
   sc <- lapply(recipes, function(rc) {
     row <- list(recipe = rc$ref, fits = FALSE, score = 0, why = "")
     if (!identical(rc$status, "proven")) { row$why <- "a draft, not yet accepted"; return(row) }
-    if (!is.na(bank_slug) && !(bank_slug %in% c(rc$bank, .layout_slug(.layout_bank_display(rc$bank)))))
-      { row$why <- sprintf("a recipe of another bank (%s)", rc$bank); return(row) }
     a <- vapply(rc$all, function(p) .rc_has_phrase(txt, p), logical(1))
     n <- vapply(rc$none, function(p) .rc_has_phrase(txt, p), logical(1))
     if (!all(a)) { row$why <- sprintf("\"%s\" is not printed", rc$all[!a][1]); row$score <- sum(a); return(row) }
@@ -308,11 +315,16 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL) {
                        stringsAsFactors = FALSE)
   fit <- which(scores$fits)
   if (!length(fit)) return(none("No recipe fits this statement.", scores))
-  top <- fit[scores$score[fit] == max(scores$score[fit])]
-  if (length(top) > 1L)
-    return(none(sprintf("Recipes %s fit this statement equally well, so neither is used.",
-                        paste(scores$recipe[top], collapse = " and ")), scores))
-  list(recipe = recipes[[top]], scores = scores, why = sprintf("The statement is recipe %s's design.", recipes[[top]]$ref))
+  # Every recipe that fits, best first. The chosen bank never hides one: a statement
+  # of another bank's design is said to be so (.rc_bank_note), not read as unknown.
+  fit <- fit[order(-scores$score[fit])]
+  out <- list(recipe = recipes[[fit[1]]], fits = recipes[fit], scores = scores,
+              why = sprintf("The statement is recipe %s's design.", recipes[[fit[1]]]$ref))
+  if (!is.na(bank_slug) && !(bank_slug %in% c(recipes[[fit[1]]]$bank, .layout_slug(.layout_bank_display(recipes[[fit[1]]]$bank)))))
+    out$bank_note <- sprintf("This reads as a %s %s statement, but %s was chosen.",
+                             .layout_bank_display(recipes[[fit[1]]]$bank), recipes[[fit[1]]]$title,
+                             .layout_bank_display(bank_slug))
+  out
 }
 
 # ---- the auto_read() entry ---------------------------------------------------------
@@ -327,7 +339,29 @@ recipe_first <- function(input, bank = NULL, opts = list()) {
   if (is.null(rcs)) rcs <- recipes_default()
   rg <- recipe_recognise(input, rcs, bank)
   if (is.null(rg$recipe)) return(NULL)
-  recipe_read(input, rg$recipe)
+  # Several recipes fit (an old and a new version of a design, two drafts of one
+  # design): each reads it and the statement's own arithmetic decides. Readings that
+  # prove with the SAME figures -> the newest recipe; with different figures -> a
+  # person decides, since two readings that both add up cannot both be right.
+  fits <- rg$fits %||% list(rg$recipe)
+  reads <- lapply(fits, function(rc) recipe_read(input, rc))
+  ok <- which(vapply(reads, function(r) identical(r$outcome, "proven"), logical(1)))
+  pick <- if (!length(ok)) reads[[1]] else if (length(ok) == 1L) reads[[ok]] else {
+    key <- function(r) paste(r$transactions$date, sprintf("%.2f", r$transactions$amount), collapse = "|")
+    if (length(unique(vapply(reads[ok], key, ""))) == 1L) {
+      newest <- order(-vapply(fits[ok], function(rc) rc$version, 0),
+                      -vapply(fits[ok], function(rc) as.numeric(file.mtime(rc$file %||% "")), 0))[1]
+      reads[[ok[newest]]]
+    } else {
+      r <- reads[[ok[1]]]
+      r$outcome <- "check"
+      r$why <- sprintf("Recipes %s each read this statement and add up, but give different figures, so a person decides.",
+                       paste(vapply(fits[ok], `[[`, "", "ref"), collapse = " and "))
+      r
+    }
+  }
+  if (!is.null(rg$bank_note)) pick$notes <- c(pick$notes, rg$bank_note)
+  pick
 }
 
 # recipe_note(rd) -- the sentence auto_read() records when a recipe was recognised
@@ -359,11 +393,27 @@ recipe_read <- function(input, rc) {
   r
 }
 
+# .rc_date_entry(fmt) -> list(fmt, rx, yearless) for a plain date pattern made of
+# day, month and year parts and the separators " ./-", or NULL. Parts written with
+# no separator between them are fixed width ("%y%m%d" is six digits).
+.rc_date_entry <- function(fmt) {
+  if (!is.character(fmt) || length(fmt) != 1L || !grepl("^(%[dmyYbB]|[ ./-])+$", fmt) || !grepl("%d", fmt, fixed = TRUE))
+    return(NULL)
+  parts <- regmatches(fmt, gregexpr("%[dmyYbB]|[ ./-]", fmt))[[1]]
+  tight <- !grepl("[ ./-]", fmt)
+  rx <- vapply(parts, function(p) switch(p,
+    "%d" = if (tight) "[0-9]{2}" else "[0-9]{1,2}", "%m" = if (tight) "[0-9]{2}" else "[0-9]{1,2}",
+    "%y" = "[0-9]{2}", "%Y" = "[0-9]{4}", "%b" = "[A-Za-z]{3}", "%B" = "[A-Za-z]{3,9}",
+    " " = " ", "." = "[.]", "/" = "/", "-" = "-"), "")
+  list(fmt = fmt, rx = paste0("^", paste(rx, collapse = ""), "$"), yearless = !grepl("%[yY]", fmt))
+}
+
 .rc_read <- function(input, rc) {
   wl <- input$words %||% list()
   if (!length(wl) || all(vapply(wl, function(w) is.null(w) || !nrow(w), logical(1))))
     return(.rc_fail(rc, "The PDF has no readable text."))
   ctx <- .ar_pdf_context(input)
+  if (!(rc$date_format %in% vapply(ctx$fmts, `[[`, "", "fmt"))) ctx$fmts <- c(ctx$fmts, list(.rc_date_entry(rc$date_format)))
   np <- ctx$np
   # Where each statement of the file starts: every page printing the recipe's
   # start words. Pages before the first such page belong to the first statement
@@ -774,11 +824,15 @@ recipe_read <- function(input, rc) {
   cbp <- lapply(seq_len(m), function(j) if (is.null(st$tabs[[j]])) NULL else to_list(st$tabs[[j]]$bands))
   have <- which(!vapply(cbp, is.null, logical(1)))
   ref <- if (length(have)) cbp[[have[1]]] else list()
+  # The table reader's own columns, and the rest (a second date, spare text) as
+  # extras, as a hand-drawn fix hands them over (R/convert.R .override_boxes).
+  ex <- ref[setdiff(names(ref), .BOX_CORE)]
+  ref <- ref[intersect(names(ref), .BOX_CORE)]
   tbl <- list(row_tol = st$ctx$row_tol, date_format = rc$date_format,
               amount_sign = if (identical(rc$style, "debit_credit_cols")) "debit_credit_cols" else "signed",
               decimal_mark = st$ctx$decimal, unsigned_default = "debit", keep_dateless_rows = FALSE,
               ref_width = st$ctx$frame$width, ref_height = st$ctx$frame$height,
-              columns = ref, columns_by_page = cbp, extras = NULL)
+              columns = ref, columns_by_page = cbp, extras = if (length(ex)) ex else NULL)
   list(id = paste0("recipe_", rc$id), bank = rc$bank, statement_type = NA_character_, format = "pdf",
        version = rc$version, currency = "NZD", table = tbl,
        auto = list(roles = rd$roles, conv = rd$conv, liab = isTRUE(rd$liab), dir = rd$dir,

@@ -1,0 +1,33 @@
+# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: anz_loan_account_statement
+format: 1
+version: 1
+bank: anz
+title: "Loan Account Statement"
+kind: pdf
+status: proven
+recognise:
+  all: ["Loan Account Statement", "Principal Balance", "Summary of total loan fees", "Next Loan Payment Date Due"]
+  none: ["Amount in NZ$", "Date of Transaction", "Details of Transaction"]
+statement_starts: "Loan Account Statement"
+period:
+  label: "for the period"
+table:
+  header: ["Date", "Description", "Withdrawals", "Deposits", "Principal Balance"]
+  columns:
+    date: {under: "Date"}
+    description: {under: "Description"}
+    debit: {under: "Withdrawals"}
+    credit: {under: "Deposits"}
+    balance: {under: "Principal Balance"}
+  ends_at: ["Closing Balance", "Summary of loan number", "Summary of total loan fees"]
+  skip: ["Opening Balance", "- processed on:"]
+dates:
+  format: "%d %b %y"
+  year: printed
+money:
+  style: debit_credit_cols
+  negative: ["DR"]
+order: oldest_first

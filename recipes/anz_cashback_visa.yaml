@@ -1,0 +1,31 @@
+# Recipe written by tools/recipes/from_designs.py from 7 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: anz_cashback_visa
+format: 1
+version: 1
+bank: anz
+title: "CashBack Visa"
+kind: pdf
+status: proven
+recognise:
+  all: ["Date of Transaction", "Amount in NZ$"]
+  none: ["Interest - Purchases", "Loan Account Statement", "Purchase Interest Rate Changed From", "STATEMENT OF ACCOUNT", "STATEMENT OF LOAN ACCOUNT", "Totals at end of period", "Transaction type and details", "Visa Platinum Rewards Statement"]
+period:
+  label: "Statement Period"
+table:
+  header: ["Date of Transaction", "Date Processed", "Details of Transaction", "Amount in NZ$"]
+  columns:
+    date: {under: "Date of Transaction"}
+    date2: {under: "Date Processed"}
+    description: {under: "Details of Transaction"}
+    amount: {under: "Amount in NZ$"}
+  ends_at: ["Closing Balance:", "Sundry Account Transactions", "CashBack Rewards Summary", "Please note that the amount of", "Monthly CashBack Summary", "Card Total:", "Your account is in credit.", "Please do not pay.", "Thank you.", "Payment Advice", "Minimum Payment Due", "Indicate Amount Paid"]
+  skip: ["CashBack Rewards Summary", "Monthly CashBack Summary", "Card Total:", "Your account is in credit.", "Please do not pay.", "Thank you.", "Sundry Account Transactions", "We do not appear to have received the full minimum payment this month.", "The overdue payment showing is required.", "Your account is now two payments in arrears.", "Your balance exceeds your credit limit."]
+dates:
+  format: "%d %b"
+  year: period
+money:
+  style: signed
+  positive: ["CR"]
+order: oldest_first

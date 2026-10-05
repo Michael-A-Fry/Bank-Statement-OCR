@@ -1,0 +1,32 @@
+# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: heartland_heartland_everyday
+format: 1
+version: 1
+bank: heartland
+title: "Heartland Everyday"
+kind: pdf
+status: proven
+recognise:
+  all: ["Transaction Summary", "Statement opening balance:", "Statement closing balance:", "Statement for the period :"]
+  none: ["The list of transactions on your account", "Transaction History"]
+statement_starts: "Transaction Summary"
+period:
+  label: "Statement for the period :"
+table:
+  header: ["Date", "Particulars", "Debit", "Credit", "Balance"]
+  columns:
+    date: {under: "Date"}
+    description: {under: "Particulars"}
+    debit: {under: "Debit"}
+    credit: {under: "Credit"}
+    balance: {under: "Balance"}
+  ends_at: ["Statement closing balance:"]
+  skip: ["Opening balance"]
+dates:
+  format: "%d/%m/%Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: oldest_first

@@ -1,0 +1,31 @@
+# Recipe written by tools/recipes/from_designs.py from 4 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: bnz_bnz_advantage_visa_platinum
+format: 1
+version: 1
+bank: bnz
+title: "BNZ Advantage Visa Platinum"
+kind: pdf
+status: proven
+recognise:
+  all: ["Activity for the period"]
+  none: ["Airpoints Dollars earned this month", "Cash Rewards earned from this month's statement period", "General Payments & Charges", "Interest rate summary information"]
+period:
+  label: "Activity for the period"
+table:
+  header: ["Date", "Category", "Merchant", "Debit amount $", "Credit amount $"]
+  columns:
+    date: {under: "Date"}
+    type: {under: "Category"}
+    description: {under: "Merchant"}
+    debit: {under: "Debit amount $"}
+    credit: {under: "Credit amount $"}
+  ends_at: ["Total debits and credits", "ANNUAL PURCHASE INTEREST RATE IS", "Got a transaction enquiry?", "Total Debits and Credits", "THE ANNUAL PURCHASE INTEREST RATE AND ANNUAL CASH ADVANCE INTEREST RATE SHOWN APPLY UNTIL"]
+  no_rows: ["You have no transactions for this period."]
+dates:
+  format: "%d %B"
+  year: period
+money:
+  style: debit_credit_cols
+order: oldest_first

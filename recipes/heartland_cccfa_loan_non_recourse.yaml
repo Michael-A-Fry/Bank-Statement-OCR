@@ -1,0 +1,35 @@
+# Recipe written by tools/recipes/from_designs.py from 2 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: heartland_cccfa_loan_non_recourse
+format: 1
+version: 1
+bank: heartland
+title: "CCCFA-Loan Non-recourse"
+kind: pdf
+status: proven
+recognise:
+  all: ["Transaction History", "Transaction Date", "Arrears Balance"]
+  none: ["Opening Balance:", "Statement opening balance:", "Transaction Summary"]
+statement_starts: "Transaction History"
+table:
+  header: ["Transaction Date", "Value Date", "Transaction Description", "Method", "Ref", "Debit", "Credit", "Balance", "Arrears Balance", "Other Party Bank", "Other Ref"]
+  columns:
+    date: {under: "Transaction Date"}
+    date2: {under: "Value Date"}
+    description: {under: "Transaction Description"}
+    type: {under: "Method"}
+    text1: {under: "Ref"}
+    debit: {under: "Debit"}
+    credit: {under: "Credit"}
+    balance: {under: "Balance"}
+    text2: {under: "Arrears Balance"}
+    text3: {under: "Other Party Bank"}
+    text4: {under: "Other Ref"}
+  ends_at: ["\u00a9 Heartland Bank Ltd."]
+dates:
+  format: "%d/%m/%Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: newest_first

@@ -1,0 +1,31 @@
+# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: rabobank_rabodirect_master_savings_acco
+format: 1
+version: 1
+bank: rabobank
+title: "RaboDirect Master Savings Account"
+kind: pdf
+status: proven
+recognise:
+  all: ["Transaction Details", "Statement period :", "Statement date :", "Page number :"]
+statement_starts: "Statement period :"
+period:
+  label: "Statement period :"
+table:
+  header: ["Date", "Ref.", "Transaction Details", "Debit", "Credit", "Balance"]
+  columns:
+    date: {under: "Date"}
+    type: {under: "Ref."}
+    description: {under: "Transaction Details"}
+    debit: {under: "Debit"}
+    credit: {under: "Credit"}
+    balance: {under: "Balance"}
+  skip: ["Opening balance", "Closing balance"]
+dates:
+  format: "%d-%m-%Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: oldest_first

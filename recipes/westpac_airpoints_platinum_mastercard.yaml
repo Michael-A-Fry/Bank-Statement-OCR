@@ -1,0 +1,32 @@
+# Recipe written by tools/recipes/from_designs.py from 7 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: westpac_airpoints_platinum_mastercard
+format: 1
+version: 1
+bank: westpac
+title: "Airpoints\u2122 Platinum Mastercard\u00ae"
+kind: pdf
+status: proven
+recognise:
+  all: ["TRANSACTION DATE", "PROCESS DATE"]
+  none: ["American Express", "hotpoints Platinum Mastercard", "hotpoints\u00ae summary"]
+period:
+  label: "Statement Period:"
+table:
+  header: ["TRANSACTION DATE", "PROCESS DATE", "DETAILS", "AMOUNT $"]
+  columns:
+    date: {under: "TRANSACTION DATE"}
+    date2: {under: "PROCESS DATE"}
+    description: {under: "DETAILS"}
+    amount: {under: "AMOUNT $"}
+  ends_at: ["Interest rate summary information", "DESCRIPTION", "Ways to pay your credit card:", "Check your statements online", "Transactional information", "Interest Rate Summary Information", "Transactional Information", "Continued on next page", "Payment Details"]
+  skip: ["General Payments & Charges"]
+  no_rows: ["******** NO TRANSACTIONS ********"]
+dates:
+  format: "%d %b"
+  year: period
+money:
+  style: signed
+  positive: ["CR"]
+order: oldest_first

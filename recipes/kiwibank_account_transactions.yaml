@@ -1,0 +1,33 @@
+# Recipe written by tools/recipes/from_designs.py from 4 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the statement's own arithmetic; one that does not is not used.
+recipe: kiwibank_account_transactions
+format: 1
+version: 1
+bank: kiwibank
+title: "Account Transactions"
+kind: pdf
+status: proven
+recognise:
+  all: ["Account Transactions", "Enquiry Period", "Transaction Keywords"]
+  none: ["Date of Transaction", "Transaction Details", "Your transaction details"]
+statement_starts: "Account Transactions"
+period:
+  label: "Enquiry Period"
+table:
+  header: ["Posted", "Eff Tran Date", "Description", "Cheque", "Debit Amt", "Credit Amt", "Balance"]
+  columns:
+    date: {under: "Posted"}
+    date2: {under: "Eff Tran Date"}
+    description: {under: "Description"}
+    text1: {under: "Cheque"}
+    debit: {under: "Debit Amt"}
+    credit: {under: "Credit Amt"}
+    balance: {under: "Balance"}
+  ends_at: ["www.kiwibank.co.nz"]
+dates:
+  format: "%d %b %Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: newest_first
