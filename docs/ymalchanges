@@ -1,0 +1,789 @@
+Consolidated Recommendations for Strengthening the PDF Extraction Vocabulary
+Coverage assessment
+
+Yes, with the additions below, this document consolidates the material raised throughout this conversation and the statement families reviewed so far. It covers the terminology, document fields, table structures and parsing behaviours identified across BNZ, SBS, RaboDirect, TSB, ASB, Kiwibank, Westpac, American Express and ANZ transaction, credit-card and loan documents.
+
+However, it would be inaccurate to claim that a static word list can cover every possible future statement. New banks, historical forms, generated reports, OCR defects and product-specific documents will introduce new wording. The right target is:
+
+Complete coverage of all supplied examples, supported by a structure that allows unfamiliar wording to be added safely without changing extraction code.
+
+The earlier recommendations remain valid. The following changes should be incorporated into the consolidated document based on Amex, ANZ - 9 Columns (4) and ANZ Loan (5).
+
+1. Retain the two-file design, but tighten the responsibility of each file
+
+The two-file design remains appropriate:
+
+labels.yaml should identify labelled document-level values.
+lexicon.yaml should identify tables, columns, row types, direction notation, transaction classes, structural markers and parsing patterns.
+
+The files should not become two overlapping bags of banking terminology.
+
+In particular:
+
+Balance labels, due dates and account identifiers belong in labels.yaml.
+Date, description, withdrawal, deposit and balance column headings belong in lexicon.yaml.
+Payment, fee, interest, refund and transfer wording belongs in transaction-class vocabularies.
+CR, DR, OD and column position establish direction.
+Totals, carry-forwards and section headings require dedicated structural categories.
+
+This separation is essential because the same word can perform different roles. For example, interest can appear as a percentage-bearing account attribute, a loan transaction, a credit-card charge or a summary total.
+
+Recommendations for labels.yaml
+2. Complete the account and party identification model
+
+The shared dictionary should support distinct fields for:
+
+account_name
+account_number
+account_type
+card_number
+customer_number
+membership_number
+loan_number
+facility_number
+statement_number
+primary_cardholder
+prepared_for
+
+American Express uses Prepared for, Membership Number and Card Number as separate identifiers. Its card numbers use a masked pattern such as XXXX-XXXXXX-13008, which does not match a conventional 16-digit card pattern.
+
+Add synonyms including:
+
+membership number
+member number
+membership no
+prepared for
+card number
+card no
+account number
+account no
+loan number
+home loan number
+facility number
+customer number
+customer no
+client number
+
+The account and card regexes should not determine the semantic field alone. The nearby label and document type should establish whether an identifier is an account, card, membership, loan or customer number.
+
+3. Complete the balance model
+
+The recommended balance fields are:
+
+opening_balance
+closing_balance
+current_balance
+available_balance
+available_credit
+principal_balance
+amount_payable
+interest_owing
+overdue_amount
+over_limit_amount
+frozen_amount
+uncleared_amount
+authorisations_amount
+Add amount_payable
+
+American Express separately displays Closing Balance and Amount Payable. These may have the same value in a particular statement, but they are distinct concepts and should not be collapsed during extraction.
+
+Recommended synonyms:
+
+amount payable
+payment
+payment amount
+amount due
+total amount due
+total due
+
+A standalone payment label should only be accepted when immediately associated with a monetary value in a payment-summary region.
+
+Add principal_balance
+
+The ANZ loan transaction table uses Principal Balance, not merely Balance.
+
+Recommended synonyms:
+
+principal balance
+outstanding principal
+loan principal
+principal outstanding
+outstanding loan balance
+Add interest_owing
+
+The ANZ loan summary provides Interest Owing as at [date].
+
+Recommended synonyms:
+
+interest owing
+interest owing as at
+accrued interest
+unpaid interest
+interest outstanding
+
+If possible, preserve the associated “as at” date separately as interest_owing_date.
+
+4. Expand period and statement-date handling
+
+The supplied documents now demonstrate:
+
+explicitly labelled statement periods;
+inline “from date to date” periods;
+START - date periods;
+statement opening and closing dates;
+“as at” dates;
+loan-summary periods; and
+documents containing multiple consecutive statements.
+
+ANZ includes a first period expressed as START - 30 Sep 2019, rather than two complete dates.
+
+The date-range model should therefore support:
+
+full date to full date;
+full date through full date;
+START - date;
+start to date;
+an explicitly labelled opening date and closing date;
+an unlabelled range immediately following a recognised statement-period heading.
+
+For START - date, the start should remain null or be represented as an open interval. It should not be set equal to the first transaction date unless the application explicitly records that as an inference.
+
+5. Add American Express summary fields
+
+American Express introduces the following document-level concepts:
+
+Opening Date
+Closing Date
+Opening Balance
+New Credits
+New Debits
+Closing Balance
+Amount Payable
+Due Date
+Membership Number
+Prepared for
+
+These should map as follows:
+
+statement_start: opening date
+statement_end: closing date
+opening_balance: opening balance
+total_credits: new credits
+total_debits: new debits
+closing_balance: closing balance
+amount_payable: amount payable
+payment_due_date: due date, due by
+membership_number: membership number
+account_name or prepared_for: prepared for
+
+The phrases New Credits and New Debits are statement-level totals in the summary panel, while New Transactions for [cardholder] introduces a transaction group. They must not be treated as equivalent labels.
+
+6. Complete the loan metadata model
+
+The ANZ loan documents add several fields beyond the earlier SBS and Kiwibank recommendations:
+
+principal_paid
+interest_paid
+interest_owing
+next_loan_payment_amount
+next_loan_payment_date
+fixed_rate_review_date
+maturity_date
+opening_interest_rate
+current_fixed_interest_rate
+new_floating_interest_rate
+current_maturity_date
+total_loan_fees
+
+ANZ explicitly provides Principal Paid, Interest Paid, Interest Owing as at, Next Loan Payment Amount, Next Loan Payment Date Due, Fixed Rate Review Date, Maturity Date and Total Loan Fees.
+
+Recommended synonyms should include:
+
+principal paid
+principal repaid
+principal repayments
+interest paid
+interest charged
+interest owing
+next loan payment amount
+next payment amount
+next loan payment date due
+next payment date
+fixed rate review date
+fixed interest review date
+rate review date
+maturity date
+current maturity date
+total loan fees
+total fees
+opening interest rate
+current fixed interest rate
+new floating interest rate
+
+Use a percentage value type for rates and a duration type for remaining loan terms wherever the engine supports them.
+
+7. Distinguish statement data from attached notices
+
+ANZ Loan (5) contains both loan statements and separate notices concerning fixed-interest expiry and rate changes. The notices include fields such as Loan Number, Current Balance, Current Fixed Interest Rate, New Floating Interest Rate, Next Payment Date and Current Maturity Date.
+
+The parser should classify pages or sections as:
+
+loan statement;
+rate-expiry notice;
+interest-rate change notice;
+informational continuation page.
+
+Values extracted from a rate-change notice should not silently overwrite statement-period values. Each value should retain:
+
+source page;
+document-section type;
+effective date, where printed;
+original label;
+confidence.
+Recommendations for lexicon.yaml
+8. Expand table-header vocabulary with the new exact phrases
+
+Add the following header phrases:
+
+transaction type and details
+principal balance
+foreign spending
+amount $
+details
+withdrawals
+deposits
+fee description
+amount
+opening date
+closing date
+
+ANZ uses a combined Transaction type and details column. ANZ loan statements use Date, Description, Withdrawals, Deposits, Principal Balance. American Express uses Details, Foreign Spending, Amount $.
+
+Whole phrases should receive more weight than component terms. For example:
+
+transaction type and details is stronger evidence than either type or details;
+principal balance is stronger than balance;
+foreign spending is stronger than foreign or spending.
+9. Support physically expanded multi-column descriptions
+
+The ANZ document is described as a nine-column layout, although several of those physical columns form one conceptual Transaction type and details field. A row may contain:
+
+transaction code;
+account number or merchant;
+particulars;
+code;
+reference;
+serial or terminal identifier;
+withdrawal;
+deposit;
+balance.
+
+The extractor should not assume that each visual column corresponds to one final output field. It should support:
+
+transaction_type
+description
+particulars
+code
+reference
+serial_number
+withdrawal
+deposit
+balance
+
+and then allow unused middle columns to be concatenated into a lossless raw description.
+
+The recommended output should retain:
+
+description_raw
+transaction_type
+other_party
+particulars
+code
+reference
+serial_number
+
+This avoids losing content when the statement presents semi-structured details across several visual columns.
+
+10. Add transaction-code dictionaries
+
+The ANZ statements provide an explicit code legend:
+
+AP: Automatic Payment
+BP: Bill Payment
+DC: Direct Credit
+ED: Electronic Dishonour
+FX: Foreign Exchange
+IP: International EFTPOS Transaction
+IF: International Payment
+AT: Automatic Teller Machine
+CQ: Cheque/Withdrawal
+DD: Direct Debit
+EP: EFTPOS Transaction
+IA: International Money Machine
+VT: Visa Transaction.
+
+These should be stored in a dedicated category such as transaction_type_codes, not in debit_markers or credit_markers.
+
+The code alone does not always establish direction. For example, the statement layout and the populated Withdrawals or Deposits column provide stronger evidence. The code should assist classification and field segmentation.
+
+Recommended structure conceptually:
+
+code
+normalised transaction class
+description
+possible direction
+direction confidence
+
+DR and CR should remain direction markers. DD, DC, BP, AP, EP and similar abbreviations are transaction types.
+
+11. Add American Express grouping and subtotal markers
+
+American Express groups transactions under:
+
+New Transactions for [name]
+Other Account Transactions
+Total of new transactions for [name]
+Total of other account transactions.
+
+Add structural categories for:
+
+Group headings
+new transactions for
+other account transactions
+transactions for
+charges for
+card transactions for
+Group totals
+total of new transactions for
+total of other account transactions
+total transactions for
+subtotal for
+
+The parser should:
+
+identify the group heading;
+capture the associated cardholder or card number as group context;
+apply that context to following rows;
+stop applying it at the next group heading;
+exclude the subtotal row from transaction output.
+
+A name following New Transactions for is group metadata, not part of the next merchant description.
+
+12. Support American Express single-amount direction
+
+American Express uses a single Amount $ column. Credits are indicated with CR, including payment and credit-adjustment rows.
+
+This reinforces the previously recommended direction hierarchy:
+
+explicit CR or DR;
+separate debit or credit column;
+signed or parenthesised amount;
+validated balance movement;
+transaction-class hint;
+unresolved if direction remains ambiguous.
+
+Add:
+
+CR
+CREDIT
+CREDIT ADJUSTMENT
+CREDIT BALANCE TRANSFERRED
+
+to appropriate direction or transaction-class categories.
+
+However, Credit Adjustment and Credit Balance Transferred should be semantic credit hints, while CR is explicit direction notation.
+
+13. Expand payment and credit-adjustment classes
+
+Add the following observed phrases:
+
+payment - thank you
+payment thank you
+credit adjustment
+credit balance transferred
+other account transactions
+
+American Express includes both Payment - Thank You and Credit Balance Transferred. It also shows a small Credit Adjustment under Other Account Transactions.
+
+Recommended transaction classes:
+
+payment
+balance_transfer
+adjustment
+refund
+reversal
+reward
+fee
+interest
+foreign_currency_purchase
+
+Do not force all adjustments into refund; their economic meaning may differ.
+
+14. Expand fee vocabulary
+
+The ANZ transaction statements introduce:
+
+cash handling fee
+transaction fee
+monthly account fee
+replacement card fee.
+
+Add these to fee_markers, along with previously identified terms:
+
+account fee
+card/account fee
+service fee
+annual fee
+cash advance fee
+cash handling fee
+transaction fee
+monthly account fee
+replacement card fee
+statement reprint fee
+dishonour fee
+direct debit dishonour fee
+overdraft fee
+over-limit fee
+late payment fee
+loan restructure fee
+application fee
+fixed rate break cost
+foreign-currency fee
+offshore service margin
+conversion commission
+
+The ANZ loan statement separately provides a Fee Description / Amount table and Total Loan Fees. The engine should classify this as a fee-summary table, not as the main transaction table.
+
+15. Expand loan-event vocabulary
+
+Add these loan transaction and event phrases:
+
+loan drawdown
+loan interest
+loan payment
+loan payment - interest
+processed on
+rate change
+new rate
+opening interest rate
+principal paid
+interest paid
+interest owing
+fixed rate review
+fixed interest rate period
+floating interest rate
+loan repayment holiday
+maturity date
+
+The ANZ loan table includes parent transaction rows followed by indented supporting lines such as - processed on: 02 Nov 15.
+
+The processed-on line must be attached to the preceding transaction as a secondary date. It must not become a separate transaction.
+
+Recommended row-level fields:
+
+transaction_date
+processed_date
+description
+withdrawal
+deposit
+principal_balance
+direction
+transaction_class
+16. Add non-transaction event and notice handling
+
+Some financial documents contain rows that represent a material account event but no monetary movement:
+
+opening interest rate;
+rate change;
+new rate;
+fixed-rate expiry;
+repayment change;
+offset attachment;
+maturity-date change.
+
+These should be retained as account_event records where possible, rather than discarded because no amount is present.
+
+The event schema should support:
+
+event date;
+event type;
+old value;
+new value;
+percentage;
+effective date;
+raw description;
+source page.
+17. Improve summary and continuation recognition
+
+Add or retain the following structural markers:
+
+totals at end of page
+totals at end of period
+balance brought forward from previous page
+carried forward to next page
+carried forward
+brought forward
+no transactions for this period
+statement of accounts
+statement of account
+loan account statement
+continued
+summary of loan number
+summary of total loan fees
+account information
+accounts at a glance
+
+ANZ explicitly uses Totals at end of page, Totals at end of period, Balance brought forward from previous page and No transactions for this period.
+
+No transactions for this period should produce a valid empty statement result containing account metadata and balances. It should not be treated as an extraction failure.
+
+18. Correct the meaning of “available credit”
+
+ANZ transaction-account statements state Your available credit is [amount] as at the closing date of this statement, even though the product is a Business Current Account.
+
+Therefore:
+
+do not assume available_credit only occurs on credit-card statements;
+preserve the printed label exactly;
+map it to available_credit, not automatically to available_balance;
+allow product context to determine interpretation downstream.
+
+This is an important example of why semantic normalisation must not overwrite source meaning.
+
+19. Expand masked identifier recognition
+
+Support at least:
+
+standard NZ bank accounts;
+extended NZ accounts;
+masked 16-digit cards;
+American Express-style masked identifiers;
+contiguous payment account numbers;
+loan identifiers with an additional suffix.
+
+Examples in the supplied documents include:
+
+standard hyphenated bank accounts;
+0222-0088120097-1004 loan identifiers;
+XXXX-XXXXXX-13008 American Express identifiers.
+
+The parser should preserve:
+
+raw identifier;
+normalised identifier;
+masking status;
+identifier type;
+nearby label.
+
+Do not run arithmetic validation or check-digit logic against masked identifiers.
+
+Recommendations for the Engine and File Schema
+20. Add explicit vocabulary categories
+
+The consolidated lexicon specification should support these separate categories:
+
+header_keywords
+layout_stopwords
+debit_markers
+credit_markers
+overdrawn_markers
+summary_line_labels
+continuation_markers
+section_heading_markers
+group_heading_markers
+group_total_markers
+non_transaction_labels
+fee_markers
+interest_markers
+payment_markers
+transfer_markers
+reversal_markers
+adjustment_markers
+tax_markers
+loan_markers
+cash_markers
+dishonour_markers
+transaction_type_codes
+period_connectives
+money_regex
+percentage_regex
+date_regex
+account_regex
+card_regex
+loan_regex
+date_formats
+field_name_patterns
+
+This is the clearest way to cover all wording identified in the conversation without confusing semantic classification with monetary direction.
+
+21. Add value types beyond money, date and text
+
+The label schema currently supports:
+
+money
+date
+date range
+text
+regex.
+
+A stronger schema should add:
+
+percentage
+identifier
+integer
+duration
+currency
+boolean
+money pair
+money plus date
+open date range
+
+These would improve validation for:
+
+interest rates;
+statement numbers;
+remaining contract terms;
+currencies;
+combined credit and debit totals;
+interest owing as at a date;
+START - date periods.
+
+If additional primitive types cannot be added immediately, use constrained regex value types rather than unrestricted text.
+
+22. Make matching longest-first and boundary-aware
+
+The current case-insensitive substring model is useful but too permissive for production extraction.
+
+Matching should follow this order:
+
+exact normalised phrase;
+longest token-boundary phrase;
+anchored regular expression;
+OCR-tolerant phrase;
+short fallback label only when value type and layout agree.
+
+Examples requiring longest-first handling include:
+
+current payment due date before payment due;
+total minimum payment due before minimum payment;
+principal balance before balance;
+transaction type and details before type;
+opening interest rate before opening;
+total of new transactions for before new transactions for.
+23. Add context and scope controls
+
+Support constraints beyond where: page1, including:
+
+page 1 only;
+first statement page;
+outside transaction table;
+inside summary region;
+inside fee-summary table;
+inside loan-summary table;
+immediately after label;
+same line;
+next line;
+right of label;
+below label;
+before transaction table;
+group heading only.
+
+This will materially reduce collisions involving words such as balance, payment, date, interest, opening and closing.
+
+24. Add reconciliation-based confidence
+
+A strong extractor should validate results through financial relationships where the document supplies enough evidence.
+
+Examples include:
+
+opening balance, credits, debits and closing balance;
+previous balance, payments, purchases and current balance;
+page brought-forward and carried-forward values;
+transaction balance movement;
+page totals and period totals;
+loan principal balance continuity.
+
+American Express prints a balance equation across the summary, while ANZ supplies page and period totals and repeated running balances.
+
+Reconciliation should:
+
+increase confidence when values agree;
+flag mismatches;
+never silently alter extracted values;
+identify the likely failing page or row;
+retain both printed and calculated results.
+25. Add multi-document segmentation
+
+Several supplied PDFs contain multiple statements and other document types in one file. The extractor should segment using combinations of:
+
+document title;
+statement number;
+account number;
+statement period;
+opening or closing date;
+page numbering reset;
+account section heading;
+repeated issuer header.
+
+A new statement should begin when strong document-start evidence appears, even when the PDF itself is one file.
+
+This is critical for Amex, ANZ - 9 Columns (4) and ANZ Loan (5), each of which contains multiple pages or statement instances.
+
+Complete Priority List
+Priority 1: Required for accurate extraction
+Separate label, header, structure, direction and transaction-class vocabularies.
+Support multiple statements within one PDF.
+Support multiple date concepts, including transaction, processed, effective and snapshot dates.
+Support single-amount tables using CR/DR suffixes.
+Support separate withdrawal and deposit columns.
+Support multi-column descriptions without losing intermediate fields.
+Add statement, card, customer, membership, loan and facility identifiers.
+Add structural group headings, subtotals, page totals and continuation rows.
+Add ordinal-date normalisation and year inference.
+Add leading minus, trailing minus, parentheses, CR, DR and OD monetary forms.
+Add open date ranges such as START - date.
+Add reconciliation and confidence scoring.
+Remove "test" from closing_balance.
+Remove unqualified opening and closing from statement date labels.
+Avoid generic substring-only matching.
+Priority 2: Required for broad product coverage
+Add credit-card payment, credit-limit and amount-payable fields.
+Add loan balances, repayments, interest, review dates and maturity fields.
+Add account snapshot fields, including frozen and uncleared amounts.
+Add foreign-currency details, conversion rates and commissions.
+Add percentage and duration value types.
+Add transaction-code dictionaries.
+Add fee, interest, reversal, adjustment, transfer, payment, tax, cash and loan classes.
+Retain valid zero-amount account events.
+Classify notices and informational pages separately.
+Propagate card, account and section context to following rows.
+Priority 3: Production hardening
+Add schema versions and migration rules.
+Add duplicate and collision validation.
+Add conservative OCR normalisation.
+Preserve raw text, location, source page and matched wording.
+Build a regression suite from every supplied statement family.
+Record unmatched high-confidence labels and headers for maintainer review.
+Test statement segmentation, row counts, totals and balance continuity.
+Final conclusion
+
+The recommendations now cover everything materially identified in this conversation and all supplied statement examples reviewed so far.
+
+The three newest files add the final major structural requirements:
+
+American Express adds membership identifiers, cardholder transaction groups, amount payable, foreign-spending detail, single-amount CR notation and per-cardholder subtotals.
+ANZ transaction statements add a combined multi-column description structure, code legends, page and period totals, open-ended statement periods, no-transaction periods and account-level available credit.ANZ loan documents add principal balances, processed dates, loan summaries, principal and interest totals, next-payment fields, rate-review dates, maturity dates, fee-summary tables and rate-change notices.
+
+The result should not be implemented as one enormous flat vocabulary. The production design should be a controlled hierarchy of:
+
+document labels;
+table headers;
+direction evidence;
+transaction classes;
+structural rows;
+document and section types;
+typed values;
+reconciliation rules; and
+extraction provenance.
+
+That structure gives you complete coverage of the supplied corpus while remaining maintainable when the next unfamiliar bank statement appears.
