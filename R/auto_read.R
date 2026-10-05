@@ -233,11 +233,23 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     if (anyNA(v) || v[1] > v[2]) NULL else v
   })
   pb <- Filter(Negate(is.null), pb)
+  # A period the statement LABELS as its own ("Statement period ...") is one of its
+  # periods wherever it sits: a file of several statements prints one per
+  # statement, and their periods need not meet (17 Apr, then 20 Apr after a
+  # weekend). A row inside any of them is inside the statement's period.
+  if (identical(md$period_source, "labelled") && length(pb)) {
+    all <- c(list(first), pb)
+    all <- all[!duplicated(vapply(all, function(v) paste(as.numeric(v), collapse = "-"), ""))]
+    return(lapply(all, as.character))
+  }
+  # Ranges nobody labelled join only when they follow on, a weekend or a public
+  # holiday apart at most: one account's consecutive periods.
+  gap <- 4
   keep <- list(first)
   repeat {
     lo <- min(vapply(keep, function(v) as.numeric(v[1]), 0)); hi <- max(vapply(keep, function(v) as.numeric(v[2]), 0))
-    add <- Filter(function(v) (as.numeric(v[1]) >= hi && as.numeric(v[1]) <= hi + 1) ||
-                              (as.numeric(v[2]) <= lo && as.numeric(v[2]) >= lo - 1), pb)
+    add <- Filter(function(v) (as.numeric(v[1]) >= hi && as.numeric(v[1]) <= hi + gap) ||
+                              (as.numeric(v[2]) <= lo && as.numeric(v[2]) >= lo - gap), pb)
     add <- Filter(function(v) !any(vapply(keep, function(k) identical(k, v), logical(1))), add)
     if (!length(add)) break
     keep <- c(keep, add[1])
@@ -886,6 +898,9 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     cl <- .ar_closing_value(model$anchors, rd, ctx$decimal, n)
     if (!is.na(op)) parsed$header$opening_balance <- op
     if (!is.na(cl)) parsed$header$closing_balance <- cl
+    # Every printed period this statement's rows may fall in (a file of several
+    # statements prints one each), for reconcile's dates-in-period check.
+    if (length(ctx$md$periods) > 1L) parsed$header$periods <- ctx$md$periods
   }
   list(parsed = parsed, tx = tx, page = page)
 }

@@ -688,6 +688,13 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
   p0 <- pdate(md$period_start); p1 <- pdate(md$period_end)
   yrs <- suppressWarnings(as.integer(format(c(p0, p1)[!is.na(c(p0, p1))], "%Y")))
   yrs <- unique(yrs[!is.na(yrs)])
+  # A file of several statements prints one period each (md$periods, set by the
+  # reader). A row printed as day and month takes the year that puts it inside one
+  # of them: "22 Dec" in a file whose periods run Dec 2025 to Jun 2026 is 2025.
+  pers <- Filter(function(pp) !anyNA(pp),
+                 lapply(md$periods %||% list(), function(pp) c(pdate(pp[1]), pdate(pp[2]))))
+  if (length(pers) > 1L)
+    yrs <- unique(c(yrs, unlist(lapply(pers, function(pp) as.integer(format(pp, "%Y"))))))
   # Some statements print day/month only in the table AND give no parseable
   # period. Rather than silently drop EVERY row (year-less dates parse to NA
   # and fail the date filter), scan the page text for a plausible 4-digit year.
@@ -732,8 +739,10 @@ parse_pdf_table <- function(input, template, force_rows = NULL, meta = NULL) {
     out <- vapply(raw, function(r) {
       if (is.na(r) || !nzchar(trimws(r))) return(NA_character_)
       cand <- suppressWarnings(as.Date(paste(r, yrs), fmt))
-      inp <- !is.na(cand) & (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1) &
-        (is.na(year_cap) | cand <= year_cap)
+      inside <- if (length(pers) > 1L)
+        Reduce(`|`, lapply(pers, function(pp) !is.na(cand) & cand >= pp[1] & cand <= pp[2]))
+        else (is.na(p0) | cand >= p0) & (is.na(p1) | cand <= p1)
+      inp <- !is.na(cand) & inside & (is.na(year_cap) | cand <= year_cap)
       pick <- if (any(inp)) which(inp)[1] else which(!is.na(cand))[1]
       if (is.na(pick)) pick <- 1L
       paste(r, yrs[pick])

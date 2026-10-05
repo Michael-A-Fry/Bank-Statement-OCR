@@ -351,6 +351,12 @@
     return(.kpi("dates_within_period", "na", detail = "statement period not available"))
   d <- suppressWarnings(as.Date(tx$date))
   within <- !is.na(d) & d >= ps & d <= pe
+  # A file of several statements prints one period each (h$periods, set by the
+  # reader): a row inside any of them is inside the statement's period.
+  for (pp in h$periods %||% list()) {
+    a <- .tolerant_date(pp[1]); b <- .tolerant_date(pp[2])
+    if (!is.na(a) && !is.na(b)) within <- within | (!is.na(d) & d >= a & d <= b)
+  }
   outside <- sum(!within, na.rm = TRUE)
   # EXPECTED AND ACTUAL MUST BE THE SAME KIND OF THING. They are rendered side by
   # side under exactly those two headings, and this check used to put a date RANGE

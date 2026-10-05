@@ -1431,3 +1431,28 @@ test_that("summary figures named by the arithmetic: the summary-box order rule i
   expect_false(ar_auto(auto_read(ar_pdf(below))))
   gf_ok(auto_read(ar_pdf(c(below, "", "Page 1 of 1"))))
 })
+
+test_that("a file of several statements read whole: each row takes the year of the period it falls in", {
+  # Statement periods a weekend apart (19 Feb ... 20 Feb is fine; 17 Apr then
+  # 20 Apr is the common case), rows printed as day and month only. Read whole,
+  # "22 Dec" belongs to the first statement's period (2025), not the last's
+  # (2026), and every row is inside one of the printed periods.
+  p1 <- c("Kauri Bank                         Statement period 20 Dec 2025 to 16 Jan 2026", "",
+          "Date     Details                          Withdrawals     Deposits      Balance",
+          "         Opening balance                                                  1,000.00",
+          "22 Dec   EFTPOS RIVERSIDE DAIRY                      12.40                    987.60",
+          "05 Jan   SALARY MATAI HOLDINGS                                  3,120.00    4,107.60",
+          "         Closing balance                                                  4,107.60")
+  p2 <- c("Kauri Bank                         Statement period 19 Jan 2026 to 13 Feb 2026", "",
+          "Date     Details                          Withdrawals     Deposits      Balance",
+          "         Opening balance                                                  4,107.60",
+          "21 Jan   DD CITY COUNCIL RATES                      268.15                  3,839.45",
+          "09 Feb   TRANSFER TO SAVINGS                        400.00                  3,439.45",
+          "         Closing balance                                                  3,439.45")
+  rd <- auto_read(ar_pdf(p1, p2))
+  expect_identical(as.character(rd$transactions$date), c("2025-12-22", "2026-01-05", "2026-01-21", "2026-02-09"))
+  expect_true(isTRUE(ok_of(rd, "dates_in_period")))
+  k <- rd$recon$kpis
+  if (is.data.frame(k) && "dates_within_period" %in% k$name)
+    expect_identical(k$status[k$name == "dates_within_period"], "pass")
+})
