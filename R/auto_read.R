@@ -1896,6 +1896,49 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   list(ok = TRUE, why = "Every word on the table rows falls in exactly one column.")
 }
 
+# .ar_column_examples(model, tpl, n) -- for each column of figures, the first `n`
+# table lines that print something in it, as printed: the line's date, its words
+# and the figure. Please check asks a person what a column is by SHOWING them
+# lines from it ("3 Mar  COUNTDOWN  45.20 -- did this go out or come in?"); a
+# heading word alone ("Debits") is not something everyone can answer from.
+# Read from the page's own words, so the lines are the column's whatever the
+# reading decided the column is. data.frame(field, date, description, figure).
+.ar_column_examples <- function(model, tpl, n = 2L) {
+  out <- list()
+  txt <- function(w, lo, hi) {
+    s <- w[w$cx >= lo & w$cx < hi, , drop = FALSE]
+    trimws(paste(s$text[order(s$x)], collapse = " "))
+  }
+  for (p in seq_along(tpl$boxes)) {
+    bx <- tpl$boxes[[p]]; pg <- model$pgs[[p]]
+    if (is.null(bx) || is.null(pg) || !nrow(bx)) next
+    lines <- model$rows$line[model$rows$page == p]
+    w <- pg$w[pg$w$line %in% lines, , drop = FALSE]
+    if (!nrow(w)) next
+    span <- function(f) { k <- which(bx$field == f); if (length(k)) c(bx$x_min[k[1]], bx$x_max[k[1]]) else NULL }
+    dsp <- span("date"); tsp <- span("description")
+    money <- bx$field[bx$field %in% c("debit", "credit", "amount", "balance") | grepl("^other[0-9]*$", bx$field)]
+    for (f in money) {
+      have <- sum(vapply(out, function(e) identical(e$field, f), logical(1)))
+      if (have >= n) next
+      sp <- span(f)
+      for (ln in lines) {
+        wl <- w[w$line == ln, , drop = FALSE]
+        fig <- txt(wl, sp[1], sp[2])
+        if (!nzchar(fig) || !grepl("[0-9]", fig)) next
+        out[[length(out) + 1L]] <- list(field = f,
+          date = if (is.null(dsp)) "" else txt(wl, dsp[1], dsp[2]),
+          description = if (is.null(tsp)) "" else substr(txt(wl, tsp[1], tsp[2]), 1L, 40L),
+          figure = fig)
+        have <- have + 1L
+        if (have >= n) break
+      }
+    }
+  }
+  if (!length(out)) return(NULL)
+  do.call(rbind, lapply(out, as.data.frame, stringsAsFactors = FALSE))
+}
+
 # ---- candidates and the decision ------------------------------------------------------------
 
 .ar_candidate <- function(source, tpl, post, ckl, rd, rl, basis, model, cs, headings, ctx) {
@@ -1912,6 +1955,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     data.frame(page = p, field = bx$field, kind = kind, x_min = bx$x_min, x_max = bx$x_max,
                ink_min = bx$ink_min, ink_max = bx$ink_max, heading = hd, stringsAsFactors = FALSE)
   }))
+  examples <- safe(.ar_column_examples(model, tpl), NULL)
   tpl$boxes <- NULL
   derived <- if (!is.null(post$tx)) sum(grepl("amount_from_balance", post$tx$flags, fixed = TRUE)) else 0L
   proof <- list(kind = ckl$proof_kind, links = as.integer(sc[["links"]]), held = as.integer(sc[["held"]]),
@@ -1925,7 +1969,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
          else "Nothing on the statement adds up to prove the reading."
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = post$parsed, tx = post$tx, checks = .ar_checks_df(ck), proof = proof,
-       columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
+       columns = cols_df, examples = examples, rd = rd, basis = basis, signature = tpl$signature,
        no_balance = rd$b == 0L, notes = rl$note %||% character(0))
 }
 
@@ -2210,7 +2254,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   if (!is.null(tpl)) tpl$auto$outcome <- outcome
   list(outcome = outcome, why = why, template = tpl, parsed = cd$parsed, recon = recon,
        transactions = cd$tx %||% .ar_empty_tx(), proof = cd$proof, checks = cd$checks,
-       candidates = cdf, columns = cd$columns, matched_layout = matched,
+       candidates = cdf, columns = cd$columns, examples = cd$examples, matched_layout = matched,
        notes = cd$notes %||% character(0), other_accounts = list())
 }
 

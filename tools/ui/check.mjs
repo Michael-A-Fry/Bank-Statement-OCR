@@ -316,7 +316,8 @@ async function run(browser, D) {
   check('each page carries its balance tick', (await text(page, '#cv_ck_pages')).includes('Page 1 \u2713'),
         await text(page, '#cv_ck_pages'));
   check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
-  check('one dropdown per column of figures', (await page.$$('select[id^="cv_ck_role_"]')).length === 3);
+  check('one question per column of figures', (await page.$$('.ck-ask')).length === 3);
+  check('...each shown by its own lines', (await text(page, '.ck-ask')).includes('Lines from this column'), await text(page, '.ck-ask'));
   check('someone not signed in as admin is offered no word teaching', !(await page.$('#cv_ck_teach')));
   await shot(page, '03-please-check-pdf');
   //    the last resort: drawing the columns by hand
@@ -333,7 +334,7 @@ async function run(browser, D) {
   for (let k = 1; k <= 12; k++) { await page.mouse.move(X(287 + k * 9.6), Y + k); await sleep(40); }
   await page.mouse.up(); await sleep(2200);
   await page.click('#ed_set'); await sleep(1200);
-  check('a drawn box is set as the column', (await text(page, '#ed_msg')).includes('Money out set on page 1'),
+  check('a drawn box is set as the column', (await text(page, '#ed_msg')).includes('Money going out set on page 1'),
         await text(page, '#ed_msg'));
   await page.click('#ed_save');
   const boxed = await rereadDone(page, '');
@@ -353,7 +354,7 @@ async function run(browser, D) {
         await page.evaluate(() => document.querySelector('#cv_status').innerText + document.querySelector('#cv_check').innerText)));
   check('an untouched reading offers no Undo', !(await page.$('#cv_ck_undo')));
   await shot(page, '05-please-check-csv');
-  await selectize(page, 'cv_ck_role_debit', 'credit'); await selectize(page, 'cv_ck_role_credit', 'debit');
+  await page.check('input[name="cv_ck_role_debit"][value="credit"]'); await page.check('input[name="cv_ck_role_credit"][value="debit"]'); await sleep(700);
   await page.click('#cv_ck_reread');
   const wrong = await rereadDone(page, '');
   check('a wrong reading is said not to prove, at once', wrong.startsWith('Still not proven'), wrong);
@@ -368,7 +369,7 @@ async function run(browser, D) {
   check('...and then offers no Undo', !(await page.$('#cv_ck_undo')));
   r = await rows(page);
   eq('...and the row is back to Please check', word('ambiguous.csv'), 'Please check');
-  await selectize(page, 'cv_ck_role_debit', 'debit'); await selectize(page, 'cv_ck_role_credit', 'credit');
+  await page.check('input[name="cv_ck_role_debit"][value="debit"]'); await page.check('input[name="cv_ck_role_credit"][value="credit"]'); await sleep(700);
   await page.click('#cv_ck_reread');
   const right = await rereadDone(page, undone);
   check('the right roles prove it, and it says so', right.startsWith('Proven'), right);

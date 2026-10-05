@@ -1456,3 +1456,18 @@ test_that("a file of several statements read whole: each row takes the year of t
   if (is.data.frame(k) && "dates_within_period" %in% k$name)
     expect_identical(k$status[k$name == "dates_within_period"], "pass")
 })
+
+test_that("a reading carries two of each money column's own lines, for Please check to ask about", {
+  r <- auto_read(read_input(file.path(engine_root(), "tests", "testthat", "fixtures", "anz_everyday_pdf_sample.pdf")))
+  ex <- r$examples
+  expect_true(is.data.frame(ex))
+  expect_setequal(unique(ex$field), c("debit", "credit", "balance"))
+  expect_true(all(table(ex$field) <= 2L))
+  # the lines are the column's as printed: a money-out figure with its own row's words
+  d <- ex[ex$field == "debit", ]
+  expect_equal(d$figure[1], "12.40"); expect_equal(d$description[1], "EFTPOS RIVERSIDE DAIRY")
+  expect_equal(d$date[1], "03 Feb")
+  # and a spreadsheet's, from its cells
+  r2 <- auto_read(read_input(file.path(engine_root(), "tests", "testthat", "fixtures", "debit_credit_cols.csv")))
+  expect_true(all(c("debit", "credit") %in% r2$examples$field))
+})

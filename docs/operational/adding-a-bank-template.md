@@ -19,7 +19,7 @@ bank before:
 | Outcome | What it means for the new bank |
 |---|---|
 | **Proven** | Done. The tool has also **learned** this design as a new layout of that bank, marked *(new)* in the row. It is *provisional* until three statements of that design have proved it, or until an admin confirms it. |
-| **Please check** | Read, but not proven. Open **Please check**, set the column that is wrong (*Money out*, *Money in*, *Balance*...) and press **Re-read**. If it now proves, the fix is learned for that bank straight away. |
+| **Please check** | Read, but not proven. Open **Please check**, answer the question for the column that is wrong (money going *out*, money coming *in*, the *balance*...) and press **Read it again**. If it now proves, the fix is learned for that bank straight away. |
 | **Couldn't read** | Nothing usable was read. Try **Please check** if it offers columns. Otherwise **Draw the columns yourself** (the last resort, for this file only), or set the file aside and tell whoever looks after the tool. |
 
 **A statement with no running balance and no totals** cannot prove itself

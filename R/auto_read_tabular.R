@@ -676,6 +676,22 @@
     heading = tt$heads, stringsAsFactors = FALSE)
   cols_df <- cols_df[nzchar(cols_df$field), , drop = FALSE]
   rownames(cols_df) <- NULL
+  # Two lines from each column of figures, as the file holds them, for Please
+  # check to ask about (see .ar_column_examples).
+  examples <- safe({
+    m <- tt$m; f <- ifelse(is.na(fields), "", fields)
+    dj <- which(f == "date")[1]; tj <- which(f == "description")[1]
+    ex <- list()
+    for (j in which(kind == "money" & nzchar(f))) {
+      rr <- tt$body[nzchar(trimws(m[tt$body, j])) & !is.na(m[tt$body, j])]
+      for (r in utils::head(rr, 2L))
+        ex[[length(ex) + 1L]] <- data.frame(field = f[j],
+          date = if (is.na(dj)) "" else trimws(m[r, dj]),
+          description = if (is.na(tj)) "" else substr(trimws(m[r, tj]), 1L, 40L),
+          figure = trimws(m[r, j]), stringsAsFactors = FALSE)
+    }
+    if (length(ex)) do.call(rbind, ex) else NULL
+  }, NULL)
   proof <- list(kind = ckl$proof_kind, links = as.integer(sc[["links"]]), held = as.integer(sc[["held"]]),
                 unique = identical(basis, "arithmetic"), pages_with_rows = if (nrow(tx)) 1L else integer(0),
                 pages_used = 1L, derived = 0L,
@@ -686,6 +702,6 @@
          else "Nothing in the file adds up to prove the reading."
   list(source = source, passed = passed, failing = failing, why = why, template = tpl,
        parsed = parsed, tx = tx, checks = .ar_checks_df(ck), proof = proof,
-       columns = cols_df, rd = rd, basis = basis, signature = tpl$signature,
+       columns = cols_df, examples = examples, rd = rd, basis = basis, signature = tpl$signature,
        no_balance = rd$b == 0L, notes = rl$note %||% character(0))
 }

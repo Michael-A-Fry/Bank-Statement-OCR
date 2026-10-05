@@ -1453,7 +1453,7 @@ test_that("Re-read sends the roles as a fix, and the answer goes back where it c
   expect_false(grepl("src\\$bank", joined))
   # "This is right" vouches for the reading ON SCREEN, never a dropdown not yet re-read
   cf <- .src_block(src, "observeEvent\\(input\\$cv_ck_confirm, \\{", 16L)
-  expect_match(cf, "press Re-read first")
+  expect_match(cf, "press Read it again first")
   expect_match(cf, "\\.reread\\(cv_ov\\(\\), confirm = TRUE")
   # a confirm the engine refuses is said, in the engine's own words
   words <- .ui_fun(".reread_words", also = c("plain_messages", ".sentence"), consts = ".AUDIT_GAP_RX")
@@ -1812,4 +1812,26 @@ test_that("a wording can be taught from the statement on Please check, by an adm
   expect_match(ui, "req\\(admin_ok\\(\\)\\)")
   expect_match(ui, "word_meaning_choices\\(blank = TRUE\\)")
   expect_match(ui, "create = TRUE")                   # pick from the page, or type it
+})
+
+# ---------------------------------------------------------------------------
+# Please check asks what each column of figures is with the column's OWN lines
+# and the answers in plain words. A dropdown labelled "Money out" holding "Money
+# out" asked nothing anyone could answer with confidence.
+test_that("each column of figures is asked about with its own lines, in plain words", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  L <- new.env(); sys.source(file.path(engine_root(), "ui_labels.R"), envir = L)
+  expect_identical(names(L$ROLE_ASK), names(L$ROLE_PLAIN))      # every role is asked, none extra
+  expect_true(all(lengths(L$ROLE_ASK) == 2L))                    # each with what it means
+  expect_match(L$ROLE_ASK$debit[1], "OUT of the account")
+  expect_match(L$ROLE_ASK$credit[1], "IN to the account")
+  ask <- .src_block(src, "\\.ck_ask <- function", 20L)
+  expect_match(ask, 'radioButtons\\(paste0\\("cv_ck_role_", f\\)')  # the id Read it again reads
+  expect_match(ask, "Lines from this column")
+  expect_match(ask, "ex\\$field == f")
+  expect_match(joined, "What is each column\\?")
+  expect_match(joined, 'actionButton\\("cv_ck_reread", "Read it again"')
+  expect_false(grepl("role_choices", joined, fixed = TRUE))       # the old dropdowns are gone
+  # the page numbers its columns of figures the same way the questions do
+  expect_match(.src_block(src, "output\\$cv_ck_plot <- renderPlot", 30L), 'sprintf\\("%d %s", qn\\[j\\]')
 })

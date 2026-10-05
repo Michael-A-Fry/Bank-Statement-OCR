@@ -96,8 +96,13 @@ prove. On a proven statement it is one quiet link, **See how it was read**.
 
 Then one of three things:
 
-1. **The reading is wrong. Fix it.** Set the dropdown for the column that is
-   wrong and press **Re-read**. It says at once whether the reading now proves.
+1. **The reading is wrong. Fix it.** Under **What is each column?**, each column
+   of figures is numbered on the page and shown by two of its own lines, with
+   the question in plain words: money going **out** of the account (things
+   bought, bills paid, cash taken out), money coming **in** (pay, deposits,
+   refunds, payments onto a card), both in one column, or what is left after
+   each line (the balance). The tool's guess is ticked. Change any that is
+   wrong and press **Read it again**. It says at once whether the reading now proves.
    If it does, it converts, and the fix is **learned** for that bank, so the
    next statement like this one is read right without you.
 2. **The reading is right. Press This is right.** The conversion becomes yours,
@@ -111,7 +116,7 @@ Then one of three things:
    page. **Set** or **Remove** a column, or use one page's columns on every page,
    then **Re-read with these columns**. Columns you draw are never learned.
 
-You changed a dropdown and it made things worse? **Undo my changes** puts the
+You changed an answer and it made things worse? **Undo my changes** puts the
 reading back as it was. It is offered on any reading made with your fix, even
 after you open another file and come back.
 

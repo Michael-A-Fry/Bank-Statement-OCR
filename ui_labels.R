@@ -221,8 +221,18 @@ plain_outcome <- function(status, outcome = NA, basis = NA, reason = NA, fix = N
 
 # The roles a column of figures can be given on Please check, as R/convert.R
 # takes them (overrides$roles), in the words the person chooses from.
-ROLE_PLAIN <- c(debit = "Money out", credit = "Money in", amount = "Amount (+ in, - out)",
-                balance = "Balance", other = "Not money in or out")
+ROLE_PLAIN <- c(debit = "Money going out", credit = "Money coming in", amount = "Both, in one column",
+                balance = "Balance", other = "None of these")
+# ROLE_ASK -- the same roles as Please check ASKS them: what the column is, and
+# what that means, in words anyone can answer. "Money out" on its own was not
+# clear enough to answer: out of what, and does a card payment count? Each answer
+# is shown under lines from the column itself (R/auto_read.R .ar_column_examples).
+ROLE_ASK <- list(
+  debit   = c("Money going OUT of the account", "Things bought, bills paid, cash taken out"),
+  credit  = c("Money coming IN to the account", "Pay, deposits, refunds, payments onto a card"),
+  amount  = c("Both, in one column", "A minus sign, or DR, means the money went out"),
+  balance = c("What is left in the account after each line", "The balance"),
+  other   = c("None of these", "Ignore this column"))
 # plain_column(field) -- a found column's name as the page labels it: the reader
 # calls a figure column it cannot place other1, other2 and a spare text column
 # text1, text2.
@@ -231,7 +241,7 @@ plain_column <- function(field) vapply(as.character(field), function(f) {
   n <- sub("^(other|text)", "", f)
   if (grepl("^other[0-9]*$", f)) return(trimws(paste("Other figure", n)))
   if (grepl("^text[0-9]*$", f)) return(trimws(paste("Text", n)))
-  lab <- c(debit = "Money out", credit = "Money in", date2 = "Second date", weekday = "Day")[f]
+  lab <- c(debit = "Money going out", credit = "Money coming in", date2 = "Second date", weekday = "Day")[f]
   if (!is.na(lab)) unname(lab) else cv_friendly_cols(f)
 }, character(1), USE.NAMES = FALSE)
 

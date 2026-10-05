@@ -869,7 +869,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     result$reading <- lapply(seq_len(k), function(i) {
       r <- readings[[i]]
       list(outcome = r$outcome, why = r$why, pages = units[[i]]$pages, proof = r$proof, checks = r$checks,
-           candidates = r$candidates, columns = file_cols(i), matched_layout = r$matched_layout,
+           candidates = r$candidates, columns = file_cols(i), examples = r$examples,
+           matched_layout = r$matched_layout,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
            transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]],
            other_accounts = r$other_accounts %||% list())

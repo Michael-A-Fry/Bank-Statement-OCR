@@ -4144,13 +4144,20 @@ server <- function(input, output, session) {
       text(r$w / 2, 30, "No columns were found on this page.", col = PALETTE$bad, font = 2)
       return(invisible())
     }
+    # Each column of figures carries the number of its question beside the page.
+    qn <- match(cols$field, .ck_money(res, s)$field)
     for (j in seq_len(nrow(cols))) {
       cc <- .ck_col_colour(cols$field[j], cols$kind[j])
       # the band the column owns, and inside it the ink that was actually read
       rect(cols$x_min[j], 0, cols$x_max[j], r$h, border = cc, lwd = 1.6, lty = 2)
       if (all(is.finite(c(cols$ink_min[j], cols$ink_max[j]))))
         rect(cols$ink_min[j], 0, cols$ink_max[j], r$h, col = paste0(cc, "1f"), border = NA)
-      .col_label((cols$x_min[j] + cols$x_max[j]) / 2, plain_column(cols$field[j]), cc)
+      # A column of figures is labelled with its question's number and one short
+      # word: a band is too narrow for "Money going out".
+      short <- c(debit = "Out", credit = "In", amount = "In/Out", balance = "Balance")[cols$field[j]]
+      .col_label((cols$x_min[j] + cols$x_max[j]) / 2,
+                 if (is.na(qn[j])) plain_column(cols$field[j])
+                 else sprintf("%d %s", qn[j], if (is.na(short)) "Other" else short), cc)
     }
   }, height = function() {
     w <- session$clientData$output_cv_ck_plot_width %||% 600
@@ -4180,6 +4187,25 @@ server <- function(input, output, session) {
                stringsAsFactors = FALSE)
   }
   .field_role <- function(f) if (grepl("^other[0-9]*$", f)) "other" else f
+  # .ck_ask(f, j, n, heading, ex, sel) -- one column's question: its number and
+  # colour as drawn on the page, two of its own lines, and the plain answers.
+  .ck_ask <- function(f, j, n, heading, ex, sel) {
+    cc <- .ck_col_colour(f, "money")
+    hd <- trimws(as.character(heading %||% ""))
+    rows <- if (is.data.frame(ex) && nrow(ex)) ex[ex$field == f, , drop = FALSE] else NULL
+    div(class = "ck-ask",
+      div(class = "ck-ask-head",
+        span(class = "ck-swatch", style = sprintf("background:%s", cc)),
+        sprintf("Column %d of %d", j, n),
+        if (nzchar(hd)) span(class = "muted", style = "font-weight:400", sprintf(" - headed \"%s\"", substr(hd, 1, 40)))),
+      if (!is.null(rows) && nrow(rows)) tagList(
+        div(class = "ck-ask-label", "Lines from this column:"),
+        tags$table(class = "ck-ask-lines", tags$tbody(lapply(seq_len(nrow(rows)), function(i) tags$tr(
+          tags$td(rows$date[i]), tags$td(rows$description[i]), tags$td(class = "ck-ask-fig", rows$figure[i])))))),
+      radioButtons(paste0("cv_ck_role_", f), "What is this column?", selected = sel, width = "100%",
+        choiceValues = names(ROLE_ASK),
+        choiceNames = unname(lapply(ROLE_ASK, function(a) tagList(tags$b(a[1]), tags$br(), span(class = "muted", a[2]))))))
+  }
   # .ck_fixed(res) -- was the result on the page read with a person's fix?
   .ck_fixed <- function(res) !is.null(cv_ov()) || !is.na(as.character(res$person$fix %||% NA_character_)[1])
   output$cv_ck_side <- renderUI({
@@ -4189,28 +4215,29 @@ server <- function(input, output, session) {
     money <- .ck_money(res, s)
     others <- unique(as.character(rd$columns$field[!(rd$columns$kind %in% "money")]))
     ov <- cv_ov()$roles
-    role_choices <- stats::setNames(names(ROLE_PLAIN), unname(ROLE_PLAIN))
+    ex <- rd$examples
     ck <- rd$checks
     bad <- if (is.data.frame(ck)) ck[ck$ok %in% FALSE, , drop = FALSE] else NULL
     tagList(
-      h5(style = "margin-top:0", "What each column of figures is"),
+      # ONE QUESTION PER COLUMN, ASKED WITH THE COLUMN'S OWN LINES. A dropdown
+      # labelled "Money out" holding "Money out" asked nothing anyone could answer
+      # with confidence. Each column of figures is numbered on the page, and here
+      # it is shown by two of its own lines ("3 Feb  EFTPOS RIVERSIDE DAIRY  12.40")
+      # with the question in plain words. The tool's guess is ticked already.
+      h5(style = "margin-top:0", "What is each column?"),
+      if (nrow(money)) p(class = "muted", style = "font-size:12.5px;margin:-4px 0 8px",
+        "The columns of figures are numbered on the page. The tool's guess is ticked - change any that is wrong, then press Read it again."),
       if (!nrow(money)) p(class = "muted", "No column of figures was found on this statement.")
       else lapply(seq_len(nrow(money)), function(j) {
         f <- money$field[j]
         sel <- if (!is.null(ov) && f %in% names(ov)) as.character(ov[[f]]) else .field_role(f)
-        hd <- trimws(money$heading[j])
-        div(class = "ck-role",
-          selectInput(paste0("cv_ck_role_", f),
-                      label = tagList(plain_column(f),
-                                      if (nzchar(hd)) span(class = "muted", style = "font-weight:400",
-                                                           sprintf(" - headed \"%s\"", substr(hd, 1, 40)))),
-                      choices = role_choices, selected = sel, width = "100%"))
+        .ck_ask(f, j, nrow(money), money$heading[j], ex, sel)
       }),
       if (length(others)) p(class = "muted", style = "font-size:12.5px",
         sprintf("Also found: %s. Dates and words are recognised by what they are.",
                 paste(plain_column(others), collapse = ", "))),
       div(style = "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0",
-        if (nrow(money)) actionButton("cv_ck_reread", "Re-read", class = "btn-primary"),
+        if (nrow(money)) actionButton("cv_ck_reread", "Read it again", class = "btn-primary"),
         if (need && !identical(res$status, "unsupported"))
           actionButton("cv_ck_confirm", "This is right", class = "btn-default")),
       uiOutput("cv_ck_msg"),
@@ -4412,7 +4439,7 @@ server <- function(input, output, session) {
     ov <- .ck_roles_overrides(); now <- cv_ov()$roles
     shown <- if (is.null(now)) vapply(names(ov$roles), .field_role, "") else unlist(now)[names(ov$roles)]
     if (!is.null(ov) && !identical(unname(as.character(ov$roles)), unname(as.character(shown)))) {
-      notify_once("cv_reread", "You changed what a column is - press Re-read first, then confirm what it reads.",
+      notify_once("cv_reread", "You changed what a column is - press Read it again first, then confirm what it reads.",
                   duration = 8)
       return()
     }
@@ -4433,8 +4460,8 @@ server <- function(input, output, session) {
   # short delay fires mid-drag the moment somebody pauses, and the rectangle is
   # wiped with the mouse still down. A delay longer than any drag means the ONE
   # brush that arrives is the finished box.
-  .ED_FIELDS <- c("Date" = "date", "Description" = "description", "Money out" = "debit",
-                  "Money in" = "credit", "Amount (+ in, - out)" = "amount", "Balance" = "balance",
+  .ED_FIELDS <- c("Date" = "date", "Description" = "description", "Money going out" = "debit",
+                  "Money coming in" = "credit", "Both, in one column (+ in, - out)" = "amount", "Balance" = "balance",
                   "Particulars" = "particulars", "Code" = "code", "Reference" = "reference",
                   "Other party" = "other_party", "Type" = "type", "Second date" = "date2")
   ed <- reactiveVal(NULL)   # list(stmt, pages, boxes = data.frame(page, field, x_min, x_max))

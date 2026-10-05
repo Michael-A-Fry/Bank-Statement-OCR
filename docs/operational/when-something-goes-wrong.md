@@ -13,8 +13,8 @@ act on that.
 2. **Open Please check** (*Please check ->* in the row). It shows the columns the
    tool found, drawn on the page for a PDF or listed for a CSV or Excel file,
    with a tick or a cross for each page, and the checks that did not hold. Most
-   problems are fixed there in two clicks: set the column that is wrong, then
-   **Re-read** ([converting-statements.md](converting-statements.md)).
+   problems are fixed there in two clicks: answer what the wrong column is, then
+   **Read it again** ([converting-statements.md](converting-statements.md)).
 3. **For the detail**, the **Checks**, the **Diagnostics** and the **Field
    coverage** sit under your transactions in one disclosure headed
    **Checks & detail (for review)**. It is already open whenever the run needs a person. On
@@ -102,7 +102,8 @@ the sentence.
 
 1. **A column read as the wrong thing.** Symptom: *the balance does not add up*
    from the first row, or every sign the wrong way round. Fix it on Please check:
-   set the column (money out, money in, balance) and Re-read.
+   answer what the column is (money going out, money coming in, the balance)
+   and press Read it again.
 2. **A row the reading missed or added.** Symptom: *the balance does not add up
    at row N*, with the rows on either side right. Look at that row on the page in
    Please check. A wrapped description, a summary line, or a smudge on a scan is

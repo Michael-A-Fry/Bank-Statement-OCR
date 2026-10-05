@@ -498,3 +498,13 @@ test_that("every delimited sample in the corpus is still read as a table", {
                    info = paste("newly unreadable:", paste(basename(bad), collapse = ", ")))
 })
 
+
+test_that("the conversion hands the screen two lines from each column of figures", {
+  out <- tempfile("conv"); dir.create(out)
+  res <- convert_statement(file.path(engine_root(), "tests", "testthat", "fixtures", "anz_everyday_pdf_sample.pdf"),
+                           bank = "anz", outdir = out, logdir = file.path(out, "logs"), log = FALSE,
+                           layouts_dir = file.path(out, "lay"), tracking_dir = NA)
+  ex <- res$reading[[1]]$examples
+  expect_true(is.data.frame(ex) && nrow(ex) > 0L)
+  expect_true(all(c("field", "date", "description", "figure") %in% names(ex)))
+})
