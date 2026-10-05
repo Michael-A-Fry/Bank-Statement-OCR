@@ -37,6 +37,7 @@ R/   -- the conversion path (input -> read -> proven -> written)
   normalise.R           parse_date / parse_amount / clean_description (verbatim), date and delimiter resolution
   labels.R              label dictionary + matcher (single labelled values)
   lexicon.R             externalised recognition vocabularies (admin-editable)
+  words.R               what a wording means, in one list with examples; teaching one, refusing clashes (Admin -> Words, Please check)
   extract_metadata.R    generic statement metadata + multi-statement detection
   split.R               deterministic split of a bundled upload, each statement read on its own
   reconcile.R           reconciliation KPIs + deterministic trust mapping
