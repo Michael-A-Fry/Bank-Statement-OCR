@@ -335,6 +335,9 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL) {
 # recipes_default().
 recipe_first <- function(input, bank = NULL, opts = list()) {
   rcs <- opts$recipes
+  # options(bso.recipes = FALSE): read without recipes, as the automatic reader
+  # alone would (measuring the reader; tests of what it learns).
+  if (is.null(rcs) && isFALSE(getOption("bso.recipes"))) rcs <- FALSE
   if (isFALSE(rcs)) return(NULL)
   if (is.null(rcs)) rcs <- recipes_default()
   rg <- recipe_recognise(input, rcs, bank)
@@ -429,6 +432,10 @@ recipe_read <- function(input, rc) {
     if (any(cnt > 1)) return(.rc_fail(rc, sprintf("Page %d prints \"%s\" twice, so the statements on it cannot be told apart by page.",
                                                    which(cnt > 1)[1], rc$starts[1])))
     starts <- which(cnt > 0)
+    # A design that prints its start words at the top of EVERY page ("Statement of
+    # Accounts") marks no starts with them on a page numbered 2 or later.
+    later <- grepl("[Pp]age\\s+([2-9]|[1-9][0-9]+)\\s+of\\s+[0-9]+", .page_texts(input))
+    starts <- starts[!later[starts]]
   }
   # No start phrase found (or none named): each statement starts where the page
   # numbering restarts ("Page 1 of N"), the same signal the file splitter uses.
@@ -1184,7 +1191,7 @@ recipe_read <- function(input, rc) {
        candidates = data.frame(source = paste0("recipe:", rc$ref), passed = isTRUE(u$passed), why = u$why %||% "",
                                stringsAsFactors = FALSE),
        columns = .rc_columns(st, rc), examples = safe(.rc_examples(list(u)), NULL), matched_layout = NULL, matched_recipe = rc$ref,
-       recipe_title = rc$title, notes = character(0), other_accounts = list(),
+       recipe_title = rc$title, recipe_bank = rc$bank, notes = character(0), other_accounts = list(),
        statements = list(.rc_statement_summary(u, st$pages, 1L)))
 }
 
@@ -1246,7 +1253,7 @@ recipe_read <- function(input, rc) {
   list(outcome = if (passed) "proven" else "check", why = why, template = tpl, parsed = comb$parsed,
        recon = comb$recon, transactions = tx, proof = proof, checks = checks,
        candidates = data.frame(source = paste0("recipe:", rc$ref), passed = passed, why = why, stringsAsFactors = FALSE),
-       columns = cols, examples = safe(.rc_examples(us), NULL), matched_layout = NULL, matched_recipe = rc$ref, recipe_title = rc$title,
+       columns = cols, examples = safe(.rc_examples(us), NULL), matched_layout = NULL, matched_recipe = rc$ref, recipe_title = rc$title, recipe_bank = rc$bank,
        notes = character(0), other_accounts = list(),
        statements = lapply(seq_len(k), function(i) .rc_statement_summary(us[[i]], ranges[[i]], i)))
 }

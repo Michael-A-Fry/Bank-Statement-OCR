@@ -957,9 +957,12 @@ test_that("metamorphic: dropping a page of a bundle is caught or still right", {
   skip_if_not(file.exists(p))
   inp <- read_input(p)
   full <- auto_read(inp)
-  # Read whole, a bundle is never automatic (round 2: one_statement); the rule
-  # below is the one that matters: a page dropped is never an automatic answer.
-  expect_false(ar_auto(full))
+  # Read whole by the automatic reader, a bundle is never automatic (round 2:
+  # one_statement). A recipe reads each statement on its own and proves each one
+  # and that each opens where the one before closed. The rule below is the one
+  # that matters: a page dropped is never an automatic answer.
+  expect_true(!ar_auto(full) || (!is.null(full$matched_recipe) && length(full$statements) == 2L))
+  expect_false(ar_auto(auto_read(inp, opts = list(recipes = FALSE))))
   drop2 <- inp
   for (k in c("words", "pages", "page_width", "page_height", "page_ocr")) if (!is.null(drop2[[k]])) drop2[[k]] <- drop2[[k]][-2]
   rd <- auto_read(drop2)

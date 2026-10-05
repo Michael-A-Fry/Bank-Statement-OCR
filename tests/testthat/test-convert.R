@@ -259,6 +259,9 @@ test_that("a fix for one statement of a bundle leaves the others alone", {
 })
 
 test_that("one bundle counts once towards a layout", {
+  # read by the automatic reader alone: a recipe reads this design, and a recipe
+  # reading teaches no layout
+  withr::local_options(bso.recipes = FALSE)
   cv <- convert_sandbox(); d <- sandbox_dir(cv)
   r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"), bank = "ANZ")
   expect_identical(r$run_log$learn_action, "created,none")

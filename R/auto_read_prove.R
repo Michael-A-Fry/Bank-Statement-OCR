@@ -239,7 +239,7 @@
     src <- c(src, paste0(a$class, if (carry) "~carry", if (isTRUE(a$named)) "~named",
                          if (a$in_table) "@table" else "@summary"))
   }
-  data.frame(pos = pos, val = val, src = src, stringsAsFactors = FALSE)
+  .ar_df(pos = pos, val = val, src = src)
 }
 
 # .ar_separate_boxes(boxes, n, liab, decimal) -- do the opening balances printed
@@ -264,6 +264,14 @@
 #        exactly ONE choice of signs, or the sign is left unsettled
 # Returns the steps, the settled signs, and which rows each kind of step covers.
 # Vectorised over the steps: the role search runs this hundreds of times.
+# .ar_df(...) -- data.frame(..., stringsAsFactors = FALSE) for plain columns of
+# one length, without the checks and name deparsing data.frame() spends most of
+# its time on: the role search builds thousands of these on a long bundle.
+.ar_df <- function(...) {
+  x <- list(...)
+  structure(x, class = "data.frame", row.names = .set_row_names(length(x[[1]])))
+}
+
 .ar_chain <- function(A, uns, bal, apts, dir) {
   n <- length(A)
   ord <- if (identical(dir, "new")) rev(seq_len(n)) else seq_len(n)
@@ -274,7 +282,7 @@
   pos <- pos[o]; val <- val[o]; src <- src[o]
   signs <- rep(NA_real_, n)
   L <- length(pos) - 1L
-  if (L < 1L) return(list(steps = data.frame(from = integer(0), to = integer(0), expected = numeric(0),
+  if (L < 1L) return(list(steps = .ar_df(from = integer(0), to = integer(0), expected = numeric(0),
                                              got = numeric(0), ok = logical(0), unknown = integer(0),
                                              ambiguous = logical(0)),
                           signs = signs, ord = ord, one_row = integer(0), covered = integer(0),
@@ -306,7 +314,7 @@
   good <- which(ok %in% TRUE & p2 > p1)
   covered <- unique(ord[unlist(lapply(good, function(q) (p1[q] + 1L):p2[q]))])
   one <- good[p2[good] - p1[good] == 1L]
-  list(steps = data.frame(from = as.integer(p1), to = as.integer(p2), expected = expv, got = got,
+  list(steps = .ar_df(from = as.integer(p1), to = as.integer(p2), expected = expv, got = got,
                           ok = ok, unknown = unk, ambiguous = amb),
        signs = signs, ord = ord, one_row = ord[p2[one]], covered = if (is.null(covered)) integer(0) else covered,
        sections = 1L + sum(brk), breaks = p1[brk])

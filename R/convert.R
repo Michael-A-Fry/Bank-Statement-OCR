@@ -629,6 +629,11 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     # not cover a statement that points elsewhere.
     unit_bank <- vapply(seq_len(k), function(i) {
       if (k == 1L || is.na(bank_slug)) return(NA_character_)
+      # A statement proven by a recipe is that recipe's bank's design: no need to
+      # look for the bank again (on a 150-page bundle that look is seconds).
+      rb <- readings[[i]]$recipe_bank
+      if (identical(readings[[i]]$outcome, "proven") && length(rb) == 1L && !is.na(rb) && nzchar(rb))
+        return(if (identical(.layout_slug(rb), bank_slug)) NA_character_ else .layout_bank_display(.layout_slug(rb), rb))
       u <- bank_identify(units[[i]]$input)
       if (!is.na(u$institution %||% NA) && !identical(u$institution, bank_slug))
         as.character(u$display %||% u$institution)[1] else NA_character_
