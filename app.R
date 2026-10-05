@@ -986,8 +986,9 @@ server <- function(input, output, session) {
           done <- if (is.null(done)) got$rows else rbind(done, got$rows)
         }
         p <- job_progress(h)
-        nw <- list(state = "running", ahead = 0L, i = p$i %||% 0L, n = p$n %||% cur$n,
-                   file = p$file %||% NA_character_, done = done)
+        ok <- function(v) !is.null(v) && length(v) == 1L && !is.na(v)
+        nw <- list(state = "running", ahead = 0L, i = if (ok(p$i)) p$i else 0L, n = if (ok(p$n)) p$n else cur$n,
+                   file = p$file %||% NA_character_, says = p$says %||% NA_character_, done = done)
       }
       if (!identical(nw, cur)) slot$live(nw)
     }
@@ -1066,11 +1067,20 @@ server <- function(input, output, session) {
         else sprintf("%d conversion%s ahead of yours - yours starts as soon as one finishes.",
                      n, if (n == 1L) "" else "s"))))
     }
-    p <- job_progress(h)     # a case folder reports which file it is on
+    p <- job_progress(h)     # a case folder reports which file it is on, and where in it
+    ok <- function(v) !is.null(v) && length(v) == 1L && !is.na(v)
+    # how far into the file: its page, or a fixed share for the steps without pages
+    within <- if (is.null(p) || !ok(p$stage)) 0.3
+              else if (p$stage %in% c("ocr", "table") && ok(p$done) && ok(p$total) && p$total > 0) 0.1 + 0.8 * p$done / p$total
+              else switch(p$stage, reading = 0.05, files = 0.95, 0.3)
+    batch <- !is.null(p) && ok(p$i) && ok(p$n)
     invisible(bar$set(
-      value  = if (is.null(p)) 0.4 else min(0.95, max(0.05, (p$i - 1) / max(p$n, 1))),
-      detail = if (is.null(p)) "Reading the file and running the checks\u2026"
-               else sprintf("%d of %d - %s", p$i, p$n, p$file)))
+      value  = min(0.97, max(0.03, if (batch) (p$i - 1 + within) / max(p$n, 1) else within)),
+      detail = {
+        d <- paste(c(if (batch) sprintf("%d of %d - %s", p$i, p$n, p$file),
+                     if (!is.null(p) && ok(p$says)) p$says), collapse = " \u00b7 ")
+        if (nzchar(d)) d else "Reading the file and running the checks\u2026"
+      }))
   }
 
   # A conversion that did not come back. The engine's own read failure keeps its
@@ -3237,7 +3247,8 @@ server <- function(input, output, session) {
           list(tags$td(class = "plan-layout", if (is.na(d$layout[1])) "\u2014" else .layout_name(d$layout[1])),
                .plan_outcome(o, d$rows[1]))
         } else if (identical(live$state, "running") && identical(as.integer(live$i), as.integer(k)))
-          list(tags$td(""), tags$td(class = "plan-res", div(class = "plan-converting", "Converting\u2026")))
+          list(tags$td(""), tags$td(class = "plan-res", div(class = "plan-converting",
+            if (!is.na(live$says %||% NA)) paste0(live$says, "\u2026") else "Converting\u2026")))
         else list(tags$td(""), tags$td(class = "plan-res", span(class = "muted", "Waiting")))
       } else if (case_res && identical(as.character(b$status[i]), "stopped")) {
         list(tags$td(""), tags$td(class = "plan-res", span(class = "muted", "Stopped - press Convert to convert it")))

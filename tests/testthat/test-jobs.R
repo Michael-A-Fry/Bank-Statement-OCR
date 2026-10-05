@@ -702,3 +702,25 @@ test_that("a batch job leaves one verdict per finished file, and they read back 
   # never a half-written file: written under .tmp and renamed into place
   expect_length(list.files(jd, "[.]tmp$"), 0L)
 })
+
+test_that("the screen sees where a file has got to: its page, as one whole line", {
+  d <- tempfile("stage_"); dir.create(d); on.exit(unlink(d, recursive = TRUE))
+  j <- list(dir = d)
+  expect_null(job_progress(j))                       # nothing said yet
+  w <- .job_stage_writer(d)
+  w("table", 37L, 150L)
+  p <- job_progress(j)
+  expect_identical(p$says, "Checking page 37 of 150")
+  expect_identical(c(p$done, p$total), c(37L, 150L))
+  expect_true(is.na(p$i))                            # one file, not a case
+  w("ocr", 2L, 9L); expect_identical(job_progress(j)$says, "Reading page 2 of 9")
+  w("files", NA, NA); expect_identical(job_progress(j)$says, "Writing the Excel and CSV files")
+  # a torn or foreign line is never shown
+  writeLines("table 3", file.path(d, "stage")); expect_null(job_progress(j))
+  # the engine's notes reach the sink set for a job, pages counted in the file
+  got <- character(0)
+  old <- progress_sink(function(s, a, b) got <<- c(got, sprintf("%s %s %s", s, a, b)))
+  on.exit(progress_sink(old), add = TRUE)
+  progress_scope(10L, 30L); progress_page("table", 4L); progress_scope(0L, NA_integer_)
+  expect_identical(got, "table 14 30")
+})

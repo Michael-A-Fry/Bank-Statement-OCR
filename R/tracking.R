@@ -24,7 +24,9 @@
 # is counted (unreadable_lines), so it can never be miscounted as an event, and
 # the next append starts on a fresh line so it is not lost with it.
 
-TRACK_EVENTS        <- c("convert", "confirm", "correction", "spot_check", "learn")
+# "timing": one per file, seconds per step (reading the file, finding the bank,
+# reading the statements, writing the files) -- never counted as a statement.
+TRACK_EVENTS        <- c("convert", "confirm", "correction", "spot_check", "learn", "timing")
 TRACK_OUTCOMES      <- c("proven", "layout_match", "check", "unread")
 TRACK_KINDS         <- c("pdf", "scan", "delimited", "excel")
 TRACK_PROOF_KINDS   <- c("chain", "totals", "layout", "person", "none")
@@ -83,6 +85,12 @@ TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift
   repairs_tried  = list(type = "enum_list", values = TRACK_REPAIRS),
   candidates     = list(type = "int", min = 0, max = 1000),
   secs           = list(type = "num", min = 0, max = 86400, digits = 3),
+  statements     = list(type = "int", min = 0, max = 5000),
+  ocr_pages      = list(type = "int", min = 0, max = 5000),
+  secs_read      = list(type = "num", min = 0, max = 86400, digits = 3),
+  secs_bank      = list(type = "num", min = 0, max = 86400, digits = 3),
+  secs_reading   = list(type = "num", min = 0, max = 86400, digits = 3),
+  secs_files     = list(type = "num", min = 0, max = 86400, digits = 3),
   derived        = list(type = "int", min = 0, max = 100000),
   learn_action   = list(type = "enum", values = TRACK_LEARN_ACTIONS),
   correction     = list(type = "correction"),

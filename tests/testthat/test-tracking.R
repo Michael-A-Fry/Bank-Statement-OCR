@@ -360,3 +360,17 @@ test_that("the summary of an empty, missing or damaged store has every field", {
   expect_true(s$unreadable_lines >= 1L)
   expect_identical(s$files, 3L)
 })
+
+test_that("a file's timing is one anonymous record, never counted as a statement", {
+  d <- tempfile("trk_"); dir.create(d); on.exit(unlink(d, recursive = TRUE))
+  track_record(list(event = "convert", kind = "pdf", outcome = "proven", rows = 5L), d)
+  track_record(list(event = "timing", kind = "pdf", pages = 150L, statements = 50L, ocr_pages = 0L, secs = 35.2,
+                    secs_read = 2.1, secs_bank = 5.8, secs_reading = 23.4, secs_files = 0.7,
+                    source_file = "Smith J statement.pdf"), d)
+  ln <- unlist(lapply(list.files(d, full.names = TRUE, recursive = TRUE), readLines))
+  tim <- jsonlite::fromJSON(ln[grepl('"timing"', ln)])
+  expect_identical(tim$secs_reading, 23.4)
+  expect_null(tim$source_file)                        # a name never reaches the record
+  s <- track_summary(d)
+  expect_identical(as.integer(s$statements), 1L)
+})

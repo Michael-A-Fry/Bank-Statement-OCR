@@ -451,3 +451,32 @@ safe_readlines <- function(path, encoding = NULL) {
   # bitwXor over the whole vector, then one test: no early exit anywhere.
   sum(as.integer(xor(a, b))) == 0L
 }
+
+# ---- progress: where a conversion has got to, for the screen ----------------------
+# progress_note(stage, done, total) -- "reading" (the file's text), "ocr" (page
+# `done` of `total` read as a picture), "table" (reading the statement up to page
+# `done` of `total`), "files" (writing the output files). A job's child sets the
+# sink (R/jobs.R) that the screen reads; with no sink (the console, tests) nothing
+# happens, and a sink that fails is ignored: a broken progress line must never
+# stop a conversion. progress_scope(offset, total) makes the pages of one
+# statement of a bundle count as the file's pages ("page 37 of 150").
+.PROGRESS <- new.env(parent = emptyenv())
+progress_sink <- function(fn) {
+  old <- .PROGRESS$fn
+  assign("fn", fn, envir = .PROGRESS)
+  invisible(old)
+}
+progress_scope <- function(offset = 0L, total = NA_integer_) {
+  assign("offset", as.integer(offset), envir = .PROGRESS)
+  assign("total", as.integer(total), envir = .PROGRESS)
+}
+progress_note <- function(stage, done = NA_integer_, total = NA_integer_) {
+  fn <- .PROGRESS$fn
+  if (is.function(fn)) safe(fn(as.character(stage)[1], as.integer(done)[1], as.integer(total)[1]))
+  invisible(NULL)
+}
+# progress_page(stage, p) -- page `p` of the statement being read, as the file's page.
+progress_page <- function(stage, p) {
+  if (!is.function(.PROGRESS$fn)) return(invisible(NULL))
+  progress_note(stage, (.PROGRESS$offset %||% 0L) + as.integer(p), .PROGRESS$total %||% NA_integer_)
+}

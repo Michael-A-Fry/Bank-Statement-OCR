@@ -579,9 +579,21 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
                 pages = NA_integer_, period_start = NA_character_, period_end = NA_character_, n_accounts = NA_integer_,
                 layout_sig = NA_character_, layout_hint = NA_character_, reason = NA_character_, tracked = FALSE)
 
+  # Seconds per step, for the anonymous timing record (a "timing" tracking event):
+  # how long reading the file, finding the bank, reading the statements and writing
+  # the files took, so slow steps can be seen without seeing any statement.
+  tm <- new.env(parent = emptyenv()); tm$last <- proc.time()[["elapsed"]]
+  step <- function(name) {
+    now <- proc.time()[["elapsed"]]
+    assign(name, (tm[[name]] %||% 0) + now - tm$last, envir = tm); tm$last <- now
+  }
+  progress_scope(0L, NA_integer_)
+
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
+    progress_note("reading")
     input <- read_input(path)
+    step("read")
     # THE FILE ITSELF COULD NOT BE READ: the sender's problem, not a reading to
     # check. Raised through the funnel, which makes it a `failed` result.
     if (!is.null(why <- .unreadable_reason(input))) stop(why, call. = FALSE)
@@ -590,7 +602,9 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     multi <- detect_multiple_statements(input, meta)
 
     # ---- the bank: the person's pick, pre-filled and checked from the document ----
+    step("other")
     ident <- bank_identify(input)
+    step("bank")
     pick <- bank_pick(ident, bank, isTRUE(bank_confirmed))
     bank_id <- as.character(pick$bank %||% NA_character_)[1]
     bank_slug <- .layout_slug(bank_id)
@@ -613,7 +627,11 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     units <- if (is.null(segs)) list(list(input = input, pages = seq_along(input$pages %||% input$words %||% 1L)))
              else lapply(segs, function(pg) list(input = .subinput_pages(input, pg), pages = pg))
     k <- length(units)
+    np_file <- length(input$pages %||% input$words %||% 1L)
+    step("other")
     reads <- lapply(seq_len(k), function(i) {
+      progress_scope(min(units[[i]]$pages) - 1L, np_file)
+      progress_page("table", 1L)
       uo <- .unit_overrides(overrides, i, k, units[[i]]$pages)
       if (!is.null(uo$error)) {
         rd <- .read_statement(units[[i]]$input, layouts, bank_name, NULL)
@@ -622,6 +640,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       .read_statement(units[[i]]$input, layouts, bank_name, uo$ov, uo$unless_auto)
     })
     readings <- lapply(reads, `[[`, "reading")
+    progress_scope(0L, np_file)
+    step("reading")
     # Each statement's own account number and name, as its labels print them, for
     # the output files (after the checks: they prove nothing, they label the rows).
     for (i in seq_len(k)) if (is.list(readings[[i]]$parsed$header)) {
@@ -858,8 +878,11 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       list(account = o$account %||% NA_character_, title = o$title %||% NA_character_, statement = i,
            rows = as.integer(o$rows %||% NROW(o$tx)), transactions = o$tx))), recursive = FALSE)
     if (status %in% c("ok", "needs_review")) {
+      step("other")
+      progress_note("files")
       result$outputs <- write_outputs(parsed, recon, outdir, base, formats,
         diagnostics = diag, metadata = meta, build = stamp, other_accounts = others)
+      step("files")
       # The governed feed's ONLY source of transaction values: the table the
       # workbook and CSV show, taken BEFORE the display-only spreadsheet guard, so
       # a feed row and a workbook row hold byte-identical values.
@@ -1042,6 +1065,22 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     multiple_statements = facts$multi,
     message = .log_scrub(paste(result$messages, collapse = " | "))
   )
+  # ---- timing: one anonymous record per file (kind, pages and seconds only) ----
+  step("other")
+  secs <- function(x) round(as.numeric(tm[[x]] %||% 0), 3)
+  result$timing <- list(total = round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 3),
+                        read = secs("read"), bank = secs("bank"), reading = secs("reading"),
+                        files = secs("files"), other = secs("other"))
+  result$run_log$timing <- result$timing
+  if (!is.null(tdir))
+    safe(suppressWarnings(track_record(Filter(Negate(is.null), list(
+      event = "timing", engine_version = stamp$engine_version,
+      kind = if (is.na(stamp$kind)) NULL else stamp$kind,
+      pages = if (is.na(facts$pages %||% NA)) NULL else as.integer(facts$pages),
+      statements = as.integer(facts$statements %||% 1L),
+      ocr_pages = safe(as.integer(sum(as.logical(input$page_ocr %||% FALSE), na.rm = TRUE)), NULL),
+      secs = result$timing$total, secs_read = result$timing$read, secs_bank = result$timing$bank,
+      secs_reading = result$timing$reading, secs_files = result$timing$files)), tdir)))
   if (isTRUE(log)) log_run(logdir, result)
 
   # ---- metadata capture: LOCAL ONLY, kept forever (logs/metadata/), never fed ----

@@ -511,3 +511,16 @@ test_that("the conversion hands the screen two lines from each column of figures
   expect_true(is.data.frame(ex) && nrow(ex) > 0L)
   expect_true(all(c("field", "date", "description", "figure") %in% names(ex)))
 })
+
+test_that("a conversion says where it has got to, and times each step", {
+  got <- character(0)
+  old <- progress_sink(function(s, a, b) got <<- c(got, sprintf("%s %s %s", s, a, b)))
+  on.exit(progress_sink(old))
+  cv <- convert_sandbox()
+  r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"))
+  expect_identical(got[1], "reading NA NA")
+  expect_true(all(c("table 1 3", "table 3 3") %in% got))    # each statement, as the file's page
+  expect_identical(got[length(got)], "files NA NA")
+  expect_true(all(c("total", "read", "bank", "reading", "files") %in% names(r$timing)))
+  expect_true(r$timing$total >= r$timing$reading)
+})

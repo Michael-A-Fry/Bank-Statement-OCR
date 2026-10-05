@@ -1229,7 +1229,7 @@ recipe_read <- function(input, rc) {
 # closed on (the rule convert_statement applies to a split file).
 .rc_finish_many <- function(units, ranges, rc, np) {
   k <- length(units)
-  us <- lapply(units, function(st) .rc_unit(st, rc))
+  us <- lapply(seq_len(k), function(i) { progress_page("table", max(ranges[[i]])); .rc_unit(units[[i]], rc) })
   readings <- lapply(seq_len(k), function(i) {
     u <- us[[i]]
     rec <- if (!is.null(u$parsed) && NROW(u$tx)) safe(reconcile(u$parsed, u$tpl), NULL) else NULL

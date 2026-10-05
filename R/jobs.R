@@ -419,6 +419,9 @@ job_seed_input_cache <- function(x) {
 job_run_task <- function(task, paths, args, jobdir = NULL) {
   paths <- as.character(paths)
   args <- as.list(args %||% list())
+  # Where the file being converted has got to ("table 37 150": reading page 37 of
+  # 150), for the screen: the engine reports it (progress_note, R/util.R).
+  if (!is.null(jobdir)) { old <- progress_sink(.job_stage_writer(jobdir)); on.exit(progress_sink(old), add = TRUE) }
   switch(as.character(task)[1],
     convert = do.call(convert_statement, c(list(paths[1]), args)),
     batch = {
@@ -466,6 +469,23 @@ job_run_task <- function(task, paths, args, jobdir = NULL) {
   p <- file.path(jobdir, "progress")
   function(i, n, f) safe(cat(sprintf("%d/%d %s\n", i, n, basename(f)),
                              file = p, append = TRUE))
+}
+
+# ...and where the file being read has got to: one line, "<stage> <done> <total>",
+# REPLACED (written under a temporary name and renamed into place) each time, so
+# the parent only ever reads a whole line. At most a few writes a second.
+.job_stage_writer <- function(jobdir) {
+  p <- file.path(jobdir, "stage")
+  last <- -Inf
+  function(stage, done, total) {
+    now <- proc.time()[["elapsed"]]
+    if (identical(stage, "table") && now - last < 0.25) return(invisible(NULL))
+    last <<- now
+    tmp <- paste0(p, ".tmp")
+    safe({ writeLines(sprintf("%s %s %s", stage, if (is.na(done)) "-" else done, if (is.na(total)) "-" else total), tmp)
+           file.rename(tmp, p) })
+    invisible(NULL)
+  }
 }
 
 # ...and each file's VERDICT the moment it exists. One small file per finished file
@@ -737,11 +757,29 @@ job_queue_ahead <- function(j) {
 job_progress <- function(j) {
   ln <- .job_read(file.path(j$dir, "progress"))
   ln <- ln[grepl("^[0-9]+/[0-9]+ .", ln)]
-  if (!length(ln)) return(NULL)
-  last <- ln[length(ln)]
-  list(i = as.integer(sub("^([0-9]+)/.*$", "\\1", last)),
-       n = as.integer(sub("^[0-9]+/([0-9]+) .*$", "\\1", last)),
-       file = sub("^[0-9]+/[0-9]+ ", "", last))
+  st <- .job_read(file.path(j$dir, "stage"))
+  st <- st[grepl("^(reading|ocr|table|files) ([0-9]+|-) ([0-9]+|-)$", st)]
+  stage <- if (length(st)) strsplit(st[1], " ", fixed = TRUE)[[1]] else NULL
+  if (!length(ln) && is.null(stage)) return(NULL)
+  last <- if (length(ln)) ln[length(ln)] else NA_character_
+  num <- function(x) suppressWarnings(as.integer(x))
+  list(i = if (is.na(last)) NA_integer_ else as.integer(sub("^([0-9]+)/.*$", "\\1", last)),
+       n = if (is.na(last)) NA_integer_ else as.integer(sub("^[0-9]+/([0-9]+) .*$", "\\1", last)),
+       file = if (is.na(last)) NA_character_ else sub("^[0-9]+/[0-9]+ ", "", last),
+       stage = stage[1], done = num(stage[2]), total = num(stage[3]),
+       says = job_stage_words(stage[1], num(stage[2]), num(stage[3])))
+}
+
+# job_stage_words(stage, done, total) -- the stage as the screen says it.
+job_stage_words <- function(stage, done = NA_integer_, total = NA_integer_) {
+  if (is.null(stage) || is.na(stage)) return(NA_character_)
+  of <- function(w) if (!is.na(done) && !is.na(total)) sprintf("%s page %d of %d", w, done, total) else NULL
+  switch(stage,
+    reading = "Opening the file",
+    ocr = of("Reading") %||% "Reading the scanned pages",
+    table = of("Checking") %||% "Checking the statement",
+    files = "Writing the Excel and CSV files",
+    NA_character_)
 }
 
 # job_result(handle) -- the object the child produced, or NULL if it did not get

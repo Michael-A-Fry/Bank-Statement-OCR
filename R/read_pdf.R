@@ -204,6 +204,7 @@ read_pdf <- function(path,
     needs_ocr_p <- ocr_router && isTRUE(page_needs_ocr(pages[p], words[[p]]))
     if (needs_ocr_p && !ocr_tools) scanned_no_ocr[p] <- TRUE
     if (ocr_ready && needs_ocr_p) {
+      progress_note("ocr", p, np)
       res <- ocr_pdf_page(path, p)
       ocr_note[p] <- res$note %||% ""
       ocr_timed_out[p] <- isTRUE(res$timed_out)
