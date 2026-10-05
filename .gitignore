@@ -95,6 +95,9 @@ make-bundle.log
 # scripts/bundle-offline.R refuses to ship one, because a rule only a .gitignore
 # knows is a rule nothing checks.)
 /templates/layouts/
+# ...and the recipes it drafts from a person's checks (R/recipes.R, drafts), for
+# the same reason: server state, named the same everywhere (anz_draft_1@v1.yaml).
+/templates/recipes/
 
 # The 1.x template folders (retired in 2.0.0). A box updated from 1.x can still
 # hold templates somebody built in them; they stay out of the repository too.

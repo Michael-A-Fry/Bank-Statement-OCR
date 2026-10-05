@@ -12,6 +12,13 @@
 #   expect_auto_read_golden(fixture, expected, outcomes)  the automatic reader, given
 #     no template, reads the same statement to the same figures.
 
+# ALWAYS ASK ONCE (R/convert.R) holds a statement of a design the tool has not
+# been taught, even when it adds up. Most tests here are about the READER, through
+# convert_statement(), so they run with "auto": a statement converts on its
+# arithmetic. The tests of asking once set "ask" themselves
+# (withr::local_options(bso.unknown_design = "ask")).
+options(bso.unknown_design = "auto")
+
 engine_root <- function() {
   r <- Sys.getenv("ENGINE_ROOT", "")
   if (nzchar(r)) return(r)

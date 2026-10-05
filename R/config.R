@@ -127,7 +127,12 @@
     # decision); an admin turns it on. The arithmetic proves the figures; a spot
     # check is what measures everything it cannot reach. A statement converted on
     # a proven layout with no arithmetic of its own is picked at twice this rate.
-    spot_check_rate = 0
+    spot_check_rate = 0,
+    # ALWAYS ASK ONCE (product owner's decision): a statement whose design no
+    # accepted recipe or proven layout knows is never converted without a person,
+    # even when it adds up; the person's check teaches the design (R/recipes.R,
+    # drafts). "auto" converts such a statement on its arithmetic alone, as 2.x did.
+    unknown_design = "ask"
   ),
   retention = list(
     # Every converted statement is copied byte-for-byte into uploads/<id>/ so a

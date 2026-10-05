@@ -491,6 +491,8 @@ test_that("a fault listed as a diagnostic is not listed again as a check", {
   # PROVES, which beside a failure and with no pass/fail column says the opposite)
   expect_match(paste(src, collapse = "\n"), 'sprintf\\("Failed: %s", plain_check')
   expect_match(.ui_labels()$plain_failing_check("check:dates_readable"), "^Failed: ")
+  # ...except a design not taught yet: nothing failed, it is asked about once
+  expect_identical(.ui_labels()$plain_failing_check("reading:known_design"), "New design - check it once")
 })
 
 # ---------------------------------------------------------------------------

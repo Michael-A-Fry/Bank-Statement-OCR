@@ -191,7 +191,8 @@ READING_CHECK_PLAIN <- c(
   tables_set_aside   = "Other tables in the file were left out, and the opening and closing balances confirm none of the statement's rows were",
   edge_lines         = "Balance lines with unfamiliar wording at the table's ends are its opening, closing or carried balance",
   compact_dates      = "Dates printed as eight digits all fall inside the statement period",
-  statements_join    = "Each statement in the file opens at the balance the one before it closed on")
+  statements_join    = "Each statement in the file opens at the balance the one before it closed on",
+  known_design       = "A person has checked this statement design before")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 
 # ---------------------------------------------------------------------------
@@ -312,6 +313,8 @@ plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, 
 plain_failing_check <- function(x) vapply(x, function(e) {
   if (is.na(e)) return(NA_character_)
   code <- sub("^[^:]*:", "", e)
+  # a design not yet taught is not a failure: it is asked about once
+  if (identical(code, "known_design")) return("New design - check it once")
   switch(sub(":.*$", "", e),
          reading = paste0("Failed: ", plain_label(code, READING_CHECK_PLAIN)),
          check  = paste0("Failed: ", plain_label(code, CHECK_PLAIN)),

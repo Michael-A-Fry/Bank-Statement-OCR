@@ -28,6 +28,9 @@
 suppressMessages({ library(yaml); library(jsonlite) })
 Sys.setenv(ENGINE_ROOT = normalizePath("."))
 for (f in list.files("R", "[.]R$", full.names = TRUE)) source(f)
+# The reader is measured: a design not yet taught converts on its arithmetic, as
+# it would with auto_reading: unknown_design: auto (the product asks a person once).
+options(bso.unknown_design = "auto")
 source("tools/synth/truth.R")
 
 a <- commandArgs(TRUE)

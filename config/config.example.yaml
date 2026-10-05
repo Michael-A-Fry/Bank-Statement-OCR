@@ -74,6 +74,11 @@ auto_reading:
   # with no balance and no totals, converted on a proven layout, is picked at
   # twice this rate.
   spot_check_rate: 0
+  # A statement whose design the tool has not been taught (no accepted recipe) is
+  # never converted without a person, even when it adds up: "ask" (the default)
+  # puts it on Please check, filled in, and the person's "It's right" teaches the
+  # design. "auto" converts such a statement on its arithmetic alone, as 2.x did.
+  unknown_design: ask
 
 feed:
   # The analytics feed Qlik loads for dashboards. Accountants convert in the Shiny

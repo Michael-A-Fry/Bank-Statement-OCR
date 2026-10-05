@@ -60,8 +60,13 @@ recipes_dirs <- function(cfg = NULL) {
   shipped <- if (nzchar(root)) file.path(root, "recipes") else "recipes"
   if (is.null(cfg)) cfg <- safe(load_config(), list())
   server <- as.character(unlist(safe(cfg$paths$recipes, NULL)))
-  unique(c(shipped, server[!is.na(server) & nzchar(server)]))
+  # ...and the folder a conversion writes its drafts to (recipes_state_dir), while
+  # that conversion runs: a draft is read by the next statement of its design.
+  state <- as.character(.RECIPE_STATE$dir %||% NA_character_)
+  d <- c(shipped, server, state)
+  unique(d[!is.na(d) & nzchar(d)])
 }
+.RECIPE_STATE <- new.env(parent = emptyenv())
 
 # recipes_load(dirs) -> the usable recipes, one per id: its highest version, and
 # none for an id whose highest version is retired (a version is never edited; a
@@ -290,7 +295,7 @@ recipes_default <- function() {
 # bank is given, it is that bank's. The recipe is returned only when it is
 # CLEARLY the best: the only one that fits, or the one that fits on more printed
 # evidence than any other. Two fitting equally is no answer (NULL), and says so.
-recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL) {
+recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL, drafts = FALSE) {
   none <- function(why, scores = NULL) list(recipe = NULL, scores = scores, why = why)
   if (!length(recipes)) return(none("No recipes are installed."))
   if (!identical(input$kind %||% "", "pdf")) return(none("Recipes read text PDFs only, so far."))
@@ -300,7 +305,9 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL) {
   bank_slug <- if (is.null(bank) || all(is.na(bank))) NA_character_ else .layout_slug(bank)
   sc <- lapply(recipes, function(rc) {
     row <- list(recipe = rc$ref, fits = FALSE, score = 0, why = "")
-    if (!identical(rc$status, "proven")) { row$why <- "a draft, not yet accepted"; return(row) }
+    if (!identical(rc$status, "proven") && !(isTRUE(drafts) && identical(rc$status, "draft"))) {
+      row$why <- "a draft, not yet accepted"; return(row)
+    }
     a <- vapply(rc$all, function(p) .rc_has_phrase(txt, p), logical(1))
     n <- vapply(rc$none, function(p) .rc_has_phrase(txt, p), logical(1))
     if (!all(a)) { row$why <- sprintf("\"%s\" is not printed", rc$all[!a][1]); row$score <- sum(a); return(row) }
@@ -347,6 +354,13 @@ recipe_first <- function(input, bank = NULL, opts = list()) {
   if (isFALSE(rcs)) return(NULL)
   if (is.null(rcs)) rcs <- recipes_default()
   rg <- recipe_recognise(input, rcs, bank)
+  # No accepted recipe fits: a DRAFT may (a design a person checked once). Its
+  # reading is used only to fill Please check in; R/convert.R asks a person until
+  # the draft has its proofs.
+  if (is.null(rg$recipe) && !isFALSE(opts$drafts)) {
+    rg <- recipe_recognise(input, Filter(function(r) identical(r$status, "draft"), rcs), bank, drafts = TRUE)
+    if (!is.null(rg$recipe)) rg$draft <- TRUE
+  }
   if (is.null(rg$recipe)) return(NULL)
   # Several recipes fit (an old and a new version of a design, two drafts of one
   # design): each reads it and the statement's own arithmetic decides. Readings that
@@ -370,6 +384,7 @@ recipe_first <- function(input, bank = NULL, opts = list()) {
     }
   }
   if (!is.null(rg$bank_note)) pick$notes <- c(pick$notes, rg$bank_note)
+  if (isTRUE(rg$draft)) pick$draft <- TRUE
   pick
 }
 
@@ -1299,4 +1314,165 @@ recipe_read <- function(input, rc) {
                                                 "missing between them, or they are different accounts."),
                                           o[i], format(st[[i]]$close, nsmall = 2), format(st[[i + 1L]]$open, nsmall = 2))))
   list(ok = TRUE, why = "Each statement opens at the balance the one before it closed on.")
+}
+
+# ---- drafts: a new design, learned from a person's answer --------------------------
+#
+# ALWAYS ASK ONCE. A statement no accepted recipe recognises is never converted
+# without a person (R/convert.R): its reading -- the automatic reader's, or a
+# draft recipe's -- is put on Please check, already filled in. When the person
+# says it is right AND the statement's own arithmetic proved it, the design is
+# written down as a DRAFT recipe: its table heading, its columns left to right
+# (under their heading words, or as bands when a column has none), its date format
+# and money style. The draft is kept only if it reads the same statement to the
+# same figures. Each later statement a draft reads and a person confirms is a
+# proof; after LAYOUT_PROVEN_AFTER proofs from LAYOUT_PROVEN_ACCOUNTS accounts
+# (told apart by salted marks, never kept: R/layouts.R) a new version is written
+# as proven, and statements of the design are read on their own from then on.
+# A draft names nothing the statement prints but its table heading and its period
+# label: no title line (it may be a person's name), no account number.
+
+# recipes_state_dir(layouts_dir, cfg) -- where drafts are written: paths$recipes,
+# else beside the layouts (templates/recipes on a server). Never the shipped recipes/.
+recipes_state_dir <- function(layouts_dir = NULL, cfg = NULL) {
+  if (is.null(cfg)) cfg <- safe(load_config(), list())
+  d <- as.character(unlist(safe(cfg$paths$recipes, NULL)))[1]
+  if (!is.na(d) && nzchar(d)) return(d)
+  if (is.null(layouts_dir) || is.na(layouts_dir)) return(NULL)
+  file.path(dirname(layouts_dir), "recipes")
+}
+
+# .rc_draft(reading, input, bank, id) -> the draft as a list ready for YAML, or
+# list(error) saying why the reading cannot be written as a recipe.
+.rc_draft <- function(reading, input, bank, id) {
+  no <- function(why) list(error = why)
+  if (!identical(input$kind %||% "", "pdf") || isTRUE(any(as.logical(input$page_ocr %||% FALSE))))
+    return(no("Only a text PDF is written as a recipe, so far."))
+  cl <- reading$columns
+  if (!is.data.frame(cl) || !nrow(cl)) return(no("The reading found no columns."))
+  cl <- cl[cl$page == min(cl$page), , drop = FALSE]
+  cl <- cl[order(cl$x_min), , drop = FALSE]
+  money <- c("debit", "credit", "amount", "balance")
+  f <- as.character(cl$field); n_text <- 0L
+  for (j in seq_along(f)) if (!(f[j] %in% c("date", "description", money, "date2", "particulars", "code",
+                                            "reference", "other_party", "type"))) {
+    n_text <- n_text + 1L; f[j] <- sprintf("text%d", n_text)
+  }
+  if (n_text > 9L || anyDuplicated(f)) return(no("The reading's columns cannot be named as a recipe's."))
+  hd <- trimws(as.character(cl$heading)); hd[is.na(hd)] <- ""
+  # The reader's heading for a column can take in a title line above it ("Your
+  # transactions" over "Date"): a recipe's heading is the words on ONE line.
+  if (all(nzchar(hd))) hd <- .rc_draft_header(input, cl$page[1], hd) %||% rep("", length(hd))
+  anchored <- all(nzchar(hd)) && !anyDuplicated(tolower(hd))
+  cols <- stats::setNames(lapply(seq_along(f), function(j)
+    if (anchored) list(under = hd[j]) else list(x_min = round(cl$x_min[j], 1), x_max = round(cl$x_max[j], 1))), f)
+  tb <- reading$template$table %||% list()
+  dfmt <- as.character(tb$date_format %||% NA_character_)[1]
+  if (is.na(dfmt)) return(no("The reading has no date format."))
+  yearful <- grepl("%[yY]", dfmt)
+  per <- NULL
+  if (!yearful) {
+    # the year comes from the period: the label it is printed under, as printed
+    p1 <- .rc_flat(.page_texts(input)[1])
+    labs <- as.character(unlist(.period_labels()))
+    labs <- labs[order(-nchar(labs))]
+    hit <- labs[vapply(labs, function(l) .rc_has_phrase(p1, l), logical(1))]
+    if (!length(hit)) return(no("The dates print no year and no period label was found to take it from."))
+    per <- list(label = hit[1])
+  }
+  y <- list(recipe = id, format = RECIPE_FORMAT, version = 1L, bank = bank,
+            title = sprintf("%s statement (drafted)", .layout_bank_display(bank)), kind = "pdf", status = "draft",
+            recognise = list(all = if (anchored) as.list(hd) else list(per$label %||% "statement")),
+            period = per,
+            table = c(if (anchored) list(header = as.list(hd)) else list(ref_width = round(input$page_width[1] %||% .A4_W, 1)),
+                      list(columns = cols)),
+            dates = list(format = dfmt, year = if (yearful) "printed" else "period"),
+            money = list(style = if ("amount" %in% f) "signed" else "debit_credit_cols"),
+            order = if (identical(reading$template$auto$dir, "new")) "newest_first" else "oldest_first")
+  Filter(Negate(is.null), y)
+}
+
+# .rc_draft_header(input, page, hd) -- the column headings as printed on ONE line
+# of the page: for each line, each heading's longest tail of words printed on it,
+# in order; the first line where every column has one. NULL when there is none.
+.rc_draft_header <- function(input, page, hd) {
+  lines <- .rc_line_tokens(input)[[page]] %||% list()
+  words <- lapply(hd, function(h) strsplit(.rc_tok(h), " ", fixed = TRUE)[[1]])
+  for (L in lines) {
+    pick <- vapply(words, function(w) {
+      for (a in seq_along(w)) { ph <- paste(w[a:length(w)], collapse = " ")
+        if (nzchar(ph) && !is.na(.rc_find_seq(L$tok, ph))) return(ph) }
+      ""
+    }, "")
+    if (all(nzchar(pick)) && !is.null(.rc_header_spans(L$tok, L$x, L$x1, pick))) return(pick)
+  }
+  NULL
+}
+
+# recipe_learn(reading, input, bank, file_sha, accounts, dir) -> list(action, ref,
+# why). Called by R/convert.R when a person confirms a reading the arithmetic
+# proved (or a draft read). action: "created" (a new draft), "evidence_added" (one
+# more proof), "promoted" (proven: read on its own from now on), "none".
+recipe_learn <- function(reading, input, bank, file_sha, accounts = NULL, dir = NULL) {
+  out <- function(action, why, ref = NA_character_) list(action = action, ref = ref, why = why)
+  tryCatch({
+    b <- .layout_slug(bank)
+    if (is.na(b)) return(out("none", "No bank was given, so no recipe is drafted."))
+    if (is.null(dir)) return(out("none", "No folder is set up for drafted recipes."))
+    sha <- tolower(trimws(as.character(file_sha %||% "")[1]))
+    if (is.na(sha) || !grepl("^[0-9a-f]{64}$", sha)) return(out("none", "The statement has no fingerprint, so it cannot be counted."))
+    release <- .layout_lock(dir)
+    if (is.null(release)) return(out("none", "The drafted recipes are being changed by someone else, so nothing was learned this time."))
+    on.exit(release(), add = TRUE)
+    mine <- recipes_load(dir)
+    rc <- NULL
+    if (isTRUE(reading$draft) && !is.null(reading$matched_recipe))
+      rc <- Filter(function(r) identical(r$ref, reading$matched_recipe), mine)[1][[1]]
+    if (is.null(rc)) {
+      ids <- vapply(mine, `[[`, "", "id")
+      taken <- suppressWarnings(as.integer(sub(sprintf("^%s_draft_", b), "", ids[startsWith(ids, paste0(b, "_draft_"))])))
+      id <- sprintf("%s_draft_%d", b, max(c(0L, taken), na.rm = TRUE) + 1L)
+      y <- .rc_draft(reading, input, b, id)
+      if (!is.null(y$error)) return(out("none", y$error))
+      rc <- .rc_validate(y)
+      if (!is.null(rc$error)) return(out("none", paste("The draft is not a valid recipe:", rc$error)))
+      # Kept only if it reads this statement to exactly the reading's figures.
+      rr <- recipe_read(input, rc)
+      key <- function(t) paste(t$date, sprintf("%.2f", t$amount), collapse = "|")
+      if (!identical(rr$outcome, "proven") || !identical(key(rr$transactions), key(reading$transactions)))
+        return(out("none", "Written as a recipe, this design did not read the statement back to the same figures, so no recipe is drafted."))
+      f <- file.path(dir, sprintf("%s@v1.yaml", id))
+      dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+      yaml::write_yaml(y, f)
+      rc$file <- f
+      .rc_evidence_add(dir, rc$id, sha, accounts)
+      return(out("created", sprintf("This design was saved as draft recipe %s: statements like it come back filled in, and after %d checked from %d accounts they are read on their own.",
+                                    rc$ref, LAYOUT_PROVEN_AFTER, LAYOUT_PROVEN_ACCOUNTS), rc$ref))
+    }
+    ev <- .rc_evidence_add(dir, rc$id, sha, accounts)
+    if (length(ev$proved_by) >= LAYOUT_PROVEN_AFTER && length(ev$groups) >= LAYOUT_PROVEN_ACCOUNTS) {
+      y <- yaml::read_yaml(rc$file)
+      y$version <- as.integer(rc$version) + 1L; y$status <- "proven"
+      f <- file.path(dir, sprintf("%s@v%d.yaml", rc$id, y$version))
+      if (!file.exists(f)) yaml::write_yaml(y, f)
+      return(out("promoted", sprintf("Recipe %s now has %d checked statements from %d accounts, so statements like it are read on their own.",
+                                     rc$id, length(ev$proved_by), length(ev$groups)), sprintf("%s@%d", rc$id, y$version)))
+    }
+    out("evidence_added", sprintf("Draft recipe %s: %d of %d checked statements, from %d of %d accounts.", rc$ref,
+                                  length(ev$proved_by), LAYOUT_PROVEN_AFTER, length(ev$groups), LAYOUT_PROVEN_ACCOUNTS), rc$ref)
+  }, error = function(e) out("none", paste0("No recipe was drafted (", conditionMessage(e), ").")))
+}
+
+# .rc_evidence_add(dir, id, sha, accounts) -- one more checked statement for a
+# draft: kept in <dir>/.evidence/<id>.yaml as the statements' fingerprints and the
+# accounts' salted marks (R/layouts.R), never a number.
+.rc_evidence_add <- function(dir, id, sha, accounts) {
+  f <- file.path(dir, ".evidence", paste0(id, ".yaml"))
+  ev <- if (file.exists(f)) safe(yaml::read_yaml(f), list()) else list()
+  salt <- as.character(ev$salt %||% .layout_new_salt(id, sha))[1]
+  acc <- .layout_accounts_add(list(salt = salt, groups = as.character(unlist(ev$groups))), .layout_marks(accounts, salt))
+  ev <- list(salt = salt, groups = as.list(acc$groups), proved_by = as.list(unique(c(as.character(unlist(ev$proved_by)), sha))))
+  dir.create(dirname(f), recursive = TRUE, showWarnings = FALSE)
+  yaml::write_yaml(ev, f)
+  list(proved_by = unlist(ev$proved_by), groups = unlist(ev$groups))
 }

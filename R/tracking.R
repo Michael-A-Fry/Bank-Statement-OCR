@@ -48,7 +48,8 @@ TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_u
                   "year_settled", "table_unbroken", "summary_lines_checked",
                   "rows_once", "one_statement", "rows_between_ends", "one_side_per_row",
                   "ends_printed", "sections_set_aside", "currency_own", "workbook_plain",
-                  "tables_set_aside", "edge_lines", "compact_dates", "statements_join")
+                  "tables_set_aside", "edge_lines", "compact_dates", "statements_join",
+                  "known_design")
 # The reader's repair steps (the "repair:<step>" candidates of R/auto_read.R; a
 # step tried more than one way, "edge_lines2", is recorded under its own name).
 TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift",

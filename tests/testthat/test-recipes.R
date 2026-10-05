@@ -470,3 +470,50 @@ test_that("a page with no heading continues the columns of the page before; a te
   expect_identical(r$outcome, "proven")
   expect_equal(r$transactions$amount, rc_want)
 })
+
+test_that("always ask once: a new design waits for a person, and their check drafts a recipe", {
+  withr::local_options(bso.unknown_design = "ask")
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  f <- fixture("tests/testthat/fixtures/asb_everyday_pdf_sample.pdf")
+  r1 <- cv(f, bank = "ASB")
+  expect_identical(r1$status, "needs_review")                     # it adds up, and still waits
+  expect_match(r1$reason, "not seen this statement design before")
+  expect_length(list.files(file.path(d, "recipes"), "[.]yaml$"), 0L) # nothing learned without a person
+  r2 <- cv(f, bank = "ASB", confirm = TRUE)
+  expect_identical(r2$status, "ok")
+  expect_identical(r2$run_log$learn_action, "created")
+  drafts <- list.files(file.path(d, "recipes"), "[.]yaml$", full.names = TRUE)
+  expect_length(drafts, 1L)
+  # the draft names only the table heading and the period label: no name, no account
+  txt <- paste(readLines(drafts), collapse = "\n")
+  expect_false(grepl("JORDAN|ALEX|RIVERA|[0-9]{2}-[0-9]{4}-[0-9]{6,7}", txt))
+  expect_match(txt, "status: draft")
+  # the next statement of the design comes back filled in by the draft, and waits
+  r3 <- cv(f, bank = "ASB")
+  expect_identical(r3$status, "needs_review")
+  expect_match(r3$reason, "asb_draft_1@1")
+  # "auto" converts a new design on its arithmetic, as 2.x did
+  withr::local_options(bso.unknown_design = "auto")
+  expect_identical(convert_sandbox()(f, bank = "ASB")$status, "ok")
+})
+
+test_that("a draft is promoted after 3 checked statements from 2 accounts, and then reads on its own", {
+  d <- tempfile("rcdraft_"); on.exit(unlink(d, recursive = TRUE))
+  inp <- read_input(fixture("tests/testthat/fixtures/asb_everyday_pdf_sample.pdf"))
+  rd <- auto_read(inp, opts = list(recipes = FALSE))
+  sha <- function(ch) strrep(ch, 64)
+  a <- recipe_learn(rd, inp, "ASB", sha("a"), "12-3456-0789012-50", d)
+  expect_identical(a$action, "created")
+  drd <- recipe_first(inp, opts = list(recipes = recipes_load(d)))
+  expect_true(isTRUE(drd$draft)); expect_identical(drd$outcome, "proven")
+  expect_identical(recipe_learn(drd, inp, "ASB", sha("a"), "12-3456-0789012-50", d)$action, "evidence_added")  # same file: still 1
+  expect_identical(recipe_learn(drd, inp, "ASB", sha("b"), "12-3456-0789012-50", d)$action, "evidence_added")  # 2, one account
+  p <- recipe_learn(drd, inp, "ASB", sha("c"), "01-0123-0456789-00", d)
+  expect_identical(p$action, "promoted")
+  top <- recipes_load(d)
+  expect_identical(top[[1]]$status, "proven"); expect_identical(top[[1]]$version, 2L)
+  # no account number is kept: only salted marks
+  ev <- paste(readLines(list.files(file.path(d, ".evidence"), full.names = TRUE)), collapse = "\n")
+  expect_false(grepl("0789012|0456789", ev))
+  expect_null(recipe_first(inp, opts = list(recipes = top))$draft)
+})

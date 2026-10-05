@@ -419,6 +419,17 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
 }
 
 .AUTO <- c("proven", "layout_match")
+
+# .unknown_design_mode(cfg) -- "ask" (the default) or "auto": see
+# auto_reading$unknown_design in config/config.example.yaml. options(bso.unknown_design)
+# overrides it for one session (the scorers measure the reader with "auto").
+.unknown_design_mode <- function(cfg) {
+  m <- as.character(getOption("bso.unknown_design") %||% safe(cfg$auto_reading$unknown_design, NULL) %||% "ask")[1]
+  if (identical(m, "auto")) "auto" else "ask"
+}
+
+# .text_pdf(input) -- a PDF read from its text layer (no page read as a picture).
+.text_pdf <- function(input) identical(input$kind %||% "", "pdf") && !isTRUE(any(as.logical(input$page_ocr %||% FALSE)))
 # The reader's checks that, failing, say the figures are WRONG rather than unproven.
 .CONTRADICTIONS <- c("balance_chain", "chain_across_pages", "opening_closing", "printed_totals")
 
@@ -588,6 +599,12 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     assign(name, (tm[[name]] %||% 0) + now - tm$last, envir = tm); tm$last <- now
   }
   progress_scope(0L, NA_integer_)
+  # Drafted recipes live beside the layouts; while this conversion runs they are
+  # read with the shipped recipes (R/recipes.R recipes_dirs).
+  rdir <- safe(recipes_state_dir(ldir, cfg), NULL)
+  old_rdir <- .RECIPE_STATE$dir
+  assign("dir", rdir, envir = .RECIPE_STATE)
+  on.exit(assign("dir", old_rdir, envir = .RECIPE_STATE), add = TRUE)
 
   outcome <- tryCatch({
     base <- tools::file_path_sans_ext(basename(path %||% "input"))
@@ -654,6 +671,25 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       }
     }
     facts$statements <- k
+    # ---- ALWAYS ASK ONCE: a design the tool has not been taught ----
+    # A reading that adds up but that no accepted recipe and no proven layout made
+    # waits for a person, already filled in. Their "It's right" teaches the design
+    # (below). A person's own fix is their answer, so it is not held again.
+    ask_new <- identical(.unknown_design_mode(cfg), "ask")
+    for (i in seq_len(k)) {
+      r <- readings[[i]]
+      known <- (!is.null(r$matched_recipe) && !isTRUE(r$draft)) || !is.null(r$matched_layout)
+      if (ask_new && is.null(reads[[i]]$fix) && isTRUE(r$outcome %in% .AUTO) && !known) {
+        why <- if (isTRUE(r$draft))
+          sprintf("It adds up, read with %s, a design a person has checked before; check it once more and it counts towards reading statements like it on their own.", r$matched_recipe)
+          else "It adds up, but the tool has not seen this statement design before; check it once and statements like it will come back filled in."
+        readings[[i]]$new_design <- r$outcome
+        readings[[i]]$outcome <- "check"
+        readings[[i]]$why <- why
+        ck <- data.frame(check = "known_design", ok = FALSE, why = why, stringsAsFactors = FALSE)
+        readings[[i]]$checks <- if (is.data.frame(r$checks)) rbind(r$checks[, c("check", "ok", "why")], ck) else ck
+      }
+    }
     # Bundles are identified statement by statement (spec section 5): one that
     # names another bank than the pick never teaches the picked bank's layouts.
     # Even weakly: the person kept one bank for the whole file, so their word does
@@ -809,6 +845,15 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         }
         else if (identical(f$kind, "boxes"))
           list(action = "none", why = "Edited column boxes apply to this file only: a layout does not remember positions.")
+        # A design checked by a person that its arithmetic proved: a text PDF is
+        # written down as a draft recipe (or counts towards one); anything else
+        # teaches a layout, as a proven reading always has.
+        else if (confirmed && identical(r$new_design, "proven") && is.null(f)) {
+          rp <- r; rp$outcome <- "proven"
+          acc <- .unit_accounts(r, if (k == 1L) meta else NULL, units[[i]]$input)
+          if (.text_pdf(units[[i]]$input)) c(recipe_learn(rp, units[[i]]$input, bank_id, .unit_sha(sha, i, k), acc, rdir), list(kind = "recipe"))
+          else layout_learn(rp, pick, .unit_sha(sha, i, k), ldir, accounts = acc)
+        }
         # A reading made with a recipe teaches no layout: the recipe already is this
         # design's reading, and its columns were measured by the recipe, not found
         # by the automatic reader that a layout serves.
@@ -831,7 +876,9 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         held <- c(held, fix_hold(r$template, bank_id, if (confirmed && is.null(f)) "confirm" else "roles", who, ldir)$id)
     }
     facts$learn <- vapply(learn, function(l) as.character(l$action %||% "none"), "")
-    for (i in seq_len(k)) if (is.null(readings[[i]]$matched_layout) && !is.na(learn[[i]]$ref %||% NA) &&
+    for (i in seq_len(k)) if (identical(learn[[i]]$kind, "recipe") && !is.na(learn[[i]]$ref %||% NA))
+      readings[[i]]$learned_recipe <- learn[[i]]$ref
+    for (i in seq_len(k)) if (is.null(readings[[i]]$matched_layout) && !identical(learn[[i]]$kind, "recipe") && !is.na(learn[[i]]$ref %||% NA) &&
                               learn[[i]]$action %in% c("created", "evidence_added", "promoted", "corrected"))
       readings[[i]]$learned_layout <- learn[[i]]$ref
 

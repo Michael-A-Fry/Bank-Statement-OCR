@@ -651,6 +651,16 @@ test_that("the one-page deployment guide says the things that actually stop it",
 # fresh clone with a stale ignore file both walk straight past one. It also
 # catches a test that converts without a sandbox and so learns into the tree.
 # ---------------------------------------------------------------------------
+test_that("no drafted recipe sits in the folder the server owns", {
+  root <- engine_root()
+  p <- file.path(root, "templates", "recipes")
+  stray <- setdiff(list.files(p, recursive = TRUE, all.files = TRUE), "README.md")
+  expect_identical(stray, character(0),
+    info = paste0("templates/recipes/ is a server's drafted recipes; found: ", paste(stray, collapse = ", ")))
+  ign <- readLines(file.path(root, ".gitignore"), warn = FALSE)
+  expect_true(any(grepl("^/?templates/recipes/", ign)))
+})
+
 test_that("no learned layout sits in the folder the server owns", {
   root <- engine_root()
   rel <- .config_defaults()$paths$layouts

@@ -333,6 +333,10 @@ job_kill_tree <- function(pid) {
     "# this process shells out to, not this process.",
     paste0('invisible(Sys.setenv(OMP_THREAD_LIMIT = ', deparse(as.character(threads)),
            ', OMP_NUM_THREADS = ', deparse(as.character(threads)), "))"),
+    "# This session's override of auto_reading: unknown_design (R/convert.R), if it",
+    "# set one, holds for its conversions too.",
+    if (!is.null(getOption("bso.unknown_design")))
+      paste0("options(bso.unknown_design = ", deparse(as.character(getOption("bso.unknown_design"))[1]), ")"),
     'invisible(writeLines(as.character(Sys.getpid()), file.path(.jd, "pid")))',
     "# One terminal file, renamed into place, so the parent can never read half",
     "# a reason and call it the whole one. Line 1 is the KIND, line 2 the words.",

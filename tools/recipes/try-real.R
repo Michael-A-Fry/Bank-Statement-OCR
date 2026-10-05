@@ -43,7 +43,11 @@ for (i in seq_along(files)) {
   rec <- unique(unlist(lapply(rd, function(r) r$matched_recipe %||% r$template$recipe$ref)))
   rec <- if (length(rec)) paste(rec, collapse = "+") else "-"
   st <- as.character(res$status %||% "failed")[1]
-  result <- if (identical(st, "ok")) "automatic" else if (identical(st, "needs_review")) "needs you" else "couldn't read"
+  new_design <- any(vapply(rd, function(r) identical(r$failing_check %||% "", "reading:known_design") ||
+                                             grepl("design before", r$why %||% ""), logical(1)))
+  # "new design": it adds up, and is held because no recipe knows it yet (asked once)
+  result <- if (identical(st, "ok")) "automatic" else if (identical(st, "needs_review") && new_design) "new design"
+            else if (identical(st, "needs_review")) "needs you" else "couldn't read"
   why <- mask(one_line(res$reason %||% (if (length(rd)) rd[[1]]$why) %||% res$messages[1] %||% ""))
   kind <- tolower(tools::file_ext(files[i]))
   pages <- res$metadata$pages_actual %||% NA
@@ -52,6 +56,6 @@ for (i in seq_along(files)) {
 }
 df <- do.call(rbind, rows)
 cat("\nPer recipe:\n")
-print(as.data.frame.matrix(table(df$recipe, factor(df$result, c("automatic", "needs you", "couldn't read")))))
-cat(sprintf("\nTotal: %d files, %d automatic, %d need you, %d couldn't be read.\n", nrow(df),
-            sum(df$result == "automatic"), sum(df$result == "needs you"), sum(df$result == "couldn't read")))
+print(as.data.frame.matrix(table(df$recipe, factor(df$result, c("automatic", "new design", "needs you", "couldn't read")))))
+cat(sprintf("\nTotal: %d files, %d automatic, %d new design (adds up, checked once), %d need you, %d couldn't be read.\n", nrow(df),
+            sum(df$result == "automatic"), sum(df$result == "new design"), sum(df$result == "needs you"), sum(df$result == "couldn't read")))
