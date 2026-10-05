@@ -18,7 +18,7 @@ import re
 import sys
 import zlib
 
-SYNTH = "/home/user/Bank-Statement-OCR/tools/synth"
+SYNTH = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "tools", "synth"))
 if SYNTH not in sys.path:
     sys.path.insert(0, SYNTH)
 

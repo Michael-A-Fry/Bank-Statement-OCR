@@ -37,3 +37,9 @@ Excel BNZ 2033-2195, Kiwibank 2196-2413, Westpac 2414-2519, shared 107-1786, out
 22. Feed: account_number and account_name empty for automatic readings (parse_pdf_table.R:1358, feed.R:292).
 23. ANZ "Transaction type and details" spans 5 physical columns; join them into the description (type code first) -- the new tool keeps only the widest.
 Measuring gap: score_auto.R does not split bundles -- use score_convert.R.
+
+## Regenerating the lookalikes
+`python3 docs/context/qvf/gen/make_<type>.py` writes to docs/context/qvf/sets/<area>/ (git-ignored).
+They import tools/synth/make_layouts.py (path found relative to the file). The BNZ .xls
+writer needs xlwt: `pip install --target docs/context/qvf/.pylib xlwt` (dev-time only; never shipped).
+Score: `Rscript tools/synth/score_convert.R docs/context/qvf/sets/<area> --mode cold`.
