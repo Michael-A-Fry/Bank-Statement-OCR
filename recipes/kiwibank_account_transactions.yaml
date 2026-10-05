@@ -10,7 +10,7 @@ kind: pdf
 status: proven
 recognise:
   all: ["Account Transactions", "Enquiry Period", "Transaction Keywords"]
-  none: ["Closing Balance", "Date of Transaction", "Date of transaction", "Transaction Details", "Transaction detail", "Your transaction details"]
+  none: ["Date of Transaction", "Transaction Details", "Transaction detail"]
 statement_starts: "Account Transactions"
 period:
   label: "Enquiry Period"

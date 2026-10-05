@@ -1,4 +1,4 @@
-# Recipe written by tools/recipes/from_designs.py from 3 real statement design(s)
+# Recipe written by tools/recipes/from_designs.py from 6 real statement design(s)
 # described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
 # prove itself by the statement's own arithmetic; one that does not is not used.
 recipe: kiwibank_air_new_zealand_airpoints_plat
@@ -9,8 +9,8 @@ title: "Air New Zealand Airpoints Platinum MasterCard"
 kind: pdf
 status: proven
 recognise:
-  all: ["Date of Transaction", "Transaction Details", "Closing Balance"]
-  none: ["Account Transactions", "Date of transaction", "Enquiry Period", "Transaction Keywords", "Transaction detail", "Your transaction details"]
+  all: ["Date of Transaction", "Transaction Details", "Card Used"]
+  none: ["Account Transactions", "Enquiry Period", "Transaction Keywords", "Transaction detail"]
 period:
   label: "Statement period"
 table:
@@ -22,8 +22,8 @@ table:
     description: {under: "Transaction Details"}
     credit: {under: "Credit"}
     debit: {under: "Debit"}
-  ends_at: ["Totals", "Kiwibank credit card payment slip", "Your cheque particulars", "TOTALS", "Your payment slip", "Payment options"]
-  skip: ["Continued over"]
+  ends_at: ["Totals", "Kiwibank credit card payment slip", "Your cheque particulars", "TOTALS", "Your payment slip", "Your Payment Slip.", "Payment options", "The information below is a summary"]
+  skip: ["Continued over", "Includes an International Transaction Fee of", "Australian Dollar at", "Yuan Renminbi at"]
 dates:
   format: "%d/%m/%y"
   year: printed

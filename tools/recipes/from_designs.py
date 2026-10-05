@@ -49,7 +49,34 @@ def sections(b):
 def quoted(s): return [q.strip() for q in re.findall(r'"([^"]+)"', s or "")]
 def clean(ph): return [p for p in ph if p and not PLACEHOLDER.search(p) and len(p) >= 3]
 def first_word(s): return (s or "").replace("[kind]", "").split()[0].strip().lower() if (s or "").split() else ""
+# A phrase as the reader matches it (R/recipes.R .rc_flat): lower case, words only.
+def flat(s): return " %s " % re.sub(r"[^a-z0-9%]+", " ", (s or "").lower()).strip()
+def printed_in(p, phrases): return any(flat(p) in flat(x) for x in phrases if x)
 def slug(s): return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+VARIANT = re.compile(r'^(\s*[a-z]\)\s*)?(Older|Newer)[^:"]*:\s*(.*)$')
+
+def variants(b):
+    """A block that describes an older and a newer design of the same statement
+    ("Older: ...", "Newer variant: ...", '"A" / "B" -> role', '"A" OR "B"') becomes
+    two blocks, one per design; every unmarked line belongs to both. A marked line
+    followed by bare quoted lines (a heading listed one word per line) carries its
+    mark down. A block without such marks is returned as it is."""
+    hdr = sections(b).get("header", "")
+    if not re.search(r"(?m)^\s*(Older|Newer)\b", hdr): return [b]
+    out = {"Older": [], "Newer": []}; mode = None
+    for ln in b.split("\n"):
+        m = VARIANT.match(ln)
+        if m:
+            mode = m.group(2); out[mode].append((m.group(1) or "") + m.group(3)); continue
+        if mode and re.match(r'^\s*"[^"]*"\s*$', ln): out[mode].append(ln); continue
+        mode = None
+        two = re.match(r'^(\s*)"([^"]+)"\s*(?:/|OR)\s*"([^"]+)"(.*)$', ln)
+        if two:
+            out["Older"].append('%s"%s"%s' % (two.group(1), two.group(2), two.group(4)))
+            out["Newer"].append('%s"%s"%s' % (two.group(1), two.group(3), two.group(4))); continue
+        out["Older"].append(ln); out["Newer"].append(ln)
+    return ["\n".join(out["Older"]), "\n".join(out["Newer"])]
 
 def parse(b):
     S = sections(b)
@@ -70,12 +97,15 @@ def parse(b):
     po = re.search(r'd\)\s*"([^"]+)"', per)
     d["open_start"] = po.group(1).strip() if po else None
     hdr = S.get("header", "")
-    if re.search(r"(?i)older|newer|variant", hdr): d["problems"].append("several design variants in one block")
+    if re.search(r"(?m)^\s*(Older|Newer)\b", hdr): d["problems"].append("several design variants in one block")
     hdr = re.split(r"Is the heading", hdr)[0]
     d["header"] = quoted(hdr)
     cols = []
     for m in re.finditer(r'"([^"]+)"\s*(?:=>|->)\s*([a-z-]+)', S.get("columns", "")):
         cols.append((m.group(1).strip(), ROLE.get(m.group(2), None), m.group(2)))
+    # columns are listed in any order; the heading line sets it
+    hl = [h.lower() for h in d["header"]]
+    if cols and all(c[0].lower() in hl for c in cols): cols.sort(key=lambda c: hl.index(c[0].lower()))
     d["columns"] = cols
     dt = (S.get("dates") or "").split("\n")[0]
     fm = re.match(r"\s*(.+?)\s+(yes|no)\b", dt)
@@ -93,7 +123,9 @@ def parse(b):
     d["positive"] = [x for x in quoted(pos.group(1) if pos else "") if x == "CR"]
     o = re.search(r"(oldest_first|newest_first)", S.get("order", ""))
     d["order"] = o.group(1) if o else "oldest_first"
-    d["skip"] = clean(quoted(S.get("skip")))
+    # a heading word ("Credit") printed again inside the table is the heading, not a
+    # line to skip -- as a skip it would swallow a row whose description starts with it
+    d["skip"] = [x for x in clean(quoted(S.get("skip"))) if not any(flat(h).startswith(flat(x)) for h in d["header"])]
     d["ends"] = clean(quoted(S.get("ends")))
     nr = S.get("norows", "")
     d["norows"] = [] if re.search(r"UNSURE|NONE", nr) else clean(quoted(nr))
@@ -114,11 +146,15 @@ def check(d):
     if not d["style"]: p.append("money style not given")
     return p
 
-def recipe_yaml(rid, ds, status="draft", extra_none=()):
+def recipe_yaml(rid, ds, status="draft", extra_none=(), sib_seen=()):
     d0 = ds[0]
     common = set(d0["all"])
     for d in ds[1:]: common &= set(d["all"])
     alls = [p for p in d0["all"] if p in common] or d0["header"][:2]
+    # When a sibling design prints every one of these too, the heading words only
+    # this design prints tell them apart ("Card Used" against "Credit amount").
+    if sib_seen and all(printed_in(p, sib_seen) for p in alls):
+        alls += [h for h in d0["header"] if not printed_in(h, sib_seen) and h not in alls][:2]
     # One start phrase only when every statement of the design prints the same one.
     st = set(d["starts"] for d in ds)
     starts = [(st.pop(), len(ds))] if len(st) == 1 and None not in st else []
@@ -129,7 +165,10 @@ def recipe_yaml(rid, ds, status="draft", extra_none=()):
     # prints it): only phrases EVERY statement of the design lists are kept.
     own_none = set(ds[0]["none"])
     for d in ds[1:]: own_none &= set(d["none"])
-    nones = sorted((own_none | set(extra_none)) - seen - set(alls))
+    # The reader ignores capitals and matches whole words, so "Date of transaction"
+    # would also block a statement printing "Date of Transaction".
+    nones = sorted(x for x in (own_none | set(extra_none)) - set(alls) if not printed_in(x, seen | set(alls)))
+    nones = list({flat(x): x for x in reversed(nones)}.values())[::-1]
     uniq = lambda xs: list(dict.fromkeys(xs))
     skip = uniq(x for d in ds for x in d["skip"])
     # A section heading ("Sundry Account Transactions") is skipped and reading carries
@@ -177,7 +216,8 @@ def main():
     text = open(a.src, encoding="utf-8").read()
     blocks = [b for b in re.split(r"\n(?=STATEMENT DESIGN)", text) if b.startswith("STATEMENT DESIGN")]
     groups, skipped = collections.OrderedDict(), []
-    for i, b in enumerate(blocks, 1):
+    for i, blk in enumerate(blocks, 1):
+      for b in variants(blk):
         d = parse(b); p = check(d)
         if p: skipped.append((i, d["bank"], d["title"], p)); continue
         key = (d["bank"], tuple(h.lower() for h in d["header"]), d["date_format"])
@@ -192,15 +232,16 @@ def main():
         return c
     def seen_of(ds):
         return set(x for d in ds for x in d["all"] + d["skip"] + d["ends"] + d["header"] + [d["title"], d["starts"] or ""])
-    extra = {}
+    extra, sibs = {}, {}
     for k, ds in groups.items():
         sib = [alls_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0]]
         extra[k] = sorted(set().union(*sib) - seen_of(ds)) if sib else []
+        sibs[k] = set().union(*[seen_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0]])
     ids = collections.Counter()
     for (bank, hdr, fmt), ds in groups.items():
         base = "%s_%s" % (bank, slug(ds[0]["title"])[:30]); ids[base] += 1
         rid = base if ids[base] == 1 else "%s_%d" % (base, ids[base])
-        open(os.path.join(a.out, rid + ".yaml"), "w").write(recipe_yaml(rid, ds, a.status, extra[(bank, hdr, fmt)]))
+        open(os.path.join(a.out, rid + ".yaml"), "w").write(recipe_yaml(rid, ds, a.status, extra[(bank, hdr, fmt)], sibs[(bank, hdr, fmt)]))
         print("recipe %-45s from %d statement(s)" % (rid, len(ds)))
     print("\n%d blocks -> %d draft recipes; %d blocks not converted:" % (len(blocks), len(groups), len(skipped)))
     for i, bank, title, p in skipped: print("  block %d %s %s: %s" % (i, bank, title[:35], "; ".join(p)))

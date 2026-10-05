@@ -1150,6 +1150,28 @@ recipe_read <- function(input, rc) {
 .rc_why <- function(rc, why) sprintf("Read with recipe %s (%s). %s", rc$ref, rc$title, why)
 
 # .rc_finish_one(st, rc) -- a file holding one statement.
+# .rc_examples(us, n) -- for each column of figures, the first `n` rows that print
+# something in it, as printed: the row's date, its words and the figure, under the
+# role the reading gave the column. Please check shows these lines to ask what a
+# column is (as .ar_column_examples does for the automatic reader).
+.rc_examples <- function(us, n = 2L) {
+  out <- list()
+  for (u in us) {
+    col <- u$col
+    if (is.null(col) || !NROW(col$rows) || !ncol(col$cells)) next
+    roles <- u$rd$roles %||% col$roles
+    desc <- if (NROW(u$tx) == nrow(col$rows)) u$tx$description else col$rows$raw
+    for (k in seq_along(roles)) {
+      have <- sum(vapply(out, function(e) sum(e$field == roles[k]), 0))
+      hit <- utils::head(which(!is.na(col$cells[, k]) & grepl("[0-9]", col$cells[, k])), n - have)
+      if (length(hit))
+        out[[length(out) + 1L]] <- data.frame(field = roles[k], date = col$rows$date[hit],
+          description = substr(as.character(desc[hit]), 1L, 40L), figure = col$cells[hit, k], stringsAsFactors = FALSE)
+    }
+  }
+  if (length(out)) do.call(rbind, out) else NULL
+}
+
 .rc_finish_one <- function(st, rc) {
   u <- .rc_unit(st, rc)
   outcome <- if (isTRUE(u$passed)) "proven" else "check"
@@ -1161,7 +1183,7 @@ recipe_read <- function(input, rc) {
        checks = u$checks,
        candidates = data.frame(source = paste0("recipe:", rc$ref), passed = isTRUE(u$passed), why = u$why %||% "",
                                stringsAsFactors = FALSE),
-       columns = .rc_columns(st, rc), examples = NULL, matched_layout = NULL, matched_recipe = rc$ref,
+       columns = .rc_columns(st, rc), examples = safe(.rc_examples(list(u)), NULL), matched_layout = NULL, matched_recipe = rc$ref,
        recipe_title = rc$title, notes = character(0), other_accounts = list(),
        statements = list(.rc_statement_summary(u, st$pages, 1L)))
 }
@@ -1224,7 +1246,7 @@ recipe_read <- function(input, rc) {
   list(outcome = if (passed) "proven" else "check", why = why, template = tpl, parsed = comb$parsed,
        recon = comb$recon, transactions = tx, proof = proof, checks = checks,
        candidates = data.frame(source = paste0("recipe:", rc$ref), passed = passed, why = why, stringsAsFactors = FALSE),
-       columns = cols, examples = NULL, matched_layout = NULL, matched_recipe = rc$ref, recipe_title = rc$title,
+       columns = cols, examples = safe(.rc_examples(us), NULL), matched_layout = NULL, matched_recipe = rc$ref, recipe_title = rc$title,
        notes = character(0), other_accounts = list(),
        statements = lapply(seq_len(k), function(i) .rc_statement_summary(us[[i]], ranges[[i]], i)))
 }

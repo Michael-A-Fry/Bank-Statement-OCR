@@ -109,6 +109,16 @@ test_that("the shipped recipes load whole, each with its id and version", {
   expect_identical(anz$status, "proven")
 })
 
+test_that("no shipped recipe's must-not-appear wording is printed by its own design", {
+  # Wording is matched ignoring capitals, as whole words: "Date of transaction" in
+  # one design's must-not-appear would also block its own "Date of Transaction".
+  for (rc in rc_shipped()) {
+    own <- .rc_flat(paste(c(rc$all, rc$header, rc$title, rc$statement_starts), collapse = " | "))
+    for (p in rc$none)
+      expect_false(.rc_has_phrase(own, p), info = sprintf("%s: \"%s\" is its own wording", rc$ref, p))
+  }
+})
+
 test_that("a file that is not a valid recipe is named and left out, never half-used", {
   d <- rc_tmpdir(); on.exit(unlink(d, recursive = TRUE), add = TRUE)
   rc_write(d, "ok.yaml", rc_valid_yaml("ok_one"))
