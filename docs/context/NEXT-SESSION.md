@@ -42,3 +42,24 @@ account number/name empty in feed. ANZ Visa/ASB Visa cards were NOT written (age
 
 ## If the owner pastes a "STATEMENT DESIGN" block
 It came from docs/context/recipe-intake-prompt.md (on main): Copilot describing a real statement with nothing personal. Write recipes/<bank>_<product>_<kind>.yaml from it, following recipes/anz_everyday_pdf.yaml; build a lookalike from its SAMPLE (tools/synth/make_layouts.py helpers) and prove the recipe reads it automatically with 0 wrong before committing.
+
+## Drift, wrong picks and bank selection (owner asked 5 Oct; decisions to build)
+Today (main): recipe_recognise() skips recipes of another bank when a bank is chosen
+(R/recipes.R:289); a recognised recipe that does not prove falls back to the automatic
+reader with the note "The bank may have changed the design" (R/recipes.R:337).
+Build:
+1. Never edit a recipe. A drift (e.g. ANZ Visa Oct 2026) becomes a NEW recipe or a new
+   version beside the old one; old statements keep proving on the old one.
+2. When several recipes are recognised (old + new design, or a tie), READ WITH EACH and let
+   the proof decide; two that prove with different figures -> person. (Today a tie picks none.)
+3. Try every bank's recipes, not just the chosen bank's. If another bank's recipe proves it,
+   say plainly: "This reads as an ANZ Visa statement, but ASB was chosen. Use ANZ?"
+4. Three cases, three messages, three Admin Review lists:
+   - WRONG PICK: another bank's recipe proves it, or bank identity disagrees with the pick.
+   - DRIFT: the same recipe's words are found but its reading does not prove; nothing else fits.
+   - NEW DESIGN: no recipe's words are found.
+5. Drift / new design -> automatic reader; if it proves, convert and flag "recipe may need
+   updating"; else Please check questions -> proven answers saved as a DRAFT recipe
+   (version n+1 or new id) -> admin accepts in Admin -> Banks. Accept = proven.
+6. Bank stays pre-filled from the statement (no type picking, unlike the QVF); a person
+   only picks when the statement does not say. Overriding against the statement is flagged.
