@@ -93,3 +93,14 @@ Build:
   QVF/Inphinity Mole offers no rule to copy here. Work: let recipes read OCR'd words
   (kind pdf + scan), and get one such statement described via the Copilot prompt (item 3 =
   pdf-scanned). Whether Mole itself OCRs is unknown (web search found nothing definite).
+
+## THE GATE (owner challenged the direction, 5 Oct -- be honest, not certain)
+The ANZ 14/15 result is partly CIRCULAR: the recipe and the lookalikes were both written
+from the same QVF format card. It proves the machinery is safe, not that recipes beat the
+generic reader on REAL statements. Earlier the generic reader was "certain" on synthetic
+sets and real statements disagreed. So, before writing many recipes:
+1. Owner runs REAL statements of each priority type through the CURRENT tool on their own
+   machine and reports counts per type: automatic / Please check / failed (no PII).
+2. Add the recipes for those types; owner reruns the SAME files.
+3. Recipes stay only if real-statement automatic counts go up with 0 automatic-but-wrong.
+   If they do not, stop and rethink with the owner. Real files are the judge, not lookalikes.
