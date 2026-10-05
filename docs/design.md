@@ -213,6 +213,20 @@ from the balance always forces `check`. A heading that says one thing while the
 arithmetic proves another (card and loan accounts run backwards) loses to the
 arithmetic, and a note is recorded.
 
+### Recipes: known designs, read first (`R/recipes.R`)
+
+A **recipe** (`recipes/<id>.yaml`) says how one bank design is printed: the words
+that recognise it, where each statement of a file starts, the table's heading
+words and its columns left to right, which lines end the table or are not
+transactions, the date format and its year, and how money is signed. Columns hang
+under their heading words, measured on every page. `auto_read()` asks
+`recipe_first()` before anything else: a recipe that recognises the file reads it,
+and the reading is used only when it **proves** to the bar above (the reader's own
+role search must pick the recipe's columns, and the reader's own checks all pass).
+Otherwise the file is read as if there were no recipes, with a note that the
+recipe did not prove. A recipe never makes an unproven reading automatic, and a
+recipe reading teaches no layout. The format is in the build contract, section 5d.
+
 ### Banks (`R/bank_identity.R`)
 
 Evidence in order of trust: **the account holder's own account number**, looked

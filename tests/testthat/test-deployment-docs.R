@@ -53,6 +53,10 @@ test_that("the offline bundle never ships the live dictionaries over a server's 
   expect_true(all(c("R", "templates", "config", "www",
                     "app.R", "ui_content.R", "ui_labels.R", "RUN-ME.bat") %in% items))
   expect_true(file.exists(file.path(.dep_root(), "www", "app.css")))
+  # "recipes" holds the shipped recipes (R/recipes.R). Without it every statement
+  # still converts, read from scratch, so nothing else would notice it missing.
+  expect_true("recipes" %in% items)
+  expect_true(length(list.files(file.path(.dep_root(), "recipes"), "[.]yaml$")) > 0L)
 
   src <- .dep_read("scripts/bundle-offline.R")
   # It must still carry STARTING vocabularies, as examples, or a brand-new install

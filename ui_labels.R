@@ -190,7 +190,8 @@ READING_CHECK_PLAIN <- c(
   workbook_plain     = "The workbook has one sheet of transactions and no hidden rows",
   tables_set_aside   = "Other tables in the file were left out, and the opening and closing balances confirm none of the statement's rows were",
   edge_lines         = "Balance lines with unfamiliar wording at the table's ends are its opening, closing or carried balance",
-  compact_dates      = "Dates printed as eight digits all fall inside the statement period")
+  compact_dates      = "Dates printed as eight digits all fall inside the statement period",
+  statements_join    = "Each statement in the file opens at the balance the one before it closed on")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 
 # ---------------------------------------------------------------------------
