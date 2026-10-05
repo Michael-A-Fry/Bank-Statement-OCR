@@ -43,6 +43,45 @@ TWO RECIPES PROVE: identical figures -> newer recipe; any difference -> ask a pe
 Paste to the new session: "Read docs/context/NEXT-SESSION.md on branch
 wip/qvf-kit and do the next unchecked step. One step per commit; push after each."
 
+## DECISIONS MADE BY CLAUDE from the owner's direction (owner may overrule any)
+D1  ONE CONCEPT: recipes replace learned layouts. Layout learning stops; existing layout
+    files stay on disk unused; Admin -> Banks lists recipes. Layout code is removed in the
+    final code check.
+D2  WHERE RECIPES LIVE: shipped (the 11) in recipes/ (product, overwritten on update);
+    drafted/learned ones in the server's state folder templates/recipes/<bank>/<id>@v<n>.yaml
+    -- versioned, never edited, never overwritten by an update (same rules layouts had).
+D3  RECOGNITION: every recipe of every bank is tried; the chosen bank never hides one. If the
+    recognised recipe's bank differs from the pick: "This reads as <bank> <product>, but
+    <picked> was chosen. Use <bank>?" The bank box is pre-filled from the recipe.
+D4  EXCEL IN RECIPES: the recipe format gains kind: excel/csv (exact column headers,
+    preamble labels, sheet) because 3 of the 11 types are spreadsheets. Plus the 3 Excel
+    rules: OD in the number format, "." = zero, split by an account-number column.
+D5  ACCOUNT FIELDS IN RECIPES: a recipe names the labels for account number and account
+    name (e.g. account: {number_label: "Account number", name_label: "Account name"}) so
+    both are filled in every output.
+D6  DRAFTING FROM ANSWERS: a draft recipe is written from the proven reading -- table
+    header words, columns left to right, date format, money style, period label -- and
+    recognise.all = the table's full header line + the longest digit-free title/box heading
+    on the statement's first page. The admin sees and may edit the words before accepting.
+D7  SPOT CHECKS: a recipe proven only by opening + rows = closing (no running balance, e.g.
+    cards) gets the adaptive spot checks the owner chose earlier until it has 3 proofs.
+D8  SIDE-BY-SIDE TOOL: tools/compare-qvf.R -- given the QVF's output CSV and the new tool's
+    CSV for the same statement, prints counts only (rows, totals, rows matched on date +
+    amount, rows only in one). The owner runs it locally; no data leaves.
+D9  PROGRESS: the conversion job writes its stage and page n/N to its progress file; the
+    queue shows "File 2 of 5 -- reading the table, page 37 of 150".
+D10 TIMINGS: each conversion adds seconds per stage (text, OCR, recognise, read, prove,
+    write) to the existing anonymous tracking line (no names, numbers or file names); the
+    Admin "Automatic reading" carry-off summary includes median seconds per page by kind.
+D11 SCOPE TRIMS: the owner's vocabulary doc -> only the items the 11 types need (START
+    period, no-transactions, card subtotals, "Current balance", labels-above-figures);
+    the rest dropped. The old "Stage 4" list -> dropped except D7, D9, D10.
+    Admin Review (wip/admin-review) -> trimmed to: needs-a-look list with the page picture,
+    and draft recipes with Accept / Retire.
+D12 VERSION: the release is 3.0.0 (recipes), with a 2.x -> 3.0 server update guide.
+D13 FINAL CODE CHECK at the end, focused on the recipe path, the proof, outputs and the
+    removal of superseded code (layout learning, the generic reader's auto-convert path).
+
 ## Rules (owner's, still in force)
 - Work branch: claude/bank-statement-ocr-platform-t6n934. Pushing to main allowed when the full suite is green.
 - Commit footer: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com> / Claude-Session: https://claude.ai/code/session_01Sf7ppx17bCYkfX8ivYbVEb
