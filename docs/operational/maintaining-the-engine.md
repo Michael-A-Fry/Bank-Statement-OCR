@@ -74,10 +74,10 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **68 files, 1,077 tests, 6,622 passing assertions**
+The last full run measured **69 files, 1,099 tests, 6,776 passing assertions**
 — taken on 2026-10-05, at `VERSION` 2.0.0, on R 4.3.3, with skips not allowed:
-**0 failed, 0 errors, 0 skipped**. It was taken after the one-list Words screen
-was added (`test-words.R`, the 68th file). Treat the figures as a count of what exists; the pass condition is
+**0 failed, 0 errors, 0 skipped**. It was taken after the recipe reader was
+added (`test-recipes.R`, the 69th file). Treat the figures as a count of what exists; the pass condition is
 still the one above.
 
 **After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the
