@@ -8,7 +8,7 @@ keeping versioned records of readings its own arithmetic proved, never by fittin
 model. Never crash - return structured status.
 
 ## 1. Directory layout
-`R/` holds **45 single-concern modules**. The core conversion path is the first
+`R/` holds **49 single-concern modules**. The core conversion path is the first
 group; the rest support it. (Every module's own header comment is the authority on
 what it does - this table is the map, not a duplicate spec.)
 
@@ -29,6 +29,7 @@ R/   -- the conversion path (input -> read -> proven -> written)
   auto_read_prove.R     automatic reading: column roles by arithmetic and the all-or-nothing checks
   auto_read_summ.R      automatic reading: opening, closing and totals under unknown wordings, named by arithmetic
   auto_read_tabular.R   automatic reading: CSV and Excel exports, columns by content and headings
+  recipes.R             a known design read with its recipe (recipes/*.yaml), proven to the reader's own bar
   layouts.R             each bank's learned layouts: versioned store, matching and learning rules
   fixes.R               a person's unproven fix, held for an admin (never learned on its own)
   tracking.R            no-personal-data record of what automatic reading did, and its summary
@@ -66,6 +67,8 @@ R/   -- operations, evidence and governance
   requests.R            the format requests raised in 1.x, for triage on Admin -> Health
   retention.R           what is left on disk, and when it goes away
 
+recipes/                the shipped recipes, one YAML file per known bank design (section 5d);
+                        a server's own recipes live in the folder config's paths$recipes names
 templates/              templates/README.md: what lives here now
   layouts/              LIVE: each bank's learned layouts, <bank>/<id>@v<n>.yaml
                         (created on the server; never shipped, never hand-edited)
@@ -315,10 +318,66 @@ only when the arithmetic proves every row (consecutive statements of one account
 chain cleanly; statements of different accounts break the chain); otherwise it
 goes to a person with the *several statements in one file* diagnostic.
 
+### 5d. Recipes: a known design, read the same way every time (`R/recipes.R`)
+A **recipe** is a small YAML file saying how ONE bank design is printed; one
+reader runs any recipe, and the statement's own arithmetic proves every result.
+`recipes/` ships with the product (one file per design, `<id>.yaml`); a server
+may keep its own in the folder `paths$recipes` names. A recipe is never edited:
+a change is a new file with a higher `version`, and the highest version of an id
+is used (none when it is `retired`). A file that is not a valid recipe is named
+in `attr(recipes_load(), "problems")` and never half-used.
+
+```yaml
+recipe: anz_everyday_pdf          # id: lower case, digits, _
+format: 1                         # the recipe FILE format this reader reads
+version: 1                        # this recipe's own version
+bank: anz
+kind: pdf                         # text PDFs only, so far
+status: proven                    # draft | proven | retired; only proven ones read
+recognise: {all: ["Account at a glance", "Transaction type and details"],
+            none: ["The following is a summary of your loan"]}
+statement_starts: "Account at a glance"     # each statement of a file starts on such a page
+period: {label: "Statement period", open_start: "START"}
+table:
+  header: ["Date", "Transaction type and details", "Withdrawals", "Deposits", "Balance"]
+  columns:                        # left to right; each hangs under its heading
+    date: {under: "Date"}
+    description: {under: "Transaction type and details"}
+    debit: {under: "Withdrawals"}
+    credit: {under: "Deposits"}
+    balance: {under: "Balance"}
+  ends_at: ["Totals at end of page", "Totals at end of period"]
+  skip: []                        # dated lines that are events, not money
+  no_rows: ["No transactions for this period"]
+dates: {format: "%d %b", year: period}      # year: printed | period
+money: {style: debit_credit_cols, negative: ["OD"]}
+```
+
+Columns either all hang `under:` a heading (measured on each page: a figure
+belongs to the money column whose heading it stands under, every other word to
+the text column whose heading starts at or left of it, boundaries half way across
+the gutters) or all give `x_min`/`x_max` (the 1.x bands, for a design with no
+heading row). The rule: **the recipe proposes, the arithmetic decides.** A recipe
+reading is `proven` only when, statement by statement, the automatic reader's own
+role search (`.ar_roles`) picks exactly one reading and it is the recipe's, every
+one of the reader's arithmetic and safety checks passes (`.ar_arith_checks`,
+`.ar_ends_printed`, `.ar_dates_settled`, `.ar_page_labels_ok`, `.ar_reader_agrees`
+and the rest, called, not copied), and the recipe's completeness checks pass
+(every dated line with a figure is a row, a balance line or a line the recipe
+skips; every page with such lines gave rows). A file of several statements is
+read one statement at a time and is proven only when they also follow on
+(`statements_join`). A statement that says it has no transactions is proven empty
+only when its opening equals its closing balance and any totals are nil.
+`auto_read()` asks `recipe_first()` before reading a file from scratch and uses a
+recipe reading only when it is proven; otherwise it reads the file exactly as it
+would with no recipes, with a note that the recipe did not prove. A reading made
+with a recipe teaches no layout.
+
 ## 6. Function interfaces (exact signatures)
 - `read_input(path) -> input` : `list(kind, path, sha256, lines=NULL, table=NULL, pages=NULL, words=NULL, meta)`. Dispatch by extension. A scan's pages are OCR'd here; `meta$ocr_timed_out` names any page whose OCR ran out of time (read as blank).
 - `bank_identify(input) -> list(institution, bank_code, confidence = high|medium|low|unknown, why, evidence)`. Never returns or stores an account number. `bank_pick(identified, chosen = NULL, confirmed = FALSE)` -> the bank to use, whether to ask, and `block_learning`.
-- `auto_read(input, layouts = list(), bank = NULL, opts = list()) -> reading` : `outcome` (`proven` / `layout_match` / `check` / `unread`), `why`, `template`, `parsed`, `recon`, `transactions`, `proof`, `checks` (data.frame `check, ok, why`), `candidates`, `columns`, `matched_layout`, `other_accounts` (other accounts' tables read apart: `account`, `title`, `rows`, `tx`, `proof`; never in `transactions`). Spec Appendix A1 is the field-by-field contract. `opts$roles` carries a person's role fix from Please check.
+- `auto_read(input, layouts = list(), bank = NULL, opts = list()) -> reading` : `outcome` (`proven` / `layout_match` / `check` / `unread`), `why`, `template`, `parsed`, `recon`, `transactions`, `proof`, `checks` (data.frame `check, ok, why`), `candidates`, `columns`, `matched_layout`, `matched_recipe` (`"<id>@<version>"` when a recipe read it, else NULL), `recipe_tried` (a recipe recognised whose reading did not prove: `recipe`, `why`), `other_accounts` (other accounts' tables read apart: `account`, `title`, `rows`, `tx`, `proof`; never in `transactions`). Spec Appendix A1 is the field-by-field contract. `opts$roles` carries a person's role fix from Please check (no recipe is tried then); `opts$recipes` the recipes to try, or `FALSE` for none (default `recipes_default()`).
+- Recipes: `recipes_load(dirs = recipes_dirs()) -> list` (problems in `attr(, "problems")`), `recipes_default()` (cached on the files' times), `recipe_recognise(input, recipes, bank = NULL) -> list(recipe, scores, why)`, `recipe_read(input, recipe) -> reading` (the shape above, `outcome` `proven` or `check`), `recipe_first(input, bank, opts)`.
 - `parse_statement(input, template) -> parsed` : `list(transactions, extras, header, provenance)` per schema above (CSV / Excel); `parse_pdf_table()` for a PDF, which takes `template$table$columns_by_page[[p]]` for page `p` when present.
 - `parse_date(x, fmt) -> list(iso, raw)`; `parse_amount(x, style, ...) -> list(value, direction, raw)`; `clean_description(x) -> character` (verbatim-preserving: only `trimws`).
 - `reconcile(parsed, template) -> list(kpis=data.frame, trust=list(level, score, reasons))`. KPI rows: `name, status(pass|fail|na), expected, actual, discrepancy, detail`.
@@ -332,7 +391,7 @@ goes to a person with the *several statements in one file* diagnostic.
   - `overrides$roles`: a named vector from a found column's field (`result$columns$field`, e.g. `debit`, `other1`) to `debit` / `credit` / `amount` / `balance` / `other`. `overrides$columns`: drawn boxes, `data.frame(field, x_min, x_max[, page])`, PDF only, pages of the FILE. `overrides$statement`: which statement of a bundle the fix is for.
   - `confirm = TRUE` on a `needs_review` reading -> `ok` with `feed_basis = "person"`; refused, with a message, when a balance, opening/closing or printed-totals check contradicts the reading, or when a fix sent with it did not apply.
   - `bank_confirmed = TRUE`: the person kept their pick against the statement's disagreement, which unblocks learning (but never teaches the picked bank from a statement in a bundle that names another).
-  - Returns `list(status, outcome, reason, feed_basis, bank, reading, columns, learn, fix_held, person, derived, spot_check, stamp, kpis, trust, header, transactions, outputs, diagnostics, coverage, messages, run_id, run_log, ...)`.
+  - Returns `list(status, outcome, reason, feed_basis, bank, reading, columns, learn, fix_held, person, derived, spot_check, stamp, kpis, trust, header, transactions, outputs, diagnostics, coverage, messages, run_id, run_log, matched_recipe, ...)`. `matched_recipe` (and `stamp$recipe`) is the recipe that read every statement of the file, else NA; each `reading[[i]]` carries its own. A statement a recipe proves empty converts `ok` with no rows.
 - `spot_check_record(result, verdict = "right"|"wrong"|"cant_tell", tracking_dir)`: the person's answer to a spot check.
 - `convert_batch(paths, ..., banks = NULL, overrides = NULL, progress = NULL, done = NULL) -> data.frame(file, status, outcome, bank, chosen, layout, rows, trust, failing_check, message, result)` - a loop over `convert_statement()`; `failing_check` may be `reading:<check>` or `diag:<category>`.
 - `identify_file(path, name) -> list(ext, format, kind, pages, state, bank, bank_display, bank_code, confidence, ask, detail)` - the Convert table's row: the bank the statement names, without OCR. `state` is `ready | scanned | scanned_no_ocr | unreadable | unsupported_type`. `identify_scan(path, name)` does the same for a scan's first pages in a background job. `bank_choices(layouts_dir)` feeds the bank dropdown.
@@ -420,7 +479,7 @@ is the healthy ceiling there.
 
 ## 10. Logging (`logs/runs/<run_id>.json`, one FILE per run)
 `ts, run_id, kind, requested_by, source_file, source_sha256, bank_hint,
-institution, bank_code, bank_confidence, file_kind, layout, outcome, proof_kind,
+institution, bank_code, bank_confidence, file_kind, layout, recipe, outcome, proof_kind,
 feed_basis, learn_action, person_fix, spot_check, reason, layout_signature,
 layout_hint, engine_version, reader_version, layouts_state, status, trust_level,
 row_count, derived_amounts, kpi_fail_count, pages, statements, period_start,

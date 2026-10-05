@@ -1,0 +1,70 @@
+# ANZ transaction account statement, text PDF: everyday, current and call
+# accounts. The Qlik converter's type "ANZ" ("ANZ - 9 Columns"); its format card
+# (anz.md, read off the converter's script) is cited below as "card". The owner's
+# real ANZ statements are this design.
+#
+# What the statement looks like: an "Account at a glance" box (account, period,
+# opening and closing balance, total withdrawals and deposits), then one table
+# whose heading is printed again on every page. A page ends with "Totals at end of
+# page" (and sometimes "Balance Carried Forward"), the next page opens with
+# "Balance brought forward from previous page", and the last page ends with
+# "Totals at end of period". A file can hold several statements, each opening
+# with its own glance box. An overdrawn balance prints "OD" after the figure.
+#
+# A recipe is read by R/recipes.R and proven by the statement's own arithmetic,
+# so nothing here is trusted on its own: a statement this recipe does not fit
+# (the bank changed the design) is not proven and goes to the automatic reader.
+recipe: anz_everyday_pdf
+format: 1
+version: 1
+bank: anz
+title: ANZ transaction account
+kind: pdf
+status: proven
+
+# Words the statement prints, matched whole and case-insensitively. Every "all"
+# phrase must be printed and no "none" phrase. The table heading below must also
+# be found on one line.
+recognise:
+  all: ["Account at a glance", "Transaction type and details"]
+  none: ["The following is a summary of your loan"]
+
+# Each statement of a file starts on the page printing this.
+statement_starts: "Account at a glance"
+
+# The period is printed after this label in the glance box. A new account's first
+# statement prints "START - 30 Sep 2019": it has no start date, so a row's year
+# is the one that puts it on or before the period's end (card section 1).
+period:
+  label: "Statement period"
+  open_start: "START"
+
+table:
+  header: ["Date", "Transaction type and details", "Withdrawals", "Deposits", "Balance"]
+  # Left to right. Each column hangs under its heading word, wherever the page
+  # prints it. The heading "Transaction type and details" stands over five
+  # printed columns (type code, other party, particulars, code, reference); they
+  # are one description, as the Qlik converter reads them.
+  columns:
+    date:        {under: "Date"}
+    description: {under: "Transaction type and details"}
+    debit:       {under: "Withdrawals"}
+    credit:      {under: "Deposits"}
+    balance:     {under: "Balance"}
+  # A line starting with one of these ends the table on its page. A totals line
+  # is kept as the printed totals the rows must add up to.
+  ends_at: ["Totals at end of page", "Totals at end of period", "Balance Carried Forward",
+            "Your available credit"]
+  # The table says the statement has no transactions.
+  no_rows: ["No transactions for this period"]
+
+# "02 Sep": no year, so each row takes the year that puts it inside the period.
+dates:
+  format: "%d %b"
+  year: period
+
+# Money out and money in in columns of their own; a balance followed by "OD" is
+# overdrawn (negative).
+money:
+  style: debit_credit_cols
+  negative: ["OD"]

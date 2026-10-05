@@ -306,9 +306,13 @@ test_that("a correction names roles only from the column-role vocabulary", {
 })
 
 test_that("the check and repair lists match what the reader can report", {
-  src <- unlist(lapply(list.files(fixture("R"), "^auto_read.*[.]R$", full.names = TRUE), readLines, warn = FALSE))
+  # The automatic reader's files, and the recipe reader's, which reports the same
+  # checks of a recipe's table and one of its own (written as `check = "..."`).
+  src <- unlist(lapply(list.files(fixture("R"), "^(auto_read.*|recipes)[.]R$", full.names = TRUE), readLines, warn = FALSE))
   skip_if(!length(src))
-  checks <- unique(regmatches(src, regexpr('(?<=add\\(")[a-z_]+(?=")', src, perl = TRUE)))
+  checks <- unique(c(regmatches(src, regexpr('(?<=add\\(")[a-z_]+(?=")', src, perl = TRUE)),
+                     regmatches(src, regexpr('(?<=check = ")[a-z_]+(?=")', src, perl = TRUE))))
+  expect_true("statements_join" %in% checks)
   repairs <- unique(regmatches(src, regexpr('(?<="repair:)[a-z_]+(?=")', src, perl = TRUE)))
   expect_true(length(checks) > 5)
   expect_true(all(checks %in% TRACK_CHECKS), info = paste(setdiff(checks, TRACK_CHECKS), collapse = ", "))

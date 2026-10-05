@@ -27,13 +27,32 @@
 # left to right (debit, credit, amount, balance, other), as the reading's own
 # template$auto$roles lists them. Only that assignment is read; the arithmetic
 # still has to prove it, and no learned layout or repair stands in for it.
+#
+# RECIPES FIRST (R/recipes.R). A statement of a design the tool has a recipe for
+# is read with that recipe before anything else. Its reading is used only when it
+# PROVES, to the bar every reading here meets; it then comes back "proven" with
+# matched_recipe ("<id>@<version>"). A recipe recognised whose reading does not
+# prove is set aside with a note (the bank may have changed the design) and the
+# file is read exactly as it would be with no recipes at all. opts$recipes: the
+# recipes to try (a list), or FALSE for none; recipes_default() otherwise. A
+# person's roles (opts$roles) are a fix to the automatic reading, so no recipe is
+# tried then.
 
 AUTO_READ_VERSION <- "1.0.0"
 
 auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   t0 <- proc.time()[["elapsed"]]
-  rd <- tryCatch(.ar_read(input, layouts %||% list(), bank, opts %||% list()),
-    error = function(e) .ar_unread(paste0("The reader stopped on this file (", conditionMessage(e), ").")))
+  opts <- opts %||% list()
+  rc <- if (is.null(opts$roles)) tryCatch(recipe_first(input, bank, opts), error = function(e) NULL) else NULL
+  rd <- if (identical(rc$outcome, "proven")) rc else {
+    r <- tryCatch(.ar_read(input, layouts %||% list(), bank, opts),
+      error = function(e) .ar_unread(paste0("The reader stopped on this file (", conditionMessage(e), ").")))
+    if (!is.null(rc)) {
+      r$notes <- c(r$notes, recipe_note(rc))
+      r$recipe_tried <- list(recipe = rc$matched_recipe, why = rc$why)
+    }
+    r
+  }
   # A scanned page whose OCR ran out of time comes back blank. If it was the last
   # page, the rows that were read can still add up on their own, so nothing above
   # would notice the missing rows: such a reading is never automatic.

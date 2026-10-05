@@ -31,9 +31,12 @@ TRACK_PROOF_KINDS   <- c("chain", "totals", "layout", "person", "none")
 TRACK_LEARN_ACTIONS <- c("created", "evidence_added", "promoted", "none",
                          "confirmed", "corrected", "retired", "renamed")
 TRACK_SPOT_CHECKS   <- c("right", "wrong", "cant_tell")
-# The reader's hard checks (R/auto_read.R). A new check must be added here before
-# it can be tracked; until then it is dropped with a warning, never written raw.
-# test-tracking.R holds both lists to the reader's source, so they cannot drift.
+# The reader's hard checks (R/auto_read.R), and the recipe reader's (R/recipes.R),
+# which asks the same questions of a recipe's table plus one of its own
+# (statements_join: a file of several statements read with a recipe). A new check
+# must be added here before it can be tracked; until then it is dropped with a
+# warning, never written raw. test-tracking.R holds both lists to the readers'
+# source, so they cannot drift.
 TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_used_once",
                   "lines_accounted", "dates_settled", "dated_lines_used", "pages_complete",
                   "balance_chain", "chain_across_pages", "opening_closing", "printed_totals",
@@ -43,7 +46,7 @@ TRACK_CHECKS <- c("rows_read", "rows_match_columns", "pages_with_rows", "words_u
                   "year_settled", "table_unbroken", "summary_lines_checked",
                   "rows_once", "one_statement", "rows_between_ends", "one_side_per_row",
                   "ends_printed", "sections_set_aside", "currency_own", "workbook_plain",
-                  "tables_set_aside", "edge_lines", "compact_dates")
+                  "tables_set_aside", "edge_lines", "compact_dates", "statements_join")
 # The reader's repair steps (the "repair:<step>" candidates of R/auto_read.R; a
 # step tried more than one way, "edge_lines2", is recorded under its own name).
 TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift",

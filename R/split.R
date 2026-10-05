@@ -223,7 +223,7 @@ bundle_combine <- function(readings, ranges, npages) {
          opening_balance = h$opening_balance %||% NA_real_, closing_balance = h$closing_balance %||% NA_real_,
          account_hash = NA_character_, rows = nrow(r$transactions %||% data.frame()),
          outcome = r$outcome %||% "unread", why = r$why %||% NA_character_,
-         layout = r$matched_layout %||% NA_character_,
+         layout = r$matched_layout %||% NA_character_, recipe = r$matched_recipe %||% NA_character_,
          trust_level = r$recon$trust$level %||% "low", trust_score = r$recon$trust$score %||% 0)
   })
 

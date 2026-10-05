@@ -1,0 +1,70 @@
+# ANZ home loan and term loan statement, text PDF. The Qlik converter's type
+# "ANZ - Loan"; its format card (anz_loan.md, read off the converter's script)
+# is cited below as "card".
+#
+# What the statement looks like: "Summary of Home Loan Number ...", then "The
+# following is a summary of your loan for the period <date> to <date>", a loan
+# summary (principal and interest paid, next payment), and one table: Date |
+# Description | Withdrawals | Deposits | Principal Balance, its heading printed
+# again on every page. Drawdowns, interest and fees are withdrawals (the debt
+# grows), payments are deposits. The balance is what is owed, printed "DR". A
+# page ends with "Balance Carried Forward" and the next page opens with the same
+# line under its heading; the table ends with "Closing Balance". Notices (a
+# fixed-rate expiry, a rate change) can sit between statements: they print no
+# table, so they read nothing.
+#
+# Read by R/recipes.R and proven by the statement's own arithmetic, so nothing
+# here is trusted on its own.
+recipe: anz_loan_pdf
+format: 1
+version: 1
+bank: anz
+title: ANZ home or term loan
+kind: pdf
+status: proven
+
+recognise:
+  all: ["The following is a summary of your loan", "Principal Balance"]
+  none: ["Account at a glance"]
+
+# Not "The following" alone: a notice saying "The following changes ..." would
+# start a statement that is not there (card section 2, last row).
+statement_starts: "The following is a summary of your loan"
+
+# "... for the period 1 November 2015 to 30 November 2015". Only the summary's
+# own wording: "Summary of total loan fees for the period ..." is the fee table's.
+period:
+  label: "summary of your loan for the period"
+
+table:
+  header: ["Date", "Description", "Withdrawals", "Deposits", "Principal Balance"]
+  columns:
+    date:        {under: "Date"}
+    description: {under: "Description"}
+    debit:       {under: "Withdrawals"}
+    credit:      {under: "Deposits"}
+    balance:     {under: "Principal Balance"}
+  # "Balance Carried Forward" ends a page's table, except straight under the
+  # heading, where the next page repeats it as the balance brought forward
+  # (card section 1, "End of a block"). The reader never ends a table on a line
+  # printed before its first row.
+  ends_at: ["Closing Balance", "Balance Carried Forward"]
+  # Dated lines that are events, not money: they are not rows. A balance printed
+  # on one is the balance where it stands ("Opening interest rate 6.10% p.a.
+  # 480,000.00 DR" is the opening balance). Card section 2, "Skips rows whose 3rd
+  # word is Opening, Rate, change or Balance".
+  skip: ["Opening interest rate", "Rate change", "Interest rate change"]
+
+# "31 Jan 17": the year is printed. The Qlik converter throws it away and guesses
+# it from the period, which puts July-December rows of a period starting before
+# October in the wrong year (card section 2); here the printed year is read.
+dates:
+  format: "%d %b %y"
+  year: printed
+
+# Money out and money in in columns of their own; the balance owed prints "DR"
+# (negative), one in credit "CR".
+money:
+  style: debit_credit_cols
+  negative: ["DR"]
+  positive: ["CR"]

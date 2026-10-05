@@ -500,7 +500,7 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
 
 # .bundle_joins(readings) -- do a bundle's statements join up into one unbroken run
 # of the same account? Every statement proven with both its ends printed, each with
-# a period start and an opening and closing balance, and, ordered by period, each
+# a printed period and an opening and closing balance, and, ordered by period, each
 # opening equal to the previous closing to the cent.
 .bundle_joins <- function(readings) {
   if (length(readings) < 2L) return(TRUE)
@@ -509,14 +509,19 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
     ck <- r$checks
     ends <- if (is.data.frame(ck)) ck$ok[ck$check == "ends_printed"] else logical(0)
     list(proven = identical(as.character(r$outcome %||% "")[1], "proven") && length(ends) == 1L && isTRUE(ends),
-         start = .bundle_date(h$period_start),
+         start = .bundle_date(h$period_start), end = .bundle_date(h$period_end),
          open = suppressWarnings(as.numeric(h$opening_balance %||% NA)[1]),
          close = suppressWarnings(as.numeric(h$closing_balance %||% NA)[1]))
   }
   st <- lapply(readings, one)
-  if (!all(vapply(st, function(x) x$proven && !is.na(x$start) && is.finite(x$open) && is.finite(x$close), logical(1))))
-    return(FALSE)
-  st <- st[order(vapply(st, function(x) as.numeric(x$start), 0))]
+  if (!all(vapply(st, function(x) x$proven && is.finite(x$open) && is.finite(x$close), logical(1)))) return(FALSE)
+  # In period order: by start; or, where a statement prints no start (a new
+  # account's first statement, "START - 30 Sep 2019"), by end -- consecutive
+  # statements end in the order they start.
+  by <- if (all(vapply(st, function(x) !is.na(x$start), NA))) "start"
+        else if (all(vapply(st, function(x) !is.na(x$end), NA))) "end" else NA_character_
+  if (is.na(by)) return(FALSE)
+  st <- st[order(vapply(st, function(x) as.numeric(x[[by]]), 0))]
   all(vapply(seq_len(length(st) - 1L), function(i) abs(st[[i]]$close - st[[i + 1L]]$open) < 0.005, logical(1)))
 }
 
@@ -567,7 +572,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
   # even a file that cannot be read says what it was converted against.
   stamp <- list(engine_version = engine_version(), reader_version = AUTO_READ_VERSION,
                 layouts_state = if (is.null(ldir)) "unknown" else safe(layouts_state_id(ldir), "unknown"),
-                layout = NA_character_, outcome = "unread",
+                layout = NA_character_, recipe = NA_character_, outcome = "unread",
                 proof_kind = "none", institution = safe(.layout_slug(bank_pick(list(), bank)$bank), NA_character_),
                 bank_code = NA_character_, bank_confidence = NA_character_, kind = NA_character_)
   facts <- list(rows = 0L, learn = character(0), statements = 1L, multi = FALSE, fix = NA_character_,
@@ -658,6 +663,12 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     stamp$proof_kind <- if (worst %in% .AUTO) (lead$proof$kind %||% "none") else "none"
     lref <- unique(unlist(lapply(readings, function(r) r$matched_layout)))
     stamp$layout <- if (length(lref) == 1L) lref else NA_character_
+    # The recipe ("<id>@<version>") that read the file, when every statement was
+    # read with the same one: it is what produced the answer, for the run log and
+    # the JSON, as the layout is.
+    rref <- unique(unlist(lapply(readings, function(r) r$matched_recipe)))
+    stamp$recipe <- if (length(rref) == 1L && sum(vapply(readings, function(r) !is.null(r$matched_recipe), NA)) == k)
+      rref else NA_character_
     why_of <- function(i) {
       w <- readings[[i]]$why %||% "The reader gave no reason."
       if (k > 1L) sprintf("Statement %d of %d (pages %d-%d): %s", i, k, min(units[[i]]$pages), max(units[[i]]$pages), w) else w
@@ -684,7 +695,13 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     ocr_poor <- ocr_pages > 0L && (!is.finite(ocr_conf) || ocr_conf < PARAM_OCR_PAGE_MIN_CONF)
     derived <- if (has_rows) sum(grepl("amount_from_balance", parsed$transactions$flags, fixed = TRUE)) else 0L
     box_fixed <- any(vapply(fixes, function(f) identical(f$kind, "boxes") && is.null(f$error), logical(1)))
-    status <- if (!has_rows || all(outcomes == "unread")) "unsupported"
+    # A statement that SAYS it has no transactions, read with a recipe and proven
+    # (its opening balance is its closing balance, its totals are nil, nothing on
+    # it is shaped like a row: R/recipes.R), is a statement read, with no rows --
+    # not one the tool could not read.
+    proven_empty <- !has_rows && length(readings) > 0L && !is.null(parsed) &&
+      all(vapply(readings, function(r) identical(r$outcome, "proven") && isTRUE(r$proof$empty), logical(1)))
+    status <- if ((!has_rows && !proven_empty) || all(outcomes == "unread")) "unsupported"
               else if (all(outcomes %in% .AUTO) && !ocr_poor) "ok"
               else "needs_review"
     # ONE FILE, SEVERAL STATEMENTS. Each statement of a bundle is read and proven on
@@ -756,6 +773,11 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         }
         else if (identical(f$kind, "boxes"))
           list(action = "none", why = "Edited column boxes apply to this file only: a layout does not remember positions.")
+        # A reading made with a recipe teaches no layout: the recipe already is this
+        # design's reading, and its columns were measured by the recipe, not found
+        # by the automatic reader that a layout serves.
+        else if (!is.null(r$matched_recipe) && identical(r$outcome, "proven"))
+          list(action = "none", why = sprintf("Read with recipe %s, so no layout is learned from it.", r$matched_recipe))
         else if (identical(r$outcome, "proven") && is.null(f)) {
           m <- if (length(credited)) layout_match(r$template$signature, layouts_load(ldir, bank_id)) else NULL
           if (!is.null(m) && m$id %in% credited)
@@ -778,7 +800,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       readings[[i]]$learned_layout <- learn[[i]]$ref
 
     # ---- the files ----
-    if (has_rows) {
+    if (has_rows || proven_empty) {
       parsed$transactions <- .zero_unsigned(parsed$transactions)
       parsed$extras <- .zero_unsigned(parsed$extras)
       # A card's 0.00 closing balance turned round is -0 too, and the JSON writes it so.
@@ -851,6 +873,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
 
     result$status <- status
     result$template_id <- stamp$layout %||% NA_character_
+    result$matched_recipe <- stamp$recipe
     result$outcome <- worst
     result$reason <- reason
     result$feed_basis <- basis
@@ -870,7 +893,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       r <- readings[[i]]
       list(outcome = r$outcome, why = r$why, pages = units[[i]]$pages, proof = r$proof, checks = r$checks,
            candidates = r$candidates, columns = file_cols(i), examples = r$examples,
-           matched_layout = r$matched_layout,
+           matched_layout = r$matched_layout, matched_recipe = r$matched_recipe, recipe_tried = r$recipe_tried,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
            transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]],
            other_accounts = r$other_accounts %||% list())
@@ -970,6 +993,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     bank_confidence = stamp$bank_confidence,
     file_kind = stamp$kind,
     layout = stamp$layout,
+    recipe = stamp$recipe,
     outcome = stamp$outcome,
     proof_kind = stamp$proof_kind,
     feed_basis = result$feed_basis %||% "none",

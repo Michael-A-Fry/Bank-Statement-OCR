@@ -134,7 +134,13 @@ options(timeout = 600)
 # holds the store itself (templates/layouts/), which must never travel: pruned
 # below with the private data, and proven gone. See templates/README.md and
 # docs/operational/updating-a-version.md.
-app_items <- c("R", "templates",
+# "recipes" carries the shipped recipes (R/recipes.R): how each known bank design
+# is read. Product, replaced by an update. A server's own recipes live in the
+# folder config's paths$recipes names, outside the install, which an update never
+# touches. Left out, every statement still converts (the automatic reader reads
+# it), only without its recipe, so nothing would notice: test-deployment-docs.R
+# pins it.
+app_items <- c("R", "recipes", "templates",
                "config", "scripts", "www",
                "tests", "samples", "docs",
                "app.R", "ui_content.R", "ui_labels.R", "CHANGELOG.md", "run.R", "README.md", "RUN-ME.bat",
