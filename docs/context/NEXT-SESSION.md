@@ -28,6 +28,7 @@ section title mistaken for column headings (Westpac card); summary labels-over-f
 account number/name empty in feed. ANZ Visa/ASB Visa cards were NOT written (agent stopped) -- read QVF script lines 4120-5471.
 
 ## Steps (tick when done)
+0. [ ] Read docs/context/qvf/FINDINGS.md (fix list + baselines).
 1. [ ] Regenerate lookalikes: for g in docs/context/qvf/gen/make_*.py: python3 $g (check each file's --out / output dir; sets went to scratchpad/qvf/sets/<area>). Baseline-score with tools/synth/score_convert.R --mode cold.
 2. [ ] Checkout wip/recipes, rebase on the work branch, run tests/testthat/test-recipes.R + test-auto-read.R + test-convert.R. Fix until green.
 3. [ ] Score the ANZ + ANZ Loan lookalikes with recipes; zoo dev/corpus/offsweep must not drop (dev pdf 115/128, corpus 30/43, offsweep 22/26, AUTO_WRONG 0).
