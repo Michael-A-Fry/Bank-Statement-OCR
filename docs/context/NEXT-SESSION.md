@@ -186,18 +186,18 @@ on main (docs/context/recipe-intake-prompt.md).
 4. [ ] Recipes, credit cards first: anz_visa, asb_visa, bnz_visa, kiwibank_cc, westpac_cc
        (one per commit; from Copilot blocks if given, else cards + QVF script lines;
        each measured on its lookalikes, 0 wrong). Use FINDINGS rules 7-14.
-6. [ ] Recipes, everyday + Excel: kiwibank_pdf, bnz/kiwibank/westpac excel (FINDINGS 15-21).
-7. [ ] GATE, part 2: owner reruns the SAME real files; recipes must raise the automatic
+5. [ ] Recipes, everyday + Excel: kiwibank_pdf, bnz/kiwibank/westpac excel (FINDINGS 15-21).
+6. [ ] GATE, part 2: owner reruns the SAME real files; recipes must raise the automatic
        count with 0 wrong. If not, STOP and rethink with the owner.
-8. [ ] D16 the accountant's screen (QVF-simple) + D9 progress + D10 timings.
-9. [ ] D15 admin (Needs attention / Recipes / Words / Health; create, modify+Test,
+7. [ ] D16 the accountant's screen (QVF-simple) + D9 progress + D10 timings.
+8. [ ] D15 admin (Needs attention / Recipes / Words / Health; create, modify+Test,
        toggle, merge, undo) + D14 draft recipes from the 13 old templates and Copilot
        blocks + D1 layouts retired.
-10. [ ] Speed: 150-page bundle of a known type under 1 minute (make_bench.py); stop failed
+9. [ ] Speed: 150-page bundle of a known type under 1 minute (make_bench.py); stop failed
        readings re-reading every page.
-11. [ ] Output: full description + type/particulars/code/reference columns; account
+10. [ ] Output: full description + type/particulars/code/reference columns; account
        number and name; D8 tools/compare-qvf.R for the side-by-side rollout.
-12. [ ] Final code check (D13), full suite, browser checks, version 3.0.0 + server update
+11. [ ] Final code check (D13), full suite, browser checks, version 3.0.0 + server update
        guide (D12). Push main.
 
 ## If the owner pastes a "STATEMENT DESIGN" block
