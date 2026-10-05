@@ -1228,7 +1228,20 @@ server <- function(input, output, session) {
   # anything that changes the store from THIS process (Admin's buttons, training);
   # a conversion learns in its own process, so its finish presses it too.
   layouts_bump <- reactiveVal(0L)
-  lay_all <- reactive({ layouts_bump(); safe(layouts_load(LAYOUTS_DIR, include_retired = TRUE), list()) })
+  # Learning also happens in OTHER processes: a conversion's background job,
+  # another person's session, a training run. So every open page also watches the
+  # store itself, cheaply: a layout file is never edited (every change is a new
+  # file), so its count and newest time say whether anything changed. The
+  # tracking folder is watched the same way for the Banks table's counts.
+  .store_stamp <- function(d) {
+    f <- safe(list.files(d, recursive = TRUE, all.files = TRUE, full.names = TRUE), character(0))
+    if (!length(f)) return("none")
+    paste(length(f), format(max(file.mtime(f), na.rm = TRUE), "%Y%m%d%H%M%OS3"))
+  }
+  layouts_poll <- reactivePoll(5000, session,
+    checkFunc = function() paste(.store_stamp(LAYOUTS_DIR), .store_stamp(TRACKING_DIR)),
+    valueFunc = function() Sys.time())
+  lay_all <- reactive({ layouts_bump(); layouts_poll(); safe(layouts_load(LAYOUTS_DIR, include_retired = TRUE), list()) })
   # .layout_name(ref) -- "bnz_1@3" (or "bnz_1") as the name people see. A layout the
   # store no longer holds is shown as its reference rather than as nothing: a
   # blank would hide that something read the statement.
@@ -1246,7 +1259,7 @@ server <- function(input, output, session) {
   # branch the clearing bank lends out, the identifier never answers with one, and
   # as the first three entries of every dropdown they read as banks to pick.
   bank_list <- reactive({
-    layouts_bump()
+    layouts_bump(); layouts_poll()
     ch <- safe(bank_choices(LAYOUTS_DIR), character(0))
     ref <- safe(.bi_ref(), NULL)
     if (!is.null(ref)) ch <- ch[!(unname(ch) %in% names(ref$pseudo)[ref$pseudo %in% TRUE])]
@@ -1276,17 +1289,34 @@ server <- function(input, output, session) {
   }
 
   # ---- Admin -> Banks -------------------------------------------------------------
+  # The banks in the table's row order, so a click on a row picks that row's bank.
+  adm_bank_slugs <- reactiveVal(character(0))
   output$adm_banks <- renderDT({
     req(admin_ok())
+    layouts_bump(); layouts_poll()
     b <- safe(layouts_banks(LAYOUTS_DIR), data.frame())
-    layouts_bump()
-    heads <- c("Bank", "Layouts in use", "Proven", "Provisional", "Retired", "Statements that proved them")
-    if (!is.data.frame(b) || !nrow(b))
+    # Every bank statements were converted for, from tracking, so a bank shows here
+    # from its first statement, not only once one of them has proved itself and
+    # taught a layout. A bank with converted statements and no layout has had none
+    # prove itself yet: they all went to Please check.
+    seen <- safe(track_summary(TRACKING_DIR)$banks, integer(0))
+    seen <- seen[!(names(seen) %in% c("unknown", "")) & !grepl("^code ", names(seen))]
+    heads <- c("Bank", "Statements converted", "Layouts in use", "Proven", "Provisional", "Retired",
+               "Statements that proved them")
+    if (!is.data.frame(b)) b <- data.frame()
+    slugs <- unique(c(if (nrow(b)) b$slug, names(seen)))
+    adm_bank_slugs(slugs)
+    if (!length(slugs))
       return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
                        rownames = FALSE, selection = "none",
-                       options = dt_none_opts("Nothing has been learned yet. Convert statements, or train a bank below.", dom = "t")))
-    d <- data.frame(b$bank, b$layouts, b$proven, b$provisional, b$retired, b$statements,
-                    stringsAsFactors = FALSE)
+                       options = dt_none_opts("Nothing has been converted or learned yet. Convert statements, or train a bank below.", dom = "t")))
+    col <- function(f, i) if (nrow(b) && !is.na(i)) b[[f]][i] else 0L
+    d <- do.call(rbind, lapply(slugs, function(sl) {
+      i <- if (nrow(b)) match(sl, b$slug) else NA_integer_
+      data.frame(if (!is.na(i)) b$bank[i] else .bank_label(sl), unname(if (sl %in% names(seen)) seen[[sl]] else 0L),
+                 col("layouts", i), col("proven", i), col("provisional", i), col("retired", i), col("statements", i),
+                 stringsAsFactors = FALSE)
+    }))
     names(d) <- heads
     datatable(d, rownames = FALSE, selection = "single",
               options = list(dom = "t", pageLength = 50))
@@ -1304,9 +1334,9 @@ server <- function(input, output, session) {
   })
   observeEvent(input$adm_banks_rows_selected, {
     req(admin_ok())
-    lb <- safe(layouts_banks(LAYOUTS_DIR), data.frame()); i <- input$adm_banks_rows_selected
-    if (is.data.frame(lb) && length(i) && i[1] <= nrow(lb))
-      updateSelectizeInput(session, "adm_bank_pick", selected = lb$slug[i[1]])
+    sl <- isolate(adm_bank_slugs()); i <- input$adm_banks_rows_selected
+    if (length(i) && i[1] <= length(sl))
+      updateSelectizeInput(session, "adm_bank_pick", selected = sl[i[1]])
   })
   # The picked bank's layouts, newest version of each, retired ones included -- a
   # retirement is undone by Confirm, so a retired layout must stay on screen.
