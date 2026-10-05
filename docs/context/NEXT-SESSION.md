@@ -104,3 +104,13 @@ sets and real statements disagreed. So, before writing many recipes:
 2. Add the recipes for those types; owner reruns the SAME files.
 3. Recipes stay only if real-statement automatic counts go up with 0 automatic-but-wrong.
    If they do not, stop and rethink with the owner. Real files are the judge, not lookalikes.
+
+## Best for the analyst (owner asked "what's best for the user?", 5 Oct)
+Order of what matters to her: (1) right figures she can trust; (2) almost no clicks, nothing
+to pick when the statement says it; (3) fast on 150+ page bundles; (4) help = one plain
+question with her own lines, once per design; (5) predictable -- same type reads the same
+way (recipes); (6) every statement she gets covered (small banks, image-only PDFs).
+ROLLOUT RECOMMENDED: run side by side. The QVF keeps its 11 types while the new tool runs
+on the same files and is compared; a type moves over once the new tool matches or beats it
+on real statements. Everything the QVF cannot read moves to the new tool at once.
+Judge by analyst minutes per statement and how often she has to step in, not test scores.
