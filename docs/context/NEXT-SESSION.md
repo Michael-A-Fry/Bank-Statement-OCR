@@ -128,6 +128,23 @@ D15 ADMIN -- RECIPES MUST BE DEAD SIMPLE TO CREATE, MODIFY, ENABLE/DISABLE AND M
     (ed_*), wip/admin-review (R/review.R) for the needs-a-look list.
     Browser checks (tools/ui/check.mjs) must drive every one of these actions end to end.
 
+D16 THE ACCOUNTANT'S SCREEN -- NO MORE COMPLEX THAN THE QVF (owner: "INFO OVERLOAD").
+    The QVF gives a transaction table plus a per-row "Balance Check". That is the ceiling.
+    1. ONE sentence at the top: "Done -- 42 transactions, the balance adds up." or
+       "Needs you -- the balance stops adding up at 14 Mar (page 3)."
+    2. The table, QVF-style: Date | Description | Money out | Money in | Balance | Check
+       (tick / cross / blank). Jumps to and highlights the FIRST cross; clicking a row shows
+       that page with the line marked.
+    3. The plain column questions ONLY when the tool is unsure what a column is.
+    4. At most three buttons: "Read it again" | "It's right -- accept it" | "Set aside".
+    5. Downloads (Excel, CSV) once done or accepted.
+    REMOVED from the accountant's screen (to Admin, or behind ONE closed "More detail"
+    link): the checks list, diagnostics, flags, charts, field coverage, "Draw the columns
+    yourself", word teaching, the feedback form, layout/recipe chips.
+    Convert table "Outcome" column: one word -- Done / Needs you / Couldn't read -- plus at
+    most 8 words of reason.
+    Browser checks must assert the accountant's screen holds nothing beyond this list.
+
 ## Rules (owner's, still in force)
 - Work branch: claude/bank-statement-ocr-platform-t6n934. Pushing to main allowed when the full suite is green.
 - Commit footer: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com> / Claude-Session: https://claude.ai/code/session_01Sf7ppx17bCYkfX8ivYbVEb
