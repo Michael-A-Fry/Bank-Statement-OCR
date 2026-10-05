@@ -39,3 +39,6 @@ account number/name empty in feed. ANZ Visa/ASB Visa cards were NOT written (age
 8. [ ] Please check answers -> save a draft recipe for admin to accept.
 9. [ ] wip/admin-review: finish, test, merge.
 10. [ ] Account number + name into feed. Then full code check (task: untested paths).
+
+## If the owner pastes a "STATEMENT DESIGN" block
+It came from docs/context/recipe-intake-prompt.md (on main): Copilot describing a real statement with nothing personal. Write recipes/<bank>_<product>_<kind>.yaml from it, following recipes/anz_everyday_pdf.yaml; build a lookalike from its SAMPLE (tools/synth/make_layouts.py helpers) and prove the recipe reads it automatically with 0 wrong before committing.
