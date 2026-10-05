@@ -73,11 +73,26 @@ D9  PROGRESS: the conversion job writes its stage and page n/N to its progress f
 D10 TIMINGS: each conversion adds seconds per stage (text, OCR, recognise, read, prove,
     write) to the existing anonymous tracking line (no names, numbers or file names); the
     Admin "Automatic reading" carry-off summary includes median seconds per page by kind.
-D11 SCOPE TRIMS: the owner's vocabulary doc -> only the items the 11 types need (START
-    period, no-transactions, card subtotals, "Current balance", labels-above-figures);
-    the rest dropped. The old "Stage 4" list -> dropped except D7, D9, D10.
+D11 SCOPE (corrected after owner's challenge): the 11 types are the FINISH LINE for "done",
+    NOT a limit on what we pre-fill. From the owner's vocabulary doc keep every general
+    wording that helps read ANY statement -- balance labels, period wording (incl. START),
+    totals/subtotal lines ("Total of new transactions for", "Totals at end of page"),
+    "Current balance", column headings, non-transaction lines, labels-above-figures -- as
+    long as it passes the clash guard. Drop only the extra OUTPUT fields (loan/fee/event/
+    notice models, transaction classes, new value types): output is transactions in
+    Excel/CSV. The old "Stage 4" list -> dropped except D7, D9, D10.
     Admin Review (wip/admin-review) -> trimmed to: needs-a-look list with the page picture,
     and draft recipes with Accept / Retire.
+D14 DRAFT RECIPES FROM EVERYTHING WE KNOW: any design we have partial knowledge of gets a
+    status: draft recipe -- the 13 old 1.x templates in tests/testthat/fixtures/templates
+    (ANZ/ASB/Westpac everyday PDF with x-bands, and CSV exports), the owner's Copilot
+    STATEMENT DESIGN blocks for other types, and the doc's wording. A draft is NEVER trusted
+    alone (owner's "always ask once"): a statement it recognises gets the Please check
+    questions PRE-FILLED from the draft, so the person confirms in one click instead of
+    answering from scratch; each confirmed reading that proves counts as a proof; after 3
+    proofs from 2+ accounts (or an admin) it becomes proven and automatic. A recipe needs at
+    minimum recognise words, header/columns, date format and money style to READ; anything
+    less is still used as pre-fill.
 D12 VERSION: the release is 3.0.0 (recipes), with a 2.x -> 3.0 server update guide.
 D13 FINAL CODE CHECK at the end, focused on the recipe path, the proof, outputs and the
     removal of superseded code (layout learning, the generic reader's auto-convert path).
