@@ -87,3 +87,9 @@ Build:
   guessing; also stop failed readings re-reading every page up to 7 times
   (R/auto_read.R .ar_read_pdf repair loop) and measure with tools/synth/make_bench.py.
 - R VERSION for laptop mode: unknown; laptop mode parked until owner checks R.version.string.
+- NON-SELECTABLE PDFs (owner confirmed 5 Oct): dragging the cursor selects nothing -> NO text
+  layer (kind (a) above), i.e. page images. Read with OCR (R/ocr.R), same as a scan. These come
+  from smaller banks, which the QVF never supported (its 11 types are all big banks), so the
+  QVF/Inphinity Mole offers no rule to copy here. Work: let recipes read OCR'd words
+  (kind pdf + scan), and get one such statement described via the Copilot prompt (item 3 =
+  pdf-scanned). Whether Mole itself OCRs is unknown (web search found nothing definite).
