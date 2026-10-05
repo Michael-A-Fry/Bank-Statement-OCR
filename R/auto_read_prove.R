@@ -51,12 +51,25 @@
 
 # .ar_anchor_phrases() -- opening and closing wordings: the label dictionary's own
 # (so an analyst's added wording reaches the reader) plus the shorthands above.
+#
+# READ ONCE, NOT ONCE PER LINE. This is asked for every line of every page, and it
+# read the dictionary FILE each time: on a 100-page statement that was a sixth of
+# the whole reading time. The answer is kept beside the vocabulary's own cache,
+# keyed on the file and its modified time, so a word taught in Admin (which
+# rewrites the file) is picked up by the next line that asks.
 .ar_anchor_phrases <- function() {
+  path <- safe(.dictionary_path(), "")
+  stamp <- if (nzchar(path) && file.exists(path)) as.numeric(file.mtime(path)) else 0
+  key <- paste0("ar::anchors::", path, "::", stamp)
+  if (exists(key, envir = .LEXICON_CACHE, inherits = FALSE))
+    return(get(key, envir = .LEXICON_CACHE, inherits = FALSE))
   d <- safe(default_label_dict(), list())
   op <- unlist(d$opening_balance$any_of %||% character(0))
   cl <- unlist(d$closing_balance$any_of %||% character(0))
-  list(open = unique(.ar_norm_label(c(op, .AR_OPEN_EXTRA))),
-       close = unique(.ar_norm_label(c(cl, .AR_CLOSE_EXTRA))))
+  out <- list(open = unique(.ar_norm_label(c(op, .AR_OPEN_EXTRA))),
+              close = unique(.ar_norm_label(c(cl, .AR_CLOSE_EXTRA))))
+  assign(key, out, envir = .LEXICON_CACHE)
+  out
 }
 
 # .ar_anchor_class(label) -- "open", "close", "total" or "" for each line label
