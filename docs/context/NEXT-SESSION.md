@@ -173,31 +173,33 @@ account number/name empty in feed. ANZ Visa/ASB Visa cards were NOT written (age
 Done already: wip/recipes merged to main (3c61147): recipe reader + ANZ and ANZ Loan
 recipes, 14/15 on lookalikes, 0 wrong, zoo unchanged, suite green. Copilot intake prompt
 on main (docs/context/recipe-intake-prompt.md).
-0. [ ] Read: this file top to bottom, HOW-WE-GOT-HERE.md, qvf/FINDINGS.md.
-1. [ ] Branch from latest main. Regenerate the QVF lookalikes (qvf/gen) and re-score the
+STATUS (10 Oct 2026): every build step is done; 3.0.0 is on main (23e8fd7), full suite 74 files / 1,172 tests / 0 failed, both browser tours 100%, regression 0 automatic-but-wrong. OUTSTANDING: only the owner gates (steps 2 and 6): run tools/recipes/try-real.R on real statements and compare with the QVF via tools/compare-qvf.R.
+
+0. [x] Read: this file top to bottom, HOW-WE-GOT-HERE.md, qvf/FINDINGS.md.
+1. [x] Branch from latest main. Regenerate the QVF lookalikes (qvf/gen) and re-score the
        baseline with score_convert.R --mode cold.
-2. [ ] GATE, part 1: ask the owner to run REAL statements of the 11 types through the
+2. [ ] (OWNER) GATE, part 1: ask the owner to run REAL statements of the 11 types through the
        CURRENT tool and report counts per type (automatic / needs you / couldn't read);
        ask for Copilot STATEMENT DESIGN blocks for each type. Continue with 3+ meanwhile.
-3. [ ] Recipe engine changes the decisions need: D3 (all banks' recipes tried; wrong-pick
+3. [x] Recipe engine changes the decisions need: D3 (all banks' recipes tried; wrong-pick
        message), two-recipe rule (same figures -> newer; differ -> person), drift = ask once,
        kind excel/csv (D4), account fields (D5), "always ask once" for unknown designs
        (automatic reader only pre-fills). Tests for each.
-4. [ ] Recipes, credit cards first: anz_visa, asb_visa, bnz_visa, kiwibank_cc, westpac_cc
+4. [x] Recipes, credit cards first: anz_visa, asb_visa, bnz_visa, kiwibank_cc, westpac_cc
        (one per commit; from Copilot blocks if given, else cards + QVF script lines;
        each measured on its lookalikes, 0 wrong). Use FINDINGS rules 7-14.
-5. [ ] Recipes, everyday + Excel: kiwibank_pdf, bnz/kiwibank/westpac excel (FINDINGS 15-21).
-6. [ ] GATE, part 2: owner reruns the SAME real files; recipes must raise the automatic
+5. [x] Recipes, everyday + Excel: kiwibank_pdf, bnz/kiwibank/westpac excel (FINDINGS 15-21).
+6. [ ] (OWNER) GATE, part 2: owner reruns the SAME real files; recipes must raise the automatic
        count with 0 wrong. If not, STOP and rethink with the owner.
-7. [ ] D16 the accountant's screen (QVF-simple) + D9 progress + D10 timings.
-8. [ ] D15 admin (Needs attention / Recipes / Words / Health; create, modify+Test,
+7. [x] D16 the accountant's screen (QVF-simple) + D9 progress + D10 timings.
+8. [x] D15 admin (Needs attention / Recipes / Words / Health; create, modify+Test,
        toggle, merge, undo) + D14 draft recipes from the 13 old templates and Copilot
        blocks + D1 layouts retired.
-9. [ ] Speed: 150-page bundle of a known type under 1 minute (make_bench.py); stop failed
+9. [x] Speed: 150-page bundle of a known type under 1 minute (make_bench.py); stop failed
        readings re-reading every page.
-10. [ ] Output: full description + type/particulars/code/reference columns; account
+10. [x] Output: full description + type/particulars/code/reference columns; account
        number and name; D8 tools/compare-qvf.R for the side-by-side rollout.
-11. [ ] Final code check (D13), full suite, browser checks, version 3.0.0 + server update
+11. [x] Final code check (D13), full suite, browser checks, version 3.0.0 + server update
        guide (D12). Push main.
 
 ## If the owner pastes a "STATEMENT DESIGN" block
