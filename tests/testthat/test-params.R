@@ -9,6 +9,7 @@ test_that("tuning constants hold their shipped values", {
   expect_identical(PARAM_OCR_MIN_CHARS, 20L)
   expect_identical(PARAM_OCR_MIN_WORDS, 3L)
   expect_identical(PARAM_OCR_MAX_BAD_RATIO, 0.30)
+  expect_identical(PARAM_OCR_MIN_WORD_SHARE, 0.50)
   expect_identical(PARAM_OCR_CELL_MIN_CONF, 60)
   expect_identical(PARAM_OCR_PAGE_MIN_CONF, 70)
   expect_identical(PARAM_OCR_RENDER_DPI, 300L)

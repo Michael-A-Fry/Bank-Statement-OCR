@@ -1,0 +1,44 @@
+# Written by hand from the Bank of China Online Saver design described by the owner
+# (docs/context/RECIPE_STATEMENTS block 29). tools/recipes/from_designs.py cannot
+# write it: the block names the description column by two heading words printed
+# together ("Vou. No./Trans. No. /Purpose/Details"), which is not one of the
+# heading labels. The description hangs under "Vou. No./Trans. No." and takes in
+# the words under "/Purpose/Details" beside it; the second label is left out of
+# the heading so a statement printing it under the first (or not at all) still
+# reads. Every reading with it must still prove itself by the statement's own
+# arithmetic; one that does not is not used.
+recipe: bank_of_china_online_saver_statmt_nzd_pb
+format: 1
+version: 1
+bank: bank_of_china
+title: "Online Saver Statmt NZD-PB"
+kind: pdf
+status: proven
+recognise:
+  all: ["STATEMENT OF ACCOUNT", "Online Saver Statmt NZD-PB", "Previous Period Balance", "Tran. Amount", "Balance for the Period"]
+  none: ["Principal Balance", "STATEMENT OF LOAN ACCOUNT", "Tr.Type"]
+statement_starts: "STATEMENT OF ACCOUNT"
+period:
+  label: "From(YYYYMMDD)"
+  format: "%Y%m%d"
+balances:
+  opening: "Previous Period Balance"
+  closing: "Balance for the Period"
+table:
+  header: ["Tr.D.", "Val.D.", "Vou. No./Trans. No.", "Tran. Amount", "Balance"]
+  columns:
+    date: {under: "Tr.D."}
+    date2: {under: "Val.D."}
+    description: {under: "Vou. No./Trans. No."}
+    amount: {under: "Tran. Amount"}
+    balance: {under: "Balance"}
+  ends_at: ["Balance for the Period", "Num of Transactions of Debit"]
+  skip: ["Balance Carried Forward To Next Page", "Balance Carried Over From Previous Page", "YYMMDD YYMMDD"]
+  no_rows: ["No entries for this period."]
+dates:
+  format: "%y%m%d"
+  year: printed
+money:
+  style: signed
+  plus_means: money_in
+order: oldest_first

@@ -1,0 +1,48 @@
+# Written from the HSBC Everyday design described by the owner (docs/context/
+# RECIPE_STATEMENTS block 47, a picture-only PDF read by OCR). The converter's
+# draft (tools/recipes/from_designs.py) is changed by hand where it would read
+# wrongly: the period prints "From 30OCT2020 to 30NOV2020", so "From" is not an
+# open start; a section holding only "BALANCE BROUGHT FORWARD" and "CLOSING
+# BALANCE" is not a "no transactions" line (those are balances, read as the
+# section's opening and closing); "Transaction Turnover" (the section's totals,
+# printed in the money columns) ends the table; and the date is printed on the
+# first row of each day only (`carried`). A statement's second account section
+# ("MULTI CURRENCY A/C", in another currency) ends the table where it starts;
+# where it continues onto a page with the same heading its rows break the running
+# balance, so such a statement is never proven and goes to Please check.
+# The portfolio summary's totals ("TOTAL DEPOSITS" ...) cover every account, so
+# they are `not_totals` of this table. Every reading with it must prove itself by
+# the statement's own arithmetic.
+recipe: hsbc_hsbc_everyday_a_c
+format: 1
+version: 1
+bank: hsbc
+title: "HSBC EVERYDAY A/C"
+kind: pdf
+status: proven
+recognise:
+  all: ["Composite Statement", "Statement Details", "HSBC EVERYDAY A/C", "Transaction Details", "Deposits", "Withdrawals", "Balance (DR=Debit)"]
+  none: ["Amount in NZ$", "Low Rate Visa", "Transaction type and details"]
+statement_starts: "Summary of Your Portfolio"
+period:
+  label: "Statement Period"
+  format: "%d%b%Y"
+table:
+  header: ["Date", "Transaction Details", "Deposits", "Withdrawals", "Balance (DR=Debit)"]
+  columns:
+    date: {under: "Date"}
+    description: {under: "Transaction Details"}
+    credit: {under: "Deposits"}
+    debit: {under: "Withdrawals"}
+    balance: {under: "Balance (DR=Debit)"}
+  ends_at: ["Transaction Turnover", "Transaction Count", "MULTI CURRENCY A/C", "Statement Details"]
+  skip: ["BALANCE BROUGHT FORWARD", "BALANCE CARRIED FORWARD", "CLOSING BALANCE"]
+  not_totals: ["TOTAL DEPOSITS", "Total Deposits and Investments", "Total Borrowings", "Net Position"]
+dates:
+  format: "%d%b%Y"
+  year: printed
+  carried: true
+money:
+  style: debit_credit_cols
+  negative: ["DR"]
+order: oldest_first

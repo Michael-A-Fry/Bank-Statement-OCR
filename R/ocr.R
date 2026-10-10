@@ -224,6 +224,39 @@ ocr_pdf_page <- function(pdf, page, dpi = PARAM_OCR_RENDER_DPI, lang = "eng", pr
   sum(bad) / length(cp)
 }
 
+# .text_word_share(s) -- of the page's words (two characters or more), the share
+# that read as words: a word with a vowel, a short capital code (NZD, PS, DR), a
+# figure, a date, a code of letters and digits, a rule of dashes. A font with no
+# Unicode map can extract ordinary-looking ASCII that is not the page at all
+# ("#$%&' )*+" or "Wkh vwdwhphqw"), which the bad-character ratio does not see;
+# a page whose words mostly do not read as words is read by OCR instead. Measured
+# on 3,000 text pages of statements and other documents (scratch corpus, zoo,
+# real-world samples): the lowest genuine page scores 0.61, broken text layers
+# 0.02-0.42. NA when the page has too few words to tell (under 30).
+.text_word_share <- function(s) {
+  tok <- unlist(strsplit(enc2utf8(paste(s, collapse = " ")), "[[:space:]]+", perl = TRUE))
+  tok <- tok[!is.na(tok) & nchar(tok, type = "chars", allowNA = TRUE) >= 2L]
+  tok <- tok[!is.na(tok)]
+  if (length(tok) < 30L) return(NA_real_)
+  core <- gsub("^[][\"'(]+|[][\"'),.:;!?*]+$", "", tok, perl = TRUE)
+  # A word in another script (accents, Chinese labels) reads; one carrying the
+  # replacement character or a private-use glyph does not.
+  wide <- vapply(core, function(t) {
+    cp <- utf8ToInt(t)
+    if (!length(cp) || is.na(cp[1])) 0L
+    else if (any((cp >= 0xE000 & cp <= 0xF8FF) | cp == 0xFFFD)) -1L
+    else as.integer(any(cp > 127))
+  }, 0L, USE.NAMES = FALSE)
+  num <- grepl("^[-+($]*[0-9][0-9.,:/-]*[)%-]?$", core, perl = TRUE) |
+         grepl("^[$-]?[0-9.,]+(CR|DR|OD|-)?$", core, perl = TRUE)
+  word <- grepl("^[A-Za-z][A-Za-z'&./_-]*$", core, perl = TRUE) &
+          (grepl("[aeiouyAEIOUY]", core, perl = TRUE) | (core == toupper(core) & nchar(core) <= 5L))
+  code <- grepl("^[A-Za-z0-9$#*/.&-]+$", core, perl = TRUE) & grepl("[0-9]", core, perl = TRUE) &
+          grepl("[A-Za-z]", core, perl = TRUE)
+  rule <- grepl("^[*#=_.-]+$", core, perl = TRUE)
+  mean(num | word | code | rule | wide == 1L)
+}
+
 # page_needs_ocr(page_text, word_boxes, ...) -- decide whether a page must be read
 # by OCR. Routes on more than a flat character count so it no longer (a) skips a
 # scanned transaction page that carries a thin incidental text layer (a Bates
@@ -243,7 +276,10 @@ page_needs_ocr <- function(page_text, word_boxes = NULL, min_chars = PARAM_OCR_M
   if (is.null(page_text) || !nzchar(trimws(joined)) || nchar_ns < min_chars)
     return(!have_words)
   # (b) text present but mostly garbage (broken CID font) -> OCR.
+  # ... or text of ordinary characters that does not read as words (a font with no
+  # Unicode map whose glyph codes come out as letters and symbols).
   if (.text_bad_ratio(joined) > max_bad_ratio) return(TRUE)
+  if (isTRUE(.text_word_share(page_text) < PARAM_OCR_MIN_WORD_SHARE)) return(TRUE)
   # (a) real text but almost no word boxes: a scanned page whose only digital text
   # is an incidental stamp/footer, the transaction rows being image-only -> OCR.
   if (!is.na(nwords) && nwords < min_words) return(TRUE)

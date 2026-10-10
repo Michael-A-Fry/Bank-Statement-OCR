@@ -189,11 +189,13 @@ test_that("a recipe recognises its own design, and only when it is clearly the b
   twin <- rc_anz(); twin$id <- "anz_twin"; twin$ref <- "anz_twin@1"
   rg <- recipe_recognise(inp, list(rc_anz(), twin))
   expect_length(rg$fits, 2L)
-  # A draft is never used to read automatically, and a scan is not a text PDF.
+  # A draft is never used to read automatically. A scan of the design is its
+  # design too: recipes read OCR'd pages (test-recipes-scans.R), still proven by
+  # the arithmetic.
   draft <- rc_anz(); draft$status <- "draft"
   expect_null(recipe_recognise(inp, list(draft))$recipe)
   scan <- inp; scan$page_ocr <- TRUE
-  expect_null(recipe_recognise(scan, rcs)$recipe)
+  expect_identical(recipe_recognise(scan, rcs)$recipe$ref, "anz_everyday_pdf@1")
 })
 
 # ---- reading: columns under their headings ----------------------------------------------------

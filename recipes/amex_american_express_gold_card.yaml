@@ -1,0 +1,43 @@
+# Written by hand from the American Express Gold Card design described by the owner
+# (docs/context/RECIPE_STATEMENTS block 3). tools/recipes/from_designs.py cannot
+# write it: the date is printed with no heading of its own, left of "Details", so
+# the date column stands `left_of:` that heading. The cardholder sections ("New
+# Transactions for ...", "OTHER ACCOUNT TRANSACTIONS") are lines inside the table,
+# and each section's total is a subtotal of part of the table, set aside: the
+# statement's opening balance plus every row must still come to its closing
+# balance. A foreign-currency row's sub-lines ("... includes conversion commission")
+# are its description. Each section lists its own rows in date order, so the dates
+# as a whole need not be (`in_order: false`). A "CR" figure is a credit to the card. Every reading with it
+# must still prove itself by the statement's own arithmetic; one that does not is
+# not used.
+recipe: amex_american_express_gold_card
+format: 1
+version: 1
+bank: amex
+title: "American Express Gold Card"
+kind: pdf
+status: proven
+recognise:
+  all: ["Statement of Account", "Statement Period", "Amount Payable", "New Transactions"]
+statement_starts: "Statement of Account"
+period:
+  label: "Statement Period"
+  format: "%B %d, %Y"
+table:
+  header: ["Details", "Foreign Spending", "Amount $"]
+  columns:
+    date: {left_of: "Details"}
+    description: {under: "Details"}
+    text1: {under: "Foreign Spending"}
+    amount: {under: "Amount $"}
+  ends_at: ["Please check all transactions carefully", "Cardmember Offers and Information"]
+  skip: ["New Transactions for", "OTHER ACCOUNT TRANSACTIONS"]
+  subtotals: ["Total of new transactions for", "Total of other account transactions"]
+dates:
+  format: "%d %b"
+  year: period
+  in_order: false
+money:
+  style: signed
+  positive: ["CR"]
+order: oldest_first

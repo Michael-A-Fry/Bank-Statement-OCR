@@ -30,6 +30,7 @@ PARAM_MONEY_TOL <- 0.005
 PARAM_OCR_MIN_CHARS     <- 20L    # fewer non-space chars than this -> treat as image
 PARAM_OCR_MIN_WORDS     <- 3L     # fewer real word boxes than this -> scanned page
 PARAM_OCR_MAX_BAD_RATIO <- 0.30   # more than this fraction of garbage chars -> OCR
+PARAM_OCR_MIN_WORD_SHARE <- 0.50  # fewer of a page's words than this read as words -> its text layer is garbage -> OCR
 PARAM_OCR_CELL_MIN_CONF <- 60     # per-cell OCR confidence floor (flag a cell below)
 PARAM_OCR_PAGE_MIN_CONF <- 70     # page-mean OCR confidence below this -> loud caveat
 PARAM_OCR_RENDER_DPI    <- 300L   # dpi a scanned page is rasterised at before OCR

@@ -1,6 +1,13 @@
-# Recipe written by tools/recipes/from_designs.py from 1 real statement design(s)
-# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
-# prove itself by the statement's own arithmetic; one that does not is not used.
+# Recipe written by tools/recipes/from_designs.py from 2 real statement design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS blocks 64 and 65: the text PDF
+# and the scanned one; a scan is read on its OCR'd words). Every reading with it must
+# still prove itself by the statement's own arithmetic; one that does not is not used.
+# Changed by hand: the date is printed on the first row of each day only (`carried`),
+# and "Payment Service Charge" is a row (a fee with its own amount and balance), not
+# a line to skip: skipping it would leave the running balance unexplained.
+# "Brought forward" repeats the page before's totals and balance: it is a balance
+# carried on (the reader's own words), not a line to skip, since a skipped line may
+# not print money in or out. The period prints as "17May26 - 19Aug26".
 recipe: tsb_saver_plus
 format: 1
 version: 1
@@ -14,6 +21,7 @@ recognise:
 statement_starts: "Your Statement"
 period:
   label: "Period"
+  format: "%d%b%y"
 table:
   header: ["Date", "Serial", "Transaction details", "Withdrawals", "Deposits", "Balance"]
   columns:
@@ -24,10 +32,11 @@ table:
     credit: {under: "Deposits"}
     balance: {under: "Balance"}
   ends_at: ["Carried forward", "Closing totals"]
-  skip: ["Opening balance", "Brought forward", "Payment Service Charge"]
+  skip: ["Opening balance"]
 dates:
   format: "%d%b%y"
   year: printed
+  carried: true
 money:
   style: debit_credit_cols
 order: oldest_first

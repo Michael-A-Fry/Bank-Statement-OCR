@@ -60,6 +60,7 @@ Half a cent is the sweet spot for statements quoted to the cent.
 | `PARAM_OCR_MIN_CHARS` | `20` | Below this many non-space characters, a page's text layer is "effectively empty" → OCR it (unless it has real word boxes, i.e. a digital PDF). |
 | `PARAM_OCR_MIN_WORDS` | `3` | Fewer real word boxes than this → a scanned page whose only digital text is an incidental stamp/footer → OCR it. |
 | `PARAM_OCR_MAX_BAD_RATIO` | `0.30` | More than this fraction of garbage characters (broken CID font) → OCR it. |
+| `PARAM_OCR_MIN_WORD_SHARE` | `0.50` | Fewer of a page's words than this read as words (a font with no Unicode map extracts letters and symbols that are not the page) → its text layer is not believed and the page is OCR'd. |
 | `PARAM_OCR_CELL_MIN_CONF` | `60` | A per-cell OCR confidence (0–100) below this in a date/amount/balance cell earns an `ocr_low_conf` flag on that row. |
 | `PARAM_OCR_PAGE_MIN_CONF` | `70` | A page-mean OCR confidence below this raises a high-severity "OCR is unsure" diagnostic. |
 | `PARAM_OCR_RENDER_DPI` | `300` | The resolution a scanned page is rasterised at before OCR. Higher = sharper glyphs but slower; raise it for poor scans. |

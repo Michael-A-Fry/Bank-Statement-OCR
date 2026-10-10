@@ -16,6 +16,21 @@
 # page, so a page printed a few points to one side still reads; fixed x-bands
 # (the 1.x form) are accepted for a design with no heading row.
 #
+# Words a design may need, each optional (recipes/*.yaml has an example of each):
+#   column `left_of: <heading>`     the first column, printed with no heading of its
+#                                   own left of that heading (a card's date)
+#   period `format:`                a period in the design's own pattern ("%Y%m%d")
+#   `balances: {opening, closing}`  the design's own words for its two balances
+#   table `subtotals:`              lines totalling part of the table, set aside
+#   table `not_totals:`             summary lines that are not this table's totals
+#   dates `carried: true`           the date is printed on a day's first row only
+#   dates `in_order: false`         rows listed in sections, each in date order
+#   money `plus_means:`             what a plain figure in a signed column is, when
+#                                   the arithmetic holds either way round
+# A scan, or a page whose text layer is garbage and was OCR'd (R/ocr.R), is read
+# with the same recipe: its words are matched with OCR's slack (.rc_tok_match), and
+# its figures are proven by the arithmetic exactly as a text PDF's.
+#
 # WHY. The automatic reader works a design out from scratch every time, and on
 # lookalikes of the 11 designs the team really uses it got about a third right
 # first time. The old Qlik converter reads each of them with a fixed recipe and is
@@ -158,16 +173,28 @@ recipes_default <- function() {
   under <- vapply(cl, function(c) as.character(c$under %||% NA_character_)[1], "")
   xmin <- vapply(cl, function(c) suppressWarnings(as.numeric(c$x_min %||% NA)[1]), 0)
   xmax <- vapply(cl, function(c) suppressWarnings(as.numeric(c$x_max %||% NA)[1]), 0)
-  anchored <- !is.na(under)
+  # left_of: the first column printed with no heading of its own, left of the first
+  # heading (a card's date, printed left of "Details"). It runs from the page's left
+  # edge to that heading.
+  left <- vapply(cl, function(c) as.character(c$left_of %||% NA_character_)[1], "")
+  if (any(!is.na(left[-1]))) return(bad("only the first column can be `left_of:` a heading."))
+  if (!is.na(left[1])) {
+    if (!is.na(under[1])) return(bad("the first column hangs `under:` a heading or stands `left_of:` one, not both."))
+    if (!identical(unname(left[1]), unname(under[2]))) return(bad("the first column stands `left_of:` the heading of the column after it."))
+  }
+  anchored <- !is.na(under) | !is.na(left)
   # One way or the other for the whole table: a mix would leave the reader
   # measuring half the columns on the page and taking the rest on trust.
   if (any(anchored) && !all(anchored)) return(bad("either every column hangs `under:` a heading, or every column gives `x_min` and `x_max`."))
   if (all(anchored)) {
     if (!length(header)) return(bad("columns hang under heading words, so `table: header:` must list them."))
+    lo <- !is.na(left)
+    under_ <- under; under <- under[!lo]
     miss <- under[!(under %in% header)]
     if (length(miss)) return(bad("column heading \"%s\" is not in `table: header:`.", miss[1]))
     if (anyDuplicated(under)) return(bad("two columns hang under \"%s\".", under[duplicated(under)][1]))
     if (is.unsorted(match(under, header), strictly = TRUE)) return(bad("the columns must be listed in the order of their headings."))
+    under <- under_
   } else {
     if (anyNA(xmin) || anyNA(xmax) || any(xmin >= xmax)) return(bad("each column's `x_min` must be left of its `x_max`."))
     if (is.unsorted(xmin, strictly = TRUE) || any(xmax[-length(xmax)] > xmin[-1])) return(bad("the columns' bands must run left to right without overlapping."))
@@ -184,7 +211,30 @@ recipes_default <- function() {
   if (!(year %in% c("printed", "period"))) return(bad("`dates: year:` must be printed or period."))
   if (has_year != identical(year, "printed")) return(bad("`dates: year:` is \"%s\" but the format %s a year.", year,
                                                          if (has_year) "prints" else "does not print"))
+  # in_order: false -- the table lists its rows in sections that each run in date
+  # order (a card's cardholders, each with their own charges), so the dates as a
+  # whole need not. Every date must still be inside the statement period.
+  # carried: true -- the date is printed on the first row of each day only; a row
+  # with no date of its own is of the day above it (flagged date_carried). A row
+  # with no date and none above it is still not a row.
+  carried <- dt$carried %||% FALSE
+  if (!is.logical(carried) || length(carried) != 1L || is.na(carried)) return(bad("`dates: carried:` must be true or false."))
+  in_order <- dt$in_order %||% TRUE
+  if (!is.logical(in_order) || length(in_order) != 1L || is.na(in_order)) return(bad("`dates: in_order:` must be true or false."))
   per <- y$period
+  # period: format -- a period printed in a pattern the shared date table leaves
+  # out ("From(YYYYMMDD):20211001"), read only after the recipe's period label.
+  pfmt <- as.character((if (is.list(per)) per$format else NULL) %||% NA_character_)[1]
+  if (!is.na(pfmt) && is.null(.rc_date_entry(pfmt))) return(bad("period format \"%s\" is not a plain date pattern.", pfmt))
+  if (!is.na(pfmt) && !grepl("%[Yy]", pfmt)) return(bad("the period format must print a year."))
+  # balances: the statement's own words for its opening and closing balance, where
+  # the reader's vocabulary does not have them ("Previous Period Balance"). A line
+  # printing one with a figure is that balance, never a row.
+  bl <- y$balances %||% list()
+  if (!is.list(bl) || length(setdiff(names(bl), c("opening", "closing"))))
+    return(bad("`balances:` names an `opening:` and a `closing:` label."))
+  bl_open <- as.character(unlist(bl$opening)); bl_close <- as.character(unlist(bl$closing))
+  if (any(!nzchar(trimws(c(bl_open, bl_close))))) return(bad("a `balances:` label is empty."))
   if (identical(year, "period") && (is.null(per) || !nzchar(as.character(per$label %||% "")[1])))
     return(bad("the dates take their year from the period, so `period: label:` must say where it is printed."))
   mo <- y$money %||% list()
@@ -196,6 +246,12 @@ recipes_default <- function() {
   # recipe and the figures would disagree about a sign.
   for (m in neg) if (!isTRUE(.num(paste("1.00", m)) < 0)) return(bad("the engine does not read \"%s\" as a negative figure.", m))
   for (m in pos) if (!isTRUE(.num(paste("1.00", m)) > 0)) return(bad("the engine does not read \"%s\" as a positive figure.", m))
+  # plus_means: what a plain (unsigned) figure in a signed amount column is, as the
+  # design prints it ("Positive transaction amounts represent deposits"). It settles
+  # only what the arithmetic cannot: a reading and its exact negation both add up.
+  plus <- as.character(mo$plus_means %||% NA_character_)[1]
+  if (!is.na(plus) && !(plus %in% c("money_in", "money_out"))) return(bad("`money: plus_means:` must be money_in or money_out."))
+  if (!is.na(plus) && !has_amt) return(bad("`money: plus_means:` is for a signed amount column."))
   order <- as.character(y$order %||% "oldest_first")[1]
   if (!(order %in% c("oldest_first", "newest_first"))) return(bad("`order:` must be oldest_first or newest_first."))
   # types: the transaction-type codes a description starts with ("DD", "BP"),
@@ -204,19 +260,28 @@ recipes_default <- function() {
   if (!is.list(types) || (length(types) && (is.null(names(types)) || any(!nzchar(names(types))) ||
       any(!grepl("^[A-Za-z0-9]{1,6}$", names(types))))))
     return(bad("`types:` must name codes of letters or digits, each with its meaning."))
-  cols <- data.frame(field = fields, under = under, x_min = xmin, x_max = xmax,
+  cols <- data.frame(field = fields, under = under, left_of = left, x_min = xmin, x_max = xmax,
                      money = fields %in% .RECIPE_MONEY, stringsAsFactors = FALSE, row.names = NULL)
   list(id = id, version = ver, ref = paste0(id, "@", ver), bank = bank,
        title = as.character(y$title %||% id)[1], kind = kind, status = status,
        all = all, none = none,
        starts = as.character(unlist(y$statement_starts)),
        period = if (is.null(per)) NULL else list(label = as.character(per$label)[1],
-                                                open_start = as.character(per$open_start %||% NA_character_)[1]),
+                                                open_start = as.character(per$open_start %||% NA_character_)[1],
+                                                format = pfmt),
+       opening = bl_open, closing = bl_close,
        header = header, cols = cols, anchored = all(anchored),
        ref_width = suppressWarnings(as.numeric(tb$ref_width %||% .A4_W)[1]),
        ends_at = as.character(unlist(tb$ends_at)), skip = as.character(unlist(tb$skip)),
+       # subtotals: a line totalling PART of the table (one cardholder's charges). It
+       # is set aside with its figure: the statement's whole still has to add up.
+       subtotals = as.character(unlist(tb$subtotals)),
+       # not_totals: lines outside the table that use the reader's words for a total
+       # or a balance but are not this statement's (a portfolio summary's "TOTAL
+       # DEPOSITS" across all accounts). They are not balance points.
+       not_totals = as.character(unlist(tb$not_totals)),
        no_rows = as.character(unlist(tb$no_rows)),
-       date_format = dfmt, year = year, style = style, negative = neg, positive = pos,
+       date_format = dfmt, year = year, in_order = in_order, carried = carried, style = style, negative = neg, positive = pos, plus_means = plus,
        dir = if (identical(order, "newest_first")) "new" else "old", types = types)
 }
 
@@ -229,27 +294,55 @@ recipes_default <- function() {
 }
 # A printed word as a heading or phrase token: lower case, edge punctuation off.
 .rc_tok <- function(s) gsub("^[[:punct:]]+|[[:punct:]]+$", "", .rc_norm(s))
+# .rc_words(label) -- a label's words as tokens, each word on its own exactly as a
+# printed word is (.rc_tok): "Vou. No./Trans. No." is vou, no./trans, no.
+.rc_words <- function(label) {
+  n <- .rc_norm(label)
+  if (!nzchar(n)) return(character(0))
+  .rc_tok(strsplit(n, " ", fixed = TRUE)[[1]])
+}
 
 # .rc_find_seq(tok, label, from) -- where the words of `label` stand one after
 # another in `tok` (start index), searching from `from`; NA when they do not.
-.rc_find_seq <- function(tok, label, from = 1L) {
-  lw <- strsplit(.rc_tok(label), " ", fixed = TRUE)[[1]]
+.rc_find_seq <- function(tok, label, from = 1L, fuzzy = FALSE) {
+  lw <- .rc_words(label)
   m <- length(lw); n <- length(tok)
   if (!m || n < m || from > n - m + 1L) return(NA_integer_)
-  for (i in seq.int(from, n - m + 1L)) if (identical(tok[i:(i + m - 1L)], lw)) return(i)
+  if (!isTRUE(fuzzy)) {
+    for (i in seq.int(from, n - m + 1L)) if (identical(tok[i:(i + m - 1L)], lw)) return(i)
+    return(NA_integer_)
+  }
+  ok <- vapply(lw, function(p) .rc_tok_match(tok, p), logical(n))
+  if (!is.matrix(ok)) ok <- matrix(ok, nrow = n)
+  for (i in seq.int(from, n - m + 1L)) if (all(ok[cbind(i:(i + m - 1L), seq_len(m))])) return(i)
   NA_integer_
+}
+
+# .rc_tok_match(tok, p) -- which OCR'd words read as the word p. A scan's words are
+# recognised, not typeset, so a heading or a phrase is allowed what OCR commonly
+# does to a word: 0 for o, 1 or | for l, and one letter wrong, missing or extra in
+# a word of four letters or more. A short word ("Date", "No.") must be exact after
+# that, so two short labels are never taken for each other. The arithmetic still
+# decides every reading; this only lets a recipe recognise its own design.
+.rc_ocr_fold <- function(s) chartr("01|", "oll", s)
+.rc_tok_match <- function(tok, p) {
+  t <- .rc_ocr_fold(tok); q <- .rc_ocr_fold(p)
+  hit <- t == q
+  long <- !hit & nchar(q) >= 4L & abs(nchar(t) - nchar(q)) <= 1L
+  if (any(long)) hit[long] <- as.vector(utils::adist(t[long], q)) <= 1
+  hit
 }
 
 # .rc_header_spans(tok, x, x1, labels) -- the heading labels found on one line,
 # left to right and in order: data.frame(label, x0, x1), or NULL when any is not
 # there.
-.rc_header_spans <- function(tok, x, x1, labels) {
+.rc_header_spans <- function(tok, x, x1, labels, fuzzy = FALSE) {
   out <- data.frame(label = labels, x0 = NA_real_, x1 = NA_real_, stringsAsFactors = FALSE)
   from <- 1L
   for (k in seq_along(labels)) {
-    i <- .rc_find_seq(tok, labels[k], from)
+    i <- .rc_find_seq(tok, labels[k], from, fuzzy)
     if (is.na(i)) return(NULL)
-    m <- length(strsplit(.rc_tok(labels[k]), " ", fixed = TRUE)[[1]])
+    m <- length(.rc_words(labels[k]))
     out$x0[k] <- x[i]; out$x1[k] <- x1[i + m - 1L]
     from <- i + m
   }
@@ -258,10 +351,13 @@ recipes_default <- function() {
 
 # .rc_starts_with(label, phrases) -- does a line's label begin with one of the
 # phrases (whole words, case-insensitive)?
-.rc_starts_with <- function(label, phrases) {
+.rc_starts_with <- function(label, phrases, fuzzy = FALSE) {
   if (!length(phrases)) return(FALSE)
   s <- paste0(.rc_tok(label), " ")
-  any(startsWith(s, paste0(.rc_tok(phrases), " ")))
+  if (any(startsWith(s, paste0(.rc_tok(phrases), " ")))) return(TRUE)
+  if (!isTRUE(fuzzy)) return(FALSE)
+  tok <- .rc_words(label)
+  any(vapply(phrases, function(p) identical(.rc_find_seq(tok, p, 1L, TRUE), 1L), logical(1)))
 }
 
 # .rc_flat(s) -- text as its words only, space-separated with a space at each
@@ -270,9 +366,13 @@ recipes_default <- function() {
 
 # .rc_has_phrase(flat, phrase) -- the phrase printed in this text (.rc_flat), as
 # whole words.
-.rc_has_phrase <- function(flat, phrase) {
+.rc_has_phrase <- function(flat, phrase, fuzzy = FALSE) {
   p <- .rc_flat(phrase)
-  nzchar(trimws(p)) && grepl(p, flat, fixed = TRUE)
+  if (!nzchar(trimws(p))) return(FALSE)
+  if (grepl(p, flat, fixed = TRUE)) return(TRUE)
+  if (!isTRUE(fuzzy)) return(FALSE)
+  tok <- strsplit(trimws(flat), " ", fixed = TRUE)[[1]]
+  !is.na(.rc_find_seq(tok, trimws(p), 1L, TRUE))
 }
 
 # ---- recognising ----------------------------------------------------------------
@@ -309,7 +409,9 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL, dr
   # other way round.
   recipes <- Filter(function(rc) identical(rc$kind %||% "pdf", if (is.na(sk)) "pdf" else sk), recipes)
   if (!length(recipes)) return(none(if (is.na(sk)) "No recipe reads PDFs." else "No recipe reads this kind of spreadsheet."))
-  if (is.na(sk) && isTRUE(any(as.logical(input$page_ocr %||% FALSE)))) return(none("The file is a scan; its recipes read text PDFs only."))
+  # A scan (or a page whose text layer was unreadable and was OCR'd instead) is
+  # recognised on its OCR'd words, with the slack OCR needs (.rc_tok_match).
+  fz <- is.na(sk) && isTRUE(any(as.logical(input$page_ocr %||% FALSE)))
   book <- if (!is.na(sk)) .rc_book(input) else NULL
   txt <- if (!is.na(sk)) .rc_book_text(book) else .rc_flat(paste(.page_texts(input), collapse = " "))
   lines <- NULL
@@ -324,15 +426,15 @@ recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL, dr
       row$fits <- f$fits; row$score <- f$score; row$why <- f$why
       return(row)
     }
-    a <- vapply(rc$all, function(p) .rc_has_phrase(txt, p), logical(1))
-    n <- vapply(rc$none, function(p) .rc_has_phrase(txt, p), logical(1))
+    a <- vapply(rc$all, function(p) .rc_has_phrase(txt, p, fz), logical(1))
+    n <- vapply(rc$none, function(p) .rc_has_phrase(txt, p, fz), logical(1))
     if (!all(a)) { row$why <- sprintf("\"%s\" is not printed", rc$all[!a][1]); row$score <- sum(a); return(row) }
     if (any(n)) { row$why <- sprintf("\"%s\" is printed", rc$none[n][1]); return(row) }
     head_ok <- TRUE
     if (rc$anchored) {
       if (is.null(lines)) lines <<- .rc_line_tokens(input)
       head_ok <- any(vapply(unlist(lines, recursive = FALSE), function(l)
-        !is.null(.rc_header_spans(l$tok, l$x, l$x1, rc$header)), logical(1)))
+        !is.null(.rc_header_spans(l$tok, l$x, l$x1, rc$header, fz)), logical(1)))
     }
     if (!head_ok) { row$why <- "its table heading is not printed on one line"; row$score <- sum(a); return(row) }
     row$fits <- TRUE; row$score <- length(rc$all) + 1L + length(rc$none)
@@ -437,14 +539,14 @@ recipe_read <- function(input, rc) {
 # day, month and year parts and the separators " ./-", or NULL. Parts written with
 # no separator between them are fixed width ("%y%m%d" is six digits).
 .rc_date_entry <- function(fmt) {
-  if (!is.character(fmt) || length(fmt) != 1L || !grepl("^(%[dmyYbB]|[ ./-])+$", fmt) || !grepl("%d", fmt, fixed = TRUE))
+  if (!is.character(fmt) || length(fmt) != 1L || !grepl("^(%[dmyYbB]|[ ./,-])+$", fmt) || !grepl("%d", fmt, fixed = TRUE))
     return(NULL)
-  parts <- regmatches(fmt, gregexpr("%[dmyYbB]|[ ./-]", fmt))[[1]]
-  tight <- !grepl("[ ./-]", fmt)
+  parts <- regmatches(fmt, gregexpr("%[dmyYbB]|[ ./,-]", fmt))[[1]]
+  tight <- !grepl("[ ./,-]", fmt)
   rx <- vapply(parts, function(p) switch(p,
     "%d" = if (tight) "[0-9]{2}" else "[0-9]{1,2}", "%m" = if (tight) "[0-9]{2}" else "[0-9]{1,2}",
     "%y" = "[0-9]{2}", "%Y" = "[0-9]{4}", "%b" = "[A-Za-z]{3}", "%B" = "[A-Za-z]{3,9}",
-    " " = " ", "." = "[.]", "/" = "/", "-" = "-"), "")
+    " " = " ", "." = "[.]", "/" = "/", "-" = "-", "," = ","), "")
   list(fmt = fmt, rx = paste0("^", paste(rx, collapse = ""), "$"), yearless = !grepl("%[yY]", fmt))
 }
 
@@ -455,6 +557,18 @@ recipe_read <- function(input, rc) {
   ctx <- .ar_pdf_context(input)
   if (!(rc$date_format %in% vapply(ctx$fmts, `[[`, "", "fmt"))) ctx$fmts <- c(ctx$fmts, list(.rc_date_entry(rc$date_format)))
   np <- ctx$np
+  # OCR'd pages are read with the slack OCR needs in their wording (.rc_tok_match);
+  # their figures and dates are read as printed, and the arithmetic decides.
+  rc$fuzzy <- isTRUE(any(ctx$ocr))
+  # OCR'd words have a date printed tight ("17May26") cut into its pieces again
+  # (.ar_ocr_split), so on a scan the recipe's date reads with a space between them.
+  if (rc$fuzzy && grepl("%[bB]", rc$date_format) && !grepl("[ ./,-]", rc$date_format)) {
+    rc$date_format <- gsub("(%[dmyYbB])(?=%)", "\\1 ", rc$date_format, perl = TRUE)
+    if (!(rc$date_format %in% vapply(ctx$fmts, `[[`, "", "fmt"))) ctx$fmts <- c(ctx$fmts, list(.rc_date_entry(rc$date_format)))
+  }
+  pf <- rc$period$format %||% NA_character_
+  if (rc$fuzzy && !is.na(pf) && grepl("%[bB]", pf) && !grepl("[ ./,-]", pf))
+    rc$period$format <- gsub("(%[dmyYbB])(?=%)", "\\1 ", pf, perl = TRUE)
   # Where each statement of the file starts: every page printing the recipe's
   # start words. Pages before the first such page belong to the first statement
   # (a cover letter or notice). Two starts on one page cannot be cut by page.
@@ -463,7 +577,7 @@ recipe_read <- function(input, rc) {
     lt <- .rc_line_tokens(ctx$input)
     cnt <- vapply(seq_len(np), function(p) {
       if (p > length(lt)) return(0)
-      sum(vapply(lt[[p]], function(l) any(vapply(rc$starts, function(s) !is.na(.rc_find_seq(l$tok, s)), logical(1))),
+      sum(vapply(lt[[p]], function(l) any(vapply(rc$starts, function(s) !is.na(.rc_find_seq(l$tok, s, 1L, rc$fuzzy)), logical(1))),
                  logical(1)))
     }, 0)
     if (any(cnt > 1)) return(.rc_fail(rc, sprintf("Page %d prints \"%s\" twice, so the statements on it cannot be told apart by page.",
@@ -497,7 +611,7 @@ recipe_read <- function(input, rc) {
   sctx$aside <- Filter(function(a) a$page %in% pages, ctx$aside %||% list())
   md <- if (k == 1L) ctx$md else safe(extract_metadata(sub), NULL)
   md <- md %||% list()
-  pgs <- .ar_pdf_pages(sctx)
+  pgs <- .rc_mark_balances(.ar_pdf_pages(sctx), rc)
   per <- .rc_period(pgs, rc)
   md <- .rc_md(md, per)
   sctx$md <- md
@@ -511,6 +625,33 @@ recipe_read <- function(input, rc) {
     if (!is.null(tabs[[j]])) prev <- tabs[[j]]
   }
   list(ctx = sctx, pgs = pgs, tabs = tabs, per = per, md = md, pages = pages)
+}
+
+# .rc_mark_balances(pgs, rc) -- every line printing one of the recipe's own
+# opening or closing balance words with a figure is that balance (a summary line of
+# that class), as a line in the reader's vocabulary would be.
+.rc_mark_balances <- function(pgs, rc) {
+  if (!length(rc$opening) && !length(rc$closing) && !length(rc$not_totals)) return(pgs)
+  for (j in seq_along(pgs)) {
+    pg <- pgs[[j]]
+    if (is.null(pg) || is.null(pg$lines) || !nrow(pg$lines)) next
+    money_lines <- unique(pg$ph$line[pg$ph$kind == "money"])
+    fl <- vapply(pg$lines$raw, .rc_flat, "", USE.NAMES = FALSE)
+    fz <- isTRUE(rc$fuzzy)
+    nt <- vapply(seq_along(fl), function(i) any(vapply(rc$not_totals, function(p) .rc_has_phrase(fl[i], p, fz), logical(1))), logical(1))
+    if (any(nt)) {
+      pg$lines$aclass[nt] <- ""; pg$lines$summary[nt] <- FALSE
+      if (!is.null(pg$seg) && nrow(pg$seg)) pg$seg <- pg$seg[!(pg$seg$line %in% pg$lines$line[nt]), , drop = FALSE]
+    }
+    for (i in which(pg$lines$line %in% money_lines & !nt)) {
+      cl <- if (any(vapply(rc$opening, function(p) .rc_has_phrase(fl[i], p, fz), logical(1)))) "open"
+            else if (any(vapply(rc$closing, function(p) .rc_has_phrase(fl[i], p, fz), logical(1)))) "close" else ""
+      if (!nzchar(cl)) next
+      pg$lines$aclass[i] <- cl; pg$lines$summary[i] <- TRUE
+    }
+    pgs[[j]] <- pg
+  }
+  pgs
 }
 
 # .rc_period(pgs, rc) -- the statement period, read after the recipe's label on
@@ -535,8 +676,17 @@ recipe_read <- function(input, rc) {
       s <- tolower(orig)
       at <- regexpr(lab, s, fixed = TRUE) + nchar(lab)
       rest <- substr(orig, at, nchar(orig))
-      ds <- regmatches(rest, gregexpr(date_rx, rest, perl = TRUE))[[1]]
-      d <- do.call(c, lapply(ds, .plausible_period_date))
+      pf <- rc$period$format %||% NA_character_
+      if (!is.na(pf)) {
+        rx <- sub("\\$$", "", sub("^\\^", "", .rc_date_entry(pf)$rx))
+        ds <- regmatches(rest, gregexpr(sprintf("(?<![0-9A-Za-z])%s(?![0-9A-Za-z])", rx), rest, perl = TRUE))[[1]]
+        d <- as.Date(vapply(ds, function(x) format(as.Date(x, pf)), ""))
+        d <- d[!is.na(d) & vapply(as.integer(format(d, "%Y")), function(yy) isTRUE(.plausible_year(yy)), logical(1))]
+        ds <- ds[match(format(d, pf), ds)]
+      } else {
+        ds <- regmatches(rest, gregexpr(date_rx, rest, perl = TRUE))[[1]]
+        d <- do.call(c, lapply(ds, .plausible_period_date))
+      }
       open_w <- rc$period$open_start
       opens <- !is.na(open_w) && startsWith(tolower(trimws(rest)), .rc_norm(open_w))
       if (opens && length(d) >= 1L && !is.na(d[1])) {
@@ -545,7 +695,8 @@ recipe_read <- function(input, rc) {
         return(list(found = TRUE, start = lo, end = e, start_text = NA_character_, end_text = ds[1], open = TRUE))
       }
       if (length(d) >= 2L && !anyNA(d[1:2]) && d[1] <= d[2])
-        return(list(found = TRUE, start = d[1], end = d[2], start_text = ds[1], end_text = ds[2], open = FALSE))
+        return(list(found = TRUE, start = d[1], end = d[2], start_text = ds[1], end_text = ds[2], open = FALSE,
+                    own_format = !is.na(pf)))
     }
   }
   none
@@ -570,12 +721,13 @@ recipe_read <- function(input, rc) {
   w <- pg$w; ln <- pg$lines
   tok <- .rc_tok(w$text)
   # Only a line printing the first heading word can be the heading row.
-  first <- strsplit(.rc_tok(rc$header[1]), " ", fixed = TRUE)[[1]][1]
-  cand <- unique(w$line[tok == first])
+  first <- .rc_words(rc$header[1])[1]
+  fz <- isTRUE(rc$fuzzy)
+  cand <- unique(w$line[if (fz) .rc_tok_match(tok, first) else tok == first])
   for (i in which(ln$line %in% cand)) {
     ix <- which(w$line == ln$line[i])
     ix <- ix[order(w$x[ix])]
-    sp <- .rc_header_spans(tok[ix], w$x[ix], w$x1[ix], rc$header)
+    sp <- .rc_header_spans(tok[ix], w$x[ix], w$x1[ix], rc$header, fz)
     if (!is.null(sp)) return(list(line = ln$line[i], y = ln$y[i], y1 = ln$y1[i], spans = sp))
   }
   NULL
@@ -605,6 +757,9 @@ recipe_read <- function(input, rc) {
     sp <- prev$spans
   } else if (rc$anchored) {
     sp <- hdr$spans[match(cols$under, hdr$spans$label), c("x0", "x1")]
+    # A column left of the first heading runs from the left edge up to it.
+    lo <- which(!is.na(cols$left_of))
+    if (length(lo)) { sp$x0[lo] <- 0; sp$x1[lo] <- sp$x0[lo + 1L] - tol }
   } else {
     sp <- data.frame(x0 = cols$x_min, x1 = cols$x_max)
   }
@@ -646,6 +801,9 @@ recipe_read <- function(input, rc) {
   kind <- character(0); keep <- integer(0)
   last_y1 <- if (!is.null(hdr)) hdr$y1 else -Inf
   pitch <- NA_real_; last_row_y <- NA_real_; rows_here <- 0L
+  # A dateless row takes the day above it: one on this page, or the last row of the
+  # page before (a day running over the page break).
+  carry_ok <- isTRUE(rc$carried) && !is.null(prev) && any(prev$region$kind == "row")
   labels <- vapply(ln$raw, .pdf_line_label, "", USE.NAMES = FALSE)
   for (i in below) {
     l <- ln$line[i]
@@ -653,16 +811,18 @@ recipe_read <- function(input, rc) {
     d <- date_of(l)
     in_money <- any(money_on[[as.character(l)]] > 0)
     anchor <- nzchar(ln$aclass[i])
-    is_end <- .rc_starts_with(lab, rc$ends_at)
+    is_end <- .rc_starts_with(lab, rc$ends_at, rc$fuzzy)
     gap <- ln$y[i] - last_y1
     far <- 2.5 * (if (is.na(pitch)) 2.5 * h else pitch)
     tight <- gap <= 1.2 * h
     if (is.finite(last_y1) && gap > far && !(is_end && gap <= 2 * far)) break
     k <- if (is_end && (rows_here > 0L || !anchor)) { if (anchor) "end" else "stop" }
-         else if (.rc_starts_with(lab, rc$no_rows)) "no_rows"
-         else if (.rc_starts_with(lab, rc$skip)) "skip"
+         else if (.rc_starts_with(lab, rc$no_rows, rc$fuzzy)) "no_rows"
+         else if (.rc_starts_with(lab, rc$skip, rc$fuzzy)) "skip"
+         else if (.rc_starts_with(lab, rc$subtotals, rc$fuzzy)) "subtotal"
          else if (anchor) "anchor"
          else if (!is.null(d) && in_money) "row"
+         else if (in_money && isTRUE(rc$carried) && (rows_here > 0L || carry_ok)) "row"
          else if (!is.null(d)) "dated_left"
          else if (in_money) "money_left"
          else if (tight && !isTRUE(ln$footer[i]) && is.finite(last_y1)) "cont"
@@ -721,7 +881,7 @@ recipe_read <- function(input, rc) {
   b <- numeric(max(0L, K - 1L))
   for (k in seq_len(K - 1L)) {
     if (hi[k] >= lo[k + 1L] && is.na(conflict))
-      conflict <- sprintf("the print under \"%s\" runs into the print under \"%s\"", cols$under[k], cols$under[k + 1L])
+      conflict <- sprintf("the print under \"%s\" runs into the print under \"%s\"", if (is.na(cols$under[k])) cols$field[k] else cols$under[k], cols$under[k + 1L])
     b[k] <- (hi[k] + lo[k + 1L]) / 2
   }
   pad <- 2 * h
@@ -796,6 +956,9 @@ recipe_read <- function(input, rc) {
       }, "")
       if (kd == "row") {
         d <- tb$date_of(l)
+        # A row printing no date (recipe `carried`) has none here: the day above it is
+        # carried down after the table reader (.rc_carry_dates), and flagged.
+        if (is.null(d)) d <- list(text = NA_character_, fmts = NA_character_)
         n <- n + 1L
         rows[[n]] <- list(page = j, line = l, y = reg$y[r], y1 = reg$y1[r], raw = reg$raw[r],
                           date = d$text, date_fmts = d$fmts, date2 = NA_character_)
@@ -889,7 +1052,7 @@ recipe_read <- function(input, rc) {
   ref <- ref[intersect(names(ref), .BOX_CORE)]
   tbl <- list(row_tol = st$ctx$row_tol, date_format = rc$date_format,
               amount_sign = if (identical(rc$style, "debit_credit_cols")) "debit_credit_cols" else "signed",
-              decimal_mark = st$ctx$decimal, unsigned_default = "debit", keep_dateless_rows = FALSE,
+              decimal_mark = st$ctx$decimal, unsigned_default = "debit", keep_dateless_rows = isTRUE(rc$carried),
               ref_width = st$ctx$frame$width, ref_height = st$ctx$frame$height,
               columns = ref, columns_by_page = cbp, extras = if (length(ex)) ex else NULL)
   list(id = paste0("recipe_", rc$id), bank = rc$bank, statement_type = NA_character_, format = "pdf",
@@ -925,8 +1088,13 @@ recipe_read <- function(input, rc) {
   # reader is handed the earliest start the recipe allows, so it can choose each
   # row's year, and the header keeps what the statement printed.
   if (isTRUE(st$per$open)) md$period_start <- format(st$per$start, "%d %b %Y")
+  # A period printed in the recipe's own pattern ("From(YYYYMMDD):20211001") is
+  # handed over as plain dates; the header keeps it as printed.
+  own <- isTRUE(st$per$own_format)
+  if (own) { md$period_start <- format(st$per$start, "%d %b %Y"); md$period_end <- format(st$per$end, "%d %b %Y") }
   p <- safe(parse_pdf_table(cin, tpl, force_rows = if (length(force)) force else NULL, meta = md), NULL)
   if (!is.null(p) && isTRUE(st$per$open)) p$header$period_start <- NA_character_
+  if (!is.null(p) && own) { p$header$period_start <- st$per$start_text; p$header$period_end <- st$per$end_text }
   p
 }
 
@@ -942,6 +1110,7 @@ recipe_read <- function(input, rc) {
   # only ever settle a reading against its exact negation.
   hroles <- if (rc$anchored) vapply(rc$cols$under[rc$cols$money], .wa_money_role, "") else rep(NA_character_, length(roles))
   rl <- .ar_roles(V, col$anchors, liab_ev, decimal, heading_roles = hroles, texts = col$rows$raw)
+  rl <- .rc_plus_means(rl, rc, roles)
   ch <- rl$chosen
   if (!is.null(ch) && identical(as.character(ch$roles), roles) && identical(ch$dir, rc$dir) && identical(ch$conv, "S"))
     return(list(rd = ch, rl = rl, basis = "arithmetic", why = NULL, V = V))
@@ -959,6 +1128,41 @@ recipe_read <- function(input, rc) {
                score = c(links = 0, held = 0, failed = 0, unknown = 0, ambiguous = 0), chain = NULL)
   }
   list(rd = rd, rl = rl, basis = basis, why = why, V = V)
+}
+
+# .rc_plus_means(rl, rc, roles) -- the arithmetic left exactly two readings, the
+# recipe's columns read one way and its exact negation (a signed amount column on
+# an account that names no card or loan and whose rows say nothing either way).
+# The recipe says what a plain figure means, so the one reading that agrees is
+# taken; every other question stays the arithmetic's.
+.rc_plus_means <- function(rl, rc, roles) {
+  if (is.na(rc$plus_means %||% NA) || !is.null(rl$chosen) || rl$n_distinct != 2L) return(rl)
+  d <- rl$distinct
+  if (!all(vapply(d, function(r) identical(as.character(r$roles), roles) && identical(r$conv, "S"), logical(1)))) return(rl)
+  a1 <- ifelse(is.na(d[[1]]$A), 0, d[[1]]$A); a2 <- ifelse(is.na(d[[2]]$A), 0, d[[2]]$A)
+  if (!isTRUE(all.equal(a1, -a2)) || !identical(is.na(d[[1]]$A), is.na(d[[2]]$A))) return(rl)
+  # A plain figure read as money in is the reading that keeps it as printed on an
+  # account (liab FALSE); as money out, the one that reads the account as owed.
+  want_liab <- identical(rc$plus_means, "money_out")
+  pick <- Filter(function(r) identical(isTRUE(r$liab), want_liab), d)
+  if (length(pick) != 1L) return(rl)
+  rl$chosen <- pick[[1]]; rl$n_distinct <- 1L; rl$distinct <- pick
+  rl$note <- c(rl$note, sprintf("the arithmetic holds either way round; recipe %s says a plain figure is %s",
+                                rc$ref, if (want_liab) "money out" else "money in"))
+  rl
+}
+
+# .rc_carry_dates(tx) -- each row the table reader kept with no date of its own
+# (recipe `carried`) takes the date of the row above it, flagged date_carried, as
+# the automatic reader does (.ar_post_pdf).
+.rc_carry_dates <- function(tx) {
+  n <- nrow(tx); if (!n) return(tx)
+  f <- tx$flags %||% rep("", n); f[is.na(f)] <- ""
+  nod <- is.na(tx$date) & (is.na(tx$date_raw) | !nzchar(trimws(tx$date_raw)))
+  if (!any(nod)) return(tx)
+  for (i in seq_len(n)) if (nod[i] && i > 1L && !is.na(tx$date[i - 1L])) tx$date[i] <- tx$date[i - 1L]
+  tx$flags <- .ar_addflag(f, nod & !is.na(tx$date), "date_carried")
+  tx
 }
 
 # .rc_unit(st, rc) -- one statement read, checked and decided.
@@ -993,6 +1197,7 @@ recipe_read <- function(input, rc) {
   tx <- parsed$transactions
   page <- suppressWarnings(as.integer(sub("^pdf:p", "", parsed$provenance$source_ref %||% character(0))))
   if (!is.null(tx) && nrow(tx)) {
+    if (isTRUE(rc$carried)) tx <- .rc_carry_dates(tx)
     tx <- .ar_settle(tx, rd, col$cells, ctx$decimal, col$anchors, aligned = nrow(tx) == n)
     tx <- .rc_types(tx, rc$types)
     parsed$transactions <- tx
@@ -1066,7 +1271,7 @@ recipe_read <- function(input, rc) {
   used <- paste(R$page, R$line)
   akey <- paste(vapply(col$anchors, function(a) a$page, 0), vapply(col$anchors, function(a) a$line, 0))
   skey <- unlist(lapply(seq_len(m), function(j) { tb <- st$tabs[[j]]
-    if (is.null(tb)) character(0) else paste(j, tb$region$line[tb$region$kind %in% c("skip", "no_rows")]) }))
+    if (is.null(tb)) character(0) else paste(j, tb$region$line[tb$region$kind %in% c("skip", "no_rows", "subtotal")]) }))
   stray <- seeds[!(paste(seeds$page, seeds$line) %in% c(used, akey, skey)), , drop = FALSE]
   la <- pb("lines_accounted")
   add("lines_accounted", !nrow(stray) && !length(la),
@@ -1090,6 +1295,9 @@ recipe_read <- function(input, rc) {
                             ctx$decimal, st$md, two_dates = FALSE, strict = any(ctx$ocr),
                             yearless = !grepl("%[Yy]", rc$date_format), page_text = ctx$pages_text,
                             two_sided = .ar_two_sided(col$cells, rd$roles, ctx$decimal, aligned = n == nrow(R)))
+  if (isFALSE(rc$in_order) && isFALSE(ar_ck$checks$dates_in_order$ok))
+    ar_ck$checks$dates_in_order <- list(ok = NA, why = sprintf(
+      "The rows are listed in sections, each in date order, so the dates as a whole need not be (recipe %s).", rc$ref))
   # The period check above, when it failed, stands.
   if (isFALSE(ck$dates_in_period$ok)) ar_ck$checks$dates_in_period <- ck$dates_in_period
   if (identical(ar$basis, "other")) ar_ck$checks$unique <- list(ok = FALSE, why = ar$why)
@@ -1199,7 +1407,7 @@ recipe_read <- function(input, rc) {
     data.frame(page = if (is.null(file_pages)) j else file_pages[j], field = b$field,
                kind = ifelse(b$field == "date", "date", ifelse(b$field %in% .RECIPE_MONEY, "money", "text")),
                x_min = b$x_min, x_max = b$x_max, ink_min = b$lo, ink_max = b$hi,
-               heading = if (rc$anchored) rc$cols$under else "", stringsAsFactors = FALSE)
+               heading = if (rc$anchored) ifelse(is.na(rc$cols$under), "", rc$cols$under) else "", stringsAsFactors = FALSE)
   })
   out <- Filter(Negate(is.null), out)
   if (length(out)) do.call(rbind, out) else .ar_unread("")$columns
@@ -1414,7 +1622,7 @@ recipes_state_dir <- function(layouts_dir = NULL, cfg = NULL) {
 # in order; the first line where every column has one. NULL when there is none.
 .rc_draft_header <- function(input, page, hd) {
   lines <- .rc_line_tokens(input)[[page]] %||% list()
-  words <- lapply(hd, function(h) strsplit(.rc_tok(h), " ", fixed = TRUE)[[1]])
+  words <- lapply(hd, .rc_words)
   for (L in lines) {
     pick <- vapply(words, function(w) {
       for (a in seq_along(w)) { ph <- paste(w[a:length(w)], collapse = " ")

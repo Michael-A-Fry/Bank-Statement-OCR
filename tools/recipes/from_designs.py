@@ -152,7 +152,8 @@ def check(d):
     p = list(d["problems"])
     if sheet_kind(d):
         return check_sheet(d, p)
-    if d["kind"] not in ("pdf-text",): p.append("kind %s (recipes read text PDFs for now)" % d["kind"])
+    # A scan or a picture-only PDF is read by OCR, and its recipe reads the OCR'd words.
+    if d["kind"] not in ("pdf-text", "pdf-scanned", "pdf-image"): p.append("kind %s is not one recipes read" % d["kind"])
     if d["date_format"] not in KNOWN_DATES and not re.match(r"^(%[dmyYbB]|[ ./-])+$", d["date_format"] or ""):
         p.append("date format %r is not one the reader knows" % d["date_format"])
     if not d["header"]: p.append("no table heading")
