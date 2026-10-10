@@ -564,6 +564,7 @@ async function run(browser, D) {
         await waitFor(tp, () => /^It adds up/.test((document.querySelector('#adm_rc_test_msg') || {}).innerText || ''), 60000),
         await text(tp, '#adm_rc_test_msg'));
   check('...and draws its page with the columns numbered', await waitFor(tp, () => !!document.querySelector('#adm_rc_plot img'), 20000));
+  await sleep(800); await shot(tp, 'tour-admin-recipe-card');
   if (!LIVE) {
     // a recognise-by word: added, removed, added again, saved, undone
     await tp.fill('#adm_rc_word_new', 'Statement period'); await tp.click('#adm_rc_word_add'); await sleep(1200);
@@ -597,6 +598,7 @@ async function run(browser, D) {
       await tp.click('#adm_rc_new_test'); await sleep(1500);
       await waitFor(tp, () => !document.documentElement.classList.contains('shiny-busy'), 90000); await sleep(800);
       check('...Test says it still adds up', /^It adds up/.test(await text(tp, '#adm_rc_new_body')), await text(tp, '#adm_rc_new_body'));
+      if (nm === 'Everyday') await shot(tp, 'tour-admin-new-recipe-from-statement');
       await tp.click('#adm_rc_new_save');
       check('...and Save makes it a draft recipe, opened on its card',
             await waitFor(tp, n => /Saved as draft recipe/.test((document.querySelector('#adm_rc_msg') || {}).innerText || '') &&
