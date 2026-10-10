@@ -23,6 +23,7 @@ R/   -- the conversion path (input -> read -> proven -> written)
   read_pdf.R            PDF text + word-box reader (pdftools) + drawn-sign scan
   identify.R            the Convert table's row per file: its kind, pages and BANK (pre-filled)
   bank_identity.R       which bank issued a statement, from the holder's account number and its wording
+  bank_memory.R         the bank remembered for an account (salted mark only) or a file name seen before
   auto_read.R           automatic reading: the reading pipeline, candidates, outcome (proven / check / unread)
   auto_read_blocks.R    automatic reading: a statement pack read a table at a time; other accounts kept apart
   auto_read_pdf.R       automatic reading: tokens, cells and the column model found on each PDF page
