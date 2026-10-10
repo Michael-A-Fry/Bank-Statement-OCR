@@ -1480,7 +1480,7 @@ test_that("Re-read sends the roles as a fix, and the answer goes back where it c
                "held for an admin")
   expect_match(words(list(status = "ok", outcome = "proven", feed_basis = "proven", messages = "ok: 3 row(s)",
                           learn = list(list(action = "corrected", why = "Layout x now reads this way."))), FALSE),
-               "^Done \u2014 .*Layout x now reads this way\\.$")
+               "^(Done|Adds up) \u2014 .*Layout x now reads this way\\.$")
   expect_match(words(list(status = "needs_review", reason = "the balance breaks at row 2",
                           reading = list(list(transactions = data.frame(amount = 1:3))),
                           messages = "needs_review: z"), FALSE),
@@ -1916,8 +1916,8 @@ test_that("D16: a clicked transaction opens Please check at its page, and the Ou
   expect_true(any(grepl('selection = "single"', src, fixed = TRUE)))
   e <- new.env(parent = globalenv()); sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
   short_reason <- e$short_reason; plain_failing_check <- e$plain_failing_check
-  expect_identical(short_reason("Two columns could be money out \u2014 tell us which"),
-                   "Two columns could be money out \u2014 tell us which")
+  expect_identical(short_reason("Which column is money out?"),
+                   "Which column is money out?")
   long <- short_reason("one two three four five six seven eight nine ten eleven")
   expect_identical(long, "one two three four five six seven eight nine ten…")
   expect_identical(short_reason(NA), "")

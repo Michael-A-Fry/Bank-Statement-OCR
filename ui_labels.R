@@ -219,7 +219,7 @@ READING_PROBLEM_PLAIN <- c(
   signs_settled      = "Money in and money out are unclear",
   no_derived_amounts = "Some amounts had to be worked out",
   amounts_read       = "Some amounts could not be read",
-  unique             = "Two columns could be money out \u2014 tell us which",
+  unique             = "Which column is money out?",
   rows_proven        = "Some rows are not covered by the balance",
   reader_agrees      = "Two readings of the table disagree",
   dates_carried      = "Some dates were carried down from above",

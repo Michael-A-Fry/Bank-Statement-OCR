@@ -297,7 +297,7 @@ async function run(browser, D) {
   check('...in one word and a few words of reason', r.every(x => !x.why || x.why.split(/\s+/).length <= 10),
         JSON.stringify(r.map(x => x.result)));
   check('a reason is given where a person has something to do',
-        /could be money out \u2014 tell us which/.test(byFile(r, 'ambiguous.csv').result) && byFile(r, 'unproven.csv').result.length > 20,
+        /Which column is money out\?/.test(byFile(r, 'ambiguous.csv').result) && byFile(r, 'unproven.csv').result.length > 20,
         JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
   check('the design a recipe read is named', /ANZ .*Account/.test(byFile(r, 'anz_march.pdf').layout),
         byFile(r, 'anz_march.pdf').layout);
@@ -316,7 +316,7 @@ async function run(browser, D) {
         JSON.stringify(await page.$$eval('a.plan-check', as => as.map(a => a.innerText))));
   check('each outcome word has one sentence of hover help', await page.evaluate(() =>
         [...document.querySelectorAll('.plan-verdict')].every(v => /^(Done|Needs you|Couldn't read): .+\.$/.test(v.title || ''))));
-  check('the case says what happens now, once, not repeating the heading', /add up already|Press Next file to check/.test(await text(page, '.plan-now')) && !/need(s)? you/.test(await text(page, '.plan-now')), await text(page, '.plan-now'));
+  check('the case says what happens now, once, not repeating the heading', /in one click|Press Next file to check/.test(await text(page, '.plan-now')) && !/need(s)? you/.test(await text(page, '.plan-now')), await text(page, '.plan-now'));
   check('...with a Next file to check button', !!(await page.$('#cv_next_check')));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
   check('Download everything waits until nothing needs you', !(await page.$('#cv_batch_dl')));
@@ -426,7 +426,7 @@ async function run(browser, D) {
   await page.click('#ed_save');
   const boxed = await rereadDone(page, '');
   check('the drawn columns are read again and still have to prove themselves',
-        boxed.startsWith('Done \u2014 '), boxed);
+        /^(Done|Adds up) \u2014 /.test(boxed), boxed);
   check('...and say they apply to this file only', boxed.includes('this file only'));
   await page.click('#cv_more'); await sleep(600);
 
@@ -461,7 +461,7 @@ async function run(browser, D) {
   await page.check('input[name="cv_ck_role_debit"][value="debit"]'); await page.check('input[name="cv_ck_role_credit"][value="credit"]'); await sleep(700);
   await page.click('#cv_ck_reread');
   const right = await rereadDone(page, undone);
-  check('the right roles prove it, and it says so', right.startsWith('Done'), right);
+  check('the right roles prove it, and it says so', /^(Done|Adds up)/.test(right), right);
   r = await rows(page);
   eq('...and the row is updated in place, asking only for its bank', word('ambiguous.csv') + ' / ' + byFile(r, 'ambiguous.csv').why, 'Needs you / Pick the bank');
   await shot(page, '06-reread-proven');
@@ -470,7 +470,7 @@ async function run(browser, D) {
   check('no downloads before it is done', !(await page.$('#dl_xlsx')) && !(await page.$('#dl_csv')));
   eq('at most three buttons, in plain words', await page.evaluate(() =>
      [...document.querySelectorAll('#cv_check button')].map(b => b.innerText.trim())),
-     ['Read it again', 'It\u2019s right \u2014 accept it', 'Set aside']);
+     ['It\u2019s right \u2014 accept it', 'Read it again', 'Set aside']);
   await page.click('#cv_ck_aside'); await sleep(1200);
   check('Set aside waits ten seconds with an Undo button', /Setting it aside/.test(await text(page, '#cv_ck_msg')) &&
         !!(await page.$('#cv_ck_undo_pending')), await text(page, '#cv_ck_msg'));
@@ -596,8 +596,8 @@ async function run(browser, D) {
   { const about = await tp.evaluate(() => document.querySelector('.tab-pane.active').textContent);
     check('About describes reading by bank, not templates', !/template/i.test(about));
     check('About leads with the promise as its one page title', /arithmetic has to prove it/.test(await text(tp, '.tab-pane.active h1')));
-    check('About describes recipes and the one-word outcomes (3.0.0)',
-          /recipe/i.test(about) && /Done/.test(about) && /Needs you/.test(about) && !/learned layout/i.test(about)); }
+    check('About gives the one-word outcomes, with no internal words',
+          !/recipe|Flags column/i.test(about) && /Done/.test(about) && /Needs you/.test(about) && !/learned layout/i.test(about)); }
   await screen(tp, 'About');
   await tp.click('a[data-value="Admin"]'); await sleep(800);
   await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
@@ -828,7 +828,7 @@ async function run(browser, D) {
   await pick(tp, 'anz_march.pdf', 'anz'); await go(tp); await waitIdle(tp);
   await clickIn(tp, 'anz_march.pdf', '.plan-file');
   await tp.click('#cv_ck_toggle'); await sleep(2500);
-  await tp.click('summary:text("Teach it a wording from this statement")'); await sleep(2500);
+  await tp.click('summary:text("Teach a word (admin)")'); await sleep(2500);
   check('an admin can teach a wording from the statement on screen',
         await waitFor(tp, () => !!document.getElementById('cv_ck_teach_word'), 20000));
   check('...with nothing drawn as an error', !(await tp.$('#cv_ck_teach .shiny-output-error')));

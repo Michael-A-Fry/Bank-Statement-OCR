@@ -32,13 +32,6 @@ or the design is new. You see the page, answer a plain question if asked, and it
 
 <h3 class="ab-h">Behind the scenes</h3>
 <div class="ab-more">
-<p>Each statement design the tool knows has a <b>recipe</b>: where its table is, what each
-column is, how its dates and money are printed. A recipe is never the answer on its own: every
-statement is checked against its own arithmetic every time. A design with no recipe yet is always
-shown to a person once; their check becomes the recipe, and after a few checked statements it
-reads on its own.</p>
-<p>An amount that could not be read but that the running balance fixes is filled in, marked in the
-Flags column, and the statement always needs you.</p>
-<p>Best results come from CSV or Excel exports where your bank offers them.</p>
+<p>Best results come from CSV or Excel exports.</p>
 </div>
 </div>')

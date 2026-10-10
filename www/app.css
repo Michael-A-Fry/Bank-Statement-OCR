@@ -566,7 +566,10 @@ a.user-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;bord
   border:1px solid var(--line-2);color:var(--slate);font-size:var(--fs-cap);font-weight:600;text-decoration:none}
 a.user-chip:hover{border-color:var(--brand-line);color:var(--ink);text-decoration:none}
 .user-dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
-a.hdr-signout{font-size:var(--fs-cap);color:var(--slate);font-weight:600}
+a.user-chip{padding:0;border:0}
+.user-av{width:28px;height:28px;border-radius:50%;background:var(--brand);color:#fff;display:inline-flex;
+  align-items:center;justify-content:center;font-size:11px;font-weight:700;letter-spacing:.02em}
+a.hdr-signout{font-size:var(--fs-cap);color:var(--slate);font-weight:600;text-decoration:none}
 /* admin tabs scroll sideways on a phone instead of wrapping */
 #adm_tabs.nav-tabs{display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 #adm_tabs.nav-tabs>li{float:none;flex:0 0 auto}
@@ -836,3 +839,34 @@ body.modal-open{overflow:hidden}
 .ck-ask table{table-layout:fixed;width:100%}
 .ck-ask td{overflow-wrap:anywhere;white-space:normal}
 @media (max-width:767px){#cv_txns table.dataTable tbody td::before{margin-right:6px}}
+/* round 4 -------------------------------------------------------------- */
+/* a converted row's bank reads as plain text, with a quiet Change */
+.plan-pick-done{display:inline-flex;align-items:baseline;gap:8px;position:relative}
+.plan-pick-done select.plan-pick{appearance:none;-webkit-appearance:none;border:0;background:transparent;
+  padding:0;font:inherit;color:var(--ink);box-shadow:none;width:auto;max-width:100%;cursor:pointer}
+.plan-pick-done .plan-change{font-size:var(--fs-cap);color:var(--brand);font-weight:600;pointer-events:none}
+.plan-pick-done:hover .plan-change{text-decoration:underline}
+/* the quiet third action */
+.btn.btn-link.ck-quiet{color:var(--slate);font-weight:500;padding-left:6px;padding-right:6px;box-shadow:none}
+.btn.btn-link.ck-quiet:hover{color:var(--ink)}
+/* the column cards: money is never clipped */
+.ck-ask table{table-layout:auto}
+.ck-ask td.num,.ck-ask td:last-child{white-space:nowrap}
+/* a tablet: name and type on the left, the outcome on the right, tight rows */
+@media (min-width:768px) and (max-width:1199px){
+  table.plan-table tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:16px;row-gap:2px;padding:10px 0}
+  table.plan-table td{grid-column:1}
+  table.plan-table td.plan-res,table.plan-table td.plan-layout{grid-column:2}
+  table.plan-table td.plan-res{grid-row:1 / span 3;align-self:center}
+}
+/* a phone: two-line transaction cards, nothing shown that is empty */
+@media (max-width:767px){
+  #cv_txns table.dataTable tbody td:empty{display:none}
+  #cv_txns table.dataTable tbody td::before{content:none!important}
+}
+/* one toast at a time, top right, out of the way of the spinner */
+#shiny-notification-panel{top:72px;bottom:auto;right:16px}
+#shiny-notification-panel .shiny-notification:not(:last-child){display:none}
+.plan-actions .plan-accept-all{font-weight:600}
+td.plan-tpl .plan-pick-done{display:flex;min-width:0;max-width:100%}
+.plan-pick-done select.plan-pick{flex:1 1 auto;min-width:0;width:100%;text-overflow:ellipsis}
