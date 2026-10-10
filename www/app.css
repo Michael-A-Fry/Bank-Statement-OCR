@@ -499,3 +499,38 @@ p.tick-line{margin:6px 0 10px;font-size:13px;font-weight:600}
 .na-week{margin:0 0 12px;font-size:14px;color:var(--ink)}
 .na-note{color:var(--slate);font-size:12.5px;font-style:italic;margin-top:2px}
 .undo-note{max-width:320px;height:32px;padding:4px 10px;font-size:13px}
+
+/* ===== part 4: finish -- motion, rhythm and focus ======================== */
+/* The last layer: nothing here changes WHAT is on screen, only how it feels --
+   a calmer type rhythm, roomier table rows, a keyboard focus ring everywhere,
+   and short, quiet motion that switches itself off for people who ask the
+   operating system for less motion. */
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,'Helvetica Neue',Arial,sans-serif;
+  text-rendering:optimizeLegibility;font-feature-settings:'tnum' 1,'cv11' 1}
+::selection{background:var(--brand-line)}
+.tab-content>.tab-pane.active{animation:ss-rise .22s cubic-bezier(.2,.7,.2,1)}
+@keyframes ss-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.well,.plan{border-radius:var(--r-lg);box-shadow:var(--sh-2);transition:box-shadow .2s ease}
+.plan{padding:18px 20px}
+.btn{transition:background .15s ease,border-color .15s ease,box-shadow .15s ease,transform .08s ease}
+.btn:active{transform:translateY(1px)}
+.btn-primary:hover{box-shadow:0 2px 8px rgba(0,121,61,.25)}
+.btn:focus-visible,a:focus-visible,select:focus-visible,tr.plan-openable:focus-visible{
+  outline:none;box-shadow:0 0 0 3px rgba(0,121,61,.28)}
+table.plan-table td{padding:11px 10px;transition:background .15s ease}
+table.plan-table th{padding:8px 10px}
+table.plan-table tbody tr:last-child td{border-bottom:none}
+td.plan-file{min-width:170px;overflow-wrap:break-word;word-break:break-word}
+td.plan-tpl select{transition:border-color .15s ease,box-shadow .15s ease}
+td.plan-tpl select:hover{border-color:var(--brand-line)}
+a.plan-check{transition:transform .15s ease}
+tr.plan-openable:hover a.plan-check{transform:translateX(2px)}
+a.hub-card{transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+a.hub-card:hover{transform:translateY(-2px)}
+.plan-chip,.chip{transition:background .15s ease}
+.shiny-notification{animation:ss-rise .2s ease}
+@media (prefers-reduced-motion:reduce){
+  .tab-pane,.shiny-notification,.btn,a.hub-card,a.plan-check{animation-duration:.01ms!important;
+    transition-duration:.01ms!important}
+}
+.plan-scroll{max-height:max(560px,72vh)}
