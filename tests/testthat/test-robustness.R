@@ -136,6 +136,18 @@ test_that("date_raw / amount_raw / balance_raw are neutralised for spreadsheets"
   expect_identical(safe_df$balance_raw, "'=9*9")
 })
 
+# The account name and number printed on the statement are on every row since 3.0.0,
+# and the Summary sheet carries the header's text: both are neutralised too.
+test_that("account name and number, and the Summary sheet, are neutralised for spreadsheets", {
+  df <- data.frame(description = "ok", account_name = "=HYPERLINK(1)", account_number = "+1",
+                   stringsAsFactors = FALSE)
+  safe_df <- .spreadsheet_safe(df)
+  expect_identical(safe_df$account_name, "'=HYPERLINK(1)")
+  expect_identical(safe_df$account_number, "'+1")
+  h <- .header_df_safe(list(account_name = "@cmd", closing_balance = 12.5))
+  expect_identical(h$value, c("'@cmd", "12.5"))
+})
+
 # ---- PDF date band that captures TWO dates (txn + processed) ---------------
 test_that("a date cell with two dates parses the FIRST, not a mangled year", {
   # "22 Aug 24 Aug" -> appending a year makes R read the 2nd day (24) as the

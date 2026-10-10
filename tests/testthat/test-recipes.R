@@ -516,6 +516,18 @@ test_that("always ask once: a new design waits for a person, and their check dra
   expect_identical(convert_sandbox()(f, bank = "ASB")$status, "ok")
 })
 
+# A fix that cannot be applied (here: a recipe pick the screen never offered) is
+# no person's answer: the automatic reading it falls back to still waits.
+test_that("always ask once: a fix that could not be applied does not let a new design through", {
+  withr::local_options(bso.unknown_design = "ask")
+  cv <- convert_sandbox(); d <- sandbox_dir(cv)
+  f <- fixture("tests/testthat/fixtures/asb_everyday_pdf_sample.pdf")
+  r <- cv(f, bank = "ASB", overrides = list(recipe = "not_offered@1"))
+  expect_identical(r$status, "needs_review")
+  expect_match(r$reason, "not seen this statement design before")
+  expect_length(list.files(file.path(d, "recipes"), "[.]yaml$"), 0L)
+})
+
 test_that("a draft is promoted after 3 checked statements from 2 accounts, and then reads on its own", {
   d <- tempfile("rcdraft_"); on.exit(unlink(d, recursive = TRUE))
   inp <- read_input(fixture("tests/testthat/fixtures/asb_everyday_pdf_sample.pdf"))
@@ -662,4 +674,19 @@ test_that("D7: a conversion read with a recipe proven only by its totals is mark
   expect_true(isTRUE(r$spot_check))                       # the spot-check rate is 0 (off) here
   expect_identical(r$spot_recipe$id, "kauri_fixture_pdf")
   expect_identical(r$spot_recipe$proofs, 0L)
+})
+
+# An update may ship a recipe file with the same id and version as one an admin
+# wrote on the server (an Off, an edit). The server's copy is used: an update never
+# undoes what the admin decided (D2). Two copies inside one folder: the first stands.
+test_that("the server's copy of a recipe version wins over the shipped one of the same number", {
+  shipped <- rc_tmpdir(); server <- rc_tmpdir()
+  on.exit(unlink(c(shipped, server), recursive = TRUE))
+  rc_write(shipped, "kauri_test@v2.yaml", rc_valid_yaml(version = 2))
+  rc_write(server, "kauri_test@v2.yaml", rc_valid_yaml(version = 2, status = "retired"))
+  r <- recipes_load(c(shipped, server))
+  expect_length(r, 0L)                                       # the admin's Off stands
+  expect_match(attr(r, "problems"), "which is the one used")
+  rc_write(shipped, "kauri_test@2.yaml", rc_valid_yaml(version = 2, status = "retired"))
+  expect_match(attr(recipes_load(shipped), "problems"), "already defined")
 })

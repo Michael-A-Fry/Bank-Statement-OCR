@@ -100,6 +100,17 @@ recipes_load <- function(dirs = recipes_dirs()) {
       if (!is.null(r$error)) { problems <- c(problems, sprintf("%s: %s", basename(f), r$error)); next }
       r$file <- f
       dup <- vapply(found, function(o) identical(o$ref, r$ref), logical(1))
+      # The same id and version in the shipped folder and the server's own: the
+      # server's copy is the one used. An admin's change (off, an edit) is written
+      # as the next version on the server, and a later update may ship a file with
+      # that same number; the update must never undo what the admin decided (D2).
+      if (any(dup) && !identical(dirname(found[[which(dup)[1]]]$file), dirname(f))) {
+        j <- which(dup)[1]
+        problems <- c(problems, sprintf("%s: %s is also defined by this server's %s, which is the one used.",
+                                        basename(found[[j]]$file), r$ref, basename(f)))
+        found[[j]] <- r
+        next
+      }
       if (any(dup)) {
         problems <- c(problems, sprintf("%s: %s is already defined by %s, so this copy is not used.",
                                         basename(f), r$ref, basename(found[[which(dup)[1]]]$file)))

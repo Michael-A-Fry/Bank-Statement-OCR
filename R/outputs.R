@@ -10,6 +10,13 @@
     stringsAsFactors = FALSE, row.names = NULL
   )
 }
+# The Summary sheet's values (the account name, the statement title) are the
+# statement's own text, so they are neutralised for the workbook like the rows.
+.header_df_safe <- function(header) {
+  d <- .header_df(header)
+  d$value <- .neutralize_formula(d$value)
+  d
+}
 
 # .checks_df(recon) -- KPI rows plus trust summary rows.
 .checks_df <- function(recon) {
@@ -99,7 +106,10 @@
 # Includes the verbatim *_raw source cells: they are copied straight from the
 # statement, so a hostile PDF could put "=cmd" in an amount/date/balance cell and
 # it would execute when the xlsx/csv is opened in Excel unless neutralised here.
+# account_name and account_number (3.0.0) are copied from the statement's own
+# labels onto every row, so they are text a statement controls too.
 .SS_TEXT_COLS <- c("description", "particulars", "code", "reference",
+                   "account_name", "account_number",
                    "other_party", "type", "raw", "debit", "credit",
                    "date_raw", "amount_raw", "balance_raw")
 .neutralize_formula <- function(v) {
@@ -231,7 +241,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
     openxlsx::addWorksheet(wb, "Transactions")
     openxlsx::writeData(wb, "Transactions", sheet_tx)
     openxlsx::addWorksheet(wb, "Summary")
-    openxlsx::writeData(wb, "Summary", .header_df(parsed$header))
+    openxlsx::writeData(wb, "Summary", .header_df_safe(parsed$header))
     openxlsx::addWorksheet(wb, "Checks")
     openxlsx::writeData(wb, "Checks", .checks_df(recon))
     openxlsx::addWorksheet(wb, "Provenance")

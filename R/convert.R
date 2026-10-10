@@ -718,12 +718,15 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     # ---- ALWAYS ASK ONCE: a design the tool has not been taught ----
     # A reading that adds up but that no accepted recipe and no proven layout made
     # waits for a person, already filled in. Their "It's right" teaches the design
-    # (below). A person's own fix is their answer, so it is not held again.
+    # (below). A person's own fix is their answer, so it is not held again -- but a
+    # fix that could not be applied (fix$error) answered nothing: the reading is
+    # the automatic one, and it waits like any other.
     ask_new <- identical(.unknown_design_mode(cfg), "ask")
     for (i in seq_len(k)) {
       r <- readings[[i]]
       known <- (!is.null(r$matched_recipe) && !isTRUE(r$draft)) || !is.null(r$matched_layout)
-      if (ask_new && is.null(reads[[i]]$fix) && isTRUE(r$outcome %in% .AUTO) && !known) {
+      answered <- !is.null(reads[[i]]$fix) && is.null(reads[[i]]$fix$error)
+      if (ask_new && !answered && isTRUE(r$outcome %in% .AUTO) && !known) {
         why <- if (isTRUE(r$draft))
           sprintf("It adds up, read with %s, a design a person has checked before; check it once more and it counts towards reading statements like it on their own.", r$matched_recipe)
           else "It adds up, but the tool has not seen this statement design before; check it once and statements like it will come back filled in."
