@@ -350,7 +350,7 @@ test_that("only the table is in the default view; the rest is behind ONE More de
   expect_length(grep('uiOutput\\("cv_feed"\\)', src), 0L)   # not on the page at all
   expect_true(i_txns < i_toggle)        # the table, then the one link
   expect_true(i_toggle < i_panel && i_panel < i_detail)
-  expect_match(.app_block(src, "output\\$cv_more_toggle <- renderUI", 8L), "More detail")
+  expect_match(.app_block(src, "output\\$cv_more_toggle <- renderUI", 8L), "Show more detail")
   # the toggle's caption no longer claims the checks it does not open
   cap <- .app_block(src, "output\\$cv_more_toggle <- renderUI", 20L)
   expect_false(grepl("The page, the checks, and the template it used.", cap, fixed = TRUE))

@@ -12,46 +12,33 @@
 # columns fits. A statement that prints no balance and no totals is never called
 # proven; it converts on its own only when a recipe a person accepted reads it.
 about_html <- function() HTML('
-<style>
- .ab{max-width:1020px} .ab h3{color:#00205b;margin:26px 0 10px;font-size:16px}
- .ab .steps{display:flex;flex-wrap:wrap;counter-reset:step}
- .ab .step{flex:1 1 170px;max-width:196px;margin:0 12px 10px 0;font-size:12.5px;color:#555;
-   padding-top:8px;border-top:3px solid #b6c8e0}
- .ab .step b{display:block;color:#1f2a33;font-size:13px;margin-bottom:2px}
- .ab .step b::before{counter-increment:step;content:counter(step) ".  ";color:#00205b}
- .ab .trust{display:grid;grid-template-columns:190px 1fr;max-width:860px;font-size:13px}
- .ab .trust dt{font-weight:600;color:#1f2a33;padding:7px 10px 7px 0;border-top:1px solid #eceeed}
- .ab .trust dd{margin:0;color:#555;padding:7px 0;border-top:1px solid #eceeed}
- .ab .muted{color:#777;font-size:12.5px}
- @media (max-width:767px){.ab .trust{grid-template-columns:1fr}}
-</style>
 <div class="ab">
-<h3>How a conversion flows</h3>
-<div class="steps">
-  <div class="step"><b>Upload</b>Your bank&#39;s statements - PDF, scan, CSV or Excel - on Convert.</div>
-  <div class="step"><b>Bank</b>Each file&#39;s bank is filled in from the statement itself. Change it if it is wrong.</div>
-  <div class="step"><b>Read</b>Dates, descriptions and figures are read from the page&#39;s content, not from heading words.</div>
-  <div class="step"><b>Prove</b>The statement&#39;s own arithmetic - its running balance, opening and closing balance, printed totals - must add up.</div>
-  <div class="step"><b>Download</b>Excel or CSV. Anything that did not prove is shown on Please check with the reason.</div>
-</div>
-<p class="muted">Each bank design the tool knows has a <b>recipe</b>: where its table is, what each
+<h3 class="ab-h">How a conversion flows</h3>
+<ol class="ab-steps">
+  <li class="ab-step"><span class="ab-num">1</span><b>Upload</b><span>Your bank&#39;s statements &#8212; PDF, scan, CSV or Excel &#8212; on Convert.</span></li>
+  <li class="ab-step"><span class="ab-num">2</span><b>Bank</b><span>Each file&#39;s bank is filled in from the statement. Change it if it is wrong.</span></li>
+  <li class="ab-step"><span class="ab-num">3</span><b>Read</b><span>Dates, descriptions and figures are read from what is on the page.</span></li>
+  <li class="ab-step"><span class="ab-num">4</span><b>Prove</b><span>The statement&#39;s own running balance and totals must add up to the cent.</span></li>
+  <li class="ab-step"><span class="ab-num">5</span><b>Download</b><span>Excel or CSV. Anything not proven is shown to you with the reason.</span></li>
+</ol>
+
+<h3 class="ab-h">How you know it&#39;s right</h3>
+<dl class="ab-trust">
+<dt><span class="pill pill-ok">Done</span></dt><dd>The design is one the tool knows, and every balance step adds up to the cent.
+Nothing to do.</dd>
+<dt><span class="pill pill-warn">Needs you</span></dt><dd>Read, but not proven &#8212; for example the balance stops adding up at a row,
+or the design is new. You see the page, answer a plain question if asked, and it is read again.</dd>
+<dt><span class="pill pill-bad">Couldn&#39;t read</span></dt><dd>Nothing usable came out. The reason, and what to try, is shown.</dd>
+</dl>
+
+<details class="ab-more"><summary>How it works</summary>
+<p>Each statement design the tool knows has a <b>recipe</b>: where its table is, what each
 column is, how its dates and money are printed. A recipe is never the answer on its own: every
 statement is checked against its own arithmetic every time. A design with no recipe yet is always
 shown to a person once; their check becomes the recipe, and after a few checked statements it
 reads on its own.</p>
-
-<h3>How you know it&#39;s right</h3>
-<dl class="trust">
-<dt>Done</dt><dd>The design is one the tool knows, and every balance step adds up to the cent (or, with no
-running balance, opening plus the rows gives the closing balance and the printed totals agree).
-Nothing to do.</dd>
-<dt>Needs you</dt><dd>Read, but not proven - for example the balance stops adding up at a row,
-or the design is new. You see the page with the columns drawn on it, answer a plain question
-about a column if asked, and re-read; or say it is right.</dd>
-<dt>Couldn&#39;t read</dt><dd>Nothing usable came out. The reason is shown.</dd>
-<dt>Derived amounts</dt><dd>An amount that could not be read but that the running balance fixes is
-filled in, marked in the Flags column, and the statement always needs you.</dd>
-</dl>
-<p class="muted" style="margin-top:14px">Best results come from CSV or Excel exports where your bank
-offers them.</p>
+<p>An amount that could not be read but that the running balance fixes is filled in, marked in the
+Flags column, and the statement always needs you.</p>
+<p>Best results come from CSV or Excel exports where your bank offers them.</p>
+</details>
 </div>')

@@ -1688,7 +1688,8 @@ test_that("a case re-reads only the files whose bank changed, and hands back the
   expect_match(joined, "for \\(col in names\\(b\\)\\) bb\\[\\[col\\]\\]\\[rows\\] <- b\\[\\[col\\]\\]")
   btn <- .src_block(src, "output\\$cv_go_btn <- renderUI", 40L)
   expect_match(btn, 'sprintf\\("Convert %d changed file%s"')
-  expect_match(btn, 'sprintf\\("Convert all %d again", n\\)')
+  # after a run with nothing changed the button needs no count (round-2 design)
+  expect_match(btn, 'else "Convert again"', fixed = TRUE)
   dl <- .ui_block(src, "output\\$cv_batch_dl <- downloadHandler", 30L)
   expect_match(dl, "\\.batch_outputs\\(cv_batch\\(\\)\\)")
   expect_match(dl, "could not be packed into one file")
@@ -1804,7 +1805,8 @@ test_that("Admin's uploads table is the whole log, with the layout each was read
   src <- .ui_src()
   expect_match(.ui_block(src, 'h4\\("Uploads', 3L), "every document converted here")
   up <- .src_block(src, "output\\$adm_uploads <- renderDT", 30L)
-  expect_match(up, '"Layout"'); expect_match(up, '"Nothing usable was read"')
+  expect_match(up, '"Statement design"'); expect_match(up, '"Nothing usable was read"')
+  expect_false(grepl('"run_id"', up, fixed = TRUE))   # no run ids on screen
   expect_match(up, "\\.layout_name\\(r\\)")
   # a saved upload, or a file in failed/, is read again on Convert -- where Please check is
   rr <- .src_block(src, "\\.reread_on_convert <- function", 8L)
@@ -1888,7 +1890,8 @@ test_that("the result says one sentence, and a new design is asked about with tw
   expect_match(st, "New design \\\\u2014 check it once")
   expect_match(st, "The balance stops adding up at %s")
   expect_false(grepl("failed_checks_ui(res)", st, fixed = TRUE))   # the list is under More detail
-  ck <- .ui_block(src, "output\\$cv_check <- renderUI", 30L)
+  # the two buttons sit under the rows they accept (cv_accept_bar), not above them
+  ck <- .ui_block(src, "output\\$cv_accept_bar <- renderUI", 30L)
   expect_match(ck, 'actionButton\\("cv_ck_confirm", "It\\\\u2019s right \\\\u2014 accept it"')
   expect_match(ck, 'actionButton\\("cv_ck_aside", "Set aside"')
   # set aside marks the upload for an admin; it converts nothing

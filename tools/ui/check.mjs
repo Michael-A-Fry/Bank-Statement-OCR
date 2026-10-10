@@ -147,7 +147,7 @@ const rows = page => page.evaluate(() => [...document.querySelectorAll('tr.plan-
   const sel = tr.querySelector('select');
   return { file: q('.plan-file'), kind: q('.plan-kind'), value: sel ? sel.value : null,
            chip: q('td.plan-tpl .plan-chip') || q('td.plan-tpl .plan-note'), layout: q('.plan-layout'),
-           result: q('.plan-res'), why: q('.plan-why'), open: tr.classList.contains('plan-open') };
+           result: q('.plan-res'), why: q('.plan-why'), verdict: q('.plan-verdict'), open: tr.classList.contains('plan-open') };
 }));
 const button = page => page.$eval('#cv_go', e => e.innerText.trim());
 const byFile = (rs, f) => rs.find(r => r.file === f) || {};
@@ -179,9 +179,9 @@ const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png
 // the QID is asked once a session, unless the host has a sign-in: wait for the box
 // (or for the line saying who is recorded), fill it, and wait for it to be taken
 async function setQid(page) {
-  await waitFor(page, () => !!document.querySelector('#cv_qid') || /Recording as/.test(document.body.innerText), 15000);
+  await waitFor(page, () => !!document.querySelector('#cv_qid') || !!document.querySelector('#hdr_user .user-chip'), 15000);
   const q = await page.$('#cv_qid');
-  if (q) { await q.fill('UI0001'); await waitFor(page, () => /Recording as/.test(document.body.innerText), 10000); }
+  if (q) { await q.fill('UI0001'); await waitFor(page, () => /UI0001/.test((document.querySelector('#hdr_user') || {}).innerText || ''), 10000); }
 }
 async function freshConvert(ctx) {
   const p = await ctx.newPage();
@@ -290,7 +290,7 @@ async function run(browser, D) {
   check('every row carries its result',
         await waitFor(page, () => document.querySelectorAll('tr.plan-openable').length === 6, 300000));
   r = await rows(page);
-  const word = f => byFile(r, f).result.split(':')[0].replace(/ \d+ rows?$/, '').trim();
+  const word = f => (byFile(r, f).verdict || '').trim();
   // D16: one word each. With "always ask once", a new design that adds up waits for a person.
   eq('each file has its outcome in plain words', six.map(word),
      [ 'Done', ASK ? 'Needs you' : 'Done', 'Needs you', 'Needs you', "Couldn't read", "Couldn't read"]);
@@ -310,8 +310,9 @@ async function run(browser, D) {
      ['FILE', 'TYPE', 'BANK', 'READ AS', 'OUTCOME']);
   check('..."Read as" never says the engine\'s word "layout"', r.every(x => !/layout/i.test(x.layout)), JSON.stringify(r.map(x => x.layout)));
   check('..."Read as" is blank, not a dash, when nothing read it', r.every(x => x.layout !== '\u2014'), JSON.stringify(r.map(x => x.layout)));
-  check('a check link says what it opens ("Check 4 rows")', await page.evaluate(() =>
-        [...document.querySelectorAll('a.plan-check')].every(a => /^Check (\d[\d,]* rows?|the columns) \u2192$/.test(a.innerText.trim()))),
+  check('a check link is one quiet "Check \u2192", naming what it opens for a screen reader', await page.evaluate(() =>
+        [...document.querySelectorAll('a.plan-check')].every(a => a.innerText.trim() === 'Check \u2192' &&
+          /^Check (\d[\d,]* rows?|the columns)$/.test(a.getAttribute('aria-label') || ''))),
         JSON.stringify(await page.$$eval('a.plan-check', as => as.map(a => a.innerText))));
   check('each outcome word has one sentence of hover help', await page.evaluate(() =>
         [...document.querySelectorAll('.plan-verdict')].every(v => /^(Done|Needs you|Couldn't read): .+\.$/.test(v.title || ''))));
@@ -319,7 +320,12 @@ async function run(browser, D) {
   check('...with a Next file to check button', !!(await page.$('#cv_next_check')));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
   check('Download everything is above the table', !!(await page.$('#cv_batch_dl')));
-  eq('the button offers to convert them all again', await button(page), 'Convert all 6 again');
+  eq('the button offers to convert again, with no count', await button(page), 'Convert again');
+  check('the case header says what needs doing, as a heading', /^\d+ files? needs? a quick check$/.test(await text(page, '.plan-top-case h2')),
+        await text(page, '.plan-top-case h2'));
+  check('...with its counts as chips', (await page.$$('.plan-tally .count-chip')).length === 3, await text(page, '.plan-tally'));
+  check('...and only Next file to check is primary', await page.evaluate(() =>
+        [...document.querySelectorAll('.plan-actions .btn-primary')].map(b => b.id).join(',') === 'cv_next_check'));
   check('a row that needs a person offers Please check',
         await page.evaluate(() => ['ambiguous.csv', 'unproven.csv'].every(f => [...document.querySelectorAll('tr.plan-row')]
           .some(t => t.querySelector('.plan-file').innerText === f && t.querySelector('a.plan-check')))));
@@ -345,7 +351,7 @@ async function run(browser, D) {
       seenNext.push((await rows(page)).filter(x => x.open).map(x => x.file)[0]);
     }
     eq('Next file to check opens each file that needs you, then starts again', seenNext, [...need, need[0]]);
-    check('...with its check open below', !!(await page.$('#cv_check .check-panel')));
+    check('...with its check open below', !!(await page.$('#cv_check .check-panel, #cv_accept_bar .accept-bar')));
     if (ASK) {
       const acc = await page.$('#cv_accept_all');
       check('ask mode: "Accept all that add up" is offered for the new design that adds up', !!acc &&
@@ -367,9 +373,12 @@ async function run(browser, D) {
   if (ASK) {
     await clickIn(page, 'bnz_export.csv', '.plan-file'); await sleep(2500);
     check('a new design says so', /New design/.test(await text(page, '#cv_status')), await text(page, '#cv_status'));
-    eq('...and asks with two buttons', await page.evaluate(() =>
-       [...document.querySelectorAll('#cv_check button')].map(b => b.innerText.trim())),
+    eq('...and asks with two buttons, under the rows it accepts', await page.evaluate(() =>
+       [...document.querySelectorAll('#cv_accept_bar button')].map(b => b.innerText.trim())),
        ['It\u2019s right \u2014 accept it', 'Set aside']);
+    check('...the rows come before the button', await page.evaluate(() => {
+       const t = document.querySelector('#cv_txns'), b = document.querySelector('#cv_accept_bar');
+       return !!t && !!b && !!(t.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }));
     check('...and offers no download yet', !(await page.$('#dl_xlsx')));
     await clickIn(page, 'anz_march.pdf', '.plan-file'); await sleep(2500);
   }
@@ -388,12 +397,17 @@ async function run(browser, D) {
         await text(page, '#cv_ck_pages'));
   check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
   check('one question per column of figures', (await page.$$('.ck-ask')).length === 3);
-  check('...each shown by its own lines', (await text(page, '.ck-ask')).includes('Lines from this column'), await text(page, '.ck-ask'));
+  check('...each shown by its own lines', (await page.$eval('.ck-ask', e => e.textContent).catch(() => '')).includes('Lines from this column'), await text(page, '.ck-ask'));
   check('someone not signed in as admin is offered no word teaching', !(await page.$('#cv_ck_teach')));
   await shot(page, '03-please-check-pdf');
   //    the last resort: drawing the columns by hand
-  await page.click('#cv_ck_side details > summary'); await sleep(500);
-  check('the last resort is behind More detail', (await text(page, '#cv_ck_side details > summary')) === 'More detail');
+  check('one "Show more detail" link, and no second one in the panel', (await text(page, '#cv_more')) === 'Show more detail' &&
+        (await page.$$('#cv_ck_side details:not(.ck-ask)')).length === 0, await text(page, '#cv_more'));
+  check('a reading that adds up folds each column question to one line', await page.evaluate(() =>
+        [...document.querySelectorAll('details.ck-ask')].every(d => !d.open)));
+  await page.click('#cv_more'); await sleep(800);
+  check('the last resort is behind Show more detail', await waitFor(page, () => {
+        const e = document.querySelector('#cv_ck_editor'); return !!e && e.offsetParent !== null; }, 10000));
   await page.click('#cv_ck_editor');
   check('the column editor opens on the page', await waitFor(page, () => !!document.querySelector('#ed_plot img'), 30000));
   await sleep(1000);
@@ -414,6 +428,7 @@ async function run(browser, D) {
   check('the drawn columns are read again and still have to prove themselves',
         boxed.startsWith('Done - with the columns you drew'), boxed);
   check('...and say they apply to this file only', boxed.includes('this file only'));
+  await page.click('#cv_more'); await sleep(600);
 
   // 6. PLEASE CHECK, on a spreadsheet: Re-read wrong, Re-read right
   await page.click('tr.plan-row:has(td.plan-file:text-is("ambiguous.csv")) a.plan-check'); await sleep(3000);
@@ -573,8 +588,9 @@ async function run(browser, D) {
     await shot(pg, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-'));
   };
   await tp.click('a[data-value="About"]');
-  { const about = await tp.evaluate(() => document.querySelector('.tab-pane.active').innerText);
+  { const about = await tp.evaluate(() => document.querySelector('.tab-pane.active').textContent);
     check('About describes reading by bank, not templates', !/template/i.test(about));
+    check('About leads with the promise as its one page title', /arithmetic has to prove it/.test(await text(tp, '.tab-pane.active h1')));
     check('About describes recipes and the one-word outcomes (3.0.0)',
           /recipe/i.test(about) && /Done/.test(about) && /Needs you/.test(about) && !/learned layout/i.test(about)); }
   await screen(tp, 'About');
@@ -582,15 +598,18 @@ async function run(browser, D) {
   await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
   const admTabs = await tp.$$eval('#adm_tabs > li > a', as => as.map(a => a.innerText.trim()));
   eq('Admin has exactly four tabs', admTabs, ['Needs attention', 'Recipes', 'Words', 'Health']);
-  check('Admin opens on Needs attention, with its cards and counts',
-        await waitFor(tp, () => /Statements waiting for a look/.test((document.querySelector('#adm_na_cards') || {}).innerText || ''), 20000) &&
-        (await tp.$$('#adm_na_cards .na-count')).length === 4, await text(tp, '#adm_na_cards'));
+  check('Admin opens on Needs attention: a card only for what is waiting, or one calm line',
+        await waitFor(tp, () => !!document.querySelector('#adm_na_cards .na-card, #adm_na_cards .na-calm'), 20000) &&
+        await tp.evaluate(() => [...document.querySelectorAll('#adm_na_cards .na-count')].every(c => c.innerText.trim() !== '0')),
+        await text(tp, '#adm_na_cards'));
+  check('...and Merge is never a primary button', (await tp.$$('#adm_na_cards button.btn-primary[data-act^="merge|"]')).length === 0);
   if (!LIVE) {
     // the fix a person confirmed, held for an admin
     check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
     await tp.click('#adm_fixes tbody tr'); await sleep(500);
     await tp.click('#adm_fix_accept'); await sleep(2000);
-    check('...and Accept makes it a proven layout', (await text(tp, '#adm_fix_msg')).startsWith('Accepted'), await text(tp, '#adm_fix_msg'));
+    check('...and Accept says the design is saved, in plain words', /^Kiwibank statement design saved$/.test((await text(tp, '#adm_fix_msg')).trim()), await text(tp, '#adm_fix_msg'));
+    check('...and with nothing left waiting its buttons are gone', await waitFor(tp, () => !document.querySelector('#adm_fix_accept'), 10000));
   }
   check('Needs attention opens with the week in one line', /^This week: /.test(await text(tp, '#adm_na_cards .na-week')),
         await text(tp, '#adm_na_cards .na-week'));
@@ -603,18 +622,28 @@ async function run(browser, D) {
         (await text(tp, row)).includes('ANZ'), await text(tp, '#adm_rc_list'));
   check('...and never shows YAML', !/recipe:|status:|yaml/i.test(await text(tp, '#adm_rc_list')));
   if (!LIVE) {
+    check('Recipes shows banks by name, never a folder name', await tp.evaluate(() =>
+          [...document.querySelectorAll('#adm_rc_list td[data-label="Bank"]')].every(td => !/_|^[a-z]+$/.test(td.innerText.trim()))),
+          await text(tp, '#adm_rc_list'));
+    check('...with a search box and a heading per bank', !!(await tp.$('#adm_rc_find')) && (await tp.$$('#adm_rc_list .rc-group')).length > 1);
+    check('...and a quiet switch, never a row of ON buttons', !/\bON\b/.test(await text(tp, '#adm_rc_list')));
+    await tp.fill('#adm_rc_find', 'kiwibank'); await sleep(400);
+    check('search narrows the list', await tp.evaluate(() => [...document.querySelectorAll('#adm_rc_list tr[data-find]')]
+          .filter(r => r.style.display !== 'none').every(r => /kiwibank/.test(r.dataset.find))));
+    await tp.fill('#adm_rc_find', ''); await tp.evaluate(() => window.ssRcFind('')); await sleep(300);
     await tp.click(`${row} .rc-toggle`);
     check('a recipe is turned off with one click',
-          await waitFor(tp, s => /OFF/.test((document.querySelector(s + ' .rc-toggle') || {}).innerText || ''), 15000, row), await text(tp, row));
+          await waitFor(tp, s => (document.querySelector(s + ' .rc-toggle') || {}).getAttribute?.('aria-checked') === 'false', 15000, row), await text(tp, row));
     await tp.click(`${row} .rc-toggle`);
-    check('...and on again', await waitFor(tp, s => /ON/.test((document.querySelector(s + ' .rc-toggle') || {}).innerText || ''), 15000, row),
+    check('...and on again', await waitFor(tp, s => (document.querySelector(s + ' .rc-toggle') || {}).getAttribute?.('aria-checked') === 'true', 15000, row),
           await text(tp, row));
   }
   await tp.click(`${row} a.rc-open`);
   check('a click opens the recipe card', await waitFor(tp, () => !!document.getElementById('adm_rc_title'), 15000));
   check('...asking the plain column questions with this recipe\'s answers',
         await tp.$eval('#adm_rc_role_3', e => e.value).catch(() => '') === 'money out' &&
-        /Recognised by these words/.test(await text(tp, '#adm_rc_card')), await text(tp, '#adm_rc_card'));
+        /Recognised by these words/i.test(await text(tp, '#adm_rc_card')), await text(tp, '#adm_rc_card'));
+  check('...with no Save until something changes', !(await tp.$('#adm_rc_save')));
   check('...and no YAML anywhere on it', !/recipe:|status:|under:|yaml/i.test(await text(tp, '#adm_rc_card')));
   await tp.setInputFiles('#adm_rc_test_file', [path.join(D, 'anz_march.pdf')]); await sleep(2500);
   await tp.click('#adm_rc_test');
@@ -635,10 +664,14 @@ async function run(browser, D) {
     check('Test with the change, before saving: it still adds up',
           await waitFor(tp, () => /^It adds up/.test((document.querySelector('#adm_rc_test_msg') || {}).innerText || ''), 60000),
           await text(tp, '#adm_rc_test_msg'));
+    check('a change brings up one Save changes', await waitFor(tp, () => !!document.querySelector('#adm_rc_save'), 10000) &&
+          (await text(tp, '#adm_rc_save')).trim() === 'Save changes');
     await tp.click('#adm_rc_save');
+    const openMore = async () => { await tp.evaluate(() => { const d = document.querySelector('#adm_rc_card details.rc-more'); if (d) d.open = true; }); await sleep(400); };
     check('Save makes a new version, the old one kept',
           await waitFor(tp, () => /^Saved as a new version/.test((document.querySelector('#adm_rc_msg') || {}).innerText || ''), 15000) &&
-          /Version 4\s+changed/.test(await text(tp, '#adm_rc_card')), await text(tp, '#adm_rc_card'));
+          (await openMore(), /Version 4\s+changed/.test(await text(tp, '#adm_rc_card'))), await text(tp, '#adm_rc_card'));
+    await openMore();
     await tp.click('#adm_rc_undo');
     check('Undo brings the last version back',
           await waitFor(tp, () => /is back to how it was in version 3/.test((document.querySelector('#adm_rc_msg') || {}).innerText || ''), 15000) &&
@@ -659,8 +692,9 @@ async function run(browser, D) {
       if (nm === 'Everyday') await shot(tp, 'tour-admin-new-recipe-from-statement');
       await tp.click('#adm_rc_new_save');
       check('...and Save makes it a draft recipe, opened on its card',
-            await waitFor(tp, n => /Saved as draft recipe/.test((document.querySelector('#adm_rc_msg') || {}).innerText || '') &&
-              ((document.querySelector('#adm_rc_card h4') || {}).innerText || '').endsWith('ANZ ' + n), 90000, nm), await text(tp, '#adm_rc_card') + ' | ' + await text(tp, '#adm_rc_new'));
+            await waitFor(tp, n => /^Saved\. ANZ .+ is now a draft/.test((document.querySelector('#adm_rc_msg') || {}).innerText || '') &&
+              ((document.querySelector('#adm_rc_card h4') || {}).innerText || '').trim() === n, 90000, nm), await text(tp, '#adm_rc_card') + ' | ' + await text(tp, '#adm_rc_new'));
+      check('...and never shows the engine id', !/_draft_|@\d/.test(await text(tp, '#adm_rc_msg')), await text(tp, '#adm_rc_msg'));
     }
   }
   await screen(tp, 'Admin Recipes');
@@ -684,6 +718,9 @@ async function run(browser, D) {
   }
   // HEALTH holds what the old tabs did: how automatic reading is doing, and training
   await tp.click('a[data-value="Health"]'); await sleep(1500);
+  check('Health leads with the reading tiles, the rest folded away', await tp.evaluate(() =>
+        [...document.querySelectorAll('details.hl-sec')].length >= 5 && [...document.querySelectorAll('details.hl-sec')].every(d => !d.open)));
+  await tp.evaluate(() => document.querySelectorAll('details.hl-sec').forEach(d => { d.open = true; })); await sleep(1500);
   await waitFor(tp, () => /Statements read\s*\d+/i.test((document.querySelector('#adm_ar_head') || {}).innerText || '') &&
     /PDF/.test((document.querySelector('#adm_ar_kinds') || {}).innerText || ''), 30000);
   check('Automatic reading counts what was read', /Statements read\s*\d+/i.test(await text(tp, '#adm_ar_head')),
@@ -768,6 +805,9 @@ async function run(browser, D) {
     fs.readFileSync(path.join(WORDS_DIR, 'labels.yaml'), 'utf8').includes('"kickoff kitty"'));
   await screen(tp, 'Admin Words');
   await tp.click('a[data-value="Health"]'); await sleep(1500);
+  await tp.evaluate(() => document.querySelectorAll('details.hl-sec').forEach(d => { d.open = false; })); await sleep(500);
+  check('Health shows no file paths or run ids', !/\/tmp\/|[0-9a-f]{32}|_ok_pct|needs_review/i.test(await tp.evaluate(() =>
+    document.querySelector('#adm_tabs + .tab-content .tab-pane.active').innerText)));
   check('Health names layouts, not templates', !/template/i.test(await tp.evaluate(() =>
     document.querySelector('#adm_tabs + .tab-content .tab-pane.active').innerText)));
   await screen(tp, 'Admin Health');

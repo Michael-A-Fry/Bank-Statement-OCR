@@ -20,7 +20,7 @@ takes. Nothing in `config\config.yaml` has to change.
   balance stops adding up). The table is laid out like the QVF's: Date,
   Description, Money out, Money in, Balance and a **Check** tick or cross per row.
   The buttons are *Read it again*, *It's right - accept it* and *Set aside*.
-  Everything else (checks, diagnostics, charts) is behind one *More detail* link.
+  Everything else (checks, diagnostics, charts) is behind one *Show more detail* link.
 - **A new design is always shown once.** A statement whose design the tool has
   not been taught comes back as *Needs you*, already filled in, even when it adds
   up. Looking it over and pressing *It's right* teaches the design. The next

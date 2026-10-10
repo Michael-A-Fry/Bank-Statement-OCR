@@ -93,6 +93,45 @@
 
 # ---- the overview -----------------------------------------------------------------
 
+# recipe_display_name(title, bank) -- the recipe's name as a screen shows it: the
+# printed wording tidied for people ("ELECTRONIC ACCOUNT" -> "Electronic account",
+# "Online Saver Statmt NZD-PB" -> "Online Saver (NZD)"), without the bank in front
+# ("ANZ Everyday" under ANZ is "Everyday"). The printed wording itself stays the
+# recipe's title and a recognition word; this is display only.
+RECIPE_NAME_FIXES <- c("undisclosed transactional account" = "Transaction account",
+  "cccfa-loan non-recourse" = "Home loan", "search by access number" = "Account search export",
+  "bank transaction dataset" = "Transaction export", "hsbc everyday a/c" = "HSBC Everyday")
+recipe_display_name <- function(title, bank = NA_character_) {
+  title <- as.character(title); bank <- rep_len(as.character(bank), length(title))
+  vapply(seq_along(title), function(i) {
+    t <- title[i]; if (is.na(t) || !nzchar(t)) return(t)
+    k <- tolower(trimws(t))
+    if (k %in% names(RECIPE_NAME_FIXES)) return(unname(RECIPE_NAME_FIXES[[k]]))
+    t <- enc2utf8(t)
+    for (m in c("\u2122", "\u00ae", "(R)", "(TM)")) t <- gsub(enc2utf8(m), "", t, fixed = TRUE, useBytes = TRUE)
+    Encoding(t) <- "UTF-8"
+    t <- gsub("\\bStatmt\\b|\\bStatement\\b", "", t, ignore.case = TRUE)
+    t <- gsub("\\s*A/C\\b", "", t, ignore.case = TRUE)
+    t <- gsub("\\b(NZD|AUD|USD)-[A-Z]+\\b", "(\\1)", t)
+    t <- gsub("\\s+", " ", trimws(t))
+    b <- bank[i]
+    if (!is.na(b) && nzchar(b)) {
+      if (startsWith(tolower(t), paste0(tolower(b), " ")) || startsWith(tolower(t), paste0(tolower(b), "-"))) {
+        t2 <- trimws(sub("^[-:\u2014 ]+", "", substring(t, nchar(b) + 1L)))
+        if (nzchar(t2)) t <- t2
+      }
+    }
+    if (grepl("[A-Z]{3,}", t) && !grepl("[a-z]", t)) {
+      w <- strsplit(tolower(t), " ", fixed = TRUE)[[1]]
+      keep <- toupper(w) %in% c("ANZ", "ASB", "BNZ", "HSBC", "TSB", "NZ", "NZD", "ICBC", "CCB", "GST")
+      w[keep] <- toupper(w[keep])
+      t <- paste(w, collapse = " ")
+      t <- paste0(toupper(substr(t, 1, 1)), substring(t, 2))
+    }
+    if (!nzchar(t)) title[i] else t
+  }, "", USE.NAMES = FALSE)
+}
+
 # recipes_overview(dirs, tracking, days, hidden) -> one row per recipe: id, bank,
 # title, status (draft / proven / retired), version, enabled, hidden (retired
 # from the list), statements read and how many needed help in the last `days`
@@ -107,7 +146,8 @@ recipes_overview <- function(dirs = NULL, tracking = NULL, days = 30, hidden = T
     v <- .rca_of(vs, id); top <- v[[length(v)]]
     mine <- Filter(function(r) identical(r$recipe_id, id), recs)
     o <- unique(vapply(v, `[[`, "", "origin"))
-    data.frame(id = id, bank = .layout_bank_display(top$rc$bank), title = top$rc$title,
+    bk <- .layout_bank_display(top$rc$bank)
+    data.frame(id = id, bank = bk, title = top$rc$title, name = recipe_display_name(top$rc$title, bk),
                status = top$status, version = top$version, enabled = !identical(top$status, "retired"),
                hidden = isTRUE(top$y$admin$hidden),
                read = length(mine),
@@ -118,7 +158,7 @@ recipes_overview <- function(dirs = NULL, tracking = NULL, days = 30, hidden = T
                stringsAsFactors = FALSE)
   })
   out <- if (length(rows)) do.call(rbind, rows) else
-    data.frame(id = character(0), bank = character(0), title = character(0), status = character(0),
+    data.frame(id = character(0), bank = character(0), title = character(0), name = character(0), status = character(0),
                version = integer(0), enabled = logical(0), hidden = logical(0), read = integer(0),
                needed_help = integer(0), tried_not_proven = integer(0), proofs = integer(0),
                origin = character(0), stringsAsFactors = FALSE)
@@ -145,14 +185,14 @@ recipe_set_enabled <- function(id, on, dirs = NULL) {
   dirs <- .rca_dirs(dirs)
   t <- .rca_top(dirs, id); if (!is.null(t$error)) return(.rca_no(t$error))
   is_on <- !identical(t$top$status, "retired")
-  if (isTRUE(on) == is_on) return(.rca_ok(sprintf("Recipe %s is already %s.", id, if (is_on) "on" else "off"), paste0(id, "@", t$top$version)))
+  if (isTRUE(on) == is_on) return(.rca_ok(sprintf("%s is already %s.", .rca_name(t$top$y, id), if (is_on) "on" else "off"), paste0(id, "@", t$top$version)))
   if (isTRUE(on)) {
-    if (is.null(t$live)) return(.rca_no(sprintf("Recipe %s has never been on, so there is nothing to switch back on.", id)))
+    if (is.null(t$live)) return(.rca_no(sprintf("%s has never been on, so there is nothing to switch back on.", .rca_name(t$top$y, id))))
     y <- t$live$y; y$admin <- NULL
-    return(.rca_write(dirs, y, sprintf("Recipe %s is on again: statements like it are tried with it.", id)))
+    return(.rca_write(dirs, y, sprintf("%s is on again: statements like it are tried with it.", .rca_name(y, id))))
   }
   y <- t$top$y; y$status <- "retired"; y$admin <- list(hidden = FALSE)
-  .rca_write(dirs, y, sprintf("Recipe %s is off: statements like it get the questions instead.", id))
+  .rca_write(dirs, y, sprintf("%s is off: statements like it get the questions instead.", .rca_name(y, id)))
 }
 
 # recipe_retire(id, dirs) -- off, and hidden from the list (never deleted).
@@ -160,7 +200,16 @@ recipe_retire <- function(id, dirs = NULL) {
   dirs <- .rca_dirs(dirs)
   t <- .rca_top(dirs, id); if (!is.null(t$error)) return(.rca_no(t$error))
   y <- t$top$y; y$status <- "retired"; y$admin <- list(hidden = TRUE)
-  .rca_write(dirs, y, sprintf("Recipe %s is retired: it is off and no longer listed. Its versions are kept.", id))
+  .rca_write(dirs, y, sprintf("%s is retired: it is off and no longer listed. Its versions are kept.", .rca_name(y, id)))
+}
+
+# .rca_name(y, id) -- a recipe's name for a sentence: its bank and tidied name
+# ("ANZ Everyday"), never its id.
+.rca_name <- function(y, id = "") {
+  bk <- .layout_bank_display(y$bank %||% NA_character_)
+  nm <- recipe_display_name(y$title %||% "", bk)
+  out <- trimws(paste(if (!is.na(bk) && nzchar(bk)) bk else "", if (!is.na(nm)) nm else ""))
+  if (nzchar(out)) out else "This statement design"
 }
 
 # recipe_accept(id, dirs) -- an admin accepts a draft: proven from now on.
@@ -168,9 +217,9 @@ recipe_accept <- function(id, dirs = NULL) {
   dirs <- .rca_dirs(dirs)
   t <- .rca_top(dirs, id); if (!is.null(t$error)) return(.rca_no(t$error))
   if (!identical(t$top$status, "draft"))
-    return(.rca_no(sprintf("Recipe %s is not a draft waiting to be accepted (it is %s).", id, t$top$status)))
+    return(.rca_no(sprintf("%s is not a draft waiting to be accepted (it is %s).", .rca_name(t$top$y, id), t$top$status)))
   y <- t$top$y; y$status <- "proven"; y$admin <- list(accepted = TRUE)
-  .rca_write(dirs, y, sprintf("Recipe %s is accepted: statements like it are read on their own, and each reading must still add up.", id))
+  .rca_write(dirs, y, sprintf("%s is accepted: statements like it are read on their own, and each reading must still add up.", .rca_name(y, id)))
 }
 
 # recipe_undo(id, dirs) -- go back to the version before the newest: written as a
@@ -179,9 +228,9 @@ recipe_undo <- function(id, dirs = NULL) {
   dirs <- .rca_dirs(dirs)
   t <- .rca_top(dirs, id); if (!is.null(t$error)) return(.rca_no(t$error))
   n <- length(t$all)
-  if (n < 2L) return(.rca_no(sprintf("Recipe %s has no earlier version to go back to.", id)))
+  if (n < 2L) return(.rca_no(sprintf("%s has no earlier version to go back to.", .rca_name(t$top$y, id))))
   prev <- t$all[[n - 1L]]
-  .rca_write(dirs, prev$y, sprintf("Recipe %s is back to how it was in version %d.", id, prev$version))
+  .rca_write(dirs, prev$y, sprintf("%s is back to how it was in version %d.", .rca_name(prev$y, id), prev$version))
 }
 
 # ---- changing a recipe in plain fields ---------------------------------------------
@@ -307,7 +356,7 @@ recipe_update <- function(id, changes, dirs = NULL, check = list()) {
       return(.rca_no(sprintf("That change was not saved: of %d statements this recipe read, %d would no longer add up and %d would change figures.",
                              length(check), n_bad, n_changed)))
   }
-  .rca_write(dirs, y, sprintf("Recipe %s is changed; the earlier version is kept and can be brought back.", id))
+  .rca_write(dirs, y, sprintf("%s is changed; the earlier version is kept and can be brought back.", .rca_name(y, id)))
 }
 
 # ---- testing before saving ---------------------------------------------------------
@@ -356,7 +405,7 @@ recipe_merge <- function(a, b, dirs = NULL, check = list()) {
   if (is.null(ta$live) || is.null(tb$live) || identical(ta$top$status, "retired") || identical(tb$top$status, "retired"))
     return(.rca_no("Only two recipes that are on can be merged."))
   if (!identical(.rca_table_key(ta$top$rc), .rca_table_key(tb$top$rc)))
-    return(.rca_no(sprintf("Recipes %s and %s read their tables differently, so they are not one design and were not merged.", a, b)))
+    return(.rca_no(sprintf("%s and %s read their tables differently, so they are not one design and were not merged.", .rca_name(ta$top$y, a), .rca_name(tb$top$y, b))))
   pa <- .rca_proofs(dirs, a); pb <- .rca_proofs(dirs, b)
   score <- function(t, p) c(length(p$proved_by), identical(t$top$status, "proven"), t$top$version,
                             as.numeric(file.mtime(t$top$file)))
@@ -378,7 +427,7 @@ recipe_merge <- function(a, b, dirs = NULL, check = list()) {
   for (inp in check) {
     rg <- recipe_recognise(inp, list(rc), drafts = TRUE)
     if (is.null(rg$recipe) || !identical(recipe_read(inp, rc)$outcome, "proven"))
-      return(.rca_no(sprintf("The merge was not saved: merged, recipe %s would no longer read every statement the two recipes read.", kid)))
+      return(.rca_no(sprintf("The merge was not saved: merged, %s would no longer read every statement the two read.", .rca_name(K$top$y, kid))))
   }
   w1 <- .rca_write(dirs, y, "")
   if (!isTRUE(w1$ok)) return(w1)
@@ -394,7 +443,8 @@ recipe_merge <- function(a, b, dirs = NULL, check = list()) {
     yaml::write_yaml(list(salt = into$salt %||% .layout_new_salt(kid, "merge"), groups = as.list(into$groups),
                           proved_by = as.list(unique(c(into$proved_by, from$proved_by)))), f)
   }
-  .rca_ok(sprintf("Recipes %s and %s are one now: %s is kept with both recipes' words, and %s is off.", kid, oid, kid, oid),
+  kn <- .rca_name(K$top$y, kid); on <- .rca_name(O$top$y, oid)
+  .rca_ok(sprintf("%s and %s are one now: %s is kept with both sets of words, and %s is off.", kn, on, kn, on),
           w1$ref, kept = kid, retired = oid)
 }
 
@@ -432,7 +482,9 @@ recipe_from_statement <- function(input, answers = list(), dirs = NULL) {
     u <- recipe_update(id, list(title = sprintf("%s %s", .layout_bank_display(.layout_slug(bank)), nm)), dirs)
     if (isTRUE(u$ok)) r$ref <- u$ref
   }
-  .rca_ok(sprintf("Saved as draft recipe %s. Accept it to read statements like it on their own.", r$ref), r$ref, id = id)
+  t <- .rca_top(dirs, id)
+  nm <- if (is.null(t$error)) .rca_name(t$top$y, id) else "This statement design"
+  .rca_ok(sprintf("Saved. %s is now a draft \u2014 accept it to read statements like it on their own.", nm), r$ref, id = id)
 }
 
 # recipe_preview(input, bank, roles) -> list(outcome ("proven" / "check"), why,
@@ -469,8 +521,8 @@ needs_attention <- function(dirs = NULL, tracking = NULL, uploads = NULL, days =
              a[, c("id", "ts", "file_ext", "note"), drop = FALSE]
            } else data.frame(id = character(0), ts = character(0), file_ext = character(0), note = character(0), stringsAsFactors = FALSE)
   ov <- recipes_overview(dirs, tracking, days, hidden = FALSE)
-  drafts <- ov[ov$enabled & ov$status == "draft", c("id", "bank", "title", "proofs"), drop = FALSE]
-  failing <- ov[ov$enabled & ov$tried_not_proven > 0, c("id", "bank", "title", "tried_not_proven"), drop = FALSE]
+  drafts <- ov[ov$enabled & ov$status == "draft", c("id", "bank", "title", "name", "proofs"), drop = FALSE]
+  failing <- ov[ov$enabled & ov$tried_not_proven > 0, c("id", "bank", "title", "name", "tried_not_proven"), drop = FALSE]
   live <- Filter(function(t) !identical(t$status, "retired"),
                  lapply(ov$id[ov$enabled], function(id) .rca_top(dirs, id)$top))
   merges <- list()
@@ -544,7 +596,8 @@ recipe_card <- function(id, dirs = NULL) {
     "changed"
   }
   vs <- rev(t$all)
-  list(id = t$top$id, bank = .layout_bank_display(y$bank), title = y$title %||% t$top$id,
+  bk <- .layout_bank_display(y$bank)
+  list(id = t$top$id, bank = bk, title = y$title %||% t$top$id, name = recipe_display_name(y$title %||% t$top$id, bk),
        status = t$top$status, enabled = !identical(t$top$status, "retired"), kind = y$kind %||% "pdf",
        columns = data.frame(n = seq_along(cols), field = names(cols) %||% character(0), heading = unname(hd), role = .rca_plain_role(names(cols)),
                             stringsAsFactors = FALSE),

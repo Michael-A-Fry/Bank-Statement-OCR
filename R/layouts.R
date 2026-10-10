@@ -498,7 +498,31 @@ layouts_banks <- function(dir = layouts_dir()) {
 .layout_bank_display <- function(slug, fallback = slug) {
   ref <- if (exists(".bi_ref", mode = "function")) safe(.bi_ref(), NULL) else NULL
   d <- if (!is.null(ref) && !is.na(slug) && slug %in% names(ref$display)) ref$display[[slug]] else NULL
-  as.character(d %||% fallback %||% slug)[1]
+  out <- as.character(d %||% fallback %||% slug)[1]
+  bank_display_name(out)
+}
+
+# bank_display_name(x) -- the one place a bank's folder name becomes the name
+# people know it by ("amex" -> "American Express"). A name already written for
+# people is kept; a lower-case slug is title-cased ("westforce_credit_union" ->
+# "Westforce Credit Union"). Used for every bank shown on a screen.
+BANK_DISPLAY_NAMES <- c(amex = "American Express", american_express = "American Express",
+  bank_of_china = "Bank of China", cooperative = "The Co-operative Bank", coop = "The Co-operative Bank",
+  co_operative = "The Co-operative Bank", westforce_credit_union = "Westforce Credit Union",
+  anz = "ANZ", asb = "ASB", bnz = "BNZ", hsbc = "HSBC", tsb = "TSB", icbc = "ICBC", ccb = "CCB",
+  kiwibank = "Kiwibank", westpac = "Westpac", rabobank = "Rabobank", heartland = "Heartland Bank",
+  sbs = "SBS Bank", nzcu = "NZCU")
+bank_display_name <- function(x) {
+  x <- as.character(x)
+  vapply(x, function(b) {
+    if (is.na(b) || !nzchar(b)) return(b)
+    k <- tolower(gsub("[^A-Za-z0-9]+", "_", b))
+    if (k %in% names(BANK_DISPLAY_NAMES)) return(unname(BANK_DISPLAY_NAMES[[k]]))
+    if (!grepl("^[a-z0-9_]+$", b)) return(b)
+    w <- strsplit(b, "_", fixed = TRUE)[[1]]
+    w <- ifelse(w %in% c("of", "and", "the"), w, paste0(toupper(substr(w, 1, 1)), substring(w, 2)))
+    paste(w, collapse = " ")
+  }, "", USE.NAMES = FALSE)
 }
 
 # layouts_state_id(dir) -> a short hash of every layout file's name and content:

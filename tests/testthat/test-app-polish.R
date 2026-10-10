@@ -33,7 +33,7 @@ test_that("Couldn't read always says what to do next", {
   expect_true(nzchar(L$unread_next("delimited", "no rows")))
   src <- .pl_app()
   expect_match(src, "unread_next(res_i$stamp$kind", fixed = TRUE)
-  expect_match(src, 'div(class = "plan-next", nxt)', fixed = TRUE)
+  expect_match(src, 'div(class = "plan-next", title = why, nxt)', fixed = TRUE)
 })
 
 test_that("the table says Read as, drops the your-choice chip, and names what Check opens", {
