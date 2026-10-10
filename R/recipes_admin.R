@@ -128,7 +128,8 @@ recipe_display_name <- function(title, bank = NA_character_) {
       t <- paste(w, collapse = " ")
       t <- paste0(toupper(substr(t, 1, 1)), substring(t, 2))
     }
-    if (!nzchar(t)) title[i] else t
+    if (!nzchar(t)) return(title[i])
+    paste0(toupper(substr(t, 1, 1)), substring(t, 2))
   }, "", USE.NAMES = FALSE)
 }
 
