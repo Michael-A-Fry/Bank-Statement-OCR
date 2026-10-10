@@ -74,7 +74,7 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **69 files, 1,103 tests, 6,846 passing assertions**
+The last full run measured **69 files, 1,115 tests, 6,944 passing assertions**
 — taken on 2026-10-05, at `VERSION` 2.0.0, on R 4.3.3, with skips not allowed:
 **0 failed, 0 errors, 0 skipped**. It was taken after the recipe reader was
 added (`test-recipes.R`, the 69th file). Treat the figures as a count of what exists; the pass condition is
