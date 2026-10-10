@@ -122,7 +122,7 @@ test_that("there is a way OUT of an admin session", {
   skip_if_not(file.exists(app))
   src <- readLines(app, warn = FALSE)
   joined <- paste(src, collapse = "\n")
-  expect_match(joined, 'actionButton\\("adm_signout"')
+  expect_match(joined, '(actionButton|actionLink)\\("adm_signout"')
   i <- grep("observeEvent\\(input\\$adm_signout", src)[1]
   expect_false(is.na(i))
   body <- paste(src[i:min(i + 5L, length(src))], collapse = " ")
