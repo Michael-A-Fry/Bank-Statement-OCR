@@ -448,8 +448,11 @@ test_that("the case table puts what went wrong first, by meaning not by spelling
   # and the order is simply the order the rows are drawn in. Asserted as an ORDER.
   src <- .ui_src()
   blk <- .src_block(src, "output\\$cv_plan <- renderUI", 120L)
-  expect_match(blk, "sev <- match\\(b\\$status, BATCH_STATUSES, nomatch = length\\(BATCH_STATUSES\\) \\+ 1L\\)")
-  expect_match(blk, "ord <- order\\(-sev, as\\.character\\(b\\$failing_check\\), ord\\)")
+  # one order for the table and for Next file to check (.case_order)
+  co <- .src_block(src, "\\.case_order <- function\\(b\\)", 4L)
+  expect_match(co, "sev <- match\\(b\\$status, BATCH_STATUSES, nomatch = length\\(BATCH_STATUSES\\) \\+ 1L\\)")
+  expect_match(co, "order\\(-sev, as\\.character\\(b\\$failing_check\\), seq_len\\(nrow\\(b\\)\\)\\)")
+  expect_match(blk, "if \\(case_res\\) ord <- \\.case_order\\(b\\)")
   expect_match(blk, "trs <- lapply\\(ord, function\\(i\\)")
   expect_false(grepl("length(BATCH_STATUSES) + 1L -", blk, fixed = TRUE))
   # the engine's order really is worst-last, which -sev re-reads
@@ -1370,9 +1373,12 @@ test_that("each file's outcome is said in the four phrases, and the reason goes 
   expect_match(.src_block(src, "output\\$cv_plan <- renderUI", 200L), "plain_outcome\\(res_i\\$status")
   expect_match(.ui_block(src, "output\\$cv_status <- renderUI", 30L), "plain_outcome\\(st,")
   expect_match(.ui_block(src, "output\\$cv_headline <- renderUI", 30L), "plain_outcome\\(\"ok\",")
-  # the learned layout each file was read with, by the name people see
+  # the learned layout each file was read with, said as "Read as" says it: the
+  # bank and how it is known, never the engine's own layout name
   lys <- .src_block(src, "\\.res_layouts <- function", 12L)
-  expect_match(lys, "\\.layout_name\\(rd\\$matched_layout\\)")
+  expect_match(lys, "\\.read_as_name\\(rd\\$matched_layout\\)")
+  ra <- .src_block(src, "\\.read_as_name <- function", 8L)
+  expect_match(ra, 'sprintf\\("%s statement, %s"')
   expect_match(lys, '"new"')
 })
 
@@ -1462,7 +1468,9 @@ test_that("Re-read sends the roles as a fix, and the answer goes back where it c
   # "This is right" vouches for the reading ON SCREEN, never a dropdown not yet re-read
   cf <- .src_block(src, "observeEvent\\(input\\$cv_ck_confirm, \\{", 16L)
   expect_match(cf, "press Read it again first")
-  expect_match(cf, "\\.reread\\(cv_ov\\(\\), confirm = TRUE")
+  # ...after its ten seconds to Undo: the same confirm, held then done (.ck_commit)
+  expect_match(cf, '\\.ck_hold\\("confirm", res, ov = cv_ov\\(\\)\\)')
+  expect_match(joined, 'if \\(identical\\(pd\\$kind, "confirm"\\)\\) \\.reread\\(pd\\$ov, confirm = TRUE')
   # a confirm the engine refuses is said, in the engine's own words
   words <- .ui_fun(".reread_words", also = c("plain_messages", ".sentence"), consts = ".AUDIT_GAP_RX")
   expect_match(words(list(status = "needs_review", messages = c(
@@ -1674,7 +1682,7 @@ test_that("a case re-reads only the files whose bank changed, and hands back the
   src <- .ui_src(); joined <- paste(src, collapse = "\n")
   again <- .src_block(src, "plan_again <- function\\(\\)", 6L)
   expect_match(again, "if \\(length\\(ch\\)\\) ch else NULL")
-  rb <- .src_block(src, "run_batch <- function\\(files, banks = NULL, rows = NULL\\)", 60L)
+  rb <- .src_block(src, "run_batch <- function\\(files, banks = NULL, rows = NULL, confirm = FALSE\\)", 60L)
   expect_match(rb, "paths <- as\\.character\\(b_old\\$file\\[rows\\]\\)")
   expect_match(rb, "banks <- banks\\[rows\\]")
   expect_match(joined, "for \\(col in names\\(b\\)\\) bb\\[\\[col\\]\\]\\[rows\\] <- b\\[\\[col\\]\\]")
@@ -1885,7 +1893,9 @@ test_that("the result says one sentence, and a new design is asked about with tw
   expect_match(ck, 'actionButton\\("cv_ck_aside", "Set aside"')
   # set aside marks the upload for an admin; it converts nothing
   sa <- .ui_block(src, "observeEvent\\(input\\$cv_ck_aside, \\{", 12L)
-  expect_match(sa, 'set_upload_status\\(id, "set_aside"')
+  expect_match(sa, '\\.ck_hold\\("aside", res\\)')
+  sn <- .ui_block(src, "\\.ck_aside_now <- function", 12L)
+  expect_match(sn, 'set_upload_status\\(id, "set_aside"')
   # no download before it is done or accepted
   dl <- .ui_block(src, "output\\$cv_downloads <- renderUI", 6L)
   expect_match(dl, 'if \\(!identical\\(res\\$status, "ok"\\)\\) return\\(NULL\\)')
@@ -1903,10 +1913,10 @@ test_that("D16: a clicked transaction opens Please check at its page, and the Ou
   expect_true(any(grepl('selection = "single"', src, fixed = TRUE)))
   e <- new.env(parent = globalenv()); sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
   short_reason <- e$short_reason; plain_failing_check <- e$plain_failing_check
-  expect_identical(short_reason("Failed: Only one reading of the columns fits"),
-                   "Failed: Only one reading of the columns fits")
-  long <- short_reason("one two three four five six seven eight nine ten")
-  expect_identical(long, "one two three four five six seven eight…")
+  expect_identical(short_reason("Two columns could be money out - tell us which"),
+                   "Two columns could be money out - tell us which")
+  long <- short_reason("one two three four five six seven eight nine ten eleven")
+  expect_identical(long, "one two three four five six seven eight nine ten…")
   expect_identical(short_reason(NA), "")
   expect_identical(plain_failing_check("reading:known_design"), "New design - check it once")
 })

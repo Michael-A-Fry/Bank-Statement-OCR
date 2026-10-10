@@ -18,6 +18,12 @@ box.
 | Work out what to do when something looks wrong | [when-something-goes-wrong.md](when-something-goes-wrong.md) |
 | Describe a tricky layout with no client information in it | [survey-a-statement-with-ai.md](survey-a-statement-with-ai.md) |
 
+## Improving the screens
+
+| I want to… | Page |
+|---|---|
+| Watch one accountant convert a real case unaided, and note where the screen made them stop | [five-minute-usability-test.md](five-minute-usability-test.md) |
+
 ## Running the server
 
 | I want to… | Page |

@@ -486,11 +486,13 @@ test_that("a fault listed as a diagnostic is not listed again as a check", {
   expect_length(i, 1L)
   blk <- paste(src[i:min(i + 12L, length(src))], collapse = " ")
   expect_match(blk, "f\\$detail %\\|\\|% \"\"\\) %in% dg\\$detail")
-  # and a failing check says it failed, the way the batch table's column does
-  # (ui_labels.R, plain_failing_check: CHECK_PLAIN words a check as what it
+  # and a failing check says what is WRONG, the way the batch table's column does
+  # (ui_labels.R, CHECK_PROBLEM_PLAIN: CHECK_PLAIN words a check as what it
   # PROVES, which beside a failure and with no pass/fail column says the opposite)
-  expect_match(paste(src, collapse = "\n"), 'sprintf\\("Failed: %s", plain_check')
-  expect_match(.ui_labels()$plain_failing_check("check:dates_readable"), "^Failed: ")
+  expect_match(paste(src, collapse = "\n"), 'tags\\$b\\(plain_check_problem\\(')
+  expect_identical(.ui_labels()$plain_failing_check("check:dates_readable"), "Some dates could not be read")
+  expect_identical(.ui_labels()$plain_failing_check("reading:unique"), "Two columns could be money out - tell us which")
+  expect_false(any(grepl("^Failed", .ui_labels()$plain_failing_check(paste0("reading:", names(.ui_labels()$READING_CHECK_PLAIN))))))
   # ...except a design not taught yet: nothing failed, it is asked about once
   expect_identical(.ui_labels()$plain_failing_check("reading:known_design"), "New design - check it once")
 })

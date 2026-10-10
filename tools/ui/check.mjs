@@ -147,7 +147,7 @@ const rows = page => page.evaluate(() => [...document.querySelectorAll('tr.plan-
   const sel = tr.querySelector('select');
   return { file: q('.plan-file'), kind: q('.plan-kind'), value: sel ? sel.value : null,
            chip: q('td.plan-tpl .plan-chip') || q('td.plan-tpl .plan-note'), layout: q('.plan-layout'),
-           result: q('.plan-res'), open: tr.classList.contains('plan-open') };
+           result: q('.plan-res'), why: q('.plan-why'), open: tr.classList.contains('plan-open') };
 }));
 const button = page => page.$eval('#cv_go', e => e.innerText.trim());
 const byFile = (rs, f) => rs.find(r => r.file === f) || {};
@@ -213,6 +213,17 @@ async function run(browser, D) {
         !/template/i.test(await page.evaluate(() => document.querySelector('.tab-pane.active').innerText)));
   await setQid(page);
 
+  //    files dropped anywhere on the page land in the picker, like Browse
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['Date,Amount,Balance\n01/02/2024,-5.00,95.00\n'], 'dropped_statement.csv', { type: 'text/csv' }));
+    document.body.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }));
+    document.body.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  check('a file dropped on the page is added, like Browse', await waitFor(page, () =>
+        [...document.querySelectorAll('tr.plan-row .plan-file')].some(td => td.innerText === 'dropped_statement.csv'), 20000));
+  check('...and the drop hint goes away', !(await page.evaluate(() => document.body.classList.contains('ss-drop'))));
+
   // 1. six files: a bank each, filled in from the statement where it says
   const six = ['anz_march.pdf', 'bnz_export.csv', 'ambiguous.csv', 'unproven.csv', 'mystery_export.csv', 'scanned_letter.pdf'];
   await page.setInputFiles('#cv_file', six.map(f => path.join(D, f)));
@@ -244,7 +255,8 @@ async function run(browser, D) {
   check('...refuses an account number for a name', (await text(page, '#cv_new_bank_msg')).includes('account number'));
   await page.fill('#cv_new_bank', 'Smith Credit Union'); await page.click('#cv_new_bank_ok'); await sleep(1200);
   r = await rows(page);
-  eq('a changed row says so', [byFile(r, 'anz_march.pdf').chip, byFile(r, 'unproven.csv').chip], ['your choice', 'your choice']);
+  eq('a changed row wears no "your choice" chip: the dropdown says it', [byFile(r, 'anz_march.pdf').chip, byFile(r, 'unproven.csv').chip], ['', '']);
+  eq('...and keeps the bank chosen', [byFile(r, 'anz_march.pdf').value, byFile(r, 'unproven.csv').value], ['anz', 'kiwibank']);
   eq('...and the named bank is the row\'s bank', byFile(r, 'mystery_export.csv').value, 'Smith Credit Union');
   await shot(page, '01-convert-banks');
 
@@ -282,15 +294,29 @@ async function run(browser, D) {
   // D16: one word each. With "always ask once", a new design that adds up waits for a person.
   eq('each file has its outcome in plain words', six.map(word),
      [ 'Done', ASK ? 'Needs you' : 'Done', 'Needs you', 'Needs you', "Couldn't read", "Couldn't read"]);
-  check('...in one word and a few words of reason', r.every(x => { const w = x.result.split('\n')[0].split(':');
-          return w.length < 2 || w.slice(1).join(':').replace(/(\d[\d,]* rows?)?\s*(Please check.*)?$/, '').trim().split(/\s+/).length <= 8; }),
+  check('...in one word and a few words of reason', r.every(x => !x.why || x.why.split(/\s+/).length <= 10),
         JSON.stringify(r.map(x => x.result)));
   check('a reason is given where a person has something to do',
-        byFile(r, 'ambiguous.csv').result.includes('reading of the columns') && byFile(r, 'unproven.csv').result.length > 20,
+        /could be money out - tell us which/.test(byFile(r, 'ambiguous.csv').result) && byFile(r, 'unproven.csv').result.length > 20,
         JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
   check('the design a recipe read is named', /ANZ .*Account/.test(byFile(r, 'anz_march.pdf').layout),
         byFile(r, 'anz_march.pdf').layout);
   check('worst first', r.slice(0, 2).every(x => word(x.file) === "Couldn't read"), JSON.stringify(r.map(x => x.file)));
+  check('no reason says "Failed:" - each says what is wrong', r.every(x => !/Failed/.test(x.result)), JSON.stringify(r.map(x => x.result)));
+  check('every "Couldn\'t read" says what to do next', await page.evaluate(() => [...document.querySelectorAll('tr.plan-row')]
+          .filter(t => /^Couldn't read/.test(t.querySelector('.plan-res').innerText))
+          .every(t => { const n = t.querySelector('.plan-next'); return n && n.innerText.trim().split(/\s+/).length >= 5; })));
+  eq('the reading column is called "Read as"', await page.$$eval('table.plan-table th', ths => ths.map(t => t.innerText.trim())),
+     ['FILE', 'TYPE', 'BANK', 'READ AS', 'OUTCOME']);
+  check('..."Read as" never says the engine\'s word "layout"', r.every(x => !/layout/i.test(x.layout)), JSON.stringify(r.map(x => x.layout)));
+  check('..."Read as" is blank, not a dash, when nothing read it', r.every(x => x.layout !== '\u2014'), JSON.stringify(r.map(x => x.layout)));
+  check('a check link says what it opens ("Check 4 rows")', await page.evaluate(() =>
+        [...document.querySelectorAll('a.plan-check')].every(a => /^Check (\d[\d,]* rows?|the columns) \u2192$/.test(a.innerText.trim()))),
+        JSON.stringify(await page.$$eval('a.plan-check', as => as.map(a => a.innerText))));
+  check('each outcome word has one sentence of hover help', await page.evaluate(() =>
+        [...document.querySelectorAll('.plan-verdict')].every(v => /^(Done|Needs you|Couldn't read): .+\.$/.test(v.title || ''))));
+  check('the case says what happens now', /need(s)? you\./.test(await text(page, '.plan-now')), await text(page, '.plan-now'));
+  check('...with a Next file to check button', !!(await page.$('#cv_next_check')));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
   check('Download everything is above the table', !!(await page.$('#cv_batch_dl')));
   eq('the button offers to convert them all again', await button(page), 'Convert all 6 again');
@@ -309,6 +335,23 @@ async function run(browser, D) {
   }
   await shot(page, '02b-convert-results-tablet');
   await page.setViewportSize({ width: 1440, height: 900 }); await sleep(700);
+
+  //    Next file to check walks through every file that needs a person, in table order
+  {
+    const need = r.filter(x => /^Needs you/.test(x.result)).map(x => x.file);
+    const seenNext = [];
+    for (let k = 0; k < need.length + 1; k++) {
+      await page.click('#cv_next_check'); await sleep(2500);
+      seenNext.push((await rows(page)).filter(x => x.open).map(x => x.file)[0]);
+    }
+    eq('Next file to check opens each file that needs you, then starts again', seenNext, [...need, need[0]]);
+    check('...with its check open below', !!(await page.$('#cv_check .check-panel')));
+    if (ASK) {
+      const acc = await page.$('#cv_accept_all');
+      check('ask mode: "Accept all that add up" is offered for the new design that adds up', !!acc &&
+            /Accept all that add up \(1\)/.test(await acc.innerText()));
+    }
+  }
 
   // 4. click through -- and a click on a dropdown is not a click on the row
   await clickIn(page, 'anz_march.pdf', '.plan-file');
@@ -413,10 +456,23 @@ async function run(browser, D) {
   eq('at most three buttons, in plain words', await page.evaluate(() =>
      [...document.querySelectorAll('#cv_check button')].map(b => b.innerText.trim())),
      ['Read it again', 'It\u2019s right \u2014 accept it', 'Set aside']);
-  await page.click('#cv_ck_aside');
-  const aside = await rereadDone(page, '');
+  await page.click('#cv_ck_aside'); await sleep(1200);
+  check('Set aside waits ten seconds with an Undo button', /Setting it aside/.test(await text(page, '#cv_ck_msg')) &&
+        !!(await page.$('#cv_ck_undo_pending')), await text(page, '#cv_ck_msg'));
+  check('...and counts down', /in \d+ s/.test(await text(page, '#cv_ck_msg .undo-count')));
+  check('...with a box for a note to the admin', !!(await page.$('#cv_ck_aside_note')));
+  await page.click('#cv_ck_undo_pending');
+  const undone1 = await rereadDone(page, await text(page, '#cv_ck_msg'));
+  check('Undo takes it back: nothing was changed', /^Undone/.test(undone1), undone1);
+  await page.click('#cv_ck_aside'); await sleep(1000);
+  await page.fill('#cv_ck_aside_note', 'Client sent a photo - asked for the PDF');
+  await sleep(11500);
+  const aside = await rereadDone(page, undone1);
   check('Set aside says it is not converted and goes to an admin', aside.startsWith('Set aside') && aside.includes('admin'), aside);
-  await page.click('#cv_ck_confirm');
+  await page.click('#cv_ck_confirm'); await sleep(1000);
+  check('It\u2019s right waits ten seconds with an Undo button too', /Accepting it as right/.test(await text(page, '#cv_ck_msg')),
+        await text(page, '#cv_ck_msg'));
+  await sleep(10500);
   const conf = await rereadDone(page, aside);
   check('"It\u2019s right \u2014 accept it" converts it as read and holds it for an admin', conf.startsWith('Confirmed') && conf.includes('admin'), conf);
   r = await rows(page);
@@ -536,6 +592,8 @@ async function run(browser, D) {
     await tp.click('#adm_fix_accept'); await sleep(2000);
     check('...and Accept makes it a proven layout', (await text(tp, '#adm_fix_msg')).startsWith('Accepted'), await text(tp, '#adm_fix_msg'));
   }
+  check('Needs attention opens with the week in one line', /^This week: /.test(await text(tp, '#adm_na_cards .na-week')),
+        await text(tp, '#adm_na_cards .na-week'));
   await screen(tp, 'Admin Needs attention');
   // RECIPES: one row per recipe, a toggle, a card
   await tp.click('a[data-value="Recipes"]'); await sleep(1500);
@@ -626,6 +684,8 @@ async function run(browser, D) {
   }
   // HEALTH holds what the old tabs did: how automatic reading is doing, and training
   await tp.click('a[data-value="Health"]'); await sleep(1500);
+  await waitFor(tp, () => /Statements read\s*\d+/i.test((document.querySelector('#adm_ar_head') || {}).innerText || '') &&
+    /PDF/.test((document.querySelector('#adm_ar_kinds') || {}).innerText || ''), 30000);
   check('Automatic reading counts what was read', /Statements read\s*\d+/i.test(await text(tp, '#adm_ar_head')),
         await text(tp, '#adm_ar_head'));
   check('...the automatic rate per kind of file', (await text(tp, '#adm_ar_kinds')).includes('PDF'));
@@ -714,7 +774,12 @@ async function run(browser, D) {
   //    an admin teaches a wording with the statement beside it, on Please check
   await tp.click('a[data-value="Convert"]'); await sleep(800); await setQid(tp);
   await tp.setInputFiles('#cv_file', [path.join(D, 'anz_march.pdf')]);
-  await waitFor(tp, () => document.querySelectorAll('tr.plan-row').length === 1, 60000);
+  await waitFor(tp, () => document.querySelectorAll('tr.plan-row').length === 1, 60000); await sleep(800);
+  {
+    const rr = await rows(tp);
+    eq('a file named like one read before takes its bank, said as such', [byFile(rr, 'anz_march.pdf').value, byFile(rr, 'anz_march.pdf').chip],
+       ['anz', 'Same bank as last time']);
+  }
   await pick(tp, 'anz_march.pdf', 'anz'); await go(tp); await waitIdle(tp);
   await clickIn(tp, 'anz_march.pdf', '.plan-file');
   await tp.click('#cv_ck_toggle'); await sleep(2500);

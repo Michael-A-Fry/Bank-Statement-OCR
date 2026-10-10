@@ -463,8 +463,11 @@ recipe_preview <- function(input, bank = NULL, roles = NULL) {
 needs_attention <- function(dirs = NULL, tracking = NULL, uploads = NULL, days = 30) {
   dirs <- .rca_dirs(dirs)
   up <- safe(read_uploads(uploads), NULL)
-  aside <- if (is.data.frame(up) && nrow(up)) up[up$status %in% "set_aside" & !up$purged, c("id", "ts", "file_ext"), drop = FALSE]
-           else data.frame(id = character(0), ts = character(0), file_ext = character(0), stringsAsFactors = FALSE)
+  aside <- if (is.data.frame(up) && nrow(up)) {
+             a <- up[up$status %in% "set_aside" & !up$purged, , drop = FALSE]
+             if (!("note" %in% names(a))) a$note <- rep(NA_character_, nrow(a))
+             a[, c("id", "ts", "file_ext", "note"), drop = FALSE]
+           } else data.frame(id = character(0), ts = character(0), file_ext = character(0), note = character(0), stringsAsFactors = FALSE)
   ov <- recipes_overview(dirs, tracking, days, hidden = FALSE)
   drafts <- ov[ov$enabled & ov$status == "draft", c("id", "bank", "title", "proofs"), drop = FALSE]
   failing <- ov[ov$enabled & ov$tried_not_proven > 0, c("id", "bank", "title", "tried_not_proven"), drop = FALSE]
@@ -479,7 +482,29 @@ needs_attention <- function(dirs = NULL, tracking = NULL, uploads = NULL, days =
   merges <- if (length(merges)) do.call(rbind, merges) else data.frame(a = character(0), b = character(0), bank = character(0), stringsAsFactors = FALSE)
   for (x in c("aside", "drafts", "failing", "merges")) { v <- get(x); rownames(v) <- NULL; assign(x, v) }
   list(counts = c(set_aside = nrow(aside), drafts = nrow(drafts), failing = nrow(failing), merges = nrow(merges)),
-       set_aside = aside, drafts = drafts, failing = failing, merges = merges)
+       set_aside = aside, drafts = drafts, failing = failing, merges = merges,
+       week = week_summary(up))
+}
+
+# week_summary(up, now) -- the last seven days in one line, for the top of Needs
+# attention: "This week: 42 statements - 35 done on their own, 4 checked by a
+# person, 2 set aside, 1 couldn't be read." `up` is read_uploads(); counts only.
+week_summary <- function(up, now = Sys.time()) {
+  if (!is.data.frame(up) || !nrow(up) || !("ts_utc" %in% names(up))) return("This week: no statements yet.")
+  t <- suppressWarnings(as.POSIXct(sub("Z$", "", gsub("T", " ", up$ts_utc)), tz = "UTC"))
+  w <- up[!is.na(t) & t >= now - 7 * 86400, , drop = FALSE]
+  if (!nrow(w)) return("This week: no statements yet.")
+  chk <- if ("checked" %in% names(w)) w$checked %in% TRUE else rep(FALSE, nrow(w))
+  n <- c(done = sum(w$status %in% "ok" & !chk), checked = sum(chk),
+         waiting = sum(w$status %in% "needs_review"), aside = sum(w$status %in% "set_aside"),
+         unread = sum(w$status %in% c("unsupported", "failed")))
+  bits <- c(if (n[["done"]]) sprintf("%d done on their own", n[["done"]]),
+            if (n[["checked"]]) sprintf("%d checked by a person", n[["checked"]]),
+            if (n[["waiting"]]) sprintf("%d still waiting for a check", n[["waiting"]]),
+            if (n[["aside"]]) sprintf("%d set aside", n[["aside"]]),
+            if (n[["unread"]]) sprintf("%d couldn't be read", n[["unread"]]))
+  sprintf("This week: %d statement%s%s.", nrow(w), if (nrow(w) == 1L) "" else "s",
+          if (length(bits)) paste0(" - ", paste(bits, collapse = ", ")) else "")
 }
 
 # ---- the recipe card, in plain words -------------------------------------------------

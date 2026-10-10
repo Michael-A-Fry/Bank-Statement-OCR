@@ -65,6 +65,8 @@ options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2)
 # folder of five hundred small statements passed it and then converted one after
 # another inside a single job, with no progress for the first one and no way to stop.
 MAX_BATCH_FILES <- suppressWarnings(as.integer(CONFIG$app$max_batch_files %||% 50L))
+# How long It's right and Set aside wait, with an Undo button, before they are done.
+UNDO_SECONDS <- 10L
 if (!is.finite(MAX_BATCH_FILES) || MAX_BATCH_FILES < 1L) MAX_BATCH_FILES <- 50L
 # Training a bank is the one place a pile bigger than a case is expected ("upload
 # ALL statements you have for a bank"). It runs as one background job, and a job
@@ -94,6 +96,9 @@ LEXICON_PATH <- CONFIG$paths$lexicon %||% file.path("dictionaries", "lexicon.yam
 # conversion in a child process can never disagree about where either lives.
 LAYOUTS_DIR  <- layouts_dir(CONFIG)
 TRACKING_DIR <- tracking_dir(CONFIG)
+# The bank remembered for an account (a salted mark, never the number) or a file
+# name seen before (R/bank_memory.R). The salt is this install's own.
+options(statement_studio.account_salt = tryCatch(bank_memory_salt(TRACKING_DIR), error = function(e) ""))
 # The bundled specimen statement (public, synthetic, ships with the app) that "Try
 # it on a sample" converts, so a brand-new user sees a full result without a file.
 # It has to be one the reader PROVES on its own, with nothing learned: a sample
@@ -476,6 +481,19 @@ ui <- fluidPage(
          Shiny.setInputValue('cv_plan_open', {gen: parseInt($(this).attr('data-gen'), 10),
            row: parseInt($(this).attr('data-row'), 10), check: true}, {priority: 'event'});
        });
+       // the Undo bar counts down on the page; typing a note gives more time
+       setInterval(function(){
+         document.querySelectorAll('.undo-count[data-secs]').forEach(function(el){
+           if (!el.dataset.end) el.dataset.end = Date.now() + 1000 * parseInt(el.dataset.secs, 10);
+           var left = Math.max(0, Math.ceil((parseInt(el.dataset.end, 10) - Date.now()) / 1000));
+           el.textContent = 'in ' + left + ' s';
+         });
+       }, 250);
+       $(document).on('input', '#cv_ck_aside_note', function(){
+         document.querySelectorAll('.undo-count[data-secs]').forEach(function(el){
+           el.dataset.end = Date.now() + 1000 * parseInt(el.dataset.secs, 10); });
+         Shiny.setInputValue('cv_ck_note_typing', Date.now(), {priority: 'event'});
+       });
        $(document).on('keydown', 'tr.plan-openable', function(e){
          if (e.key === 'Enter' && e.target === this) $(this).trigger('click');
        });
@@ -485,6 +503,44 @@ ui <- fluidPage(
              if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 400);
          });
        });")),
+    # DROP FILES OR A FOLDER ANYWHERE ON THE PAGE. The dropped files (a folder's
+    # files, walked) are handed to the ordinary picker, so they go through exactly
+    # the same upload as Browse: same size limit, same file types, same table.
+    tags$script(HTML(
+      "(function(){
+        var OK = /\\.(pdf|csv|tsv|tdv|xlsx|xls)$/i, depth = 0;
+        function walk(entry, out){
+          return new Promise(function(done){
+            if (!entry) return done();
+            if (entry.isFile) return entry.file(function(f){ if (OK.test(f.name)) out.push(f); done(); }, function(){ done(); });
+            if (!entry.isDirectory) return done();
+            var rd = entry.createReader(), all = [];
+            (function more(){ rd.readEntries(function(es){
+              if (!es.length) return Promise.all(all.map(function(e){ return walk(e, out); })).then(function(){ done(); });
+              all = all.concat([].slice.call(es)); more(); }, function(){ done(); }); })();
+          });
+        }
+        function hasFiles(e){ var t = e.originalEvent && e.originalEvent.dataTransfer;
+          return t && [].indexOf.call(t.types || [], 'Files') >= 0; }
+        $(document).on('dragenter', function(e){ if (!hasFiles(e)) return; depth++; document.body.classList.add('ss-drop'); });
+        $(document).on('dragleave', function(e){ if (!hasFiles(e)) return; if (--depth <= 0){ depth = 0; document.body.classList.remove('ss-drop'); } });
+        $(document).on('dragover', function(e){ if (hasFiles(e)) e.preventDefault(); });
+        $(document).on('drop', function(e){
+          if (!hasFiles(e)) return;
+          e.preventDefault(); depth = 0; document.body.classList.remove('ss-drop');
+          var dt = e.originalEvent.dataTransfer, items = [].slice.call(dt.items || []), out = [];
+          var entries = items.map(function(it){ return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null; });
+          var p = entries.some(Boolean) ? Promise.all(entries.map(function(en){ return walk(en, out); }))
+                                         : Promise.resolve([].slice.call(dt.files).forEach(function(f){ if (OK.test(f.name)) out.push(f); }));
+          p.then(function(){
+            if (!out.length) { Shiny.setInputValue('cv_drop_none', Date.now(), {priority: 'event'}); return; }
+            var tab = document.querySelector('a[data-value=\"Convert\"]'); if (tab) $(tab).tab('show');
+            var inp = document.getElementById('cv_file'); if (!inp) return;
+            var box = new DataTransfer(); out.forEach(function(f){ box.items.add(f); });
+            inp.files = box.files; $(inp).trigger('change');
+          });
+        });
+      })();")),
     # Loading feedback: a real animation, not just the grey-out. A busy pill shows
     # whenever Shiny is working; recalculating outputs dim and float a spinner. The
     # pill, the dim and the centred CONVERTING overlay are styled in app.css
@@ -552,7 +608,7 @@ ui <- fluidPage(
           fileInput("cv_file", "File(s) to convert (.pdf / .csv / .tsv / .xlsx / .xls)",
                     multiple = TRUE,
                     accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx", ".xls")),
-          helpText(class = "muted", "One statement, or several for a whole case folder."),
+          helpText(class = "muted", "One statement, or several for a whole case folder. You can also drag files or a folder onto the page."),
           uiOutput("cv_whoami"),
           # OFF UNTIL IT CAN WORK, with the reason under it: a full-width green button
           # that does nothing when pressed sends the person looking for what is broken.
@@ -1314,6 +1370,17 @@ server <- function(input, output, session) {
     ly <- lay_all()[[sub("@v?[0-9]+$", "", ref)]]
     if (is.null(ly)) ref else as.character(safe(layout_display_name(ly), ref))[1]
   }
+  # .read_as_name(ref, how) -- a learned layout as the Convert table's "Read as"
+  # says it: the bank and how it is known, never the engine's own name for it
+  # ("BNZ layout 1: Date | ..."). Blank when the reference is not a layout.
+  .read_as_name <- function(ref, how = "seen before") {
+    ref <- as.character(ref %||% NA_character_)[1]
+    if (is.na(ref) || !nzchar(ref)) return(NA_character_)
+    ly <- lay_all()[[sub("@v?[0-9]+$", "", ref)]]
+    if (is.null(ly)) return(NA_character_)
+    bk <- as.character(ly$bank %||% ly$institution %||% "")[1]
+    sprintf("%s statement, %s", .layout_bank_display(bk, if (nzchar(bk)) toupper(bk) else "A"), how)
+  }
   # The banks a person can choose from: every NZ bank on the list, every bank the
   # store has layouts for, and any bank named in this session (cv_new_banks) --
   # by the same rule bank_choices() uses, sorted by name.
@@ -1384,10 +1451,13 @@ server <- function(input, output, session) {
     na <- adm_na()
     if (is.null(na)) return(p(class = "bad", "What needs attention could not be worked out."))
     up <- na$set_aside; dr <- na$drafts; fl <- na$failing; mg <- na$merges
+    tagList(
+    p(class = "na-week", na$week %||% ""),
     div(class = "na-grid",
       .na_card("Statements waiting for a look", nrow(up), "None - good.",
         lapply(seq_len(nrow(up)), function(i) .na_item(
-          sprintf("Set aside %s (%s)", as.character(safe(local_time_text(up$ts[i]), up$ts[i]))[1], toupper(up$file_ext[i] %||% "")),
+          tagList(sprintf("Set aside %s (%s)", as.character(safe(local_time_text(up$ts[i]), up$ts[i]))[1], toupper(up$file_ext[i] %||% "")),
+            if (!is.na(up$note[i] %||% NA) && nzchar(up$note[i])) div(class = "na-note", sprintf("\u201c%s\u201d", up$note[i]))),
           .act_btn("adm_na_act", paste0("fix|", up$id[i]), "Fix", "btn-primary btn-sm")))),
       .na_card("New recipes waiting for you", nrow(dr), "None waiting.",
         lapply(seq_len(nrow(dr)), function(i) .na_item(
@@ -1402,7 +1472,7 @@ server <- function(input, output, session) {
       .na_card("Recipes that look like one", nrow(mg), "None.",
         lapply(seq_len(nrow(mg)), function(i) .na_item(
           sprintf("%s: %s and %s read the same design", mg$bank[i], .rc_title(mg$a[i]), .rc_title(mg$b[i])),
-          .act_btn("adm_na_act", paste0("merge|", mg$a[i], ":", mg$b[i]), "Merge", "btn-primary btn-sm")))))
+          .act_btn("adm_na_act", paste0("merge|", mg$a[i], ":", mg$b[i]), "Merge", "btn-primary btn-sm"))))))
   })
   .rc_title <- function(id) {
     ov <- rc_ov(); i <- if (is.data.frame(ov)) match(id, ov$id) else NA
@@ -3165,7 +3235,8 @@ server <- function(input, output, session) {
       datapath = as.character(f$datapath), kind = NA_character_,
       format = NA_character_, pages = NA_integer_, state = "checking",
       bank = NA_character_, bank_display = NA_character_, confidence = "unknown",
-      ask = TRUE, detail = NA_character_, stringsAsFactors = FALSE)
+      ask = TRUE, detail = NA_character_, mark = NA_character_, remembered = NA_character_,
+      stringsAsFactors = FALSE)
     cv_plan_picks(rep(NA_character_, nrow(f)))
     plan_start_check()
   }, ignoreNULL = FALSE)
@@ -3191,6 +3262,7 @@ server <- function(input, output, session) {
         cv_plan_done(i)
       }
       if (is.null(rows) || plan_env$i >= nrow(rows)) {
+        .plan_recall()
         cv_plan(list(gen = b$gen, rows = plan_env$rows, too_many = 0L))
         cv_plan_busy(NULL)
         plan_scan_start()          # scans: their first pages, read in the background
@@ -3206,7 +3278,34 @@ server <- function(input, output, session) {
     rows$confidence[i]   <- as.character(id$confidence %||% "unknown")[1]
     rows$ask[i]          <- isTRUE(id$ask %||% is.na(rows$bank[i]))
     rows$detail[i]       <- as.character(id$detail %||% NA_character_)[1]
+    rows$mark[i]         <- as.character(id$account_mark %||% NA_character_)[1]
     rows
+  }
+  # .plan_recall() -- a row whose statement does not settle its bank takes the bank
+  # remembered for its account or its file name, as a choice the person can change.
+  .plan_recall <- function() {
+    rows <- plan_env$rows; if (is.null(rows) || !nrow(rows)) return(invisible(NULL))
+    mem <- safe(bank_memory_load(TRACKING_DIR), NULL); if (is.null(mem)) return(invisible(NULL))
+    picks <- isolate(cv_plan_picks()); length(picks) <- nrow(rows)
+    for (i in seq_len(nrow(rows))) {
+      if (!(rows$state[i] %in% c("ready", "scan_ready", "scanned")) || !is.na(picks[i])) next
+      if (!is.na(rows$bank[i]) && !isTRUE(rows$ask[i])) next
+      r <- safe(bank_memory_recall(TRACKING_DIR, rows$name[i], rows$mark[i], memory = mem), NULL)
+      if (is.null(r) || is.na(r$bank) || identical(r$bank, rows$bank[i])) next
+      picks[i] <- r$bank; rows$remembered[i] <- r$why
+    }
+    plan_env$rows <- rows; cv_plan_picks(picks)
+    invisible(NULL)
+  }
+  # .remember_bank(i, name, res, bank) -- after a file has converted and its
+  # balance adds up, remember the bank it was read as, for its account and its name.
+  .remember_bank <- function(i, name, res, bank = NULL) {
+    if (!identical(as.character(res$status %||% "")[1], "ok")) return(invisible(NULL))
+    bk <- as.character(bank %||% res$run_log$institution %||% NA_character_)[1]
+    rows <- plan_env$rows
+    mk <- if (!is.null(rows) && !is.na(i) && i <= nrow(rows) && identical(rows$name[i], name)) rows$mark[i] else NA_character_
+    safe(bank_memory_note(TRACKING_DIR, name, mk, bk))
+    invisible(NULL)
   }
 
   # ---- SCANS: their bank from their first pages ------------------------------------
@@ -3283,6 +3382,11 @@ server <- function(input, output, session) {
     }
     pk <- cv_plan_picks(); length(pk) <- nrow(p$rows)
     pk[i] <- if (nzchar(val)) val else NA_character_
+    # a remembered bank changed by hand is the person's own choice now
+    if (!is.na(p$rows$remembered[i] %||% NA)) {
+      p$rows$remembered[i] <- NA_character_; cv_plan(p)
+      if (!is.null(plan_env$rows) && nrow(plan_env$rows) >= i) plan_env$rows$remembered[i] <- NA_character_
+    }
     cv_plan_picks(pk)
   })
   observeEvent(input$cv_new_bank_ok, {
@@ -3335,8 +3439,11 @@ server <- function(input, output, session) {
     v <- input$cv_plan_open; p <- cv_plan()
     i <- suppressWarnings(as.integer(v$row %||% NA)[1])
     if (is.null(p) || !identical(suppressWarnings(as.integer(v$gen %||% NA)[1]), p$gen) || is.na(i)) return()
-    if (NROW(p$rows) > 1L) open_batch_row(i)
-    if (isTRUE(v$check)) { cv_ck_open(TRUE); session$sendCustomMessage("ss-scroll", "cv_check") }
+    go <- function() {
+      if (NROW(p$rows) > 1L) open_batch_row(i)
+      if (isTRUE(v$check)) { cv_ck_open(TRUE); session$sendCustomMessage("ss-scroll", "cv_check") }
+    }
+    if (!is.null(ck_pending())) .ck_commit(then = go) else go()
   })
 
   # plan_effective(p, picks) -> per row, the bank to GIVE the conversion: NA = take
@@ -3376,6 +3483,7 @@ server <- function(input, output, session) {
   # bank is the tool's SUGGESTION to check, never a verdict.
   .plan_chip <- function(r) {
     st <- as.character(r$state)[1]
+    if (!is.na(r$remembered %||% NA)) return(c("plan-ok", "Same bank as last time"))
     if (st %in% c("ready", "scan_ready")) {
       if (is.na(r$bank)) return(c("plan-warn", "Please choose the bank"))
       if (isTRUE(r$ask)) return(c("plan-warn", "Please check the bank"))
@@ -3392,6 +3500,7 @@ server <- function(input, output, session) {
   # The hover on a row's chip: the identifier's own sentence where there is one,
   # and for a scan, why its bank is not named yet.
   .plan_hover <- function(r) {
+    if (!is.na(r$remembered %||% NA)) return(r$remembered)
     if (identical(r$state, "scanned_no_ocr"))
       return(paste("This file is a picture of a statement, and this server has no OCR software to",
                    "read it. Ask whoever looks after the tool, or get a text PDF, CSV or Excel export",
@@ -3429,13 +3538,12 @@ server <- function(input, output, session) {
       if (!is.null(rd$matched_recipe) && !isTRUE(rd$draft))
         return(sprintf("%s %s", .layout_bank_display(rd$recipe_bank %||% "", rd$recipe_bank %||% ""), rd$recipe_title %||% rd$matched_recipe))
       if (!is.null(rd$learned_recipe) || isTRUE(rd$draft)) return("New design (being learned)")
-      if (!is.null(rd$matched_layout)) return(.layout_name(rd$matched_layout))
+      if (!is.null(rd$matched_layout)) return(.read_as_name(rd$matched_layout))
       if (!is.null(rd$learned_layout))
-        return(sprintf("%s (%s)", .layout_name(rd$learned_layout),
-                       if (identical(rd$learn$action, "created")) "new" else "learned"))
+        return(.read_as_name(rd$learned_layout, if (identical(rd$learn$action, "created")) "new" else "learned now"))
       # proved on its own content, then found to be a layout already proven: that
       # layout is what read it, though nothing new was learned
-      if (identical(rd$learn$action, "none") && !is.null(rd$learn$ref)) return(.layout_name(rd$learn$ref))
+      if (identical(rd$learn$action, "none") && !is.null(rd$learn$ref)) return(.read_as_name(rd$learn$ref))
       NULL
     }))
     unique(out[!is.na(out)])
@@ -3464,17 +3572,25 @@ server <- function(input, output, session) {
   # reason a person acts on, and the way to Please check. One builder for a
   # finished case and for each file's verdict as it arrives mid-run, so the two can
   # never say it differently.
-  .plan_outcome <- function(o, n_rows = NA, link = NULL, again = FALSE) {
+  # .check_words(res) -- what a row's check link opens, said on the link itself:
+  # "Check 4 rows" for a reading with rows, "Check the columns" for one without.
+  .check_words <- function(res) {
+    n <- suppressWarnings(as.integer(.rows_of(res))[1])
+    if (is.na(n) || n < 1L) "Check the columns"
+    else sprintf("Check %s row%s", format(n, big.mark = ","), if (n == 1L) "" else "s")
+  }
+  .plan_outcome <- function(o, n_rows = NA, link = NULL, again = FALSE, nxt = NULL) {
     n_rows <- suppressWarnings(as.integer(n_rows)[1])
     why <- short_reason(o$why %||% "")
     tags$td(class = "plan-res",
-      div(class = paste("plan-verdict", paste0("o-", o$cls)),
+      div(class = paste("plan-verdict", paste0("o-", o$cls)), title = OUTCOME_HELP[[o$cls]],
           if (nzchar(why)) paste0(o$word, ":") else o$word),
       if (nzchar(why)) div(class = "plan-why", title = why,
                            why),
       if (!is.na(n_rows) && o$cls != "bad")
         div(class = "plan-sub", sprintf("%s row%s", format(n_rows, big.mark = ","),
                                         if (identical(n_rows, 1L)) "" else "s")),
+      if (o$cls == "bad" && length(nxt) && nzchar(nxt)) div(class = "plan-next", nxt),
       link,
       if (again) span(class = "plan-chip plan-mine", "Bank changed"))
   }
@@ -3488,6 +3604,60 @@ server <- function(input, output, session) {
     if (NROW(p$rows) == 1L && !is.null(ran) && identical(ran$gen, p$gen)) return(cv_res())
     NULL
   }
+
+  # .case_order(b) -- the rows of a case in the order the table shows them: the
+  # files that need a person first, grouped by what went wrong.
+  .case_order <- function(b) {
+    sev <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
+    order(-sev, as.character(b$failing_check), seq_len(nrow(b)))
+  }
+  # .case_addsup(b) -- the rows "Accept all that add up" accepts: held ONLY because
+  # their design is new (always ask once), every statement in them adding up.
+  .case_addsup <- function(b) {
+    if (is.null(b) || !nrow(b)) return(integer(0))
+    which(vapply(seq_len(nrow(b)), function(i) {
+      r <- b$result[[i]]
+      is.list(r) && identical(as.character(r$status %||% "")[1], "needs_review") && isTRUE(.new_design(r))
+    }, logical(1)))
+  }
+  # .case_now(cls, n_add) -- the one line at the top of a case: what happens now.
+  .case_now <- function(cls, n_add = 0L) {
+    w <- sum(cls == "warn"); bad <- sum(cls == "bad")
+    if (w > 0L)
+      return(paste0(sprintf("%d file%s need%s you. ", w, if (w == 1L) "" else "s", if (w == 1L) "s" else ""),
+        if (n_add > 0L) sprintf("%d of them add up - accept them in one go, or ", n_add) else "",
+        if (n_add > 0L) "press Next file to check to look at each." else "Press Next file to check to look at each in turn."))
+    if (bad > 0L)
+      return(sprintf("Everything that could be read is done. %d couldn't be read - each says what to try.", bad))
+    "All done. Download everything, or click a file to see it."
+  }
+  observeEvent(input$cv_drop_none, notify_once("cv_drop",
+    "Nothing to add there - drop PDF, CSV or Excel statements, or a folder of them.", type = "warning", duration = 6))
+  observeEvent(input$cv_next_check, {
+    if (!is.null(ck_pending())) return(.ck_commit(then = .next_check))
+    .next_check()
+  })
+  .next_check <- function() {
+    b <- isolate(cv_batch()); if (is.null(b) || !nrow(b)) return()
+    ord <- .case_order(b)
+    need <- ord[vapply(ord, function(i) identical(plain_outcome(b$result[[i]]$status, NA, b$result[[i]]$feed_basis)$cls, "warn"), NA)]
+    if (!length(need)) { notify_once("cv_next", "Nothing left to check.", duration = 4); return() }
+    cur <- isolate(cv_batch_row())
+    pos <- if (is.na(cur) || !(cur %in% ord)) 0L else match(cur, ord)
+    after <- need[match(need, ord) > pos]
+    i <- if (length(after)) after[1] else need[1]
+    open_batch_row(i)
+    cv_ck_open(TRUE); session$sendCustomMessage("ss-scroll", "cv_check")
+  }
+  observeEvent(input$cv_accept_all, {
+    b <- cv_batch(); f <- input$cv_file
+    rows <- .case_addsup(b)
+    if (!length(rows) || is.null(f) || nrow(f) != nrow(b)) return()
+    if (!.identity_ok()) return()
+    notify_once("cv_accept_all", sprintf("Accepting %d file%s that add up - each is recorded as checked by you.",
+                length(rows), if (length(rows) == 1L) "" else "s"), duration = 6)
+    run_batch(f, as.character(b$chosen %||% rep(NA_character_, nrow(b))), rows = rows, confirm = TRUE)
+  })
 
   output$cv_plan <- renderUI({
     cv_plan_redraw()
@@ -3522,10 +3692,7 @@ server <- function(input, output, session) {
     # grouped by what went wrong (BATCH_STATUSES is worst-LAST). A first run keeps
     # the upload order while it runs, so rows do not jump about.
     ord <- seq_len(nrow(rows))
-    if (case_res) {
-      sev <- match(b$status, BATCH_STATUSES, nomatch = length(BATCH_STATUSES) + 1L)
-      ord <- order(-sev, as.character(b$failing_check), ord)
-    }
+    if (case_res) ord <- .case_order(b)
     trs <- lapply(ord, function(i) {
       r <- rows[i, ]
       chip <- .plan_chip(r)
@@ -3544,15 +3711,15 @@ server <- function(input, output, session) {
       bank_cell <- tags$td(class = "plan-tpl", ctl,
         if (!is.null(seen)) div(class = "plan-note plan-note-warn",
                                 sprintf("Which bank? The statement looks like %s", seen))
-        else if (mine) div(class = "plan-note", "your choice")
-        else if (!cols) span(class = paste("plan-chip", chip[1]), title = .plan_hover(r), chip[2]))
+        else if (!cols && (!mine || !is.na(r$remembered %||% NA)))
+          span(class = paste("plan-chip", chip[1]), title = .plan_hover(r), chip[2]))
       tail <- if (in_run) {
         k <- match(i, run$rows)
         d <- if (!is.null(live$done)) live$done[live$done$k == k, , drop = FALSE] else NULL
         if (!is.null(d) && nrow(d)) {
           o <- plain_outcome(d$status[1], d$outcome[1], basis = d$outcome[1],
                              reason = plain_failing_check(d$failing_check[1]))
-          list(tags$td(class = "plan-layout", if (is.na(d$layout[1])) "\u2014" else .layout_name(d$layout[1])),
+          list(tags$td(class = "plan-layout", { ra <- .read_as_name(d$layout[1]); if (is.na(ra)) "" else ra }),
                .plan_outcome(o, d$rows[1]))
         } else if (identical(live$state, "running") && identical(as.integer(live$i), as.integer(k)))
           list(tags$td(""), tags$td(class = "plan-res", div(class = "plan-converting",
@@ -3568,9 +3735,12 @@ server <- function(input, output, session) {
         # Please check has something to show only where columns were found
         has_cols <- any(vapply(res_i$reading %||% list(), function(rd) NROW(rd$columns) > 0L, logical(1)))
         link <- if (o$cls != "ok" && has_cols)
-          tags$a(class = "plan-check", href = "#", `data-gen` = p$gen, `data-row` = i, "Please check \u2192")
-        list(tags$td(class = "plan-layout", if (length(lys)) lapply(lys, div) else span(class = "muted", "\u2014")),
-             .plan_outcome(o, .rows_of(res_i), link, again = i %in% changed))
+          tags$a(class = "plan-check", href = "#", `data-gen` = p$gen, `data-row` = i,
+                 title = "Opens this file below, with its page and the question to answer",
+                 paste(.check_words(res_i), "\u2192"))
+        nxt <- if (o$cls == "bad") unread_next(res_i$stamp$kind %||% NA, c(res_i$reason, res_i$messages), has_cols)
+        list(tags$td(class = "plan-layout", if (length(lys)) lapply(lys, div) else NULL),
+             .plan_outcome(o, .rows_of(res_i), link, again = i %in% changed, nxt = nxt))
       } else if (cols) list(tags$td(""), tags$td("")) else NULL
       openable <- case_res && !running && !identical(as.character(b$status[i]), "stopped")
       tags$tr(class = paste(c("plan-row", chip[1], if (mine) "plan-chosen", if (openable) "plan-openable",
@@ -3583,7 +3753,7 @@ server <- function(input, output, session) {
         tags$td(class = "plan-kind", kind),
         bank_cell, tail)
     })
-    head_cells <- if (cols) list(tags$th("Layout"), tags$th("Outcome")) else NULL
+    head_cells <- if (cols) list(tags$th("Read as"), tags$th("Outcome")) else NULL
     tbl <- tags$table(class = paste("plan-table", if (cols) "plan-has-res"),
       tags$thead(tags$tr(tags$th("File"), tags$th("Type"), tags$th("Bank"), head_cells)),
       tags$tbody(trs))
@@ -3611,11 +3781,21 @@ server <- function(input, output, session) {
       say <- function(x, word) { v <- sum(cls == x); if (v > 0L) sprintf("%d %s", v, word) else NULL }
       bits <- Filter(Negate(is.null), list(say("ok", "converted"), say("warn", "to check"),
         say("bad", "couldn't be read"), say("stopped", "stopped")))
-      div(class = "plan-top",
-        div(p(class = "plan-head", sprintf("%d files", nrow(rows))),
-            p(class = "muted plan-tally", paste0(paste(unlist(bits), collapse = "  \u00b7  "), "."))),
-        if (length(.batch_outputs(b)))
-          downloadButton("cv_batch_dl", "Download everything", class = "btn-primary"))
+      n_warn <- sum(cls == "warn"); n_ok_add <- length(.case_addsup(b))
+      div(class = "plan-top plan-top-case",
+        div(class = "plan-top-say",
+            p(class = "plan-head", sprintf("%d files", nrow(rows))),
+            p(class = "muted plan-tally", paste0(paste(unlist(bits), collapse = "  \u00b7  "), ".")),
+            p(class = "plan-now", .case_now(cls, n_ok_add))),
+        div(class = "plan-actions",
+          if (n_ok_add > 0L)
+            actionButton("cv_accept_all", sprintf("Accept all that add up (%d)", n_ok_add), class = "btn-default",
+                         title = "Accepts every new-design file whose balance adds up, each recorded as checked by you"),
+          if (n_warn > 0L)
+            actionButton("cv_next_check", "Next file to check \u2192", class = "btn-primary",
+                         title = "Opens the next file that needs you, with its question"),
+          if (length(.batch_outputs(b)))
+            downloadButton("cv_batch_dl", "Download everything", class = if (n_warn > 0L) "btn-default" else "btn-primary")))
     } else {
       p(class = "plan-head",
         if (single_res) "Not the right bank? Choose another and press Convert again."
@@ -3711,6 +3891,7 @@ server <- function(input, output, session) {
           detail = paste(res$messages, collapse = "; "), dir = UPLOADS_DIR), NA_character_)
         else NA_character_
         show_result(res, list(path = src, name = name, bank = bank), upload_id %||% uid)
+        if (record) .remember_bank(1L, name, res, bank)
         # ...and this is what the governed feed did with it (the last word on
         # cv_recorded / cv_feed_gate, which show_result has just cleared).
         publish_result(res, record)
@@ -3804,7 +3985,7 @@ server <- function(input, output, session) {
   # rows whose bank changed, plan_again). Their copies are already in this case's
   # scratch folder and their outputs are written over in place; every other row
   # keeps its result and its files, and the new results are merged into the table.
-  run_batch <- function(files, banks = NULL, rows = NULL) {
+  run_batch <- function(files, banks = NULL, rows = NULL, confirm = FALSE) {
     if (.case_converting()) return(invisible(NULL))
     banks <- as.character(banks %||% rep(NA_character_, NROW(files)))
     b_old <- isolate(cv_batch())
@@ -3850,6 +4031,10 @@ server <- function(input, output, session) {
     # fails every file in the case.
     # overlay = FALSE: the Convert table shows this case's progress row by row
     a <- convert_args(); a$bank <- NULL; a$overrides <- NULL; a$confirm <- NULL; a$bank_confirmed <- NULL
+    # "Accept all that add up": the same confirm a person gives one file with It's
+    # right, given to each of these rows -- the engine still refuses any that do not
+    # add up, and records each one as checked by this person.
+    if (isTRUE(confirm)) a$confirm <- TRUE
     cv_slot$start("batch", paths, sess, overlay = FALSE,
       message = sprintf("Converting %d file%s\u2026", n, if (n == 1L) "" else "s"),
       args = c(a, list(banks = banks)),
@@ -3877,6 +4062,7 @@ server <- function(input, output, session) {
           # switched off, and assigning NULL with [[ DELETES the element instead of
           # storing it - the column would come up one short of the files.
           b$feed_gate[i] <- list(publish_result(res, TRUE))
+          .remember_bank(rows[i], nms[i], res, .chosen_bank(b, i))
           # The rows are on disk in this file's workbook / CSV / JSON; holding fifty
           # more copies in one object buys nothing. Marked with the engine's own
           # name for it, so a reader can tell "dropped" from "there were none".
@@ -4484,7 +4670,7 @@ server <- function(input, output, session) {
       choiceValues = as.list(t$page),
       choiceNames = lapply(seq_len(nrow(t)), function(j) {
         w <- .tick_word(t[j, ])
-        span(class = paste("tick", w$cls), title = w$say, sprintf("Page %d %s", t$page[j], w$glyph))
+        span(class = paste("tick", w$cls), title = paste0(.sentence(w$say), " ", if (identical(w$cls, "tick-ok")) TICK_HELP else if (identical(w$cls, "tick-bad")) CROSS_HELP else ""), sprintf("Page %d %s", t$page[j], w$glyph))
       }))
   })
   output$cv_ck_tick_line <- renderUI({
@@ -4712,16 +4898,24 @@ server <- function(input, output, session) {
       .reread(cv_ov(), what = "Reading it again with the new wording\u2026",
               said = paste(attr(out, "reason"), "This statement has been read again with it."))
   })
-  output$cv_ck_msg_short <- renderUI({
-    n <- cv_ck_note(); res <- cv_res()
+  # The line under the buttons: the Undo bar while It's right / Set aside can still
+  # be taken back, otherwise what the last action found.
+  .ck_msg_ui <- function() {
+    res <- cv_res(); pd <- ck_pending()
+    if (!is.null(pd) && !is.null(res) && identical(pd$run_id, res$run_id))
+      return(div(class = "undo-bar", role = "status",
+        tags$b(if (identical(pd$kind, "confirm")) "Accepting it as right" else "Setting it aside"),
+        span(class = "undo-count", `data-secs` = UNDO_SECONDS, sprintf("in %d s", UNDO_SECONDS)),
+        actionButton("cv_ck_undo_pending", "Undo", class = "btn-default btn-sm"),
+        if (identical(pd$kind, "aside"))
+          tags$input(id = "cv_ck_aside_note", type = "text", class = "form-control undo-note", maxlength = "200",
+                     placeholder = "A note for the admin (optional)", `aria-label` = "A note for the admin (optional)")))
+    n <- cv_ck_note()
     if (is.null(n) || is.null(res) || !identical(n$run_id, res$run_id)) return(NULL)
     div(class = if (isTRUE(n$ok)) "note" else "note-bad", style = "margin:6px 0", n$text)
-  })
-  output$cv_ck_msg <- renderUI({
-    n <- cv_ck_note(); res <- cv_res()
-    if (is.null(n) || is.null(res) || !identical(n$run_id, res$run_id)) return(NULL)
-    div(class = if (isTRUE(n$ok)) "note" else "note-bad", style = "margin:6px 0", n$text)
-  })
+  }
+  output$cv_ck_msg_short <- renderUI(.ck_msg_ui())
+  output$cv_ck_msg <- renderUI(.ck_msg_ui())
 
   # .ck_roles_overrides() -- the roles the dropdowns say, as R/convert.R takes them,
   # for the statement on screen. NULL when the statement has no column of figures.
@@ -4770,7 +4964,7 @@ server <- function(input, output, session) {
   # usual line under the buttons. Its outputs are written
   # over the old ones in the same folder, so Download hands over the new reading.
   .reread <- function(overrides = NULL, confirm = FALSE, bank = NULL, bank_confirmed = NULL,
-                      what = "Re-reading\u2026", said = NULL) {
+                      what = "Re-reading\u2026", said = NULL, then = NULL) {
     if (.case_converting()) return(invisible(NULL))
     res0 <- isolate(cv_res()); src <- isolate(cv_src())
     if (is.null(res0) || is.null(src) || !file.exists(src$path %||% "") || is.null(isolate(cv_dir()))) {
@@ -4826,6 +5020,7 @@ server <- function(input, output, session) {
         cv_ck_note(list(run_id = res$run_id, ok = identical(res$status, "ok"),
                         text = said %||% .reread_words(res, confirm)))
         cv_ck_open(TRUE)
+        if (is.function(then)) then()
       })
   }
   observeEvent(input$cv_ck_reread, {
@@ -4850,7 +5045,53 @@ server <- function(input, output, session) {
                   duration = 8)
       return()
     }
-    .reread(cv_ov(), confirm = TRUE, what = "Confirming\u2026")
+    .ck_hold("confirm", res, ov = cv_ov())
+  })
+  # TEN SECONDS TO TAKE IT BACK. It's right and Set aside wait UNDO_SECONDS before
+  # anything is done, with an Undo button; nothing is recorded, learned or marked
+  # until then. Opening another file (or Next file to check) does it at once and
+  # then goes on. ck_pending is WHAT is waiting (drawn once); ck_deadline is WHEN
+  # (typing a note pushes it back without redrawing the note box).
+  ck_pending  <- reactiveVal(NULL)
+  ck_deadline <- reactiveVal(NULL)
+  .ck_hold <- function(kind, res, ov = NULL) {
+    ck_pending(list(kind = kind, run_id = res$run_id, ov = ov))
+    ck_deadline(Sys.time() + UNDO_SECONDS)
+  }
+  .ck_aside_now <- function(res, note = "") {
+    note <- substr(gsub("[0-9][0-9 -]{4,}[0-9]", "[number]", trimws(as.character(note %||% "")[1])), 1, 200)
+    if (is.na(note)) note <- ""
+    id <- cv_upload_id()
+    ok <- !is.na(id) && isTRUE(safe(set_upload_status(id, "set_aside", run_id = res$run_id,
+      detail = paste0("Set aside on Please check for an admin to look at",
+                      if (nzchar(note)) paste0(". Note: ", note) else ""))))
+    cv_ck_note(list(run_id = res$run_id, ok = ok,
+      text = if (ok) "Set aside. It is not converted; an admin will see it under Needs attention."
+             else "Set aside for now. (It could not be marked for an admin, so tell one.)"))
+  }
+  # .ck_commit(then) -- do what is waiting now; `then` runs once it is done.
+  .ck_commit <- function(then = NULL) {
+    pd <- isolate(ck_pending()); ck_pending(NULL); ck_deadline(NULL)
+    res <- isolate(cv_res())
+    if (is.null(pd) || is.null(res) || !identical(pd$run_id, res$run_id)) {
+      if (is.function(then)) then()
+      return(invisible(NULL))
+    }
+    if (identical(pd$kind, "confirm")) .reread(pd$ov, confirm = TRUE, what = "Confirming\u2026", then = then)
+    else { .ck_aside_now(res, isolate(input$cv_ck_aside_note)); if (is.function(then)) then() }
+  }
+  observe({
+    at <- ck_deadline(); if (is.null(at)) return()
+    left <- as.numeric(difftime(at, Sys.time(), units = "secs"))
+    if (left > 0.05) invalidateLater(ceiling(left * 1000)) else isolate(.ck_commit())
+  })
+  observeEvent(input$cv_ck_undo_pending, {
+    pd <- ck_pending(); req(pd)
+    ck_pending(NULL); ck_deadline(NULL)
+    cv_ck_note(list(run_id = pd$run_id, ok = TRUE, text = "Undone - nothing was changed."))
+  })
+  observeEvent(input$cv_ck_note_typing, {
+    if (!is.null(ck_pending())) ck_deadline(Sys.time() + UNDO_SECONDS)
   })
   # SET ASIDE (D16): not converted now; the upload is marked for an admin, who sees
   # it under Needs attention with its page.
@@ -4892,12 +5133,7 @@ server <- function(input, output, session) {
   })
   observeEvent(input$cv_ck_aside, {
     res <- cv_res(); req(res)
-    id <- cv_upload_id()
-    ok <- !is.na(id) && isTRUE(safe(set_upload_status(id, "set_aside", run_id = res$run_id,
-                                                      detail = "Set aside on Please check for an admin to look at")))
-    cv_ck_note(list(run_id = res$run_id, ok = ok,
-      text = if (ok) "Set aside. It is not converted; an admin will see it under Needs attention."
-             else "Set aside for now. (It could not be marked for an admin, so tell one.)"))
+    .ck_hold("aside", res)
   })
 
   # ---- the last resort: drawing the columns by hand -------------------------------
@@ -5088,9 +5324,9 @@ server <- function(input, output, session) {
   # -- one fault, two vocabularies, and the second bullet's own name says the
   # OPPOSITE of what happened, because CHECK_PLAIN words a check as what it
   # PROVES for use beside a pass/fail column that this list does not have.
-  # ui_labels.R solved that once for the batch table (plain_failing_check prefixes
-  # "Failed: "); the verdict card never got it. Both are fixed below: the check
-  # says it failed, and a check whose detail is BYTE-IDENTICAL to a listed
+  # ui_labels.R words each check as its PROBLEM (CHECK_PROBLEM_PLAIN) for the
+  # batch table and this card alike. Both are fixed below: the check says what is
+  # wrong, and a check whose detail is BYTE-IDENTICAL to a listed
   # diagnostic's is dropped as the echo it is. Byte-identical, never fuzzy -- if
   # the engine ever words them differently they are two facts again and both
   # appear, which is the safe way round.
@@ -5130,7 +5366,7 @@ server <- function(input, output, session) {
             tags$b(plain_diag(dg$category[i])),
             if (nzchar(dg$detail[i] %||% "")) sprintf(" - %s", dg$detail[i]) else NULL)),
           lapply(seq_len(if (is.null(f)) 0L else nrow(f)), function(i) tags$li(
-            tags$b(sprintf("Failed: %s", plain_check(f$name[i]))),
+            tags$b(plain_check_problem(f$name[i])),
             if (nzchar(f$detail[i] %||% "")) sprintf(" - %s", f$detail[i]) else NULL)))),
       # THE REMEDY IS THE TOOL'S OWN, AND IT SITS WITH THE DIAGNOSIS: a run whose
       # top diagnostic says "split the file" must not carry a button somewhere else
@@ -5238,6 +5474,7 @@ server <- function(input, output, session) {
                                   "margin:0 8px 6px 0;padding:5px 10px;border-radius:999px;",
                                   "background:%s;color:%s;font-size:13px;font-weight:600"),
                            m[[3]], m[[2]]),
+           title = switch(st %||% "na", pass = TICK_HELP, fail = CROSS_HELP, "This could not be checked."),
            # The row already says which statement, so the chip does not repeat it.
            span(style = "font-size:14px", m[[1]]), plain_check(.stmt_base(nm)))
     }

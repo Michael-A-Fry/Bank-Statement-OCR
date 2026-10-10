@@ -45,11 +45,11 @@ CHECK_PLAIN <- c(
 # tags every KPI "<name> [statement 2]", which matches nothing in the map, so a
 # split bundle showed RAW CODES for every check on the page. Strip the tag, look
 # the check up, put the statement back in words.
-plain_check <- function(x) {
+plain_check <- function(x, map = CHECK_PLAIN) {
   x <- as.character(x)
   base <- sub("[[:space:]]*\\[statement ([0-9]+)\\]$", "", x)
   n <- sub("^.*\\[statement ([0-9]+)\\]$", "\\1", x)
-  lab <- plain_label(base, CHECK_PLAIN)
+  lab <- plain_label(base, map)
   tagged <- n != x
   lab[tagged] <- sprintf("%s (statement %s)", lab[tagged], n[tagged])
   lab
@@ -148,7 +148,7 @@ plain_diag <- function(x) plain_label(x, DIAG_PLAIN)
 
 # The automatic reader's own hard checks (R/auto_read*.R), each named for what it
 # establishes when it holds. Shown beside a tick or a cross on Please check, in
-# the case table as "Failed: ...", and counted on Admin -> Automatic reading.
+# and counted on Admin -> Automatic reading.
 # ONE entry per check the reader can report; test-batch.R holds this map to the
 # tracking allowlist (R/tracking.R), so a new check cannot reach the screen as a
 # raw code.
@@ -194,6 +194,65 @@ READING_CHECK_PLAIN <- c(
   statements_join    = "Each statement in the file opens at the balance the one before it closed on",
   known_design       = "A person has checked this statement design before")
 plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
+
+# THE SAME CHECKS, SAID AS THE PROBLEM WHEN ONE DID NOT HOLD. The Convert table
+# and the case summary say what is wrong in a sentence a person can act on ("Two
+# columns could be money out - tell us which"), never "Failed: <what it proves>".
+# ONE entry per check in READING_CHECK_PLAIN (test-labels.R holds the two maps to
+# the same names), at most ten words each.
+READING_PROBLEM_PLAIN <- c(
+  rows_read          = "No transaction rows could be found",
+  rows_match_columns = "Some rows in the columns were not read",
+  pages_with_rows    = "A page with transactions gave no rows",
+  words_used_once    = "Some words could belong to two columns",
+  lines_accounted    = "A line with a figure was left unread",
+  dates_settled      = "The dates could be read two ways",
+  dated_lines_used   = "A dated line was left unread",
+  pages_complete     = "A page looks to be missing",
+  balance_chain      = "The running balance does not add up",
+  chain_across_pages = "The balance does not carry across pages",
+  opening_closing    = "Opening plus movements is not the closing balance",
+  printed_totals     = "The printed totals do not agree",
+  dates_readable     = "Some dates could not be read",
+  dates_in_order     = "The dates are out of order",
+  dates_in_period    = "Some dates fall outside the statement period",
+  signs_settled      = "Money in and money out are unclear",
+  no_derived_amounts = "Some amounts had to be worked out",
+  amounts_read       = "Some amounts could not be read",
+  unique             = "Two columns could be money out - tell us which",
+  rows_proven        = "Some rows are not covered by the balance",
+  reader_agrees      = "Two readings of the table disagree",
+  dates_carried      = "Some dates were carried down from above",
+  other_tables       = "Another table on the page may hold rows",
+  ocr_complete       = "Some pages of the scan could not be read",
+  year_settled       = "The year of some dates is not printed",
+  table_unbroken     = "A pending section sits inside the table",
+  summary_lines_checked = "Some total lines could not be checked",
+  rows_once          = "Some rows look to be printed twice",
+  one_statement      = "The file may hold more than one statement",
+  rows_between_ends  = "Some rows sit outside the opening and closing",
+  one_side_per_row   = "A row has both money out and money in",
+  ends_printed       = "The end of the statement is not printed",
+  sections_set_aside = "A pending section was left out - please check",
+  currency_own       = "The account is not in New Zealand dollars",
+  workbook_plain     = "The workbook has extra sheets or hidden rows",
+  tables_set_aside   = "Other tables were left out - please check",
+  edge_lines         = "A balance line has unfamiliar wording",
+  compact_dates      = "Some eight-digit dates fall outside the period",
+  statements_join    = "The statements in the file do not join up",
+  known_design       = "New design - check it once")
+CHECK_PROBLEM_PLAIN <- c(
+  balance_reconciliation     = "The balance does not add up",
+  running_balance_continuity = "The running balance jumps",
+  amount_direction           = "Money in and out may be swapped",
+  transaction_count          = "The row count does not match",
+  dates_within_period        = "Some dates fall outside the statement period",
+  dates_readable             = "Some dates could not be read",
+  account_number             = "The account number does not look right",
+  no_unparsed_rows           = "Some rows could not be read",
+  ocr_confidence             = "The scan is hard to read")
+# plain_check_problem(x) -- a failing check of the result, said as the problem.
+plain_check_problem <- function(x) plain_check(x, CHECK_PROBLEM_PLAIN)
 
 # ---------------------------------------------------------------------------
 # THE OUTCOME OF A FILE, in the phrases the Convert table and the verdict card
@@ -303,22 +362,20 @@ plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, 
 # that appeared in two of them would render the wrong sentence with nothing to
 # notice it -- so the map is named rather than guessed.
 #
-# "Failed: " on a check because CHECK_PLAIN and READING_CHECK_PLAIN word a check
-# as what it PROVES ("Row dates could be read"), for use beside a separate
-# pass/fail column. This table has no such column, so the bare phrase would say
-# the OPPOSITE of what happened.
+# The PROBLEM maps, not CHECK_PLAIN / READING_CHECK_PLAIN: those word a check as
+# what it PROVES ("Row dates could be read"), for use beside a tick or a cross.
+# This table has no such column, so it says what is wrong instead.
 #
 # NOT plain_check(): that re-appends "(statement N)", and batch.R strips that tag
 # precisely so a split bundle's files group together under one kind of failure.
 # An unknown code falls back to itself -- never to a blank cell, which would hide
 # a file that needs attention.
-# short_reason(x) -- the Outcome cell's reason, at most 8 words ("Failed: " is kept: it is
-# what turns a check's pass-wording into the reason).
+# short_reason(x) -- the Outcome cell's reason, at most 10 words.
 short_reason <- function(x) {
   x <- trimws(as.character(x %||% "")[1])
   if (is.na(x) || !nzchar(x)) return("")
   w <- strsplit(x, "\\s+")[[1]]
-  if (length(w) > 8L) paste0(paste(w[1:8], collapse = " "), "\u2026") else x
+  if (length(w) > 10L) paste0(paste(w[1:10], collapse = " "), "\u2026") else x
 }
 plain_failing_check <- function(x) vapply(x, function(e) {
   if (is.na(e)) return(NA_character_)
@@ -326,8 +383,8 @@ plain_failing_check <- function(x) vapply(x, function(e) {
   # a design not yet taught is not a failure: it is asked about once
   if (identical(code, "known_design")) return("New design - check it once")
   switch(sub(":.*$", "", e),
-         reading = paste0("Failed: ", plain_label(code, READING_CHECK_PLAIN)),
-         check  = paste0("Failed: ", plain_label(code, CHECK_PLAIN)),
+         reading = plain_label(code, READING_PROBLEM_PLAIN),
+         check  = plain_label(code, CHECK_PROBLEM_PLAIN),
          diag   = plain_label(code, DIAG_PLAIN),
          status = plain_label(code, STATUS_PLAIN),
          e)
@@ -442,3 +499,28 @@ FRIENDLY_READ_ERROR <- paste(
 CONVERT_STOPPED <- paste(
   "This conversion stopped before it finished, so there is nothing to show.",
   "Try it again - if it stops a second time, tell whoever looks after the tool.")
+
+# unread_next(kind, text, has_cols) -- what to do next with a file that could not be
+# read, in one sentence. "Couldn't read" on its own leaves a person stuck; this is
+# the next step, chosen from what the file is (`kind`: the result's stamp kind,
+# "pdf" / "scan" / "delimited" / "excel" / NA) and what the engine said (`text`).
+unread_next <- function(kind = NA, text = "", has_cols = FALSE) {
+  k <- as.character(kind %||% NA)[1]; t <- tolower(paste(as.character(text %||% ""), collapse = " "))
+  if (grepl("password|encrypt", t))
+    return("It may have a password - save an unlocked copy, then add it again.")
+  if (identical(k, "scan") || grepl("scan|photo|picture|ocr", t))
+    return("It looks like a photo or scan - try the original PDF from the bank.")
+  if (is.na(k) || !nzchar(k) || grepl("file type|not a pdf|not a file", t))
+    return("This is not a file it reads - use the bank's PDF, CSV or Excel download.")
+  if (isTRUE(has_cols))
+    return("Open Check the columns to show which column is which.")
+  "Try the bank's own PDF or CSV download of this statement instead."
+}
+
+# One sentence of hover help for each outcome word and for a row's tick or cross.
+OUTCOME_HELP <- list(
+  ok   = "Done: the statement's own balances add up, so it is ready to use.",
+  warn = "Needs you: one quick look from a person before it can be used.",
+  bad  = "Couldn't read: nothing usable came out of this file - the line below says what to try.")
+TICK_HELP  <- "Tick: this adds up - nothing to do."
+CROSS_HELP <- "Cross: this does not add up - it needs a look."

@@ -102,7 +102,8 @@ read_uploads <- function(dir = NULL) {
     id = character(0), ts = character(0), ts_utc = character(0),
     file_ext = character(0), status = character(0),
     template = character(0), trust = character(0), run_id = character(0),
-    needs_pickup = logical(0), purged = logical(0), stringsAsFactors = FALSE))
+    needs_pickup = logical(0), purged = logical(0), note = character(0),
+    checked = logical(0), stringsAsFactors = FALSE))
   rows <- lapply(recs, function(f) {
     r <- safe(jsonlite::fromJSON(f, simplifyVector = FALSE), NULL); if (is.null(r)) return(NULL)
     hist_status <- vapply(r$history %||% list(), function(h) h$status %||% "", character(1))
@@ -119,6 +120,11 @@ read_uploads <- function(dir = NULL) {
       # "open it in the toolkit" never looks available for a file that is gone --
       # the record survives, the client's statement does not.
       purged = isTRUE(r$purged),
+      # the person's note when they set it aside (Please check), for the admin
+      note = { d <- as.character(r$detail %||% "")[1]
+               if (!is.na(d) && grepl("Note: ", d, fixed = TRUE)) sub("^.*?Note: ", "", d, perl = TRUE) else NA_character_ },
+      # done because a person checked it: it waited for one first
+      checked = identical(r$status, "ok") && "needs_review" %in% hist_status,
       stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))

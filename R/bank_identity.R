@@ -443,9 +443,25 @@ nz_account_checksum <- function(code, branch, base, suffix) {
 # ---------------------------------------------------------------------------
 
 .bi_ev <- function(kind = character(0), institution = character(0), strength = numeric(0),
-                   zone = character(0), page = integer(0), code = character(0))
+                   zone = character(0), page = integer(0), code = character(0),
+                   mark = rep(NA_character_, length(kind)))
   data.frame(kind = kind, institution = institution, strength = strength, zone = zone,
-             page = page, code = code, stringsAsFactors = FALSE)
+             page = page, code = code, mark = mark, stringsAsFactors = FALSE)
+
+# .bi_mark(code, branch, base, suffix) -- the holder account as a SALTED MARK, so a
+# statement of an account seen before can be recognised without ever keeping its
+# number. The salt is the install's own secret (the app sets the option from a file
+# in its data folder); with no salt there is no mark. A masked number has none.
+.bi_mark <- function(code, branch, base, suffix) {
+  salt <- getOption("statement_studio.account_salt", "")
+  if (!is.character(salt) || length(salt) != 1L || !nzchar(salt)) return(NA_character_)
+  parts <- c(code, branch, base, suffix)
+  if (any(is.na(parts)) || !all(grepl("^[0-9]+$", parts))) return(NA_character_)
+  key <- paste(salt, sprintf("%02d", as.integer(code)), sprintf("%04d", as.integer(branch)),
+               sub("^0+", "", base), sub("^0+", "", suffix), sep = "|")
+  h <- .text_sha256(key)
+  if (is.na(h)) NA_character_ else substr(h, 1, 24)
+}
 
 # .bi_text_evidence(text, zone, page, ref) -- legal names, domains, phones, SWIFT
 # codes and brand words in one line. Brand words count only in the masthead, the
@@ -556,7 +572,8 @@ nz_account_checksum <- function(code, branch, base, suffix) {
     if (need_label && !grepl(.BI_LABEL_RX, pre, perl = TRUE)) next
     r <- .bi_account_evidence(acc$code[k], acc$branch[k], acc$base[k], acc$suffix[k], ref)
     if (is.null(r)) next
-    ev <- rbind(ev, .bi_ev(r$kind, r$institution, r$strength, zone, page, r$code))
+    ev <- rbind(ev, .bi_ev(r$kind, r$institution, r$strength, zone, page, r$code,
+                           .bi_mark(acc$code[k], acc$branch[k], acc$base[k], acc$suffix[k])))
   }
   ev
 }
@@ -1021,7 +1038,9 @@ bank_identify <- function(input) {
   evid <- evid[order(-evid$strength, evid$kind, evid$institution, evid$zone), , drop = FALSE]
   evid <- evid[!duplicated(evid[, c("kind", "institution", "zone")]), , drop = FALSE]
   rownames(evid) <- NULL
-  list(institution = res$institution, bank_code = res$bank_code,
+  marks <- ev[!is.na(ev$mark), , drop = FALSE]
+  mark <- if (nrow(marks)) marks$mark[order(-marks$strength)][1] else NA_character_
+  list(institution = res$institution, bank_code = res$bank_code, account_mark = mark,
        confidence = res$confidence, why = res$why, evidence = evid,
        display = if (is.na(res$institution)) NA_character_ else ref$display[[res$institution]],
        needs_decision = isTRUE(res$conflict), pages = pages, pages_agree = agree)

@@ -91,6 +91,7 @@ identify_file <- function(path, name = basename(path)) {
   out$bank <- as.character(pick$bank %||% NA_character_)[1]
   out$bank_display <- if (is.na(out$bank)) NA_character_ else as.character(ident$display %||% out$bank)[1]
   out$bank_code <- as.character(ident$bank_code %||% NA_character_)[1]
+  out$account_mark <- as.character(ident$account_mark %||% NA_character_)[1]
   out$confidence <- as.character(ident$confidence %||% "unknown")[1]
   out$ask <- isTRUE(pick$ask)
   out$detail <- as.character(pick$why %||% ident$why %||% NA_character_)[1]
