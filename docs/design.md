@@ -476,7 +476,7 @@ lives in one place, `docs/operational/maintaining-the-engine.md`.
 
 ### To add a bank
 
-Nothing. Convert its statements, or train it on Admin -> Banks. If a bank's
+Nothing. Convert its statements, or train it on Admin -> Health -> Train a bank. If a bank's
 statements do not prove, the reader is missing something general: find it on the
 dev set (`tools/synth/`), fix it in `R/auto_read*.R`, and measure on every set
 before and after. **AUTO_WRONG must stay 0.** If you find yourself writing

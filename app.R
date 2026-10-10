@@ -158,6 +158,56 @@ PALETTE <- list(ok = "#0f7a37", bad = "#b3261e", warn = "#b7791f", meta = "#a15c
   graphics::text(x, 14, label, col = col, font = 2, cex = 0.85)
 }
 
+# .ck_col_colour(field, kind) -- the colour of a column on a page picture: what it
+# IS, the same colours the money columns have everywhere (money in green, money
+# out red). Shared by Please check and the recipe card.
+.ck_col_colour <- function(field, kind) {
+  if (identical(kind, "date")) return("#1d4ed8")
+  if (!identical(kind, "money")) return("#68727d")
+  switch(sub("[0-9]+$", "", field), debit = PALETTE$bad, credit = PALETTE$ok,
+         balance = "#00205b", amount = PALETTE$warn, "#7c3aed")
+}
+# .col_short(field) -- one short word for a column: a band is too narrow for
+# "Money going out".
+.col_short <- function(field) {
+  s <- unname(c(debit = "Out", credit = "In", amount = "In/Out", balance = "Balance", date = "Date",
+                description = "Details")[as.character(field)])
+  s[is.na(s)] <- "Other"
+  s
+}
+# .money_cols(reading) -> a reading's columns of figures: field and heading.
+.money_cols <- function(rd) {
+  cols <- rd$columns
+  if (!is.data.frame(cols) || !nrow(cols)) return(data.frame(field = character(0), heading = character(0)))
+  m <- cols[cols$kind %in% "money", , drop = FALSE]
+  m <- m[!duplicated(m$field), , drop = FALSE]
+  data.frame(field = as.character(m$field), heading = as.character(m$heading %||% ""), stringsAsFactors = FALSE)
+}
+# .draw_page_columns(r, cols, labels) -- a page picture (render_page_view) with
+# each column's band drawn, the ink read inside it shaded, and its label on top.
+# Please check and the recipe card draw their pages with this one function.
+.draw_page_columns <- function(r, cols, labels) {
+  # NOT restored on exit: the caller may draw more over the page (Please check's
+  # marked line), and restoring the margins would move its coordinates.
+  graphics::par(mar = c(0, 0, 0, 0))
+  graphics::plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i", xlab = "", ylab = "", axes = FALSE)
+  graphics::rasterImage(r$ras, 0, r$h, r$w, 0)
+  if (!is.data.frame(cols) || !nrow(cols)) return(invisible())
+  for (j in seq_len(nrow(cols))) {
+    cc <- .ck_col_colour(cols$field[j], cols$kind[j])
+    graphics::rect(cols$x_min[j], 0, cols$x_max[j], r$h, border = cc, lwd = 1.6, lty = 2)
+    if (all(is.finite(c(cols$ink_min[j], cols$ink_max[j]))))
+      graphics::rect(cols$ink_min[j], 0, cols$ink_max[j], r$h, col = paste0(cc, "1f"), border = NA)
+    .col_label((cols$x_min[j] + cols$x_max[j]) / 2, labels[j], cc)
+  }
+  invisible()
+}
+# .plot_height(width, r) -- a page picture's height at the width it is shown.
+.plot_height <- function(width, r) {
+  w <- width %||% 600
+  if (is.null(r) || !is.finite(r$w) || r$w <= 0) 600 else max(300, round(w * r$h / r$w))
+}
+
 # .audit_gap(res) -- this conversion produced a workbook and NO audit record.
 #
 # The engine keeps the words (R/convert.R writes them into res$messages when the
@@ -586,35 +636,20 @@ ui <- fluidPage(
       div(style = "text-align:right;margin-bottom:6px",
           actionButton("adm_signout", "Sign out of Admin", class = "btn-default btn-sm")),
       # ---- FOUR TABS, BECAUSE AN ADMIN HAS FOUR QUESTIONS --------------------
-      #   Banks             what has the tool learned, is it right, and teach it more
-      #   Automatic reading how is it doing (counts only), and the spot checks
+      #   Needs attention   what is waiting for an admin, each with one button
+      #   Recipes           how each design of statement is read: on/off, change, merge
       #   Words             the words it looks for
-      #   Health            what is failing, the uploads, the queues, the housekeeping
+      #   Health            what is failing, how automatic reading is doing, the
+      #                     uploads, the queues, training, the housekeeping
       tabsetPanel(
         id = "adm_tabs",
         tabPanel(
-          "Banks",
+          "Needs attention",
           br(),
-          p(class = "muted", style = "max-width:860px",
-            "Each bank's layouts are learned from statements whose own arithmetic proved them. A new layout is provisional until three statements from it have proved it, or until you confirm it here. Nothing is ever edited in place: every change is a new version, so a conversion already issued can always be traced to what was learned then."),
-          DTOutput("adm_banks"),
-          br(),
-          fluidRow(
-            column(4, selectizeInput("adm_bank_pick", "Bank", choices = NULL,
-                                     options = list(placeholder = "Pick a bank, or click a row above"))),
-            column(8, uiOutput("adm_bank_head"))),
-          DTOutput("adm_layouts"),
-          br(),
-          fluidRow(
-            column(5,
-              actionButton("adm_layout_confirm", "Confirm the selected layout", class = "btn-primary"),
-              actionButton("adm_layout_retire", "Retire it", class = "btn-danger")),
-            column(7,
-              div(style = "display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap",
-                div(style = "flex:1 1 220px",
-                  textInput("adm_layout_name", "Rename it", "", placeholder = "e.g. Everyday account", width = "100%")),
-                actionButton("adm_layout_rename", "Rename", style = "margin-bottom:15px")))),
-          uiOutput("adm_layout_msg"),
+          # ONE CARD PER KIND OF THING TO DO, each with its count, and each item
+          # with ONE button (D15): Fix, Accept / Retire, Merge.
+          uiOutput("adm_na_cards"),
+          uiOutput("adm_na_msg"),
           tags$hr(),
           h4("Fixes waiting for an admin"),
           p(class = "muted", style = "max-width:860px",
@@ -623,49 +658,20 @@ ui <- fluidPage(
           div(style = "margin-top:8px",
             actionButton("adm_fix_accept", "Accept the selected fix", class = "btn-primary"),
             actionButton("adm_fix_discard", "Discard it")),
-          uiOutput("adm_fix_msg"),
-          tags$hr(),
-          h4("Train a bank"),
-          p(class = "muted", style = "max-width:860px",
-            sprintf("Pick or name the bank, add every statement you have for it (up to %d at a time), and Train. They are read in the background - the layouts are worked out from them, and each statement that does not prove itself is listed with the reason. More can be added any time.",
-                    TRAIN_MAX_FILES)),
-          fluidRow(
-            column(4, selectizeInput("adm_train_bank", "Bank", choices = NULL,
-                                     options = list(create = TRUE,
-                                                    placeholder = "Pick a bank, or type a new one's name"))),
-            column(5, fileInput("adm_train_files", "Its statements", multiple = TRUE,
-                                accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx", ".xls"))),
-            column(3, br(), actionButton("adm_train_go", "Train", class = "btn-primary"))),
-          uiOutput("adm_train_status")
+          uiOutput("adm_fix_msg")
         ),
         tabPanel(
-          "Automatic reading",
+          "Recipes",
           br(),
-          div(style = "margin-bottom:8px",
-            actionButton("adm_ar_refresh", "Refresh", class = "btn-default btn-sm"),
-            uiOutput("adm_ar_export_ui", inline = TRUE)),
-          uiOutput("adm_ar_head"),
-          h4("By kind of file"),
-          DTOutput("adm_ar_kinds"),
-          fluidRow(
-            column(6, h4("Checks that failed"),
-              helpText("Which of the reader's checks stopped a statement being proven, most often first."),
-              DTOutput("adm_ar_checks")),
-            column(6, h4("What each reading was checked against, and what was learned"),
-              DTOutput("adm_ar_proof"))),
-          h4("Spot checks"),
-          uiOutput("adm_ar_spot"),
-          fluidRow(
-            column(5,
-              numericInput("adm_spot_rate", "Spot-check rate (% of automatic conversions)",
-                           value = 0, min = 0, max = 100, step = 0.5),
-              actionButton("adm_spot_save", "Save the rate", class = "btn-primary"),
-              uiOutput("adm_spot_msg")),
-            column(7, helpText(paste(
-              "Off (0) by default. A spot check asks the person who ran an automatic conversion to compare a few",
-              "figures with the statement. Which statements are picked depends on the file itself, so the same",
-              "statement is always picked, or never; one converted on a layout with no balance of its own is",
-              "picked at twice the rate."))))
+          # ONE ROW PER RECIPE (D15). A recipe is how the tool reads one design of
+          # statement; every reading it makes must still add up. Nobody sees YAML.
+          p(class = "muted", style = "max-width:860px",
+            "Each recipe reads one design of statement. Every reading must still add up, so a recipe can never make a wrong conversion look right. Click a recipe to see it and change it."),
+          uiOutput("adm_rc_list"),
+          div(style = "margin:10px 0",
+            actionButton("adm_rc_new_open", "New recipe from a statement", class = "btn-default")),
+          uiOutput("adm_rc_new"),
+          uiOutput("adm_rc_card")
         ),
         tabPanel(
           "Words",
@@ -778,6 +784,14 @@ ui <- fluidPage(
           DTOutput("adm_unreadable"),
           h4("Learned layouts in use"),
           DTOutput("adm_usage"),
+          # A LAYOUT THAT MATCHED WRONGLY IS RETIRED HERE (the Banks tab is gone, D1;
+          # recipes replace learned layouts, and until the last is retired this is
+          # where one is taken out of use).
+          div(style = "display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px",
+            div(style = "flex:0 1 320px;min-width:0", selectizeInput("adm_layout_pick", "Take a learned layout out of use", choices = NULL,
+              width = "100%", options = list(placeholder = "Pick a layout"))),
+            actionButton("adm_layout_retire", "Retire it", class = "btn-danger", style = "margin-bottom:15px")),
+          uiOutput("adm_layout_msg"),
           h4("What the team said about these conversions"),
           helpText("Every rating left on a conversion, newest first, with the document it was left on and the layout that read it."),
           DTOutput("adm_feedback"),
@@ -848,6 +862,47 @@ ui <- fluidPage(
               uiOutput("adm_ba_summary"),
               h5("Not read - grouped by layout, biggest first"), DTOutput("adm_ba_clusters"),
               h5("Per file - shapes only, no personal data"), DTOutput("adm_ba_files_tbl"))),
+          tags$hr(),
+          # HOW AUTOMATIC READING IS DOING (it was its own tab; D15 keeps four).
+          h4("Automatic reading"),
+          div(style = "margin-bottom:8px",
+            actionButton("adm_ar_refresh", "Refresh", class = "btn-default btn-sm"),
+            uiOutput("adm_ar_export_ui", inline = TRUE)),
+          uiOutput("adm_ar_head"),
+          h4("By kind of file"),
+          DTOutput("adm_ar_kinds"),
+          fluidRow(
+            column(6, h4("Checks that failed"),
+              helpText("Which of the reader's checks stopped a statement being proven, most often first."),
+              DTOutput("adm_ar_checks")),
+            column(6, h4("What each reading was checked against, and what was learned"),
+              DTOutput("adm_ar_proof"))),
+          h4("Spot checks"),
+          uiOutput("adm_ar_spot"),
+          fluidRow(
+            column(5,
+              numericInput("adm_spot_rate", "Spot-check rate (% of automatic conversions)",
+                           value = 0, min = 0, max = 100, step = 0.5),
+              actionButton("adm_spot_save", "Save the rate", class = "btn-primary"),
+              uiOutput("adm_spot_msg")),
+            column(7, helpText(paste(
+              "Off (0) by default. A spot check asks the person who ran an automatic conversion to compare a few",
+              "figures with the statement. Which statements are picked depends on the file itself, so the same",
+              "statement is always picked, or never; one converted on a layout with no balance of its own is",
+              "picked at twice the rate.")))),
+          tags$hr(),
+          h4("Train a bank"),
+          p(class = "muted", style = "max-width:860px",
+            sprintf("Pick or name the bank, add every statement you have for it (up to %d at a time), and Train. They are read in the background - the layouts are worked out from them, and each statement that does not prove itself is listed with the reason. More can be added any time.",
+                    TRAIN_MAX_FILES)),
+          fluidRow(
+            column(4, selectizeInput("adm_train_bank", "Bank", choices = NULL,
+                                     options = list(create = TRUE,
+                                                    placeholder = "Pick a bank, or type a new one's name"))),
+            column(5, fileInput("adm_train_files", "Its statements", multiple = TRUE,
+                                accept = c(".pdf", ".csv", ".tsv", ".tdv", ".xlsx", ".xls"))),
+            column(3, br(), actionButton("adm_train_go", "Train", class = "btn-primary"))),
+          uiOutput("adm_train_status"),
           tags$hr(),
           h4("Housekeeping"),
           actionButton("adm_rollup", sprintf("Tidy up logs (archive runs older than %d days)", LOG_KEEP_DAYS)),
@@ -1296,143 +1351,394 @@ server <- function(input, output, session) {
     NULL
   }
 
-  # ---- Admin -> Banks -------------------------------------------------------------
-  # The banks in the table's row order, so a click on a row picks that row's bank.
-  adm_bank_slugs <- reactiveVal(character(0))
-  output$adm_banks <- renderDT({
-    req(admin_ok())
-    layouts_bump(); layouts_poll()
-    b <- safe(layouts_banks(LAYOUTS_DIR), data.frame())
-    # Every bank statements were converted for, from tracking, so a bank shows here
-    # from its first statement, not only once one of them has proved itself and
-    # taught a layout. A bank with converted statements and no layout has had none
-    # prove itself yet: they all went to Please check.
-    seen <- safe(track_summary(TRACKING_DIR)$banks, integer(0))
-    seen <- seen[!(names(seen) %in% c("unknown", "")) & !grepl("^code ", names(seen))]
-    heads <- c("Bank", "Statements converted", "Layouts in use", "Proven", "Provisional", "Retired",
-               "Statements that proved them")
-    if (!is.data.frame(b)) b <- data.frame()
-    slugs <- unique(c(if (nrow(b)) b$slug, names(seen)))
-    adm_bank_slugs(slugs)
-    if (!length(slugs))
-      return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
-                       rownames = FALSE, selection = "none",
-                       options = dt_none_opts("Nothing has been converted or learned yet. Convert statements, or train a bank below.", dom = "t")))
-    col <- function(f, i) if (nrow(b) && !is.na(i)) b[[f]][i] else 0L
-    d <- do.call(rbind, lapply(slugs, function(sl) {
-      i <- if (nrow(b)) match(sl, b$slug) else NA_integer_
-      data.frame(if (!is.na(i)) b$bank[i] else .bank_label(sl), unname(if (sl %in% names(seen)) seen[[sl]] else 0L),
-                 col("layouts", i), col("proven", i), col("provisional", i), col("retired", i), col("statements", i),
-                 stringsAsFactors = FALSE)
-    }))
-    names(d) <- heads
-    datatable(d, rownames = FALSE, selection = "single",
-              options = list(dom = "t", pageLength = 50))
-  })
-  observe({
-    req(admin_ok())
-    ch <- bank_list()
-    lb <- safe(layouts_banks(LAYOUTS_DIR), data.frame())
-    # The banks WITH layouts first: those are the ones there is something to look at.
-    have <- if (is.data.frame(lb) && nrow(lb)) lb$slug else character(0)
-    learned <- ch[ch %in% have]; extra <- setdiff(have, ch)
-    learned <- c(learned, stats::setNames(extra, lb$bank[match(extra, lb$slug)]))
-    .fill_pick(session, "adm_bank_pick", c(learned, ch[!ch %in% have]), empty = "No banks yet")
-    .fill_pick(session, "adm_train_bank", ch, empty = "Type the bank's name")
-  })
-  observeEvent(input$adm_banks_rows_selected, {
-    req(admin_ok())
-    sl <- isolate(adm_bank_slugs()); i <- input$adm_banks_rows_selected
-    if (length(i) && i[1] <= length(sl))
-      updateSelectizeInput(session, "adm_bank_pick", selected = sl[i[1]])
-  })
-  # The picked bank's layouts, newest version of each, retired ones included -- a
-  # retirement is undone by Confirm, so a retired layout must stay on screen.
-  adm_bank_layouts <- reactive({
-    req(admin_ok())
-    bank <- input$adm_bank_pick %||% ""
-    all <- lay_all()
-    if (!nzchar(bank) || !length(all)) return(list())
-    slug <- .layout_slug(bank)
-    Filter(function(l) identical(.layout_slug(l$layout$bank), slug), all)
-  })
-  output$adm_bank_head <- renderUI({
-    req(admin_ok())
-    bank <- input$adm_bank_pick %||% ""
-    if (!nzchar(bank)) return(NULL)
-    ls <- adm_bank_layouts()
-    st <- vapply(ls, function(l) as.character(l$layout$status %||% "")[1], "")
-    p(style = "margin:30px 0 0", strong(paste0(.bank_label(bank) %||% bank, ": ")),
-      if (!length(ls)) "nothing learned yet."
-      else sprintf("%d layout%s - %d proven, %d provisional, %d retired.", length(ls),
-                   if (length(ls) == 1L) "" else "s", sum(st == "proven"),
-                   sum(st == "provisional"), sum(st == "retired")))
-  })
-  .LAYOUT_ORIGIN_PLAIN <- c(auto = "learned", confirmed = "confirmed by an admin",
-                            corrected = "corrected by a person")
-  output$adm_layouts <- renderDT({
-    ls <- adm_bank_layouts()
-    heads <- c("Layout", "Status", "Statements that proved it", "Created", "How", "Version")
-    if (!length(ls))
-      return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
-                       rownames = FALSE, selection = "none",
-                       options = dt_none_opts("No layouts for this bank yet.", dom = "t")))
-    one <- function(l, f) as.character(l$layout[[f]] %||% NA_character_)[1]
-    d <- data.frame(
-      vapply(ls, function(l) as.character(safe(layout_display_name(l), one(l, "id")))[1], ""),
-      vapply(ls, function(l) one(l, "status"), ""),
-      vapply(ls, function(l) length(unique(unlist(l$layout$proved_by))), integer(1)),
-      vapply(ls, function(l) as.character(safe(local_time_text(one(l, "created")), one(l, "created")))[1], ""),
-      vapply(ls, function(l) plain_label(one(l, "origin"), .LAYOUT_ORIGIN_PLAIN), ""),
-      vapply(ls, function(l) one(l, "version"), ""),
-      stringsAsFactors = FALSE)
-    names(d) <- heads
-    datatable(d, rownames = FALSE, selection = "single",
-              options = list(dom = "tip", pageLength = 15, scrollX = TRUE)) |>
-      formatStyle("Status", fontWeight = "bold",
-        color = styleEqual(c("proven", "provisional", "retired"), c(PALETTE$ok, PALETTE$warn, "#68727d")))
-  })
-  # WHICH layout the buttons act on: the selected row of THIS bank's table. Read
-  # fresh on every press, so a redraw between the click and the press cannot point
-  # a Retire at a different layout.
-  .adm_layout_selected <- function() {
-    ls <- adm_bank_layouts(); i <- input$adm_layouts_rows_selected
-    if (!length(ls) || !length(i) || i[1] > length(ls)) return(NULL)
-    ls[[i[1]]]
+  # ---- Admin -> Needs attention and Recipes (D15; engine: R/recipes_admin.R) --------
+  # Every change is a NEW recipe version in the server's own recipes folder; the
+  # shipped recipes/ are never written. Nobody sees YAML: the card asks the same
+  # plain questions Please check asks, with this recipe's answers.
+  RC_DIRS <- list(shipped = if (nzchar(Sys.getenv("ENGINE_ROOT", ""))) file.path(Sys.getenv("ENGINE_ROOT"), "recipes") else "recipes",
+                  server = safe(recipes_state_dir(LAYOUTS_DIR, CONFIG), NULL))
+  rc_bump <- reactiveVal(0L)
+  rc_poll <- reactivePoll(5000, session,
+    checkFunc = function() paste(.store_stamp(RC_DIRS$server %||% tempdir()), .store_stamp(TRACKING_DIR),
+                                 .store_stamp(UPLOADS_DIR)),
+    valueFunc = function() Sys.time())
+  .rc_changed <- function() { rc_bump(isolate(rc_bump()) + 1L); layouts_bump(isolate(layouts_bump()) + 1L) }
+  rc_ov <- reactive({ req(admin_ok()); rc_bump(); rc_poll()
+    safe(recipes_overview(RC_DIRS, TRACKING_DIR, 30, hidden = FALSE), NULL) })
+  adm_na <- reactive({ req(admin_ok()); rc_bump(); rc_poll()
+    safe(needs_attention(RC_DIRS, TRACKING_DIR, UPLOADS_DIR, 30), NULL) })
+  # A button that tells the server which item it is for, in one event. Ids are
+  # recipe ids and upload ids: plain slugs, refused otherwise.
+  .act_btn <- function(input_id, value, label, cls = "btn-default btn-sm") {
+    if (!grepl("^[A-Za-z0-9_.|:-]+$", value)) return(NULL)
+    tags$button(type = "button", class = paste("btn", cls), `data-act` = value,
+                onclick = sprintf("Shiny.setInputValue('%s','%s',{priority:'event'})", input_id, value), label)
   }
-  .layout_note <- function(ok, msg) output$adm_layout_msg <- renderUI(
-    div(class = if (ok) "ok" else "bad", style = "margin-top:6px", msg))
-  # One shape for all three changes: each returns list(ok, changed, ref, why), and
-  # the screen says what changed in words -- never "done" over a change that did
-  # not happen.
-  .layout_change_ui <- function(fun, done) {
+  .na_card <- function(title, n, empty, items) div(class = "na-card",
+    div(class = "na-head", span(class = "na-count", n), span(title)),
+    if (!n) p(class = "muted", style = "margin:4px 0 0", empty)
+    else tags$ul(class = "na-items", items))
+  .na_item <- function(words, ...) tags$li(span(class = "na-words", words), span(class = "na-btns", ...))
+  output$adm_na_cards <- renderUI({
     req(admin_ok())
-    ly <- .adm_layout_selected()
-    if (is.null(ly)) { .layout_note(FALSE, "Click a layout in the table first."); return() }
-    nm <- as.character(safe(layout_display_name(ly), ly$layout$id))[1]
-    r <- safe(fun(ly$layout$id), list(ok = FALSE, why = "The change could not be made."))
-    if (isTRUE(r$ok) && isTRUE(r$changed %||% TRUE)) {
-      layouts_bump(isolate(layouts_bump()) + 1L)
-      .layout_note(TRUE, sprintf("%s: %s", nm, done))
-    } else .layout_note(FALSE, sprintf("%s: %s", nm, r$why %||% "nothing changed."))
+    na <- adm_na()
+    if (is.null(na)) return(p(class = "bad", "What needs attention could not be worked out."))
+    up <- na$set_aside; dr <- na$drafts; fl <- na$failing; mg <- na$merges
+    div(class = "na-grid",
+      .na_card("Statements waiting for a look", nrow(up), "None - good.",
+        lapply(seq_len(nrow(up)), function(i) .na_item(
+          sprintf("Set aside %s (%s)", as.character(safe(local_time_text(up$ts[i]), up$ts[i]))[1], toupper(up$file_ext[i] %||% "")),
+          .act_btn("adm_na_act", paste0("fix|", up$id[i]), "Fix", "btn-primary btn-sm")))),
+      .na_card("New recipes waiting for you", nrow(dr), "None waiting.",
+        lapply(seq_len(nrow(dr)), function(i) .na_item(
+          sprintf("%s - %s (%d checked)", dr$bank[i], dr$title[i], as.integer(dr$proofs[i])),
+          .act_btn("adm_na_act", paste0("accept|", dr$id[i]), "Accept", "btn-primary btn-sm"),
+          .act_btn("adm_na_act", paste0("retire|", dr$id[i]), "Retire")))),
+      .na_card("Recipes that stopped adding up", nrow(fl), "None - good.",
+        lapply(seq_len(nrow(fl)), function(i) .na_item(
+          sprintf("%s - %s: %d statement%s did not add up. The bank may have changed the design.", fl$bank[i], fl$title[i],
+                  as.integer(fl$tried_not_proven[i]), if (fl$tried_not_proven[i] == 1L) "" else "s"),
+          .act_btn("adm_na_act", paste0("open|", fl$id[i]), "Fix", "btn-primary btn-sm")))),
+      .na_card("Recipes that look like one", nrow(mg), "None.",
+        lapply(seq_len(nrow(mg)), function(i) .na_item(
+          sprintf("%s: %s and %s read the same design", mg$bank[i], .rc_title(mg$a[i]), .rc_title(mg$b[i])),
+          .act_btn("adm_na_act", paste0("merge|", mg$a[i], ":", mg$b[i]), "Merge", "btn-primary btn-sm")))))
+  })
+  .rc_title <- function(id) {
+    ov <- rc_ov(); i <- if (is.data.frame(ov)) match(id, ov$id) else NA
+    if (is.na(i)) id else ov$title[i]
   }
-  observeEvent(input$adm_layout_confirm, .layout_change_ui(
-    function(id) layout_confirm(id, LAYOUTS_DIR, by = who_now()),
-    "confirmed. It is proven from now on, and statements that match it convert on their own."))
-  observeEvent(input$adm_layout_retire, .layout_change_ui(
-    function(id) layout_retire(id, LAYOUTS_DIR, by = who_now()),
-    "retired. It is no longer used to read statements; Confirm brings it back. Conversions already issued are unchanged."))
-  observeEvent(input$adm_layout_rename, {
+  adm_na_msg <- reactiveVal(NULL)
+  output$adm_na_msg <- renderUI({ m <- adm_na_msg(); if (is.null(m)) return(NULL)
+    div(class = if (isTRUE(m$ok)) "note" else "note-bad", style = "margin:8px 0", m$text) })
+  .rc_say <- function(rv, r) rv(list(ok = isTRUE(r$ok), text = r$why %||% "It could not be done."))
+  observeEvent(input$adm_na_act, {
     req(admin_ok())
-    nm <- trimws(input$adm_layout_name %||% "")
-    if (!nzchar(nm)) { .layout_note(FALSE, "Type the new name first."); return() }
-    if (grepl("[0-9][0-9 -]{3,}[0-9]", nm)) {
-      .layout_note(FALSE, "A layout's name must not hold a long number - it is shown on every screen and kept in the logs.")
+    v <- as.character(input$adm_na_act %||% "")[1]
+    kind <- sub("[|].*$", "", v); id <- sub("^[^|]*[|]", "", v)
+    if (identical(kind, "fix")) {
+      p <- upload_file_path(id, UPLOADS_DIR)
+      if (is.na(p) || !file.exists(p)) { adm_na_msg(list(ok = FALSE, text = "That statement's file is no longer kept.")); return() }
+      .reread_on_convert(p, basename(p), upload_id = id)
       return()
     }
-    .layout_change_ui(function(id) layout_rename(id, nm, LAYOUTS_DIR),
-                      sprintf("now named \"%s\".", nm))
-    updateTextInput(session, "adm_layout_name", value = "")
+    if (identical(kind, "open")) { .rc_open(id); updateTabsetPanel(session, "adm_tabs", selected = "Recipes"); return() }
+    r <- switch(kind,
+      accept = safe(recipe_accept(id, RC_DIRS), NULL),
+      retire = safe(recipe_retire(id, RC_DIRS), NULL),
+      merge = { ab <- strsplit(id, ":", fixed = TRUE)[[1]]; if (length(ab) == 2L) safe(recipe_merge(ab[1], ab[2], RC_DIRS), NULL) },
+      NULL)
+    .rc_say(adm_na_msg, r %||% list(ok = FALSE, why = "It could not be done."))
+    .rc_changed()
+  })
+
+  # ---- the list: one row per recipe ----
+  output$adm_rc_list <- renderUI({
+    req(admin_ok())
+    ov <- rc_ov()
+    if (!is.data.frame(ov)) return(p(class = "bad", "The recipes could not be read."))
+    ov <- ov[!ov$hidden, , drop = FALSE]
+    if (!nrow(ov)) return(p(class = "muted", "No recipes yet."))
+    ov <- ov[order(tolower(ov$bank), tolower(ov$title)), , drop = FALSE]
+    div(class = "rc-wrap", tags$table(class = "rc-table",
+      tags$thead(tags$tr(tags$th("Bank"), tags$th("Name"), tags$th("On"), tags$th("Read"),
+                         tags$th("Needed help (30 days)"), tags$th("Is it"))),
+      tags$tbody(lapply(seq_len(nrow(ov)), function(i) {
+        id <- ov$id[i]
+        tags$tr(class = if (identical(rc_sel(), id)) "rc-picked", `data-recipe` = id,
+          tags$td(ov$bank[i]),
+          tags$td(tags$a(href = "#", class = "rc-open",
+                         onclick = sprintf("Shiny.setInputValue('adm_rc_open','%s',{priority:'event'});return false;", id),
+                         ov$title[i])),
+          tags$td(.act_btn("adm_rc_toggle", id, if (ov$enabled[i]) "ON" else "OFF",
+                           paste("btn-sm rc-toggle", if (ov$enabled[i]) "rc-on" else "rc-off"))),
+          tags$td(ov$read[i]), tags$td(ov$needed_help[i]),
+          tags$td(if (!ov$enabled[i]) "off" else if (identical(ov$status[i], "draft")) "draft" else "proven"))
+      }))))
+  })
+  observeEvent(input$adm_rc_toggle, {
+    req(admin_ok())
+    id <- as.character(input$adm_rc_toggle)[1]
+    ov <- rc_ov(); i <- match(id, ov$id); req(!is.na(i))
+    r <- safe(recipe_set_enabled(id, !ov$enabled[i], RC_DIRS), list(ok = FALSE, why = "It could not be switched."))
+    .rc_say(rc_msg, r); if (!identical(rc_sel(), id)) rc_msg(NULL)
+    adm_na_msg(NULL); .rc_changed()
+    if (!isTRUE(r$ok)) showNotification(r$why, type = "error")
+  })
+
+  # ---- the recipe card ----
+  rc_sel <- reactiveVal(NULL)
+  rc_words <- reactiveVal(character(0))
+  rc_sample <- reactiveVal(NULL)
+  rc_msg <- reactiveVal(NULL)
+  rc_test_msg <- reactiveVal(NULL)
+  .rc_open <- function(id) {
+    rc_sel(id); rc_msg(NULL); rc_test_msg(NULL); rc_sample(NULL)
+    cd <- safe(recipe_card(id, RC_DIRS), NULL)
+    rc_words(as.character(cd$recognise %||% character(0)))
+    session$sendCustomMessage("ss-scroll", "adm_rc_card")
+  }
+  observeEvent(input$adm_rc_open, { req(admin_ok()); .rc_open(as.character(input$adm_rc_open)[1]) })
+  rc_card <- reactive({ req(admin_ok()); rc_bump(); id <- rc_sel(); req(id)
+    cd <- safe(recipe_card(id, RC_DIRS), NULL)
+    if (is.null(cd) || !is.null(cd$error)) NULL else cd })
+  # after a save or an undo, the words on the card are the saved ones
+  observeEvent(rc_bump(), { cd <- isolate(tryCatch(rc_card(), error = function(e) NULL))
+    if (!is.null(cd)) rc_words(as.character(cd$recognise)) }, ignoreInit = TRUE)
+  RC_ROLE_CHOICES <- c("Date" = "date", "Description" = "description", "Money going out" = "money out",
+                       "Money coming in" = "money in", "Money in and out, in one column" = "amount",
+                       "Balance" = "balance", "Second date" = "second date", "Particulars" = "particulars",
+                       "Code" = "code", "Reference" = "reference", "Other party" = "other party",
+                       "Type" = "type", "Something else - ignore it" = "other")
+  output$adm_rc_card <- renderUI({
+    req(admin_ok())
+    cd <- rc_card(); req(cd)
+    ov <- rc_ov()
+    others <- if (is.data.frame(ov)) ov[ov$id != cd$id & ov$enabled & !ov$hidden & ov$bank == cd$bank, , drop = FALSE] else NULL
+    s <- rc_sample()
+    div(class = "rc-card", id = "adm_rc_card_box",
+      div(class = "check-head",
+        h4(style = "margin:0", sprintf("%s - %s", cd$bank, cd$title)),
+        span(class = paste("chip", if (!cd$enabled) "" else if (identical(cd$status, "draft")) "chip-warn" else ""),
+             if (!cd$enabled) "Off" else if (identical(cd$status, "draft")) sprintf("Draft - %d checked", cd$proofs) else "Proven")),
+      fluidRow(
+        column(7,
+          if (!is.null(s) && identical(s$id, cd$id) && length(s$pages)) tagList(
+            if (length(s$pages) > 1L) radioButtons("adm_rc_page", NULL, inline = TRUE, selected = s$page,
+                                                    choiceValues = as.list(s$pages), choiceNames = as.list(sprintf("Page %d", s$pages))),
+            plotOutput("adm_rc_plot", height = "auto"))
+          else div(class = "rc-nopage", p(class = "muted",
+            "Test a statement of this design below to see its page here, with the columns drawn and numbered.")),
+          div(class = "rc-test",
+            fileInput("adm_rc_test_file", "Test with a statement", accept = c(".pdf", ".csv", ".xlsx", ".xls"), width = "100%"),
+            actionButton("adm_rc_test", "Test", class = "btn-default"),
+            uiOutput("adm_rc_test_msg"))),
+        column(5,
+          textInput("adm_rc_title", "Name", cd$title, width = "100%"),
+          h5("What is each column?"),
+          if (!nrow(cd$columns)) p(class = "muted", "This recipe names no columns.")
+          else lapply(seq_len(nrow(cd$columns)), function(j) selectInput(paste0("adm_rc_role_", j),
+            sprintf("Column %d%s", j, if (nzchar(cd$columns$heading[j])) sprintf(" - headed \"%s\"", substr(cd$columns$heading[j], 1, 40)) else ""),
+            RC_ROLE_CHOICES, selected = cd$columns$role[j], width = "100%")),
+          textInput("adm_rc_date", "How is a date printed? (an example)", cd$date, width = "100%"),
+          radioButtons("adm_rc_money", "How is money shown?", inline = FALSE, selected = cd$money,
+            choiceNames = list("Money out and money in, in columns of their own", "One amount column"),
+            choiceValues = list("money out and money in", "one amount")),
+          h5("Recognised by these words"),
+          div(class = "rc-chips", lapply(rc_words(), function(w) span(class = "rc-chip", w,
+            tags$button(type = "button", class = "rc-chip-x", title = "Remove", `aria-label` = paste("Remove", w),
+                        onclick = sprintf("Shiny.setInputValue('adm_rc_word_rm',%s,{priority:'event'})",
+                                          jsonlite::toJSON(w, auto_unbox = TRUE)), "\u00d7")))),
+          div(style = "display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap",
+            div(style = "flex:1 1 160px", textInput("adm_rc_word_new", NULL, "", placeholder = "Add a word the statement prints", width = "100%")),
+            actionButton("adm_rc_word_add", "Add", style = "margin-bottom:15px")),
+          div(style = "display:flex;gap:8px;flex-wrap:wrap;margin:8px 0",
+            actionButton("adm_rc_save", "Save", class = "btn-primary"),
+            actionButton("adm_rc_onoff", if (cd$enabled) "Turn off" else "Turn on", class = "btn-default")),
+          if (!is.null(others) && nrow(others)) div(style = "display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap",
+            div(style = "flex:1 1 160px", selectInput("adm_rc_merge_with", "Merge with...",
+              stats::setNames(others$id, others$title), width = "100%")),
+            actionButton("adm_rc_merge", "Merge", style = "margin-bottom:15px")),
+          uiOutput("adm_rc_msg"),
+          h5("Versions"),
+          tags$table(class = "split-table rc-versions",
+            tags$tbody(lapply(seq_len(min(6L, nrow(cd$versions))), function(i) tags$tr(
+              tags$td(sprintf("Version %d", cd$versions$version[i])), tags$td(cd$versions$what[i]),
+              tags$td(cd$versions$when[i]))))),
+          if (nrow(cd$versions) > 1L) actionButton("adm_rc_undo", "Undo the last change", class = "btn-default btn-sm"))))
+  })
+  output$adm_rc_msg <- renderUI({ m <- rc_msg(); if (is.null(m)) return(NULL)
+    div(class = if (isTRUE(m$ok)) "note" else "note-bad", style = "margin:6px 0", m$text) })
+  output$adm_rc_test_msg <- renderUI({ m <- rc_test_msg(); if (is.null(m)) return(NULL)
+    div(class = if (isTRUE(m$ok)) "note" else "note-bad", style = "margin:6px 0", m$text) })
+  observeEvent(input$adm_rc_word_rm, { req(admin_ok())
+    w <- as.character(input$adm_rc_word_rm)[1]; rc_words(setdiff(rc_words(), w)) })
+  observeEvent(input$adm_rc_word_add, { req(admin_ok())
+    w <- trimws(input$adm_rc_word_new %||% "")
+    if (!nzchar(w)) return()
+    if (grepl("[0-9][0-9 -]{3,}[0-9]", w)) {
+      rc_msg(list(ok = FALSE, text = "A word that recognises a design must not hold a long number - it could be an account.")); return() }
+    if (!(tolower(w) %in% tolower(rc_words()))) rc_words(c(rc_words(), w))
+    updateTextInput(session, "adm_rc_word_new", value = "")
+  })
+  # .rc_changes() -- what the card says now that the saved recipe does not, as
+  # recipe_update takes it. Empty: nothing changed.
+  .rc_changes <- function() {
+    cd <- rc_card(); ch <- list()
+    t <- trimws(input$adm_rc_title %||% cd$title)
+    if (nzchar(t) && !identical(t, cd$title)) ch$title <- t
+    if (nrow(cd$columns)) {
+      roles <- vapply(seq_len(nrow(cd$columns)), function(j) as.character(input[[paste0("adm_rc_role_", j)]] %||% cd$columns$role[j])[1], "")
+      if (!identical(roles, cd$columns$role)) ch$columns <- roles
+    }
+    d <- trimws(input$adm_rc_date %||% cd$date)
+    if (nzchar(d) && !identical(d, cd$date)) ch$date_format <- d
+    m <- input$adm_rc_money %||% cd$money
+    if (!identical(m, cd$money)) ch$money_style <- m
+    w <- rc_words()
+    add <- w[!(tolower(w) %in% tolower(cd$recognise))]; rm <- cd$recognise[!(tolower(cd$recognise) %in% tolower(w))]
+    if (length(add)) ch$recognise_add <- add
+    if (length(rm)) ch$recognise_remove <- rm
+    ch
+  }
+  observeEvent(input$adm_rc_save, {
+    req(admin_ok()); cd <- rc_card(); req(cd)
+    ch <- .rc_changes()
+    if (!length(ch)) { rc_msg(list(ok = TRUE, text = "Nothing was changed, so nothing was saved.")); return() }
+    r <- safe(recipe_update(cd$id, ch, RC_DIRS), list(ok = FALSE, why = "It could not be saved."))
+    rc_msg(list(ok = isTRUE(r$ok), text = if (isTRUE(r$ok)) "Saved as a new version. Undo brings the last one back." else r$why))
+    if (isTRUE(r$ok)) .rc_changed()
+  })
+  observeEvent(input$adm_rc_undo, {
+    req(admin_ok()); cd <- rc_card(); req(cd)
+    r <- safe(recipe_undo(cd$id, RC_DIRS), list(ok = FALSE, why = "It could not be undone."))
+    .rc_say(rc_msg, r); if (isTRUE(r$ok)) .rc_changed()
+  })
+  observeEvent(input$adm_rc_onoff, {
+    req(admin_ok()); cd <- rc_card(); req(cd)
+    r <- safe(recipe_set_enabled(cd$id, !cd$enabled, RC_DIRS), list(ok = FALSE, why = "It could not be switched."))
+    .rc_say(rc_msg, r); if (isTRUE(r$ok)) .rc_changed()
+  })
+  observeEvent(input$adm_rc_merge, {
+    req(admin_ok()); cd <- rc_card(); req(cd)
+    other <- as.character(input$adm_rc_merge_with %||% "")[1]; req(nzchar(other))
+    r <- safe(recipe_merge(cd$id, other, RC_DIRS), list(ok = FALSE, why = "They could not be merged."))
+    .rc_say(rc_msg, r)
+    if (isTRUE(r$ok)) { .rc_changed(); if (!identical(r$kept, cd$id)) rc_sel(r$kept) }
+  })
+  observeEvent(input$adm_rc_test, {
+    req(admin_ok()); cd <- rc_card(); req(cd)
+    f <- input$adm_rc_test_file
+    if (is.null(f) || !nrow(f)) { rc_test_msg(list(ok = FALSE, text = "Add a statement to test with first.")); return() }
+    path <- f$datapath[1]
+    r <- withProgress(message = "Testing\u2026", value = 0.5, {
+      inp <- safe(read_input(path), NULL)
+      if (is.null(inp)) list(outcome = "check", why = "That file could not be opened.")
+      else safe(recipe_test(cd$id, inp, RC_DIRS, changes = .rc_changes()),
+                list(outcome = "check", why = "It could not be tested."))
+    })
+    rc_test_msg(list(ok = identical(r$outcome, "proven"), text = r$why))
+    cols <- r$reading$columns
+    pg <- if (is.data.frame(cols) && nrow(cols)) sort(unique(as.integer(cols$page))) else integer(0)
+    rc_sample(if (length(pg) && grepl("[.]pdf$", tolower(path))) list(id = cd$id, path = path, reading = r$reading, pages = pg, page = pg[1]) else NULL)
+  })
+  observeEvent(input$adm_rc_page, { req(admin_ok()); s <- rc_sample(); pg <- suppressWarnings(as.integer(input$adm_rc_page))
+    if (!is.null(s) && !is.na(pg)) { s$page <- pg; rc_sample(s) } })
+  output$adm_rc_plot <- renderPlot({
+    s <- rc_sample(); cd <- rc_card(); req(s, cd, file.exists(s$path))
+    r <- render_page_view(s$path, s$page, 100); req(r)
+    cols <- s$reading$columns; cols <- cols[cols$page %in% s$page, , drop = FALSE]
+    n <- match(cols$field, cd$columns$field)
+    .draw_page_columns(r, cols, ifelse(is.na(n), plain_column(cols$field),
+                                       sprintf("%d %s", n, .col_short(cols$field))))
+  }, height = function() .plot_height(session$clientData$output_adm_rc_plot_width,
+                                      tryCatch({ s <- rc_sample(); render_page_view(s$path, s$page, 100) }, error = function(e) NULL)))
+
+  # ---- a new recipe from a statement: never a blank form ----
+  rc_new_open <- reactiveVal(FALSE)
+  rc_new <- reactiveVal(NULL)
+  rc_new_msg <- reactiveVal(NULL)
+  observeEvent(input$adm_rc_new_open, { req(admin_ok()); rc_new_open(!isTRUE(rc_new_open())); rc_new(NULL); rc_new_msg(NULL) })
+  output$adm_rc_new <- renderUI({
+    req(admin_ok()); if (!isTRUE(rc_new_open())) return(NULL)
+    div(class = "rc-card",
+      h4(style = "margin-top:0", "New recipe from a statement"),
+      p(class = "muted", "Add one statement of the new design. The tool reads it and fills in the answers; check them, Test, then Save."),
+      fluidRow(
+        column(4, selectizeInput("adm_rc_new_bank", "Bank", choices = c("", bank_list()), width = "100%",
+                                 options = list(create = TRUE, placeholder = "Pick a bank, or type a new one's name"))),
+        column(4, textInput("adm_rc_new_name", "What kind of statement is it?", "", placeholder = "e.g. Everyday account", width = "100%")),
+        column(4, fileInput("adm_rc_new_file", "The statement (a PDF)", accept = ".pdf", width = "100%"))),
+      actionButton("adm_rc_new_read", "Read it", class = "btn-primary"),
+      uiOutput("adm_rc_new_body"))
+  })
+  .rc_new_roles <- function() {
+    n <- rc_new(); m <- .money_cols(n$reading)
+    if (!nrow(m)) return(NULL)
+    roles <- vapply(m$field, function(f) as.character(input[[paste0("adm_rc_new_role_", f)]] %||% .field_role(f))[1], "")
+    if (identical(unname(roles), vapply(m$field, .field_role, "", USE.NAMES = FALSE))) return(NULL)
+    stats::setNames(roles, m$field)
+  }
+  .rc_new_read <- function(roles = NULL) {
+    f <- input$adm_rc_new_file; bank <- trimws(input$adm_rc_new_bank %||% "")
+    if (!nzchar(bank)) { rc_new_msg(list(ok = FALSE, text = "Say which bank the statement is from first.")); return() }
+    pb <- .bank_name_problem(bank); if (!is.null(pb)) { rc_new_msg(list(ok = FALSE, text = pb)); return() }
+    if (is.null(f) || !nrow(f)) { rc_new_msg(list(ok = FALSE, text = "Add the statement first.")); return() }
+    r <- withProgress(message = "Reading it\u2026", value = 0.5, {
+      inp <- safe(read_input(f$datapath[1]), NULL)
+      if (is.null(inp)) list(outcome = "check", why = "That file could not be opened.")
+      else c(safe(recipe_preview(inp, bank, roles), list(outcome = "check", why = "It could not be read.")), list(input = inp))
+    })
+    rc_new(list(reading = r$reading, input = r$input, path = f$datapath[1], bank = bank, roles = roles,
+                page = as.integer((r$reading$columns$page %||% 1L)[1])))
+    rc_new_msg(list(ok = identical(r$outcome, "proven"), text = r$why))
+  }
+  observeEvent(input$adm_rc_new_read, { req(admin_ok()); .rc_new_read(NULL) })
+  observeEvent(input$adm_rc_new_test, { req(admin_ok()); req(rc_new()); .rc_new_read(.rc_new_roles()) })
+  observeEvent(input$adm_rc_new_save, {
+    req(admin_ok()); n <- rc_new(); req(n, n$input)
+    r <- withProgress(message = "Saving\u2026", value = 0.5,
+      safe(recipe_from_statement(n$input, list(bank = n$bank, roles = n$roles, title = trimws(input$adm_rc_new_name %||% "")), RC_DIRS),
+           list(ok = FALSE, why = "It could not be saved.")))
+    rc_new_msg(list(ok = isTRUE(r$ok), text = r$why))
+    if (isTRUE(r$ok)) {
+      .rc_changed(); rc_new_open(FALSE); rc_new(NULL)
+      .rc_open(r$id %||% sub("@v?[0-9]+$", "", r$ref)); rc_msg(list(ok = TRUE, text = r$why))
+    }
+  })
+  output$adm_rc_new_body <- renderUI({
+    m <- rc_new_msg(); n <- rc_new()
+    tagList(
+      if (!is.null(m)) div(class = if (isTRUE(m$ok)) "note" else "note-bad", style = "margin:8px 0", m$text),
+      if (!is.null(n) && !is.null(n$reading)) {
+        money <- .money_cols(n$reading)
+        fluidRow(
+          column(7, if (is.data.frame(n$reading$columns) && nrow(n$reading$columns)) plotOutput("adm_rc_new_plot", height = "auto")),
+          column(5,
+            h5("What is each column?"),
+            if (!nrow(money)) p(class = "muted", "No column of figures was found on this statement.")
+            else lapply(seq_len(nrow(money)), function(j) {
+              f <- money$field[j]
+              sel <- if (!is.null(n$roles) && f %in% names(n$roles)) n$roles[[f]] else .field_role(f)
+              selectInput(paste0("adm_rc_new_role_", f), sprintf("Column %d of %d", j, nrow(money)),
+                          stats::setNames(names(ROLE_PLAIN), unname(ROLE_PLAIN)), selected = sel, width = "100%")
+            }),
+            div(style = "display:flex;gap:8px;flex-wrap:wrap;margin:8px 0",
+              if (nrow(money)) actionButton("adm_rc_new_test", "Test", class = "btn-default"),
+              actionButton("adm_rc_new_save", "Save", class = "btn-primary"))))
+      })
+  })
+  output$adm_rc_new_plot <- renderPlot({
+    n <- rc_new(); req(n, file.exists(n$path %||% ""))
+    r <- render_page_view(n$path, n$page, 100); req(r)
+    cols <- n$reading$columns; cols <- cols[cols$page %in% n$page, , drop = FALSE]
+    qn <- match(cols$field, .money_cols(n$reading)$field)
+    .draw_page_columns(r, cols, ifelse(is.na(qn), plain_column(cols$field), sprintf("%d %s", qn, .col_short(cols$field))))
+  }, height = function() .plot_height(session$clientData$output_adm_rc_new_plot_width,
+                                      tryCatch({ n <- rc_new(); render_page_view(n$path, n$page, 100) }, error = function(e) NULL)))
+
+  observe({
+    req(admin_ok())
+    .fill_pick(session, "adm_train_bank", bank_list(), empty = "Type the bank's name")
+  })
+
+  # ---- a learned layout, retired from Health ----
+  observe({
+    req(admin_ok())
+    ls <- Filter(function(l) !identical(l$layout$status, "retired"), lay_all())
+    ch <- vapply(ls, function(l) as.character(l$layout$id)[1], "")
+    names(ch) <- vapply(ls, function(l) as.character(safe(layout_display_name(l), l$layout$id))[1], "")
+    .fill_pick(session, "adm_layout_pick", ch, empty = "No learned layouts")
+  })
+  observeEvent(input$adm_layout_retire, {
+    req(admin_ok())
+    id <- as.character(input$adm_layout_pick %||% "")[1]
+    if (!nzchar(id)) { output$adm_layout_msg <- renderUI(div(class = "bad", "Pick a layout first.")); return() }
+    r <- safe(layout_retire(id, LAYOUTS_DIR, by = who_now()), list(ok = FALSE, why = "It could not be retired."))
+    if (isTRUE(r$ok)) layouts_bump(isolate(layouts_bump()) + 1L)
+    output$adm_layout_msg <- renderUI(div(class = if (isTRUE(r$ok)) "ok" else "bad",
+      if (isTRUE(r$ok)) sprintf("%s is retired: it is no longer used to read statements. Conversions already issued are unchanged.", .layout_name(id) %||% id)
+      else r$why %||% "It could not be retired."))
   })
 
   # ---- fixes held for an admin (R/fixes.R) ----
@@ -1668,7 +1974,7 @@ server <- function(input, output, session) {
       p(sprintf("%d spot check%s answered: %d right, %d wrong, %d couldn't tell.", tot,
                 if (tot == 1L) "" else "s", unname(sc["right"]), unname(sc["wrong"]), unname(sc["cant_tell"]))),
       if (isTRUE(unname(sc["wrong"]) > 0L))
-        p(class = "bad", "A spot check found an automatic conversion that was wrong. Look at the layouts it was read with on Banks."),
+        p(class = "bad", "A spot check found an automatic conversion that was wrong. Look at the recipe it was read with, on Recipes."),
       # WHAT A CLEAN RUN OF SPOT CHECKS CAN AND CANNOT SAY (spec section 9): zero
       # errors in n checks only shows the error rate is below about 3/n.
       p(class = "muted", style = "font-size:12.5px", if (tot >= 30L && !isTRUE(unname(sc["wrong"]) > 0L))
@@ -4195,53 +4501,26 @@ server <- function(input, output, session) {
     src <- cv_src(); req(src, file.exists(src$path %||% ""))
     render_page_view(src$path, ck_page(), 100)
   })
-  # The colour of a column on the page: what it IS, the same colours the money
-  # columns have everywhere (money in green, money out red).
-  .ck_col_colour <- function(field, kind) {
-    if (identical(kind, "date")) return("#1d4ed8")
-    if (!identical(kind, "money")) return("#68727d")
-    switch(sub("[0-9]+$", "", field), debit = PALETTE$bad, credit = PALETTE$ok,
-           balance = "#00205b", amount = PALETTE$warn, "#7c3aed")
-  }
   output$cv_ck_plot <- renderPlot({
     r <- ck_render(); req(r)
     res <- cv_res(); s <- ck_stmt()
-    op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
-    plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
-         xlab = "", ylab = "", axes = FALSE)
-    rasterImage(r$ras, 0, r$h, r$w, 0)
+    cols <- res$reading[[s]]$columns
+    if (is.data.frame(cols)) cols <- cols[cols$page %in% r$pg, , drop = FALSE]
+    # Each column of figures carries the number of its question beside the page,
+    # and one short word: a band is too narrow for "Money going out".
+    qn <- if (is.data.frame(cols)) match(cols$field, .ck_money(res, s)$field) else integer(0)
+    labels <- vapply(seq_along(qn), function(j)
+      if (is.na(qn[j])) plain_column(cols$field[j]) else sprintf("%d %s", qn[j], .col_short(cols$field[j])), "")
+    .draw_page_columns(r, cols, labels)
     mk <- ck_mark()
     if (!is.null(mk) && identical(mk$page, as.integer(r$pg))) {
       y <- .ck_mark_y(cv_src()$path, r$pg, mk$amount)
       if (is.finite(y)) rect(0, y - 7, r$w, y + 7, col = "#f59e0b40", border = "#d97706", lwd = 2)
     }
-    cols <- res$reading[[s]]$columns
-    if (!is.data.frame(cols) || !nrow(cols)) return(invisible())
-    cols <- cols[cols$page %in% r$pg, , drop = FALSE]
-    if (!nrow(cols)) {
+    if (is.data.frame(res$reading[[s]]$columns) && nrow(res$reading[[s]]$columns) && !NROW(cols))
       text(r$w / 2, 30, "No columns were found on this page.", col = PALETTE$bad, font = 2)
-      return(invisible())
-    }
-    # Each column of figures carries the number of its question beside the page.
-    qn <- match(cols$field, .ck_money(res, s)$field)
-    for (j in seq_len(nrow(cols))) {
-      cc <- .ck_col_colour(cols$field[j], cols$kind[j])
-      # the band the column owns, and inside it the ink that was actually read
-      rect(cols$x_min[j], 0, cols$x_max[j], r$h, border = cc, lwd = 1.6, lty = 2)
-      if (all(is.finite(c(cols$ink_min[j], cols$ink_max[j]))))
-        rect(cols$ink_min[j], 0, cols$ink_max[j], r$h, col = paste0(cc, "1f"), border = NA)
-      # A column of figures is labelled with its question's number and one short
-      # word: a band is too narrow for "Money going out".
-      short <- c(debit = "Out", credit = "In", amount = "In/Out", balance = "Balance")[cols$field[j]]
-      .col_label((cols$x_min[j] + cols$x_max[j]) / 2,
-                 if (is.na(qn[j])) plain_column(cols$field[j])
-                 else sprintf("%d %s", qn[j], if (is.na(short)) "Other" else short), cc)
-    }
-  }, height = function() {
-    w <- session$clientData$output_cv_ck_plot_width %||% 600
-    r <- tryCatch(ck_render(), error = function(e) NULL)
-    if (is.null(r) || !is.finite(r$w) || r$w <= 0) 600 else max(300, round(w * r$h / r$w))
-  })
+  }, height = function() .plot_height(session$clientData$output_cv_ck_plot_width,
+                                      tryCatch(ck_render(), error = function(e) NULL)))
   # A CSV or workbook has no page to draw: its columns are named by their headings.
   output$cv_ck_table <- renderUI({
     res <- cv_res(); s <- ck_stmt()
@@ -4322,6 +4601,7 @@ server <- function(input, output, session) {
           actionButton("cv_ck_confirm", "It\u2019s right \u2014 accept it", class = if (new_only) "btn-primary" else "btn-default"),
         if (need) actionButton("cv_ck_aside", "Set aside", class = "btn-default")),
       uiOutput("cv_ck_msg"),
+      uiOutput("cv_ck_recipe"),
       # THE WAY BACK. A role set wrong can leave nothing readable -- no columns, so
       # no dropdowns and no Re-read -- and the only other way out was converting
       # the whole case again. Offered on any reading a person's fix produced, so it
@@ -4536,6 +4816,42 @@ server <- function(input, output, session) {
   })
   # SET ASIDE (D16): not converted now; the upload is marked for an admin, who sees
   # it under Needs attention with its page.
+  # SAVE AS A RECIPE (D15): a person's answers that made the statement add up can
+  # become a draft recipe for its design, named in their words. A draft is never
+  # trusted alone: statements like it come back filled in until it is proven.
+  ck_rc_done <- reactiveVal(NULL)
+  .ck_recipe_offer <- function() {
+    res <- cv_res(); src <- cv_src()
+    if (is.null(res) || is.null(src) || !identical(res$status, "ok") || is.null(cv_ov())) return(NULL)
+    if (!identical(res$stamp$kind %||% "", "pdf") || length(res$reading %||% list()) != 1L) return(NULL)
+    rd <- res$reading[[1]]
+    if (!is.null(rd$matched_recipe) || !is.null(rd$learned_recipe)) return(NULL)
+    bank <- as.character(src[["bank"]] %||% NA_character_)[1]
+    if (is.na(bank) || !nzchar(bank)) return(NULL)
+    list(bank = bank, label = .bank_label(bank) %||% bank, run = res$run_id)
+  }
+  output$cv_ck_recipe <- renderUI({
+    o <- .ck_recipe_offer(); if (is.null(o)) return(NULL)
+    d <- ck_rc_done()
+    if (!is.null(d) && identical(d$run, o$run))
+      return(div(class = if (isTRUE(d$ok)) "note" else "note-bad", style = "margin:6px 0", d$text))
+    div(class = "ck-recipe",
+      textInput("cv_ck_rc_name", sprintf("Which %s statement is it?", o$label), "", placeholder = "e.g. Everyday account", width = "100%"),
+      actionButton("cv_ck_rc_save", sprintf("Save as a recipe for %s statements like this?", o$label), class = "btn-default"))
+  })
+  observeEvent(input$cv_ck_rc_save, {
+    o <- .ck_recipe_offer(); req(o)
+    nm <- trimws(input$cv_ck_rc_name %||% "")
+    if (grepl("[0-9][0-9 -]{3,}[0-9]", nm)) {
+      ck_rc_done(list(run = o$run, ok = FALSE, text = "A recipe's name must not hold a long number - it could be an account.")); return() }
+    inp <- safe(read_input(cv_src()$path), NULL)
+    r <- if (is.null(inp)) list(ok = FALSE, why = "The statement could not be opened again.")
+         else safe(recipe_from_statement(inp, list(bank = o$bank, roles = cv_ov()$roles, title = nm), RC_DIRS),
+                   list(ok = FALSE, why = "It could not be saved as a recipe."))
+    ck_rc_done(list(run = o$run, ok = isTRUE(r$ok),
+                    text = if (isTRUE(r$ok)) "Saved as a draft recipe. An admin accepts it under Needs attention; until then statements like it come back filled in." else r$why))
+    if (isTRUE(r$ok)) .rc_changed()
+  })
   observeEvent(input$cv_ck_aside, {
     res <- cv_res(); req(res)
     id <- cv_upload_id()

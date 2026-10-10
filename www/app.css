@@ -452,3 +452,28 @@ p.tick-line{margin:6px 0 10px;font-size:13px;font-weight:600}
 .ck-ask-lines td.ck-ask-fig{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .ck-ask .radio{margin:4px 0}
 .ck-ask .radio label{line-height:1.3}
+
+/* ---- Admin: Needs attention cards and the recipes (D15) ---- */
+.na-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.na-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card, #fff);min-width:0}
+.na-head{display:flex;gap:10px;align-items:center;font-weight:600}
+.na-count{display:inline-block;min-width:30px;text-align:center;padding:2px 8px;border-radius:999px;background:var(--brand-tint);color:var(--brand);font-size:15px}
+.na-items{list-style:none;margin:8px 0 0;padding:0}
+.na-items li{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line)}
+.na-words{flex:1 1 160px;min-width:0;overflow-wrap:anywhere;font-size:13px}
+.na-btns{display:flex;gap:6px}
+.rc-wrap{max-width:100%;overflow-x:auto}
+.rc-table{border-collapse:collapse;width:100%;font-size:13px}
+.rc-table th,.rc-table td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.rc-table tr.rc-picked td{background:var(--brand-tint)}
+.rc-toggle{min-width:52px;font-weight:700}
+.rc-toggle.rc-on{background:var(--ok);color:#fff;border-color:var(--ok)}
+.rc-toggle.rc-off{background:#eef1f4;color:var(--slate)}
+.rc-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:12px 0;min-width:0}
+.rc-nopage{border:1px dashed var(--line);border-radius:8px;padding:24px 12px;text-align:center}
+.rc-test{margin-top:10px}
+.rc-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.rc-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 10px;border-radius:999px;background:var(--brand-tint);border:1px solid var(--brand-line);font-size:12.5px;max-width:100%;overflow-wrap:anywhere}
+.rc-chip-x{border:0;background:transparent;font-size:15px;line-height:1;cursor:pointer;padding:0 4px;color:var(--slate)}
+.rc-versions td{font-size:12.5px}
+.ck-recipe{margin:8px 0;padding:8px 10px;border:1px dashed var(--brand-line);border-radius:8px}

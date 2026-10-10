@@ -32,46 +32,73 @@ An admin has four questions, so there are four tabs:
 
 | Tab | The question |
 |---|---|
-| **Banks** | What has the tool learned, is it right, and how do I teach it more? |
-| **Automatic reading** | How is it doing? Counts only, plus the spot checks. |
+| **Needs attention** | What is waiting for me? Each thing with one button. |
+| **Recipes** | How is each design of statement read, and is it right? |
 | **Words** | Which words does it look for? |
-| **Health** | What is failing? Also the uploads, the queues and the housekeeping. |
+| **Health** | What is failing, and how is automatic reading doing? Also the uploads, the queues, training and the housekeeping. |
 
-### Banks: what the tool has learned
+No screen shows a recipe file (YAML). Every change is made in plain words, and
+every change writes a NEW version: nothing is edited in place, so a conversion
+already issued can always be traced to what read it, and every undo is one more
+version. The statement's own arithmetic still gates every reading, so no change
+here can make a wrong conversion look right.
 
-The tool learns each bank's **layouts**, one per statement design, from
-statements whose own arithmetic proved them. The rules, in short:
+### Needs attention: what is waiting for you
 
-- **Only a proven reading teaches.** A new design starts **provisional**. It
-  becomes **proven** after three statements of it have proved it, or when you
-  confirm it here.
-- **A person's fix that then proves is learned at once.** A fix that does not
-  prove, or a *This is right*, applies to that one file and waits for you (see
-  below).
-- **Nothing is learned while the bank is in question**, that is, while a
-  statement names a different bank from the one picked and nobody has said
-  which is right.
-- **Nothing is edited in place.** Every change writes a new version of the
-  layout file, so a conversion already issued can always be traced to what was
-  learned then, and every undo is one more version.
+Cards, each with its count:
 
-The tab has three parts:
+- **Statements waiting for a look**: set aside on Please check. **Fix** opens
+  the statement on Convert, with Please check.
+- **New recipes waiting for you**: drafts saved from a person's answers or from
+  *New recipe from a statement*. **Accept** makes one proven (statements like
+  it are read on their own, and must still add up); **Retire** takes it out of
+  use and off the list. A draft is also proven by itself after three checked
+  statements from two accounts.
+- **Recipes that stopped adding up**: recognised recently but their reading did
+  not add up; the bank may have changed the design. **Fix** opens the recipe.
+- **Recipes that look like one**: two recipes of the same bank reading the same
+  table. **Merge** keeps the one with more checked statements, with both
+  recipes' words, and turns the other off.
 
-- **The bank overview, then the chosen bank's layouts.** For each layout: its
-  name, status (*provisional*, *proven*, *retired*), how many statements proved
-  it, when it was created, how it was learned (*auto*, *confirmed* by an admin,
-  *corrected* by a person's fix) and its version. Select one and:
-  - **Confirm**: it is proven from now on, and statements that match it convert
-    on their own.
-  - **Rename**: give it the name the team uses ("Everyday account").
-  - **Retire**: it is no longer used to read statements. Its files are kept,
-    conversions already issued are unchanged, and confirming it brings it back.
-- **Fixes waiting for an admin.** A fix on Please check that the statement's
+**Fixes waiting for an admin**, below the cards: A fix on Please check that the statement's
   arithmetic could not prove, or a reading a person confirmed as right. Each
   applies to the one file it was made on. **Accept** one to make it a proven
   layout of its bank, or **Discard** it to turn it down. Accept only what you
   have checked against the statement: an accepted fix converts the next
   statement of that design without anyone looking.
+
+### Recipes: how each design is read
+
+One row per recipe: bank, name, an **ON/OFF** switch (off: statements like it
+get the questions instead), statements read, how many needed help in the last
+30 days, and draft or proven. Click a recipe for its card:
+
+- its sample page, with the columns drawn and numbered, once you **Test** a
+  statement of the design with it (the answer is one sentence: it adds up, or
+  why not). Test uses any change on the card before it is saved;
+- the plain questions Please check asks, with this recipe's answers: what each
+  column is, how a date is printed, how money is shown;
+- the words that recognise the design, as chips: remove one with its cross,
+  add one in the box;
+- **Save** (a new version), **Undo the last change**, **Merge with...**, and
+  **Turn off** / **Turn on**; and its versions, newest first.
+
+**New recipe from a statement** reads one statement, fills in the answers from
+what the tool found, lets you Test them, and saves a draft. Please check offers
+the same, *Save as a recipe for ...?*, when a person's answers made a statement
+add up.
+
+Where they are kept: the shipped recipes in `recipes\` (replaced by an update,
+never written by the app), and every change and draft in the server's own
+recipes folder (`paths.recipes`, else `templates\recipes\`). **Back it up.**
+
+### Learned layouts and training (on Health)
+
+The tool also learns a bank's **layouts** from statements whose own arithmetic
+proved them. A learned layout that read a statement wrongly is taken out of use
+on Health (*Take a learned layout out of use*); its files are kept and
+conversions already issued are unchanged.
+
 - **Train a bank.** Add every statement you have for a bank (up to 200 at a
   time), press **Train**, and read the report: *"ANZ: 7 layouts from 212
   statements, 205 proven, 7 need a look"*, with each one's reason. It runs in
@@ -83,7 +110,7 @@ fixes in `templates\layouts\.pending\`. **Back it up**
 ([backup-and-restore.md](backup-and-restore.md)). It is learned from your own
 statements and exists nowhere else.
 
-### Automatic reading: how it is doing
+### Health: automatic reading, how it is doing
 
 Read from `logs\tracking\`, which holds codes and counts only. No names,
 descriptions, amounts, dates, account numbers or file names are ever written
@@ -172,7 +199,7 @@ A live picture from the run and feedback logs. Press **Refresh from logs** first
 - **Check a pile of files at once**: drop in a pile and get one picture of what
   the reader proves on its own, and of the statements it cannot read, grouped by
   layout, biggest first. **It audits; it does not convert, save or learn.** To
-  teach the tool, use Banks -> Train.
+  teach the tool, use Health -> Train a bank.
 - **Housekeeping**: **Tidy up logs** archives run and feedback records older
   than the retention window into `logs\archive\` (nothing is deleted). **Saved
   statements - retention** deletes copies past `retention.uploads_keep_days`,
@@ -184,7 +211,7 @@ A live picture from the run and feedback logs. Press **Refresh from logs** first
 
 | To change | Where | Edited in |
 |---|---|---|
-| What the tool knows about a bank's layouts | `templates\layouts\` | **Admin -> Banks**: confirm, rename, retire, accept or discard a fix, train. Never by hand. |
+| What the tool knows about a bank's layouts | `templates\layouts\` | **Admin -> Recipes** (on/off, change, merge, undo) and **Admin -> Needs attention** (accept or discard a fix, accept a draft); a layout is retired and a bank trained on **Admin -> Health**. Never by hand. |
 | What a fact about the statement is called ("Balance brought forward" for the opening balance) | `dictionaries\labels.yaml` | **Admin -> Words**, or Please check |
 | What words inside the transaction table mean: DR / CR marks, money column headings, lines that are not transactions; and the money and date shapes | `dictionaries\lexicon.yaml` | **Admin -> Words**, or Please check |
 | The NZ banks themselves: names, legal names, websites, branch register | `dictionaries\nz_banks.yaml`, `dictionaries\nz_bank_branches.csv` | Shipped with the tool. The register is refreshed by a maintainer, never in the app. |

@@ -205,7 +205,7 @@ pointing at `app.shiny_url`, opening in a new tab.
 | Symptom | Fix |
 |---|---|
 | Nothing in `feed\transactions\` | Was it a real **Convert-button** upload? Did it clear the gate? Read the `gate_result` column in `feed\runs\*.csv` — it says why. Then check `logs\feed\` for a write failure. |
-| Everything is `withheld:needs_review` | The statements are not being proven. Look at Admin -> Automatic reading -> *Checks that failed*; for exports with no balance, train the bank so their layouts are proven ([adding-a-bank-template.md](adding-a-bank-template.md)). |
+| Everything is `withheld:needs_review` | The statements are not being proven. Look at Admin -> Health -> Automatic reading -> *Checks that failed*; for exports with no balance, train the bank so their layouts are proven ([adding-a-bank-template.md](adding-a-bank-template.md)). |
 | Qlik shows nothing at all | Check the `StatementFeed` connection points at `feed\`, that files exist, and that the reload ran. |
 | Totals split in two | A field set mismatch. Every `transactions` CSV is meant to have the SAME fields, so check whether an old file predates that guarantee (extras used to be appended) - and load `transactions` and `review` as separate tables. |
 | Special characters garbled | `codepage is 65001` on every `LOAD`. |

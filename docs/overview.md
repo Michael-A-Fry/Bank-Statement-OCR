@@ -290,10 +290,12 @@ check: confirms it, or sets the one column that is wrong. She is never asked a
 question the tool could answer itself, and never one she could not.
 
 **The admin** — one person, part-time. Sets the admin password (until they do,
-the Admin tab refuses to open for anybody). On **Banks**: trains each bank on
-every statement the unit has for it, confirms or retires learned layouts, and
-accepts or discards a person's fix that the arithmetic could not prove. On
-**Automatic reading**: watches the share read automatically against the 95%
+the Admin tab refuses to open for anybody). On **Needs attention**: accepts or
+retires draft recipes, merges two recipes of one design, opens set-aside
+statements, and accepts or discards a person's fix that the arithmetic could
+not prove. On **Recipes**: turns a design's recipe on or off, tests and changes
+it in plain words, and undoes a change. On **Health**: trains each bank, and
+watches the share read automatically against the 95%
 target, and sets the spot-check rate. Edits the wording dictionaries in plain
 English. Keeps the backups.
 

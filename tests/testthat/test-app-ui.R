@@ -1257,8 +1257,8 @@ test_that("the shared-secret comparison cannot be timed one character at a time"
 # BANK-FIRST AUTOMATIC READING (spec section 7). Templates are retired: the
 # Convert table carries each file's BANK and, once converted, its learned LAYOUT
 # and its OUTCOME; Please check is where a statement that did not prove itself is
-# set right; Admin -> Banks and Admin -> Automatic reading replace the template
-# library. tools/ui/check.mjs drives all of it in a real browser; these hold the
+# set right; Admin -> Recipes and Admin -> Health (automatic reading) replace the
+# template library. tools/ui/check.mjs drives all of it in a real browser; these hold the
 # rules that browser drive cannot see.
 # ===========================================================================
 
@@ -1301,7 +1301,9 @@ test_that("no retired engine function is called by the screens", {
               "layout_confirm", "layout_retire", "layout_rename", "layouts_banks",
               "fixes_pending", "fix_accept", "fix_discard", "track_summary", "track_export",
               "spot_check_record", "convert_batch", "statement_audit", "batch_audit",
-              "layout_usage", "layout_drift"))
+              "layout_usage", "layout_drift", "recipes_overview", "needs_attention", "recipe_card",
+              "recipe_set_enabled", "recipe_update", "recipe_test", "recipe_undo", "recipe_merge",
+              "recipe_accept", "recipe_retire", "recipe_from_statement", "recipe_preview"))
     expect_true(exists(f, mode = "function"), info = f)
 })
 
@@ -1547,20 +1549,42 @@ test_that("a spot check is asked only when picked, and recorded with no personal
     expect_match(paste(src, collapse = "\n"), v)
 })
 
-test_that("Admin -> Banks changes a layout only through the engine, signed in, and says what changed", {
-  src <- .ui_src()
-  ch <- .src_block(src, "\\.layout_change_ui <- function", 14L)
-  expect_match(ch, "req\\(admin_ok\\(\\)\\)")
-  expect_match(ch, "layouts_bump\\(isolate\\(layouts_bump\\(\\)\\) \\+ 1L\\)")
-  joined <- paste(src, collapse = "\n")
-  for (f in c("layout_confirm\\(id, LAYOUTS_DIR", "layout_retire\\(id, LAYOUTS_DIR", "layout_rename\\(id, nm, LAYOUTS_DIR",
-              "fix_accept\\(id, LAYOUTS_DIR", "fix_discard\\(id, LAYOUTS_DIR"))
+test_that("Admin has four tabs, and every recipe change goes through the engine, signed in (D15)", {
+  src <- .ui_src(); joined <- paste(src, collapse = "\n")
+  # exactly four tabs: Needs attention, Recipes, Words, Health. Banks (the learned
+  # layouts, D1) and Automatic reading (now a section of Health) are retired.
+  tabs <- regmatches(joined, gregexpr('tabPanel\\(\\s*"([^"]+)"', joined))[[1]]
+  tabs <- sub('^tabPanel\\(\\s*"', "", sub('"$', "", tabs))
+  i <- match("Needs attention", tabs)
+  expect_identical(tabs[i:(i + 3L)], c("Needs attention", "Recipes", "Words", "Health"))
+  for (gone in c('"Banks"', '"Automatic reading",', "adm_layouts", "adm_bank_pick", "adm_layout_confirm",
+                 "layout_rename(", "layout_confirm("))
+    expect_false(grepl(gone, joined, fixed = TRUE), info = gone)
+  # each action is the engine's, on the server's own recipes folder, never shipped
+  for (f in c("recipe_accept\\(id, RC_DIRS\\)", "recipe_retire\\(id, RC_DIRS\\)", "recipe_merge\\(ab\\[1\\], ab\\[2\\], RC_DIRS\\)",
+              "recipe_set_enabled\\(id, !ov\\$enabled\\[i\\], RC_DIRS\\)", "recipe_update\\(cd\\$id, ch, RC_DIRS\\)",
+              "recipe_undo\\(cd\\$id, RC_DIRS\\)", "recipe_test\\(cd\\$id, inp, RC_DIRS, changes = \\.rc_changes\\(\\)\\)",
+              "recipe_from_statement\\(n\\$input", "recipe_from_statement\\(inp, list\\(bank = o\\$bank",
+              "fix_accept\\(id, LAYOUTS_DIR", "fix_discard\\(id, LAYOUTS_DIR",
+              # a layout that matched wrongly is still taken out of use, from Health
+              "layout_retire\\(id, LAYOUTS_DIR, by = who_now\\(\\)\\)"))
     expect_match(joined, f)
+  expect_match(.src_block(src, "observeEvent\\(input\\$adm_layout_retire, \\{", 4L), "req\\(admin_ok\\(\\)\\)")
+  expect_match(joined, "server = safe\\(recipes_state_dir\\(LAYOUTS_DIR, CONFIG\\), NULL\\)")
+  for (h in c("observeEvent\\(input\\$adm_na_act, \\{", "observeEvent\\(input\\$adm_rc_toggle, \\{",
+              "observeEvent\\(input\\$adm_rc_save, \\{", "observeEvent\\(input\\$adm_rc_undo, \\{",
+              "observeEvent\\(input\\$adm_rc_merge, \\{", "observeEvent\\(input\\$adm_rc_test, \\{",
+              "observeEvent\\(input\\$adm_rc_new_save, \\{"))
+    expect_match(.src_block(src, h, 4L), "req\\(admin_ok\\(\\)", info = h)
   expect_match(.src_block(src, "\\.fix_act <- function", 6L), "req\\(admin_ok\\(\\)\\)")
-  # a rename is a name, never a number that could be an account
-  expect_match(.src_block(src, "observeEvent\\(input\\$adm_layout_rename, \\{", 12L), "\\[0-9\\]\\[0-9 -\\]\\{3,\\}\\[0-9\\]")
-  # a retired layout stays on screen, so Confirm can bring it back
-  expect_match(joined, "layouts_load\\(LAYOUTS_DIR, include_retired = TRUE\\)")
+  # an id from the browser becomes a button only when it is a plain slug
+  expect_match(.src_block(src, "\\.act_btn <- function", 4L), 'grepl\\("\\^\\[A-Za-z0-9_.\\|:-\\]\\+\\$", value\\)')
+  # a recognise word or a recipe name is never a long number (it could be an account)
+  expect_match(.src_block(src, "observeEvent\\(input\\$adm_rc_word_add, \\{", 6L), "\\[0-9\\]\\[0-9 -\\]\\{3,\\}\\[0-9\\]")
+  expect_match(.src_block(src, "observeEvent\\(input\\$cv_ck_rc_save, \\{", 6L), "\\[0-9\\]\\[0-9 -\\]\\{3,\\}\\[0-9\\]")
+  # the card's page is Please check's: one drawing function for both
+  expect_match(.src_block(src, "output\\$adm_rc_plot <- renderPlot", 10L), "\\.draw_page_columns\\(")
+  expect_match(.src_block(src, "output\\$cv_ck_plot <- renderPlot", 12L), "\\.draw_page_columns\\(")
 })
 
 test_that("training a bank is the case machinery with the bank on every file, and feeds nothing", {
@@ -1619,8 +1643,10 @@ test_that("Admin -> Automatic reading: counts only, the target, and the spot-che
 
 test_that("every new Admin output is gated on the session, not on the tab being hidden", {
   src <- .ui_src()
-  for (h in c("output\\$adm_banks <- renderDT", "output\\$adm_bank_head <- renderUI",
-              "adm_bank_layouts <- reactive", "adm_fix_list <- reactive", "output\\$adm_train_status <- renderUI",
+  for (h in c("output\\$adm_na_cards <- renderUI", "output\\$adm_rc_list <- renderUI",
+              "output\\$adm_rc_card <- renderUI", "rc_ov <- reactive", "adm_na <- reactive", "rc_card <- reactive",
+              "output\\$adm_rc_new <- renderUI",
+              "adm_fix_list <- reactive", "output\\$adm_train_status <- renderUI",
               "adm_ar <- reactive", "output\\$adm_ar_export_ui <- renderUI"))
     expect_match(.src_block(src, h, 4L), "req\\(admin_ok\\(\\)\\)", info = h)
 })

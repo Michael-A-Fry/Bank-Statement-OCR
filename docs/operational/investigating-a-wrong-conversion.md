@@ -7,8 +7,9 @@ happened, reproducing the exact figure, and deciding whose problem it is.
 
 Everything you need is already on the box. Nothing here needs the internet, and
 nothing here changes a stored figure — there is no cell to edit. The fix is
-always a corrected reading (a role set on Please check, a layout retired on
-Admin -> Banks, or an engine fix) and a re-run.
+always a corrected reading (a role set on Please check, a recipe turned off or
+changed on Admin -> Recipes, a layout retired on Admin -> Health, or an engine
+fix) and a re-run.
 
 ---
 
@@ -212,10 +213,10 @@ the timestamps instead. Fix the cause before it grows:
 
 | Symptom in the re-run | Read it as |
 |---|---|
-| `outcome` `layout_match` and the figures are wrong | **a learned layout.** The statement had nothing of its own to prove it, and a layout supplied the reading. Look at that layout on Admin -> Banks. If it is wrong, **Retire** it. Then convert the file again, and it goes to Please check. Record it: a layout that matched wrongly is evidence for the reader's matching rules. |
+| `outcome` `layout_match` and the figures are wrong | **a learned layout.** The statement had nothing of its own to prove it, and a layout supplied the reading. If that layout is wrong, **Retire** it on Admin -> Health -> *Take a learned layout out of use*. Then convert the file again, and it goes to Please check. Record it: a layout that matched wrongly is evidence for the reader's matching rules. |
 | `outcome` `proven` and a figure is wrong | **the most serious finding there is**: the arithmetic proved a wrong reading. Keep the file, the run record and the re-run. It goes to [`../context/findings-register.md`](../context/findings-register.md) at once, and to whoever maintains the engine. |
-| `institution` names a **different bank** from the statement | the bank was picked wrongly, or read wrongly. A **proven** reading's figures are not affected (its own arithmetic proved them, whatever the bank), but a layout match was made against the wrong bank's layouts, and anything learned went to the wrong bank: retire it on Admin -> Banks. |
-| `feed_basis` `person` | a person confirmed it on Please check. Ask her which figure she checked. The confirm is held under Admin -> Banks -> *Fixes waiting for an admin*: **Discard** it. |
+| `institution` names a **different bank** from the statement | the bank was picked wrongly, or read wrongly. A **proven** reading's figures are not affected (its own arithmetic proved them, whatever the bank), but a layout match was made against the wrong bank's layouts, and anything learned went to the wrong bank: retire it on Admin -> Health. |
+| `feed_basis` `person` | a person confirmed it on Please check. Ask her which figure she checked. The confirm is held under Admin -> Needs attention -> *Fixes waiting for an admin*: **Discard** it. |
 | The run was OCR'd (`pages` set, *Scan / OCR read quality* present) and individual digits are wrong | **the file.** Ask for a better scan or the bank's CSV or Excel export. A misread digit that the balance does not catch is the scan's limit, not something the engine can improve from here. |
 | Everything is proven and she still says it is wrong | ask which row and which figure. A conversion proven to the cent that reads a description verbatim is usually a disagreement about what the statement means, not about what it says. |
 

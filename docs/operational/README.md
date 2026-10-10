@@ -52,7 +52,7 @@ The things that change live in **data and config, not code**.
 
 | To change | Where | Who, and how |
 |---|---|---|
-| How a bank's statements are read | `templates\layouts\` (learned, never hand-edited) | nobody needs to: proven statements teach it. A person fixes one reading on **Please check**; an admin confirms, retires or trains on **Admin → Banks**. No code. |
+| How a bank's statements are read | `templates\layouts\` (learned, never hand-edited) | nobody needs to: proven statements teach it. A person fixes one reading on **Please check**; an admin turns recipes on and off, changes and merges them on **Admin → Recipes**, and accepts drafts on **Admin → Needs attention**. No code. |
 | What a fact about the statement is called (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Words**, or Please check |
 | What words inside the transaction table mean (a DR / CR mark, a column heading), or a money or date shape | `dictionaries\lexicon.yaml` | admin — **Admin → Words**, or Please check |
 | How often automatic conversions are spot-checked | `config\config.yaml` → `auto_reading: spot_check_rate` | admin — **Admin → Automatic reading** |
@@ -73,5 +73,5 @@ and why, is in [admin-and-maintenance.md](admin-and-maintenance.md).
 3. **Use it** — upload a statement, click Convert, download the Excel/CSV/JSON.
    ([converting-statements.md](converting-statements.md))
 4. **Grow it** — when a new bank turns up, convert its statements; to teach it a
-   whole pile at once, train the bank on Admin → Banks.
+   whole pile at once, train the bank on Admin → Health → Train a bank.
    ([adding-a-bank-template.md](adding-a-bank-template.md))

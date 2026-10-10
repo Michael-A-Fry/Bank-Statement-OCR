@@ -40,11 +40,11 @@ paths:
   uploads: uploads
   requests: requests
   logs: logs
-  # Bank layouts the automatic reader has learned (Admin -> Banks), a folder per
+  # Bank layouts the automatic reader has learned (Admin -> Needs attention), a folder per
   # bank. Learned here from your own statements, so BACK IT UP with the logs:
   # it exists nowhere else. Every change is a new file; nothing is edited in place.
   layouts: templates/layouts
-  # Automatic-reading tracking (Admin -> Automatic reading): one line per event,
+  # Automatic-reading tracking (Admin -> Health -> Automatic reading): one line per event,
   # a file per month. Codes and counts only -- never names, descriptions,
   # amounts, dates, account numbers or file names.
   tracking: logs/tracking

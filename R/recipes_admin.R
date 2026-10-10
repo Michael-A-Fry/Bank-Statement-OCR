@@ -425,7 +425,32 @@ recipe_from_statement <- function(input, answers = list(), dirs = NULL) {
   }
   r <- recipe_learn(rd, input, bank, sha, NULL, dirs$server)
   if (!identical(r$action, "created")) return(.rca_no(r$why))
-  .rca_ok(sprintf("Saved as draft recipe %s. Accept it to read statements like it on their own.", r$ref), r$ref)
+  id <- sub("@v?[0-9]+$", "", r$ref)
+  # A name the person gave ("Everyday account") is the draft's title: a new version.
+  nm <- trimws(as.character(answers$title %||% "")[1])
+  if (!is.na(nm) && nzchar(nm)) {
+    u <- recipe_update(id, list(title = sprintf("%s %s", .layout_bank_display(.layout_slug(bank)), nm)), dirs)
+    if (isTRUE(u$ok)) r$ref <- u$ref
+  }
+  .rca_ok(sprintf("Saved as draft recipe %s. Accept it to read statements like it on their own.", r$ref), r$ref, id = id)
+}
+
+# recipe_preview(input, bank, roles) -> list(outcome ("proven" / "check"), why,
+# reading): the statement read by the automatic reader, with the person's column
+# roles when given -- what "New recipe from a statement" shows before Save.
+# Nothing is written.
+recipe_preview <- function(input, bank = NULL, roles = NULL) {
+  rd <- safe(auto_read(input, list(), bank, list(recipes = FALSE)), NULL)
+  if (is.null(rd)) return(list(outcome = "check", why = "The statement could not be read.", reading = NULL))
+  if (length(roles)) {
+    o <- .override_roles(rd, roles)
+    if (!is.null(o$error)) return(list(outcome = "check", why = o$error, reading = rd))
+    rd <- safe(auto_read(input, list(), bank, list(roles = o$roles)), rd)
+  }
+  n <- if (is.data.frame(rd$transactions)) nrow(rd$transactions) else 0L
+  if (identical(rd$outcome, "proven"))
+    list(outcome = "proven", why = sprintf("It adds up: %d transaction%s, and the statement's own figures agree.", n, if (n == 1L) "" else "s"), reading = rd)
+  else list(outcome = "check", why = sprintf("It does not add up yet: %s", rd$why %||% "no reason was given."), reading = rd)
 }
 
 # ---- what needs a look -------------------------------------------------------------
@@ -455,4 +480,55 @@ needs_attention <- function(dirs = NULL, tracking = NULL, uploads = NULL, days =
   for (x in c("aside", "drafts", "failing", "merges")) { v <- get(x); rownames(v) <- NULL; assign(x, v) }
   list(counts = c(set_aside = nrow(aside), drafts = nrow(drafts), failing = nrow(failing), merges = nrow(merges)),
        set_aside = aside, drafts = drafts, failing = failing, merges = merges)
+}
+
+# ---- the recipe card, in plain words -------------------------------------------------
+
+# The plain word for each column role, as the card asks it (the keys .RCA_ROLES
+# takes back).
+.RCA_PLAIN <- c(date = "date", description = "description", debit = "money out", credit = "money in",
+                amount = "amount", balance = "balance", date2 = "second date", particulars = "particulars",
+                code = "code", reference = "reference", other_party = "other party", type = "type")
+.rca_plain_role <- function(f) {
+  f <- as.character(f)
+  out <- unname(.RCA_PLAIN[f]); out[is.na(out)] <- "other"
+  out
+}
+
+# recipe_card(id, dirs) -> what the card shows, in plain words, or list(error):
+# id, bank, title, status, enabled, kind, columns (n, heading, role), date (an
+# example as printed), money ("money out and money in" / "one amount"), recognise
+# (the words), versions (version, status, what, when; newest first).
+recipe_card <- function(id, dirs = NULL) {
+  dirs <- .rca_dirs(dirs)
+  t <- .rca_top(dirs, id); if (!is.null(t$error)) return(t)
+  y <- t$top$y
+  cols <- y$table$columns %||% list()
+  hd <- vapply(cols, function(c) as.character(c$under %||% "")[1], "")
+  ex <- function(fmt) {
+    if (is.null(fmt) || is.na(fmt) || !nzchar(fmt)) return("")
+    as.character(safe(format(as.Date("2026-02-03"), fmt), fmt))
+  }
+  what <- function(v) {
+    a <- v$y$admin %||% list()
+    if (!is.null(a$merged_into)) return(sprintf("merged into %s", a$merged_into))
+    if (!is.null(a$merged_from)) return(sprintf("merged with %s", a$merged_from))
+    if (identical(v$status, "retired")) return(if (isTRUE(a$hidden)) "retired" else "turned off")
+    if (isTRUE(a$accepted)) return("accepted")
+    if (v$version == 1L) return(if (identical(v$status, "draft")) "drafted from a statement" else "first version")
+    "changed"
+  }
+  vs <- rev(t$all)
+  list(id = t$top$id, bank = .layout_bank_display(y$bank), title = y$title %||% t$top$id,
+       status = t$top$status, enabled = !identical(t$top$status, "retired"), kind = y$kind %||% "pdf",
+       columns = data.frame(n = seq_along(cols), field = names(cols) %||% character(0), heading = unname(hd), role = .rca_plain_role(names(cols)),
+                            stringsAsFactors = FALSE),
+       date = ex(y$dates$format), date_format = as.character(y$dates$format %||% ""),
+       money = if (identical(y$money$style, "signed")) "one amount" else "money out and money in",
+       recognise = as.character(unlist(y$recognise$all)),
+       proofs = length(.rca_proofs(dirs, t$top$id)$proved_by),
+       versions = data.frame(version = vapply(vs, `[[`, 0L, "version"), status = vapply(vs, `[[`, "", "status"),
+                             what = vapply(vs, what, ""),
+                             when = vapply(vs, function(v) format(file.mtime(v$file), "%d %b %Y"), ""),
+                             stringsAsFactors = FALSE))
 }

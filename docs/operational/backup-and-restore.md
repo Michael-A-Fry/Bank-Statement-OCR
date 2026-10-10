@@ -15,7 +15,7 @@ a folder copy.
 | `templates\layouts\` | **Every bank layout the tool has learned on this server**, and the person-made fixes waiting for an admin (`templates\layouts\.pending\`). Each layout was proven by your own statements. Rebuilding it means finding those statements again and training each bank from scratch. Until then, statements with no balance of their own go back to *Please check*. **This is the accumulated value of the tool.** |
 | `dictionaries\` | `labels.yaml` and `lexicon.yaml`: every wording and marker taught in Admin -> Words. Losing these crashes nothing, but statements that read last week can quietly stop being proven, which is worse. (The two bank reference files beside them, `nz_banks.yaml` and `nz_bank_branches.csv`, ship with the tool and are easy to replace, so backing them up does no harm.) |
 | `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Admin -> Health is computed from it. Once gone, it cannot be recreated. |
-| `logs\tracking\` | The automatic-reading counts: how much was proven, what failed, and every spot-check answer. Admin -> Automatic reading and the carry-off summary are read from it, and it is the evidence for the 95% target. Codes and counts only, no client data. |
+| `logs\tracking\` | The automatic-reading counts: how much was proven, what failed, and every spot-check answer. Admin -> Health -> Automatic reading and the carry-off summary are read from it, and it is the evidence for the 95% target. Codes and counts only, no client data. |
 
 Worth having, easy to live without: `config\config.yaml` (your settings;
 `RUN-ME.bat` keeps a copy on the same machine under
@@ -73,8 +73,8 @@ and the app starts), so the private R and packages are in place.
    `templates\layouts\`, `dictionaries\`, `logs\metadata\`, `logs\tracking\`,
    `config\config.yaml`.
 3. **Start the app.**
-4. **Admin -> Banks** lists every bank and its layouts. The count should match
-   what you backed up.
+4. **Admin -> Recipes** lists every recipe, and Admin -> Health its learned
+   layouts. The counts should match what you backed up.
 5. Then convert one statement you know is proven, and confirm it still is. That
    proves `dictionaries\` came back too.
 
@@ -105,7 +105,7 @@ That is **one step of history only**: a second bad save overwrites the good
 `.bak`.
 
 The layout store needs no `.bak`, because it never overwrites anything. To undo
-something learned, **Retire** the layout on Admin -> Banks. Every change,
+something learned, **Retire** the layout on Admin -> Health. Every change,
 including a retirement, is a new version written beside the old one.
 
 ## What backup does not cover

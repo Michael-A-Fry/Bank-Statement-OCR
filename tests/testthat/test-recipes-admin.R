@@ -239,3 +239,43 @@ test_that("a new draft from a statement and its answers; needs attention lists w
   expect_identical(unname(na$counts), c(1L, 1L, 1L, 0L))
   expect_identical(na$set_aside$id, id); expect_identical(na$failing$id, "anz_draft_2")
 })
+
+test_that("the recipe card says a recipe in plain words, never YAML, with its versions", {
+  dirs <- ra_dirs()
+  cd <- recipe_card("kauri_test", dirs)
+  expect_null(cd$error)
+  expect_identical(cd$columns$role[cd$columns$field == "debit"], "money out")
+  expect_identical(cd$columns$role[cd$columns$field == "credit"], "money in")
+  expect_identical(cd$money, "money out and money in")
+  expect_identical(cd$date, "03 Feb")
+  expect_true(length(cd$recognise) >= 1L)
+  expect_identical(cd$versions$what, "first version")
+  # every answer on the card goes back through recipe_update as it is shown
+  roles <- cd$columns$role
+  expect_true(recipe_update("kauri_test", list(columns = roles, date_format = cd$date, money_style = cd$money,
+                                               recognise_add = "Statement date"), dirs)$ok)
+  recipe_set_enabled("kauri_test", FALSE, dirs)
+  cd2 <- recipe_card("kauri_test", dirs)
+  expect_false(cd2$enabled)
+  expect_identical(cd2$versions$what[1:2], c("turned off", "changed"))
+  expect_identical(cd2$columns$role, roles)
+  expect_true("Statement date" %in% cd2$recognise)
+  expect_match(recipe_card("no_such", dirs)$error, "no recipe called")
+  # nothing on the card is YAML or a file path
+  flat <- paste(unlist(cd2[c("title", "columns", "date", "money", "recognise", "versions")]), collapse = " ")
+  expect_false(grepl("yaml|under:|status:|[/\\\\]", flat))
+})
+
+test_that("a new recipe from a statement: the reader's answers first, the person's name kept", {
+  dirs <- ra_dirs(); unlink(file.path(dirs$shipped, "kauri_test.yaml"))
+  inp <- rc_pdf(rc_one())
+  p <- recipe_preview(inp, "anz")
+  expect_identical(p$outcome, "proven"); expect_match(p$why, "^It adds up")
+  expect_false(is.null(p$reading$columns))
+  bad <- recipe_preview(inp, "anz", roles = c(nothing = "debit"))
+  expect_identical(bad$outcome, "check")
+  r <- recipe_from_statement(inp, list(bank = "ANZ", title = "Everyday"), dirs)
+  expect_true(r$ok); expect_identical(r$id, "anz_draft_1")
+  expect_identical(recipe_card("anz_draft_1", dirs)$title, "ANZ Everyday")
+  expect_identical(recipe_card("anz_draft_1", dirs)$status, "draft")
+})

@@ -38,7 +38,7 @@ picked, nothing is learned until someone answers *Which bank?*.
 
 When a bank arrives with a pile of statements, give it all of them at once.
 
-1. **Admin -> Banks -> Train a bank.** Pick the bank, or type a new bank's name.
+1. **Admin -> Health -> Train a bank.** Pick the bank, or type a new bank's name.
 2. Add **every statement you have for it**, up to 200 at a time: PDFs, scans,
    CSV and Excel together. More can be added any time.
 3. Press **Train**. They are read in the background, as a case conversion would
@@ -55,22 +55,31 @@ Training **feeds nothing to Qlik and records no uploads**. It only teaches. A
 statement that needs a look teaches nothing. Convert it on the Convert tab and
 use Please check to set it right, and a fix that then proves is learned.
 
-### After training: look at the layouts
+### After training: look at the recipes
 
-**Admin -> Banks** lists every bank, then the chosen bank's layouts: name,
-status, how many statements proved it, when it was created, how it was learned
-(*auto*, *confirmed*, *corrected*) and its version.
+Each design of statement is read by a **recipe**. **Admin -> Recipes** lists
+one row per recipe: bank, name, an ON/OFF switch, how many statements it read
+and how many needed help in the last 30 days, and whether it is a draft or
+proven. Click a recipe to open its card:
 
-- **Confirm** a provisional layout you have checked by eye. It is proven from
-  then on, and statements matching it convert on their own, including ones with
-  no balance.
-- **Rename** a layout to what the team calls it ("Everyday account").
-- **Retire** a layout that is wrong. It is no longer used, its files are kept,
-  and conversions already issued are unchanged. Confirming it brings it back.
+- **Test** reads a statement you add with the recipe (with any change you have
+  made, before saving) and says in one sentence whether it adds up. Its page is
+  drawn with the columns numbered.
+- The card asks the same plain questions as Please check: what each column is,
+  how a date is printed, how money is shown, and the words that recognise the
+  design (remove one with its cross, add one in the box).
+- **Save** writes a new version and keeps the old one; **Undo** brings the last
+  one back. **Turn off** stops the recipe being tried (statements like it get
+  the questions instead). **Merge with...** makes two recipes of one design one.
+- **New recipe from a statement** reads one statement, fills in the answers
+  from what the tool found, and saves a draft after you Test it. Please check
+  offers the same ("Save as a recipe for ...?") when a person's answers made a
+  statement add up.
 
-Every one of these writes a new version of the layout and never edits one, so
-any past conversion can still be traced to exactly what had been learned when
-it ran.
+Drafts wait on **Admin -> Needs attention** to be accepted (or retired). No
+screen ever shows a recipe file: every change is a new version, never an edit,
+so any past conversion can still be traced to exactly what read it. A learned
+layout that read a statement wrongly is retired on **Admin -> Health**.
 
 ### Fixes waiting for an admin
 

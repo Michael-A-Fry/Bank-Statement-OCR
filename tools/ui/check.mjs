@@ -14,10 +14,12 @@
 // at desktop, laptop and tablet width, Please check on a spreadsheet (Re-read wrong,
 // Undo, Re-read right, Set aside, It's right - accept it) and on a PDF (the page, its ticks, the column
 // editor with a box drawn and saved), Download everything, a single file with a bank
-// the statement disagrees with, scans, Stop, and every Admin tab -- Banks (confirm,
-// rename, retire, a held fix, training with another bank's statement in the pile),
-// Automatic reading (the spot-check rate, a spot check answered, the carry-off
-// summary), Words and Health -- each at desktop and phone width. Last, the app's own
+// the statement disagrees with, scans, Stop, and every Admin tab -- Needs attention
+// (a held fix, two drafts merged, a draft accepted), Recipes (a recipe turned off
+// and on, its card: Test, a recognise word added and removed, Save, Undo; a new
+// recipe from a statement, twice), Words, and Health (automatic reading: the
+// spot-check rate, a spot check answered, the carry-off summary; training with
+// another bank's statement in the pile) -- each at desktop and phone width. Last, the app's own
 // console: an R error or warning there fails the run.
 //
 // Options (environment):
@@ -520,64 +522,106 @@ async function run(browser, D) {
   await screen(tp, 'About');
   await tp.click('a[data-value="Admin"]'); await sleep(800);
   await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
-  check('Admin opens on Banks', (await text(tp, '#adm_banks')).includes('ANZ'), await text(tp, '#adm_banks'));
-  check('nothing was learned under a bank nobody chose',
-        !/FALSE|TRUE|\bNA\b/.test(await text(tp, '#adm_banks')), await text(tp, '#adm_banks'));
-  if (!LIVE && ASK) {
-    // always ask once: nothing was learned behind anyone's back
-    await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
-    check('ask mode: no layout was learned without a person', (await tp.$$('#adm_layouts tbody tr td.dataTables_empty')).length === 1 ||
-          (await tp.$$('#adm_layouts tbody tr')).length === 0, await text(tp, '#adm_layouts'));
-  }
-  if (!LIVE && !ASK) {
-    // a bank's layouts: confirm, rename, retire, and back
-    await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
-    check('a bank lists its learned layouts', (await tp.$$('#adm_layouts tbody tr')).length >= 1);
-    await tp.click('#adm_layouts tbody tr'); await sleep(600);
-    await tp.click('#adm_layout_confirm'); await sleep(2000);
-    check('Confirm makes a layout proven', (await text(tp, '#adm_layout_msg')).includes('confirmed') &&
-          (await text(tp, '#adm_layouts tbody tr')).includes('proven'), await text(tp, '#adm_layout_msg'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
-    await tp.fill('#adm_layout_name', 'Everyday account'); await tp.click('#adm_layout_rename'); await sleep(2000);
-    check('Rename names it everywhere', (await text(tp, '#adm_layouts tbody tr')).includes('Everyday account'),
-          await text(tp, '#adm_layout_msg'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
-    await tp.click('#adm_layout_retire'); await sleep(2000);
-    check('Retire takes it out of use, and stays on screen', (await text(tp, '#adm_layouts tbody tr')).includes('retired'));
-    await tp.click('#adm_layouts tbody tr'); await sleep(500);
-    await tp.click('#adm_layout_confirm'); await sleep(2000);
-    check('...and Confirm brings it back', (await text(tp, '#adm_layouts tbody tr')).includes('proven'));
-  }
+  const admTabs = await tp.$$eval('#adm_tabs > li > a', as => as.map(a => a.innerText.trim()));
+  eq('Admin has exactly four tabs', admTabs, ['Needs attention', 'Recipes', 'Words', 'Health']);
+  check('Admin opens on Needs attention, with its cards and counts',
+        await waitFor(tp, () => /Statements waiting for a look/.test((document.querySelector('#adm_na_cards') || {}).innerText || ''), 20000) &&
+        (await tp.$$('#adm_na_cards .na-count')).length === 4, await text(tp, '#adm_na_cards'));
   if (!LIVE) {
     // the fix a person confirmed, held for an admin
     check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
     await tp.click('#adm_fixes tbody tr'); await sleep(500);
     await tp.click('#adm_fix_accept'); await sleep(2000);
     check('...and Accept makes it a proven layout', (await text(tp, '#adm_fix_msg')).startsWith('Accepted'), await text(tp, '#adm_fix_msg'));
-    // training a bank: many statements, read in the background, then the report
-    await selectize(tp, 'adm_train_bank', 'westpac');
-    // ...one of them a BNZ export that says so: it proves itself, and teaches
-    // Westpac nothing, and the report says which and why
-    await tp.setInputFiles('#adm_train_files', [path.join(D, 'westpac_march.pdf'), path.join(D, 'asb_march.pdf'),
-                                                path.join(D, 'bnz_export.csv')]);
-    await sleep(2500);
-    await tp.click('#adm_train_go');
-    check('training reports what it found',
-          await waitFor(tp, () => /layouts? from 3 statements/.test((document.querySelector('#adm_train_status') || {}).innerText || ''), 300000),
-          await text(tp, '#adm_train_status'));
-    if (ASK) check('ask mode: training asks about each new design rather than learning it',
-          /3 need a look/.test(await text(tp, '#adm_train_status')) &&
-          /has not seen this statement design before/.test(await text(tp, '#adm_train_status')) &&
-          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
-          await text(tp, '#adm_train_status'));
-    else check('...and lists another bank\'s statement as needing a look, with the reason',
-          /1 needs a look/.test(await text(tp, '#adm_train_status')) &&
-          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
-          await text(tp, '#adm_train_status'));
-    console.log(`        (training: ${(await text(tp, '#adm_train_status')).split('\n')[0]})`);
   }
-  await screen(tp, 'Admin Banks');
-  await tp.click('a[data-value="Automatic reading"]'); await sleep(1500);
+  await screen(tp, 'Admin Needs attention');
+  // RECIPES: one row per recipe, a toggle, a card
+  await tp.click('a[data-value="Recipes"]'); await sleep(1500);
+  const R = 'anz_everyday_pdf';
+  const row = `#adm_rc_list tr[data-recipe="${R}"]`;
+  check('Recipes lists one row per recipe, with its bank', await waitFor(tp, s => !!document.querySelector(s), 20000, row) &&
+        (await text(tp, row)).includes('ANZ'), await text(tp, '#adm_rc_list'));
+  check('...and never shows YAML', !/recipe:|status:|yaml/i.test(await text(tp, '#adm_rc_list')));
+  if (!LIVE) {
+    await tp.click(`${row} .rc-toggle`);
+    check('a recipe is turned off with one click',
+          await waitFor(tp, s => /OFF/.test((document.querySelector(s + ' .rc-toggle') || {}).innerText || ''), 15000, row), await text(tp, row));
+    await tp.click(`${row} .rc-toggle`);
+    check('...and on again', await waitFor(tp, s => /ON/.test((document.querySelector(s + ' .rc-toggle') || {}).innerText || ''), 15000, row),
+          await text(tp, row));
+  }
+  await tp.click(`${row} a.rc-open`);
+  check('a click opens the recipe card', await waitFor(tp, () => !!document.getElementById('adm_rc_title'), 15000));
+  check('...asking the plain column questions with this recipe\'s answers',
+        await tp.$eval('#adm_rc_role_3', e => e.value).catch(() => '') === 'money out' &&
+        /Recognised by these words/.test(await text(tp, '#adm_rc_card')), await text(tp, '#adm_rc_card'));
+  check('...and no YAML anywhere on it', !/recipe:|status:|under:|yaml/i.test(await text(tp, '#adm_rc_card')));
+  await tp.setInputFiles('#adm_rc_test_file', [path.join(D, 'anz_march.pdf')]); await sleep(2500);
+  await tp.click('#adm_rc_test');
+  check('Test reads a statement with the recipe and says so in one sentence',
+        await waitFor(tp, () => /^It adds up/.test((document.querySelector('#adm_rc_test_msg') || {}).innerText || ''), 60000),
+        await text(tp, '#adm_rc_test_msg'));
+  check('...and draws its page with the columns numbered', await waitFor(tp, () => !!document.querySelector('#adm_rc_plot img'), 20000));
+  if (!LIVE) {
+    // a recognise-by word: added, removed, added again, saved, undone
+    await tp.fill('#adm_rc_word_new', 'Statement period'); await tp.click('#adm_rc_word_add'); await sleep(1200);
+    const chips = async () => tp.$$eval('#adm_rc_card .rc-chip', cs => cs.map(c => c.firstChild.textContent.trim()));
+    check('a recognise word is added as a chip', (await chips()).includes('Statement period'), JSON.stringify(await chips()));
+    await tp.click('#adm_rc_card .rc-chip:has-text("Statement period") .rc-chip-x'); await sleep(1200);
+    check('...and removed with its cross', !(await chips()).includes('Statement period'), JSON.stringify(await chips()));
+    await tp.fill('#adm_rc_word_new', 'Statement period'); await tp.click('#adm_rc_word_add'); await sleep(1200);
+    await tp.click('#adm_rc_test');
+    check('Test with the change, before saving: it still adds up',
+          await waitFor(tp, () => /^It adds up/.test((document.querySelector('#adm_rc_test_msg') || {}).innerText || ''), 60000),
+          await text(tp, '#adm_rc_test_msg'));
+    await tp.click('#adm_rc_save');
+    check('Save makes a new version, the old one kept',
+          await waitFor(tp, () => /^Saved as a new version/.test((document.querySelector('#adm_rc_msg') || {}).innerText || ''), 15000) &&
+          /Version 4\s+changed/.test(await text(tp, '#adm_rc_card')), await text(tp, '#adm_rc_card'));
+    await tp.click('#adm_rc_undo');
+    check('Undo brings the last version back',
+          await waitFor(tp, () => /is back to how it was in version 3/.test((document.querySelector('#adm_rc_msg') || {}).innerText || ''), 15000) &&
+          !(await chips()).includes('Statement period'), await text(tp, '#adm_rc_msg'));
+    // a new recipe from a statement, twice: two drafts of one design
+    for (const nm of ['Everyday', 'Everyday (again)']) {
+      if (!(await tp.$('#adm_rc_new_file'))) { await tp.click('#adm_rc_new_open'); await sleep(1500); }
+      await selectize(tp, 'adm_rc_new_bank', 'anz');
+      await tp.fill('#adm_rc_new_name', nm);
+      await tp.setInputFiles('#adm_rc_new_file', [path.join(D, 'anz_march.pdf')]); await sleep(2500);
+      await tp.click('#adm_rc_new_read');
+      check(`New recipe from a statement (${nm}): the reader fills in the answers`,
+            await waitFor(tp, () => /^It adds up/.test((document.querySelector('#adm_rc_new_body') || {}).innerText || ''), 90000) &&
+            !!(await tp.$('#adm_rc_new_body select')), await text(tp, '#adm_rc_new_body'));
+      await tp.click('#adm_rc_new_test'); await sleep(1500);
+      await waitFor(tp, () => !document.documentElement.classList.contains('shiny-busy'), 90000); await sleep(800);
+      check('...Test says it still adds up', /^It adds up/.test(await text(tp, '#adm_rc_new_body')), await text(tp, '#adm_rc_new_body'));
+      await tp.click('#adm_rc_new_save');
+      check('...and Save makes it a draft recipe, opened on its card',
+            await waitFor(tp, n => /Saved as draft recipe/.test((document.querySelector('#adm_rc_msg') || {}).innerText || '') &&
+              ((document.querySelector('#adm_rc_card h4') || {}).innerText || '').endsWith('ANZ ' + n), 90000, nm), await text(tp, '#adm_rc_card') + ' | ' + await text(tp, '#adm_rc_new'));
+    }
+  }
+  await screen(tp, 'Admin Recipes');
+  if (!LIVE) {
+    // back on Needs attention: the two drafts are offered as one, and merged
+    await tp.click('a[data-value="Needs attention"]'); await sleep(2000);
+    await waitFor(tp, () => [...document.querySelectorAll('#adm_na_cards button[data-act^="merge|"]')]
+      .some(b => (b.dataset.act.match(/_draft_/g) || []).length === 2), 30000);
+    const mg = await tp.$$eval('#adm_na_cards button[data-act^="merge|"]', bs => bs.map(b => b.dataset.act)
+      .filter(a => (a.match(/_draft_/g) || []).length === 2));
+    check('two drafts of one design are offered as a merge', mg.length >= 1, await text(tp, '#adm_na_cards'));
+    if (mg.length) await tp.click(`#adm_na_cards button[data-act="${mg[mg.length - 1]}"]`);
+    check('...and Merge makes them one', await waitFor(tp, () => /are one now/.test((document.querySelector('#adm_na_msg') || {}).innerText || ''), 15000),
+          await text(tp, '#adm_na_msg'));
+    const ac = await tp.$$eval('#adm_na_cards button[data-act^="accept|"]', bs => bs.map(b => b.dataset.act));
+    check('a draft waits to be accepted', ac.length >= 1, await text(tp, '#adm_na_cards'));
+    if (ac.length) await tp.click(`#adm_na_cards button[data-act="${ac[0]}"]`);
+    check('...and Accept makes it proven', await waitFor(tp, () => /is accepted/.test((document.querySelector('#adm_na_msg') || {}).innerText || ''), 15000),
+          await text(tp, '#adm_na_msg'));
+    await screen(tp, 'Admin Needs attention after');
+  }
+  // HEALTH holds what the old tabs did: how automatic reading is doing, and training
+  await tp.click('a[data-value="Health"]'); await sleep(1500);
   check('Automatic reading counts what was read', /Statements read\s*\d+/i.test(await text(tp, '#adm_ar_head')),
         await text(tp, '#adm_ar_head'));
   check('...the automatic rate per kind of file', (await text(tp, '#adm_ar_kinds')).includes('PDF'));
@@ -614,7 +658,30 @@ async function run(browser, D) {
   let sj = {}; try { sj = JSON.parse(fs.readFileSync(sjp, 'utf8')); } catch { /* not JSON */ }
   check('the carry-off summary is counts only', String(sj.what || '').includes('counts only') && Number.isInteger(sj.statements),
         String(sj.what));
-  await screen(tp, 'Admin Automatic reading');
+  if (!LIVE) {
+    // training a bank: many statements, read in the background, then the report
+    await selectize(tp, 'adm_train_bank', 'westpac');
+    // ...one of them a BNZ export that says so: it proves itself, and teaches
+    // Westpac nothing, and the report says which and why
+    await tp.setInputFiles('#adm_train_files', [path.join(D, 'westpac_march.pdf'), path.join(D, 'asb_march.pdf'),
+                                                path.join(D, 'bnz_export.csv')]);
+    await sleep(2500);
+    await tp.click('#adm_train_go');
+    check('training reports what it found',
+          await waitFor(tp, () => /layouts? from 3 statements/.test((document.querySelector('#adm_train_status') || {}).innerText || ''), 300000),
+          await text(tp, '#adm_train_status'));
+    if (ASK) check('ask mode: training asks about each new design rather than learning it',
+          /3 need a look/.test(await text(tp, '#adm_train_status')) &&
+          /has not seen this statement design before/.test(await text(tp, '#adm_train_status')) &&
+          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
+          await text(tp, '#adm_train_status'));
+    else check('...and lists another bank\'s statement as needing a look, with the reason',
+          /1 needs a look/.test(await text(tp, '#adm_train_status')) &&
+          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
+          await text(tp, '#adm_train_status'));
+    console.log(`        (training: ${(await text(tp, '#adm_train_status')).split('\n')[0]})`);
+  }
+  await screen(tp, 'Admin Health automatic reading');
   await tp.click('a[data-value="Words"]'); await sleep(1500);
   //    one list of meanings, each with an example, and only what the reader reads
   const kinds = await tp.evaluate(() => Object.values(document.getElementById('adm_word_kind').selectize.options)

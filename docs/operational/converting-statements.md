@@ -124,7 +124,7 @@ On a **bundle** (one file holding several statements), a statement picker shows
 which statement you are fixing. A fix goes to that statement only.
 
 **A fix that does not prove** applies to this one file and is held for an admin
-(Admin -> Banks). One person's word never teaches the tool on its own.
+(Admin -> Needs attention). One person's word never teaches the tool on its own.
 
 ## Amounts filled in from the balance
 

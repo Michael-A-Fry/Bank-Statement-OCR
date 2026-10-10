@@ -19,7 +19,7 @@ accord loses work.
 | Ask | How | Read it as |
 |---|---|---|
 | Did **several unrelated banks** break at once? | Convert one statement from each of two banks that worked last week | Two banks = the build. One bank = that bank's learned layouts, or a change in how the bank prints its statements. |
-| Did the **learned state** change too? | Compare `layouts_state` and `layout` in the two `logs\runs\<run_id>.json` records — the old good one and today's bad one | A different `layouts_state` means something was learned, confirmed, accepted or retired in between. If the bad figure came from a layout match (`outcome` `layout_match`), look at that layout on Admin -> Banks first. **Retiring a bad layout is the fix; do not roll back the build for it.** |
+| Did the **learned state** change too? | Compare `layouts_state` and `layout` in the two `logs\runs\<run_id>.json` records — the old good one and today's bad one | A different `layouts_state` means something was learned, confirmed, accepted or retired in between. If the bad figure came from a layout match (`outcome` `layout_match`), retire that layout on Admin -> Health first. **Retiring a bad layout is the fix; do not roll back the build for it.** |
 | Did the **build** change? | Compare `engine_version` in the same two records | Same version and different figures on 1.4.0 or later is a finding in itself — [investigating-a-wrong-conversion.md](investigating-a-wrong-conversion.md) §4 |
 | Is it the **file**? | Was it a scan? | OCR quality varies statement to statement and is not a version problem |
 

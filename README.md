@@ -112,7 +112,7 @@ reading fault from a bad scan.
   proven, matched a proven layout, or was confirmed by a person, and every
   conversion says on screen whether it was published or held back. Marking a
   result *wrong* withdraws it.
-- **Tracking with no personal data.** Admin -> Automatic reading counts what
+- **Tracking with no personal data.** Admin -> Health -> Automatic reading counts what
   was proven, what failed and why, and the spot-check answers, against the 95%
   target.
 - **A full automated test suite** guards every guarantee, and the runner fails
@@ -129,9 +129,11 @@ Three tabs:
   click Convert, read the outcome, and download. Please check, spot checks and
   the column editor (the last resort) are all here.
   ([converting-statements.md](docs/operational/converting-statements.md))
-- **Admin** (reached with `?admin`, and password-protected): **Banks** (learned
-  layouts, fixes waiting for an admin, train a bank), **Automatic reading** (the
-  counts, and the spot-check rate), **Words** (the dictionaries) and **Health**.
+- **Admin** (reached with `?admin`, and password-protected): **Needs attention**
+  (drafts to accept, merges, set-aside statements, fixes waiting for an admin),
+  **Recipes** (one row per design: on/off, test, change, undo, merge, new from a
+  statement), **Words** (the dictionaries) and **Health** (automatic reading's
+  counts and the spot-check rate, training, uploads, housekeeping).
   Until `app.admin_password` is changed from the shipped placeholder, Admin
   **refuses to open for anybody**.
   ([admin-and-maintenance.md](docs/operational/admin-and-maintenance.md))
