@@ -517,8 +517,10 @@ async function run(browser, D) {
     await shot(pg, 'tour-' + name.toLowerCase().replace(/[^a-z]+/g, '-'));
   };
   await tp.click('a[data-value="About"]');
-  check('About describes reading by bank, not templates',
-        !/template/i.test(await tp.evaluate(() => document.querySelector('.tab-pane.active').innerText)));
+  { const about = await tp.evaluate(() => document.querySelector('.tab-pane.active').innerText);
+    check('About describes reading by bank, not templates', !/template/i.test(about));
+    check('About describes recipes and the one-word outcomes (3.0.0)',
+          /recipe/i.test(about) && /Done/.test(about) && /Needs you/.test(about) && !/learned layout/i.test(about)); }
   await screen(tp, 'About');
   await tp.click('a[data-value="Admin"]'); await sleep(800);
   await tp.fill('#adm_pw', ADMIN_PW); await tp.click('#adm_login'); await sleep(2500);
