@@ -1868,3 +1868,19 @@ test_that("the result says one sentence, and a new design is asked about with tw
   expect_match(tx, 'money_out = "Money out", money_in = "Money in"')
   expect_match(tx, 'balance = "Balance", check = "Check"')
 })
+
+test_that("D16: a clicked transaction opens Please check at its page, and the Outcome reason is short", {
+  src <- .ui_src()
+  ob <- .ui_block(src, "observeEvent\\(input\\$cv_txns_rows_selected", 15L)
+  expect_match(ob, "ck_page\\(as.integer\\(pg\\)\\)")
+  expect_match(ob, "cv_ck_open\\(TRUE\\)")
+  expect_true(any(grepl('selection = "single"', src, fixed = TRUE)))
+  e <- new.env(parent = globalenv()); sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
+  short_reason <- e$short_reason; plain_failing_check <- e$plain_failing_check
+  expect_identical(short_reason("Failed: Only one reading of the columns fits"),
+                   "Failed: Only one reading of the columns fits")
+  long <- short_reason("one two three four five six seven eight nine ten")
+  expect_identical(long, "one two three four five six seven eight…")
+  expect_identical(short_reason(NA), "")
+  expect_identical(plain_failing_check("reading:known_design"), "New design - check it once")
+})

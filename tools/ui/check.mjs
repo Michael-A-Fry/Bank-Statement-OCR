@@ -12,7 +12,7 @@
 // The tour: the Convert table (banks pre-filled, changed, a new bank named), a case
 // converted with its progress in the table, every outcome, click-through, the table
 // at desktop, laptop and tablet width, Please check on a spreadsheet (Re-read wrong,
-// Undo, Re-read right, This is right) and on a PDF (the page, its ticks, the column
+// Undo, Re-read right, Set aside, It's right - accept it) and on a PDF (the page, its ticks, the column
 // editor with a box drawn and saved), Download everything, a single file with a bank
 // the statement disagrees with, scans, Stop, and every Admin tab -- Banks (confirm,
 // rename, retire, a held fix, training with another bank's statement in the pile),
@@ -280,8 +280,11 @@ async function run(browser, D) {
   // D16: one word each. With "always ask once", a new design that adds up waits for a person.
   eq('each file has its outcome in plain words', six.map(word),
      [ 'Done', ASK ? 'Needs you' : 'Done', 'Needs you', 'Needs you', "Couldn't read", "Couldn't read"]);
+  check('...in one word and a few words of reason', r.every(x => { const w = x.result.split('\n')[0].split(':');
+          return w.length < 2 || w.slice(1).join(':').replace(/(\d[\d,]* rows?)?\s*(Please check.*)?$/, '').trim().split(/\s+/).length <= 8; }),
+        JSON.stringify(r.map(x => x.result)));
   check('a reason is given where a person has something to do',
-        byFile(r, 'ambiguous.csv').result.includes('readings') && byFile(r, 'unproven.csv').result.length > 20,
+        byFile(r, 'ambiguous.csv').result.includes('reading of the columns') && byFile(r, 'unproven.csv').result.length > 20,
         JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
   check('the design a recipe read is named', /ANZ .*Account/.test(byFile(r, 'anz_march.pdf').layout),
         byFile(r, 'anz_march.pdf').layout);
@@ -293,7 +296,7 @@ async function run(browser, D) {
         await page.evaluate(() => ['ambiguous.csv', 'unproven.csv'].every(f => [...document.querySelectorAll('tr.plan-row')]
           .some(t => t.querySelector('.plan-file').innerText === f && t.querySelector('a.plan-check')))));
   check('...and never one that proved itself', await page.evaluate(() => [...document.querySelectorAll('tr.plan-row')]
-          .filter(t => /^Proven/.test(t.querySelector('.plan-res').innerText)).every(t => !t.querySelector('a.plan-check'))));
+          .filter(t => /^Done/.test(t.querySelector('.plan-res').innerText)).every(t => !t.querySelector('a.plan-check'))));
   await shot(page, '02-convert-results');
   //    a converted case fits its panel at every width: a table at desktop, a card
   //    per file below that -- never an outcome cut off behind a sideways scroll
@@ -315,9 +318,27 @@ async function run(browser, D) {
   eq('a click on a dropdown does not open its row', (await rows(page)).filter(x => x.open).map(x => x.file),
      ['anz_march.pdf']);
 
-  // 5. PLEASE CHECK, on a PDF: the page, the columns drawn on it, a tick per page
-  await page.click('#cv_ck_toggle'); await sleep(2500);
-  check('a proven PDF can still show how it was read', !!(await page.$('#cv_ck_plot img')));
+  //    ask mode: a new design that adds up says so, and asks with two buttons only
+  if (ASK) {
+    await clickIn(page, 'bnz_export.csv', '.plan-file'); await sleep(2500);
+    check('a new design says so', /New design/.test(await text(page, '#cv_status')), await text(page, '#cv_status'));
+    eq('...and asks with two buttons', await page.evaluate(() =>
+       [...document.querySelectorAll('#cv_check button')].map(b => b.innerText.trim())),
+       ['It\u2019s right \u2014 accept it', 'Set aside']);
+    check('...and offers no download yet', !(await page.$('#dl_xlsx')));
+    await clickIn(page, 'anz_march.pdf', '.plan-file'); await sleep(2500);
+  }
+  //    the table is the QVF's, with its Check column: a tick where the balance follows
+  check('the transactions table has a Check column', await waitFor(page, () =>
+        [...document.querySelectorAll('#cv_txns th')].some(th => th.textContent.trim() === 'Check'), 20000));
+  check('...ticked where the balance follows', await page.evaluate(() =>
+        [...document.querySelectorAll('#cv_txns tbody td')].some(td => td.innerText.trim() === '\u2713')));
+  check('a finished file offers its downloads', !!(await page.$('#dl_xlsx')));
+
+  // 5. PLEASE CHECK, on a PDF: a row of the table clicked opens its page, line marked
+  await page.click('#cv_txns tbody tr:nth-child(2) td:nth-child(2)'); await sleep(3000);
+  check('a clicked transaction opens the page it is on', await waitFor(page, () => !!document.querySelector('#cv_ck_plot img'), 20000));
+  check('...at that page', (await page.evaluate(() => (document.querySelector('input[name="cv_ck_page"]:checked') || {}).value)) === '1');
   check('each page carries its balance tick', (await text(page, '#cv_ck_pages')).includes('Page 1 \u2713'),
         await text(page, '#cv_ck_pages'));
   check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
@@ -326,6 +347,8 @@ async function run(browser, D) {
   check('someone not signed in as admin is offered no word teaching', !(await page.$('#cv_ck_teach')));
   await shot(page, '03-please-check-pdf');
   //    the last resort: drawing the columns by hand
+  await page.click('#cv_ck_side details > summary'); await sleep(500);
+  check('the last resort is behind More detail', (await text(page, '#cv_ck_side details > summary')) === 'More detail');
   await page.click('#cv_ck_editor');
   check('the column editor opens on the page', await waitFor(page, () => !!document.querySelector('#ed_plot img'), 30000));
   await sleep(1000);
@@ -344,13 +367,14 @@ async function run(browser, D) {
   await page.click('#ed_save');
   const boxed = await rereadDone(page, '');
   check('the drawn columns are read again and still have to prove themselves',
-        boxed.startsWith('Proven with the columns you drew'), boxed);
+        boxed.startsWith('Done - with the columns you drew'), boxed);
   check('...and say they apply to this file only', boxed.includes('this file only'));
 
   // 6. PLEASE CHECK, on a spreadsheet: Re-read wrong, Re-read right
   await page.click('tr.plan-row:has(td.plan-file:text-is("ambiguous.csv")) a.plan-check'); await sleep(3000);
   check('Please check opens from the row', (await text(page, '#cv_check')).startsWith('Please check'));
-  check('...with the reason', (await text(page, '#cv_check')).includes('readings of the columns'));
+  check('...with the reason', /readings? of the columns/.test((await text(page, '#cv_status')) + (await text(page, '#cv_check'))),
+        (await text(page, '#cv_status')).slice(0, 300));
   check('a spreadsheet shows its columns by heading', (await text(page, '#cv_ck_table')).includes('Col A'));
   await sleep(1500);
   check('nothing on the result page, its checks and its field coverage included, says "template"',
@@ -373,24 +397,32 @@ async function run(browser, D) {
   check('Undo reads it as the tool first found it', undone.startsWith('Your changes are undone'), undone);
   check('...and then offers no Undo', !(await page.$('#cv_ck_undo')));
   r = await rows(page);
-  eq('...and the row is back to Please check', word('ambiguous.csv'), 'Please check');
+  eq('...and the row is back to Needs you', word('ambiguous.csv'), 'Needs you');
   await page.check('input[name="cv_ck_role_debit"][value="debit"]'); await page.check('input[name="cv_ck_role_credit"][value="credit"]'); await sleep(700);
   await page.click('#cv_ck_reread');
   const right = await rereadDone(page, undone);
-  check('the right roles prove it, and it says so', right.startsWith('Proven'), right);
+  check('the right roles prove it, and it says so', right.startsWith('Done'), right);
   r = await rows(page);
-  eq('...and the row is updated in place', word('ambiguous.csv'), 'Proven');
+  eq('...and the row is updated in place', word('ambiguous.csv'), 'Done');
   await shot(page, '06-reread-proven');
-  //    This is right, on a statement nothing on it can prove
+  //    It's right - accept it, on a statement nothing on it can prove; Set aside first
   await page.click('tr.plan-row:has(td.plan-file:text-is("unproven.csv")) a.plan-check'); await sleep(3000);
+  check('no downloads before it is done', !(await page.$('#dl_xlsx')) && !(await page.$('#dl_csv')));
+  eq('at most three buttons, in plain words', await page.evaluate(() =>
+     [...document.querySelectorAll('#cv_check button')].map(b => b.innerText.trim())),
+     ['Read it again', 'It\u2019s right \u2014 accept it', 'Set aside']);
+  await page.click('#cv_ck_aside');
+  const aside = await rereadDone(page, '');
+  check('Set aside says it is not converted and goes to an admin', aside.startsWith('Set aside') && aside.includes('admin'), aside);
   await page.click('#cv_ck_confirm');
-  const conf = await rereadDone(page, '');
-  check('"This is right" converts it as read and holds it for an admin', conf.startsWith('Confirmed') && conf.includes('admin'), conf);
+  const conf = await rereadDone(page, aside);
+  check('"It\u2019s right \u2014 accept it" converts it as read and holds it for an admin', conf.startsWith('Confirmed') && conf.includes('admin'), conf);
   r = await rows(page);
-  eq('...and the row says who decided', word('unproven.csv'), 'Confirmed on Please check');
+  eq('...and the row says who decided', word('unproven.csv'), 'Done - you checked it');
+  check('...and its downloads appear once accepted', await waitFor(page, () => !!document.querySelector('#dl_xlsx'), 20000));
   check('a reading a person vouched for does not wear the proven green',
         await page.evaluate(() => { const v = document.querySelector('#cv_headline .verdict');
-          return !!v && v.classList.contains('verdict-medium') && /a person confirmed it/.test(v.innerText); }),
+          return !!v && v.classList.contains('verdict-medium') && /you checked it/.test(v.innerText); }),
         await text(page, '#cv_headline'));
 
   // 7. download everything
@@ -408,7 +440,8 @@ async function run(browser, D) {
   check('choosing new files cleared the last case', (await page.$$('tr.plan-openable')).length === 0);
   await pick(page, 'bnz_export.csv', 'anz');
   await go(page); await waitIdle(page);
-  check('its result is below the table', (await text(page, '#cv_headline')).includes('5 transactions read'));
+  check('its result is below the table', /5 transactions|New design/.test((await text(page, '#cv_headline')) + (await text(page, '#cv_status'))),
+        (await text(page, '#cv_headline')) + (await text(page, '#cv_status')));
   check('a statement that names another bank asks which is right', (await text(page, '#cv_bank_note')).includes('Which bank?'),
         await text(page, '#cv_bank_note'));
   check('...in a plain sentence, with no grade and the bank named once',
@@ -416,7 +449,7 @@ async function run(browser, D) {
         await text(page, '#cv_bank_note'));
   check('...and the row says it too', (await rows(page))[0].chip === 'Which bank? The statement looks like BNZ',
         (await rows(page))[0].chip);
-  eq('the one row carries its outcome too', word('bnz_export.csv'), 'Proven');
+  eq('the one row carries its outcome too', word('bnz_export.csv'), ASK ? 'Needs you' : 'Done');
   eq('the button says again', await button(page), 'Convert again');
   await shot(page, '07-bank-question');
   await page.click('#cv_bank_use'); await waitIdle(page); await sleep(1500);
@@ -490,7 +523,13 @@ async function run(browser, D) {
   check('Admin opens on Banks', (await text(tp, '#adm_banks')).includes('ANZ'), await text(tp, '#adm_banks'));
   check('nothing was learned under a bank nobody chose',
         !/FALSE|TRUE|\bNA\b/.test(await text(tp, '#adm_banks')), await text(tp, '#adm_banks'));
-  if (!LIVE) {
+  if (!LIVE && ASK) {
+    // always ask once: nothing was learned behind anyone's back
+    await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
+    check('ask mode: no layout was learned without a person', (await tp.$$('#adm_layouts tbody tr td.dataTables_empty')).length === 1 ||
+          (await tp.$$('#adm_layouts tbody tr')).length === 0, await text(tp, '#adm_layouts'));
+  }
+  if (!LIVE && !ASK) {
     // a bank's layouts: confirm, rename, retire, and back
     await selectize(tp, 'adm_bank_pick', 'anz'); await sleep(1500);
     check('a bank lists its learned layouts', (await tp.$$('#adm_layouts tbody tr')).length >= 1);
@@ -508,6 +547,8 @@ async function run(browser, D) {
     await tp.click('#adm_layouts tbody tr'); await sleep(500);
     await tp.click('#adm_layout_confirm'); await sleep(2000);
     check('...and Confirm brings it back', (await text(tp, '#adm_layouts tbody tr')).includes('proven'));
+  }
+  if (!LIVE) {
     // the fix a person confirmed, held for an admin
     check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
     await tp.click('#adm_fixes tbody tr'); await sleep(500);
@@ -524,7 +565,12 @@ async function run(browser, D) {
     check('training reports what it found',
           await waitFor(tp, () => /layouts? from 3 statements/.test((document.querySelector('#adm_train_status') || {}).innerText || ''), 300000),
           await text(tp, '#adm_train_status'));
-    check('...and lists another bank\'s statement as needing a look, with the reason',
+    if (ASK) check('ask mode: training asks about each new design rather than learning it',
+          /3 need a look/.test(await text(tp, '#adm_train_status')) &&
+          /has not seen this statement design before/.test(await text(tp, '#adm_train_status')) &&
+          /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
+          await text(tp, '#adm_train_status'));
+    else check('...and lists another bank\'s statement as needing a look, with the reason',
           /1 needs a look/.test(await text(tp, '#adm_train_status')) &&
           /bnz_export\.csv\s+-\s+It looks like a BNZ statement, so nothing was learned/.test(await text(tp, '#adm_train_status')),
           await text(tp, '#adm_train_status'));
@@ -544,6 +590,13 @@ async function run(browser, D) {
     check('the admin sets the spot-check rate', (await text(tp, '#adm_spot_msg')).startsWith('Saved'), await text(tp, '#adm_spot_msg'));
     const sp = await freshConvert(ctx);
     await sp.click('#cv_try_sample'); await waitIdle(sp);
+    if (ASK) {
+      // a new design is asked about, never spot-checked: a person is already looking
+      check('ask mode: a new design is asked about, not spot-checked', !(await sp.$('#cv_spot_right')) &&
+            /New design/.test(await text(sp, '#cv_status')), await text(sp, '#cv_status'));
+      await sp.close();
+      await tp.fill('#adm_spot_rate', '0'); await tp.click('#adm_spot_save'); await sleep(1200);
+    } else {
     check('a conversion picked for a spot check asks for one', (await text(sp, '#cv_spot')).includes('Spot check'),
           await text(sp, '#cv_spot'));
     await shot(sp, '09-spot-check');
@@ -554,6 +607,7 @@ async function run(browser, D) {
     await tp.click('#adm_ar_refresh'); await sleep(2000);
     check('the spot check is counted', (await text(tp, '#adm_ar_spot')).includes('1 spot check answered: 1 right'),
           await text(tp, '#adm_ar_spot'));
+    }
   }
   const [sdl] = await Promise.all([tp.waitForEvent('download', { timeout: 30000 }), tp.click('#adm_ar_export')]);
   const sjp = path.join(OUT, 'automatic-reading-summary.json'); await sdl.saveAs(sjp);

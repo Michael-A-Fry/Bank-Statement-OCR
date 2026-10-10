@@ -312,6 +312,14 @@ plain_label  <- function(x, map) { out <- unname(map[x]); ifelse(is.na(out), x, 
 # precisely so a split bundle's files group together under one kind of failure.
 # An unknown code falls back to itself -- never to a blank cell, which would hide
 # a file that needs attention.
+# short_reason(x) -- the Outcome cell's reason, at most 8 words ("Failed: " is kept: it is
+# what turns a check's pass-wording into the reason).
+short_reason <- function(x) {
+  x <- trimws(as.character(x %||% "")[1])
+  if (is.na(x) || !nzchar(x)) return("")
+  w <- strsplit(x, "\\s+")[[1]]
+  if (length(w) > 8L) paste0(paste(w[1:8], collapse = " "), "\u2026") else x
+}
 plain_failing_check <- function(x) vapply(x, function(e) {
   if (is.na(e)) return(NA_character_)
   code <- sub("^[^:]*:", "", e)

@@ -3160,12 +3160,12 @@ server <- function(input, output, session) {
   # never say it differently.
   .plan_outcome <- function(o, n_rows = NA, link = NULL, again = FALSE) {
     n_rows <- suppressWarnings(as.integer(n_rows)[1])
-    why <- o$why %||% ""
+    why <- short_reason(o$why %||% "")
     tags$td(class = "plan-res",
       div(class = paste("plan-verdict", paste0("o-", o$cls)),
           if (nzchar(why)) paste0(o$word, ":") else o$word),
       if (nzchar(why)) div(class = "plan-why", title = why,
-                           if (nchar(why) > 140) paste0(substr(why, 1, 137), "\u2026") else why),
+                           why),
       if (!is.na(n_rows) && o$cls != "bad")
         div(class = "plan-sub", sprintf("%s row%s", format(n_rows, big.mark = ","),
                                         if (identical(n_rows, 1L)) "" else "s")),
@@ -3255,7 +3255,9 @@ server <- function(input, output, session) {
       } else if (case_res && identical(as.character(b$status[i]), "stopped")) {
         list(tags$td(""), tags$td(class = "plan-res", span(class = "muted", "Stopped - press Convert to convert it")))
       } else if (!is.null(res_i)) {
-        o <- plain_outcome(res_i$status, res_i$outcome, res_i$feed_basis, res_i$reason, res_i$person$fix)
+        # the table's reason is the short phrase (D16): one word, then a few words
+        o <- plain_outcome(res_i$status, res_i$outcome, res_i$feed_basis,
+                           plain_failing_check(.failing_check(res_i)), res_i$person$fix)
         lys <- .res_layouts(res_i)
         # Please check has something to show only where columns were found
         has_cols <- any(vapply(res_i$reading %||% list(), function(rd) NROW(rd$columns) > 0L, logical(1)))
@@ -4073,6 +4075,7 @@ server <- function(input, output, session) {
   # result opens: to the first statement that did not prove, and its first page.
   ck_stmt <- reactiveVal(1L)
   ck_page <- reactiveVal(1L)
+  ck_mark <- reactiveVal(NULL)   # the clicked transaction's line (below)
   observeEvent(cv_res(), {
     res <- cv_res(); if (is.null(res)) return()
     oc <- vapply(res$reading %||% list(), function(r) as.character(r$outcome %||% "unread")[1], "")
@@ -4080,6 +4083,7 @@ server <- function(input, output, session) {
     if (is.na(s)) s <- 1L
     ck_stmt(as.integer(s))
     ck_page(as.integer((res$reading[[s]]$pages %||% 1L)[1]))
+    ck_mark(NULL)
   }, ignoreNULL = FALSE)
   observeEvent(input$cv_ck_stmt, {
     res <- cv_res(); s <- suppressWarnings(as.integer(input$cv_ck_stmt))
@@ -4090,6 +4094,29 @@ server <- function(input, output, session) {
     pg <- suppressWarnings(as.integer(input$cv_ck_page)); if (!is.na(pg)) ck_page(pg)
   })
   ck_rows <- reactive({ res <- cv_res(); if (is.null(res)) NULL else .result_rows(res) })
+  # A ROW OF THE TRANSACTIONS TABLE, CLICKED (D16): Please check opens at that
+  # row's page (its provenance, pdf:pN) with the line marked. The mark is the
+  # row's amount found among the page's words; none found, the page alone.
+  observeEvent(input$cv_txns_rows_selected, {
+    i <- suppressWarnings(as.integer(input$cv_txns_rows_selected)[1])
+    res <- cv_res(); rows <- ck_rows()
+    if (is.na(i) || is.null(res) || !.ck_is_pdf(res) || is.null(rows) || i > nrow(rows)) return()
+    pg <- rows$page[i]; if (is.na(pg)) return()
+    ck_stmt(as.integer(rows$statement[i])); ck_page(as.integer(pg))
+    ck_mark(list(page = as.integer(pg), amount = abs(rows$amount[i])))
+    cv_ck_open(TRUE)
+    updateRadioButtons(session, "cv_ck_page", selected = pg)
+    session$sendCustomMessage("ss-scroll", "cv_check")
+  })
+  # .ck_mark_y(path, page, amount) -> the y (PDF points) of the amount's word, or NA
+  .ck_mark_y <- function(path, page, amount) {
+    if (!is.finite(amount %||% NA)) return(NA_real_)
+    w <- tryCatch(suppressMessages(pdftools::pdf_data(path)[[page]]), error = function(e) NULL)
+    if (!is.data.frame(w) || !nrow(w)) return(NA_real_)
+    v <- suppressWarnings(as.numeric(gsub("[^0-9.]", "", w$text)))
+    j <- which(!is.na(v) & abs(v - amount) < 0.005 & grepl("[.]", w$text))[1]
+    if (is.na(j)) NA_real_ else w$y[j] + w$height[j] / 2
+  }
   # The ticks for the statement on screen, one per page.
   ck_ticks <- reactive({
     res <- cv_res(); req(res); s <- ck_stmt()
@@ -4183,6 +4210,11 @@ server <- function(input, output, session) {
     plot(NA, xlim = c(0, r$w), ylim = c(r$h, 0), xaxs = "i", yaxs = "i",
          xlab = "", ylab = "", axes = FALSE)
     rasterImage(r$ras, 0, r$h, r$w, 0)
+    mk <- ck_mark()
+    if (!is.null(mk) && identical(mk$page, as.integer(r$pg))) {
+      y <- .ck_mark_y(cv_src()$path, r$pg, mk$amount)
+      if (is.finite(y)) rect(0, y - 7, r$w, y + 7, col = "#f59e0b40", border = "#d97706", lwd = 2)
+    }
     cols <- res$reading[[s]]$columns
     if (!is.data.frame(cols) || !nrow(cols)) return(invisible())
     cols <- cols[cols$page %in% r$pg, , drop = FALSE]
@@ -5301,7 +5333,7 @@ server <- function(input, output, session) {
               balance = "Balance", check = "Check", flags = "Note")[vis]
     # MONEY IS SHOWN TO THE CENT, ALWAYS (display only: the files keep the number).
     # The table opens at the first cross: that is where to look.
-    dt <- datatable(df, rownames = FALSE, colnames = c(unname(labs), ".derived"),
+    dt <- datatable(df, rownames = FALSE, colnames = c(unname(labs), ".derived"), selection = "single",
                     options = list(pageLength = 10, scrollX = TRUE,
                                    displayStart = if (length(bad)) 10L * ((bad[1] - 1L) %/% 10L) else 0L,
                                    columnDefs = list(list(visible = FALSE, targets = length(vis)),

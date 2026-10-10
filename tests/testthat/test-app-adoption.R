@@ -381,12 +381,14 @@ test_that("too many files is refused at the door, with the number", {
 })
 
 # A file that read nothing has no outcome to grade: the case table says "Couldn't
-# read" with the reader's reason, the same words its own card uses, and offers
+# read" with the short phrase of the check that failed (D16: one word and at most
+# eight words of reason; the card below keeps the reader's full sentence), and offers
 # Please check only where there are columns to look at.
 test_that("a file that converted nothing is said to be unread, in the card's own words", {
   src <- .app_src()
   blk <- .app_block(src, "output\\$cv_plan <- renderUI", 200L)
-  expect_match(blk, "plain_outcome\\(res_i\\$status, res_i\\$outcome, res_i\\$feed_basis, res_i\\$reason")
+  expect_match(blk, "plain_outcome\\(res_i\\$status, res_i\\$outcome, res_i\\$feed_basis,\\s+plain_failing_check\\(\\.failing_check\\(res_i\\)\\)")
+  expect_match(.app_block(src, "\\.plan_outcome <- function", 10L), "short_reason\\(")
   expect_match(blk, "has_cols <- any\\(")
   expect_match(.app_block(src, "output\\$cv_status <- renderUI", 30L),
                "plain_outcome\\(st, res\\$outcome, res\\$feed_basis, res\\$reason\\)")
