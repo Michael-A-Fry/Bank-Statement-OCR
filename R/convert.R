@@ -845,14 +845,18 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         }
         else if (identical(f$kind, "boxes"))
           list(action = "none", why = "Edited column boxes apply to this file only: a layout does not remember positions.")
-        # A design checked by a person that its arithmetic proved: a text PDF is
+        # A design checked by a person that its arithmetic proved: a text PDF or a spreadsheet is
         # written down as a draft recipe (or counts towards one); anything else
         # teaches a layout, as a proven reading always has.
         else if (confirmed && identical(r$new_design, "proven") && is.null(f)) {
           rp <- r; rp$outcome <- "proven"
           acc <- .unit_accounts(r, if (k == 1L) meta else NULL, units[[i]]$input)
-          if (.text_pdf(units[[i]]$input)) c(recipe_learn(rp, units[[i]]$input, bank_id, .unit_sha(sha, i, k), acc, rdir), list(kind = "recipe"))
-          else layout_learn(rp, pick, .unit_sha(sha, i, k), ldir, accounts = acc)
+          rl <- if (.text_pdf(units[[i]]$input) || !is.na(.rc_sheet_kind(units[[i]]$input)))
+            c(recipe_learn(rp, units[[i]]$input, bank_id, .unit_sha(sha, i, k), acc, rdir), list(kind = "recipe")) else NULL
+          # A spreadsheet design that cannot be written as a recipe (figures with
+          # no sign of their own, a column with no heading) teaches a layout, as before.
+          if (is.null(rl) || (identical(rl$action, "none") && !.text_pdf(units[[i]]$input)))
+            layout_learn(rp, pick, .unit_sha(sha, i, k), ldir, accounts = acc) else rl
         }
         # A reading made with a recipe teaches no layout: the recipe already is this
         # design's reading, and its columns were measured by the recipe, not found

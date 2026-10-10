@@ -524,7 +524,8 @@ recipe_card <- function(id, dirs = NULL) {
        columns = data.frame(n = seq_along(cols), field = names(cols) %||% character(0), heading = unname(hd), role = .rca_plain_role(names(cols)),
                             stringsAsFactors = FALSE),
        date = ex(y$dates$format), date_format = as.character(y$dates$format %||% ""),
-       money = if (identical(y$money$style, "signed")) "one amount" else "money out and money in",
+       money = if (identical(y$money$style, "signed")) "one amount"
+               else if (identical(y$money$style, "type_words")) "one amount, with a word saying money in or out" else "money out and money in",
        recognise = as.character(unlist(y$recognise$all)),
        proofs = length(.rca_proofs(dirs, t$top$id)$proved_by),
        versions = data.frame(version = vapply(vs, `[[`, 0L, "version"), status = vapply(vs, `[[`, "", "status"),

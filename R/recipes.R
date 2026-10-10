@@ -130,12 +130,17 @@ recipes_default <- function() {
   bank <- .layout_slug(y$bank)
   if (is.na(bank)) return(bad("it names no `bank:`."))
   kind <- as.character(y$kind %||% "pdf")[1]
-  if (!identical(kind, "pdf")) return(bad("kind \"%s\" is not read by recipes yet (only pdf).", kind))
+  if (!(kind %in% c("pdf", .RECIPE_SHEET_KINDS))) return(bad("kind \"%s\" is not one recipes read (pdf, excel or csv).", kind))
   status <- as.character(y$status %||% "draft")[1]
   if (!(status %in% .RECIPE_STATUS)) return(bad("its status must be one of %s.", paste(.RECIPE_STATUS, collapse = ", ")))
   rec <- y$recognise %||% list()
   all <- as.character(unlist(rec$all)); none <- as.character(unlist(rec$none))
   if (!length(all) || any(!nzchar(trimws(all)))) return(bad("`recognise: all:` must list the words that recognise the design."))
+  # A spreadsheet's recipe names its columns by heading only (R/recipes_sheet.R).
+  if (kind %in% .RECIPE_SHEET_KINDS)
+    return(.rc_validate_sheet(y, list(id = id, version = ver, ref = paste0(id, "@", ver), bank = bank,
+                                      title = as.character(y$title %||% id)[1], kind = kind, status = status,
+                                      all = all, none = none)))
   tb <- y$table %||% list()
   header <- as.character(unlist(tb$header))
   cl <- tb$columns
@@ -298,15 +303,26 @@ recipes_default <- function() {
 recipe_recognise <- function(input, recipes = recipes_default(), bank = NULL, drafts = FALSE) {
   none <- function(why, scores = NULL) list(recipe = NULL, scores = scores, why = why)
   if (!length(recipes)) return(none("No recipes are installed."))
-  if (!identical(input$kind %||% "", "pdf")) return(none("Recipes read text PDFs only, so far."))
-  if (isTRUE(any(as.logical(input$page_ocr %||% FALSE)))) return(none("The file is a scan; its recipes read text PDFs only."))
-  txt <- .rc_flat(paste(.page_texts(input), collapse = " "))
+  sk <- .rc_sheet_kind(input)
+  if (!identical(input$kind %||% "", "pdf") && is.na(sk)) return(none("Recipes read PDFs, Excel and CSV files."))
+  # A recipe reads one kind of file: a PDF's never reads a spreadsheet, or the
+  # other way round.
+  recipes <- Filter(function(rc) identical(rc$kind %||% "pdf", if (is.na(sk)) "pdf" else sk), recipes)
+  if (!length(recipes)) return(none(if (is.na(sk)) "No recipe reads PDFs." else "No recipe reads this kind of spreadsheet."))
+  if (is.na(sk) && isTRUE(any(as.logical(input$page_ocr %||% FALSE)))) return(none("The file is a scan; its recipes read text PDFs only."))
+  book <- if (!is.na(sk)) .rc_book(input) else NULL
+  txt <- if (!is.na(sk)) .rc_book_text(book) else .rc_flat(paste(.page_texts(input), collapse = " "))
   lines <- NULL
   bank_slug <- if (is.null(bank) || all(is.na(bank))) NA_character_ else .layout_slug(bank)
   sc <- lapply(recipes, function(rc) {
     row <- list(recipe = rc$ref, fits = FALSE, score = 0, why = "")
     if (!identical(rc$status, "proven") && !(isTRUE(drafts) && identical(rc$status, "draft"))) {
       row$why <- "a draft, not yet accepted"; return(row)
+    }
+    if (!is.na(sk)) {
+      f <- .rc_sheet_fits(rc, book, txt)
+      row$fits <- f$fits; row$score <- f$score; row$why <- f$why
+      return(row)
     }
     a <- vapply(rc$all, function(p) .rc_has_phrase(txt, p), logical(1))
     n <- vapply(rc$none, function(p) .rc_has_phrase(txt, p), logical(1))
@@ -403,7 +419,7 @@ recipe_note <- function(rd) {
 # "check" with the first reason, and auto_read() does not use it.
 recipe_read <- function(input, rc) {
   t0 <- proc.time()[["elapsed"]]
-  out <- tryCatch(.rc_read(input, rc), error = function(e)
+  out <- tryCatch(if (identical(rc$kind %||% "pdf", "pdf")) .rc_read(input, rc) else .rc_read_sheet(input, rc), error = function(e)
     .rc_fail(rc, paste0("The recipe reader stopped on this file (", conditionMessage(e), ").")))
   out$secs <- round(proc.time()[["elapsed"]] - t0, 3)
   out$engine <- AUTO_READ_VERSION
@@ -1346,6 +1362,7 @@ recipes_state_dir <- function(layouts_dir = NULL, cfg = NULL) {
 # list(error) saying why the reading cannot be written as a recipe.
 .rc_draft <- function(reading, input, bank, id) {
   no <- function(why) list(error = why)
+  if (!is.na(.rc_sheet_kind(input))) return(.rc_draft_sheet(reading, input, bank, id))
   if (!identical(input$kind %||% "", "pdf") || isTRUE(any(as.logical(input$page_ocr %||% FALSE))))
     return(no("Only a text PDF is written as a recipe, so far."))
   cl <- reading$columns

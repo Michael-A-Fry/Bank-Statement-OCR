@@ -124,6 +124,12 @@ def parse(b):
     # g) the type codes a description starts with: "DD" = "Direct Debit"
     g = re.search(r"g\)\s*(.*)$", mo, re.S)
     d["types"] = [(c, m) for c, m in re.findall(r'"([A-Za-z0-9]{1,6})"\s*=\s*"([^"]+)"', g.group(1) if g else "")]
+    if SHEET_KINDS.get(d["kind"]):
+        if a and a.group(1) == "type column": d["style"] = "type_words"
+        d["out_words"] = [x for x, w in re.findall(r'"([^"]+)"\s*=\s*money (out|in)', mo) if w == "out"]
+        d["in_words"] = [x for x, w in re.findall(r'"([^"]+)"\s*=\s*money (out|in)', mo) if w == "in"]
+        ob = re.search(r'OPENING BALANCE\s*a\)\s*"([^"]+)"\s*b\)\s*([^\n]*)', b)
+        d["opening_label"] = ob.group(1).strip() if ob and re.search(r"metadata|summary box|above", ob.group(2)) else None
     o = re.search(r"(oldest_first|newest_first)", S.get("order", ""))
     d["order"] = o.group(1) if o else "oldest_first"
     # a heading word ("Credit") printed again inside the table is the heading, not a
@@ -134,8 +140,18 @@ def parse(b):
     d["norows"] = [] if re.search(r"UNSURE|NONE", nr) else clean(quoted(nr))
     return d
 
+SHEET_KINDS = {"xls": "excel", "xlsx": "excel", "excel-xlsx": "excel", "excel-xls": "excel", "excel": "excel",
+               "csv": "csv", "excel-csv": "csv"}
+# An account column a spreadsheet lists several accounts by (one statement each).
+# Never another party's account ("Other-Party-Account-Number").
+ACCOUNT_HEADS = ("kiwiacc", "account number", "account no", "account", "acct", "account no.")
+
+def sheet_kind(d): return SHEET_KINDS.get(d["kind"])
+
 def check(d):
     p = list(d["problems"])
+    if sheet_kind(d):
+        return check_sheet(d, p)
     if d["kind"] not in ("pdf-text",): p.append("kind %s (recipes read text PDFs for now)" % d["kind"])
     if d["date_format"] not in KNOWN_DATES and not re.match(r"^(%[dmyYbB]|[ ./-])+$", d["date_format"] or ""):
         p.append("date format %r is not one the reader knows" % d["date_format"])
@@ -148,6 +164,68 @@ def check(d):
     if "date" not in roles or "description" not in roles: p.append("needs a date and a description column")
     if not d["style"]: p.append("money style not given")
     return p
+
+def check_sheet(d, p):
+    """A spreadsheet design: its columns are found by their headings, in any order."""
+    if not re.search(r"%[yY]", d["date_format"] or "") or (d["date_format"] not in KNOWN_DATES and
+            not re.match(r"^(%[dmyYbB]|[ ./-])+$", d["date_format"] or "")):
+        p.append("date format %r is not one a spreadsheet recipe reads" % d["date_format"])
+    if not d["header"]: p.append("no table heading")
+    heads = [c[0].strip().lower() for c in d["columns"]]
+    if any(h not in [x.strip().lower() for x in d["header"]] for h in heads): p.append("a column's heading is not in the heading row")
+    roles = [c[1] for c in d["columns"]]
+    if None in roles: p.append("a column role is not one of the choices")
+    if "date" not in roles or "description" not in roles: p.append("needs a date and a description column")
+    if not d["style"]: p.append("money style not given")
+    if d["style"] == "type_words" and not (d["out_words"] and d["in_words"]): p.append("the type words for money in and out are not given")
+    return p
+
+def sheet_yaml(rid, ds, status="draft"):
+    """A kind: excel / csv recipe (R/recipes_sheet.R)."""
+    d0 = ds[0]
+    q = lambda s: json.dumps(s, ensure_ascii=True)
+    common = set(d0["all"])
+    for d in ds[1:]: common &= set(d["all"])
+    alls = [p for p in d0["all"] if p in common] or [h.strip() for h in d0["header"][:2]]
+    own_none = set(d0["none"])
+    for d in ds[1:]: own_none &= set(d["none"])
+    seen = set(x for d in ds for x in d["all"] + d["skip"] + d["ends"] + d["header"])
+    nones = sorted(x for x in own_none - set(alls) if not printed_in(x, seen | set(alls)))
+    uniq = lambda xs: list(dict.fromkeys(xs))
+    ends = uniq(x for d in ds for x in d["ends"])
+    # A row that ends the table is never also one to skip; an opening or closing
+    # balance row is the reader's to use, never one to skip.
+    skip = uniq(x for d in ds for x in d["skip"] if x not in ends and not re.match(r"(?i)^(opening|closing) balance$", x.strip()))
+    header = [h.strip() for h in d0["header"]]
+    cols, n_text, used = [], 0, set()
+    for head, role, raw in d0["columns"]:
+        head = head.strip()
+        if role is None or head.lower() not in [h.lower() for h in header]: continue
+        if role == "text":
+            if n_text >= 9: continue
+            n_text += 1; role = "text%d" % n_text
+        if role in used: continue
+        used.add(role); cols.append((role, head))
+    split = next((h for h in header if h.lower() in ACCOUNT_HEADS and any(c[1] == h for c in cols if c[0].startswith("text"))), None)
+    L = ["# Spreadsheet recipe written by tools/recipes/from_designs.py from %d real export design(s)" % len(ds),
+         "# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still",
+         "# prove itself by the export's own arithmetic; one that does not is not used.",
+         "recipe: %s" % rid, "format: 1", "version: 1", "bank: %s" % d0["bank"],
+         "title: %s" % q(d0["title"]), "kind: %s" % sheet_kind(d0), "status: %s" % status, "recognise:",
+         "  all: [%s]" % ", ".join(q(x) for x in alls)]
+    if nones: L.append("  none: [%s]" % ", ".join(q(x) for x in nones))
+    L += ["sheet: headings", "table:", "  header: [%s]" % ", ".join(q(h) for h in header), "  columns:"]
+    for role, head in cols: L.append("    %s: {under: %s}" % (role, q(head)))
+    if ends: L.append("  ends_at: [%s]" % ", ".join(q(x) for x in ends))
+    if skip: L.append("  skip: [%s]" % ", ".join(q(x) for x in skip))
+    if split: L.append("  split_by: %s" % q(split))
+    if d0.get("opening_label"): L += ["opening:", "  label: %s" % q(d0["opening_label"])]
+    L += ["dates:", "  format: %s" % q(d0["date_format"]), "  year: printed", "money:", "  style: %s" % d0["style"]]
+    if d0["style"] == "type_words":
+        L.append("  out_words: [%s]" % ", ".join(q(x) for x in d0["out_words"]))
+        L.append("  in_words: [%s]" % ", ".join(q(x) for x in d0["in_words"]))
+    L.append("order: %s" % d0["order"])
+    return "\n".join(L) + "\n"
 
 def recipe_yaml(rid, ds, status="draft", extra_none=(), sib_seen=()):
     d0 = ds[0]
@@ -229,7 +307,7 @@ def main():
       for b in variants(blk):
         d = parse(b); p = check(d)
         if p: skipped.append((i, d["bank"], d["title"], p)); continue
-        key = (d["bank"], tuple(h.lower() for h in d["header"]), d["date_format"])
+        key = (d["bank"], tuple(h.strip().lower() for h in d["header"]), d["date_format"], sheet_kind(d) or "pdf")
         groups.setdefault(key, []).append(d)
     os.makedirs(a.out, exist_ok=True)
     # What tells a design from its same-bank siblings: each sibling's must-appear
@@ -243,14 +321,16 @@ def main():
         return set(x for d in ds for x in d["all"] + d["skip"] + d["ends"] + d["header"] + [d["title"], d["starts"] or ""])
     extra, sibs = {}, {}
     for k, ds in groups.items():
-        sib = [alls_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0]]
+        sib = [alls_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0] and k2[3] == k[3]]
         extra[k] = sorted(set().union(*sib) - seen_of(ds)) if sib else []
-        sibs[k] = set().union(*[seen_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0]])
+        sibs[k] = set().union(*[seen_of(o) for k2, o in groups.items() if k2 != k and k2[0] == k[0] and k2[3] == k[3]])
     ids = collections.Counter()
-    for (bank, hdr, fmt), ds in groups.items():
+    for key, ds in groups.items():
+        bank = key[0]
         base = "%s_%s" % (bank, slug(ds[0]["title"])[:30]); ids[base] += 1
         rid = base if ids[base] == 1 else "%s_%d" % (base, ids[base])
-        open(os.path.join(a.out, rid + ".yaml"), "w").write(recipe_yaml(rid, ds, a.status, extra[(bank, hdr, fmt)], sibs[(bank, hdr, fmt)]))
+        body = sheet_yaml(rid, ds, a.status) if sheet_kind(ds[0]) else recipe_yaml(rid, ds, a.status, extra[key], sibs[key])
+        open(os.path.join(a.out, rid + ".yaml"), "w").write(body)
         print("recipe %-45s from %d statement(s)" % (rid, len(ds)))
     print("\n%d blocks -> %d draft recipes; %d blocks not converted:" % (len(blocks), len(groups), len(skipped)))
     for i, bank, title, p in skipped: print("  block %d %s %s: %s" % (i, bank, title[:35], "; ".join(p)))

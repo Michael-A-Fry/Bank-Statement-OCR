@@ -1,0 +1,32 @@
+# Spreadsheet recipe written by tools/recipes/from_designs.py from 4 real export design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the export's own arithmetic; one that does not is not used.
+recipe: bnz_undisclosed_transactional_acco
+format: 1
+version: 1
+bank: bnz
+title: "Undisclosed transactional account"
+kind: excel
+status: proven
+recognise:
+  all: ["Opening Balance as at", "Payment Type"]
+sheet: headings
+table:
+  header: ["Particulars", "Payment Type", "Withdrawals", "Deposits", "Date", "Balance"]
+  columns:
+    description: {under: "Particulars"}
+    type: {under: "Payment Type"}
+    debit: {under: "Withdrawals"}
+    credit: {under: "Deposits"}
+    date: {under: "Date"}
+    balance: {under: "Balance"}
+  ends_at: ["DO NOT DELETE OR CHANGE THIS ROW!!!!!", "Disclosure", "While this data is extracted from Bank files", "Unstatemented transactions only"]
+  skip: ["It is here for calculation purposes", "Type in the opening balance amount", "Name of Other Party"]
+opening:
+  label: "Opening Balance as at"
+dates:
+  format: "%m/%d/%Y"
+  year: printed
+money:
+  style: debit_credit_cols
+order: oldest_first

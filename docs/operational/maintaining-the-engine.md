@@ -74,10 +74,10 @@ skipped: 0
   again at 2.0.0 (templates retired: ten test files went with the code they
   tested).
 
-The last full run measured **70 files, 1,124 tests, 7,029 passing assertions**
+The last full run measured **71 files, 1,137 tests, 7,203 passing assertions**
 — taken on 2026-10-10, at `VERSION` 2.0.0, on R 4.3.3, with skips not allowed:
 **0 failed, 0 errors, 0 skipped**. It was taken after the recipe reader was
-added (`test-recipes.R`, the 69th file); `test-recipes-admin.R` (the recipes admin engine) is the 70th. Treat the figures as a count of what exists; the pass condition is
+added (`test-recipes.R`, the 69th file); `test-recipes-admin.R` (the recipes admin engine) is the 70th, and `test-recipes-sheet.R` (spreadsheet recipes) the 71st. Treat the figures as a count of what exists; the pass condition is
 still the one above.
 
 **After any change to `app.R`, `www/app.css` or `R/identify.R`, also press the

@@ -1,0 +1,39 @@
+# Spreadsheet recipe written by tools/recipes/from_designs.py from 1 real export design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the export's own arithmetic; one that does not is not used.
+recipe: bnz_bank_transaction_dataset
+format: 1
+version: 1
+bank: bnz
+title: "Bank transaction dataset"
+kind: excel
+status: proven
+recognise:
+  all: ["Transaction Description", "Transaction Category", "Doc Reference Bank Statement", "Balance Check"]
+sheet: headings
+table:
+  header: ["File Name", "Row ID", "Bank", "Account Name", "Account Number", "Transaction Description", "Transaction Category", "Transaction Type", "Date", "Details", "Transaction Code", "Amount", "Balance", "Doc Reference Bank Statement", "Doc Reference Bank Voucher", "Year", "Tax Year", "Balance Check", "Balance Pass"]
+  columns:
+    text1: {under: "File Name"}
+    text2: {under: "Row ID"}
+    text3: {under: "Bank"}
+    text4: {under: "Account Name"}
+    text5: {under: "Account Number"}
+    description: {under: "Transaction Description"}
+    text6: {under: "Transaction Category"}
+    type: {under: "Transaction Type"}
+    date: {under: "Date"}
+    text7: {under: "Details"}
+    amount: {under: "Amount"}
+    text8: {under: "Balance"}
+    text9: {under: "Doc Reference Bank Statement"}
+    balance: {under: "Balance Check"}
+  split_by: "Account Number"
+dates:
+  format: "%d/%m/%Y"
+  year: printed
+money:
+  style: type_words
+  out_words: ["Withdrawal"]
+  in_words: ["Deposit"]
+order: oldest_first

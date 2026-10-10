@@ -1,0 +1,31 @@
+# Spreadsheet recipe written by tools/recipes/from_designs.py from 3 real export design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the export's own arithmetic; one that does not is not used.
+recipe: westpac_transaction_export
+format: 1
+version: 1
+bank: westpac
+title: "Transaction export"
+kind: excel
+status: proven
+recognise:
+  all: ["Account Name", "Account Number"]
+sheet: headings
+table:
+  header: ["Source-Type", "This-Party-Reference", "This-Party-Desc", "This-Party-Code", "Other-Party_Name", "Other-Party-Account-Number", "Date", "Amount", "Running-Balance", "Tran-Code"]
+  columns:
+    type: {under: "Source-Type"}
+    text1: {under: "This-Party-Reference"}
+    description: {under: "This-Party-Desc"}
+    text2: {under: "This-Party-Code"}
+    text3: {under: "Other-Party_Name"}
+    text4: {under: "Other-Party-Account-Number"}
+    date: {under: "Date"}
+    amount: {under: "Amount"}
+    balance: {under: "Running-Balance"}
+dates:
+  format: "%m-%d-%y"
+  year: printed
+money:
+  style: signed
+order: oldest_first

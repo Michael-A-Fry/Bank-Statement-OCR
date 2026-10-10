@@ -1,0 +1,37 @@
+# Spreadsheet recipe written by tools/recipes/from_designs.py from 1 real export design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the export's own arithmetic; one that does not is not used.
+recipe: kiwibank_search_by_access_number
+format: 1
+version: 1
+bank: kiwibank
+title: "Search by Access Number"
+kind: excel
+status: proven
+recognise:
+  all: ["Search by Access Number", "Running Balance", "OtherPartyAcc", "ThisPartyReference"]
+sheet: headings
+table:
+  header: ["Customer", "RelType", "KiwiAcc", "ProcessDate", "ReceiptTime", "TranCode", "Amount", "Narration1", "PayingBankDRN", "OtherPartyAcc", "PayeeDetails", "Running Balance", "CardNo", "EODBalance", "ThisPartyParticulars", "ThisPartyCode", "ThisPartyReference"]
+  columns:
+    text1: {under: "Customer"}
+    type: {under: "RelType"}
+    text2: {under: "KiwiAcc"}
+    date: {under: "ProcessDate"}
+    text3: {under: "ReceiptTime"}
+    amount: {under: "Amount"}
+    description: {under: "Narration1"}
+    text4: {under: "PayingBankDRN"}
+    text5: {under: "OtherPartyAcc"}
+    text6: {under: "PayeeDetails"}
+    balance: {under: "Running Balance"}
+    text7: {under: "CardNo"}
+    text8: {under: "EODBalance"}
+    text9: {under: "ThisPartyParticulars"}
+  split_by: "KiwiAcc"
+dates:
+  format: "%Y-%m-%d"
+  year: printed
+money:
+  style: signed
+order: newest_first

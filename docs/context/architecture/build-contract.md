@@ -31,6 +31,7 @@ R/   -- the conversion path (input -> read -> proven -> written)
   auto_read_tabular.R   automatic reading: CSV and Excel exports, columns by content and headings
   recipes.R             a known design read with its recipe (recipes/*.yaml), proven to the reader's own bar
   recipes_admin.R       the Admin page's recipes: overview, on/off, plain-field edits, test, merge, undo, needs attention
+  recipes_sheet.R       spreadsheet recipes (kind excel / csv): sheet, heading row, columns by heading, split by account
   layouts.R             each bank's learned layouts: versioned store, matching and learning rules
   fixes.R               a person's unproven fix, held for an admin (never learned on its own)
   tracking.R            no-personal-data record of what automatic reading did, and its summary
@@ -333,7 +334,7 @@ recipe: anz_everyday_pdf          # id: lower case, digits, _
 format: 1                         # the recipe FILE format this reader reads
 version: 1                        # this recipe's own version
 bank: anz
-kind: pdf                         # text PDFs only, so far
+kind: pdf                         # pdf (text PDFs), or excel / csv (below)
 status: proven                    # draft | proven | retired; only proven ones read
 recognise: {all: ["Account at a glance", "Transaction type and details"],
             none: ["The following is a summary of your loan"]}
@@ -373,6 +374,24 @@ only when its opening equals its closing balance and any totals are nil.
 recipe reading only when it is proven; otherwise it reads the file exactly as it
 would with no recipes, with a note that the recipe did not prove. A reading made
 with a recipe teaches no layout.
+
+**Spreadsheet recipes** (`kind: excel` or `kind: csv`, `R/recipes_sheet.R`). A
+bank's Excel or CSV export is a design too. Its recipe names the heading row by
+its words (each a cell of one row; leading spaces do not count), each column
+`under:` its heading in any order, rows to `skip` and rows that end the table
+(`ends_at`, once the table has begun), an optional `opening: {label: ...}` printed
+above the table, `split_by:` an account column (one statement per account), and
+`sheet: headings` (every visible sheet printing the heading row; hidden sheets are
+never read, and a sheet's name never recognises a design) or `sheet: {name:
+"<pattern>"}`. Dates must print their year (an Excel date cell is read as its
+date whatever the format); money is `debit_credit_cols`, `signed`, or
+`type_words` (`out_words: [Withdrawal]`, `in_words: [Deposit]` in a `type`
+column). A lone "." or "-" in a money column is nothing. The cut table goes
+through the tabular reader (`R/auto_read_tabular.R`) with the recipe's roles, so
+the same arithmetic proves it; a workbook of several accounts is proven only
+when every account is (the first is the statement, the others its
+`other_accounts`). A confirmed new spreadsheet design is drafted as a spreadsheet
+recipe (headings only), exactly as a PDF's is.
 
 ## 6. Function interfaces (exact signatures)
 - `read_input(path) -> input` : `list(kind, path, sha256, lines=NULL, table=NULL, pages=NULL, words=NULL, meta)`. Dispatch by extension. A scan's pages are OCR'd here; `meta$ocr_timed_out` names any page whose OCR ran out of time (read as blank).

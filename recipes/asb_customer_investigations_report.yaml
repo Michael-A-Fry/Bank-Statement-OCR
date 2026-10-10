@@ -1,0 +1,36 @@
+# Spreadsheet recipe written by tools/recipes/from_designs.py from 3 real export design(s)
+# described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
+# prove itself by the export's own arithmetic; one that does not is not used.
+recipe: asb_customer_investigations_report
+format: 1
+version: 1
+bank: asb
+title: "Customer Investigations Report"
+kind: excel
+status: proven
+recognise:
+  all: ["Customer Investigations Report", "Transaction listing for customer:", "Service Type Description", "Source Type Description"]
+sheet: headings
+table:
+  header: ["Date", "Time", "Amount", "Balance", "Description", "Reference Text", "Other Party", "Card Number", "Service Type Description", "Source Type Description", "Location Description", "Device", "Latitude", "Longitude", "Location Address", "Google Maps Link"]
+  columns:
+    date: {under: "Date"}
+    text1: {under: "Time"}
+    amount: {under: "Amount"}
+    balance: {under: "Balance"}
+    description: {under: "Description"}
+    text2: {under: "Reference Text"}
+    text3: {under: "Other Party"}
+    text4: {under: "Card Number"}
+    type: {under: "Service Type Description"}
+    text5: {under: "Location Description"}
+    text6: {under: "Device"}
+    text7: {under: "Latitude"}
+    text8: {under: "Longitude"}
+    text9: {under: "Location Address"}
+dates:
+  format: "%Y-%m-%d"
+  year: printed
+money:
+  style: signed
+order: oldest_first
