@@ -87,3 +87,25 @@ test_that("every row of the files carries its own statement's account number and
   one <- .with_accounts(tx[, 1:4], list(transactions = tx[, 1:4], header = list(account_number = "03-4567-0890123-00")))
   expect_identical(unique(one$account_number), "03-4567-0890123-00")
 })
+
+test_that("each row's Check is the QVF's balance check: a tick, a cross where it breaks, blank with no balance", {
+  tick <- "✓"; cross <- "✗"
+  tx <- data.frame(amount = c(-12.4, 3120, -268.15), balance = c(2398.15, 5518.15, 5250))
+  expect_identical(balance_check(tx, 2410.55), rep(tick, 3))
+  expect_identical(balance_check(tx, NA), c("", tick, tick))          # no opening: nothing to start from
+  tx$balance[3] <- 5200
+  expect_identical(balance_check(tx, 2410.55), c(tick, tick, cross))
+  expect_identical(balance_check(tx[3:1, ], NA), c(cross, tick, ""))  # newest first
+  # a row with no balance carries its money to the next printed one
+  tx2 <- data.frame(amount = c(-10, -5, 20), balance = c(90, NA, 105))
+  expect_identical(balance_check(tx2, 100), c(tick, "", tick))
+  # a card: spending raises what is owed
+  expect_identical(balance_check(data.frame(amount = c(-50, -20, 100), balance = c(150, 170, 70)), 100), rep(tick, 3))
+  # the file's Check column sits after the balance, each statement of a bundle from its own opening
+  df <- data.frame(row_id = 1:4, date = "2026-01-01", amount = c(-1, -1, -1, -1), balance = c(9, 8, 19, 18))
+  parsed <- list(transactions = cbind(df, statement_index = c(1L, 1L, 2L, 2L)),
+                 statements = list(list(opening_balance = 10), list(opening_balance = 20)))
+  out <- .with_check(df, parsed)
+  expect_identical(names(out)[5], "check")
+  expect_identical(out$check, rep(tick, 4))
+})

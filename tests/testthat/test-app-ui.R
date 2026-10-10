@@ -210,13 +210,16 @@ test_that("every result verdict uses the shared verdict card", {
 # ---------------------------------------------------------------------------
 # When the tool asks for a second pair of eyes, the evidence must not be one
 # collapsed click behind the chart.
-test_that("Checks & detail opens itself whenever something was flagged", {
+test_that("the checks sit behind More detail and do not open themselves (D16)", {
+  # The owner's call: a person checking a statement sees one sentence and the table
+  # with its Check column; the first cross is where to look. The checks list is
+  # for whoever opens More detail.
   src <- .ui_src()
   block <- .ui_block(src, "output\\$cv_detail <- renderUI", 20L)
-  expect_match(block, 'any\\(k\\$status %in% "fail"\\)')
-  expect_match(block, "open = if \\(open_it\\) NA else NULL")
-  # a clean pass still starts tidy
-  expect_match(block, 'open_it <- !isTRUE\\(\\(res\\$status %\\|\\|% ""\\) == "ok"\\) \\|\\| isTRUE\\(any_failed\\)')
+  expect_match(block, "open_it <- FALSE")
+  i_detail <- grep('uiOutput\\("cv_detail"\\)', src)
+  i_panel <- grep('conditionalPanel\\("output\\.cv_detail_open == true"', src)
+  expect_length(i_detail, 1L); expect_true(i_detail > i_panel[1])
 })
 
 # ---------------------------------------------------------------------------
@@ -341,11 +344,13 @@ test_that("the checks that matter are on screen whether they pass or fail", {
   for (nm in c("balance_reconciliation", "no_unparsed_rows",
                "running_balance_continuity", "dates_readable"))
     expect_match(blk, nm, fixed = TRUE)
-  # ...and it is rendered in the DEFAULT view, not behind the disclosure
+  # ...behind More detail now (D16); the default view's Check column says, row by
+  # row, what the proof strip says for the whole statement
   i_proof <- grep('uiOutput\\("cv_proof"\\)', src)
   i_more  <- grep('uiOutput\\("cv_more_toggle"\\)', src)
   expect_length(i_proof, 1L)
-  expect_true(i_proof < min(i_more))
+  expect_true(i_proof > min(i_more))
+  expect_match(paste(.ui_block(src, "output\\$cv_txns <- renderDT", 40L), collapse = "\n"), '"check" %in% names\\(d\\)')
 })
 
 test_that("every check named in the proof strip has plain-English wording", {
@@ -1346,12 +1351,13 @@ test_that("the QID is asked once for the whole case, before it starts", {
 test_that("each file's outcome is said in the four phrases, and the reason goes with it", {
   L <- new.env(); sys.source(file.path(engine_root(), "ui_labels.R"), envir = L)
   po <- L$plain_outcome
-  expect_identical(po("ok", "proven", "proven", "x")$word, "Proven")
-  expect_identical(po("ok", "layout_match", "layout_match")$word, "Matches a learned layout")
-  expect_identical(po("ok", "check", "person")$word, "Confirmed on Please check")
-  expect_identical(po("ok", "proven", "person", fix = "boxes")$word, "Proven with the columns you drew")
+  # D16: one word -- Done / Needs you / Couldn't read -- and a vouched Done says so
+  expect_identical(po("ok", "proven", "proven", "x")$word, "Done")
+  expect_identical(po("ok", "layout_match", "layout_match")$word, "Done")
+  expect_identical(po("ok", "check", "person")$word, "Done - you checked it")
+  expect_identical(po("ok", "proven", "person", fix = "boxes")$word, "Done - with the columns you drew")
   nr <- po("needs_review", "check", "none", "Two readings fit.")
-  expect_identical(c(nr$word, nr$why, nr$cls), c("Please check", "Two readings fit.", "warn"))
+  expect_identical(c(nr$word, nr$why, nr$cls), c("Needs you", "Two readings fit.", "warn"))
   un <- po("unsupported", "unread", "none", "Nothing adds up.")
   expect_identical(c(un$word, un$why, un$cls), c("Couldn't read", "Nothing adds up.", "bad"))
   expect_identical(po("failed", NA, NA, "damaged")$word, "Couldn't read")
@@ -1464,7 +1470,7 @@ test_that("Re-read sends the roles as a fix, and the answer goes back where it c
                "held for an admin")
   expect_match(words(list(status = "ok", outcome = "proven", feed_basis = "proven", messages = "ok: 3 row(s)",
                           learn = list(list(action = "corrected", why = "Layout x now reads this way."))), FALSE),
-               "^Proven - .*Layout x now reads this way\\.$")
+               "^Done - .*Layout x now reads this way\\.$")
   expect_match(words(list(status = "needs_review", reason = "the balance breaks at row 2",
                           reading = list(list(transactions = data.frame(amount = 1:3))),
                           messages = "needs_review: z"), FALSE),
@@ -1834,4 +1840,31 @@ test_that("each column of figures is asked about with its own lines, in plain wo
   expect_false(grepl("role_choices", joined, fixed = TRUE))       # the old dropdowns are gone
   # the page numbers its columns of figures the same way the questions do
   expect_match(.src_block(src, "output\\$cv_ck_plot <- renderPlot", 30L), 'sprintf\\("%d %s", qn\\[j\\]')
+})
+
+# ---------------------------------------------------------------------------
+# D16: THE ACCOUNTANT'S SCREEN -- NO MORE THAN THE QVF. One sentence, the table
+# with its Check column, at most three buttons, downloads once it is done.
+test_that("the result says one sentence, and a new design is asked about with two buttons", {
+  src <- .ui_src()
+  hd <- .ui_block(src, "output\\$cv_headline <- renderUI", 40L)
+  expect_match(hd, 'sprintf\\("Done \\\\u2014 %s transaction%s, %s\\."')
+  expect_false(grepl(".layout_chips(res)", hd, fixed = TRUE))
+  st <- .ui_block(src, "output\\$cv_status <- renderUI", 40L)
+  expect_match(st, "New design \\\\u2014 check it once")
+  expect_match(st, "The balance stops adding up at %s")
+  expect_false(grepl("failed_checks_ui(res)", st, fixed = TRUE))   # the list is under More detail
+  ck <- .ui_block(src, "output\\$cv_check <- renderUI", 30L)
+  expect_match(ck, 'actionButton\\("cv_ck_confirm", "It\\\\u2019s right \\\\u2014 accept it"')
+  expect_match(ck, 'actionButton\\("cv_ck_aside", "Set aside"')
+  # set aside marks the upload for an admin; it converts nothing
+  sa <- .ui_block(src, "observeEvent\\(input\\$cv_ck_aside, \\{", 12L)
+  expect_match(sa, 'set_upload_status\\(id, "set_aside"')
+  # no download before it is done or accepted
+  dl <- .ui_block(src, "output\\$cv_downloads <- renderUI", 6L)
+  expect_match(dl, 'if \\(!identical\\(res\\$status, "ok"\\)\\) return\\(NULL\\)')
+  # the table: the QVF's six columns
+  tx <- .ui_block(src, "output\\$cv_txns <- renderDT", 40L)
+  expect_match(tx, 'money_out = "Money out", money_in = "Money in"')
+  expect_match(tx, 'balance = "Balance", check = "Check"')
 })

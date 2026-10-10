@@ -94,6 +94,7 @@ function makeFiles() {
 // layouts and tracking all go to a temporary folder, so a check never writes into
 // a real install's data and every run starts from nothing learned.
 const ADMIN_PW = 'ui-check-' + process.pid;
+const ASK = process.env.UNKNOWN_DESIGN === 'ask';
 let appLog = '';           // everything the app wrote to its console, checked at the end
 let WORDS_DIR = '';        // the throwaway copies of the two words files
 function makeConfig() {
@@ -107,7 +108,10 @@ function makeConfig() {
     'paths:', `  logs: ${p('logs')}`, `  uploads: ${p('uploads')}`, `  requests: ${p('requests')}`,
     `  layouts: ${p('layouts')}`, `  tracking: ${p('tracking')}`,
     `  dictionary: ${p('labels.yaml')}`, `  lexicon: ${p('lexicon.yaml')}`,
-    'feed:', `  feed_dir: ${p('feed')}`, ''].join('\n'));
+    'feed:', `  feed_dir: ${p('feed')}`,
+    // the tour below checks the READER's outcomes, so a new design converts on its
+    // arithmetic; UNKNOWN_DESIGN=ask tours the product's "always ask once" instead
+    'auto_reading:', `  unknown_design: ${process.env.UNKNOWN_DESIGN || 'auto'}`, ''].join('\n'));
   return path.join(d, 'config.yaml');
 }
 async function startApp() {
@@ -266,19 +270,20 @@ async function run(browser, D) {
   check('the table says which file it is on', [...seen.header].some(h => /^(Converting \d+ of 6|Starting)/.test(h)),
         JSON.stringify([...seen.header]));
   check('rows show their own state while the case runs',
-        [...seen.cells].some(c => /^(Waiting|Converting)/.test(c)), JSON.stringify([...seen.cells]));
+        [...seen.cells].some(c => /^(Waiting|Converting|Opening|Reading|Checking|Writing)/.test(c)), JSON.stringify([...seen.cells]));
   check('Convert is locked while it runs', seen.button.has('Converting\u2026'), JSON.stringify([...seen.button]));
   check('the bank dropdowns are locked while it runs', seen.locked);
   check('every row carries its result',
         await waitFor(page, () => document.querySelectorAll('tr.plan-openable').length === 6, 300000));
   r = await rows(page);
   const word = f => byFile(r, f).result.split(':')[0].replace(/ \d+ rows?$/, '').trim();
+  // D16: one word each. With "always ask once", a new design that adds up waits for a person.
   eq('each file has its outcome in plain words', six.map(word),
-     ['Proven', 'Proven', 'Please check', 'Please check', "Couldn't read", "Couldn't read"]);
+     [ 'Done', ASK ? 'Needs you' : 'Done', 'Needs you', 'Needs you', "Couldn't read", "Couldn't read"]);
   check('a reason is given where a person has something to do',
         byFile(r, 'ambiguous.csv').result.includes('readings') && byFile(r, 'unproven.csv').result.length > 20,
         JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
-  check('the layout learned from a proven statement is named', /ANZ layout 1.*\(new\)/.test(byFile(r, 'anz_march.pdf').layout),
+  check('the design a recipe read is named', /ANZ .*Account/.test(byFile(r, 'anz_march.pdf').layout),
         byFile(r, 'anz_march.pdf').layout);
   check('worst first', r.slice(0, 2).every(x => word(x.file) === "Couldn't read"), JSON.stringify(r.map(x => x.file)));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
@@ -305,7 +310,7 @@ async function run(browser, D) {
   r = await rows(page);
   eq('a clicked row opens', r.filter(x => x.open).map(x => x.file), ['anz_march.pdf']);
   check('its result is shown below',
-        (await text(page, '#cv_headline')).includes('Proven \u2014 6 transactions read'), await text(page, '#cv_headline'));
+        (await text(page, '#cv_headline')).includes('Done \u2014 6 transactions, the balance adds up.'), await text(page, '#cv_headline'));
   await clickIn(page, 'bnz_export.csv', 'select'); await page.keyboard.press('Escape'); await sleep(600);
   eq('a click on a dropdown does not open its row', (await rows(page)).filter(x => x.open).map(x => x.file),
      ['anz_march.pdf']);

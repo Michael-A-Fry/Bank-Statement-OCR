@@ -987,6 +987,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       list(outcome = r$outcome, why = r$why, pages = units[[i]]$pages, proof = r$proof, checks = r$checks,
            candidates = r$candidates, columns = file_cols(i), examples = r$examples,
            matched_layout = r$matched_layout, matched_recipe = r$matched_recipe, recipe_tried = r$recipe_tried,
+           recipe_title = r$recipe_title, recipe_bank = r$recipe_bank, draft = isTRUE(r$draft),
+           new_design = r$new_design, learned_recipe = r$learned_recipe,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
            transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]],
            other_accounts = r$other_accounts %||% list())

@@ -193,6 +193,25 @@ other_accounts_df <- function(other) {
   cbind(df[, seq_len(at), drop = FALSE], acc, df[, setdiff(seq_len(ncol(df)), seq_len(at)), drop = FALSE])
 }
 
+# .with_check(df, parsed) -- the rows with their Check (balance_check) after the
+# balance: each statement of a bundle from its own opening balance. No balance
+# column, no Check column.
+.with_check <- function(df, parsed) {
+  if (!("balance" %in% names(df)) || !nrow(df)) return(df)
+  tx <- parsed$transactions
+  si <- suppressWarnings(as.integer(tx$statement_index))
+  sts <- parsed$statements
+  ck <- rep("", nrow(df))
+  if (length(si) == nrow(df) && length(sts) && !anyNA(si)) {
+    for (j in unique(si)) {
+      k <- which(si == j)
+      ck[k] <- balance_check(tx[k, , drop = FALSE], sts[[j]]$opening_balance %||% NA_real_)
+    }
+  } else ck <- balance_check(tx, parsed$header$opening_balance %||% NA_real_)
+  at <- match("balance", names(df))
+  cbind(df[, seq_len(at), drop = FALSE], check = ck, df[, setdiff(seq_len(ncol(df)), seq_len(at)), drop = FALSE])
+}
+
 write_outputs <- function(parsed, recon, outdir, basename,
                           formats = c("xlsx", "csv", "json"),
                           diagnostics = NULL, metadata = NULL, build = NULL,
@@ -204,7 +223,7 @@ write_outputs <- function(parsed, recon, outdir, basename,
   # The human-facing transaction table, built ONCE and shared by the workbook and
   # the CSV, so the two files can never disagree about what was captured.
   sheet_tx <- if (any(c("xlsx", "csv") %in% formats))
-    .spreadsheet_safe(.with_accounts(display_transactions(parsed$transactions, parsed$extras), parsed))
+    .spreadsheet_safe(.with_check(.with_accounts(display_transactions(parsed$transactions, parsed$extras), parsed), parsed))
 
   if ("xlsx" %in% formats) {
     xlsx_path <- file.path(outdir, paste0(basename, ".xlsx"))
@@ -273,4 +292,32 @@ write_outputs <- function(parsed, recon, outdir, basename,
   }
 
   paths
+}
+
+# balance_check(tx, opening) -- each row's Check, as the old Qlik converter's
+# "Balance Check" gave it: "\u2713" when the last printed balance plus the money of
+# the rows since gives this row's printed balance, "\u2717" when it does not, ""
+# where the row prints no balance (or the first row has no opening to start from).
+# The rows' order (oldest or newest first) and which way money moves the balance
+# (an account, or a card where spending raises it) are the ones most rows fit, so
+# one table is read one way throughout. Nothing here changes a figure: it is what
+# a person sees beside each row, and the first cross is where to look.
+balance_check <- function(tx, opening = NA_real_) {
+  n <- NROW(tx)
+  if (!n || !all(c("amount", "balance") %in% names(tx))) return(rep("", n))
+  a <- suppressWarnings(as.numeric(tx$amount)); b <- suppressWarnings(as.numeric(tx$balance))
+  op <- suppressWarnings(as.numeric(opening)[1])
+  run <- function(ord, sgn) {
+    out <- rep("", n); last <- if (identical(ord, "old")) op else NA_real_; acc <- 0
+    idx <- if (identical(ord, "old")) seq_len(n) else rev(seq_len(n))
+    for (i in idx) {
+      acc <- acc + sgn * ifelse(is.na(a[i]), 0, a[i])
+      if (is.na(b[i])) next
+      if (!is.na(last)) out[i] <- if (abs(last + acc - b[i]) < 0.005) "\u2713" else "\u2717"
+      last <- b[i]; acc <- 0
+    }
+    out
+  }
+  ways <- list(run("old", 1), run("old", -1), run("new", 1), run("new", -1))
+  ways[[which.max(vapply(ways, function(w) sum(w == "\u2713"), 0))]]
 }

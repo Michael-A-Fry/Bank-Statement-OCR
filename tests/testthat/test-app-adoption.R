@@ -339,23 +339,24 @@ test_that("the loader really does source all of R/, which is what the guard assu
 # change, so telling her was noise dressed as information. The one case that
 # matters -- a feed write that FAILED -- is a server fault, and it is raised in
 # Admin (adm_feed_health) where somebody can act on it.
-test_that("the checks are not behind the evidence toggle, and the feed line is gone", {
+test_that("only the table is in the default view; the rest is behind ONE More detail link (D16)", {
   src <- .app_src()
+  i_txns   <- grep('^\\s*DTOutput\\("cv_txns"\\)', src)
   i_detail <- grep('^\\s*uiOutput\\("cv_detail"\\),', src)
   i_toggle <- grep('^\\s*uiOutput\\("cv_more_toggle"\\),', src)
   i_panel  <- grep('conditionalPanel\\("output\\.cv_detail_open == true"', src)
-  expect_length(i_detail, 1L)
+  expect_length(i_detail, 1L); expect_length(i_txns, 1L)
   expect_length(i_toggle, 1L); expect_length(i_panel, 1L)
   expect_length(grep('uiOutput\\("cv_feed"\\)', src), 0L)   # not on the page at all
-  expect_true(i_detail < i_toggle)      # the checks: above the link, one click
-  expect_true(i_toggle < i_panel)
+  expect_true(i_txns < i_toggle)        # the table, then the one link
+  expect_true(i_toggle < i_panel && i_panel < i_detail)
+  expect_match(.app_block(src, "output\\$cv_more_toggle <- renderUI", 8L), "More detail")
   # the toggle's caption no longer claims the checks it does not open
   cap <- .app_block(src, "output\\$cv_more_toggle <- renderUI", 20L)
   expect_false(grepl("The page, the checks, and the template it used.", cap, fixed = TRUE))
   # ...and the panel is not offered at all where there is nothing behind it: on a
   # run with no transactions the X-ray, the charts and the candidates all render
   # nothing, so the link used to open an empty box.
-  expect_true(i_toggle > grep('conditionalPanel\\("output\\.cv_has_txns == true",\\s*$', src)[1])
 })
 
 test_that("too many files is refused at the door, with the number", {

@@ -537,22 +537,20 @@ ui <- fluidPage(
           conditionalPanel("output.cv_has_result != true && output.cv_has_batch != true",
                            uiOutput("cv_empty")),
           conditionalPanel("output.cv_has_result == true",
-            # Figures + transactions render only when the reading produced rows: a
-            # file that read nothing must never show zero-money cards and an empty
-            # graph under its honest verdict.
+            # NO MORE THAN THE QVF (D16): the sentence above, then the table with its
+            # Check column. Everything else -- the figures, did it add up, a bundle's
+            # statements, the checks, the charts, the feedback form -- is behind ONE
+            # closed "More detail" link. A file that read nothing shows no table.
             conditionalPanel("output.cv_has_txns == true",
-              uiOutput("cv_summary"),
-              uiOutput("cv_proof"),    # did it add up - always, pass or fail
-              uiOutput("cv_split"),    # a bundle: what each statement in it says
-              h4("Your transactions"),
               DTOutput("cv_txns")),
-            # THE CHECKS, ONE CLICK FROM THE VERDICT AND LITERALLY BELOW IT. It opens
-            # ITSELF the moment anything is flagged, so on the runs that matter the
-            # count is zero.
-            uiOutput("cv_detail"),
-            conditionalPanel("output.cv_has_txns == true",
-              uiOutput("cv_more_toggle"),
-              conditionalPanel("output.cv_detail_open == true",
+            uiOutput("cv_more_toggle"),
+            conditionalPanel("output.cv_detail_open == true",
+              conditionalPanel("output.cv_has_txns == true",
+                uiOutput("cv_summary"),
+                uiOutput("cv_proof"),    # did it add up - always, pass or fail
+                uiOutput("cv_split")),   # a bundle: what each statement in it says
+              uiOutput("cv_detail"),
+              conditionalPanel("output.cv_has_txns == true",
                 h4("Analysis"),
                 div(style = "border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:6px 0 14px",
                   fluidRow(
@@ -570,8 +568,8 @@ ui <- fluidPage(
                       radioButtons("an_unit", "Measure",
                         c("Dollars" = "amount", "Count" = "count"), inline = TRUE))),
                   plotOutput("cv_trend", height = "270px"),
-                  uiOutput("cv_trend_note"))))),
-          uiOutput("cv_feedback")
+                  uiOutput("cv_trend_note"))),
+              uiOutput("cv_feedback")))
         )
       )
     ),
@@ -3121,6 +3119,10 @@ server <- function(input, output, session) {
   # per statement that had one; a layout the reading STARTED says so.
   .res_layouts <- function(res) {
     out <- unlist(lapply(res$reading %||% list(), function(rd) {
+      # a recipe names the design it read: "ANZ Business Premium Call Account"
+      if (!is.null(rd$matched_recipe) && !isTRUE(rd$draft))
+        return(sprintf("%s %s", .layout_bank_display(rd$recipe_bank %||% "", rd$recipe_bank %||% ""), rd$recipe_title %||% rd$matched_recipe))
+      if (!is.null(rd$learned_recipe) || isTRUE(rd$draft)) return("New design (being learned)")
       if (!is.null(rd$matched_layout)) return(.layout_name(rd$matched_layout))
       if (!is.null(rd$learned_layout))
         return(sprintf("%s (%s)", .layout_name(rd$learned_layout),
@@ -3820,7 +3822,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res)
     div(style = "margin:16px 0 6px",
       actionLink("cv_more", style = "font-weight:700;font-size:14.5px",
-        label = if (isTRUE(cv_detail_open())) "Hide the charts" else "Show the charts"))
+        label = if (isTRUE(cv_detail_open())) "Less detail" else "More detail"))
   })
 
   # Empty state: shown before the first conversion. Tells a brand-new user what
@@ -3875,16 +3877,38 @@ server <- function(input, output, session) {
     # an image-only PDF on a machine with no OCR software is not a reading to check.
     bdx <- if (st %in% c("unsupported", "failed")) .blocking_diag(res) else NULL
     if (!is.null(bdx)) headline <- .sentence(bdx$detail[1])
+    # ONE SENTENCE (D16). A new design that adds up says only that; a reading that
+    # stops adding up says WHERE, from the table's own Check column; anything else
+    # gives the reader's first reason. The checks list is under More detail.
+    body <- if (identical(st, "needs_review") && .new_design(res))
+      "It adds up. Look over the rows below; if they match the statement, press \u201cIt\u2019s right \u2014 accept it\u201d."
+    else if (identical(st, "needs_review") && !is.null(first_x <- .first_cross(cv_data())))
+      sprintf("The balance stops adding up at %s (row %d).", first_x$date, first_x$row)
+    else if (nzchar(o$why) && is.null(bdx)) .first_sentence(o$why) else NULL
+    if (identical(st, "needs_review") && .new_design(res)) headline <- "New design \u2014 check it once"
     div(class = paste0("verdict verdict-", lvl),
       div(class = "verdict-ico", "!"),
       div(style = "flex:1;min-width:0",
         div(class = "verdict-title", headline),
-        if (nzchar(o$why) && is.null(bdx)) p(class = "verdict-body", .sentence(o$why)),
-        lapply(.verdict_lines(res), function(m) p(class = "verdict-body", .sentence(m))),
-        .audit_note(res),
-        failed_checks_ui(res),
-        .layout_chips(res)))
+        if (!is.null(body)) p(class = "verdict-body", body),
+        .audit_note(res)))
   })
+  # .new_design(res) -- held only because no recipe knows its design (always ask once)
+  .new_design <- function(res) {
+    rd <- res$reading %||% list()
+    length(rd) && all(vapply(rd, function(r) !is.null(r$new_design) || r$outcome %in% c("proven", "layout_match"), NA)) &&
+      any(vapply(rd, function(r) !is.null(r$new_design), NA))
+  }
+  # .first_cross(d) -- the first row whose Check is a cross: list(row, date), or NULL
+  .first_cross <- function(d) {
+    if (is.null(d) || !("check" %in% names(d))) return(NULL)
+    i <- which(d$check %in% "\u2717")[1]
+    if (is.na(i)) NULL else list(row = i, date = format(as.Date(d$date[i]), "%d %b %Y"))
+  }
+  .first_sentence <- function(x) {
+    x <- .sentence(x); m <- regexpr("^.*?[.](\\s|$)", x, perl = TRUE)
+    if (m > 0) trimws(regmatches(x, m)) else x
+  }
 
   # Row FLAGS worth a chip: things the engine recorded per row that a clean-looking
   # result would otherwise never mention on screen -- most importantly the
@@ -3915,20 +3939,20 @@ server <- function(input, output, session) {
       nf <- sum(grepl(f, fl, fixed = TRUE))
       if (nf > 0) chip(sprintf(ROW_FLAG_CHIPS[[f]], nf))
     }))
+    # ONE SENTENCE (D16): how it went, how many rows, and what it rests on. The
+    # reader's own reasons, the checks and the design that read it are under More
+    # detail; a row-level warning (a year taken from elsewhere) stays in sight.
+    tail <- switch(as.character(res$feed_basis %||% "")[1],
+                   proven = "the balance adds up", layout_match = "read as a design it knows",
+                   person = if (identical(as.character(res$person$fix %||% "")[1], "boxes")) "read with the columns you drew"
+                            else "you checked it",
+                   "converted")
     div(class = paste0("verdict verdict-", lvl),
       div(class = "verdict-ico", icon),
       div(style = "flex:1;min-width:0",
-        div(class = "verdict-title", sprintf("%s \u2014 %s transaction%s read", o$word,
-          format(n, big.mark = ","), if (identical(as.integer(n), 1L)) "" else "s")),
-        # WHY IT CAN BE RELIED ON, in the reader's own words -- only where the
-        # arithmetic or a proven layout is what it rests on.
-        if ((res$feed_basis %||% "") %in% c("proven", "layout_match") && nzchar(res$reason %||% ""))
-          p(class = "verdict-body", .sentence(res$reason)),
-        if (vouched) p(class = "verdict-body",
-          "The statement's own arithmetic could not prove this reading; a person confirmed it on Please check."),
-        lapply(.verdict_lines(res), function(m) p(class = "verdict-body", .sentence(m))),
+        div(class = "verdict-title", sprintf("Done \u2014 %s transaction%s, %s.",
+          format(n, big.mark = ","), if (identical(as.integer(n), 1L)) "" else "s", tail)),
         .audit_note(res),
-        .layout_chips(res),
         if (length(chips)) div(chips)))
   })
 
@@ -4079,6 +4103,17 @@ server <- function(input, output, session) {
     res <- cv_res()
     if (is.null(res) || !length(res$reading %||% list())) return(NULL)
     need <- .ck_needed(res)
+    # A new design that adds up: nothing to ask about its columns (D16), so the
+    # page and the questions stay folded behind one link; two buttons decide.
+    new_only <- need && .new_design(res)
+    if (new_only && !isTRUE(cv_ck_open()))
+      return(div(class = "check-panel",
+        div(style = "display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 6px",
+          actionButton("cv_ck_confirm", "It\u2019s right \u2014 accept it", class = "btn-primary"),
+          actionButton("cv_ck_aside", "Set aside", class = "btn-default")),
+        uiOutput("cv_ck_msg_short"),
+        p(style = "margin:6px 0 0;font-size:13px;color:var(--muted)", "Something not right? ",
+          actionLink("cv_ck_toggle", "See how it was read, and change a column"))))
     if (!need && !isTRUE(cv_ck_open()))
       return(div(style = "margin:0 0 12px;font-size:13px;color:var(--muted)",
         "Want to see where the columns were found? ",
@@ -4089,7 +4124,7 @@ server <- function(input, output, session) {
     div(class = "check-panel",
       div(class = "check-head",
         h4(style = "margin:0", if (need) "Please check" else "How it was read"),
-        if (!need) actionLink("cv_ck_toggle", "Hide")),
+        if (!need || new_only) actionLink("cv_ck_toggle", "Hide")),
       if (k > 1L) radioButtons("cv_ck_stmt", "This file holds several statements - which one:",
         inline = TRUE, selected = s, choiceValues = as.list(seq_len(k)),
         choiceNames = lapply(seq_len(k), function(i) {
@@ -4223,6 +4258,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res); s <- ck_stmt()
     rd <- res$reading[[s]]; req(rd)
     need <- .ck_needed(res)
+    new_only <- need && .new_design(res)   # adds up, a design not yet taught (D16)
     money <- .ck_money(res, s)
     others <- unique(as.character(rd$columns$field[!(rd$columns$kind %in% "money")]))
     ov <- cv_ov()$roles
@@ -4247,10 +4283,12 @@ server <- function(input, output, session) {
       if (length(others)) p(class = "muted", style = "font-size:12.5px",
         sprintf("Also found: %s. Dates and words are recognised by what they are.",
                 paste(plain_column(others), collapse = ", "))),
+      # AT MOST THREE BUTTONS (D16)
       div(style = "display:flex;gap:8px;flex-wrap:wrap;margin:6px 0",
-        if (nrow(money)) actionButton("cv_ck_reread", "Read it again", class = "btn-primary"),
+        if (nrow(money)) actionButton("cv_ck_reread", "Read it again", class = if (new_only) "btn-default" else "btn-primary"),
         if (need && !identical(res$status, "unsupported"))
-          actionButton("cv_ck_confirm", "This is right", class = "btn-default")),
+          actionButton("cv_ck_confirm", "It\u2019s right \u2014 accept it", class = if (new_only) "btn-primary" else "btn-default"),
+        if (need) actionButton("cv_ck_aside", "Set aside", class = "btn-default")),
       uiOutput("cv_ck_msg"),
       # THE WAY BACK. A role set wrong can leave nothing readable -- no columns, so
       # no dropdowns and no Re-read -- and the only other way out was converting
@@ -4265,15 +4303,18 @@ server <- function(input, output, session) {
           sprintf("%d amount%s could not be read and %s filled in from the running balance. %s shaded in the transactions table below and marked in its Flags column.",
                   res$derived, if (res$derived == 1L) "" else "s", if (res$derived == 1L) "was" else "were",
                   if (res$derived == 1L) "It is" else "They are")),
-      if (!is.null(bad) && nrow(bad)) tags$details(open = if (need) NA else NULL, style = "margin:8px 0",
-        tags$summary(style = "font-weight:600", sprintf("%d check%s did not hold", nrow(bad), if (nrow(bad) == 1L) "" else "s")),
-        tags$ul(style = "margin:4px 0 0 18px;padding:0;font-size:13px",
-          lapply(seq_len(nrow(bad)), function(j) tags$li(
-            tags$b(plain_reading_check(bad$check[j])), sprintf(" - %s", bad$why[j]))))),
-      if (.ck_is_pdf(res))
-        p(style = "margin-top:10px;font-size:13px",
-          "None of these fits? ", actionLink("cv_ck_editor", "Draw the columns yourself"),
-          span(class = "muted", " - the last resort, for this file only.")),
+      # MORE DETAIL, CLOSED (D16): the checks that did not hold and the last resort.
+      if ((!is.null(bad) && nrow(bad)) || .ck_is_pdf(res)) tags$details(style = "margin:8px 0",
+        tags$summary(style = "font-weight:600;cursor:pointer", "More detail"),
+        if (!is.null(bad) && nrow(bad)) tagList(
+          p(style = "margin:6px 0 2px;font-size:13px", sprintf("%d check%s did not hold:", nrow(bad), if (nrow(bad) == 1L) "" else "s")),
+          tags$ul(style = "margin:4px 0 0 18px;padding:0;font-size:13px",
+            lapply(seq_len(nrow(bad)), function(j) tags$li(
+              tags$b(plain_reading_check(bad$check[j])), sprintf(" - %s", bad$why[j]))))),
+        if (.ck_is_pdf(res))
+          p(style = "margin-top:10px;font-size:13px",
+            "None of these fits? ", actionLink("cv_ck_editor", "Draw the columns yourself"),
+            span(class = "muted", " - the last resort, for this file only."))),
       # TEACH IT FROM THE PAGE. A wording the tool did not know (the opening balance
       # printed as "Kickoff kitty") is taught here, with the statement beside it,
       # instead of on a separate Admin screen. Words apply to every statement, so
@@ -4320,6 +4361,11 @@ server <- function(input, output, session) {
     if (isTRUE(attr(out, "added")))
       .reread(cv_ov(), what = "Reading it again with the new wording\u2026",
               said = paste(attr(out, "reason"), "This statement has been read again with it."))
+  })
+  output$cv_ck_msg_short <- renderUI({
+    n <- cv_ck_note(); res <- cv_res()
+    if (is.null(n) || is.null(res) || !identical(n$run_id, res$run_id)) return(NULL)
+    div(class = if (isTRUE(n$ok)) "note" else "note-bad", style = "margin:6px 0", n$text)
   })
   output$cv_ck_msg <- renderUI({
     n <- cv_ck_note(); res <- cv_res()
@@ -4455,6 +4501,17 @@ server <- function(input, output, session) {
       return()
     }
     .reread(cv_ov(), confirm = TRUE, what = "Confirming\u2026")
+  })
+  # SET ASIDE (D16): not converted now; the upload is marked for an admin, who sees
+  # it under Needs attention with its page.
+  observeEvent(input$cv_ck_aside, {
+    res <- cv_res(); req(res)
+    id <- cv_upload_id()
+    ok <- !is.na(id) && isTRUE(safe(set_upload_status(id, "set_aside", run_id = res$run_id,
+                                                      detail = "Set aside on Please check for an admin to look at")))
+    cv_ck_note(list(run_id = res$run_id, ok = ok,
+      text = if (ok) "Set aside. It is not converted; an admin will see it under Needs attention."
+             else "Set aside for now. (It could not be marked for an admin, so tell one.)"))
   })
 
   # ---- the last resort: drawing the columns by hand -------------------------------
@@ -5163,7 +5220,7 @@ server <- function(input, output, session) {
     res <- cv_res(); req(res)
     k <- res$kpis
     any_failed <- !is.null(k) && "status" %in% names(k) && any(k$status %in% "fail")
-    open_it <- !isTRUE((res$status %||% "") == "ok") || isTRUE(any_failed)
+    open_it <- FALSE   # behind More detail now (D16); opened by whoever wants it
     has_kpis <- is.data.frame(k) && nrow(k) > 0L
     has_cov  <- is.data.frame(res$coverage) && nrow(res$coverage) > 0L
     has_diag <- is.data.frame(res$diagnostics) && nrow(res$diagnostics) > 0L
@@ -5221,46 +5278,39 @@ server <- function(input, output, session) {
     # cv_trend have all consumed cv_data(). Drop its three derived helper columns
     # (.date/.amt/.bal) so the display shape is exactly what read.csv gave before.
     d <- cv_data(); req(!is.null(d))
-    df <- d[, setdiff(names(d), c(".date", ".amt", ".bal")), drop = FALSE]
-    # The CSV is already the display shape (no verbatim *_raw; debit/credit when the
-    # statement splits them). Trim columns this statement never fills so the table
-    # shows only fields that were actually read.
-    df <- df[, .cols_with_data(df), drop = FALSE]
-    # Beth reads Date, Description, Amount, Balance first; the bank-technical
-    # columns (in/out, particulars / code / reference / type / ...) follow. The
-    # internal row id ("#") is dropped from the preview - the "Showing N" line
-    # already counts, and the downloaded file keeps it.
-    df <- df[, setdiff(names(df), "row_id"), drop = FALSE]
-    lead <- intersect(c("date", "description", "amount", "debit", "credit", "balance",
-                        "direction", "type", "reference", "particulars", "code", "other_party"),
-                      names(df))
-    df <- df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
-    # The flags in words (ui_labels.R, FLAG_PLAIN), never the engine's codes -- and
-    # a DERIVED amount, filled in from the running balance, shaded (spec section 2).
-    derived <- if ("flags" %in% names(df)) grepl("amount_from_balance", df$flags, fixed = TRUE) else rep(FALSE, nrow(df))
-    if ("flags" %in% names(df)) df$flags <- plain_flags(df$flags)
-    df$.derived <- derived
-    # MONEY IS SHOWN TO THE CENT, ALWAYS. Straight out of the CSV a figure renders
-    # as R printed it -- "-12.4", "3120", "2398.15" -- so the one column an analyst
-    # checks against the paper statement was the one column that did not look like
-    # the paper statement. Three different shapes for three amounts on the same
-    # screen is not a style complaint: it makes a line-by-line eyeball check slower
-    # and a transposed digit easier to miss.
-    #
-    # DISPLAY ONLY. The downloaded CSV/XLSX keep the unformatted numeric, because a
-    # thousands separator in a machine-readable export is how a figure stops being a
-    # number on the way into Qlik.
+    # THE QVF'S TABLE, NO MORE (D16): Date | Description | Money out | Money in |
+    # Balance | Check. Everything else the statement printed is in the downloaded
+    # files; the screen is for checking the rows against the paper. Check is the
+    # file's own column (R/outputs.R balance_check): the balance before, plus this
+    # row's money, gives this row's balance -- a tick, or a cross where it does not.
+    amt <- d$.amt
+    df <- data.frame(date = as.character(d$date), description = as.character(d$description),
+                     money_out = ifelse(!is.na(amt) & amt < 0, -amt, NA_real_),
+                     money_in = ifelse(!is.na(amt) & amt > 0, amt, NA_real_), stringsAsFactors = FALSE)
+    if (any(!is.na(d$.bal))) df$balance <- d$.bal
+    if ("check" %in% names(d)) df$check <- ifelse(is.na(d$check), "", as.character(d$check))
+    # A row's own warnings (its year taken from elsewhere, a figure read from a
+    # faint scan) in words, as a Note -- only when some row has one. A DERIVED
+    # amount, filled in from the running balance, is shaded too (spec section 2).
+    df$flags <- if ("flags" %in% names(d)) ifelse(is.na(d$flags), "", as.character(d$flags)) else ""
+    df$.derived <- grepl("amount_from_balance", df$flags, fixed = TRUE)
+    if (any(nzchar(df$flags))) df$flags <- plain_flags(df$flags) else df$flags <- NULL
+    bad <- if ("check" %in% names(df)) which(df$check == "\u2717") else integer(0)
     vis <- setdiff(names(df), ".derived")
-    dt <- datatable(df, rownames = FALSE, colnames = c(cv_friendly_cols(vis), ".derived"),
+    labs <- c(date = "Date", description = "Description", money_out = "Money out", money_in = "Money in",
+              balance = "Balance", check = "Check", flags = "Note")[vis]
+    # MONEY IS SHOWN TO THE CENT, ALWAYS (display only: the files keep the number).
+    # The table opens at the first cross: that is where to look.
+    dt <- datatable(df, rownames = FALSE, colnames = c(unname(labs), ".derived"),
                     options = list(pageLength = 10, scrollX = TRUE,
-                                   columnDefs = list(list(visible = FALSE, targets = length(vis)))))
-    if (any(derived))
-      dt <- formatStyle(dt, ".derived", target = "row",
-                        backgroundColor = styleEqual(TRUE, "#fff3d6"))
-    money <- intersect(c("amount", "debit", "credit", "balance", "fee",
-                         "fx_amount", "running_balance"), names(df))
-    money <- money[vapply(df[money], is.numeric, logical(1))]
-    if (length(money)) dt <- DT::formatRound(dt, columns = money, digits = 2)
+                                   displayStart = if (length(bad)) 10L * ((bad[1] - 1L) %/% 10L) else 0L,
+                                   columnDefs = list(list(visible = FALSE, targets = length(vis)),
+                                                     list(className = "dt-center", targets = which(vis == "check") - 1L))))
+    if (any(df$.derived)) dt <- formatStyle(dt, ".derived", target = "row", backgroundColor = styleEqual(TRUE, "#fff3d6"))
+    if ("check" %in% vis) dt <- formatStyle(dt, "check", target = "row",
+                                            backgroundColor = styleEqual("\u2717", "#fde2e1"))
+    money <- intersect(c("money_out", "money_in", "balance"), vis)
+    if (length(money)) dt <- DT::formatCurrency(dt, columns = money, currency = "", digits = 2)
     dt
   })
 
@@ -5299,6 +5349,9 @@ server <- function(input, output, session) {
   }
   output$cv_downloads <- renderUI({
     res <- cv_res(); if (is.null(res)) return(NULL)
+    # Downloads once it is done or accepted (D16): a reading that needs a person is
+    # not handed out before they have looked.
+    if (!identical(res$status, "ok")) return(NULL)
     btns <- dl_buttons(res$outputs, c(xlsx = "dl_xlsx", csv = "dl_csv"))
     has_json <- any(grepl("\\.json$", res$outputs %||% character(0)))
     if (!length(btns) && !has_json) return(NULL)

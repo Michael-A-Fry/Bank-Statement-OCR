@@ -201,12 +201,14 @@ plain_reading_check <- function(x) plain_label(x, READING_CHECK_PLAIN)
 # list(cls, word, why): `cls` is the colour (ok / warn / bad), `word` the phrase,
 # `why` the reader's reason when a person has something to do, else "". `basis`
 # is the result's feed_basis: how an `ok` reading earned it.
+# One word for how it went (D16: no more than the QVF says): Done / Needs you /
+# Couldn't read. A "Done" a person vouched for says so in a few words.
 OUTCOME_PLAIN <- c(
-  proven       = "Proven",
-  layout_match = "Matches a learned layout",
-  person       = "Confirmed on Please check",
-  boxes        = "Proven with the columns you drew",
-  check        = "Please check",
+  proven       = "Done",
+  layout_match = "Done",
+  person       = "Done - you checked it",
+  boxes        = "Done - with the columns you drew",
+  check        = "Needs you",
   unread       = "Couldn't read")
 plain_outcome <- function(status, outcome = NA, basis = NA, reason = NA, fix = NA) {
   one <- function(v) { v <- as.character(v %||% NA)[1]; if (is.na(v)) "" else v }
