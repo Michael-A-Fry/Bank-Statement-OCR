@@ -13,6 +13,75 @@ finding id.
 
 ---
 
+## 3.0.0
+
+**Every bank design is a recipe, and every reading is proven. A design no
+recipe knows is always shown to a person once.**
+
+Built to the owner's final-phase decisions (recipes + proof, D1-D16). The major
+version changes because the accountant's screen, the outcomes and Admin all
+change shape, and because a statement of a new design no longer converts on its
+own. Nothing is deleted from a 2.x server, so the normal package update works.
+Use [the 2.x to 3.0 guide](docs/operational/updating-2.x-to-3.0.md): it says
+what changes for people, the two new settings, where drafted recipes live, how
+to roll back, and how to run side by side with the QVF.
+
+### What changes for the people using it
+
+- **Recipes.** Each known bank design is a recipe (`recipes/*.yaml`, read by
+  `R/recipes.R`): its recognise words, table heading, columns, date format and
+  money style. PDFs, scans (on their OCR'd words), Excel and CSV. Every recipe
+  of every bank is tried; a statement of another bank's design than the one
+  picked says so. 27 shipped recipes, written from the owner's real statement
+  designs.
+- **Always ask once** (`auto_reading: unknown_design: ask`, the default). A
+  statement that adds up but that no accepted recipe or proven layout knows comes
+  back *Needs you*, filled in. *It's right* writes a draft recipe beside the
+  layouts (`templates/recipes/`, or `paths: recipes:`); after 3 checked
+  statements from 2 accounts, or an admin's Accept, it reads on its own. Drift is
+  the same: a recipe that stops proving is not used, and the statement is asked
+  about.
+- **The accountant's screen is no more complex than the QVF's.** One sentence
+  (*Done* / *Needs you*, with where the balance stops adding up), a table of Date,
+  Description, Money out, Money in, Balance and a Check tick or cross per row (a
+  clicked row shows its page with the line marked), at most three buttons, and
+  plain column questions only when the tool is unsure.
+- **Two recipes that both prove with different figures go to a person**, side by
+  side; the same figures take the newer recipe.
+- **Outputs**: account number and name on every row, the full description, and
+  Type, Particulars, Code and Reference where printed.
+- **Progress inside a file** (stage and page n of N) and an anonymous timing line
+  per file (seconds per step; no names, numbers or file names).
+- **Speed**: a 150-page bundle of a known design reads in about 35 seconds.
+- **Admin** is Needs attention, Recipes, Words and Health. Recipes can be switched
+  on and off, changed in plain fields with a Test that re-reads every kept
+  statement the recipe read, merged, accepted, retired and undone. Every change
+  is a new version; nothing is deleted; no YAML is shown.
+
+### What stopped a wrong figure
+
+- Every recipe reading must pass the same proof as the automatic reader; a
+  recipe whose reading does not prove is never used.
+- A recipe proven only by opening + rows = closing gets adaptive spot checks
+  until it has 3 proofs.
+- A fix on Please check that cannot be applied (a recipe pick never offered, a
+  role that does not fit) no longer counts as a person's answer: the automatic
+  reading of a new design still waits.
+- Account name and number, and the Summary sheet, are neutralised against
+  spreadsheet formulas like the other text columns.
+- A server's own recipe version is used over a shipped one with the same id and
+  number, so an update can never undo an admin's Off or edit; the offline
+  package never carries a PC's drafted recipes (`templates/recipes/`).
+
+### Tools
+
+- `tools/compare-qvf.R`: one statement, QVF output against this tool's, counts
+  only.
+- `tools/recipes/try-real.R`: the real-statement gate, one anonymous line per
+  file.
+- `tools/recipes/from_designs.py`: recipes from the owner's statement design
+  blocks.
+
 ## 2.0.0
 
 **Templates are gone. You pick a bank, and the tool reads each statement from

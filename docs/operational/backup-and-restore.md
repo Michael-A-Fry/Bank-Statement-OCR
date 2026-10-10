@@ -13,6 +13,7 @@ a folder copy.
 | Path (inside the app folder) | What you lose without it |
 |---|---|
 | `templates\layouts\` | **Every bank layout the tool has learned on this server**, and the person-made fixes waiting for an admin (`templates\layouts\.pending\`). Each layout was proven by your own statements. Rebuilding it means finding those statements again and training each bank from scratch. Until then, statements with no balance of their own go back to *Please check*. **This is the accumulated value of the tool.** |
+| `templates\recipes\` | **This server's own recipes** (3.0.0): the drafts written from people's checks on *Please check*, their proof counts (`templates\recipes\.evidence\`), and every change an admin made on **Admin -> Recipes**. The shipped recipes come back with any package; these do not. Without them every design taught on this server is asked about again. (If `config\config.yaml` sets `paths: recipes:`, back up that folder instead.) |
 | `dictionaries\` | `labels.yaml` and `lexicon.yaml`: every wording and marker taught in Admin -> Words. Losing these crashes nothing, but statements that read last week can quietly stop being proven, which is worse. (The two bank reference files beside them, `nz_banks.yaml` and `nz_bank_branches.csv`, ship with the tool and are easy to replace, so backing them up does no harm.) |
 | `logs\metadata\` | The permanent record of how every conversion went, kept forever and never archived. Admin -> Health is computed from it. Once gone, it cannot be recreated. |
 | `logs\tracking\` | The automatic-reading counts: how much was proven, what failed, and every spot-check answer. Admin -> Health -> Automatic reading and the carry-off summary are read from it, and it is the evidence for the 95% target. Codes and counts only, no client data. |
@@ -45,6 +46,7 @@ it are a liability, not an asset.
 set "APP=D:\StatementStudio-offline"
 set "DEST=\\backup-share\StatementStudio\%DATE:~-4%-%DATE:~3,2%-%DATE:~0,2%"
 robocopy "%APP%\templates\layouts"  "%DEST%\templates\layouts"  /E
+robocopy "%APP%\templates\recipes"  "%DEST%\templates\recipes"  /E
 robocopy "%APP%\dictionaries"       "%DEST%\dictionaries"       /E
 robocopy "%APP%\logs\metadata"      "%DEST%\logs\metadata"      /E
 robocopy "%APP%\logs\tracking"      "%DEST%\logs\tracking"      /E
@@ -52,7 +54,7 @@ robocopy "%APP%\config"             "%DEST%\config" config.yaml
 ```
 
 `/E` copies the hidden-looking `.pending` folder inside `templates\layouts\`
-too. `robocopy` exits with **1** for "files were copied", which is success, not
+and `.evidence` inside `templates\recipes\` too. `robocopy` exits with **1** for "files were copied", which is success, not
 an error. Anything **8 or above** is a real failure, so read the message.
 
 Keep at least the last four weekly copies, plus one from before each update.
@@ -70,7 +72,7 @@ and the app starts), so the private R and packages are in place.
 
 1. **Stop the app.** Press `Ctrl-C`, or end the scheduled task.
 2. Copy back **over** the app folder, replacing what is there:
-   `templates\layouts\`, `dictionaries\`, `logs\metadata\`, `logs\tracking\`,
+   `templates\layouts\`, `templates\recipes\`, `dictionaries\`, `logs\metadata\`, `logs\tracking\`,
    `config\config.yaml`.
 3. **Start the app.**
 4. **Admin -> Recipes** lists every recipe, and Admin -> Health its learned

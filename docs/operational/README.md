@@ -30,10 +30,11 @@ box.
 | **Ask the box whether it is fit to convert — one command, after every update** | `scripts\health-check.R`, in [maintaining-the-engine.md](maintaining-the-engine.md) §1 |
 | Back up the irreplaceable folders, and restore them | [backup-and-restore.md](backup-and-restore.md) |
 | Update to a new version (build a package, replace the folder) | [updating.md](updating.md) |
+| **Go from 2.x to 3.0.0 (recipes): what changes, new settings, rolling back, side by side with the QVF** | [updating-2.x-to-3.0.md](updating-2.x-to-3.0.md) |
 | **Go from 1.23.1 to 2.0.0: every file to update, add or delete** | [release-2.0.0-hand-carry.md](release-2.0.0-hand-carry.md) |
 | **Merge a dev folder into the live one by hand — and what must never be copied** | [updating-a-version.md](updating-a-version.md) |
 | **Put a bad version back, and deal with what it already sent to Qlik** | [rolling-back.md](rolling-back.md) |
-| Do admin: banks and learned layouts, automatic-reading counts, spot checks, dictionaries, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
+| Do admin: recipes (on/off, change, merge, accept drafts), automatic-reading counts, spot checks, dictionaries, tidy logs | [admin-and-maintenance.md](admin-and-maintenance.md) |
 | Feed the Qlik dashboards | [connecting-qlik.md](connecting-qlik.md) |
 
 ## Owning it (the maintainer)
@@ -52,7 +53,7 @@ The things that change live in **data and config, not code**.
 
 | To change | Where | Who, and how |
 |---|---|---|
-| How a bank's statements are read | `templates\layouts\` (learned, never hand-edited) | nobody needs to: proven statements teach it. A person fixes one reading on **Please check**; an admin turns recipes on and off, changes and merges them on **Admin → Recipes**, and accepts drafts on **Admin → Needs attention**. No code. |
+| How a bank's statements are read | its **recipe**: `recipes\` (shipped) and `templates\recipes\` (this server's drafts and changes; never hand-edited) | nobody needs to: a person's check on a new design writes it. A person fixes one reading on **Please check**; an admin turns recipes on and off, changes and merges them on **Admin → Recipes**, and accepts drafts on **Admin → Needs attention**. No code. |
 | What a fact about the statement is called (another phrase for "closing balance") | `dictionaries\labels.yaml` | admin — **Admin → Words**, or Please check |
 | What words inside the transaction table mean (a DR / CR mark, a column heading), or a money or date shape | `dictionaries\lexicon.yaml` | admin — **Admin → Words**, or Please check |
 | How often automatic conversions are spot-checked | `config\config.yaml` → `auto_reading: spot_check_rate` | admin — **Admin → Automatic reading** |

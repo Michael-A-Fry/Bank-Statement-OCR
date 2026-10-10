@@ -48,8 +48,12 @@ that ships with the tool, from a made-up bank, with no client data in it), and
 download the **JSON**. Leave the bank empty; the row says *Please choose the
 bank*, because the made-up bank is in no register.
 
-It comes back **Proven**, with **12 transactions**: the running balance checks
-on all 12 steps and no other reading of the columns fits.
+It comes back **Needs you**, with **12 transactions** and the reason "It adds
+up, but the tool has not seen this statement design before". The running balance
+checks on all 12 steps and no other reading of the columns fits, but since 3.0.0
+a design no recipe knows is always shown to a person once
+(`auto_reading: unknown_design: ask`). Press *It's right - accept it*: it comes
+back **Done**, and that is the run the JSON is for.
 
 Then convert `samples\raw\anz\anz_transaction_export_01.csv`, an ANZ export.
 It reads as **7 transactions**, six payments out and one salary in, and comes

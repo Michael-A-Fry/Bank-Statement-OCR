@@ -193,9 +193,10 @@ pointing at `app.shiny_url`, opening in a new tab.
 ## Check it works
 
 1. Convert `samples\raw\tutorial\sample_everyday_statement.pdf` → it is
-   **Proven**, and the download works.
+   **Needs you** (a design the tool has not seen is always shown once); press
+   *It's right - accept it* → **Done**, and the download works.
 2. Reload the Qlik app → those transactions appear, and `Runs` shows the run as
-   `accepted`, with `template_origin` `proven`.
+   `accepted`, with `template_origin` `proven` or `person`.
 3. Convert something that goes to Please check, for example
    `samples\raw\anz\anz_transaction_export_01.csv` (no balance to prove it by)
    → it does **not** appear, and `Runs` shows it `withheld:needs_review`.

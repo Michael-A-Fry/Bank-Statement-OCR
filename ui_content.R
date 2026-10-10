@@ -10,7 +10,7 @@
 # EVERY CLAIM HERE IS ONE THE READER KEEPS. "Proven" means what R/auto_read.R
 # means by it: every balance step holds to the cent and no other reading of the
 # columns fits. A statement that prints no balance and no totals is never called
-# proven; it converts on its own only when it matches a layout already proven.
+# proven; it converts on its own only when a recipe a person accepted reads it.
 about_html <- function() HTML('
 <style>
  .ab{max-width:1020px} .ab h3{color:#00205b;margin:26px 0 10px;font-size:16px}
@@ -34,22 +34,23 @@ about_html <- function() HTML('
   <div class="step"><b>Prove</b>The statement&#39;s own arithmetic - its running balance, opening and closing balance, printed totals - must add up.</div>
   <div class="step"><b>Download</b>Excel or CSV. Anything that did not prove is shown on Please check with the reason.</div>
 </div>
-<p class="muted">Each bank&#39;s layouts are learned from the statements it has read and proved, so the
-next statement of the same layout is quicker and surer. A layout is a starting point, never the
-answer: every statement is checked against its own arithmetic every time.</p>
+<p class="muted">Each bank design the tool knows has a <b>recipe</b>: where its table is, what each
+column is, how its dates and money are printed. A recipe is never the answer on its own: every
+statement is checked against its own arithmetic every time. A design with no recipe yet is always
+shown to a person once; their check becomes the recipe, and after a few checked statements it
+reads on its own.</p>
 
 <h3>How you know it&#39;s right</h3>
 <dl class="trust">
-<dt>Proven</dt><dd>Every balance step adds up to the cent, and no other reading of the columns
-fits. Nothing to do.</dd>
-<dt>Matches a learned layout</dt><dd>The statement prints no running balance, but its totals
-check (where printed) and it matches a layout this bank has already proven.</dd>
-<dt>Please check</dt><dd>Read, but not proven - for example two readings both fit, or a balance
-step does not add up. You see the page with the columns drawn on it, set what a column is if it
-is wrong, and re-read; or confirm it is right.</dd>
+<dt>Done</dt><dd>The design is one the tool knows, and every balance step adds up to the cent (or, with no
+running balance, opening plus the rows gives the closing balance and the printed totals agree).
+Nothing to do.</dd>
+<dt>Needs you</dt><dd>Read, but not proven - for example the balance stops adding up at a row,
+or the design is new. You see the page with the columns drawn on it, answer a plain question
+about a column if asked, and re-read; or say it is right.</dd>
 <dt>Couldn&#39;t read</dt><dd>Nothing usable came out. The reason is shown.</dd>
 <dt>Derived amounts</dt><dd>An amount that could not be read but that the running balance fixes is
-filled in, marked in the Flags column, and the statement always goes to Please check.</dd>
+filled in, marked in the Flags column, and the statement always needs you.</dd>
 </dl>
 <p class="muted" style="margin-top:14px">Best results come from CSV or Excel exports where your bank
 offers them.</p>

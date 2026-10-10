@@ -1,34 +1,36 @@
-# templates\ - the bank layouts the tool has learned
+# templates\ - what this server has learned
 
-Statement templates are gone (2.0.0). The tool reads every statement from its
-**content** and proves the reading with the statement's own arithmetic: the
-running balance, and opening plus movements equals closing. Nobody draws
-columns or picks a template any more. You pick the **bank** (the tool pre-fills
-it from the statement) and convert.
+Since 3.0.0 every bank design the tool knows is a **recipe**: which words
+recognise the design, the table's heading, what each column is, how dates and
+money are printed. A recipe is never the answer on its own: every reading is
+checked against the statement's own arithmetic, every time.
 
-What the tool remembers about each bank lives here, in `layouts\`:
+There are two kinds of recipe:
 
-| Folder | What | Rules |
+| Where | What | Rules |
 |---|---|---|
-| `layouts\<bank>\` | **Learned layouts**, one folder per bank (`anz`, `westpac`, ...). Each file is one version of one layout: `<bank>_<n>@v<version>.yaml`, for example `anz_1@v3.yaml`. A file holds the column roles, date and money styles, heading words and relative column positions. It holds no names, figures or account numbers. | Written by the tool, never by hand. A layout starts **provisional** and becomes **proven** after three statements prove themselves, or when an admin confirms it. A change never edits a file: it writes the next version beside it. So every output, which is stamped with the learned state it was read against, can be traced to exactly what had been learned when it was made. **Irreplaceable: back it up** with the logs (`..\docs\operational\backup-and-restore.md`). |
-| `layouts\.pending\` | A person's word that the arithmetic could not back: a fix on Please check that did not prove, or a reading confirmed with *This is right*. Held for an admin to **accept** or **discard**. | Never read as a layout, and not part of the learned state. It applies to the one file it was made on until an admin accepts it. |
+| `..\recipes\` (in the install) | The **shipped recipes**, one file per design (`anz_cashback_visa.yaml`, ...). | Part of the product. An update replaces them. |
+| `recipes\` (here) | **This server's own recipes**: drafts written from a person's check on Please check, and every change an admin makes on **Admin -> Recipes** (on/off, an edit, a merge, accept, retire, undo). Files are `<id>@v<version>.yaml`, for example `anz_draft_1@v1.yaml`; the proof counts are in `recipes\.evidence\`. They hold the table heading and the period label, never a name, a figure or an account number. | Written by the tool, never by hand. A change never edits a file: it writes the next version beside it. A draft reads on its own after **3 checked statements from 2 accounts**, or when an admin accepts it. Where this folder lives is the `paths: recipes:` setting in `config\config.yaml`; without it, it is here, beside `layouts\`. **Irreplaceable: back it up** (`..\docs\operational\backup-and-restore.md`). |
 
-The folder is created the first time a statement is learned, so a fresh install
-has only this README. Where it lives is the `paths: layouts:` setting in
-`config\config.yaml`.
+A statement whose design no accepted recipe recognises is **always shown to a
+person once** (`auto_reading: unknown_design: ask`, the default). It comes back
+filled in, and their "It's right" writes the draft.
 
-An admin can confirm, rename or retire any learned layout on **Admin -> Banks**,
-and accept or discard a held fix there. Retiring keeps the files, so nothing
-already issued changes.
+`layouts\` is what 2.x learned: one folder per bank of learned layouts, and
+`layouts\.pending\` for fixes held for an admin. 3.0.0 still reads them, so
+statements that converted on a proven layout still do, but a text PDF or a
+spreadsheet now teaches a recipe instead. Keep the folder and keep backing it up.
 
-**Never copy a `layouts\` folder from one install to another.** File names are
-the same everywhere (`anz\anz_1@v1.yaml`), so a copy silently replaces what the
-other install learned.
+The folders are created the first time something is learned, so a fresh
+install has only this README.
 
-The templates that used to ship in `statements\` now live in
-`tests\testthat\fixtures\templates\`, as test material for the engine's table
-reader only. The app does not read them. A server updated from 1.x still has
-`statements\`, `statements_seed\` and `statements_user\` here. None of them is
-read any more, and
+**Never copy `recipes\` or `layouts\` from one install to another.** File names
+are the same everywhere (`anz_draft_1@v1.yaml`), so a copy silently replaces
+what the other install learned. The offline package never carries them.
+
+The templates that used to ship in `statements\` before 2.0.0 now live in
+`tests\testthat\fixtures\templates\`, as test material only. A server updated
+from 1.x may still have `statements\`, `statements_seed\` and
+`statements_user\` here; none of them is read, and
 [the 2.0.0 hand-carry list](../docs/operational/release-2.0.0-hand-carry.md)
 says what to keep and what to delete.

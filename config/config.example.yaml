@@ -44,6 +44,12 @@ paths:
   # bank. Learned here from your own statements, so BACK IT UP with the logs:
   # it exists nowhere else. Every change is a new file; nothing is edited in place.
   layouts: templates/layouts
+  # This server's own recipes (Admin -> Recipes): the drafts written from a
+  # person's check on Please check, and every admin change (on/off, an edit, a
+  # merge). Leave it out and they are kept beside the layouts, in
+  # templates/recipes. An update never touches this folder; the shipped recipes
+  # are in recipes/ in the install. Like the layouts, BACK IT UP.
+  # recipes: templates/recipes
   # Automatic-reading tracking (Admin -> Health -> Automatic reading): one line per event,
   # a file per month. Codes and counts only -- never names, descriptions,
   # amounts, dates, account numbers or file names.

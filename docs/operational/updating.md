@@ -4,6 +4,10 @@ Same as building it the first time: build a fresh package on the internet PC,
 drop it on the server. Settings, learned bank layouts, taught words, logs and the
 installed R are all kept.
 
+> **Going from 2.x to 3.0.0?** This page's steps are all it takes, but read
+> [updating-2.x-to-3.0.md](updating-2.x-to-3.0.md) first: what changes for
+> people, the new settings, and the new folder to back up.
+>
 > **Going from 1.23.1 to 2.0.0?** Do not use this page alone. 2.0.0 deletes eight
 > engine files and the template folders, and a copy-over never deletes anything:
 > the old files would stay, and the app would still load them. Follow
@@ -50,7 +54,7 @@ that the package does not carry it — not anything clever in the copy.
 |---|---|
 | `config\config.yaml` | `R\` — **including `R\params.R`** |
 | `dictionaries\labels.yaml`, `dictionaries\lexicon.yaml` | `app.R`, `ui_content.R`, `ui_labels.R`, `run.R` |
-| `templates\layouts\` (every learned layout) | `templates\README.md` |
+| `templates\layouts\` (every learned layout), `templates\recipes\` (this server's drafted and changed recipes) | `templates\README.md`, `recipes\` (the shipped recipes) |
 | `logs\` (including `logs\tracking\`), `feed\`, `uploads\` | `scripts\`, `tests\`, `samples\`, `docs\`, `README.md`, `RUN-ME.bat` |
 | `R-runtime\`, `R-lib\` | `config\config.example.yaml`, `dictionaries\*.example.yaml`, and the bank list: `dictionaries\nz_banks.yaml`, `dictionaries\nz_bank_branches.csv` |
 
@@ -58,7 +62,8 @@ One detail worth knowing, because it is the one that could bite: the package
 carries the `templates\` folder, and the PC that builds it may have learned
 layouts of its own (from testing), **under the same names** as the server's
 (`anz\anz_1@v1.yaml`). They would replace the server's. So
-`scripts\bundle-offline.R` leaves `templates\layouts\` out, and refuses to build
+`scripts\bundle-offline.R` leaves `templates\layouts\` and `templates\recipes\`
+out (drafted recipes are named the same on every PC too), and refuses to build
 at all if a learned layout or a held fix is anywhere else in the folder;
 `offline\manifest.txt` records it on its `layouts:` line. Your backup is what
 makes any other mistake recoverable

@@ -73,7 +73,11 @@ never_ship_keep <- "samples/_private_staging/README.md"   # explains the empty f
 # pruned, and then PROVEN gone in section 1: no file shaped like a learned layout
 # (or a fix held for an admin in .pending/) may be anywhere in the bundle, whatever
 # folder paths: layouts points at on this PC.
-never_ship_state <- "templates/layouts"
+# The recipes this PC drafted from a person's checks (templates/recipes/, R/recipes.R
+# recipes_state_dir) are server state too, named the same way (anz_draft_1@v1.yaml)
+# with their proof counts in .evidence/: shipped, they would replace a server's own
+# drafts and counts. Pruned with the layouts, and the same proof catches a stray one.
+never_ship_state <- c("templates/layouts", "templates/recipes")
 learned_file_re  <- "^[a-z0-9_]+_[0-9]+@v[1-9][0-9]*[.]yaml$"   # R/layouts.R's file names
 held_fix_re      <- "(^|/)[.]pending/[a-z0-9_]+[.]yaml$"         # R/fixes.R's held fixes
 

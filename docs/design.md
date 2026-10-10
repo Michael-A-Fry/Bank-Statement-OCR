@@ -705,8 +705,10 @@ Double-click `RUN-ME.bat`. Then, in order:
 
 1. `offline\manifest.txt`: does `app_version` say what you just shipped?
 2. Run the suite the way §8 describes: `failed: 0`, `errors: 0`, `skipped: 0`.
-3. Convert `samples\raw\tutorial\sample_everyday_statement.pdf`. It must be
-   **Proven**, 12 transactions.
+3. Convert `samples\raw\tutorial\sample_everyday_statement.pdf`. It is a
+   made-up bank's design, so with `auto_reading: unknown_design: ask` (the
+   default since 3.0.0) it must come back **Needs you**, 12 transactions, with
+   "the tool has not seen this statement design before".
 4. Open that conversion's `.json` and check `build.engine_version`. If it says
    `unknown`, the `VERSION` file did not travel. Fix that before anyone converts
    anything real.

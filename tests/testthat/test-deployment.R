@@ -661,6 +661,17 @@ test_that("no drafted recipe sits in the folder the server owns", {
   expect_true(any(grepl("^/?templates/recipes/", ign)))
 })
 
+# The package is built from a PC that may have converted statements, and so drafted
+# recipes into templates/recipes/ (named the same on every machine). The bundle
+# ships templates/, so that folder must be pruned like the learned layouts.
+test_that("the offline bundle never carries this PC's drafted recipes", {
+  src <- paste(readLines(file.path(engine_root(), "scripts", "bundle-offline.R"), warn = FALSE), collapse = "\n")
+  m <- regmatches(src, regexpr("never_ship_state <- c\\([^)]*\\)", src))
+  expect_length(m, 1L)
+  expect_match(m, "\"templates/layouts\"", fixed = TRUE)
+  expect_match(m, "\"templates/recipes\"", fixed = TRUE)
+})
+
 test_that("no learned layout sits in the folder the server owns", {
   root <- engine_root()
   rel <- .config_defaults()$paths$layouts

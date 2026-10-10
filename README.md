@@ -5,15 +5,17 @@ downloadable data (**Excel + CSV + JSON**). It is built for forensic accounting:
 descriptions kept verbatim, nothing hidden is ever read, no silent data loss, and
 **no silently wrong figures**.
 
-**Since 2.0.0 there are no templates.** You pick the **bank**, and the tool fills
-it in from the statement itself. It then reads each statement from its
-**content** (what is a date, what is a figure, what lines up with what) and
-**proves** the reading with the statement's own arithmetic: the running balance,
-opening plus movements equals closing, and the printed totals. A reading that
-proves converts with no clicks. A reading it cannot prove is shown to a person
-with the reason, and is fixed in two clicks. Each bank's layouts are **learned**
-from the statements it has proved, so the next statement of that layout is
-quicker and surer.
+**Since 3.0.0 every bank design is a recipe, and every reading is proven.** A
+**recipe** says how one design is read: the words that recognise it, the table's
+heading, what each column is, how its dates and money are printed. The tool
+**proves** every reading with the statement's own arithmetic: the running
+balance, opening plus movements equals closing, and the printed totals. A
+reading that proves converts with no clicks. One it cannot prove is shown to a
+person with the reason. A design no recipe knows yet is **always shown to a
+person once**, already filled in; their "It's right" writes a draft recipe, and
+after three checked statements from two accounts that design is read on its own.
+Admins switch recipes on and off, change and merge them on Admin -> Recipes,
+without ever seeing a recipe file.
 
 **No Python, no machine learning.** Learning here means keeping versioned
 records of readings the arithmetic proved, each traceable to the statements that
@@ -46,10 +48,12 @@ Then one page per job:
   automatic-reading specification, the data contract, the engine parameters, the
   edge-case register, the findings register and the roadmap.
 
-**Updating a server from 1.x to 2.0.0?**
-[release-2.0.0-hand-carry.md](docs/operational/release-2.0.0-hand-carry.md)
-lists every file to update, add or delete. A plain copy-over is not enough for
-this release.
+**Updating a server from 2.x to 3.0.0?**
+[updating-2.x-to-3.0.md](docs/operational/updating-2.x-to-3.0.md) says what
+changes for accountants and admins, the two new settings, where drafted recipes
+live, how to roll back, and how to run it side by side with the QVF.
+From 1.x, first follow
+[release-2.0.0-hand-carry.md](docs/operational/release-2.0.0-hand-carry.md).
 
 **New here?** [first-time-setup.md](docs/operational/first-time-setup.md): two
 double-clicks, then set the admin password and open the firewall port.
