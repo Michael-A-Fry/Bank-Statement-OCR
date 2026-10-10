@@ -491,10 +491,10 @@ test_that("a fault listed as a diagnostic is not listed again as a check", {
   # PROVES, which beside a failure and with no pass/fail column says the opposite)
   expect_match(paste(src, collapse = "\n"), 'tags\\$b\\(plain_check_problem\\(')
   expect_identical(.ui_labels()$plain_failing_check("check:dates_readable"), "Some dates could not be read")
-  expect_identical(.ui_labels()$plain_failing_check("reading:unique"), "Two columns could be money out - tell us which")
+  expect_identical(.ui_labels()$plain_failing_check("reading:unique"), "Two columns could be money out \u2014 tell us which")
   expect_false(any(grepl("^Failed", .ui_labels()$plain_failing_check(paste0("reading:", names(.ui_labels()$READING_CHECK_PLAIN))))))
   # ...except a design not taught yet: nothing failed, it is asked about once
-  expect_identical(.ui_labels()$plain_failing_check("reading:known_design"), "New design - check it once")
+  expect_identical(.ui_labels()$plain_failing_check("reading:known_design"), "New design \u2014 check it once")
 })
 
 # ---------------------------------------------------------------------------

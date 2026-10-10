@@ -74,7 +74,7 @@ COVERAGE_PLAIN <- c(populated = "present", partial = "some rows empty",
 # "doesn't include it" -- the claim about the file the verdict above stopped making.
 # A `partial` note is kept: it counts the blank rows, which is all it says.
 COVERAGE_NOTE_PLAIN <- c(
-  empty    = "Read as a column, but every row is blank - the column may be in the wrong place.",
+  empty    = "Read as a column, but every row is blank \u2014 the column may be in the wrong place.",
   unmapped = "Not printed on this statement, or printed inside another column.")
 # How a single check came out (the `status` column of the KPI table). Lived inline
 # in app.R, which meant one of the five wording maps was somewhere else; all five
@@ -219,7 +219,7 @@ READING_PROBLEM_PLAIN <- c(
   signs_settled      = "Money in and money out are unclear",
   no_derived_amounts = "Some amounts had to be worked out",
   amounts_read       = "Some amounts could not be read",
-  unique             = "Two columns could be money out - tell us which",
+  unique             = "Two columns could be money out \u2014 tell us which",
   rows_proven        = "Some rows are not covered by the balance",
   reader_agrees      = "Two readings of the table disagree",
   dates_carried      = "Some dates were carried down from above",
@@ -233,14 +233,14 @@ READING_PROBLEM_PLAIN <- c(
   rows_between_ends  = "Some rows sit outside the opening and closing",
   one_side_per_row   = "A row has both money out and money in",
   ends_printed       = "The end of the statement is not printed",
-  sections_set_aside = "A pending section was left out - please check",
+  sections_set_aside = "A pending section was left out \u2014 please check",
   currency_own       = "The account is not in New Zealand dollars",
   workbook_plain     = "The workbook has extra sheets or hidden rows",
-  tables_set_aside   = "Other tables were left out - please check",
+  tables_set_aside   = "Other tables were left out \u2014 please check",
   edge_lines         = "A balance line has unfamiliar wording",
   compact_dates      = "Some eight-digit dates fall outside the period",
   statements_join    = "The statements in the file do not join up",
-  known_design       = "New design - check it once")
+  known_design       = "New design \u2014 check it once")
 CHECK_PROBLEM_PLAIN <- c(
   balance_reconciliation     = "The balance does not add up",
   running_balance_continuity = "The running balance jumps",
@@ -265,8 +265,8 @@ plain_check_problem <- function(x) plain_check(x, CHECK_PROBLEM_PLAIN)
 OUTCOME_PLAIN <- c(
   proven       = "Done",
   layout_match = "Done",
-  person       = "Done - you checked it",
-  boxes        = "Done - with the columns you drew",
+  person       = "Done",
+  boxes        = "Done",
   check        = "Needs you",
   unread       = "Couldn't read")
 plain_outcome <- function(status, outcome = NA, basis = NA, reason = NA, fix = NA) {
@@ -381,7 +381,7 @@ plain_failing_check <- function(x) vapply(x, function(e) {
   if (is.na(e)) return(NA_character_)
   code <- sub("^[^:]*:", "", e)
   # a design not yet taught is not a failure: it is asked about once
-  if (identical(code, "known_design")) return("New design - check it once")
+  if (identical(code, "known_design")) return("New design \u2014 check it once")
   switch(sub(":.*$", "", e),
          reading = plain_label(code, READING_PROBLEM_PLAIN),
          check  = plain_label(code, CHECK_PROBLEM_PLAIN),
@@ -404,7 +404,7 @@ FEED_PLAIN <- list(
   accepted = list(
     ok = TRUE, line = "Sent to the dashboards.", why = ""),
   `withheld:needs_review` = list(
-    ok = FALSE, line = "Held back from the dashboards - it needs checking first.",
+    ok = FALSE, line = "Held back from the dashboards \u2014 it needs checking first.",
     why = "Only readings that were proven, or confirmed on Please check, are published."),
   `withheld:unsupported` = list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
@@ -413,7 +413,7 @@ FEED_PLAIN <- list(
     ok = FALSE, line = "Nothing was sent to the dashboards.",
     why = "The file could not be read."),
   `withheld:not_proven` = list(
-    ok = FALSE, line = "Held back from the dashboards - nothing proved this reading.",
+    ok = FALSE, line = "Held back from the dashboards \u2014 nothing proved this reading.",
     why = "Only readings the statement's own arithmetic proved, or a person confirmed, feed them. Your download is complete; ask your data analyst if it should feed them."))
 FEED_PLAIN_UNKNOWN <- list(
   ok = FALSE, line = "Held back from the dashboards.",
@@ -426,7 +426,7 @@ FEED_PLAIN_UNKNOWN <- list(
 FEED_PLAIN_SUFFIX <- c(
   write_failed   = "The feed folder could not be written to, so the dashboards did NOT receive this run. Tell whoever looks after the server.",
   no_rows        = "No transaction rows were produced, so nothing was sent.",
-  stale_row_kept = "An earlier version of this statement is STILL on the dashboards - the tool could not remove it. Tell whoever looks after the server before relying on the dashboard figures for it.")
+  stale_row_kept = "An earlier version of this statement is STILL on the dashboards \u2014 the tool could not remove it. Tell whoever looks after the server before relying on the dashboard figures for it.")
 # ...AND THE HEADLINE EACH ONE REPLACES. These three used to override `ok` and
 # `why` but leave `line` alone, and `line` is what the screen prints in bold,
 # first. So a feed write that FAILED rendered "Sent to the dashboards." as its
@@ -435,9 +435,9 @@ FEED_PLAIN_SUFFIX <- c(
 # operator to trust. A suffix that says the run did not arrive has to replace the
 # sentence that says it did.
 FEED_LINE_SUFFIX <- c(
-  write_failed   = "NOT sent to the dashboards - the feed could not be written.",
+  write_failed   = "NOT sent to the dashboards \u2014 the feed could not be written.",
   no_rows        = "Nothing was sent to the dashboards.",
-  stale_row_kept = "Sent to the dashboards - but an OLDER version of this statement is still there too.")
+  stale_row_kept = "Sent to the dashboards \u2014 but an OLDER version of this statement is still there too.")
 # plain_feed(gate) -- write_feed()'s return value -> list(ok, line, why), or NULL
 # when there is nothing to say (feed switched off, or a form result).
 plain_feed <- function(gate) {
@@ -498,7 +498,7 @@ FRIENDLY_READ_ERROR <- paste(
 # saying it belonged here.)
 CONVERT_STOPPED <- paste(
   "This conversion stopped before it finished, so there is nothing to show.",
-  "Try it again - if it stops a second time, tell whoever looks after the tool.")
+  "Try it again \u2014 if it stops a second time, tell whoever looks after the tool.")
 
 # unread_next(kind, text, has_cols) -- what to do next with a file that could not be
 # read, in one sentence. "Couldn't read" on its own leaves a person stuck; this is
@@ -507,11 +507,11 @@ CONVERT_STOPPED <- paste(
 unread_next <- function(kind = NA, text = "", has_cols = FALSE) {
   k <- as.character(kind %||% NA)[1]; t <- tolower(paste(as.character(text %||% ""), collapse = " "))
   if (grepl("password|encrypt", t))
-    return("It may have a password - save an unlocked copy, then add it again.")
+    return("It may have a password \u2014 save an unlocked copy, then add it again.")
   if (identical(k, "scan") || grepl("scan|photo|picture|ocr", t))
-    return("It looks like a photo or scan - try the original PDF from the bank.")
+    return("It looks like a photo or scan \u2014 try the original PDF from the bank.")
   if (is.na(k) || !nzchar(k) || grepl("file type|not a pdf|not a file", t))
-    return("This is not a file it reads - use the bank's PDF, CSV or Excel download.")
+    return("This is not a file it reads \u2014 use the bank's PDF, CSV or Excel download.")
   if (isTRUE(has_cols))
     return("Open Check the columns to show which column is which.")
   "Try the bank's own PDF or CSV download of this statement instead."
@@ -521,6 +521,6 @@ unread_next <- function(kind = NA, text = "", has_cols = FALSE) {
 OUTCOME_HELP <- list(
   ok   = "Done: the statement's own balances add up, so it is ready to use.",
   warn = "Needs you: one quick look from a person before it can be used.",
-  bad  = "Couldn't read: nothing usable came out of this file - the line below says what to try.")
-TICK_HELP  <- "Tick: this adds up - nothing to do."
-CROSS_HELP <- "Cross: this does not add up - it needs a look."
+  bad  = "Couldn't read: nothing usable came out of this file \u2014 the line below says what to try.")
+TICK_HELP  <- "Tick: this adds up \u2014 nothing to do."
+CROSS_HELP <- "Cross: this does not add up \u2014 it needs a look."

@@ -13,13 +13,12 @@
 # proven; it converts on its own only when a recipe a person accepted reads it.
 about_html <- function() HTML('
 <div class="ab">
-<h3 class="ab-h">How a conversion flows</h3>
+<h3 class="ab-h">How it works</h3>
 <ol class="ab-steps">
-  <li class="ab-step"><span class="ab-num">1</span><b>Upload</b><span>Your bank&#39;s statements &#8212; PDF, scan, CSV or Excel &#8212; on Convert.</span></li>
-  <li class="ab-step"><span class="ab-num">2</span><b>Bank</b><span>Each file&#39;s bank is filled in from the statement. Change it if it is wrong.</span></li>
-  <li class="ab-step"><span class="ab-num">3</span><b>Read</b><span>Dates, descriptions and figures are read from what is on the page.</span></li>
-  <li class="ab-step"><span class="ab-num">4</span><b>Prove</b><span>The statement&#39;s own running balance and totals must add up to the cent.</span></li>
-  <li class="ab-step"><span class="ab-num">5</span><b>Download</b><span>Excel or CSV. Anything not proven is shown to you with the reason.</span></li>
+  <li class="ab-step"><span class="ab-num">1</span><b>Check the bank</b><span>Upload PDF, scan, CSV or Excel on Convert. Each file&#39;s bank is filled in for you; change it if it is wrong.</span></li>
+  <li class="ab-step"><span class="ab-num">2</span><b>We read it</b><span>Dates, descriptions and figures are read from what is on the page.</span></li>
+  <li class="ab-step"><span class="ab-num">3</span><b>We check the maths</b><span>The statement&#39;s own running balance and totals must add up to the cent.</span></li>
+  <li class="ab-step"><span class="ab-num">4</span><b>Download</b><span>Excel or CSV. Anything not proven is shown to you with the reason.</span></li>
 </ol>
 
 <h3 class="ab-h">How you know it&#39;s right</h3>
@@ -31,7 +30,8 @@ or the design is new. You see the page, answer a plain question if asked, and it
 <dt><span class="pill pill-bad">Couldn&#39;t read</span></dt><dd>Nothing usable came out. The reason, and what to try, is shown.</dd>
 </dl>
 
-<details class="ab-more"><summary>How it works</summary>
+<h3 class="ab-h">Behind the scenes</h3>
+<div class="ab-more">
 <p>Each statement design the tool knows has a <b>recipe</b>: where its table is, what each
 column is, how its dates and money are printed. A recipe is never the answer on its own: every
 statement is checked against its own arithmetic every time. A design with no recipe yet is always
@@ -40,5 +40,5 @@ reads on its own.</p>
 <p>An amount that could not be read but that the running balance fixes is filled in, marked in the
 Flags column, and the statement always needs you.</p>
 <p>Best results come from CSV or Excel exports where your bank offers them.</p>
-</details>
+</div>
 </div>')

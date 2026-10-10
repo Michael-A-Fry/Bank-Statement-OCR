@@ -19,7 +19,7 @@ test_that("every check has a plain problem sentence, and none says Failed", {
   all <- c(L$READING_PROBLEM_PLAIN, L$CHECK_PROBLEM_PLAIN)
   expect_false(any(grepl("Failed", all)))
   expect_true(all(lengths(strsplit(all, "\\s+")) <= 10L))
-  expect_identical(L$plain_failing_check("reading:unique"), "Two columns could be money out - tell us which")
+  expect_identical(L$plain_failing_check("reading:unique"), "Two columns could be money out \u2014 tell us which")
   expect_identical(L$plain_failing_check("reading:balance_chain"), "The running balance does not add up")
   expect_identical(L$plain_check_problem("balance_reconciliation [statement 2]"), "The balance does not add up (statement 2)")
 })

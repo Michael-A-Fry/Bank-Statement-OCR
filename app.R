@@ -25,6 +25,10 @@ suppressMessages({
   library(shiny)
   library(DT)
 })
+# A table that fits on one page shows no pager.
+options(DT.options = list(drawCallback = DT::JS(
+  "function(s){var api=this.api();var one=api.page.info().pages<=1;",
+  "$(api.table().container()).find('.dataTables_paginate,.dataTables_info').toggle(!one);}")))
 
 # Load the engine (all pure-R modules) into the session.
 for (.f in list.files("R", full.names = TRUE, pattern = "\\.R$")) source(.f)
@@ -721,6 +725,7 @@ ui <- fluidPage(
           p(class = "muted", style = "max-width:860px",
             "When someone fixes a statement, it only changes that one file. Accept a fix to use it for every statement like it."),
           DTOutput("adm_fixes"),
+          uiOutput("adm_fixes_empty"),
           uiOutput("adm_fix_btns"),
           uiOutput("adm_fix_msg")
         ),
@@ -830,7 +835,7 @@ ui <- fluidPage(
           # HOW AUTOMATIC READING IS DOING (it was its own tab; D15 keeps four).
           h3(class = "hl-title", "How reading is going"),
           div(style = "margin-bottom:8px",
-            actionButton("adm_ar_refresh", "Refresh", class = "btn-default btn-sm"),
+            actionButton("adm_refresh", "Refresh", class = "btn-default btn-sm"),
             uiOutput("adm_ar_export_ui", inline = TRUE)),
           uiOutput("adm_ar_head"),
           h4("By kind of file"),
@@ -841,7 +846,6 @@ ui <- fluidPage(
               DTOutput("adm_ar_checks")),
             column(6, h4("What each reading was checked against, and what was learned"),
               DTOutput("adm_ar_proof"))),
-          actionButton("adm_refresh", "Refresh from logs", class = "btn-default btn-sm"),
           helpText("A live picture from every conversion the team has run and every rating left."),
           # HOW MUCH OF THE HISTORY THIS PICTURE IS MADE OF: it reads the newest
           # slice and says which slice, rather than freezing everybody's browser to
@@ -1478,9 +1482,9 @@ server <- function(input, output, session) {
     safe(needs_attention(RC_DIRS, TRACKING_DIR, UPLOADS_DIR, 30), NULL) })
   # A button that tells the server which item it is for, in one event. Ids are
   # recipe ids and upload ids: plain slugs, refused otherwise.
-  .act_btn <- function(input_id, value, label, cls = "btn-default btn-sm") {
+  .act_btn <- function(input_id, value, label, cls = "btn-default btn-sm", title = NULL) {
     if (!grepl("^[A-Za-z0-9_.|:-]+$", value)) return(NULL)
-    tags$button(type = "button", class = paste("btn", cls), `data-act` = value,
+    tags$button(type = "button", class = paste("btn", cls), `data-act` = value, title = title,
                 onclick = sprintf("Shiny.setInputValue('%s','%s',{priority:'event'})", input_id, value), label)
   }
   .na_card <- function(title, n, empty, items) div(class = "na-card",
@@ -1512,7 +1516,8 @@ server <- function(input, output, session) {
       if (nrow(mg)) .na_card("Designs that look like one", nrow(mg), "",
         lapply(seq_len(nrow(mg)), function(i) .na_item(
           sprintf("%s: %s and %s read the same design", mg$bank[i], .rc_title(mg$a[i]), .rc_title(mg$b[i])),
-          .act_btn("adm_na_act", paste0("merge|", mg$a[i], ":", mg$b[i]), "Merge", "btn-default btn-sm")))))
+          .act_btn("adm_na_act", paste0("merge|", mg$a[i], ":", mg$b[i]), "Combine these", "btn-default btn-sm",
+            title = "These two read the same statement design. Combine them into one recipe.")))))
     cards <- Filter(Negate(is.null), cards)
     tagList(
     p(class = "na-week", na$week %||% ""),
@@ -1524,8 +1529,12 @@ server <- function(input, output, session) {
     if (is.na(i)) id else ov$name[i]
   }
   adm_na_msg <- reactiveVal(NULL)
+  # .toast_ui(ok, text) -- an admin result as one dismissible toast, green or red.
+  .toast_ui <- function(ok, text) div(class = paste("adm-toast", if (!isTRUE(ok)) "bad"), role = "status",
+    span(text), tags$button(type = "button", class = "btn btn-link btn-xs", `aria-label` = "Dismiss",
+      onclick = "this.parentNode.style.display='none'", "\u00d7"))
   output$adm_na_msg <- renderUI({ m <- adm_na_msg(); if (is.null(m)) return(NULL)
-    div(class = if (isTRUE(m$ok)) "note" else "note-bad", style = "margin:8px 0", m$text) })
+    .toast_ui(isTRUE(m$ok), m$text) })
   .rc_say <- function(rv, r) rv(list(ok = isTRUE(r$ok), text = r$why %||% "It could not be done."))
   observeEvent(input$adm_na_act, {
     req(admin_ok())
@@ -1916,15 +1925,16 @@ server <- function(input, output, session) {
   output$adm_fixes <- renderDT({
     f <- adm_fix_list()
     heads <- c("Bank", "What the person did", "Who", "When")
-    if (!is.data.frame(f) || !nrow(f))
-      return(datatable(stats::setNames(data.frame(matrix(character(0), 0, length(heads))), heads),
-                       rownames = FALSE, selection = "none",
-                       options = dt_none_opts("Nothing is waiting.", dom = "t")))
+    if (!is.data.frame(f) || !nrow(f)) return(NULL)
     d <- data.frame(vapply(f$bank, function(b) .bank_label(b) %||% b, ""),
                     plain_label(f$kind, .FIX_KIND_PLAIN), ifelse(is.na(f$by), "-", f$by),
                     as.character(safe(local_time_text(f$held), f$held)), stringsAsFactors = FALSE)
     names(d) <- heads
     datatable(d, rownames = FALSE, selection = "single", options = list(dom = "tip", pageLength = 10))
+  })
+  output$adm_fixes_empty <- renderUI({
+    f <- adm_fix_list(); if (is.data.frame(f) && nrow(f)) return(NULL)
+    div(class = "empty-state", "Nothing is waiting.")
   })
   # the two buttons only when there is a fix to act on
   output$adm_fix_btns <- renderUI({
@@ -1941,8 +1951,7 @@ server <- function(input, output, session) {
     }
     r <- safe(fun(f$id[i[1]]), list(ok = FALSE, why = "It could not be done."))
     adm_fix_bump(isolate(adm_fix_bump()) + 1L); layouts_bump(isolate(layouts_bump()) + 1L)
-    output$adm_fix_msg <- renderUI(div(class = if (isTRUE(r$ok)) "ok" else "bad",
-      if (isTRUE(r$ok)) done(r) else r$why %||% "It could not be done."))
+    output$adm_fix_msg <- renderUI(.toast_ui(isTRUE(r$ok), if (isTRUE(r$ok)) done(r) else r$why %||% "It could not be done."))
   }
   observeEvent(input$adm_fix_accept, .fix_act(
     function(id) fix_accept(id, LAYOUTS_DIR, by = who_now()),
@@ -2064,7 +2073,7 @@ server <- function(input, output, session) {
 
   # ---- Admin -> Automatic reading (R/tracking.R): counts only ---------------------
   adm_ar_bump <- reactiveVal(0L)
-  observeEvent(input$adm_ar_refresh, { req(admin_ok()); adm_ar_bump(isolate(adm_ar_bump()) + 1L) })
+  observeEvent(input$adm_refresh, { req(admin_ok()); adm_ar_bump(isolate(adm_ar_bump()) + 1L) })
   adm_ar <- reactive({ req(admin_ok()); adm_ar_bump()
     safe(track_summary(TRACKING_DIR), NULL) })
   .pct <- function(x) if (is.null(x) || is.na(x)) "-" else sprintf("%.1f%%", 100 * x)
@@ -2083,14 +2092,13 @@ server <- function(input, output, session) {
     tagList(
       div(class = "stat-grid",
         tile("Statements read", format(s$statements, big.mark = ",")),
-        tile("Read on their own", .pct(rate),
+        tile(sprintf("Read on their own \u00b7 goal %.0f%%", 100 * AR_TARGET), .pct(rate),
              if (is.na(rate %||% NA)) NULL else if (rate >= AR_TARGET) PALETTE$ok else PALETTE$warn),
         tile("Please check", format(unname(oc["check"]), big.mark = ",")),
         tile("Couldn't read", format(unname(oc["unread"]), big.mark = ","))),
       p(class = "muted", style = "margin:0 0 4px",
-        sprintf("Proven %s, matched a known design %s. The target is %.0f%% read on their own for each kind of file, with nothing automatic and wrong.",
-                format(unname(oc["proven"]), big.mark = ","), format(unname(oc["layout_match"]), big.mark = ","),
-                100 * AR_TARGET)),
+        sprintf("%s added up on their own; %s were read by a saved recipe. Nothing read on its own may be wrong.",
+                format(unname(oc["proven"]), big.mark = ","), format(unname(oc["layout_match"]), big.mark = ","))),
       if (!is.na(s$first %||% NA))
         p(class = "muted", style = "margin:0 0 4px;font-size:12.5px",
           sprintf("From %s to %s.", safe(local_time_text(s$first), s$first), safe(local_time_text(s$last), s$last))),
@@ -2116,7 +2124,7 @@ server <- function(input, output, session) {
     d <- data.frame(Check = plain_reading_check(names(ck)), Statements = as.integer(ck),
                     stringsAsFactors = FALSE)
     datatable(d, rownames = FALSE, selection = "none",
-              options = dt_none_opts("No check has failed.", dom = "tp", pageLength = 10))
+              options = dt_none_opts("No check has failed.", dom = if (nrow(d) > 10L) "tp" else "t", pageLength = 10))
   })
   output$adm_ar_proof <- renderDT({
     s <- adm_ar(); req(s)
@@ -2376,8 +2384,7 @@ server <- function(input, output, session) {
     .words_taught()
     ok <- isTRUE(out) && isTRUE(attr(out, "added"))
     if (ok) updateTextInput(session, "adm_word_text", value = "")
-    output$adm_word_msg <- renderUI(span(class = if (isTRUE(out)) "ok" else "bad",
-      attr(out, "reason") %||% "Could not add that wording."))
+    output$adm_word_msg <- renderUI(.toast_ui(isTRUE(out), attr(out, "reason") %||% "Could not add that wording."))
   })
   # .words_taught() -- after a word is taught, from any screen: both whole-file
   # editors show the file as it now is, and the lists that depend on it refresh.
@@ -3645,18 +3652,29 @@ server <- function(input, output, session) {
     tags$select(class = "plan-pick", `data-gen` = gen, `data-row` = i,
       `aria-label` = sprintf("Bank for %s", name),
       disabled = if (isTRUE(locked)) NA else NULL,
-      if (!nzchar(sel)) opt("", "Choose the bank\u2026"),
+      if (!nzchar(sel)) opt("", "Bank\u2026"),
       lapply(seq_along(choices), function(k) opt(unname(choices[k]), names(choices)[k])),
       opt("__new__", "Another bank - type its name\u2026"))
   }
 
   # .res_layouts(res) -> the learned layouts a result was read with, as names, one
   # per statement that had one; a layout the reading STARTED says so.
+  # .recipe_read_as(bank, title) -- a recipe's name for an accountant: the bank
+  # once, then the design, without an admin's notes in brackets ("(again)").
+  .recipe_read_as <- function(bank, title) {
+    bank <- trimws(as.character(bank %||% "")[1]); t <- as.character(title %||% "")[1]
+    t <- trimws(gsub("\\s*\\([^)]*\\)", "", t))
+    if (nzchar(bank) && startsWith(tolower(t), tolower(bank))) t <- trimws(substring(t, nchar(bank) + 1L))
+    t <- sub("^[-:,]\\s*", "", t)
+    if (!nzchar(t)) return(sprintf("%s statement", bank))
+    trimws(paste(bank, t))
+  }
   .res_layouts <- function(res) {
     out <- unlist(lapply(res$reading %||% list(), function(rd) {
       # a recipe names the design it read: "ANZ Business Premium Call Account"
       if (!is.null(rd$matched_recipe) && !isTRUE(rd$draft))
-        return(sprintf("%s %s", .layout_bank_display(rd$recipe_bank %||% "", rd$recipe_bank %||% ""), rd$recipe_title %||% rd$matched_recipe))
+        return(.recipe_read_as(.layout_bank_display(rd$recipe_bank %||% "", rd$recipe_bank %||% ""),
+                               rd$recipe_title %||% rd$matched_recipe))
       if (!is.null(rd$learned_recipe) || isTRUE(rd$draft)) return("New design (being learned)")
       if (!is.null(rd$matched_layout)) return(.read_as_name(rd$matched_layout))
       if (!is.null(rd$learned_layout))
@@ -3708,9 +3726,10 @@ server <- function(input, output, session) {
                                c(ok = "pill-ok", warn = "pill-warn", bad = "pill-bad")[[o$cls]] %||% ""),
                  title = OUTCOME_HELP[[o$cls]], o$word)
     rows_txt <- if (!is.na(n_rows) && o$cls == "ok")
-      span(class = "plan-sub", sprintf("%s row%s", format(n_rows, big.mark = ","), if (identical(n_rows, 1L)) "" else "s"))
+      div(class = "plan-sub", sprintf("%s row%s", format(n_rows, big.mark = ","), if (identical(n_rows, 1L)) "" else "s"))
     tags$td(class = "plan-res",
-      div(class = "plan-line1", pill, if (o$cls == "ok") rows_txt, link),
+      div(class = "plan-line1", pill, link),
+      if (o$cls == "ok") rows_txt,
       if (o$cls == "warn" && nzchar(why)) div(class = "plan-why", title = why, why),
       if (o$cls == "bad" && length(nxt) && nzchar(nxt)) div(class = "plan-next", title = why, nxt),
       if (again) span(class = "plan-chip plan-mine", "Bank changed"))
@@ -3745,12 +3764,11 @@ server <- function(input, output, session) {
   .case_now <- function(cls, n_add = 0L) {
     w <- sum(cls == "warn"); bad <- sum(cls == "bad")
     if (w > 0L)
-      return(paste0(sprintf("%d file%s need%s you. ", w, if (w == 1L) "" else "s", if (w == 1L) "s" else ""),
-        if (n_add > 0L) sprintf("%d of them add up - accept them in one go, or ", n_add) else "",
-        if (n_add > 0L) "press Next file to check." else "Press Next file to check, or click any file to see it."))
+      return(if (n_add > 0L) sprintf("%d of them add up already.", n_add)
+             else "Press Next file to check, or click any file to see it.")
     if (bad > 0L)
-      return(sprintf("Everything that could be read is done. %d couldn't be read - each says what to try.", bad))
-    "All done. Download everything, or click a file to see it."
+      return(sprintf("%d couldn't be read \u2014 each says what to try.", bad))
+    "Download everything, or click a file to see it."
   }
   observeEvent(input$cv_drop_none, notify_once("cv_drop",
     "Nothing to add there - drop PDF, CSV or Excel statements, or a folder of them.", type = "warning", duration = 6))
@@ -3830,8 +3848,7 @@ server <- function(input, output, session) {
       # its own row: in a case, the note with the two buttons is only on its result.
       seen <- .bank_disputed(res_i)
       bank_cell <- tags$td(class = "plan-tpl", ctl,
-        if (!is.null(seen)) div(class = "plan-note plan-note-warn",
-                                sprintf("Which bank? The statement looks like %s", seen))
+        if (!is.null(seen)) NULL
         else if (!cols && (!mine || !is.na(r$remembered %||% NA)))
           span(class = paste("plan-chip", chip[1]), title = .plan_hover(r), chip[2]))
       tail <- if (in_run) {
@@ -3852,6 +3869,9 @@ server <- function(input, output, session) {
         # the table's reason is the short phrase (D16): one word, then a few words
         o <- plain_outcome(res_i$status, res_i$outcome, res_i$feed_basis,
                            plain_failing_check(.failing_check(res_i)), res_i$person$fix)
+        # Read, but nobody knows the bank: the one next step is to pick it.
+        if (identical(o$cls, "ok") && is.na(as.character(res_i$bank$bank %||% NA_character_)[1]))
+          o <- list(cls = "warn", word = "Needs you", why = "Pick the bank")
         lys <- .res_layouts(res_i)
         # Please check has something to show only where columns were found
         has_cols <- any(vapply(res_i$reading %||% list(), function(rd) NROW(rd$columns) > 0L, logical(1)))
@@ -3897,8 +3917,12 @@ server <- function(input, output, session) {
       cls <- vapply(seq_len(nrow(b)), function(i) {
         r <- b$result[[i]]
         if (identical(as.character(b$status[i]), "stopped")) "stopped"
-        else plain_outcome(r$status, r$outcome, r$feed_basis, r$reason)$cls
+        else { o <- plain_outcome(r$status, r$outcome, r$feed_basis, r$reason)$cls
+               if (identical(o, "ok") && is.list(r) && is.na(as.character(r$bank$bank %||% NA_character_)[1])) "bank" else o }
       }, "")
+      # a file read and proven whose bank nobody has named needs only that answer:
+      # it counts as to check, but its download is ready.
+      n_bank <- sum(cls == "bank"); cls[cls == "bank"] <- "warn"
       say <- function(x, word, k) { v <- sum(cls == x); if (v > 0L) span(class = paste("count-chip", k), sprintf("%d %s", v, word)) else NULL }
       bits <- Filter(Negate(is.null), list(say("ok", "done", "cc-ok"), say("warn", "to check", "cc-warn"),
         say("bad", "couldn't read", "cc-bad"), say("stopped", "stopped", "")))
@@ -3909,17 +3933,17 @@ server <- function(input, output, session) {
       div(class = "plan-top plan-top-case",
         div(class = "plan-top-say",
             h2(class = "plan-head plan-h2", title),
-            div(class = "plan-tally", bits),
+            div(class = "plan-tally", bits,
+              if (n_ok_add > 0L)
+                actionLink("cv_accept_all", sprintf("Accept all that add up (%d)", n_ok_add), class = "plan-accept-all",
+                           title = "Accepts every new-design file whose balance adds up, each recorded as checked by you")),
             p(class = "plan-now", .case_now(cls, n_ok_add))),
         div(class = "plan-actions",
-          if (n_ok_add > 0L)
-            actionButton("cv_accept_all", sprintf("Accept all that add up (%d)", n_ok_add), class = "btn-default",
-                         title = "Accepts every new-design file whose balance adds up, each recorded as checked by you"),
           if (n_warn > 0L)
             actionButton("cv_next_check", "Next file to check \u2192", class = "btn-primary",
                          title = "Opens the next file that needs you, with its question"),
-          if (length(.batch_outputs(b)))
-            downloadButton("cv_batch_dl", "Download everything", class = if (n_warn > 0L) "btn-default" else "btn-primary")))
+          if (n_warn - n_bank == 0L && length(.batch_outputs(b)))
+            downloadButton("cv_batch_dl", "Download everything", class = "btn-primary")))
     } else {
       p(class = "plan-head",
         if (single_res) "Not the right bank? Choose another and press Convert again."
@@ -4477,7 +4501,7 @@ server <- function(input, output, session) {
   .layout_chips <- function(res) {
     ly <- .res_layouts(res)
     if (!length(ly)) return(NULL)
-    div(lapply(ly, function(x) span(class = "chip", paste("Layout:", x))))
+    div(lapply(ly, function(x) span(class = "chip", x)))
   }
 
   output$cv_status <- renderUI({
@@ -4587,20 +4611,20 @@ server <- function(input, output, session) {
     # No bank: asked only where the table's Bank picker is on screen to answer it.
     if (is.na(used)) {
       if (!NROW(cv_plan()$rows)) return(NULL)
-      return(p(class = "bank-line",
-        strong("Which bank is this? "), "Pick it in the table above so we remember this design."))
+      return(div(class = "bank-ask",
+        p(strong("Which bank is this? "), "Pick it in the Bank column so we remember this design.")))
     }
     if (!isTRUE(bk$block_learning)) return(NULL)
     used_lab <- as.character(bk$display %||% .bank_label(used) %||% used)[1]
     seen_lab <- as.character(bk$identified_display %||% .bank_label(seen) %||% seen)[1]
     div(class = "bank-ask",
-      p(strong("Which bank? "), .bank_question(bk$why, used_lab, seen_lab)),
-      p(class = "muted", style = "font-size:12.5px",
-        "Nothing is learned from this statement until you say. The figures are not affected."),
+      p(strong(if (!is.na(seen) && !identical(seen, used))
+          sprintf("This looks like a %s statement. You picked %s.", seen_lab, used_lab)
+        else sprintf("Is this a %s statement?", used_lab))),
       div(style = "display:flex;gap:8px;flex-wrap:wrap",
-        actionButton("cv_bank_keep", sprintf("It is %s", used_lab), class = "btn-default btn-sm"),
         if (!is.na(seen) && !identical(seen, used))
-          actionButton("cv_bank_use", sprintf("It is %s", seen_lab), class = "btn-default btn-sm")))
+          actionButton("cv_bank_use", sprintf("Use %s", seen_lab), class = "btn-primary btn-sm"),
+        actionButton("cv_bank_keep", sprintf("Keep %s", used_lab), class = "btn-default btn-sm")))
   })
   # .bank_question(why, used, seen) -- the identifier's sentence, as a person reads
   # it. It reads "You picked ASB, but the statement looks like Westpac (medium
@@ -4655,13 +4679,13 @@ server <- function(input, output, session) {
     if (!is.na(done))
       return(div(class = "note", style = "margin:0 0 12px",
         if (identical(done, "wrong"))
-          "Thank you - recorded as wrong. Set it right on Please check below, and mark it Wrong at the bottom of the page so its figures are pulled back."
+          "Thank you \u2014 noted. Put it right under Please check below."
         else "Thank you - your spot check was recorded."))
     div(class = "note spot-check", style = "margin:0 0 12px",
-      p(strong("Spot check. "), "This conversion was picked for a person to look at. Compare a few dates and amounts in the table below with the statement - are they right?"),
+      p(strong("Quick spot check: "), "do a few dates and amounts match your statement?"),
       div(style = "display:flex;gap:8px;flex-wrap:wrap",
-        actionButton("cv_spot_right", "They're right", class = "btn-default btn-sm"),
-        actionButton("cv_spot_wrong", "Something is wrong", class = "btn-danger btn-sm"),
+        actionButton("cv_spot_right", "Yes, they match", class = "btn-primary btn-sm"),
+        actionButton("cv_spot_wrong", "No, something's off", class = "btn-default btn-sm"),
         actionButton("cv_spot_cant", "I can't tell", class = "btn-default btn-sm")))
   })
   .spot <- function(v) {
@@ -4775,8 +4799,9 @@ server <- function(input, output, session) {
     s <- isolate(ck_stmt())
     div(class = paste("check-panel", if (!need) "check-panel-done"),
       div(class = "check-head",
-        h4(style = "margin:0", if (need) "Please check" else "How it was read"),
-        if (!need || new_only) actionLink("cv_ck_toggle", "Close", class = "ck-close")),
+        h3(class = "sec-h", style = "margin:0", if (need) "Which column is which?" else "How it was read"),
+        if (!need || new_only) actionLink("cv_ck_toggle", "\u00d7", class = "ck-close",
+                                          `aria-label` = "Close", title = "Close")),
       if (k > 1L) radioButtons("cv_ck_stmt", "This file holds several statements - which one:",
         inline = TRUE, selected = s, choiceValues = as.list(seq_len(k)),
         choiceNames = lapply(seq_len(k), function(i) {
@@ -4799,6 +4824,7 @@ server <- function(input, output, session) {
   # The page chooser IS the tick strip: each page, with whether its balance adds up.
   output$cv_ck_pages <- renderUI({
     t <- ck_ticks(); req(nrow(t) > 0L)
+    if (nrow(t) == 1L) return(NULL)
     radioButtons("cv_ck_page", NULL, inline = TRUE, selected = isolate(ck_page()),
       choiceValues = as.list(t$page),
       choiceNames = lapply(seq_len(nrow(t)), function(j) {
@@ -4846,7 +4872,7 @@ server <- function(input, output, session) {
     cols <- res$reading[[s]]$columns
     if (!is.data.frame(cols) || !nrow(cols)) return(p(class = "muted", "No columns were found."))
     tagList(
-      p(class = "muted", "A CSV or Excel file has no page to draw: these are its columns, by their headings, and what each was read as. The rows read are in the transactions table below."),
+      p(class = "muted", "We matched each heading in your file to a column. Change any that's wrong."),
       tags$table(class = "split-table",
         tags$thead(tags$tr(tags$th("Heading in the file"), tags$th("Read as"))),
         tags$tbody(lapply(seq_len(nrow(cols)), function(j) tags$tr(
@@ -4946,7 +4972,7 @@ server <- function(input, output, session) {
       # with the question in plain words. The tool's guess is ticked already.
       h5(style = "margin-top:0", "What is each column?"),
       if (nrow(money)) p(class = "muted", style = "font-size:12.5px;margin:-4px 0 8px",
-        "The columns of figures are numbered on the page. The tool's guess is ticked - change any that is wrong, then press Read it again."),
+        "We matched each column to what it holds. Change any that's wrong, then press Read again."),
       if (!nrow(money)) p(class = "muted", "No column of figures was found on this statement.")
       else lapply(seq_len(nrow(money)), function(j) {
         f <- money$field[j]
@@ -5083,7 +5109,7 @@ server <- function(input, output, session) {
     if (length(fix_err)) return(fix_err[1])
     if (identical(res$status, "ok")) {
       o <- plain_outcome("ok", res$outcome, res$feed_basis, res$reason, res$person$fix)
-      return(paste0(o$word, " - the statement's own arithmetic now adds up.",
+      return(paste0(o$word, " \u2014 the statement's own arithmetic now adds up.",
                     if (length(learn)) paste0(" ", learn[1]) else "",
                     if (identical(res$person$fix, "boxes")) " The columns you drew apply to this file only." else ""))
     }
@@ -5308,7 +5334,7 @@ server <- function(input, output, session) {
     extra <- setdiff(unique(boxes$field), .ED_FIELDS)
     showModal(modalDialog(
       title = "Draw the columns yourself", size = "l", easyClose = FALSE, class = "ed-modal",
-      p(class = "muted", "Drag across a column on the page - only its left and right edges matter - say what it is, and Set it. Every page starts with the columns the tool found. The columns you draw apply to this file only."),
+      p(class = "muted", "Drag across a column on the page, say what it holds, and press Save column. Your columns apply to this file only."),
       fluidRow(
         column(3, selectInput("ed_page", "Page", choices = pages, selected = isolate(ck_page()))),
         column(5, selectInput("ed_field", "What is in the box you drew?",
@@ -5321,10 +5347,10 @@ server <- function(input, output, session) {
       # the actions stay in sight in the footer while the page scrolls inside the box
       footer = div(class = "ed-footer",
         div(class = "ed-footer-left",
-          actionButton("ed_set", "Set it", class = "btn-default"),
-          actionButton("ed_remove", "Remove it", class = "btn-default")),
+          actionButton("ed_set", "Save column", class = "btn-default"),
+          actionButton("ed_remove", "Delete column", class = "btn-default")),
         div(class = "ed-footer-right", modalButton("Cancel"),
-          actionButton("ed_save", "Re-read with these columns", class = "btn-primary")))))
+          actionButton("ed_save", "Read again", class = "btn-primary")))))
   })
   ed_page_now <- reactive({ e <- ed(); req(e)
     pg <- suppressWarnings(as.integer(input$ed_page)); if (is.na(pg) || !(pg %in% e$pages)) e$pages[1] else pg })
@@ -5385,7 +5411,7 @@ server <- function(input, output, session) {
     removeModal()
     ov <- list(columns = b)
     if (length(res$reading) > 1L) ov$statement <- e$stmt
-    .reread(ov, what = "Re-reading with the columns you drew\u2026")
+    .reread(ov, what = "Reading again\u2026")
   })
   # plain_messages(m) -- the engine's status messages with their MACHINE CODES
   # taken off, and empties dropped.

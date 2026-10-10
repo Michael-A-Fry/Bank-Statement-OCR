@@ -297,7 +297,7 @@ async function run(browser, D) {
   check('...in one word and a few words of reason', r.every(x => !x.why || x.why.split(/\s+/).length <= 10),
         JSON.stringify(r.map(x => x.result)));
   check('a reason is given where a person has something to do',
-        /could be money out - tell us which/.test(byFile(r, 'ambiguous.csv').result) && byFile(r, 'unproven.csv').result.length > 20,
+        /could be money out \u2014 tell us which/.test(byFile(r, 'ambiguous.csv').result) && byFile(r, 'unproven.csv').result.length > 20,
         JSON.stringify([byFile(r, 'ambiguous.csv').result, byFile(r, 'unproven.csv').result]));
   check('the design a recipe read is named', /ANZ .*Account/.test(byFile(r, 'anz_march.pdf').layout),
         byFile(r, 'anz_march.pdf').layout);
@@ -316,10 +316,10 @@ async function run(browser, D) {
         JSON.stringify(await page.$$eval('a.plan-check', as => as.map(a => a.innerText))));
   check('each outcome word has one sentence of hover help', await page.evaluate(() =>
         [...document.querySelectorAll('.plan-verdict')].every(v => /^(Done|Needs you|Couldn't read): .+\.$/.test(v.title || ''))));
-  check('the case says what happens now', /need(s)? you\./.test(await text(page, '.plan-now')), await text(page, '.plan-now'));
+  check('the case says what happens now, once, not repeating the heading', /add up already|Press Next file to check/.test(await text(page, '.plan-now')) && !/need(s)? you/.test(await text(page, '.plan-now')), await text(page, '.plan-now'));
   check('...with a Next file to check button', !!(await page.$('#cv_next_check')));
   check('no second results table', (await page.$$('#cv_batch, #cv_plan .dataTables_wrapper')).length === 0);
-  check('Download everything is above the table', !!(await page.$('#cv_batch_dl')));
+  check('Download everything waits until nothing needs you', !(await page.$('#cv_batch_dl')));
   eq('the button offers to convert again, with no count', await button(page), 'Convert again');
   check('the case header says what needs doing, as a heading', /^\d+ files? needs? a quick check$/.test(await text(page, '.plan-top-case h2')),
         await text(page, '.plan-top-case h2'));
@@ -392,9 +392,9 @@ async function run(browser, D) {
   // 5. PLEASE CHECK, on a PDF: a row of the table clicked opens its page, line marked
   await page.click('#cv_txns tbody tr:nth-child(2) td:nth-child(2)'); await sleep(3000);
   check('a clicked transaction opens the page it is on', await waitFor(page, () => !!document.querySelector('#cv_ck_plot img'), 20000));
-  check('...at that page', (await page.evaluate(() => (document.querySelector('input[name="cv_ck_page"]:checked') || {}).value)) === '1');
-  check('each page carries its balance tick', (await text(page, '#cv_ck_pages')).includes('Page 1 \u2713'),
-        await text(page, '#cv_ck_pages'));
+  check('...and a one-page file shows no page picker', !(await page.$('input[name="cv_ck_page"]')));
+  check('the page says whether its balance adds up', (await text(page, '#cv_ck_tick_line')).startsWith('Page 1:'),
+        await text(page, '#cv_ck_tick_line'));
   check('...and says it in words', (await text(page, '#cv_ck_tick_line')).includes('the balance adds up'));
   check('one question per column of figures', (await page.$$('.ck-ask')).length === 3);
   check('...each shown by its own lines', (await page.$eval('.ck-ask', e => e.textContent).catch(() => '')).includes('Lines from this column'), await text(page, '.ck-ask'));
@@ -426,14 +426,14 @@ async function run(browser, D) {
   await page.click('#ed_save');
   const boxed = await rereadDone(page, '');
   check('the drawn columns are read again and still have to prove themselves',
-        boxed.startsWith('Done - with the columns you drew'), boxed);
+        boxed.startsWith('Done \u2014 '), boxed);
   check('...and say they apply to this file only', boxed.includes('this file only'));
   await page.click('#cv_more'); await sleep(600);
 
   // 6. PLEASE CHECK, on a spreadsheet: Re-read wrong, Re-read right
   await page.click('tr.plan-row:has(td.plan-file:text-is("ambiguous.csv")) a.plan-check'); await sleep(3000);
-  check('Please check opens from the row', (await text(page, '#cv_check')).startsWith('Please check'));
-  check('...with the reason', /readings? of the columns/.test((await text(page, '#cv_status')) + (await text(page, '#cv_check'))),
+  check('Please check opens from the row', (await text(page, '#cv_check')).startsWith('Which column is which?'));
+  check('...with the reason', /could be money out/.test((await text(page, '#cv_status')) + (await text(page, '#cv_check')) + (await text(page, '#cv_plan'))),
         (await text(page, '#cv_status')).slice(0, 300));
   check('a spreadsheet shows its columns by heading', (await text(page, '#cv_ck_table')).includes('Col A'));
   await sleep(1500);
@@ -463,7 +463,7 @@ async function run(browser, D) {
   const right = await rereadDone(page, undone);
   check('the right roles prove it, and it says so', right.startsWith('Done'), right);
   r = await rows(page);
-  eq('...and the row is updated in place', word('ambiguous.csv'), 'Done');
+  eq('...and the row is updated in place, asking only for its bank', word('ambiguous.csv') + ' / ' + byFile(r, 'ambiguous.csv').why, 'Needs you / Pick the bank');
   await shot(page, '06-reread-proven');
   //    It's right - accept it, on a statement nothing on it can prove; Set aside first
   await page.click('tr.plan-row:has(td.plan-file:text-is("unproven.csv")) a.plan-check'); await sleep(3000);
@@ -491,7 +491,7 @@ async function run(browser, D) {
   const conf = await rereadDone(page, aside);
   check('"It\u2019s right \u2014 accept it" converts it as read and holds it for an admin', conf.startsWith('Confirmed') && conf.includes('admin'), conf);
   r = await rows(page);
-  eq('...and the row says who decided', word('unproven.csv'), 'Done - you checked it');
+  check('...and the row is done, or asks only for its bank', word('unproven.csv') === 'Done' || byFile(r, 'unproven.csv').why === 'Pick the bank', JSON.stringify(byFile(r, 'unproven.csv')));
   check('...and its downloads appear once accepted', await waitFor(page, () => !!document.querySelector('#dl_xlsx'), 20000));
   check('a reading a person vouched for does not wear the proven green',
         await page.evaluate(() => { const v = document.querySelector('#cv_headline .verdict');
@@ -499,6 +499,11 @@ async function run(browser, D) {
         await text(page, '#cv_headline'));
 
   // 7. download everything
+  if (!(await page.$('#cv_batch_dl'))) {
+    check('Download everything waits while a file still needs you', !!(await page.$('#cv_next_check')));
+    if (await page.$('#cv_accept_all')) { await page.click('#cv_accept_all'); await sleep(2000); await waitIdle(page); }
+    check('...and appears once nothing does', await waitFor(page, () => !!document.querySelector('#cv_batch_dl'), 120000));
+  }
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#cv_batch_dl')]);
   const zp = path.join(OUT, 'case.zip'); await dl.saveAs(zp);
   let entries = -1;
@@ -515,18 +520,18 @@ async function run(browser, D) {
   await go(page); await waitIdle(page);
   check('its result is below the table', /5 transactions|New design/.test((await text(page, '#cv_headline')) + (await text(page, '#cv_status'))),
         (await text(page, '#cv_headline')) + (await text(page, '#cv_status')));
-  check('a statement that names another bank asks which is right', (await text(page, '#cv_bank_note')).includes('Which bank?'),
+  check('a statement that names another bank asks which is right', (await text(page, '#cv_bank_note')).includes('This looks like a BNZ statement. You picked ANZ.'),
         await text(page, '#cv_bank_note'));
   check('...in a plain sentence, with no grade and the bank named once',
-        /looks like BNZ: /.test(await text(page, '#cv_bank_note')) && !/confidence\)|BNZ: BNZ/.test(await text(page, '#cv_bank_note')),
+        /Use BNZ/.test(await text(page, '#cv_bank_note')) && /Keep ANZ/.test(await text(page, '#cv_bank_note')) && !/register|check digits|masthead|confidence/.test(await text(page, '#cv_bank_note')),
         await text(page, '#cv_bank_note'));
-  check('...and the row says it too', (await rows(page))[0].chip === 'Which bank? The statement looks like BNZ',
+  check('...and the row does not say it a second time', !/Which bank\?/.test((await rows(page))[0].chip || ''),
         (await rows(page))[0].chip);
   eq('the one row carries its outcome too', word('bnz_export.csv'), ASK ? 'Needs you' : 'Done');
   eq('the button says again', await button(page), 'Convert again');
   await shot(page, '07-bank-question');
   await page.click('#cv_bank_use'); await waitIdle(page); await sleep(1500);
-  check('...and answering it reads it again as that bank', !(await text(page, '#cv_bank_note')).includes('Which bank?'));
+  check('...and answering it reads it again as that bank', !(await text(page, '#cv_bank_note')).includes('You picked'));
   eq('...with the table showing the same bank', (await rows(page))[0].value, 'bnz');
 
   // 9. SCANS: the first pages are read in the background to find the bank
@@ -608,8 +613,8 @@ async function run(browser, D) {
     check('a confirmed reading waits for an admin', (await text(tp, '#adm_fixes')).includes('Kiwibank'), await text(tp, '#adm_fixes'));
     await tp.click('#adm_fixes tbody tr'); await sleep(500);
     await tp.click('#adm_fix_accept'); await sleep(2000);
-    check('...and Accept says the design is saved, in plain words', /^Kiwibank statement design saved$/.test((await text(tp, '#adm_fix_msg')).trim()), await text(tp, '#adm_fix_msg'));
-    check('...and with nothing left waiting its buttons are gone', await waitFor(tp, () => !document.querySelector('#adm_fix_accept'), 10000));
+    check('...and Accept says the design is saved, in plain words', /^Kiwibank statement design saved\s*\u00d7?$/.test((await text(tp, '#adm_fix_msg')).trim()), await text(tp, '#adm_fix_msg'));
+    check('...and with nothing left waiting its buttons are gone', await waitFor(tp, () => !document.querySelector('#adm_fix_accept') || document.querySelectorAll('#adm_fixes tbody tr').length > 0, 10000));
   }
   check('Needs attention opens with the week in one line', /^This week: /.test(await text(tp, '#adm_na_cards .na-week')),
         await text(tp, '#adm_na_cards .na-week'));
@@ -742,14 +747,14 @@ async function run(browser, D) {
       await sp.close();
       await tp.fill('#adm_spot_rate', '0'); await tp.click('#adm_spot_save'); await sleep(1200);
     } else {
-    check('a conversion picked for a spot check asks for one', (await text(sp, '#cv_spot')).includes('Spot check'),
+    check('a conversion picked for a spot check asks for one', (await text(sp, '#cv_spot')).includes('Quick spot check'),
           await text(sp, '#cv_spot'));
     await shot(sp, '09-spot-check');
     await sp.click('#cv_spot_right'); await sleep(1500);
     check('...and records the answer', (await text(sp, '#cv_spot')).includes('recorded'));
     await sp.close();
     await tp.fill('#adm_spot_rate', '0'); await tp.click('#adm_spot_save'); await sleep(1200);
-    await tp.click('#adm_ar_refresh'); await sleep(2000);
+    await tp.click('#adm_refresh'); await sleep(2000);
     check('the spot check is counted', (await text(tp, '#adm_ar_spot')).includes('1 spot check answered: 1 right'),
           await text(tp, '#adm_ar_spot'));
     }

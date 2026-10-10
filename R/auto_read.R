@@ -1686,7 +1686,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
   add("amounts_read", na_amt == 0L, if (na_amt == 0L) "Every amount reads." else sprintf("%d amount(s) could not be read.", na_amt))
   uq <- switch(basis,
     arithmetic = list(TRUE, "No other reading of the columns fits the arithmetic."),
-    ambiguous = list(FALSE, sprintf("%d different readings of the columns all fit the arithmetic.", rl$n_distinct)),
+    ambiguous = list(FALSE, sprintf("More than one column could be money out (%d ways fit) - tell us which.", rl$n_distinct)),
     broken = list(FALSE, "No reading of the columns makes the balance add up."),
     list(FALSE, "Nothing on the statement proves which column is which."))
   add("unique", uq[[1]], uq[[2]])
@@ -2025,7 +2025,7 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
     keys <- unique(vapply(passed, key, ""))
     pick <- if (isTRUE(content$passed)) content else passed[[1]]
     if (length(keys) > 1L)
-      return(.ar_finish(pick, "check", sprintf("%d different readings each pass every check, so the reading is not unique.", length(keys)),
+      return(.ar_finish(pick, "check", sprintf("More than one way of reading the columns adds up (%d ways) - tell us which.", length(keys)),
                         cdf, NULL))
     # A layout's conventions settle what this page cannot (which way a card runs)
     # only once the layout itself is proven: a statement that does not prove itself

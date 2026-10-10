@@ -1359,8 +1359,8 @@ test_that("each file's outcome is said in the four phrases, and the reason goes 
   # D16: one word -- Done / Needs you / Couldn't read -- and a vouched Done says so
   expect_identical(po("ok", "proven", "proven", "x")$word, "Done")
   expect_identical(po("ok", "layout_match", "layout_match")$word, "Done")
-  expect_identical(po("ok", "check", "person")$word, "Done - you checked it")
-  expect_identical(po("ok", "proven", "person", fix = "boxes")$word, "Done - with the columns you drew")
+  expect_identical(po("ok", "check", "person")$word, "Done")
+  expect_identical(po("ok", "proven", "person", fix = "boxes")$word, "Done")
   nr <- po("needs_review", "check", "none", "Two readings fit.")
   expect_identical(c(nr$word, nr$why, nr$cls), c("Needs you", "Two readings fit.", "warn"))
   un <- po("unsupported", "unread", "none", "Nothing adds up.")
@@ -1480,7 +1480,7 @@ test_that("Re-read sends the roles as a fix, and the answer goes back where it c
                "held for an admin")
   expect_match(words(list(status = "ok", outcome = "proven", feed_basis = "proven", messages = "ok: 3 row(s)",
                           learn = list(list(action = "corrected", why = "Layout x now reads this way."))), FALSE),
-               "^Done - .*Layout x now reads this way\\.$")
+               "^Done \u2014 .*Layout x now reads this way\\.$")
   expect_match(words(list(status = "needs_review", reason = "the balance breaks at row 2",
                           reading = list(list(transactions = data.frame(amount = 1:3))),
                           messages = "needs_review: z"), FALSE),
@@ -1694,7 +1694,7 @@ test_that("a case re-reads only the files whose bank changed, and hands back the
   expect_match(dl, "\\.batch_outputs\\(cv_batch\\(\\)\\)")
   expect_match(dl, "could not be packed into one file")
   expect_match(.src_block(src, "output\\$cv_plan <- renderUI", 200L),
-               'if \\(length\\(\\.batch_outputs\\(b\\)\\)\\)\\s+downloadButton\\("cv_batch_dl"')
+               'if \\(n_warn - n_bank == 0L && length\\(\\.batch_outputs\\(b\\)\\)\\)\\s+downloadButton\\("cv_batch_dl"')
 })
 
 test_that("a stopped case keeps nothing that no longer describes what is on disk", {
@@ -1916,10 +1916,10 @@ test_that("D16: a clicked transaction opens Please check at its page, and the Ou
   expect_true(any(grepl('selection = "single"', src, fixed = TRUE)))
   e <- new.env(parent = globalenv()); sys.source(file.path(engine_root(), "ui_labels.R"), envir = e)
   short_reason <- e$short_reason; plain_failing_check <- e$plain_failing_check
-  expect_identical(short_reason("Two columns could be money out - tell us which"),
-                   "Two columns could be money out - tell us which")
+  expect_identical(short_reason("Two columns could be money out \u2014 tell us which"),
+                   "Two columns could be money out \u2014 tell us which")
   long <- short_reason("one two three four five six seven eight nine ten eleven")
   expect_identical(long, "one two three four five six seven eight nine ten…")
   expect_identical(short_reason(NA), "")
-  expect_identical(plain_failing_check("reading:known_design"), "New design - check it once")
+  expect_identical(plain_failing_check("reading:known_design"), "New design \u2014 check it once")
 })
