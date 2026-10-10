@@ -4563,6 +4563,42 @@ server <- function(input, output, session) {
         choiceValues = names(ROLE_ASK),
         choiceNames = unname(lapply(ROLE_ASK, function(a) tagList(tags$b(a[1]), tags$br(), span(class = "muted", a[2]))))))
   }
+  # .ck_choice_ui(ch, need) -- TWO READINGS THAT BOTH ADD UP (two recipes for one
+  # design that give different figures). The statement cannot say which is right,
+  # so both are shown side by side in plain figures and the person picks one; the
+  # pick is read again with that recipe alone and counts as a proof for it.
+  .ck_money_txt <- function(x) if (is.na(x)) "-" else formatC(x, format = "f", digits = 2, big.mark = ",")
+  # The message slot is drawn by whichever of the two side panels is showing (never
+  # both at once), so it is made in one place: one id, one binding.
+  .ck_msg_slot <- function() uiOutput("cv_ck_msg")
+  .ck_choice_ui <- function(ch, need) {
+    ch <- ch[seq_len(min(3L, length(ch)))]
+    one <- function(o, j) div(class = "ck-choice", style = "flex:1 1 220px;border:1px solid var(--line,#ddd);border-radius:8px;padding:10px",
+      tags$b(sprintf("Reading %d", j)), span(class = "muted", sprintf(" - %s", o$title)),
+      tags$table(class = "ck-ask-lines", style = "margin:6px 0", tags$tbody(
+        tags$tr(tags$td("Rows"), tags$td(class = "ck-ask-fig", o$rows)),
+        tags$tr(tags$td("Money in"), tags$td(class = "ck-ask-fig", .ck_money_txt(o$money_in))),
+        tags$tr(tags$td("Money out"), tags$td(class = "ck-ask-fig", .ck_money_txt(o$money_out))),
+        tags$tr(tags$td("Closing balance"), tags$td(class = "ck-ask-fig", .ck_money_txt(o$closing))))),
+      if (is.data.frame(o$sample) && nrow(o$sample)) tags$table(class = "ck-ask-lines", tags$tbody(lapply(seq_len(nrow(o$sample)), function(i)
+        tags$tr(tags$td(o$sample$date[i]), tags$td(o$sample$description[i]), tags$td(class = "ck-ask-fig", .ck_money_txt(o$sample$amount[i])))))),
+      if (need) actionButton(paste0("cv_ck_pick_", j), "This one is right", class = "btn-primary", style = "margin-top:6px"))
+    tagList(
+      h5(style = "margin-top:0", "Two readings both add up - which one is right?"),
+      p(class = "muted", style = "font-size:12.5px;margin:-4px 0 8px",
+        "The statement can be read two ways and its figures add up both times, so the tool cannot tell which is right. Compare them with the page and pick one."),
+      div(style = "display:flex;gap:10px;flex-wrap:wrap", lapply(seq_along(ch), function(j) one(ch[[j]], j))),
+      if (need) div(style = "margin-top:8px", actionButton("cv_ck_aside", "Neither - set aside", class = "btn-default")),
+      .ck_msg_slot())
+  }
+  lapply(1:3, function(j) observeEvent(input[[paste0("cv_ck_pick_", j)]], {
+    res <- cv_res(); req(res); s <- ck_stmt()
+    ch <- res$reading[[s]]$recipe_choice %||% list()
+    req(length(ch) >= j)
+    ov <- list(recipe = ch[[j]]$ref)
+    if (length(res$reading) > 1L) ov$statement <- s
+    .reread(ov, what = "Reading it the way you picked\u2026")
+  }, ignoreInit = TRUE))
   # .ck_fixed(res) -- was the result on the page read with a person's fix?
   .ck_fixed <- function(res) !is.null(cv_ov()) || !is.na(as.character(res$person$fix %||% NA_character_)[1])
   output$cv_ck_side <- renderUI({
@@ -4576,6 +4612,8 @@ server <- function(input, output, session) {
     ex <- rd$examples
     ck <- rd$checks
     bad <- if (is.data.frame(ck)) ck[ck$ok %in% FALSE, , drop = FALSE] else NULL
+    ch <- rd$recipe_choice %||% list()
+    if (length(ch) > 1L) return(.ck_choice_ui(ch, need))
     tagList(
       # ONE QUESTION PER COLUMN, ASKED WITH THE COLUMN'S OWN LINES. A dropdown
       # labelled "Money out" holding "Money out" asked nothing anyone could answer
@@ -4600,7 +4638,7 @@ server <- function(input, output, session) {
         if (need && !identical(res$status, "unsupported"))
           actionButton("cv_ck_confirm", "It\u2019s right \u2014 accept it", class = if (new_only) "btn-primary" else "btn-default"),
         if (need) actionButton("cv_ck_aside", "Set aside", class = "btn-default")),
-      uiOutput("cv_ck_msg"),
+      .ck_msg_slot(),
       uiOutput("cv_ck_recipe"),
       # THE WAY BACK. A role set wrong can leave nothing readable -- no columns, so
       # no dropdowns and no Re-read -- and the only other way out was converting

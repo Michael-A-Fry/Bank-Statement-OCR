@@ -318,6 +318,24 @@ log_run <- function(logdir, result) {
 .read_statement <- function(input, layouts, bank, overrides, unless_auto = FALSE) {
   base <- auto_read(input, layouts, bank)
   if (unless_auto && base$outcome %in% .AUTO) return(list(reading = base, fix = NULL))
+  # THE PERSON'S PICK between two recipes that both prove with different figures
+  # (overrides$recipe, one of the refs Please check offered): that recipe's own
+  # reading, which must still prove. The pick is a proof for that recipe.
+  pk <- as.character(unlist(overrides$recipe))[1]
+  if (!is.na(pk %||% NA) && nzchar(pk)) {
+    offered <- vapply(base$recipe_choice %||% list(), function(o) as.character(o$ref)[1], "")
+    if (!(pk %in% offered))
+      return(list(reading = base, fix = list(kind = "recipe", error = sprintf(
+        "recipe %s is not one of the readings offered for this statement.", pk))))
+    rc <- Filter(function(r) identical(r$ref, pk), recipes_default())[1][[1]]
+    if (is.null(rc)) return(list(reading = base, fix = list(kind = "recipe", error = sprintf("recipe %s is no longer installed.", pk))))
+    rd <- recipe_read(input, rc)
+    if (!identical(rd$outcome, "proven"))
+      return(list(reading = base, fix = list(kind = "recipe", error = sprintf("read with recipe %s alone, the statement no longer adds up.", pk))))
+    rd$draft <- identical(rc$status, "draft")
+    rd$recipe_picked <- pk
+    return(list(reading = rd, fix = list(kind = "recipe", proven = TRUE, recipe = pk, changes = list())))
+  }
   has_roles <- length(overrides$roles) > 0L
   has_boxes <- NROW(overrides$columns) > 0L
   if (!has_roles && !has_boxes) return(list(reading = base, fix = NULL))
@@ -388,6 +406,26 @@ log_run <- function(logdir, result) {
   strtoi(substr(sha, 1L, 7L), 16L) / 16^7 < min(1, rate)
 }
 
+# .spot_recipe(ref, readings, basis, dir) -> NULL, or list(id, ref, dir, proofs,
+# rate) for a file read automatically with ONE recipe whose every statement was
+# proven by its totals only (proof kind "totals": opening + rows = closing, no
+# running balance). Its proofs are the checked statements counted for it in
+# <dir>/.evidence (R/recipes.R .rc_evidence_add), shared with the drafts' count.
+SPOT_PROOFS_NEEDED <- 3L
+.spot_recipe <- function(ref, readings, basis, dir) {
+  if (!identical(basis, "proven") || is.na(ref %||% NA) || !length(readings)) return(NULL)
+  kinds <- vapply(readings, function(r) as.character(r$proof$kind %||% "none")[1], "")
+  if (!all(kinds == "totals")) return(NULL)
+  id <- sub("@v?[0-9]+$", "", ref)
+  n <- 0L
+  if (!is.null(dir) && !is.na(dir)) {
+    f <- file.path(dir, ".evidence", paste0(id, ".yaml"))
+    if (file.exists(f)) n <- length(unique(as.character(unlist(safe(yaml::read_yaml(f), list())$proved_by))))
+  }
+  if (n >= SPOT_PROOFS_NEEDED) return(NULL)
+  list(id = id, ref = ref, dir = dir, proofs = n, rate = 1 - n / SPOT_PROOFS_NEEDED)
+}
+
 # spot_check_record(result, verdict, tracking_dir) -- a person's eyeball of a
 # conversion picked for a spot check: "right", "wrong" or "cant_tell". Recorded
 # with the layout and outcome it judges, never the statement's content.
@@ -404,6 +442,12 @@ spot_check_record <- function(result, verdict, tracking_dir = NULL) {
   if (!is.na(ref) && grepl("^[a-z0-9_]+@v?[0-9]+$", ref)) {
     f$layout_id <- sub("@v?[0-9]+$", "", ref); f$layout_version <- as.integer(sub("^.*@v?", "", ref))
   }
+  # D7: "right" on a totals-only recipe still earning its proofs is one more proof
+  # for that recipe (salted account marks only, never a number).
+  sr <- result$spot_recipe
+  if (identical(f$spot_check, "right") && is.list(sr) && !is.null(sr$dir) && !is.na(sr$dir) &&
+      grepl("^[0-9a-f]{64}$", sr$sha %||% ""))
+    safe(.rc_evidence_add(sr$dir, sr$id, sr$sha, sr$accounts), NULL)
   track_record(Filter(Negate(is.null), f), tdir)
 }
 
@@ -817,7 +861,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     confirmed <- isTRUE(confirm) && identical(status, "needs_review") && !("unread" %in% outcomes) &&
                  !length(contra) && !length(fix_err)
     refused <- isTRUE(confirm) && identical(status, "needs_review") && !confirmed
-    basis <- if (identical(status, "ok")) { if (box_fixed) "person" else if (all(outcomes == "layout_match")) "layout_match" else "proven" }
+    picked <- unique(unlist(lapply(fixes, function(f) if (identical(f$kind, "recipe") && is.null(f$error)) f$recipe)))
+    basis <- if (identical(status, "ok")) { if (box_fixed || length(picked)) "person" else if (all(outcomes == "layout_match")) "layout_match" else "proven" }
              else if (confirmed) "person" else "none"
     if (confirmed) { status <- "ok"; stamp$proof_kind <- "person" }
 
@@ -836,6 +881,15 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         else if (!is.na(unit_bank[i]))
           list(action = "none", why = sprintf("Statement %d looks like %s, not %s, so nothing is learned from it.", i, unit_bank[i], bank_name))
         else if (!is.null(f$error)) list(action = "none", why = "The fix could not be read, so nothing is learned.")
+        # RECIPES REPLACE LEARNED LAYOUTS FOR TEXT PDFS (D1). A person's fix that the
+        # arithmetic then proves is written down as a draft recipe of the design (or
+        # counts towards one); a learned layout is still READ (a server keeps every
+        # layout it learned), but a text PDF teaches none any more.
+        else if (identical(f$kind, "roles") && isTRUE(f$proven) && .text_pdf(units[[i]]$input)) {
+          rp <- r; rp$outcome <- "proven"
+          c(recipe_learn(rp, units[[i]]$input, bank_id, .unit_sha(sha, i, k),
+                         .unit_accounts(r, if (k == 1L) meta else NULL, units[[i]]$input), rdir), list(kind = "recipe"))
+        }
         else if (identical(f$kind, "roles") && isTRUE(f$proven)) {
           # A person's fix that the arithmetic then proves teaches straight away.
           m <- layout_match(r$template$signature, layouts_load(ldir, bank_id))
@@ -863,6 +917,8 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
         # by the automatic reader that a layout serves.
         else if (!is.null(r$matched_recipe) && identical(r$outcome, "proven"))
           list(action = "none", why = sprintf("Read with recipe %s, so no layout is learned from it.", r$matched_recipe))
+        else if (identical(r$outcome, "proven") && is.null(f) && .text_pdf(units[[i]]$input))
+          list(action = "none", why = "A text PDF's design is learned as a recipe, from a person's check, not as a layout.")
         else if (identical(r$outcome, "proven") && is.null(f)) {
           m <- if (length(credited)) layout_match(r$template$signature, layouts_load(ldir, bank_id)) else NULL
           if (!is.null(m) && m$id %in% credited)
@@ -878,6 +934,23 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
       if (learn_ok && is.na(unit_bank[i]) && is.null(f$error) && !identical(f$kind, "boxes") && identical(r$outcome, "check") &&
           ((identical(f$kind, "roles") && !isTRUE(f$proven)) || confirmed) && is.list(r$template))
         held <- c(held, fix_hold(r$template, bank_id, if (confirmed && is.null(f)) "confirm" else "roles", who, ldir)$id)
+    }
+    # A person's pick between two recipes' readings is one proof for the recipe
+    # picked (a draft counts it towards being read on its own; any recipe keeps the
+    # count, which also ends its spot checks: .spot_recipe).
+    for (i in seq_len(k)) {
+      f <- fixes[[i]]
+      if (!identical(f$kind, "recipe") || !is.null(f$error) || is.null(rdir) || is.na(.unit_sha(sha, i, k) %||% NA)) next
+      r <- readings[[i]]; acc <- .unit_accounts(r, if (k == 1L) meta else NULL, units[[i]]$input)
+      learn[[i]] <- if (isTRUE(r$draft) && !is.na(bank_slug))
+        c(recipe_learn(r, units[[i]]$input, bank_id, .unit_sha(sha, i, k), acc, rdir), list(kind = "recipe"))
+      else {
+        id <- sub("@v?[0-9]+$", "", f$recipe)
+        ev <- safe(.rc_evidence_add(rdir, id, .unit_sha(sha, i, k), acc), NULL)
+        list(action = if (is.null(ev)) "none" else "evidence_added", kind = "recipe", ref = f$recipe,
+             why = if (is.null(ev)) "The pick could not be counted." else
+               sprintf("You picked the reading of recipe %s; it counts as a checked statement for it (%d so far).", f$recipe, length(ev$proved_by)))
+      }
     }
     facts$learn <- vapply(learn, function(l) as.character(l$action %||% "none"), "")
     for (i in seq_len(k)) if (identical(learn[[i]]$kind, "recipe") && !is.na(learn[[i]]$ref %||% NA))
@@ -995,7 +1068,7 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
            new_design = r$new_design, learned_recipe = r$learned_recipe,
            learned_layout = r$learned_layout, roles = r$template$auto$roles, template = r$template,
            transactions = r$transactions, notes = r$notes, fix = fixes[[i]], learn = learn[[i]],
-           other_accounts = r$other_accounts %||% list())
+           other_accounts = r$other_accounts %||% list(), recipe_choice = r$recipe_choice)
     })
     result$other_accounts <- others
     result$columns <- file_cols(1L)
@@ -1009,7 +1082,16 @@ convert_statement <- function(path, bank = NULL, outdir = "out", logdir = "logs"
     # spot-checked twice as often (spec section 2).
     rate <- suppressWarnings(as.numeric(cfg$auto_reading$spot_check_rate %||% 0)[1])
     if (identical(basis, "layout_match")) rate <- min(1, 2 * rate)
+    # D7: a recipe whose readings are proven only by opening + rows = closing (no
+    # running balance on the rows: a card) is spot-checked ADAPTIVELY until it has
+    # SPOT_PROOFS_NEEDED proofs -- every such statement at first, then fewer as the
+    # proofs come in (1 - proofs / 3), never less than the twice-the-rate of a
+    # statement with no arithmetic of its own. A "right" spot check is a proof.
+    sr <- .spot_recipe(stamp$recipe, readings, basis, rdir)
+    if (!is.null(sr)) rate <- max(rate, min(1, 2 * rate), sr$rate)
     result$spot_check <- basis %in% c("proven", "layout_match") && .spot_pick(sha, rate)
+    if (!is.null(sr)) { sr$sha <- sha; sr$accounts <- .unit_accounts(readings[[1]], if (k == 1L) meta else NULL, input) }
+    result$spot_recipe <- sr
     result$trust <- recon$trust %||% list(level = "low", score = 0, reasons = reason)
     result$kpis <- recon$kpis
     result$header <- parsed$header %||% list()

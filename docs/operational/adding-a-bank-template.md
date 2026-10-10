@@ -18,7 +18,8 @@ bank before:
 
 | Outcome | What it means for the new bank |
 |---|---|
-| **Proven** | Done. The tool has also **learned** this design as a new layout of that bank, marked *(new)* in the row. It is *provisional* until three statements of that design have proved it, or until an admin confirms it. |
+| **Please check, though it adds up** | A design the tool has not seen is always **asked once**: check it and press *It's right*. A text PDF or a spreadsheet is then written down as a **draft recipe** of that bank: statements like it come back already filled in, and after three checked statements from two accounts they convert on their own. (Since 3.0 a text PDF no longer teaches a *layout*; layouts a server learned before are still read, so nothing is lost.) |
+| **Proven** | Done: a recipe that knows the design read it, and the statement's own arithmetic proved every figure. |
 | **Please check** | Read, but not proven. Open **Please check**, answer the question for the column that is wrong (money going *out*, money coming *in*, the *balance*...) and press **Read it again**. If it now proves, the fix is learned for that bank straight away. |
 | **Couldn't read** | Nothing usable was read. Try **Please check** if it offers columns. Otherwise **Draw the columns yourself** (the last resort, for this file only), or set the file aside and tell whoever looks after the tool. |
 
@@ -26,7 +27,8 @@ bank before:
 (there is nothing to add up), so the first ones from a new bank come back
 **Please check**. Once a statement of the same design **with** a balance has
 proved the layout, and the layout is proven, statements without one convert as
-**Matches a learned layout**. This is why training (below) helps most for
+**Matches a learned layout** (for a text PDF, its recipe does this job once
+it is proven). This is why training (below) helps most for
 banks whose exports carry no balance.
 
 You never need a template, a sample file or a test to add a bank. The tool
@@ -75,6 +77,32 @@ proven. Click a recipe to open its card:
   from what the tool found, and saves a draft after you Test it. Please check
   offers the same ("Save as a recipe for ...?") when a person's answers made a
   statement add up.
+
+**Two readings that both add up.** Now and then two recipes of one design read
+a statement differently and both readings add up. The arithmetic cannot say
+which is right, so Please check shows the two side by side - rows, money in,
+money out, closing balance and a few of the rows - and the person presses
+**This one is right** under the one that matches the page. That pick is read
+again with that recipe alone, and it counts as one checked statement for it.
+
+**Spot checks for cards.** A recipe whose statements are proven only by
+*opening balance + rows = closing balance* (no running balance on the rows, as
+on most card statements) has every such conversion marked for a spot check at
+first, then two in three, then one in three, until three spot checks say
+*right*; after that it follows the normal spot-check rate.
+
+**Drafts from the old 1.x templates (D14).** The 13 templates of 1.x (and any
+1.x templates a server still holds) can be turned into draft recipes once:
+
+    Rscript tools/recipes/from_templates.R <the server's recipes folder> [1.x templates folder ...]
+
+With no templates folder named it converts the 13 in
+`tests/testthat/fixtures/templates`. It writes one `<id>_from_1x@v1.yaml` draft
+per template, never over a file already there, and reads no statement. A draft
+only fills Please check in: the first statements of the design are still asked
+once, and it converts on its own only after its proofs. A PDF template whose
+dates print no year is given the period label "Statement period"; if the design
+prints another, correct it on the recipe's card.
 
 Drafts wait on **Admin -> Needs attention** to be accepted (or retired). No
 screen ever shows a recipe file: every change is a new version, never an edit,

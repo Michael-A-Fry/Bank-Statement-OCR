@@ -23,6 +23,8 @@
 #   `balances: {opening, closing}`  the design's own words for its two balances
 #   table `subtotals:`              lines totalling part of the table, set aside
 #   table `not_totals:`             summary lines that are not this table's totals
+#   table `non_moving:`             words of a row that prints a figure but keeps
+#                                   the balance before it ("NSF"): moves 0.00, flagged
 #   dates `carried: true`           the date is printed on a day's first row only
 #   dates `in_order: false`         rows listed in sections, each in date order
 #   money `plus_means:`             what a plain figure in a signed column is, when
@@ -281,6 +283,10 @@ recipes_default <- function() {
        # DEPOSITS" across all accounts). They are not balance points.
        not_totals = as.character(unlist(tb$not_totals)),
        no_rows = as.character(unlist(tb$no_rows)),
+       # non_moving: words marking a row that prints a figure but leaves the balance
+       # where it was (TSB's "NSF": a payment refused for want of funds). Such a row
+       # is kept, read as moving nothing, and flagged; the balance still has to hold.
+       non_moving = as.character(unlist(tb$non_moving)),
        date_format = dfmt, year = year, in_order = in_order, carried = carried, style = style, negative = neg, positive = pos, plus_means = plus,
        dir = if (identical(order, "newest_first")) "new" else "old", types = types)
 }
@@ -498,12 +504,31 @@ recipe_first <- function(input, bank = NULL, opts = list()) {
       r$outcome <- "check"
       r$why <- sprintf("Recipes %s each read this statement and add up, but give different figures, so a person decides.",
                        paste(vapply(fits[ok], `[[`, "", "ref"), collapse = " and "))
+      # Both readings, for Please check to show side by side; the person's pick
+      # (overrides$recipe, R/convert.R) is a proof for that recipe.
+      r$recipe_choice <- lapply(ok, function(j) recipe_choice_summary(reads[[j]], fits[[j]]))
       r
     }
   }
   if (!is.null(rg$bank_note)) pick$notes <- c(pick$notes, rg$bank_note)
   if (isTRUE(rg$draft)) pick$draft <- TRUE
   pick
+}
+
+# recipe_choice_summary(rd, rc) -> one recipe's reading of a statement, in plain
+# figures for a person to compare with another's: the recipe, how many rows, the
+# money in and out, the closing balance, and its first and last rows. Nothing is
+# kept: it lives on the result only.
+recipe_choice_summary <- function(rd, rc) {
+  tx <- rd$transactions %||% .ar_empty_tx()
+  a <- suppressWarnings(as.numeric(tx$amount))
+  h <- rd$parsed$header %||% list()
+  pick <- unique(c(head(seq_len(nrow(tx)), 2L), tail(seq_len(nrow(tx)), 1L)))
+  list(ref = rc$ref, title = rc$title %||% rc$ref, bank = rc$bank %||% NA_character_, draft = identical(rc$status, "draft"),
+       rows = nrow(tx), money_in = round(sum(a[a > 0], na.rm = TRUE), 2), money_out = round(-sum(a[a < 0], na.rm = TRUE), 2),
+       closing = suppressWarnings(as.numeric(h$closing_balance %||% NA)[1]),
+       sample = data.frame(date = as.character(tx$date[pick]), description = as.character(tx$description[pick] %||% rep("", length(pick))),
+                           amount = a[pick], stringsAsFactors = FALSE))
 }
 
 # recipe_note(rd) -- the sentence auto_read() records when a recipe was recognised
@@ -550,11 +575,74 @@ recipe_read <- function(input, rc) {
   list(fmt = fmt, rx = paste0("^", paste(rx, collapse = ""), "$"), yearless = !grepl("%[yY]", fmt))
 }
 
+# .rc_fix_dates(input, rc) -> list(input, repaired): two ways a design's dates are
+# printed slightly wrong, put right before anything is read (TSB designs):
+#   * a tight date ("%d%b%y") printed with a space before its year, "19Sep 26":
+#     the two words are one date ("19Sep26"), in the words and the page text;
+#   * a date whose four-digit year lost its last digit, "02/01/202": repaired ONLY
+#     when the statement's printed period allows exactly one year for it, and the
+#     row is flagged (year_repaired). Otherwise it is left as printed, the line is
+#     not a row, and the reading stops at a check -- the year is never guessed.
+# repaired: data.frame(page, y) of every date put right the second way.
+.rc_fix_dates <- function(input, rc) {
+  none <- data.frame(page = integer(0), y = numeric(0))
+  fmt <- rc$date_format %||% ""
+  wl <- input$words %||% list()
+  if (grepl("%[bB]", fmt) && grepl("%y", fmt) && !grepl("[ ./,-]", fmt)) {
+    wl <- lapply(wl, function(w) {
+      if (is.null(w) || nrow(w) < 2L) return(w)
+      a <- which(grepl("^[0-9]{1,2}[A-Za-z]{3}$", w$text))
+      drop <- integer(0)
+      for (i in a) {
+        j <- which(grepl("^[0-9]{2}$", w$text) & abs(w$y - w$y[i]) < 2 & w$x > w$x[i] &
+                   w$x - (w$x[i] + w$width[i]) <= 1.5 * max(w$height[i], 1))
+        j <- setdiff(j, drop)
+        if (length(j) != 1L) next
+        w$width[i] <- w$x[j] + w$width[j] - w$x[i]; w$text[i] <- paste0(w$text[i], w$text[j]); drop <- c(drop, j)
+      }
+      if (length(drop)) w <- w[-drop, , drop = FALSE]
+      w
+    })
+    input$words <- wl
+    if (length(input$pages)) input$pages <- gsub("\\b([0-9]{1,2}[A-Za-z]{3}) ([0-9]{2})(?![0-9.,])", "\\1\\2", input$pages, perl = TRUE)
+  }
+  if (!grepl("%Y", fmt, fixed = TRUE)) return(list(input = input, repaired = none))
+  # the same pattern with a three-digit year
+  parts <- regmatches(fmt, gregexpr("%[dmyYbB]|[ ./,-]", fmt))[[1]]
+  tight <- !grepl("[ ./,-]", fmt)
+  rxp <- vapply(parts, function(p) switch(p,
+    "%d" = if (tight) "[0-9]{2}" else "[0-9]{1,2}", "%m" = if (tight) "[0-9]{2}" else "[0-9]{1,2}",
+    "%y" = "[0-9]{2}", "%Y" = "[0-9]{3}", "%b" = "[A-Za-z]{3}", "%B" = "[A-Za-z]{3,9}",
+    " " = " ", "." = "[.]", "/" = "/", "-" = "-", "," = ","), "")
+  rx <- paste0("^", paste(rxp, collapse = ""), "$")
+  hits <- lapply(wl, function(w) if (is.null(w) || !nrow(w)) integer(0) else which(grepl(rx, w$text)))
+  if (!length(unlist(hits))) return(list(input = input, repaired = none))
+  md <- safe(extract_metadata(input), list())
+  ps <- .plausible_period_date(md$period_start %||% NA); pe <- .plausible_period_date(md$period_end %||% NA)
+  if (is.na(ps) || is.na(pe) || pe < ps) return(list(input = input, repaired = none))
+  rep <- list()
+  for (p in seq_along(wl)) for (i in hits[[p]]) {
+    t <- wl[[p]]$text[i]
+    cand <- paste0(t, 0:9)
+    d <- as.Date(cand, format = fmt, optional = TRUE)
+    ok <- which(!is.na(d) & d >= ps & d <= pe)
+    if (length(ok) != 1L) next
+    wl[[p]]$text[i] <- cand[ok]
+    rep[[length(rep) + 1L]] <- data.frame(page = p, y = wl[[p]]$y[i])
+    if (length(input$pages) >= p) input$pages[p] <- sub(t, cand[ok], input$pages[p], fixed = TRUE)
+  }
+  input$words <- wl
+  list(input = input, repaired = if (length(rep)) do.call(rbind, rep) else none)
+}
+
 .rc_read <- function(input, rc) {
   wl <- input$words %||% list()
   if (!length(wl) || all(vapply(wl, function(w) is.null(w) || !nrow(w), logical(1))))
     return(.rc_fail(rc, "The PDF has no readable text."))
+  fx <- .rc_fix_dates(input, rc)
+  input <- fx$input
   ctx <- .ar_pdf_context(input)
+  ctx$repaired <- fx$repaired
   if (!(rc$date_format %in% vapply(ctx$fmts, `[[`, "", "fmt"))) ctx$fmts <- c(ctx$fmts, list(.rc_date_entry(rc$date_format)))
   np <- ctx$np
   # OCR'd pages are read with the slack OCR needs in their wording (.rc_tok_match);
@@ -609,6 +697,8 @@ recipe_read <- function(input, rc) {
   sctx$input <- sub; sctx$np <- m; sctx$pw <- ctx$pw[pages]; sctx$ph <- ctx$ph[pages]
   sctx$ocr <- ctx$ocr[pages]; sctx$pages_text <- sub$pages %||% character(0)
   sctx$aside <- Filter(function(a) a$page %in% pages, ctx$aside %||% list())
+  rp <- ctx$repaired
+  if (NROW(rp)) { rp <- rp[rp$page %in% pages, , drop = FALSE]; rp$page <- match(rp$page, pages); sctx$repaired <- rp }
   md <- if (k == 1L) ctx$md else safe(extract_metadata(sub), NULL)
   md <- md %||% list()
   pgs <- .rc_mark_balances(.ar_pdf_pages(sctx), rc)
@@ -999,12 +1089,37 @@ recipe_read <- function(input, rc) {
           why = sprintf("The line \"%s\" on page %d prints a figure under a money heading but is not a row.", substr(reg$raw[r], 1, 40), j))
     }
   }
+  nm <- .rc_non_moving(rows, cells, anchors, rc, bal_k, mov_k)
+  for (i in nm) cells[[i]][mov_k] <- NA_character_
   pick <- function(f, proto) if (n) unlist(lapply(rows, `[[`, f)) else proto
   R <- data.frame(page = pick("page", integer(0)), line = pick("line", integer(0)), y = pick("y", numeric(0)),
                   y1 = pick("y1", numeric(0)), raw = pick("raw", character(0)), date = pick("date", character(0)),
                   date_fmts = pick("date_fmts", character(0)), date2 = rep(NA_character_, n), stringsAsFactors = FALSE)
   C <- if (n) matrix(unlist(cells), ncol = K, byrow = TRUE) else matrix(NA_character_, 0, K)
-  list(rows = R, cells = C, anchors = anchors, problems = problems, roles = money)
+  list(rows = R, cells = C, anchors = anchors, problems = problems, roles = money, non_moving = nm)
+}
+
+# .rc_non_moving(rows, cells, anchors, rc, bal_k, mov_k) -> the rows (indices) that
+# the recipe's `non_moving` words mark AND whose printed balance is exactly the
+# balance before them (the row above, or the opening balance), while printing a
+# figure under money out or in. Only both together make a row non-moving: the
+# word alone never stops a figure from counting.
+.rc_non_moving <- function(rows, cells, anchors, rc, bal_k, mov_k) {
+  n <- length(rows)
+  if (!n || !length(rc$non_moving) || is.na(bal_k) || !length(mov_k)) return(integer(0))
+  bal <- vapply(cells, function(c) .num(c[bal_k]), 0)
+  op <- NA_real_
+  for (a in anchors) if (identical(a$class, "open") && isTRUE(a$before_rows == 0L)) { op <- .num(a$value_text); break }
+  out <- integer(0)
+  for (i in seq_len(n)) {
+    fl <- .rc_flat(rows[[i]]$raw)
+    if (!any(vapply(rc$non_moving, function(p) .rc_has_phrase(fl, p, isTRUE(rc$fuzzy)), logical(1)))) next
+    if (all(is.na(cells[[i]][mov_k]))) next
+    j <- if (identical(rc$dir, "new")) i + 1L else i - 1L
+    prev <- if (j >= 1L && j <= n) bal[j] else op
+    if (is.finite(bal[i]) && is.finite(prev) && abs(bal[i] - prev) < PARAM_MONEY_TOL) out <- c(out, i)
+  }
+  out
 }
 
 # .rc_seed_lines(st) -- on every page of the statement, the lines shaped like a
@@ -1077,6 +1192,13 @@ recipe_read <- function(input, rc) {
     ls <- tb$region$line[tb$region$kind %in% c("row", "cont")]
     w <- pg$w
     keep <- w$line %in% ls & w$cx >= min(tb$bands$x_min) & w$cx <= max(tb$bands$x_max)
+    # A non-moving row's figure is not money moved: it is not handed over.
+    nm <- col$non_moving[col$rows$page[col$non_moving] == j]
+    if (length(nm)) {
+      mb <- tb$bands[tb$bands$field %in% c("debit", "credit", "amount"), , drop = FALSE]
+      inmv <- Reduce(`|`, lapply(seq_len(nrow(mb)), function(b) w$cx >= mb$x_min[b] & w$cx <= mb$x_max[b]), FALSE)
+      keep <- keep & !(w$line %in% col$rows$line[nm] & inmv)
+    }
     w[keep, c("x", "y", "width", "height", "text"), drop = FALSE]
   })
   cin$page_width <- rep(st$ctx$frame$width, m); cin$page_height <- rep(st$ctx$frame$height, m)
@@ -1192,6 +1314,8 @@ recipe_read <- function(input, rc) {
   liab_ev <- .ar_liability_evidence(own_text)
   ar <- .rc_reading(col, rc, liab_ev, ctx$decimal)
   rd <- ar$rd
+  # A non-moving row moves nothing: that is the amount the balance proves for it.
+  if (length(col$non_moving) && length(rd$A) == n) { rd$A[col$non_moving] <- 0; ar$rd <- rd }
   tpl <- .rc_template(st, rc, rd)
   parsed <- .rc_parse(st, col, tpl)
   tx <- parsed$transactions
@@ -1200,6 +1324,7 @@ recipe_read <- function(input, rc) {
     if (isTRUE(rc$carried)) tx <- .rc_carry_dates(tx)
     tx <- .ar_settle(tx, rd, col$cells, ctx$decimal, col$anchors, aligned = nrow(tx) == n)
     tx <- .rc_types(tx, rc$types)
+    if (nrow(tx) == n) tx <- .rc_row_flags(tx, col, st$ctx$repaired)
     parsed$transactions <- tx
     op <- .ar_opening_value(col$anchors, rd, ctx$decimal, nrow(tx))
     cl <- .ar_closing_value(col$anchors, rd, ctx$decimal, nrow(tx))
@@ -1225,6 +1350,30 @@ recipe_read <- function(input, rc) {
          else "Nothing on the statement adds up to prove the reading."
   list(passed = passed, why = why, failing = failing, parsed = parsed, tx = tx, page = page, tpl = tpl,
        checks = .ar_checks_df(ck$checks), proof = proof, rd = rd, col = col)
+}
+
+# .rc_row_flags(tx, col, repaired) -- the recipe's own marks on the rows, once the
+# table reader's rows are the recipe's one for one: a non-moving row moves 0.00
+# (its amount was worked out from the unchanged balance) and says why; a row whose
+# date was printed with its year cut short, repaired from the period, says so.
+.rc_row_flags <- function(tx, col, repaired = NULL) {
+  f <- tx$flags; f[is.na(f)] <- ""
+  nm <- col$non_moving %||% integer(0)
+  if (length(nm)) {
+    # its figure was set aside on purpose: not a malformed, forced or derived row
+    f[nm] <- vapply(strsplit(f[nm], ",", fixed = TRUE), function(t)
+      paste(setdiff(t, c("amount_from_balance", "malformed", "forced", "")), collapse = ","), "")
+    f <- .ar_addflag(f, seq_along(f) %in% nm, "non_moving")
+    tx$amount[nm] <- 0
+    if ("direction" %in% names(tx)) tx$direction[nm] <- .direction(0)
+  }
+  if (NROW(repaired)) {
+    R <- col$rows
+    hit <- vapply(seq_len(nrow(R)), function(i) any(repaired$page == R$page[i] & repaired$y >= R$y[i] - 1 & repaired$y <= R$y1[i] + 1), NA)
+    f <- .ar_addflag(f, hit, "year_repaired")
+  }
+  tx$flags <- f
+  tx
 }
 
 # .rc_own_text(st) -- the statement's own title and summary: every line above its
@@ -1517,14 +1666,16 @@ recipe_read <- function(input, rc) {
        statements = lapply(seq_len(k), function(i) .rc_statement_summary(us[[i]], ranges[[i]], i)))
 }
 
-# .rc_join(us) -> list(ok, why). In period order each statement opens at the
-# balance the one before it closed on, to the cent. A statement missing from the
+# .rc_join(us) -> list(ok, why). In period order (never the file's order: a
+# bundle may be saved newest first or shuffled) each statement opens at the
+# balance the one before it closed on, to the cent, and starts the day after it
+# ended. A statement missing from the
 # middle, or two accounts' statements in one file, break it. Ordered by period
 # end: a new account's first statement prints no start.
 .rc_join <- function(us) {
   one <- function(u) {
     h <- u$parsed$header %||% list()
-    list(end = .plausible_period_date(h$period_end %||% NA), open = suppressWarnings(as.numeric(h$opening_balance %||% NA)[1]),
+    list(start = .plausible_period_date(h$period_start %||% NA), end = .plausible_period_date(h$period_end %||% NA), open = suppressWarnings(as.numeric(h$opening_balance %||% NA)[1]),
          close = suppressWarnings(as.numeric(h$closing_balance %||% NA)[1]))
   }
   st <- lapply(us, one)
@@ -1533,11 +1684,21 @@ recipe_read <- function(input, rc) {
     "Statement %d does not print its period end and both its balances, so the statements cannot be shown to follow on.", which(!okv)[1])))
   o <- order(vapply(st, function(s) as.numeric(s$end), 0))
   st <- st[o]
-  for (i in seq_len(length(st) - 1L)) if (abs(st[[i]]$close - st[[i + 1L]]$open) >= PARAM_MONEY_TOL)
-    return(list(ok = FALSE, why = sprintf(paste("Statement %d closes at %s but the next one opens at %s: a statement may be",
-                                                "missing between them, or they are different accounts."),
-                                          o[i], format(st[[i]]$close, nsmall = 2), format(st[[i + 1L]]$open, nsmall = 2))))
-  list(ok = TRUE, why = "Each statement opens at the balance the one before it closed on.")
+  for (i in seq_len(length(st) - 1L)) {
+    if (abs(st[[i]]$close - st[[i + 1L]]$open) >= PARAM_MONEY_TOL)
+      return(list(ok = FALSE, why = sprintf(paste("Statement %d closes at %s but statement %d, the next by date, opens at %s: a statement may be",
+                                                  "missing between them, or they are different accounts."),
+                                            o[i], format(st[[i]]$close, nsmall = 2), o[i + 1L], format(st[[i + 1L]]$open, nsmall = 2))))
+    # A month missing between two statements whose balances happen to agree (a
+    # quiet month) is still a gap: the next statement starts after the day
+    # following the last one's end. A person looks.
+    nx <- st[[i + 1L]]$start
+    if (!is.na(nx) && as.numeric(nx - st[[i]]$end) > 1)
+      return(list(ok = FALSE, why = sprintf(paste("No statement covers %s to %s, between statement %d and statement %d:",
+                                                  "a statement may be missing from the file."),
+                                            format(st[[i]]$end + 1), format(nx - 1), o[i], o[i + 1L])))
+  }
+  list(ok = TRUE, why = "In date order, each statement opens at the balance the one before it closed on.")
 }
 
 # ---- drafts: a new design, learned from a person's answer --------------------------

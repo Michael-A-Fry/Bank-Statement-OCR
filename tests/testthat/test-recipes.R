@@ -368,6 +368,23 @@ test_that("a file of several statements is read one statement at a time, and pro
   expect_false(isTRUE(gap$checks$ok[gap$checks$check == "statements_join"]))
 })
 
+# A bundle saved newest first (or shuffled) is joined in period order, never file
+# order; a month missing between two statements is still a check, even when the
+# balances on either side of it agree (a quiet month).
+test_that("a bundle's statements are joined in period order, and a missing month is still a check", {
+  rd <- recipe_read(rc_pdf(rc_second(), rc_one()), rc_anz())
+  expect_identical(rd$outcome, "proven")
+  expect_true(isTRUE(rd$checks$ok[rd$checks$check == "statements_join"]))
+  bad <- recipe_read(rc_pdf(rc_second(open = "3,000.00"), rc_one()), rc_anz())
+  expect_identical(bad$outcome, "check")
+  expect_match(bad$checks$why[bad$checks$check == "statements_join"], "Statement 2 closes at 3344.91 but statement 1", fixed = TRUE)
+  april <- sub("01 Mar 2026 to 31 Mar 2026", "01 Apr 2026 to 30 Apr 2026", rc_second(), fixed = TRUE)
+  april <- sub("^0([59]) Mar", "0\\1 Apr", april)
+  gap <- recipe_read(rc_pdf(april, rc_one()), rc_anz())
+  expect_identical(gap$outcome, "check")
+  expect_match(gap$checks$why[gap$checks$check == "statements_join"], "No statement covers 2026-03-01 to 2026-03-31", fixed = TRUE)
+})
+
 test_that("a statement with no rows is proven only when it says so and its balances agree", {
   empty <- function(open = "3,344.91", close = "3,344.91", say = TRUE) c(
     rc_box(open = open, close = close), rc_head,
@@ -518,4 +535,131 @@ test_that("a draft is promoted after 3 checked statements from 2 accounts, and t
   ev <- paste(readLines(list.files(file.path(d, ".evidence"), full.names = TRUE)), collapse = "\n")
   expect_false(grepl("0789012|0456789", ev))
   expect_null(recipe_first(inp, opts = list(recipes = top))$draft)
+})
+
+# ---- two recipes that disagree; spot checks for a recipe proven by its totals ----------
+
+# rc_kauri_dir() -- a server recipes folder (config paths$recipes) holding a recipe for
+# the design of the shipped ANZ fixture, set for the rest of the calling test.
+rc_kauri_dir <- function(env = parent.frame()) {
+  d <- rc_tmpdir()
+  rc_write(d, "kauri_fixture_pdf.yaml", c(
+    "recipe: kauri_fixture_pdf", "format: 1", "version: 1", "bank: anz", "kind: pdf", "status: proven",
+    "recognise: {all: [\"Statement of Accounts\", \"Transaction type and details\"]}",
+    "period: {label: \"Statement period\"}",
+    "table:",
+    "  header: [\"Date\", \"Transaction type and details\", \"Withdrawals\", \"Deposits\", \"Balance\"]",
+    "  columns:",
+    "    date: {under: \"Date\"}",
+    "    description: {under: \"Transaction type and details\"}",
+    "    debit: {under: \"Withdrawals\"}",
+    "    credit: {under: \"Deposits\"}",
+    "    balance: {under: \"Balance\"}",
+    "dates: {format: \"%d %b\", year: period}",
+    "money: {style: debit_credit_cols, negative: [\"OD\"]}"))
+  cfg <- file.path(d, "config.yaml")
+  writeLines(c("paths:", sprintf("  recipes: \"%s\"", d)), cfg)
+  withr::local_envvar(BSO_CONFIG = cfg, .local_envir = env)
+  withr::defer(unlink(d, recursive = TRUE), envir = env)
+  d
+}
+# rc_mock(name, fn) -- replace an engine function for the rest of the calling test.
+rc_mock <- function(name, fn, env = parent.frame()) {
+  real <- get(name, envir = globalenv())
+  assign(name, fn, envir = globalenv())
+  withr::defer(assign(name, real, envir = globalenv()), envir = env)
+  real
+}
+# A second recipe for the same design whose reading also "proves" but with the first
+# row's figure different: two readings that both add up, which no statement can settle.
+rc_twin <- function(rc, id = paste0(rc$id, "_twin")) { t <- rc; t$id <- id; t$ref <- paste0(id, "@", rc$version); t }
+rc_mock_twin_reads <- function(env = parent.frame()) {
+  real <- rc_mock("recipe_read", function(input, rc) {
+    if (!grepl("_twin@", rc$ref)) return(real(input, rc))
+    base <- rc; base$id <- sub("_twin$", "", rc$id); base$ref <- sub("_twin@", "@", rc$ref)
+    r <- real(input, base)
+    if (NROW(r$transactions)) r$transactions$amount[1] <- r$transactions$amount[1] + 1
+    r$matched_recipe <- rc$ref
+    r
+  }, env)
+}
+
+test_that("two recipes proving different figures: both readings are offered side by side, and nothing is automatic", {
+  rc_mock_twin_reads()
+  inp <- rc_pdf(rc_one())
+  both <- list(rc_anz(), rc_twin(rc_anz()))
+  r <- recipe_first(inp, opts = list(recipes = both))
+  expect_identical(r$outcome, "check")
+  ch <- r$recipe_choice
+  expect_length(ch, 2L)
+  expect_setequal(vapply(ch, `[[`, "", "ref"), c("anz_everyday_pdf@1", "anz_everyday_pdf_twin@1"))
+  expect_identical(vapply(ch, `[[`, 0L, "rows"), c(6L, 6L))
+  expect_false(identical(ch[[1]]$money_out, ch[[2]]$money_out) && identical(ch[[1]]$money_in, ch[[2]]$money_in))
+  expect_true(all(vapply(ch, function(o) nrow(o$sample) == 3L, NA)))
+  # the reader from scratch would prove it; it still waits for the person's pick
+  a <- auto_read(inp, opts = list(recipes = both))
+  expect_identical(a$outcome, "check")
+  expect_length(a$recipe_choice, 2L)
+})
+
+test_that("the person's pick between two recipes is read with that recipe, converts, and counts as a proof for it", {
+  d <- rc_kauri_dir()
+  rc_mock_twin_reads()
+  kauri <- recipes_load(d)[[1]]
+  rc_mock("recipes_default", function() list(kauri, rc_twin(kauri)))
+  cv <- convert_sandbox()
+  f <- fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf")
+  r1 <- cv(f, bank = "ANZ")
+  expect_identical(r1$status, "needs_review")
+  expect_length(r1$reading[[1]]$recipe_choice, 2L)
+  r2 <- cv(f, bank = "ANZ", overrides = list(recipe = "kauri_fixture_pdf@1"))
+  expect_identical(r2$status, "ok")
+  expect_identical(r2$feed_basis, "person")
+  expect_identical(r2$matched_recipe, "kauri_fixture_pdf@1")
+  expect_identical(r2$learn[[1]]$action, "evidence_added")
+  ev <- yaml::read_yaml(file.path(d, ".evidence", "kauri_fixture_pdf.yaml"))
+  expect_length(ev$proved_by, 1L)
+  # only an offered reading can be picked
+  r3 <- cv(f, bank = "ANZ", overrides = list(recipe = "something_else@1"))
+  expect_identical(r3$status, "needs_review")
+  expect_match(paste(r3$messages, collapse = " "), "not one of the readings offered", fixed = TRUE)
+})
+
+test_that("D7: a recipe proven by its totals only is spot-checked adaptively until it has 3 proofs", {
+  d <- rc_tmpdir(); on.exit(unlink(d, recursive = TRUE))
+  tot <- list(list(proof = list(kind = "totals")))
+  s0 <- .spot_recipe("card_x@2", tot, "proven", d)
+  expect_identical(s0$id, "card_x"); expect_identical(s0$proofs, 0L); expect_equal(s0$rate, 1)
+  # a running balance proves every row: no extra spot checks
+  expect_null(.spot_recipe("card_x@2", list(list(proof = list(kind = "chain"))), "proven", d))
+  expect_null(.spot_recipe("card_x@2", c(tot, list(list(proof = list(kind = "chain")))), "proven", d))
+  # a person's own word, or no recipe: not this rule
+  expect_null(.spot_recipe("card_x@2", tot, "person", d))
+  expect_null(.spot_recipe(NA_character_, tot, "proven", d))
+  # every such statement at first, then fewer as the proofs come in, then none extra
+  .rc_evidence_add(d, "card_x", strrep("a", 64), "12-3456-0789012-50")
+  expect_equal(.spot_recipe("card_x@2", tot, "proven", d)$rate, 2 / 3)
+  .rc_evidence_add(d, "card_x", strrep("b", 64), "12-3456-0789012-50")
+  expect_equal(.spot_recipe("card_x@2", tot, "proven", d)$rate, 1 / 3)
+  # a "right" spot check is the third proof; "wrong" or "can't tell" is not
+  td <- file.path(d, "tracking")
+  res <- list(stamp = list(outcome = "proven", proof_kind = "totals", kind = "pdf"),
+              spot_recipe = c(.spot_recipe("card_x@2", tot, "proven", d), list(sha = strrep("c", 64), accounts = "01-0123-0456789-00")))
+  spot_check_record(res, "wrong", td)
+  expect_equal(.spot_recipe("card_x@2", tot, "proven", d)$rate, 1 / 3)
+  spot_check_record(res, "right", td)
+  expect_null(.spot_recipe("card_x@2", tot, "proven", d))
+  ev <- paste(readLines(file.path(d, ".evidence", "card_x.yaml")), collapse = "\n")
+  expect_false(grepl("0789012|0456789", ev))
+})
+
+test_that("D7: a conversion read with a recipe proven only by its totals is marked for a spot check", {
+  d <- rc_kauri_dir()
+  real <- rc_mock("recipe_read", function(input, rc) { r <- real(input, rc); if (identical(r$outcome, "proven")) r$proof$kind <- "totals"; r })
+  cv <- convert_sandbox()
+  r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_sample.pdf"), bank = "ANZ")
+  expect_identical(r$status, "ok")
+  expect_true(isTRUE(r$spot_check))                       # the spot-check rate is 0 (off) here
+  expect_identical(r$spot_recipe$id, "kauri_fixture_pdf")
+  expect_identical(r$spot_recipe$proofs, 0L)
 })

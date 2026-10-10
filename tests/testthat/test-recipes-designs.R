@@ -325,3 +325,66 @@ test_that("the new recipe words are checked when a recipe loads", {
   expect_identical(.rc_words("Vou. No./Trans. No."), c("vou", "no./trans", "no"))
   expect_identical(.rc_words("Balance (DR=Debit)"), c("balance", "dr=debit"))
 })
+
+# ---- TSB quirks from the designs (blocks 115 and 138) ---------------------------------
+
+test_that("TSB Saver Plus: a date printed with a space before its year (\"19Sep 26\") reads as one date", {
+  rc <- dz_recipe("tsb_saver_plus")
+  pg <- tsb_pages()
+  pg[[1]] <- sub("21May26", "21May 26", pg[[1]], fixed = TRUE)
+  pg[[2]] <- sub("23May26", "23May 26", pg[[2]], fixed = TRUE)
+  rd <- dz_read(do.call(dz_pdf, pg), rc)
+  expect_identical(rd$outcome, "proven")
+  expect_identical(format(rd$transactions$date)[c(2, 6)], c("2026-05-21", "2026-05-23"))
+  # a figure after a tight day-month is never taken for its year
+  fx <- .rc_fix_dates(dz_pdf(c("21May 26.00 x")), rc[[1]])
+  expect_identical(fx$input$words[[1]]$text[1:2], c("21May", "26.00"))
+})
+
+tl_line <- function(date = "", time = "", desc = "", wd = "", dp = "", bal = "") {
+  a <- list(date, 1, time, 13, desc, 33, wd, -86, dp, -100, bal, -115)
+  keep <- rep(nzchar(unlist(a[seq(1, length(a), 2)])), each = 2)
+  do.call(dz_line, a[keep])
+}
+tl_page <- function(rows, period = TRUE) c(
+  "TRANSLIST      Transaction Listing for: PERSON A", "Account Number : 00-0000-0000000-00",
+  if (period) "Statement period 18/12/2025 to 05/01/2026", "",
+  dz_line("Date", 1, "Time", 13, "Serial No", 23, "Particulars / Code / Reference", 33, "Withdrawal", -86,
+          "Deposit", -100, "Balance", -115),
+  rows, "", "Total Deposits = $6900.00     Total Withdrawals = $1117.94", "Page 1 of 1")
+tl_rows <- function(nsf_bal = "5944.03", last = "02/01/202") c(
+  tl_line("18/12/2025", "00:07:15", "Legal Fee Subsidy", dp = "6000.00", bal = "6000.00"),
+  tl_line("18/12/2025", "00:18:14", "Payment to Loan", wd = "55.97", bal = "5944.03"),
+  tl_line("20/12/2025", "12:08:10", "NSF Payment to Loan", wd = "1059.47", bal = nsf_bal),
+  tl_line("21/12/2025", "10:00:00", "Dishonour Fee", wd = "2.50", bal = "5941.53"),
+  tl_line(last, "09:21:43", "PART 2002", dp = "900.00", bal = "6841.53"))
+
+test_that("TSB listing: an NSF row keeps the balance, moves nothing, is flagged, and the statement still proves", {
+  rc <- dz_recipe("tsb_transaction_listing")
+  expect_identical(rc[[1]]$non_moving, "NSF")
+  rd <- dz_read(dz_pdf(tl_page(tl_rows())), rc)
+  expect_identical(rd$outcome, "proven")
+  tx <- rd$transactions
+  expect_equal(tx$amount, c(6000, -55.97, 0, -2.50, 900))
+  expect_identical(grepl("non_moving", tx$flags), c(FALSE, FALSE, TRUE, FALSE, FALSE))
+  expect_false(grepl("amount_from_balance", tx$flags[3]))
+  # the word alone never stops a figure counting: an NSF row whose balance moves
+  # is an ordinary row, and here the balance then does not add up
+  moved <- dz_read(dz_pdf(tl_page(tl_rows(nsf_bal = "4884.56"))), rc)
+  expect_false(identical(moved$outcome, "proven"))
+  # without the recipe's word the row's figure counts, and the balance cannot hold
+  r1 <- rc[[1]]; r1$non_moving <- character(0)
+  expect_false(identical(dz_read(dz_pdf(tl_page(tl_rows())), list(r1))$outcome, "proven"))
+})
+
+test_that("TSB listing: a date missing its last year digit is repaired only when the period proves it", {
+  rc <- dz_recipe("tsb_transaction_listing")
+  rd <- dz_read(dz_pdf(tl_page(tl_rows())), rc)
+  expect_identical(format(rd$transactions$date[5]), "2026-01-02")
+  expect_true(grepl("year_repaired", rd$transactions$flags[5]))
+  expect_identical(sum(grepl("year_repaired", rd$transactions$flags)), 1L)
+  # no period printed: the year is never guessed, a person checks
+  expect_identical(dz_read(dz_pdf(tl_page(tl_rows(), period = FALSE)), rc)$outcome, "check")
+  # a repair the period does not allow (no year of 2020-2029 puts 02/03 inside it)
+  expect_identical(dz_read(dz_pdf(tl_page(tl_rows(last = "02/03/202"))), rc)$outcome, "check")
+})

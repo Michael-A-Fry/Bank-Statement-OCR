@@ -533,3 +533,108 @@ recipe_card <- function(id, dirs = NULL) {
                              when = vapply(vs, function(v) format(file.mtime(v$file), "%d %b %Y"), ""),
                              stringsAsFactors = FALSE))
 }
+
+# ---- D14: draft recipes from the old 1.x templates -------------------------------------
+#
+# recipe_from_template(tpl, id) -> list(yaml) or list(error). One 1.x template (the
+# YAML a 1.x server kept per bank design: a fingerprint, x-bands or column sources,
+# a date format and a money style) written as a DRAFT recipe of the same design.
+# A draft is never trusted alone: a statement it recognises comes back on Please
+# check filled in from it (always ask once), and only proofs make it automatic.
+# What a template does not say is not invented: no period label is known for a
+# PDF design whose dates print no year, so the draft names the common one
+# ("Statement period") and an admin corrects it on the page if it differs.
+# tools/recipes/from_templates.R runs this over a folder of templates.
+.TPL_FIELDS <- c("date", "description", "debit", "credit", "amount", "balance",
+                 "particulars", "code", "reference", "other_party", "type")
+recipe_from_template <- function(tpl, id = NULL) {
+  no <- function(why) list(error = why)
+  if (!is.list(tpl)) return(no("it is not a template."))
+  bank <- .layout_slug(tpl$bank)
+  if (is.na(bank)) return(no("it names no bank."))
+  fmt <- as.character(tpl$format %||% "")[1]
+  kind <- switch(fmt, pdf = "pdf", delimited = "csv", excel = "excel", NA_character_)
+  if (is.na(kind)) return(no(sprintf("format \"%s\" is not a PDF, CSV or Excel design.", fmt)))
+  id <- id %||% sprintf("%s_from_1x", gsub("[^a-z0-9_]", "_", tolower(as.character(tpl$id %||% paste(bank, fmt))[1])))
+  id <- substr(gsub("_+", "_", id), 1L, 40L)
+  if (!grepl(.RECIPE_ID_RX, id)) return(no(sprintf("\"%s\" cannot be a recipe id.", id)))
+  title <- sprintf("%s %s (from a 1.x template)", .layout_bank_display(bank),
+                   gsub("[-_]", " ", as.character(tpl$statement_type %||% kind)[1]))
+  sign <- as.character(tpl$amount_sign %||% tpl$table$amount_sign %||% "signed")[1]
+  name_extras <- function(fields) {
+    k <- 0L
+    vapply(fields, function(f) if (f %in% .TPL_FIELDS) f else { k <<- k + 1L; sprintf("text%d", k) }, "")
+  }
+  base <- list(recipe = id, format = RECIPE_FORMAT, version = 1L, bank = bank, title = title, kind = kind,
+               status = "draft")
+  if (kind == "pdf") {
+    tb <- tpl$table %||% list()
+    cl <- Filter(Negate(is.null), tb$columns %||% list())
+    if (!length(cl)) return(no("it has no columns."))
+    xmin <- vapply(cl, function(c) as.numeric(c$x_min %||% NA)[1], 0)
+    o <- order(xmin); cl <- cl[o]
+    f <- name_extras(names(cl))
+    if (sum(grepl("^text", f)) > 9L) return(no("it has more spare columns than a recipe can name."))
+    cols <- stats::setNames(lapply(cl, function(c) list(x_min = as.numeric(c$x_min), x_max = as.numeric(c$x_max))), f)
+    words <- as.character(unlist(tpl$fingerprint$page_contains_all))
+    if (!length(words)) return(no("its fingerprint names no words to recognise the design by."))
+    dfmt <- as.character(tb$date_format %||% NA_character_)[1]
+    if (is.na(dfmt)) return(no("it has no date format."))
+    yearful <- grepl("%[yY]", dfmt)
+    y <- c(base, list(recognise = list(all = as.list(words))),
+           if (!yearful) list(period = list(label = "Statement period")),
+           list(table = list(ref_width = .A4_W, columns = cols),
+                dates = list(format = dfmt, year = if (yearful) "printed" else "period"),
+                money = list(style = if (identical(sign, "debit_credit_cols")) "debit_credit_cols" else "signed"),
+                order = "oldest_first"))
+  } else {
+    cl <- Filter(function(c) is.list(c) && !is.null(c$source), tpl$columns %||% list())
+    ex <- Filter(function(c) is.list(c) && !is.null(c$source), tpl$extras %||% list())
+    if (!length(cl)) return(no("it has no columns."))
+    all_cols <- c(cl, ex)
+    f <- name_extras(names(all_cols))
+    if (sum(grepl("^text", f)) > 9L) return(no("it has more spare columns than a recipe can name."))
+    src <- vapply(all_cols, function(c) as.character(c$source)[1], "")
+    dfmt <- as.character(unlist(cl$date$format))[1]
+    if (is.na(dfmt %||% NA)) return(no("it has no date format."))
+    head_words <- as.character(unlist(tpl$fingerprint$header_contains_all))
+    money <- if (identical(sign, "type_dc")) {
+      if (!("type" %in% f)) return(no("its money is signed by a type column it does not name."))
+      list(style = "type_words", out_words = list(as.character(tpl$type_debit_value)[1]),
+           in_words = list(as.character(tpl$type_credit_value)[1]))
+    } else list(style = if (identical(sign, "debit_credit_cols")) "debit_credit_cols" else "signed")
+    y <- c(base, list(recognise = list(all = as.list(unique(c(head_words, src[f %in% c("date", "amount", "debit", "credit")])))),
+                      sheet = "headings",
+                      table = list(header = as.list(unique(c(head_words, src))),
+                                   columns = stats::setNames(lapply(src, function(s) list(under = s)), f)),
+                      dates = list(format = dfmt, year = "printed"), money = money, order = "oldest_first"))
+  }
+  chk <- .rc_validate(y)
+  if (!is.null(chk$error)) return(no(paste("written as a recipe it is not valid:", chk$error)))
+  list(yaml = y)
+}
+
+# recipes_from_templates(dirs, out) -> data.frame(template, recipe, written, why): every
+# 1.x template in `dirs` written to `out` as a draft (never over a file already there).
+recipes_from_templates <- function(dirs, out = NULL) {
+  fs <- unlist(lapply(dirs[dir.exists(dirs)], list.files, pattern = "[.]ya?ml$", full.names = TRUE))
+  rows <- lapply(sort(fs), function(f) {
+    tpl <- tryCatch(yaml::read_yaml(f), error = function(e) NULL)
+    r <- recipe_from_template(tpl)
+    if (!is.null(r$error)) return(data.frame(template = basename(f), recipe = NA_character_, written = FALSE, why = r$error))
+    ref <- sprintf("%s@v1.yaml", r$yaml$recipe)
+    path <- if (!is.null(out)) file.path(out, ref) else NA_character_
+    done <- FALSE; why <- "drafted (not written: no folder given)"
+    if (!is.null(out)) {
+      if (file.exists(path)) why <- "a draft of that name is already there; left as it is"
+      else { dir.create(out, recursive = TRUE, showWarnings = FALSE)
+             writeLines(c(sprintf("# Draft recipe written by tools/recipes/from_templates.R from the 1.x template %s.", basename(f)),
+                          "# A draft only fills Please check in; it reads on its own after 3 proofs from 2 accounts.",
+                          yaml::as.yaml(r$yaml)), path)
+             done <- TRUE; why <- "written" }
+    }
+    data.frame(template = basename(f), recipe = r$yaml$recipe, written = done, why = why)
+  })
+  if (!length(rows)) return(data.frame(template = character(0), recipe = character(0), written = logical(0), why = character(0)))
+  do.call(rbind, rows)
+}

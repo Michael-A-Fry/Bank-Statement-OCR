@@ -258,16 +258,16 @@ test_that("a fix for one statement of a bundle leaves the others alone", {
   expect_true(all(vapply(r3$reading, function(x) identical(x$outcome, "proven"), NA)))
 })
 
-test_that("one bundle counts once towards a layout", {
-  # read by the automatic reader alone: a recipe reads this design, and a recipe
-  # reading teaches no layout
+test_that("a text PDF bundle read from scratch teaches no layout (D1: recipes replace learned layouts)", {
+  # read by the automatic reader alone. Before D1 the bundle created one layout,
+  # counted once; now a text PDF's design is learned only as a recipe, from a
+  # person's check, so nothing is written to layouts at all.
   withr::local_options(bso.recipes = FALSE)
   cv <- convert_sandbox(); d <- sandbox_dir(cv)
   r <- cv(fixture("tests/testthat/fixtures/anz_everyday_pdf_bundle_sample.pdf"), bank = "ANZ")
-  expect_identical(r$run_log$learn_action, "created,none")
-  ly <- layouts_load(file.path(d, "layouts"), "anz")
-  expect_length(ly, 1L)
-  expect_length(ly[[1]]$layout$proved_by, 1L)
+  expect_identical(r$run_log$learn_action, "none,none")
+  expect_match(r$reading[[1]]$learn$why, "learned as a recipe", fixed = TRUE)
+  expect_length(layouts_load(file.path(d, "layouts"), "anz"), 0L)
 })
 
 test_that("a file that cannot be read is still stamped and tracked", {

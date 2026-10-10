@@ -51,6 +51,12 @@ auto_read <- function(input, layouts = list(), bank = NULL, opts = list()) {
       r$notes <- c(r$notes, recipe_note(rc))
       r$recipe_tried <- list(recipe = rc$matched_recipe, why = rc$why)
     }
+    # Two recipes that each prove with different figures: the reading from scratch
+    # never settles it on its own -- a person picks one of the two readings.
+    if (length(rc$recipe_choice) > 1L) {
+      r$recipe_choice <- rc$recipe_choice
+      if (r$outcome %in% c("proven", "layout_match")) { r$outcome <- "check"; r$why <- rc$why }
+    }
     r
   }
   # A scanned page whose OCR ran out of time comes back blank. If it was the last

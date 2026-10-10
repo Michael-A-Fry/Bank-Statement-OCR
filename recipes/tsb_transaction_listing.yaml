@@ -1,6 +1,10 @@
 # Recipe written by tools/recipes/from_designs.py from 2 real statement design(s)
 # described by the owner (docs/context/RECIPE_STATEMENTS). Every reading with it must still
 # prove itself by the statement's own arithmetic; one that does not is not used.
+# Changed by hand: a row marked "NSF" (a payment refused for want of funds) prints
+# its figure but keeps the balance before it, so it is read as moving nothing and
+# flagged non_moving. A date printed with its year cut short ("02/01/202") is put
+# right only when the statement's period allows one year for it.
 recipe: tsb_transaction_listing
 format: 1
 version: 1
@@ -23,6 +27,7 @@ table:
     credit: {under: "Deposit"}
     balance: {under: "Balance"}
   ends_at: ["Total Deposits =", "Total Withdrawals ="]
+  non_moving: ["NSF"]
 dates:
   format: "%d/%m/%Y"
   year: printed
