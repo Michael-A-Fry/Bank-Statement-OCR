@@ -30,6 +30,7 @@ R/   -- the conversion path (input -> read -> proven -> written)
   auto_read_summ.R      automatic reading: opening, closing and totals under unknown wordings, named by arithmetic
   auto_read_tabular.R   automatic reading: CSV and Excel exports, columns by content and headings
   recipes.R             a known design read with its recipe (recipes/*.yaml), proven to the reader's own bar
+  recipes_admin.R       the Admin page's recipes: overview, on/off, plain-field edits, test, merge, undo, needs attention
   layouts.R             each bank's learned layouts: versioned store, matching and learning rules
   fixes.R               a person's unproven fix, held for an admin (never learned on its own)
   tracking.R            no-personal-data record of what automatic reading did, and its summary

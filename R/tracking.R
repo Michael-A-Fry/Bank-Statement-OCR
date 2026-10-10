@@ -77,6 +77,12 @@ TRACK_REPAIRS <- c("reocr_rows", "wider_cells", "narrower_cells", "no_page_shift
   # R/layouts.R ids: <bank slug>_<n>
   layout_id      = list(type = "re", re = "^[a-z0-9]+(_[a-z0-9]+)*_[0-9]{1,4}$", id = TRUE),
   layout_version = list(type = "int", min = 1, max = 9999),
+  # R/recipes.R ids, and how the recipe was used: "read" (its reading was the
+  # statement's) or "tried" (recognised, but its reading did not prove, so the
+  # automatic reader read it instead: a design that may have changed).
+  recipe_id      = list(type = "re", re = .TRACK_ID_RE, id = TRUE),
+  recipe_version = list(type = "int", min = 1, max = 9999),
+  recipe_used    = list(type = "enum", values = c("read", "tried")),
   kind           = list(type = "enum", values = TRACK_KINDS),
   pages          = list(type = "int", min = 0, max = 5000),
   rows           = list(type = "int", min = 0, max = 100000),
@@ -245,6 +251,12 @@ track_reading_fields <- function(reading, bank = NULL, state_id = NULL, pages = 
   if (is.character(ml) && length(ml) == 1L && grepl("^[a-z0-9_]+@v?[0-9]+$", ml)) {
     f$layout_id <- sub("@v?[0-9]+$", "", ml)
     f$layout_version <- as.integer(sub("^.*@v?", "", ml))
+  }
+  mr <- reading$matched_recipe %||% reading$recipe_tried$recipe
+  if (is.character(mr) && length(mr) == 1L && grepl("^[a-z][a-z0-9_]*@[0-9]+$", mr)) {
+    f$recipe_id <- sub("@[0-9]+$", "", mr)
+    f$recipe_version <- as.integer(sub("^.*@", "", mr))
+    f$recipe_used <- if (!is.null(reading$matched_recipe)) "read" else "tried"
   }
   k <- reading$template$signature$kind %||% reading$signature$kind
   if (!is.null(k)) f$kind <- as.character(k)[1]

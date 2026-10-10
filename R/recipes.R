@@ -1429,7 +1429,9 @@ recipe_learn <- function(reading, input, bank, file_sha, accounts = NULL, dir = 
     if (isTRUE(reading$draft) && !is.null(reading$matched_recipe))
       rc <- Filter(function(r) identical(r$ref, reading$matched_recipe), mine)[1][[1]]
     if (is.null(rc)) {
-      ids <- vapply(mine, `[[`, "", "id")
+      # Every id ever used here, retired ones too: a new draft never reuses one.
+      ids <- unique(c(vapply(mine, `[[`, "", "id"),
+                      sub("@v?[0-9]+[.]ya?ml$", "", list.files(dir, "[.]ya?ml$"))))
       taken <- suppressWarnings(as.integer(sub(sprintf("^%s_draft_", b), "", ids[startsWith(ids, paste0(b, "_draft_"))])))
       id <- sprintf("%s_draft_%d", b, max(c(0L, taken), na.rm = TRUE) + 1L)
       y <- .rc_draft(reading, input, b, id)
